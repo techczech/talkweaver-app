@@ -1,0 +1,47 @@
+/* @order 1394 */
+  .slide-content.layout-quote > blockquote {
+    background: var(--tint);
+    border-left: .22em solid var(--accent);
+    border-radius: 0;
+    box-shadow: none;
+    margin: 0;
+    padding: 1.4em 1.6em 1.2em 2.4em;
+    max-width: 24em;
+    font-weight: 400;
+    font-size: max(31px, 3.4cqw);
+    line-height: 1.42;
+    letter-spacing: -.01em;
+  }/* @order 1395 */
+  .slide-content.layout-quote > blockquote::before {
+    content: "\201C";
+    position: absolute;
+    left: .28em;
+    top: .18em;
+    font-size: 2.6em;
+    line-height: 1;
+    font-family: Georgia, serif;
+    font-weight: 700;
+    color: var(--accent);
+    opacity: 1;
+  }/* @order 1396 */
+  .slide-content.layout-quote > blockquote p { max-width: 17em; }/* @order 1397 */
+  .slide-content.layout-quote > blockquote cite,
+  .slide-content.layout-quote > blockquote + cite {
+    display: flex;
+    align-items: center;
+    gap: 1em;
+    margin-top: 1.2em;
+    font-style: normal;
+    font-family: var(--sans);
+    font-size: .58em;
+    font-weight: 600;
+    color: var(--ink);
+    letter-spacing: .01em;
+  }/* @order 1398 */
+  .slide-content.layout-quote > blockquote cite::before {
+    content: "";
+    flex: none;
+    width: 3em;
+    height: 2px;
+    background: var(--accent);
+  }

@@ -1,0 +1,11 @@
+/* @order 1074 */
+.slide-sublink {
+  width: calc(100% - 18px);
+  margin-left: 18px;
+  padding-block: 5px;
+  color: color-mix(in srgb, var(--ink) 62%, transparent);
+  font-size: 0.82rem;
+}
+
+/* @order 1229 */
+.presenter-outline .slide-sublink { color: #b8c6d2; }

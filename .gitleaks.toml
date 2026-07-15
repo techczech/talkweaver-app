@@ -1,0 +1,12 @@
+# Repo-scoped gitleaks config. The layout registry (ADR-0011) declares option VALUES whose
+# field is literally named `token:` — the exact trigger-token text a UI choice writes, e.g.
+# `token: 'contrast=ledger'`. The generic-api-key rule reads that as a credential. Allowlist
+# ONLY that shape in the registry file; everything else scans as normal.
+[extend]
+useDefault = true
+
+[allowlist]
+condition = "AND"
+regexTarget = "line"
+regexes = ['''token: '[a-z0-9=_-]*'''']
+paths = ['''src/shared/layout-registry/entries\.ts''']

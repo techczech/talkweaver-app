@@ -1,0 +1,10 @@
+/* @order 0551 */
+
+  /* EQUATION ({equation}). Operand discs + accent + glyphs → solid-accent result disc.
+     One composition; reads as a single statement. *//* @order 0552 */
+  .equation-row {
+    display: flex; align-items: center; justify-content: center; gap: clamp(12px, 1.6vw, 26px);
+    margin: 48px auto 0; width: min(1180px, 100%); flex-wrap: wrap;
+  }/* @order 1458 */
+
+  /* Equation (mockup .formula): outlined pills, accent operators, the RESULT fills accent. */

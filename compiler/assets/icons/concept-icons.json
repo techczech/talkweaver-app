@@ -1,0 +1,230 @@
+{
+  "_meta": {
+    "purpose": "Curated concept->icon map. A high-priority semantic layer the matcher consults for ALL feature-list items, after exact brand/alias and before generic Lucide scoring. Its primary job: resolve `icon-semantic-needed` gaps (an icon-resolvable list with 1-2 items that no brand/Lucide rule matches) into a deliberate, human/agent-chosen icon, so the whole list can render as icons instead of dropping to plain. Curated choices apply everywhere, not only at gaps.",
+    "schema": "phrase -> { key, note }. `phrase` is the NORMALIZED concept phrase (see normalization below). `key` is a vendored icon key: \"lucide:<name>\" (assets/icons/lucide.json) or \"svgl:<name>\" (svgl + extra brand index). `note` records the human/agent reasoning for the choice (why this icon means this concept).",
+    "normalization": "Match key = item text, lowercased, markdown/list-marker stripped, punctuation collapsed to single spaces, trimmed. Build-time normalizeConceptPhrase() produces the same form for lookup. Author phrases in this normalized form.",
+    "uniqueness": "Concept-resolved icons participate in deck-level icon uniqueness exactly like brand/Lucide picks. If a chosen key is already taken in the deck, the assigner falls back as for any genuine candidate.",
+    "workflow": "Builds emit `icon-semantic-needed:<slide-id>:<exact item text>` when an icon-resolvable list has an unmatched item NOT covered here; that list renders PLAIN until resolved. The agent step: read the warning, judge the item by MEANING, pick the most apt vendored icon, add a `{ normalized-phrase: { key, note } }` entry here, commit, rebuild. See references/slide-design-language.md (Icon System) and the aicc agent-instructions/presentation-deck-building.md.",
+    "source": "Hand-authored by Dominik / agent semantic check. Not generated."
+  },
+
+  "by mid 2025 just something general models can do": {
+    "key": "lucide:infinity",
+    "note": "agents deck, slide C15 (Deep research). The item is the punchline of a special-purpose-model -> general-capability arc: deep research stopped being a separate fine-tuned product and became an unbounded, built-in thing any general model just does. `infinity` (tags: unlimited, forever, loop) reads as 'no longer a bounded special product; now an open-ended general capability'. Distinct from the 3 brand/Lucide picks in the same list (gemini, openai, cpu) so deck uniqueness holds. Considered: sparkles (too generic, already a creativity rule target), wand-sparkles (magic, but understates 'ubiquitous/default'), badge-check (verified, wrong sense)."
+  },
+
+  "and then it just became ambient": {
+    "key": "lucide:radio-tower",
+    "note": "Test fixture (markdown-outline-v2.md, 'Concept-resolvable list' slide). Exercises the >=2-genuine + 1-gap -> concept-resolved path: the list has two brand items plus this abstract 'became ambient/pervasive' line that no brand or Lucide rule matches. `radio-tower` reads as 'broadcast everywhere, ambient, pervasive'. Kept here (not only in the test) so the mechanism is exercised by real committed data, not a test-only stub."
+  },
+
+  "science communication": {
+    "key": "lucide:megaphone",
+    "note": "Test fixture (markdown-outline-v2.md, 'About the researcher': Cognitive linguistics, AI history, Science communication). The new icon-resolvable rule flags this 3rd item (2 genuine Lucide anchors + 1 hole). Science communication = public outreach / broadcasting ideas -> `megaphone`. Resolving it (rather than leaving the list plain) demonstrates the same agent workflow end-to-end."
+  },
+
+  "early electronic computers": {
+    "key": "lucide:computer",
+    "note": "Test fixture (markdown-outline-v2.md, 'Periods with sub-points', nested list). icon-resolvable: 'Computational prehistory' and 'Theory of computers' match Lucide; this middle item is the hole. Literally about early computers -> `computer`."
+  },
+
+  "ask for suggested organising schemes": {
+    "key": "lucide:lightbulb",
+    "note": "agents-and-ai (example-organising-a-downloads-folder) + five-things (same example slide). Steps where the others are observe/check/rename actions; this one asks the model to PROPOSE a scheme -> `lightbulb` (suggestion/idea). Unique vs siblings."
+  },
+
+  "agents md": {
+    "key": "lucide:file-cog",
+    "note": "agents-and-ai (where-to-put-instructions) + five-things (put-instructions-in-files). `AGENTS.md` is the instruction/config file an agent reads -> `file-cog` (a file that configures behaviour). Siblings are plan files / notes / example folders (file-text-ish); file-cog distinguishes the controlling instruction file."
+  },
+
+  "three agents task creation prioritisation execution": {
+    "key": "lucide:users",
+    "note": "agent-arch C3. The line names THREE cooperating agents; siblings are bot / python / generic. `users` reads as 'several agents/actors'. Unique vs bot."
+  },
+
+  "what changed the useful fraction grew": {
+    "key": "lucide:trending-up",
+    "note": "agent-arch C17. The point is a quantity that GREW (the useful fraction of a long context) -> `trending-up`. Siblings: windows, brain, monitor-cloud."
+  },
+
+  "sandbox dangerous calls": {
+    "key": "lucide:shield-alert",
+    "note": "agent-arch D6. Containing dangerous tool calls -> `shield-alert` (guard against a hazard). Siblings already use wrench/arrow/shield-user/terminal; shield-alert is distinct and signals the danger explicitly."
+  },
+
+  "the loop closes either way": {
+    "key": "lucide:repeat",
+    "note": "agent-arch D7. The agent loop returns to the model regardless of branch -> `repeat` (a closing loop). Siblings: message-square, cpu, book-open."
+  },
+
+  "it is now the de facto standard": {
+    "key": "lucide:badge-check",
+    "note": "agent-arch F2. AGENTS.md has become the accepted standard (the slide lists three tools that respect it) -> `badge-check` (verified/accepted/standard). Siblings are the three brand logos (codex, gemini, openai)."
+  },
+
+  "i am still using ai": {
+    "key": "lucide:sparkles",
+    "note": "five-things (what-this-means). The reassurance that this is STILL AI, just in a new context -> `sparkles` (the AI capability itself). Siblings: model power, control, chatgpt-interface picks."
+  },
+
+  "permissions matter": {
+    "key": "lucide:lock",
+    "note": "five-things (folders-projects-and-sandboxes). Permissions = access control -> `lock`. Siblings: codex-folders, project-folder, sandbox picks."
+  },
+
+  "limited lifetime": {
+    "key": "lucide:hourglass",
+    "note": "five-things (what-code-interpreter-is). The Code Interpreter VM is ephemeral -> `hourglass` (time-limited). Siblings: VM/openai, limited-control, files-disappear picks."
+  },
+
+  "higher capability models use allowance faster": {
+    "key": "lucide:gauge",
+    "note": "five-things (accounts-and-usage-limits). Burning allowance faster = a rate -> `gauge`. Siblings: sign-in, usage-limits, higher-reasoning picks."
+  },
+
+  "transparency": {
+    "key": "lucide:glasses",
+    "note": "five-things (benefits-of-local-work). Transparency = able to see through / inspect -> `glasses` (clear sight). Siblings: retrieval, portability picks."
+  },
+
+  "publish later if you want to": {
+    "key": "lucide:cloud-upload",
+    "note": "five-things (from-script-to-website). Optional later publishing of a locally-built site -> `cloud-upload`. Siblings: prompt+folder, generate-script, keep-files-local picks."
+  },
+
+  "explain and recreate if needed": {
+    "key": "lucide:copy-plus",
+    "note": "five-things (external-skills-and-scripts). Reproduce an outside skill from an explanation -> `copy-plus` (recreate/duplicate-with-extension). Siblings: built-in-first, inspect-outside picks."
+  },
+
+  "gemma 3": {
+    "key": "lucide:package",
+    "note": "open-and-local-models (local-models-you-should-pay-attention-to). Gemma is an open-WEIGHT downloadable model and has no vendored brand logo (add-icon found none in Simple Icons/Iconify; the Iconify 'GLM' hit was a crypto token, rejected). `package` reads as a downloadable open-weight bundle. Siblings: qwen + mistral-ai logos, gpt-oss->brain. Distinct from GLM Flash's `box`."
+  },
+
+  "glm flash": {
+    "key": "lucide:box",
+    "note": "open-and-local-models (same list). GLM (Zhipu) open-weight model, no correct vendored brand logo available (the only Iconify 'glm' is the Golem crypto token — wrong brand, not added). `box` = an open-weight model package, kept distinct from Gemma 3's `package` for list uniqueness."
+  },
+
+  "remote locations": {
+    "key": "lucide:satellite-dish",
+    "note": "open-and-local-models (some-use-cases). Running models where connectivity is poor/absent -> `satellite-dish` (remote/off-grid connectivity). Siblings: sensitive-data, archive, privacy, code picks."
+  },
+
+  "practice and competence": {
+    "key": "lucide:award",
+    "note": "kcl (understanding-is-a-professional-obligation). Professional competence/skill -> `award`. Siblings: history/context, communities/values, technology/architecture picks. Distinct from `flask-conical` used for the other gap in this list."
+  },
+
+  "evidence and method": {
+    "key": "lucide:flask-conical",
+    "note": "kcl (same list). Evidence + method = empirical investigation -> `flask-conical`. Unique vs `award`."
+  },
+
+  "specify the case": {
+    "key": "lucide:crosshair",
+    "note": "kcl (before-you-teach-publish-or-advise). Pin down the exact case -> `crosshair` (precise targeting). Siblings: verify-evidence, understand-system, update-claim, name-actors, institutional-responsibility picks. Distinct from `scan-eye` (examine practice)."
+  },
+
+  "examine practice": {
+    "key": "lucide:scan-eye",
+    "note": "kcl (same list). Inspect actual practice -> `scan-eye` (look closely). Unique vs crosshair."
+  },
+
+  "three stages past present future": {
+    "key": "lucide:milestone",
+    "note": "ai-history (about-the-series). Three temporal stages -> `milestone` (markers along a path/time). Siblings: file-text, brain, clock."
+  },
+
+  "meaning i have prejudices": {
+    "key": "lucide:scale",
+    "note": "ai-history (why-me). Admitting bias/prejudice -> `scale` (the things weigh/tilt one way). Siblings: message-square, brain, book-open, pen-line, lightbulb."
+  },
+
+  "concerns about computers": {
+    "key": "lucide:triangle-alert",
+    "note": "ai-history (regions-of-axial-age). Worries/concerns about computing -> `triangle-alert`. Siblings in this long list already include `scale`, so a distinct caution glyph is needed; triangle-alert is unused there."
+  },
+
+  "expert systems": {
+    "key": "lucide:brain-circuit",
+    "note": "ai-history (key-trends). Rule-based 'expert' AI -> `brain-circuit` (codified reasoning). Siblings: schema-revolution->json-schema, connectionism->link. Distinct from `snowflake` (AI winter) in the same list."
+  },
+
+  "the real ai winter": {
+    "key": "lucide:snowflake",
+    "note": "ai-history (key-trends). The AI winter -> `snowflake` (literal winter metaphor). Unique vs brain-circuit."
+  },
+
+  "ocr": {
+    "key": "lucide:scan-text",
+    "note": "ai-history (key-areas-of-technology). Optical character recognition -> `scan-text` (read text from an image). Siblings: settings, cpu, circuit-board, brain."
+  },
+
+  "follow checklists": {
+    "key": "lucide:list-checks",
+    "note": "evaluating-claims (how-do-we-evaluate-any-claims). Working through a checklist -> `list-checks`. Siblings: shield-check (trust sources), share-2 (reliability signals)."
+  },
+
+  "trusted sources have bounded expertise": {
+    "key": "lucide:ruler",
+    "note": "evaluating-claims (limits-to-trust). Expertise has BOUNDS -> `ruler` (measured limit). Siblings: ticket-slash, book-copy."
+  },
+
+  "will try to be truthful": {
+    "key": "lucide:badge-check",
+    "note": "evaluating-claims (principles, the 'trusted source' list). A commitment to truthfulness -> `badge-check`. Siblings in this list: file-text, info, brain, database, bug, a-arrow-down. (Same icon used in agent-arch F2 — uniqueness is per-deck, so reuse across decks is fine.) Distinct from `eye-off` (the disclosure-limit gap) in this list."
+  },
+
+  "can be limited in disclosure": {
+    "key": "lucide:eye-off",
+    "note": "evaluating-claims (same principles list). May withhold/not disclose -> `eye-off`. Unique vs badge-check."
+  },
+
+  "general commentator": {
+    "key": "lucide:megaphone",
+    "note": "evaluating-claims (principles, the 'source positioning' list). A broad public commentator -> `megaphone`. Siblings: bring-to-front, globe-off, bug."
+  },
+
+  "methods sections": {
+    "key": "lucide:clipboard-list",
+    "note": "evaluating-claims (ai-research-ers). The methods write-up -> `clipboard-list` (recorded procedure). Siblings: monitor-cloud, flask-conical (so flask is taken; clipboard-list is distinct)."
+  },
+
+  "how were models chosen": {
+    "key": "lucide:list-filter",
+    "note": "evaluating-claims (peer-reviewed-publications). Selection/filtering of which models to test -> `list-filter`. Long sibling list (book-open, microscope, graduation-cap, cpu, a-arrow-down, experience-platform, monitor-cloud); list-filter is unused."
+  },
+
+  "what is the positioning of the source": {
+    "key": "lucide:compass",
+    "note": "evaluating-claims (traditional-heuristics). Where the source stands / its orientation -> `compass`. Siblings: target, crosshair, flag, contrast."
+  },
+
+  "how much effort is required to stay current": {
+    "key": "lucide:gauge",
+    "note": "evaluating-claims (fundamental-problem). The effort/rate needed to keep up -> `gauge`. Siblings: info, book-copy. (Same icon as a five-things item; per-deck uniqueness means no conflict here.)"
+  },
+
+  "no actual examples of this happening in practice": {
+    "key": "lucide:ban",
+    "note": "evaluating-claims (slop-squatting). Absence — there are NO real-world examples -> `ban` (none/prohibited/absent). Siblings: clock, timer, users."
+  },
+
+  "many cited sources are from campaigning organisation not evidence": {
+    "key": "lucide:siren",
+    "note": "evaluating-claims (edinburgh-petition). Activist/campaigning sources rather than evidence -> `siren` (alarm/advocacy). Siblings: target, clock, bug. Distinct from `megaphone` used by 'General commentator' elsewhere in THIS deck, preserving deck-level uniqueness."
+  },
+
+  "learning": {
+    "key": "lucide:graduation-cap",
+    "note": "ai-history (russell-and-norvig — the AIMA part list). 'Learning' = the machine-learning part of the textbook -> `graduation-cap` (learning/education). Siblings: puzzle (problem-solving), brain (knowledge/reasoning), lightbulb (uncertain reasoning). Distinct from `radio` (the communicating/perceiving/acting part)."
+  },
+
+  "communicating perceiving and acting": {
+    "key": "lucide:radio",
+    "note": "ai-history (russell-and-norvig). The AIMA part covering NLP / perception / robotics — communicating, sensing, and acting in the world -> `radio` (communication/signal). Unique vs graduation-cap and the siblings; message-square (the obvious 'communicate' pick) is already used by the why-me list in this deck, so radio preserves deck uniqueness."
+  }
+}

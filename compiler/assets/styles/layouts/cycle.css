@@ -1,0 +1,21 @@
+/* @order 0542 */
+
+  /* CYCLE ({cycle}). Node cards on an ellipse (build-time % coordinates, centred on their
+     point) over an SVG underlay of accent arc arrows joining consecutive stops into a loop.
+     Nodes are the steppable units; the arrows are decorative chrome. *//* @order 0543 */
+  .cycle-diagram { position: relative; margin: 26px auto 0; width: min(1080px, 100%); aspect-ratio: 1000 / 620; }/* @order 0544 */
+  .cycle-svg { position: absolute; inset: 0; width: 100%; height: 100%; }/* @order 0545 */
+  .cycle-arc-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }/* @order 0546 */
+  .cycle-arc { fill: none; stroke: var(--accent); stroke-width: 10; stroke-linecap: round; }/* @order 0547 */
+  .cycle-svg marker path, .cycle-arc-svg marker path { fill: var(--accent); }/* @order 0548 */
+  .cycle-node {
+    position: absolute; transform: translate(-50%, -50%);
+    display: flex; flex-direction: column; align-items: center; gap: 3px; text-align: center;
+    background: var(--tint); border: 2px solid var(--accent); border-radius: 12px;
+    padding: clamp(10px, 1.2vw, 18px) clamp(14px, 1.6vw, 24px);
+    max-width: clamp(150px, 19vw, 250px); box-shadow: 0 6px 18px #17202a14;
+  }/* @order 0549 */
+  .cycle-stage { font-weight: 760; font-size: max(15px, 1.5cqw); color: var(--ink); line-height: 1.15; }/* @order 0550 */
+  .cycle-cap { font-size: max(12px, 1.05cqw); color: var(--muted); line-height: 1.25; }/* @order 1621 */
+
+  /* #74 cycle is a LOOP (mockup .cycle): ring stage with pill nodes on the circle */

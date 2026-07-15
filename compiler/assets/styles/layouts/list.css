@@ -1,0 +1,204 @@
+/* @order 0085 */
+
+  /* === list layout (D2): title left, iconed revealable feature-list right === *//* @order 0086 */
+  /* The slide-content becomes a two-column band — the kicker/h1/lead group anchors the
+     left column, the feature-list fills the right. Items reveal one-by-one (each carries
+     data-fragment), so the spoken point and its icon arrive together. *//* @order 0087 */
+  .slide-content.layout-list {
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    column-gap: clamp(34px, 4vw, 72px);
+    align-content: center;
+    align-items: center;
+  }/* @order 0088 */
+  /* Title group: a single block cell in column 1, vertically centred against the whole
+     slide regardless of the right column's height (Refinement 1). The kicker sits tight
+     above the h1 inside it. *//* @order 0089 */
+  .slide-content.layout-list > .slide-head {
+    display: block;
+    grid-column: 1;
+    grid-row: 1 / span 99;
+    align-self: center;
+  }/* @order 0090 */
+  .slide-content.layout-list > .slide-head > .kicker { margin-bottom: 12px; }/* @order 0091 */
+  .slide-content.layout-list > .slide-head > h1 { max-width: 14ch; }/* @order 0092 */
+  .slide-content.layout-list > p.lead,
+  .slide-content.layout-list > p:not(.kicker) { grid-column: 1; max-width: 30ch; }/* @order 0093 */
+  .slide-content.layout-list > .feature-list {
+    grid-column: 2;
+    grid-row: 1 / span 99;
+    align-self: center;
+  }/* @order 0094 */
+  .feature-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 14px;
+    counter-reset: feature;
+    width: 100%;
+  }/* @order 0095 */
+  /* Long lists (>6) split into two shallow columns inside the right cell. *//* @order 0096 */
+  .feature-list.fl-wide {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 20px;
+  }/* @order 0097 */
+  /* ADR-0005 list rows (mockup .icon-list .item): clean borderless rows — no panel, no bars,
+     no radius, no shadow. The icon carries the accent; the type carries the weight. *//* @order 0098 */
+  .feature-list > li {
+    counter-increment: feature;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: 18px;
+    padding: 12px 0;
+    /* Type-scale principle: 30pt ideal / 20pt floor — list rows sit at speaking size. */
+    font-size: max(34px, 3.2cqw);
+    line-height: 1.28;
+    color: var(--ink);
+  }/* @order 0099 */
+  .feature-list.fl-wide > li { font-size: max(31px, 2.9cqw); padding: 10px 0; gap: 16px; }/* @order 0101 */
+  .feature-list.fl-wide .fl-icon { width: 1.1em; height: 1.1em; }/* @order 0107 */
+  .feature-list.fl-wide .fl-svg-mono { font-size: 16px; border-radius: 6px; }/* @order 0109 */
+  .feature-list.fl-wide .fl-icon.fl-num { font-size: 15px; }/* @order 0111 */
+  /* E6 — plain feature-list: no icon column. Name lists ("Minsky", "Abelson / Schank")
+     and weak-match lists drop the icon entirely and keep only the panel + accent border.
+     The single-column grid replaces the auto/1fr icon grid so the text sits flush at the
+     card's left padding — intentional, not an amputated icon slot. *//* @order 0112 */
+  .feature-list.fl-plain > li {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }/* @order 0115 */
+
+  /* === H1 — nested feature-list children === *//* @order 0116 */
+  /* A parent item carrying a nested sub-list reads as a single card: the parent text on top,
+     a quieter indented sub-list beneath it inside the same card. The sub-list belongs to the
+     parent (no icon, no reveal of its own — it appears with the parent fragment). *//* @order 0117 */
+  /* A list with children stays a single full-width column so each card has room for its
+     sub-list (overrides the >6-items two-column split). *//* @order 0118 */
+  .feature-list.fl-has-children.fl-wide { grid-template-columns: 1fr; }/* @order 0119 */
+  /* The parent li becomes a top-anchored stack: icon+text on the first row, the sub-list
+     spanning the full card width on the next row. *//* @order 0120 */
+  .feature-list.fl-has-children > li {
+    align-items: start;
+    row-gap: 8px;
+  }/* @order 0121 */
+  .feature-list.fl-has-children > li > .fl-icon { align-self: start; margin-top: 2px; }/* @order 0122 */
+  /* Sub-list alignment: in an iconed list it starts in the TEXT column (under the parent
+     text, not under the icon) so it reads as a true sub-bullet; in a plain list (single
+     column) it spans the card. 2026-06-09: was full-span with a dash marker — read as a
+     detached sibling row rather than a sub-item. *//* @order 0123 */
+  .feature-list > li > .fl-sublist { grid-column: 1 / -1; }/* @order 0124 */
+  .feature-list:not(.fl-plain) > li > .fl-sublist { grid-column: 2; }/* @order 0139 */
+
+  /* === SD-9 {annotated} — shared-axis grid (Task 6, 2026-06-25) === *//* @order 0140 */
+  /* ONE grid for the whole list: column 1 = widest lead (max-content), so every annotation
+     starts on the SAME left axis. display:contents on each <li> lifts the lead+ann pair into
+     the parent grid without creating a nested grid per item.
+     Replaces the old per-item card approach (old fl-has-aside 3-column grid per li). *//* @order 0141 */
+  .feature-list.fl-annotated {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    column-gap: clamp(18px, 3.4vw, 48px);
+    row-gap: clamp(10px, 2.7vw, 28px);
+    align-items: baseline;
+    /* Reset the default gap set on .feature-list */
+    gap: clamp(10px, 2.7vw, 28px) clamp(18px, 3.4vw, 48px);
+  }/* @order 0142 */
+  /* Each li becomes transparent to the grid — its children (lead + ann) lift into the parent grid. *//* @order 0143 */
+  .feature-list.fl-annotated > li {
+    display: contents;
+    /* Reset the card styles from the default .feature-list > li */
+    padding: 0;
+    border-left: none;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+  }/* @order 0144 */
+  /* Column 1: the primary label (icon + text). white-space:nowrap keeps the lead on one line
+     so all annotations snap to a shared axis regardless of label length. *//* @order 0145 */
+  .feature-list.fl-annotated > li > .fl-lead {
+    display: flex;
+    align-items: center;
+    gap: clamp(8px, 1.2vw, 16px);
+    white-space: nowrap;
+    font-size: max(20px, 2cqw);
+    font-weight: 650;
+    line-height: 1.2;
+    color: var(--ink);
+  }/* @order 0146 */
+  .feature-list.fl-annotated > li > .fl-lead .fl-icon {
+    width: clamp(22px, 2.2vw, 32px);
+    height: clamp(22px, 2.2vw, 32px);
+    flex: none;
+    color: var(--accent);
+    position: static;
+  }/* @order 0147 */
+  .feature-list.fl-annotated > li > .fl-lead .fl-text { min-width: 0; }/* @order 0148 */
+  /* Column 2: the annotation. Left-aligned, capped width, muted, wraps naturally. *//* @order 0149 */
+  .feature-list.fl-annotated > li > .fl-ann {
+    font-size: max(16px, 1.5cqw);
+    color: color-mix(in srgb, var(--ink) 72%, transparent);
+    line-height: 1.35;
+    max-width: 40ch;
+    align-self: baseline;
+  }/* @order 0150 */
+  /* Sub-list in annotation column (col 2): indented bullets, muted, annotation-scale type.
+     display:contents on <li> lifts .fl-sublist alongside .fl-lead into the shared grid;
+     the sub-list sits in col 2 naturally without any extra grid-column override. *//* @order 0151 */
+  .feature-list.fl-annotated > li > .fl-sublist {
+    align-self: baseline;
+    font-size: max(16px, 1.5cqw);
+    color: color-mix(in srgb, var(--ink) 72%, transparent);
+    margin: 0;
+    padding-left: 0;
+  }/* @order 0354 */
+
+  /* F1: list-visual — media + list only (no paragraph, no quote). The big title is KEPT
+     (h1 not demoted); the feature-list fills one column, the media the other. Both columns
+     are top-aligned relative to each other; the pair centres vertically in the stage.
+     Layout: slide-head row 1 (full width), then .lv-body row 2: a two-column inner grid
+     (feature-list left, media right). Autofit scales the title. Below 950px stacks. *//* @order 0355 */
+  .slide-content.layout-list-visual {
+    grid-template-columns: 1fr;
+    row-gap: 22px;
+    align-content: center;
+  }/* @order 0356 */
+  .slide-content.layout-list-visual > .slide-head {
+    display: block;
+    grid-column: 1;
+    grid-row: 1;
+  }/* @order 0357 */
+  .slide-content.layout-list-visual > .slide-head > h1 { max-width: 24ch; }/* @order 0358 */
+  /* Inner body: two-column grid. Feature-list (left) + media (right), vertically top-aligned
+     as a pair so the two columns start at the same level. *//* @order 0359 */
+  .slide-content.layout-list-visual > .lv-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+    column-gap: clamp(32px, 3.8vw, 64px);
+    align-items: start;
+    grid-column: 1;
+    grid-row: 2;
+  }/* @order 0360 */
+  .slide-content.layout-list-visual > .lv-body > .lv-list { min-width: 0; }/* @order 0361 */
+  .slide-content.layout-list-visual > .lv-body > .lv-media { min-width: 0; display: grid; gap: 14px; align-content: start; }/* @order 0364 */
+  .slide-content.layout-list-visual > .lv-body > .lv-media figure.slide-embed {
+    margin: 0; aspect-ratio: 16 / 9; width: 100%; max-height: 72vh;
+  }/* @order 0365 */
+  .slide-content.layout-list-visual > .lv-body > .lv-media figure.slide-embed iframe { min-height: 0; height: 100%; }/* @order 0366 */
+  /* Feature-list in list-visual: full reveal (data-fragment on items, like list layout). *//* @order 0367 */
+  .slide-content.layout-list-visual .feature-list > li { font-size: max(19px, 1.9cqw); }/* @order 0705 */
+  .slide-content > blockquote + .feature-list,
+  .slide-content > blockquote + .feature-list > li {
+    display: block !important; background: transparent !important; border: 0 !important;
+    border-radius: 0 !important; padding: 0 !important; margin-left: 0 !important; grid-template-columns: none !important;
+  }/* @order 0706 */
+  .slide-content > blockquote + .feature-list > li + li { margin-top: .4em !important; }/* @order 0707 */
+  .slide-content > blockquote + .feature-list .fl-icon,
+  .slide-content > blockquote + .feature-list .fl-svg { display: none !important; }/* @order 1343 */
+  .slide[data-title-layout="left"] .slide-content > .feature-list { row-gap: clamp(12px, 2.8vh, 44px); }/* @order 1399 */
+
+  /* Icon list (LOCKED mockup slide 4 renders the icon list as NUMBERED ICON CARDS in a grid,
+     not flat rows): hairline card, accent icon top, label, mono index bottom. *//* @order 1405 */
+  /* words never wrap one-per-line: cards keep a readable min width and text keeps words whole *//* @order 1610 */
+
+  /* #71 plain lists (no icons): hairline-separated rows that fill the band — never bare lines */

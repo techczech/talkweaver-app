@@ -1,0 +1,87 @@
+{
+  "_meta": {
+    "description": "Accumulative supplementary icon set. Grows as builds encounter icon-gap warnings. Keys/titles join the brand token index alongside svgl; svgl wins on key collision.",
+    "sources": "Simple Icons (CC0 shapes, trademark caveat) via https://cdn.simpleicons.org/; Iconify API (https://api.iconify.design/) as fallback — per-set licenses recorded per entry.",
+    "policy": "Missing icon → run scripts/add-icon.mjs <term>, commit, rebuild. Source + license + date recorded per entry."
+  },
+  "substack": {
+    "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M22.539 8.242H1.46V5.406h21.08zM1.46 10.812V24L12 18.11L22.54 24V10.812zM22.54 0H1.46v2.836h21.08z\"/></svg>",
+    "title": "Substack",
+    "tokens": [
+      "substack"
+    ],
+    "source": "Simple Icons (https://simpleicons.org/icons/substack.svg via https://cdn.simpleicons.org/substack)",
+    "license": "CC0-1.0 (shape); Substack trademark of Substack Inc.",
+    "date": "2026-06-06"
+  },
+  "medium": {
+    "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M4.21 0A4.2 4.2 0 0 0 0 4.21v15.58A4.2 4.2 0 0 0 4.21 24h15.58A4.2 4.2 0 0 0 24 19.79v-1.093a5 5 0 0 1-.422.02c-2.577 0-4.027-2.146-4.09-4.832a8 8 0 0 1 .022-.708c.093-1.186.475-2.241 1.105-3.022a3.9 3.9 0 0 1 1.395-1.1c.468-.237 1.127-.367 1.664-.367h.023q.151 0 .303.01V4.211A4.2 4.2 0 0 0 19.79 0Zm.198 5.583h4.165l3.588 8.435l3.59-8.435h3.864v.146l-.019.004c-.705.16-1.063.397-1.063 1.254h-.003l.003 10.274c.06.676.424.885 1.063 1.03l.02.004v.145h-4.923v-.145l.019-.005c.639-.144.994-.353 1.054-1.03V7.267l-4.745 11.15h-.261L6.15 7.569v9.445c0 .857.358 1.094 1.063 1.253l.02.004v.147H4.405v-.147l.019-.004c.705-.16 1.065-.397 1.065-1.253V6.987c0-.857-.358-1.094-1.064-1.254l-.018-.004zm19.25 3.668c-1.086.023-1.733 1.323-1.813 3.124H24V9.298a1.4 1.4 0 0 0-.342-.047m-1.862 3.632c-.1 1.756.86 3.239 2.204 3.634v-3.634z\"/></svg>",
+    "title": "Medium",
+    "tokens": [
+      "medium"
+    ],
+    "source": "Simple Icons (https://simpleicons.org/icons/medium.svg via https://cdn.simpleicons.org/medium)",
+    "license": "CC0-1.0 (shape); Medium trademark of A Medium Corporation.",
+    "date": "2026-06-06"
+  },
+  "wikipedia": {
+    "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M12.09 13.119c-.936 1.932-2.217 4.548-2.853 5.728c-.616 1.074-1.127.931-1.532.029c-1.406-3.321-4.293-9.144-5.651-12.409c-.251-.601-.441-.987-.619-1.139q-.27-.225-1.122-.271q-.314-.034-.313-.159v-.455l.052-.045c.924-.005 5.401 0 5.401 0l.051.045v.434q0 .177-.225.176l-.564.031c-.485.029-.727.164-.727.436c0 .135.053.33.166.601c1.082 2.646 4.818 10.521 4.818 10.521l.136.046l2.411-4.81l-.482-1.067l-1.658-3.264s-.318-.654-.428-.872c-.728-1.443-.712-1.518-1.447-1.617c-.207-.023-.313-.05-.313-.149v-.468l.06-.045h4.292l.113.037v.451c0 .105-.076.15-.227.15l-.308.047c-.792.061-.661.381-.136 1.422l1.582 3.252l1.758-3.504c.293-.64.233-.801.111-.947c-.07-.084-.305-.22-.812-.24l-.201-.021a.23.23 0 0 1-.145-.051a.15.15 0 0 1-.067-.129v-.427l.061-.045c1.247-.008 4.043 0 4.043 0l.059.045v.436c0 .121-.059.178-.193.178c-.646.03-.782.095-1.023.439c-.12.186-.375.589-.646 1.039l-2.301 4.273l-.065.135l2.792 5.712l.17.048l4.396-10.438c.154-.422.129-.722-.064-.895c-.197-.172-.346-.273-.857-.295l-.42-.016a.26.26 0 0 1-.152-.045c-.043-.029-.072-.075-.072-.119v-.436l.059-.045h4.961l.041.045v.437c0 .119-.074.18-.209.18c-.648.03-1.127.18-1.443.421c-.314.255-.557.616-.736 1.067c0 0-4.043 9.258-5.426 12.339c-.525 1.007-1.053.917-1.503-.031c-.571-1.171-1.773-3.786-2.646-5.71z\"/></svg>",
+    "title": "Wikipedia",
+    "tokens": [
+      "wikipedia"
+    ],
+    "source": "Simple Icons (https://simpleicons.org/icons/wikipedia.svg via https://cdn.simpleicons.org/wikipedia)",
+    "license": "CC0-1.0 (shape); Wikipedia trademark of Wikimedia Foundation.",
+    "date": "2026-06-06"
+  },
+  "slack": {
+    "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M6 15a2 2 0 0 1-2 2a2 2 0 0 1-2-2a2 2 0 0 1 2-2h2zm1 0a2 2 0 0 1 2-2a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2a2 2 0 0 1-2-2zm2-8a2 2 0 0 1-2-2a2 2 0 0 1 2-2a2 2 0 0 1 2 2v2zm0 1a2 2 0 0 1 2 2a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2a2 2 0 0 1 2-2zm8 2a2 2 0 0 1 2-2a2 2 0 0 1 2 2a2 2 0 0 1-2 2h-2zm-1 0a2 2 0 0 1-2 2a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2a2 2 0 0 1 2 2zm-2 8a2 2 0 0 1 2 2a2 2 0 0 1-2 2a2 2 0 0 1-2-2v-2zm0-1a2 2 0 0 1-2-2a2 2 0 0 1 2-2h5a2 2 0 0 1 2 2a2 2 0 0 1-2 2z\"/></svg>",
+    "title": "Slack",
+    "tokens": [
+      "slack"
+    ],
+    "source": "Iconify (mdi:slack) — Material Design Icons. https://api.iconify.design/mdi/slack.svg",
+    "license": "Apache-2.0 — Material Design Icons by Pictogrammers",
+    "date": "2026-06-06"
+  },
+  "deepmind": {
+    "svg": "<svg fill=\"#4285F4\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\" aria-hidden=\"true\"><title>DeepMind</title><path d=\"m5.99,1.62a8.54,8.54 0 0 0 -2.54,6.83c0.35,4.4 4.51,7.99 8.28,7.99c3.5,0 4.88,-3.06 4.54,-5.14a4.32,4.32 0 0 0 -0.95,-2.07c0.63,0.34 1.24,0.77 1.81,1.3c1.52,1.41 2.44,3.23 2.58,5.1c0.33,4.13 -2.73,8.37 -7.85,8.37c-1.69,0 -3.48,-0.43 -4.98,-1.14c-4.06,-1.92 -6.88,-6.06 -6.88,-10.86c0,-4.43 2.41,-8.3 5.99,-10.38zm6.15,-1.62c1.69,0 3.48,0.43 4.98,1.14a12,12 0 0 1 6.88,10.86c0,4.43 -2.41,8.3 -5.99,10.38a8.54,8.54 0 0 0 2.54,-6.83c-0.35,-4.4 -4.51,-7.99 -8.28,-7.99c-3.5,0 -4.88,3.06 -4.54,5.14a4.3,4.3 0 0 0 0.96,2.07a8.72,8.72 0 0 1 -1.81,-1.3c-1.52,-1.41 -2.44,-3.23 -2.59,-5.1c-0.33,-4.13 2.73,-8.37 7.85,-8.37z\"/></svg>",
+    "title": "DeepMind",
+    "tokens": [
+      "deepmind"
+    ],
+    "source": "Simple Icons (https://simpleicons.org/icons/deepmind.svg via https://cdn.simpleicons.org/deepmind)",
+    "license": "CC0-1.0 (shape); see https://simpleicons.org for trademark info; DeepMind is a trademark of its owner.",
+    "date": "2026-06-07"
+  },
+  "linear": {
+    "svg": "<svg fill=\"#5E6AD2\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\" aria-hidden=\"true\"><title>Linear</title><path d=\"M2.886 4.18A11.982 11.982 0 0 1 11.99 0C18.624 0 24 5.376 24 12.009c0 3.64-1.62 6.903-4.18 9.105L2.887 4.18ZM1.817 5.626l16.556 16.556c-.524.33-1.075.62-1.65.866L.951 7.277c.247-.575.537-1.126.866-1.65ZM.322 9.163l14.515 14.515c-.71.172-1.443.282-2.195.322L0 11.358a12 12 0 0 1 .322-2.195Zm-.17 4.862 9.823 9.824a12.02 12.02 0 0 1-9.824-9.824Z\"/></svg>",
+    "title": "Linear",
+    "tokens": [
+      "linear"
+    ],
+    "source": "Simple Icons (https://simpleicons.org/icons/linear.svg via https://cdn.simpleicons.org/linear)",
+    "license": "CC0-1.0 (shape); see https://simpleicons.org for trademark info; Linear is a trademark of its owner.",
+    "date": "2026-06-09"
+  },
+  "miro": {
+    "svg": "<svg fill=\"#050038\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\" aria-hidden=\"true\"><title>Miro</title><path d=\"M17.392 0H13.9L17 4.808 10.444 0H6.949l3.102 6.3L3.494 0H0l3.05 8.131L0 24h3.494L10.05 6.985 6.949 24h3.494L17 5.494 13.899 24h3.493L24 3.672 17.392 0z\"/></svg>",
+    "title": "Miro",
+    "tokens": [
+      "miro"
+    ],
+    "source": "Simple Icons (https://simpleicons.org/icons/miro.svg via https://cdn.simpleicons.org/miro)",
+    "license": "CC0-1.0 (shape); see https://simpleicons.org for trademark info; Miro is a trademark of its owner.",
+    "date": "2026-06-09"
+  },
+  "airtable": {
+    "svg": "<svg fill=\"#18BFFF\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\" aria-hidden=\"true\"><title>Airtable</title><path d=\"M11.992 1.966c-.434 0-.87.086-1.28.257L1.779 5.917c-.503.208-.49.908.012 1.116l8.982 3.558a3.266 3.266 0 0 0 2.454 0l8.982-3.558c.503-.196.503-.908.012-1.116l-8.957-3.694a3.255 3.255 0 0 0-1.272-.257zM23.4 8.056a.589.589 0 0 0-.222.045l-10.012 3.877a.612.612 0 0 0-.38.564v8.896a.6.6 0 0 0 .821.552L23.62 18.1a.583.583 0 0 0 .38-.551V8.653a.6.6 0 0 0-.6-.596zM.676 8.095a.644.644 0 0 0-.48.19C.086 8.396 0 8.53 0 8.69v8.355c0 .442.515.737.908.54l6.27-3.006.307-.147 2.969-1.436c.466-.22.43-.908-.061-1.092L.883 8.138a.57.57 0 0 0-.207-.044z\"/></svg>",
+    "title": "Airtable",
+    "tokens": [
+      "airtable"
+    ],
+    "source": "Simple Icons (https://simpleicons.org/icons/airtable.svg via https://cdn.simpleicons.org/airtable)",
+    "license": "CC0-1.0 (shape); see https://simpleicons.org for trademark info; Airtable is a trademark of its owner.",
+    "date": "2026-06-09"
+  }
+}

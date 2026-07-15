@@ -1,0 +1,128 @@
+{
+  "statement": [
+    "layout-statement",
+    "stmt-list"
+  ],
+  "list": [
+    "layout-list",
+    "feature-list",
+    "list-visual",
+    "layout-links",
+    "layout-logolist"
+  ],
+  "quote": [
+    "layout-quote",
+    "slide-quote",
+    "quote-layout"
+  ],
+  "contrast": [
+    "layout-contrast",
+    "contrast-",
+    "layout-compare",
+    "compare-"
+  ],
+  "media": [
+    "layout-media",
+    "layout-copy-visual",
+    "copy-visual",
+    "slide-figure",
+    "figure-row",
+    "img-row",
+    "image-grid",
+    "image-quote",
+    "cta-screenshots"
+  ],
+  "cards": [
+    "layout-cards",
+    "card-gallery",
+    "gallery-card",
+    "cards-media",
+    "layout-grid"
+  ],
+  "carousel": [
+    "layout-carousel",
+    "carousel-"
+  ],
+  "title": [
+    "layout-title",
+    "layout-closing",
+    "layout-section-title",
+    "layout-subsection-title",
+    "deck-title",
+    "deck-thanks"
+  ],
+  "timeline": [
+    "layout-timeline",
+    "timeline-",
+    "tl-"
+  ],
+  "diagrams": [
+    "layout-flow",
+    "flow-",
+    "layout-pyramid",
+    "pyramid",
+    "layout-orgchart",
+    "orgchart",
+    "layout-mindmap",
+    "mindmap",
+    "layout-conceptmap",
+    "conceptmap",
+    "layout-system-map",
+    "system-map",
+    "layout-smartart",
+    "smartart",
+    "layout-process",
+    "process-",
+    "layout-steps",
+    "steps-"
+  ],
+  "trace": [
+    "layout-trace",
+    "trace-",
+    "slide-code",
+    "code-block"
+  ],
+  "table": [
+    "layout-table",
+    "slide-table",
+    "layout-timetable",
+    "table-outline"
+  ],
+  "charts": [
+    "layout-chart",
+    "layout-barchart",
+    "layout-piechart",
+    "layout-linechart",
+    "layout-sigmoid",
+    "chart-",
+    "bar-chart",
+    "pie-chart",
+    "line-chart",
+    "sigmoid"
+  ],
+  "columns": [
+    "layout-columns",
+    "columns-layout",
+    "column-stack",
+    ".columns",
+    ".col-align"
+  ],
+  "stats": [
+    "layout-stats",
+    "stats-",
+    "layout-countdown",
+    "countdown-"
+  ],
+  "icon-row": [
+    "layout-iconrow",
+    "icon-row"
+  ],
+  "cycle": [
+    "layout-cycle",
+    "cycle-"
+  ],
+  "equation": [
+    "layout-equation",
+    "equation-"
+  ]
+}

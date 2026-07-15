@@ -1,0 +1,217 @@
+/* @order 0746 */
+
+  /* D4: cards slides demote the title to a quiet eyebrow line — SECTION KICKER · Title —
+     so the gallery is the hero. The title part stays in the accent-ink for slight weight
+     against the muted kicker; the big h1 is sr-only (kept for nav/overview fallbacks). *//* @order 0747 */
+  /* E4 follow-up: the whole cards block (eyebrow + gallery/split) centres vertically in the
+     stage; the two split columns keep their TOP edges level relative to each other. *//* @order 0748 */
+  .slide-content.layout-cards { align-content: center; }/* @order 0753 */
+  .slide-content.layout-cards .card-gallery { min-height: 62vh; margin-top: 14px; }/* @order 0754 */
+
+  /* D7: a cards slide with leading media (e.g. a newsreel clip) sets the media beside the
+     whole gallery instead of stacking above it — media in a left column (≤56%), the steppable
+     card gallery in a right column, both vertically centred. The media persists while the
+     speaker browses every card. Below 950px it stacks (media above the gallery). *//* @order 0755 */
+  .cards-media-split {
+    display: grid;
+    grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+    column-gap: clamp(30px, 3.4vw, 60px);
+    /* E4: align the TOPS of the media column and the gallery column. Centring the media
+       (align-items: center) dropped the video well below the first quote card, which starts
+       at the top of its column. start-aligning both keeps their top edges level. */
+    align-items: start;
+    margin-top: 14px;
+  }/* @order 0756 */
+  .cards-media-split .cards-media-col { min-width: 0; align-self: start; display: grid; gap: 12px; }/* @order 0757 */
+  .cards-media-split .cards-media-col figure.slide-embed {
+    margin: 0; aspect-ratio: 16 / 9; width: 100%; max-height: 74vh;
+  }/* @order 0758 */
+  .cards-media-split .cards-media-col figure.slide-embed iframe { min-height: 0; height: 100%; }/* @order 0760 */
+  .cards-media-split .cards-gallery-col { min-width: 0; }/* @order 0761 */
+  /* No forced gallery height inside a split: the row's height becomes the taller of the
+     visible card and the media, so the centred pair genuinely sits mid-stage (card heights
+     may vary while stepping — accepted tradeoff for true vertical centring). *//* @order 0762 */
+  .cards-media-split .cards-gallery-col .card-gallery { min-height: 0; margin-top: 0; }/* @order 0767 */
+  .slide-content.layout-cards .card-gallery { /* leave room for the source line below */ }/* @order 0768 */
+
+  .card-gallery { position: relative; min-height: 56vh; margin-top: 28px; }/* @order 0771 */
+  .card-gallery.carousel { position: relative; min-height: 0; margin-top: 8px; flex: 1 1 auto; display: block; }/* @order 0784 */
+  .card-gallery.card-grid { position: static; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: clamp(12px, 1.6vw, 24px); align-content: start; }/* @order 0785 */
+  .slide-content.layout-cards .card-gallery.card-grid { min-height: 0; margin-top: 8px; }/* @order 0786 */
+  .card-gallery.card-grid .card { height: auto; max-height: none; align-content: start; }/* @order 0787 */
+  /* Cards cap their height to the stage and scroll INTERNALLY when content still overflows
+     after the dense step — so a long quote is always fully reachable, never silently clipped.
+     A bottom gradient fade (the ::after, shown only while .is-scrollable) signals "more below". *//* @order 0788 */
+  /* ADR-0005 gallery card: flat hairline card on paper — no tint fill, no top bar, no radius,
+     no elevation. Chrome carries nothing; type and the accent carry the card. *//* @order 0789 */
+  .card-gallery .card { position: relative; background: var(--paper); border: 1px solid var(--hairline); border-radius: 0; box-shadow: none; padding: clamp(24px, 3.2vw, 48px); height: 100%; max-height: 72vh; overflow-y: auto; overflow-x: hidden; display: grid; align-content: center; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--accent) 50%, transparent) transparent; }/* @order 0790 */
+  .card-gallery .card::-webkit-scrollbar { width: 8px; }/* @order 0791 */
+  .card-gallery .card::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 8px; }/* @order 0792 */
+  .card-gallery .card::-webkit-scrollbar-track { background: transparent; }/* @order 0793 */
+  .card-gallery .card.is-scrollable::after { content: ""; position: sticky; bottom: -1px; left: 0; right: 0; display: block; height: clamp(28px, 4vh, 56px); margin: 0 calc(-1 * clamp(24px, 3.2vw, 48px)) calc(-1 * clamp(24px, 3.2vw, 48px)); background: linear-gradient(to bottom, transparent, var(--tint)); pointer-events: none; }/* @order 0794 */
+  /* Card titles: sentence case, ink, weight 600 — never shouting caps, never accent-on-title
+     (ADR-0005: accent lives in icons/numbers/keywords). *//* @order 0795 */
+  .card-gallery .card h4 { margin: 0 0 .6em; font-size: max(19px, 1.9cqw); font-weight: 600; letter-spacing: -0.01em; text-transform: none; color: var(--ink); }/* @order 0796 */
+  /* Type floor — no tiny text on a slide, ever. Anything inside a card not covered by a
+     specific treatment (quotes, h4, figcaptions, cites) inherits at least statement-adjacent
+     scale. Feature lists inside cards sit on paper (not panel) so their card edges read
+     against the panel card background. *//* @order 0797 */
+  .card-gallery .card { font-size: max(19px, 1.8cqw); }/* @order 0800 */
+  .card-gallery .card > p { font-size: max(21px, 2cqw); line-height: 1.35; max-width: 60ch; }/* @order 0801 */
+  /* G2/G4 — SPEAKER COMMENT. Dominik's own remark inside a card (a paragraph, not a quote)
+     reads as a statement, NOT a quotation: an accent-bar callout in the sans face, no quote
+     mark. Distinct from the serif + quote-mark blockquote so the audience can tell "this is
+     the speaker talking" from "this is a cited source". One consistent size across cards and
+     the in-card split text column. The .card > p selector above sets base size; this adds the
+     bar and overrides the family/colour. Works regardless of split nesting (G4). *//* @order 0802 */
+  .card-gallery .card p.card-comment,
+  .card-gallery .card .card-text-col p.card-comment {
+    margin: 0 0 .5em;
+    padding-left: 22px;
+    border-left: 5px solid var(--accent);
+    font-family: var(--sans);
+    font-size: max(29px, 2.7cqw);
+    line-height: 1.34;
+    color: var(--ink);
+    max-width: 46ch;
+  }/* @order 0803 */
+  .card-gallery .card p.card-comment:last-child { margin-bottom: 0; }/* @order 0804 */
+  .card-gallery .card p.card-comment strong { color: var(--accent); }/* @order 0808 */
+  .card-gallery .card blockquote { border: 0; margin: 0; padding: 0 0 0 0.9em; font-family: var(--sans); font-size: max(24px, 2.6cqw); line-height: 1.3; }/* @order 0809 */
+  /* G1: same decorative opening quote mark as slide-level quotes, scaled to the card. *//* @order 0810 */
+  .card-gallery .card blockquote::before { font-size: 2.6em; top: -0.18em; left: -0.14em; }/* @order 0811 */
+  .card-gallery .card blockquote p { margin: 0 0 .5em; }/* @order 0812 */
+  .card-gallery .card blockquote p:last-of-type { margin-bottom: 0; }/* @order 0813 */
+  .card-gallery .card blockquote strong { color: var(--accent); }/* @order 0814 */
+  .card-gallery .card blockquote cite { display: block; margin-top: .7em; font-family: var(--sans); font-style: normal; font-size: .42em; color: var(--muted); letter-spacing: .02em; }/* @order 0815 */
+  /* QUOTE + ATTRIBUTION: when a card's quote is followed by a source line (a reference/feature-list
+     or a paragraph), the quotation is the hero and the reference sits QUIETLY AT THE BOTTOM with a
+     clear gap — not crowded directly under the quote. Only engages when a blockquote actually has a
+     trailing sibling, so a quote-only card keeps its centred treatment. *//* @order 0816 */
+  .card-gallery .card:has(> blockquote + *) { display: flex; flex-direction: column; justify-content: flex-start; min-height: 56vh; }/* @order 0817 */
+  .card-gallery .card:has(> blockquote + *) > :last-child { margin-top: auto; padding-top: clamp(28px, 6vh, 80px); }/* @order 0823 */
+  /* D6: scale quote type by length so long multi-paragraph quotes don't overflow. Buckets are
+     set in the generator via data-quote-length. The runtime .card-dense step (scrollHeight >
+     clientHeight) nudges one notch smaller before any scroll fallback kicks in. *//* @order 0824 */
+  .card-gallery .card blockquote[data-quote-length="medium"] { font-size: max(20px, 2.05cqw); }/* @order 0825 */
+  .card-gallery .card blockquote[data-quote-length="long"] { font-size: max(17px, 1.6cqw); line-height: 1.36; }/* @order 0826 */
+  .card-gallery .card.card-dense blockquote { font-size: max(15px, 1.45cqw); line-height: 1.34; }/* @order 0827 */
+  .card-gallery .card.card-dense blockquote[data-quote-length="long"] { font-size: max(14px, 1.32cqw); }/* @order 0828 */
+  /* D7: a card holding BOTH media and text lays them side-by-side inside the card — media in
+     one column (≤56%, vertically centred, embeds 16:9), text in the other — instead of stacking
+     and clipping. The card stays a centred grid; the inner .card-split-grid is the two-column
+     row. Below 950px (handled in the breakpoint block) it stacks media above text. *//* @order 0829 */
+  .card-gallery .card.card-media-split { align-content: center; }/* @order 0830 */
+  .card-gallery .card.card-media-split .card-split-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+    column-gap: clamp(20px, 2.4vw, 40px);
+    align-items: center;
+  }/* @order 0831 */
+  .card-gallery .card.card-media-split .card-media-col { min-width: 0; display: grid; gap: 10px; align-content: center; }/* @order 0832 */
+  .card-gallery .card.card-media-split .card-media-col figure { margin: 0; }/* @order 0833 */
+  .card-gallery .card.card-media-split .card-media-col figure.slide-embed { aspect-ratio: 16 / 9; width: 100%; max-height: 56vh; }/* @order 0834 */
+  .card-gallery .card.card-media-split .card-media-col figure.slide-embed iframe { min-height: 0; height: 100%; }/* @order 0836 */
+  .card-gallery .card.card-media-split .card-text-col { min-width: 0; }/* @order 0837 */
+  .card-gallery .card.card-media-split .card-text-col blockquote { font-size: max(17px, 1.7cqw); }/* @order 0838 */
+  .card-gallery .card.card-media-split .card-text-col blockquote::before { font-size: 2.4em; top: -0.16em; left: -0.12em; }/* @order 0839 */
+  /* G4: card-text-col paragraphs were previously unstyled body copy. A non-quote paragraph
+     in the split column is a speaker comment — give it the same accent-bar callout treatment
+     as flow-card comments (the Nature "Chatbots are not reliable…" line). This selector matches
+     the split-column specificity exactly and sits AFTER it, so the comment treatment wins. *//* @order 0840 */
+  .card-gallery .card.card-media-split .card-text-col > p.card-comment {
+    margin: 0 0 .5em; padding-left: 18px; border-left: 5px solid var(--accent);
+    font-family: var(--sans); font-size: max(16px, 1.55cqw); line-height: 1.4;
+    color: var(--ink); max-width: none;
+  }/* @order 0841 */
+  .card-gallery .card.card-media-split .card-text-col > p.card-comment:last-child { margin-bottom: 0; }/* @order 0842 */
+  .card-gallery .card.card-media-split .card-text-col > p.card-comment strong { color: var(--accent); }/* @order 0843 */
+  /* E2: media INSIDE a plain content card (an embed, optionally paired with a still image —
+     no side-by-side text, so not .card-media-split). The base .slide-embed iframe carries
+     min-height: 52vh for full-bleed slide embeds; inside a height-capped, align-content:center
+     card that forces the embed to ~52vh AND lets a stacked image spill past the card's clip
+     box, so only a thin sliver of the image shows below the embed. Scope the embed to a 16:9
+     box, drop the iframe min-height, and cap any stacked figure/image so embed + still compose
+     cleanly within one card. When a card holds BOTH (embed + image), let the rows size to
+     content and share the height instead of one element dominating. *//* @order 0844 */
+  .card-gallery .card:not(.card-media-split):not(.card-title) figure.slide-embed {
+    margin: 0; aspect-ratio: 16 / 9; width: 100%; max-height: 56vh; justify-self: center;
+  }/* @order 0845 */
+  .card-gallery .card:not(.card-media-split):not(.card-title) figure.slide-embed iframe { min-height: 0; height: 100%; }/* @order 0862 */
+  .card-gallery[data-exclusive] .card { display: none; }/* @order 0863 */
+  .card-gallery[data-exclusive] .card.active-card { display: grid; }/* @order 0864 */
+  .card-gallery[data-exclusive] .card.hidden-fragment { opacity: 1; transform: none; }/* @order 0865 */
+  /* Title card: opens every gallery. No panel chrome — a clean accent-led title page so it
+     reads distinctly from the bordered content cards. Big serif title, uppercase kicker. *//* @order 0866 */
+  .card-gallery .card.card-title {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    border-radius: 0;
+    text-align: center;
+    justify-items: center;
+    padding: clamp(20px, 4vw, 64px);
+  }/* @order 0867 */
+  .card-gallery .card.card-title .card-title-inner {
+    display: grid;
+    gap: clamp(14px, 1.6vw, 24px);
+    justify-items: center;
+    border-top: 5px solid var(--accent);
+    padding-top: clamp(22px, 3vw, 44px);
+  }/* @order 0868 */
+  .card-gallery .card.card-title .card-title-kicker {
+    margin: 0;
+    font-family: var(--sans);
+    font-size: max(13px, 1.1cqw);
+    font-weight: 800;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--accent-2);
+  }/* @order 0869 */
+  .card-gallery .card.card-title .card-title-h {
+    margin: 0;
+    font-family: var(--sans);
+    font-weight: 500;
+    line-height: 1.04;
+    color: var(--ink);
+    font-size: max(40px, 6cqw);
+    /* E1: the measure must live on the TITLE element so ch resolves against the large serif
+       font here — not on .card-title-inner (a base-16px sans box, where 22ch ≈ 350px forced
+       the 84px title to one word per line). ~18ch matches a normal h1. */
+    max-width: 18ch;
+  }/* @order 0870 */
+  /* Mini-grid overview: every card of the active gallery at once, scaled into a responsive
+     grid regardless of reveal state. Click a card to jump to it. Standalone trigger only. *//* @order 0871 */
+  .card-gallery.grid-view { min-height: 0; display: grid; gap: clamp(12px, 1.4vw, 22px);
+    grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); align-content: start; }/* @order 0872 */
+  .card-gallery.grid-view .card,
+  .card-gallery.grid-view .card.card-title {
+    display: grid !important;
+    height: auto;
+    min-height: 150px;
+    max-height: 32vh;
+    overflow: hidden;
+    cursor: pointer;
+    padding: clamp(14px, 1.4vw, 22px);
+    box-shadow: var(--hairline-shadow);
+    border: 1px solid var(--line);
+    border-top: 4px solid var(--accent);
+    border-radius: 10px;
+    background: var(--tint);
+    transition: transform 120ms ease, box-shadow 120ms ease;
+  }/* @order 0873 */
+  .card-gallery.grid-view .card.card-title { text-align: left; justify-items: stretch; }/* @order 0874 */
+  .card-gallery.grid-view .card.card-title .card-title-inner { border-top: 0; padding-top: 0; max-width: none; justify-items: start; text-align: left; }/* @order 0875 */
+  .card-gallery.grid-view .card.card-title .card-title-h { font-size: max(22px, 2.4cqw); }/* @order 0876 */
+  .card-gallery.grid-view .card.grid-current { outline: 3px solid var(--accent); outline-offset: 2px; }/* @order 0877 */
+  .card-gallery.grid-view .card:hover { transform: translateY(-2px); box-shadow: var(--elevation); }/* @order 0878 */
+  .card-gallery.grid-view .card blockquote { font-size: max(15px, 1.4cqw); }/* @order 0879 */
+  .card-gallery.grid-view .card figure img,
+  .card-gallery.grid-view .card figure video { max-height: 18vh; object-fit: contain; }/* @order 0880 */
+  .card-gallery.grid-view .card .slide-embed iframe { min-height: 0; height: 16vh; }/* @order 1407 */
+
+  /* Card gallery (mockup .cards): flat hairline cards, numbered, icon top / label / index bottom *//* @order 1675 */
+
+  /* Mockup .roles-h / .lblgrp: a card child written as "Label: value" renders as a mono accent
+     label over an ink value, hairline-separated — the locked complex-card grammar. *//* @order 1681 */
+  /* {cards=rows} (mockup .roles-v): the same cards laid as full-width rows, title column left */

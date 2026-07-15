@@ -1,0 +1,56 @@
+name: Release
+
+# Build installers for macOS (Apple Silicon) and Windows and upload them to a GitHub Release.
+# Trigger by pushing a version tag, e.g.  git tag v0.17.3 && git push origin v0.17.3
+# electron-builder uploads to a DRAFT release for that version; review it, then publish.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  macos:
+    name: macOS (arm64)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build native macOS helpers (Swift)
+        run: npm run build:native
+      - name: Build renderer/main
+        run: npm run build
+      - name: Package + publish (dmg, zip)
+        run: npx electron-builder --mac --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  windows:
+    name: Windows (x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build renderer/main
+        run: npm run build
+      - name: Package + publish (nsis installer)
+        run: npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

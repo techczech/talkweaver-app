@@ -1,0 +1,88 @@
+/* @order 1400 */
+  .slide-content > .feature-list:not(.fl-annotated):has(.fl-icon),
+  .slide-content > .feature-list.fl-wide:not(.fl-annotated):has(.fl-icon) {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(16ch, 100%), 1fr));
+    gap: .55em;
+    align-content: center;
+    counter-reset: twcard;
+    max-width: none;
+  }/* @order 1401 */
+  .slide-content > .feature-list:not(.fl-annotated):has(.fl-icon) > li,
+  .slide-content > .feature-list.fl-wide:not(.fl-annotated):has(.fl-icon) > li {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: .9em;
+    border: 1px solid var(--hairline);
+    padding: 1em .8em;
+    min-height: 21vh;
+    font-size: max(26px, 1.05em);
+    font-weight: 500;
+    line-height: 1.25;
+    counter-increment: twcard;
+  }/* @order 1402 */
+  .slide-content > .feature-list:not(.fl-annotated):has(.fl-icon) > li::before { display: none; }/* @order 1403 */
+  .slide-content > .feature-list:not(.fl-annotated):has(.fl-icon) > li::after {
+    content: counter(twcard, decimal-leading-zero);
+    font-family: var(--mono);
+    font-size: .6em;
+    color: var(--muted);
+    letter-spacing: .1em;
+  }/* @order 1404 */
+  .slide-content > .feature-list:not(.fl-annotated):has(.fl-icon) > li > .fl-icon,
+  .slide-content > .feature-list:not(.fl-annotated):has(.fl-icon) > li svg {
+    width: 1.8em;
+    height: 1.8em;
+    color: var(--accent);
+    stroke-width: 1.5;
+    flex: none;
+  }/* @order 1406 */
+  .slide-content > .feature-list:not(.fl-annotated):has(.fl-icon) > li { overflow-wrap: normal; word-break: keep-all; hyphens: none; }/* @order 1611 */
+  .slide-content > .feature-list:not(:has(.fl-icon)) { width: 100%; max-width: none; }/* @order 1612 */
+  .slide-content > .feature-list:not(:has(.fl-icon)) > li {
+    border-top: 1px solid var(--hairline);
+    padding: .55em 0;
+    font-weight: 400;
+  }/* @order 1613 */
+  .slide-content > .feature-list:not(:has(.fl-icon)) > li:last-child { border-bottom: 1px solid var(--hairline); }/* @order 1642 */
+  .slide-content > .feature-list:has(.fl-icon) > li { font-size: var(--fs-dense) !important; font-weight: 400; }
+
+  /* {iconlist=list}: restore the pre-skin icon rows at today's type scale. The icon is the
+     accent device; rows have no card chrome and never paint the boxes variant's mono number. */
+  .slide-content > .feature-list.fl-iconlist-list:not(.fl-annotated),
+  .slide-content > .feature-list.fl-wide.fl-iconlist-list:not(.fl-annotated) {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0;
+    max-width: none;
+    width: 100%;
+    counter-reset: none;
+  }
+  .slide-content > .feature-list.fl-iconlist-list:not(.fl-annotated) > li,
+  .slide-content > .feature-list.fl-wide.fl-iconlist-list:not(.fl-annotated) > li {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    justify-content: initial;
+    gap: .7em;
+    min-height: 0;
+    padding: .55em 0;
+    border: 0;
+    border-top: 1px solid var(--hairline);
+    font-size: var(--fs-body) !important;
+    font-weight: 400;
+    line-height: 1.28;
+  }
+  .slide-content > .feature-list.fl-iconlist-list:not(.fl-annotated) > li:last-child {
+    border-bottom: 1px solid var(--hairline);
+  }
+  .slide-content > .feature-list.fl-iconlist-list:not(.fl-annotated) > li::after { content: none; }
+  .slide-content > .feature-list.fl-iconlist-list:not(.fl-annotated) > li > .fl-icon,
+  .slide-content > .feature-list.fl-iconlist-list:not(.fl-annotated) > li svg {
+    width: 1.25em;
+    height: 1.25em;
+    color: var(--accent);
+    stroke-width: 1.6;
+  }

@@ -1,0 +1,14 @@
+node_modules
+out
+dist
+.DS_Store
+*.local
+release/
+out/
+artefacts/
+# Compiled native helpers — derived from their .swift sources by `npm run build:native` (and dist:mac).
+native/ocr
+native/media
+
+# not published to the public repo
+.bridle/

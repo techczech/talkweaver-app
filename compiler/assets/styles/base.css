@@ -1,0 +1,2583 @@
+/* @order 0002 */
+
+  * { box-sizing: border-box; }/* @order 0003 */
+  html, body { margin: 0; min-height: 100%; }/* @order 0004 */
+  body {
+    font-family: var(--sans);
+    color: var(--ink);
+    background: var(--paper);
+    overflow: hidden;
+  }/* @order 0005 */
+  button, input, select { font: inherit; }/* @order 0006 */
+
+  .deck {
+    min-height: 100vh;
+    display: grid;
+    /* ADR-0005 chrome policy: the stage fills the whole deck; the control bar (.footer) is a
+       fixed overlay that auto-hides, so content slides are full-bleed with no persistent chrome
+       except the 3px accent progress tick. */
+    grid-template-rows: 1fr;
+  }/* @order 0007 */
+  .stage {
+    position: relative;
+    min-height: 0;
+    overflow: hidden;
+    /* Type-scale principle: type sizes are STAGE-relative (cqw), not window-relative (vw) —
+       so embedded/scaled renders (thumbnails, previews, screenshot capture) keep proportion. */
+    container-type: size;
+  }/* @order 0008 */
+  .slide {
+    position: absolute;
+    inset: 0;
+    display: none;
+    place-items: center;
+    /* Single safe-area token — uniform across EVERY layout (consistent margins). */
+    padding: var(--slide-pad-y) var(--slide-pad-x);
+    overflow: hidden;
+    /* Re-declare --tint ON the slide so it resolves against the slide's inline --sec-tint
+       (the generator stamps --sec-accent/--sec-tint, and --accent, inline per section). The
+       :root --tint only ever saw :root's absent --sec-tint, so it stayed the cobalt default
+       for every section; declaring it here makes the section TINT track the section accent. */
+    --tint: var(--sec-tint, #e8eefc);
+  }/* @order 0009 */
+  .slide.active { display: grid; }/* @order 0010 */
+  .slide-content {
+    width: min(1180px, 100%);
+    min-height: min(820px, 86vh);
+    margin: 0 auto;
+    display: grid;
+    align-content: center;
+  }/* @order 0011 */
+  /* ADR-0005: all headings are the sans grotesque — nothing uses the serif any more. *//* @order 0012 */
+  h1, h2 {
+    margin: 0;
+    font-family: var(--sans);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.12;
+  }/* @order 0013 */
+  h2 { font-size: max(34px, 5cqw); max-width: 17ch; }/* @order 0015 */
+  /* ADR-0005 card (mockup .cards .card): flat, sharp, hairline-bordered on paper — no radius,
+     no shadow, no tint fill. The accent appears in icons/numbers/keywords, not in chrome. *//* @order 0016 */
+  .card {
+    background: var(--paper);
+    border: 1px solid var(--hairline);
+    border-radius: 0;
+    padding: clamp(18px, 2.6vh, 28px) clamp(16px, 1.6vw, 26px);
+    box-shadow: none;
+  }/* @order 0017 */
+  .card strong { display: block; margin-bottom: 8px; color: var(--ink); font-weight: 600; }/* @order 0018 */
+  /* Statement: the slide's main point as large prose. ONE treatment, shared by the authored
+     `.statement` block class and by generated layout-statement paragraphs.
+     ADR-0005 (mockup .t-statement): a single large sans phrase, centred both axes, NO left-bar.
+     max-width 12em / line-height 1.3 are the binding readability measures; the line-height also
+     lets boxed strong emphasis (below) sit clear of adjacent lines. *//* @order 0019 */
+  .statement,
+  .slide-content.layout-statement > p:not(.kicker) {
+    margin: 0;
+    font-family: var(--sans);
+    font-weight: 500;
+    font-size: max(34px, 5.4cqw);
+    line-height: 1.3;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+    max-width: 12em;
+  }/* @order 0020 */
+  /* Boxed emphasis (mockup .box) for the structural big-type layouts: a filled accent chip with
+     clone box-decoration so it never bleeds across a wrapped line. Statement/section hosts carry
+     line-height ≥ 1.3; quote/image-quote define their own boxed strong beside their type rules. *//* @order 0021 */
+  .slide-content.layout-statement > p strong,
+  .slide-content.layout-statement > .slide-head h1 strong,
+  .slide-content.layout-section-title h1 strong {
+    background: var(--accent); color: var(--paper);
+    padding: 0.02em 0.18em; border-radius: 0.1em;
+    box-decoration-break: clone; -webkit-box-decoration-break: clone;
+  }/* @order 0026 */
+  /* Beside-a-figure columns (copy-visual / list-visual / cards-media-split) keep the column
+     width contract — the content paragraph fills its column rather than the 46ch slide cap. *//* @order 0027 */
+  .slide-content.layout-copy-visual .cv-copy > .content-p,
+  .slide-content.layout-list-visual .content-p,
+  .cards-media-split .content-p { max-width: 28ch; }/* @order 0028 */
+  /* [data-fragment] now lives ONLY on card-gallery cards (subslide stepping). Feature lists,
+     quotes, figures and timeline entries no longer emit it — they render fully visible by
+     default and only step when reveal/focus mode is on (see mode CSS near the runtime). *//* @order 0029 */
+  [data-fragment] {
+    transition: opacity 180ms ease, transform 180ms ease;
+  }/* @order 0030 */
+  [data-fragment].hidden-fragment {
+    opacity: 0.12;
+    transform: translateY(6px);
+  }/* @order 0031 */
+
+  /* === layout blocks (markdown-outline-v2) === *//* @order 0032 */
+  /* Single source of truth for kicker / h1 / lead type scale (reference: KCL deck). *//* @order 0033 */
+  /* Text-supports-speech: content sits in a left-aligned band, key phrases pop in the
+     section accent, body width is capped so the eye lands on the spoken point. *//* @order 0034 */
+  .slide-content { text-align: left; }/* @order 0035 */
+  /* Title group wrapper. By default it is transparent to layout (display:contents) so the
+     kicker + h1 keep behaving as direct grid/flow children of .slide-content — every
+     existing layout works unchanged. The two-column layouts (list/statement) override this
+     to make .slide-head a real grid cell that vertically centres the title (see below). *//* @order 0036 */
+  .slide-head { display: contents; }/* @order 0037 */
+  /* Visually-hidden but kept for nav-title fallbacks / overview that read h1 text. *//* @order 0038 */
+  .sr-only {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0);
+    white-space: nowrap; border: 0;
+  }/* @order 0039 */
+  .slide-content :is(p, li, blockquote, figcaption) strong { color: var(--accent); }/* @order 0040 */
+  .slide-content > p:not(.lead):not(.kicker) { max-width: 60ch; }/* @order 0041 */
+  .kicker {
+    color: var(--accent);
+    margin: 0 0 18px;
+    font-family: var(--mono);
+    font-size: max(13px, 1.05cqw);
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }/* @order 0042 */
+  /* 2026-06-09 title spec: default H1 = 60% of the old base clamp(42,6.7vw,86). Every per-layout
+     H1 override below is scaled by the SAME ~0.605 factor so proportions hold across layouts. *//* @order 0043 */
+  h1 { font-size: max(25px, 4.02cqw); max-width: 18ch; }/* @order 0044 */
+  /* Title-fit contract: a title NEVER breaks a word mid-word and NEVER overflows its
+     column. Words wrap on whitespace (overflow-wrap/word-break normal, hyphens off); the
+     runtime title-fit pass (see fitTitles) then shrinks the font-size — via an inline
+     px font-size that wins over every stylesheet rule — when a long single word still
+     exceeds the column at the authored size. min-width:0 lets the title's grid/flow column
+     actually shrink so clientWidth reports the true available width to measure against. *//* @order 0045 */
+  h1, h2 { overflow-wrap: normal; word-break: normal; hyphens: none; min-width: 0; }/* @order 0046 */
+  .slide-content.layout-image-claim h1 { font-size: max(21px, 2.66cqw); max-width: 19ch; }/* @order 0048 */
+  .slide-content.layout-closing h1,
+  .slide-content.layout-list h1,
+  .slide-content.layout-grid h1,
+  .slide-content.layout-system-map h1 { max-width: 16ch; }/* @order 0076 */
+  /* The title/closing bookends centre their text; the subtitle/author/CTA paragraphs are
+     `.content-p`, which would otherwise pick up the universal vertical accent-bar (border-left).
+     Drop it here so a centred line stays centred (no side bar floating left of centred text). *//* @order 0077 */
+  .slide-content.layout-title:not(.layout-statement) .content-p:not(.card-comment),
+  .slide-content.layout-closing:not(.layout-statement) .content-p:not(.card-comment) {
+    border-left: 0;
+    padding-left: 0;
+  }/* @order 0083 */
+
+  /* Lead paragraph: title/opening/closing layouts treat their first paragraph as a lead.
+     (layout-statement is NOT a lead — see the statement layout below.) *//* @order 0084 */
+  p.lead,
+  .slide-content.layout-title > p,
+  .slide-content.layout-closing > p,
+  .slide-content.layout-opening > p {
+    max-width: 34ch;
+    margin: 24px 0 0;
+    font-size: max(21px, 2.5cqw);
+    line-height: 1.34;
+    color: var(--muted);
+  }/* @order 0100 */
+  .fl-icon {
+    display: grid;
+    place-items: center;
+    width: 1.15em;
+    height: 1.15em;
+    flex: none;
+    color: var(--accent);
+  }/* @order 0102 */
+  /* Icon System v3: Lucide stroke icons use currentColor accent; brand SVGs keep their own fills.
+     .fl-svg-lucide: stroke=currentColor inherits --accent from .fl-icon.
+     .fl-svg-brand: sized to fill the box; no colour override (brand colours respected). *//* @order 0103 */
+  .fl-svg { width: 100%; height: 100%; }/* @order 0104 */
+  .fl-svg-brand { width: 100%; height: 100%; display: block; }/* @order 0105 */
+  /* Monogram fallback (logolist): an honest neutral chip with the company's first letter
+     when no real brand mark exists — never a misleading generic shape, never plain. Fills
+     the same .fl-icon box as a real logo so the list stays visually consistent. *//* @order 0106 */
+  .fl-svg-mono {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 100%;
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--ink) 7%, transparent);
+    border: 1.5px solid color-mix(in srgb, var(--ink) 16%, transparent);
+    color: color-mix(in srgb, var(--ink) 72%, transparent);
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 19px;
+    line-height: 1;
+    letter-spacing: 0;
+  }/* @order 0108 */
+  .fl-icon.fl-num {
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    border: 2px solid var(--accent);
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 18px;
+    line-height: 1;
+  }/* @order 0110 */
+  .fl-text { min-width: 0; }/* @order 0113 */
+
+  /* SD-17 — links layout: the URL echo in muted monospace beside the anchor text. *//* @order 0114 */
+  .link-url { font-size: 0.78em; font-family: monospace; opacity: 0.55; word-break: break-all; }/* @order 0125 */
+  .fl-sublist {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 4px;
+  }/* @order 0126 */
+  .fl-sublist > li {
+    position: relative;
+    padding-left: 20px;
+    /* clearly smaller than the parent card text; quieter colour, no accent border, no panel. */
+    font-size: 0.78em;
+    line-height: 1.3;
+    color: color-mix(in srgb, var(--ink) 78%, transparent);
+  }/* @order 0127 */
+  /* Quiet round bullet marker, vertically centred on the first line. *//* @order 0128 */
+  .fl-sublist > li::before {
+    content: "\2022";
+    position: absolute;
+    left: 6px;
+    top: 0;
+    color: color-mix(in srgb, var(--ink) 45%, transparent);
+  }/* @order 0129 */
+  /* Depth ≥2 scales down again and quietens further. *//* @order 0130 */
+  .fl-sublist .fl-sublist {
+    padding-left: 12px;
+  }/* @order 0131 */
+  .fl-sublist .fl-sublist > li {
+    font-size: 0.92em;
+    color: color-mix(in srgb, var(--ink) 68%, transparent);
+  }/* @order 0132 */
+  .fl-sublist .fl-sublist > li::before { content: "·"; }/* @order 0133 */
+
+  /* === SD-10 (Task 5): sub-bullet icons ({icons=all}) ===
+     .fl-sublist-icons suppresses the dash marker; .fl-sub-icon is the icon slot — smaller
+     than the top-level .fl-icon (22px vs 34px) and coloured with the secondary gold accent
+     so sub-bullets read as a quieter tier alongside the primary icon column. *//* @order 0134 */
+  .fl-sublist-icons > li {
+    padding-left: 28px; /* icon (22px) + 6px gap — replaces the plain 20px bullet indent */
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }/* @order 0135 */
+  .fl-sublist-icons > li::before { content: none; /* icon replaces the bullet */ }/* @order 0136 */
+  .fl-sub-icon {
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    flex: none;
+    align-self: center;
+    color: var(--gold);
+    opacity: 0.85;
+  }/* @order 0137 */
+  .fl-sub-icon .fl-svg { width: 100%; height: 100%; }/* @order 0138 */
+  .fl-sub-icon .fl-svg-lucide { stroke-width: 2; }/* @order 0152 */
+  .fl-subtext { min-width: 0; }/* @order 0169 */
+
+  /* BIG list treatment for the other list-family layouts (opening/closing/section). *//* @order 0170 */
+  .slide-content.layout-opening > ul,
+  .slide-content.layout-opening > ol,
+  .slide-content.layout-closing > ul,
+  .slide-content.layout-closing > ol,
+  .slide-content.layout-section-title > ul,
+  .slide-content.layout-section-title > ol {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 24px;
+    margin: 42px 0 0;
+    padding: 0;
+    list-style: none;
+    max-width: 980px;
+    counter-reset: biglist;
+  }/* @order 0171 */
+  .slide-content.layout-opening > ul > li,
+  .slide-content.layout-opening > ol > li,
+  .slide-content.layout-closing > ul > li,
+  .slide-content.layout-closing > ol > li,
+  .slide-content.layout-section-title > ul > li,
+  .slide-content.layout-section-title > ol > li {
+    border-left: 4px solid var(--accent);
+    border-radius: 8px;
+    background: var(--tint);
+    box-shadow: var(--hairline-shadow);
+    padding: 14px 16px;
+    font-size: max(20px, 2cqw);
+    line-height: 1.24;
+  }/* @order 0172 */
+  /* Nested lists (e.g. computational prehistory) stay quiet inside their parent card.
+     Feature-list sub-lists (.fl-sublist) carry their own sub-bullet design — excluded. *//* @order 0173 */
+  .slide-content :is(ul, ol) :is(ul, ol):not(.fl-sublist) {
+    display: block;
+    margin: 10px 0 0;
+    padding: 0;
+    list-style: none;
+    grid-template-columns: none;
+  }/* @order 0174 */
+  .slide-content :is(ul, ol) :is(ul, ol):not(.fl-sublist) > li {
+    border-left: 2px solid var(--line);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    margin: 0 0 0 4px;
+    padding: 4px 0 4px 14px;
+    font-size: 0.82em;
+    color: var(--muted);
+  }/* @order 0175 */
+  .slide-content.layout-opening > ol > li,
+  .slide-content.layout-closing > ol > li,
+  .slide-content.layout-section-title > ol > li {
+    counter-increment: biglist;
+  }/* @order 0176 */
+  .slide-content.layout-opening > ol > li::before,
+  .slide-content.layout-closing > ol > li::before,
+  .slide-content.layout-section-title > ol > li::before {
+    content: counter(biglist) ". ";
+    color: var(--accent);
+    font-weight: 800;
+  }/* @order 0177 */
+  @media (max-width: 950px) {
+    .slide-content.layout-list {
+      grid-template-columns: 1fr;
+      align-content: start;
+      row-gap: 20px;
+    }
+    .slide-content.layout-list > .slide-head,
+    .slide-content.layout-list > p.lead,
+    .slide-content.layout-list > p:not(.kicker),
+    .slide-content.layout-list > .feature-list { grid-column: 1; grid-row: auto; align-self: start; }
+    .slide-content.layout-list > .slide-head > h1 { max-width: none; }
+    .feature-list.fl-wide { grid-template-columns: 1fr; }
+    /* Statement layout (D3) stacks the same way below 950px. */
+    .slide-content.layout-statement {
+      grid-template-columns: 1fr;
+      align-content: start;
+      row-gap: 20px;
+    }
+    .slide-content.layout-statement > .slide-head,
+    .slide-content.layout-statement > p { grid-column: 1; grid-row: auto; align-self: start; }
+    .slide-content.layout-statement > .slide-head > h1 { max-width: none; }
+    /* F1: list-visual stacks below 950px — title, then the two columns stack (feature-list first, media below). */
+    .slide-content.layout-list-visual {
+      grid-template-columns: 1fr;
+      align-content: start;
+      row-gap: 20px;
+    }
+    .slide-content.layout-list-visual > .slide-head,
+    .slide-content.layout-list-visual > .lv-body { grid-column: 1; grid-row: auto; }
+    .slide-content.layout-list-visual > .lv-body { grid-template-columns: 1fr; }
+    .slide-content.layout-list-visual > .slide-head > h1 { max-width: none; }
+    /* copy-visual stacks the same way below 950px. */
+    .slide-content.layout-copy-visual { grid-template-columns: 1fr; align-content: start; }
+    .slide-content.layout-copy-visual > .cv-body { grid-template-columns: 1fr; row-gap: 18px; }
+    .slide-content.layout-copy-visual > .cv-body > .cv-copy > blockquote,
+    .slide-content.layout-copy-visual > .cv-body > .cv-copy > p:not(.kicker) { max-width: none; }
+    /* Fix 1: timeline-visual stacks below 950px — title, then timeline, then comment. */
+    .slide-content.layout-timeline-visual { grid-template-columns: 1fr; align-content: start; row-gap: 20px; }
+    .slide-content.layout-timeline-visual > .slide-head,
+    .slide-content.layout-timeline-visual > .tv-body { grid-column: 1; grid-row: auto; }
+    .slide-content.layout-timeline-visual > .tv-body { grid-template-columns: 1fr; row-gap: 18px; }
+    .slide-content.layout-timeline-visual > .tv-body > .tv-timeline .timeline { margin-top: 0; }
+    .slide-content.layout-timeline-visual > .tv-body > .tv-comment .content-p { max-width: none; }
+    .slide-content.layout-timeline-visual > .slide-head > h1 { max-width: none; }
+  }/* @order 0178 */
+  @media (max-width: 900px) {
+    .slide-content.layout-opening > ul,
+    .slide-content.layout-opening > ol,
+    .slide-content.layout-closing > ul,
+    .slide-content.layout-closing > ol,
+    .slide-content.layout-section-title > ul,
+    .slide-content.layout-section-title > ol { grid-template-columns: 1fr; }
+  }/* @order 0185 */
+  /* Comparison columns carry compact lists: lighter card rows than a full feature-list. *//* @order 0186 */
+  .contrast-cards .feature-list { gap: 8px; }/* @order 0187 */
+  .contrast-cards .feature-list > li {
+    font-size: max(16px, 1.35cqw);
+    padding: 9px 12px;
+    box-shadow: none;
+  }/* @order 0190 */
+  .cpanel {
+    border-radius: 12px;
+    padding: clamp(18px, 2.2vw, 34px);
+    display: grid;
+    gap: 4px;
+    align-content: start;
+    min-width: 0;
+  }/* @order 0191 */
+  .cpanel-left { background: var(--tint); border: 1.5px solid var(--ink); box-shadow: var(--hairline-shadow); }/* @order 0192 */
+  .cpanel-right { background: var(--ink); color: var(--paper); }/* @order 0193 */
+  .cpanel-eyebrow {
+    margin: 0;
+    font-size: max(11px, 0.95cqw);
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }/* @order 0194 */
+  .cpanel-right .cpanel-eyebrow { color: color-mix(in srgb, var(--paper) 62%, transparent); }/* @order 0195 */
+  .cpanel-verb {
+    margin: 0 0 10px;
+    font-family: var(--sans);
+    font-size: max(22px, 2.1cqw);
+    line-height: 1.1;
+  }/* @order 0196 */
+  .cpanel-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: clamp(5px, 0.7vh, 10px);
+  }/* @order 0197 */
+  .cpanel-list > li {
+    position: relative;
+    padding-left: 22px;
+    font-size: max(15px, 1.3cqw);
+    line-height: 1.3;
+  }/* @order 0198 */
+  .cpanel-list > li::before {
+    content: "\2192";
+    position: absolute;
+    left: 0;
+    top: 0;
+    color: var(--accent);
+  }/* @order 0199 */
+  .cpanel-right .cpanel-list > li { color: color-mix(in srgb, var(--paper) 88%, transparent); }/* @order 0200 */
+  .cpanel-right .cpanel-list > li::before { color: color-mix(in srgb, var(--paper) 55%, transparent); }/* @order 0213 */
+
+  /* Grid / tiles. A centred flex-wrap whose per-tile basis comes from `--tile-cols` (the balanced
+     auto column count, or the author's explicit {blocks:RxC} cols). justify-content:center CENTRES
+     an incomplete final row, so 5 tiles read 3+2 centred — never the old 4+1 dangling orphan. *//* @order 0214 */
+  .tile-grid {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 42px;
+    max-width: 1100px;
+    margin-inline: auto;
+  }/* @order 0215 */
+  .tile-grid > div {
+    flex: 0 1 calc((100% - (var(--tile-cols, 4) - 1) * 12px) / var(--tile-cols, 4));
+    min-width: 0;
+    min-height: 112px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--tint);
+    color: var(--ink);
+    font-size: max(20px, 2.2cqw);
+    font-weight: 500;
+    text-align: center;
+    padding: 14px;
+  }/* @order 0253 */
+  .columns-grid > .col .feature-list { margin-top: 6px; }/* @order 0254 */
+  .columns-grid > .col .slide-figure { margin: 0; }/* @order 0255 */
+  @media (max-width: 900px) {
+    .columns-grid.columns-2,
+    .columns-grid.columns-3,
+    .columns-grid.columns-4 { grid-template-columns: 1fr; }
+    .columns-grid > .col-align-middle { justify-content: flex-start; }
+  }/* @order 0256 */
+
+  .evidence-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.38fr) minmax(280px, .72fr);
+    gap: 28px;
+    align-items: stretch;
+    margin-top: 28px;
+  }/* @order 0262 */
+  .video-placeholder-note {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 0.95rem;
+  }/* @order 0263 */
+  .video-placeholder-note .vp-glyph {
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    border: 2px solid var(--accent);
+    color: var(--accent);
+    font-size: 13px;
+  }/* @order 0264 */
+  .video-placeholder-note code { font-size: 0.82em; color: var(--ink); }/* @order 0273 */
+  /* ── SD-14: .split — image beside content, vertically centred ───────────────────────────────
+     .media-right: image on right, copy on left (normal flex row).
+     .media-left: image on left, copy on right (row-reverse so copy stays first in DOM order).
+     .media: 42% of the width, does not grow.
+     .copy: remaining width, content vertically centred. *//* @order 0274 */
+  .split {
+    display: flex;
+    gap: clamp(16px, 6%, 64px);
+    align-items: center;
+    height: 100%;
+    min-height: 0;
+  }/* @order 0275 */
+  .split.media-right { flex-direction: row; }/* @order 0276 */
+  .split.media-left { flex-direction: row-reverse; }/* @order 0277 */
+  .split.align-top { align-items: flex-start; }/* @order 0278 */
+  .split .media { flex: 0 0 42%; min-width: 0; }/* @order 0281 */
+  .split .copy {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }/* @order 0292 */
+  /* QR directive ([QR: url | label]) — a build-time QR SVG sized clamp(140px,18vw,280px) with
+     a caption beneath. Sits as a block on any layout (renders after other blocks); multiple QRs
+     share the .figure-row grammar (side-by-side like images). The matrix is dark-on-white. *//* @order 0293 */
+  /* QR overhaul (refinement 6, 2026-06-09). The QR lives in the BOTTOM-LEFT corner of the slide,
+     with NO card / no padding ring around the code (the code keeps its own quiet zone for scanning).
+     It is a real button — click or focus+Enter expands it FULL-SCREEN (runtime openQrFullscreen).
+     The linked URL shows CLEANED in small type beneath it. *//* @order 0294 */
+  .slide-qr.slide-qr-corner {
+    position: absolute;
+    left: var(--slide-pad-x);
+    bottom: var(--slide-pad-y);
+    z-index: 3;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    border: 0;
+    background: none;
+    width: auto;
+    max-width: 40vw;
+  }/* @order 0295 */
+  .slide-qr.slide-qr-corner .qr-code {
+    width: clamp(96px, 11vw, 148px);
+    padding: 0;
+    margin: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+    line-height: 0;
+    border-radius: 6px;
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+  }/* @order 0296 */
+  .slide-qr.slide-qr-corner .qr-code:hover,
+  .slide-qr.slide-qr-corner .qr-code:focus-visible {
+    transform: scale(1.04);
+    box-shadow: 0 6px 20px #17202a2e;
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }/* @order 0297 */
+  .slide-qr.slide-qr-corner .qr-code svg { display: block; width: 100%; height: auto; border-radius: 4px; }/* @order 0298 */
+  .slide-qr.slide-qr-corner .qr-caption {
+    border: 0;
+    padding: 0;
+    color: var(--muted);
+    font-size: 0.78rem;
+    letter-spacing: 0.01em;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }/* @order 0299 */
+  .slide-qr.slide-qr-corner .qr-caption a { color: inherit; text-decoration: none; }/* @order 0300 */
+  .slide-qr.slide-qr-corner .qr-caption a:hover { text-decoration: underline; }/* @order 0301 */
+  .slide-qr.slide-qr-corner.qr-too-long { position: absolute; left: var(--slide-pad-x); bottom: var(--slide-pad-y); padding: 0; background: none; border: 0; }/* @order 0302 */
+  .slide-qr.slide-qr-corner.qr-too-long a { color: var(--accent); font-weight: 600; font-size: 0.82rem; word-break: break-all; }/* @order 0303 */
+  /* Full-screen QR overlay (runtime openQrFullscreen): a dimmed backdrop with the code centred
+     large and the URL beneath. Click anywhere / Esc closes it. *//* @order 0304 */
+  .qr-fullscreen {
+    position: fixed; inset: 0; z-index: 9999;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px;
+    background: #17202aee; cursor: zoom-out; padding: 5vh 5vw;
+  }/* @order 0305 */
+  .qr-fullscreen .qr-fs-code { width: min(60vh, 70vw); background: #fff; padding: clamp(16px, 2.4vw, 32px); border-radius: 14px; }/* @order 0306 */
+  .qr-fullscreen .qr-fs-code svg { display: block; width: 100%; height: auto; }/* @order 0307 */
+  .qr-fullscreen .qr-fs-url { color: #e8eef5; font-weight: 400; font-size: max(34px, 5cqw); line-height: 1.15; word-break: break-all; max-width: 92vw; text-align: center; }/* @order 0308 */
+  .qr-fullscreen .qr-fs-url strong { font-weight: 800; color: #ffffff; }/* @order 0310 */
+  .callouts {
+    align-self: stretch;
+    display: grid;
+    align-content: center;
+    gap: 12px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }/* @order 0311 */
+  .callouts li {
+    border-left: 3px solid var(--accent);
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+    padding: 6px 0 6px 18px;
+    font-size: max(20px, 2cqw);
+    line-height: 1.22;
+    /* Callouts routinely carry long URLs/emails (e.g. CTA "scan or visit …" lines). Unlike
+       titles, body tokens MAY break so a long URL never pushes the column past its track and
+       overflows the slide horizontally. */
+    overflow-wrap: anywhere;
+  }/* @order 0312 */
+  .callouts li strong { color: var(--blue); }/* @order 0313 */
+
+  /* cta-screenshots layout (ported from KCL): a screenshots strip beside a right column of
+     callouts + action buttons. The screenshots are .cta-shot figures; the right column reuses
+     the v3 .callouts style. Everything keys off --accent (section accent), not a hard colour. *//* @order 0314 */
+  .cta-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.45fr) minmax(260px, .62fr);
+    gap: clamp(20px, 2.4vw, 28px);
+    align-items: stretch;
+    margin-top: 28px;
+    min-height: 0;
+  }/* @order 0315 */
+  .cta-images {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    gap: 16px;
+    align-items: stretch;
+    min-width: 0;
+  }/* @order 0316 */
+  .cta-shot {
+    margin: 0;
+    display: grid;
+    grid-template-rows: 1fr auto;
+    min-height: 0;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+    background: white;
+    box-shadow: var(--hairline-shadow);
+  }/* @order 0317 */
+  .cta-shot img {
+    /* Never-upscale: see .slide-figure img. Natural size capped to the box, scaled down only. */
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: min(100%, 56vh);
+    object-fit: contain;
+    justify-self: center;
+    align-self: center;
+    background: white;
+  }/* @order 0318 */
+  .cta-shot figcaption {
+    border-top: 1px solid var(--line);
+    padding: 8px 11px;
+    color: var(--muted);
+    font-size: .84rem;
+  }/* @order 0319 */
+  /* Right column: callouts centred, action buttons pinned below them. *//* @order 0320 */
+  .cta-aside {
+    display: grid;
+    grid-template-rows: 1fr auto;
+    gap: 16px;
+    min-width: 0;
+  }/* @order 0321 */
+  .cta-aside .callouts { align-self: center; }/* @order 0322 */
+  /* CTA callouts follow the section accent rather than the fixed blue. *//* @order 0323 */
+  .cta-callouts li { border-left-color: var(--accent); }/* @order 0324 */
+  .cta-callouts li strong { color: var(--accent); }/* @order 0325 */
+  .slide-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 10px;
+  }/* @order 0328 */
+  .slide-content > * + .slide-actions,
+  .slide-content .content-p + .slide-actions,
+  .slide-content blockquote + .slide-actions,
+  .slide-content .statement + .slide-actions { margin-top: var(--gutter-graphic); }/* @order 0329 */
+  /* The same gutter where a graphic/diagram follows body text in flow (top-title layouts): the
+     diagram must not butt against the paragraph above it. (Layouts that already set their own
+     top-margin — flow, timeline — keep theirs; this only adds a floor where none existed.) *//* @order 0330 */
+  .slide-content .content-p + .system-map,
+  .slide-content .content-p + .mindmap-mm,
+  .slide-content .content-p + .conceptmap,
+  .slide-content .content-p + .pyramid,
+  .slide-content .content-p + .figure-row,
+  .slide-content .content-p + figure.slide-figure { margin-top: var(--gutter-graphic); }/* @order 0331 */
+  .slide-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 46px;
+    border: 1px solid var(--accent);
+    border-radius: 7px;
+    background: var(--accent);
+    color: white;
+    font-weight: 800;
+    padding: 10px 16px;
+    text-decoration: none;
+  }/* @order 0332 */
+  .slide-action:hover { background: color-mix(in srgb, var(--accent) 82%, black); }/* @order 0344 */
+  /* Table + screenshot pair (2026-06-09): the table takes the text column beside the image. *//* @order 0345 */
+  .slide-content.layout-copy-visual > .cv-body > .cv-copy > .slide-table {
+    min-width: 0; margin: 0;
+  }/* @order 0362 */
+  .slide-content.layout-list-visual > .lv-body > .lv-media .slide-figure { margin: 0; max-height: 72vh; }/* @order 0363 */
+  .slide-content.layout-list-visual > .lv-body > .lv-media .slide-figure img,
+  .slide-content.layout-list-visual > .lv-body > .lv-media .slide-figure video { max-height: 72vh; }/* @order 0397 */
+  /* ADR-0005 pyramid (mockup .pyr): SOLID section accent at stepped opacities — apex strongest,
+     base quietest — sharp corners, no borders, white labels throughout. One hue, one grammar. *//* @order 0398 */
+  .pyr-tier {
+    box-sizing: border-box;
+    min-width: fit-content;
+    min-height: clamp(64px, 9vh, 100px);
+    padding: 14px 32px; border-radius: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
+    background: var(--accent);
+    border: 0;
+    color: var(--paper);
+  }/* @order 0399 */
+  .pyr-tier:nth-child(2) { opacity: 0.82; }/* @order 0400 */
+  .pyr-tier:nth-child(3) { opacity: 0.64; }/* @order 0401 */
+  .pyr-tier:nth-child(4) { opacity: 0.46; }/* @order 0402 */
+  .pyr-tier:nth-child(n+5) { opacity: 0.34; }/* @order 0403 */
+  .pyr-label { font-weight: 600; font-size: max(22px, 2.4cqw); line-height: 1.12; white-space: nowrap; }/* @order 0404 */
+  .pyr-cap { margin-top: 5px; font-size: max(14px, 1.2cqw); opacity: .85; line-height: 1.2; white-space: normal; }/* @order 0432 */
+  .stat-value {
+    font-weight: 800; font-size: max(42px, 5cqw); line-height: 1;
+    color: var(--accent); font-variant-numeric: tabular-nums; letter-spacing: -0.01em;
+  }/* @order 0433 */
+  .stat-label { font-weight: 640; font-size: max(15px, 1.5cqw); line-height: 1.25; color: var(--ink); }/* @order 0434 */
+  .stat-cap { font-size: max(13px, 1.1cqw); color: var(--muted); line-height: 1.3; }/* @order 0437 */
+  .proc-step {
+    flex: 1 1 0; min-width: 0; position: relative;
+    display: flex; flex-direction: column; align-items: center; text-align: center;
+    padding: 0 10px;
+  }/* @order 0438 */
+  .proc-step::before {
+    content: ""; position: absolute; top: 26px; left: 0; right: 0; height: 2px;
+    background: color-mix(in srgb, var(--accent) 45%, var(--line));
+  }/* @order 0439 */
+  .proc-step:first-child::before { left: 50%; }/* @order 0440 */
+  .proc-step:last-child::before { right: 50%; }/* @order 0441 */
+  .proc-step:only-child::before { display: none; }/* @order 0442 */
+  .proc-num {
+    position: relative; z-index: 1; width: 52px; height: 52px; border-radius: 50%;
+    display: grid; place-items: center; background: var(--accent); color: #fff;
+    font-weight: 800; font-size: max(19px, 1.9cqw);
+    box-shadow: 0 8px 18px #17202a1c;
+  }/* @order 0443 */
+  .proc-label { margin-top: 14px; font-weight: 760; font-size: max(16px, 1.7cqw); line-height: 1.15; }/* @order 0444 */
+  .proc-time { margin-top: 4px; font-weight: 700; font-size: max(13px, 1.2cqw); color: var(--accent); letter-spacing: .02em; }/* @order 0445 */
+  .proc-details { list-style: none; margin: 8px 0 0; padding: 0; }/* @order 0446 */
+  .proc-details li { font-size: max(13px, 1.15cqw); color: var(--muted); line-height: 1.3; }/* @order 0447 */
+  .proc-details li::before { content: "– "; color: var(--accent); }/* @order 0450 */
+  .step-col {
+    flex: 1 1 0; min-width: 0; box-sizing: border-box;
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+    gap: 6px; padding: 16px 12px; text-align: center;
+    border-radius: 10px 10px 0 0;
+    background: color-mix(in srgb, var(--accent) 16%, var(--tint));
+    border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--line));
+    color: var(--ink);
+  }/* @order 0451 */
+  .step-col:last-child { background: var(--accent); color: #fff; border-color: var(--accent); }/* @order 0452 */
+  .step-col:nth-last-child(2):not(:first-child) { background: color-mix(in srgb, var(--accent) 62%, var(--tint)); color: #fff; }/* @order 0453 */
+  .step-col:nth-last-child(3):not(:first-child) { background: color-mix(in srgb, var(--accent) 40%, var(--tint)); }/* @order 0454 */
+  .step-label { font-weight: 760; font-size: max(17px, 1.9cqw); line-height: 1.12; }/* @order 0455 */
+  .step-cap { font-size: max(13px, 1.15cqw); opacity: .85; line-height: 1.25; }/* @order 0458 */
+  .ir-item {
+    flex: 1 1 0; min-width: 0;
+    display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px;
+    padding: 18px 12px;
+  }/* @order 0459 */
+  .ir-icon { width: clamp(52px, 5.4vw, 78px); height: clamp(52px, 5.4vw, 78px); color: var(--accent); display: grid; place-items: center; }/* @order 0460 */
+  .ir-icon svg, .ir-icon img { width: 100%; height: 100%; }/* @order 0461 */
+  /* Numbered-disc fallback (icons unresolvable — same icon-or-number contract as feature-lists). *//* @order 0462 */
+  .ir-icon.ir-num {
+    border-radius: 50%; background: var(--accent); color: #fff;
+    font-weight: 800; font-size: max(20px, 2cqw);
+  }/* @order 0463 */
+  .ir-label { font-weight: 760; font-size: max(17px, 1.8cqw); line-height: 1.15; }/* @order 0464 */
+  .ir-desc { list-style: none; margin: 0; padding: 0; }/* @order 0465 */
+  .ir-desc li { font-size: max(14px, 1.25cqw); color: var(--muted); line-height: 1.35; }/* @order 0466 */
+  .ir-desc li + li { margin-top: 4px; }/* @order 0484 */
+  @media (max-width: 950px) {
+    .image-quote { grid-template-columns: 1fr; grid-template-rows: auto auto auto; }
+    .image-quote .iq-figure { grid-column: 1; grid-row: 1; }
+    .image-quote blockquote { grid-column: 1; grid-row: 2; }
+    .image-quote .iq-cite { grid-column: 1; grid-row: 3; }
+  }/* @order 0494 */
+  /* Featurized lists inside a cell render QUIET (plain small lines, no panel-card chrome). *//* @order 0495 */
+  .image-grid .ig-note .feature-list { display: block; margin: 0; padding: 0; }/* @order 0496 */
+  .image-grid .ig-note .feature-list > li {
+    display: block; background: none; border: 0; border-radius: 0; box-shadow: none;
+    padding: 0; margin: 0; font-size: max(13px, 1.15cqw); color: var(--muted); line-height: 1.35;
+  }/* @order 0497 */
+  .image-grid .ig-note .feature-list > li + li { margin-top: 4px; }/* @order 0498 */
+  .image-grid .ig-note .feature-list > li::before { content: "– "; color: var(--accent); }/* @order 0499 */
+  .image-grid .ig-note .feature-list .fl-icon, .image-grid .ig-note .feature-list .fl-svg { display: none; }/* @order 0534 */
+
+  /* TIMETABLE ({timetable}) — a day schedule: a fixed-width time column + the session. Break
+     rows are tinted and italicised so the eye finds the pauses. Rows are steppable units. *//* @order 0535 */
+  .timetable { width: min(960px, 100%); margin: 24px auto 0; border-collapse: collapse; font-size: max(18px, 2cqw); }/* @order 0536 */
+  .timetable td { padding: 12px 16px; border-bottom: 1px solid var(--line, #e4ded2); vertical-align: baseline; }/* @order 0537 */
+  .timetable tr:last-child td { border-bottom: 0; }/* @order 0538 */
+  .timetable .tt-time { width: 7.5em; white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 700; color: var(--accent); }/* @order 0539 */
+  .timetable .tt-event { color: var(--ink); }/* @order 0540 */
+  .timetable tr.timetable-break td { background: color-mix(in srgb, var(--accent) 8%, transparent); }/* @order 0541 */
+  .timetable tr.timetable-break .tt-event { font-style: italic; color: var(--muted, #6b7c8a); }/* @order 0553 */
+  /* ADR-0005 equation (mockup .formula): OUTLINE PILLS — ink-bordered capsules on paper,
+     large type; operators in the accent; the RESULT pill fills with the section accent. *//* @order 0554 */
+  .eq-term {
+    display: grid; place-items: center; text-align: center;
+    min-width: clamp(120px, 13vw, 220px); width: auto; height: auto; border-radius: 999px;
+    background: var(--paper);
+    border: 2.5px solid var(--ink);
+    font-weight: 600; font-size: max(26px, 3cqw); color: var(--ink);
+    padding: 0.35em 0.85em; box-sizing: border-box; line-height: 1.2;
+  }/* @order 0555 */
+  .eq-op { font-weight: 400; font-size: max(34px, 3.8cqw); color: var(--accent); }/* @order 0556 */
+  .eq-result { background: var(--accent); border-color: var(--accent); color: var(--paper); }/* @order 0565 */
+  .ct-arrow { display: block; box-sizing: border-box; }/* @order 0566 */
+  .ct-left { grid-column: 1; grid-row: 1; color: var(--muted); font-weight: 500; text-align: right; background: none; clip-path: none; }/* @order 0567 */
+  .ct-right { grid-column: 3; grid-row: 1; color: var(--ink); font-weight: 600; text-align: left; background: none; clip-path: none; }/* @order 0573 */
+
+  /* COUNTDOWN element (chrome, not content — composable with any layout). Hidden until the
+     runtime arms it on slide activation; share exports never arm it, so handouts/print show
+     nothing. digits: quiet mm:ss bottom-RIGHT (the corner QR owns bottom-left); final 10s
+     shifts to the crimson secondary; a gentle flash at 0:00 — never auto-advances. bar: a
+     thin accent bar along the slide bottom shrinking 100%→0 over the duration. *//* @order 0574 */
+  .countdown { display: none; }/* @order 0579 */
+  @keyframes countdown-flash { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }/* @order 0583 */
+
+  /* Presenter timer family. The single top clock (.tw-clock-bar) lives further down; here sit its
+     cousins — the section chip beside the count, the audience float (cross-slide cousin of the
+     per-slide countdown, runtime-created so share exports never have it), and the reminder banner
+     that flashes in the presenter window until clicked. *//* @order 0584 */
+  .section-timer-chip {
+    font-variant-numeric: tabular-nums; font-weight: 760; font-size: 12px;
+    color: #fff; background: var(--accent, #0b3a6b); border-radius: 999px; padding: 3px 10px;
+  }/* @order 0585 */
+  .section-timer-chip.talk-crit { background: var(--accent-2, #9f1239); }/* @order 0586 */
+  .section-timer-float {
+    position: fixed; right: clamp(18px, 2.4vw, 40px); bottom: clamp(14px, 2vh, 30px); z-index: 6;
+    font: 760 clamp(22px, 2.4vw, 38px)/1 var(--sans, system-ui);
+    font-variant-numeric: tabular-nums; color: var(--accent); opacity: .85;
+  }/* @order 0589 */
+  .presenter-reminder {
+    position: fixed; left: 50%; top: 18px; transform: translateX(-50%); z-index: 120;
+    display: flex; gap: 14px; align-items: baseline; cursor: pointer;
+    background: var(--accent-2, #9f1239); color: #fff; border-radius: 12px;
+    padding: 14px 22px; box-shadow: 0 16px 40px #0006;
+    font: 800 clamp(16px, 1.6vw, 22px)/1.2 var(--sans, system-ui);
+    animation: reminder-flash 1s ease-in-out 6;
+  }/* @order 0590 */
+  .presenter-reminder small { font: 600 11px/1 var(--sans, system-ui); opacity: .8; }/* @order 0591 */
+  @keyframes reminder-flash { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }/* @order 0592 */
+
+
+  @media (max-width: 950px) {
+    .stats-row, .icon-row, .process-strip { flex-wrap: wrap; }
+    .stats-row .stat, .ir-item, .proc-step { flex: 1 1 44%; }
+    .proc-step::before { display: none; }
+    .steps-diagram { height: auto; align-items: stretch; flex-direction: column; }
+    .step-col { height: auto !important; border-radius: 10px; }
+    .image-grid .ig-cell { flex-basis: 100%; }
+    .chart-cols { height: auto; flex-wrap: wrap; }
+    .chart-col { flex: 1 1 44%; }
+    .chart-col-plot { min-height: 130px; }
+    .chart-pie { flex-direction: column; }
+    .cycle-diagram { aspect-ratio: auto; }
+    .cycle-svg { display: none; }
+    .cycle-arc-svg { display: none; }
+    .cycle-node { position: static; transform: none; margin: 8px auto; max-width: 90%; }
+    .contrast-arrows .contrast-pair { grid-template-columns: 1fr; }
+    .ct-left, .ct-right { clip-path: none; border-radius: 8px; }
+  }/* @order 0593 */
+
+  /* FLOW / DIAGRAM layout ({layout=flow}). A connected sequence of node cards joined by
+     accent connectors (CSS-drawn chevron arrows — no unicode glyphs). Calibrated against the
+     agent-architecture two-box + agentic-loop diagrams: warm card nodes, ink border, accent key
+     phrase, a string-thin accent connector with a solid arrowhead. Typography is clamp()-scaled
+     so the whole diagram shrinks with the slide (autofit) and the connectors reflow. *//* @order 0594 */
+  .flow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    justify-content: center;
+    gap: 0;
+    margin-top: 32px;
+    font-size: max(15px, 1.5cqw);
+  }/* @order 0623 */
+  .flow-cycle-row {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    justify-content: center;
+    gap: 0;
+  }/* @order 0624 */
+  /* Each node shares the row evenly and shrinks to fit (no ragged wrap). Equal flex-basis keeps
+     the boxes the same width; align-self stretch keeps them the same height. *//* @order 0625 */
+  .flow-cycle-row .flow-node { flex: 1 1 0; max-width: none; align-self: stretch; }/* @order 0626 */
+  .flow-cycle-row .flow-connector { align-self: center; }/* @order 0639 */
+  @media (max-width: 900px) {
+    .flow-horizontal { flex-direction: column; align-items: center; }
+    .flow-horizontal .flow-arrow { transform: rotate(90deg); }
+    .flow-horizontal .flow-node, .flow-loop .flow-node { width: min(560px, 100%); }
+    /* On narrow screens the loop stacks vertically; arrows point down and the return spans
+       the stacked column rather than a horizontal row. */
+    .flow-cycle-row { flex-direction: column; align-items: center; }
+    .flow-cycle-row .flow-connector .flow-arrow { transform: rotate(90deg); }
+  }/* @order 0642 */
+  .slide.mode-active .flow-loop:has(.flow-cycle-row .flow-node[data-mode-state="full"]) .flow-return { visibility: visible; }/* @order 0665 */
+
+  /* Trace is a terminal panel: transcript copy and labels share a high-contrast mono surface. *//* @order 0666 */
+  .trace {
+    margin: 22px 0 0;
+    padding: 20px 22px;
+    background: #101418;
+    color: #e8eef5;
+    border-radius: 0;
+    box-shadow: none;
+    font: 500 clamp(13px, 1.05vw, 16px)/1.65 ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    max-height: 70vh;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scroll-behavior: smooth;
+    /* Fix 3 — in-card scroll affordance: a thin scrollbar + soft top/bottom fade so a long
+       trace reads as "more above/below, scrollable" rather than a hard clip. The runtime
+       scroll-follows the current turn into this box as reveal/focus steps. */
+    scrollbar-width: thin;
+    scrollbar-color: #3a4757 transparent;
+  }/* @order 0667 */
+  .trace::-webkit-scrollbar { width: 8px; }/* @order 0668 */
+  .trace::-webkit-scrollbar-thumb { background: #3a4757; border-radius: 8px; }/* @order 0669 */
+  .trace::-webkit-scrollbar-track { background: transparent; }/* @order 0674 */
+  .trace .turn { margin-bottom: 16px; }/* @order 0675 */
+  .trace .turn:last-child { margin-bottom: 0; }/* @order 0676 */
+  .trace .role {
+    font: 700 12px/1 var(--sans);
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }/* @order 0677 */
+  .trace .role.user { color: #7cc4f5; }/* @order 0678 */
+  .trace .role.harness { color: #62d6b2; }/* @order 0679 */
+  .trace .role.model { color: #e6b673; }/* @order 0680 */
+  .trace .role.tool { color: #c4a3f0; }/* @order 0681 */
+  .trace .role.reasoning { color: #8fa6bd; }/* @order 0682 */
+  /* Auto-assigned speaker colours for arbitrary dialogue labels (any `Speaker: text` line that
+     is not a well-known AI-loop role). The generator hashes each distinct speaker name to one of
+     these 8 buckets (speaker-0…7) so a name keeps a stable, distinct colour. Hues spread around
+     the wheel; tuned for legibility on the dark trace panel. *//* @order 0683 */
+  .trace .role.speaker-0 { color: #8a5a00; }/* @order 0684 */
+  .trace .role.speaker-1 { color: #0a7a5c; }/* @order 0685 */
+  .trace .role.speaker-2 { color: #b3502d; }/* @order 0686 */
+  .trace .role.speaker-3 { color: #3d6b1e; }/* @order 0687 */
+  .trace .role.speaker-4 { color: #5b4bd8; }/* @order 0688 */
+  .trace .role.speaker-5 { color: #a03a6b; }/* @order 0689 */
+  .trace .role.speaker-6 { color: #31506e; }/* @order 0690 */
+  .trace .role.speaker-7 { color: #0f4bd8; }/* @order 0691 */
+  .trace .body { white-space: pre-wrap; word-break: break-word; color: #e8eef5; }/* @order 0692 */
+  .trace .body em { color: #c4b5fd; font-style: normal; }/* @order 0693 */
+  .slide-content.layout-trace > h1,
+  .slide-content.layout-trace > h2,
+  .slide-content.layout-code > h1,
+  .slide-content.layout-code > h2 { margin-bottom: 0; }/* @order 0694 */
+
+  /* G1 — CONSISTENT QUOTE DEVICE. Every quote (slide-level blockquote and card blockquote)
+     carries one decorative oversized opening quotation mark (serif, accent colour) set into
+     the left margin, plus the serif pull-quote treatment. The cite reads below. This is the
+     single shared look so a quote is instantly recognisable as a quote everywhere. The mark
+     is the visual signature: comments (Dominik's own text) deliberately do NOT get it. *//* @order 0695 */
+  blockquote { position: relative; }/* @order 0696 */
+  blockquote::before {
+    content: "\201C";
+    position: absolute;
+    /* The oversized mark keeps the serif face (mockup .qpanel::before) — the ONE deliberate
+       serif survivor; everything textual is the sans. Full accent, bold, per the lock. */
+    font-family: Georgia, "Times New Roman", serif;
+    font-weight: 700;
+    color: var(--accent);
+    opacity: 0.9;
+    line-height: 0.9;
+    pointer-events: none;
+  }/* @order 0697 */
+  /* Standalone quote (single blockquote outside a gallery) gets the serif pull-quote treatment. *//* @order 0698 */
+  .slide-content > blockquote {
+    margin: 32px 0 0;
+    padding: 4px 0 4px 56px;
+    font-family: var(--sans);
+    font-size: max(24px, 2.7cqw);
+    line-height: 1.28;
+    max-width: 28ch;
+  }/* @order 0699 */
+  .slide-content > blockquote::before { font-size: 3.4em; top: -0.16em; left: -0.04em; }/* @order 0700 */
+  .slide-content > blockquote p { margin: 0 0 .3em; }/* @order 0701 */
+  .slide-content > blockquote strong { color: var(--accent); }/* @order 0702 */
+  .slide-content > blockquote cite { display: block; margin-top: .6em; font-family: var(--sans); font-style: normal; font-size: .46em; color: var(--muted); letter-spacing: .02em; }/* @order 0703 */
+
+  /* QUOTE CITATION — ONE normalised treatment (slide-level). A source line directly after a quote
+     reads as a quiet attribution, whether the author wrote it as a plain paragraph OR a single
+     bullet: muted sans, an accent left-rule, NO box, set well below the quotation. This is the
+     "Brooks" format applied everywhere — a bulleted source (e.g. Shannon) no longer renders as a
+     filled feature-list card. *//* @order 0704 */
+  .slide-content > blockquote + p,
+  .slide-content > blockquote + .feature-list { margin-top: clamp(26px, 5vh, 60px) !important; }/* @order 0708 */
+  .slide-content > blockquote + p,
+  .slide-content > blockquote + .feature-list .fl-text {
+    display: block; padding-left: .9em; border-left: 3px solid color-mix(in srgb, var(--accent) 45%, transparent);
+    color: var(--muted); font-family: var(--sans); font-weight: 400; font-style: normal;
+    font-size: max(15px, 1.4cqw); line-height: 1.4;
+  }/* @order 0724 */
+  /* Quote + portrait/screenshot (2026-06-09): an explicit {quote} slide carrying a figure lays
+     the image BESIDE the quote (image left ~40%, quote right), centred as a pair — it was
+     stacking the figure under the quote in a full-width white card with dead whitespace. *//* @order 0725 */
+  .slide-content.layout-quote:has(> .slide-figure) {
+    display: grid;
+    grid-template-columns: minmax(0, 0.62fr) minmax(0, 1fr);
+    column-gap: clamp(28px, 3.2vw, 56px);
+    align-items: center;
+    align-content: center;
+  }/* @order 0726 */
+  /* Quote-with-figure: the pair sits on PAPER (mockup .iq) — the tinted panel belongs to the
+     text-only quote; a figure pairing goes flat so the image never floats on a tint slab. *//* @order 0727 */
+  .slide-content.layout-quote:has(> .slide-figure) > blockquote {
+    background: none;
+    border-left: 0;
+    padding: 0 0 0 1.3em;
+  }/* @order 0728 */
+  .slide-content.layout-quote:has(> .slide-figure) > blockquote::before { font-size: 2.4em; top: -0.05em; left: 0; }/* @order 0729 */
+  .slide-content.layout-quote:has(> .slide-figure) > .slide-figure {
+    grid-column: 1;
+    grid-row: 1;
+    align-self: center;
+    height: fit-content;
+    grid-template-rows: auto auto;
+    max-height: 80vh;
+    margin: 0;
+  }/* @order 0730 */
+  .slide-content.layout-quote:has(> .slide-figure) > blockquote {
+    grid-column: 2;
+    grid-row: 1;
+    margin: 0;
+    max-width: none;
+  }/* @order 0749 */
+  .kicker-compact { margin: 0 0 6px; }/* @order 0750 */
+  .kicker-compact .kicker-eyebrow { color: var(--accent-2); }/* @order 0751 */
+  .kicker-compact .kicker-sep { color: var(--muted); font-weight: 600; }/* @order 0752 */
+  .kicker-compact .kicker-title { color: var(--ink); font-weight: 800; }/* @order 0759 */
+  .cards-media-split .cards-media-col .slide-figure { margin: 0; max-height: 74vh; }/* @order 0763 */
+
+  /* D5: source/citation reference for a card gallery — sits BELOW the gallery as a small
+     muted line. Bare URLs in it are quietly styled (muted, dotted underline) rather than
+     the loud default link blue. *//* @order 0764 */
+  .slide-source { margin: 14px 0 0; font-family: var(--sans); font-size: max(11px, .92cqw);
+    line-height: 1.4; color: var(--muted); letter-spacing: .01em; max-width: 90ch; }/* @order 0765 */
+  .slide-source a { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--muted) 55%, transparent); text-underline-offset: 2px; }/* @order 0766 */
+  .slide-source a:hover { color: var(--ink); text-decoration-color: var(--accent); }/* @order 0772 */
+  .card-gallery.carousel .card.carousel-subslide {
+    /* No panel: no border, no background, no shadow, no padding, no centring grid — a clean stage. */
+    background: transparent; border: 0; border-radius: 0; box-shadow: none;
+    padding: 0; margin: 0; height: 100%; max-height: none; min-height: 0;
+    display: none; overflow: visible; align-content: stretch;
+  }/* @order 0773 */
+  .card-gallery.carousel[data-exclusive] .card.carousel-subslide { display: none; }/* @order 0774 */
+  .card-gallery.carousel[data-exclusive] .card.carousel-subslide.active-card { display: block; }/* @order 0775 */
+  /* The sub-slide's own .slide-content fills the frame and keeps its layout grammar (title rail,
+     media, figure-row grid, statement, quote …) — identical to a real slide. *//* @order 0776 */
+  .card-gallery.carousel .card.carousel-subslide > .slide-content {
+    height: 100%; margin: 0; padding: 0; max-width: none;
+  }/* @order 0779 */
+
+  /* Static grid — the DEFAULT {cards} treatment: every card visible at once in a responsive grid,
+     each sized to its content. Overrides the stepped-gallery base (height:100%, centred, tall
+     min-height) which now only applies to {cards=stepped}. *//* @order 0780 */
+  .cards-grid-head { margin: 0 0 16px; }/* @order 0781 */
+  /* ADR-0005: the grid head kicker duplicated the visible title (duplicated information —
+     banned). The title alone carries the head. *//* @order 0782 */
+  .cards-grid-head .card-title-kicker { display: none; }/* @order 0783 */
+  .cards-grid-title { margin: 0; font-family: var(--sans); font-size: max(26px, 3.2cqw); line-height: 1.1; color: var(--ink); }/* @order 0798 */
+  .card-gallery .card .feature-list { margin: 0; }/* @order 0799 */
+  .card-gallery .card .feature-list li { background: var(--paper); font-size: max(19px, 1.8cqw); }/* @order 0805 */
+  /* Slide-level floor for any generic list a layout doesn't specifically treat.
+     Feature-list sub-lists carry their own (smaller) sub-bullet sizing — excluded. *//* @order 0806 */
+  /* GLOBAL LIST FLOOR — type-scale principle (30pt ideal / 20pt min): no list anywhere may
+     render under ~31px. Timeline entries inherit the .timeline scale instead. *//* @order 0807 */
+  .slide-content ul:not(.feature-list):not(.timeline):not(.callouts):not(.fl-sublist) li,
+  .slide-content ol:not(.timeline):not(.tl-entries) li { font-size: max(31px, 2.8cqw); line-height: 1.32; }/* @order 0818 */
+
+  /* LIST + COMMENTARY: a card whose list is followed by a prose block puts them SIDE BY SIDE —
+     the list in the left column, the commentary beside it — instead of stacking the text under
+     the list. The h4 (if any) spans the top. *//* @order 0819 */
+  .card-gallery .card:has(> .feature-list + p) {
+    display: grid; align-content: center;
+    grid-template-columns: 1.35fr 1fr; column-gap: clamp(26px, 3vw, 52px); align-items: center;
+  }/* @order 0820 */
+  .card-gallery .card:has(> .feature-list + p) > h4 { grid-column: 1 / -1; }/* @order 0821 */
+  .card-gallery .card:has(> .feature-list + p) > .feature-list { grid-column: 1; margin: 0; }/* @order 0822 */
+  .card-gallery .card:has(> .feature-list + p) > p { grid-column: 2; margin: 0; }/* @order 0835 */
+  .card-gallery .card.card-media-split .card-media-col .slide-figure { max-height: 56vh; }/* @order 0846 */
+  .card-gallery .card:not(.card-media-split):not(.card-title) .slide-figure { margin: 0; max-height: 56vh; }/* @order 0847 */
+  .card-gallery .card:not(.card-media-split):not(.card-title) .slide-figure img,
+  .card-gallery .card:not(.card-media-split):not(.card-title) .slide-figure video { max-height: 56vh; }/* @order 0848 */
+  /* A media-only card with two stacked media (embed + still): give each its own row at a
+     reduced cap so both fit the card without clipping one to a sliver. *//* @order 0849 */
+  .card-gallery .card:not(.card-media-split):not(.card-title):has(figure.slide-embed):has(.slide-figure) { row-gap: 12px; }/* @order 0850 */
+  .card-gallery .card:not(.card-media-split):not(.card-title):has(figure.slide-embed):has(.slide-figure) figure.slide-embed { max-height: 38vh; }/* @order 0851 */
+  .card-gallery .card:not(.card-media-split):not(.card-title):has(figure.slide-embed):has(.slide-figure) .slide-figure { max-height: 24vh; }/* @order 0852 */
+  .card-gallery .card:not(.card-media-split):not(.card-title):has(figure.slide-embed):has(.slide-figure) .slide-figure img,
+  .card-gallery .card:not(.card-media-split):not(.card-title):has(figure.slide-embed):has(.slide-figure) .slide-figure video { max-height: 21vh; }/* @order 0853 */
+  /* G3 — IMAGES ALWAYS FIT FULLY, never clipped. Every in-card image is object-fit:contain
+     within a box capped against the card height (card max-height 72vh, minus padding/chrome).
+     When a card stacks MULTIPLE images they SHARE the vertical budget so all are fully visible
+     (≈half each for two), rather than the first eating the box and the rest clipping. The card
+     keeps content-sized rows so each figure's row is exactly as tall as the (contained) image.
+     The slide-level figure cap (78vh) already contains; this scopes the card budget. *//* @order 0854 */
+  .card-gallery .card .slide-figure { min-height: 0; }/* @order 0855 */
+  .card-gallery .card .slide-figure img,
+  .card-gallery .card .slide-figure video { object-fit: contain; }/* @order 0856 */
+  /* G5 — SIDE-BY-SIDE multiple images. A non-split card with 2+ images (e.g. the slop
+     "Reporting" card's two screenshots, or the Nature "Problem" card's two figures) lays the
+     images out as an auto-fit row (2-up typical) so each gets half the width and is fully
+     visible (object-fit:contain), rather than stacking and each eating a vertical sliver. The
+     images live in a generated .figure-row wrapper. Below 950px the row collapses to a single
+     column (stacking) — see the responsive block. Captions stay under each image. *//* @order 0857 */
+  .card-gallery .card:not(.card-media-split):not(.card-title) .figure-row,
+  .card-gallery .card.card-media-split .card-media-col .figure-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+    gap: 12px;
+    align-items: start;
+    min-width: 0;
+  }/* @order 0858 */
+  .card-gallery .card .figure-row .slide-figure { margin: 0; min-height: 0; max-height: 60vh; }/* @order 0859 */
+  .card-gallery .card .figure-row .slide-figure img,
+  .card-gallery .card .figure-row .slide-figure video { max-height: 56vh; object-fit: contain; }/* @order 0860 */
+  .card-gallery .card.card-media-split .card-media-col .figure-row .slide-figure { max-height: 52vh; }/* @order 0861 */
+  .card-gallery .card.card-media-split .card-media-col .figure-row .slide-figure img,
+  .card-gallery .card.card-media-split .card-media-col .figure-row .slide-figure video { max-height: 48vh; }/* @order 0881 */
+  .gallery-grid-btn {
+    width: 30px; height: 30px; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid var(--line); border-radius: 7px;
+    background: var(--tint); color: var(--muted); cursor: pointer;
+    transition: color 120ms ease, border-color 120ms ease;
+  }/* @order 0882 */
+  .gallery-grid-btn:hover, .gallery-grid-btn.active { color: var(--accent); border-color: var(--accent); }/* @order 0883 */
+  .gallery-grid-btn svg { width: 16px; height: 16px; }/* @order 0884 */
+  body.audience-mode .gallery-grid-btn { display: none !important; }/* @order 0885 */
+  /* G5 — fullscreen LIGHTBOX gallery. A single keystroke (z) — or Enter/click on an image —
+     opens a dark overlay that shows every image on the current slide at maximum size
+     (object-fit:contain), with a caption, an "n / N" counter and ←/→ browsing. LearnWeaver's
+     media fullscreen feel: full-bleed black backdrop, image centred and contained, close on
+     Esc / same key / backdrop click. Hidden by default; toggled via .open. Never printed. *//* @order 0886 */
+  /* License popup (2026-06-13): centred card over a dimmed backdrop. Hidden via the [hidden]
+     attribute (toggled by the runtime); print-safe (never shows in print). *//* @order 0887 */
+  .license-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 210;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(8, 12, 18, 0.62);
+  }/* @order 0888 */
+  .license-modal[hidden] { display: none; }/* @order 0889 */
+  .license-card {
+    position: relative;
+    max-width: 560px;
+    width: 100%;
+    max-height: 80vh;
+    overflow: auto;
+    background: var(--panel, #fff);
+    color: var(--ink, #1a1a1a);
+    border: 1px solid var(--line, #e4ded2);
+    border-radius: 12px;
+    padding: 28px 30px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
+  }/* @order 0890 */
+  .license-close { position: absolute; top: 12px; right: 12px; }/* @order 0891 */
+  .license-body h3 { font-family: var(--sans); font-size: 1.15rem; margin: 0 0 12px; }/* @order 0892 */
+  .license-body h4 { font-family: var(--sans); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted, #6b7c8a); margin: 18px 0 8px; }/* @order 0893 */
+  .license-name { font-size: 1.05rem; font-weight: 700; margin: 0 0 8px; }/* @order 0894 */
+  .license-name a { color: var(--accent); }/* @order 0895 */
+  .license-note { margin: 0 0 6px; }/* @order 0896 */
+  .license-credits { margin: 0; padding-left: 1.1em; }/* @order 0897 */
+  .license-credits li { margin: 2px 0; }/* @order 0898 */
+  @media print { .license-modal { display: none !important; } }/* @order 0899 */
+  .lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    display: none;
+    background: rgba(8, 12, 18, 0.94);
+    color: #f4f7fb;
+    align-items: center;
+    justify-content: center;
+  }/* @order 0900 */
+  .lightbox.open { display: grid; grid-template-rows: 1fr auto; }/* @order 0901 */
+  .lightbox-stage {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+    padding: clamp(20px, 4vw, 64px);
+    gap: clamp(12px, 2vw, 28px);
+  }/* @order 0902 */
+  .lightbox-img {
+    /* Viewport units, not %: percentage max-height does not resolve inside the flex stage,
+       so tall images overflowed top+bottom (2026-06-10). The image now always fits. */
+    max-width: 94vw;
+    max-height: 84vh;
+    object-fit: contain;
+    border-radius: 6px;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  }/* @order 0903 */
+  .lightbox-nav {
+    border: 0;
+    background: rgba(255, 255, 255, 0.08);
+    color: #f4f7fb;
+    width: clamp(40px, 4vw, 56px);
+    height: clamp(40px, 4vw, 56px);
+    border-radius: 50%;
+    font-size: max(20px, 2.2cqw);
+    line-height: 1;
+    cursor: pointer;
+    flex: none;
+    transition: background 120ms ease;
+  }/* @order 0904 */
+  .lightbox-nav:hover, .lightbox-nav:focus-visible { background: rgba(255, 255, 255, 0.2); }/* @order 0905 */
+  .lightbox-nav[hidden] { display: none; }/* @order 0906 */
+  .lightbox-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px clamp(18px, 3vw, 40px) clamp(18px, 3vw, 40px);
+  }/* @order 0907 */
+  .lightbox-caption {
+    font-family: var(--sans);
+    font-size: max(14px, 1.3cqw);
+    color: #cdd7e2;
+    max-width: 70ch;
+  }/* @order 0908 */
+  .lightbox-counter {
+    font-family: var(--sans);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    font-size: max(13px, 1.1cqw);
+    color: #9fb0c0;
+    flex: none;
+  }/* @order 0909 */
+  .lightbox-close {
+    position: absolute;
+    top: 16px;
+    right: 18px;
+    border: 0;
+    background: rgba(255, 255, 255, 0.08);
+    color: #f4f7fb;
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+  }/* @order 0910 */
+  .lightbox-close:hover, .lightbox-close:focus-visible { background: rgba(255, 255, 255, 0.2); }/* @order 0911 */
+  /* QR entry in the lightbox (Z-zoom): the URL IS the payload — the audience writes it down.
+     The code + URL cluster in the CENTRE of the screen (grid stops stretching the stage), the
+     URL is display-sized and bright, and the path (the short id) is the boldest thing on it. *//* @order 0912 */
+  .lightbox.qr-focus.open { grid-template-rows: auto auto; align-content: center; }/* @order 0913 */
+  .lightbox.qr-focus .lightbox-stage { padding-bottom: 0; }/* @order 0914 */
+  .lightbox.qr-focus .lightbox-img { max-height: 60vh; }/* @order 0915 */
+  .lightbox.qr-focus .lightbox-bar {
+    flex-direction: column;
+    justify-content: center;
+    gap: 8px;
+    padding-top: clamp(18px, 3.2vh, 36px);
+  }/* @order 0916 */
+  .lightbox.qr-focus .lightbox-caption {
+    font-size: max(34px, 5cqw);
+    font-weight: 400;
+    color: #e8eef5;
+    max-width: none;
+    text-align: center;
+    line-height: 1.15;
+    word-break: break-all;
+  }/* @order 0917 */
+  .lightbox.qr-focus .lightbox-caption strong { font-weight: 800; color: #ffffff; }/* @order 0918 */
+  .lightbox.qr-focus .lightbox-counter { font-size: 13px; color: #7d8c9c; }/* @order 0919 */
+  /* Presenter "Gallery" button on the media control row — shown only when the slide has images. *//* @order 0920 */
+  .presenter-gallery[hidden] { display: none; }/* @order 0921 */
+  @media print { .lightbox { display: none !important; } }/* @order 0924 */
+  /* gallery affordance: dots + counter *//* @order 0925 */
+  .gallery-nav {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin: 18px 0 0;
+  }/* @order 0926 */
+  .gallery-dots { display: inline-flex; gap: 9px; }/* @order 0927 */
+  .gallery-dot {
+    width: 11px;
+    height: 11px;
+    padding: 0;
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    background: transparent;
+    cursor: pointer;
+    transition: background 140ms ease, transform 140ms ease;
+  }/* @order 0928 */
+  .gallery-dot:hover { transform: scale(1.15); }/* @order 0929 */
+  .gallery-dot.active { background: var(--accent); }/* @order 0930 */
+  .gallery-counter { color: var(--muted); font-size: 0.85rem; font-weight: 700; letter-spacing: .04em; white-space: nowrap; }/* @order 0931 */
+  @media print { .gallery-nav { display: none !important; } }/* @order 0932 */
+  /* === Timelines (D10): structured groups, date emphasis, rail/columns/compact modes ===
+     Shared shape: a .timeline wrapper holds one or more .tl-group blocks, each an optional
+     small-caps accent header (.tl-group-head) above an <ol class="tl-entries"> of <li>.
+     A dated entry splits into an accent .tl-date column and a .tl-body description; an
+     undated entry is body-only. The mode class drives the layout of the groups. *//* @order 0933 */
+  .timeline { margin: 32px 0 0; font-size: max(31px, 3cqw); line-height: 1.3; }/* @order 0935 */
+  .timeline li { display: grid; grid-template-columns: minmax(4.4em, max-content) 1fr; column-gap: .9em; align-items: baseline; }/* @order 0936 */
+  .timeline li:only-child, .timeline li:has(> .tl-body:only-child) { grid-template-columns: 1fr; }/* @order 0942 */
+  /* Fix 1: in single-column fallbacks (a timeline followed by a list/paragraph that did NOT
+     pair into timeline-visual), give the following block clear separation from the rail
+     instead of butting against it. *//* @order 0943 */
+  .timeline + * { margin-top: 28px; }/* @order 0974 */
+  @media (max-width: 900px) {
+    .timeline-columns { grid-template-columns: 1fr; }
+    .timeline-compact .tl-entries { grid-template-columns: 1fr; }
+    /* horizontal collapses to the vertical rail look when there is no room for a track. */
+    .timeline-horizontal .tl-entries {
+      grid-auto-flow: row; grid-auto-columns: auto; border-top: 0;
+      padding-left: 1.5em; border-left: 2px solid var(--line); padding-top: 0; gap: .55em;
+    }
+    .timeline-horizontal li { text-align: left; padding-top: 0; }
+    .timeline-horizontal li::before { top: .35em; left: calc(-1.5em - 7px); transform: none; }
+  }/* @order 1012 */
+
+  @media (max-width: 900px) {
+    /* Narrow: both collapse to a stacked vertical rail (date then card) so they never crush. */
+    .timeline-spine .tl-spine-track, .timeline-pills .tl-spine-track {
+      grid-template-columns: 1fr; min-height: 0; padding: 0 0 0 1.4em;
+      border-left: 3px solid var(--accent); gap: .9em; align-items: stretch;
+    }
+    .timeline-spine .tl-spine-track::before, .timeline-pills .tl-spine-track::before { display: none; }
+    .timeline-spine .tl-spine-stop, .timeline-pills .tl-spine-stop {
+      display: block; position: relative;
+    }
+    .timeline-spine .tl-spine-card, .timeline-pills .tl-spine-card {
+      position: static; width: auto; transform: none; margin: 0;
+    }
+    .timeline-spine .tl-spine-date {
+      position: static; transform: none; display: block; text-align: left; margin-bottom: .25em;
+    }
+    .timeline-pills .tl-spine-pill { margin-top: 0; display: inline-block; margin-bottom: .35em; }
+    .tl-spine-leader { display: none; }
+    .tl-spine-dot {
+      position: absolute; left: calc(-1.4em - 9px); top: .2em; transform: none;
+    }
+  }/* @order 1013 */
+  .slide-embed { margin: 0; }/* @order 1014 */
+  .slide-embed iframe { width: 100%; height: 100%; min-height: 52vh; border: 1px solid var(--line); border-radius: 8px; background: white; }/* @order 1015 */
+  .slide-embed { position: relative; }/* @order 1016 */
+  .embed-open-link {
+    position: absolute; bottom: 8px; right: 10px; z-index: 2;
+    font: 600 12px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #fff; background: rgba(11, 17, 23, 0.78);
+    padding: 5px 10px; border-radius: 999px; text-decoration: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+  }/* @order 1017 */
+  .embed-open-link:hover { background: rgba(11, 17, 23, 0.95); }/* @order 1018 */
+  /* B3 embed interaction: covered embeds (NOT video) are non-interactive previews so a click can
+     never move keyboard focus into the iframe and freeze slide navigation. Interaction is opt-in
+     via the chip or the `e` key, which adds .embed-live to the iframe. The presenter's remote live
+     embed (renderLivePreviewEmbed, marked data-remote-embed) gets the same gate; its srcdoc sims
+     keep their own key-forwarding and stay interactive. *//* @order 1019 */
+  figure.slide-embed iframe:not([data-embed-video]) { pointer-events: none; }/* @order 1020 */
+  figure.slide-embed iframe.embed-live { pointer-events: auto; }/* @order 1021 */
+  /* `.preview` prefix raises specificity above the base `.preview.preview-live-sim .live-sim-frame`
+     rule (which sets pointer-events:auto for interactive sims) so remote embeds default to none. *//* @order 1022 */
+  .preview.preview-live-sim .live-sim-frame[data-remote-embed] { pointer-events: none; }/* @order 1023 */
+  .preview.preview-live-sim .live-sim-frame[data-remote-embed].embed-live { pointer-events: auto; }/* @order 1024 */
+  .embed-interact-chip {
+    position: absolute; top: 8px; right: 10px; z-index: 3;
+    display: inline-flex; align-items: center; gap: 6px;
+    font: 600 12px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #fff; background: rgba(11, 17, 23, 0.78);
+    padding: 5px 10px; border: 0; border-radius: 999px; cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.25); pointer-events: auto;
+  }/* @order 1025 */
+  .embed-interact-chip:hover { background: rgba(11, 17, 23, 0.95); }/* @order 1026 */
+  .embed-interact-chip kbd { font: 700 11px/1 ui-monospace, monospace; background: rgba(255,255,255,0.22); padding: 2px 5px; border-radius: 4px; }/* @order 1027 */
+  /* Hide the chip where it must not show: on the embed currently being interacted with, in the
+     presenter's thumbnail preview clones, on the clean audience display, and in print. *//* @order 1028 */
+  figure.slide-embed:has(iframe.embed-live) .embed-interact-chip { display: none; }/* @order 1029 */
+  .preview .embed-interact-chip { display: none; }/* @order 1030 */
+  body.audience-mode .embed-interact-chip { display: none; }/* @order 1031 */
+  @media print { .embed-interact-chip { display: none; } }/* @order 1032 */
+  /* Return-to-slides: a parent-level button (outside any iframe) — the cross-origin-safe way to
+     hand the keyboard back once a focused embed has swallowed key events. Visible while interacting. *//* @order 1033 */
+  .embed-return-btn {
+    position: fixed; top: 14px; right: 16px; z-index: 9999; display: none;
+    align-items: center; gap: 8px;
+    font: 700 14px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #fff; background: #2563eb; border: 0; border-radius: 999px; cursor: pointer;
+    padding: 10px 16px; box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+  }/* @order 1034 */
+  .embed-return-btn:hover { background: #1d4ed8; }/* @order 1035 */
+  body.embed-interacting .embed-return-btn { display: inline-flex; }/* @order 1040 */
+  @media print { .card-gallery[data-exclusive] .card { display: block !important; height: auto; margin: .4em 0; } .slide-embed iframe { display: none; } }/* @order 1041 */
+
+  @media (max-width: 950px) {
+    /* D7: below 950px every media+text split stacks. copy-visual rules moved to the earlier breakpoint block. */
+    .cards-media-split { grid-template-columns: 1fr; }
+    .card-gallery .card.card-media-split .card-split-grid { grid-template-columns: 1fr; row-gap: 16px; }
+    .contrast-grid { grid-template-columns: 1fr; }
+    .tile-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .evidence-layout { grid-template-columns: 1fr; }
+    /* cta-screenshots stacks below 950px: screenshots stack into rows, then the callouts/actions
+       column drops below; action buttons left-align. */
+    .cta-layout { grid-template-columns: 1fr; }
+    .cta-images { grid-auto-flow: row; }
+    .cta-shot img { max-height: 28vh; }
+    .slide-actions { align-items: start; }
+    /* G5: below 950px the side-by-side image row collapses to a stack (G3 behaviour). */
+    .card-gallery .card .figure-row,
+    .slide-content > .figure-row { grid-template-columns: 1fr; }
+    .card-gallery .card .figure-row .slide-figure { max-height: 30vh; }
+    .card-gallery .card .figure-row .slide-figure img,
+    .card-gallery .card .figure-row .slide-figure video { max-height: 30vh; }
+  }/* @order 1042 */
+  /* === end layout blocks === *//* @order 1043 */
+
+  aside.notes { display: none; }/* @order 1044 */
+
+  /* ADR-0005 control bar: a fixed overlay pinned to the bottom edge, auto-hiding after ~2s of
+     mouse stillness (body.chrome-idle) unless the presenter pins it visible with C
+     (body.chrome-pinned). Shown on any mouse move. Sits just above the 3px progress tick. *//* @order 1045 */
+  .footer {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 3px;
+    z-index: 45;
+    min-height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 16px;
+    border-top: 1px solid var(--line);
+    background: color-mix(in srgb, var(--paper) 88%, white);
+    transition: transform 300ms ease, opacity 300ms ease;
+  }/* @order 1046 */
+  body.chrome-idle:not(.chrome-pinned) .footer {
+    transform: translateY(calc(100% + 3px));
+    opacity: 0;
+    pointer-events: none;
+  }/* @order 1047 */
+  .footer-left, .footer-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }/* @order 1048 */
+  .count { color: var(--muted); font-size: 0.9rem; white-space: nowrap; }/* @order 1049 */
+  .section-tag {
+    color: var(--accent);
+    font-weight: 700;
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }/* @order 1050 */
+  /* The 3px section-accent progress tick — ADR-0005's ONLY persistent cue. Pinned to the very
+     bottom edge and drawn above the control bar so it stays visible whether the bar is shown or
+     hidden. *//* @order 1051 */
+  .progress {
+    position: fixed;
+    left: 0;
+    bottom: 0;
+    height: 3px;
+    width: 100%;
+    background: transparent;
+    z-index: 46;
+    pointer-events: none;
+  }/* @order 1052 */
+  .progress span {
+    display: block;
+    height: 100%;
+    width: 0;
+    background: var(--accent);
+    transition: width 160ms ease;
+  }/* @order 1053 */
+  .btn {
+    border: 1px solid var(--line);
+    background: var(--tint);
+    color: var(--ink);
+    border-radius: 7px;
+    padding: 7px 10px;
+    cursor: pointer;
+  }/* @order 1054 */
+  .btn:hover { border-color: var(--accent); }/* @order 1055 */
+  .btn.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+  }/* @order 1056 */
+  .icon-btn { width: 34px; padding: 7px 0; text-align: center; }/* @order 1057 */
+
+  .drawer {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: min(440px, 90vw);
+    background: var(--tint);
+    border-right: 1px solid var(--line);
+    box-shadow: var(--shadow);
+    transform: translateX(-105%);
+    transition: transform 180ms ease;
+    z-index: 20;
+    display: grid;
+    grid-template-rows: auto auto 1fr;
+  }/* @order 1058 */
+  .drawer.open { transform: translateX(0); }/* @order 1059 */
+  .drawer header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px;
+    border-bottom: 1px solid var(--line);
+  }/* @order 1060 */
+  .drawer h3 { margin: 0; font-size: 1rem; }/* @order 1061 */
+  .drawer input {
+    margin: 14px 16px;
+    width: calc(100% - 32px);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 10px;
+  }/* @order 1062 */
+  .overview-list {
+    overflow: auto;
+    padding: 0 16px 18px;
+  }/* @order 1063 */
+  /* Section header — a clickable jump to that section's first slide. *//* @order 1064 */
+  .section-head {
+    display: block;
+    width: 100%;
+    text-align: left;
+    font-family: inherit;
+    margin: 18px 0 6px;
+    padding: 4px 8px;
+    background: transparent;
+    border: 0;
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--accent);
+    font-size: 0.78rem;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }/* @order 1065 */
+  .section-head:hover { background: #0b4a6f14; }/* @order 1066 */
+  /* H2 — subsection sub-header: indented under its section, quieter and smaller, also clickable. *//* @order 1067 */
+  .subsection-head {
+    display: block;
+    width: calc(100% - 12px);
+    text-align: left;
+    font-family: inherit;
+    margin: 9px 0 5px 12px;
+    padding: 3px 8px;
+    background: transparent;
+    border: 0;
+    border-left: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+    border-radius: 0 6px 6px 0;
+    cursor: pointer;
+    color: color-mix(in srgb, var(--ink) 62%, transparent);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }/* @order 1068 */
+  .subsection-head:hover { background: #0b4a6f10; }/* @order 1069 */
+  /* Slide row — just the readable title; the whole row is the click target. *//* @order 1070 */
+  .slide-link {
+    width: 100%;
+    display: block;
+    text-align: left;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--ink);
+    padding: 7px 10px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.95rem;
+    line-height: 1.35;
+  }/* @order 1071 */
+  .slide-link:hover, .slide-link.current { background: #0b4a6f12; }/* @order 1072 */
+  .slide-link.current { font-weight: 700; }/* @order 1073 */
+  .slide-link-title { display: block; }/* @order 1074 */
+  /* Overview drawer header controls: the "⊞ Previews" expand toggle beside the close button. *//* @order 1075 */
+  .drawer-head-actions { display: flex; align-items: center; gap: 8px; }/* @order 1076 */
+  .tw-overview-expand {
+    font-family: inherit; font-size: 0.78rem; font-weight: 700;
+    padding: 5px 10px; border: 1px solid var(--line); border-radius: 7px;
+    background: transparent; color: var(--ink); cursor: pointer;
+  }/* @order 1077 */
+  .tw-overview-expand:hover { background: #0b4a6f12; }/* @order 1078 */
+  /* Expanded overview: scaled-thumbnail grid instead of the collapsed grouped list. *//* @order 1079 */
+  /* align-content/items:start so rows stay content-height — otherwise a filtered grid (1–2 hits) stretches each cell to fill the tall drawer, dwarfing the thumbnail. *//* @order 1080 */
+  .tw-overview-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; align-content: start; align-items: start; }/* @order 1081 */
+  .tw-overview-grid .slide-link { flex-direction: column; align-items: stretch; }/* @order 1082 */
+  .tw-thumb { aspect-ratio: 16/9; overflow: hidden; border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; background: #fff; position: relative; }/* @order 1083 */
+  /* Fixed deck-sized canvas; the cloned slide (position:absolute;inset:0) fills it, JS scales it to the column width. *//* @order 1084 */
+  .tw-thumb-inner { position: absolute; top: 0; left: 0; width: 1280px; height: 720px; transform-origin: top left; pointer-events: none; }/* @order 1085 */
+  .tw-thumb-inner > .slide { display: grid !important; position: absolute; inset: 0; }/* @order 1086 */
+  .tw-thumb-inner .mode-el { opacity: 1 !important; visibility: visible !important; filter: none !important; }/* @order 1087 */
+  .tw-thumb-embed { width: 100%; height: 100%; background: repeating-linear-gradient(45deg, #e5e7eb, #e5e7eb 10px, #d7dbe0 10px, #d7dbe0 20px); }/* @order 1088 */
+  .slide-link.tw-highlight { outline: 2px solid #4a9eff; }/* @order 1089 */
+  .tw-status { margin-right: 6px; }/* @order 1090 */
+  .slide-link.tw-shown .tw-status { color: #3fb950; }/* @order 1091 */
+  .slide-link.tw-skipped .tw-status { color: #d29922; }/* @order 1092 */
+  .slide-link.tw-unseen .tw-status { color: #6e7681; }/* @order 1093 */
+
+  .notes-drawer {
+    position: fixed;
+    inset: 0 0 0 auto;
+    width: min(420px, 90vw);
+    background: var(--tint);
+    border-left: 1px solid var(--line);
+    box-shadow: var(--shadow);
+    transform: translateX(105%);
+    transition: transform 180ms ease;
+    z-index: 21;
+    display: grid;
+    grid-template-rows: auto 1fr;
+  }/* @order 1094 */
+  .notes-drawer.open { transform: translateX(0); }/* @order 1095 */
+  .notes-body { overflow: auto; padding: 18px; line-height: 1.55; color: var(--muted); }/* @order 1096 */
+  .notes-body aside.notes { display: block; }/* @order 1097 */
+
+  .presenter-root {
+    /* Bound to the viewport so the middle 1fr row is finite — previews then get a real
+       height to scale into and the outline scrolls internally instead of stretching the
+       whole column (D8). */
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+    padding: 18px;
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) 8px minmax(320px, 0.85fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 14px;
+    background: #111820;
+    color: #f7f3ea;
+  }/* @order 1098 */
+  /* F2 — preview size cycle. Shrinking the right column (Next/Then/Notes) hands the freed
+     width to the CURRENT slide preview so it is bigger and easier to read while presenting.
+     The choice is a data attribute on .presenter-root (persisted for the session, restored on
+     open) cycled by the ⤢ button on the Next panel or the "[" key. "medium" is the default
+     baseline (no attribute needed); "small" and "off" progressively shrink/hide the side. *//* @order 1099 */
+  .presenter-root[data-preview-size="small"] {
+    grid-template-columns: minmax(0, 1.9fr) 8px minmax(220px, 0.5fr);
+  }/* @order 1100 */
+  /* "off": the side column collapses entirely; the current preview and outline get the whole
+     width. The Next target is still tracked (label updates), just not rendered as a thumbnail. *//* @order 1101 */
+  .presenter-root[data-preview-size="off"] {
+    grid-template-columns: minmax(0, 1fr) 0 0;
+  }/* @order 1102 */
+  .presenter-root[data-preview-size="off"] .presenter-side {
+    display: none;
+  }/* @order 1103 */
+  /* "large": the original, more generous side column for when the speaker wants a big Next. *//* @order 1104 */
+  .presenter-root[data-preview-size="large"] {
+    grid-template-columns: minmax(0, 1.1fr) 8px minmax(360px, 1fr);
+  }/* @order 1105 */
+  .presenter-root header,
+  .presenter-panel,
+  .presenter-controls {
+    background: #1a2530;
+    border: 1px solid #ffffff1c;
+    border-radius: 8px;
+  }/* @order 1106 */
+  .presenter-root header {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 14px;
+  }/* @order 1107 */
+  .presenter-root h1 {
+    font-family: var(--sans);
+    font-size: 1rem;
+    margin: 0;
+    max-width: none;
+  }/* @order 1108 */
+  .presenter-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }/* @order 1109 */
+  .presenter-header-actions .btn {
+    background: #243445;
+    border-color: #ffffff24;
+    color: #f7f3ea;
+  }/* @order 1110 */
+  .presenter-main {
+    min-height: 0;
+    display: grid;
+    /* 2026-06-10 rework: the LEFT side is entirely the current-slide preview — the outline
+       moved into an on-demand drawer (O key). */
+    grid-template-rows: minmax(0, 1fr);
+    gap: 14px;
+  }/* @order 1111 */
+  /* Right column. Default (no notes): Next + Then previews split the height evenly. When
+       the current slide HAS notes, the Then preview collapses and the Notes panel appears. *//* @order 1112 */
+  .presenter-side {
+    min-height: 0;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 14px;
+  }/* @order 1113 */
+  .presenter-side .presenter-notes { display: none; }/* @order 1114 */
+  .presenter-side.has-notes {
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }/* @order 1115 */
+  .presenter-side.has-notes .presenter-notes { display: grid; }/* @order 1116 */
+  .presenter-panel {
+    min-height: 0;
+    overflow: hidden;
+    padding: 12px;
+  }/* @order 1117 */
+  /* Panels that hold a preview: title row + the 16:9 preview filling the rest. *//* @order 1118 */
+  .presenter-main > .presenter-panel:first-child,
+  .presenter-side > .presenter-panel:not(.presenter-notes) {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+  }/* @order 1119 */
+  /* The Current panel is chrome-free (2026-06-12): no heading, slim padding — the preview is
+     the panel's only child, so it takes the single full-height row and the slide gets every
+     pixel the viewport allows. *//* @order 1120 */
+  .presenter-main > .presenter-panel:first-child {
+    grid-template-rows: minmax(0, 1fr);
+    padding: 8px;
+  }/* @order 1121 */
+  /* When notes are present they replace the "Then" preview (must beat the grid rule above). *//* @order 1122 */
+  .presenter-side.has-notes > .presenter-following { display: none; }/* @order 1123 */
+  /* Outline drawer (2026-06-10): the former in-grid outline panel, now an overlay summoned
+     with O — search on top, scrolling list below, gone when not needed. *//* @order 1124 */
+  .presenter-outline-drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 160;
+    width: min(460px, 92vw);
+    padding: 14px;
+    background: #0d141c;
+    border-left: 1px solid #ffffff1f;
+    box-shadow: -18px 0 48px rgba(0, 0, 0, 0.5);
+    /* Shown/hidden via the .open class (toggled by the shared createOverview factory), mirroring
+       the standalone .drawer. Slides off-screen when closed. */
+    transform: translateX(105%);
+    transition: transform 180ms ease;
+  }/* @order 1125 */
+  .presenter-outline-drawer.open { transform: translateX(0); }/* @order 1126 */
+  .presenter-outline-drawer .presenter-panel {
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    height: 100%;
+  }/* @order 1127 */
+  .presenter-outline-hint {
+    margin-left: 10px;
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0.04em;
+    color: #8fa1b5;
+    white-space: nowrap;
+  }/* @order 1128 */
+  /* Drag divider between the current-slide preview and the side column. *//* @order 1129 */
+  /* No explicit grid-row: a definite row would place the divider BEFORE the auto-placed
+     main column and steal column 1. Source order (main → divider → side) does the work. *//* @order 1130 */
+  .presenter-divider {
+    cursor: col-resize;
+    border-radius: 4px;
+    background: #ffffff14;
+    min-width: 8px;
+  }/* @order 1131 */
+  .presenter-divider:hover, .presenter-divider.dragging { background: #ffffff34; }/* @order 1132 */
+  .presenter-root[data-preview-size="off"] .presenter-divider { display: none; }/* @order 1133 */
+  .presenter-main > .presenter-panel:first-child .preview,
+  .presenter-side > .presenter-panel:not(.presenter-notes) .preview {
+    width: 100%;
+    height: 100%;
+    /* No fixed aspect on the BOX — fitPreviewIframe() letterboxes the 16:9 slide inside
+       whatever shape the panel gives us (it fits to min(boxW/1280, boxH/720)). */
+    aspect-ratio: auto;
+  }/* @order 1134 */
+  .presenter-panel h2 {
+    font-family: var(--sans);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: #b8c6d2;
+    margin: 0 0 10px;
+  }/* @order 1135 */
+  /* Dynamic "Next card 3/6" / "… (6 cards)" hint appended to the Next panel header. *//* @order 1136 */
+  .preview-label {
+    text-transform: none;
+    letter-spacing: 0.02em;
+    color: var(--accent);
+    font-weight: 700;
+  }/* @order 1137 */
+  .preview-label:not(:empty)::before { content: " · "; color: #6b7c8a; font-weight: 400; }/* @order 1138 */
+  /* F2 — the Next panel header carries only its label now; the resize control lives in the
+     persistent header actions (below) so it stays clickable even when the side pane (and thus
+     the Next preview) is hidden in the "off" size. *//* @order 1139 */
+  .presenter-panel h2 { display: flex; align-items: baseline; gap: 4px; }/* @order 1140 */
+  /* Preview-size cycle button: a normal header .btn so it always shows alongside the audience
+     button, regardless of preview size. The current size is shown in its label as an affordance
+     that "off" is just another state you can press out of. *//* @order 1141 */
+  .preview-size-btn {
+    font-size: 0.78rem;
+    line-height: 1;
+    white-space: nowrap;
+  }/* @order 1142 */
+  .preview {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    /* Letterbox: dark mat behind the scaled slide so a fitted (not cropped) slide reads as
+       a clean thumbnail even when its aspect differs slightly from the box. */
+    background: #0b1117;
+    color: #b8c6d2;
+    border-radius: 6px;
+    display: block;
+    aspect-ratio: 16 / 9;
+  }/* @order 1143 */
+  /* The iframe is a FIXED deck-resolution stage (1280x720); JS scales it as one rigid unit
+     via transform so the entire slide fits the box and nothing crops (D8). *//* @order 1144 */
+  .preview iframe {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 1280px;
+    height: 720px;
+    border: 0;
+    background: var(--paper);
+    pointer-events: none;
+    transform-origin: top left;
+    transform: scale(0.001);
+  }/* @order 1145 */
+  .preview.preview-live-sim { background: var(--paper); }/* @order 1146 */
+  .preview.preview-live-sim .live-sim-frame {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    border: 0; background: var(--paper);
+    transform: none; pointer-events: auto;
+  }/* @order 1147 */
+  .preview.preview-end {
+    display: grid;
+    place-items: center;
+    font-family: var(--sans);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-size: 0.85rem;
+  }/* @order 1148 */
+  .presenter-notes {
+    grid-template-rows: auto minmax(0, 1fr);
+  }/* @order 1149 */
+  .presenter-notes-body {
+    overflow: auto;
+    color: #e7eef4;
+    font-size: 1.02rem;
+    line-height: 1.6;
+  }/* @order 1150 */
+  .presenter-notes-body aside.notes { display: block; }/* @order 1151 */
+  .presenter-notes-body aside.notes p { margin: 0 0 0.7em; }/* @order 1152 */
+  .presenter-notes-body aside.notes p:last-child { margin-bottom: 0; }/* @order 1153 */
+  .presenter-controls {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px;
+  }/* @order 1154 */
+  /* Match the main app's button language (radius, clean bordered secondary, oxford-blue primary),
+     adapted to the presenter's dark chrome. *//* @order 1155 */
+  .presenter-controls .btn, .presenter-header-actions .btn {
+    background: #1f2a37;
+    border: 1px solid #ffffff26;
+    color: #e7edf4;
+    border-radius: 7px;
+    padding: 7px 12px;
+    font-weight: 500;
+  }/* @order 1156 */
+  .presenter-controls .btn:hover, .presenter-header-actions .btn:hover { border-color: #6ea8e6; background: #26333f; }/* @order 1157 */
+  .presenter-controls .btn.primary { background: #2f6db5; border-color: #2f6db5; color: #fff; font-weight: 600; }/* @order 1158 */
+  .presenter-controls .btn.primary:hover { background: #3a7cc6; border-color: #3a7cc6; }/* @order 1159 */
+  .tw-btn-ico { margin-right: 6px; opacity: 0.85; font-size: 0.95em; }/* @order 1160 */
+  /* Single top clock (2026-06-30, presenter QoL): ONE always-visible clock at the top of the
+     presenter view with explicit Start / Pause / Resume + a duration setter. Urgency is colour
+     (amber warn, dark-amber urgent) plus a red pulse once the talk overruns; idle/paused read
+     muted. Colours use the deck's own accent tokens where a suitable one exists. *//* @order 1161 */
+  /* Clock lives INSIDE the header flex row (title · clock · actions); relative so the setter anchors to it. *//* @order 1162 */
+  .tw-clock-bar { position: relative; display: flex; align-items: center; gap: 10px; flex: 0 0 auto; z-index: 5; }/* @order 1163 */
+  #presenterTitle { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }/* @order 1164 */
+  /* The time is a bold pill: white on green while on-track; the background shifts to amber →
+     dark-amber → red as the end nears; neutral grey before Start. *//* @order 1165 */
+  .tw-clock { font-variant-numeric: tabular-nums; font-weight: 800; font-size: 1.5rem; letter-spacing: 0.01em; color: #fff; background: #1f9d55; padding: 2px 12px; border-radius: 8px; }/* @order 1166 */
+  .tw-clock[data-status="idle"] { background: #37475a; color: #dbe4ee; }/* @order 1167 */
+  .tw-clock[data-status="paused"] { opacity: 0.7; }/* @order 1168 */
+  .tw-clock[data-level="warn"] { background: #c99a1f; }/* @order 1169 */
+  .tw-clock[data-level="urgent"] { background: #b3620a; }/* @order 1170 */
+  .tw-clock[data-level="over"] { background: var(--accent-2, #9f1239); animation: tw-clock-pulse 1s ease-in-out infinite; }/* @order 1171 */
+  @keyframes tw-clock-pulse { 50% { opacity: 0.45; } }/* @order 1172 */
+  .tw-clock-elapsed { opacity: 0.4; font-size: 0.8rem; font-variant-numeric: tabular-nums; }/* @order 1173 */
+  .tw-clock-btn { background: #1f9d55; color: #fff; border: 0; border-radius: 6px; padding: 4px 10px; font-weight: 700; cursor: pointer; }/* @order 1174 */
+  .tw-clock-btn:hover { filter: brightness(1.08); }/* @order 1175 */
+  /* Once running, the button steps back so the time leads. *//* @order 1176 */
+  .tw-clock-btn.tw-running { background: rgba(255, 255, 255, 0.07); color: #cdd6e0; border: 1px solid #ffffff2e; font-weight: 600; }/* @order 1177 */
+  .tw-clock-btn.tw-running:hover { background: rgba(255, 255, 255, 0.14); filter: none; }/* @order 1178 */
+  .tw-duration-btn { background: none; border: 1px solid #ffffff24; color: #f7f3ea; border-radius: 6px; padding: 4px 8px; cursor: pointer; }/* @order 1179 */
+  .tw-duration-btn:hover { border-color: #ffffff44; background: #243445; }/* @order 1180 */
+  .tw-duration-setter { position: absolute; top: calc(100% + 10px); left: 50%; transform: translateX(-50%); z-index: 30;
+    background: #1a2530; border: 1px solid #ffffff26; border-radius: 10px; padding: 12px; width: 244px;
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5); display: flex; flex-direction: column; gap: 9px; color: #f7f3ea; text-align: left; }/* @order 1181 */
+  .tw-duration-setter[hidden] { display: none; }/* @order 1182 */
+  .tw-setter-title { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.07em; opacity: 0.6; font-weight: 800; }/* @order 1183 */
+  .tw-setter-sub { text-transform: none; letter-spacing: 0; opacity: 0.85; font-weight: 500; }/* @order 1184 */
+  .tw-setter-input { display: flex; align-items: center; gap: 6px; }/* @order 1185 */
+  .tw-setter-input input { width: 64px; text-align: center; background: #0f1620; color: #f7f3ea; border: 1px solid #ffffff2e; border-radius: 6px; padding: 6px; font-size: 1rem; font-variant-numeric: tabular-nums; }/* @order 1186 */
+  .tw-setter-unit { opacity: 0.6; font-size: 0.85rem; }/* @order 1187 */
+  .tw-step { width: 30px; height: 30px; border-radius: 6px; border: 1px solid #ffffff2e; background: #243445; color: #f7f3ea; font-size: 1.1rem; line-height: 1; cursor: pointer; }/* @order 1188 */
+  .tw-step:hover { filter: brightness(1.15); }/* @order 1189 */
+  .tw-duration-presets, .tw-reminder-presets { display: flex; flex-wrap: wrap; gap: 6px; }/* @order 1190 */
+  .tw-duration-presets button, .tw-reminder { padding: 5px 11px; border-radius: 999px; border: 1px solid #ffffff26; background: #243445; color: #f7f3ea; font-size: 0.85rem; cursor: pointer; font-variant-numeric: tabular-nums; }/* @order 1191 */
+  .tw-duration-presets button:hover, .tw-reminder:hover { filter: brightness(1.15); }/* @order 1192 */
+  .tw-duration-presets button.on { background: #1f9d55; border-color: #1f9d55; color: #fff; font-weight: 700; }/* @order 1193 */
+  .tw-reminder.on { background: var(--accent-2, #9f1239); border-color: var(--accent-2, #9f1239); color: #fff; font-weight: 700; }/* @order 1194 */
+  .tw-resume { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.55); }/* @order 1195 */
+  .tw-resume[hidden] { display: none; }/* @order 1196 */
+  .tw-resume-card { background: #1a2530; border: 1px solid #ffffff26; border-radius: 12px; padding: 20px 22px; width: min(360px, 90vw); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6); color: #f7f3ea; text-align: center; }/* @order 1197 */
+  .tw-resume-text { font-size: 1.1rem; font-weight: 700; margin-bottom: 12px; }/* @order 1198 */
+  .tw-resume-reset { display: inline-flex; align-items: center; gap: 8px; font-size: 0.9rem; opacity: 0.85; margin-bottom: 16px; cursor: pointer; }/* @order 1199 */
+  .tw-resume-actions { display: flex; gap: 10px; justify-content: center; }/* @order 1200 */
+  /* Fast, key-only hover tooltip (JS-positioned; shows just the shortcut). *//* @order 1201 */
+  .tw-tip { position: fixed; transform: translate(-50%, -100%) translateY(-6px); background: #0b1118; color: #eaf1f8; border: 1px solid #ffffff2e; border-radius: 5px; padding: 3px 7px; font-size: 0.78rem; font-weight: 700; font-variant-numeric: tabular-nums; z-index: 60; pointer-events: none; white-space: nowrap; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5); }/* @order 1202 */
+  .tw-tip[hidden] { display: none; }/* @order 1203 */
+  .tw-shortcuts { position: fixed; inset: 0; z-index: 55; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.55); }/* @order 1204 */
+  .tw-shortcuts[hidden] { display: none; }/* @order 1205 */
+  .tw-shortcuts-card { background: #1a2530; border: 1px solid #ffffff26; border-radius: 12px; padding: 18px 22px; width: min(520px, 92vw); max-height: 80vh; overflow: auto; color: #f7f3ea; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6); }/* @order 1206 */
+  .tw-shortcuts-head { font-size: 1.05rem; font-weight: 800; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }/* @order 1207 */
+  .tw-shortcuts-head span { font-size: 0.75rem; font-weight: 500; opacity: 0.6; }/* @order 1208 */
+  .tw-shortcuts-section { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.07em; opacity: 0.55; font-weight: 800; margin: 13px 0 5px; }/* @order 1209 */
+  .tw-shortcuts-row { display: grid; grid-template-columns: 200px 1fr; gap: 12px; align-items: baseline; padding: 3px 0; }/* @order 1210 */
+  .tw-shortcuts-keys { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.8rem; background: #0f1620; border: 1px solid #ffffff24; border-radius: 4px; padding: 2px 6px; color: #cfe3ff; white-space: nowrap; justify-self: start; }/* @order 1211 */
+  /* E8: media control row — appears only when the current slide carries an embed/video. *//* @order 1212 */
+  .presenter-media {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    flex: 1 1 auto;
+    justify-content: center;
+  }/* @order 1213 */
+  .presenter-media[hidden] { display: none; }/* @order 1214 */
+  .presenter-media-label {
+    color: #b8c6d2;
+    font-size: 0.82rem;
+    max-width: 26ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }/* @order 1215 */
+  .presenter-media-select {
+    color: #f7f3ea;
+    background: #243445;
+    border: 1px solid #ffffff24;
+    border-radius: 7px;
+    padding: 6px 8px;
+    max-width: 18ch;
+  }/* @order 1216 */
+  .presenter-media-select[hidden] { display: none; }/* @order 1217 */
+  .presenter-meta { color: #b8c6d2; font-size: 0.9rem; }/* @order 1218 */
+  .presenter-search {
+    width: 100%;
+    color: #f7f3ea;
+    background: #243445;
+    border: 1px solid #ffffff24;
+    border-radius: 7px;
+    padding: 8px;
+  }/* @order 1219 */
+  .presenter-outline {
+    min-height: 0;
+    overflow: auto;
+    margin-top: 10px;
+    padding-right: 4px;
+  }/* @order 1220 */
+  /* The presenter drawer now hosts the SHARED overview rows (.section-head / .subsection-head /
+     .slide-link), whose default colours (var(--ink)/var(--accent)) are near-black and unreadable
+     on this dark drawer. These presenter-scoped overrides restore legibility. Visual polish is
+     eyeballed live; the bar here is readable + not-broken-looking. *//* @order 1221 */
+  .presenter-outline .section-head {
+    color: #8fa6b8;
+    letter-spacing: 0.12em;
+  }/* @order 1222 */
+  .presenter-outline .section-head:hover { background: #243445; }/* @order 1223 */
+  .presenter-outline .subsection-head {
+    color: #b8c6d2;
+    border-left-color: color-mix(in srgb, #8fa6b8 55%, transparent);
+  }/* @order 1224 */
+  .presenter-outline .subsection-head:hover { background: #ffffff10; }/* @order 1225 */
+  .presenter-outline .slide-link {
+    color: #f7f3ea;
+    border: 1px solid transparent;
+  }/* @order 1226 */
+  .presenter-outline .slide-link:hover,
+  .presenter-outline .slide-link.current {
+    background: #2c4054;
+    border-color: #ffffff24;
+  }/* @order 1227 */
+  .presenter-outline .slide-link.current { border-color: var(--accent-2); font-weight: 700; }/* @order 1228 */
+  .presenter-outline .slide-link.tw-highlight { outline: 2px solid #4a9eff; }/* @order 1229 */
+  /* Expanded-grid thumbs: readable frame on the dark drawer. *//* @order 1230 */
+  .presenter-outline .tw-thumb { border-color: rgba(255,255,255,0.18); }/* @order 1231 */
+  /* "⊞ Previews" toggle in the presenter drawer header — dark-drawer variant of .tw-overview-expand. *//* @order 1232 */
+  .presenter-outline-expand {
+    margin-left: auto;
+    font-family: inherit;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 4px 9px;
+    border: 1px solid #ffffff24;
+    border-radius: 7px;
+    background: transparent;
+    color: #f7f3ea;
+    cursor: pointer;
+    white-space: nowrap;
+  }/* @order 1233 */
+  .presenter-outline-expand:hover { background: #243445; }/* @order 1234 */
+
+  body.presenter-mode .deck,
+  body.presenter-mode .drawer,
+  body.presenter-mode .notes-drawer,
+  body.presenter-mode .progress { display: none; }/* @order 1235 */
+  body:not(.presenter-mode) .presenter-root { display: none; }/* @order 1236 */
+
+  body.audience-mode .deck {
+    grid-template-rows: 1fr;
+  }/* @order 1237 */
+  body.audience-mode .stage {
+    min-height: 100vh;
+  }/* @order 1238 */
+  body.audience-mode .progress,
+  body.audience-mode .drawer,
+  body.audience-mode .notes-drawer,
+  body.audience-mode .footer-left,
+  body.audience-mode #overviewBtn,
+  body.audience-mode #notesBtn,
+  body.audience-mode #printBtn,
+  body.audience-mode #presenterBtn {
+    display: none !important;
+  }/* @order 1239 */
+  body.audience-mode .footer {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    left: auto;
+    bottom: auto;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    z-index: 40;
+  }/* @order 1240 */
+  body.audience-mode .footer-right {
+    display: block;
+  }/* @order 1241 */
+  body.audience-mode #fullscreenBtn {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border-radius: 999px;
+    background: #fffdf2b8;
+    border-color: #17202a33;
+    box-shadow: 0 4px 14px #17202a18;
+    color: var(--ink);
+    opacity: 0.6;
+  }/* @order 1242 */
+  body.audience-mode #fullscreenBtn:hover,
+  body.audience-mode #fullscreenBtn:focus {
+    opacity: 1;
+  }/* @order 1243 */
+  .audience-fullscreen-prompt {
+    display: none;
+  }/* @order 1244 */
+
+  @media (max-width: 820px) {
+    .columns { grid-template-columns: 1fr; }
+    .footer { align-items: stretch; flex-direction: column; }
+    .footer-left, .footer-right { flex-wrap: wrap; }
+  }/* @order 1245 */
+
+  /* === Container-mode renderings (ADR-0007, Task 6) ==========================================
+     Painted at runtime onto the active slide (and the presenter preview clones) when the current
+     beat is a grid / grid-return / contents beat. Colour follows the SECTION accent: --sc is the
+     section colour (= the slide's inline --accent), --sct its 12% tint (no tint var exists in the
+     runtime; color-mix is the established pattern). Maps the locked mockup
+     (docs/design/2026-07-09-container-modes/mockup-card-table.html) onto current runtime tokens:
+     mockup --white→--panel, --grey→--muted, --hair→--line. *//* @order 1246 */
+  .ct-host { --sc: var(--accent); --sct: color-mix(in srgb, var(--accent) 12%, white); }/* @order 1247 */
+  .ct-overlay { position: absolute; inset: 0; z-index: 4; }/* @order 1248 */
+
+  /* Card Table (grid / grid-return): the section's own content is replaced by the card grid. *//* @order 1249 */
+  .ct-grid-host > .slide-content { display: none; }/* @order 1250 */
+  .ct-grid {
+    background: var(--paper);
+    display: grid; place-content: center; align-content: center; gap: 2.6vh;
+    padding: var(--slide-pad-y) var(--slide-pad-x);
+  }/* @order 1251 */
+  .ct-grid-head { display: grid; gap: 1.2vh; }/* @order 1252 */
+  .ct-kicker {
+    margin: 0; font-family: var(--mono); font-size: max(11px, 1.1cqw);
+    letter-spacing: .2em; text-transform: uppercase; color: var(--sc); font-weight: 600;
+  }/* @order 1253 */
+  .ct-title {
+    margin: 0; font-family: var(--sans); font-weight: 500; line-height: 1.04;
+    font-size: max(28px, 3.6cqw); max-width: 24ch; color: var(--ink);
+  }/* @order 1254 */
+  .ct-cards {
+    display: grid; grid-template-columns: repeat(var(--ct-cols, 4), 1fr); gap: 1.4vw;
+  }/* @order 1255 */
+  .ct-card {
+    text-align: left; font: inherit; cursor: pointer;
+    background: var(--tint); border: 1.5px solid var(--hairline); border-radius: 0;
+    padding: 3.4vh 1.8vw 3vh; display: grid; gap: 1.4vh; align-content: start;
+    min-height: 32vh; position: relative; transition: border-color .2s ease, box-shadow .2s ease, background .2s ease;
+  }/* @order 1256 */
+  .ct-card:focus-visible { outline: 2px solid var(--sc); outline-offset: 2px; }/* @order 1257 */
+  .ct-card .ct-n { font-family: var(--mono); font-size: max(14px, 1.3cqw); color: var(--muted); letter-spacing: .08em; }/* @order 1258 */
+  .ct-card .ct-t { font-size: max(31px, 2.9cqw); font-weight: 600; line-height: 1.16; color: var(--ink); }/* @order 1259 */
+  .ct-card .ct-mini { height: 4.2vh; border-radius: 5px; background: var(--sct); position: relative; overflow: hidden; }/* @order 1260 */
+  .ct-card .ct-mini::before { content: ""; position: absolute; left: 10%; top: 26%; width: 55%; height: 8%; background: var(--sc); opacity: .55; border-radius: 2px; }/* @order 1261 */
+  .ct-card .ct-mini::after { content: ""; position: absolute; left: 10%; top: 48%; width: 75%; height: 6%; background: var(--ink); opacity: .18; border-radius: 2px; }/* @order 1262 */
+  .ct-card.next { border-color: var(--sc); border-width: 2.5px; box-shadow: 0 10px 28px color-mix(in srgb, var(--sc) 15%, transparent); }/* @order 1263 */
+  .ct-card.next .ct-n::after { content: "  · next"; color: var(--sc); }/* @order 1264 */
+  .ct-card.done { background: var(--sct); border-color: transparent; }/* @order 1265 */
+  .ct-card.done .ct-t { color: var(--muted); font-weight: 500; }/* @order 1266 */
+  .ct-card.done .ct-mini { opacity: .35; }/* @order 1267 */
+  .ct-card.done::after { content: "✓"; position: absolute; top: 1.1vh; right: .9vw; font-size: max(13px, 1.4cqw); color: var(--sc); font-weight: 700; }/* @order 1268 */
+
+  /* Contents: THIN agenda rail (max 14vw per the taste rules). *//* @order 1269 */
+  .ct-rail-host { --ct-rail-w: max(150px, 13.5vw); }/* @order 1270 */
+  .ct-rail-host > .slide-content { padding-left: var(--ct-rail-w); }/* @order 1271 */
+  .ct-rail {
+    position: absolute; left: 0; top: 0; bottom: 0; width: var(--ct-rail-w);
+    background: var(--sct); padding: 4vh 1.1vw; display: grid; align-content: center; gap: 1.9vh; z-index: 3;
+  }/* @order 1272 */
+  .ct-rail .ct-rail-kicker {
+    margin: 0; font-family: var(--mono); font-size: max(9px, .8cqw); letter-spacing: .16em;
+    text-transform: uppercase; color: var(--sc); font-weight: 600; line-height: 1.5;
+  }/* @order 1273 */
+  .ct-item {
+    display: grid; grid-template-columns: 1.5em 1fr; gap: .4vw; align-items: baseline;
+    font-size: max(11px, 1.05cqw); color: var(--muted); line-height: 1.25;
+  }/* @order 1274 */
+  .ct-item .ct-item-no { font-family: var(--mono); font-size: .82em; }/* @order 1275 */
+  .ct-item.done .ct-item-no { color: var(--sc); }/* @order 1276 */
+  .ct-item.done .ct-item-lbl { opacity: .75; }/* @order 1277 */
+  .ct-item.now { color: var(--ink); font-weight: 600; }/* @order 1278 */
+  .ct-item.now .ct-item-no { color: var(--sc); }/* @order 1279 */
+
+  /* Contents: FILMSTRIP variant ({contents=strip}) — contact-sheet footer of miniatures. *//* @order 1280 */
+  .ct-strip-host > .slide-content { padding-bottom: 13vh; }/* @order 1281 */
+  .ct-strip {
+    /* overrides .ct-overlay's inset:0 top so the strip sits as a 13vh FOOTER, not full-height. */
+    position: absolute; left: 0; right: 0; top: auto; bottom: 0; height: 13vh; border-top: 1px solid var(--line);
+    display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 1.8vw;
+    padding: 0 var(--slide-pad-x); background: var(--paper); z-index: 3;
+  }/* @order 1282 */
+  .ct-strip .ct-strip-kicker {
+    margin: 0; font-family: var(--mono); font-size: max(9px, .8cqw); letter-spacing: .16em;
+    text-transform: uppercase; color: var(--sc); font-weight: 600; max-width: 11ch; line-height: 1.5;
+  }/* @order 1283 */
+  .ct-shots { display: grid; grid-auto-flow: column; grid-auto-columns: 9.5vw; gap: .9vw; align-items: center; overflow: hidden; }/* @order 1284 */
+  .ct-shot {
+    aspect-ratio: 16 / 9; border: 1px solid var(--line); border-radius: 5px; background: var(--tint);
+    position: relative; overflow: hidden; transition: outline-color .2s ease;
+  }/* @order 1285 */
+  /* Real slide miniature (ADR-0007: the strip shows the slides themselves): a prepared clone of
+     the child slide laid out at full viewport size (vw units inside slides resolve against the
+     real viewport — the slideThumb pattern) and scaled as one rigid unit into the 9.5vw shot
+     (scale = 9.5vw / 100vw = .095, viewport-independent so it also holds inside the fixed
+     1280×720 presenter-preview iframe). *//* @order 1286 */
+  .ct-shot .ct-shot-mini {
+    position: absolute; left: 0; top: 0; width: 100vw; height: 56.25vw;
+    transform: scale(.095); transform-origin: top left; pointer-events: none;
+  }/* @order 1287 */
+  .ct-shot .ct-shot-mini .slide { display: grid !important; position: absolute; inset: 0; }/* @order 1288 */
+  .ct-shot .ct-mini-ph {
+    display: grid; place-items: center; width: 100%; height: 100%; min-height: 8em;
+    background: var(--sct); color: var(--muted); font-family: var(--mono); font-size: 2em; border-radius: 8px;
+  }/* @order 1289 */
+  .ct-shot.now { outline: 2.5px solid var(--sc); outline-offset: 2px; }/* @order 1290 */
+  .ct-shot.done { filter: grayscale(1); opacity: .45; }/* @order 1291 */
+  .ct-shot.done::after {
+    content: "✓"; position: absolute; top: 5%; right: 5%; width: 1.35em; height: 1.35em;
+    display: grid; place-items: center; font-size: max(8px, .9cqw); font-weight: 700;
+    color: var(--tint); background: var(--sc); border-radius: 50%; filter: none;
+  }/* @order 1292 */
+
+  /* Print / PDF export iterates SLIDES, not beats (ADR-0007 §consequences): a grid section prints
+     once as its plain section slide. Hide the runtime-injected container chrome and restore the
+     section's own content so print is never broken by an overlay. *//* @order 1293 */
+  @media print {
+    .ct-overlay { display: none !important; }
+    .ct-grid-host > .slide-content { display: grid !important; }
+    .ct-rail-host > .slide-content { padding-left: 0 !important; }
+    .ct-strip-host > .slide-content { padding-bottom: 0 !important; }
+  }/* @order 1294 */
+
+  @media print {
+    body { overflow: visible; background: white; }
+    .footer, .drawer, .notes-drawer, .progress, .presenter-root { display: none !important; }
+    .deck, .stage { display: block; min-height: auto; overflow: visible; }
+    .slide {
+      position: relative;
+      display: block !important;
+      min-height: 90vh;
+      page-break-after: always;
+      padding: 7vh 8vw;
+    }
+    aside.notes {
+      display: block;
+      margin-top: 32px;
+      padding: 18px;
+      border: 1px solid #bbb;
+      background: #f7f7f7;
+      color: #333;
+    }
+    [data-fragment].hidden-fragment { opacity: 1; transform: none; }
+  }/* @order 1295 */
+
+  /* === Reveal / Focus stepping modes (Dominik's redesign) ===
+     Two OPTIONAL, mutually-exclusive modes that step through a slide's content units one at
+     a time. Default is neither: every element renders fully visible and → advances the slide.
+     Both modes share one stepping grammar; only the resting/dim treatment differs.
+
+     The runtime tags each content unit (.mode-el) with a per-element state attribute so the
+     CSS below paints it. Layout is NEVER touched — reveal "hidden" elements keep their space
+     (opacity/visibility only, see .mode-el rule) so the slide does not reflow per step.
+     Title/kicker stay fully visible in both modes. The same classes are baked statically into
+     the presenter Current-preview clone (.mode-el + data-mode-state) so it mirrors exactly. *//* @order 1296 */
+  .slide.mode-active .mode-el {
+    transition: opacity 220ms ease, filter 220ms ease;
+  }/* @order 1297 */
+  /* REVEAL — step 0: all hidden; revealed-but-older soften to ~0.75; newest + full state full. *//* @order 1298 */
+  .slide.mode-reveal .mode-el[data-mode-state="hidden"] {
+    opacity: 0;
+    visibility: hidden;
+  }/* @order 1299 */
+  .slide.mode-reveal .mode-el[data-mode-state="soft"] { opacity: 0.75; }/* @order 1300 */
+  /* Sub-bullet stepping (2026-06-13): a top-level bullet is a unit AND its sub-bullets are units.
+     CSS opacity compounds, so a parent softened to 0.75 would cap a "current" child at 0.75 too.
+     A parent that still CONTAINS a tagged child stays fully opaque — it is the live context for
+     its sub-bullets, not an old/faded line. (Grouped lists never match: their bullets are not
+     mode-els, so [data-reveal-group] has no .mode-el descendant and dims as one whole.) *//* @order 1301 */
+  .slide.mode-reveal .mode-el[data-mode-state="soft"]:has(.mode-el[data-mode-state]) { opacity: 1; }/* @order 1302 */
+  .slide.mode-focus .mode-el[data-mode-state="soft"]:has(.mode-el[data-mode-state]),
+  .slide.mode-focus .mode-el[data-mode-state="fuzzy"]:has(.mode-el[data-mode-state]) { opacity: 1; filter: none; }/* @order 1303 */
+  .slide.mode-reveal .mode-el[data-mode-state="current"],
+  .slide.mode-reveal .mode-el[data-mode-state="full"] { opacity: 1; }/* @order 1304 */
+  /* FOCUS — step 0: all fuzzy (~0.15 + blur); visited soften to ~0.6; current/full sharp. *//* @order 1305 */
+  .slide.mode-focus .mode-el[data-mode-state="fuzzy"] {
+    opacity: 0.15;
+    filter: blur(2px);
+  }/* @order 1306 */
+  .slide.mode-focus .mode-el[data-mode-state="soft"] {
+    opacity: 0.6;
+    filter: none;
+  }/* @order 1307 */
+  .slide.mode-focus .mode-el[data-mode-state="current"],
+  .slide.mode-focus .mode-el[data-mode-state="full"] {
+    opacity: 1;
+    filter: none;
+  }/* @order 1308 */
+  /* Presenter Current-preview mirror — same selectors, applied to the cloned slide which
+     carries .mode-reveal/.mode-focus + .mode-active on its root and data-mode-state per unit. *//* @order 1309 */
+  /* Mode banner (top-centre toast, on-palette). Reused name kept for sync simplicity. *//* @order 1310 */
+  .focus-banner {
+    position: fixed;
+    top: 18px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-8px);
+    z-index: 90;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 16px;
+    border-radius: 999px;
+    background: var(--tint);
+    border: 1px solid var(--accent);
+    color: var(--ink);
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.16);
+    font: 600 13px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 200ms ease, transform 200ms ease;
+  }/* @order 1311 */
+  .focus-banner.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }/* @order 1312 */
+  .focus-banner kbd {
+    font: inherit;
+    font-weight: 700;
+    color: var(--accent);
+  }/* @order 1313 */
+  @media print { .focus-banner { display: none !important; } }/* @order 1314 */
+  /* F1 — live highlight sync. The presenter's highlight wraps the chosen text in <mark.hl-mark>;
+     the same mark is reproduced on the audience slide. A warm translucent wash keeps the text
+     fully readable (no boxed background that fights the slide's own type). Spanning nested
+     markup (<strong> etc.) produces several adjacent marks, so they must read as one continuous
+     stroke — no per-mark padding, inherit colour/weight. *//* @order 1315 */
+  mark.hl-mark {
+    background: linear-gradient(transparent 8%, rgba(255, 209, 102, 0.62) 8%, rgba(255, 209, 102, 0.62) 92%, transparent 92%);
+    color: inherit;
+    padding: 0;
+    border-radius: 2px;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }/* @order 1316 */
+  /* Presenter Current preview shows the same marks (baked into the clone), so the speaker sees
+     exactly what the audience sees. While highlight mode is armed, the preview is selectable. *//* @order 1317 */
+  .presenter-root.highlight-armed .presenter-main > .presenter-panel:first-child .preview iframe {
+    pointer-events: auto;
+    cursor: text;
+  }/* @order 1318 */
+  .presenter-root.highlight-armed .presenter-main > .presenter-panel:first-child {
+    outline: 2px solid var(--accent, #e0a93b);
+    outline-offset: -2px;
+  }/* @order 1319 */
+  /* Print: every element fully visible regardless of mode state. *//* @order 1320 */
+  @media print {
+    .slide.mode-active .mode-el { opacity: 1 !important; visibility: visible !important; filter: none !important; }
+  }/* @order 1321 */
+  /* Presenter mode-toggle button active states. *//* @order 1322 */
+  #presenterReveal.active,
+  #presenterFocus.active { background: #2f6db5; border-color: #2f6db5; color: #fff; font-weight: 600; }/* @order 1323 */
+
+  /* === TITLE PLACEMENT — the locked deck-wide default (2026-06-09 title spec) ===
+     ONE data-driven title system, applied by the generator's data-title-layout / data-split
+     attributes on the slide <section>:
+       data-title-layout="left"  → title in a LEFT rail (35/65 by default; data-split=30|50 tunes
+                                    it), the rail vertically centred; all other content fills the
+                                    right column. The default for text/list/statement/contrast/
+                                    image-claim/quote and the vertical timelines.
+       data-title-layout="top"   → a small title bar on TOP, content full width below. The default
+                                    for wide layouts (columns, media, big diagrams, horizontal
+                                    timeline) and the {titletop} override on any slide.
+     Structural/centred layouts (title, section/subsection divider, closing) and self-columned ones
+     (cards, copy-visual, code, trace, list-visual) carry NO data-title-layout and keep their own
+     treatment. These rules turn .slide-content into the grid and re-home its children, overriding
+     each layout's bespoke grid — so the placement is uniform regardless of the slide's layout. *//* @order 1324 */
+
+  /* LEFT rail (ADR-0005 title-as-sidebar, Gate B fix): the rail is the LEFTMOST band —
+     flush with the slide edge — and the slide spans the FULL stage (the 1180px content box
+     was floating the rail mid-slide). Content in column 2 gets the remaining width at a
+     larger reading size. Split via data-split. *//* @order 1325 */
+  .slide[data-title-layout="left"] { --rail-w: max(260px, 26cqw); }/* @order 1326 */
+  .slide[data-title-layout="left"][data-split="30"] { --rail-w: max(240px, 30cqw) !important; }/* @order 1327 */
+  .slide[data-title-layout="left"][data-split="35"] { --rail-w: max(280px, 35cqw) !important; }/* @order 1328 */
+  .slide[data-title-layout="left"][data-split="40"] { --rail-w: max(300px, 40cqw) !important; }/* @order 1329 */
+  .slide[data-title-layout="left"][data-split="50"] { --rail-w: max(340px, 50cqw) !important; }/* @order 1330 */
+  /* The tint rail is painted on the SLIDE (full height by construction) — pseudo-element and
+     grid-row tricks either inflated scrollHeight (autofit zoomed the slide to 0.45) or
+     centre-packed with the grid rows. --rail-w keeps paint and column in lockstep. *//* @order 1331 */
+  .slide[data-title-layout="left"]:has(> .slide-content > .slide-head:not(.slide-head-quiet)) {
+    padding: 0;
+    background: linear-gradient(to right, var(--tint) 0, var(--tint) var(--rail-w), transparent var(--rail-w));
+  }/* @order 1332 */
+  .slide[data-title-layout="left"]:has(> .slide-content > .slide-head:not(.slide-head-quiet)) .slide-content {
+    display: grid !important;
+    width: 100%;
+    max-width: none;
+    min-height: 100%;
+    margin: 0;
+    grid-template-columns: var(--rail-w) 1fr !important;
+    column-gap: clamp(34px, 4vw, 72px);
+    padding-right: var(--slide-pad-x);
+    align-content: center;
+    align-items: center;
+    text-align: left;
+  }/* @order 1333 */
+      /* Rail text keeps the safe-area inset even though the band touches the edge. *//* @order 1334 */
+  .slide[data-title-layout="left"] .slide-content > .slide-head:not(.slide-head-quiet) {
+    padding-left: var(--slide-pad-x);
+  }/* @order 1335 */
+  /* The right column reads LARGE — the rail earns its keep by giving the content room. *//* @order 1336 */
+  .slide[data-title-layout="left"] .slide-content > .content-p:not(.card-comment) { font-size: max(29px, 2.8cqw); max-width: 40ch; }/* @order 1337 */
+  /* ADR-0005 title-as-sidebar (mockup .t-side): the rail is a SECTION-TINT panel — kicker in
+     the accent, title in ink, vertically centred, stretching the column's full height. *//* @order 1338 */
+  .slide[data-title-layout="left"] .slide-content > .slide-head {
+    display: grid !important;
+    align-content: center;
+    grid-column: 1 !important;
+    grid-row: 1 / span 99 !important;
+    align-self: stretch !important;
+    min-height: 100%;
+    place-content: center;
+  }/* @order 1339 */
+  /* The tint rail paints ONLY a VISIBLE head — a nav-only quiet head must stay invisible
+     (painting it produced stray floating tint bars on statement/quote slides). The rail
+     runs the column's FULL height via an oversized ::before clipped by the slide. *//* @order 1340 */
+  .slide[data-title-layout="left"] .slide-content > .slide-head:not(.slide-head-quiet) {
+    position: relative;
+    padding: clamp(24px, 4vh, 48px) clamp(28px, 2.6cqw, 72px);
+  }/* @order 1341 */
+  .slide[data-title-layout="left"] .slide-content > .slide-head > h1 { max-width: 14ch; }/* @order 1342 */
+  .slide[data-title-layout="left"] .slide-content > ol.timeline {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-evenly;
+    min-height: 62cqh;
+  }/* @order 1344 */
+  /* {sidebar}/{title=side}: the ADR-0005 tint rail above (the pre-rewrite blue panel stays
+     retired; the tint panel is the locked replacement).
+     data-title-style="sidebar" may still be stamped by legacy {titlestyle=sidebar}; it is inert. *//* @order 1345 */
+  /* Every non-title direct child fills the right content column (feature-list, figure,
+     columns-grid, lv/tv body, diagram svg, prose, blockquote, statement paragraphs …). *//* @order 1346 */
+  .slide[data-title-layout="left"] .slide-content > *:not(.slide-head) {
+    grid-column: 2 !important;
+    grid-row: 1 / span 99 !important;
+    align-self: center;
+    min-width: 0;
+    max-width: 100%;
+  }/* @order 1347 */
+  /* Trailing siblings after the first flow under it in the same column (multi-paragraph
+     statements, a source line, an action row): let them take auto rows rather than stack on row 1. *//* @order 1348 */
+  .slide[data-title-layout="left"] .slide-content > *:not(.slide-head) ~ *:not(.slide-head) {
+    grid-row: auto !important;
+    margin-top: clamp(20px, 5vh, 72px);
+  }/* @order 1349 */
+  /* {notitle} on a left-rail layout: the heading is nav-only (.slide-head-quiet, sr-only h1), so
+     the empty 35% rail would just be dead space. Collapse to a single full-width column and let the
+     content span it — the title-less statement then genuinely owns the whole slide (full-bleed). *//* @order 1350 */
+  .slide[data-title-layout="left"] .slide-content:has(> .slide-head-quiet) {
+    grid-template-columns: 1fr !important;
+  }/* @order 1351 */
+  .slide[data-title-layout="left"] .slide-content:has(> .slide-head-quiet) > *:not(.slide-head) {
+    grid-column: 1 !important;
+  }/* @order 1352 */
+  /* …EXCEPT a quote slide carrying a figure (2026-06-09): the pair keeps its two-column
+     image-beside-quote arrangement even though the (quiet-headed) rail collapsed. *//* @order 1353 */
+  .slide[data-title-layout="left"] .slide-content.layout-quote:has(> .slide-figure) {
+    grid-template-columns: minmax(0, 0.62fr) minmax(0, 1fr) !important;
+    column-gap: clamp(28px, 3.2vw, 56px);
+    align-items: center;
+  }/* @order 1354 */
+  .slide[data-title-layout="left"] .slide-content.layout-quote:has(> .slide-figure) > .slide-figure {
+    grid-column: 1 !important;
+    grid-row: 1 !important;
+  }/* @order 1355 */
+  .slide[data-title-layout="left"] .slide-content.layout-quote:has(> .slide-figure) > blockquote {
+    grid-column: 2 !important;
+    grid-row: 1 !important;
+  }/* @order 1356 */
+
+  /* TOP title bar: title stacks above full-width content. The fix for the old "List D" overflow
+     is here — .slide-head is a real grid row with its OWN track (grid-template-rows: auto 1fr) and
+     a bottom margin, so the H1 can never overlap the content beneath it; the content row takes the
+     remaining height and starts cleanly below the bar. *//* @order 1357 */
+  .slide[data-title-layout="top"] .slide-content {
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: flex-start;
+    align-items: stretch;
+    text-align: left;
+  }/* @order 1358 */
+  /* The title bar sits at the TOP of the slide, LEFT-aligned (reset any align-self: center a
+     layout like list/contrast would otherwise impose on the head in this flex column). *//* @order 1359 */
+  .slide[data-title-layout="top"] .slide-content > .slide-head {
+    display: block !important;
+    flex: 0 0 auto !important;
+    align-self: flex-start !important;
+    text-align: left !important;
+    margin: 0 0 clamp(16px, 2.4vw, 32px) !important;
+  }/* @order 1360 */
+  /* The content below the top bar centres in the remaining space (leading/trailing auto margins
+     absorb the free space, so a short list/figure sits mid-stage rather than hugging the title). *//* @order 1361 */
+  .slide[data-title-layout="top"] .slide-content > .slide-head + * { margin-top: auto !important; }/* @order 1362 */
+  .slide[data-title-layout="top"] .slide-content > *:last-child:not(.slide-head) { margin-bottom: auto !important; }/* @order 1363 */
+  /* The top-title bar reads as a compact band: a touch smaller than the rail H1 so the visual
+     below owns the stage, with a thin accent underline marking the bar. *//* @order 1364 */
+  .slide[data-title-layout="top"] .slide-content > .slide-head > h1 {
+    /* 2026-07-08: full-width single line (was max-width: 32ch, which wrapped long titles). */
+    max-width: none;
+    font-size: max(22px, 3.1cqw);
+    /* ADR-0005: no decorative underlines — whitespace separates the bar from the stage. */
+    padding-bottom: 0.18em;
+  }/* @order 1365 */
+  /* All non-title children stack in normal document flow BELOW the bar, full width. A flex column
+     guarantees the title can never overlap the content (the old List D top-title bug): the head is
+     its own non-shrinking flex item, the content follows after it. *//* @order 1366 */
+  .slide[data-title-layout="top"] .slide-content > *:not(.slide-head) {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    width: 100%;
+  }/* @order 1367 */
+
+  /* corner-section: quiet top-right label (SD-8, Wave 1 task 3) *//* @order 1368 */
+  .slide .corner-section {
+    position: absolute;
+    top: 4%;
+    right: 5%;
+    font-size: max(0.55rem, 1.4cqw);
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--faint, rgba(0,0,0,0.25));
+    pointer-events: none;
+  }/* @order 1375 */
+  /* Inside a container-mode host (contents rail / grid / strip) the SECTION owns the left
+     band — the child slide's own title rail must not paint a second tint column. *//* @order 1384 */
+
+  /* ===================================================================================
+     ADR-0005 FIDELITY LAYER — ported from the LOCKED mockup round-2-structure-refined.html.
+     The mockup is the spec; these rules sit at the very end of the cascade and express the
+     mockup's design verbatim: em sizes against ONE proportional base per slide, so the
+     mockup's proportions hold at any stage size. (Dominik, 2026-07-11: "every single design
+     in there must be represented fully".)
+     =================================================================================== *//* @order 1386 */
+
+  /* .box — the mockup's emphasis device: accent plate behind the key phrase, cloned per line *//* @order 1412 */
+
+  /* Title-as-sidebar panel typography (mockup .t-side .panel h3 — NOT display-scale) *//* @order 1415 */
+  /* Dominik's one correction TO the lock (2026-07-11): with text-only content the 26% rail
+     reads too narrow — text-only rail slides get a wider panel so the two columns balance. *//* @order 1417 */
+
+  /* ADR-0005 deck font options (frontmatter `font:`): Gill Sans and Verdana are the sanctioned
+     alternatives; everything else rides the Trebuchet default. *//* @order 1488 */
+
+  /* Icon rows (mockup .quad): accent top rule, icon+heading, hairline-separated sub-items. *//* @order 1526 */
+  /* Structural layouts own the full band (mockup .body spans the stage; only TEXT keeps a
+     ch-capped measure). The old 1180px content column strangled grids/tables/charts wide. *//* @order 1583 */
+  /* V1 · Poster (default) *//* @order 1588 */
+  /* V2 · Split card *//* @order 1596 */
+  /* V3 · Banner *//* @order 1629 */
+
+  /* #76 a rail slide with NO content owns the stage: full tint, centred title block *//* @order 1639 */
+
+  /* ── TYPE RAMP (round-6 size review, 2026-07-11): one documented scale, stage-relative.
+     Hierarchy must never invert: display > title > rail title > body > dense > label. *//* @order 1652 */
+
+  /* ── TITLE ZONE (round-6): content-slide titles sit at a FIXED distance from the top with a
+     hairline divider; content anchors under it instead of drifting in a sea of white. ── *//* @order 1750 */
+
+  /* trace terminal at presentation scale: body text NEVER caps, panel owns the band */

@@ -1,0 +1,76 @@
+/* @order 1468 */
+  .pyramid { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; }/* @order 1469 */
+  .pyramid .pyr-tier {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.6em;
+    background: var(--accent);
+    color: var(--paper);
+    font-weight: 600;
+    font-size: max(26px, 1.15em);
+    border: none;
+    border-radius: 0;
+    padding: .2em 1em;
+  }/* @order 1470 */
+  .pyramid .pyr-tier .pyr-label { color: inherit; }/* @order 1471 */
+  .pyramid .pyr-tier:nth-child(1) { width: 24%; }/* @order 1472 */
+  .pyramid .pyr-tier:nth-child(2) { width: 44%; opacity: .8; }/* @order 1473 */
+  .pyramid .pyr-tier:nth-child(3) { width: 64%; opacity: .6; }/* @order 1474 */
+  .pyramid .pyr-tier:nth-child(4) { width: 84%; opacity: .4; }/* @order 1475 */
+  .pyramid .pyr-tier:nth-child(5) { width: 96%; opacity: .3; }/* @order 1536 */
+  .flow-row { width: 100%; justify-content: space-between; gap: 1em; }/* @order 1537 */
+  .flow-row .flow-item { flex: 1 1 0; min-width: 0; }/* @order 1538 */
+  .flow-row .flow-node {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--paper);
+    border: 1px solid var(--hairline);
+    border-top: 4px solid var(--accent);
+    border-radius: 0;
+    box-shadow: none;
+    font-weight: 600;
+    font-size: max(28px, 1.05em);
+    padding: 1em 1.1em;
+    text-align: left;
+  }/* @order 1539 */
+  .flow-row .flow-arrow { color: var(--accent); font-size: max(30px, 1.4em); }/* @order 1550 */
+  .flow.flow-horizontal {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .8em;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+  }/* @order 1551 */
+  .flow.flow-horizontal .flow-node {
+    flex: 1 1 0;
+    min-width: 0;
+    background: var(--paper);
+    border: 1px solid var(--hairline);
+    border-top: 4px solid var(--accent);
+    border-left: none;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 1em 1.1em;
+    text-align: left;
+  }/* @order 1552 */
+  .flow.flow-horizontal .flow-node .flow-label { font-weight: 600; font-size: max(28px, 1.05em); line-height: 1.25; }/* @order 1553 */
+  .flow.flow-horizontal .flow-connector { flex: 0 0 auto; }/* @order 1554 */
+  .flow.flow-horizontal .flow-arrow { color: var(--accent); font-size: max(30px, 1.3em); }/* @order 1556 */
+  .orgchart { font-size: max(26px, .95em); width: 100%; }/* @order 1557 */
+  .orgchart .org-box {
+    font-weight: 400;
+    font-size: 1em;
+    padding: .55em 1em;
+    border: 1px solid var(--hairline);
+    border-top: 3px solid var(--accent);
+    border-radius: 0;
+    box-shadow: none;
+    background: var(--paper);
+  }/* @order 1558 */
+  .orgchart .org-root > .org-box { font-weight: 600; }/* @order 1618 */
+  .conceptmap { width: 100%; }/* @order 1619 */
+  .conceptmap svg { min-height: 60vh; width: 100%; }/* @order 1620 */
+  .conceptmap svg text { font-weight: 400; }

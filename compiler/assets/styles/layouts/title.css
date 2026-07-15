@@ -1,0 +1,182 @@
+/* @order 0049 */
+  /* ADR-0005 section divider (mockup .t-section): the whole slide fills with the section TINT;
+     a mono accent eyebrow sits above a large sans title. Block centred both axes, text left
+     inside (whitespace rule). NO underline — the tint field is the "you are here" cue. *//* @order 0050 */
+  .slide:has(> .slide-content.layout-section-title) { background: var(--tint); }/* @order 0051 */
+  .slide-content.layout-section-title {
+    justify-items: center;
+    align-content: center;
+    text-align: left;
+  }/* @order 0052 */
+  .slide-content.layout-section-title h1 {
+    font-family: var(--sans);
+    font-weight: 700;
+    max-width: 12em;
+    font-size: max(38px, 5.6cqw);
+    line-height: 1.24;
+    letter-spacing: -0.025em;
+  }/* @order 0053 */
+  /* Mono accent eyebrow above section titles, even when no kicker is authored. *//* @order 0054 */
+  .slide-content.layout-section-title h1::before {
+    content: "Section";
+    display: block;
+    margin-bottom: 0.7em;
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: max(13px, 1.1cqw);
+    font-weight: 500;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    border: 0;
+  }/* @order 0055 */
+  .slide-content.layout-section-title .kicker {
+    font-family: var(--mono);
+    font-weight: 500;
+    color: var(--accent);
+  }/* @order 0056 */
+  .slide-content.layout-section-title .kicker + h1::before { display: none; }/* @order 0057 */
+
+  /* === H2 subsection-title (level-2 interstitial) === *//* @order 0058 */
+  /* Progressive de-emphasis from a section title: noticeably smaller h1, LEFT-aligned (not
+     centred), the PARENT section shown as an accent eyebrow above, a lighter/thinner underline.
+     The slide's --accent is the parent section's accent (set inline, like section titles). *//* @order 0059 */
+  /* Subsection = a quieter section divider (ADR-0005 progressive de-emphasis): no tint field,
+     smaller sans title, a mono accent parent-eyebrow. Block centred both axes, text left. *//* @order 0060 */
+  .slide-content.layout-subsection-title {
+    justify-items: center;
+    align-content: center;
+    text-align: left;
+  }/* @order 0061 */
+  .slide-content.layout-subsection-title .kicker {
+    color: var(--accent);
+    font-family: var(--mono);
+    font-weight: 500;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    font-size: max(13px, 1.1cqw);
+    margin-bottom: 0.6em;
+  }/* @order 0062 */
+  .slide-content.layout-subsection-title h1 {
+    font-family: var(--sans);
+    font-weight: 700;
+    max-width: 14em;
+    font-size: max(31px, 4.4cqw);
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+  }/* @order 0063 */
+
+  /* === E7 auto title slide (deck-title) === *//* @order 0064 */
+  /* Opening bookend. Asymmetric, left-anchored: an accent kicker (the event line), the deck
+     title at the largest serif scale with an accent rule beneath it, then the author muted.
+     Distinct from a section title (which is centred) — this opens the whole deck. *//* @order 0065 */
+  /* ADR-0005 poster title (mockup title-variations V1): white page, large sans title, mono
+     accent event line above, author muted below. Block centred both axes, text left inside
+     (whitespace rule). The accent gesture is a keyword underline on **bold** (mockup .under);
+     the whole-title rule is dropped (poster underlines only the key phrase). *//* @order 0066 */
+  /* Poster assembly (title-variations V1): the title block owns the centre; the speaker line
+     is PINNED to the bottom of the stage, led by a short accent rule; any kicker (series ·
+     event) sits at the top in mono accent. Never a floating author line under the title. *//* @order 0067 */
+  .slide-content.layout-title {
+    width: 100%;
+    max-width: none;
+    min-height: 100%;
+    display: grid !important;
+    grid-template-rows: auto 1fr auto;
+    align-content: stretch;
+    justify-items: start;
+    padding-bottom: clamp(18px, 3.5vh, 44px);
+  }/* @order 0068 */
+  .slide-content.layout-title > .slide-head,
+  .slide-content.layout-title > h1,
+  .slide-content.layout-title > .slide-head > h1 {
+    /* .slide-head is display:contents on title slides — the H1 itself is the grid item. */
+    grid-row: 2;
+    align-self: center;
+    justify-self: center;
+  }/* @order 0069 */
+  .slide-content.layout-title > .slide-head > .kicker,
+  .slide-content.layout-title > .kicker { grid-row: 1; justify-self: start; }/* @order 0070 */
+  .slide-content.layout-title > p {
+    grid-row: 3;
+    justify-self: stretch;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.8em;
+    max-width: none;
+    font-size: max(17px, 1.5cqw);
+    color: var(--ink);
+    font-weight: 600;
+  }/* @order 0071 */
+  .slide-content.layout-title > p::before {
+    content: "";
+    flex: 0 0 auto;
+    width: 3em;
+    height: 2px;
+    background: var(--accent);
+  }/* @order 0072 */
+  .slide-content.layout-title > .slide-head > .kicker,
+  .slide-content.layout-title > .kicker {
+    color: var(--accent);
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: max(14px, 1.3cqw);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    margin-bottom: 22px;
+  }/* @order 0073 */
+  .slide-content.layout-title h1 {
+    font-family: var(--sans);
+    font-weight: 700;
+    max-width: 11em;
+    font-size: max(38px, 6.5cqw);
+    line-height: 1.14;
+    letter-spacing: -0.035em;
+  }/* @order 0074 */
+  /* Poster keyword underline: **bold** in the title gets the soft accent underline, upright. *//* @order 0075 */
+  .slide-content.layout-title h1 strong {
+    color: inherit;
+    font-weight: inherit;
+    box-shadow: inset 0 -0.16em 0 color-mix(in srgb, var(--accent) 35%, transparent);
+  }/* @order 0078 */
+
+  /* === E7 auto closing slide (deck-thanks) === *//* @order 0079 */
+  /* Closing bookend. Centred, statement-scale "Thank you"; the call-to-action (or the
+     author/event tail) sits below, prominent — the CTA's bold runs already render in the
+     accent (.slide-content … strong rule), so a `**…**` cta pops. *//* @order 0080 */
+  .slide-content.layout-closing {
+    place-items: center;
+    text-align: center;
+  }/* @order 0081 */
+  .slide-content.layout-closing h1 {
+    font-family: var(--sans);
+    font-weight: 700;
+    max-width: 12em;
+    font-size: max(33px, 5.14cqw);
+    line-height: 1.3;
+    letter-spacing: -0.025em;
+  }/* @order 0082 */
+  .slide-content.layout-closing > p,
+  .slide-content.layout-closing > .slide-head + p {
+    text-align: center;
+    max-width: 40ch;
+    margin: 28px auto 0;
+    font-size: max(22px, 2.8cqw);
+  }/* @order 1378 */
+  /* Title slides are POSTERS, never left-rail slides — whatever title placement got stamped.
+     Re-assert the poster grid over the rail system (same trick as the statement repair). *//* @order 1390 */
+
+  /* Section divider (mockup .t-section): full-bleed tint, centred title *//* @order 1420 */
+
+  /* ── FIDELITY BATCH 2 (mockup slides 3, 3b, 9, 10, 13, 14, 14e, 17, 18) ─────────────── *//* @order 1421 */
+
+  /* Content-slide title treatment (mockup h3.head + .meta kicker) *//* @order 1572 */
+
+  /* Titles left (#68): title/section headings never centre while other text left-aligns *//* @order 1574 */
+
+  /* ── ADR-0005 title designs (title-variations.html, ported verbatim) ── *//* @order 1576 */
+  /* the head may be display:contents — hide its CHILDREN, the box may not exist *//* @order 1633 */
+
+  /* #77 closing mirrors the title poster: statement-scale thanks, accent CTA, identity bottom *//* @order 1670 */
+
+  /* ── FIDELITY BATCH 9: closing poster · mockup complex-table family (roles-h/roles-v) ── */

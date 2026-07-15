@@ -1,0 +1,57 @@
+/* @order 1408 */
+  .card-gallery { counter-reset: twcard; }/* @order 1409 */
+  .card-gallery .card {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: .9em;
+    border: 1px solid var(--hairline);
+    border-radius: 0;
+    box-shadow: none;
+    background: var(--paper);
+    padding: 1em .9em;
+    min-height: 21vh;
+    counter-increment: twcard;
+  }/* @order 1410 */
+  .card-gallery .card::after {
+    content: counter(twcard, decimal-leading-zero);
+    font-family: var(--mono);
+    font-size: .6em;
+    color: var(--muted);
+    letter-spacing: .1em;
+  }/* @order 1411 */
+  .card-gallery .card .card-icon svg, .card-gallery .card > svg {
+    width: 1.8em;
+    height: 1.8em;
+    color: var(--accent);
+    stroke-width: 1.5;
+  }/* @order 1650 */
+  .card-gallery .card { font-size: var(--fs-dense); }/* @order 1651 */
+  .card-gallery .card .card-title, .card-gallery .card h3 { font-weight: 500; }/* @order 1676 */
+  .card-gallery .card { border-top: 4px solid var(--accent); }/* @order 1677 */
+  .card-gallery .card .lblgrp { padding: .7em 0; border-top: 1px solid var(--hairline); width: 100%; }/* @order 1678 */
+  .card-gallery .card .lblgrp:first-of-type { border-top: none; }/* @order 1679 */
+  .card-gallery .card .lblgrp .lbl {
+    display: block;
+    font-family: var(--mono);
+    font-size: max(13px, .62em);
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: .3em;
+  }/* @order 1680 */
+  .card-gallery .card .lblgrp .val { color: var(--ink); line-height: 1.45; font-size: .95em; font-weight: 400; }/* @order 1682 */
+  .card-gallery.cards-rows { display: flex; flex-direction: column; gap: .6em; counter-reset: twcard; }/* @order 1683 */
+  .card-gallery.cards-rows .card {
+    display: grid;
+    grid-template-columns: 22% repeat(auto-fit, minmax(0, 1fr));
+    gap: 1.5em;
+    align-items: start;
+    min-height: 0;
+    border-top: 1px solid var(--hairline);
+    border-left: 4px solid var(--accent);
+    padding: 1em 1.2em;
+  }/* @order 1684 */
+  .card-gallery.cards-rows .card::after { display: none; }/* @order 1685 */
+  .card-gallery.cards-rows .card .lblgrp { border-top: none; padding: 0; }

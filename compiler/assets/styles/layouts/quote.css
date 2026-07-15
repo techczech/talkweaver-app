@@ -1,0 +1,50 @@
+/* @order 0709 */
+
+  /* QUOTE LAYOUT (quote-only slide, title hidden by default). The blockquote owns the whole
+     stage: centred, full-bleed, larger than the inline pull-quote since no title competes. The
+     nav-only heading (.slide-head-quiet) holds an sr-only h1 and is not drawn. {title=show}
+     restores a normal .slide-head above the quote. *//* @order 0710 */
+  /* ADR-0005 quote (mockup .t-quote / .qpanel): a tinted panel with an accent left rule and an
+     oversized quotation mark — "unmistakably a quote". Upright sans (NO italics), line-height
+     1.42 so boxed strong emphasis clears its neighbours; the text line caps at 17em. Block
+     centred both axes, text left inside. Attribution reads below with a short accent rule. *//* @order 0711 */
+  .slide-content.layout-quote { justify-content: center; align-content: center; justify-items: center; }/* @order 0712 */
+  .slide-content.layout-quote > .slide-head-quiet { display: contents; }/* @order 0713 */
+  .slide-content.layout-quote > blockquote {
+    margin: 0;
+    background: var(--tint);
+    border-left: 6px solid var(--accent);
+    padding: clamp(28px, 5vh, 52px) clamp(28px, 4vw, 56px) clamp(28px, 5vh, 52px) clamp(52px, 5.5vw, 92px);
+    font-family: var(--sans);
+    font-weight: 400;
+    font-size: max(28px, 3.4cqw);
+    line-height: 1.42;
+    max-width: min(62vw, 24em);
+  }/* @order 0714 */
+  .slide-content.layout-quote > blockquote > p { max-width: 17em; }/* @order 0715 */
+  .slide-content.layout-quote > blockquote[data-quote-length="medium"] { font-size: max(24px, 2.6cqw); }/* @order 0716 */
+  .slide-content.layout-quote > blockquote[data-quote-length="long"] { font-size: max(19px, 1.9cqw); }/* @order 0717 */
+  /* Mark sits in the panel's corner, CLEAR of the text (padding-left reserves its column). *//* @order 0718 */
+  .slide-content.layout-quote > blockquote::before { font-size: 2.9em; opacity: 0.9; top: 0.05em; left: 0.16em; }/* @order 0719 */
+  /* Boxed emphasis inside the quote (mockup .box): filled accent chip, clone across line wraps. *//* @order 0720 */
+  .slide-content.layout-quote > blockquote strong {
+    background: var(--accent); color: var(--paper);
+    padding: 0.02em 0.18em; border-radius: 0.1em;
+    box-decoration-break: clone; -webkit-box-decoration-break: clone;
+  }/* @order 0721 */
+  /* Attribution: upright, muted, led by a short accent rule (mockup .attr .rule). *//* @order 0722 */
+  .slide-content.layout-quote > blockquote cite {
+    margin-top: 1.3em;
+    font-size: 0.42em;
+  }/* @order 0723 */
+  .slide-content.layout-quote > blockquote cite::before {
+    content: "";
+    display: inline-block;
+    width: 3em; height: 2px;
+    background: var(--accent);
+    vertical-align: middle;
+    margin-right: 0.8em;
+  }/* @order 1393 */
+
+  /* Quote (mockup .t-quote): tint panel, thick accent left border, giant serif mark,
+     rule-then-name attribution */
