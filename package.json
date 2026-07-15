@@ -1,0 +1,183 @@
+{
+  "name": "talk-weaver",
+  "version": "0.17.3",
+  "description": "Desktop authoring app for the presentation ecosystem",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "typecheck": "tsc --noEmit",
+    "smoke:compiler": "node scripts/smoke-compiler.mjs",
+    "test:embeds": "node scripts/test-embed-inline.mjs",
+    "test:frame": "node scripts/test-frame.mjs",
+    "generate:triggers": "node scripts/generate-trigger-dictionary.mjs",
+    "test:layout-registry": "node scripts/test-layout-registry-parity.mjs",
+    "test:options-model": "node scripts/test-layout-options-model.mjs",
+    "test:options-parity": "node scripts/test-options-parity.mjs",
+    "test:deck-options-parity": "node scripts/test-deck-options-parity.mjs",
+    "test:frontmatter-editor": "node scripts/test-frontmatter-editor.mjs",
+    "test:inspector-model": "node scripts/test-inspector-model.mjs",
+    "test:inline-trigger-commit": "node scripts/test-inline-trigger-commit.mjs",
+    "generate:deck-styles": "node scripts/build-deck-styles.mjs",
+    "generate:shortcut-help": "node scripts/build-shortcut-help.mjs",
+    "test:css-modules": "node scripts/test-css-modules.mjs",
+    "test:shortcuts": "node scripts/test-shortcut-registry.mjs",
+    "test:commands": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-command-registry.mjs",
+    "test:prerender-ledger": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-prerender-ledger.mjs",
+    "test:warnings": "node scripts/test-warning-registry.mjs",
+    "test:trigger-line": "node scripts/test-trigger-line.mjs",
+    "test:icon-fallback": "node scripts/test-icon-fallback.mjs",
+    "test:static-folds": "node scripts/test-static-card-folds.mjs",
+    "test:contrast-variants": "node scripts/test-contrast-variants.mjs",
+    "test:round-b-variants": "node scripts/test-round-b-variants.mjs",
+    "sampler:build": "node scripts/build-layout-sampler.mjs",
+    "test:sampler": "node e2e/test-layout-sampler.mjs",
+    "test:metadata": "node scripts/test-metadata-registry.mjs",
+    "test:tags": "node scripts/test-tags.mjs",
+    "test:pathways": "node scripts/test-pathways.mjs",
+    "test:runs:e2e": "node e2e/diagnose-runs.mjs",
+    "test:runs": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-runs.mjs",
+    "test": "npm run test:sequencer && npm run smoke:compiler && npm run test:overview && npm run test:beats && npm run test:metadata && npm run test:tags && npm run test:pathways && npm run test:runs && npm run test:layout-registry && npm run test:layout-picker && npm run test:options-model && npm run test:options-parity && npm run test:deck-options-parity && npm run test:frontmatter-editor && npm run test:inspector-model && npm run test:inline-trigger-commit && npm run test:talklist-window && npm run test:vault-index-handler && npm run test:css-modules && npm run test:shortcuts && npm run test:commands && npm run test:prerender-ledger && npm run test:warnings && npm run test:trigger-line && npm run test:icon-fallback && npm run test:static-folds && npm run test:contrast-variants && npm run test:round-b-variants && npm run test:sampler",
+    "test:selector": "node scripts/test-selector-logic.mjs",
+    "test:layout-picker": "node scripts/test-layout-picker-model.mjs",
+    "test:talklist-window": "node scripts/test-talklist-window.mjs",
+    "test:vault-index-handler": "node scripts/test-vault-list-handler.mjs",
+    "test:sidebar": "node e2e/diagnose-sidebar.mjs",
+    "test:slides": "node scripts/test-slide-outline.mjs",
+    "test:moves": "node scripts/test-outliner-moves.mjs",
+    "test:tree": "node scripts/test-tree.mjs",
+    "test:sequencer": "node scripts/test-sequencer.mjs",
+    "test:beats": "node scripts/test-beats-preview.mjs",
+    "test:container": "node scripts/test-container-render.mjs",
+    "test:migrate": "node scripts/test-migrate.mjs",
+    "migrate": "node compiler/scripts/migrate-outline.mjs",
+    "test:publishing": "node scripts/test-publishing-logic.mjs",
+    "test:links": "node scripts/test-links.mjs",
+    "test:normalize": "node scripts/test-normalize.mjs",
+    "test:timers": "node scripts/test-timers.mjs",
+    "test:overview": "node scripts/test-overview.mjs",
+    "test:ledger": "node scripts/test-ledger.mjs",
+    "test:ledger:presentation": "node scripts/test-presentation-ledger.mjs",
+    "test:history": "node e2e/diagnose-history.mjs",
+    "test:recording": "node e2e/diagnose-recording.mjs",
+    "test:replay": "node e2e/diagnose-replay.mjs",
+    "test:transcript": "node e2e/diagnose-transcript.mjs",
+    "test:propagation": "node scripts/test-propagation.mjs",
+    "test:merge": "node scripts/test-merge.mjs",
+    "test:browser": "node scripts/test-browser-model.mjs",
+    "test:focus": "node scripts/test-focus-scope.mjs",
+    "test:focus-model": "node scripts/test-slide-focus.mjs",
+    "build:ocr": "swiftc -O native/ocr.swift -o native/ocr",
+    "build:media": "swiftc -O native/media.swift -o native/media",
+    "build:native": "npm run build:ocr && npm run build:media",
+    "build": "npm run generate:triggers && npm run generate:deck-styles && npm run generate:shortcut-help && tsc --noEmit && electron-vite build",
+    "preview": "electron-vite preview",
+    "start": "electron .",
+    "dist:mac": "tsc --noEmit && npm run build:native && npm run build && electron-builder --mac --dir",
+    "dist:mac:release": "npm run build:native && npm run build && electron-builder --mac",
+    "dist:win:release": "npm run build && electron-builder --win"
+  },
+  "build": {
+    "appId": "com.techczech.talkweaver",
+    "productName": "TalkWeaver",
+    "asar": false,
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "compiler",
+        "to": "compiler"
+      }
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "techczech",
+      "repo": "talkweaver-app"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": "arm64"
+        },
+        {
+          "target": "zip",
+          "arch": "arm64"
+        }
+      ],
+      "category": "public.app-category.productivity",
+      "identity": null,
+      "icon": "build/icon.png",
+      "extraResources": [
+        {
+          "from": "native/ocr",
+          "to": "ocr"
+        },
+        {
+          "from": "native/media",
+          "to": "media"
+        }
+      ],
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "TalkWeaver records your microphone while you present, so you can review and transcribe what you said on each slide. Recording is opt-in — it only starts when you press ⇧R in the presenter."
+      }
+    },
+    "dmg": {
+      "title": "TalkWeaver ${version}"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": "x64"
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
+    }
+  },
+  "devDependencies": {
+    "@codemirror/autocomplete": "^6.18.6",
+    "@codemirror/commands": "^6.7.1",
+    "@codemirror/lang-markdown": "^6.3.1",
+    "@codemirror/language": "^6.10.6",
+    "@codemirror/language-data": "^6.5.1",
+    "@codemirror/search": "^6.7.0",
+    "@codemirror/state": "^6.5.0",
+    "@codemirror/view": "^6.36.1",
+    "@electron/rebuild": "^4.0.4",
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.23",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "42.4.0",
+    "electron-builder": "^26.0.12",
+    "electron-vite": "5.0.0",
+    "playwright": "^1.60.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.11"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1075.0",
+    "lucide-react": "^1.21.0",
+    "sharp": "^0.34.5"
+  },
+  "license": "MIT",
+  "author": "Dominik Lukeš",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/techczech/talkweaver-app.git"
+  },
+  "homepage": "https://github.com/techczech/talkweaver-app"
+}

@@ -1,0 +1,284 @@
+/* @order 0047 */
+  .slide-content.layout-cta-screenshots h1 { font-size: max(21px, 2.9cqw); max-width: 21ch; }/* @order 0257 */
+  .slide-figure {
+    margin: 0;
+    display: grid;
+    grid-template-rows: 1fr auto;
+    min-height: 0;
+    /* No frame: the image sits DIRECTLY on the slide background (no white box / border / radius),
+       so a screenshot fills the space and reads as part of the slide rather than a pasted card. */
+    background: transparent;
+  }/* @order 0258 */
+  /* NEVER-UPSCALE contract: an image is shown at MOST at its intrinsic pixel size (1x) and
+     only ever scaled DOWN to fit its box — never stretched up, which is what made small
+     screenshots look "repeatedly recompressed". With the intrinsic width/height attributes the
+     generator now emits, width:auto/height:auto resolve to the natural pixel size; the
+     max-* caps then shrink it to fit the box and the vertical budget. object-fit:contain keeps
+     aspect ratio in the rare case a box forces both caps. Centred in its grid cell. *//* @order 0259 */
+  .slide-figure img,
+  .slide-figure video {
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: min(100%, 78vh);
+    object-fit: contain;
+    justify-self: center;
+    align-self: center;
+    /* transparent: a PNG with transparency shows on the slide background, not a white plate */
+    background: transparent;
+  }/* @order 0260 */
+  /* Share-export stand-in for an over-limit local video (2026-06-10): poster (when authored)
+     plus an honest note naming the file that plays in the app bundle. *//* @order 0261 */
+  .slide-figure.video-placeholder { grid-template-rows: auto auto; height: fit-content; align-self: center; }/* @order 0265 */
+  .slide-figure figcaption {
+    padding: 9px 12px 0;
+    color: var(--muted);
+    font-size: 0.86rem;
+    text-align: center;
+  }/* @order 0266 */
+  /* ── SD-4: figure.fig — centred caption layout ──────────────────────────────────────────────
+     Adds flex-column centering to any image figure so the caption (when present) sits directly
+     below the image and centred to it, not left-aligned. Combined with .slide-figure so all
+     existing figure selectors (lightbox, copy-visual, lv-media) continue to work unchanged. *//* @order 0267 */
+  figure.slide-figure.fig {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: clamp(6px, 0.8vw, 12px);
+    margin: 0;
+  }/* @order 0268 */
+  figure.slide-figure.fig figcaption {
+    padding: 0;
+    font-size: max(11px, 1.5cqw);
+    color: var(--muted);
+    text-align: center;
+    line-height: 1.3;
+    max-width: 100%;
+  }/* @order 0269 */
+  /* ── SD-5: .img-row — 2-3 images as a flex row of captioned units ───────────────────────────
+     Each figure.fig gets equal flex so they share the width; the caption wraps to its image
+     width naturally (the figure is flex-column with align-items:center). *//* @order 0270 */
+  .img-row {
+    display: flex;
+    gap: clamp(12px, 4vw, 48px);
+    align-items: flex-start;
+    margin: 0;
+  }/* @order 0271 */
+  .img-row figure.slide-figure.fig {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    max-height: 70vh;
+  }/* @order 0272 */
+  .img-row figure.slide-figure.fig img,
+  .img-row figure.slide-figure.fig video { max-height: 60vh; cursor: zoom-in; }/* @order 0279 */
+  .split .media figure.slide-figure.fig { margin: 0; max-height: 70vh; }/* @order 0280 */
+  .split .media figure.slide-figure.fig img,
+  .split .media figure.slide-figure.fig video { max-height: 66vh; cursor: zoom-in; }/* @order 0282 */
+  /* G5: slide-body side-by-side image row (2+ images directly in the slide, not in a card).
+     Auto-fit columns so each image shares the width and stays fully visible. *//* @order 0283 */
+  .slide-content > .figure-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+    gap: clamp(14px, 1.6vw, 24px);
+    align-items: start;
+    min-width: 0;
+    margin: 0;
+  }/* @order 0284 */
+  .slide-content > .figure-row .slide-figure { margin: 0; max-height: 72vh; }/* @order 0285 */
+  .slide-content > .figure-row .slide-figure img,
+  .slide-content > .figure-row .slide-figure video { max-height: 70vh; }/* @order 0286 */
+  /* ── ADR-0022 GALLERY — 4+ images on one slide reflow into a responsive multi-row grid ──────
+     The default .figure-row keeps 2-3 images side-by-side (one row). With 4+ images a single row
+     would cram them illegibly, so .figure-row-gallery switches to a wrapping grid with a real
+     column floor: as many columns as fit at >=220px each, the rest wrapping to further rows. Every
+     image stays fully visible (object-fit:contain via .slide-figure img) and click-to-enlarge via
+     the existing lightbox. Heights shrink so two rows still fit the slide. *//* @order 0287 */
+  .slide-content > .figure-row.figure-row-gallery {
+    grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+    align-content: center;
+    max-height: 78vh;
+  }/* @order 0288 */
+  .slide-content > .figure-row.figure-row-gallery .slide-figure { max-height: 38vh; }/* @order 0289 */
+  .slide-content > .figure-row.figure-row-gallery .slide-figure img,
+  .slide-content > .figure-row.figure-row-gallery .slide-figure video { max-height: 36vh; }/* @order 0290 */
+  /* A click target reads as interactive: the gallery image lifts slightly on hover. *//* @order 0291 */
+  .slide-content > .figure-row .slide-figure img { cursor: zoom-in; }/* @order 0309 */
+  .figure-row.qr-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: clamp(14px, 1.6vw, 24px); align-items: start; margin: 0; }/* @order 0333 */
+
+  /* D7: copy-visual — one media block + text (quote/statement), laid side-by-side. Same
+     two-column grammar as the list/statement layouts: a compact eyebrow header spans the
+     top, then media (left, ≤56%) sits beside the text (right). Both columns are top-aligned
+     relative to each other; the row pair centres vertically in the stage (align-content:center).
+     This matches the cards-media-split treatment. Below 950px the columns stack. *//* @order 0334 */
+  .slide-content.layout-copy-visual {
+    align-content: center;
+    grid-template-columns: 1fr;
+    row-gap: 18px;
+  }/* @order 0335 */
+  .slide-content.layout-copy-visual > .slide-head { grid-column: 1 / -1; grid-row: 1; }/* @order 0336 */
+  .slide-content.layout-copy-visual > .cv-body {
+    grid-column: 1; grid-row: 2;
+    display: grid;
+    grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+    column-gap: clamp(32px, 3.6vw, 64px);
+    align-items: center;
+    min-width: 0;
+  }
+  .slide-content.layout-copy-visual > .cv-body > .cv-media,
+  .slide-content.layout-copy-visual > .cv-body > .cv-copy {
+    min-width: 0;
+    display: grid;
+    gap: 18px;
+    align-content: center;
+  }
+  /* Media column: figures, embeds and videos. Capped to ~56% of the slide via the column
+     track. Embeds keep a 16:9 box. *//* @order 0337 */
+  /* Media column is vertically CENTRED (the columns rule: image/video/paragraph → middle), so a
+     figure shorter than the prose column sits centred against it rather than pinned to the top. *//* @order 0338 */
+  .slide-content.layout-copy-visual > .cv-body > .cv-media .slide-figure,
+  .slide-content.layout-copy-visual > .cv-body > .cv-media figure.slide-embed {
+    min-width: 0; margin: 0;
+  }/* @order 0339 */
+  .slide-content.layout-copy-visual > .cv-body > .cv-media figure.slide-embed {
+    aspect-ratio: 16 / 9; width: 100%; max-height: 76vh;
+  }/* @order 0340 */
+  .slide-content.layout-copy-visual > .cv-body > .cv-media figure.slide-embed iframe { min-height: 0; height: 100%; }/* @order 0341 */
+  .slide-content.layout-copy-visual > .cv-body > .cv-media .slide-figure {
+    max-height: 76vh;
+    /* Hug the image: the figure card ends where the image ends instead of stretching the
+       white panel to the column height (2026-06-09 — small/portrait images sat in a tall
+       white box). */
+    height: fit-content;
+    grid-template-rows: auto auto;
+  }/* @order 0342 */
+  /* Text column: a standalone blockquote (pull-quote) or statement paragraphs, sized to the design
+     language and vertically CENTRED against the media column — so whichever column is shorter sits
+     middle-aligned beside the taller one (the columns rule: image/video/paragraph → middle). *//* @order 0343 */
+  .slide-content.layout-copy-visual > .cv-body > .cv-copy > blockquote,
+  .slide-content.layout-copy-visual > .cv-body > .cv-copy > p:not(.kicker) {
+    min-width: 0; max-width: 28ch;
+  }/* @order 0346 */
+  .slide-content.layout-copy-visual > .cv-body > .cv-copy > blockquote {
+    margin: 0; padding: 0 0 0 52px;
+    font-family: var(--sans); font-size: max(22px, 2.5cqw); line-height: 1.28;
+  }/* @order 0347 */
+  .slide-content.layout-copy-visual > .cv-body > .cv-copy > blockquote::before { font-size: 3.2em; top: -0.18em; left: -0.04em; }/* @order 0348 */
+  .slide-content.layout-copy-visual > .cv-body > .cv-copy > blockquote[data-quote-length="medium"] { font-size: max(19px, 2cqw); }/* @order 0349 */
+  .slide-content.layout-copy-visual > .cv-body > .cv-copy > blockquote[data-quote-length="long"] { font-size: max(16px, 1.6cqw); line-height: 1.34; }/* @order 0350 */
+  .slide-content.layout-copy-visual > .cv-body > .cv-copy > blockquote p { margin: 0 0 .35em; }/* @order 0351 */
+  .slide-content.layout-copy-visual > .cv-body > .cv-copy > blockquote p:last-of-type { margin-bottom: 0; }/* @order 0352 */
+  .slide-content.layout-copy-visual > .cv-body > .cv-copy > blockquote strong { color: var(--accent); }/* @order 0353 */
+  .slide-content.layout-copy-visual > .cv-body > .cv-copy > blockquote cite { display: block; margin-top: .6em; font-family: var(--sans); font-style: normal; font-size: .42em; color: var(--muted); letter-spacing: .02em; }/* @order 0467 */
+
+  /* IMAGE QUOTE ({image-quote}). Image (≈40%) beside the quotation (≈60%), the attribution as a
+     full-width accent bar along the bottom — the classic PPT person-photo/tweet + quote slide.
+     Title is nav-only by default (mirrors {quote}); the global blockquote::before supplies the
+     decorative mark. A plain {quote} carrying a figure keeps the quiet-cite pair treatment. *//* @order 0468 */
+  .slide-content.layout-image-quote { justify-content: center; align-content: center; }/* @order 0469 */
+  .slide-content.layout-image-quote > .slide-head-quiet { display: contents; }/* @order 0470 */
+  .image-quote {
+    display: grid;
+    grid-template-columns: minmax(0, 0.62fr) minmax(0, 1fr);
+    grid-template-rows: 1fr auto;
+    column-gap: clamp(28px, 3.2vw, 56px); row-gap: clamp(20px, 3vh, 36px);
+    align-items: center; width: 100%; align-self: center;
+  }/* @order 0471 */
+  .image-quote .iq-figure { grid-column: 1; grid-row: 1; margin: 0; display: grid; justify-items: center; row-gap: 8px; }/* @order 0472 */
+  .image-quote .iq-figure img {
+    max-width: 100%; max-height: 56vh; width: auto; height: auto;
+    border-radius: 0; border: 1px solid var(--hairline); box-shadow: none;
+  }/* @order 0473 */
+  .image-quote .iq-figure figcaption { font-size: max(12px, 1cqw); color: var(--muted); text-align: center; }/* @order 0474 */
+  /* ADR-0005 image-quote (mockup .iq): portrait beside an upright sans quote led by an oversized
+     accent mark; boxed strong emphasis; attribution as a short accent rule + name (NOT a filled
+     bar). line-height 1.28 is the readability floor for the boxed host. *//* @order 0475 */
+  .image-quote blockquote {
+    grid-column: 2; grid-row: 1; margin: 0;
+    /* em-based clearance: the mark (2.4em) always fits inside the reserved padding. */
+    padding: 4px 0 4px 1.35em;
+    font-family: var(--sans); font-weight: 400; font-size: max(24px, 2.8cqw); line-height: 1.28;
+  }/* @order 0476 */
+  .image-quote blockquote::before { font-size: 2.4em; opacity: 0.9; top: -0.05em; left: 0; }/* @order 0477 */
+  .image-quote blockquote[data-quote-length="medium"] { font-size: max(20px, 2.2cqw); }/* @order 0478 */
+  .image-quote blockquote[data-quote-length="long"] { font-size: max(17px, 1.7cqw); line-height: 1.32; }/* @order 0479 */
+  .image-quote blockquote p { margin: 0 0 .3em; }/* @order 0480 */
+  .image-quote blockquote p:last-of-type { margin-bottom: 0; }/* @order 0481 */
+  .image-quote blockquote strong {
+    background: var(--accent); color: var(--paper);
+    padding: 0.02em 0.18em; border-radius: 0.1em;
+    box-decoration-break: clone; -webkit-box-decoration-break: clone;
+  }/* @order 0482 */
+  .image-quote .iq-cite {
+    grid-column: 1 / -1; grid-row: 2; margin: 0;
+    display: flex; align-items: center; gap: 0.8em;
+    color: var(--ink);
+    font-size: max(14px, 1.4cqw); font-weight: 640; letter-spacing: .015em;
+  }/* @order 0483 */
+  .image-quote .iq-cite::before {
+    content: ""; flex: 0 0 auto;
+    width: 3em; height: 2px; background: var(--accent);
+  }/* @order 0485 */
+
+  /* IMAGE GRID ({image-grid}). A STATIC annotated grid — image on top, note card (title + text)
+     beneath — ALL cells visible at once (tool galleries, app showcases; the stepped one-at-a-time
+     treatment stays with {cards}). Balanced flex like system-map satellites; --ig-cols set inline
+     from the balanced column count (or an explicit {blocks:RxC}). Images CONTAIN (never crop,
+     never upscale) on a quiet panel. *//* @order 0486 */
+  .image-grid {
+    display: flex; flex-wrap: wrap; justify-content: center;
+    gap: 18px; margin: 28px auto 0; width: min(1200px, 100%);
+  }/* @order 0487 */
+  .image-grid .ig-cell {
+    flex: 0 1 calc((100% - (var(--ig-cols, 3) - 1) * 18px) / var(--ig-cols, 3));
+    min-width: 0; margin: 0;
+    display: flex; flex-direction: column;
+    background: var(--tint); border: 1px solid var(--line); border-radius: 10px;
+    overflow: hidden;
+  }/* @order 0488 */
+  /* Absolute-inset containment: a viewBox-only SVG has no intrinsic px size, so percentage
+     max-height against the auto grid row resolved to nothing and the image overflowed the cell.
+     Pinning the img to the padded box guarantees containment for ANY media (object-fit keeps
+     the aspect; small rasters are not upscaled past the box). *//* @order 0489 */
+  .image-grid .ig-media {
+    position: relative;
+    height: clamp(120px, 20vh, 210px);
+    background: color-mix(in srgb, var(--ink) 4%, var(--tint));
+  }/* @order 0490 */
+  .image-grid .ig-media img {
+    position: absolute; inset: 10px;
+    width: calc(100% - 20px); height: calc(100% - 20px);
+    object-fit: contain;
+  }/* @order 0491 */
+  .image-grid .ig-note { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 6px; text-align: left; }/* @order 0492 */
+  .image-grid .ig-note h4 {
+    margin: 0; font-size: max(14px, 1.4cqw); font-weight: 740; color: var(--accent);
+    letter-spacing: .01em;
+  }/* @order 0493 */
+  .image-grid .ig-note .content-p { margin: 0; font-size: max(13px, 1.15cqw); color: var(--muted); line-height: 1.35; }/* @order 0922 */
+  /* Images invite the gallery (not in the presenter mini-previews, which are static). *//* @order 0923 */
+  body:not(.presenter-mode) .slide.active figure.slide-figure img { cursor: zoom-in; }/* @order 1036 */
+  /* Embed-only slides (2026-06-10): the simulation COVERS the whole stage under the title bar —
+     never a letterboxed 16:9 window with scrollbars. Outranks the top-title centring margins. *//* @order 1037 */
+  .slide[data-title-layout="top"] .slide-content.layout-media > figure.slide-embed {
+    flex: 1 1 auto !important;
+    width: 100%;
+    min-height: 0;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    aspect-ratio: auto;
+    /* Grid (not block): the iframe stretches to the figure's definite grid area — percentage
+       heights do NOT resolve inside a flex-grown block, which left the iframe at its 152px
+       intrinsic default. */
+    display: grid;
+  }/* @order 1038 */
+  .slide-content.layout-media > figure.slide-embed { min-height: 0; }/* @order 1039 */
+  .slide-content.layout-media > figure.slide-embed iframe { height: 100%; width: 100%; min-height: 0; }/* @order 1494 */
+
+  /* ── FIDELITY BATCH 3 (mockup slides 6 image-quote, 8 full-bleed) ─────────────────── *//* @order 1495 */
+
+  /* Image-quote (mockup .iq): 38% portrait column (tall, cover-cropped, hairline inset),
+     quote beside it with the giant serif mark and rule attribution. *//* @order 1505 */
+
+  /* Full-bleed media (mockup .t-bleed): a lone image OWNS the stage — cover-cropped edge to
+     edge; any figcaption becomes the bottom-left white caption over a scrim. */

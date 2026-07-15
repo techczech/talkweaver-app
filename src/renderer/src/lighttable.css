@@ -1,0 +1,1581 @@
+/* ============================================================
+   LIGHT TABLE — design foundation (ADR-0034)
+   Ported from the locked mockup:
+   docs/design/2026-07-03-browser-focus/light-table-hifi-v1.html
+   Everything except @font-face is scoped under `.lt` so the
+   existing app UI is untouched. Fake-thumbnail CSS (.th-*) is
+   deliberately NOT ported — real thumbnails replace it.
+   ============================================================ */
+
+/* ---------- bundled fonts (offline; no CDN) ---------- */
+@font-face {
+  font-family: 'Fraunces';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/fraunces-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Fraunces';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/fraunces-latin-400-italic.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Fraunces';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('./assets/fonts/fraunces-latin-500-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Fraunces';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('./assets/fonts/fraunces-latin-600-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Alegreya Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/alegreya-sans-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Alegreya Sans';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/alegreya-sans-latin-400-italic.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Alegreya Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('./assets/fonts/alegreya-sans-latin-500-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Alegreya Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./assets/fonts/alegreya-sans-latin-700-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('./assets/fonts/jetbrains-mono-latin-500-normal.woff2') format('woff2');
+}
+
+/* ---------- tokens (mockup :root, 17-43) ----------
+   Also on .lt-tagpicker: the toolbar-anchored "Tag current slide…" picker mounts OUTSIDE
+   any .lt overlay (WorkspaceLayout root), so it must carry the token set itself. */
+.lt, .lt-tagpicker {
+  --lt-paper:#f3eee2; --lt-paper-deep:#ece5d4; --lt-print:#fdfaf2; --lt-chrome:#f8f4ea;
+  --lt-ink:#2b2620; --lt-ink-soft:#6b6355; --lt-ink-faint:#9a9182;
+  --lt-hair:#ddd4c2; --lt-hair-soft:#e7dfcf;
+  --lt-oxford:#0b3a6b; --lt-oxford-soft:#e6ecf4; --lt-oxford-mid:#3a608c;
+  --lt-amber:#a3630e; --lt-amber-soft:#f5e8d2; --lt-red:#8c3a2e; --lt-red-soft:#f3e0da;
+  --lt-green:#3d6b46; --lt-green-soft:#e2ecdf;
+  --lt-shadow-print:0 1px 2px rgba(72,58,34,.10), 0 6px 18px rgba(72,58,34,.13);
+  --lt-shadow-print-hover:0 2px 4px rgba(72,58,34,.12), 0 14px 34px rgba(72,58,34,.18);
+  --lt-shadow-lift:0 3px 8px rgba(72,58,34,.14), 0 24px 60px rgba(72,58,34,.22);
+  --lt-sans:'Alegreya Sans', 'Gill Sans', system-ui, sans-serif;
+  --lt-serif:'Fraunces', Georgia, serif;
+  --lt-mono:'JetBrains Mono', ui-monospace, monospace;
+  --lt-ease:cubic-bezier(.33,.02,.2,1);
+}
+
+/* ---------- kbd (mockup 57-62) ---------- */
+.lt kbd{
+  font-family:var(--lt-mono); font-size:10.5px; line-height:1;
+  padding:3px 5px; border-radius:4px;
+  background:var(--lt-print); border:1px solid var(--lt-hair);
+  border-bottom-width:2px; color:var(--lt-ink-soft); white-space:nowrap;
+}
+
+/* ---------- icon primitive (mockup 63-64) ---------- */
+.lt .lt-icon{width:15px; height:15px; stroke:currentColor; stroke-width:1.8; fill:none;
+  stroke-linecap:round; stroke-linejoin:round; flex:none; display:block}
+
+/* ---------- density steps (mockup 103-114) ---------- */
+.lt .lt-steps{
+  display:flex; border:1px solid var(--lt-hair); border-radius:7px; overflow:hidden;
+  background:var(--lt-print);
+}
+.lt .lt-steps button{
+  width:28px; height:26px; font-family:var(--lt-mono); font-size:12px;
+  color:var(--lt-ink-faint); border-right:1px solid var(--lt-hair-soft);
+  transition:background .18s var(--lt-ease), color .18s var(--lt-ease);
+}
+.lt .lt-steps button:last-child{border-right:none}
+.lt .lt-steps button:hover{background:var(--lt-paper-deep)}
+.lt .lt-steps button.active{background:var(--lt-oxford); color:#fff}
+/* Gate-4: the UA focus ring drew a detached box around a clicked step — keep keyboard focus
+   visible but INSIDE the segmented container so the control always reads as one piece. */
+.lt .lt-steps button:focus{outline:none}
+.lt .lt-steps button:focus-visible{outline:1.5px solid var(--lt-oxford-mid); outline-offset:-1.5px}
+
+/* ---------- small anchored popovers (mockup 127-161) ---------- */
+.lt .lt-pop{
+  position:absolute; top:36px; right:0; z-index:70; width:284px;
+  background:var(--lt-print); border:1px solid var(--lt-hair); border-radius:10px;
+  box-shadow:var(--lt-shadow-lift); padding:14px 16px 15px; text-align:left;
+  font-size:13px; color:var(--lt-ink-soft); line-height:1.5; cursor:default;
+  opacity:0; transform:translateY(-4px); pointer-events:none;
+  /* visibility keeps a CLOSED pop's controls out of the tab order; delaying the visibility
+     flip on close (0s delay on open) preserves the opacity/transform animation both ways. */
+  visibility:hidden;
+  transition:opacity .22s var(--lt-ease), transform .22s var(--lt-ease), visibility 0s linear .22s;
+}
+.lt .lt-pop.open{opacity:1; transform:none; pointer-events:auto; visibility:visible; transition-delay:0s}
+.lt .lt-pop .lt-pop-title{font-family:var(--lt-serif); font-size:14px; color:var(--lt-ink); margin-bottom:2px}
+.lt .lt-pop .lt-pop-sub{font-size:11px; color:var(--lt-ink-faint); margin-bottom:10px}
+.lt .lt-pop .lt-prow{display:flex; align-items:center; gap:8px; padding:6px 0; border-top:1px solid var(--lt-hair-soft)}
+.lt .lt-pop .lt-prow:first-of-type{border-top:none}
+.lt .lt-pop .lt-prow .lt-pl{flex:1; color:var(--lt-ink); font-size:12.5px}
+.lt .lt-pop .lt-prow .lt-ph{display:block; font-size:11px; color:var(--lt-ink-faint); font-weight:400}
+.lt .lt-pop .lt-steps-sm{display:flex; border:1px solid var(--lt-hair); border-radius:6px; overflow:hidden; background:var(--lt-print)}
+.lt .lt-pop .lt-steps-sm button{width:23px; height:22px; font-family:var(--lt-mono); font-size:11px; color:var(--lt-ink-faint); border-right:1px solid var(--lt-hair-soft)}
+.lt .lt-pop .lt-steps-sm button:last-child{border-right:none}
+.lt .lt-pop .lt-steps-sm button.active{background:var(--lt-oxford); color:#fff}
+.lt .lt-switch{
+  flex:none; width:32px; height:18px; border-radius:9px; position:relative;
+  background:var(--lt-hair); transition:background .2s var(--lt-ease);
+}
+.lt .lt-switch::after{
+  content:""; position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%;
+  background:var(--lt-print); box-shadow:0 1px 2px rgba(72,58,34,.25);
+  transition:left .2s var(--lt-ease);
+}
+.lt .lt-switch.on{background:var(--lt-oxford)}
+.lt .lt-switch.on::after{left:16px}
+.lt .lt-pop .lt-pop-foot{margin-top:10px; padding-top:9px; border-top:1px solid var(--lt-hair-soft); font-size:11px; color:var(--lt-ink-faint); font-style:italic}
+.lt .lt-pop .lt-seg{display:flex; border:1px solid var(--lt-hair); border-radius:6px; overflow:hidden; background:var(--lt-print); margin-top:4px}
+.lt .lt-pop .lt-seg button{flex:1; font-size:11px; padding:4px 2px; color:var(--lt-ink-soft); border-right:1px solid var(--lt-hair-soft)}
+.lt .lt-pop .lt-seg button:last-child{border-right:none}
+.lt .lt-pop .lt-seg button.active{background:var(--lt-oxford-soft); color:var(--lt-oxford); font-weight:500}
+
+/* ---------- filter chips (mockup 200-215) ---------- */
+.lt .lt-chip{
+  display:flex; align-items:center; gap:6px;
+  height:25px; padding:0 10px; border-radius:13px;
+  border:1px solid var(--lt-hair); background:var(--lt-print);
+  font-size:12.5px; color:var(--lt-ink-soft);
+  transition:border-color .18s var(--lt-ease), background .18s var(--lt-ease);
+}
+.lt .lt-chip:hover{border-color:var(--lt-ink-faint)}
+.lt .lt-chip .lt-icon{width:12px; height:12px}
+.lt .lt-chip .lt-x{display:none}
+.lt .lt-chip.on{background:var(--lt-oxford-soft); border-color:var(--lt-oxford-mid); color:var(--lt-oxford)}
+.lt .lt-chip.on .lt-x{display:block; color:var(--lt-oxford-mid); border-radius:50%}
+.lt .lt-chip.on .lt-x:hover{background:rgba(11,58,107,.12)}
+.lt .lt-chip.lt-clear-all{border-style:dashed; color:var(--lt-ink-faint); display:none}
+.lt .lt-chip.lt-clear-all.show{display:flex}
+.lt .lt-chip.lt-clear-all:hover{color:var(--lt-ink)}
+
+/* ---------- version filmstrip expansion row (mockup 457-482) ---------- */
+.lt .lt-strip-row{
+  grid-column:1 / -1;
+  overflow:hidden; max-height:0; opacity:0;
+  transition:max-height .32s var(--lt-ease), opacity .3s var(--lt-ease), margin .32s var(--lt-ease);
+  margin:-14px 0 0;
+}
+.lt .lt-strip-row.open{max-height:340px; opacity:1; margin:-6px 0 4px}
+.lt .lt-strip-inner{
+  background:linear-gradient(to bottom, rgba(236,229,212,.7), rgba(236,229,212,.35));
+  border:1px solid var(--lt-hair-soft); border-radius:8px;
+  padding:14px 18px 16px; position:relative;
+}
+.lt .lt-strip-inner::before{
+  content:""; position:absolute; top:-7px; left:calc(var(--anchor, 12%));
+  width:12px; height:12px; transform:rotate(45deg);
+  background:#f0e9d9; border-left:1px solid var(--lt-hair-soft); border-top:1px solid var(--lt-hair-soft);
+}
+.lt .lt-strip-head{display:flex; align-items:baseline; gap:10px; margin-bottom:11px}
+.lt .lt-strip-head .lt-sh-title{
+  font-size:10.5px; letter-spacing:.2em; text-transform:uppercase;
+  color:var(--lt-ink-soft); font-weight:700;
+}
+.lt .lt-strip-head .lt-sh-id{font-family:var(--lt-mono); font-size:10px; color:var(--lt-ink-faint)}
+.lt .lt-strip-head .lt-sh-close{margin-left:auto; color:var(--lt-ink-faint); padding:2px; border-radius:4px}
+.lt .lt-strip-head .lt-sh-close:hover{color:var(--lt-ink); background:var(--lt-paper-deep)}
+.lt .lt-strip-head .lt-sh-close .lt-icon{width:13px; height:13px}
+
+/* ---------- version filmstrip prints (mockup 483-512) ---------- */
+.lt .lt-strip{display:flex; gap:16px; overflow-x:auto; padding:2px 2px 6px}
+.lt .lt-vprint{flex:none; width:196px; cursor:pointer; position:relative}
+.lt .lt-vprint .lt-vframe{
+  background:var(--lt-print); border-radius:3px; padding:4px;
+  box-shadow:0 1px 2px rgba(72,58,34,.1), 0 4px 12px rgba(72,58,34,.12);
+  transition:box-shadow .22s var(--lt-ease), transform .22s var(--lt-ease);
+}
+.lt .lt-vprint:hover .lt-vframe{transform:translateY(-2px); box-shadow:var(--lt-shadow-print-hover)}
+.lt .lt-vprint.canonical .lt-vframe{box-shadow:0 0 0 1.5px var(--lt-amber), 0 4px 14px rgba(72,58,34,.16)}
+.lt .lt-vprint .lt-vthumb{aspect-ratio:16/9; border-radius:2px; background:#fbf7ec; border:1px solid rgba(72,58,34,.07); position:relative; container-type:inline-size; overflow:hidden}
+.lt .lt-vthumb img{width:100%; height:100%; object-fit:cover; display:block}
+.lt .lt-vthumb .lt-sk-thumb{position:absolute; inset:0; aspect-ratio:auto}
+/* schematic fallback when a version's render is missing from the batch */
+.lt .lt-vthumb .lt-vthumb-fallback{
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  padding:7% 9%; text-align:center;
+  font-family:var(--lt-serif); font-weight:500; font-size:11px; line-height:1.3; color:#79705f;
+}
+.lt .lt-vcap{padding:7px 2px 0}
+.lt .lt-vcap .lt-vdate{
+  font-family:var(--lt-mono); font-size:10px; color:var(--lt-ink); letter-spacing:.02em;
+  display:flex; align-items:center; gap:5px;
+}
+.lt .lt-vcap .lt-vdate .lt-star{color:var(--lt-amber)}
+.lt .lt-vcap .lt-vdate .lt-star .lt-icon{width:11px; height:11px; fill:var(--lt-amber); stroke:var(--lt-amber)}
+.lt .lt-vcap .lt-vsrc{font-size:11px; color:var(--lt-ink-faint); font-style:italic; margin-top:1px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.lt .lt-vcap .lt-vseal{font-size:10px; color:var(--lt-ink-faint); margin-top:1px}
+.lt .lt-vact{
+  margin-top:7px; width:100%;
+  font-size:11.5px; font-weight:500; color:var(--lt-oxford);
+  border:1px solid var(--lt-hair); border-radius:6px; padding:4px 0;
+  background:var(--lt-print);
+  opacity:0; transform:translateY(3px);
+  transition:opacity .2s var(--lt-ease), transform .2s var(--lt-ease), border-color .2s var(--lt-ease);
+}
+.lt .lt-vprint:hover .lt-vact{opacity:1; transform:none}
+.lt .lt-vact:hover{border-color:var(--lt-oxford-mid); background:var(--lt-oxford-soft)}
+
+/* ---------- empty states (mockup 514-529) ---------- */
+.lt .lt-empty{
+  display:none; flex-direction:column; align-items:center; text-align:center;
+  padding:70px 20px 40px; animation:lt-cardIn .4s var(--lt-ease);
+}
+.lt .lt-empty.show{display:flex}
+.lt .lt-empty .lt-e-frame{
+  width:150px; aspect-ratio:16/9; border-radius:3px;
+  border:1.5px dashed var(--lt-hair); background:rgba(253,250,242,.5);
+  display:flex; align-items:center; justify-content:center; color:var(--lt-ink-faint);
+  margin-bottom:20px;
+}
+.lt .lt-empty .lt-e-frame .lt-icon{width:22px; height:22px; stroke-width:1.4}
+.lt .lt-empty h3{font-family:var(--lt-serif); font-weight:500; font-size:19px; margin-bottom:6px}
+.lt .lt-empty p{color:var(--lt-ink-soft); font-size:13.5px; max-width:400px; line-height:1.5}
+.lt .lt-empty p .lt-q{font-family:var(--lt-mono); font-size:12px; background:var(--lt-paper-deep); padding:1px 6px; border-radius:4px}
+.lt .lt-empty .lt-e-actions{display:flex; gap:10px; margin-top:18px}
+@keyframes lt-cardIn{
+  from{opacity:0; transform:translateY(10px)}
+  to{opacity:1; transform:none}
+}
+
+/* ---------- buttons (mockup 531-542) ---------- */
+.lt .lt-btn{
+  display:inline-flex; align-items:center; gap:7px;
+  height:31px; padding:0 14px; border-radius:7px; font-size:13px; font-weight:500;
+  border:1px solid var(--lt-hair); background:var(--lt-print); color:var(--lt-ink-soft);
+  transition:box-shadow .2s var(--lt-ease), border-color .2s var(--lt-ease), background .2s var(--lt-ease);
+}
+.lt .lt-btn:hover{box-shadow:0 1px 4px rgba(72,58,34,.14)}
+.lt .lt-btn.primary{background:var(--lt-oxford); border-color:var(--lt-oxford); color:#fff}
+.lt .lt-btn.primary:hover{background:#0d4682; box-shadow:0 2px 8px rgba(11,58,107,.3)}
+.lt .lt-btn.primary kbd{background:rgba(255,255,255,.16); border-color:rgba(255,255,255,.28); border-bottom-width:1px; color:#fff}
+.lt .lt-btn.danger{color:var(--lt-red); border-color:#d8b3aa}
+.lt .lt-btn.danger:hover{background:var(--lt-red-soft)}
+
+/* ---------- action tray (mockup 545-561) ---------- */
+.lt .lt-tray{
+  position:absolute; left:50%; bottom:18px; transform:translateX(-50%);
+  z-index:30; display:flex; align-items:center; gap:16px;
+  background:var(--lt-print); border:1px solid var(--lt-hair);
+  border-radius:12px; padding:9px 10px 9px 18px;
+  box-shadow:var(--lt-shadow-lift);
+  animation:lt-trayIn .4s var(--lt-ease);
+}
+@keyframes lt-trayIn{from{opacity:0; transform:translate(-50%, 12px)} to{opacity:1; transform:translate(-50%,0)}}
+.lt .lt-tray .lt-t-count{display:flex; align-items:baseline; gap:8px}
+.lt .lt-tray .lt-t-count .lt-n{font-family:var(--lt-serif); font-weight:600; font-size:19px; color:var(--lt-oxford)}
+.lt .lt-tray .lt-t-count .lt-w{font-size:12.5px; color:var(--lt-ink-soft)}
+.lt .lt-tray .lt-t-sep{width:1px; height:24px; background:var(--lt-hair)}
+.lt .lt-tray .lt-t-clear{font-size:12.5px; color:var(--lt-ink-faint); text-decoration:underline dotted; text-underline-offset:3px}
+.lt .lt-tray .lt-t-clear:hover{color:var(--lt-ink)}
+.lt .lt-tray .lt-t-hint{font-size:11px; color:var(--lt-ink-faint); font-style:italic}
+.lt .lt-tray .lt-pathname{font-family:var(--lt-serif); font-style:italic}
+
+/* ---------- keyboard hint footer (mockup 575-583) ---------- */
+.lt .lt-hintbar{
+  flex:none; display:flex; align-items:center; gap:18px;
+  height:32px; padding:0 20px;
+  background:var(--lt-chrome); border-top:1px solid var(--lt-hair);
+  font-size:11.5px; color:var(--lt-ink-faint); overflow:hidden; white-space:nowrap;
+}
+.lt .lt-hintbar .lt-h{display:flex; align-items:center; gap:5px}
+.lt .lt-hintbar .lt-push{margin-left:auto}
+.lt .lt-hintbar .lt-h b{font-weight:500; color:var(--lt-ink-soft)}
+
+/* ---------- status badges (mockup 731-737) ---------- */
+.lt .lt-badge{
+  font-family:var(--lt-mono); font-size:9px; letter-spacing:.05em; text-transform:uppercase;
+  padding:2px 7px; border-radius:8px;
+}
+.lt .lt-badge.identical{background:var(--lt-green-soft); color:var(--lt-green)}
+.lt .lt-badge.behind{background:var(--lt-amber-soft); color:var(--lt-amber)}
+.lt .lt-badge.diverged{background:var(--lt-red-soft); color:var(--lt-red)}
+
+/* ---------- version-rail vprint extras (mockup 757-784) ---------- */
+.lt .lt-vrail .lt-strip{padding-bottom:4px}
+.lt .lt-vrail .lt-vprint{width:178px}
+.lt .lt-vprint.viewing .lt-vframe{box-shadow:0 0 0 2px var(--lt-oxford), 0 4px 14px rgba(72,58,34,.18)}
+.lt .lt-vprint.viewing.canonical .lt-vframe{box-shadow:0 0 0 2px var(--lt-oxford), 0 0 0 4px var(--lt-amber-soft), 0 4px 14px rgba(72,58,34,.18)}
+.lt .lt-vtag{
+  position:absolute; top:-7px; left:8px; z-index:3;
+  font-family:var(--lt-mono); font-size:8.5px; letter-spacing:.08em; text-transform:uppercase;
+  background:var(--lt-oxford); color:#fff; border-radius:4px; padding:2px 6px;
+}
+.lt .lt-vprint.canonical .lt-vtag.can{background:var(--lt-amber)}
+.lt .lt-vacts{display:flex; gap:5px; margin-top:7px; opacity:0; transform:translateY(3px);
+  transition:opacity .2s var(--lt-ease), transform .2s var(--lt-ease)}
+.lt .lt-vprint:hover .lt-vacts, .lt .lt-vprint.viewing .lt-vacts{opacity:1; transform:none}
+.lt .lt-vacts button{
+  flex:1; font-size:10.5px; font-weight:500; color:var(--lt-oxford);
+  border:1px solid var(--lt-hair); border-radius:5px; padding:3px 0; background:var(--lt-print);
+}
+.lt .lt-vacts button:hover{border-color:var(--lt-oxford-mid); background:var(--lt-oxford-soft)}
+.lt .lt-vrail-empty{
+  display:flex; align-items:center; gap:14px; padding:10px 2px 6px;
+}
+.lt .lt-vrail-empty .lt-e-frame{
+  flex:none; width:96px; aspect-ratio:16/9; border-radius:3px;
+  border:1.5px dashed var(--lt-hair); background:rgba(253,250,242,.5);
+  display:flex; align-items:center; justify-content:center; color:var(--lt-ink-faint);
+}
+.lt .lt-vrail-empty h4{font-family:var(--lt-serif); font-weight:500; font-size:14.5px; margin-bottom:2px}
+.lt .lt-vrail-empty p{font-size:12px; color:var(--lt-ink-soft); line-height:1.5; max-width:520px}
+
+/* ---------- overlays: scrim / panel (mockup 790-878) ---------- */
+.lt .lt-scrim{
+  position:fixed; inset:0; z-index:90;
+  background:rgba(43,38,32,.32);
+  display:none; align-items:flex-start; justify-content:center;
+  padding:52px 32px 32px; overflow-y:auto;
+}
+.lt .lt-scrim.open{display:flex; animation:lt-scrimIn .22s var(--lt-ease)}
+@keyframes lt-scrimIn{from{opacity:0} to{opacity:1}}
+.lt .lt-panel{
+  background:var(--lt-print); border:1px solid var(--lt-hair); border-radius:13px;
+  box-shadow:var(--lt-shadow-lift); width:100%; max-width:780px;
+  display:flex; flex-direction:column; overflow:hidden;
+  animation:lt-panelIn .3s var(--lt-ease);
+}
+@keyframes lt-panelIn{from{opacity:0; transform:translateY(14px)} to{opacity:1; transform:none}}
+.lt .lt-panel-head{
+  display:flex; align-items:baseline; gap:10px;
+  padding:18px 22px 0;
+}
+.lt .lt-panel-head h2{font-family:var(--lt-serif); font-weight:500; font-size:19px}
+.lt .lt-panel-head .lt-ph-id{font-family:var(--lt-mono); font-size:10.5px; color:var(--lt-ink-faint)}
+.lt .lt-panel-head .lt-ph-close{
+  margin-left:auto; align-self:center; color:var(--lt-ink-faint); padding:4px; border-radius:6px;
+}
+.lt .lt-panel-head .lt-ph-close:hover{color:var(--lt-ink); background:var(--lt-paper-deep)}
+.lt .lt-panel-sub{padding:5px 22px 14px; font-size:13px; color:var(--lt-ink-soft); line-height:1.5}
+.lt .lt-panel-sub .lt-adopting{
+  display:inline-flex; align-items:center; gap:6px; margin-left:2px;
+  font-family:var(--lt-mono); font-size:10.5px; padding:2px 8px; border-radius:9px;
+  background:var(--lt-amber-soft); color:var(--lt-amber);
+}
+.lt .lt-prop-rows{border-top:1px solid var(--lt-hair-soft)}
+.lt .lt-prop-row{
+  display:flex; align-items:center; gap:12px;
+  padding:11px 22px; border-bottom:1px solid var(--lt-hair-soft);
+}
+.lt .lt-prop-row .lt-pr-talk{min-width:0; flex:1}
+.lt .lt-prop-row .lt-pr-talk .lt-wt{font-family:var(--lt-serif); font-weight:500; font-size:14px}
+.lt .lt-prop-row .lt-pr-talk .lt-ws{font-size:11px; color:var(--lt-ink-faint); font-variant-caps:all-small-caps; letter-spacing:.04em; margin-left:7px}
+.lt .lt-prop-row .lt-pr-note{font-size:11.5px; color:var(--lt-ink-faint); font-style:italic; white-space:nowrap}
+.lt .lt-prop-row .lt-pr-diff{
+  display:flex; align-items:center; gap:5px;
+  font-size:11.5px; font-weight:500; color:var(--lt-oxford);
+  border:1px solid var(--lt-hair); border-radius:6px; padding:3px 10px; background:var(--lt-print);
+}
+.lt .lt-prop-row .lt-pr-diff:hover{border-color:var(--lt-oxford-mid); background:var(--lt-oxford-soft)}
+.lt .lt-prop-row .lt-pr-diff.on{background:var(--lt-oxford-soft); border-color:var(--lt-oxford-mid)}
+.lt .lt-rs-toggle{display:flex; border:1px solid var(--lt-hair); border-radius:7px; overflow:hidden; background:var(--lt-print); flex:none}
+.lt .lt-rs-toggle button{font-size:11.5px; font-weight:500; padding:4px 12px; color:var(--lt-ink-faint); border-right:1px solid var(--lt-hair-soft)}
+.lt .lt-rs-toggle button:last-child{border-right:none}
+.lt .lt-rs-toggle button.on-replace{background:var(--lt-oxford); color:#fff}
+.lt .lt-rs-toggle button.on-skip{background:var(--lt-paper-deep); color:var(--lt-ink)}
+.lt .lt-prop-row.is-identical{opacity:.72}
+.lt .lt-prop-row.is-identical .lt-pr-ok{
+  display:flex; align-items:center; gap:6px; font-size:11.5px; color:var(--lt-green); flex:none;
+}
+/* diff drawer inside the checklist (mockup 846-868) */
+.lt .lt-diff-drawer{
+  display:none; border-bottom:1px solid var(--lt-hair-soft);
+  background:linear-gradient(to bottom, rgba(236,229,212,.55), rgba(236,229,212,.25));
+  padding:14px 22px 18px;
+}
+.lt .lt-diff-drawer.open{display:block; animation:lt-scrimIn .25s var(--lt-ease)}
+.lt .lt-diff-cols{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+.lt .lt-diff-col .lt-dc-head{
+  display:flex; align-items:baseline; gap:8px; margin-bottom:7px;
+  font-size:11px; color:var(--lt-ink-soft);
+}
+.lt .lt-diff-col .lt-dc-head b{font-family:var(--lt-serif); font-size:12.5px; font-weight:500; color:var(--lt-ink)}
+.lt .lt-diff-body{
+  background:var(--lt-print); border:1px solid var(--lt-hair); border-radius:7px;
+  font-family:var(--lt-mono); font-size:11px; line-height:1.75; padding:10px 0;
+  overflow-x:auto;
+}
+.lt .lt-diff-body .lt-dl{padding:0 12px; white-space:pre}
+.lt .lt-diff-body .lt-dl.del{background:var(--lt-red-soft); color:var(--lt-red)}
+.lt .lt-diff-body .lt-dl.add{background:var(--lt-green-soft); color:var(--lt-green)}
+.lt .lt-diff-body .lt-dl.dim{color:var(--lt-ink-faint)}
+.lt .lt-diff-note{margin-top:9px; font-size:11.5px; color:var(--lt-ink-faint); font-style:italic}
+.lt .lt-panel-foot{
+  display:flex; align-items:center; gap:14px;
+  padding:14px 22px 16px;
+}
+.lt .lt-panel-foot .lt-reassure{
+  display:flex; align-items:center; gap:7px;
+  font-size:12px; color:var(--lt-ink-soft); font-style:italic; min-width:0;
+}
+.lt .lt-panel-foot .lt-reassure .lt-icon{color:var(--lt-green); flex:none}
+.lt .lt-panel-foot .lt-spacer{flex:1}
+
+/* propagation checklist (Task 7): stacks ABOVE the Browser overlay (z-index 900) and
+   BELOW the cheat-sheet (1000), so ?-help can sit on top of an open checklist */
+.lt.lt-prop-root .lt-scrim.lt-prop-scrim{z-index:950}
+/* inline per-row failure strip after a partial adopt */
+.lt .lt-prop-fail{
+  display:flex; align-items:center; gap:12px; justify-content:space-between;
+  padding:8px 22px; border-bottom:1px solid var(--lt-hair-soft);
+  background:var(--lt-red-soft); color:var(--lt-red); font-size:12px;
+}
+.lt .lt-prop-fail .lt-btn{flex:none}
+/* the filmstrip's secondary per-version action (adopt entry) sits under Insert */
+.lt .lt-vact.lt-vact-adopt{margin-top:5px}
+
+/* ---------- scrollbars, quiet (mockup 903-906) ---------- */
+.lt ::-webkit-scrollbar{width:10px; height:10px}
+.lt ::-webkit-scrollbar-thumb{background:#d4c9b2; border-radius:6px; border:3px solid var(--lt-paper)}
+.lt ::-webkit-scrollbar-track{background:transparent}
+.lt .lt-table-scroll::-webkit-scrollbar-track{margin:10px}
+
+/* ============================================================
+   SLIDE BROWSER (Task 5) — ported verbatim from the mockup's
+   Browser view CSS (lines 44-56 resets, 66-124 chrome, 163-198
+   views + search row, 217-306 rail + table, 308-373 cards,
+   376-380 thumb frame, 439-455 skeletons), lt- prefixed.
+   Real twthumb:// images replace the fake .th-* thumbnails.
+   ============================================================ */
+
+/* ---------- root frame (mockup body 46-54 + .app 67, as a fixed overlay) ---------- */
+.lt.lt-browser-root{
+  position:fixed; inset:0; z-index:900;
+  display:flex; flex-direction:column;
+  font-family:var(--lt-sans); font-size:15px; color:var(--lt-ink);
+  background:var(--lt-paper);
+  background-image:
+    radial-gradient(1200px 700px at 30% -10%, rgba(255,252,244,.7), transparent 60%),
+    radial-gradient(900px 600px at 95% 105%, rgba(214,200,170,.35), transparent 55%);
+  overflow:hidden;
+  -webkit-font-smoothing:antialiased;
+}
+/* control resets (mockup 55-56), scoped so app chrome is untouched */
+.lt button{font:inherit; color:inherit; background:none; border:none; cursor:pointer; text-align:inherit}
+.lt input{font:inherit; color:inherit}
+
+/* ---------- top chrome (mockup 70-124) ---------- */
+/* Gate-4: the Browser overlays a hiddenInset window, so the macOS traffic lights float over
+   the top-left corner — 78px of left padding clears them (the app's own toolbar clears them
+   vertically instead, but the 46px bar can't grow without leaving the locked design). */
+.lt .lt-topbar{
+  display:flex; align-items:center; gap:14px;
+  height:46px; padding:0 16px 0 78px; flex:none;
+  background:var(--lt-chrome);
+  border-bottom:1px solid var(--lt-hair);
+}
+/* Gate-4: at narrow widths the topbar must never push the density steps / settings / ? past
+   the window edge — the right-side controls are rigid (flex:none) and the squeeze lands on
+   the brand + view tabs instead (min-width:0 lets them shrink and clip quietly). */
+.lt .lt-topbar .lt-density, .lt .lt-topbar .lt-steps, .lt .lt-topbar .lt-steps button,
+.lt .lt-topbar .lt-tool-btn{flex:none}
+.lt .lt-topbar .lt-brand{min-width:0; overflow:hidden}
+.lt .lt-topbar .lt-brand .lt-wordmark{white-space:nowrap}
+.lt .lt-topbar .lt-viewtabs{min-width:0; overflow:hidden}
+.lt .lt-brand{display:flex; align-items:baseline; gap:8px}
+.lt .lt-brand .lt-wordmark{font-family:var(--lt-serif); font-weight:500; font-size:16px; letter-spacing:.01em}
+.lt .lt-brand .lt-room{
+  font-size:10.5px; letter-spacing:.18em; text-transform:uppercase;
+  color:var(--lt-ink-faint); font-weight:500;
+}
+.lt .lt-viewtabs{
+  display:flex; gap:2px; margin-left:10px;
+  background:var(--lt-paper-deep); border:1px solid var(--lt-hair);
+  border-radius:8px; padding:2px;
+}
+.lt .lt-viewtabs button{
+  display:flex; align-items:center; gap:7px;
+  padding:4px 14px; border-radius:6px;
+  font-size:13px; font-weight:500; color:var(--lt-ink-soft);
+  transition:background .22s var(--lt-ease), color .22s var(--lt-ease), box-shadow .22s var(--lt-ease);
+}
+.lt .lt-viewtabs button kbd{margin-left:2px}
+.lt .lt-viewtabs button.active{
+  background:var(--lt-print); color:var(--lt-ink);
+  box-shadow:0 1px 2px rgba(72,58,34,.12);
+}
+/* Focus tab ships disabled until Task 9 wires the view */
+.lt .lt-viewtabs button:disabled{opacity:.45; cursor:default}
+.lt .lt-top-spacer{flex:1}
+.lt .lt-density{
+  display:flex; align-items:center; gap:8px;
+  font-size:10.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--lt-ink-faint);
+}
+.lt .lt-tool-btn{
+  display:flex; align-items:center; gap:7px;
+  height:28px; padding:0 11px; border-radius:7px;
+  border:1px solid var(--lt-hair); background:var(--lt-print);
+  font-size:13px; color:var(--lt-ink-soft); position:relative;
+  transition:box-shadow .2s var(--lt-ease), color .2s var(--lt-ease);
+}
+.lt .lt-tool-btn:hover{box-shadow:0 1px 4px rgba(72,58,34,.14); color:var(--lt-ink)}
+.lt .lt-tool-btn.iconbtn{width:28px; padding:0; justify-content:center}
+.lt .lt-help-btn{font-family:var(--lt-serif); font-size:15px}
+
+/* ---------- view (mockup 163-167) ---------- */
+.lt .lt-view{flex:1; min-height:0; display:flex; flex-direction:column; animation:lt-viewIn .32s var(--lt-ease)}
+@keyframes lt-viewIn{from{opacity:0} to{opacity:1}}
+
+/* ---------- search row (mockup 172-198) ---------- */
+.lt .lt-searchrow{
+  flex:none; display:flex; flex-direction:column; gap:9px;
+  padding:14px 20px 12px; background:var(--lt-chrome);
+  border-bottom:1px solid var(--lt-hair);
+}
+.lt .lt-searchbar{display:flex; align-items:center; gap:12px}
+.lt .lt-searchfield{
+  flex:1; max-width:620px; display:flex; align-items:center; gap:9px;
+  height:34px; padding:0 12px; border-radius:8px;
+  background:var(--lt-print); border:1px solid var(--lt-hair);
+  box-shadow:inset 0 1px 2px rgba(72,58,34,.05);
+  transition:border-color .2s var(--lt-ease), box-shadow .2s var(--lt-ease);
+}
+.lt .lt-searchfield:focus-within{border-color:var(--lt-oxford-mid); box-shadow:0 0 0 3px var(--lt-oxford-soft)}
+.lt .lt-searchfield .lt-icon{color:var(--lt-ink-faint)}
+.lt .lt-searchfield input{
+  flex:1; border:none; outline:none; background:transparent; font-size:14px;
+}
+.lt .lt-searchfield input::placeholder{color:var(--lt-ink-faint); font-style:italic}
+.lt .lt-searchfield kbd{opacity:.85}
+.lt .lt-result-count{
+  font-family:var(--lt-mono); font-size:11px; color:var(--lt-ink-faint); white-space:nowrap;
+}
+.lt .lt-filters{display:flex; align-items:center; gap:7px; flex-wrap:wrap}
+.lt .lt-filters .lt-flabel{
+  font-size:10.5px; letter-spacing:.16em; text-transform:uppercase;
+  color:var(--lt-ink-faint); margin-right:2px; font-weight:500;
+}
+/* chip-anchored picker popovers (reuse .lt-pop, anchored below the chip) */
+.lt .lt-chip-wrap{position:relative}
+.lt .lt-chip-wrap .lt-pop{top:30px; left:0; right:auto; width:244px; z-index:75}
+.lt .lt-pop .lt-opt{
+  display:flex; align-items:center; gap:7px; width:100%;
+  padding:4px 7px; border-radius:5px; font-size:12.5px; color:var(--lt-ink);
+  cursor:pointer;
+}
+.lt .lt-pop .lt-opt:hover{background:var(--lt-paper-deep)}
+.lt .lt-pop .lt-opt.picked{color:var(--lt-oxford); background:var(--lt-oxford-soft)}
+.lt .lt-pop .lt-opt-list{max-height:220px; overflow-y:auto; margin-top:6px}
+.lt .lt-pop input.lt-pop-input{
+  width:100%; border:1px solid var(--lt-hair); border-radius:6px; background:var(--lt-print);
+  padding:4px 8px; font-size:12.5px; outline:none;
+}
+.lt .lt-pop input.lt-pop-input:focus{border-color:var(--lt-oxford-mid); box-shadow:0 0 0 2px var(--lt-oxford-soft)}
+
+.lt .lt-browser-body{flex:1; min-height:0; display:flex; position:relative}
+
+/* ---------- the index (left rail, mockup 219-280) ---------- */
+.lt .lt-rail{
+  flex:none; width:236px; min-height:0; overflow-y:auto;
+  border-right:1px solid var(--lt-hair);
+  padding:18px 0 24px;
+  background:linear-gradient(to right, rgba(236,229,212,.55), transparent);
+  transition:width .28s var(--lt-ease), padding .28s var(--lt-ease);
+}
+.lt .lt-rail.collapsed{width:0; padding:18px 0; overflow:hidden; border-right-color:transparent}
+.lt .lt-rail-head{
+  display:flex; align-items:center; justify-content:space-between;
+  padding:0 14px 0 20px; margin-bottom:12px;
+}
+.lt .lt-rail-title{
+  font-size:10.5px; letter-spacing:.22em; text-transform:uppercase;
+  color:var(--lt-ink-faint); font-weight:500; white-space:nowrap;
+}
+.lt .lt-rail-collapse{color:var(--lt-ink-faint); padding:3px; border-radius:5px}
+.lt .lt-rail-collapse:hover{color:var(--lt-ink); background:var(--lt-paper-deep)}
+.lt .lt-talk-node{margin-bottom:4px}
+.lt .lt-talk-row{
+  display:flex; align-items:center; gap:6px; width:100%;
+  padding:6px 12px 6px 14px; text-align:left;
+  color:var(--lt-ink); font-size:13.5px;
+}
+.lt .lt-talk-row .lt-caret{transition:transform .24s var(--lt-ease); color:var(--lt-ink-faint); width:11px; height:11px}
+.lt .lt-talk-node.open .lt-talk-row .lt-caret{transform:rotate(90deg)}
+.lt .lt-talk-row .lt-t-name{
+  flex:1; font-family:var(--lt-serif); font-weight:500; font-size:13.5px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.lt .lt-talk-row .lt-t-count{font-family:var(--lt-mono); font-size:10px; color:var(--lt-ink-faint)}
+.lt .lt-talk-row:hover .lt-t-name{color:var(--lt-oxford)}
+.lt .lt-sections{
+  overflow:hidden; max-height:0;
+  transition:max-height .3s var(--lt-ease);
+}
+.lt .lt-talk-node.open .lt-sections{max-height:300px}
+.lt .lt-sec-row{
+  display:grid; grid-template-columns:34px 1fr auto; align-items:baseline;
+  width:100%; padding:4px 14px 4px 6px; text-align:left;
+  font-size:12.5px; color:var(--lt-ink-soft);
+  /* Locked tweak (Dominik): names from files are never capitalised — caps are for UI labels only. */
+  letter-spacing:.01em;
+  transition:color .18s var(--lt-ease), background .18s var(--lt-ease);
+}
+.lt .lt-sec-row .lt-hang{
+  font-family:var(--lt-mono); font-variant-caps:normal; font-size:10px;
+  color:var(--lt-ink-faint); text-align:right; padding-right:9px;
+}
+.lt .lt-sec-row .lt-s-count{font-family:var(--lt-mono); font-variant-caps:normal; font-size:10px; color:var(--lt-ink-faint)}
+.lt .lt-sec-row:hover{color:var(--lt-ink)}
+.lt .lt-sec-row.current{color:var(--lt-oxford); background:linear-gradient(to right, transparent, var(--lt-oxford-soft) 12%, var(--lt-oxford-soft))}
+.lt .lt-sec-row.current .lt-hang{color:var(--lt-oxford-mid)}
+.lt .lt-rail-reopen{
+  position:absolute; left:10px; top:104px; z-index:10;
+  width:26px; height:26px; border-radius:7px;
+  border:1px solid var(--lt-hair); background:var(--lt-print);
+  color:var(--lt-ink-faint); display:none; align-items:center; justify-content:center;
+  box-shadow:0 1px 3px rgba(72,58,34,.12);
+}
+.lt .lt-rail-reopen.show{display:flex}
+
+/* ---------- the table (grid, mockup 282-306) ---------- */
+.lt .lt-table-scroll{flex:1; min-height:0; overflow-y:auto; position:relative; padding:26px 30px 120px}
+.lt .lt-group{margin-bottom:34px}
+.lt .lt-group-head{
+  display:flex; align-items:baseline; gap:12px; margin-bottom:16px;
+  padding-bottom:8px; border-bottom:1px solid var(--lt-hair-soft);
+}
+.lt .lt-group-head .lt-g-talk{
+  font-family:var(--lt-serif); font-weight:500; font-size:16px; letter-spacing:.005em;
+}
+.lt .lt-group-head .lt-g-sep{color:var(--lt-hair); font-size:14px}
+.lt .lt-group-head .lt-g-section{
+  /* Locked tweak (Dominik): section names come from his files — normal case, never caps. */
+  font-size:13px; letter-spacing:.02em;
+  color:var(--lt-ink-soft); font-weight:500; font-style:italic;
+}
+.lt .lt-group-head .lt-g-count{
+  margin-left:auto; font-family:var(--lt-mono); font-size:10.5px; color:var(--lt-ink-faint);
+}
+.lt .lt-grid{display:grid; gap:26px 22px; transition:gap .25s var(--lt-ease)}
+.lt .lt-grid.g2{grid-template-columns:repeat(2,1fr)}
+.lt .lt-grid.g3{grid-template-columns:repeat(3,1fr)}
+.lt .lt-grid.g4{grid-template-columns:repeat(4,1fr); gap:22px 18px}
+.lt .lt-grid.g5{grid-template-columns:repeat(5,1fr); gap:18px 15px}
+.lt .lt-grid.g6{grid-template-columns:repeat(6,1fr); gap:16px 13px}
+/* Gate-4 (the g4 blowout): grid items default to min-width:auto, so ONE child with wide
+   min-content — the nowrap .lt-origin talk title in .lt-l-meta (visible at g2-g4, hidden at
+   g5/g6, and widest relative to its track at 4-across) — forced repeat(4,1fr) tracks past the
+   container and the whole table scrolled sideways. min-width:0 on every grid child (cards AND
+   the spanning strip row) keeps 1fr honest; the meta row + origin then ellipsise as designed. */
+.lt .lt-grid > *{min-width:0}
+.lt .lt-label .lt-l-meta{min-width:0}
+.lt .lt-label .lt-l-meta .lt-origin{min-width:0}
+
+/* ---------- slide card = a print on the table (mockup 308-339) ---------- */
+.lt .lt-card{
+  position:relative; cursor:pointer;
+  animation:lt-cardIn .5s var(--lt-ease) both;
+  animation-delay:calc(var(--i, 0) * 55ms);
+}
+.lt .lt-print{
+  position:relative;
+  background:var(--lt-print); border-radius:4px;
+  padding:5px;
+  box-shadow:var(--lt-shadow-print);
+  transition:box-shadow .26s var(--lt-ease), transform .26s var(--lt-ease);
+}
+.lt .lt-card:hover .lt-print{box-shadow:var(--lt-shadow-print-hover); transform:translateY(-2px)}
+.lt .lt-card.selected .lt-print{
+  box-shadow:0 0 0 2px var(--lt-oxford), var(--lt-shadow-print-hover);
+}
+.lt .lt-card.expanded .lt-print{box-shadow:0 0 0 1.5px var(--lt-oxford-mid), var(--lt-shadow-lift); transform:translateY(-2px)}
+/* keyboard focus ring — the mockup drives focus by hover only; the app needs a visible active card */
+.lt .lt-card.focused .lt-print{box-shadow:0 0 0 1.5px var(--lt-oxford-mid), var(--lt-shadow-print-hover)}
+.lt .lt-card.selected.focused .lt-print{box-shadow:0 0 0 2px var(--lt-oxford), 0 0 0 4px var(--lt-oxford-soft), var(--lt-shadow-print-hover)}
+.lt .lt-sel-mark{
+  position:absolute; top:-8px; left:-8px; z-index:5;
+  width:22px; height:22px; border-radius:50%;
+  background:var(--lt-oxford); color:#fff;
+  display:none; align-items:center; justify-content:center;
+  box-shadow:0 2px 6px rgba(11,58,107,.4);
+}
+.lt .lt-sel-mark .lt-icon{width:12px; height:12px; stroke-width:2.6}
+.lt .lt-card.selected .lt-sel-mark{display:flex; animation:lt-pop .22s var(--lt-ease)}
+@keyframes lt-pop{from{transform:scale(.5)} to{transform:scale(1)}}
+
+/* the archival label under each print (mockup 341-373) */
+.lt .lt-label{padding:9px 4px 2px}
+.lt .lt-label .lt-l-title{
+  font-size:13px; font-weight:500; line-height:1.3; color:var(--lt-ink);
+  display:-webkit-box; -webkit-line-clamp:1; -webkit-box-orient:vertical; overflow:hidden;
+}
+.lt .lt-label .lt-l-meta{
+  display:flex; align-items:center; gap:6px; margin-top:3px;
+  font-size:11px; color:var(--lt-ink-faint);
+}
+.lt .lt-label .lt-l-meta .lt-origin{
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-style:italic;
+}
+.lt .lt-tag{
+  flex:none; font-family:var(--lt-mono); font-size:9px; letter-spacing:.06em;
+  padding:2px 5px; border-radius:3px;
+  background:var(--lt-paper-deep); color:var(--lt-ink-soft); text-transform:uppercase;
+}
+.lt .lt-vbadge{
+  flex:none; display:flex; align-items:center; gap:4px; margin-left:auto;
+  font-family:var(--lt-mono); font-size:9.5px;
+  padding:2.5px 7px; border-radius:9px;
+  background:var(--lt-print); border:1px solid var(--lt-hair);
+  color:var(--lt-ink-soft); white-space:nowrap;
+  transition:background .2s var(--lt-ease), border-color .2s var(--lt-ease), color .2s var(--lt-ease);
+}
+.lt .lt-vbadge:hover{border-color:var(--lt-oxford-mid); color:var(--lt-oxford)}
+.lt .lt-card.expanded .lt-vbadge{background:var(--lt-oxford); border-color:var(--lt-oxford); color:#fff}
+.lt .lt-vbadge .lt-icon{width:10px; height:10px}
+.lt .lt-vbadge.novers{border-style:dashed; cursor:default}
+.lt .lt-vbadge.novers:hover{border-color:var(--lt-hair); color:var(--lt-ink-soft)}
+/* Gate-4 (honest badges): a stamped card whose counts are NOT yet in the cache shows this
+   silent shimmer pill — it claims nothing. The dashed 'no versions yet' badge appears only
+   after a fetch confirmed zero versions. */
+.lt .lt-vbadge-sk{
+  flex:none; margin-left:auto; width:56px; height:17px; border-radius:9px;
+  border:1px solid var(--lt-hair-soft);
+  background:linear-gradient(100deg, #efe8d7 38%, #f9f4e7 50%, #efe8d7 62%);
+  background-size:220% 100%;
+  animation:lt-shimmer 1.6s linear infinite;
+}
+.lt .g5 .lt-label .lt-l-meta .lt-origin, .lt .g6 .lt-label .lt-l-meta .lt-origin{display:none}
+.lt .g6 .lt-vbadge span.long{display:none}
+
+/* ---------- REAL 16:9 slide thumbnails (frame from mockup 376-380) ---------- */
+.lt .lt-thumb{
+  aspect-ratio:16/9; border-radius:2px; overflow:hidden; position:relative;
+  background:#fbf7ec; border:1px solid rgba(72,58,34,.07);
+}
+.lt .lt-thumb img{width:100%; height:100%; object-fit:cover; display:block}
+/* schematic fallback when the twthumb:// render is missing (GridView CellThumb pattern) */
+.lt .lt-thumb .lt-thumb-fallback{
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  padding:7% 9%; text-align:center;
+  font-family:var(--lt-serif); font-weight:500; font-size:13px; line-height:1.25; color:#79705f;
+}
+
+/* ---------- skeleton thumbs (mockup 439-455) ---------- */
+.lt .lt-card.skeleton{cursor:default}
+.lt .lt-card.skeleton .lt-print{box-shadow:var(--lt-shadow-print)}
+.lt .lt-card.skeleton:hover .lt-print{transform:none; box-shadow:var(--lt-shadow-print)}
+.lt .lt-sk-thumb{
+  aspect-ratio:16/9; border-radius:2px;
+  background:linear-gradient(100deg, #efe8d7 38%, #f9f4e7 50%, #efe8d7 62%);
+  background-size:220% 100%;
+  animation:lt-shimmer 1.6s linear infinite;
+}
+@keyframes lt-shimmer{from{background-position:120% 0} to{background-position:-100% 0}}
+.lt .lt-sk-line{height:11px; border-radius:3px; background:var(--lt-paper-deep); margin:11px 4px 0; width:70%}
+.lt .lt-sk-line.short{width:45%; margin-top:7px; height:9px}
+.lt .lt-sk-note{
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  font-size:11px; color:var(--lt-ink-faint); font-style:italic;
+}
+/* while a real thumb is decoding, the shimmer sits INSIDE the frame */
+.lt .lt-thumb .lt-sk-thumb{position:absolute; inset:0; aspect-ratio:auto}
+
+/* ============================================================
+   DUPLICATE COLLAPSE (Task 9, ADR-0032) — NOT in the locked
+   mockup: an authorised Light-Table-language extension. A cluster
+   of byte-identical prints reads as a STACK (under-sheets peeking
+   behind the top print — "a pile of copies on the light table");
+   a near-identical cluster is a FANNED amber stack signalling
+   "not quite the same".
+   ============================================================ */
+
+/* the under-sheets live on the CARD (not .lt-print), so the print's hover/expanded transform
+   never reorders them in front of its own thumbnail — z-index:-1 keeps them behind the print. */
+.lt .lt-card.stack::before,
+.lt .lt-card.stack::after,
+.lt .lt-card.nearstack::before,
+.lt .lt-card.nearstack::after{
+  content:""; position:absolute; z-index:-1;
+  top:0; left:0; right:0; aspect-ratio:16/9;
+  border-radius:4px; background:var(--lt-print);
+  box-shadow:var(--lt-shadow-print);
+  transition:transform .26s var(--lt-ease);
+}
+/* identical: two near-square offset copies, barely rotated (they ARE the same) */
+.lt .lt-card.stack::before{transform:translate(4px,5px) rotate(.7deg)}
+.lt .lt-card.stack::after{transform:translate(8px,9px) rotate(1.7deg)}
+.lt .lt-card.stack:hover::before{transform:translate(5px,3px) rotate(.7deg)}
+.lt .lt-card.stack:hover::after{transform:translate(9px,7px) rotate(1.7deg)}
+/* near: fanned BOTH ways + amber-tinted under-sheets — "close, not identical" */
+.lt .lt-card.nearstack::before{background:var(--lt-amber-soft); transform:translate(-6px,4px) rotate(-2.6deg)}
+.lt .lt-card.nearstack::after{background:var(--lt-amber-soft); transform:translate(7px,6px) rotate(2.9deg)}
+.lt .lt-card.nearstack:hover::before{transform:translate(-7px,2px) rotate(-2.6deg)}
+.lt .lt-card.nearstack:hover::after{transform:translate(8px,4px) rotate(2.9deg)}
+
+/* the "in N talks" pill on an identical stack — reuses the vbadge language, oxford accent,
+   opens the where-used locations panel (E). */
+.lt .lt-clusterbadge{
+  flex:none; display:flex; align-items:center; gap:4px; margin-left:auto;
+  font-family:var(--lt-mono); font-size:9.5px;
+  padding:2.5px 7px; border-radius:9px;
+  background:var(--lt-oxford-soft); border:1px solid var(--lt-oxford-mid);
+  color:var(--lt-oxford); white-space:nowrap;
+  transition:background .2s var(--lt-ease), color .2s var(--lt-ease);
+}
+.lt .lt-clusterbadge:hover,
+.lt .lt-clusterbadge.on{background:var(--lt-oxford); color:#fff}
+.lt .lt-clusterbadge .lt-icon{width:10px; height:10px}
+
+/* the near stack's uncollapse control + a variant's re-collapse control — amber. */
+.lt .lt-nearbadge{
+  flex:none; display:flex; align-items:center; gap:4px; margin-left:auto;
+  font-family:var(--lt-mono); font-size:9.5px;
+  padding:2.5px 7px; border-radius:9px;
+  background:var(--lt-amber-soft); border:1px solid #d9b483;
+  color:var(--lt-amber); white-space:nowrap;
+  transition:background .2s var(--lt-ease), color .2s var(--lt-ease);
+}
+.lt .lt-nearbadge:hover{background:var(--lt-amber); color:#fff}
+.lt .lt-nearbadge.ghost{background:var(--lt-print); border-color:var(--lt-hair); color:var(--lt-ink-soft)}
+.lt .lt-nearbadge.ghost:hover{background:var(--lt-amber-soft); border-color:var(--lt-amber); color:var(--lt-amber)}
+.lt .lt-nearbadge .lt-icon{width:10px; height:10px}
+.lt .lt-tag.lt-variant-tag{background:var(--lt-amber-soft); color:var(--lt-amber)}
+
+/* ---------- identical-stack LOCATIONS panel (where-used + merge), in the expansion slot ---------- */
+.lt .lt-locs .lt-loc-list{display:flex; flex-direction:column; gap:0; max-height:230px; overflow-y:auto; padding:2px 0}
+.lt .lt-loc-row{
+  display:flex; align-items:center; gap:14px;
+  padding:8px 4px; border-bottom:1px solid var(--lt-hair-soft);
+}
+.lt .lt-loc-row:last-child{border-bottom:none}
+.lt .lt-loc-thumb{flex:none; width:104px}
+.lt .lt-loc-thumb .lt-thumb{box-shadow:0 1px 2px rgba(72,58,34,.12)}
+.lt .lt-loc-meta{flex:1; min-width:0}
+.lt .lt-loc-talk{
+  font-family:var(--lt-serif); font-weight:500; font-size:14px; color:var(--lt-ink);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.lt .lt-loc-where{
+  font-size:11.5px; color:var(--lt-ink-soft); margin-top:2px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.lt .lt-loc-sec{font-family:var(--lt-mono); font-size:10px; color:var(--lt-ink-faint)}
+.lt .lt-loc-acts{flex:none; display:flex; gap:6px}
+.lt .lt-loc-btn{
+  display:flex; align-items:center; gap:5px; white-space:nowrap;
+  font-size:11.5px; font-weight:500; color:var(--lt-oxford);
+  border:1px solid var(--lt-hair); border-radius:6px; padding:4px 10px; background:var(--lt-print);
+  transition:border-color .18s var(--lt-ease), background .18s var(--lt-ease);
+}
+.lt .lt-loc-btn:hover{border-color:var(--lt-oxford-mid); background:var(--lt-oxford-soft)}
+.lt .lt-loc-btn .lt-icon{width:12px; height:12px}
+.lt .lt-loc-btn.ghost{color:var(--lt-ink-soft)}
+.lt .lt-loc-btn.ghost:hover{color:var(--lt-ink); background:var(--lt-paper-deep); border-color:var(--lt-ink-faint)}
+.lt .lt-loc-foot{
+  display:flex; align-items:center; gap:14px; margin-top:12px;
+  padding-top:12px; border-top:1px solid var(--lt-hair-soft);
+}
+.lt .lt-loc-reassure{font-size:12px; color:var(--lt-ink-soft); font-style:italic; min-width:0; line-height:1.45}
+.lt .lt-loc-spacer{flex:1}
+.lt .lt-loc-foot .lt-btn{flex:none}
+.lt .lt-loc-oneslide{display:flex; align-items:center; gap:7px; font-size:12.5px; color:var(--lt-green)}
+.lt .lt-loc-oneslide .lt-icon{color:var(--lt-green)}
+
+/* ---------- Merge-into-one confirm (sibling overlay, above the Browser like the checklist) ---------- */
+.lt.lt-merge-root .lt-scrim.lt-merge-scrim{z-index:950}
+.lt .lt-merge-scrim .lt-panel{max-width:600px}
+.lt .lt-merge-name{font-family:var(--lt-serif); font-style:italic; color:var(--lt-ink)}
+.lt .lt-merge-scrim .lt-panel-sub b{font-weight:600; color:var(--lt-ink); font-family:var(--lt-serif); font-style:normal}
+.lt .lt-merge-scrim .lt-panel-foot .lt-btn.primary .lt-icon{width:14px; height:14px}
+
+/* ============================================================================
+   SLIDE FOCUS (B1/B3/B4) — the atelier. A full workspace view (peer of gridMode,
+   NOT a scrim) with its own chrome bar. Ported verbatim from the locked mockup
+   (docs/design/2026-07-03-browser-focus/light-table-hifi-v1.html, ADR-0034), with
+   lt- prefixes and --lt-* variables. The LEFT md-pane hosts the app's REAL editor
+   (reused instance, focus-scoped) — not the mock contenteditable — so the styling
+   here frames a CodeMirror slot rather than restyling its lines.
+   ============================================================================ */
+.lt-focus{
+  position:relative; flex:1; min-height:0;
+  display:flex; flex-direction:column;
+  background:var(--lt-paper);
+  font-family:var(--lt-sans); color:var(--lt-ink);
+}
+.lt-focus *{box-sizing:border-box}
+
+/* the window is titleBarStyle:hiddenInset — mirror the workspace toolbar's 28px traffic-light inset
+   and make the bar draggable so Focus moves the window like the normal chrome (controls opt out). */
+.lt-focus-top{
+  flex:none; display:flex; align-items:center; gap:14px;
+  height:calc(44px + 28px); padding:28px 18px 0;
+  background:var(--lt-chrome); border-bottom:1px solid var(--lt-hair);
+  -webkit-app-region:drag;
+}
+.lt-focus-top button, .lt-focus-top .lt-crumb, .lt-focus-top .lt-pos{-webkit-app-region:no-drag}
+.lt-crumb{display:flex; align-items:center; gap:7px; font-size:13px; color:var(--lt-ink-soft); min-width:0}
+.lt-crumb .lt-c-talk{font-family:var(--lt-serif); font-weight:500; color:var(--lt-ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:34ch}
+.lt-crumb .lt-icon{width:12px; height:12px; color:var(--lt-ink-faint); flex:none}
+.lt-crumb .lt-c-sec{font-variant-caps:all-small-caps; letter-spacing:.05em; white-space:nowrap}
+.lt-crumb .lt-c-slide{white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--lt-ink)}
+.lt-focus-nav{display:flex; align-items:center; gap:4px; margin-left:auto; flex:none}
+.lt-focus-nav .lt-pos{font-family:var(--lt-mono); font-size:11px; color:var(--lt-ink-faint); margin:0 8px}
+.lt-nav-btn{
+  width:28px; height:28px; border-radius:7px; display:flex; align-items:center; justify-content:center;
+  border:1px solid var(--lt-hair); background:var(--lt-print); color:var(--lt-ink-soft); cursor:pointer;
+  transition:box-shadow .18s var(--lt-ease), color .18s var(--lt-ease);
+}
+.lt-nav-btn:hover{box-shadow:0 1px 4px rgba(72,58,34,.14); color:var(--lt-ink)}
+.lt-nav-btn .lt-icon{width:16px; height:16px}
+/* the Versions rail toggle (Task 10 wires it; here it is a disabled placeholder, CLOSED per ADR-0034) */
+.lt-railtoggle{
+  display:inline-flex; align-items:center; gap:6px; font-size:11.5px; cursor:default;
+  border:1px solid var(--lt-hair); border-radius:7px; padding:4px 9px;
+  background:var(--lt-print); color:var(--lt-ink-faint);
+}
+.lt-railtoggle .lt-icon{width:14px; height:14px}
+.lt-railtoggle[disabled]{opacity:.55}
+
+.lt-focus-body{flex:1; min-height:0; display:flex}
+
+/* markdown pane — editing-grade: this is where the work happens */
+.lt-md-pane{
+  flex:none; width:clamp(420px, 40%, 560px); min-height:0; display:flex; flex-direction:column;
+  border-right:1px solid var(--lt-hair); background:rgba(248,244,234,.75);
+}
+.lt-pane-head{flex:none; display:flex; align-items:center; gap:8px; padding:12px 16px 9px}
+.lt-pane-head .lt-p-title{font-size:10.5px; letter-spacing:.22em; text-transform:uppercase; color:var(--lt-ink-faint); font-weight:700}
+.lt-pane-head .lt-p-note{margin-left:auto; font-size:10.5px; color:var(--lt-ink-faint); font-style:italic}
+/* the editor slot: the reused CodeMirror instance is reparented into here (reverse-portal host). */
+.lt-md-editor{
+  flex:1; min-height:0; overflow:hidden;
+  margin:0 12px 12px; border-radius:8px;
+  background:var(--lt-print); border:1px solid var(--lt-hair);
+  box-shadow:inset 0 1px 3px rgba(72,58,34,.05);
+}
+.lt-md-editor .editor-portal-host,
+.lt-md-editor .editor-container{height:100%; min-height:0}
+.lt-pane-foot{
+  flex:none; padding:0 16px 12px; font-size:11px; color:var(--lt-ink-faint);
+  display:flex; align-items:center; gap:6px;
+}
+.lt-pane-foot .lt-dot{width:6px; height:6px; border-radius:50%; background:var(--lt-green); flex:none}
+.lt-pane-foot .lt-dot.dirty{background:var(--lt-amber)}
+
+/* the atelier stage */
+.lt-stage-col{flex:1; min-width:0; display:flex; flex-direction:column}
+.lt-stage{
+  flex:1; min-height:0; display:flex; align-items:center; justify-content:center;
+  padding:30px 48px 20px; position:relative;
+}
+.lt-stage-print{
+  width:min(100%, calc((100vh - 330px) * 16 / 9), 880px);
+  background:var(--lt-print); border-radius:5px; padding:9px;
+  box-shadow:var(--lt-shadow-lift);
+  position:relative;
+}
+.lt-stage-frame{
+  display:block; width:100%; aspect-ratio:16/9; border:1px solid rgba(72,58,34,.07);
+  border-radius:2px; background:#fbf7ec;
+}
+/* keep the previous frame while a recompile is in flight — dim it faintly so the refresh reads */
+.lt-stage-print.compiling .lt-stage-frame iframe{opacity:.72; transition:opacity .2s var(--lt-ease)}
+/* human-readable compile-error state (never raw stderr) */
+.lt-stage-err{
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;
+  width:100%; aspect-ratio:16/9; border-radius:2px; text-align:center; padding:24px;
+  background:var(--lt-red-soft); border:1px solid #e3c4bc; color:var(--lt-red);
+}
+.lt-stage-err h4{font-family:var(--lt-serif); font-size:15px; margin:0; font-weight:600}
+.lt-stage-err p{font-size:12.5px; color:#8a4a3c; margin:0; max-width:36ch; line-height:1.5}
+.lt-stage-err .lt-btn{
+  font-size:12px; border:1px solid #d7a99e; border-radius:7px; padding:5px 12px; cursor:pointer;
+  background:var(--lt-print); color:var(--lt-red);
+}
+.lt-stage-err .lt-btn:hover{background:#fbeee9}
+.lt-stage-arrow{
+  position:absolute; top:50%; transform:translateY(-50%);
+  width:34px; height:34px; border-radius:50%; cursor:pointer;
+  border:1px solid var(--lt-hair); background:var(--lt-print); color:var(--lt-ink-soft);
+  display:flex; align-items:center; justify-content:center;
+  box-shadow:0 2px 8px rgba(72,58,34,.14); opacity:.55; z-index:2;
+  transition:opacity .2s var(--lt-ease), box-shadow .2s var(--lt-ease);
+}
+.lt-stage-arrow:hover{opacity:1; box-shadow:0 3px 12px rgba(72,58,34,.2)}
+.lt-stage-arrow .lt-icon{width:18px; height:18px}
+.lt-stage-arrow.prev{left:12px}
+.lt-stage-arrow.next{right:12px}
+
+/* where-used strip */
+.lt-whereused{flex:none; margin:0 48px; padding:10px 0 14px; border-top:1px solid var(--lt-hair-soft)}
+.lt-wu-head{display:flex; align-items:center; gap:10px; margin-bottom:9px}
+.lt-wu-title{font-size:10.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--lt-ink-faint); font-weight:700}
+.lt-wu-detach{
+  margin-left:auto; display:flex; align-items:center; gap:6px; cursor:pointer;
+  font-size:11.5px; color:var(--lt-ink-soft); border:1px solid var(--lt-hair);
+  border-radius:6px; padding:3px 10px; background:var(--lt-print);
+}
+.lt-wu-detach .lt-icon{width:14px; height:14px}
+.lt-wu-detach:hover{border-color:var(--lt-ink-faint); color:var(--lt-ink)}
+.lt-wu-detach:disabled{opacity:.5; cursor:not-allowed}
+.lt-wu-detach-note{font-size:10.5px; color:var(--lt-ink-faint); font-style:italic}
+.lt-wu-rows{display:flex; gap:10px; flex-wrap:wrap}
+.lt-wu-row{
+  display:flex; align-items:center; gap:9px;
+  border:1px solid var(--lt-hair); border-radius:8px;
+  background:var(--lt-print); padding:6px 11px; font-size:12.5px;
+}
+.lt-wu-row .lt-wt{font-family:var(--lt-serif); font-weight:500}
+.lt-wu-row .lt-ws{color:var(--lt-ink-faint); font-size:11px; font-variant-caps:all-small-caps; letter-spacing:.04em}
+.lt-wu-none{font-size:12.5px; color:var(--lt-ink-faint); font-style:italic; padding:2px 0}
+.lt-badge{font-family:var(--lt-mono); font-size:9px; letter-spacing:.05em; text-transform:uppercase; padding:2px 7px; border-radius:8px}
+.lt-badge.identical{background:var(--lt-green-soft); color:var(--lt-green)}
+.lt-badge.behind{background:var(--lt-amber-soft); color:var(--lt-amber)}
+.lt-badge.diverged{background:var(--lt-red-soft); color:var(--lt-red)}
+.lt-wu-adopt{
+  font-size:11px; font-weight:500; color:var(--lt-oxford); cursor:pointer;
+  border:none; background:none; border-left:1px solid var(--lt-hair-soft); padding-left:9px;
+}
+.lt-wu-adopt:hover{text-decoration:underline; text-underline-offset:3px}
+.lt-wu-loading,.lt-wu-error{font-size:12px; color:var(--lt-ink-faint); font-style:italic}
+.lt-wu-error{color:var(--lt-red); font-style:normal}
+.lt-wu-error .lt-btn{margin-left:8px; font-size:11px; border:1px solid var(--lt-hair); border-radius:6px; padding:2px 8px; background:var(--lt-print); color:var(--lt-oxford); cursor:pointer; font-style:normal}
+
+/* version-rail placeholder (Task 10 fills this with the real filmstrip) */
+.lt-vrail-slot{flex:none; margin:0 48px 12px; padding:10px 14px; border-top:1px solid var(--lt-hair-soft);
+  font-size:11.5px; color:var(--lt-ink-faint); font-style:italic}
+
+/* hint bar (mockup 1790-1797) */
+.lt-focus-hint{
+  flex:none; display:flex; align-items:center; gap:18px; height:34px; padding:0 18px;
+  background:var(--lt-chrome); border-top:1px solid var(--lt-hair); font-size:11.5px; color:var(--lt-ink-soft);
+}
+.lt-focus-hint .lt-h{display:flex; align-items:center; gap:5px}
+.lt-focus-hint .lt-h.push{margin-left:auto}
+.lt-focus-hint .lt-h b{font-weight:500; color:var(--lt-ink-faint)}
+.lt-focus-hint kbd{
+  font-family:var(--lt-mono); font-size:10px; min-width:16px; text-align:center;
+  padding:1px 5px; border-radius:5px; border:1px solid var(--lt-hair); background:var(--lt-print); color:var(--lt-ink-soft);
+}
+/* confirm dialogue reuses the Browser scrim/panel vocabulary (mockup 1959-1973) */
+.lt-focus-confirm-scrim{position:absolute; inset:0; z-index:60; background:rgba(43,38,32,.34); display:flex; align-items:center; justify-content:center}
+.lt-focus-confirm{
+  width:min(520px,92vw); background:var(--lt-print); border:1px solid var(--lt-hair);
+  border-radius:14px; box-shadow:var(--lt-shadow-lift); overflow:hidden; font-family:var(--lt-sans);
+}
+.lt-focus-confirm .cf-head{display:flex; align-items:center; padding:14px 16px 10px; border-bottom:1px solid var(--lt-hair-soft)}
+.lt-focus-confirm .cf-head h2{font-family:var(--lt-serif); font-size:17px; font-weight:600; margin:0; color:var(--lt-ink)}
+.lt-focus-confirm .cf-close{margin-left:auto; border:none; background:none; color:var(--lt-ink-faint); cursor:pointer; display:flex}
+.lt-focus-confirm .cf-close .lt-icon{width:18px; height:18px}
+.lt-focus-confirm .cf-body{padding:14px 16px; font-size:13.5px; line-height:1.55; color:var(--lt-ink-soft)}
+.lt-focus-confirm .cf-body b{color:var(--lt-ink); font-weight:600}
+.lt-focus-confirm .cf-body .fine{display:block; margin-top:8px; font-size:11.5px; color:var(--lt-ink-faint)}
+.lt-focus-confirm .cf-foot{display:flex; align-items:center; gap:10px; padding:12px 16px 14px}
+.lt-focus-confirm .cf-foot .spacer{flex:1}
+.lt-focus-confirm .cf-btn{font-size:12.5px; border:1px solid var(--lt-hair); border-radius:8px; padding:6px 13px; background:var(--lt-print); color:var(--lt-ink); cursor:pointer; display:flex; align-items:center; gap:7px}
+.lt-focus-confirm .cf-btn:hover{border-color:var(--lt-ink-faint)}
+.lt-focus-confirm .cf-btn.danger{background:var(--lt-red); border-color:var(--lt-red); color:#fff}
+.lt-focus-confirm .cf-btn.danger:hover{background:#7a3226}
+.lt-focus-confirm .cf-btn kbd{font-family:var(--lt-mono); font-size:10px; padding:1px 5px; border-radius:5px; border:1px solid rgba(0,0,0,.12); background:rgba(0,0,0,.04)}
+.lt-focus-confirm .cf-btn.danger kbd{border-color:rgba(255,255,255,.4); background:rgba(255,255,255,.15); color:#fff}
+
+/* ============================================================
+   TAG PICKER (ADR-0037, locked mockup:
+   docs/design/2026-07-11-v015-tags-metadata/direction-a-rail.html 244-290)
+   Two anchors: above the Browser tray (t), under the toolbar
+   ("Tag current slide…"). Same surface, same behaviour.
+   ============================================================ */
+.lt-tagpicker{
+  width:340px; background:var(--lt-print); border:1px solid var(--lt-hair); border-radius:10px;
+  box-shadow:var(--lt-shadow-lift); overflow:visible; z-index:70;
+  font-family:var(--lt-sans); color:var(--lt-ink); text-align:left;
+  animation:lt-tp-pop .12s ease-out;
+}
+.lt-tagpicker.anchor-tray{position:absolute; left:50%; transform:translateX(-50%); bottom:78px}
+.lt-tagpicker.anchor-toolbar{position:fixed; left:50%; transform:translateX(-50%); top:56px}
+@keyframes lt-tp-pop{from{opacity:0; transform:translateX(-50%) translateY(4px)} to{opacity:1; transform:translateX(-50%) translateY(0)}}
+.lt-tagpicker.anchor-tray::after{ /* anchor notch toward the tray it came from */
+  content:''; position:absolute; left:50%; bottom:-6px; width:10px; height:10px;
+  background:var(--lt-print); border-right:1px solid var(--lt-hair); border-bottom:1px solid var(--lt-hair);
+  transform:translateX(-50%) rotate(45deg);
+}
+.lt-tagpicker.anchor-toolbar::after{
+  content:''; position:absolute; left:50%; top:-6px; width:10px; height:10px;
+  background:var(--lt-print); border-left:1px solid var(--lt-hair); border-top:1px solid var(--lt-hair);
+  transform:translateX(-50%) rotate(45deg);
+}
+.lt-tagpicker.busy{opacity:.75; pointer-events:none}
+.lt-tagpicker .lt-icon{width:14px; height:14px; flex:none}
+.lt-tagpicker .tp-head{display:flex; align-items:center; gap:8px; padding:9px 12px 7px}
+.lt-tagpicker .tp-head .tp-ic{color:var(--lt-oxford)}
+.lt-tagpicker .tp-title{font-weight:650; font-size:12.5px}
+.lt-tagpicker .tp-note{font-family:var(--lt-mono); font-size:10px; color:var(--lt-ink-faint); margin-left:auto}
+.lt-tagpicker .tp-input{
+  margin:0 12px 8px; display:flex; align-items:center; gap:7px;
+  border:1px solid var(--lt-hair); border-radius:8px; padding:5px 9px; background:var(--lt-paper);
+  color:var(--lt-ink-faint);
+}
+.lt-tagpicker .tp-input:focus-within{border-color:var(--lt-oxford)}
+.lt-tagpicker .tp-input input{flex:1; border:none; background:transparent; outline:none; font-size:12px; color:var(--lt-ink); font-family:var(--lt-sans)}
+.lt-tagpicker .tp-list{max-height:196px; overflow-y:auto; padding:0 6px 6px}
+.lt-tagpicker .tp-empty{padding:10px 12px; font-size:11.5px; color:var(--lt-ink-faint)}
+.lt-tagpicker .tp-row{
+  display:flex; align-items:center; gap:8px; width:100%; text-align:left;
+  padding:5px 8px; border-radius:8px; font-size:12px; border:none; background:none;
+  color:var(--lt-ink); cursor:pointer;
+}
+.lt-tagpicker .tp-row:hover{background:var(--lt-paper-deep)}
+.lt-tagpicker .tp-row.active{background:var(--lt-oxford-soft); outline:1.5px solid var(--lt-oxford); outline-offset:-1.5px}
+.lt-tagpicker .tp-box{
+  width:14px; height:14px; flex:none; border:1.5px solid var(--lt-hair); border-radius:3px;
+  display:flex; align-items:center; justify-content:center; background:var(--lt-print);
+}
+.lt-tagpicker .tp-box .lt-icon{width:10px; height:10px; stroke-width:3}
+.lt-tagpicker .tp-row.on .tp-box{background:var(--lt-oxford); border-color:var(--lt-oxford); color:#fff}
+.lt-tagpicker .tp-row.mixed .tp-box{color:var(--lt-oxford); border-color:var(--lt-oxford)}
+.lt-tagpicker .tp-name{font-family:var(--lt-mono); font-size:11px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.lt-tagpicker .tp-count{font-family:var(--lt-mono); font-size:10px; color:var(--lt-ink-faint)}
+.lt-tagpicker .tp-state{font-size:9.5px; color:var(--lt-ink-faint); white-space:nowrap}
+.lt-tagpicker .tp-row.create .tp-name{font-family:var(--lt-sans); font-size:12px; color:var(--lt-green)}
+.lt-tagpicker .tp-row.create .tp-box{border-style:dashed; color:var(--lt-green); border-color:var(--lt-green)}
+.lt-tagpicker .tp-foot{
+  border-top:1px solid var(--lt-hair); background:var(--lt-paper); padding:7px 12px;
+  font-size:10.5px; color:var(--lt-ink-faint); display:flex; align-items:center; gap:8px;
+  border-radius:0 0 10px 10px;
+}
+.lt-tagpicker .tp-foot .tp-hint{flex:1; line-height:1.35}
+.lt-tagpicker .tp-foot .tp-hint b{color:var(--lt-ink-soft)}
+.lt-tagpicker .tp-foot kbd{font-family:var(--lt-mono); font-size:8.5px; padding:1px 4px; border-radius:4px; border:1px solid var(--lt-hair); background:var(--lt-print); color:var(--lt-ink-soft)}
+
+/* Slide-card tag chips (mockup .mini-tag, 218-222): filled, mono, subtle — cards are dense. */
+.lt .lt-minitag, .lt-minitag{
+  font-family:var(--lt-mono); font-size:8.5px; background:var(--lt-paper-deep); color:var(--lt-ink-soft);
+  border-radius:3px; padding:1px 4px; white-space:nowrap;
+}
+
+/* ============================================================
+   v0.15 wave-1 — the UNIFIED RAIL + scoped grid views (ADR-0009,
+   docs/design/2026-07-11-v015-tags-metadata/lock-candidate-unified-rail.html).
+   Geometry + grammar from the locked mockup, re-toned onto --lt tokens.
+   ============================================================ */
+
+/* ---------- the rail shell (~280px, stacked collapsible groups) ---------- */
+.lt .lt-urail{
+  flex:none; width:280px; min-height:0; overflow-y:auto;
+  display:flex; flex-direction:column;
+  border-right:1px solid var(--lt-hair);
+  padding:12px 10px 16px;
+  background:linear-gradient(to right, rgba(236,229,212,.55), transparent);
+  transition:width .28s var(--lt-ease), padding .28s var(--lt-ease);
+}
+.lt .lt-urail.collapsed{width:0; padding:12px 0; overflow:hidden; border-right-color:transparent}
+.lt .lt-urail .lt-rail-head{padding:0 4px 0 6px; margin-bottom:6px}
+
+.lt .lt-rgroup{margin-bottom:6px; border-bottom:1px solid var(--lt-hair-soft); padding-bottom:8px}
+.lt .lt-rgroup:last-of-type{border-bottom:none}
+.lt .lt-rghead{
+  display:flex; align-items:center; gap:6px; width:100%; text-align:left; padding:6px 6px;
+  font-size:10px; letter-spacing:.14em; text-transform:uppercase; font-weight:600;
+  color:var(--lt-ink-faint); border-radius:6px;
+}
+.lt .lt-rghead .lt-icon{width:12px; height:12px}
+button.lt-rghead:hover{background:var(--lt-paper-deep); color:var(--lt-ink-soft)}
+.lt .lt-rghead .lt-chev{margin-left:auto; transition:transform .18s var(--lt-ease)}
+.lt .lt-rgroup.closed .lt-rghead .lt-chev{transform:rotate(-90deg)}
+.lt .lt-rghead .lt-gsum{
+  margin-left:auto; margin-right:4px; font-family:var(--lt-mono); font-size:9px;
+  letter-spacing:0; text-transform:none; color:var(--lt-oxford);
+}
+.lt .lt-rail-sub{font-size:10.5px; color:var(--lt-ink-faint); padding:0 6px 6px; line-height:1.4}
+.lt .lt-rail-foot{
+  margin-top:auto; padding:10px 6px 0; border-top:1px solid var(--lt-hair-soft);
+  font-size:10.5px; color:var(--lt-ink-faint); line-height:1.45;
+}
+
+/* ---------- search group (relocated field + the talk-hit cluster) ---------- */
+.lt .lt-rail-search{padding:2px 2px 6px}
+.lt .lt-searchfield.rail{max-width:none; height:30px; padding:0 9px; font-size:12.5px}
+.lt .lt-searchfield.rail input{font-size:12.5px}
+.lt .lt-talk-hits{margin-top:7px}
+.lt .lt-th-label{
+  font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--lt-ink-faint);
+  font-weight:600; padding:0 6px 4px;
+}
+.lt .lt-th-row{
+  display:flex; align-items:center; gap:8px; width:100%; text-align:left;
+  padding:4px 6px; border-radius:6px; font-size:12px; color:var(--lt-ink);
+}
+.lt .lt-th-row:hover{background:var(--lt-paper-deep)}
+.lt .lt-th-row .lt-tn{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.lt .lt-th-row .lt-tn.serif{font-family:var(--lt-serif); font-size:12.5px}
+.lt .lt-th-row .lt-tc{font-family:var(--lt-mono); font-size:10px; color:var(--lt-ink-faint)}
+.lt .lt-th-act{font-size:10px; color:var(--lt-oxford); font-weight:550; flex:none}
+
+/* ---------- scope rows (full-width furniture — NEVER chips) ---------- */
+.lt .lt-scope-row{
+  display:flex; align-items:center; gap:9px; width:100%;
+  padding:5px 6px; border-radius:6px; border:1px solid var(--lt-hair);
+  background:var(--lt-print); margin:0 0 5px;
+}
+.lt .lt-scope-cover{
+  width:36px; aspect-ratio:16/9; flex:none; border:1px solid var(--lt-hair); border-radius:3px;
+  background:var(--lt-print); display:flex; align-items:center; justify-content:center;
+  font-family:var(--lt-serif); font-size:11px; color:var(--lt-oxford); font-weight:600;
+  overflow:hidden; box-shadow:0 1px 2px rgba(72,58,34,.08);
+}
+.lt .lt-scope-cover img{width:100%; height:100%; object-fit:cover; display:block}
+.lt .lt-scope-cover.fold{background:var(--lt-paper-deep); color:var(--lt-ink-soft)}
+.lt .lt-scope-body{flex:1; min-width:0; display:flex; flex-direction:column}
+.lt .lt-scope-nm{
+  font-family:var(--lt-serif); font-size:12.5px; color:var(--lt-ink);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.lt .lt-scope-kind{font-size:9.5px; color:var(--lt-ink-faint)}
+.lt .lt-scope-kind .lt-cc{font-family:var(--lt-mono); font-size:9.5px}
+.lt .lt-scope-rm{display:flex; padding:3px; border-radius:4px; color:var(--lt-ink-faint); flex:none}
+.lt .lt-scope-rm:hover{color:var(--lt-red); background:var(--lt-paper-deep)}
+.lt .lt-scope-clear{
+  display:flex; align-items:center; gap:6px; width:100%; padding:4px 6px;
+  color:var(--lt-red); font-size:11.5px; border-radius:6px;
+}
+.lt .lt-scope-clear:hover{background:var(--lt-paper-deep)}
+.lt .lt-scope-clear kbd{margin-left:auto}
+
+/* ---------- browse tabs + files tree + collections ---------- */
+.lt .lt-btabs{
+  display:flex; gap:2px; background:var(--lt-print); border:1px solid var(--lt-hair);
+  border-radius:7px; padding:2px; margin:0 2px 8px;
+}
+.lt .lt-btabs button{
+  flex:1; display:flex; align-items:center; justify-content:center; gap:6px;
+  padding:4px 6px; border-radius:5px; color:var(--lt-ink-soft); font-size:11.5px;
+}
+.lt .lt-btabs button:hover{background:var(--lt-paper-deep)}
+.lt .lt-btabs button.on{background:var(--lt-oxford); color:#fff; font-weight:600}
+
+.lt .lt-ftree{display:flex; flex-direction:column}
+.lt .lt-trow{
+  display:flex; align-items:center; gap:6px; width:100%; text-align:left;
+  padding:3px 6px; border-radius:6px; font-size:12px; color:var(--lt-ink);
+}
+.lt .lt-trow:hover{background:var(--lt-paper-deep)}
+.lt .lt-trow.scoped{background:var(--lt-oxford-soft); color:var(--lt-oxford); font-weight:600}
+.lt .lt-trow .lt-disc{display:flex; padding:2px; margin:-2px 0; border-radius:3px; color:var(--lt-ink-faint); flex:none}
+.lt .lt-trow .lt-disc:hover{background:var(--lt-hair-soft); color:var(--lt-ink)}
+.lt .lt-trow .lt-disc .lt-icon{width:11px; height:11px; transition:transform .18s var(--lt-ease)}
+.lt .lt-trow .lt-disc.open .lt-icon{transform:rotate(90deg)}
+.lt .lt-ficon{color:var(--lt-ink-soft); width:13px; height:13px}
+.lt .lt-trow.scoped .lt-ficon{color:var(--lt-oxford)}
+.lt .lt-trow .lt-tn{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.lt .lt-trow.talk .lt-tn{font-family:var(--lt-serif); font-size:12.5px}
+.lt .lt-trow.sec{font-size:11.5px; color:var(--lt-ink-soft)}
+.lt .lt-trow.sec.scoped{color:var(--lt-oxford)}
+.lt .lt-trow .lt-tc{font-family:var(--lt-mono); font-size:10px; color:var(--lt-ink-faint)}
+.lt .lt-trow.d1{padding-left:22px}
+.lt .lt-trow.d2{padding-left:44px}
+
+.lt .lt-coll-label{
+  font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--lt-ink-faint);
+  font-weight:600; padding:6px 6px 3px;
+}
+.lt .lt-crow{
+  display:flex; align-items:center; gap:8px; width:100%; text-align:left;
+  padding:4px 6px; border-radius:6px; font-size:12px; color:var(--lt-ink);
+}
+.lt .lt-crow:hover{background:var(--lt-paper-deep)}
+.lt .lt-crow.scoped{background:var(--lt-oxford-soft)}
+.lt .lt-crow .lt-tn{
+  flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  font-family:var(--lt-serif); font-size:12.5px;
+}
+.lt .lt-csub{font-family:var(--lt-sans); font-size:11px; color:var(--lt-ink-soft)}
+.lt .lt-when{font-family:var(--lt-mono); font-size:9.5px; color:var(--lt-ink-faint); flex:none}
+.lt .lt-coll-soon{opacity:.5}
+.lt .lt-coll-soon .lt-crow.soon{cursor:default}
+.lt .lt-coll-soon .lt-crow.soon:hover{background:none}
+.lt .lt-vbadge-soon{
+  font-family:var(--lt-mono); font-size:8.5px; letter-spacing:0; text-transform:none;
+  color:var(--lt-amber); border:1px solid var(--lt-amber-soft);
+  border-radius:3px; padding:0 4px; margin-left:5px;
+}
+
+/* ---------- filter sub-groups (collapsible, searchable, capped) ---------- */
+.lt .lt-fsub{margin:2px 2px 6px; border:1px solid var(--lt-hair); border-radius:7px; background:var(--lt-print); overflow:hidden}
+.lt .lt-fsub-head{
+  display:flex; align-items:center; gap:6px; width:100%; text-align:left; padding:5px 8px;
+  font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--lt-ink-faint); font-weight:600;
+}
+.lt .lt-fsub-head:hover{background:var(--lt-paper-deep); color:var(--lt-ink-soft)}
+.lt .lt-fbadge{
+  font-family:var(--lt-mono); font-size:9px; letter-spacing:0; min-width:16px; text-align:center;
+  background:var(--lt-oxford); color:#fff; border-radius:999px; padding:1px 5px;
+}
+.lt .lt-fsub-head .lt-chev{margin-left:auto; width:11px; height:11px; transition:transform .18s var(--lt-ease)}
+.lt .lt-fsub.closed .lt-chev{transform:rotate(-90deg)}
+.lt .lt-fsub-body{padding:0 6px 7px; border-top:1px solid var(--lt-hair-soft)}
+.lt .lt-finput{
+  display:flex; align-items:center; gap:6px; margin:6px 2px 7px;
+  border:1px solid var(--lt-hair); border-radius:6px; background:var(--lt-paper); padding:3px 7px;
+}
+.lt .lt-finput:focus-within{border-color:var(--lt-oxford-mid)}
+.lt .lt-finput .lt-icon{width:10px; height:10px; color:var(--lt-ink-faint)}
+.lt .lt-finput input{flex:1; min-width:0; border:none; background:transparent; outline:none; font-size:11px; color:var(--lt-ink)}
+.lt .lt-finput input::placeholder{color:var(--lt-ink-faint)}
+.lt .lt-showall{
+  display:block; width:100%; text-align:left; margin-top:4px; padding:2px 6px;
+  font-size:10.5px; color:var(--lt-oxford); border-radius:4px;
+}
+.lt .lt-showall:hover{background:var(--lt-paper-deep)}
+.lt .lt-fzero{font-size:10.5px; color:var(--lt-ink-faint); padding:2px 6px}
+
+/* small round pills — Layout + Content */
+.lt .lt-chipwrap{display:flex; flex-wrap:wrap; gap:4px; padding:0 2px}
+.lt .lt-chipwrap.lt-ct-pad{padding-top:7px}
+.lt .lt-lchip{
+  display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:999px;
+  font-size:11px; border:1px solid var(--lt-hair); color:var(--lt-ink-soft); background:var(--lt-print);
+}
+.lt .lt-lchip:hover{background:var(--lt-paper-deep)}
+.lt .lt-lchip.on{background:var(--lt-oxford); border-color:var(--lt-oxford); color:#fff; font-weight:550}
+.lt .lt-lchip .lt-cc{font-family:var(--lt-mono); font-size:9px; opacity:.7}
+.lt .lt-lchip.more{border-style:dashed; color:var(--lt-ink-faint)}
+.lt .lt-lchip .lt-ci{width:11px; height:11px}
+
+/* full-width chips — Tags FILLED (curated) vs Sections HOLLOW (observed), never blended */
+.lt .lt-rail-list{display:flex; flex-direction:column; gap:4px; padding:0 2px}
+.lt .lt-fchip{
+  display:flex; align-items:center; gap:7px; width:100%; text-align:left;
+  padding:4px 8px; border-radius:6px; font-size:12px; border:1px solid transparent;
+}
+.lt .lt-fchip .lt-fn{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.lt .lt-fchip .lt-cc{font-family:var(--lt-mono); font-size:10px; color:var(--lt-ink-faint)}
+.lt .lt-fchip.tag{background:var(--lt-paper-deep); color:var(--lt-ink)}
+.lt .lt-fchip.tag .lt-fn{font-family:var(--lt-mono); font-size:11px}
+.lt .lt-fchip.tag:hover{background:var(--lt-hair-soft); border-color:var(--lt-hair)}
+.lt .lt-fchip.tag.on{background:var(--lt-oxford); color:#fff}
+.lt .lt-fchip.tag.on .lt-cc{color:rgba(255,255,255,.65)}
+.lt .lt-fchip.sec{background:transparent; border-color:var(--lt-hair); color:var(--lt-ink-soft)}
+.lt .lt-fchip.sec:hover{background:var(--lt-paper-deep)}
+.lt .lt-fchip.sec.on{border-color:var(--lt-oxford); color:var(--lt-oxford); background:var(--lt-oxford-soft); font-weight:600}
+.lt .lt-fchip.sec.on .lt-cc{color:var(--lt-oxford)}
+.lt .lt-rail-clearf{
+  display:flex; align-items:center; gap:6px; padding:4px 8px; margin-top:6px;
+  color:var(--lt-red); font-size:11.5px; border-radius:6px;
+}
+.lt .lt-rail-clearf:hover{background:var(--lt-paper-deep)}
+
+/* ---------- results column: echo line + grid tools ---------- */
+.lt .lt-results{flex:1; min-width:0; display:flex; flex-direction:column; min-height:0}
+.lt .lt-echo{
+  display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:10px 30px 0; flex:none;
+}
+.lt .lt-echo-label{font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--lt-ink-faint); font-weight:600}
+.lt .lt-echo-kind{display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap}
+.lt .lt-epill{
+  display:inline-flex; align-items:center; gap:5px; padding:2px 4px 2px 8px; border-radius:6px;
+  font-size:11px;
+}
+.lt .lt-epill.tag{background:var(--lt-oxford); color:#fff; font-family:var(--lt-mono); font-size:10.5px}
+.lt .lt-epill.sec{border:1px solid var(--lt-oxford); color:var(--lt-oxford)}
+.lt .lt-epill.lay{border:1px solid var(--lt-hair); color:var(--lt-ink-soft); background:var(--lt-print); border-radius:999px}
+.lt .lt-epill.ct{background:var(--lt-paper-deep); color:var(--lt-ink-soft)}
+.lt .lt-epill button{display:flex; padding:1px; border-radius:3px; color:inherit; opacity:.7}
+.lt .lt-epill button:hover{opacity:1; background:rgba(0,0,0,.12)}
+.lt .lt-epill button .lt-icon{width:11px; height:11px}
+.lt .lt-echo-join{font-size:10px; color:var(--lt-ink-faint); font-family:var(--lt-mono)}
+.lt .lt-echo-clear{font-size:11px; color:var(--lt-red); padding:2px 6px; border-radius:6px}
+.lt .lt-echo-clear:hover{background:var(--lt-paper-deep)}
+
+.lt .lt-gridtools{display:flex; align-items:center; gap:10px; padding:8px 30px 0; flex:none}
+.lt .lt-gridnote{font-size:11px; color:var(--lt-ink-faint)}
+.lt .lt-vseg{display:inline-flex; border:1px solid var(--lt-hair); border-radius:7px; overflow:hidden; background:var(--lt-print); margin-left:auto}
+.lt .lt-vseg button{
+  padding:3px 10px; font-size:11px; color:var(--lt-ink-soft); border-right:1px solid var(--lt-hair);
+  display:flex; align-items:center; gap:5px;
+}
+.lt .lt-vseg button:last-child{border-right:none}
+.lt .lt-vseg button.on{background:var(--lt-oxford); color:#fff; font-weight:600}
+.lt .lt-vseg button .lt-icon{width:12px; height:12px}
+
+/* ---------- outline view (§-headed, position badges) ---------- */
+.lt .lt-outline-sec{margin-bottom:14px}
+.lt .lt-sec-head{
+  display:flex; align-items:baseline; gap:8px; margin:12px 2px 10px;
+  font-size:12px; color:var(--lt-ink-soft);
+}
+.lt .lt-sec-head .lt-sec-n{font-family:var(--lt-mono); font-size:10px; color:var(--lt-ink-faint); margin-left:auto}
+.lt .lt-ordn{
+  position:absolute; top:10px; right:10px; z-index:2; font-family:var(--lt-mono); font-size:8.5px;
+  color:var(--lt-ink-faint); background:var(--lt-print); border:1px solid var(--lt-hair);
+  border-radius:3px; padding:0 4px; pointer-events:none;
+}
+
+/* ---------- side-by-side columns (2–3 talks; shared comparison anatomy) ---------- */
+.lt .lt-colwrap{flex:1; min-height:0; display:flex; gap:12px; padding:12px 30px 14px; overflow:hidden}
+.lt .lt-col{
+  flex:1; min-width:0; display:flex; flex-direction:column; min-height:0;
+  border:1px solid var(--lt-hair); border-radius:8px; background:var(--lt-print); overflow:hidden;
+}
+.lt .lt-col-head{
+  display:flex; align-items:baseline; gap:8px; padding:8px 12px;
+  border-bottom:1px solid var(--lt-hair); background:var(--lt-chrome); flex:none;
+  position:sticky; top:0; z-index:2;
+}
+.lt .lt-col-talk{
+  font-family:var(--lt-serif); font-size:13.5px; color:var(--lt-ink); font-weight:500;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.lt .lt-col-ord{font-size:9px; letter-spacing:.07em; text-transform:uppercase; color:var(--lt-green); font-weight:650; flex:none}
+.lt .lt-col-n{font-family:var(--lt-mono); font-size:10px; color:var(--lt-ink-faint); margin-left:auto; flex:none}
+.lt .lt-col-scroll{flex:1; overflow-y:auto; padding:8px 10px 90px; min-height:0}
+.lt .lt-col-zero{padding:24px 14px; text-align:center; color:var(--lt-ink-soft); font-size:12px}
+.lt .lt-col-zero b{color:var(--lt-ink)}
+
+/* ============================================================
+   v0.15.x — the active talk in the rail (listed as disk truth,
+   dimmed + "current", never scoping) and the INSERT-DECISION
+   VIEWER (↵ on a Browser card; ⌘↵ is the only insert key).
+   ============================================================ */
+.lt .lt-trow.current, .lt .lt-crow.current{opacity:.55; cursor:default}
+.lt .lt-trow.current:hover, .lt .lt-crow.current:hover{background:none}
+.lt .lt-trow.current .lt-disc{cursor:pointer}
+.lt .lt-current-tag{
+  flex:none; font-family:var(--lt-mono); font-size:8.5px; letter-spacing:.04em;
+  color:var(--lt-amber); border:1px solid var(--lt-amber-soft); border-radius:3px; padding:0 4px;
+}
+
+/* ---------- the viewer shell: a layer INSIDE the Browser root ---------- */
+.lt .lt-viewer{
+  position:absolute; inset:0; z-index:80; display:flex; flex-direction:column;
+  background:var(--lt-paper); outline:none;
+  animation:lt-viewIn .22s var(--lt-ease);
+}
+.lt .lt-iv-top{
+  flex:none; display:flex; align-items:center; gap:12px; padding:10px 20px;
+  border-bottom:1px solid var(--lt-hair); background:var(--lt-chrome);
+}
+.lt .lt-iv-room{
+  font-size:10.5px; letter-spacing:.16em; text-transform:uppercase;
+  color:var(--lt-ink-faint); font-weight:500;
+}
+.lt .lt-iv-talk{
+  font-family:var(--lt-serif); font-size:15px; font-weight:500; color:var(--lt-ink);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.lt .lt-iv-pos{font-family:var(--lt-mono); font-size:10.5px; color:var(--lt-ink-faint)}
+.lt .lt-iv-spacer{flex:1}
+
+.lt .lt-iv-body{flex:1; min-height:0; display:flex}
+.lt .lt-iv-main{flex:1; min-width:0; display:flex; flex-direction:column; min-height:0}
+.lt .lt-iv-stage{
+  flex:1; min-height:0; display:flex; align-items:center; justify-content:center;
+  padding:22px 28px 12px; background:var(--lt-paper-deep);
+}
+.lt .lt-iv-print{
+  position:relative; aspect-ratio:16/9; width:100%; overflow:hidden;
+  background:var(--lt-print); border:1px solid var(--lt-hair); border-radius:4px;
+}
+.lt .lt-iv-print img{width:100%; height:100%; object-fit:contain; display:block}
+.lt .lt-iv-print.big{
+  width:auto; max-width:100%; max-height:100%; height:100%;
+  border-radius:6px; box-shadow:var(--lt-shadow-print-hover);
+}
+.lt .lt-iv-print .lt-sk-thumb{position:absolute; inset:0}
+.lt .lt-iv-fallback{
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  padding:8%; text-align:center; font-family:var(--lt-serif); font-size:14px; color:var(--lt-ink-soft);
+}
+.lt .lt-iv-print.big .lt-iv-fallback{font-size:22px}
+
+/* filmstrip — the whole source deck, outline order, viewed centred */
+.lt .lt-iv-strip{
+  flex:none; display:flex; gap:10px; align-items:flex-start;
+  padding:12px 20px 16px; overflow-x:auto; overflow-y:hidden;
+  border-top:1px solid var(--lt-hair-soft); background:var(--lt-paper);
+}
+.lt .lt-iv-cell{
+  position:relative; flex:none; width:132px; padding:3px;
+  border:1px solid transparent; border-radius:6px; cursor:pointer;
+}
+.lt .lt-iv-cell:hover{background:var(--lt-paper-deep)}
+.lt .lt-iv-cell.viewed{border-color:var(--lt-oxford); background:var(--lt-oxford-soft)}
+.lt .lt-iv-cell.picked .lt-iv-print{outline:2px solid var(--lt-oxford); outline-offset:-2px}
+.lt .lt-iv-ord{
+  position:absolute; top:6px; left:6px; z-index:2; font-family:var(--lt-mono); font-size:8.5px;
+  color:var(--lt-ink-faint); background:var(--lt-print); border:1px solid var(--lt-hair);
+  border-radius:3px; padding:0 4px; pointer-events:none;
+}
+.lt .lt-iv-pick{
+  position:absolute; top:6px; right:6px; z-index:2; width:16px; height:16px; border-radius:4px;
+  background:var(--lt-oxford); color:#fff; display:flex; align-items:center; justify-content:center;
+}
+.lt .lt-iv-pick .lt-icon{width:11px; height:11px}
+
+/* the decision rail — metadata, never editing */
+.lt .lt-iv-rail{
+  flex:none; width:280px; min-height:0; overflow-y:auto;
+  border-left:1px solid var(--lt-hair); background:var(--lt-chrome);
+  padding:18px 18px 24px; display:flex; flex-direction:column; gap:14px;
+}
+.lt .lt-iv-title{
+  font-family:var(--lt-serif); font-size:16px; font-weight:500; color:var(--lt-ink);
+  line-height:1.3;
+}
+.lt .lt-iv-meta{display:grid; grid-template-columns:1fr; gap:2px 0; margin:0}
+.lt .lt-iv-meta dt{
+  font-size:9.5px; letter-spacing:.12em; text-transform:uppercase; font-weight:600;
+  color:var(--lt-ink-faint); margin-top:10px;
+}
+.lt .lt-iv-meta dd{
+  margin:2px 0 0; font-size:12.5px; color:var(--lt-ink); display:flex; align-items:center;
+  gap:4px; flex-wrap:wrap;
+}
+.lt .lt-iv-meta dd.serif{font-family:var(--lt-serif)}
+.lt .lt-iv-dim{color:var(--lt-ink-faint); font-style:italic}
+.lt .lt-iv-id{font-family:var(--lt-mono); font-size:11px; color:var(--lt-oxford)}
+.lt .lt-iv-ic{width:12px; height:12px; color:var(--lt-ink-faint)}
+.lt .lt-iv-actions{display:flex; flex-direction:column; gap:8px; margin-top:4px}
+.lt .lt-iv-note{font-size:11px; color:var(--lt-ink-faint); line-height:1.5; margin:0}
+
+.lt .lt-iv-hints{
+  flex:none; display:flex; align-items:center; gap:16px; padding:7px 20px;
+  border-top:1px solid var(--lt-hair); background:var(--lt-chrome);
+  font-size:11px; color:var(--lt-ink-soft); overflow-x:auto; white-space:nowrap;
+}
+.lt .lt-iv-hints .lt-h{display:flex; align-items:center; gap:5px}
+.lt .lt-iv-hints .lt-push{margin-left:auto}
+.lt .lt-iv-hints .lt-h b{font-weight:500; color:var(--lt-ink-soft)}
+
+/* v0.15.2 — conditioned facet counts: a 0-under-the-other-filters chip dims but stays
+   clickable (clicking explains the emptiness honestly). Active chips keep full strength. */
+.lt .lt-lchip.zero:not(.on), .lt .lt-fchip.zero:not(.on){opacity:.45}
+.lt .lt-lchip.zero:not(.on):hover, .lt .lt-fchip.zero:not(.on):hover{opacity:.7}

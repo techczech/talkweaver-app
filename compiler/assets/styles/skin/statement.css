@@ -1,0 +1,45 @@
+/* @order 1371 */
+  .slide[data-title-layout="left"] .slide-content.layout-statement:has(> .slide-head-quiet) {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    justify-items: center;
+    align-content: center;
+  }/* @order 1372 */
+  .slide[data-title-layout="left"] .slide-content.layout-statement:has(> .slide-head-quiet) > *:not(.slide-head) {
+    grid-column: 1 !important;
+    align-self: center;
+    max-width: 12em;
+    border-left: 0;
+    padding-left: 0;
+  }/* @order 1374 */
+  .slide-content.layout-statement > p.content-p { border-left: 0; padding-left: 0; }/* @order 1389 */
+  .slide-content.layout-statement > p,
+  .slide-content.layout-statement > .content-p {
+    font-weight: 500;
+    font-size: max(38px, 5.4cqw);
+    line-height: 1.3;
+    letter-spacing: -.02em;
+    max-width: 12em;
+  }
+
+  /* {statement=tint}: quote-panel presence without the quotation device or italics. */
+  .slide-content.layout-statement.statement-tint > p,
+  .slide-content.layout-statement.statement-tint > .content-p {
+    background: var(--tint);
+    border-left: .22em solid var(--accent);
+    padding: 1.25em 1.5em;
+    max-width: 24em;
+    font-family: var(--sans);
+    font-size: max(31px, 3.4cqw);
+    font-style: normal;
+    line-height: 1.42;
+  }
+
+  /* {statement=poster}: sanctioned centred-stage statement block; its lines stay left-aligned. */
+  .slide-content.layout-statement.statement-poster > p,
+  .slide-content.layout-statement.statement-poster > .content-p {
+    font-weight: 500;
+    font-size: clamp(42px, 6.4cqw, 92px);
+    line-height: 1.22;
+    max-width: 12em;
+  }

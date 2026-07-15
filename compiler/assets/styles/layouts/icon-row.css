@@ -1,0 +1,20 @@
+/* @order 0456 */
+
+  /* ICON ROW ({iconrow}). The landscape sibling of {iconlist}/{annotated}: a horizontal row of
+     big accent icons, a bold label under each, quiet description lines beneath. Icons resolve
+     through the same semantic vocabulary as feature-lists ({icon=…} overrides + deck icons:). *//* @order 0457 */
+  .icon-row {
+    display: flex; align-items: flex-start; justify-content: center; gap: 22px;
+    margin: 46px auto 0; width: min(1180px, 100%);
+  }/* @order 1524 */
+
+  /* Icon rows (mockup .quad, corrected): heading is icon+label INLINE and left-aligned;
+     sub-items left, grey, hairline-separated; whole grid a step smaller than body. *//* @order 1529 */
+  /* mockup .quad h4: icon INLINE with the heading, both left *//* @order 1568 */
+
+  /* Dense grids (#66): ink for content (grey is de-emphasis only), one further step down *//* @order 1605 */
+
+  /* ── FIDELITY BATCH 6 (Dominik round-5, 2026-07-11) ─────────────────────────────────── *//* @order 1606 */
+
+  /* #69 dense icon-row grids: genuinely small (mockup .quad ≈ .92em of a 25px base) and rows
+     ALIGNED — uniform item heights so hairlines line up across columns */

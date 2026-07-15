@@ -1,0 +1,36 @@
+/* @order 0014 */
+  .columns {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 28px;
+    margin-top: 34px;
+  }/* @order 0242 */
+
+  /* COLUMNS layout ({columns} / {2col} / {3col}). The slide's top-level content nodes are dealt
+     across N equal columns. Per-column vertical alignment (the columns rule): a column of purely
+     image/video/paragraph content is vertically CENTRED (.col-align-middle); a column carrying
+     any text-structural node — a subheading, sublist or feature-list — is aligned TOP
+     (.col-align-top), so headed lists read from a common baseline while figures float centred. *//* @order 0243 */
+  .columns-grid {
+    display: grid;
+    gap: clamp(20px, 2.6vw, 44px);
+    margin-top: 30px;
+    align-items: stretch;
+  }/* @order 0244 */
+  .columns-grid.columns-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }/* @order 0245 */
+  .columns-grid.columns-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }/* @order 0246 */
+  .columns-grid.columns-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }/* @order 0247 */
+  .columns-grid > .col {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }/* @order 0248 */
+  .columns-grid > .col-align-top { justify-content: flex-start; }/* @order 0249 */
+  .columns-grid > .col-align-middle { justify-content: center; }/* @order 0250 */
+  /* Inside a column, headings/figures/lists already carry their own type styling; just make
+     them flow naturally and never overflow the narrower column box. *//* @order 0251 */
+  .columns-grid > .col > * { margin-top: 0; max-width: 100%; }/* @order 0252 */
+  .columns-grid > .col h3 { margin: 0; color: var(--accent); font-size: max(20px, 1.9cqw); line-height: 1.1; }/* @order 1614 */
+
+  /* #72 columns content is never bold */

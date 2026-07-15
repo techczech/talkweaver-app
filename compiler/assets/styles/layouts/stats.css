@@ -1,0 +1,47 @@
+/* @order 0427 */  /* ADR-0005: no italics *//* @order 0428 */
+
+  /* ===== PPT-replication batch (2026-06-11) — shapes ported from PPT2HandoutSkill so old
+     PowerPoint slides replicate 1:1: {stats} {process} {steps} {iconrow} {image-quote}
+     {image-grid}. All static build-time HTML+CSS (no runtime drawing, no share-parity hooks). *//* @order 0429 */
+
+  /* STATS ({stats}). A big-number row: huge accent value, label beneath, optional small caption.
+     Cells are panel cards with the accent top rule (same device as orgchart boxes). *//* @order 0430 */
+  .stats-row {
+    display: flex; flex-wrap: wrap; justify-content: center; align-items: stretch;
+    gap: 18px; margin: 40px auto 0; width: min(1150px, 100%);
+  }/* @order 0431 */
+  .stats-row .stat {
+    flex: 1 1 0; min-width: 168px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; gap: 8px; padding: 26px 18px;
+    background: var(--tint); border: 1px solid var(--line); border-top: 4px solid var(--accent);
+    border-radius: 10px;
+  }/* @order 0575 */
+  .countdown.countdown-armed { display: block; }/* @order 0576 */
+  .countdown-digits {
+    position: absolute; right: clamp(18px, 2.4vw, 40px); bottom: clamp(14px, 2vh, 30px); z-index: 5;
+    font: 760 clamp(22px, 2.4vw, 38px)/1 var(--sans, system-ui);
+    font-variant-numeric: tabular-nums; color: var(--accent); opacity: .85;
+  }/* @order 0577 */
+  .countdown-digits.countdown-final { color: var(--accent-2, #9f1239); opacity: 1; }/* @order 0578 */
+  .countdown-digits.countdown-done { animation: countdown-flash 1.1s ease-in-out 3; }/* @order 0580 */
+  .countdown-bar {
+    position: absolute; left: 0; bottom: 0; z-index: 5; height: 7px; width: 100%;
+    background: var(--accent); transform-origin: left center; opacity: .9;
+  }/* @order 0581 */
+  .countdown-bar.countdown-final { background: var(--accent-2, #9f1239); }/* @order 0582 */
+  .countdown-bar.countdown-done { animation: countdown-flash 1.1s ease-in-out 3; }/* @order 0587 */
+  .section-timer-float.countdown-final { color: var(--accent-2, #9f1239); opacity: 1; }/* @order 0588 */
+  .section-timer-float.countdown-done { animation: countdown-flash 1.1s ease-in-out 3; }/* @order 1476 */
+
+  /* Stats (mockup .t-bignum): the number is the slide — huge accent figure, plain-weight label. *//* @order 1514 */
+
+  /* ── FIDELITY BATCH 4 (Dominik round-3 principles, 2026-07-11) ─────────────────────────
+     Binding: NO centred text (especially paragraphs) — centre blocks, not lines.
+     NO all-caps as main content — caps live only in kickers/short chrome labels.
+     Type steps DOWN inside dense structures (tables, grids) relative to bullet text. *//* @order 1515 */
+
+  /* Stats (mockup .t-bignum, repaired): plain stage — no card, no tint, no border. The number
+     is a huge accent figure; the label sits under it in ink at body scale, left-aligned. *//* @order 1563 */
+
+  /* Stats (#65): the label reads at statement scale beside the figure — no tiny-next-to-huge */

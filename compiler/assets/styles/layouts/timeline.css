@@ -1,0 +1,224 @@
+/* @order 0368 */
+
+  /* Fix 1 — timeline-visual: a timeline (graphical element) beside a comment. Same column
+     grammar as list-visual: slide-head row 1 (full width), then .tv-body row 2 — a two-column
+     inner grid (timeline left, comment right). The pair is vertically CENTRED as a unit
+     (align-items: center) per Dominik's "comment next to timeline, like all graphical
+     elements". Below 950px the columns stack (see the responsive block). *//* @order 0369 */
+  .slide-content.layout-timeline-visual {
+    grid-template-columns: 1fr;
+    row-gap: 22px;
+    align-content: center;
+  }/* @order 0370 */
+  .slide-content.layout-timeline-visual > .slide-head { display: block; grid-column: 1; grid-row: 1; }/* @order 0371 */
+  .slide-content.layout-timeline-visual > .slide-head > h1 { max-width: 24ch; }/* @order 0372 */
+  .slide-content.layout-timeline-visual > .tv-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+    column-gap: clamp(32px, 3.8vw, 64px);
+    align-items: center;
+    grid-column: 1;
+    grid-row: 2;
+    min-height: 0;
+  }/* @order 0373 */
+  .slide-content.layout-timeline-visual > .tv-body > .tv-timeline { min-width: 0; align-self: center; }/* @order 0374 */
+  /* The timeline's own top margin (32px, set for the stacked layout) is the rail-to-title gap;
+     beside a comment it would push the rail off-centre, so zero it in the paired layout. *//* @order 0375 */
+  .slide-content.layout-timeline-visual > .tv-body > .tv-timeline .timeline { margin-top: 0; }/* @order 0376 */
+  .slide-content.layout-timeline-visual > .tv-body > .tv-comment { min-width: 0; align-self: center; }/* @order 0377 */
+  /* The comment reads as a speaker statement beside the rail: accent left bar, generous type,
+     never the cramped under-rail paragraph it used to be. *//* @order 0378 */
+  .slide-content.layout-timeline-visual > .tv-body > .tv-comment .content-p {
+    margin: 0;
+    max-width: 32ch;
+    font-size: max(20px, 2cqw);
+    line-height: 1.4;
+    padding-left: 0.9em;
+    border-left: 3px solid var(--accent);
+  }/* @order 0379 */
+  .slide-content.layout-timeline-visual > .tv-body > .tv-comment .content-p strong { color: var(--accent); }/* @order 0380 */
+  .slide-content.layout-timeline-visual > .tv-body > .tv-comment .content-p + .content-p { margin-top: 0.7em; }/* @order 0934 */
+  .timeline .tl-entries { list-style: none; margin: 0; padding: 0; display: grid; gap: .5em; }/* @order 0937 */
+  .timeline .tl-date { color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }/* @order 0938 */
+  .timeline .tl-body { color: var(--ink); }/* @order 0939 */
+  .timeline .tl-body strong { color: var(--accent); }/* @order 0940 */
+  .timeline .tl-group-head {
+    margin: 0 0 .3em; font-family: var(--mono, inherit); font-size: .5em; font-weight: 500;
+    letter-spacing: .16em; text-transform: uppercase; color: var(--accent);
+  }/* @order 0941 */
+  .timeline .tl-group + .tl-group { margin-top: 1.05em; }/* @order 0944 */
+
+  /* rail (default): single vertical rail; dots sit ON the rail next to each entry. Group
+     headers ride the rail as small-caps dividers (a smaller dot).
+     Refinement 4 (2026-06-09): the rail LINE passes through the CENTRE of every dot. The line and
+     the dots are anchored to ONE shared coordinate — `--tl-rail-x`, the rail's distance from the
+     container's left edge — expressed in a FONT-INDEPENDENT unit (px). The previous border-left +
+     per-li-`em` offset drifted because the container padding (container font) and the dot offset
+     (li font) resolved `em` against different font sizes; pinning both to the same px value removes
+     the drift. The line is an absolutely-positioned 2px bar at --tl-rail-x; content is inset past
+     it; each dot is centred on --tl-rail-x. The dot SIZES keep `em` so they scale with the text. *//* @order 0945 */
+  .timeline-rail { position: relative; padding-left: 26px; --tl-rail-x: 13px; }/* @order 0946 */
+  .timeline-rail::before {
+    content: ""; position: absolute; left: var(--tl-rail-x); top: 0; bottom: 0;
+    width: 2px; transform: translateX(-1px); background: var(--line);
+  }/* @order 0947 */
+  .timeline-rail .tl-entries { gap: .55em; position: relative; }/* @order 0948 */
+  .timeline-rail li { position: relative; }/* @order 0949 */
+  /* Dot CENTRE sits on the rail line. The li content begins at the container's left edge +
+     padding-left (26px), so to put the dot centre at --tl-rail-x (13px from the container edge) the
+     dot's left edge = --tl-rail-x − padding-left − dot-radius = 13px − 26px − .275em. All the
+     horizontal terms that bridge container↔li are px (font-independent); only the dot radius is em. *//* @order 0950 */
+  .timeline-rail li::before {
+    content: ""; position: absolute; left: calc(var(--tl-rail-x) - 26px - .275em); top: .55em;
+    width: .55em; height: .55em; border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 0 4px var(--paper); z-index: 1;
+  }/* @order 0951 */
+  .timeline-rail .tl-group-head { position: relative; }/* @order 0952 */
+  /* ONE dot per dated event: the accent dot sits on the DATE (group head); the body rows
+     beneath carry no dot of their own (the old two-dot pairing read as an artefact). *//* @order 0953 */
+  .timeline-rail .tl-group-head::before {
+    content: ""; position: absolute; left: calc(var(--tl-rail-x) - 26px - .3em); top: .18em;
+    width: .6em; height: .6em; border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 0 4px var(--paper); z-index: 1;
+  }/* @order 0954 */
+  .timeline-rail .tl-group:has(> .tl-group-head) li::before { display: none; }/* @order 0955 */
+
+  /* columns: one column per group (good for 2–4 grouped categories). Each column keeps its
+     own header atop; entries flow down. No rail — width does the separating. *//* @order 0956 */
+  .timeline-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(15em, 1fr)); gap: 1.4em 2em; }/* @order 0957 */
+  .timeline-columns .tl-group + .tl-group { margin-top: 0; }/* @order 0958 */
+  .timeline-columns .tl-group { border-top: 2px solid var(--line); padding-top: .55em; }/* @order 0959 */
+  .timeline-columns .tl-entries { gap: .55em; }/* @order 0960 */
+  .timeline-columns li { grid-template-columns: 1fr; }/* @order 0961 */
+  .timeline-columns .tl-date { display: block; }/* @order 0962 */
+
+  /* compact: dense two-column flow for long flat timelines; date-led rows, no rail. *//* @order 0963 */
+  .timeline-compact { font-size: max(17px, 1.7cqw); }/* @order 0964 */
+  .timeline-compact .tl-entries { grid-template-columns: 1fr 1fr; gap: .4em 2.4em; }/* @order 0965 */
+  .timeline-compact li { align-items: baseline; }/* @order 0966 */
+
+  /* horizontal ({timelinehorizontal}): a left-to-right track of dated stops along a single line.
+     Each entry is a column with a dot on the rail, its date above and body below. Entries flow in
+     an auto-fit grid so the track fills the slide width; on narrow screens it falls back to a
+     stacked vertical rail (so it never crushes). The horizontal rail is drawn as a top border on
+     the entries row. *//* @order 0967 */
+  .timeline-horizontal { margin-top: 38px; }/* @order 0968 */
+  .timeline-horizontal .tl-group + .tl-group { margin-top: 1.4em; }/* @order 0969 */
+  .timeline-horizontal .tl-entries {
+    display: grid; grid-auto-flow: column; grid-auto-columns: minmax(8em, 1fr);
+    gap: 0 1.4em; padding-top: 1.4em; border-top: 2px solid var(--line);
+  }/* @order 0970 */
+  .timeline-horizontal li {
+    display: block; position: relative; grid-template-columns: none;
+    padding-top: .2em; text-align: center;
+  }/* @order 0971 */
+  .timeline-horizontal li::before {
+    content: ""; position: absolute; top: calc(-1.4em - 1px); left: 50%; transform: translateX(-50%);
+    width: .6em; height: .6em; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px var(--paper);
+  }/* @order 0972 */
+  .timeline-horizontal .tl-date { display: block; }/* @order 0973 */
+  .timeline-horizontal .tl-body { display: block; margin-top: .2em; }/* @order 0975 */
+
+  /* spine ({timelinespine}, treatment A) + pills ({timeline-pills}, treatment D): the classic
+     illustrated horizontal timeline. A central Oxford-blue spine bar runs across the slide; ONE
+     dot per DATE stop sits ON the line; event CARDS (panel style) connect to their dot by a short
+     DOTTED vertical leader. Both share this machinery; built for ~6 legible stops (>6 auto-splits
+     across slides upstream). Layout: the track is an N-column grid (N = --tl-spine-cols, set per
+     deck = the stop count); each stop is a relatively-positioned grid cell whose dot/leader/card/
+     label are absolutely positioned about the central spine row. Generous spacing, no overlap.
+       • A: card ALTERNATES above/below by index parity; the bold date LABEL sits on the spine.
+       • D: a solid accent date PILL sits on the spine; a single card hangs BELOW every stop. *//* @order 0976 */
+  .timeline-spine, .timeline-pills {
+    margin-top: 30px; --tl-spine-cols: 6; --tl-spine-scale: 1;
+    --tl-spine-leader: color-mix(in srgb, var(--accent) 55%, transparent);
+  }/* @order 0977 */
+  .timeline-spine .tl-spine-track, .timeline-pills .tl-spine-track {
+    list-style: none; margin: 0; padding: 0; position: relative; width: 100%;
+    display: grid; grid-template-columns: repeat(var(--tl-spine-cols), 1fr);
+    /* Fill the stage so the spine centres with symmetric room for cards above AND below. */
+    align-items: center; min-height: clamp(320px, 56vh, 480px);
+  }/* @order 0978 */
+  /* The spine bar: a continuous rounded Oxford-blue band running across the centre row. *//* @order 0979 */
+  .timeline-spine .tl-spine-track::before {
+    content: ""; position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%);
+    height: 5px; border-radius: 99px; background: var(--accent); z-index: 0;
+  }/* @order 0980 */
+  .timeline-spine .tl-spine-stop, .timeline-pills .tl-spine-stop {
+    position: relative; display: flex; justify-content: center; min-width: 0;
+  }/* @order 0981 */
+  /* Event card — the panel style shared with the deck. *//* @order 0982 */
+  .tl-spine-card {
+    background: var(--tint); border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: 0 1px 0 #00000008; padding: .6em .75em;
+    font-size: calc(clamp(14px, 1.35vw, 19px) * var(--tl-spine-scale, 1)); line-height: 1.28; min-width: 0;
+  }/* @order 0983 */
+  .tl-spine-card .tl-spine-events { list-style: none; margin: 0; padding: 0; display: grid; gap: .3em; }/* @order 0984 */
+  .tl-spine-card .tl-spine-events li { display: block; color: var(--ink); }/* @order 0985 */
+  .tl-spine-card .tl-spine-events li::before { content: "·"; color: var(--accent); font-weight: 700; margin-right: .35em; }/* @order 0986 */
+  .tl-spine-card .tl-spine-events li:only-child::before { content: none; }/* @order 0987 */
+  .tl-spine-card .tl-spine-events strong { color: var(--accent); }/* @order 0988 */
+  .tl-spine-card .tl-event-date { color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }/* @order 0989 */
+  /* The dot sits ON the spine, centred on each stop's cell. *//* @order 0990 */
+  .tl-spine-dot {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2;
+    width: 15px; height: 15px; border-radius: 50%;
+    background: var(--accent); box-shadow: 0 0 0 4px var(--paper);
+  }/* @order 0991 */
+  /* Dotted vertical leader in the accent colour, from the dot out to the card. *//* @order 0992 */
+  .tl-spine-leader {
+    position: absolute; left: 50%; transform: translateX(-50%); width: 0; z-index: 1;
+    border-left: 2px dotted var(--tl-spine-leader);
+  }/* @order 0993 */
+
+  /* ── A (spine): date label on the spine; card alternates above/below ── *//* @order 0994 */
+  .timeline-spine .tl-spine-date {
+    position: absolute; left: 50%; transform: translateX(-50%); margin: 0;
+    font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums;
+    font-size: calc(clamp(13px, 1.25vw, 18px) * var(--tl-spine-scale, 1)); line-height: 1.1; white-space: nowrap; z-index: 2;
+  }/* @order 0995 */
+  .timeline-spine .tl-spine-card {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    /* Cards alternate above/below, so SAME-side cards sit ~2 columns apart — give them that room
+       rather than shrinking with the font. A wide card keeps a dense (e.g. 10-stop) spine to ~2-3
+       lines instead of a tall 6-line sliver. Capped so it never collides with its same-side
+       neighbour; the font itself still scales down via --tl-spine-scale. */
+    width: min(190%, clamp(160px, 16vw, 205px));
+  }/* @order 0996 */
+  /* even stop (card ABOVE): card sits above the spine, date label below the line. *//* @order 0997 */
+  .timeline-spine .tl-spine-stop[data-side="above"] .tl-spine-card { bottom: calc(50% + 30px); }/* @order 0998 */
+  .timeline-spine .tl-spine-stop[data-side="above"] .tl-spine-date { top: calc(50% + 13px); }/* @order 0999 */
+  /* odd stop (card BELOW): card sits below the spine, date label above the line. *//* @order 1000 */
+  .timeline-spine .tl-spine-stop[data-side="below"] .tl-spine-card { top: calc(50% + 30px); }/* @order 1001 */
+  .timeline-spine .tl-spine-stop[data-side="below"] .tl-spine-date { bottom: calc(50% + 13px); }/* @order 1002 */
+  /* No dotted leader on the spine (treatment A): the dot + date on the rail already anchor each
+     card to its column, and the connecting line read as clutter. The card sits just off the rail. *//* @order 1003 */
+  .timeline-spine .tl-spine-leader { display: none; }/* @order 1004 */
+
+  /* ── D (pills): date pill ON the spine; single card hangs BELOW every stop ── *//* @order 1005 */
+  .timeline-pills .tl-spine-track { align-items: start; padding-top: 64px; }/* @order 1006 */
+  .timeline-pills .tl-spine-track::before {
+    content: ""; position: absolute; left: 0; right: 0; top: 70px; transform: translateY(-50%);
+    height: 5px; border-radius: 99px; background: var(--accent); z-index: 0;
+  }/* @order 1007 */
+  .timeline-pills .tl-spine-stop { flex-direction: column; align-items: center; }/* @order 1008 */
+  .timeline-pills .tl-spine-pill {
+    position: relative; z-index: 3; background: var(--accent); color: #fff;
+    font-weight: 800; font-variant-numeric: tabular-nums; font-size: calc(clamp(13px, 1.25vw, 17px) * var(--tl-spine-scale, 1));
+    padding: 5px 14px; border-radius: 999px; margin-top: -16px; white-space: nowrap;
+  }/* @order 1009 */
+  /* No dotted leader on pills either — the pill on the rail already marks the stop. The card
+     hangs below with a clear gap so its text never rides on the rail. *//* @order 1010 */
+  .timeline-pills .tl-spine-leader { display: none; }/* @order 1011 */
+  .timeline-pills .tl-spine-card {
+    position: relative; margin-top: 28px; width: min(190%, clamp(160px, 16vw, 205px));
+  }/* @order 1424 */
+
+  /* Horizontal timeline (mockup .tl-simple): hairline track, ring dots, mono accent dates,
+     the LAST event lands filled + bold. *//* @order 1436 */
+
+  /* Vertical timeline (mockup .tl-dyn list): 2px hairline rail, ring dots ON the rail,
+     mono dates, generous rhythm. *//* @order 1686 */
+
+  /* ── {timeline=dynamic} (mockup .tl-dyn, locked slide 3b) ─────────────────────────────── *//* @order 1744 */
+
+  /* no stepping active: the FIRST event is hot and its detail card shows (mockup opens on e1) */

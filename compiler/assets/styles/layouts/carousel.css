@@ -1,0 +1,12 @@
+/* @order 0769 */
+
+  /* ── ADR-0022 CAROUSEL — stepped FULL-BLEED sub-slides ──────────────────────────────────
+     A carousel reuses the data-exclusive stepping container, but each sub-slide is a real
+     full-bleed slide (its content ran through inferLayout + the normal renderers), NOT a card.
+     So strip ALL card chrome from .carousel-subslide and let its inner .slide-content fill the
+     frame and lay out exactly as a top-level slide would. The runtime's applyExclusiveCards
+     toggles .active-card on the visible sub-slide (same machinery as a gallery). *//* @order 0770 */
+  .slide-content.layout-carousel { display: flex; flex-direction: column; height: 100%; }/* @order 0777 */
+  /* The sub-slide draws its own visible title; the parent carousel head already shows the shared
+     section · parent-title eyebrow above the stepped frames, so the parent head stays compact. *//* @order 0778 */
+  .slide-content.layout-carousel > .slide-head-compact { margin: 0 0 10px; flex: 0 0 auto; }

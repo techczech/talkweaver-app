@@ -1,0 +1,38 @@
+/* @order 0532 */
+
+  /* TABLE ({table}) — reuses .slide-table; only the numeric right-align class is new. *//* @order 0533 */
+  .slide-table th.num, .slide-table td.num { text-align: right; font-variant-numeric: tabular-nums; }/* @order 0643 */
+
+  .slide-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 28px;
+    font-size: max(17px, 1.7cqw);
+  }/* @order 0644 */
+  .slide-table th,
+  .slide-table td {
+    border: 1px solid var(--hairline);
+    padding: clamp(12px, 1.6vh, 20px) clamp(14px, 1.2vw, 22px);
+    text-align: left;
+    vertical-align: top;
+  }/* @order 0645 */
+  .slide-table thead th {
+    background: var(--tint);
+    color: var(--ink);
+    font-weight: 600;
+    font-size: 1.08em;
+  }/* @order 0646 */
+  /* First-column row labels read as the mockup's small-caps mono field labels. *//* @order 0647 */
+  .slide-table tbody th:first-child {
+    font-family: var(--mono);
+    font-size: 0.72em;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }/* @order 1453 */
+
+  /* Table (mockup .ctable): tint column headers with weight, mono accent row headers,
+     hairline grid throughout. *//* @order 1521 */
+
+  /* Tables: content is NEVER capsed or mono; row leader reads as a label by colour+weight
+     only. Dense structure → one step smaller than bullet text. */

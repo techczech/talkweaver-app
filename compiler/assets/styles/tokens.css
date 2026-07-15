@@ -1,0 +1,48 @@
+/* @order 0001 */
+  :root {
+    /* ADR-0005 design language (locked 2026-07-09): light Swiss, warm white, section-coloured.
+       Fonts: SYSTEM STACKS ONLY (amended by Dominik 2026-07-10) — no @font-face, no CDN, no
+       downloads; the mockups' Familjen Grotesk/Fragment Mono are reference feel only. */
+    --paper: #fdfdfb;        /* page — warm white */
+    --ink: #101418;          /* text */
+    --muted: #5c6570;        /* secondary text */
+    --hairline: #e3e2dc;     /* rules/borders */
+    /* Section accent + tint. Each carries a per-section fallback stamped inline by the generator
+       (--sec-accent / --sec-tint on the slide <section>); the defaults here are section 1 (cobalt).
+       Section cycle: 1 cobalt #0f4bd8/#e8eefc · 2 emerald #0a7a5c/#e4f3ee · 3 vermilion
+       #c2410c/#fcece3 — then repeat. One swap point per section is the inline stamp. */
+    --accent: var(--sec-accent, #0f4bd8);  /* section accent — cobalt default */
+    --tint:   var(--sec-tint,   #e8eefc);  /* section tint — NEW */
+    /* --panel kept as an alias of --tint so container-mode CSS keeps working until Task 5. */
+    --panel: var(--tint);
+    /* Legacy named tokens kept as aliases so the 4,300-line block still resolves. --accent-2
+       (secondary, was crimson) now rides the section accent; fixed named hues stay available. */
+    --accent-2: var(--accent);
+    --line: var(--hairline);
+    /* ADR-0005: the section accent carries ALL accent roles; green/red keep semantic
+       (correct/incorrect) meaning only. */
+    --oxford: var(--accent);
+    --crimson: var(--accent);
+    --green: #0a7a5c;
+    --red: #b42318;
+    --blue: var(--accent);
+    --gold: var(--accent);
+    --hairline-shadow: 0 1px 0 #00000008;
+    --elevation: 0 24px 70px #17202a26;
+    --shadow: 0 24px 70px #17202a26;
+    --sans: "Trebuchet MS", system-ui, -apple-system, "Segoe UI", sans-serif; /* ADR-0005 face (locked 2026-07-11); options below */
+    /* --serif stays defined (Georgia) but nothing may newly use it (ADR-0005). */
+    --serif: Georgia, "Times New Roman", serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    /* Consistent margins (2026-06-09 title spec): ONE slide safe-area / content inset, applied to
+       every layout via .slide. Content sits the same distance from the slide edge regardless of
+       layout — no more ad-hoc per-layout padding. Change here to reflow the whole deck's margins. */
+    --slide-pad-y: 5vh;
+    --slide-pad-x: 5.6vw;
+  }/* @order 0326 */
+  /* Refinement 7 (2026-06-09): keep a consistent GUTTER between text and any graphical element
+     (action/CTA row, accent bars, rules, diagrams) so they never sit cramped against adjacent text.
+     ONE token (--gutter-graphic); the visible offender was the CTA button row butting straight onto
+     the statement above it (and onto the statement's accent bar). A button row that FOLLOWS any
+     sibling gets the gutter above it. *//* @order 0327 */
+  :root { --gutter-graphic: clamp(18px, 2.2vw, 32px); }

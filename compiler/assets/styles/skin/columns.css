@@ -1,0 +1,4 @@
+/* @order 1615 */
+  .columns-grid li, .columns-grid p { font-weight: 400; }/* @order 1616 */
+  .columns-grid h4, .columns-grid h3, .columns-grid h2 { font-weight: 600; }/* @order 1648 */
+  .columns-grid h4, .columns-grid h3, .columns-grid h2 { font-weight: 500; font-size: var(--fs-label); font-family: var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }

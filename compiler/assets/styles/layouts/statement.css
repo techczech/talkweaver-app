@@ -1,0 +1,101 @@
+/* @order 0022 */
+  /* === G6 — UNIVERSAL CONTENT PARAGRAPH ===
+     Every generated content paragraph carries `.content-p` (one render-time class, see
+     generate-presentation-bundle.mjs). This single rule is the comment/statement visual
+     treatment for ALL containers — the accent-bar callout that reads as "the speaker's
+     point", at a statement-adjacent scale. It replaces the previous per-container <p>
+     paths (the bare copy-visual / list-visual / cards-media-split paragraph that rendered
+     unstyled). Container tuning is done by descendant overrides below, NOT by new <p> paths.
+
+     PRECEDENCE: the statement layout keeps its own bigger treatment. The `:not(.layout-statement *)`
+     guard here means a statement paragraph (which is ALSO `.content-p`) takes ONLY the
+     `.statement, .layout-statement > p` rule above — the two never fight. Card comments
+     (`.content-p.card-comment`) take the card-scoped override (later in this sheet). *//* @order 0023 */
+  .slide-content:not(.layout-statement) .content-p:not(.card-comment) {
+    margin: 0 0 .6em;
+    padding-left: 22px;
+    border-left: 5px solid var(--accent);
+    font-family: var(--sans);
+    font-size: max(29px, 2.7cqw);
+    line-height: 1.34;
+    color: var(--ink);
+    max-width: 46ch;
+    /* Body copy may carry long emails/URLs (CTA contact lines); let them break so a long
+       token never overflows the slide horizontally. (Titles keep overflow-wrap:normal.) */
+    overflow-wrap: anywhere;
+  }/* @order 0024 */
+  .slide-content:not(.layout-statement) .content-p:not(.card-comment):last-child { margin-bottom: 0; }/* @order 0025 */
+  .slide-content:not(.layout-statement) .content-p:not(.card-comment) strong { color: var(--accent); }/* @order 0153 */
+
+  /* === SD-16 statement-beside-list layout (Task 6, 2026-06-25) === *//* @order 0154 */
+  /* Title across the top; body = .stmt-list flex container.
+     Left column (.stmt, 42%): the claim, left-border accent bar = height of the TEXT.
+     Right column (.list-side, flex:1): supporting list, icons allowed.
+     align-items:center centres both columns vertically so the bar is text-height, not column-height. *//* @order 0155 */
+  .stmt-list {
+    display: flex;
+    gap: clamp(24px, 6vw, 80px);
+    align-items: center;
+    height: 100%;
+  }/* @order 0156 */
+  /* ADR-0005 (mockup .anchor .main p): the claim is plain large type — no bars; keyword
+     emphasis is the boxed strong. The old accent bar + the universal content-p bar were
+     doubling up. *//* @order 0157 */
+  .stmt-list .stmt {
+    flex: 0 0 42%;
+    border-left: 0;
+    padding-left: 0;
+    font-family: var(--sans);
+    font-weight: 500;
+    font-size: max(26px, 3cqw);
+    line-height: 1.3;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+  }/* @order 0158 */
+  .stmt-list .stmt.content-p, .stmt-list .content-p { border-left: 0; padding-left: 0; }/* @order 0159 */
+  .stmt-list .list-side {
+    flex: 1;
+    min-width: 0;
+  }/* @order 0160 */
+
+  /* === statement layout (ADR-0005 mockup .t-statement) === *//* @order 0161 */
+  /* One idea, dead-centre: a single large sans phrase, block centred both axes, text left
+     inside. The nav-only title (.slide-head-quiet / sr-only h1) is not drawn; when {title=show}
+     restores a visible .slide-head it stacks (mono kicker + title) above the statement. *//* @order 0162 */
+  .slide-content.layout-statement {
+    justify-items: center;
+    align-content: center;
+    align-items: center;
+    text-align: left;
+  }/* @order 0163 */
+  .slide-content.layout-statement > .slide-head-quiet { display: contents; }/* @order 0164 */
+  .slide-content.layout-statement > .slide-head:not(.slide-head-quiet) { display: block; }/* @order 0165 */
+  .slide-content.layout-statement > .slide-head > .kicker {
+    font-family: var(--mono);
+    font-weight: 500;
+    color: var(--accent);
+    margin-bottom: 10px;
+  }/* @order 0166 */
+  .slide-content.layout-statement > .slide-head > h1 {
+    font-family: var(--sans);
+    font-weight: 700;
+    max-width: 12em;
+    line-height: 1.2;
+    margin-bottom: 0.5em;
+  }/* @order 0167 */
+  /* Trailing paragraphs (multi-part statement) step down to a quieter muted line. *//* @order 0168 */
+  .slide-content.layout-statement > p:not(.kicker) ~ p:not(.kicker) {
+    margin-top: 0.6em;
+    font-size: max(22px, 3.2cqw);
+    font-weight: 400;
+    color: var(--muted);
+  }/* @order 1369 */
+
+  /* ===== ADR-0005 PRECEDENCE REPAIRS (end of cascade — these win ties) ===== *//* @order 1370 */
+  /* A statement-family slide with a nav-only (quiet) head must NOT become a left-rail
+     two-column slide: the rail override was flattening the statement's measure
+     (max-width: 100%) and pushing the block into column 2. Restore the centred
+     single-column statement with the binding readability measures. *//* @order 1373 */
+  /* Statement paragraphs never carry the content-p accent bar, wherever they appear. *//* @order 1388 */
+
+  /* Statement (mockup .t-statement): weight 500, tight measure, centred by the layout */

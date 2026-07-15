@@ -1,0 +1,39 @@
+/* @order 1525 */
+  .icon-row { font-size: .85em; width: 100%; max-width: none; gap: 2em; }/* @order 1528 */
+  .icon-row .ir-item {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    text-align: left !important;
+    gap: 0;
+    padding: .9em 0 0;
+  }/* @order 1530 */
+  .icon-row .ir-item .ir-icon {
+    margin: 0 .55em 0 0;
+    display: inline-flex;
+    vertical-align: middle;
+    float: left;
+  }/* @order 1531 */
+  .icon-row .ir-item .ir-label {
+    font-weight: 600;
+    font-size: 1.15em;
+    text-align: left;
+    line-height: 1.25;
+    overflow-wrap: break-word;
+    display: flex;
+    align-items: center;
+    gap: .55em;
+  }/* @order 1532 */
+  .icon-row .ir-item .ir-label::before { content: none; }/* @order 1533 */
+  .icon-row .ir-item .ir-desc { width: 100%; margin-top: .7em; }/* @order 1534 */
+  .icon-row .ir-item .ir-desc li { text-align: left; overflow-wrap: break-word; }/* @order 1569 */
+  .icon-row { font-size: .8em; }/* @order 1570 */
+  .icon-row .ir-item .ir-desc li { color: var(--ink); font-size: .88em; }/* @order 1607 */
+  .icon-row { font-size: .62em; }/* @order 1608 */
+  .icon-row .ir-item .ir-label { min-height: 2.6em; display: flex; align-items: center; }/* @order 1609 */
+  .icon-row .ir-item .ir-desc li { min-height: 2.4em; display: flex; align-items: center; }/* @order 1643 */
+  .icon-row { font-size: var(--fs-dense) !important; }/* @order 1644 */
+  .icon-row .ir-item .ir-label { font-size: 1.1em; font-weight: 500; }/* @order 1645 */
+  .icon-row .ir-item .ir-desc li { font-size: .92em; }

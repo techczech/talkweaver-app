@@ -1,0 +1,60 @@
+/* @order 0500 */
+  /* ===== Layout batch 2 (2026-06-12) — charts, cycle, equation, contrast arrows,
+     countdown element. All geometry computed at build time; CSS only paints. ===== *//* @order 0501 */
+
+  /* CHART — bar ({chart}/{barchart}). Bottom-aligned columns (the {steps} grammar): the plot
+     area is a fixed-height flex row; each column's bar height % was computed at build time.
+     Value above the bar, label beneath the plot. *//* @order 0502 */
+  .chart-cols {
+    display: flex; align-items: stretch; justify-content: center; gap: clamp(14px, 2vw, 30px);
+    margin: 34px auto 0; width: min(1080px, 100%); height: min(50vh, 460px);
+  }/* @order 0503 */
+  .chart-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; text-align: center; }/* @order 0504 */
+  .chart-col-plot { flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 8px; min-height: 0; }/* @order 0505 */
+  .chart-bar {
+    width: min(78%, 150px); border-radius: 8px 8px 0 0;
+    background: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 80%, #000);
+    box-sizing: border-box;
+  }/* @order 0506 */
+  .chart-val { font-weight: 800; font-size: max(18px, 2cqw); color: var(--accent); line-height: 1.1; }/* @order 0507 */
+  .chart-label { margin-top: 10px; font-weight: 640; font-size: max(14px, 1.3cqw); color: var(--ink); line-height: 1.2; border-top: 2px solid var(--line); padding-top: 8px; }/* @order 0508 */
+
+  /* CHART — pie ({piechart}). Build-time SVG arcs + a legend column (label · value · %).
+     Slice colours are the multicolour diagram palette. *//* @order 0509 */
+  .chart-pie {
+    display: flex; align-items: center; justify-content: center; gap: clamp(26px, 4vw, 70px);
+    margin: 30px auto 0; width: min(1080px, 100%);
+  }/* @order 0510 */
+  .chart-pie svg { width: min(46vh, 420px); height: min(46vh, 420px); flex: 0 0 auto; }/* @order 0511 */
+  .chart-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }/* @order 0512 */
+  .chart-legend li { display: flex; align-items: baseline; gap: 12px; font-size: max(15px, 1.45cqw); }/* @order 0513 */
+  .chart-swatch { width: 18px; height: 18px; border-radius: 5px; flex: 0 0 auto; align-self: center; }/* @order 0514 */
+  .chart-leg-label { font-weight: 700; color: var(--ink); }/* @order 0515 */
+  .chart-leg-val { color: var(--muted); white-space: nowrap; }/* @order 0516 */
+
+  /* CHART — line ({linechart}/{curve}). Build-time SVG polyline + dots; values above dots,
+     x labels under the baseline rule. Stroke/fill key off the section accent. *//* @order 0517 */
+  .chart-line { margin: 26px auto 0; width: min(1120px, 100%); }/* @order 0518 */
+  .chart-line svg { width: 100%; height: auto; }/* @order 0519 */
+  .chart-poly { fill: none; stroke: var(--accent); stroke-width: 5; stroke-linejoin: round; stroke-linecap: round; }/* @order 0520 */
+  .chart-dot { fill: var(--accent); stroke: var(--tint); stroke-width: 3; }/* @order 0521 */
+  .chart-baseline { stroke: var(--line); stroke-width: 2; }/* @order 0522 */
+  .chart-val-svg { font: 800 26px/1 var(--sans, system-ui); fill: var(--accent); }/* @order 0523 */
+  .chart-label-svg { font: 640 22px/1 var(--sans, system-ui); fill: var(--ink); }/* @order 0524 */
+
+  /* SIGMOID ({sigmoid} / {curve=sigmoid}) — a conceptual S-curve; items sit ON the curve at a
+     named stage or percent. Build-time SVG, one composition. *//* @order 0525 */
+  .sigmoid-curve { margin: 22px auto 0; width: min(1120px, 100%); }/* @order 0526 */
+  .sigmoid-curve svg { width: 100%; height: auto; overflow: visible; }/* @order 0527 */
+  .sigmoid-path { fill: none; stroke: var(--accent); stroke-width: 6; stroke-linecap: round; }/* @order 0528 */
+  .sigmoid-axis { stroke: var(--line); stroke-width: 2; }/* @order 0529 */
+  .sigmoid-stem { stroke: var(--line); stroke-width: 2; stroke-dasharray: 3 5; }/* @order 0530 */
+  .sigmoid-dot { fill: var(--accent); stroke: var(--tint); stroke-width: 4; }/* @order 0531 */
+  .sigmoid-label { font: 700 24px/1.1 var(--sans, system-ui); fill: var(--ink); }/* @order 1480 */
+
+  /* Effort bars (mockup .effort): mono accent value above, accent block, label + grey sub. *//* @order 1540 */
+
+  /* Chart columns: labels left-aligned under their bars (mockup .effort), never centred. *//* @order 1559 */
+
+  /* Charts (#63): every label starts on the SAME top line — reserve constant label space so
+     two-line labels can never eat into their column's plot and shift the baseline */

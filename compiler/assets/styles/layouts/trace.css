@@ -1,0 +1,52 @@
+/* @order 0648 */
+
+  /* Fenced code + trace blocks. A generic ```lang block is a monospace panel; a ```trace block
+     is a dark transcript of role-tagged turns (USER / HARNESS / MODEL / reasoning / TOOL) where
+     each role gets its own colour so the turn-taking reads at a glance. Trace turns are content
+     units, so reveal/focus stepping walks them (.trace .turn matches MODE_SELECTOR). *//* @order 0649 */
+  .slide-code {
+    margin: 22px 0 0;
+    padding: 18px 20px;
+    background: #11161c;
+    color: #e8eef5;
+    border-radius: 10px;
+    border-left: 5px solid var(--accent);
+    overflow: auto;
+    font: 500 clamp(13px, 1.15vw, 17px)/1.55 ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    box-shadow: 0 10px 24px #17202a1f;
+    position: relative;
+  }/* @order 0650 */
+  .slide-code .code-lang {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    font: 600 11px/1 var(--sans);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: #9fb1c4;
+  }/* @order 0651 */
+  .slide-code code { white-space: pre; font: inherit; color: inherit; }/* @order 0652 */
+  /* A trace fence that did not parse into role turns still renders as a slide-code panel — but
+     it is PROSE, not code, so it must wrap rather than overflow horizontally. *//* @order 0653 */
+  .slide-code.lang-trace code { white-space: pre-wrap; overflow-wrap: anywhere; }/* @order 0654 */
+  .slide-code.lang-trace { overflow-x: hidden; }/* @order 0655 */
+
+  /* Code syntax theme. Colours are emitted at BUILD TIME by scripts/highlight.mjs as token
+     <span>s (no runtime highlighter, no CDN, no network — ADR-0014 offline/single-file). A
+     restrained palette tuned for the #11161c dark panel and to harmonise with the deck's
+     Oxford-blue / crimson accents: keywords crimson-pink, strings sage-green, comments muted
+     slate, numbers warm amber, function/call names sky-blue, builtins/types soft violet,
+     attributes/keys gold, tags/markup blue-grey. All sit on a light base (#e8eef5) for contrast. *//* @order 0656 */
+  .slide-code .tok-kw      { color: #ff7a93; }/* @order 0657 */
+  .slide-code .tok-str     { color: #9ecf8a; }/* @order 0658 */
+  .slide-code .tok-com     { color: #7f8ea3; font-style: italic; }/* @order 0659 */
+  .slide-code .tok-num     { color: #e6b673; }/* @order 0660 */
+  .slide-code .tok-fn      { color: #7cc4f5; }/* @order 0661 */
+  .slide-code .tok-builtin { color: #c4a3f0; }/* @order 0662 */
+  .slide-code .tok-attr    { color: #e7c66b; }/* @order 0663 */
+  .slide-code .tok-tag     { color: #8fa6bd; }/* @order 0664 */
+  .slide-code .tok-op      { color: #c0ccd9; }/* @order 0670 */
+  .slide-code { scroll-behavior: smooth; scrollbar-width: thin; scrollbar-color: #3a4757 transparent; }/* @order 0671 */
+  .slide-code::-webkit-scrollbar { width: 8px; height: 8px; }/* @order 0672 */
+  .slide-code::-webkit-scrollbar-thumb { background: #3a4757; border-radius: 8px; }/* @order 0673 */
+  .slide-code::-webkit-scrollbar-track { background: transparent; }
