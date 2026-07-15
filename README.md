@@ -1,5 +1,7 @@
 # TalkWeaver
 
+![TalkWeaver — write your talk as a Markdown outline on the left, watch it render as slides on the right](docs/assets/screenshot.png)
+
 A desktop app for **writing talks as plain-text outlines and presenting them as slides**. You
 keep a folder ("vault") of Markdown outlines; TalkWeaver compiles each into a self-contained
 HTML deck with a presenter view, and gives you a keyboard-first editor, a slide browser, and
