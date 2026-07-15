@@ -49,6 +49,12 @@
   .keys div { color: var(--muted); font-size: 15px; }
   .callout { background: #fbf3df; border: 1px solid #e9d9a8; border-radius: 10px; padding: 14px 18px;
     font-size: 14px; color: #6b5310; }
+  .gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+  .gallery figure { margin: 0; }
+  .gallery img { width: 100%; height: auto; display: block; border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: 0 12px 32px -16px rgba(11,58,107,0.3); background: var(--card); }
+  .gallery figcaption { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  .subnote { color: var(--muted); font-size: 15px; margin: -8px 0 22px; }
   footer { padding: 40px 0 80px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); text-align: center; }
   a { color: var(--oxford); }
 </style>
@@ -91,11 +97,33 @@
   </section>
 
   <section>
+    <h2>See the slides it makes</h2>
+    <p class="subnote">Every slide below was written as a few lines of Markdown and rendered by TalkWeaver — this whole gallery is one talk about TalkWeaver.</p>
+    <div class="gallery">
+      <figure><img src="screenshots/slides/outline-source-of-truth.png" alt="A statement slide: 'The outline is the source of truth.'" loading="lazy" /><figcaption>Statement — one line that lands.</figcaption></figure>
+      <figure><img src="screenshots/slides/from-idea-to-talk.png" alt="A process slide: Capture, Outline, Design, Present." loading="lazy" /><figcaption>Process — a step strip from a bullet list.</figcaption></figure>
+      <figure><img src="screenshots/slides/designed-slides.png" alt="A card-grid slide listing slide layouts." loading="lazy" /><figcaption>Cards — a list becomes a grid.</figcaption></figure>
+      <figure><img src="screenshots/slides/pathways.png" alt="A ledger slide contrasting the full talk with a twenty-minute Pathway." loading="lazy" /><figcaption>Contrast ledger — one talk, many cuts.</figcaption></figure>
+      <figure><img src="screenshots/slides/present-record-handout.png" alt="A card slide: present, record the room, transcribe, and publish a handout." loading="lazy" /><figcaption>Present, record, hand out.</figcaption></figure>
+      <figure><img src="screenshots/slides/how-you-work.png" alt="A numbered-card slide: write, render, tick a Pathway, present." loading="lazy" /><figcaption>Numbered steps, section-tinted.</figcaption></figure>
+    </div>
+  </section>
+
+  <section>
     <h2>One talk, many cuts — Pathways</h2>
     <div class="grid">
       <div class="card"><h3>Tick, don't duplicate</h3><p>Build a shorter or audience-specific version of a talk by ticking slides into a <strong>Pathway</strong>. The outline itself never changes.</p></div>
       <div class="card"><h3>Grid · List · Matrix</h3><p>See a pathway as thumbnails, as a numbered running order, or every pathway side by side against the full outline.</p></div>
-      <div class="card"><h3>Plan &amp; deliver</h3><p>Schedule Runs in History, attach the recording when you present, and publish a per-Run handout — each with its own link.</p></div>
+      <div class="card"><h3>Plan your deliveries</h3><p>Schedule a talk as a planned Run in History — title, date, audience, and which pathway you'll give — before the day arrives.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Present, record, hand out</h2>
+    <div class="grid">
+      <div class="card"><h3>A real presenter view</h3><p>Notes, a clock, and step-through in a window separate from the audience display — and the deck is just an HTML file, so it plays anywhere.</p></div>
+      <div class="card"><h3>Record &amp; transcribe</h3><p>Record the room straight from the presenter (opt-in), then transcribe what you said <em>slide by slide</em> — so you can turn a talk back into text.</p></div>
+      <div class="card"><h3>Per-Run handouts</h3><p>Publish a handout for each delivery, built from that Run's slides with its event and date on the cover — each with its own link. The evergreen talk link stays untouched.</p></div>
     </div>
   </section>
 
