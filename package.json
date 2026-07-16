@@ -111,7 +111,12 @@
         }
       ],
       "category": "public.app-category.productivity",
-      "identity": null,
+      "identity": "DOMINIK LUKES (M7H45AGG8A)",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.inherit.plist",
+      "notarize": true,
       "icon": "build/icon.png",
       "extraResources": [
         {
