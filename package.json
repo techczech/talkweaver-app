@@ -1,6 +1,6 @@
 {
   "name": "talk-weaver",
-  "version": "0.17.3",
+  "version": "0.17.4",
   "description": "Desktop authoring app for the presentation ecosystem",
   "main": "./out/main/index.js",
   "scripts": {
