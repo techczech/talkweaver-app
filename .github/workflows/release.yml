@@ -1,8 +1,15 @@
 name: Release
 
 # Build installers for macOS (Apple Silicon) and Windows and upload them to a GitHub Release.
-# Trigger by pushing a version tag, e.g.  git tag v0.17.3 && git push origin v0.17.3
+# Trigger by pushing a version tag, e.g.  git tag v0.18.0 && git push origin v0.18.0
 # electron-builder uploads to a DRAFT release for that version; review it, then publish.
+#
+# macOS builds are code-signed with a Developer ID Application certificate and
+# notarized by Apple, so downloads open without the Gatekeeper warning. The
+# certificate + notarization credentials are supplied as encrypted repo secrets
+# (APPLE_DEVID_P12_BASE64, APPLE_DEVID_P12_PASSWORD, APPLE_ID,
+# APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID). Only tag pushes by a maintainer
+# trigger this; fork pull requests never receive the secrets.
 on:
   push:
     tags:
@@ -32,10 +39,17 @@ jobs:
         run: npm run build:native
       - name: Build renderer/main
         run: npm run build
-      - name: Package + publish (dmg, zip)
+      - name: Package + publish (signed + notarized dmg, zip)
         run: npx electron-builder --mac --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Developer ID code signing — electron-builder imports this .p12 into a temp keychain
+          CSC_LINK: ${{ secrets.APPLE_DEVID_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_DEVID_P12_PASSWORD }}
+          # Notarization (activated by "notarize": true in package.json build.mac)
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
   windows:
     name: Windows (x64)
