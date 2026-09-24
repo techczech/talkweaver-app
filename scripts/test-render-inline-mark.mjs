@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert'
+import { fileURLToPath } from 'node:url'
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { performance } from 'node:perf_hooks'
@@ -155,7 +156,7 @@ assert(
   `a ${pathological.length}-character unmatched-backtick line scans in under 10ms (actual ${scanElapsedMs.toFixed(2)}ms)`
 )
 
-const repo = resolve(new URL('..', import.meta.url).pathname)
+const repo = resolve(fileURLToPath(new URL('..', import.meta.url)))
 console.log(`inline marker pins: protected code/link ranges; comparisons and equals runs literal; ${scanElapsedMs.toFixed(2)}ms pathological scan`)
 
 const scratch = mkdtempSync(join(repo, '.tw-inline-mark-fixture-'))

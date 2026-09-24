@@ -1,9 +1,10 @@
 import { build } from 'esbuild'
+import { fileURLToPath } from 'node:url'
 import { copyFile, mkdir, readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, relative, resolve } from 'node:path'
 
-const repo = resolve(new URL('..', import.meta.url).pathname)
+const repo = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const taskRequire = createRequire(import.meta.url)
 const outfileFlag = process.argv.indexOf('--outfile')
 if (outfileFlag >= 0 && !process.argv[outfileFlag + 1]) {
