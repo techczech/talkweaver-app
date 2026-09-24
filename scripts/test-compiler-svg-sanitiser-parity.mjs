@@ -1,11 +1,12 @@
 import { strict as assert } from 'node:assert'
+import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { JSDOM } from 'jsdom'
 import { join, resolve } from 'node:path'
 import { CLEAN_SVG, HISTORICAL_SVG_BYPASSES } from './fixtures/svg-sanitiser-cases.mjs'
 
-const repo = resolve(new URL('..', import.meta.url).pathname)
+const repo = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const scratch = mkdtempSync(join(repo, '.tw-svg-sanitiser-parity-'))
 const dom = new JSDOM('')
 const previousWindow = globalThis.window

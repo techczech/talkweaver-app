@@ -1,4 +1,5 @@
 import { strict as assert } from "node:assert";
+import { fileURLToPath } from "node:url";
 import { readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import ts from "typescript";
@@ -7,7 +8,7 @@ import { parseHeadingAttrs } from "../compiler/scripts/lib/02-triggers-layout.mj
 import { prepareSource } from "../compiler/scripts/lib/08-source-adapters.mjs";
 import { LAYOUTS } from "../src/shared/layout-registry/entries.ts";
 
-const root = resolve(new URL("..", import.meta.url).pathname);
+const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const registryPath = join(root, "src/shared/layout-registry/entries.ts");
 const generatedPath = join(root, "compiler/scripts/lib/trigger-dictionary.generated.mjs");
 const samplerPath = join(root, "docs/layout-sampler-outline.md");

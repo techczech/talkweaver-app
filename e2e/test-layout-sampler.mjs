@@ -10,7 +10,7 @@ import ts from 'typescript'
 import { buildLayoutSampler, samplerArtefactsDir, samplerOutlinePath } from '../scripts/build-layout-sampler.mjs'
 import { reportRowsAfterSeparator } from './lib/layout-sampler-report.mjs'
 
-const repo = resolve(new URL('..', import.meta.url).pathname)
+const repo = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const sampleImage = join(repo, 'scripts/fixtures/layout/sample-image.png')
 const measuredVideoFixture = join(repo, 'e2e/fixtures/media-row-4x3.mp4')
 const samplerMediaAssets = ['sample-image.png', 'slide_0010.webp', '07-minister-portrait.png']

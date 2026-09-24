@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { chromium } from 'playwright'
+import { fileURLToPath } from 'node:url'
 import { extendedPollRuntimeSource } from '../compiler/assets/runtime/poll-extended.js'
 
 const browser = await chromium.launch({ headless: true })
@@ -9,7 +10,7 @@ const options = ['a', 'b', 'c'].map(optionId => ({ optionId, label: optionId.toU
 const ranking = { pollType: 'ranking', options }
 try {
   await page.setContent('<div id="ballot"></div><button id="submit">Submit</button>')
-  await page.addStyleTag({ path: new URL('../compiler/assets/styles/poll-extended.css', import.meta.url).pathname })
+  await page.addStyleTag({ path: fileURLToPath(new URL('../compiler/assets/styles/poll-extended.css', import.meta.url)) })
   await page.addScriptTag({ content: extendedPollRuntimeSource() })
   async function mount(poll) {
     await page.evaluate(poll => {

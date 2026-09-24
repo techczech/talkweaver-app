@@ -1,9 +1,10 @@
 import { strict as assert } from 'node:assert'
+import { fileURLToPath } from 'node:url'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { buildDeckStyles, layoutModulesInRegistryOrder, renderTemplateWithDeckStyles } from './build-deck-styles.mjs'
 
-const repo = resolve(new URL('..', import.meta.url).pathname)
+const repo = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const styles = join(repo, 'compiler/assets/styles')
 const manifest = JSON.parse(readFileSync(join(styles, 'layout-scopes.json'), 'utf8'))
 const modules = layoutModulesInRegistryOrder()

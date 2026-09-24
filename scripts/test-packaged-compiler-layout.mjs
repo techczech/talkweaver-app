@@ -10,9 +10,9 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
-const repo = resolve(new URL('..', import.meta.url).pathname)
+const repo = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const scratch = mkdtempSync(join(tmpdir(), '.tw-packaged-layout-'))
 const resources = join(scratch, 'TalkWeaver.app', 'Contents', 'Resources')
 const compiler = join(resources, 'compiler')
