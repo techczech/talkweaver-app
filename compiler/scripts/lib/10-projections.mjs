@@ -40,6 +40,14 @@ function sha256Hex(value) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
+// The source adapter records these before full compilation replaces media paths with data URIs.
+export function pictureKeyForSlide(slide, mediaDigests = []) {
+  const renderKey = JSON.stringify(slide, (k, v) =>
+    k === "id" || k === "sourceMarkdown" || k === "notes" || k === "tags" ? undefined : v
+  );
+  return `sha256-${sha256Hex(mediaDigests.length ? JSON.stringify([renderKey, mediaDigests]) : renderKey)}`;
+}
+
 // Flatten a (possibly nested) list to its item strings. v2 lists carry `items`
 // (top-level strings) + parallel `children` arrays; feature-lists carry `items`
 // which may be strings or `{text}` objects.
@@ -66,6 +74,8 @@ function blockText(block) {
   if (!block || typeof block !== "object") return "";
   switch (block.type) {
     case "paragraph":
+    // ADR-0023 §4: a claim is a wholly bold paragraph — same readable text, same excerpt.
+    case "claim":
     case "subheading":
     case "heading":
     case "title":
@@ -204,10 +214,7 @@ export function buildPerSlideProjections(model, deckSlug) {
     // `tags` is excluded alongside id/source/notes: a tag is curated METADATA on the Trigger
     // line (ADR-0037), never part of the rendered picture — hashing it would invalidate the
     // thumbnail cache on every tagging gesture.
-    const renderKey = JSON.stringify(slide, (k, v) =>
-      k === "id" || k === "sourceMarkdown" || k === "notes" || k === "tags" ? undefined : v
-    );
-    const renderHash = `sha256-${sha256Hex(renderKey)}`;
+    const renderHash = model.pictureKeys?.[index] ?? pictureKeyForSlide(slide);
     // slide_id: the modelled id is what a future {#id} write-back will stamp. Until the
     // outline carries an explicit {#id} (slide.attrs.id / a stamped registry), the id is
     // DERIVED — flagged id_source:"auto". We keep the human-readable derived id (the auto
@@ -251,9 +258,9 @@ export function buildPerSlideProjections(model, deckSlug) {
       tags: parseTagsValue(typeof triggers.tags === "string" ? triggers.tags : ""),
       content_hash: contentHash,
       render_hash: renderHash,
+      ...(model.thumbnailHashes?.[index] ? { thumbnail_hash: model.thumbnailHashes[index] } : {}),
       elements: buildSlideElements(slide),
       warnings: warningsBySlide.get(slideId) || []
     };
   });
 }
-

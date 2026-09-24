@@ -1,12 +1,12 @@
-/* @order 1496 */
+/* @order 1505 */
   .image-quote {
     display: grid !important;
     grid-template-columns: 38% 1fr !important;
-    gap: 3vw;
+    gap: 3cqw;
     align-items: center;
     width: 100%;
     max-width: none;
-  }/* @order 1497 */
+  }/* @order 1506 */
   .image-quote .iq-figure {
     position: relative;
     height: 64vh;
@@ -15,25 +15,26 @@
     border: none;
     background: none;
     box-shadow: inset 0 0 0 1px rgba(0,0,0,.08);
-  }/* @order 1498 */
+  }/* @order 1507 */
   .image-quote .iq-figure img {
     width: 100%;
     height: 100%;
     object-fit: cover;
     display: block;
-  }/* @order 1499 */
-  .image-quote .iq-figure.iq-contain { background: var(--hairline); }/* @order 1500 */
-  .image-quote .iq-figure.iq-contain img { object-fit: contain; }/* @order 1501 */
+  }/* @order 1508 */
+  .image-quote .iq-figure.iq-contain { background: var(--hairline); }/* @order 1509 */
+  .image-quote .iq-figure.iq-contain img { object-fit: contain; }/* @order 1510 */
   .image-quote blockquote {
     background: none;
     border: none;
     box-shadow: none;
     padding: 0 0 0 1.2em;
     font-weight: 400;
-    font-size: max(29px, 2.9cqw);
+    font-size: var(--quote-fitted-size);
     line-height: 1.28;
-    max-width: 18em;
-  }/* @order 1502 */
+    width: 100%;
+    max-width: none;
+  }/* @order 1511 */
   .image-quote blockquote::before {
     content: "\201C";
     position: absolute;
@@ -44,24 +45,24 @@
     font-size: 2.6em;
     color: var(--accent);
     opacity: 1;
-  }/* @order 1503 */
+  }/* @order 1512 */
   .image-quote .iq-cite {
     display: flex;
     align-items: center;
     gap: 1em;
     margin-top: 1.2em;
-    font-size: max(20px, .62em);
+    font-size: max(var(--type-floor), calc(var(--quote-fitted-size) * .58));
     font-weight: 600;
     color: var(--ink);
-  }/* @order 1504 */
+  }/* @order 1513 */
   .image-quote .iq-cite::before {
     content: "";
     flex: none;
     width: 3em;
     height: 2px;
     background: var(--accent);
-  }/* @order 1506 */
-  .slide:has(> .slide-content.layout-media > .slide-head-quiet) { padding: 0; }/* @order 1507 */
+  }/* @order 1515 */
+  .slide:has(> .slide-content.layout-media > .slide-head-quiet) { padding: 0; }/* @order 1516 */
   .slide-content.layout-media:has(> .slide-head-quiet) {
     display: block !important;
     width: 100% !important;
@@ -69,7 +70,7 @@
     min-height: 100%;
     margin: 0;
     padding: 0;
-  }/* @order 1508 */
+  }/* @order 1517 */
   .slide-content.layout-media:has(> .slide-head-quiet) > .slide-figure {
     position: absolute;
     inset: 0;
@@ -78,17 +79,17 @@
     background: none;
     box-shadow: none;
     overflow: hidden;
-  }/* @order 1509 */
+  }/* @order 1518 */
   .slide-content.layout-media:has(> .slide-head-quiet) > .slide-figure img {
     width: 100%;
     height: 100%;
     max-height: none;
-    object-fit: cover;
+    object-fit: contain;
     display: block;
-  }/* @order 1510 */
+  }/* @order 1519 */
   .slide-content.layout-media:has(> .slide-head-quiet) > .slide-figure figcaption {
     position: absolute;
-    left: 6vw;
+    left: 6cqw;
     bottom: 8vh;
     color: #fff;
     background: none;
@@ -99,19 +100,19 @@
     letter-spacing: -.02em;
     max-width: 12em;
     text-align: left;
-  }/* @order 1511 */
+  }/* @order 1520 */
   .slide-content.layout-media:has(> .slide-head-quiet) > .slide-figure figcaption strong {
     background: var(--accent);
     color: var(--paper);
     padding: 0 .14em;
     -webkit-box-decoration-break: clone;
     box-decoration-break: clone;
-  }/* @order 1512 */
+  }/* @order 1521 */
   .slide-content.layout-media:has(> .slide-head-quiet) > .slide-figure:has(figcaption)::after {
     content: "";
     position: absolute;
     inset: 0;
     background: linear-gradient(15deg, rgba(10,12,16,.82) 0%, rgba(10,12,16,.35) 55%, rgba(10,12,16,.05) 100%);
     pointer-events: none;
-  }/* @order 1513 */
+  }/* @order 1522 */
   .slide-content.layout-media:has(> .slide-head-quiet) > .slide-figure figcaption { z-index: 1; }

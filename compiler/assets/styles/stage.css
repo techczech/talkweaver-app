@@ -1,0 +1,366 @@
+/* =============================================================================
+   stage.css — ONE module owns the title regime (ADR-0023 §2, Dominik's pick A3)
+
+   A slide's title placement is decided in exactly two places and nowhere else:
+
+     1. src/shared/layout-registry/entries.ts   `titleRegime` per layout (the data)
+     2. compiler/scripts/lib/02-triggers-layout.mjs  titlePlacementFor()  (the resolver)
+
+   The resolver stamps ONE attribute pair on the <section> — data-title-layout
+   (left | top | hidden) and data-split (30|35|40|50) — and every rule below keys off
+   it. No layouts/*.css or skin/*.css file may position .slide-head, paint the rail or
+   set the title type scale again; they own their own bodies only.
+
+     left    the ADR-0005 tint rail: ~35vw of section tint flush with the slide edge,
+             kicker + title vertically centred in it, the content column centred beside
+             it. Text layouts (list, statement, contrast, stmt-list, links).
+     top     the title bar at the top with the hairline rule under it, the content band
+             centred in the remaining stage (leading/trailing auto margins). Every
+             full-band structure: tables, charts, timelines, diagrams, code, traces,
+             grids, cards, columns, media, copy-visual, list-visual, carousel.
+     hidden  nothing painted; the navigation h1 stays as sr-only. Quote, compare,
+             image-quote — plus any slide whose title {notitle} / {title=off} / the
+             bodyless-statement promotion hides. Behaves exactly as a quiet-headed rail
+             slide always has: no rail, content owns the whole stage.
+     (none)  structural slides that compose their own stage (title, section, subsection,
+             closing) carry no attribute and no rule here touches them.
+
+   THE TITLE IS NEVER DEMOTED TO A KICKER. The compact "SECTION · Title" eyebrow that
+   cards, copy-visual and carousel parents used to emit is abolished (ADR-0023 §2;
+   ADR-0005 "no duplicated information") — .kicker carries the SECTION name only.
+
+   Ordering: the blocks below keep the @order tags they carried in base.css / skin/*.css
+   / overrides.css, so the assembled deck stylesheet is byte-for-byte the sheet it was
+   before this file existed, minus the deleted compact-kicker rules. They sit LATE in the
+   cascade on purpose: the regime must win over a layout's own grid, which is why most
+   of these declarations are !important. (Moving them to the front of the cascade would
+   hand every per-layout rule the last word on title placement — the exact drift
+   ADR-0023 §2 is written to stop.)
+   ============================================================================= */
+
+  /* ADR-0005 type floor: 31px on the 1600px reference stage, proportional at every
+     other stage width. Running-content modules consume this one token. */
+  .slide { --type-floor: 1.9375cqw; }
+
+  /* Inline code is running content. Fenced code panels own their separate layout scale. */
+  .slide-content :not(pre) > code { font-size: max(var(--type-floor), 1em); }
+
+  /* @order 0035 */
+  /* Title group wrapper. By default it is transparent to layout (display:contents) so the
+     kicker + h1 keep behaving as direct grid/flow children of .slide-content — every
+     existing layout works unchanged. The two-column layouts (list/statement) override this
+     to make .slide-head a real grid cell that vertically centres the title (see below). */
+  /* @order 0036 */
+  .slide-head { display: contents; }
+  /* @order 0041 */
+  .kicker {
+    color: var(--accent);
+    margin: 0 0 18px;
+    font-family: var(--mono);
+    font-size: max(13px, 1.05cqw);
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+  /* @order 0042 */
+  /* 2026-06-09 title spec: default H1 = 60% of the old base clamp(42,6.7vw,86). Every per-layout
+     H1 override below is scaled by the SAME ~0.605 factor so proportions hold across layouts. */
+  /* @order 0043 */
+  h1 { font-size: max(25px, 4.02cqw); max-width: 18ch; }
+  /* @order 1332 */
+
+  /* === TITLE PLACEMENT — the locked deck-wide default (2026-06-09 title spec) ===
+     ONE data-driven title system, applied by the generator's data-title-layout / data-split
+     attributes on the slide <section>:
+       data-title-layout="left"  → title in a LEFT rail (35/65 by default; data-split=30|50 tunes
+                                    it), the rail vertically centred; all other content fills the
+                                    right column. The default for text/list/statement/contrast/
+                                    image-claim/quote and the vertical timelines.
+       data-title-layout="top"   → a small title bar on TOP, content full width below. The default
+                                    for wide layouts (columns, media, big diagrams, horizontal
+                                    timeline) and the {titletop} override on any slide.
+     Structural/centred layouts (title, section/subsection divider, closing) and self-columned ones
+     (cards, copy-visual, code, trace, list-visual) carry NO data-title-layout and keep their own
+     treatment. These rules turn .slide-content into the grid and re-home its children, overriding
+     each layout's bespoke grid — so the placement is uniform regardless of the slide's layout. */
+  /* @order 1333 */
+
+  /* LEFT rail (ADR-0005 title-as-sidebar, Gate B fix): the rail is the LEFTMOST band —
+     flush with the slide edge — and the slide spans the FULL stage (the 1180px content box
+     was floating the rail mid-slide). Content in column 2 gets the remaining width at a
+     larger reading size. Split via data-split. */
+  /* @order 1334 */
+  .slide[data-title-layout="left"] { --rail-w: max(260px, 26cqw); }
+  /* @order 1335 */
+  .slide[data-title-layout="left"][data-split="30"] { --rail-w: max(240px, 30cqw) !important; }
+  /* @order 1336 */
+  .slide[data-title-layout="left"][data-split="35"] { --rail-w: max(280px, 35cqw) !important; }
+  /* @order 1337 */
+  .slide[data-title-layout="left"][data-split="40"] { --rail-w: max(300px, 40cqw) !important; }
+  /* @order 1338 */
+  .slide[data-title-layout="left"][data-split="50"] { --rail-w: max(340px, 50cqw) !important; }
+  /* @order 1339 */
+  /* The tint rail is painted on the SLIDE (full height by construction) — pseudo-element and
+     grid-row tricks either inflated scrollHeight (autofit zoomed the slide to 0.45) or
+     centre-packed with the grid rows. --rail-w keeps paint and column in lockstep. */
+  /* @order 1340 */
+  .slide[data-title-layout="left"]:has(> .slide-content > .slide-head:not(.slide-head-quiet)) {
+    padding: 0;
+    background: linear-gradient(to right, var(--tint) 0, var(--tint) var(--rail-w), transparent var(--rail-w));
+  }
+  /* @order 1341 */
+  .slide[data-title-layout="left"]:has(> .slide-content > .slide-head:not(.slide-head-quiet)) > .slide-content {
+    display: grid !important;
+    width: 100%;
+    max-width: none;
+    min-height: 100%;
+    margin: 0;
+    grid-template-columns: var(--rail-w) 1fr !important;
+    /* Ticket 21 (Dominik: "larger left and top/bottom padding"): the content column takes the
+       locked mockup's `.t-side .content { padding: 6vh 5vw }` — 5cqw of column gap between the
+       rail and the copy (was 4cqw), 6vh of air above and below the column (was none: a tall list
+       ran to the slide edge), never less than the 61px footer band so the column clears the fixed
+       footer at every stage height. The right inset stays the slide safe area (--slide-pad-x). */
+    column-gap: clamp(40px, 5cqw, 96px);
+    padding-top: max(6vh, 61px);
+    padding-bottom: max(6vh, 61px);
+    padding-right: var(--slide-pad-x);
+    align-content: center;
+    align-items: center;
+    text-align: left;
+  }
+  /* @order 1342 */
+      /* Rail text keeps the safe-area inset even though the band touches the edge. */
+  /* @order 1343 */
+  .slide[data-title-layout="left"] > .slide-content > .slide-head:not(.slide-head-quiet) {
+    padding-left: var(--slide-pad-x);
+  }
+  /* @order 1344 */
+  /* The right column reads LARGE — the rail earns its keep by giving the content room. */
+  /* @order 1345 */
+  .slide:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content > .content-p:not(.card-comment) { font-size: var(--copy-size, max(var(--type-floor), 3.2cqw)); max-width: 40ch; }
+  /* @order 1346 */
+  /* ADR-0005 title-as-sidebar (mockup .t-side): the rail is a SECTION-TINT panel — kicker in
+     the accent, title in ink, vertically centred, stretching the column's full height. */
+  /* @order 1347 */
+  .slide:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content > .slide-head {
+    display: grid !important;
+    align-content: center;
+    grid-column: 1 !important;
+    grid-row: 1 / span 99 !important;
+    align-self: stretch !important;
+    min-height: 100%;
+    place-content: center;
+  }
+  /* @order 1348 */
+  /* The tint rail paints ONLY a VISIBLE head — a nav-only quiet head must stay invisible
+     (painting it produced stray floating tint bars on statement/quote slides). The rail
+     runs the column's FULL height via an oversized ::before clipped by the slide. */
+  /* @order 1349 */
+  .slide[data-title-layout="left"] > .slide-content > .slide-head:not(.slide-head-quiet) {
+    position: relative;
+    padding: clamp(24px, 4vh, 48px) clamp(28px, 2.6cqw, 72px);
+  }
+  /* @order 1350 */
+  .slide:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content > .slide-head > h1 { max-width: 14ch; }
+  /* @order 1351 */
+  .slide[data-title-layout="left"] > .slide-content > ol.timeline {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-evenly;
+    min-height: 62vh;
+  }
+  /* @order 1353 */
+  /* {sidebar}/{title=side}: the ADR-0005 tint rail above (the pre-rewrite blue panel stays
+     retired; the tint panel is the locked replacement).
+     data-title-style="sidebar" may still be stamped by legacy {titlestyle=sidebar}; it is inert. */
+  /* @order 1354 */
+  /* Every non-title direct child fills the right content column (feature-list, figure,
+     columns-grid, lv/tv body, diagram svg, prose, blockquote, statement paragraphs …). */
+  /* @order 1355 */
+  .slide:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content > *:not(.slide-head) {
+    grid-column: 2 !important;
+    grid-row: 1 / span 99 !important;
+    align-self: center;
+    min-width: 0;
+    max-width: 100%;
+  }
+  /* @order 1356 */
+  /* Trailing siblings after the first flow under it in the same column (multi-paragraph
+     statements, a source line, an action row): let them take auto rows rather than stack on row 1. */
+  /* @order 1357 */
+  .slide:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content > *:not(.slide-head) ~ *:not(.slide-head) {
+    grid-row: auto !important;
+    margin-top: clamp(20px, 5vh, 72px);
+  }
+  /* @order 1358 */
+  /* {notitle} on a left-rail layout: the heading is nav-only (.slide-head-quiet, sr-only h1), so
+     the empty 35% rail would just be dead space. Collapse to a single full-width column and let the
+     content span it — the title-less statement then genuinely owns the whole slide (full-bleed). */
+  /* @order 1359 */
+  .slide:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content:has(> .slide-head-quiet) {
+    grid-template-columns: 1fr !important;
+  }
+  /* @order 1360 */
+  .slide:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content:has(> .slide-head-quiet) > *:not(.slide-head) {
+    grid-column: 1 !important;
+  }
+  /* @order 1361 */
+  /* …EXCEPT a quote slide carrying a figure (2026-06-09): the pair keeps its two-column
+     image-beside-quote arrangement even though the (quiet-headed) rail collapsed. */
+  /* @order 1362 */
+  .slide:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content.layout-quote:has(> .slide-figure) {
+    grid-template-columns: minmax(0, 0.62fr) minmax(0, 1fr) !important;
+    column-gap: clamp(28px, 3.2cqw, 56px);
+    align-items: center;
+  }
+  /* @order 1363 */
+  .slide:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content.layout-quote:has(> .slide-figure) > .slide-figure {
+    grid-column: 1 !important;
+    grid-row: 1 !important;
+  }
+  /* @order 1364 */
+  .slide:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content.layout-quote:has(> .slide-figure) > blockquote {
+    grid-column: 2 !important;
+    grid-row: 1 !important;
+  }
+  /* @order 1365 */
+
+  /* TOP title bar: title stacks above full-width content. The fix for the old "List D" overflow
+     is here — .slide-head is a real grid row with its OWN track (grid-template-rows: auto 1fr) and
+     a bottom margin, so the H1 can never overlap the content beneath it; the content row takes the
+     remaining height and starts cleanly below the bar. */
+  /* @order 1366 */
+  .slide[data-title-layout="top"] > .slide-content {
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: flex-start;
+    align-items: stretch;
+    text-align: left;
+  }
+  /* @order 1367 */
+  /* The title bar sits at the TOP of the slide, LEFT-aligned (reset any align-self: center a
+     layout like list/contrast would otherwise impose on the head in this flex column). */
+  /* @order 1368 */
+  .slide[data-title-layout="top"] > .slide-content > .slide-head {
+    display: block !important;
+    flex: 0 0 auto !important;
+    align-self: flex-start !important;
+    text-align: left !important;
+    margin: 0 0 clamp(16px, 2.4cqw, 32px) !important;
+  }
+  /* @order 1369 */
+  /* The content below the top bar centres in the remaining space (leading/trailing auto margins
+     absorb the free space, so a short list/figure sits mid-stage rather than hugging the title). */
+  /* @order 1370 */
+  .slide[data-title-layout="top"] > .slide-content > .slide-head + * { margin-top: auto !important; }
+  /* @order 1371 */
+  .slide[data-title-layout="top"] > .slide-content > *:last-child:not(.slide-head) { margin-bottom: auto !important; }
+  /* @order 1372 */
+  /* The top-title bar reads as a compact band: a touch smaller than the rail H1 so the visual
+     below owns the stage, with a thin accent underline marking the bar. */
+  /* @order 1373 */
+  .slide[data-title-layout="top"] > .slide-content > .slide-head > h1 {
+    /* 2026-07-08: full-width single line (was max-width: 32ch, which wrapped long titles). */
+    max-width: none;
+    font-size: max(22px, 3.1cqw);
+    /* ADR-0005: no decorative underlines — whitespace separates the bar from the stage. */
+    padding-bottom: 0.18em;
+  }
+  /* @order 1374 */
+  /* All non-title children stack in normal document flow BELOW the bar, full width. A flex column
+     guarantees the title can never overlap the content (the old List D top-title bug): the head is
+     its own non-shrinking flex item, the content follows after it. */
+  /* @order 1375 */
+  .slide[data-title-layout="top"] > .slide-content > *:not(.slide-head) {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    width: 100%;
+  }
+  /* @order 1376 */
+
+  /* corner-section: quiet top-right label (SD-8, Wave 1 task 3) */
+  /* @order 1385 */
+  .slide.ct-rail-host .slide-content > .slide-head:not(.slide-head-quiet),
+  .slide.ct-grid-host .slide-content > .slide-head:not(.slide-head-quiet),
+  .slide.ct-strip-host .slide-content > .slide-head:not(.slide-head-quiet) { background: none; }
+  /* @order 1386 */
+  .slide.ct-rail-host .slide-content > .slide-head:not(.slide-head-quiet)::before,
+  .slide.ct-grid-host .slide-content > .slide-head:not(.slide-head-quiet)::before,
+  .slide.ct-strip-host .slide-content > .slide-head:not(.slide-head-quiet)::before { display: none; }
+  /* @order 1422 */
+  .slide[data-title-layout="left"] > .slide-content > .slide-head:not(.slide-head-quiet) > h1 {
+    font-size: max(31px, 2.9cqw);
+    line-height: 1.22;
+    letter-spacing: -.02em;
+    font-weight: 700;
+  }
+  /* @order 1423 */
+  .slide[data-title-layout="left"] > .slide-content > .slide-head:not(.slide-head-quiet) .kicker {
+    font-family: var(--mono);
+    font-size: max(14px, 1.15cqw);
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 400;
+  }
+  /* @order 1425 */
+  .slide[data-title-layout="left"]:has(> .slide-content > .slide-head:not(.slide-head-quiet)):not(:has(.slide-figure)):not(:has(.slide-table)):not(:has(.card-gallery)):not(:has(.timeline)):not(:has(svg)):not(:has(.chart-cols)):not(:has(.icon-row)) {
+    --rail-w: max(320px, 35cqw);
+  }
+  /* @order 1431 */
+  .slide:not(:is([data-title-layout="left"], [data-title-layout="hidden"])) > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) h1 {
+    font-weight: 700;
+    font-size: max(34px, 3.6cqw);
+    letter-spacing: -.02em;
+    line-height: 1.05;
+    max-width: 18em;
+  }
+  /* @order 1656 */
+  .slide[data-title-layout="left"]:has(> .slide-content > .slide-head:not(.slide-head-quiet)):not(:has(> .slide-content > *:not(.slide-head))) {
+    background: var(--tint);
+  }
+  /* @order 1657 */
+  .slide[data-title-layout="left"]:not(:has(> .slide-content > *:not(.slide-head))) > .slide-content {
+    grid-template-columns: 1fr !important;
+  }
+  /* @order 1658 */
+  .slide[data-title-layout="left"]:not(:has(> .slide-content > *:not(.slide-head))) > .slide-content > .slide-head:not(.slide-head-quiet) > h1 {
+    font-size: max(38px, 5.6cqw);
+    max-width: 12em;
+  }
+  /* @order 1675 */
+  .slide[data-title-layout="left"] > .slide-content > .slide-head:not(.slide-head-quiet) > h1 { font-size: var(--fs-rail); }
+  /* @order 1679 */
+  .slide:not(:is([data-title-layout="left"], [data-title-layout="hidden"])) > .slide-content:not(.layout-title):not(.layout-section-title):not(.layout-statement):not(.layout-closing):has(> .slide-head:not(.slide-head-quiet)) {
+    display: flex !important;
+    flex-direction: column;
+    justify-content: flex-start;
+    min-height: 100%;
+    padding-top: 6vh;
+  }
+  /* @order 1680 */
+  .slide:not(:is([data-title-layout="left"], [data-title-layout="hidden"])) > .slide-content:not(.layout-title):not(.layout-section-title):not(.layout-statement):not(.layout-closing) > .slide-head:not(.slide-head-quiet) {
+    border-bottom: 2px solid var(--hairline);
+    padding-bottom: 2.2vh;
+    margin-bottom: 4.5vh;
+    width: 100%;
+  }
+  /* @order 1681 */
+  .slide:not(:is([data-title-layout="left"], [data-title-layout="hidden"])) > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) h1 { text-align: left; }
+  /* @order 1682 */
+  /* content centres VERTICALLY in the space below the title zone (centre is the default;
+     the title stays pinned with its divider) */
+  /* @order 1683 */
+  .slide:not(:is([data-title-layout="left"], [data-title-layout="hidden"])) > .slide-content:not(.layout-title):not(.layout-section-title):not(.layout-statement):not(.layout-closing) > *:not(.slide-head):first-of-type {
+    margin-top: auto;
+  }
+  /* @order 1684 */
+  .slide:not(:is([data-title-layout="left"], [data-title-layout="hidden"])) > .slide-content:not(.layout-title):not(.layout-section-title):not(.layout-statement):not(.layout-closing) > *:last-child:not(.slide-head) {
+    margin-bottom: auto;
+  }
+  /* @order 1694 */
+  .slide:not(:is([data-title-layout="left"], [data-title-layout="hidden"])) > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) h1 { font-size: var(--fs-title); }
+  /* @order 1695 */
+  .slide[data-title-layout="left"] > .slide-content > .slide-head:not(.slide-head-quiet) > h1 { font-size: var(--fs-rail); }

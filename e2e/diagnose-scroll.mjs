@@ -3,6 +3,7 @@
 // caret to a different spot ("stays in place but slides"). We assert the CARET's on-screen Y barely
 // moves through an in-place edit, in a doc tall enough to be scrolled.
 import { _electron as electron } from 'playwright'
+import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { fileURLToPath } from 'url'; import { dirname, join } from 'path'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'; import { tmpdir } from 'os'
 
@@ -21,14 +22,19 @@ mkdirSync(td, { recursive: true }); mkdirSync(ud, { recursive: true })
 writeFileSync(join(td, 'scroll-fixture-outline.md'), FIX)
 writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault }))
 
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO })
+await ensureFreshBuild(REPO)
+const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
 const page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded'); await page.waitForTimeout(1200)
 
 const scrollTop = () => page.evaluate(() => { const s = document.querySelector('.cm-scroller'); return s ? Math.round(s.scrollTop) : 0 })
 
 try {
-  await page.locator('.talk-item', { hasText: 'Scroll Fixture' }).first().click()
+  await page.locator('.tl-search input').first().fill('Scroll Fixture')
+  await page.waitForTimeout(300)
+  await page.locator('.tl-row:not(.tl-row--folder)').filter({
+    has: page.locator('.tl-row-name').filter({ hasText: /^Scroll Fixture$/ })
+  }).first().click()
   await page.waitForSelector('.cm-content', { timeout: 8000 })
   await page.locator('.cm-content').click()
   await page.waitForTimeout(200)

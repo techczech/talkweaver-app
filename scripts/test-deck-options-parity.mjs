@@ -45,6 +45,26 @@ const declared = new Set(options.flatMap((option) => [option.key, ...(option.ali
 const duplicateKeys = [...declared].filter((key) => options.filter((option) => [option.key, ...(option.aliases ?? [])].includes(key)).length > 1)
 assert.deepEqual(duplicateKeys, [], 'Deck option keys and aliases must be unique')
 
+const titleIdentity = DECK_OPTION_GROUPS.find((group) => group.label === 'Title & identity')
+const titleColour = titleIdentity?.options.find((option) => option.key === 'colour')
+assert(titleColour, 'Deck settings derive the title colour control under Title & identity')
+assert.deepEqual(titleColour.aliases, ['accent'], 'Deck settings expose accent as the colour alias')
+assert.deepEqual(
+  Object.fromEntries(titleColour.values.map((value) => [value.value, value.swatch])),
+  {
+    // The automatic default carries no swatch: the accent comes from the section cycle.
+    '': undefined,
+    cobalt: '#0f4bd8',
+    emerald: '#0a7a5c',
+    vermilion: '#c2410c',
+    forest: '#166534'
+  },
+  'Title colour choices carry the compiler accent swatches'
+)
+const titleLogo = titleIdentity?.options.find((option) => option.key === 'logo')
+assert.equal(titleLogo?.input.type, 'string', 'Deck settings render logo as a freeform string input')
+assert.equal(titleLogo?.values, undefined, 'Deck settings do not invent a closed logo list')
+
 for (const option of options) {
   assert(option.key && option.label && option.description, `Deck option ${option.key || '(missing key)'} needs key, label and description`)
   assert(['boolean', 'string', 'url', 'number', 'map'].includes(option.input.type), `${option.key}: invalid typed input`)

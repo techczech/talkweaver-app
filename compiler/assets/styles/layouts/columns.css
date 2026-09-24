@@ -13,7 +13,7 @@
      (.col-align-top), so headed lists read from a common baseline while figures float centred. *//* @order 0243 */
   .columns-grid {
     display: grid;
-    gap: clamp(20px, 2.6vw, 44px);
+    gap: clamp(20px, 2.6cqw, 44px);
     margin-top: 30px;
     align-items: stretch;
   }/* @order 0244 */
@@ -31,6 +31,6 @@
   /* Inside a column, headings/figures/lists already carry their own type styling; just make
      them flow naturally and never overflow the narrower column box. *//* @order 0251 */
   .columns-grid > .col > * { margin-top: 0; max-width: 100%; }/* @order 0252 */
-  .columns-grid > .col h3 { margin: 0; color: var(--accent); font-size: max(20px, 1.9cqw); line-height: 1.1; }/* @order 1614 */
+  .columns-grid > .col h3 { margin: 0; color: var(--accent); font-size: max(20px, 1.9cqw); line-height: 1.1; }/* @order 1640 */
 
   /* #72 columns content is never bold */

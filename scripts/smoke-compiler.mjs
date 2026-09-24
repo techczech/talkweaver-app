@@ -1,6 +1,6 @@
 // Standalone proof the VENDORED compiler renders with no Electron and no ~/gitrepos.
 // Imports ONLY from ../compiler, so a green run also proves independence from the skill repo.
-import { mkdtempSync, writeFileSync, statSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -13,6 +13,9 @@ const { prepareSource } = await import(
 )
 const { buildPerSlideProjections } = await import(
   pathToFileURL(join(compilerDir, 'lib/10-projections.mjs')).href
+)
+const { escapeHtml } = await import(
+  pathToFileURL(join(compilerDir, 'lib/01-cli-utils.mjs')).href
 )
 
 let failures = 0
@@ -40,6 +43,69 @@ const html = model.fullHtml
 assert(typeof html === 'string' && html.length >= 500, `fullHtml ${html?.length} bytes`)
 assert(Array.isArray(rows) && rows.length >= 1, `${rows?.length} slide projection(s)`)
 
+// --- ADR-0015: title bookends use the locked 30/70 sidebar Poster ---
+const titleLogoPath = join(dir, 'title-logo.svg')
+writeFileSync(titleLogoPath, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 40"><rect width="120" height="40" fill="#14181c"/></svg>', 'utf8')
+const titleSidebarPath = join(dir, 'title-sidebar.md')
+const titleSidebarContent = [
+  '---',
+  'title: AI **Agents**',
+  'subtitle: Capabilities and limits',
+  'series: AI & Society',
+  'event: IT Professionals Forum',
+  'date: 18 July 2026',
+  'author: Dominik Lukeš',
+  'affiliation: University of Oxford',
+  'web: dominiklukes.net',
+  'colour: vermilion',
+  'logo: title-logo.svg',
+  'handout_url: https://handouts.example/agents',
+  '---',
+  '',
+  '### Content',
+  '',
+  'Body.',
+].join('\n')
+writeFileSync(titleSidebarPath, titleSidebarContent, 'utf8')
+const titleSidebarModel = await prepareSource(titleSidebarPath, titleSidebarContent, 'title-sidebar', statSync(titleSidebarPath))
+const titleStyleFor = (compiled, id) => compiled.fullHtml.match(new RegExp(`<section[^>]*data-id="${id}"[^>]*style="([^"]*)"`))?.[1] ?? ''
+const titleBookends = titleSidebarModel.slides.filter((slide) => slide.role === 'opening' || slide.role === 'ending')
+assert(titleBookends.length === 2, 'ADR-0015: compiler emits opening and closing title bookends')
+assert(titleBookends.every((slide) => slide.blocks[0]?.type === 'title-poster'), 'ADR-0015: both bookends are title-poster blocks')
+assert(titleBookends.every((slide) => slide.blocks[0]?.data?.handoutUrl === 'https://handouts.example/agents'), 'ADR-0015: handout URL is threaded into both title-poster blocks')
+assert(titleBookends.every((slide) => !slide.blocks.some((block) => block.type === 'qr')), 'ADR-0015: title bookends do not carry floating corner QR blocks')
+assert(titleBookends.every((slide) => slide.blocks[0]?.data?.logo?.startsWith('data:image/svg+xml;base64,')), 'ADR-0015: title logo uses the existing local asset inlining path')
+assert(/class="tp tp-poster[^"]*"[\s\S]*class="tp-side"[\s\S]*class="tp-main"/.test(titleSidebarModel.fullHtml), 'ADR-0015: default Poster renders the sidebar then main 30/70 structure')
+assert(titleSidebarModel.fullHtml.includes('<img class="tp-logo"'), 'ADR-0015: configured logo renders in the sidebar top slot')
+assert(titleSidebarModel.fullHtml.includes('class="tp-qr slide-qr"'), 'ADR-0015: handout QR renders in the sidebar bottom slot and remains Z-zoom discoverable')
+assert(!titleSidebarModel.fullHtml.includes('<figure class="slide-figure slide-qr slide-qr-corner"'), 'ADR-0015: title bookends have no floating corner QR overlay')
+assert(titleStyleFor(titleSidebarModel, 'deck-title').includes('--accent: #c2410c'), 'ADR-0015: colour frontmatter stamps the named accent on the title section')
+assert(titleSidebarModel.fullHtml.includes('<h2 class="tp-title">AI <strong>Agents</strong></h2>'), 'ADR-0015: title keywords still render through renderInline as strong text')
+assert(titleSidebarModel.fullHtml.includes('.tp .tp-title strong') && titleSidebarModel.fullHtml.includes('var(--accent-under)'), 'ADR-0015: title strong text receives the accent underline treatment')
+assert(
+  /\.slide-content\.layout-title:has\(\.tp\)\s*\{[^}]*height:\s*100%;[^}]*position:\s*relative;/.test(titleSidebarModel.fullHtml),
+  'ADR-0015: title poster has a definite full-height positioned ancestor in every render surface'
+)
+assert(
+  /\.slide-content\.layout-closing:has\(\.tp\)\s*\{[^}]*height:\s*100%;[^}]*position:\s*relative;/.test(titleSidebarModel.fullHtml),
+  'ADR-0015: closing poster has the same full-height positioned ancestor contract'
+)
+const titleSkinCss = readFileSync(join(here, '..', 'compiler', 'assets', 'styles', 'skin', 'base.css'), 'utf8')
+const titleRulesWithCqh = [...titleSkinCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+  .filter(([, selector, declarations]) => selector.includes('.tp') && /cqh\b/.test(declarations))
+assert(titleRulesWithCqh.length === 0, 'ADR-0015: title poster CSS contains no cqh units')
+assert(
+  titleSidebarModel.fullHtml.includes('.slide { display: grid !important; position: absolute; inset: 0; width: 100%; height: 100%; min-height: 100%; container-type: size; }'),
+  'ADR-0015: presenter preview clone slide carries the full-height size-container contract'
+)
+
+const accentAliasPath = join(dir, 'title-accent-alias.md')
+const accentAliasContent = titleSidebarContent.replace('colour: vermilion', 'accent: emerald')
+writeFileSync(accentAliasPath, accentAliasContent, 'utf8')
+const accentAliasModel = await prepareSource(accentAliasPath, accentAliasContent, 'title-accent-alias', statSync(accentAliasPath))
+assert(titleStyleFor(accentAliasModel, 'deck-title').includes('--accent: #0a7a5c'), 'ADR-0015: accent frontmatter alias stamps the named accent on the title section')
+assert(!model.fullHtml.includes('<img class="tp-logo"'), 'ADR-0015: absent logo renders no placeholder image')
+
 // --- Round A3: implicit image + table/prose is one copy-visual pair, with stacked copy ---
 const copyVisualPath = join(dir, 'copy-visual-default.md')
 const copyVisualContent = [
@@ -64,8 +130,8 @@ const copyVisualModel = await prepareSource(copyVisualPath, copyVisualContent, '
 const copyVisualSlide = copyVisualModel.slides.find((slide) => slide.title === 'Evidence')
 assert(copyVisualSlide?.layout === 'copy-visual', 'Round A3: image + table + paragraph without a trigger infers copy-visual')
 assert(
-  /<div class="cv-body"><div class="cv-media">[\s\S]*<div class="cv-copy">[\s\S]*slide-table[\s\S]*content-p/.test(copyVisualModel.fullHtml),
-  'Round A3: copy-visual renders media and all text/table blocks in separate non-overlapping columns'
+  /<div class="slot" data-slot-side="[a-z]+" data-slot-media-count="1"><div class="slot-copy">[\s\S]*slide-table[\s\S]*content-p[\s\S]*<div class="slot-media">/.test(copyVisualModel.fullHtml),
+  'Round A3 (ADR-0023 §3): copy-visual renders media and all text/table blocks in the one .slot, non-overlapping'
 )
 
 const explicitLayoutPath = join(dir, 'copy-visual-explicit-regressions.md')
@@ -403,7 +469,7 @@ assert(captionModel.fullHtml.includes('class="slide-figure fig"'), 'SD-4: figure
 assert(captionModel.fullHtml.includes('<figcaption>'), 'SD-4: figcaption present for image title')
 assert(captionModel.fullHtml.includes('Codex working through'), 'SD-4: caption text rendered')
 
-// --- Task 4 SD-14: {image=right} → .split.media-right, figcaption, list in .copy ---
+// --- SD-14 / ADR-0023 §3: {image=right} → .slot[data-slot-side="right"], figcaption, list in .slot-copy ---
 const splitRightPath = join(dir, 'split-right.md')
 const splitRightContent = [
   '# Split Right Deck',
@@ -421,11 +487,11 @@ const splitRightContent = [
 writeFileSync(splitRightPath, splitRightContent, 'utf8')
 const splitRightStat = statSync(splitRightPath)
 const splitRightModel = await prepareSource(splitRightPath, splitRightContent, 'split-right', splitRightStat)
-assert(splitRightModel.fullHtml.includes('class="split media-right"'), 'SD-14: .split.media-right present for {image=right}')
-assert(splitRightModel.fullHtml.includes('<figcaption>'), 'SD-14: figcaption present in split')
-assert(splitRightModel.fullHtml.includes('class="copy"'), 'SD-14: .copy column present')
+assert(splitRightModel.fullHtml.includes('data-slot-side="right"'), 'ADR-0023 §3: data-slot-side="right" present for {image=right}')
+assert(splitRightModel.fullHtml.includes('<figcaption>'), 'ADR-0023 §3: figcaption present in the media slot')
+assert(splitRightModel.fullHtml.includes('class="slot-copy"'), 'ADR-0023 §3: .slot-copy column present')
 
-// --- Task 4 review fix: {image=right}{align=top} → .split.media-right.align-top ---
+// --- {image=right}{align=top} → the slot's one authored escape from both-axis centring ---
 const splitAlignTopPath = join(dir, 'split-align-top.md')
 const splitAlignTopContent = [
   '# Split Align Top Deck',
@@ -442,9 +508,9 @@ const splitAlignTopContent = [
 writeFileSync(splitAlignTopPath, splitAlignTopContent, 'utf8')
 const splitAlignTopStat = statSync(splitAlignTopPath)
 const splitAlignTopModel = await prepareSource(splitAlignTopPath, splitAlignTopContent, 'split-align-top', splitAlignTopStat)
-assert(splitAlignTopModel.fullHtml.includes('class="split media-right align-top"'), 'frame.align=top: .split carries align-top class on {image=right}{align=top}')
+assert(splitAlignTopModel.fullHtml.includes('data-slot-side="right" data-slot-media-count="1" data-slot-align="top"'), 'frame.align=top: the slot carries data-slot-align="top" on {image=right}{align=top}')
 
-// --- Task 4 SD-14: {image=left} → .split.media-left ---
+// --- SD-14 / ADR-0023 §3: {image=left} → .slot[data-slot-side="left"] ---
 const splitLeftPath = join(dir, 'split-left.md')
 const splitLeftContent = [
   '# Split Left Deck',
@@ -461,9 +527,9 @@ const splitLeftContent = [
 writeFileSync(splitLeftPath, splitLeftContent, 'utf8')
 const splitLeftStat = statSync(splitLeftPath)
 const splitLeftModel = await prepareSource(splitLeftPath, splitLeftContent, 'split-left', splitLeftStat)
-assert(splitLeftModel.fullHtml.includes('class="split media-left"'), 'SD-14: .split.media-left present for {image=left}')
+assert(splitLeftModel.fullHtml.includes('data-slot-side="left"'), 'ADR-0023 §3: data-slot-side="left" present for {image=left}')
 
-// --- Task 4 SD-5: 3 consecutive images → .img-row with 3 figure.fig units ---
+// --- Task 4 SD-5 / Ticket 15: media-only images → .figure-row with 3 figure.fig units ---
 // Frontmatter triggers v2 so images lex as blocks (not inline markdown).
 const imgRowPath = join(dir, 'img-row.md')
 const imgRowContent = [
@@ -482,10 +548,10 @@ const imgRowContent = [
 writeFileSync(imgRowPath, imgRowContent, 'utf8')
 const imgRowStat = statSync(imgRowPath)
 const imgRowModel = await prepareSource(imgRowPath, imgRowContent, 'img-row', imgRowStat)
-assert(imgRowModel.fullHtml.includes('class="img-row count-3"'), 'SD-5: .img-row.count-3 present for 3 consecutive images')
+assert(imgRowModel.fullHtml.includes('class="figure-row count-3"'), 'Ticket 15: .figure-row.count-3 present for 3 consecutive media-only images')
 // All 3 figures have the fig class
 const figCount = (imgRowModel.fullHtml.match(/class="slide-figure fig"/g) || []).length
-assert(figCount === 3, `SD-5: 3 figure.fig units in img-row (got ${figCount})`)
+assert(figCount === 3, `Ticket 15: 3 figure.fig units in figure-row (got ${figCount})`)
 
 // --- Task 4 regression: image + list without explicit {image=} attr → no split ---
 // Frontmatter forces v2 so the image lex is accurate; without {image=}, split must NOT apply.
@@ -1025,6 +1091,43 @@ assert(!(spineGridModel.warnings || []).includes('unknown-trigger:grid-zoom'), '
 assert(
   containerTriggerModel.beats.map((b) => `${b.kind}:${b.slideId}`).join(' ') === 'grid:gl slide:gl-a slide:gl-b slide:hub slide:hub-a',
   `Task 5: container triggers still drive the sequencer (${containerTriggerModel.beats.map((b) => `${b.kind}:${b.slideId}`).join(' ')})`
+)
+
+// --- Live polls Stage 2 Parcel 2a: registered slide trigger becomes a poll definition ---
+const pollPath = join(dir, 'poll-authoring.md')
+const pollContent = [
+  '---',
+  'title: Poll authoring',
+  'auto_title_slide: false',
+  'auto_thanks_slide: false',
+  '---',
+  '',
+  '### Which approach should we try? {id=slide-poll poll=single}',
+  '',
+  '- First approach',
+  '- Second approach',
+  '- Third approach',
+].join('\n')
+writeFileSync(pollPath, pollContent, 'utf8')
+const pollModel = await prepareSource(pollPath, pollContent, 'poll-authoring', statSync(pollPath))
+const expectedPoll = {
+  pollId: 'poll-slide-poll',
+  type: 'single',
+  question: 'Which approach should we try?',
+  options: [
+    { optionId: 'poll-slide-poll-option-1', label: 'First approach' },
+    { optionId: 'poll-slide-poll-option-2', label: 'Second approach' },
+    { optionId: 'poll-slide-poll-option-3', label: 'Third approach' },
+  ],
+  visibility: 'live',
+}
+assert(
+  JSON.stringify(pollModel.slides[0].poll) === JSON.stringify(expectedPoll),
+  `Live polls: poll=single parses title, three options, stable ids, and default live visibility (${JSON.stringify(pollModel.slides[0].poll)})`
+)
+assert(
+  pollModel.fullHtml.includes(`data-poll="${escapeHtml(JSON.stringify(expectedPoll))}"`),
+  'Live polls: the presenter deck threads the authored poll definition onto its slide'
 )
 
 if (failures > 0) {

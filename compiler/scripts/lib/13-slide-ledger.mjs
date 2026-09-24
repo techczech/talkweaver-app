@@ -3,6 +3,7 @@
 // exercise it directly. Only this module touches _ledger/ on disk.
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, join, relative, sep } from "node:path";
+import { scanFencedLines } from "./03-object-token.mjs";
 import { parseOutlineTree } from "./14-outline-tree.mjs";
 
 export const ID_TOKEN_RE = /\{id=([A-Za-z0-9_-]+)\}/;
@@ -84,53 +85,6 @@ export function mintId(rng = Math.random, taken = new Set()) {
 
 const HEADING_RE = /^(#{1,6})\s/;
 
-// Per-line fence + comment flags. Mirrors 12-outline-edit's LENGTH-AWARE fence
-// guard (an opening ``` fence of length N is closed only by a bare fence line of
-// length >= N) and its HTML-comment state machine (structuralHeadings): a line
-// that STARTS inside an open <!-- comment is opaque, so a heading hidden in a
-// comment never terminates a block. Kept local so 13- imports nothing from 12-
-// (12- imports from here; a reverse import would create a cycle). A `#` line
-// inside a fence (python comments, fenced markdown) must never count as a heading.
-function fencedLineFlags(lines) {
-  const flags = new Array(lines.length).fill(false);
-  let inFence = false;
-  let fenceMark = "";
-  let inComment = false;
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    const t = line.trim();
-    const visibleAtStart = !inComment;
-    // advance comment state through this line (comments may open/close mid-line,
-    // span lines); comment scanning is suspended inside code fences
-    if (!inFence) {
-      let pos = 0;
-      for (;;) {
-        if (inComment) {
-          const close = line.indexOf("-->", pos);
-          if (close === -1) break;
-          inComment = false;
-          pos = close + 3;
-        } else {
-          const open = line.indexOf("<!--", pos);
-          if (open === -1) break;
-          inComment = true;
-          pos = open + 4;
-        }
-      }
-    }
-    if (!visibleAtStart) { flags[i] = true; continue; }
-    if (inFence) {
-      flags[i] = true;
-      const close = t.match(/^(`{3,})\s*$/);
-      if (close && close[1].length >= fenceMark.length) { inFence = false; fenceMark = ""; }
-      continue;
-    }
-    const open = t.match(/^(`{3,})/);
-    if (open) { inFence = true; fenceMark = open[1]; flags[i] = true; }
-  }
-  return flags;
-}
-
 // Per-id `{ function: 'section'|'leaf', hasContent }` derived from the STRUCTURAL tree
 // (parseOutlineTree, heading-is-slide model): a node is a 'section' iff it has children at
 // record time, a 'leaf' otherwise. hasContent is true iff the node owns any non-blank line of
@@ -163,7 +117,7 @@ function nodeMetaById(text) {
 // leaf/no-content default rather than throwing.
 export function extractIdSlides(text) {
   const lines = String(text).split("\n");
-  const fenced = fencedLineFlags(lines);
+  const fenced = scanFencedLines(lines).flags;
   const meta = nodeMetaById(text);
   const out = [];
   for (let i = 0; i < lines.length; i += 1) {
@@ -195,7 +149,7 @@ export function extractIdSlides(text) {
 // a `####`-looking line inside a code fence is content, never re-depthed.
 export function normalizeDepth(markdown) {
   const lines = String(markdown).split("\n");
-  const fenced = fencedLineFlags(lines);
+  const fenced = scanFencedLines(lines).flags;
   const root = fenced[0] ? null : lines[0]?.match(HEADING_RE);
   if (!root) return markdown;
   const delta = 3 - root[1].length;

@@ -16,8 +16,17 @@ single source of TalkWeaver's slide rendering and ships inside the app.
 - `scripts/`: triggers.mjs, highlight.mjs
 - `reference/`: layout-templates, fixtures, reference-outline, layout-fixture-map (+ .mjs),
   fixtures-thumbnail-map.json, fixtures-assets/two-box.svg
-- `assets/`: icons/{lucide,svgl,extra,concept-icons}.json,
+- `assets/`: icons/{lucide,svgl,extra,concept-icons,tabler}.json,
   templates/presenter-popup-single-html.html, vendor/qrcode-generator.js
+
+## Additional vendored data (post-vendoring, not from html-presentations)
+- `assets/icons/tabler.json` — Tabler Icons, vendored via Iconify's API
+  (`https://api.iconify.design/`, collection `tabler`), 6,166 glyphs.
+  - Source: `https://api.iconify.design/` (Iconify collection `tabler`)
+  - Licence: MIT
+  - Vendored: 2026-07-23 (see the file's own `_meta.date`, kept in sync)
+  - A fallback gap-fill tier, not a peer of Lucide/svgl — only its `mood-*` emotion
+    family auto-matches; see `scripts/lib/05-icons.mjs` (`TABLER_AUTO_HEAD`) for the gate.
 
 ## What was dropped (never imported by TalkWeaver)
 - lib/11-cli.mjs, lib/13-editor-app.mjs, all test-*.mjs / build-*.mjs / tooling scripts

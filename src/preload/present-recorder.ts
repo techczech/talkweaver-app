@@ -22,6 +22,8 @@
 
 import { ipcRenderer } from 'electron'
 import { mountEditBridge } from './present-edit-bridge'
+import { mountLiveBridge } from './present-live-bridge'
+import { showPresentationCloseOffer, type PresentationCloseOffer, type LiveCloseAction } from './present-close-flow'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -86,9 +88,9 @@ export interface RecorderController {
   start(): Promise<void>
   pause(): void
   resume(): void
-  /** Stop recording. A run at/above the threshold saves; a short one enters `confirm` and awaits confirmSave. */
-  stop(): Promise<SaveResult | null>
-  /** Resolve a `confirm`: keep=true forces the save, keep=false discards. No-op outside `confirm`. */
+  /** Stop recording; forceKeep explicitly keeps short clips, otherwise they await confirmSave. */
+  stop(forceKeep?: boolean): Promise<SaveResult | null>
+  /** Resolve a short recording or retry a failed audio save; keep=false explicitly discards pending audio. */
   confirmSave(keep: boolean): Promise<SaveResult | null>
   /** Fired on every state transition and whenever the current slide changes. */
   onChange(cb: (state: RecState) => void): void
@@ -106,8 +108,8 @@ export interface RecorderController {
   currentKind(): RunKind
   runGate(): { gatePassed: boolean; lastSlideReached: boolean; wallMs: number; forwardAdvances: number; saved: boolean; audioArmed: boolean }
   onRunOffer(cb: () => void): void
-  onCloseOffer(cb: () => void): void
-  closeWindow(): Promise<void>
+  onCloseOffer(cb: (offer: PresentationCloseOffer) => void): void
+  closeWindow(liveAction?: LiveCloseAction): Promise<void>
 }
 
 // ── Context from main ────────────────────────────────────────────────────────
@@ -142,10 +144,6 @@ function normaliseKind(value: unknown): RunKind {
 
 function kindLabel(kind: RunKind): string {
   return kind === 'delivery' ? 'Delivery' : kind === 'rehearsal' ? 'Rehearsal' : 'Recording'
-}
-
-function escapeHtml(value: unknown): string {
-  return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
 function pickMimeType(): string | undefined {
@@ -219,13 +217,13 @@ export function createRecorderController(ctx: RecContext): RecorderController {
   const pausedMoveCbs: Array<() => void> = []
   const errorCbs: Array<(m: string) => void> = []
   const runOfferCbs: Array<() => void> = []
-  const closeOfferCbs: Array<() => void> = []
+  const closeOfferCbs: Array<(offer: PresentationCloseOffer) => void> = []
 
   const emitChange = (): void => { for (const cb of changeCbs) cb(state) }
   const emitPausedMove = (): void => { for (const cb of pausedMoveCbs) cb() }
   const emitError = (m: string): void => { for (const cb of errorCbs) cb(m) }
   const emitRunOffer = (): void => { for (const cb of runOfferCbs) cb() }
-  const emitCloseOffer = (): void => { for (const cb of closeOfferCbs) cb() }
+  const emitCloseOffer = (offer: PresentationCloseOffer): void => { for (const cb of closeOfferCbs) cb(offer) }
 
   const rawNow = (): number => (t0 ? performance.now() - t0 : 0)
   const runNow = (): number => Math.max(0, performance.now() - runT0)
@@ -247,7 +245,7 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     if (!active) return -1
     return allSlides().indexOf(active)
   }
-  const isAudioArmed = (): boolean => state === 'recording' || state === 'paused' || state === 'confirm' || (state === 'saving' && !!pendingBlob)
+  const isAudioArmed = (): boolean => state === 'recording' || state === 'paused' || state === 'confirm' || ((state === 'saving' || state === 'error') && !!pendingBlob)
   const gatePassed = (): boolean => runLastSlideReached || (runNow() >= 5 * 60_000 && runForwardAdvances >= 5)
 
   function highlightableBlocks(slide: Element | null): Element[] {
@@ -369,7 +367,7 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     // Allowed from idle and from the terminal states of a previous run (saved/error) so
     // ⇧R can begin a fresh recording without reloading the presenter. Not while a run is live
     // or waiting on a Keep/Discard choice.
-    if (state === 'recording' || state === 'paused' || state === 'saving' || state === 'confirm') return
+    if (isAudioArmed() || state === 'saving') return
     frozenDisplayMs = null
     saveResult = null
     savedRunSessionId = null
@@ -445,7 +443,7 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     stream = null
   }
 
-  async function stop(): Promise<SaveResult | null> {
+  async function stop(forceKeep = false): Promise<SaveResult | null> {
     if (state !== 'recording' && state !== 'paused') return null
     if (!recorder) return null
     // Close any open pause into the accumulator so displayMs freezes at the true length.
@@ -468,12 +466,12 @@ export function createRecorderController(ctx: RecContext): RecorderController {
 
     // A short recording is NEVER silently dropped — ask Keep/Discard first. At/above the
     // threshold it saves straight away (frozenDisplayMs is the pause-aware length).
-    if (frozenDisplayMs < ctx.discardThresholdMs) {
+    if (!forceKeep && frozenDisplayMs < ctx.discardThresholdMs) {
       state = 'confirm'
       emitChange()
       return null
     }
-    return doSave(false)
+    return doSave(forceKeep)
   }
 
   // Persist the pending recording. `force` skips main's own discard check (a kept short run).
@@ -503,7 +501,10 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     } catch (e) {
       result = { ok: false, error: String(e) }
     }
-    pendingBlob = null
+    // A changed main-process threshold may reject a clip the preload expected to keep.
+    // Retain the captured audio until a kept save succeeds or the presenter discards it.
+    if (result.discarded) result = { ok: false, error: 'Recording was not saved. Try saving again to keep it.' }
+    if (result.ok) pendingBlob = null
     saveResult = result
     if (result.ok && !result.discarded && result.sessionId) {
       savedRunSessionId = result.sessionId
@@ -512,7 +513,7 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     }
     if (!result.ok) {
       state = 'error'
-      emitError('Recording could not be saved. It stayed on this machine — check disk space.')
+      emitError('Recording could not be saved. Keep this presentation open and try saving again after checking disk space.')
     } else {
       state = 'saved'
     }
@@ -523,13 +524,14 @@ export function createRecorderController(ctx: RecContext): RecorderController {
 
   // Resolve a Keep/Discard on a short recording. Keep forces the save; Discard drops it.
   async function confirmSave(keep: boolean): Promise<SaveResult | null> {
-    if (state !== 'confirm') return null
+    if (state !== 'confirm' && !(state === 'error' && pendingBlob)) return null
     if (keep) return doSave(true)
     pendingBlob = null
     saveResult = { ok: true, discarded: true }
     state = 'idle'
     frozenDisplayMs = null
     initialiseRunCapture()
+    pushRunState()
     emitChange()
     return saveResult
   }
@@ -698,7 +700,7 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     clearInterval(stateTickId)
     void finaliseRun()
   })
-  ipcRenderer.on('recording:show-close-offer', () => emitCloseOffer())
+  ipcRenderer.on('recording:show-close-offer', (_event, offer?: PresentationCloseOffer) => emitCloseOffer(offer ?? { live: false, offerRunSave: true, audioArmed: isAudioArmed() }))
   initialiseRunCapture()
 
   return {
@@ -734,7 +736,12 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     }),
     onRunOffer: (cb) => { runOfferCbs.push(cb) },
     onCloseOffer: (cb) => { closeOfferCbs.push(cb) },
-    closeWindow: async () => { await ipcRenderer.invoke('recording:close-window') }
+    closeWindow: async (liveAction) => {
+      if (isAudioArmed()) throw new Error('Save the recording before closing the presentation.')
+      await finaliseRun()
+      const result = await ipcRenderer.invoke('recording:close-window', liveAction)
+      if (!result?.ok) throw new Error(result?.error || 'The presentation could not be closed. Please try again.')
+    }
   }
 }
 
@@ -982,86 +989,21 @@ function mountRecUi(controller: RecorderController): void {
     })
   }
 
-  async function saveWithPicker(closeAfter = false): Promise<boolean> {
+  async function saveWithPicker(): Promise<boolean> {
     hideSaveToast()
     const picked = await chooseKind(controller.currentKind())
     if (!picked) return false
     const result = await controller.saveRun(picked)
     const ok = !!result?.ok && !result.discarded
-    if (ok && closeAfter) await controller.closeWindow()
     return ok
-  }
-
-  async function showCloseModal(): Promise<void> {
-    if (document.querySelector('.twrec-close-modal')) return
-    hideSaveToast()
-    const overlay = document.createElement('div')
-    overlay.className = 'twrec-close-modal'
-    overlay.setAttribute('role', 'dialog')
-    overlay.setAttribute('aria-modal', 'true')
-    const planned = await controller.plannedRuns()
-    const preferred = planned.find((run) => run.preferred)
-    const plannedHtml = planned.length ? `
-      <div class="twrec-planned-list" role="listbox" aria-label="Attach delivery to a planned Run">
-        ${planned.map((run) => `<button type="button" class="twrec-planned${run.id === preferred?.id ? ' active' : ''}" data-planned-run="${escapeHtml(run.id)}"><b>${escapeHtml(run.eventTitle || 'Planned Run')}</b><span>${escapeHtml(run.plannedDate || '')}${run.audience ? ` · ${escapeHtml(run.audience)}` : ''}</span></button>`).join('')}
-      </div>` : ''
-    overlay.innerHTML = `
-      <div class="twrec-close-panel">
-        <div class="twrec-close-title">Save this run to History?</div>
-        <div class="twrec-close-sub">${planned.length ? 'Attach this delivery to a planned Run, or save it as a new delivery.' : 'This looks like a delivered run. Save it now, choose another kind, or close without saving.'}</div>
-        ${plannedHtml}
-        <div class="twrec-close-row">
-          <button type="button" class="rec-btn keep" id="twrec-close-save">${planned.length ? 'Save new delivery' : 'Save delivery'}</button>
-          <button type="button" class="rec-btn ghost" id="twrec-close-save-as">Save as…</button>
-          <button type="button" class="rec-btn danger" id="twrec-close-discard">Don't save</button>
-        </div>
-      </div>`
-    document.body.appendChild(overlay)
-    const close = (): void => overlay.remove()
-    overlay.querySelectorAll<HTMLButtonElement>('[data-planned-run]').forEach((button) => {
-      button.addEventListener('click', () => {
-        void (async () => {
-          const result = await controller.saveRun('delivery', button.dataset.plannedRun)
-          if (result?.ok && !result.discarded) await controller.closeWindow()
-        })()
-      })
-    })
-    overlay.querySelector<HTMLButtonElement>('#twrec-close-save')?.addEventListener('click', () => {
-      void (async () => {
-        const result = await controller.saveRun('delivery')
-        if (result?.ok && !result.discarded) await controller.closeWindow()
-      })()
-    })
-    overlay.querySelector<HTMLButtonElement>('#twrec-close-save-as')?.addEventListener('click', () => {
-      void (async () => {
-        close()
-        const ok = await saveWithPicker(true)
-        if (!ok) await showCloseModal()
-      })()
-    })
-    overlay.querySelector<HTMLButtonElement>('#twrec-close-discard')?.addEventListener('click', () => {
-      void controller.closeWindow()
-    })
-    window.addEventListener('keydown', function onCloseKey(event: KeyboardEvent) {
-      if (!document.body.contains(overlay)) {
-        window.removeEventListener('keydown', onCloseKey, true)
-        return
-      }
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        event.stopImmediatePropagation()
-        close()
-        window.removeEventListener('keydown', onCloseKey, true)
-      }
-    }, true)
-    ;(overlay.querySelector<HTMLButtonElement>('.twrec-planned.active') ?? overlay.querySelector<HTMLButtonElement>('[data-planned-run]') ?? overlay.querySelector<HTMLButtonElement>('#twrec-close-save'))?.focus()
   }
 
   function render(): void {
     const st = controller.getState()
     module.dataset.rec = st
     const saved = st === 'saving' || st === 'saved'
-    const confirming = st === 'confirm'
+    const retryingAudio = st === 'error' && controller.runGate().audioArmed
+    const confirming = st === 'confirm' || retryingAudio
     // In confirm, the clock shows the short length and the message replaces REC; in saving/saved
     // the saved message replaces both.
     if (label) label.textContent = 'REC'
@@ -1074,10 +1016,10 @@ function mountRecUi(controller: RecorderController): void {
     }
     if (confirmMsg) {
       confirmMsg.hidden = !confirming
-      confirmMsg.innerHTML = `Short recording (${fmtClock(controller.displayMs())}) &mdash; keep it?`
+      confirmMsg.textContent = retryingAudio ? 'Recording not saved — try again?' : `Short recording (${fmtClock(controller.displayMs())}) — keep it?`
     }
     if (spinner) spinner.hidden = !saved
-    if (primary) primary.hidden = !(st === 'idle' || st === 'saved' || st === 'error')
+    if (primary) primary.hidden = retryingAudio || !(st === 'idle' || st === 'saved' || st === 'error')
     if (btnChangeKind) btnChangeKind.hidden = st !== 'saved'
     if (btnPause) btnPause.hidden = st !== 'recording'
     if (btnResume) btnResume.hidden = st !== 'paused'
@@ -1086,7 +1028,11 @@ function mountRecUi(controller: RecorderController): void {
       btnStop.setAttribute('aria-label', 'Stop and save recording (Shift R)')
       btnStop.setAttribute('title', 'Stop & save recording (⇧R)')
     }
-    if (btnKeep) btnKeep.hidden = !confirming
+    if (btnKeep) {
+      btnKeep.hidden = !confirming
+      btnKeep.textContent = retryingAudio ? 'Retry save' : 'Keep'
+      btnKeep.setAttribute('aria-label', retryingAudio ? 'Retry saving this recording' : 'Keep this recording')
+    }
     if (btnDiscard) btnDiscard.hidden = !confirming
     if (st !== 'paused') hideToast()
     if (controller.runGate().saved || controller.runGate().audioArmed) hideSaveToast()
@@ -1095,7 +1041,7 @@ function mountRecUi(controller: RecorderController): void {
   controller.onChange(render)
   controller.onSlideMovedWhilePaused(showToast)
   controller.onRunOffer(showSaveToast)
-  controller.onCloseOffer(() => { void showCloseModal() })
+  controller.onCloseOffer((offer) => { hideSaveToast(); showPresentationCloseOffer(controller, offer) })
   controller.onError((msg) => {
     const n = document.createElement('div')
     n.className = 'twrec-error'
@@ -1109,7 +1055,7 @@ function mountRecUi(controller: RecorderController): void {
 
   // 4) Controls
   primary?.addEventListener('click', () => { void controller.start() })
-  btnChangeKind?.addEventListener('click', () => { void saveWithPicker(false) })
+  btnChangeKind?.addEventListener('click', () => { void saveWithPicker() })
   btnPause?.addEventListener('click', () => controller.pause())
   btnResume?.addEventListener('click', () => controller.resume())
   btnStop?.addEventListener('click', () => { void controller.stop() })
@@ -1118,7 +1064,7 @@ function mountRecUi(controller: RecorderController): void {
   $('twrec-toast-yes')?.addEventListener('click', () => { controller.resume(); hideToast() })
   $('twrec-toast-no')?.addEventListener('click', hideToast)
   $('twrec-save-delivery')?.addEventListener('click', () => { hideSaveToast(); void controller.saveRun('delivery') })
-  $('twrec-save-as')?.addEventListener('click', () => { void saveWithPicker(false) })
+  $('twrec-save-as')?.addEventListener('click', () => { void saveWithPicker() })
   $('twrec-save-dismiss')?.addEventListener('click', hideSaveToast)
 
   // 5) Keyboard — ⇧R record/stop, ⇧P pause/resume. Capture phase so we act before the
@@ -1134,6 +1080,7 @@ function mountRecUi(controller: RecorderController): void {
     else if (st === 'paused') controller.resume()
   }
   window.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (document.querySelector('.twrec-close-modal')) return
     const t = e.target
     if (t instanceof HTMLElement && t.matches('input, textarea, select, [contenteditable="true"]')) return
     // Resolve a short-recording Keep/Discard from the keyboard: Enter keeps, Esc discards.
@@ -1145,7 +1092,7 @@ function mountRecUi(controller: RecorderController): void {
     if (!e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && (e.key === 'L' || e.key === 'l')) {
       e.preventDefault()
       e.stopImmediatePropagation()
-      void saveWithPicker(false)
+      void saveWithPicker()
       return
     }
     if (saveToast.classList.contains('show') && e.key === 'Enter') {
@@ -1201,6 +1148,7 @@ async function init(): Promise<void> {
   // The presenter view also gets the ⌘E "edit this slide" bridge (a plain presentation window gets
   // it via present-edit.ts). Mounted after the REC UI so both controls coexist.
   mountEditBridge()
+  mountLiveBridge()
 }
 
 if (document.readyState === 'loading') {

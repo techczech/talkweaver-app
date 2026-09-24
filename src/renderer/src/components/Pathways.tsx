@@ -8,6 +8,7 @@ import type {
   ResolvedPathway
 } from '../../../preload/index'
 import { SHORTCUT_REGISTRY } from '../../../shared/shortcut-registry'
+import { unresolvedTriggerBlock } from '../../../shared/layout-doctor'
 import {
   optimisticallySetPathwaySlides,
   reconcilePathwaySnapshot,
@@ -207,6 +208,8 @@ export default function Pathways({ context, onClose }: { context: PathwayWindowC
 
   const present = useCallback(async (): Promise<void> => {
     if (!context || !selected || selected.present.length === 0) return
+    const blocked = unresolvedTriggerBlock(content)
+    if (blocked) { setError(blocked.message); return }
     const result = await window.tw.pathways.present(context.outlinePath, content, selected.id)
     if (!result.success) setError(result.error || 'The pathway could not be presented.')
   }, [content, context, selected])

@@ -162,21 +162,21 @@
     max-width: 40ch;
     margin: 28px auto 0;
     font-size: max(22px, 2.8cqw);
-  }/* @order 1378 */
+  }/* @order 1387 */
   /* Title slides are POSTERS, never left-rail slides — whatever title placement got stamped.
-     Re-assert the poster grid over the rail system (same trick as the statement repair). *//* @order 1390 */
+     Re-assert the poster grid over the rail system (same trick as the statement repair). *//* @order 1399 */
 
-  /* Section divider (mockup .t-section): full-bleed tint, centred title *//* @order 1420 */
+  /* Section divider (mockup .t-section): full-bleed tint, centred title *//* @order 1429 */
 
-  /* ── FIDELITY BATCH 2 (mockup slides 3, 3b, 9, 10, 13, 14, 14e, 17, 18) ─────────────── *//* @order 1421 */
+  /* ── FIDELITY BATCH 2 (mockup slides 3, 3b, 9, 10, 13, 14, 14e, 17, 18) ─────────────── *//* @order 1430 */
 
-  /* Content-slide title treatment (mockup h3.head + .meta kicker) *//* @order 1572 */
+  /* Content-slide title treatment (mockup h3.head + .meta kicker) *//* @order 1581 */
 
-  /* Titles left (#68): title/section headings never centre while other text left-aligns *//* @order 1574 */
+  /* Titles left (#68): title/section headings never centre while other text left-aligns *//* @order 1583 */
 
-  /* ── ADR-0005 title designs (title-variations.html, ported verbatim) ── *//* @order 1576 */
-  /* the head may be display:contents — hide its CHILDREN, the box may not exist *//* @order 1633 */
+  /* ── ADR-0005 title designs (title-variations.html, ported verbatim) ── *//* @order 1585 */
+  /* the head may be display:contents — hide its CHILDREN, the box may not exist *//* @order 1659 */
 
-  /* #77 closing mirrors the title poster: statement-scale thanks, accent CTA, identity bottom *//* @order 1670 */
+  /* #77 closing mirrors the title poster: statement-scale thanks, accent CTA, identity bottom *//* @order 1696 */
 
   /* ── FIDELITY BATCH 9: closing poster · mockup complex-table family (roles-h/roles-v) ── */

@@ -2,9 +2,10 @@ import { strict as assert } from "node:assert";
 import { readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import ts from "typescript";
-import { TRIGGER_DICTIONARY, VALUE_TRIGGER_DICTIONARY, resolveDynamicTrigger } from "../compiler/scripts/triggers.mjs";
+import { SECTION_ONLY_TRIGGER_KEYS, TRIGGER_DICTIONARY, VALUE_TRIGGER_DICTIONARY, resolveDynamicTrigger } from "../compiler/scripts/triggers.mjs";
 import { parseHeadingAttrs } from "../compiler/scripts/lib/02-triggers-layout.mjs";
 import { prepareSource } from "../compiler/scripts/lib/08-source-adapters.mjs";
+import { LAYOUTS } from "../src/shared/layout-registry/entries.ts";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
 const registryPath = join(root, "src/shared/layout-registry/entries.ts");
@@ -62,13 +63,18 @@ function compilerAcceptsTrigger(trigger) {
   const text = String(trigger ?? "").trim();
   if (!text.startsWith("{")) return true;
   const parsed = parseHeadingAttrs(`Probe ${text}`);
-  return !parsed.warnings.some((warning) => warning.startsWith("unknown-trigger:"));
+  return !parsed.warnings.some((warning) =>
+    warning.startsWith("unknown-trigger:") || warning.startsWith("unresolved-trigger:")
+  );
 }
 
 const entries = extractLayouts();
 const sampler = readFileSync(samplerPath, "utf8");
 
 assert(entries.length > 0, "Registry must contain entries");
+for (const invalid of ["{role=nonsense}", "{liststyle=bogus}", "{bogus=1}"]) {
+  assert.equal(compilerAcceptsTrigger(invalid), false, `${invalid}: unresolved value-form trigger is rejected`);
+}
 
 for (const entry of entries) {
   assert(entry.name, "Every registry entry needs a name");
@@ -79,19 +85,47 @@ for (const entry of entries) {
   assert(typeof entry.sample === "string" && entry.sample.trim(), `${entry.name}: missing sample`);
   assert(typeof entry.description === "string" && entry.description.trim(), `${entry.name}: missing description`);
   assert(Array.isArray(entry.triggerWords), `${entry.name}: triggerWords must be an array`);
-  if (entry.kind === "container") assert.equal(entry.sectionOnly, true, `${entry.name}: containers must be section-only`);
 }
+
+assert.deepEqual(
+  entries.filter((entry) => entry.sectionOnly).map((entry) => entry.name),
+  ["accent", "grid-linear", "grid-zoom", "contents", "timer-audience"],
+  "only the five level-constrained triggers are section-only"
+);
 
 const missingSamplerNames = entries.map((entry) => entry.name).filter((name) => !sampler.includes(name));
 assert.deepEqual(missingSamplerNames, [], `Registry name(s) missing from docs/layout-sampler-outline.md: ${missingSamplerNames.join(", ")}`);
 
-const registryWords = new Set(entries.flatMap((entry) => entry.triggerWords));
+const triggerTokenLayouts = LAYOUTS.filter((entry) => String(entry.trigger ?? '').trim().startsWith('{'));
+const registryWords = new Set(triggerTokenLayouts.flatMap((entry) => [
+  ...entry.triggerWords,
+  ...(entry.bareAliases ?? []).map((alias) => alias.word)
+]));
+const owners = new Map();
+for (const entry of triggerTokenLayouts) {
+  for (const word of [...entry.triggerWords, ...(entry.bareAliases ?? []).map((alias) => alias.word)]) {
+    assert(!owners.has(word), `bare word '${word}' owned by both '${owners.get(word)}' and '${entry.name}' — ownership must be unique (ADR-0020 R2)`);
+    owners.set(word, entry.name);
+  }
+}
 
 const compilerWords = Object.keys(TRIGGER_DICTIONARY).sort();
 const missingFromRegistry = compilerWords.filter((word) => !registryWords.has(word));
 assert.deepEqual(missingFromRegistry, [], `Compiler trigger(s) missing from registry: ${missingFromRegistry.join(", ")}`);
 const missingFromCompiler = [...registryWords].filter((word) => !TRIGGER_DICTIONARY[word]).sort();
 assert.deepEqual(missingFromCompiler, [], `Registry trigger(s) missing from compiler: ${missingFromCompiler.join(", ")}`);
+assert.deepEqual(
+  SECTION_ONLY_TRIGGER_KEYS,
+  LAYOUTS.filter((entry) => entry.sectionOnly).map((entry) => {
+    const authored = String(entry.trigger ?? '').replace(/^\{|\}$/g, '')
+    const explicitKey = authored.match(/^([\w-]+)(?:=|:)/)?.[1]
+    return {
+      name: entry.name,
+      key: entry.resolvesTo?.key ?? explicitKey ?? entry.name
+    }
+  }),
+  'compiler section-only warning metadata is generated from the registry'
+);
 assert.deepEqual(VALUE_TRIGGER_DICTIONARY.accent, ['cobalt', 'emerald', 'vermilion', 'forest'], 'named section accents are generated into the value-trigger dictionary');
 assert.deepEqual(VALUE_TRIGGER_DICTIONARY.iconlist, ['boxes', 'list'], 'iconlist variants are generated into the value-trigger dictionary');
 assert.deepEqual(VALUE_TRIGGER_DICTIONARY.statement, ['default', 'tint', 'poster'], 'statement variants are generated into the value-trigger dictionary');
@@ -105,7 +139,8 @@ for (const entry of entries) {
   if (entry.kind === "element") continue;
   if (!compilerAcceptsTrigger(entry.trigger)) registryTriggerFailures.push(`${entry.name}:${entry.trigger}`);
   for (const alias of entry.aliases) {
-    if (!TRIGGER_DICTIONARY[alias] && !resolveDynamicTrigger(alias) && !compilerAcceptsTrigger(`{${alias}}`)) {
+    const authoredAlias = String(alias).trim().startsWith("{") ? alias : `{${alias}}`;
+    if (!TRIGGER_DICTIONARY[alias] && !resolveDynamicTrigger(alias) && !compilerAcceptsTrigger(authoredAlias)) {
       registryTriggerFailures.push(`${entry.name} alias:${alias}`);
     }
   }

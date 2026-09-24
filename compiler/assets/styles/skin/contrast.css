@@ -1,8 +1,8 @@
-/* @order 1443 */
+/* @order 1452 */
   .contrast-grid {
     border: 1px solid var(--hairline);
     background: var(--paper);
-  }/* @order 1444 */
+  }/* @order 1453 */
   .contrast-grid .contrast-pair {
     display: grid !important;
     grid-template-columns: 1fr 1fr !important;
@@ -12,8 +12,8 @@
     background: none;
     padding: 0;
     margin: 0;
-  }/* @order 1445 */
-  .contrast-grid .contrast-pair::before, .contrast-grid .contrast-pair::after { display: none !important; content: none; }/* @order 1446 */
+  }/* @order 1454 */
+  .contrast-grid .contrast-pair::before, .contrast-grid .contrast-pair::after { display: none !important; content: none; }/* @order 1455 */
   .contrast-grid .contrast-pair .ct-left,
   .contrast-grid .contrast-pair .ct-right {
     margin: 0 !important;
@@ -31,18 +31,18 @@
     border-top: 1px solid var(--hairline);
     text-align: left;
     display: block;
-  }/* @order 1447 */
+  }/* @order 1456 */
   .contrast-grid .contrast-pair:first-child .ct-left,
-  .contrast-grid .contrast-pair:first-child .ct-right { border-top: none; }/* @order 1448 */
-  .contrast-grid .contrast-pair .ct-left { color: var(--muted); }/* @order 1449 */
+  .contrast-grid .contrast-pair:first-child .ct-right { border-top: none; }/* @order 1457 */
+  .contrast-grid .contrast-pair .ct-left { color: var(--muted); }/* @order 1458 */
   .contrast-grid .contrast-pair .ct-right {
     background: var(--tint);
     border-left: 1px solid var(--hairline);
     font-weight: 500;
     color: var(--ink);
-  }/* @order 1450 */
+  }/* @order 1459 */
   .contrast-grid .contrast-pair .ct-left::after,
-  .contrast-grid .contrast-pair .ct-right::after { display: none; }/* @order 1452 */
+  .contrast-grid .contrast-pair .ct-right::after { display: none; }/* @order 1461 */
   .contrast-grid.contrast-strike .ct-left {
     text-decoration: line-through;
     text-decoration-color: var(--accent);

@@ -2,6 +2,8 @@
 // Verifies: selecting a talk renders the editor + slide-strip thumbnails, and ⌘K
 // opens a populated search palette. Screenshots saved to e2e/shots/.
 import { _electron as electron } from 'playwright'
+import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { openFirstTalk, talkRows, talkSearchInput, waitForTalkList } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { mkdirSync } from 'fs'
@@ -19,7 +21,8 @@ function record(name, pass, detail) {
 
 // No --user-data-dir here (this harness runs against the real vault), so suppress the
 // outline-v2 migration prompt explicitly — a native modal would hang the run.
-const app = await electron.launch({ args: ['.'], cwd: REPO, env: { ...process.env, TW_MIGRATE_PROMPT: '0' } })
+await ensureFreshBuild(REPO)
+const app = await electron.launch({ args: ['.'], cwd: REPO, env: { ...process.env, TW_E2E: '1', TW_MIGRATE_PROMPT: '0' } })
 const page = await app.firstWindow()
 const consoleErrors = []
 page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()) })
@@ -29,10 +32,11 @@ await page.waitForTimeout(1200)
 
 try {
   // ── select first talk ──
-  const items = page.locator('.talk-item')
+  await waitForTalkList(page)
+  const items = talkRows(page)
   const count = await items.count()
   record('talk list renders items', count > 0, `${count} items`)
-  await items.first().click()
+  await openFirstTalk(page)
 
   // editor mounts
   await page.waitForSelector('.cm-content', { timeout: 8000 })
@@ -148,12 +152,13 @@ try {
   // Talk-list search filters the list.
   await page.keyboard.press('Escape')
   await page.waitForTimeout(200)
-  const allItems = await page.locator('.talk-item').count()
-  await page.locator('.talk-list-search-input').fill('codex')
+  await waitForTalkList(page)
+  const allItems = await talkRows(page).count()
+  await talkSearchInput(page).fill('codex')
   await page.waitForTimeout(300)
-  const filteredItems = await page.locator('.talk-item').count()
+  const filteredItems = await talkRows(page).count()
   record('talk list search filters', filteredItems > 0 && filteredItems < allItems, `all=${allItems} filtered=${filteredItems}`)
-  await page.locator('.talk-list-search-input').fill('')
+  await talkSearchInput(page).fill('')
   await page.waitForTimeout(200)
 
   // editor↔strip sync: clicking a slide heading highlights the matching strip card.

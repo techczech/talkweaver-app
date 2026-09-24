@@ -10,5 +10,9 @@ artefacts/
 native/ocr
 native/media
 
-# not published to the public repo
-.bridle/
+# Agent scratch: SDD briefs, reports and local parity baselines
+.superpowers/
+
+# agent scratch probes (never commit)
+.tw-*
+docs/layout-doctor/

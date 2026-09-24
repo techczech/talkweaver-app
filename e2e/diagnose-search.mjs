@@ -1,6 +1,8 @@
 // Real-Electron harness for the reworked slide search: full-content all-words match, filters, and
 // multi-select insert.
 import { _electron as electron } from 'playwright'
+import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'; import { dirname, join } from 'path'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'; import { tmpdir } from 'os'
 
@@ -24,7 +26,8 @@ writeFileSync(join(alpha, 'alpha-talk-outline.md'), [
 writeFileSync(join(beta, 'beta-talk-outline.md'), ['---', 'title: Beta Talk', '---', '', '### Other', '', 'Unrelated content about kangaroos.', ''].join('\n'))
 writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault }))
 
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO })
+await ensureFreshBuild(REPO)
+const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
 const page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded'); await page.waitForTimeout(1200)
 
@@ -45,7 +48,7 @@ try {
   // ── UI: multi-select insert ──
   const alphaOutline = join(alpha, 'alpha-talk-outline.md')
   const diskFrom = async () => ((await page.evaluate((p) => window.tw.talk.readOutline(p), alphaOutline)) || '').match(/<!-- from:/g)?.length || 0
-  await page.locator('.talk-item', { hasText: 'Alpha Talk' }).first().click()
+  await openTalkByTitle(page, 'Alpha Talk')
   await page.waitForSelector('.cm-content', { timeout: 8000 })
   await page.waitForTimeout(300)
   const beforeFrom = await diskFrom()

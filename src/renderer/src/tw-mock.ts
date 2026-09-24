@@ -182,6 +182,10 @@ function mockLineDiff(a: string, b: string): Array<{ kind: 'same' | 'del' | 'add
   return out
 }
 
+// In-memory action-bar state for the plain-browser dev preview (ADR-0025): the flag flips in
+// memory and listeners hear it, so the toggle behaves in the dev preview too.
+const mockActionBar = { visible: false, listeners: new Set<(state: { visible: boolean; items: unknown }) => void>() }
+
 export function installMock() {
   ;(window as any).tw = {
     vault: {
@@ -251,6 +255,21 @@ export function installMock() {
         }
         return results
       },
+    },
+    // The workspace reads the action-bar setting on mount (ADR-0025); the browser mock keeps the
+    // flag in memory so the plain-browser dev preview still boots. Other settings sections are
+    // Electron-only surfaces and stay unmocked.
+    settings: {
+      getActionBar: async () => ({ visible: mockActionBar.visible, items: null }),
+      setActionBarVisible: async (visible: boolean) => {
+        mockActionBar.visible = visible
+        for (const listener of mockActionBar.listeners) listener({ visible, items: null })
+        return visible
+      },
+      onActionBarChanged: (cb: (state: { visible: boolean; items: unknown }) => void) => {
+        mockActionBar.listeners.add(cb)
+        return () => mockActionBar.listeners.delete(cb)
+      }
     },
     ledger: {
       whereUsed: async (_id: string) => MOCK_LEDGER_TALKS.map(({ talk, outline }) => ({ talk, outline })),

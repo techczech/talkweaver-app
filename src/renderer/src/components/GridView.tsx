@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { TalkInfo, ProjectionRow } from '../../../preload/index'
-import { warningsForSurface } from '../../../../compiler/scripts/lib/warning-registry.mjs'
+import type { LayoutDoctorFinding } from '../../../shared/layout-doctor'
+import { surfacedWarnings } from './SlideStrip'
 
 interface Props {
   talk: TalkInfo
   compiledSlides: ProjectionRow[] | null
+  triggerFindings: readonly LayoutDoctorFinding[]
   thumbnails?: Record<string, string> | null
   activeIndex: number
   onSelectSlide: (index: number) => void
@@ -20,13 +22,6 @@ interface Props {
 // layout/trigger change busts the cache; content_hash / slide_id are fallbacks.
 function thumbKey(row: ProjectionRow): string | null {
   return row.render_hash || row.content_hash || row.slide_id || null
-}
-
-// Compiler warnings surfaced as a grid badge. Mirrors SlideStrip's SURFACED_WARNINGS:
-// most engine warnings are resolution hints; only show the actionable ones. Keyed on the
-// warning TYPE (the `<type>:<slide-id>[:<extra>]` prefix).
-function surfacedWarnings(row: ProjectionRow): string[] {
-  return warningsForSurface(row.warnings, 'strip-badge')
 }
 
 // A projection row is a reorderable outline block iff its source_markdown begins
@@ -102,22 +97,23 @@ function groupBySection(rows: ProjectionRow[]): SectionGroup[] {
 interface CellThumbProps {
   row: ProjectionRow
   thumbnailUrl: string | null
+  triggerFindings: readonly LayoutDoctorFinding[]
 }
 
 // Real thumbnail when available; otherwise a neutral schematic box carrying the
 // slide title so the grid stays legible before thumbnails render.
 // Memoized: during a drag the whole grid re-renders on each cell-crossing (dropTarget state), but a
 // cell's thumbnail props (row + url) don't change — so the heavy <img> tree is skipped, keeping drag smooth.
-const CellThumb = React.memo(function CellThumb({ row, thumbnailUrl }: CellThumbProps) {
+const CellThumb = React.memo(function CellThumb({ row, thumbnailUrl, triggerFindings }: CellThumbProps) {
   const title = row.nav_title || row.title || 'Slide'
-  const warnings = surfacedWarnings(row)
+  const warnings = surfacedWarnings(row, 'strip-badge', triggerFindings)
   return (
     <div style={{ position: 'relative', paddingTop: '56.25%', background: 'var(--paper)' }}>
       {warnings.length > 0 && (
         <span
-          className="tw-slide-warning"
+          className={`tw-slide-warning ${warnings.some((warning) => warning.severity === 'error') ? 'tw-slide-warning--error' : ''}`}
           data-slide-warning
-          title={warnings.join('\n')}
+          title={warnings.map((warning) => warning.text).join('\n')}
           style={{
             position: 'absolute',
             top: '4px',
@@ -127,7 +123,6 @@ const CellThumb = React.memo(function CellThumb({ row, thumbnailUrl }: CellThumb
             fontWeight: 700,
             lineHeight: 1,
             color: '#fff',
-            background: '#d97706',
             borderRadius: '3px',
             padding: '2px 5px',
             boxShadow: '0 0 0 1px var(--paper)',
@@ -183,6 +178,7 @@ const CellThumb = React.memo(function CellThumb({ row, thumbnailUrl }: CellThumb
 
 interface GridCellProps {
   row: ProjectionRow
+  triggerFindings: readonly LayoutDoctorFinding[]
   thumbnails: Record<string, string> | null
   globalIndex: number
   blockIndex: number | null
@@ -202,6 +198,7 @@ interface GridCellProps {
 
 const GridCell = React.memo(function GridCell({
   row,
+  triggerFindings,
   thumbnails,
   globalIndex,
   blockIndex,
@@ -296,7 +293,7 @@ const GridCell = React.memo(function GridCell({
             }}
           />
         )}
-        <CellThumb row={row} thumbnailUrl={thumbnailUrl} />
+        <CellThumb row={row} thumbnailUrl={thumbnailUrl} triggerFindings={triggerFindings} />
         <div
           style={{
             padding: '5px 8px',
@@ -381,6 +378,7 @@ const GridCell = React.memo(function GridCell({
 export default function GridView({
   talk: _talk,
   compiledSlides,
+  triggerFindings,
   thumbnails,
   activeIndex,
   onSelectSlide,
@@ -696,6 +694,7 @@ export default function GridView({
                   <GridCell
                     key={`${row.slide_id || row.content_hash || 'row'}-${globalIndex}`}
                     row={row}
+                    triggerFindings={triggerFindings}
                     thumbnails={thumbnails ?? null}
                     globalIndex={globalIndex}
                     blockIndex={blockIndex}

@@ -1,3 +1,4 @@
+import PollAuthoringHelp from './PollAuthoringHelp'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LAYOUTS, type LayoutDef, type OptionGroup } from '../data/layouts'
 import {
@@ -460,13 +461,34 @@ export function OptionThumb({ entry, token }: { entry: LayoutDef; token: string 
 export function OptionControl({
   entry,
   binding,
-  onSelect
+  onSelect,
+  deckToken
 }: {
   entry?: LayoutDef
   binding: PickerOptionGroup
   onSelect: (group: OptionGroup, token: string) => void
+  /** T32 (Decision 1A): the value the DECK makes; that button carries the small “deck” mark. */
+  deckToken?: string
 }): React.JSX.Element {
   const { group, selectedToken } = binding
+  if (group.numberKey) {
+    const value = selectedToken.startsWith(group.numberKey + '=') ? selectedToken.split('=')[1] : ''
+    const commit = (input: HTMLInputElement): void => {
+      if (input.value === input.defaultValue) return
+      if (!input.value) onSelect(group, '')
+      else if (input.validity.valid && Number.isSafeInteger(Number(input.value))) onSelect(group, `${group.numberKey}=${Number(input.value)}`)
+      else input.reportValidity()
+    }
+    return <div className="layout-option-segments" role="group" aria-label={group.label}>
+      <input key={selectedToken} type="number" min="1" step="1" aria-label={group.label}
+        defaultValue={value === 'unlimited' ? '' : value} placeholder={group.numberKey === 'pollsubmissions' ? '1' : 'All'}
+        style={{ width: '5rem' }} onBlur={(event) => commit(event.currentTarget)}
+        onKeyDown={(event) => { event.stopPropagation(); if (event.key === 'Enter') { event.preventDefault(); commit(event.currentTarget) } }} />
+      {group.values.map((option) => <button key={option.token} type="button" aria-pressed={selectedToken === option.token}
+        onClick={() => onSelect(group, option.token)}>{option.label}</button>)}
+      {group.allowUnlimited && <button type="button" aria-pressed={value === 'unlimited'} onClick={() => onSelect(group, `${group.numberKey}=unlimited`)}>Unlimited</button>}
+    </div>
+  }
   const isThumbs = group.preview === 'thumbs' && entry != null
   const moveWithinGroup = (event: React.KeyboardEvent<HTMLButtonElement>, index: number): void => {
     if (event.key === ' ' || event.key === 'Enter') {
@@ -484,9 +506,12 @@ export function OptionControl({
   }
 
   return (
-    <div className={isThumbs ? 'layout-option-thumbs' : 'layout-option-segments'} role="group" aria-label={group.label}>
+    <div className="layout-option-control">
+    <div className={isThumbs ? 'layout-option-thumbs' : 'layout-option-segments'} role="group" aria-label={group.label}
+      data-deck-mark={deckToken !== undefined ? 'true' : undefined}>
       {group.values.map((value, index) => {
         const selected = value.token === selectedToken
+        const deckMarked = deckToken !== undefined && deckToken === value.token
         return (
           <button
             key={`${group.key}:${value.token || 'default'}`}
@@ -501,9 +526,12 @@ export function OptionControl({
             {isThumbs && <OptionThumb entry={entry} token={value.token} />}
             {value.swatch && <span className="layout-option-swatch" style={{ background: value.swatch }} aria-hidden />}
             <span>{value.label}</span>
+            {deckMarked && <span className="layout-option-deck-mark" title="The deck's own choice for this slide">deck</span>}
           </button>
         )
       })}
+    </div>
+    {group.key === 'poll-type' && <PollAuthoringHelp token={selectedToken} />}
     </div>
   )
 }
@@ -899,7 +927,7 @@ export default function CommandPalette({ isOpen, query, context, onClose, onComm
                       </div>
                     </div>
                   </div>
-                  {isActive && optionGroupsForPickerEntry(item, triggerLine).map((binding) => (
+                  {isActive && optionGroupsForPickerEntry(item, triggerLine, context ?? undefined).map((binding) => (
                     <div className="layout-picker-option-row" key={binding.group.key}>
                       <span className="layout-picker-group-label">{binding.group.label}</span>
                       <OptionControl entry={item} binding={binding} onSelect={(group, token) => commitOption(group, token, item)} />
@@ -953,7 +981,7 @@ export default function CommandPalette({ isOpen, query, context, onClose, onComm
 
         <div className="layout-picker-type-strip">
           <span className="layout-picker-group-label">Type</span>
-          {pickerTypeStripModel(triggerLine).map((binding) => (
+          {pickerTypeStripModel(triggerLine, context ?? undefined).map((binding) => (
             <React.Fragment key={binding.group.key}>
               <span className="layout-picker-type-label">{binding.group.label.replace(' size', '')}</span>
               <OptionControl binding={binding} onSelect={commitOption} />

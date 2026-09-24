@@ -3,6 +3,7 @@ import {
   digitPickForOptionStep,
   commitLayoutSelection,
   filterLayoutPickerEntries,
+  headingContextForDoc,
   inlineLayoutPickerModel,
   inlineOptionPickerStep,
   layoutPickerModel,
@@ -109,7 +110,7 @@ check(chained != null, 'inline { choosing an entry with options creates a chaine
 equal(chained.crumb, ['{', 'contrast', 'options'],
   'inline option step exposes the locked crumb labels')
 equal(chained.rows.map(({ digit, value }) => [digit, value.token]), [
-  [1, ''], [2, 'contrast=ledger'], [3, 'contrast=rows'], [4, 'contrast=tint'], [5, 'contrast=flip']
+  [1, ''], [2, 'contrast=cards'], [3, 'contrast=ledger'], [4, 'contrast=rows'], [5, 'contrast=tint'], [6, 'contrast=flip']
 ], 'inline option step maps registry values to digit rows')
 check(chained.group === contrastOptionRows[0].group,
   'inline and Command-L option paths preserve the same registry group object identity')
@@ -118,11 +119,52 @@ check(statementStep != null, 'inline { choosing statement creates its registry-d
 equal(statementStep.rows.map(({ digit, value }) => [digit, value.token]), [
   [1, ''], [2, 'statement=tint'], [3, 'statement=poster']
 ], 'inline statement step offers default, tint, and poster')
+const tableEntry = LAYOUTS.find((entry) => entry.name === 'table')
+const tableStep = inlineOptionPickerStep(tableEntry, '{table}{image=right}', '')
+check(tableStep != null, 'inline { choosing table creates its registry-driven slot step')
+equal(tableStep?.group.key, 'media-placement',
+  'table object options begin with the shared media-placement group')
+equal(tableStep?.rows.map(({ digit, value }) => [digit, value.token]), [
+  [1, ''], [2, 'image=left'], [3, 'image=right']
+], 'inline table slot step offers auto, left, and right through registry values')
+const chartEntry = LAYOUTS.find((entry) => entry.name === 'chart')
+const chartStep = inlineOptionPickerStep(chartEntry, '{chart=bar}', '')
+check(chartStep != null, 'inline { choosing chart creates its registry-driven chart-type step')
+equal(chartStep?.group.key, 'chart-shape',
+  'the chart object chain selects the chart-shape group rather than the unrelated values group')
+equal(chartStep?.rows.map(({ digit, value }) => [digit, value.token]), [
+  [1, ''], [2, 'chart=bar'], [3, 'chart=pie'], [4, 'chart=line']
+], 'inline chart type step offers auto, bar, pie, and line through registry values')
+const insertedChart = commitLayoutSelection('', [], [chartEntry], 'chart=bar')
+check(insertedChart === '{chart=bar}',
+  'the object insertion path writes the explicit default through applyLayoutSelection')
+check(commitPickerOption(insertedChart, chartStep.group, 'chart=bar') === '{chart=bar}',
+  'the chained chart option reaches commitOptionSelection without duplicating a bare chart token')
+check(selectionFromTriggerLine('{chart=pie}', LAYOUTS).includes(chartEntry),
+  'an explicit chart shape still selects the owning Chart layout in the picker')
+check(commitLayoutSelection('{chart=pie}', [chartEntry], [chartEntry], 'chart=bar') === '{chart=bar}',
+  're-inserting Chart replaces an existing explicit shape instead of duplicating its family token')
+const contrastRowsSelection = selectionFromTriggerLine('{contrast=rows}', LAYOUTS)
+check(contrastRowsSelection.includes(contrast),
+  'a registered non-chart name=value option selects its owning layout')
+check(commitLayoutSelection('{contrast=rows}', contrastRowsSelection, contrastRowsSelection) ===
+  '{contrast=rows}',
+  'committing a registered non-chart name=value layout selection preserves its bytes')
+check(
+  !selectionFromTriggerLine('{quote=bar}', LAYOUTS)
+    .some((entry) => entry.name === 'quote'),
+  'an unresolved name=value form never marks its named layout as selected'
+)
+check(
+  !selectionFromTriggerLine('{flow=horizontal}', LAYOUTS)
+    .some((entry) => entry.name === 'flow'),
+  'a registered value form with no compiler layout implication does not select its named layout'
+)
 
 const filteredStep = inlineOptionPickerStep(contrast, optionLine, 'tin')
 equal(filteredStep.rows.map(({ digit, value }) => [digit, value.token]), [[1, 'contrast=tint']],
   'continued typing filters inline option value rows and renumbers visible digit picks')
-equal(digitPickForOptionStep(chained, 3)?.token, 'contrast=rows',
+equal(digitPickForOptionStep(chained, 4)?.token, 'contrast=rows',
   'digit pick resolves the visible inline option row')
 check(digitPickForOptionStep(chained, 9) === undefined,
   'digit pick outside the visible inline rows is ignored')
@@ -146,6 +188,11 @@ equal(sectionModel.map((section) => section.label), ['Layout', 'Modifiers', 'Com
 equal(sectionModel.find((section) => section.kind === 'container').entries.map((entry) => entry.name),
   ['carousel', 'grid-linear', 'grid-zoom', 'contents', 'timer-audience'],
   'Container exposes the five registry entries on a ## heading')
+const headingContext = headingContextForDoc(['## Section {', '### Child slide', 'Body'], 0)
+equal(headingContext, { headingLevel: 2, hasChildren: true },
+  'plain document lines produce the owning section heading context')
+check(layoutPickerModel(LAYOUTS, headingContext).map((section) => section.label).includes('Container'),
+  '{ palette offers the Container section on sections (ADR-0010 §2)')
 const carousel = LAYOUTS.find((entry) => entry.name === 'carousel')
 check(commitLayoutSelection('', [], [carousel]) === '{carousel}',
   'container insertion creates the section heading Trigger line through the shared editor')

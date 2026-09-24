@@ -1,5 +1,7 @@
 // Real-Electron harness for the global toast/error messaging (so failures are VISIBLE).
 import { _electron as electron } from 'playwright'
+import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { openFirstTalk } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'; import { dirname, join } from 'path'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'; import { tmpdir } from 'os'
 
@@ -12,12 +14,13 @@ mkdirSync(td, { recursive: true }); mkdirSync(ud, { recursive: true })
 writeFileSync(join(td, 'toast-fixture-outline.md'), ['---', 'title: Toast Fixture', '---', '', '### A slide', '', 'Body.'].join('\n'))
 writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault }))
 
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO })
+await ensureFreshBuild(REPO)
+const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
 const page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded'); await page.waitForTimeout(1200)
 
 try {
-  await page.locator('.talk-item').first().click()
+  await openFirstTalk(page)
   await page.waitForSelector('.cm-content', { timeout: 8000 })
 
   // An error toast shows and PERSISTS (errors don't auto-dismiss).

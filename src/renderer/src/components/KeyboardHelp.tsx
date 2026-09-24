@@ -1,5 +1,6 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { SHORTCUT_REGISTRY } from '../../../shared/shortcut-registry'
+import { liveShortcutLabel, onKeymapChanged } from '../keymap/store'
 
 interface Props {
   isOpen: boolean
@@ -33,11 +34,13 @@ function group<T>(items: T[], cat: (t: T) => string, row: (t: T) => ShortcutRow)
   return order.map((h) => ({ heading: h, rows: map.get(h)! }))
 }
 
-const SECTIONS: Section[] = group(
-  SHORTCUT_REGISTRY.filter((shortcut) => shortcut.scope !== 'presenter'),
-  (shortcut) => `${shortcut.scope === 'app' ? 'App' : shortcut.scope[0].toUpperCase() + shortcut.scope.slice(1)} · ${shortcut.group}`,
-  (shortcut) => ({ keys: [shortcut.keys], action: shortcut.label })
-)
+function sections(): Section[] {
+  return group(
+    SHORTCUT_REGISTRY.filter((shortcut) => shortcut.scope !== 'presenter'),
+    (shortcut) => `${shortcut.scope === 'app' ? 'App' : shortcut.scope[0].toUpperCase() + shortcut.scope.slice(1)} · ${shortcut.group}`,
+    (shortcut) => ({ keys: [liveShortcutLabel(shortcut.id)], action: shortcut.label })
+  )
+}
 
 function Kbd({ children }: { children: string }) {
   return (
@@ -56,6 +59,11 @@ function ShortcutKeys({ keys }: { keys: string[] }) {
 }
 
 export default function KeyboardHelp({ isOpen, onClose }: Props) {
+  const [, setKeymapRevision] = useState(0)
+  useEffect(
+    () => onKeymapChanged(() => setKeymapRevision((revision) => revision + 1)),
+    []
+  )
   useEffect(() => {
     if (!isOpen) return
 
@@ -149,7 +157,7 @@ export default function KeyboardHelp({ isOpen, onClose }: Props) {
 
         {/* Sections */}
         <div style={{ padding: '8px 0 12px', flex: 1, overflowY: 'auto' }}>
-          {SECTIONS.map((section) => (
+          {sections().map((section) => (
             <div key={section.heading} style={{ marginBottom: 4 }}>
               {/* Section heading */}
               <div

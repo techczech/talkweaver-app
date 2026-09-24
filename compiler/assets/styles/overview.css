@@ -1,4 +1,4 @@
-/* @order 1074 */
+/* @order 1082 */
 .slide-sublink {
   width: calc(100% - 18px);
   margin-left: 18px;
@@ -7,5 +7,28 @@
   font-size: 0.82rem;
 }
 
-/* @order 1229 */
+/* @order 1238 */
 .presenter-outline .slide-sublink { color: #b8c6d2; }
+
+.presenter-outline-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.presenter-outline-controls .presenter-search { min-width: 0; }
+.presenter-outline-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  color: #f7f3ea;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.presenter-outline-filter input { accent-color: var(--accent-2); }
+.presenter-outline .tw-overview-empty {
+  grid-column: 1 / -1;
+  margin: 12px 0;
+  color: #b8c6d2;
+  font-size: 0.9rem;
+}

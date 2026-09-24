@@ -1,6 +1,8 @@
 // Real-Electron harness: HTML handout export (Phase 1). The "Handout" action builds the
 // audience-facing share-no-notes reading HTML to dist/{slug}-handout.html and opens it.
 import { _electron as electron } from 'playwright'
+import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { openFirstTalk } from './lib/talklist.mjs'
 import { fileURLToPath, pathToFileURL } from 'url'; import { dirname, join } from 'path'
 import { mkdirSync, mkdtempSync, writeFileSync, existsSync, readFileSync } from 'fs'; import { tmpdir } from 'os'
 
@@ -28,12 +30,13 @@ writeFileSync(fxPath, FIX)
 writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault }))
 const expectedHandout = join(td, 'dist', 'handout-fixture-handout.html')
 
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO })
+await ensureFreshBuild(REPO)
+const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
 const page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded'); await page.waitForTimeout(1200)
 
 try {
-  await page.locator('.talk-item').first().click()
+  await openFirstTalk(page)
   await page.waitForSelector('.cm-content', { timeout: 8000 })
   await page.waitForTimeout(300)
 

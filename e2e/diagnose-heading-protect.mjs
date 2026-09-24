@@ -9,6 +9,8 @@
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-heading-protect.mjs
 import { _electron as electron } from 'playwright'
+import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
@@ -65,7 +67,8 @@ const fxPath = join(fxDir, 'hp-fixture-outline.md')
 writeFileSync(fxPath, FIX)
 writeFileSync(join(userDataDir, 'config.json'), JSON.stringify({ vaultRoot: tempVault }, null, 2))
 
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + userDataDir], cwd: REPO })
+await ensureFreshBuild(REPO)
+const app = await electron.launch({ args: ['.', '--user-data-dir=' + userDataDir], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
 const page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded')
 await page.waitForTimeout(1200)
@@ -76,8 +79,7 @@ async function readDoc() {
   )
 }
 async function selectTalk(name) {
-  await page.locator('.talk-item', { hasText: name }).first().click()
-  await page.waitForSelector('.cm-content', { timeout: 8000 })
+  await openTalkByTitle(page, name)
   await page.waitForTimeout(400)
 }
 async function reset() {
@@ -85,9 +87,9 @@ async function reset() {
   // flush (data-loss guard, 2026-07-05) BEFORE we overwrite the file — otherwise that flush would land
   // AFTER our writeFileSync and clobber the clean fixture. Then restore the file, then switch back to
   // load it fresh.
-  await selectTalk('Other Talk')
+  await selectTalk('Other')
   writeFileSync(fxPath, FIX)
-  await selectTalk('Hp Fixture')
+  await selectTalk('HP Fixture')
 }
 async function clickLine(text) {
   await page.locator('.cm-content .cm-line', { hasText: text }).first().click()
@@ -114,7 +116,7 @@ function has(doc, needle) {
 }
 
 try {
-  await selectTalk('Hp Fixture')
+  await selectTalk('HP Fixture')
 
   // (a) ⌘⌫ from the END of a title clears the title TEXT but keeps the `### ` marker.
   await reset()

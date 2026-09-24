@@ -3,7 +3,14 @@
 // cannot drift from the shipped code. changesTouchOutside is a PURE function over plain {fromA,toA}
 // spans + a {from,to} range: no DOM, no CodeMirror state needed to run it (the import resolves
 // @codemirror/view headlessly, but the function itself touches none of it).
-import { changesTouchOutside } from '../src/renderer/src/extensions/focusScope.ts'
+import { readFileSync } from 'node:fs'
+import { EditorState } from '@codemirror/state'
+import {
+  changesTouchOutside,
+  currentFocusRange,
+  focusScopeExtension,
+  setFocusRangeEffect
+} from '../src/renderer/src/extensions/focusScope.ts'
 
 let fail = 0
 const ck = (c, m) => { if (!c) { console.error('FAIL:', m); fail++ } }
@@ -40,6 +47,41 @@ ck(changesTouchOutside([{ fromA: 100, toA: 100 }], E) === false, 'empty range: i
 ck(changesTouchOutside([{ fromA: 100, toA: 101 }], E) === true, 'empty range: any deletion rejects')
 ck(changesTouchOutside([{ fromA: 99, toA: 99 }], E) === true, 'empty range: insertion before the point rejects')
 ck(changesTouchOutside([{ fromA: 101, toA: 101 }], E) === true, 'empty range: insertion after the point rejects')
+
+// ── the live StateField range is readable by composing extensions ───────────
+let state = EditorState.create({
+  doc: 'alpha\nbeta',
+  extensions: [focusScopeExtension(() => ({ from: 0, to: 5 }))]
+})
+ck(
+  JSON.stringify(currentFocusRange(state)) === JSON.stringify({ from: 0, to: 5 }),
+  'currentFocusRange reads the seeded live range'
+)
+state = state.update({ effects: setFocusRangeEffect.of({ from: 6, to: 10 }) }).state
+ck(
+  JSON.stringify(currentFocusRange(state)) === JSON.stringify({ from: 6, to: 10 }),
+  'currentFocusRange reads an effect-updated range'
+)
+state = state.update({ changes: { from: 10, insert: '!' } }).state
+ck(
+  JSON.stringify(currentFocusRange(state)) === JSON.stringify({ from: 6, to: 11 }),
+  'currentFocusRange reads the range after edge-associated edit mapping'
+)
+
+const focusScopeSource = readFileSync(
+  new URL('../src/renderer/src/extensions/focusScope.ts', import.meta.url),
+  'utf8'
+)
+ck(
+  focusScopeSource.includes(
+    'function makeField(getRange?: () => FocusRange | null): StateField<ScopeState>'
+  ),
+  'the focus field factory remains parameterised by its initial range accessor'
+)
+ck(
+  !focusScopeSource.includes('const focusScopeField = makeField()'),
+  'the read accessor does not turn the focus field into a module singleton'
+)
 
 if (fail) { console.error(`\n${fail} check(s) failed`); process.exit(1) }
 console.log('test-focus-scope: all checks passed')

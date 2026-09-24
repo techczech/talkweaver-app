@@ -1,3 +1,4 @@
+import { runActionBarEditing } from './actionBar/editing-command'
 import { useEffect, useRef, useCallback } from 'react'
 import { imageWidgetExtension } from '../extensions/imageWidget'
 import {
@@ -10,9 +11,20 @@ import {
   deleteSlideAtCursor,
   type CursorListItemContext
 } from '../extensions/outliner'
-import { buildEditorKeyBindings, KEYMAP_CHANGED_EVENT } from '../keymap/store'
+import {
+  buildEditorKeyBindings,
+  eventMatchesEffectiveShortcut,
+  KEYMAP_CHANGED_EVENT
+} from '../keymap/store'
+import { EDITOR_COMMANDS } from '../keymap/registry'
 import { outlineFoldService } from '../extensions/outlineFold'
 import { frontmatterTableExtension } from '../extensions/frontmatterTable'
+import { inlineMarkExtension } from '../extensions/inlineMark'
+import {
+  canRunInlineFormatting,
+  objectBlocksExtension,
+  setOpenObjectBlock
+} from '../extensions/objectBlocks/field'
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view'
 import { EditorState, EditorSelection, Prec, Compartment } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap, undo, redo } from '@codemirror/commands'
@@ -32,9 +44,10 @@ import type { TalkInfo } from '../../../preload/index'
 import { notify } from '../lib/notify'
 import { triggerCompleteExtension } from '../extensions/triggerComplete'
 import { tokenProtectExtension } from '../extensions/idProtect'
+import { flashTriggerEchoAt, triggerEchoChange } from '../extensions/triggerEcho'
 import {
   commitLayoutSelection,
-  commitPickerOption,
+  commitSlideOption,
   provisionalTriggerAtCursor,
   selectionFromTriggerLine,
   toggleLayoutSelection,
@@ -42,8 +55,27 @@ import {
 } from './layoutPickerModel'
 import { LAYOUTS, type LayoutDef, type OptionGroup } from '../data/layouts'
 import { headingHasChildSlides, logicalTriggerBlockAfterHeading } from '../../../shared/trigger-line'
-import { planEditorTriggerCommit } from '../extensions/inlineTriggerCommitModel'
+import { deckCommitContext } from '../../../shared/deck-frame'
+import { normalizePositions } from '../../../shared/outline-normalize'
+import {
+  planEditorTriggerCommit,
+  prepareObjectInsertDocument
+} from '../extensions/inlineTriggerCommitModel'
 import { headingLineForSlideId } from './inspectorModel'
+import {
+  buildFencedObjectSource,
+  isSvgFile,
+  isSvgText,
+  parseTablePaste,
+  planObjectBlockSplice,
+  tablePasteKind
+} from '../../../shared/objects/insert-objects'
+import type { ObjectInsertRequest } from '../../../shared/objects/insert-objects'
+import {
+  serialiseTable,
+  type TableAlignment
+} from '../../../shared/objects/object-markup'
+import { sanitiseSvg } from '../../../shared/objects/sanitise-svg'
 import {
   focusScopeExtension,
   setFocusRange,
@@ -58,6 +90,10 @@ type AddVideoResult = {
   warning?: string
   error?: string
 }
+
+export type ObjectInsertKind = 'table' | 'mindmap' | 'chart' | 'mermaid' | 'diagram' | 'svg'
+export type ObjectInsertHandler = (kind: ObjectInsertKind, request?: ObjectInsertRequest) => void
+type ApplyLayoutOptions = { layoutTokenOverride?: string }
 
 // Markdown for an ingested media result (ADR-0028). GIF-origin clips carry the EXPLICIT ambient set
 // {autoplay}{loop}{muted} so the compiler maps tokens → <video> attributes mechanically (no "loop
@@ -102,6 +138,8 @@ interface Props {
   focusRange?: FocusRange | null
   onCursorLine?: (line: number) => void
   onImageWidgetClick?: (id: string) => void
+  /** Opens the app-wide generated shortcut sheet from a focused object editor. */
+  onOpenHelp?: () => void
   // Imperative insert-at-cursor channel (ADR-0013 cross-talk reuse).
   // On mount, Editor calls registerInsert(fn). The parent stores `fn` and may call
   // it later — e.g. when the cross-talk search palette inserts a hit — with the
@@ -112,6 +150,12 @@ interface Props {
   // onSlashCommand insertFn (which replaces the trigger line in place), this is a
   // free insert at wherever the caret is. Editor re-registers if the prop changes.
   registerInsert?: (fn: (text: string) => void) => void
+  /** Registered object insertion door shared by the slide menu, command palette and `{` picker. */
+  registerInsertObject?: (fn: ObjectInsertHandler) => void
+  /** Diagram remains a layout family until its object renderer arrives. */
+  onOpenObjectLayoutFamily?: (kind: 'chart' | 'diagram') => void
+  /** Triple-backtick object door, anchored at the live editor coordinates. */
+  onInsertObjectMenu?: (coords: { x: number; y: number }) => void
   // Lets the app drive editor-only commands (fold/unfold all) from the command palette.
   registerEditorCommands?: (cmds: {
     foldAll: () => void
@@ -121,6 +165,11 @@ interface Props {
     moveTo: (fromLine: number, toLine: number) => void
     undo: () => void
     redo: () => void
+    newSlide: () => void
+    promoteHeading: () => void
+    demoteHeading: () => void
+    bulletedList: () => void
+    numberedList: () => void
     normalizeTriggers: () => void
     deleteSlide: () => void
     // Flush any pending debounced autosave to disk NOW and resolve once written. Slide Focus's
@@ -143,6 +192,7 @@ interface Props {
     cutSelection: () => void
     copySelection: () => void
     pasteClipboard: () => void
+    runFormat: (id: 'bold' | 'italic' | 'inline-code' | 'highlight' | 'link') => void
   }) => void
   // Icon picker (ADR-0021): on mount Editor registers a reader that returns the CURRENT caret's
   // top-level list-item context ({heading, occurrence, itemIndex}) — or null when the caret is not
@@ -159,6 +209,15 @@ interface Props {
   // Protected-token click (2026-07-03): clicking a `{…}` chip reports the token instead of
   // placing a cursor inside it — the parent routes id → where-used panel, trigger → ⌘L picker.
   onProtectedTokenClick?: (token: string, kind: 'id' | 'trigger') => void
+  // T29b: the editor's two ENGAGEMENT triggers, reported up (App switches the sidebar to the
+  // Slide outline once per opened talk — armed only for opens that came from the Talks panel):
+  //   1. the first pointerdown anywhere in the editor surface (.cm-editor, incl. .cm-content);
+  //   2. the first document change made by the USER (typing/paste/drop — the keyboard-only path,
+  //      "first keydown that changes the document"; programmatic dispatches carry no input
+  //      userEvent and never fire this).
+  // Fired AT MOST as often as the parent cares: it is a plain notification, it never consumes the
+  // underlying event, and per-mount dedup is the parent's business (it consumes on first hit).
+  onEditorEngaged?: () => void
 }
 
 // Outliner keyboard extension (ADR-0019). Built from the single-source-of-truth registry (+ any
@@ -216,20 +275,37 @@ export default function Editor({
   focusRange,
   onCursorLine,
   onImageWidgetClick,
+  onOpenHelp,
   registerInsert,
+  registerInsertObject,
+  onOpenObjectLayoutFamily,
+  onInsertObjectMenu,
   registerEditorCommands,
   registerIconContext,
   registerReplaceDoc,
   registerLayoutContext,
   registerApplyLayout,
   registerApplyOption,
-  onProtectedTokenClick
+  onProtectedTokenClick,
+  onEditorEngaged
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const provisionalTriggerRef = useRef<{ before: string; from: number; to: number } | null>(null)
   const rollingBackProvisionalRef = useRef(false)
+  const applyLayoutRef = useRef<(
+    (
+      initial: LayoutDef[],
+      selected: LayoutDef[],
+      options?: ApplyLayoutOptions
+    ) => void
+  ) | null>(null)
+  const insertObjectRef = useRef<ObjectInsertHandler | null>(null)
+  const onOpenObjectLayoutFamilyRef = useRef(onOpenObjectLayoutFamily)
+  useEffect(() => { onOpenObjectLayoutFamilyRef.current = onOpenObjectLayoutFamily }, [onOpenObjectLayoutFamily])
+  const onInsertObjectMenuRef = useRef(onInsertObjectMenu)
+  useEffect(() => { onInsertObjectMenuRef.current = onInsertObjectMenu }, [onInsertObjectMenu])
   const currentTalkRef = useRef<string>('')
   // Data-loss guard (2026-07-05): the path whose REAL content is loaded and live in the doc, or null
   // while a load is in flight. The editor is remounted on every talk switch / reorderNonce bump, so a
@@ -243,8 +319,14 @@ export default function Editor({
   useEffect(() => { onDirtyRef.current = onDirty }, [onDirty])
   const onImageWidgetClickRef = useRef(onImageWidgetClick)
   useEffect(() => { onImageWidgetClickRef.current = onImageWidgetClick }, [onImageWidgetClick])
+  const onOpenHelpRef = useRef(onOpenHelp)
+  useEffect(() => { onOpenHelpRef.current = onOpenHelp }, [onOpenHelp])
   const onProtectedTokenClickRef = useRef(onProtectedTokenClick)
   useEffect(() => { onProtectedTokenClickRef.current = onProtectedTokenClick }, [onProtectedTokenClick])
+  // Ref, not closure: the engagement triggers live in the mount-once view (domEventHandlers +
+  // updateListener below), so a prop re-render must be visible there without re-creating the view.
+  const onEditorEngagedRef = useRef(onEditorEngaged)
+  useEffect(() => { onEditorEngagedRef.current = onEditorEngaged }, [onEditorEngaged])
 
   // Heading-is-slide (Task 8): a save may come back with `content` — the STAMPED text the main
   // process actually wrote ({id=…} minted for id-less headings). Adopt it into the buffer so the
@@ -277,13 +359,25 @@ export default function Editor({
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
       saveTimerRef.current = setTimeout(async () => {
         saveTimerRef.current = null
-        const res = await window.tw.talk.writeOutline(outlinePath, content)
+        const normalized = normalizePositions(content)
+        const view = viewRef.current
+        if (normalized !== content && view?.state.doc.toString() === content) {
+          const ch = minimalChange(content, normalized)
+          view.dispatch({ changes: { from: ch.from, to: ch.to, insert: ch.insert } })
+          // The normalising dispatch re-enters the update listener and schedules the same text again.
+          // This save owns the boundary, so cancel that redundant follow-up timer.
+          if (saveTimerRef.current) {
+            clearTimeout(saveTimerRef.current)
+            saveTimerRef.current = null
+          }
+        }
+        const res = await window.tw.talk.writeOutline(outlinePath, normalized)
         // Save-indicator honesty (2026-07-05): only stamp "saved" on a REAL write. If the main-process
         // backstop refused (structurally-empty over a non-empty file), the disk is unchanged — say so
         // instead of a false "saved just now". `res === false` is an IO failure (also not a save).
         if (res && res.ok === true) {
           onSaved?.()
-          adoptStampedContent(content, res)
+          adoptStampedContent(normalized, res)
         }
         else if (res && res.ok === false) {
           notify('Save skipped — the app refused to overwrite the outline with empty content. Your file on disk is unchanged.', 'warning', 'save-refused')
@@ -322,6 +416,12 @@ export default function Editor({
         doc: '',
         extensions: [
           EditorView.domEventHandlers({
+            // T29b engagement trigger 1: the first pointerdown in the editor surface — clicks in
+            // the text, the gutter, any widget chrome (observational only; never consumes).
+            pointerdown() {
+              onEditorEngagedRef.current?.()
+              return false
+            },
             paste(event: ClipboardEvent) {
               const items = event.clipboardData?.items
               if (!items) return false
@@ -364,12 +464,39 @@ export default function Editor({
                   return true
                 }
               }
+              const text = event.clipboardData?.getData('text/plain') ?? ''
+              if (text && isSvgText(text)) {
+                event.preventDefault()
+                const result = sanitiseSvg(text.trim())
+                if ('error' in result) {
+                  notify('Pasted SVG was rejected: ' + result.error, 'error', 'objects')
+                  return true
+                }
+                const v = viewRef.current
+                if (!v) return true
+                v.dispatch(v.state.replaceSelection('```svg\n' + result.svg + '\n```\n'))
+                return true
+              }
+              const carriesPastedAssets = /!\[[^\]]*\]\(assets\/[^)]+\.(?:png|jpe?g|gif|webp)\)/i.test(text)
+              const pasteTableKind = carriesPastedAssets ? null : tablePasteKind(text)
+              if (text && pasteTableKind) {
+                event.preventDefault()
+                const cells = parseTablePaste(text)
+                const model = {
+                  cells,
+                  alignments: Array(cells[0]?.length ?? 1).fill('left') as TableAlignment[]
+                }
+                const v = viewRef.current
+                if (!v) return true
+                v.dispatch(v.state.replaceSelection(serialiseTable(model) + '\n'))
+                return true
+              }
               // Text paste of slide markdown: relative image refs (assets/X.png) come from the
               // SOURCE talk and would go grey here. Materialise them into the vault pool (img-<hash>)
               // by filename so a pasted SEQUENCE's images resolve (the picker does this per-slide;
               // text paste didn't). Only intercept when the text actually carries such refs.
               const pastedText = event.clipboardData?.getData('text/plain')
-              if (pastedText && /!\[[^\]]*\]\(assets\/[^)]+\.(?:png|jpe?g|gif|webp)\)/i.test(pastedText)) {
+              if (pastedText && carriesPastedAssets) {
                 event.preventDefault()
                 window.tw.talk
                   .materializePastedAssets(pastedText)
@@ -393,7 +520,10 @@ export default function Editor({
               if (!files || files.length === 0) return false
               const arr = Array.from(files)
               const mediaFile = arr.find((f) => f.type.startsWith('video/') || f.type === 'image/gif')
-              const imageFile = arr.find((f) => f.type.startsWith('image/') && f.type !== 'image/gif')
+              const svgFile = arr.find(isSvgFile)
+              const imageFile = arr.find((f) =>
+                f.type.startsWith('image/') && f.type !== 'image/gif' && !isSvgFile(f)
+              )
               const v = viewRef.current
               const dropPos = v ? (v.posAtCoords({ x: event.clientX, y: event.clientY }) ?? v.state.selection.main.head) : 0
               if (mediaFile) {
@@ -404,6 +534,34 @@ export default function Editor({
                 window.tw.asset.addVideo({ path, ext })
                   .then((res) => insertMediaResult(viewRef.current, res, dropPos))
                   .catch((e) => { console.error(e); notify('Could not add the dropped clip — it was not added to the outline.', 'error', 'addmedia') })
+                return true
+              }
+              if (svgFile) {
+                event.preventDefault()
+                svgFile.text().then((text) => {
+                  const result = sanitiseSvg(text.trim())
+                  if ('error' in result) {
+                    notify('Dropped SVG was rejected: ' + result.error, 'error', 'objects')
+                    return
+                  }
+                  const current = viewRef.current
+                  if (!current) return
+                  const line = current.state.doc.lineAt(dropPos)
+                  const insert = '\n\n```svg\n' + result.svg + '\n```\n'
+                  current.dispatch({
+                    changes: {
+                      from: line.to,
+                      to: line.to,
+                      insert
+                    },
+                    selection: {
+                      anchor: line.to + insert.length
+                    }
+                  })
+                }).catch((error) => {
+                  console.error(error)
+                  notify('Dropped SVG was rejected: the file could not be read', 'error', 'objects')
+                })
                 return true
               }
               if (imageFile) {
@@ -441,7 +599,14 @@ export default function Editor({
           // restore the byte-exact pre-picker document, before autosave/id stamping can see it.
           // The extension comes first at highest precedence so scene C can use the first Escape to
           // back up from options; when no chained step is active, the rollback binding below wins.
-          triggerCompleteExtension,
+          triggerCompleteExtension({
+            onInsertObject: (kind, request) => {
+              // The object splice owns removal of a provisional chart token. Clear the rollback
+              // record first so its queued guard cannot restore the superseded picker bytes.
+              provisionalTriggerRef.current = null
+              insertObjectRef.current?.(kind, request)
+            }
+          }),
           Prec.highest(keymap.of([{
             key: 'Escape',
             run: (view) => rollbackProvisionalTrigger(view)
@@ -465,6 +630,20 @@ export default function Editor({
           focusScopeExtension(),
           // YAML frontmatter rendered as a typed table (raw ↔ table toggle).
           frontmatterTableExtension(),
+          // ==mark== stays visible while authoring without changing the outline's Markdown source.
+          inlineMarkExtension,
+          // RIVER object blocks: slide-white rendered widgets in the warm-paper outline flow.
+          objectBlocksExtension({
+            onInsertMenu: (coords) => onInsertObjectMenuRef.current?.(coords),
+            cheatSheet: {
+              isShortcut: (event) => eventMatchesEffectiveShortcut(event, 'app.help'),
+              request: () => onOpenHelpRef.current?.(),
+              isFinishShortcut: (event) =>
+                eventMatchesEffectiveShortcut(event, 'editor.object-finish', 'object-finish'),
+              isLeaveShortcut: (event) =>
+                eventMatchesEffectiveShortcut(event, 'editor.object-leave', 'object-leave')
+            }
+          }),
           // Plain-text find (⌘F opens the search panel) + match highlighting.
           search({ top: true }),
           highlightSelectionMatches(),
@@ -473,6 +652,11 @@ export default function Editor({
           twTheme,
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {
+              // T29b engagement trigger 2: a document change made BY THE USER — typing into an
+              // already-focused editor is a keydown that edits the doc, so a keyboard-only user
+              // engages exactly like a pointer user. Programmatic dispatches (load, adoption,
+              // replaceDoc, undo) carry no 'input' userEvent and never fire this.
+              if (update.transactions.some((tr) => tr.isUserEvent('input'))) onEditorEngagedRef.current?.()
               const content = update.state.doc.toString()
               if (rollingBackProvisionalRef.current) {
                 rollingBackProvisionalRef.current = false
@@ -653,6 +837,85 @@ export default function Editor({
     })
   }, [registerInsert])
 
+  // Every object insertion surface reaches this one live-caret function. The inserted source is
+  // blank-line separated, and block-backed objects open immediately in the existing RIVER editor.
+  useEffect(() => {
+    if (!registerInsertObject) return
+    const insertObject: ObjectInsertHandler = (kind, request) => {
+      if (kind === 'diagram') {
+        onOpenObjectLayoutFamilyRef.current?.(kind)
+        return
+      }
+      const view = viewRef.current
+      if (!view) return
+      const entry = LAYOUTS.find((candidate) => candidate.name === kind)
+      if (!entry?.object) return
+
+      const ownsTrigger = kind === 'mindmap'
+      if (ownsTrigger) {
+        const lines = view.state.doc.toString().split('\n')
+        const caretLine = view.state.doc.lineAt(view.state.selection.main.head).number
+        let triggerLine = ''
+        for (let n = caretLine; n >= 1; n -= 1) {
+          if (!/^(#{1,6})\s/.test(lines[n - 1] ?? '')) continue
+          triggerLine = logicalTriggerBlockAfterHeading(lines, n - 1)?.line ?? ''
+          break
+        }
+        const initial = selectionFromTriggerLine(triggerLine, LAYOUTS)
+        applyLayoutRef.current?.(
+          initial,
+          toggleLayoutSelection(initial, entry)
+        )
+      }
+
+      const skeleton = entry.object.emptySkeleton()
+      const chartToken = request?.triggerToken ?? 'chart=bar'
+      const block = entry.object.storage === 'fence' && !/^\s*(?:`{3,}|~{3,})/.test(skeleton)
+        ? buildFencedObjectSource(chartToken.replace(/^\{|\}$/g, ''), skeleton)
+        : skeleton
+      const openOffset = entry.object.storage === 'fence' ? block.indexOf('\n') + 1 : 0
+      const prepared = prepareObjectInsertDocument(
+        view.state.doc.toString(),
+        view.state.selection.main.head,
+        request?.replace
+      )
+      if (prepared.doc !== view.state.doc.toString()) {
+        const change = minimalChange(view.state.doc.toString(), prepared.doc)
+        view.dispatch({
+          changes: change,
+          selection: { anchor: prepared.at }
+        })
+      }
+      const head = view.state.selection.main.head
+      let line = view.state.doc.lineAt(head)
+      // A caret inside the heading does not map past a Trigger-line insertion at heading.to.
+      // Keep trigger-owned compatibility objects and chart blocks below the canonical Trigger line.
+      if ((ownsTrigger || kind === 'chart') && /^(#{1,6})\s/.test(line.text)) {
+        const sourceLines = view.state.doc.toString().split('\n')
+        const trigger = logicalTriggerBlockAfterHeading(sourceLines, line.number - 1)
+        if (trigger) line = view.state.doc.line(trigger.end)
+      }
+      const splice = planObjectBlockSplice(
+        view.state.doc.toString(),
+        line.to,
+        block,
+        openOffset
+      )
+      view.dispatch({
+        changes: { from: splice.from, to: splice.to, insert: splice.insert },
+        selection: { anchor: splice.openFrom },
+        effects: setOpenObjectBlock.of({ from: splice.blockFrom, to: splice.blockTo }),
+        scrollIntoView: true
+      })
+      view.focus()
+    }
+    insertObjectRef.current = insertObject
+    registerInsertObject(insertObject)
+    return () => {
+      if (insertObjectRef.current === insertObject) insertObjectRef.current = null
+    }
+  }, [registerInsertObject])
+
   // Expose fold/unfold-all so the command palette can collapse/expand the whole outline.
   useEffect(() => {
     registerEditorCommands?.({
@@ -675,22 +938,38 @@ export default function Editor({
       // without the editor being focused. No view.focus() so the caller (e.g. grid) keeps focus.
       undo: () => { const v = viewRef.current; if (v) undo(v) },
       redo: () => { const v = viewRef.current; if (v) redo(v) },
+      newSlide: () => { const v = viewRef.current; if (v) runActionBarEditing(v, 'new-slide') },
+      promoteHeading: () => { const v = viewRef.current; if (v) reLevel(v, -1, false) },
+      demoteHeading: () => { const v = viewRef.current; if (v) reLevel(v, 1, false) },
+      bulletedList: () => { const v = viewRef.current; if (v) runActionBarEditing(v, 'bulleted-list') },
+      numberedList: () => { const v = viewRef.current; if (v) runActionBarEditing(v, 'numbered-list') },
       normalizeTriggers: () => { const v = viewRef.current; if (v) normalizeTriggersCommand(v) },
       deleteSlide: () => { const v = viewRef.current; if (v) { deleteSlideAtCursor(v); v.focus() } },
       // Cancel the pending debounce and write the CURRENT doc immediately, so a caller that reads the
       // file straight after (detach) never races the 1.5s autosave. No-op-safe when nothing is pending.
       flushSave: async () => {
-        // Only a PENDING debounced edit needs flushing. With no timer the disk is already current, so a
-        // talk switch (App flushes the OUTGOING editor before tearing it down) stays a no-op — no
-        // redundant write or ledger churn, and crucially no write on a reorderNonce remount path. When
-        // an edit IS pending, cancel the timer and write the CURRENT doc to the OUTGOING talk's path NOW
-        // (currentTalkRef is still the outgoing talk, since flush runs before the switch) — so a sub-1.5s
-        // edit made just before a talk switch is persisted, not dropped (data-loss guard, 2026-07-05).
-        if (!saveTimerRef.current) return
-        clearTimeout(saveTimerRef.current); saveTimerRef.current = null
+        // A pending edit is written immediately. Even without a pending debounce, this boundary applies
+        // ADR-0020 D4's silent position-only normalisation before talk-switch/IO consumers proceed.
+        const hadPendingSave = saveTimerRef.current !== null
+        if (saveTimerRef.current) {
+          clearTimeout(saveTimerRef.current)
+          saveTimerRef.current = null
+        }
         const v = viewRef.current
         if (!v) return
-        const text = v.state.doc.toString()
+        const current = v.state.doc.toString()
+        const text = normalizePositions(current)
+        if (text !== current) {
+          const ch = minimalChange(current, text)
+          v.dispatch({ changes: { from: ch.from, to: ch.to, insert: ch.insert } })
+          // The dispatch schedules an autosave; this immediate flush supersedes it.
+          if (saveTimerRef.current) {
+            clearTimeout(saveTimerRef.current)
+            saveTimerRef.current = null
+          }
+        } else if (!hadPendingSave) {
+          return
+        }
         // Never flush an empty doc (a fresh-mount transient before load) or one whose content isn't the
         // loaded talk's yet — the caller (detach / switch) only needs the just-typed real text.
         if (text.trim() === '' || loadedPathRef.current !== currentTalkRef.current) return
@@ -749,6 +1028,13 @@ export default function Editor({
           const view = viewRef.current
           if (view) view.dispatch(view.state.replaceSelection(text))
         }).catch(() => notify('Couldn’t read the clipboard — paste with ⌘V instead.', 'warning'))
+      },
+      runFormat: (id) => {
+        const v = viewRef.current
+        if (!v) return
+        if (!canRunInlineFormatting(v.state)) return
+        EDITOR_COMMANDS.find((command) => command.id === id)?.run(v)
+        v.focus()
       }
     })
   }, [registerEditorCommands, onSaved, adoptStampedContent])
@@ -800,17 +1086,39 @@ export default function Editor({
         triggerLine: current.trigger?.text ?? ''
       } : null
     })
-    registerApplyLayout?.((initial, selected) => {
+    const applyLayout = (
+      initial: LayoutDef[],
+      selected: LayoutDef[],
+      options?: ApplyLayoutOptions
+    ) => {
       const v = viewRef.current
       const current = target()
       if (!v || !current) return
-      const next = commitLayoutSelection(current.trigger?.text ?? '', initial, selected)
+      const next = commitLayoutSelection(
+        current.trigger?.text ?? '',
+        initial,
+        selected,
+        options?.layoutTokenOverride,
+        deckCommitContext(v.state.doc.toString(), current.headingLine)
+      )
       if (!next || (next === current.trigger?.text && !current.needsMerge)) return
       const plan = planEditorTriggerCommit(v.state.doc.toString(), current.headingLine, () => next)
       for (const warning of plan.warnings) console.warn(warning)
+      const echo = triggerEchoChange(current.trigger?.text ?? '', next)
+      const written = echo
+        ? plan.changes.find((change) => change.insert.includes(next))
+        : undefined
+      const echoPosition = echo && written
+        ? written.from + written.insert.indexOf(next) + echo.from
+        : null
       v.dispatch({ changes: plan.changes })
+      if (echo && echoPosition != null) {
+        flashTriggerEchoAt(v, echoPosition, echo.token)
+      }
       v.focus()
-    })
+    }
+    applyLayoutRef.current = applyLayout
+    registerApplyLayout?.(applyLayout)
     registerApplyOption?.((entry, group, token, headingLine, slideId) => {
       const v = viewRef.current
       if (!v) return null
@@ -826,17 +1134,27 @@ export default function Editor({
       const current = target(ownHeadingLine ?? undefined)
       if (!current) return null
       const original = current.trigger?.text ?? ''
-      const initial = selectionFromTriggerLine(original, LAYOUTS)
-      const withEntry = entry
-        ? commitLayoutSelection(original, initial, toggleLayoutSelection(initial, entry))
-        : original
-      const next = commitPickerOption(withEntry, group, token)
+      // T32: the ⌘L picker and the Inspector (editor mounted) sweep against the deck's choice.
+      const next = commitSlideOption(v.state.doc.toString(), current.headingLine, original, entry, group, token)
       if (!next || (next === original && !current.needsMerge)) return original
       const plan = planEditorTriggerCommit(v.state.doc.toString(), current.headingLine, () => next)
       for (const warning of plan.warnings) console.warn(warning)
+      const echo = triggerEchoChange(original, next)
+      const written = echo
+        ? plan.changes.find((change) => change.insert.includes(next))
+        : undefined
+      const echoPosition = echo && written
+        ? written.from + written.insert.indexOf(next) + echo.from
+        : null
       v.dispatch({ changes: plan.changes })
+      if (echo && echoPosition != null) {
+        flashTriggerEchoAt(v, echoPosition, echo.token)
+      }
       return next
     })
+    return () => {
+      if (applyLayoutRef.current === applyLayout) applyLayoutRef.current = null
+    }
   }, [registerApplyLayout, registerApplyOption, registerLayoutContext])
 
   // Replace the whole doc with rewritten text in place — preserving caret + scroll. The parent

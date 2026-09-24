@@ -1,20 +1,24 @@
-// TalkWeaver Studio — the recordings player (ADR-0035, Phase 1, built to
-// docs/design/2026-07-05-recording/direction-1-studio-timeline.html). A full-window Light Table
-// surface: a session rail, a slide-time-marker timeline over a real waveform, and the current
+// TalkWeaver Studio — the recordings player (ADR-0035, Phase 1, with the session treatment from
+// docs/design/2026-07-05-recording/direction-3-transcript-ready-split.html). A full-window Light Table
+// surface: a grouped session sidebar, a slide-time-marker timeline over a real waveform, and the current
 // slide (rendered by ledger id from the talk's CURRENT outline). Playback is a real <audio>
 // element served the local file over twrec://. Upload to R2 is on request, per session.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  AlertTriangle, BarChart3, Check, FileText, HardDrive, Loader2, Pause, Play, Radio, RefreshCw,
-  RotateCcw, Scissors, Search, Settings, SkipBack, SkipForward, Trash2, UploadCloud, X
+  AlertTriangle, BarChart3, Check, ChevronDown, ChevronRight, FileText, HardDrive, Loader2, PanelLeftClose,
+  PanelLeftOpen, Pause, Play, Radio, RefreshCw, RotateCcw, Scissors, Search, Settings, SkipBack, SkipForward, Trash2,
+  UploadCloud, X, FileInput
 } from 'lucide-react'
 import type { RecordingSession, Transcript, TranscriptSegment, TrimRange } from '../../../preload/index'
+import { shortcutById } from '../../../shared/shortcut-registry'
+import { eventToCMKey } from '../keymap/store'
 import '../studio.css'
 
 type Session = RecordingSession & { audio: NonNullable<RecordingSession['audio']> }
 type SlideInfo = { title: string; section: string; thumbUrl: string | null; n: number; tag: string }
 type SlideTimeMark = RecordingSession['slideTimeIndex'][number]
 type ReplayState = { slideId: string; hiddenCount: number; highlights: Array<{ block: number; start: number; end: number }> }
+type SessionGroup = { key: string; title: string; sessions: Session[]; newestAt: string; longestMs: number }
 
 const fmt = (sec: number): string => {
   sec = Math.max(0, Math.round(sec))
@@ -79,6 +83,16 @@ function segmentIndexAtMs(segments: TranscriptSegment[], tMs: number): number {
 }
 
 const SPEEDS = [1, 1.25, 1.5, 2, 0.75]
+const STUDIO_SIDEBAR_STORAGE_KEY = 'talkweaver.studio.sidebarCollapsed'
+const STUDIO_SIDEBAR_SHORTCUT = shortcutById('studio.sidebar-toggle')
+
+function readStudioSidebarCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(STUDIO_SIDEBAR_STORAGE_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
 
 function replayStateAt(session: Session | null, tMs: number): ReplayState | null {
   if (!session) return null
@@ -103,17 +117,23 @@ export default function Studio({
   isOpen,
   onClose,
   initialSessionId,
-  onShowHistory
+  onShowHistory,
+  onShowImporter,
+  onOpenTalkText
 }: {
   isOpen: boolean
   onClose: () => void
   initialSessionId?: string | null
   onShowHistory?: () => void
+  onShowImporter?: () => void
+  onOpenTalkText?: (sessionId: string) => void
 }): JSX.Element | null {
   const [sessions, setSessions] = useState<Session[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState<'newest' | 'length'>('newest')
+  const [collapsedTalks, setCollapsedTalks] = useState<Set<string>>(() => new Set())
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readStudioSidebarCollapsed)
   const [slideMap, setSlideMap] = useState<Record<string, SlideInfo>>({})
   const [wave, setWave] = useState<number[] | null>(null)
   const [waveLoading, setWaveLoading] = useState(false)
@@ -183,7 +203,15 @@ export default function Studio({
     setActiveId(initialSessionId)
   }, [isOpen, initialSessionId])
 
-  const filtered = useMemo(() => {
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(STUDIO_SIDEBAR_STORAGE_KEY, String(sidebarCollapsed))
+    } catch {
+      // The sidebar still works when storage is unavailable; only persistence is lost.
+    }
+  }, [sidebarCollapsed])
+
+  const matchingSessions = useMemo(() => {
     const q = query.trim().toLowerCase()
     let list = sessions
     if (q) {
@@ -194,12 +222,49 @@ export default function Studio({
           fmtDate(s.startedAt).toLowerCase().includes(q)
       )
     }
-    const arr = [...list]
-    arr.sort((a, b) =>
-      sort === 'length' ? b.recordingMs - a.recordingMs : b.startedAt.localeCompare(a.startedAt)
-    )
-    return arr
-  }, [sessions, query, sort])
+    return list
+  }, [sessions, query])
+
+  const sessionGroups = useMemo<SessionGroup[]>(() => {
+    const byTalk = new Map<string, SessionGroup>()
+    for (const session of matchingSessions) {
+      const key = session.talkSlug || session.talkTitle
+      const current = byTalk.get(key)
+      if (current) {
+        current.sessions.push(session)
+        if (session.startedAt > current.newestAt) {
+          current.newestAt = session.startedAt
+          current.title = session.talkTitle
+        }
+        current.longestMs = Math.max(current.longestMs, session.recordingMs)
+      } else {
+        byTalk.set(key, {
+          key,
+          title: session.talkTitle,
+          sessions: [session],
+          newestAt: session.startedAt,
+          longestMs: session.recordingMs
+        })
+      }
+    }
+    const groups = [...byTalk.values()]
+    for (const group of groups) group.sessions.sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+    groups.sort((a, b) => sort === 'length'
+      ? b.longestMs - a.longestMs || b.newestAt.localeCompare(a.newestAt)
+      : b.newestAt.localeCompare(a.newestAt))
+    return groups
+  }, [matchingSessions, sort])
+
+  const filtered = useMemo(() => sessionGroups.flatMap((group) => group.sessions), [sessionGroups])
+
+  const toggleTalkGroup = useCallback((key: string): void => {
+    setCollapsedTalks((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
 
   const active = useMemo(() => sessions.find((s) => s.id === activeId) ?? null, [sessions, activeId])
   const activeTrims = active?.trims ?? []
@@ -635,6 +700,11 @@ export default function Studio({
       const typing = t && t.matches('input, textarea, [contenteditable="true"]')
       if (e.key === '?') { if (!typing) { e.preventDefault(); setSheet((s) => !s) } return }
       if (e.key === 'Escape') { e.preventDefault(); if (sheet) setSheet(false); else if (settingsOpen) setSettingsOpen(false); else onClose(); return }
+      if (STUDIO_SIDEBAR_SHORTCUT.codes.includes(eventToCMKey(e) ?? '')) {
+        e.preventDefault()
+        setSidebarCollapsed((collapsed) => !collapsed)
+        return
+      }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); searchRef.current?.focus(); return }
       if ((e.metaKey || e.ctrlKey) && e.key === '1') { e.preventDefault(); return }
       if ((e.metaKey || e.ctrlKey) && e.key === '2') {
@@ -700,6 +770,9 @@ export default function Studio({
             <BarChart3 className="lt-icon" />
             History
           </button>
+          <button title="TalkWeaver Importer — bring PowerPoint slides into the vault" onClick={onShowImporter}>
+            <FileInput className="lt-icon" /> Importer
+          </button>
         </nav>
         <div className="tws-top-spacer" />
         <div className="tws-tool tws-iconbtn" style={{ position: 'relative' }}>
@@ -726,11 +799,36 @@ export default function Studio({
         <button className="tws-tool tws-iconbtn" aria-label="Close Studio" title="Close (Esc)" onClick={onClose}><X className="lt-icon" /></button>
       </header>
 
-      {/* session rail */}
-      <div className="tws-rail">
-        <div className="tws-rail-head">
-          <span className="tws-r-title">Sessions</span>
-          <span className="tws-r-count">{sessions.length ? `${filtered.length} of ${sessions.length}` : 'none yet'}</span>
+      <div className="tws-workbench">
+      {/* session sidebar */}
+      <aside className={`tws-sidebar${sidebarCollapsed ? ' collapsed' : ''}`} aria-label="Recording sessions">
+        {sidebarCollapsed ? (
+          <div className="tws-sidebar-collapsed-strip">
+            <button
+              className="tws-sidebar-toggle"
+              aria-label="Expand recordings sidebar"
+              title={`Expand recordings sidebar (${STUDIO_SIDEBAR_SHORTCUT.keys})`}
+              onClick={() => setSidebarCollapsed(false)}
+            >
+              <PanelLeftOpen className="lt-icon" />
+            </button>
+            <span className="tws-sidebar-vertical-label" aria-hidden="true">Recordings</span>
+          </div>
+        ) : (
+        <>
+        <div className="tws-sidebar-head">
+          <div className="tws-sidebar-title-row">
+            <h2>Sessions</h2>
+            <span className="tws-r-count">{sessions.length ? `${filtered.length} of ${sessions.length}` : 'none yet'}</span>
+            <button
+              className="tws-sidebar-toggle"
+              aria-label="Collapse recordings sidebar"
+              title={`Collapse recordings sidebar (${STUDIO_SIDEBAR_SHORTCUT.keys})`}
+              onClick={() => setSidebarCollapsed(true)}
+            >
+              <PanelLeftClose className="lt-icon" />
+            </button>
+          </div>
           <div className="tws-search">
             <Search className="lt-icon" />
             <input
@@ -741,58 +839,83 @@ export default function Studio({
               aria-label="Search recordings"
             />
           </div>
-          <div className="tws-seg" role="group" aria-label="Sort">
-            <button className={sort === 'newest' ? 'on' : ''} onClick={() => setSort('newest')} title="Most recent first">Newest</button>
-            <button className={sort === 'length' ? 'on' : ''} onClick={() => setSort('length')} title="Longest first">Length</button>
+          <div className="tws-sidebar-controls">
+            <span className="tws-sort-label">Sort talks</span>
+            <div className="tws-seg" role="group" aria-label="Sort talk groups">
+              <button className={sort === 'newest' ? 'on' : ''} onClick={() => setSort('newest')} title="Talks with the most recent activity first">Newest</button>
+              <button className={sort === 'length' ? 'on' : ''} onClick={() => setSort('length')} title="Talks with the longest recording first">Length</button>
+            </div>
           </div>
           <span className="tws-reassure"><Check className="lt-icon" /> Local first — nothing is lost</span>
         </div>
 
-        {sessions.length === 0 ? (
-          <div className="tws-empty">
-            <div className="tws-e-frame"><FileText className="lt-icon" /></div>
-            <div>
+        <div className="tws-sidebar-scroll">
+          {sessions.length === 0 ? (
+            <div className="tws-empty">
+              <div className="tws-e-frame"><FileText className="lt-icon" /></div>
+              <div>
               <h3>No recordings yet</h3>
               <p>Press <span className="tws-q">⇧R</span> in the presenter to capture a run. Sessions appear here the moment you stop — saved on this Mac; upload to R2 whenever you choose.</p>
+              </div>
             </div>
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="tws-empty">
-            <div className="tws-e-frame"><Search className="lt-icon" /></div>
-            <div>
+          ) : filtered.length === 0 ? (
+            <div className="tws-empty">
+              <div className="tws-e-frame"><Search className="lt-icon" /></div>
+              <div>
               <h3>No recordings match</h3>
               <p>Nothing matches “{query}”. Clear the search to see all {sessions.length} recordings.</p>
+              </div>
             </div>
-          </div>
-        ) : (
-          <div className="tws-sessions">
-            {filtered.map((s) => {
-              const rawSec = s.recordingMs / 1000
-              const recSec = (s.recordingMs - trimMs(s.trims, s.recordingMs)) / 1000
-              const d = deltaOf(recSec, s.timerTargetMin)
-              return (
-                <button key={s.id} data-sid={s.id} className={`tws-scard ${s.id === activeId ? 'active' : ''}`} onClick={() => setActiveId(s.id)}>
-                  <div className="tws-sc-top">
-                    <span className="tws-sc-date">{fmtDate(s.startedAt)}</span>
-                    <span className={`tws-sc-up ${s.audio.uploaded ? '' : 'local'}`}>
-                      {s.audio.uploaded ? <><Check className="lt-icon" /> in R2</> : <><HardDrive className="lt-icon" /> on this Mac</>}
-                    </span>
-                  </div>
-                  <div className="tws-sc-talk">{s.talkTitle}</div>
-                  <div className="tws-sc-ctx">{s.context || '—'}</div>
-                  <div className="tws-sc-len">
-                    <span className="tws-sc-rec">{mins(recSec)}m</span>
-                    {s.trims?.length ? <span className="tws-sc-plan">raw {mins(rawSec)}m</span> : null}
-                    {s.timerTargetMin ? <span className="tws-sc-plan">planned {s.timerTargetMin}m</span> : null}
-                    {d ? <span className={`tws-delta ${d.cls}`}>{d.text}</span> : null}
-                  </div>
-                  <span className="tws-sc-play"><Play className="lt-icon" /></span>
+          ) : sessionGroups.map((group) => {
+            const collapsed = collapsedTalks.has(group.key)
+            return (
+              <section className="tws-talkgroup" key={group.key}>
+                <button
+                  className="tws-talkgroup-head"
+                  onClick={() => toggleTalkGroup(group.key)}
+                  aria-expanded={!collapsed}
+                  aria-controls={`tws-talk-${group.key.replace(/[^a-z0-9_-]/gi, '-')}`}
+                >
+                  {collapsed ? <ChevronRight className="lt-icon" /> : <ChevronDown className="lt-icon" />}
+                  <span className="tws-talkgroup-title">{group.title}</span>
+                  <span className="tws-talkgroup-count">{group.sessions.length} {group.sessions.length === 1 ? 'run' : 'runs'}</span>
                 </button>
-              )
-            })}
-          </div>
+                {!collapsed ? (
+                  <div className="tws-sessions" id={`tws-talk-${group.key.replace(/[^a-z0-9_-]/gi, '-')}`}>
+                    {group.sessions.map((s) => {
+                      const rawSec = s.recordingMs / 1000
+                      const recSec = (s.recordingMs - trimMs(s.trims, s.recordingMs)) / 1000
+                      const d = deltaOf(recSec, s.timerTargetMin)
+                      return (
+                        <button key={s.id} data-sid={s.id} className={`tws-scard ${s.id === activeId ? 'active' : ''}`} onClick={() => setActiveId(s.id)}>
+                          <div className="tws-sc-top">
+                            <span className="tws-sc-date">{fmtDate(s.startedAt)}</span>
+                          </div>
+                          <div className="tws-sc-ctx">{s.context || '—'}</div>
+                          <div className="tws-sc-len">
+                            <span className="tws-sc-rec">{mins(recSec)}m</span>
+                            {s.trims?.length ? <span className="tws-sc-plan">raw {mins(rawSec)}m</span> : null}
+                            {s.timerTargetMin ? <span className="tws-sc-plan">planned {s.timerTargetMin}m</span> : null}
+                            {d ? <span className={`tws-delta ${d.cls}`}>{d.text}</span> : null}
+                            <span className={`tws-sc-up ${s.audio.uploaded ? '' : 'local'}`}>
+                              {s.audio.uploaded ? <><Check className="lt-icon" /> in R2</> : <><HardDrive className="lt-icon" /> on this Mac</>}
+                            </span>
+                          </div>
+                          <span className="tws-sc-play"><Play className="lt-icon" /></span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                ) : null}
+              </section>
+            )
+          })}
+        </div>
+        </>
         )}
-      </div>
+      </aside>
+
+      <main className="tws-main">
 
       {/* stage: monitor + transcript seam */}
       <div className="tws-stage">
@@ -843,6 +966,16 @@ export default function Studio({
         <aside className="tws-transcript-seam">
           <div className="tws-ts-head">
             <span className="tws-p-title">Transcript</span>
+            {active ? (
+              <button
+                className="tws-ts-retry"
+                title="Manage Notes and the faithful Script for this recording"
+                onClick={() => onOpenTalkText?.(active.id)}
+              >
+                <FileText className="lt-icon" />
+                Manage notes
+              </button>
+            ) : null}
             {transcript ? (
               <button
                 className="tws-ts-retry"
@@ -1129,6 +1262,8 @@ export default function Studio({
         <span className="h"><b>U</b> upload</span>
         <span className="h push"><b>?</b> shortcuts</span>
       </div>
+      </main>
+      </div>
 
       {/* ? cheat-sheet */}
       {sheet && (
@@ -1157,6 +1292,7 @@ export default function Studio({
                 <div className="tws-cs-row">Previous / next recording <span className="keys"><kbd>↑</kbd><kbd>↓</kbd></span></div>
                 <div className="tws-cs-row">Upload to R2 <span className="keys"><kbd>U</kbd></span></div>
                 <div className="tws-cs-row">Search recordings <span className="keys"><kbd>⌘</kbd><kbd>F</kbd></span></div>
+                <div className="tws-cs-row">Collapse / expand recordings <span className="keys"><kbd>{STUDIO_SIDEBAR_SHORTCUT.keys}</kbd></span></div>
                 <div className="tws-cs-row">Edit context <span className="keys">click the label</span></div>
               </div>
               <div className="tws-cs-group">

@@ -87,7 +87,11 @@ export function createVaultIndex({ cachePath, batchSize = 32 }) {
     }
 
     async function scanDir(dir, depth = 0) {
-      if (depth > 3) return
+      // Backstop against runaway recursion (symlink loops), NOT a real nesting constraint:
+      // talks legitimately live several organisational levels deep (e.g. bucket/event/day/talk),
+      // so keep this generous. Recursion stops at each talk folder anyway (returns on finding
+      // an outline), so deep organisational trees cost little.
+      if (depth > 8) return
       let dirents
       try { dirents = await readdir(dir, { withFileTypes: true }) } catch { return }
       const outline = dirents.find((entry) => entry.isFile() && entry.name.endsWith('-outline.md'))
@@ -123,8 +127,15 @@ export function createVaultIndex({ cachePath, batchSize = 32 }) {
     await scanDir(root)
     entries.sort((a, b) => a.title.localeCompare(b.title))
     snapshot = { root, entries }
-    await mkdir(dirname(cachePath), { recursive: true })
-    await writeFile(cachePath, JSON.stringify(snapshot), 'utf8')
+    // The cache is best-effort: the entries are already computed and returned below, so a
+    // failed write (e.g. EMFILE under FD pressure) must NEVER reject refresh() — that rejection,
+    // if it lost its handler to an overlapping scan, aborted the whole main process.
+    try {
+      await mkdir(dirname(cachePath), { recursive: true })
+      await writeFile(cachePath, JSON.stringify(snapshot), 'utf8')
+    } catch (error) {
+      try { console.warn('[vault-index] cache write skipped:', error?.message ?? error) } catch {}
+    }
     await emitPending(true)
     return entries.map(publicTalk)
   }

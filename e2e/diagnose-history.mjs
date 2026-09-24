@@ -21,6 +21,7 @@
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-history.mjs
 import { _electron as electron } from 'playwright'
+import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'fs'
@@ -217,10 +218,11 @@ for (const s of sessions) {
 const sessionPath = (s) => join(tempVault, '_PRESENTATIONS', s.talkSlug, `${s.id}.json`)
 const row = (page, id) => page.locator(`[data-history-sid="${id}"]`)
 
+await ensureFreshBuild(REPO)
 const app = await electron.launch({
   args: ['.', '--user-data-dir=' + userDataDir],
   cwd: REPO,
-  env: { ...process.env, TW_REC_TEST: '1' }
+  env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
 })
 const page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded')

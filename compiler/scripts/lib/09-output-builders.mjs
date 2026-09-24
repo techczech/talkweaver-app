@@ -1,16 +1,24 @@
-import { escapeHtml, qrGeneratorSource, overviewRuntimeSource, markmapVendorSource } from "./01-cli-utils.mjs";
+import { escapeHtml, qrGeneratorSource, overviewRuntimeSource, pollExtendedStyles, markmapVendorSource, mermaidVendorSource } from "./01-cli-utils.mjs";
 import { withoutScripts } from "./04-html-extraction.mjs";
 import { renderLicenseBody } from "./08-source-adapters.mjs";
+import { liveFollowRuntimeSource } from "../../assets/runtime/live-follow.js";
 
 // =============================================================================
 // 9. Output builders — share exports + local launch tools; mostly literal injected JS/CSS strings
 // =============================================================================
 
-export function buildShareHtml({ title, slides, styles, includeNotes, slug, license }) {
+export function buildShareHtml({ title, slides, styles, includeNotes, slug, license, workerBaseUrl = "", liveTalkSlug = slug }) {
+  const hasMermaid = slides.some((slide) => /\bclass=["'][^"']*\bmermaid-mm\b/.test(slide.html));
   const notesButton = includeNotes ? '<button class="btn" id="notesBtn" type="button"><span class="btn-label">Notes</span></button>' : "";
   // Public CC attribution travels into the share export as a no-JS <details> popover.
   const licenseDisclosure = license
     ? `<details class="share-license"><summary class="btn">License</summary><div class="license-pop">${renderLicenseBody(license)}</div></details>`
+    : "";
+  const liveConfig = workerBaseUrl
+    ? JSON.stringify({ workerBaseUrl: String(workerBaseUrl).replace(/\/+$/, ""), talkSlug: String(liveTalkSlug) }).replace(/</g, "\\u003c")
+    : "null";
+  const liveControls = workerBaseUrl
+    ? '<button class="btn follow-live-btn" id="followLiveBtn" type="button" hidden><span class="live-dot" aria-hidden="true"></span><span class="btn-label">Stop following</span></button><button class="btn return-live-btn" id="returnToPresenterBtn" type="button" hidden>Return to presenter</button><label class="live-name" id="liveNameWrap" hidden>Your name <input id="liveName" type="text" placeholder="optional" autocomplete="name"></label><span class="live-follow-status" id="liveFollowStatus" role="status" aria-live="polite" hidden></span>'
     : "";
   const slideMarkup = slides.map((slide, index) => {
     const notes = includeNotes && slide.notes
@@ -36,14 +44,138 @@ export function buildShareHtml({ title, slides, styles, includeNotes, slug, lice
 <link rel="icon" href="data:,">
 <title>${escapeHtml(title)}</title>
 <style>
+${pollExtendedStyles}
 ${styles}
 body { margin: 0; }
 .presenter-root, #presenterBtn { display: none !important; }
 .share-shell { min-height: 100vh; display: grid; grid-template-rows: 1fr auto; }
 .slide { display: none; }
 .slide.active { display: grid; }
+/* ADR-0018 — the slide is a FIXED canvas, uniformly scaled to fit its box, never reflowed.
+   Deck CSS is canvas-relative (cqw/cqh + @container), so everything inside follows --slide-w
+   rather than the window. The scale factor is set by fitStage() below. */
+:root { --slide-w: 1280px; --slide-h: 720px; }
+.stage-fit { position: relative; overflow: hidden; min-height: 0; }
+.stage { position: absolute; top: 0; left: 0; width: var(--slide-w); height: var(--slide-h); transform-origin: top left; }
+
+/* ---- ADR-0018 phone view: a LIST of slides; tap one for the slide detail ---- */
+.phone-list, .phone-bar, .fs-overlay, .phone-script { display: none; }
+.phone-list[hidden], .phone-bar[hidden] { display: none !important; }
+@media (max-width: 699px) {
+  /* The shell gains rows in phone mode; declare them per mode or the extra children land in
+     implicit rows, the list stops being the scroller, and lazy row-filling never bites. */
+  body.phone-list-mode .share-shell { grid-template-rows: 1fr; height: 100dvh; min-height: 0; }
+  body.phone-detail-mode .share-shell { grid-template-rows: auto auto 1fr auto; height: 100dvh; min-height: 0; }
+  body.phone-list-mode .stage-fit, body.phone-list-mode .share-footer { display: none; }
+  body.phone-list-mode .phone-list { display: block; }
+  body.phone-detail-mode .phone-bar { display: flex; }
+  .phone-list { min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; background: #fdfdfb; }
+  .pslide-row { display: block; width: 100%; appearance: none; border: 0; border-bottom: 1px solid #e3e2dc; background: transparent; padding: 12px 0 13px; font: inherit; text-align: left; cursor: pointer; touch-action: manipulation; }
+  .pslide-row:focus-visible { outline: 2px solid #0f4bd8; outline-offset: -3px; }
+  /* aspect-ratio reserves each row's height BEFORE its clone exists, so the list has its true
+     scroll length from the start and lazy filling does not make it jump. */
+  .pslide-canvas { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; background: #fff; border-top: 1px solid #e3e2dc; border-bottom: 1px solid #e3e2dc; }
+  .pslide-inner { position: absolute; top: 0; left: 0; width: var(--slide-w); height: var(--slide-h); transform-origin: top left; pointer-events: none; }
+  .pslide-inner > .slide { display: grid !important; position: absolute; inset: 0; }
+  /* Nothing sits above a slide — the label reads as a caption under it (ADR-0018). */
+  .pslide-label { display: flex; align-items: baseline; gap: 8px; padding: 8px 14px 0; }
+  .pslide-num { flex: none; white-space: nowrap; font-family: ui-monospace, Menlo, monospace; font-size: 10px; color: #5c6570; letter-spacing: .08em; }
+  .pslide-title { font-size: 14px; font-weight: 700; letter-spacing: -.01em; }
+  .phone-bar { align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid #e3e2dc; background: #fdfdfb; }
+  .phone-bar button { min-height: 44px; border: 1px solid #e3e2dc; background: #fff; font: inherit; font-size: 13px; padding: 0 13px; cursor: pointer; touch-action: manipulation; }
+  .phone-bar .phone-bar-title { font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  body.phone-detail-mode .stage-fit { aspect-ratio: 16 / 9; max-height: 52dvh; }
+  body.phone-detail-mode .phone-script { display: block; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 14px 15px 24px; background: #fdfdfb; }
+  .phone-script .ps-title { margin: 0 0 10px; font-size: 19px; line-height: 1.25; letter-spacing: -.01em; }
+  .phone-script ul { margin: 0 0 12px; padding-left: 20px; }
+  .phone-script ul ul { margin: 5px 0 6px; }
+  .phone-script li { font-size: 17px; line-height: 1.5; margin: 0 0 6px; }
+  .phone-script li::marker { color: #0f4bd8; }
+  .phone-script p { font-size: 17px; line-height: 1.55; margin: 0 0 12px; }
+  .phone-script .ps-pair { color: #5c6570; }
+  .phone-script .ps-pair::before { content: " \2014 "; }
+  .phone-script blockquote { margin: 0 0 8px; padding: 10px 14px; background: #e8eefc; border-left: 3px solid #0f4bd8; font-size: 17px; line-height: 1.5; }
+  .phone-script .ps-attrib { font-size: 14px; color: #5c6570; margin: 0 0 14px; }
+  .phone-script .ps-media { display: flex; align-items: center; gap: 9px; margin: 0 0 13px; padding: 9px 12px; border: 1px dashed #e3e2dc; background: #fff; font-size: 14px; color: #5c6570; }
+  .phone-script .ps-media b { color: #101418; }
+  .phone-script table { border-collapse: collapse; width: 100%; margin: 0 0 13px; font-size: 15px; }
+  .phone-script th, .phone-script td { border: 1px solid #e3e2dc; padding: 7px 9px; text-align: left; line-height: 1.4; }
+  .phone-script th { background: #e8eefc; font-weight: 700; }
+}
+/* Full screen: one slide rotated to landscape at the largest scale the device allows. */
+.fs-overlay.is-open { display: flex; position: fixed; inset: 0; z-index: 70; background: #0b1117; align-items: center; justify-content: center; }
+.fs-rot { position: relative; overflow: hidden; background: #fff; }
+.fs-inner { position: absolute; top: 0; left: 0; width: var(--slide-w); height: var(--slide-h); transform-origin: top left; }
+.fs-inner > .slide { display: grid !important; position: absolute; inset: 0; }
+.fs-close { position: absolute; top: max(10px, env(safe-area-inset-top)); right: 10px; z-index: 2; min-width: 44px; min-height: 44px; border: 0; border-radius: 50%; background: #ffffff26; color: #fff; font-size: 20px; cursor: pointer; touch-action: manipulation; }
+.fs-nav { position: absolute; bottom: max(10px, env(safe-area-inset-bottom)); left: 0; right: 0; z-index: 2; display: flex; align-items: center; justify-content: center; gap: 14px; color: #fff; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.fs-nav button { min-width: 44px; min-height: 44px; border: 0; border-radius: 50%; background: #ffffff26; color: #fff; font-size: 17px; cursor: pointer; touch-action: manipulation; }
 .share-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; border-top: 1px solid #0001; background: #fffdf2; }
 .share-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.follow-live-btn { border-color: #0f4bd855; color: #0f4bd8; }
+.follow-live-btn.is-on { background: #e8eefc; border-color: #0f4bd8; color: #0f4bd8; }
+.return-live-btn { border-color: #0f4bd855; color: #0f4bd8; }
+.follow-live-btn[hidden], .return-live-btn[hidden], .live-name[hidden], .live-follow-status[hidden] { display: none !important; }
+.live-dot { width: 7px; height: 7px; border-radius: 50%; background: #b3372c; box-shadow: 0 0 0 3px #b3372c20; }
+.now-live-badge { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; border: 1px solid #b3372c33; border-radius: 999px; background: #fff5f1; color: #9b3028; padding: 3px 8px; font-size: 11px; font-weight: 700; }
+.now-live-badge[hidden] { display: none !important; }
+.live-name { display: inline-flex; align-items: center; gap: 5px; color: #5b6572; font-size: 12px; }
+.live-name input { width: 105px; border: 1px solid #17202a22; border-radius: 6px; background: #fff; color: #17202a; padding: 5px 7px; font: inherit; }
+.live-follow-status { align-self: center; color: #5b6572; font-size: 12px; }
+/* Responsive foundation per IMPLEMENTATION-PLAN: reusable phone touch, gutter, viewport and safe-area primitives. */
+:root {
+  --tw-touch-target: 44px;
+  --tw-fluid-gutter: clamp(14px, 4vw, 24px);
+  --tw-fluid-content: 640px;
+  --tw-mobile-viewport: 100dvh;
+  --tw-safe-top: max(14px, env(safe-area-inset-top));
+  --tw-safe-bottom: max(16px, env(safe-area-inset-bottom));
+}
+.audience-poll-surface { position: fixed; inset: 0; z-index: 45; display: grid; place-items: end center; width: 100%; min-height: 100svh; height: var(--tw-mobile-viewport); max-width: 100vw; overflow-x: hidden; background: #fffdf2; color: #17202a; box-sizing: border-box; }
+.audience-poll-surface[hidden] { display: none !important; }
+.audience-poll-surface > .poll-card { width: min(100%, var(--tw-fluid-content)); max-height: 100%; overflow: auto; overscroll-behavior: contain; box-sizing: border-box; padding: var(--tw-safe-top) var(--tw-fluid-gutter) var(--tw-safe-bottom); background: #fff; }
+.poll-card .ptype { color: #0f4bd8; font: 700 10px/1.1 ui-monospace, "SFMono-Regular", Consolas, monospace; letter-spacing: .1em; text-transform: uppercase; }
+.poll-card { position: relative; }
+.poll-card .pq { margin: 8px 0 16px; padding-right: 40px; font: 700 clamp(18px, 5vw, 22px)/1.25 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.poll-dismiss { position: absolute; top: 8px; right: 8px; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 9px; background: #f0ede3; color: #5c6570; font: 400 22px/1 system-ui; cursor: pointer; touch-action: manipulation; z-index: 2; }
+.poll-dismiss:hover { background: #e7e3d5; color: #17202a; }
+.poll-options { min-width: 0; margin: 0; padding: 0; border: 0; }
+.poll-option { display: flex; align-items: center; gap: 11px; width: 100%; min-height: var(--tw-touch-target); margin-bottom: 9px; padding: 10px 12px; border: 1.5px solid #e7e3d5; border-radius: 9px; box-sizing: border-box; background: #fff; font: 500 15px/1.35 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; cursor: pointer; touch-action: manipulation; }
+.poll-option input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.poll-option .box { display: grid; flex: 0 0 20px; width: 20px; height: 20px; place-items: center; border: 2px solid #c3bdae; box-sizing: border-box; }
+.poll-option.single .box { border-radius: 50%; }
+.poll-option.multi .box { border-radius: 5px; }
+.poll-option.sel { border-color: #0f4bd8; background: #e8eefc; }
+.poll-option.sel .box { border-color: #0f4bd8; background: #0f4bd8; box-shadow: inset 0 0 0 4px #e8eefc; }
+.poll-open-text { display: block; width: 100%; min-height: 110px; padding: 12px; border: 1.5px solid #e7e3d5; border-radius: 9px; box-sizing: border-box; background: #fff; color: #17202a; font: 16px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; resize: vertical; }
+.poll-submit { width: 100%; min-height: var(--tw-touch-target); margin-top: 10px; border: 0; border-radius: 9px; background: #0f4bd8; color: #fff; font: 700 15px/1.2 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; cursor: pointer; touch-action: manipulation; }
+.poll-submit:disabled { cursor: default; opacity: .42; }
+.poll-option:focus-within, .poll-open-text:focus-visible, .poll-submit:focus-visible { outline: 3px solid #0f4bd855; outline-offset: 2px; }
+.poll-allowance { width: min(100%, var(--tw-fluid-content)); box-sizing: border-box; margin: 0; padding: 10px var(--tw-fluid-gutter); color: #5c6570; background: #fff; font: 13px/1.4 system-ui, sans-serif; text-align: center; }
+.poll-option:has(input:disabled) { opacity: .55; cursor: default; }
+.poll-inline-status { min-height: 18px; margin-top: 8px; color: #5c6570; font-size: 12.5px; text-align: center; }
+.poll-inline-status[hidden] { visibility: hidden; }
+.poll-results .rtitle { display: flex; align-items: center; gap: 6px; margin-bottom: 14px; color: #5c6570; font-size: 13px; }
+.poll-results .ok { color: #1a7f4b; }
+.poll-bar { margin-bottom: 12px; }
+.poll-bar .bl { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 5px; font-size: 14px; }
+.poll-bar .pct { flex: none; color: #0f4bd8; font: 700 12px/1.2 ui-monospace, "SFMono-Regular", Consolas, monospace; }
+.poll-bar .track { height: 10px; overflow: hidden; border-radius: 5px; background: #eee7d6; }
+.poll-bar .track i { display: block; height: 100%; border-radius: inherit; background: #0f4bd8; }
+.poll-bar.mine .bl { font-weight: 700; }
+.board { display: grid; gap: 8px; }
+.poll-response { padding: 10px 12px; border: 1px solid #e7e3d5; border-radius: 9px; background: #fdfbf0; font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
+.poll-response .who { margin-top: 4px; color: #5c6570; font-size: 11px; }
+.poll-response.mine { border-color: #0f4bd8; background: #e8eefc; }
+.waiting { padding: clamp(28px, 10vh, 72px) 12px; color: #5c6570; text-align: center; }
+.waiting .ic { color: #1a7f4b; font-size: 30px; }
+.waiting .t { margin: 9px 0 5px; color: #17202a; font-size: 17px; font-weight: 700; }
+.waiting .p { font-size: 13px; line-height: 1.45; }
+.poll-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+@media (min-width: 700px) {
+  .audience-poll-surface { place-items: center; padding: var(--tw-safe-top) var(--tw-fluid-gutter) var(--tw-safe-bottom); background: #17202a66; }
+  .audience-poll-surface > .poll-card { max-height: min(760px, calc(100dvh - 48px)); border: 1px solid #e7e3d5; border-radius: 14px; box-shadow: 0 18px 54px #0004; }
+}
 .share-license { position: relative; }
 .share-license > summary { list-style: none; cursor: pointer; }
 .share-license > summary::-webkit-details-marker { display: none; }
@@ -107,7 +239,7 @@ mark.note-mark { background: #fde68a; padding: 0 1px; border-radius: 2px; }
 .nav-search:focus-visible { outline: 2px solid #2563eb55; outline-offset: 1px; }
 .section-head[hidden], .subsection-head[hidden], .slide-link[hidden] { display: none !important; }
 @media print {
-  .share-footer, .nav-panel, .notes-panel, .mynotes-panel, .help-fab, .help-overlay, .note-pop { display: none !important; }
+  .share-footer, .nav-panel, .notes-panel, .mynotes-panel, .help-fab, .help-overlay, .note-pop, .audience-poll-surface { display: none !important; }
   .slide { display: grid !important; break-after: page; min-height: 100vh; }
   .slide .notes { display: block; margin-top: 24px; border-top: 1px solid #0002; padding-top: 12px; }
 }
@@ -115,11 +247,21 @@ mark.note-mark { background: #fde68a; padding: 0 1px; border-radius: 2px; }
 </head>
 <body>
 <main class="share-shell">
+  <div class="phone-bar" id="phoneBar" hidden>
+    <button type="button" id="phoneBack" aria-label="All slides">‹ All slides</button>
+    <span class="phone-bar-title" id="phoneBarTitle"></span>
+    <button type="button" id="phoneFull" style="margin-left:auto" aria-label="Full screen">⤢ Full screen</button>
+  </div>
+  <div class="phone-list" id="phoneList" hidden></div>
+  <div class="stage-fit" id="stageFit">
   <div class="stage" id="stage">
 ${slideMarkup}
   </div>
+  </div>
+  <section class="phone-script" id="phoneScript" hidden></section>
+  ${workerBaseUrl ? '<section class="audience-poll-surface" id="audiencePollSurface" aria-label="Audience poll" aria-live="polite" hidden></section>' : ''}
   <footer class="share-footer">
-    <div><strong id="slideCount">1 / ${slides.length}</strong></div>
+    <div><strong id="slideCount">1 / ${slides.length}</strong>${workerBaseUrl ? '<span class="now-live-badge" id="nowLiveBadge" hidden><span class="live-dot" aria-hidden="true"></span>Now live</span>' : ''}</div>
     <div class="share-actions">
       <button class="btn" id="prevBtn" type="button"><span class="btn-label">Previous</span></button>
       <button class="btn" id="nextBtn" type="button"><span class="btn-label">Next</span></button>
@@ -129,6 +271,7 @@ ${slideMarkup}
       <button class="btn" id="myNotesBtn" type="button"><span class="btn-label">My Notes</span></button>
       ${licenseDisclosure}
       <button class="btn" id="printBtn" type="button"><span class="btn-label">Print</span></button>
+      ${liveControls}
     </div>
   </footer>
 </main>
@@ -136,6 +279,7 @@ ${slideMarkup}
   <button class="btn" id="closeOverview" type="button"><span class="btn-label">Close</span></button>
   <h2>Overview
     <button type="button" id="navExpand" class="tw-overview-expand" aria-label="Toggle previews">&#8862; Previews</button>
+    ${workerBaseUrl ? '<span class="now-live-badge" id="overviewNowLiveBadge" hidden><span class="live-dot" aria-hidden="true"></span>Now live</span>' : ''}
   </h2>
   <div class="nav-search-wrap">
     <svg class="nav-search-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.5-4.5"></path></svg>
@@ -174,6 +318,11 @@ ${includeNotes ? '<aside class="notes-panel" id="notesPanel" aria-label="Speaker
   <div class="mynotes-list" id="myNotesList"></div>
 </aside>
 <div class="focus-banner" id="modeBanner" role="status" aria-live="polite"></div>
+<div class="fs-overlay" id="fsOverlay" role="dialog" aria-modal="true" aria-label="Slide full screen">
+  <button class="fs-close" id="fsClose" type="button" aria-label="Close full screen">&times;</button>
+  <div class="fs-rot" id="fsRot"><div class="fs-inner" id="fsInner"></div></div>
+  <div class="fs-nav"><button id="fsPrev" type="button" aria-label="Previous slide">&lsaquo;</button><span id="fsCount"></span><button id="fsNext" type="button" aria-label="Next slide">&rsaquo;</button></div>
+</div>
 <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="Image gallery" hidden>
   <button class="lightbox-close" id="lightboxClose" type="button" aria-label="Close gallery (Esc)">&times;</button>
   <div class="lightbox-stage">
@@ -187,9 +336,17 @@ ${includeNotes ? '<aside class="notes-panel" id="notesPanel" aria-label="Speaker
   </div>
 </div>
 ${markmapVendorSource}
+${hasMermaid ? mermaidVendorSource : ""}
 <script>
 (() => {
   const slides = Array.from(document.querySelectorAll(".slide"));
+  window.mermaid && window.mermaid.initialize({
+    startOnLoad: false,
+    theme: "neutral",
+    securityLevel: "strict",
+    suppressErrorRendering: true,
+    flowchart: { htmlLabels: false }
+  });
   const count = document.getElementById("slideCount");
   const navPanel = document.getElementById("navPanel");
   const navList = document.getElementById("navList");
@@ -306,8 +463,311 @@ ${markmapVendorSource}
       if (!frame.src) frame.src = embedSrcFor(frame);
     });
   }
+  // ADR-0018: scale the fixed slide canvas to fit its box, centred, and give the box the height
+  // the scaled canvas actually occupies. This is the ONE place the slide is sized; nothing inside
+  // it ever reflows, on any screen.
+  var SLIDE_W = 1280, SLIDE_H = 720;
+  function fitStage() {
+    var fit = document.getElementById("stageFit");
+    var stage = document.getElementById("stage");
+    if (!fit || !stage) return;
+    var availW = fit.clientWidth;
+    var availH = fit.clientHeight || Math.round(availW * SLIDE_H / SLIDE_W);
+    var scale = Math.min(availW / SLIDE_W, availH / SLIDE_H);
+    if (!(scale > 0)) return;
+    var left = Math.max(0, Math.round((availW - SLIDE_W * scale) / 2));
+    var top = Math.max(0, Math.round((availH - SLIDE_H * scale) / 2));
+    stage.style.transform = "translate(" + left + "px," + top + "px) scale(" + scale + ")";
+  }
+  window.addEventListener("resize", fitStage);
+  window.addEventListener("orientationchange", fitStage);
+  if (window.ResizeObserver) {
+    var stageFitEl = document.getElementById("stageFit");
+    if (stageFitEl) new ResizeObserver(fitStage).observe(stageFitEl);
+  }
+
+  /* ---- ADR-0018 phone view: LIST of slides -> slide detail -> rotated full screen ----
+     The list clones each real slide onto its own fixed canvas (the mechanism the overview
+     drawer already uses) and scales it to full width. Clones are built lazily on scroll so a
+     200-slide deck does not pay for 200 renders up front. */
+  // ADR-0018 script companion: parsed from each slide's OUTLINE at compile time and carried on the
+  // compiled deck, so the handout ships data rather than a markdown parser.
+  var SLIDE_SCRIPT = ${JSON.stringify(slides.map((slide) => slide.script || null)).replace(/</g, "\\u003c")};
+  var PHONE_BP = 699;
+  // Must be read BEFORE render(), which does history.replaceState("#"+id) on every paint — read
+  // it later and every load looks like a deep link, so the list would never appear.
+  var hadInitialHash = Boolean(location.hash);
+  var phoneList = document.getElementById("phoneList");
+  var phoneBar = document.getElementById("phoneBar");
+  var phoneBarTitle = document.getElementById("phoneBarTitle");
+  var phoneListBuilt = false;
+
+  function isPhone() { return window.matchMedia("(max-width: " + PHONE_BP + "px)").matches; }
+
+  function fitPhoneRow(row) {
+    var inner = row.querySelector(".pslide-inner");
+    var box = row.querySelector(".pslide-canvas");
+    if (!inner || !box) return;
+    var scale = box.clientWidth / SLIDE_W;
+    inner.style.transform = "scale(" + scale + ")";
+  }
+
+  function buildPhoneList() {
+    if (phoneListBuilt || !phoneList) return;
+    phoneListBuilt = true;
+    var observer = window.IntersectionObserver ? new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) return;
+        var row = entry.target;
+        if (row.dataset.filled) return;
+        row.dataset.filled = "1";
+        var i = Number(row.dataset.index);
+        var clone = slides[i].cloneNode(true);
+        clone.classList.add("active");
+        clone.removeAttribute("id");
+        var note = clone.querySelector(".notes");
+        if (note) note.remove();
+        row.querySelector(".pslide-inner").appendChild(clone);
+        fitPhoneRow(row);
+        observer.unobserve(row);
+      });
+    }, { root: phoneList, rootMargin: "400px 0px" }) : null;
+
+    slides.forEach(function (slide, i) {
+      var row = document.createElement("button");
+      row.type = "button";
+      row.className = "pslide-row";
+      row.dataset.index = String(i);
+      var box = document.createElement("div");
+      box.className = "pslide-canvas";
+      var inner = document.createElement("div");
+      inner.className = "pslide-inner";
+      box.appendChild(inner);
+      row.appendChild(box);
+      var label = document.createElement("div");
+      label.className = "pslide-label";
+      var num = document.createElement("span");
+      num.className = "pslide-num";
+      num.textContent = (i + 1) + " / " + slides.length;
+      var title = document.createElement("span");
+      title.className = "pslide-title";
+      title.textContent = slide.dataset.navTitle || "";
+      label.appendChild(num);
+      label.appendChild(title);
+      row.appendChild(label);
+      row.addEventListener("click", function () { showPhoneDetail(i); });
+      phoneList.appendChild(row);
+      if (observer) observer.observe(row); else { row.dataset.filled = "1"; }
+    });
+
+    if (!observer) {
+      // No IntersectionObserver: fill everything, correctness over cost.
+      phoneList.querySelectorAll(".pslide-row").forEach(function (row) {
+        var i = Number(row.dataset.index);
+        var clone = slides[i].cloneNode(true);
+        clone.classList.add("active");
+        row.querySelector(".pslide-inner").appendChild(clone);
+        fitPhoneRow(row);
+      });
+    }
+  }
+
+  function showPhoneList() {
+    if (!isPhone()) return;
+    document.body.classList.add("phone-list-mode");
+    document.body.classList.remove("phone-detail-mode");
+    if (phoneBar) phoneBar.hidden = true;
+    if (phoneList) phoneList.hidden = false;
+    buildPhoneList();
+  }
+
+  /* The script companion. Authored structure is rebuilt verbatim: depth becomes real nesting,
+     prose stays prose, quotes stay quotes, media is named. No apology copy — a slide the outline
+     never authored simply shows nothing here (ADR-0018 §5). */
+  function renderPhoneScript(i) {
+    var host = document.getElementById("phoneScript");
+    if (!host) return;
+    host.replaceChildren();
+    var title = document.createElement("h2");
+    title.className = "ps-title";
+    title.textContent = slides[i]?.dataset.navTitle || "";
+    host.appendChild(title);
+
+    var blocks = SLIDE_SCRIPT[i];
+    if (!blocks || !blocks.length) return;
+
+    blocks.forEach(function (block) {
+      if (block.type === "list") {
+        var root = document.createElement("ul");
+        var stack = [root];
+        block.items.forEach(function (item) {
+          var depth = Math.max(0, Math.min(Number(item.depth) || 0, stack.length));
+          while (stack.length - 1 > depth) stack.pop();
+          while (stack.length - 1 < depth) {
+            var parentLi = stack[stack.length - 1].lastElementChild;
+            var sub = document.createElement("ul");
+            (parentLi || stack[stack.length - 1]).appendChild(sub);
+            stack.push(sub);
+          }
+          var li = document.createElement("li");
+          li.textContent = item.text;
+          if (item.pair) {
+            var span = document.createElement("span");
+            span.className = "ps-pair";
+            span.textContent = item.pair;
+            li.appendChild(span);
+          }
+          stack[stack.length - 1].appendChild(li);
+        });
+        host.appendChild(root);
+      } else if (block.type === "quote") {
+        var q = document.createElement("blockquote");
+        q.textContent = block.text;
+        host.appendChild(q);
+      } else if (block.type === "attrib") {
+        var a = document.createElement("p");
+        a.className = "ps-attrib";
+        a.textContent = "— " + block.text;
+        host.appendChild(a);
+      } else if (block.type === "media") {
+        var m = document.createElement("div");
+        m.className = "ps-media";
+        var label = document.createElement("b");
+        label.textContent = "Figure";
+        var alt = document.createElement("span");
+        alt.textContent = block.alt || "";
+        m.appendChild(label);
+        m.appendChild(alt);
+        host.appendChild(m);
+      } else if (block.type === "table") {
+        var table = document.createElement("table");
+        block.rows.forEach(function (row, rowIndex) {
+          var tr = document.createElement("tr");
+          row.forEach(function (cell) {
+            var td = document.createElement(rowIndex === 0 ? "th" : "td");
+            td.textContent = cell;
+            tr.appendChild(td);
+          });
+          table.appendChild(tr);
+        });
+        host.appendChild(table);
+      } else {
+        var p = document.createElement("p");
+        p.textContent = block.text;
+        host.appendChild(p);
+      }
+    });
+  }
+
+  /* Keep the detail view's title and script on the slide that is actually showing. Called from
+     render(), so every navigation path stays in step. */
+  function syncPhoneDetail() {
+    if (!document.body.classList.contains("phone-detail-mode")) return;
+    if (phoneBarTitle) phoneBarTitle.textContent = slides[index]?.dataset.navTitle || "";
+    renderPhoneScript(index);
+  }
+
+  function showPhoneDetail(i) {
+    if (typeof i === "number") go(i);
+    if (!isPhone()) return;
+    document.body.classList.remove("phone-list-mode");
+    document.body.classList.add("phone-detail-mode");
+    if (phoneList) phoneList.hidden = true;
+    if (phoneBar) phoneBar.hidden = false;
+    syncPhoneDetail();
+    fitStage();
+  }
+
+  function applyPhoneMode() {
+    if (isPhone()) {
+      if (!document.body.classList.contains("phone-detail-mode")) showPhoneList();
+      else showPhoneDetail();
+    } else {
+      document.body.classList.remove("phone-list-mode", "phone-detail-mode");
+      if (phoneList) phoneList.hidden = true;
+      if (phoneBar) phoneBar.hidden = true;
+      fitStage();
+    }
+  }
+
+  /* ---- full screen: rotate the slide so its long edge runs down the phone ---- */
+  var fsOverlay = document.getElementById("fsOverlay");
+  var fsRot = document.getElementById("fsRot");
+  var fsInner = document.getElementById("fsInner");
+  var fsCount = document.getElementById("fsCount");
+
+  function layoutFullScreen() {
+    if (!fsOverlay || !fsOverlay.classList.contains("is-open")) return;
+    var vw = window.innerWidth, vh = window.innerHeight;
+    var portrait = vh > vw;
+    var scale = portrait ? Math.min(vh / SLIDE_W, vw / SLIDE_H) : Math.min(vw / SLIDE_W, vh / SLIDE_H);
+    if (portrait) {
+      fsRot.style.width = Math.round(SLIDE_H * scale) + "px";
+      fsRot.style.height = Math.round(SLIDE_W * scale) + "px";
+      fsInner.style.transform = "translateX(" + Math.round(SLIDE_H * scale) + "px) rotate(90deg) scale(" + scale + ")";
+    } else {
+      fsRot.style.width = Math.round(SLIDE_W * scale) + "px";
+      fsRot.style.height = Math.round(SLIDE_H * scale) + "px";
+      fsInner.style.transform = "scale(" + scale + ")";
+    }
+    if (fsCount) fsCount.textContent = (index + 1) + " / " + slides.length;
+  }
+
+  function paintFullScreen() {
+    if (!fsInner) return;
+    fsInner.replaceChildren();
+    var clone = slides[index].cloneNode(true);
+    clone.classList.add("active");
+    clone.removeAttribute("id");
+    var note = clone.querySelector(".notes");
+    if (note) note.remove();
+    fsInner.appendChild(clone);
+    layoutFullScreen();
+  }
+
+  function openFullScreen() {
+    if (!fsOverlay) return;
+    fsOverlay.classList.add("is-open");
+    paintFullScreen();
+  }
+  function closeFullScreen() {
+    if (fsOverlay) fsOverlay.classList.remove("is-open");
+  }
+  function stepFullScreen(delta) {
+    go((index + delta + slides.length) % slides.length);
+    paintFullScreen();
+  }
+
+  document.getElementById("phoneBack")?.addEventListener("click", showPhoneList);
+  document.getElementById("phoneFull")?.addEventListener("click", openFullScreen);
+  document.getElementById("fsClose")?.addEventListener("click", closeFullScreen);
+  document.getElementById("fsPrev")?.addEventListener("click", function () { stepFullScreen(-1); });
+  document.getElementById("fsNext")?.addEventListener("click", function () { stepFullScreen(1); });
+  window.addEventListener("resize", layoutFullScreen);
+  window.addEventListener("orientationchange", function () { setTimeout(layoutFullScreen, 60); });
+  window.addEventListener("resize", function () { setTimeout(applyPhoneMode, 60); });
+  // Full screen owns the keyboard while it is open, so Esc/arrows never fall through to the deck.
+  document.addEventListener("keydown", function (event) {
+    if (!fsOverlay || !fsOverlay.classList.contains("is-open")) return;
+    if (event.key === "Escape") { event.preventDefault(); closeFullScreen(); }
+    else if (event.key === "ArrowRight") { event.preventDefault(); stepFullScreen(1); }
+    else if (event.key === "ArrowLeft") { event.preventDefault(); stepFullScreen(-1); }
+  }, true);
+  var fsTouchX = 0;
+  fsOverlay?.addEventListener("touchstart", function (e) { fsTouchX = e.touches[0].clientX; }, { passive: true });
+  fsOverlay?.addEventListener("touchend", function (e) {
+    var dx = e.changedTouches[0].clientX - fsTouchX;
+    if (Math.abs(dx) > 45) stepFullScreen(dx < 0 ? 1 : -1);
+  }, { passive: true });
+
   function render() {
     slides.forEach((slide, slideIndex) => slide.classList.toggle("active", slideIndex === index));
+    fitStage();
+    // The script companion must follow the slide from EVERY navigation path — full-screen swipe,
+    // the footer's Next/Previous, keyboard, live follow. render() is the one place the current
+    // slide changes, so the sync lives here rather than in each caller (stepping full screen used
+    // to move the slide while the text below stayed on the previous one).
+    syncPhoneDetail();
     // The shared factory paints the "current" row itself; re-render it when the drawer is open so
     // the highlight (and any live filter) tracks slide changes.
     if (overview.isOpen()) overview.render();
@@ -322,17 +782,36 @@ ${markmapVendorSource}
     syncShareEmbeds();
     drawSystemLinks(slides[index]);
     initMarkmaps(slides[index]);
+    initMermaids(slides[index]);
   }
-  function go(nextIndex) {
+  let liveNavigationObserver = null;
+  let audienceRevealIndex = 0;
+  function go(nextIndex, options = {}) {
     index = Math.max(0, Math.min(slides.length - 1, nextIndex));
     // Handouts default to COMPLETE slides: a handout is for reading, so authored {data-mode} is
     // NOT auto-entered here. Reveal/Focus is opt-in (the Reveal button / R / F); once the reader
     // turns it on it is sticky across slides, with the step just resetting to 0 on each slide.
     modeStep = 0;
     galleryStep = 0;
+    audienceRevealIndex = 0;
     render();
     applyModeDimming();
     applyGallery();
+    if (liveNavigationObserver) liveNavigationObserver(slides[index]?.dataset.id || "", Boolean(options.fromLive));
+  }
+  // Live protocol helpers are injected from compiler/assets/runtime/live-follow.js, the same
+  // testable module exercised by scripts/live-follow-client.test.mjs.
+  ${liveFollowRuntimeSource()}
+  const LIVE_CONFIG = ${liveConfig};
+  function initialiseLiveFollow() {
+    if (!LIVE_CONFIG) return;
+    const controller = createAudienceFollowRuntime({
+      document,
+      liveConfig: LIVE_CONFIG,
+      getViewerPosition: currentViewerPosition,
+      applyLiveSlideState,
+    });
+    if (controller) liveNavigationObserver = (_viewedSlideId, fromLive) => { if (!fromLive) controller.viewerMoved(); };
   }
   // LOCAL reveal/focus stepping modes (no presenter sync in share exports). Same selector list,
   // stepping grammar and CSS hooks as the deck runtime; banner auto-dismiss at 2.5s.
@@ -340,8 +819,12 @@ ${markmapVendorSource}
   // tiles, system-map satellites, evidence/cta units, smartart/mindmap/pyramid/orgchart nodes
   // were missing, so those slides would not step in handouts) + the batch-2 units (bar-chart
   // columns, cycle nodes). When the template runtime's MODE_SELECTOR gains an entry, add it
-  // HERE too — test-presentation-bundle's selector-parity check fails on drift.
-  const MODE_SELECTOR = ".feature-list[data-reveal-group],.feature-list > li:not(.image-grid *):not([data-reveal-group] *),.feature-list .fl-sublist > li:not([data-reveal-group] *),.timeline .tl-entries > li,.timeline .tl-spine-track > li,.timeline > li,.slide-content > blockquote,.statement,.slide-content .content-p:not(.card-gallery *):not(.evidence-layout *):not(.cta-layout *):not(.image-grid *),figure.slide-figure:not(.evidence-layout *):not(.cta-layout *),.trace .turn,.contrast-grid > .contrast-pair,.tile-grid > div,.system-map > div:not(.system-centre),.evidence-layout .callouts > li,.cta-layout .cta-shot,.cta-layout .callouts > li,.cta-layout .slide-action,.smartart-node:not(.smartart-node *),.flow > .flow-node,.flow-cycle-row > .flow-node,.flow-snake-row > .flow-node,.flow > .flow-item,.pyramid .pyr-tier,.orgchart .org-box,.stats-row > .stat,.process-strip > .proc-step,.steps-diagram > .step-col,.icon-row > .ir-item,.image-grid > .ig-cell,.chart-cols > .chart-col,.cycle-diagram .cycle-node,.cycle-diagram .cycle-arc-svg,.timetable tbody tr,.layout-compare .compare-half.half-b";
+  // HERE too — "npm run test:mode-selector-parity" fails on drift.
+  // NOTE: this block lives inside a String.raw template literal — never use backticks in it.
+  // 2026-07-19: ".timeline .tl-dyn-entries > li" was missing here, so {timeline=dynamic} slides
+  // enumerated ZERO units on the audience handout and reveal/focus following silently no-opped
+  // on them. The parity test named above did not exist at the time; it does now.
+  const MODE_SELECTOR = ".feature-list[data-reveal-group],.feature-list > li:not(.image-grid *):not([data-reveal-group] *),.feature-list .fl-sublist > li:not([data-reveal-group] *),.timeline .tl-entries > li,.timeline .tl-dyn-entries > li,.timeline .tl-spine-track > li,.timeline > li,.slide-content > blockquote,.statement,.slide-content .content-p:not(.card-gallery *):not(.evidence-layout *):not(.cta-layout *):not(.image-grid *),figure.slide-figure:not(.evidence-layout *):not(.cta-layout *),.trace .turn,.contrast-grid > .contrast-pair,.tile-grid > div,.system-map > div:not(.system-centre),.evidence-layout .callouts > li,.cta-layout .cta-shot,.cta-layout .callouts > li,.cta-layout .slide-action,.smartart-node:not(.smartart-node *),.flow > .flow-node,.flow-cycle-row > .flow-node,.flow-snake-row > .flow-node,.flow > .flow-item,.pyramid .pyr-tier,.orgchart .org-box,.stats-row > .stat,.process-strip > .proc-step,.steps-diagram > .step-col,.icon-row > .ir-item,.image-grid > .ig-cell,.chart-cols > .chart-col,.cycle-diagram .cycle-node,.cycle-diagram .cycle-arc-svg,.timetable tbody tr,.slide-table tbody tr,.mindmap-mm > .mm-step,.layout-compare .compare-half.half-b";
   const CARD_UNIT_SELECTOR = ".feature-list > li,blockquote,figure.slide-figure,p.content-p";
   let modeKind = null;   // null | "reveal" | "focus"
   let modeStep = 0;
@@ -415,6 +898,8 @@ ${markmapVendorSource}
       el.classList.remove("mode-el");
       el.removeAttribute("data-mode-state");
     });
+    // Mindmap unfold rides the same step as the .mm-step markers (counted in units).
+    applyMindmapRevealForSlide(slide, modeKind, clampStep(modeStep, units.length));
     if (!modeKind || units.length === 0) return;
     modeStep = clampStep(modeStep, units.length);
     units.forEach((el, i) => {
@@ -437,9 +922,16 @@ ${markmapVendorSource}
       catch (e) { el.scrollIntoView(false); }
     });
   }
-  function enterMode(kind) { closeLightbox(); modeKind = kind; modeStep = 0; showModeBanner(kind); applyModeDimming(); }
-  function exitMode() { modeKind = null; modeStep = 0; hideModeBanner(); applyModeDimming(); }
-  function toggleMode(kind) { if (modeKind === kind) exitMode(); else enterMode(kind); }
+  function setModeState(kind, step, announce) {
+    closeLightbox();
+    modeKind = kind === "reveal" || kind === "focus" ? kind : null;
+    modeStep = modeKind ? Math.max(0, Number(step) || 0) : 0;
+    if (announce && modeKind) showModeBanner(modeKind); else hideModeBanner();
+    applyModeDimming();
+  }
+  function enterMode(kind) { setModeState(kind, 0, true); }
+  function exitMode() { setModeState(null, 0, false); }
+  function toggleMode(kind) { if (modeKind === kind) exitMode(); else enterMode(kind); liveNavigationObserver?.("", false); }
   function syncRevealBtn() {
     const btn = document.getElementById("revealBtn");
     if (!btn) return;
@@ -456,6 +948,24 @@ ${markmapVendorSource}
     if (target > maxStepFor(units.length)) { go(index + 1); return; }
     modeStep = target;
     applyModeDimming();
+    liveNavigationObserver?.("", false);
+  }
+  function currentViewerPosition() {
+    return {
+      slideId: slides[index]?.dataset.id || "",
+      reveal: activeGallery() ? galleryStep : audienceRevealIndex,
+      focus: modeKind ? { kind: modeKind, step: modeStep } : null,
+    };
+  }
+  function applyLiveSlideState(message) {
+    const nextIndex = slides.findIndex((slide) => slide.dataset.id === message.slideId);
+    if (nextIndex < 0) return false;
+    go(nextIndex, { fromLive: true });
+    audienceRevealIndex = Math.max(0, Number(message.reveal) || 0);
+    galleryStep = audienceRevealIndex;
+    applyGallery();
+    setModeState(message.focus?.kind || null, message.focus?.step || 0, false);
+    return true;
   }
   function activeGallery() {
     const slide = slides[index];
@@ -483,7 +993,7 @@ ${markmapVendorSource}
         dot.type = "button";
         dot.className = "gallery-dot";
         dot.setAttribute("aria-label", "Card " + (i + 1));
-        dot.addEventListener("click", () => { galleryStep = i; applyGallery(); });
+        dot.addEventListener("click", () => { galleryStep = i; applyGallery(); liveNavigationObserver?.("", false); });
         dots.appendChild(dot);
       }
       const counter = document.createElement("span");
@@ -551,6 +1061,26 @@ ${markmapVendorSource}
     });
     // {mindmap} is rendered by markmap (ADR-0005), not hand-positioned connectors — see initMarkmaps.
   }
+  function initMermaids(root) {
+    if (!root || typeof window.mermaid === "undefined") return;
+    const hosts = root.querySelectorAll ? root.querySelectorAll(".mermaid-mm:not([data-mmd-done])") : [];
+    hosts.forEach((host) => {
+      const box = host.getBoundingClientRect();
+      if (box.width <= 0 || box.height <= 0) return;
+      host.dataset.mmdDone = "1";
+      const src = host.getAttribute("data-mmd-src") || "";
+      window.mermaid.render("mmd-" + Math.random().toString(36).slice(2), src)
+        // Accepted risk N-6: deck output has no DOMPurify; test:mermaid-vendor-security pins Mermaid's strict internal sanitisation at this innerHTML boundary.
+        .then((r) => { host.innerHTML = r.svg; })
+        .catch((e) => {
+          host.innerHTML = "";
+          const pre = document.createElement("pre"); pre.textContent = src; host.appendChild(pre);
+          const note = document.createElement("div"); note.className = "mmd-error"; note.textContent = String(e && e.message || e);
+          host.appendChild(note);
+          if (typeof console !== "undefined") console.error("MERMAID-FAIL:", e && e.message);
+        });
+    });
+  }
   // MINDMAP ({mindmap}) — ADR-0005: rendered by vendored markmap (window.d3 / window.markmap, inlined
   // above). Same lazy first-activation init as the presenter runtime: build the SVG only when the
   // host has a non-zero box (active slide, never display:none), guarded by data-mm-done so it renders
@@ -582,18 +1112,44 @@ ${markmapVendorSource}
       try {
         const opts = mm.deriveOptions({ colorFreezeLevel: 2, maxWidth: 340, color: colors, fitRatio: 0.92 });
         opts.maxInitialScale = 6;
-        mm.Markmap.create(svg, opts, node);
+        const inst = mm.Markmap.create(svg, opts, node);
+        host.__mmInstance = inst;
+        host.__mmFullRoot = node;
         host.dataset.mmDone = "1";
+        applyMindmapRevealForSlide(host.closest(".slide"), modeKind, modeStep);
       } catch (e) {
         svg.remove();
         if (typeof console !== "undefined") console.error("MARKMAP-FAIL:", e && e.message);
       }
     });
   }
+
+  // ADR-0005 amend (2026-07-19): reveal a mindmap one top-level branch per step. Mirrors the
+  // presenter template runtime (kept in parity by mode-selector-parity / reveal-cross-runtime): the
+  // compile-time .mm-step markers are the reveal units the shared machinery counts, and this
+  // translates the current step into how many branches markmap renders.
+  function pruneMarkmapBranches(fullRoot, showN) {
+    const kids = (fullRoot.children || []).slice(0, Math.max(0, showN));
+    return Object.assign({}, fullRoot, { children: kids });
+  }
+  function applyMindmapRevealForSlide(slide, kind, step) {
+    if (!slide) return;
+    const host = slide.querySelector(".mindmap-mm");
+    if (!host || !host.__mmInstance || !host.__mmFullRoot) return;
+    const total = (host.__mmFullRoot.children || []).length;
+    const showN = kind === "reveal" ? Math.max(0, Math.min(Number(step) || 0, total)) : total;
+    if (host.__mmShown === showN) return;
+    host.__mmShown = showN;
+    try {
+      host.__mmInstance.setData(pruneMarkmapBranches(host.__mmFullRoot, showN));
+      if (typeof host.__mmInstance.fit === "function") host.__mmInstance.fit();
+    } catch (e) { if (typeof console !== "undefined") console.error("MARKMAP-REVEAL-FAIL:", e && e.message); }
+  }
   window.addEventListener("resize", () => {
     densifyActiveCards();
     drawSystemLinks(slides[index]);
     initMarkmaps(slides[index]);
+    initMermaids(slides[index]);
   });
   // Step the gallery by delta; false = edge reached (caller advances the slide instead).
   function stepGallery(delta) {
@@ -604,6 +1160,7 @@ ${markmapVendorSource}
     if (target < 0 || target > count - 1) return false;
     galleryStep = target;
     applyGallery();
+    liveNavigationObserver?.("", false);
     return true;
   }
   // G5: LOCAL fullscreen image gallery (browsing feature; no presenter sync in share exports).
@@ -1251,6 +1808,10 @@ ${markmapVendorSource}
   render();
   applyModeDimming();
   applyGallery();
+  // ADR-0018: on a phone the handout opens on the slide LIST, unless a deep link named a slide.
+  applyPhoneMode();
+  if (isPhone() && hadInitialHash) showPhoneDetail();
+  initialiseLiveFollow();
 })();
 </script>
 </body>

@@ -1,0 +1,291 @@
+/* Poll frame (Ticket 5) — the compiled, at-rest rendering of an authored poll, painted on the slide
+   itself so preview, thumbnails and the handout never show an empty poll slide. ADR-0005 design
+   language: Trebuchet system stack, ink on warm white, section accent + tint, hairlines, no italics,
+   left-aligned, type floors on every step. The live projection (Ticket 23) renders THIS frame with
+   its state filled and mounts it beside the compiled one inside .slide-content; the live-state rules
+   at the end of this file paint only into the slots the grammar defines. Nothing above them may
+   assume a live session. */
+/* The frame IS the slide's stage, so it stretches to the content box rather than floating as a small
+   block in the middle of the slide (ADR-0005: keep the margins, fill the stage). The selector
+   carries the `.slide` step so it matches the title-rail rule that centres every non-head child
+   (`.slide[data-title-layout="left"] .slide-content > :not(.slide-head)`); the collapsed-rail rules
+   already move the frame into the single full-width column. */
+.slide .slide-content:has(> .poll-frame) { align-content: stretch; }
+.slide .slide-content > .poll-frame,
+.slide[data-title-layout] .slide-content > .poll-frame { align-self: stretch; }
+/* The live projection mounts the live frame directly after the compiled one (poll-projection.js);
+   the pair occupies ONE slot. The hidden compiled frame must not turn the live frame into a
+   "trailing sibling" — stage.css @order 1357 would otherwise re-row it with a 5vh margin-top and
+   grow the stage by exactly that margin. */
+.slide[data-title-layout] .slide-content > .poll-frame ~ .poll-frame {
+  grid-row: 1 / span 99 !important;
+  margin-top: 0 !important;
+}
+.poll-frame {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: clamp(14px, 2.4cqh, 34px);
+  min-height: 0;
+  min-width: 0;
+  color: var(--ink);
+  font-family: var(--sans);
+  text-align: left;
+}
+.poll-frame[hidden] { display: none !important; }
+.poll-frame-head { min-width: 0; display: grid; gap: clamp(8px, 1.2cqh, 18px); }
+.poll-frame-eyebrow {
+  margin: 0;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: max(14px, 1.15cqw);
+  font-weight: 700;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+.poll-frame-question {
+  margin: 0;
+  max-width: 26ch;
+  font-size: max(34px, 3.4cqw);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.14;
+  overflow-wrap: anywhere;
+}
+/* T27: when the answers have spent the whole ladder and the frame still overflows, fitLists stamps
+   data-question-fit="stepped" and the question gives up its one notch — the headline step down to
+   the stage type floor — before the whole-slide zoom is allowed to shrink everything. */
+.poll-frame[data-question-fit="stepped"] .poll-frame-question { font-size: var(--type-floor); }
+.poll-frame-body {
+  min-height: 0;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: clamp(18px, 3cqw, 54px);
+  align-items: center;
+}
+.poll-frame-body:has(> .poll-frame-join) { grid-template-columns: minmax(0, 1fr) minmax(0, 22%); grid-template-rows: minmax(0, 1fr); }
+.poll-frame-answers { min-width: 0; min-height: 0; }
+/* T27: the join column never grows the frame's height. The body's single row is 1fr of the frame's
+   own row (which the head and foot already bound), the aside stretches to exactly that, and the QR
+   is capped by the space left under its URL — a big QR shrinks instead of pushing the foot out. */
+.poll-frame-join {
+  min-width: 0;
+  min-height: 0;
+  max-height: 100%;
+  align-self: stretch;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  align-items: center;
+  padding: clamp(10px, 1.6cqh, 22px) clamp(10px, 1.1cqw, 20px);
+  background: var(--tint);
+}
+/* T27 — the autofit ladder's knobs. The presenter runtime (fitLists) writes --list-lh / --list-gap /
+   --fs-body inline on .slide-content when a long list would overflow its band; this frame consumes
+   the same three tokens so a long poll spends the identical leading → gap → type ladder on itself
+   before any whole-slide zoom. Fallbacks mirror the deck defaults so a frame rendered outside a
+   slide-content keeps its compiled proportions. */
+.poll-frame-options { list-style: none; margin: 0; padding: 0; display: grid; gap: calc(clamp(6px, 1.1cqh, 16px) * var(--list-gap, 1)); }
+.poll-frame-option {
+  display: grid;
+  grid-template-columns: max(24px, 2.4cqw) minmax(0, 1fr);
+  gap: clamp(8px, 1cqw, 18px);
+  align-items: baseline;
+  margin: 0;
+  padding-bottom: calc(clamp(6px, 1.1cqh, 16px) * var(--list-gap, 1));
+  border-bottom: 1px solid var(--hairline);
+  /* Type comes from the deck's own list scale (.slide-content ol li) so poll options read at the
+     same size as every other list on the stage, riding --fs-body and --list-lh when the autofit
+     ladder turns them; only the lane structure is ours. */
+  line-height: var(--list-lh, 1.3);
+  overflow-wrap: anywhere;
+}
+.poll-frame-letter { color: var(--accent); font-weight: 700; }
+.poll-frame-option-label { min-width: 0; }
+.poll-frame-matrix { list-style: none; margin: 0; padding: 0; display: grid; gap: calc(clamp(10px, 1.8cqh, 26px) * var(--list-gap, 1)); }
+.poll-frame-matrix-row { margin: 0; display: grid; gap: calc(clamp(6px, .9cqh, 12px) * var(--list-gap, 1)); }
+.poll-frame-matrix-item {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max(24px, 2.4cqw) minmax(0, 1fr);
+  gap: clamp(8px, 1cqw, 18px);
+  align-items: baseline;
+  /* Item type rides the ladder at the matrix's own ratio (2cqw of the 3.2cqw body default), never
+     below the stage type floor. */
+  font-size: max(var(--type-floor), calc(var(--fs-body, 3.2cqw) * .625));
+  font-weight: 700;
+  line-height: var(--list-lh, 1.25);
+  overflow-wrap: anywhere;
+}
+.poll-frame-matrix-number { color: var(--accent); }
+.poll-frame-matrix-text { min-width: 0; }
+.poll-frame-matrix-labels {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(var(--poll-frame-columns, 3), minmax(0, 1fr));
+  gap: clamp(6px, .8cqw, 14px);
+  margin-left: calc(max(24px, 2.4cqw) + clamp(8px, 1cqw, 18px));
+}
+.poll-frame-matrix-label {
+  margin: 0;
+  /* Chip padding steps down with the ladder's gap knob (the horizontal air stays put), and chip
+     type rides --fs-body at the chip's own ratio with a 20px floor — chips keep at least one full
+     line of label no matter how far the ladder steps. */
+  padding: calc(clamp(4px, .7cqh, 10px) * var(--list-gap, 1)) clamp(6px, .8cqw, 14px);
+  background: var(--tint);
+  color: var(--ink);
+  font-size: max(20px, calc(var(--fs-body, 3.2cqw) * .484));
+  line-height: var(--list-lh, 1.25);
+  overflow-wrap: anywhere;
+}
+.poll-frame-prompt {
+  margin: 0;
+  max-width: 30ch;
+  font-size: max(28px, 2.5cqw);
+  line-height: 1.3;
+}
+.poll-frame-warning {
+  margin: 0;
+  max-width: 34ch;
+  padding-left: clamp(10px, 1.1cqw, 18px);
+  border-left: 4px solid var(--red);
+  color: var(--ink);
+  font-size: max(24px, 2cqw);
+  line-height: 1.3;
+}
+.poll-frame-join.is-pending { padding: 0; background: transparent; }
+.poll-frame-join-note { margin: 0; color: var(--ink); font-size: var(--fs-body); line-height: 1.3; }
+.poll-frame-join-url { margin: clamp(6px, .9cqh, 12px) 0 0; font-size: max(18px, 1.5cqw); font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
+.poll-frame-qr { background: #fff; min-height: 0; }
+.poll-frame-qr svg { display: block; width: 100%; height: auto; max-height: 100%; }
+.poll-frame-foot {
+  display: grid;
+  justify-items: start;
+  gap: clamp(8px, 1.2cqw, 20px);
+  padding-top: clamp(8px, 1.2cqh, 18px);
+  border-top: 1px solid var(--hairline);
+  color: var(--muted);
+  font-size: max(var(--type-floor), 1.35cqw);
+  line-height: 1.3;
+}
+.poll-frame-chip {
+  justify-self: start;
+  padding: clamp(3px, .5cqh, 7px) clamp(7px, .8cqw, 14px);
+  background: var(--tint);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: max(14px, 1.1cqw);
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.poll-frame-instruction { min-width: 0; }
+
+/* Live state (Ticket 23) — the SAME frame with its slots filled by the runtime. Nothing below
+   changes the layout the compiled frame set; it only paints counts, bars, response cards, the
+   page marker and the open chip into the slots the grammar in poll-frame.mjs defines. */
+.poll-frame-option { position: relative; isolation: isolate; }
+.poll-frame-option.is-result { grid-template-columns: max(24px, 2.4cqw) minmax(0, 1fr) auto; }
+.poll-frame-option:has(> .poll-frame-place) { grid-template-columns: max(60px, 6cqw) minmax(0, 1fr) auto; }
+.poll-frame-options.has-joint > .poll-frame-option { grid-template-columns: max(120px, 12cqw) minmax(0, 1fr) auto; }
+.poll-frame-place { white-space: nowrap; }
+.poll-frame-count {
+  min-width: 0;
+  color: var(--muted);
+  font-size: max(var(--type-floor), 1.5cqw);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  text-align: right;
+  /* Breaks only where the runtime put a newline (ranking: points / first places), never mid-phrase. */
+  white-space: pre-line;
+}
+/* The bar sits BEHIND the option text, spanning the row above its hairline: results never leave
+   the option rows for a second layout. */
+.poll-frame-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: clamp(6px, 1.1cqh, 16px);
+  width: var(--poll-fill, 0%);
+  max-width: 100%;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  z-index: -1;
+  transition: width .3s ease-out;
+}
+.poll-frame-continued { font-size: .8em; color: var(--muted); }
+/* The row's denominator sits at the end of the LABELS line, never on a line of its own and never
+   crowding the item text, so a five-item matrix keeps the height the compiled frame gave it. */
+.poll-frame-matrix-row:has(> .poll-frame-matrix-summary) { grid-template-columns: minmax(0, 1fr) auto; }
+.poll-frame-matrix-row:has(> .poll-frame-matrix-summary) > .poll-frame-matrix-item { grid-column: 1 / -1; }
+.poll-frame-matrix-row:has(> .poll-frame-matrix-summary) > .poll-frame-matrix-labels { grid-column: 1; grid-row: 2; }
+.poll-frame-matrix-row:has(> .poll-frame-matrix-summary) > .poll-frame-matrix-summary { grid-column: 2; grid-row: 2; align-self: center; }
+.poll-frame-matrix-summary {
+  margin: 0;
+  color: var(--muted);
+  font-size: max(var(--type-floor), 1.3cqw);
+  line-height: 1.25;
+  white-space: nowrap;
+}
+/* Results keep each chip on ONE line — label, then count and share — so a five-item matrix stays
+   the height the compiled frame gave it. */
+.poll-frame-matrix-label { position: relative; isolation: isolate; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 .5em; }
+.poll-frame-matrix-label-text { min-width: 0; }
+.poll-frame-matrix-label.is-result::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--poll-fill, 0%);
+  max-width: 100%;
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  z-index: -1;
+}
+/* Seven narrow chips at 1280 leave ~75px inside a chip: the count may break between the number and
+   its share rather than overflow the chip. */
+.poll-frame-matrix-count { font-size: max(var(--type-floor), 1.4cqw); line-height: 1.2; }
+.poll-frame-matrix-count small { font-weight: 400; }
+.poll-frame-responses { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(10px, 1.4cqw, 22px); }
+.poll-frame-responses.is-long-response { grid-template-columns: minmax(0, 1fr); }
+.poll-frame-response { margin: 0; min-width: 0; padding: clamp(10px, 1.6cqh, 20px) clamp(10px, 1.2cqw, 20px); background: var(--tint); }
+.poll-frame-response p { margin: 0; font-size: max(var(--type-floor), 1.9cqw); line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; }
+.poll-frame-response small { display: block; margin-bottom: .4em; }
+.poll-frame-empty { margin: 0; color: var(--muted); font-size: max(24px, 2cqw); line-height: 1.3; }
+.poll-frame-total, .poll-frame-page { min-width: 0; }
+.poll-frame-chip[data-poll-chip="open"] { background: var(--accent); color: #fff; }
+/* A poll slide with no compiled frame (a carousel keeps its stepped body) carries the live frame on a
+   paper host over the slide, at the slide's own margins. */
+.slide > .poll-frame-host {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  padding: var(--slide-pad-y) var(--slide-pad-x);
+  background: var(--paper);
+  container-type: size;
+}
+/* The Quick poll popup (audience-polls design: Quick polls remain temporary popups) is a bounded
+   paper stage over the current slide; the frame inside it is the same frame. It is a size container
+   so the frame's stage-relative type reads against the popup, and it is the ONLY overlay a poll may
+   put over a slide — an authored poll never pops anything up. */
+.poll-frame-popup {
+  position: absolute;
+  inset: 5%;
+  z-index: 45;
+  display: grid;
+  box-sizing: border-box;
+  padding: 4cqh 4cqw;
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--hairline);
+  box-shadow: 0 8px 44px #14263f44;
+  container-type: size;
+}
+.poll-frame-popup[hidden] { display: none !important; }
+.poll-frame-popup .poll-frame-option, .poll-frame-host .poll-frame-option { font-size: max(var(--type-floor), var(--fs-body, 2.6cqw)); line-height: 1.35; }
+/* A poll heading with no body (an open-response poll) infers the statement layout, whose skin
+   (skin/statement.css @order 1381–1383) centres every child at a 12em measure. The frame is the
+   slide's stage: it keeps its full measure and stretches on every layout the slide may infer. */
+.slide[data-title-layout] .slide-content.layout-statement:has(> .poll-frame),
+.slide .slide-content.layout-statement:has(> .poll-frame) { align-content: stretch; justify-items: stretch; }
+.slide[data-title-layout] .slide-content.layout-statement:has(> .slide-head-quiet) > .poll-frame,
+.slide .slide-content.layout-statement > .poll-frame { max-width: none; justify-self: stretch; align-self: stretch; }

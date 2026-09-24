@@ -1,0 +1,12 @@
+/* Presenter-window poll chrome that belongs to the projection: the display controls (show question /
+   show results / pages) and their status line. The poll composition itself is poll-frame.css (Ticket 23:
+   the live poll is the compiled frame with its state filled; no second canvas exists). */
+.presenter-poll-display-controls { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.presenter-poll-display-controls button { min-height: 34px; border: 1px solid #46576b; border-radius: 7px; background: #243445; color: #f7f3ea; padding: 7px 11px; cursor: pointer; font: 600 12px/1.2 var(--sans); }
+.presenter-poll-display-controls button:focus-visible { outline: 2px solid #80b3ff; outline-offset: 2px; }
+.presenter-poll-display-controls [hidden] { display: none !important; }
+.presenter-poll-display-status { margin: 10px 0 0; color: #b7c5d1; font-size: 12px; }
+.presenter-poll-operation { margin-top: 10px; font-size: 12px; color: #d8e3ec; }
+.presenter-poll-operation.is-error { color: #ffd4b8; }
+.presenter-poll-controls { flex-wrap: wrap; }
+.presenter-poll-panel .presenter-poll-controls button:disabled { opacity: .55; cursor: wait; }

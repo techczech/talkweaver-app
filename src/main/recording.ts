@@ -16,7 +16,18 @@ import { readFile as readFileAsync, readdir as readdirAsync, stat as statAsync }
 import { execFileSync } from 'child_process'
 import { pathToFileURL } from 'url'
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
-import { attachDeliveryToPlanned, listRuns, normaliseRun, plannedRunCandidates, readRun } from './runs'
+import {
+  applyRunPollBuffer,
+  attachDeliveryToPlanned,
+  listRuns,
+  normaliseRun,
+  persistRun,
+  plannedRunCandidates,
+  readRun,
+  type RunPoll,
+  type RunPollResponse,
+  type RunRecord,
+} from './runs'
 
 // ── Task 4: mic permission for the present window ────────────────────────────
 // Grant ONLY the microphone, and ONLY to this present window's webContents, so the bridge's
@@ -59,6 +70,10 @@ export interface RecordingDeps {
   r2Config: () => R2Config // Settings → Recording storage (endpoint/bucket/creds source)
   readSafeKeys: () => { accessKeyId: string; secretAccessKey: string } | null // safeStorage-decrypted keys
   testMode?: () => boolean // env flag for the e2e (synthetic audio + upload short-circuit)
+  beforeCloseWindow?: (webContentsId: number, liveAction?: 'end' | 'keep') => Promise<{ ok: boolean; error?: string }>
+  /** Called after a session is persisted (any kind) — the main window refreshes its talk facts
+   *  (last-delivered dates in the panel/status bar) without a reload (T29). */
+  onSessionSaved?: (saved: { talkSlug: string; kind: RunKind }) => void
 }
 
 // The slide-time index is data, so it round-trips as-is; the session shape is the spec's data model.
@@ -122,19 +137,67 @@ const runStates = new Map<number, {
   wallMs: number
   forwardAdvances: number
 }>()
+const livePollBuffers = new Map<number, { polls: RunPoll[]; responses: RunPollResponse[] }>()
+
+function pollBuffer(webContentsId: number): { polls: RunPoll[]; responses: RunPollResponse[] } {
+  const existing = livePollBuffers.get(webContentsId)
+  if (existing) return existing
+  const created = { polls: [], responses: [] }
+  livePollBuffers.set(webContentsId, created)
+  return created
+}
+
+function persistLivePollBuffer(webContentsId: number, vaultRoot: string | null): boolean {
+  const state = runStates.get(webContentsId)
+  const buffer = livePollBuffers.get(webContentsId)
+  if (!vaultRoot || !state?.sessionId || !buffer || (!buffer.polls.length && !buffer.responses.length)) return false
+  const run = readRun(vaultRoot, state.talkSlug, state.sessionId)
+  if (!run) return false
+  persistRun(vaultRoot, applyRunPollBuffer(run, buffer))
+  livePollBuffers.delete(webContentsId)
+  return true
+}
+
+export function bufferLiveRunPoll(webContentsId: number, poll: RunPoll, vaultRoot: string | null): void {
+  try {
+    const buffer = pollBuffer(webContentsId)
+    buffer.polls = [...buffer.polls.filter((item) => item.id !== poll.id), poll]
+    livePollBuffers.set(webContentsId, buffer)
+    persistLivePollBuffer(webContentsId, vaultRoot)
+  } catch { /* live interaction must never interrupt presenting */ }
+}
+
+export function bufferLiveRunPollResponse(webContentsId: number, response: RunPollResponse, vaultRoot: string | null): void {
+  try {
+    pollBuffer(webContentsId).responses.push(response)
+    persistLivePollBuffer(webContentsId, vaultRoot)
+  } catch { /* live interaction must never interrupt presenting */ }
+}
 export function registerRecordingContext(webContentsId: number, ctx: RecordingContext): void {
   contexts.set(webContentsId, ctx)
 }
 export function unregisterRecordingContext(webContentsId: number): void {
   contexts.delete(webContentsId)
   runStates.delete(webContentsId)
+  livePollBuffers.delete(webContentsId)
 }
 export function shouldOfferRunSave(webContentsId: number): boolean {
   const s = runStates.get(webContentsId)
   return !!s && !s.saved && s.gatePassed && !s.audioArmed
 }
-export function sendRecordingCloseOffer(win: BrowserWindow): void {
-  if (!win.isDestroyed()) win.webContents.send('recording:show-close-offer')
+export function recordingAudioArmed(webContentsId: number): boolean {
+  return !!runStates.get(webContentsId)?.audioArmed
+}
+export function recordingRunReference(webContentsId: number): { talkSlug: string; runId: string } | null {
+  const state = runStates.get(webContentsId)
+  return state?.sessionId ? { talkSlug: state.talkSlug, runId: state.sessionId } : null
+}
+export function sendRecordingCloseOffer(win: BrowserWindow, offer?: { live: boolean; offerRunSave: boolean; audioArmed?: boolean }): void {
+  if (!win.isDestroyed()) win.webContents.send('recording:show-close-offer', offer ?? {
+    live: false,
+    offerRunSave: shouldOfferRunSave(win.webContents.id),
+    audioArmed: recordingAudioArmed(win.webContents.id)
+  })
 }
 
 // ── R2 upload — direct, on request only (never automatic) ────────────────────
@@ -254,7 +317,7 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
     }
   })
 
-  ipcMain.handle('recording:save', async (_event, payload) => {
+  ipcMain.handle('recording:save', async (event, payload) => {
     try {
       const compilerDir = deps.compilerDir()
       if (!compilerDir) return { ok: false, error: 'compiler-not-found' }
@@ -318,15 +381,21 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
         transcript: null,
         slideTimeIndex: L.buildSlideTimeIndex(rawMarks) as SlideTimeMark[]
       }
-      const finalSession = planned
+      const baseSession = planned
         ? attachDeliveryToPlanned(planned, normaliseRun(session))
         : normaliseRun(session)
+      const pendingPolls = livePollBuffers.get(event.sender.id)
+      const finalSession: RunRecord = pendingPolls
+        ? applyRunPollBuffer(baseSession, pendingPolls)
+        : baseSession
       // Vault is the home; if none is configured, keep the session.json beside the audio so a
       // record still survives (it just isn't in the synced Ledger).
       const sessionDir = vault ? join(vault, '_PRESENTATIONS', talkSlug) : recDir
       if (!existsSync(sessionDir)) mkdirSync(sessionDir, { recursive: true })
       const sessionJsonPath = join(sessionDir, `${sessionId}.json`)
       writeFileSync(sessionJsonPath, L.serialiseSession(finalSession), 'utf8')
+      if (pendingPolls) livePollBuffers.delete(event.sender.id)
+      deps.onSessionSaved?.({ talkSlug, kind })
 
       // 3) Local-first is the whole story on save (Dominik's call): the recording lives on this
       //    machine, uploaded:false. R2 upload is ON REQUEST — the Studio "Upload to R2" action
@@ -541,11 +610,23 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
     return { ok: true }
   })
 
-  ipcMain.handle('recording:close-window', (event) => {
-    runStates.delete(event.sender.id)
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (win && !win.isDestroyed()) win.destroy()
-    return { ok: true }
+  ipcMain.handle('recording:close-window', async (event, liveAction?: unknown) => {
+    if (liveAction !== undefined && liveAction !== 'end' && liveAction !== 'keep') {
+      return { ok: false, error: 'Invalid live session close choice.' }
+    }
+    if (recordingAudioArmed(event.sender.id)) {
+      return { ok: false, error: 'Save the recording before closing the presentation.' }
+    }
+    try {
+      const result = await deps.beforeCloseWindow?.(event.sender.id, liveAction)
+      if (result && !result.ok) return result
+      const win = BrowserWindow.fromWebContents(event.sender)
+      if (win && !win.isDestroyed()) win.destroy()
+      runStates.delete(event.sender.id)
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: String(error) }
+    }
   })
 
   // Delete a session — session.json + local audio go to the OS Trash (recoverable).

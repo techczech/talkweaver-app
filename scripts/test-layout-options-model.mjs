@@ -7,6 +7,7 @@ import {
   selectionForGroup
 } from '../src/shared/trigger-line.ts'
 import {
+  groupApplies,
   optionGroupsForSlide
 } from '../src/shared/layout-registry/options.ts'
 
@@ -94,9 +95,44 @@ const iconlistVariant = optionGroupsForSlide({ layoutName: 'iconlist', headingLe
 assert.equal(iconlistVariant.key, 'iconlist-variant')
 assert.equal(iconlistVariant.preview, 'thumbs')
 assert.deepEqual(iconlistVariant.values.map(({ token, label }) => [token, label]), [
-  ['', 'Boxes'],
+  ['', 'Auto'],
+  ['iconlist=boxes', 'Boxes'],
   ['iconlist=list', 'List']
-], 'iconlist offers its card grid default and restored plain rows')
+], 'iconlist offers the count-rule Auto, the explicit card grid, and the plain rows')
+
+// T28: iconlist-variant resolves THROUGH the list layout too (icons via {icons=top}/{icons=all}),
+// gated by the declarative applicability seam — never a group-name if.
+const iconlistVariantOnList = optionGroupsForSlide({ layoutName: 'list', headingLevel: 3, hasChildren: false })
+  .find(({ group }) => group.key === 'iconlist-variant')
+assert.ok(iconlistVariantOnList, 'iconlist-variant is a candidate wherever the icon tokens can be authored')
+assert.equal(
+  groupApplies(iconlistVariantOnList.group, {
+    layoutName: 'list', headingLevel: 3, hasChildren: false,
+    selectedTokens: { 'list-style': '', 'icon-level': '' }
+  }), false,
+  'a plain list offers no icon-list treatment'
+)
+assert.equal(
+  groupApplies(iconlistVariantOnList.group, {
+    layoutName: 'list', headingLevel: 3, hasChildren: false,
+    selectedTokens: { 'list-style': 'iconlist', 'icon-level': '' }
+  }), true,
+  '{iconlist} reveals the treatment choice'
+)
+assert.equal(
+  groupApplies(iconlistVariantOnList.group, {
+    layoutName: 'list', headingLevel: 3, hasChildren: false,
+    selectedTokens: { 'list-style': '', 'icon-level': 'icons=all' }
+  }), true,
+  '{icons=all} reveals the treatment choice'
+)
+assert.equal(
+  groupApplies(iconlistVariantOnList.group, {
+    layoutName: 'list', headingLevel: 3, hasChildren: false,
+    selectedTokens: { 'list-style': '', 'icon-level': 'icons=off' }
+  }), false,
+  '{icons=off} overrides nothing, so there is no icon list to treat'
+)
 
 const statementVariant = optionGroupsForSlide({ layoutName: 'statement', headingLevel: 3, hasChildren: false })[0].group
 assert.equal(statementVariant.key, 'statement-variant')

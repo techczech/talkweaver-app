@@ -4,7 +4,7 @@
 //
 // Checks:
 //   (a) ⌘⇧F on a slide enters Focus; the crumb names that slide; only its block is visible (focus-scope).
-//   (b) the stage iframe renders the slide and REFRESHES ~300ms after an in-band edit (debounced).
+//   (b) the live stage renders the slide and REFRESHES ~300ms after an in-band edit (debounced).
 //   (c) where-used shows a row per talk carrying the id (a shared slide → two rows, one marked here).
 //   (d) detach flushes + re-ids + toasts, and the strip collapses to the one remaining use.
 //   (e) prev/next walks the compiled order; an unstamped slide reads "only here so far".
@@ -13,6 +13,8 @@
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-slide-focus.mjs
 import { _electron as electron } from 'playwright'
+import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
@@ -62,7 +64,8 @@ writeFileSync(join(fxDir, 'focus-fixture-outline.md'), FIX)
 writeFileSync(join(sisDir, 'sister-talk-outline.md'), SISTER)
 writeFileSync(join(userDataDir, 'config.json'), JSON.stringify({ vaultRoot: tempVault }, null, 2))
 
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + userDataDir], cwd: REPO })
+await ensureFreshBuild(REPO)
+const app = await electron.launch({ args: ['.', '--user-data-dir=' + userDataDir], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
 const page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded')
 await page.waitForTimeout(1200)
@@ -70,12 +73,12 @@ await page.waitForTimeout(1200)
 const visibleLines = () => page.evaluate(() =>
   Array.from(document.querySelectorAll('.cm-content .cm-line')).map((l) => l.textContent))
 const has = (arr, needle) => arr.some((l) => (l || '').includes(needle))
-const srcdoc = () => page.locator('.lt-stage-frame').getAttribute('srcdoc').catch(() => '')
+const stageBodyText = () =>
+  page.frameLocator('.lt-stage-frame iframe').locator('body').innerText().catch(() => '')
 const bodyText = () => page.evaluate(() => document.body.innerText)
 
 async function selectTalk(name) {
-  await page.locator('.talk-item', { hasText: name }).first().click()
-  await page.waitForSelector('.cm-content', { timeout: 8000 })
+  await openTalkByTitle(page, name)
   await page.waitForTimeout(1700) // let the debounced compile land so slideLines is aligned
 }
 async function clickLine(text) {
@@ -118,13 +121,35 @@ try {
 
   // ── (b) the stage renders the slide, and refreshes after an in-band edit ───
   {
-    const first = (await srcdoc()) || ''
-    const rendered = first.includes('Shared idea slide')
+    await page.waitForFunction(
+      () => document.querySelector('.lt-stage-frame iframe')?.getAttribute('src')?.startsWith('twpresent://preview/'),
+      null,
+      { timeout: 8000 }
+    )
+    const stage = page.locator('.lt-stage-frame')
+    const iframe = stage.locator(':scope iframe[title="Slide preview"]')
+    const firstSrc = (await iframe.getAttribute('src')) || ''
+    await page.frameLocator('.lt-stage-frame iframe').locator('body', { hasText: 'Shared idea slide' })
+      .waitFor({ timeout: 8000 })
+    const firstText = await stageBodyText()
+    const rendered =
+      (await stage.evaluate((node) => node.tagName)) === 'DIV'
+      && firstSrc.startsWith('twpresent://preview/')
+      && firstText.includes('Shared idea slide')
     await clickLine('This slide is shared across two talks.')
     await page.keyboard.press('End')
     await page.keyboard.type(' EDITEDXYZ')
-    await page.waitForTimeout(900) // > 300ms preview debounce
-    const after = (await srcdoc()) || ''
+    await page.waitForFunction(
+      (before) => {
+        const next = document.querySelector('.lt-stage-frame iframe')?.getAttribute('src') || ''
+        return next.startsWith('twpresent://preview/') && next !== before
+      },
+      firstSrc,
+      { timeout: 8000 }
+    )
+    await page.frameLocator('.lt-stage-frame iframe').locator('body', { hasText: 'EDITEDXYZ' })
+      .waitFor({ timeout: 8000 })
+    const after = await stageBodyText()
     record('stage renders the slide and refreshes (debounced) after an in-band edit',
       rendered && after.includes('EDITEDXYZ'), `rendered=${rendered} updated=${after.includes('EDITEDXYZ')}`)
   }
@@ -166,16 +191,24 @@ try {
     (await page.locator('.lt-focus').count()) === 0 && (await page.locator('.workspace-toolbar').count()) === 1)
 
   // ── (g) ↵ on a Browser card enters Focus ──────────────────────────────────
-  await page.keyboard.press('Meta+k')
+  await page.keyboard.press('Meta+s')
   await page.waitForSelector('.lt-browser-root', { timeout: 4000 })
-  await page.locator('.lt-searchfield input').fill('Local only')
+  // The Browser deliberately omits slides from the currently open talk, so target Sister Talk.
+  await page.locator('.lt-searchfield input').fill('Shared idea slide')
   await page.waitForTimeout(700)
   await page.keyboard.press('ArrowDown') // move focus into the grid (blurs the search field)
   await page.waitForTimeout(150)
   await page.keyboard.press('Enter')
   await page.waitForTimeout(700)
-  record('↵ on a Browser card enters Focus on that slide',
-    (await page.locator('.lt-focus').count()) === 1, `crumb=${JSON.stringify((await page.locator('.lt-c-slide').textContent().catch(() => '')) || '')}`)
+  {
+    const talkCrumb = ((await page.locator('.lt-c-talk').textContent().catch(() => '')) || '').trim()
+    const slideCrumb = ((await page.locator('.lt-c-slide').textContent().catch(() => '')) || '').trim()
+    record('↵ on a Browser card enters Focus on the other fixture talk’s slide',
+      (await page.locator('.lt-focus').count()) === 1
+        && talkCrumb === 'Sister Talk'
+        && slideCrumb === 'Shared idea slide',
+      `talk=${JSON.stringify(talkCrumb)} slide=${JSON.stringify(slideCrumb)}`)
+  }
 
   // ── (h) editing shifts later slides' lines; paging must NOT un-scope (finding 1) ────────────
   // slideLines' heading lines come from the stale compiledSlides.source_line for up to the ~900ms

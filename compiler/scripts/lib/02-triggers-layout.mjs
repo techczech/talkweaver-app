@@ -1,7 +1,9 @@
-import { resolveTrigger, resolveDynamicTrigger } from "../triggers.mjs";
-import { escapeHtml } from "./01-cli-utils.mjs";
+import { OPEN_PATTERN_TOKENS, VALUE_TRIGGER_DICTIONARY, resolveTrigger, resolveDynamicTrigger } from "../triggers.mjs";
+import { renderInline } from "./00-inline-render.mjs";
 import { LIST_VALUE_KEYS, TRIGGER_LINE_RE, tokenizeTriggerBody } from "./trigger-tokenizer.mjs";
+import { TITLE_REGIME_BY_LAYOUT } from "./trigger-dictionary.generated.mjs";
 
+export { renderInline };
 // Tokenise the inside of a `{…}` attribute trailer into tokens separated by whitespace OR a
 // comma, EXCEPT that a double-quoted value may contain spaces and commas: `kicker="A, B"` is one
 // token. A quoted value runs from the opening `"` to the next `"`; there is NO nested-quote
@@ -35,6 +37,18 @@ export { LIST_VALUE_KEYS };
 //     `trigger-conflict:<key>:<old>→<new>` warning is emitted.
 // Returns { title, attrs, warnings } — warnings is always an array (possibly empty); callers
 // fold it into the build warnings list.
+// ADR-0020 R1 (2026-07-25): explicit key=value / key:value tokens must resolve through the
+// registry — a registered value vocabulary, or a registry-declared open pattern. Dictionary-
+// resolved bare words are exempt: their (key,value) pairs ARE registry data.
+const OPEN_PATTERN_BY_KEY = new Map(OPEN_PATTERN_TOKENS.map((token) => [token.key, token]));
+function validateExplicitToken(key, value, form, warnings) {
+  const vocab = VALUE_TRIGGER_DICTIONARY[key];
+  if (form === "equals" && Array.isArray(vocab) && vocab.includes(String(value))) return;
+  const open = OPEN_PATTERN_BY_KEY.get(key);
+  if (open && open.form === form && new RegExp(`^(?:${open.pattern})$`).test(String(value))) return;
+  warnings.push(`unresolved-trigger:${key}=${value}`);
+}
+
 export function parseHeadingAttrs(rawTitle) {
   // Peel trailing `{…}` groups off the end of the heading, right-to-left, so any number of
   // adjacent or whitespace-separated brace groups concatenate. Stop at the first non-brace
@@ -63,7 +77,10 @@ export function parseHeadingAttrs(rawTitle) {
       if (eq > 0) {
         // Explicit `key=value` (a double-quoted value is already unwrapped by the tokeniser, so a
         // value may contain spaces). Kept verbatim — explicit form is unchanged by the resolver.
-        setKey(tok.slice(0, eq), tok.slice(eq + 1));
+        const key = tok.slice(0, eq);
+        const value = tok.slice(eq + 1);
+        setKey(key, value);
+        validateExplicitToken(key, value, "equals", warnings);
         continue;
       }
       // Colon form `key:value` — currently the `{blocks:RxC}` grid-dimension trigger (e.g.
@@ -72,7 +89,10 @@ export function parseHeadingAttrs(rawTitle) {
       // (rare) heading token do not get mistaken for an attribute.
       const colon = tok.indexOf(":");
       if (colon > 0 && /^[\w-]+$/.test(tok.slice(0, colon))) {
-        setKey(tok.slice(0, colon), tok.slice(colon + 1));
+        const key = tok.slice(0, colon);
+        const value = tok.slice(colon + 1);
+        setKey(key, value);
+        validateExplicitToken(key, value, "colon", warnings);
         continue;
       }
       // A legal bare token is an identifier-like word. It may LEAD with a digit (e.g. the
@@ -191,6 +211,29 @@ export function accentForSectionName(name, palette = "") {
   return sectionAccentMapForPalette(palette).get(String(name ?? "").trim().toLowerCase()) || null;
 }
 
+// Every accent NAME the deck vocabulary documents, across both palettes — the four names Deck
+// settings offers for `colour:` and the four `{bg=…}` tints already share.
+export const DECK_ACCENT_NAMES = [...new Set([...SECTION_ACCENTS, ...SECTION_ACCENTS_GREEN].map((pair) => pair.name))];
+
+/**
+ * The accent a DECK-LEVEL `colour:` names (Ticket 10).
+ *
+ * A section's own `{accent=…}` must stay inside its deck palette — the cycle is what makes
+ * sections read as one system, and an off-cycle name there is an authoring error worth a warning.
+ * A deck `colour:` is different: it is the ONE accent the author picked for the title posters, and
+ * Deck settings offers the same four names whatever the palette. Resolving it in the deck's own
+ * palette first and then across the rest means `colour: forest` paints forest instead of silently
+ * falling back to the cycle's first accent, which is what it did before.
+ */
+export function accentForDeckColour(name, palette = "") {
+  const wanted = String(name ?? "").trim().toLowerCase();
+  if (!wanted) return null;
+  return accentForSectionName(wanted, palette)
+    || accentForSectionName(wanted, "green")
+    || accentForSectionName(wanted, "")
+    || null;
+}
+
 // Returns { accent, tint } for a section index (wraps the cycle). The assembly stamps BOTH as
 // inline --sec-accent/--sec-tint (plus --accent for back-compat) on the slide <section>.
 export function accentForSectionIndex(index, palette = "") {
@@ -198,56 +241,73 @@ export function accentForSectionIndex(index, palette = "") {
   return cycle[((index % cycle.length) + cycle.length) % cycle.length];
 }
 
-// === Title placement (2026-06-09 title spec) ===
-// Default for CONTENT layouts is the title-LEFT rail at 35/65 (title vertically centred); WIDE
-// layouts use the TOP-title treatment (small title bar, full-width content below) so the visual
-// gets room. STRUCTURAL/centred layouts (title, section/subsection divider, closing) keep their
-// own centred treatment and get NO data-title-layout stamp. Layouts that already manage their own
-// body columns (cards, copy-visual, code, trace, list-visual) are also left untouched unless the
-// author opts in via {titletop} / {split}.
+// === Title placement (ADR-0023 §2, Dominik's pick A3; replaces the 2026-06-09 title spec) ===
+// ONE rule decides where a slide's title goes, and it is registry data, not code:
 //
-// LEFT (35/65 rail by default): list, statement, contrast, image-claim, quote, and the vertical
-//   timelines (rail/vertical/columns/compact + timeline-visual).
-// TOP (full-width content): columns, media, and big diagrams (smartart, flow, conceptmap,
-//   orgchart, mindmap, system-map, pyramid), plus the HORIZONTAL timeline.
-export const TITLE_LEFT_LAYOUTS = new Set([
-  "list", "statement", "contrast", "image-claim", "quote", "timeline", "timeline-visual",
-  // Refinement 5 (2026-06-09): the central-node+satellites family (system-map, mindmap) reads as a
-  // compact radial diagram, NOT a genuinely wide visual — it sits comfortably in the right 65% with
-  // the title on the left. Only horizontal-flow/columns/full-bleed-media/horizontal-timeline are
-  // truly wide and keep the top-title.
-  "system-map", "mindmap",
-  // PPT-replication batch (2026-06-11): image-quote mirrors quote (title nav-only by default;
-  // {title=show} restores it into the left rail).
-  "image-quote",
-]);
-export const TITLE_TOP_LAYOUTS = new Set([
-  "columns", "media", "smartart", "flow", "conceptmap", "orgchart", "pyramid",
-  // PPT-replication batch (2026-06-11): all horizontal strips/grids need the full slide width.
-  "stats", "process", "steps", "iconrow", "image-grid",
-  // Layout batch 2 (2026-06-12): charts/tables/cycles/equations are wide compositions.
-  "chart", "table", "cycle", "equation",
-  // SD-16 (Task 6, 2026-06-25): title at the top; body = statement + list side-by-side.
-  "stmt-list",
-]);
-const VALID_SPLITS = new Set(["30", "35", "40", "50"]);
+//   override  →  registry regime  →  nothing else.
+//
+// The REGIME is declared once per layout in src/shared/layout-registry/entries.ts
+// (`titleRegime`) and reaches the compiler through the generated trigger dictionary
+// (TITLE_REGIME_BY_LAYOUT). There is deliberately no per-layout list in this file and none in
+// 07-assembly: adding a layout means adding one registry field.
+//
+//   sidebar → mode "left"   tint rail (~35vw), title vertically centred, content column centred.
+//                           Text layouts: list/plainlist/numbered/iconlist/annotated, stmt-list,
+//                           links, statement, contrast (all variants).
+//   top     → mode "top"    title at the top with the hairline rule, the content band centred in
+//                           the remaining stage. Every full-band structure: tables, charts,
+//                           timelines (ALL modes), flows/processes/steps/cycles, diagrams, code,
+//                           traces, equations, grids, cards, columns, icon rows, stats, media,
+//                           copy-visual, list-visual, carousel, embeds.
+//   hidden  → mode "hidden" the title is not painted; the navigation h1 stays (quote, compare,
+//                           image-quote — and any slide whose title is hidden by {notitle},
+//                           {title=off} or the bodyless-statement promotion).
+//   own     → mode ""       structural slides that compose their whole stage (title, section,
+//                           subsection, closing) — no stamp, no stage rules.
+//
+// THE TITLE IS NEVER DEMOTED TO A KICKER (ADR-0023 §2). The mono .kicker carries the SECTION
+// name only; the compact kicker-title form that cards/copy-visual/carousel used to emit is gone.
+export const VALID_SPLITS = new Set(["30", "35", "40", "50"]);
 
-// Resolve a slide's title placement to { mode: "left"|"top"|"", split: "30"|"35"|"50" }.
-//   - {titletop} forces top on any slide (overrides the layout default).
-//   - {split=N} (35/50/30) tunes the left rail; it also IMPLIES the left rail on a layout that
-//     would otherwise be top or unstamped (asking for a split means "I want a left rail").
-//   - timelineHorizontal flips a timeline from its default left rail to top.
-// Returns mode "" (no stamp) for structural/self-columned layouts with no override.
-export function titlePlacementFor({ layout, attrs = {}, timelineHorizontal = false }) {
+// The regime a layout takes with no author override. Unknown slugs (a layout the registry does
+// not declare) return "" — no stamp, exactly as before ADR-0023, so an unregistered layout can
+// never be silently restyled.
+export function titleRegimeForLayout(layout) {
+  return TITLE_REGIME_BY_LAYOUT[layout] ?? "";
+}
+
+// Resolve a slide's title placement to { mode: "left"|"top"|"hidden"|"", split: "30"|"35"|"40"|"50" }.
+// Author overrides, strongest first (ADR-0011 title-placement / title-display option groups):
+//   - {title=side} / {sidebar} forces the rail on ANY layout;
+//   - an EXPLICIT {title=top} / {titletop} forces the top bar on ANY layout;
+//   - {split=N} (30/35/40/50) tunes the rail and, on its own, asks for a rail;
+//   - a title that is not painted at all ({notitle}, {title=off}, the quote default, the bodyless
+//     statement promotion) is the hidden regime whatever the layout's class says.
+// Only then does the layout's registry regime decide.
+export function titlePlacementFor({
+  layout,
+  attrs = {},
+  frameTitle = "top",
+  frameTitleExplicit = false,
+  titleHidden = false,
+}) {
   const wantTop = attrs.titletop === true;
   const rawSplit = attrs.split != null && attrs.split !== true ? String(attrs.split).trim() : "";
   const split = VALID_SPLITS.has(rawSplit) ? rawSplit : "";
-  // {split} on its own asks for a left rail even on a layout that would default to top/none.
-  if (split && !wantTop) return { mode: "left", split: split || "35" };
+  // Author overrides.
+  if (frameTitle === "side") return { mode: "left", split: split || "35" };
+  if (frameTitleExplicit && frameTitle === "top") return { mode: "top", split: "" };
+  if (split && !wantTop) return { mode: "left", split };
   if (wantTop) return { mode: "top", split: "" };
-  if (layout === "timeline" && timelineHorizontal) return { mode: "top", split: "" };
-  if (TITLE_TOP_LAYOUTS.has(layout)) return { mode: "top", split: "" };
-  if (TITLE_LEFT_LAYOUTS.has(layout)) return { mode: "left", split: split || "35" };
+  // Nothing painted → the hidden regime, regardless of class.
+  if (titleHidden) return { mode: "hidden", split: "" };
+  // Registry regime.
+  const regime = titleRegimeForLayout(layout);
+  if (regime === "sidebar") return { mode: "left", split: split || "35" };
+  if (regime === "top") return { mode: "top", split: "" };
+  // A hidden-regime layout whose title the author restored ({title=show}) keeps the rail it has
+  // always used for that case.
+  if (regime === "hidden") return { mode: "left", split: split || "35" };
   return { mode: "", split: "" };
 }
 
@@ -415,14 +475,10 @@ export function parseConceptRelations(items) {
   return { nodes, edges, unparsed };
 }
 
-// Spine/pills timelines are built for legibility, not density: a single slide holds at most
-// SPINE_STOPS_PER_SLIDE date stops. A longer timeline AUTO-SPLITS into continuation slides of
-// ≤cap stops each (same title + a "(2/3)" marker), each a proper, generously-spaced spine. The
-// split happens in flushSlide (one timeline block can emit several slides). Tuned for up to 10
-// stops across the slide width: 1–6 render at full size, 7–10 progressively down-scale fonts and
-// card widths via spineFontScale()/--tl-spine-scale so they stay legible without overlapping.
-// Change here and the splitter, render, scale ramp and CSS all follow.
-export const SPINE_STOPS_PER_SLIDE = 10;
+// Spine/pills/horizontal timelines are built for legibility, not density: a single slide holds
+// at most a per-mode number of date stops — TIMELINE_STOPS_PER_SLIDE in timeline-layout.mjs,
+// derived from the measured text width at the type floor. A longer timeline AUTO-SPLITS into
+// continuation slides of ≤cap stops each (same title + a "(2/3)" marker) in flushSlide.
 
 // Density ramp for the spine/pills render. 1–6 stops sit at full size; 7–10 shrink fonts and card
 // widths linearly down to ~0.76 so a denser timeline stays on one slide and still reads. Returns
@@ -514,6 +570,101 @@ export function groupTimelineRows(rows) {
   return groups.filter((g) => g.items.length || g.label);
 }
 
+// ── Ticket 22: ONE timeline model ─────────────────────────────────────────────────────────────
+// Every timeline source — a plain dated list (`- 2022: ChatGPT launches`), the `**Timeline:**`
+// block, a nested outline (`- 2022` / `  - ChatGPT launches`) — yields the SAME model: an ordered
+// list of STOPS, each `{ date, text, details, category }`. `date` is the marker the reader sees
+// attached to the stop's text; `details` are further lines under the same stop (the dynamic mode's
+// detail card, a card's extra lines); `category` is set only when the author grouped dated stops
+// under an undated header ("Research" → 2022, 2024 …). Renderers read stops; `groups`/`items`
+// survive on the block for older consumers and are DERIVED from the stops.
+//
+// From groups (groupTimelineRows) to stops:
+//   • an unlabelled group: every item is its own stop (its leading date is the marker);
+//   • a labelled group whose items ALL carry dates: the label is a CATEGORY; each item is a stop;
+//   • any other labelled group: the label IS the stop's date (the marker text as authored —
+//     "30 Nov 2022" counts even though timelineDateOf() does not parse it); the first item is the
+//     stop's text and the remaining items its detail lines (an item's own date leads its line).
+export function timelineStopsFromGroups(groups) {
+  const stops = collectTimelineStops(groups);
+  // Mutation switch for scripts/test-timeline-modes.mjs: reinstate the Ticket 22 defect (every
+  // entry of a dated list folded into ONE stop) so the gate can prove it catches the collapse.
+  if (process.env.TW_REINSTATE_TIMELINE_DEFECT === "1" && stops.length > 1) {
+    return [{ date: stops[0].date, text: stops.map((s) => s.text || s.date).join(" · "), details: [], category: "" }];
+  }
+  return stops;
+}
+
+function collectTimelineStops(groups) {
+  const stops = [];
+  const lineOf = (it) => (it.date && it.body ? `${it.date} — ${it.body}` : (it.body || it.date || "")).trim();
+  for (const g of Array.isArray(groups) ? groups : []) {
+    const label = String(g.label || "").trim();
+    const items = Array.isArray(g.items) ? g.items : [];
+    if (!label) {
+      for (const it of items) stops.push({ date: String(it.date || "").trim(), text: String(it.body || "").trim(), details: [], category: "" });
+      continue;
+    }
+    if (items.length && items.every((it) => it.date)) {
+      for (const it of items) stops.push({ date: String(it.date).trim(), text: String(it.body || "").trim(), details: [], category: label });
+      continue;
+    }
+    const [first, ...rest] = items;
+    stops.push({
+      date: label,
+      text: first ? lineOf(first) : "",
+      details: rest.map(lineOf).filter(Boolean),
+      category: ""
+    });
+  }
+  return stops;
+}
+
+// The group view the mode renderers draw from: by CATEGORY when the author grouped dated stops
+// under headers (each item keeps its date), else ONE group per stop with the date as the group
+// label and the text + detail lines as undated entries. Both source forms therefore render
+// identically in every mode.
+export function timelineGroupsForRender(stops) {
+  const list = Array.isArray(stops) ? stops : [];
+  if (list.some((s) => s.category)) {
+    const groups = [];
+    for (const s of list) {
+      const label = s.category || "";
+      let g = groups.length && groups[groups.length - 1].label === label ? groups[groups.length - 1] : null;
+      if (!g) { g = { label, items: [] }; groups.push(g); }
+      g.items.push({ date: s.date, body: s.text });
+      for (const d of s.details) g.items.push({ date: "", body: d });
+    }
+    return groups;
+  }
+  return list.map((s) => ({
+    label: s.date,
+    items: [{ date: "", body: s.text }, ...s.details.map((d) => ({ date: "", body: d }))].filter((it) => it.body)
+  }));
+}
+
+// Flat entries (compact mode, `items` back-compat): one dated row per stop, detail lines as
+// undated rows beneath it.
+export function timelineEntriesFromStops(stops) {
+  return (Array.isArray(stops) ? stops : []).flatMap((s) => [
+    { date: s.date, body: s.text },
+    ...s.details.map((d) => ({ date: "", body: d }))
+  ]);
+}
+
+// The block fields every timeline source emits. Change the model here and the lexer, the plain-
+// list conversion and the continuation splitter all follow.
+export function timelineBlockFields(rows) {
+  const groups = groupTimelineRows(rows);
+  return timelineBlockFieldsFromStops(timelineStopsFromGroups(groups));
+}
+
+export function timelineBlockFieldsFromStops(stops) {
+  const view = timelineGroupsForRender(stops);
+  const items = timelineEntriesFromStops(stops).map((it) => (it.date && it.body ? `${it.date} — ${it.body}` : it.body || it.date)).filter(Boolean);
+  return { stops, groups: view, items };
+}
+
 // Auto-select a presentation mode for a grouped timeline. Explicit {timeline=…} always wins
 // (handled by the caller). Heuristic: a grouped timeline with 2–4 groups and many entries
 // becomes columns (a tall grouped rail overflows; columns spend width instead); otherwise
@@ -525,34 +676,6 @@ export function autoTimelineMode(groups) {
   const rows = totalItems + realGroups.length;
   if (realGroups.length >= 2 && realGroups.length <= 4 && rows > 8) return "columns";
   return "rail";
-}
-
-export function renderInline(text) {
-  let out = escapeHtml(text);
-  out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  out = out.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-  // Underscore emphasis (__bold__ / _italic_) — common in citations and pasted prose. Matched
-  // only at word boundaries (open `_` not after a word char, close `_` not before one) so
-  // intra-word underscores in identifiers and URLs (snake_case, /wiki/Some_Page) are left alone.
-  // Runs before the link passes; the boundary guard means a `_` flanked by word chars never fires.
-  out = out.replace(/(^|[^\w`])__(?=\S)([^_]*?\S)__(?!\w)/g, "$1<strong>$2</strong>");
-  out = out.replace(/(^|[^\w`])_(?=\S)([^_]*?\S)_(?!\w)/g, "$1<em>$2</em>");
-  out = out.replace(/`([^`]+)`/g, "<code>$1</code>");
-  // Markdown links, with an OPTIONAL title: [label](url "title"). escapeHtml ran first, so a
-  // title's quotes are already &quot;…&quot; here — match that form and surface it as a tooltip.
-  // Without the title arm, any link carrying a title (common in wiki/pasted Markdown) failed to
-  // parse because the url matcher stops at the space and then expects ")".
-  out = out.replace(/\[([^\]]+)\]\(\s*([^)\s]+)(?:\s+&quot;(.*?)&quot;)?\s*\)/g, (_, label, url, title) => {
-    const safe = /^(https?|mailto):|^[#./]/i.test(url) ? url : "#";
-    const titleAttr = title ? ` title="${title}"` : "";
-    return `<a href="${safe}"${titleAttr} target="_blank" rel="noopener">${label}</a>`;
-  });
-  // Auto-link bare URLs (left alone by the markdown-link pass above — they have no
-  // <…> wrapper since text was already escaped, so this never double-links). Trailing
-  // sentence punctuation is kept outside the link.
-  out = out.replace(/(^|[\s(])(https?:\/\/[^\s<]+?)([.,;:)\]]*)(?=\s|$|<)/g,
-    (_, lead, url, trail) => `${lead}<a href="${url}" target="_blank" rel="noopener">${url}</a>${trail}`);
-  return out;
 }
 
 // G1 — straight-/curly-quote promotion. Dominik styles quotes with `>`, but sometimes a
@@ -601,6 +724,178 @@ export function quoteFromQuotedParagraph(rawText) {
     else return null;
   }
   return { text: inner, cite };
+}
+
+// =============================================================================
+// ADR-0023 §4 — A WHOLLY BOLD PARAGRAPH IS A CLAIM (C1 default, C2 as an option)
+// =============================================================================
+// Dominik writes his one-line point as `**…**`. ADR-0005 reserves bold for a DELIBERATE INLINE
+// highlight, so a whole-bold paragraph is not "a bold paragraph" — it is a CLAIM, and the claim
+// is carried by SIZE (C1) or by a section-accent BAR (C2), never by weight.
+
+/** The two sanctioned claim treatments. `plain` is C1 (the default), `bar` is C2. */
+export const CLAIM_STYLES = ["plain", "bar"];
+
+// Recogniser, deliberately strict (mirrors quoteFromQuotedParagraph above):
+//   • the paragraph, trimmed, must OPEN and CLOSE with the same marker pair (`**` or `__`), and
+//   • the span between them must carry no further marker pair — `**a** and **b**` is ordinary
+//     prose with two inline highlights, not a claim, and
+//   • sentence punctuation may sit INSIDE the markers (`**Point.**`) or OUTSIDE them
+//     (`**Point**.`); either way the claim text keeps it.
+// Returns the claim text with the markers consumed, or null when the paragraph is not a claim.
+export function claimFromBoldParagraph(rawText) {
+  const text = String(rawText ?? "").trim();
+  if (text.length < 5) return null;
+  const m = text.match(/^(\*\*|__)([\s\S]+?)\1([.,;:!?…]*)$/);
+  if (!m) return null;
+  const inner = m[2].trim();
+  if (!inner || inner.includes(m[1])) return null;
+  return `${inner}${m[3]}`;
+}
+
+/**
+ * Resolve the claim treatment for one slide: slide token (`{claim=plain|bar}`) → deck frontmatter
+ * (`claim_style:`) → `plain`. Anything unrecognised falls through to the next level, so a typo
+ * degrades to house style rather than to an unstyled paragraph.
+ */
+export function resolveClaimStyle(attrs, meta) {
+  const token = String(attrs?.claim ?? "").trim().toLowerCase();
+  if (CLAIM_STYLES.includes(token)) return token;
+  const deck = String(meta?.claim_style ?? meta?.["claim-style"] ?? "").trim().toLowerCase();
+  if (CLAIM_STYLES.includes(deck)) return deck;
+  return "plain";
+}
+
+// Block containers a claim can be nested inside. Walking exactly these keys (rather than every
+// property) keeps the walk cheap and predictable on a model that also carries lists of strings.
+const BLOCK_CONTAINER_KEYS = ["blocks", "cards", "cells", "halves", "carousel"];
+
+function mapClaimBlocks(node, style) {
+  if (Array.isArray(node)) {
+    const mapped = node.map((item) => mapClaimBlocks(item, style));
+    return mapped.some((item, index) => item !== node[index]) ? mapped : node;
+  }
+  if (!node || typeof node !== "object") return node;
+  let next = node;
+  if (node.type === "claim") next = { ...node, type: "paragraph", claim: true, claimStyle: style };
+  for (const key of BLOCK_CONTAINER_KEYS) {
+    const child = next[key];
+    if (!Array.isArray(child)) continue;
+    const mapped = mapClaimBlocks(child, style);
+    if (mapped === child) continue;
+    if (next === node) next = { ...node };
+    next[key] = mapped;
+  }
+  return next;
+}
+
+/**
+ * RENDER-TIME view of a slide: every `claim` block becomes a paragraph carrying `claim: true` and
+ * the slide's resolved `claimStyle`.
+ *
+ * The MODEL keeps the `claim` type (the corpus census and the projections read it), but every
+ * composition decision in 06/07 — cards source lines, timeline comments, statement copy, the
+ * media slot — is written against `paragraph`. Normalising once at the render entry point means a
+ * claim occupies exactly the slot its bold paragraph occupied yesterday; only its own markup
+ * changes. Returns the SAME object when the slide carries no claim, so nothing is copied for the
+ * overwhelming majority of slides.
+ */
+export function withRenderedClaims(slide) {
+  if (!slide || typeof slide !== "object") return slide;
+  const style = CLAIM_STYLES.includes(slide.claimStyle) ? slide.claimStyle : "plain";
+  return mapClaimBlocks(slide, style);
+}
+
+// =============================================================================
+// ADR-0023 §5 — ONE QUOTE ATTRIBUTION FOLD, BOTH QUOTE PATHS (D1)
+// =============================================================================
+
+/**
+ * The attribution that follows a quote block on its OWN line (not `>`-prefixed):
+ *
+ *     > A quote.
+ *     — Project manager, 2025
+ *
+ * Called by BOTH quote paths — the `>` blockquote and the promoted wholly-quoted paragraph — so a
+ * quote is self-contained however it was written. `lines` is the lexer's line array and `index`
+ * the position just past the quote; blank lines in between are skipped.
+ *
+ * Two forms fold, and only two:
+ *   • an em/en-dash lead (`— Name`, `– Name`);
+ *   • a LONE bullet (`- Name`, `* Name`, `+ Name`) whose next content line is not also a bullet —
+ *     a real 2+ item list following a quote stays a list. (A hyphen would otherwise collide with
+ *     bullet syntax, which is why the lone-bullet guard is the only safe hyphen case.)
+ *
+ * Returns `{ cite, nextIndex }`; with nothing to fold, `cite` is "" and `nextIndex === index`.
+ */
+export function foldQuoteAttribution(lines, index) {
+  let j = index;
+  while (j < lines.length && lines[j].trim() === "") j += 1;
+  if (j >= lines.length) return { cite: "", nextIndex: index };
+  const candidate = lines[j].trim();
+  if (/^[—–]\s+\S/.test(candidate)) {
+    return { cite: candidate.replace(/^[—–]\s*/, ""), nextIndex: j + 1 };
+  }
+  if (
+    /^[-*+]\s+\S/.test(candidate)
+    && !(j + 1 < lines.length && /^[-*+]\s+\S/.test(lines[j + 1].trim()))
+  ) {
+    return { cite: candidate.replace(/^[-*+]\s*/, ""), nextIndex: j + 1 };
+  }
+  return { cite: "", nextIndex: index };
+}
+
+// Cites and titles are compared on meaning, not on typography: case, runs of whitespace and a
+// leading attribution dash are all noise.
+function normaliseAttribution(value) {
+  return String(value ?? "").trim().replace(/^[—–-]\s*/, "").replace(/\s+/g, " ").toLowerCase();
+}
+
+function visitBlocks(node, visit) {
+  if (Array.isArray(node)) {
+    for (const item of node) visitBlocks(item, visit);
+    return;
+  }
+  if (!node || typeof node !== "object") return;
+  if (typeof node.type === "string") visit(node);
+  for (const key of BLOCK_CONTAINER_KEYS) if (Array.isArray(node[key])) visitBlocks(node[key], visit);
+}
+
+/**
+ * ADR-0023 §5 rule 2 — a quote with no attribution takes the SLIDE TITLE as its cite, and records
+ * that it did (`citeFromTitle`). Applied to the model (not at render) so the corpus census, the
+ * projections and the handout all see the attribution the slide actually makes. Mutates in place,
+ * like the timeline-mode wiring beside it; returns the block count it filled.
+ */
+export function applyQuoteTitleAttribution(blocks, title) {
+  const cite = String(title ?? "").trim();
+  if (!cite) return 0;
+  let filled = 0;
+  visitBlocks(blocks, (block) => {
+    if (block.type !== "quote" || String(block.cite ?? "").trim()) return;
+    block.cite = cite;
+    block.citeFromTitle = true;
+    filled += 1;
+  });
+  return filled;
+}
+
+/**
+ * ADR-0023 §5 rule 3 — does any quote on this slide attribute itself to the slide's own title
+ * (authored that way, or filled in by rule 2)? When it does, painting the title repeats the cite,
+ * so the caller hides it (navigation text kept).
+ */
+export function quoteCiteEqualsTitle(slide) {
+  const title = normaliseAttribution(slide?.title);
+  if (!title) return false;
+  let match = false;
+  visitBlocks(slide?.blocks, (block) => {
+    // A split quote (ADR-0023 §9) carries the cite on its last part only; every part records the
+    // whole quote's cite in `quotePart.cite`, so the title regime holds across all of them.
+    const cite = block.type === "quote" ? (block.cite || block.quotePart?.cite) : "";
+    if (block.type === "quote" && normaliseAttribution(cite) === title) match = true;
+  });
+  return match;
 }
 
 // The WELL-KNOWN speakers a `trace` fenced block recognises, each mapped to a CSS class and a

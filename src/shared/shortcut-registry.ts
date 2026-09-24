@@ -1,18 +1,30 @@
-export const SHORTCUT_SCOPES = ['app', 'editor', 'browser', 'presenter', 'picker', 'pathway'] as const
+export const SHORTCUT_SCOPES = ['app', 'editor', 'browser', 'presenter', 'picker', 'pathway', 'studio', 'talktext', 'importer'] as const
 export type ShortcutScope = (typeof SHORTCUT_SCOPES)[number]
 
 export interface ShortcutEntry {
   id: string
   keys: string
   codes: string[]
+  unbound?: true
   scope: ShortcutScope
   label: string
   explanation: string
   group: string
 }
 
-const entries = (scope: ShortcutScope, rows: Array<[string, string, string[], string, string, string]>): ShortcutEntry[] =>
-  rows.map(([id, keys, codes, label, explanation, group]) => ({ id, keys, codes, scope, label, explanation, group }))
+type ShortcutRow = [string, string, string[], string, string, string, true?]
+
+const entries = (scope: ShortcutScope, rows: ShortcutRow[]): ShortcutEntry[] =>
+  rows.map(([id, keys, codes, label, explanation, group, unbound]) => ({
+    id,
+    keys,
+    codes,
+    scope,
+    label,
+    explanation,
+    group,
+    ...(unbound ? { unbound: true as const } : {})
+  }))
 
 export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
   ...entries('app', [
@@ -33,7 +45,7 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['app.inspector-slides', '⌥↑ / ⌥↓', ['Alt-ArrowUp', 'Alt-ArrowDown'], 'Inspector previous or next slide', 'Moves the Inspector and editor cursor to the adjacent slide while focus is in the Inspector.', 'View'],
     ['app.inspector-steps', '⌥← / ⌥→', ['Alt-ArrowLeft', 'Alt-ArrowRight'], 'Inspector previous or next step', 'Steps reveal, focus, or carousel behaviour in the Inspector preview.', 'View'],
     ['app.new-window', '⌘N', ['Mod-n'], 'New window', 'Opens another TalkWeaver window.', 'App'],
-    ['app.help', '⌃/', ['Ctrl-/'], 'Keyboard shortcuts', 'Opens or closes the generated keyboard shortcut sheet.', 'App'],
+    ['app.help', '⌘/ / ⌃/', ['Mod-/', 'Ctrl-/'], 'Keyboard shortcuts', 'Opens or closes the generated keyboard shortcut sheet.', 'App'],
     ['app.view-editor', '⌘1', ['Mod-1'], 'Editor only', 'Switches the workspace to the editor-only view.', 'View'],
     ['app.view-split', '⌘2', ['Mod-2'], 'Editor and slides', 'Switches the workspace to the split editor and slide view.', 'View'],
     ['app.view-strip', '⌘3', ['Mod-3'], 'Slide strip', 'Switches the workspace to the slide strip view.', 'View'],
@@ -45,6 +57,11 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['app.pathways', '⌘⌥P', ['Mod-Alt-p'], 'Open Pathway view', 'Opens the current Talk’s Pathway manager in its own window.', 'Present']
   ]),
   ...entries('editor', [
+    ['editor.undo', '⌘Z', ['Mod-z'], 'Undo', 'Reverses the last outline editor change.', 'Editing'],
+    ['editor.redo', '⇧⌘Z', ['Mod-Shift-z'], 'Redo', 'Reapplies the last outline editor change.', 'Editing'],
+    ['editor.new-slide', '— · ⌘K', [], 'New slide', 'Inserts an empty slide after the current slide.', 'Headings', true],
+    ['editor.bulleted-list', '— · ⌘K', [], 'Bulleted list', 'Toggles bullets on the selected lines.', 'Lists', true],
+    ['editor.numbered-list', '— · ⌘K', [], 'Numbered list', 'Toggles numbered items on the selected lines.', 'Lists', true],
     ['editor.move-up', '⌘⇧↑', ['Mod-Shift-ArrowUp'], 'Move slide or item up', 'Moves the current outline node before its previous sibling.', 'Reorder'],
     ['editor.move-down', '⌘⇧↓', ['Mod-Shift-ArrowDown'], 'Move slide or item down', 'Moves the current outline node after its next sibling.', 'Reorder'],
     ['editor.promote', '⌘⇧←', ['Mod-Shift-ArrowLeft'], 'Promote heading or outdent', 'Moves the current line one outline level towards the root.', 'Change level'],
@@ -56,12 +73,22 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['editor.jump-prev', '⌘⌥←', ['Mod-Alt-ArrowLeft'], 'Previous heading', 'Moves the caret to the preceding slide heading.', 'Navigate'],
     ['editor.jump-next', '⌘⌥→', ['Mod-Alt-ArrowRight'], 'Next heading', 'Moves the caret to the following slide heading.', 'Navigate'],
     ['editor.delete-slide', '⌘⇧⌫', ['Mod-Shift-Backspace'], 'Delete current slide', 'Deletes the current heading, its body, and its protected trigger line.', 'Reorder'],
+    ['editor.title-continue', '↵', ['Enter'], 'Enter from a title', 'From anywhere in a slide title, moves the caret past the protected Trigger line onto the first body line.', 'Lists'],
+    ['editor.protected-line-continue', '↵', ['Enter'], 'Enter from a protected line', 'Moves from a canonical Trigger line to its body, or from a block object token to its first list item, without splitting the structural line.', 'Objects'],
     ['editor.list-continue', '↵', ['Enter'], 'Continue list', 'Continues a list or exits it when the current item is empty.', 'Lists'],
     ['editor.list-indent', 'Tab', ['Tab'], 'Indent list item', 'Indents the current list item when the editor context permits it.', 'Lists'],
     ['editor.list-outdent', '⇧Tab', ['Shift-Tab'], 'Outdent list item', 'Outdents the current list item when the editor context permits it.', 'Lists'],
     ['editor.bold', '⌘B', ['Mod-b'], 'Bold selection', 'Wraps or unwraps the current selection in Markdown bold markers.', 'Format'],
+    ['editor.italic', '— · ⌘K', [], 'Italic selection', 'Wraps or unwraps the selection in Markdown italic markers. Exceptional use — no default key; rebindable.', 'Format', true],
+    ['editor.inline-code', '— · ⌘K', [], 'Inline code', 'Wraps or unwraps the selection in backticks.', 'Format', true],
+    ['editor.highlight', '— · ⌘K', [], 'Highlight selection', 'Sweeps the warm yellow marker (==mark==) over the selection.', 'Format', true],
+    ['editor.link', '⌘⇧L', ['Mod-Shift-l'], 'Insert link (clipboard-aware)', 'Wraps the selection as a Markdown link; a URL in the clipboard becomes the target. WriteFlex’s ⌘⇧K is not carried — the universal keymap reserves it.', 'Format'],
     ['editor.rollback-trigger', 'Esc', ['Escape'], 'Cancel trigger completion', 'Restores the exact text that preceded a provisional trigger completion.', 'Editing'],
-    ['editor.protect-heading-delete', '⌘⌫ / ⌫', ['Mod-Backspace', 'Backspace'], 'Protect slide identity', 'Prevents partial deletion from corrupting a slide heading and trigger identity.', 'Editing']
+    ['editor.protect-heading-delete', '⌘⌫ / ⌫', ['Mod-Backspace', 'Backspace'], 'Protect slide identity', 'Prevents partial deletion from corrupting a slide heading and trigger identity.', 'Editing'],
+    ['editor.object-edit', '↵', ['Enter'], 'Edit object at caret', 'Opens the selected object block for in-place editing; inside an open object, Enter is a plain newline.', 'Objects'],
+    ['editor.object-raw', '⇧⌘M', ['Shift-Mod-m'], 'Show markup on widget', 'Toggles the raw markup view on the object block at the caret.', 'Objects'],
+    ['editor.object-finish', '⌘↵', ['Mod-Enter'], 'Finish object editing', 'Closes the open object source and returns to its rendered widget.', 'Objects'],
+    ['editor.object-leave', 'Esc', ['Escape'], 'Commit and leave object editing', 'Commits the open object source and returns to its rendered widget.', 'Objects']
   ]),
   ...entries('browser', [
     ['browser.move', '↑ ↓ ← →', ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'], 'Move selection', 'Moves keyboard focus through slide cards, strip items, or talk rows.', 'Navigation'],
@@ -110,11 +137,16 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['presenter.notes', 'N', ['n'], 'Notes', 'Opens or closes the notes drawer where that role provides it.', 'Modes & display'],
     ['presenter.chrome', 'C', ['c'], 'Pin control bar', 'Pins or unpins the deck control bar.', 'Modes & display'],
     ['presenter.media', 'M', ['m'], 'Play audience media', 'Plays or pauses media on the audience display.', 'Modes & display'],
-    ['presenter.gallery', 'Z', ['z'], 'Gallery or lightbox', 'Opens or closes the current slide image gallery.', 'Modes & display'],
+    ['presenter.gallery', 'Z', ['z'], 'Gallery or lightbox', 'Opens or closes the current slide image and video gallery.', 'Modes & display'],
+    ['presenter.video-fullscreen', 'V', ['v'], 'Video: Fullscreen', 'Enlarges the current slide video to the stage and asks for full screen (on the audience display when presenting).', 'Modes & display'],
     ['presenter.embed', 'E', ['e'], 'Interact with embed', 'Enters or exits interaction with the current embedded page.', 'Modes & display'],
     ['presenter.font-larger', '+', ['+'], 'Increase text size', 'Increases the shared deck font size.', 'Modes & display'],
     ['presenter.font-smaller', '−', ['-'], 'Decrease text size', 'Decreases the shared deck font size.', 'Modes & display'],
     ['presenter.audience', 'F5', ['F5'], 'Launch audience', 'Opens the chromeless audience window on another display.', 'Audience'],
+    ['presenter.live', 'G', ['g'], 'Go or end live', 'Starts or ends the live audience-follow session.', 'Audience'],
+    ['presenter.poll-primary', 'Q', ['q'], 'Open or close current poll', 'Opens an armed poll or closes the poll currently collecting responses.', 'Audience'],
+    ['presenter.poll-reveal', '⇧ Q', ['Shift-q'], 'Reveal held poll results', 'Reveals a held poll’s current results to the audience.', 'Audience'],
+    ['presenter.poll-compose', 'K', ['k'], 'Compose a Quick poll', 'Opens the live Quick-poll composer.', 'Audience'],
     ['presenter.help', '?', ['?'], 'Show shortcuts', 'Shows or hides this generated shortcut sheet.', 'Help'],
     ['presenter.close', 'Esc', ['Escape'], 'Close overlay or mode', 'Closes the most local overlay, interaction, or active presentation mode.', 'Help']
   ]),
@@ -133,6 +165,30 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['pathway.delete', '⌘⌫', ['Mod-Backspace'], 'Delete pathway', 'Deletes the selected pathway after confirmation.', 'Manage'],
     ['pathway.drop-missing', '⌘⇧⌫', ['Mod-Shift-Backspace'], 'Drop missing slides', 'Removes every missing slide id from the selected pathway.', 'Manage'],
     ['pathway.help', '?', ['?'], 'Keyboard cheat-sheet', 'Opens the Pathway window’s keyboard shortcut sheet.', 'Help']
+  ]),
+  ...entries('studio', [
+    ['studio.sidebar-toggle', '⌘\\', ['Mod-\\'], 'Collapse or expand recordings', 'Toggles the recordings sidebar so the player can use the full width.', 'View']
+  ]),
+  ...entries('talktext', [
+    ['talktext.notes', 'N', ['n'], 'Notes mode', 'Shows the agent-written Notes document and its part review controls.', 'View'],
+    ['talktext.script', 'S', ['s'], 'Script mode', 'Shows the slide-aligned transcript.', 'View'],
+    ['talktext.rewrite', 'R', ['r'], 'Open rewrite', 'Opens the agent rewrite handoff for the current recording.', 'Notes'],
+    ['talktext.show-slide', '1–9', ['Digit1-Digit9'], 'Show slide', 'Shows a numbered slide in the Notes preview.', 'Slides'],
+    ['talktext.previous-slide', '[', ['BracketLeft'], 'Previous slide', 'Shows the previous slide in the Notes preview.', 'Slides'],
+    ['talktext.next-slide', ']', ['BracketRight'], 'Next slide', 'Shows the next slide in the Notes preview.', 'Slides'],
+    ['talktext.copy', 'C', ['c'], 'Copy', 'Copies the current Notes or Script export using the selected options.', 'Export'],
+    ['talktext.help', '?', ['?'], 'Keyboard cheat-sheet', 'Opens the Manage notes keyboard shortcut sheet.', 'Help'],
+    ['talktext.close', 'Esc', ['Escape'], 'Close overlay or screen', 'Closes the most local overlay, then Manage notes.', 'Help']
+  ]),
+  ...entries('importer', [
+    ['importer.move', 'J / K', ['j', 'k'], 'Previous or next slide', 'Moves through the visible slide queue in the Inspection Bench.', 'Navigation'],
+    ['importer.flagged', 'F', ['f'], 'Toggle flagged slides', 'Switches between all slides and slides needing review.', 'Navigation'],
+    ['importer.search', '⌘F', ['Mod-f'], 'Search imported slides', 'Moves focus to the imported-slide search field.', 'Navigation'],
+    ['importer.apply', '⌘↵', ['Mod-Enter'], 'Apply slide changes', 'Writes the current inspected slide override and regenerates the Outline.', 'Editing'],
+    ['importer.reset', '⌥R', ['Alt-r'], 'Reset slide', 'Removes manual overrides from the current slide and restores the deterministic decision.', 'Editing'],
+    ['importer.views', '⌘1 / ⌘2 / ⌘3', ['Mod-1', 'Mod-2', 'Mod-3'], 'Switch Tools view', 'Moves between Studio, History and Importer without opening another window.', 'View'],
+    ['importer.help', '?', ['?'], 'Keyboard cheat-sheet', 'Opens the Importer lifecycle and shortcut sheet.', 'Help'],
+    ['importer.close', 'Esc', ['Escape'], 'Close overlay or Importer', 'Closes the help sheet first, then the Importer window.', 'Help']
   ])
 ]
 
@@ -144,4 +200,38 @@ export function shortcutById(id: string): ShortcutEntry {
   const entry = SHORTCUT_REGISTRY.find((candidate) => candidate.id === id)
   if (!entry) throw new Error(`Unknown shortcut registry id: ${id}`)
   return entry
+}
+
+function normalisedEventKey(event: KeyboardEvent): string {
+  const key = event.key
+  if (key === ' ') return 'Space'
+  return key.length === 1 ? key.toLowerCase() : key
+}
+
+function eventMatchesCode(event: KeyboardEvent, code: string): boolean {
+  const parts = code.split('-')
+  const base = parts.at(-1) ?? ''
+  const modifiers = new Set(parts.slice(0, -1))
+  const mod = modifiers.has('Mod')
+  const ctrl = modifiers.has('Ctrl')
+  const shift = modifiers.has('Shift')
+  const alt = modifiers.has('Alt')
+  if (mod ? !(event.metaKey || event.ctrlKey) : event.metaKey) return false
+  if (!mod && event.ctrlKey !== ctrl) return false
+  if (mod && ctrl && !event.ctrlKey) return false
+  if (event.shiftKey !== shift || event.altKey !== alt) return false
+  return normalisedEventKey(event) === (base.length === 1 ? base.toLowerCase() : base)
+}
+
+/**
+ * Match a DOM-owned control against the registry's CodeMirror-style binding. An explicit override
+ * replaces the defaults, which lets widgets honour the same live keymap as the editor.
+ */
+export function shortcutEventMatches(
+  event: KeyboardEvent,
+  shortcutId: string,
+  override?: string
+): boolean {
+  const codes = override ? [override] : shortcutById(shortcutId).codes
+  return codes.some((code) => eventMatchesCode(event, code))
 }

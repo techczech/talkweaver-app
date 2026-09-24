@@ -1,19 +1,92 @@
 import { readFile, stat } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { createHash } from "node:crypto";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { args, slugify, parseGridDims, escapeHtml } from "./01-cli-utils.mjs";
-import { parseHeadingAttrs, parseTriggerLine, resolveAuthoredMode, parseCountdownDuration, SPINE_STOPS_PER_SLIDE, renderInline, accentForSectionName, backgroundTintForName } from "./02-triggers-layout.mjs";
+import { parseHeadingAttrs, parseTriggerLine, resolveAuthoredMode, parseCountdownDuration, timelineBlockFieldsFromStops, renderInline, accentForSectionName, backgroundTintForName, resolveClaimStyle, applyQuoteTitleAttribution, CLAIM_STYLES, DECK_ACCENT_NAMES } from "./02-triggers-layout.mjs";
 import { lexMarkdownBlocks } from "./03-markdown-lexer.mjs";
+import { chartObjectTokenAt, parseMarkdownFenceOpeningLine, isMarkdownFenceClosingLine } from "./03-object-token.mjs";
 import { extractTitle, updateDeckTitle } from "./04-html-extraction.mjs";
 import { collectIconGapTerms, collectSemanticIconNeeds, collectIconSuggestions, collectIconlistNoIcons } from "./05-icons.mjs";
 import { mapBlocksToLayout } from "./06-block-renderers.mjs";
 import { buildDeckHtmlFromModel, adaptCanonicalPptJson, adaptLearnWeaverExport } from "./07-assembly.mjs";
+import { annotateQuoteLayout, quoteSplitCountForBlocks, splitQuoteSlideBlocks } from "./quote-layout.mjs";
+import { timelineContinuationParts } from "./timeline-layout.mjs";
+import { annotateCodeLayout } from "./code-layout.mjs";
 import { resolveSlideFrame, FRAME_BUILTINS } from "./11-frame.mjs";
+import { parseSimpleYaml } from "./simple-yaml.mjs";
+import { posterBlockFor, posterAccentFor, applyAuthoredPosters, TITLE_STYLES } from "./title-poster.mjs";
 import { parseOutlineTree } from "./14-outline-tree.mjs";
+import { readDeckFlag, deckFlagOn, readDeckChoice, readDeckMinutes, DECK_PALETTES, DECK_FONTS, DECK_LOGO_COLOURS } from "./deck-settings.mjs";
 import { sequence } from "./15-sequencer.mjs";
+import { pollDirectivesFor, pollDefinitionFor, rebasePollDefinition } from "./poll-authoring.mjs";
+import { SECTION_ONLY_TRIGGER_KEYS } from "../triggers.mjs";
+import { pictureKeyForSlide } from "./10-projections.mjs";
 
 // =============================================================================
 // 8. Source adapters — outline v2/v1, JSON, static HTML -> model; prepareSource dispatches
 // =============================================================================
+
+// AUTHOR WINS (Composition ticket 1). A heading that carries child headings and an empty body is
+// SHAPED like a section divider, so structure supplies the divider DEFAULT — layout `section-title`
+// plus the derived section/subsection role. It is a default, never a verdict: the moment the author
+// writes a token of their own on that heading the slide is theirs, and the normal `inferLayout` +
+// role derivation run with the author's tokens winning. These keys are the exception — they carry
+// no design decision, so a heading wearing only these is still bare:
+//   • identity + provenance (the shared registry's `systemTokens`, entries.ts), stamped by the app;
+//   • the section-scoped triggers, which configure the SECTION (its accent, its timer, how its
+//     children are shown) and say nothing about this heading's own slide — a container section is
+//     divider-shaped by definition.
+const DIVIDER_NEUTRAL_ATTR_KEYS = new Set([
+  "id", "tags", "from", "clonedFrom",
+  ...SECTION_ONLY_TRIGGER_KEYS.map((entry) => entry.key),
+  "timer"
+]);
+
+// The divider roles, and the tokens that ASK for a divider. `{sub}` is the registered
+// subsection-divider trigger and `{role=section-title}` / `{role=subsection-title}` name the
+// divider outright: an author writing one of those wants the divider, so it can never suppress it.
+const DIVIDER_ROLES = new Set(["section-title", "subsection-title"]);
+const asksForDivider = (key, attrs) => key === "sub"
+  || ((key === "role" || key === "layout") && DIVIDER_ROLES.has(attrs?.[key]));
+
+// The ABSORBING layout families: each one pulls its `####` children INTO the parent slide
+// (foldChildLayoutNodes). A fold leaves the parent holding cards and no children, so a heading that
+// still has BOTH its children and an empty body was REFUSED the fold — wrong child count: contrast
+// wants 2–3, compare and columns want 2+. Their slide would render with nothing in it, so the
+// divider stands. A divider beats a blank slide, and the refusal is already reported on its own
+// terms (contrast-groups-count).
+const ABSORBING_LAYOUTS = new Set(["contrast", "compare", "columns", "cards", "image-grid", "carousel"]);
+
+/**
+ * The ONE decision both the slide emitter and the sequencer's spine probe ask: is this heading a
+ * section divider by default, and if its shape says yes, did the author's own tokens override it?
+ *
+ * @param {{isSection?: boolean, lines?: string[], cards?: unknown[]}} slide — the slide (or probe).
+ * @param {Iterable<string>} authoredKeys — attribute keys THIS heading set itself (its trigger
+ *   group plus any stray trigger line in its body). Deck-wide `triggers:` defaults are deliberately
+ *   excluded: they are not a decision about this slide.
+ * @param {string} [authoredLayout] — the layout `inferLayout` reads off the author's tokens. Only
+ *   used to spot an absorbing family whose fold was refused.
+ * @returns {{divider: boolean, structural: boolean, foldRefused: boolean, authorTokens: string[]}}
+ *   `structural` = the shape qualifies; `divider` = the divider default actually applies;
+ *   `foldRefused` = the divider stands because the author's absorbing layout has nothing to show;
+ *   `authorTokens` = the sorted author keys that overrode it (empty unless `structural && !divider`).
+ */
+export function sectionDividerDecision(slide, authoredKeys, authoredLayout) {
+  const structural = Boolean(slide?.isSection)
+    && !(slide?.lines || []).some((line) => String(line).trim())
+    && (slide?.cards || []).length === 0;
+  if (!structural) return { divider: false, structural: false, foldRefused: false, authorTokens: [] };
+  if (ABSORBING_LAYOUTS.has(authoredLayout)) {
+    return { divider: true, structural: true, foldRefused: true, authorTokens: [] };
+  }
+  const attrs = slide?.attrs || {};
+  const authorTokens = [...new Set(authoredKeys || [])]
+    .filter((key) => !DIVIDER_NEUTRAL_ATTR_KEYS.has(key) && !asksForDivider(key, attrs))
+    .sort();
+  return { divider: authorTokens.length === 0, structural: true, foldRefused: false, authorTokens };
+}
 
 function markdownLinesToHtml(lines) {
   const html = [];
@@ -78,58 +151,6 @@ function markdownLinesToHtml(lines) {
   flushParagraph();
   flushList();
   return html.join("\n") || "<p></p>";
-}
-
-function parseYamlScalar(value) {
-  const trimmed = String(value).trim();
-  if (trimmed === "true") return true;
-  if (trimmed === "false") return false;
-  if (trimmed === "null") return null;
-  if (trimmed === "[]") return [];
-  if (/^["'].*["']$/.test(trimmed)) return trimmed.slice(1, -1);
-  if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
-  return trimmed;
-}
-
-function parseInlineMap(s) {
-  const body = s.trim().replace(/^\{/, "").replace(/\}$/, "");
-  const obj = {};
-  for (const pair of body.split(",")) {
-    const i = pair.indexOf(":"); if (i < 0) continue;
-    obj[pair.slice(0, i).trim()] = parseYamlScalar(pair.slice(i + 1).trim());
-  }
-  return obj;
-}
-
-function parseSimpleYaml(value) {
-  const data = {};
-  let parentKey = null;
-  for (const rawLine of value.split(/\r?\n/)) {
-    if (!rawLine.trim() || rawLine.trim().startsWith("#")) continue;
-    const childMatch = rawLine.match(/^\s{2,}([A-Za-z0-9_-]+):\s*(.*)$/);
-    if (childMatch && parentKey && typeof data[parentKey] === "object" && !Array.isArray(data[parentKey])) {
-      const childScalar = childMatch[2];
-      data[parentKey][childMatch[1]] = (childScalar.startsWith("{") && childScalar.trimEnd().endsWith("}"))
-        ? parseInlineMap(childScalar)
-        : parseYamlScalar(childScalar);
-      continue;
-    }
-    const match = rawLine.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
-    if (!match) continue;
-    const key = match[1];
-    const scalar = match[2];
-    if (scalar.startsWith("{") && scalar.trimEnd().endsWith("}")) {
-      data[key] = parseInlineMap(scalar);
-      parentKey = null;
-    } else if (scalar === "") {
-      data[key] = {};
-      parentKey = key;
-    } else {
-      data[key] = parseYamlScalar(scalar);
-      parentKey = null;
-    }
-  }
-  return data;
 }
 
 function parseMarkdownSource(markdown) {
@@ -401,10 +422,9 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
   // thank-you slides show just the name — no obfuscation, no "hidden"/placeholder text. The email
   // commonly lives inside the author string, e.g. `Dominik Lukeš (name@host)`; remove it and any
   // surrounding ()/<> and tidy the whitespace. Frontmatter `hide_email: true` (or `hide-email`).
-  const hideEmail = (() => {
-    const v = meta.hide_email ?? meta["hide-email"];
-    return v === true || (typeof v === "string" && /^(true|yes|on|1)$/i.test(v.trim()));
-  })();
+  const hideEmailFlag = readDeckFlag(meta.hide_email ?? meta["hide-email"]);
+  if (hideEmailFlag.state === "unreadable") warnings.push(`deck-flag-unknown:hide_email:${hideEmailFlag.raw}`);
+  const hideEmail = deckFlagOn(hideEmailFlag);
   if (hideEmail && typeof meta.author === "string") {
     meta.author = meta.author
       .replace(/\s*[(<]?\s*[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\s*[)>]?/g, "")
@@ -416,7 +436,9 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
   // `{palette=green}` trigger seen on ANY slide heading sets it deck-wide (it is a deck setting,
   // not a per-slide one). Only the known alternate ("green") is honoured; anything else stays
   // on the default Oxford-blue/crimson cycle. flushSlide() records the first seen value below.
-  let deckPalette = typeof meta.palette === "string" ? meta.palette.trim().toLowerCase() : "";
+  const paletteChoice = readDeckChoice(meta.palette, DECK_PALETTES);
+  if (paletteChoice.state === "unknown") warnings.push(`palette-unknown:${paletteChoice.raw}`);
+  let deckPalette = paletteChoice.value;
   // Frame defaults (Wave 1, task 2): frontmatter `defaults:` sets deck-level frame attrs;
   // `sections:` maps section titles to per-section frame overrides. Attached to every slide.
   const deckDefaults = (meta.defaults && typeof meta.defaults === "object") ? meta.defaults : {};
@@ -443,15 +465,16 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     // title=show/compact are titleMode values, not frame placement — they must not count
     // as an explicit frame title (they'd wrongly force top placement on left-rail layouts).
     const frameTitleValue = (v) => v != null && v !== "show" && v !== "compact";
-    return (frameTitleValue(rawAttrs.title) || rawAttrs.sidebar != null)
+    return frameTitleValue(rawAttrs.title)
       || (frameTitleValue(sectionDef.title) || sectionDef.sidebar != null)
       || (frameTitleValue(deckDefaults.title) || deckDefaults.sidebar != null);
   };
 
   // section_labels: default OFF (2026-06-24); opt in with `section_labels: on`. An explicit
   // {kicker=…} still shows.
-  const sectionLabelRaw = meta.section_labels ?? meta["section-labels"];
-  const sectionLabels = sectionLabelRaw === true || /^(on|true|yes|show)$/i.test(String(sectionLabelRaw ?? ""));
+  const sectionLabelFlag = readDeckFlag(meta.section_labels ?? meta["section-labels"]);
+  if (sectionLabelFlag.state === "unreadable") warnings.push(`deck-flag-unknown:section_labels:${sectionLabelFlag.raw}`);
+  const sectionLabels = deckFlagOn(sectionLabelFlag);
   const autoKicker = (s) => s.attrs.kicker || (sectionLabels ? s.sectionTitle || "" : "");
   // Presenter talk clock (2026-06-12): frontmatter `duration: 60min` (any countdown duration
   // form) puts a remaining-time readout next to the presenter's elapsed clock.
@@ -464,18 +487,59 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
   // Presenter clock amber/dark-amber thresholds (Task 3): frontmatter `warn-at:` / `urgent-at:`
   // (whole minutes before the deadline) override the Settings global default (threaded in via
   // `defaults`), which itself falls back to 5/1. urgentAt is clamped so it never exceeds warnAt.
-  const warnAtRaw = meta["warn-at"] ?? meta.warn_at ?? defaults?.warnAtMinutes ?? 5;
-  const urgentAtRaw = meta["urgent-at"] ?? meta.urgent_at ?? defaults?.urgentAtMinutes ?? 1;
-  const warnAtMinutes = Number(warnAtRaw);
-  const urgentAtMinutes = Math.min(Number(urgentAtRaw), warnAtMinutes);
+  // Ticket 10: an unreadable threshold used to reach the deck as `data-warn-at="NaN"` — the
+  // presenter clock then never turned amber and nothing said why. Each level is read on its own so
+  // a bad FRONTMATTER value warns and falls back to the Settings default (then 5/1), while the
+  // Settings values — which the app validates — are trusted silently.
+  const readThreshold = (key, frontmatterRaw, settingsValue, houseDefault) => {
+    const read = readDeckMinutes(frontmatterRaw);
+    if (read.state === "number") return read.minutes;
+    if (read.state === "unreadable") warnings.push(`timer-threshold-unreadable:${key}:${read.raw}`);
+    const fromSettings = Number(settingsValue);
+    return Number.isFinite(fromSettings) ? fromSettings : houseDefault;
+  };
+  const warnAtMinutes = readThreshold("warn-at", meta["warn-at"] ?? meta.warn_at, defaults?.warnAtMinutes, 5);
+  const urgentAtRequested = readThreshold("urgent-at", meta["urgent-at"] ?? meta.urgent_at, defaults?.urgentAtMinutes, 1);
+  // urgent-at never exceeds warn-at — but the clamp is now stated rather than applied in silence.
+  if (urgentAtRequested > warnAtMinutes) warnings.push(`timer-threshold-clamped:urgent-at:${urgentAtRequested}:${warnAtMinutes}`);
+  const urgentAtMinutes = Math.min(urgentAtRequested, warnAtMinutes);
   // Deck font (ADR-0005, locked 2026-07-11): Trebuchet MS is the face; frontmatter
   // `font: gill-sans` / `font: verdana` are the sanctioned user options. Anything else warns
   // and falls back to the default stack.
-  const fontRaw = String(meta.font ?? "").trim().toLowerCase().replace(/\s+/g, "-");
-  const deckFont = ["gill-sans", "verdana"].includes(fontRaw) ? fontRaw : "";
-  if (fontRaw && !deckFont && fontRaw !== "trebuchet" && fontRaw !== "trebuchet-ms") warnings.push(`font-unknown:${meta.font}`);
+  const fontChoice = readDeckChoice(meta.font, DECK_FONTS, { aliases: { "trebuchet-ms": "trebuchet" } });
+  if (fontChoice.state === "unknown") warnings.push(`font-unknown:${fontChoice.raw}`);
+  // `trebuchet` is the locked house face: it is a documented CHOICE but stamps no attribute, so
+  // picking it is byte-identical to leaving the key out.
+  const deckFont = fontChoice.value === "trebuchet" ? "" : fontChoice.value;
+  // Deck-level logo colour (Task 9a): by default a {logolist} slide that mixes full-colour svgl
+  // marks with single-colour silhouette-only marks is brought to one deck accent colour so the row
+  // reads as one system (applySlideMonochrome, in 07-assembly). Frontmatter `logo-colour: brand`
+  // (British; `logo-color` alias) opts out — each brand keeps its real colours where TalkWeaver has
+  // them and silhouette-only marks render flat. Only the documented "brand" value switches; the key
+  // absent or any other value keeps the unified default, so an existing deck renders byte-identically.
+  const logoColourChoice = readDeckChoice(meta["logo-colour"] ?? meta["logo-color"], DECK_LOGO_COLOURS);
+  if (logoColourChoice.state === "unknown") warnings.push(`logo-colour-unknown:${logoColourChoice.raw}`);
+  const brandLogoColour = logoColourChoice.value === "brand" ? "brand" : "unified";
+  // Ticket 10 — the remaining closed vocabularies are validated ONCE here, where the deck's own
+  // settings are read, rather than at the point of use where a silent fallback was invisible:
+  //
+  //   colour / accent  → the title-poster accent (posterAccentFor / 07-assembly titleSkin)
+  //   title_style      → the opening poster variant (title-poster posterVariantFor)
+  //   claim_style      → the deck default claim treatment (02-triggers resolveClaimStyle)
+  //
+  // Each still FALLS BACK exactly as before — an unreadable deck setting must never fail a build —
+  // but it now says so, so "I set it and nothing happened" has an answer in the Layout Doctor.
+  const colourChoice = readDeckChoice(meta.colour ?? meta.accent, DECK_ACCENT_NAMES);
+  if (colourChoice.state === "unknown") warnings.push(`colour-unknown:${colourChoice.raw}`);
+  const titleStyleChoice = readDeckChoice(meta.title_style, TITLE_STYLES);
+  if (titleStyleChoice.state === "unknown") warnings.push(`title-style-unknown:${titleStyleChoice.raw}`);
+  const claimStyleChoice = readDeckChoice(meta.claim_style ?? meta["claim-style"], CLAIM_STYLES);
+  if (claimStyleChoice.state === "unknown") warnings.push(`claim-style-unknown:${claimStyleChoice.raw}`);
   // Deck license (2026-06-13): frontmatter `license:` (+ credits/note/url) → a footer popup,
   // never a dedicated slide. parseLicense expands common CC codes to a friendly name + URL.
+  // `license:` is the one closed vocabulary with no silent fallback: an unlisted name is kept
+  // verbatim (with `license-url` as its link), so it is honoured rather than ignored and warns
+  // about nothing.
   const license = parseLicense(meta);
   const subsections = []; // Flat record of section-like nodes below `##` {id, section, title}
   let slide = null;
@@ -528,7 +592,9 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     const blocks = lexMarkdownBlocks(s.lines);
     const hasMedia = blocks.some((b) => ["image", "embed", "video"].includes(b.type));
     const hasList = blocks.some((b) => b.type === "list");
-    const hasParagraph = blocks.some((b) => b.type === "paragraph");
+    // ADR-0023 §4: a claim is a wholly bold PARAGRAPH — it occupies the same slot, so layout
+    // inference must not see a slide differently because its prose happens to be a claim.
+    const hasParagraph = blocks.some((b) => b.type === "paragraph" || b.type === "claim");
     const hasQuote = blocks.some((b) => b.type === "quote");
     const hasText = hasList || hasParagraph || hasQuote;
     // A slide carrying a fenced code/trace block (and no media) is a code slide: a `trace` block
@@ -567,6 +633,9 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     const hasStructural = blocks.some((b) =>
       ["list", "timeline", "table", "quote"].includes(b.type));
     if (hasParagraph && !hasStructural) return "statement";
+    // A bare leaf heading states itself. Every token that implies a different layout or role has
+    // already returned above, so presentation and stepping tokens must not veto this fallthrough.
+    if (blocks.length === 0 && !s.isSection) return "statement";
     return "list";
   }
 
@@ -609,6 +678,9 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     const list = rawBlocks.find((b) => b && b.type === "list" && Array.isArray(b.items) && b.items.length);
     if (!list) return null;
     const childTrees = Array.isArray(list.children) ? list.children : [];
+    // Ticket 21: a per-item `{icon=…}` on the source list rides onto its card so the cards
+    // Icons option resolves it through the same pipeline as an icon list.
+    const overrides = Array.isArray(list.iconOverrides) ? list.iconOverrides : [];
     return list.items.map((text, i) => {
       const kids = Array.isArray(childTrees[i]) ? childTrees[i] : [];
       const blocks = kids.length
@@ -618,13 +690,13 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
             children: kids.map((k) => (Array.isArray(k.children) ? k.children : []))
           }])
         : [];
-      return { title: text, blocks };
+      return { title: text, blocks, ...(overrides[i] ? { icon: overrides[i] } : {}) };
     });
   }
 
   function quotifyCardBlocks(blocks) {
     if (!Array.isArray(blocks) || blocks.length < 2) return blocks;
-    if (!blocks.every((b) => b && b.type === "paragraph")) return blocks;
+    if (!blocks.every((b) => b && (b.type === "paragraph" || b.type === "claim"))) return blocks;
     const last = blocks[blocks.length - 1];
     if (!looksLikeAttribution(last.text)) return blocks;
     const bodyParas = blocks.slice(0, -1).map((b) => b.text).filter(Boolean);
@@ -705,7 +777,9 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
   function inferLayoutFromBlocks(blocks) {
     const hasMedia = blocks.some((b) => ["image", "embed", "video"].includes(b.type));
     const hasList = blocks.some((b) => b.type === "list" || b.type === "feature-list");
-    const hasParagraph = blocks.some((b) => b.type === "paragraph");
+    // ADR-0023 §4: a claim is a wholly bold PARAGRAPH — it occupies the same slot, so layout
+    // inference must not see a slide differently because its prose happens to be a claim.
+    const hasParagraph = blocks.some((b) => b.type === "paragraph" || b.type === "claim");
     const hasQuote = blocks.some((b) => b.type === "quote");
     const hasText = hasList || hasParagraph || hasQuote;
     const codeBlock = blocks.find((b) => b.type === "code");
@@ -723,6 +797,9 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     }
     const hasStructural = blocks.some((b) => ["list", "feature-list", "timeline", "table", "quote"].includes(b.type));
     if (hasParagraph && !hasStructural) return "statement";
+    // Carousel children have no trigger surface of their own at this seam: an empty block list
+    // means their heading is the statement, matching top-level bare-heading inference.
+    if (blocks.length === 0) return "statement";
     return "list";
   }
 
@@ -756,11 +833,25 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
 
   function flushSlide() {
     if (!slide) return;
-    const titleOnlySection = slide.isSection
-      && !slide.lines.some((line) => String(line).trim())
-      && slide.cards.length === 0;
-    let layout = titleOnlySection ? "section-title" : inferLayout(slide);
+    const baseId = slide.attrs.id || slide.id;
+    const authored = pollDirectivesFor(slide.lines);
+    const authoredPoll = pollDefinitionFor(slide, lexMarkdownBlocks(authored.contentLines), baseId, authored, warnings);
+    if (authoredPoll) slide.lines = authored.contentLines;
+    // Structure proposes the divider, the author disposes (see sectionDividerDecision).
+    const authoredLayout = inferLayout(slide);
+    const dividerDecision = sectionDividerDecision(slide, slide.authoredAttrKeys, authoredLayout);
+    const titleOnlySection = dividerDecision.divider;
+    if (dividerDecision.structural && !dividerDecision.divider) {
+      warnings.push(`divider-default-suppressed-by-tokens:${slide.id}:${dividerDecision.authorTokens.join(", ")}`);
+    }
+    let layout = titleOnlySection ? "section-title" : authoredLayout;
     const rawBlocks = lexMarkdownBlocks(slide.lines);
+    if (
+      rawBlocks.length > 0
+      && rawBlocks.every((block) => block?.type === "object-chart")
+    ) {
+      layout = "chart";
+    }
     // Wire timeline presentation attr from the slide heading onto every timeline block:
     //   {timeline=rail|columns|compact|horizontal|spine|pills}  → presentation mode (else auto)
     for (const b of rawBlocks) {
@@ -773,14 +864,23 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     let statementVariant = "";
     let backgroundTint = "";
 
-    // Round B value vocabularies. Bare {iconlist}/{statement} remain their unchanged defaults;
-    // explicit unknown values warn and deliberately fall back to those defaults.
+    // Round B value vocabularies. Bare {iconlist} pins NO variant — T28 (Dominik, 2026-09-17)
+    // makes the absence of an {iconlist=…} VALUE the auto rule (≤3 items → boxes, >3 → plain
+    // icon rows, decided in 06-block-renderers), so only an explicit value may pin one.
+    // Bare {statement} stays its unchanged default; explicit unknown values warn and
+    // deliberately fall back to those defaults.
     if (slide.attrs.iconlist != null) {
-      const variant = slide.attrs.iconlist === true ? "boxes" : String(slide.attrs.iconlist).trim().toLowerCase();
-      if (variant === "list") iconlistVariant = "list";
-      else if (variant !== "boxes") warnings.push(`iconlist-unknown:${variant}`);
-      // The value form is still an icon list even though it bypasses the bare-word dictionary.
-      slide.attrs.liststyle = "icons";
+      const variant = slide.attrs.iconlist === true ? "" : String(slide.attrs.iconlist).trim().toLowerCase();
+      if (variant === "list" || variant === "boxes") iconlistVariant = variant;
+      else if (variant) warnings.push(`iconlist-unknown:${variant}`);
+      // The value form is still an icon list even though it bypasses the bare-word dictionary —
+      // but it must never override a list style the author wrote: assign only when no authored
+      // token resolved a list style, so {numbered}{iconlist=list} stays numbers (the variant is
+      // still recorded) and {iconlist=list} alone still becomes icons. Token order cannot
+      // resurrect the override: attrs are a map, resolved before this runs.
+      if (slide.attrs.liststyle == null || slide.attrs.liststyle === true) {
+        slide.attrs.liststyle = "icons";
+      }
     }
     if (slide.attrs.statement != null) {
       const variant = slide.attrs.statement === true ? "default" : String(slide.attrs.statement).trim().toLowerCase();
@@ -800,6 +900,19 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
         if (b && b.type === "timeline") b.mode = slide.attrs.timeline;
       }
     }
+    // Ticket 21 — table options. {table-header=off}: the first row is an ordinary row (no tint,
+    // no weight, rendered inside tbody). {table-columns=off}: hairline rules between rows only.
+    // Both ride onto every table block on the slide (pipe tables and the {table} outline alike).
+    const tableHeaderOff = String(slide.attrs["table-header"] ?? "").trim().toLowerCase() === "off";
+    const tableColumnsOff = String(slide.attrs["table-columns"] ?? "").trim().toLowerCase() === "off";
+    if (tableHeaderOff || tableColumnsOff) {
+      for (const b of blocks) {
+        if (b && b.type === "table") {
+          if (tableHeaderOff) b.headerRow = false;
+          if (tableColumnsOff) b.columnRules = false;
+        }
+      }
+    }
     // Wire the flow diagram direction from the slide heading onto every flow block:
     //   {flow=horizontal|vertical|loop|branch}  (default horizontal). An unknown value falls
     //   back to horizontal at render time.
@@ -812,7 +925,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     // bare words) rides onto every chart block; default bar at render time.
     if (slide.attrs.chart != null && slide.attrs.chart !== true) {
       for (const b of blocks) {
-        if (b && b.type === "chart") b.shape = slide.attrs.chart;
+        if (b && b.type === "chart" && !b.objectToken) b.shape = slide.attrs.chart;
       }
     }
     if (layout === "equation") {
@@ -925,7 +1038,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     // fall through to the normal media/copy-visual layout (a grid on one slide + the lightbox).
     const wantCarouselTrigger = slide.attrs.carousel === true;
     // {compare} (ADR-0005 "50/50 comparison"): the slide's first two #### groups become two
-    // halves side by side — half A on the section tint, half B on paper. Needs exactly two
+    // equal halves side by side. Needs exactly two
     // groups; a compare slide with <2 groups warns and renders nothing meaningful.
     const isCompare = layout === "compare" && fromHashCards && slide.cards.length >= 2;
     const isImageGridHash = fromHashCards && layout === "image-grid";
@@ -945,7 +1058,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     const hashStaticCards = fromHashCards && isCardsGridForced;
 
     if (isCompare) {
-      // {compare} (ADR-0005): the first two #### groups become the two halves. Each half's
+      // {compare} (ADR-0005): the first two #### groups become the two equal halves. Each half's
       // heading is its small-caps mono label; its lines become the half's content (statements
       // or lists). The slide's own title is nav-only (assembly hides it, like {quote}); half B
       // reveals as one beat (MODE_SELECTOR carries `.layout-compare .compare-half.half-b`).
@@ -1008,6 +1121,9 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
         ? slide.cards.flatMap((c) => splitQuoteCards(c.title, featurizeCardBlocks(quotifyCardBlocks(lexMarkdownBlocks(c.lines)))))
         : cardsFromList(rawBlocks);
       if (galleryCards) {
+        const sourceList = !fromHashCards
+          ? rawBlocks.find((block) => block && block.type === "list" && Array.isArray(block.items) && block.items.length)
+          : null;
         layout = "cards";
         blocks = fromHashCards ? blocks : [];
         blocks = [...blocks, {
@@ -1015,24 +1131,45 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
           title: slide.title,
           kicker: autoKicker(slide),
           cards: galleryCards,
-          stepped: false
+          stepped: false,
+          numbered: slide.attrs.liststyle === "numbers" || sourceList?.ordered === true,
+          // Ticket 21 — the cards Icons option: {icons} (and its alias {iconlist}) resolve to
+          // liststyle=icons; the renderer gives every card an accent icon from the same
+          // pipeline an icon list uses (per-item {icon=…}, deck `icons:` map, vocabulary).
+          icons: slide.attrs.liststyle === "icons"
         }];
+        // The bare word {iconlist} resolves to the same liststyle=icons as {icons}, so the alias is
+        // read off the authored heading / Trigger line (the value form {iconlist=…} sets the attr).
+        const authoredRaw = `${slide.treeNode?.headingLine ?? ""}\n${slide.treeNode?.triggerLine ?? ""}`;
+        const authoredIconlist = slide.attrs.iconlist != null
+          || /\{(?:[^}]*[\s,])?iconlist(?=[\s,}])[^}]*\}/.test(authoredRaw);
+        if (authoredIconlist) warnings.push(`cards-iconlist-alias:${slide.attrs.id || slide.id}`);
       }
     }
     // Opening heuristic: the first non-section-title slide becomes the opening UNLESS an
     // explicit {role=…} is set. E7 records whether this opening came from the heuristic (vs
     // an explicit attr) so the auto title-slide pass can demote it — the auto deck-title
     // slide takes the opening role and the first authored slide becomes plain content.
-    const derivedSectionRole = slide.isSection
+    // A heading with children carries the divider role by DERIVATION — unless the author's own
+    // tokens took the slide over (the divider layout is gone, so its role must go with it: a
+    // tokened parent heading compiles exactly like the same heading without children), or unless
+    // the author named a role outright, which always wins over the derivation.
+    const derivedSectionRole = slide.isSection && !(dividerDecision.structural && !dividerDecision.divider)
       ? (slide.nodeLevel <= 2 ? "section-title" : "subsection-title")
       : "";
     const parsedRole = slide.attrs.role === "section-title" || slide.attrs.role === "subsection-title"
       ? ""
       : slide.attrs.role;
+    if (parsedRole && slide.isSection) {
+      warnings.push(`role-token-overrides-structure:${slide.id}:${parsedRole}`);
+    }
+    // ADR-0023 §2a: {title=compact} is a RETIRED treatment. The compact kicker-title form no
+    // longer exists, so the token is accepted (old decks must not start erroring) and renders as
+    // the layout's own regime — the hint is how the author learns it now does nothing.
+    if (slide.attrs.title === "compact") warnings.push(`retired-title-compact:${slide.id}`);
     const heuristicOpening = !parsedRole && !slide.isSection
       && slides.filter((s) => s.role !== "section-title" && s.role !== "subsection-title").length === 0;
-    const role = normalizeRole(derivedSectionRole || parsedRole || (heuristicOpening ? "opening" : "content"), warnings, slide.id);
-    const baseId = slide.attrs.id || slide.id;
+    const role = normalizeRole(parsedRole || derivedSectionRole || (heuristicOpening ? "opening" : "content"), warnings, slide.id);
 
     // Push one slide record, de-duplicating its id against slides already emitted.
     const emit = (record) => {
@@ -1043,8 +1180,19 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
         finalId = `${record.id}-${suffix}`;
         suffix += 1;
       }
-      slides.push({ ...record, id: finalId });
+      const finalRecord = { ...record, id: finalId };
+      if (finalRecord.poll && finalId !== record.id) {
+        finalRecord.poll = rebasePollDefinition(finalRecord.poll, finalId);
+      }
+      slides.push(finalRecord);
     };
+
+    // ADR-0023 §5 rule 2: a quote with no attribution is attributed to the slide's own title,
+    // recorded on the block (`citeFromTitle`) so every consumer — markup, corpus census,
+    // projections, handout — sees the same attribution.
+    applyQuoteTitleAttribution(blocks, slide.title);
+    annotateQuoteLayout(blocks, layout, baseId, (warning) => warnings.push(warning));
+    annotateCodeLayout(blocks, layout, baseId, (warning) => warnings.push(warning));
 
     const timelineHorizontal = slide.attrs.timeline === "horizontal"
       || slide.attrs.timeline === "spine"
@@ -1075,6 +1223,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
       kicker: titleOnlySection && slide.nodeLevel > 2 ? slide.sectionTitle : autoKicker(slide),
       navTitle: slide.title,
       title: slide.title,
+      ...(authoredPoll ? { poll: authoredPoll } : {}),
       // Authored stepping mode: {mode=reveal|focus} activates that mode on arrival. The legacy
       // {reveal=steps} attr is kept as an alias for {mode=reveal} (documented; migrate lazily).
       mode: resolveAuthoredMode(slide.attrs),
@@ -1090,6 +1239,9 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
       noStep: slide.attrs.nostep === true,
       // {novalues}: chart value labels hidden (shape-only comparison).
       noValues: slide.attrs.novalues === true,
+      // ADR-0023 §4: which claim treatment a wholly bold paragraph takes on this slide —
+      // {claim=plain|bar} on the slide, else the deck's `claim_style:`, else plain (C1).
+      claimStyle: resolveClaimStyle(slide.attrs, meta),
       // {font-body=xs|s|m|l|xl} / {font-title=…}: per-slide type-ramp override (m = ramp default).
       fontBody: ["xs","s","m","l","xl"].includes(String(slide.attrs["font-body"] ?? "")) ? slide.attrs["font-body"] : "",
       fontTitle: ["xs","s","m","l","xl"].includes(String(slide.attrs["font-title"] ?? "")) ? slide.attrs["font-title"] : "",
@@ -1178,32 +1330,47 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
       frameTitleExplicit: frameTitleExplicitFor(slide)
     };
 
-    // OVERFLOW = AUTO-SPLIT (the chosen default for spine/pills timelines). A spine or pills
-    // timeline with more than SPINE_STOPS_PER_SLIDE date stops becomes several continuation
-    // slides — each a proper, generously-spaced spine of ≤cap stops, same title plus a "(n/N)"
-    // marker, distinct ids. One timeline block thus emits N slides; nav/overview/projections all
-    // derive from the `slides` array, so they count the continuations correctly. Only applies
-    // when the spine/pills timeline is the slide's single block (a mixed slide is left intact and
-    // simply renders its stops — the cap is a legibility default, not a hard constraint).
-    const spineBlock = blocks.length === 1 && blocks[0] && blocks[0].type === "timeline"
-      && (blocks[0].mode === "spine" || blocks[0].mode === "pills") ? blocks[0] : null;
-    const spineGroups = spineBlock && Array.isArray(spineBlock.groups) ? spineBlock.groups : null;
-    if (spineGroups && spineGroups.length > SPINE_STOPS_PER_SLIDE) {
-      const chunks = [];
-      for (let i = 0; i < spineGroups.length; i += SPINE_STOPS_PER_SLIDE) {
-        chunks.push(spineGroups.slice(i, i + SPINE_STOPS_PER_SLIDE));
-      }
-      const continuationIds = Array.isArray(slide.spineContinuationIds) ? slide.spineContinuationIds : [];
-      chunks.forEach((chunk, idx) => {
-        const marker = `(${idx + 1}/${chunks.length})`;
+    // OVERFLOW = AUTO-SPLIT (the chosen default for spine/pills/horizontal timelines). A timeline
+    // with more stops than its mode holds (TIMELINE_STOPS_PER_SLIDE, timeline-layout.mjs) becomes
+    // several continuation slides — each a proper, generously-spaced track of ≤cap stops, cut into
+    // balanced parts, same title plus a "(n/N)" marker, distinct ids. One timeline block thus emits
+    // N slides; nav/overview/projections all derive from the `slides` array, so they count the
+    // continuations correctly. Only applies when the timeline is the slide's single block (a mixed
+    // slide is left intact and simply renders its stops — the cap is a legibility default, not a
+    // hard constraint). The continuation ids were reserved in the tree by
+    // dedupeTreeIdsAndInsertSequenceSplits, so the outline, sequencer and every id consumer already
+    // know these slides exist.
+    const continuationIds = Array.isArray(slide.continuationIds) ? slide.continuationIds : [];
+    const timelineParts = timelineContinuationParts(blocks, timelineBlockFieldsFromStops);
+    if (timelineParts) {
+      timelineParts.forEach((partBlock, idx) => {
+        const marker = `(${idx + 1}/${timelineParts.length})`;
         emit({
           ...record,
           id: idx === 0 ? baseId : (continuationIds[idx - 1] || `${baseId}-${idx + 1}`),
-          // Each continuation is a full spine over its slice of stops; preserve all other block fields.
-          blocks: [{ ...spineBlock, groups: chunk }],
+          // Each continuation is a full track over its slice of stops; all other block fields survive.
+          blocks: [partBlock],
           title: record.title ? `${record.title} ${marker}` : marker,
           navTitle: record.navTitle ? `${record.navTitle} ${marker}` : marker,
           // Only the first continuation inherits the opening-heuristic flag (others are content).
+          role: idx === 0 ? record.role : normalizeRole("content", warnings, baseId),
+          openingFromHeuristic: idx === 0 ? record.openingFromHeuristic : false
+        });
+      });
+      return;
+    }
+
+    // ADR-0023 §9: a quote-only slide whose quote does not fit the one panel becomes several
+    // continuation slides through the SAME mechanism — ids `<id>--2`, `<id>--3`, the same title
+    // and nav title (no marker: the panel carries "n / N"), role content after the first, cite on
+    // the last part only. Same single-block condition as the timeline.
+    const quoteParts = splitQuoteSlideBlocks(blocks, layout);
+    if (quoteParts) {
+      quoteParts.forEach((partBlocks, idx) => {
+        emit({
+          ...record,
+          id: idx === 0 ? baseId : (continuationIds[idx - 1] || `${baseId}--${idx + 1}`),
+          blocks: partBlocks,
           role: idx === 0 ? record.role : normalizeRole("content", warnings, baseId),
           openingFromHeuristic: idx === 0 ? record.openingFromHeuristic : false
         });
@@ -1245,31 +1412,33 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     }
   }
 
-  function contentLinesAndAttrs(node, attrs, { emitWarnings = true } = {}) {
+  // `authoredKeys`, when supplied, collects every attribute key this node set ITSELF via a stray
+  // trigger line — the caller seeds it with the heading's own trigger group. It is how the divider
+  // decision tells an author's token from a deck-wide `triggers:` default (both land in `attrs`).
+  function contentLinesAndAttrs(node, attrs, { emitWarnings = true, authoredKeys = null } = {}) {
     const linesOut = [];
-    let inFence = false;
-    let fenceMark = "";
-    for (const line of node.contentLines || []) {
-      const t = String(line).trim();
-      if (inFence) {
+    let fenceOpening = null;
+    const contentLines = node.contentLines || [];
+    for (let index = 0; index < contentLines.length; index += 1) {
+      const line = contentLines[index];
+      if (fenceOpening) {
         linesOut.push(line);
-        const close = t.match(/^(`{3,})\s*$/);
-        if (close && close[1].length >= fenceMark.length) { inFence = false; fenceMark = ""; }
+        if (isMarkdownFenceClosingLine(line, fenceOpening)) fenceOpening = null;
         continue;
       }
-      const open = t.match(/^(`{3,})/);
+      const open = parseMarkdownFenceOpeningLine(line);
       if (open) {
         linesOut.push(line);
-        inFence = true;
-        fenceMark = open[1];
+        fenceOpening = open;
         continue;
       }
-      const stray = parseTriggerLine(line);
+      const stray = chartObjectTokenAt(contentLines, index) ? null : parseTriggerLine(line);
       if (stray) {
         if (emitWarnings) {
           for (const w of stray.warnings || []) warnings.push(w);
         }
         Object.assign(attrs, stray.attrs);
+        if (authoredKeys) for (const key of Object.keys(stray.attrs || {})) authoredKeys.add(key);
       } else {
         linesOut.push(line);
       }
@@ -1277,25 +1446,35 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     return linesOut;
   }
 
-  function spineSplitCountForNode(node) {
-    if (!node || node._sequenceOnly) return 1;
+  // How many slides a tree node will emit, and the id separator for its continuations: `-N` for
+  // a spine/pills/horizontal timeline over its stop cap, `--N` for a quote split across panels (ADR-0023 §9).
+  function continuationSplitForNode(node) {
+    if (!node || node._sequenceOnly) return { count: 1, separator: "-" };
     const attrs = { ...deckTriggerDefaults, ...(node.attrs || {}) };
-    const lines = contentLinesAndAttrs(node, attrs, { emitWarnings: false });
-    const titleOnlySection = (node.children || []).length > 0
-      && !lines.some((line) => String(line).trim());
-    const probe = { attrs, lines, cards: [], isSection: (node.children || []).length > 0 };
-    const layout = titleOnlySection ? "section-title" : inferLayout(probe);
+    const authoredKeys = new Set(Object.keys(node.attrs || {}));
+    const lines = contentLinesAndAttrs(node, attrs, { emitWarnings: false, authoredKeys });
+    const probe = {
+      attrs,
+      lines,
+      cards: [],
+      isSection: (node.children || []).length > 0,
+      authoredAttrKeys: [...authoredKeys]
+    };
+    const authoredLayout = inferLayout(probe);
+    const layout = sectionDividerDecision(probe, authoredKeys, authoredLayout).divider
+      ? "section-title"
+      : authoredLayout;
     const rawBlocks = lexMarkdownBlocks(lines);
     for (const b of rawBlocks) {
       if (b && b.type === "timeline" && attrs.timeline) b.mode = attrs.timeline;
     }
     const blocks = mapBlocksToLayout(layout, rawBlocks);
-    const spineBlock = blocks.length === 1 && blocks[0] && blocks[0].type === "timeline"
-      && (blocks[0].mode === "spine" || blocks[0].mode === "pills") ? blocks[0] : null;
-    const spineGroups = spineBlock && Array.isArray(spineBlock.groups) ? spineBlock.groups : null;
-    return spineGroups && spineGroups.length > SPINE_STOPS_PER_SLIDE
-      ? Math.ceil(spineGroups.length / SPINE_STOPS_PER_SLIDE)
-      : 1;
+    const timelineParts = timelineContinuationParts(blocks, timelineBlockFieldsFromStops);
+    if (timelineParts) return { count: timelineParts.length, separator: "-" };
+    // The quote's cite decides the last part's budget; the title fills a missing cite (§5 rule 2)
+    // exactly as flushSlide will, so the probe and the emitted split agree.
+    applyQuoteTitleAttribution(blocks, node.title);
+    return { count: quoteSplitCountForBlocks(blocks, layout), separator: "--" };
   }
 
   function dedupeTreeIdsAndInsertSequenceSplits() {
@@ -1342,11 +1521,11 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
         if (Array.isArray(node._sequenceCarouselChildren)) {
           node._sequenceCarouselChildren = rewrite(node._sequenceCarouselChildren);
         }
-        const splitCount = spineSplitCountForNode(node);
+        const { count: splitCount, separator } = continuationSplitForNode(node);
         if (splitCount > 1) {
           node._sequenceContinuationIds = [];
           for (let idx = 2; idx <= splitCount; idx += 1) {
-            const continuationId = reserve(`${finalId}-${idx}`);
+            const continuationId = reserve(`${finalId}${separator}${idx}`);
             node._sequenceContinuationIds.push(continuationId);
           }
         }
@@ -1386,6 +1565,14 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
       const attrs = { ...deckTriggerDefaults, ...(node.attrs || {}) };
       const current = { ...context };
 
+      if (node.level !== 2) {
+        for (const { name, key } of SECTION_ONLY_TRIGGER_KEYS) {
+          if (Object.prototype.hasOwnProperty.call(node.attrs || {}, key)) {
+            warnings.push(`section-only-trigger-level:${node.id}:${name}:${node.level}`);
+          }
+        }
+      }
+
       if (node.level === 2) {
         current.section = { id: node.id, title: node.title };
         const requestedAccent = attrs.accent == null || attrs.accent === true ? "" : String(attrs.accent).trim().toLowerCase();
@@ -1404,7 +1591,8 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
         subsections.push(current.subsection);
       }
 
-      const lines = contentLinesAndAttrs(node, attrs);
+      const authoredKeys = new Set(Object.keys(node.attrs || {}));
+      const lines = contentLinesAndAttrs(node, attrs, { authoredKeys });
       slide = {
         id: node.id,
         title: node.title,
@@ -1422,8 +1610,9 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
         sourceLines: buildSourceLines(node),
         nodeLevel: node.level,
         isSection,
+        authoredAttrKeys: [...authoredKeys],
         treeNode: node,
-        spineContinuationIds: Array.isArray(node._sequenceContinuationIds) ? node._sequenceContinuationIds : [],
+        continuationIds: Array.isArray(node._sequenceContinuationIds) ? node._sequenceContinuationIds : [],
         ...(current.sectionTimer || {})
       };
       flushSlide();
@@ -1442,7 +1631,24 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
   // established container-fold contract, distinct from the fence-aware content lexer below.
   const resolvedNodeAttrs = (node) => {
     const attrs = { ...deckTriggerDefaults, ...(node.attrs || {}) };
-    for (const line of node.contentLines || []) {
+    const contentLines = node.contentLines || [];
+    const chartBlockLines = new Set();
+    let inFence = false;
+    let fenceMark = "";
+    for (let index = 0; index < contentLines.length; index += 1) {
+      const t = String(contentLines[index]).trim();
+      if (inFence) {
+        const close = t.match(/^(`{3,})\s*$/);
+        if (close && close[1].length >= fenceMark.length) { inFence = false; fenceMark = ""; }
+        continue;
+      }
+      const open = t.match(/^(`{3,})/);
+      if (open) { inFence = true; fenceMark = open[1]; continue; }
+      if (chartObjectTokenAt(contentLines, index)) chartBlockLines.add(index);
+    }
+    for (let index = 0; index < contentLines.length; index += 1) {
+      const line = contentLines[index];
+      if (chartBlockLines.has(index)) continue;
       const stray = parseTriggerLine(line);
       if (stray) Object.assign(attrs, stray.attrs);
     }
@@ -1582,7 +1788,11 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
   // auto title slide is added, any opening role that came from the first-content heuristic
   // (not an explicit attr) is demoted to content so the auto slide owns the opening.
   const hasExplicitOpening = slides.some((s) => s.role === "opening" && !s.openingFromHeuristic);
-  const wantTitleSlide = meta.auto_title_slide !== false && !hasExplicitOpening;
+  // Tri-state (Ticket 10): ABSENT means "generate it", so only an explicit off suppresses the
+  // slide. Before this, only the YAML boolean `false` counted — a quoted `"false"` was ignored.
+  const autoTitleFlag = readDeckFlag(meta.auto_title_slide);
+  if (autoTitleFlag.state === "unreadable") warnings.push(`deck-flag-unknown:auto_title_slide:${autoTitleFlag.raw}`);
+  const wantTitleSlide = autoTitleFlag.state !== "off" && !hasExplicitOpening;
   if (wantTitleSlide) {
     for (const s of slides) {
       if (s.role === "opening" && s.openingFromHeuristic) {
@@ -1591,29 +1801,19 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
       }
     }
     const eventLine = meta.event || meta.subtitle || "";
-    // ADR-0005 title designs (title-variations.html): the auto title slide is a structured
-    // POSTER (default) — series/event/date top line, title+subtitle mid, speaker/web bottom.
-    // frontmatter `title_style: split|banner` picks the other locked variants.
-    const titleVariant = ["poster", "split", "banner"].includes(String(meta.title_style || "").toLowerCase())
-      ? String(meta.title_style).toLowerCase() : "poster";
-    const titleBlocks = [{
-      type: "title-poster",
-      variant: titleVariant,
-      data: {
-        title,
-        subtitle: meta.subtitle || "",
-        series: meta.series || "",
-        event: meta.event || "",
-        date: meta.date || "",
-        author: meta.author || "",
-        affiliation: meta.affiliation || "",
-        web: meta.web || ""
-      }
-    }];
+    // ADR-0015: the auto title slide defaults to the locked 30/70 sidebar Poster; frontmatter
+    // `title_style: split|banner` picks the other locked variants. ADR-0023 §6: the poster block
+    // is built by the ONE emitter an authored {title} slide also goes through (title-poster.mjs).
+    const titleAccent = posterAccentFor(meta);
+    const titleBlocks = [posterBlockFor(
+      { meta, title, subtitle: meta.subtitle || "" },
+      { role: "opening" }
+    )];
     slides.unshift({
       id: "deck-title", section: "", role: "opening", layout: "title",
       kicker: eventLine, navTitle: title, title,
       titleMode: "show", blocks: titleBlocks,
+      titleAccent,
       reuse: defaultReuseForRole("opening"), notes: "",
       frame: { ...FRAME_BUILTINS }
     });
@@ -1625,44 +1825,46 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
   // call-to-action string) renders below in the accent; with no cta we still show the
   // author/event line so the slide is never bare.
   const hasEnding = slides.some((s) => s.role === "ending");
-  const wantThanksSlide = meta.auto_thanks_slide !== false && !hasEnding;
+  const autoThanksFlag = readDeckFlag(meta.auto_thanks_slide);
+  if (autoThanksFlag.state === "unreadable") warnings.push(`deck-flag-unknown:auto_thanks_slide:${autoThanksFlag.raw}`);
+  const wantThanksSlide = autoThanksFlag.state !== "off" && !hasEnding;
   if (wantThanksSlide) {
     const thanks = typeof meta.thanks === "string" && meta.thanks.trim() ? meta.thanks.trim() : "Thank you";
     const cta = typeof meta.cta === "string" ? meta.cta.trim() : "";
-    // The closing MIRRORS the title poster (ADR-0005): thanks at display scale, cta in the
-    // accent, identity bottom line — one structured block, not loose paragraphs.
-    const closingBlocks = [{
-      type: "title-poster",
-      variant: "closing",
-      data: {
-        title: thanks,
-        subtitle: cta,
-        series: meta.series || "",
-        event: meta.event || "",
-        date: meta.date || "",
-        author: meta.author || "",
-        affiliation: meta.affiliation || "",
-        web: meta.web || ""
-      }
-    }];
+    const titleAccent = posterAccentFor(meta);
+    // The closing mirrors the ADR-0015 title Poster as one structured block, from the same
+    // emitter an authored {closing} slide goes through (ADR-0023 §6).
+    const closingBlocks = [posterBlockFor(
+      { meta, title: thanks, subtitle: cta },
+      { role: "ending" }
+    )];
     slides.push({
       id: "deck-thanks", section: "", role: "ending", layout: "closing",
       kicker: "", navTitle: thanks, title: thanks,
       titleMode: "show", blocks: closingBlocks,
+      titleAccent,
       reuse: defaultReuseForRole("ending"), notes: "",
       frame: { ...FRAME_BUILTINS }
     });
     root.children.push(syntheticNode("deck-thanks", thanks, { role: "ending" }));
   }
 
-  // `handout_url:` frontmatter (2026-06-10 handouts): a corner QR + short link to the published
-  // handout, stamped on the OPENING and THANK-YOU slides (auto bookends and authored ones alike)
-  // so the audience can grab the slides at the start and the end. The publish-handout script
-  // writes the URL into the frontmatter once; rebuilds keep it.
+  // E7b — AUTHORED BOOKENDS (ADR-0023 §6). An authored {title} / {closing} slide renders through
+  // the SAME poster as the auto bookends above: its heading is the poster title, its first
+  // paragraph fills the subtitle slot, and every further block rides under the byline as
+  // `.tp-body` so nothing authored is dropped. Runs after E7 so the auto slides — which already
+  // carry their poster block — are passed over untouched.
+  applyAuthoredPosters(slides, meta);
+
+  // Title Posters reserve a sidebar slot for the handout QR (ADR-0015); layouts without that
+  // slot retain the established corner treatment. Keyed off the poster block first so an
+  // authored bookend (which need not carry the opening/ending ROLE) gets the same sidebar QR.
   const handoutUrl = typeof meta.handout_url === "string" && meta.handout_url.trim() ? meta.handout_url.trim() : "";
   if (handoutUrl) {
     for (const s of slides) {
-      if (s.role === "opening" || s.role === "ending") {
+      const titlePoster = (s.blocks || []).find((block) => block.type === "title-poster" && (block.variant === "poster" || block.variant === "closing"));
+      if (titlePoster) titlePoster.data = { ...(titlePoster.data || {}), handoutUrl };
+      else if (s.role === "opening" || s.role === "ending") {
         (s.blocks = s.blocks || []).push({ type: "qr", url: handoutUrl, label: "Handout" });
       }
     }
@@ -1672,7 +1874,14 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
   const deckLinks = collectDeckLinks(slides);
   // Auto-append a links slide when frontmatter opts in and no explicit {links} slide exists.
   const hasLinksSlide = slides.some((s) => s.layout === "links");
-  const wantLinksIndex = (meta.links_index === true || meta["links-index"] === true) && !hasLinksSlide;
+  // Ticket 10: this used to test `=== true` strictly, so a quoted `links_index: "true"` — what a
+  // hand-authored outline or any quoting YAML writer produces — was silently dead.
+  const linksIndexFlag = readDeckFlag(meta.links_index ?? meta["links-index"]);
+  if (linksIndexFlag.state === "unreadable") warnings.push(`deck-flag-unknown:links_index:${linksIndexFlag.raw}`);
+  const wantLinksIndex = deckFlagOn(linksIndexFlag) && !hasLinksSlide;
+  // An opted-in links index with nothing to list emits no slide. Say so: the author asked for a
+  // surface and got none, and the reason (no `[text](https://…)` anywhere) is not guessable.
+  if (wantLinksIndex && deckLinks.length === 0) warnings.push("links-index-empty:links_index");
   if (wantLinksIndex && deckLinks.length > 0) {
     slides.push({
       id: "deck-links", section: "", role: "content", layout: "links",
@@ -1738,6 +1947,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     warnAtMinutes, urgentAtMinutes,
     ...(license ? { license } : {}),
     palette: deckPalette === "green" ? "green" : "",
+    brandLogoColour,
     // LAYER 2 (drop-in): a frontmatter `icons:` block (concept phrase → icon name) becomes the
     // deck-level override map. Built once and threaded into the icon vocabulary.
     icons: (meta && typeof meta.icons === "object" && !Array.isArray(meta.icons)) ? meta.icons : null,
@@ -1785,6 +1995,82 @@ const VIDEO_INLINE_LIMIT_BYTES = (() => {
   const mb = i !== -1 ? Number(args[i + 1]) : NaN;
   return (Number.isFinite(mb) && mb >= 0 ? mb : 20) * 1024 * 1024;
 })();
+
+// The backup export's media contract (Ticket 11, 2026-09-12). The backup sweep compiles EVERY
+// changed talk in the MAIN process on a timer, unattended — so one media-heavy deck must never be
+// able to exhaust the heap. It could: a talk with 208MB of local video inlined to a 433MB HTML
+// string, four copies live at once, was a 2.28GB OOM ~13.6s after launch. These are the ONLY
+// defaults that differ from the present/preview/publish path, which stays exactly as it was (it
+// compiles one deck, on demand, for a user who is watching it happen).
+// Measured on the real offender (322MB of assets, 2026-09-12): a 64MB deck budget still wrote a
+// 95MB backup file and spent 702MB of main-process heap, because base64 inflates source bytes by
+// ~4/3 before the HTML is assembled. Video is therefore never inlined into a backup at all — it
+// is always the poster or the placeholder frame — and the remaining budget governs IMAGES only.
+export const BACKUP_EXPORT_MEDIA_OPTIONS = Object.freeze({
+  videoInlineLimitBytes: 0,
+  mediaInlineBudgetBytes: 16 * 1024 * 1024,
+  largeMediaMode: "poster"
+});
+
+// The thumbnail render's media contract (2026-09-15). Same failure class as the backup sweep
+// above, a different entry point: the Slide Browser renders thumbnails for every talk whose
+// prints are missing, one talk at a time, unattended, in the MAIN process. Preview 7 opened a
+// new compiler namespace (so every talk's prints were missing) and gave the browser its own
+// lane (so the editor strip no longer aborted the chain), and the chain walked all 84 vault
+// talks. The heaviest deck carries 44MB of images and 102MB in 25 videos; inlined, its fullHtml
+// is a 200+MB string, copied again by markSlidePreviewHtml, hashed, and written to disk. The
+// installed 0.31.0-preview.7 died twice on 2026-09-15 (07:04 and 07:23) with the main process
+// at 3.8-3.9GB against a 4096MB V8 ceiling.
+//
+// A thumbnail shows a POSTER, never a playing clip — the capture settles on the poster frame —
+// so no thumbnail render has ever needed a video byte. Images stay unbounded: a thumbnail whose
+// pictures are missing is not a thumbnail. There is deliberately no mediaInlineBudgetBytes here.
+export const THUMBNAIL_MEDIA_OPTIONS = Object.freeze({
+  videoInlineLimitBytes: 0,
+  largeMediaMode: "poster"
+});
+
+// A refused video in a backup has nothing to point at — the backup folder holds one lone HTML
+// file with no assets/ beside it — so a poster-mode refusal gets this placeholder frame rather
+// than an empty black box. Inline SVG, a few hundred bytes, no external reference.
+const REFUSED_VIDEO_POSTER =
+  "data:image/svg+xml;base64," +
+  Buffer.from(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720"><rect width="1280" height="720" fill="#1b1a18"/>' +
+      '<circle cx="640" cy="330" r="64" fill="none" stroke="#b9b2a4" stroke-width="6"/>' +
+      '<path d="M620 298l52 32-52 32z" fill="#b9b2a4"/>' +
+      '<text x="640" y="452" fill="#b9b2a4" font-family="system-ui,sans-serif" font-size="30" text-anchor="middle">' +
+      "Video kept outside this backup copy</text></svg>"
+  ).toString("base64");
+
+// One mechanism, two entry points. The `--video-inline-limit` CLI flag supplies the DEFAULT
+// per-video limit; prepareSource's `videoInlineLimitBytes` option overrides it for one compile.
+// Both resolve here, so the flag and the option can never drift apart.
+//
+// `mediaInlineBudgetBytes` is the per-DECK ceiling that the per-file limit alone could not give:
+// a talk can hold two hundred screenshots no one of which is large. Leaving it unset means
+// Infinity — nothing is ever refused on budget grounds and the standing paths are untouched.
+// `largeMediaMode` decides what a refused video shows: 'asset-only' (today's share export — the
+// relative path plus whatever poster the author provided) or 'poster' (backups, which also get
+// the placeholder frame above when the author provided no poster).
+export function createMediaInlineBudget(options = {}) {
+  const positive = (value) => (Number.isFinite(value) && value >= 0 ? value : null);
+  const perVideo = positive(options.videoInlineLimitBytes) ?? VIDEO_INLINE_LIMIT_BYTES;
+  const deckCap = positive(options.mediaInlineBudgetBytes) ?? Infinity;
+  const largeMediaMode = options.largeMediaMode === "poster" ? "poster" : "asset-only";
+  let spent = 0;
+  return {
+    largeMediaMode,
+    // Unbounded decks skip the extra stat() the budget would otherwise need per image.
+    get bounded() { return deckCap !== Infinity; },
+    get deckCapBytes() { return deckCap; },
+    get spentBytes() { return spent; },
+    // A per-video limit of 0 means "never inline video", which is what a backup export sets.
+    allowsVideo(size) { return perVideo > 0 && size <= perVideo && spent + size <= deckCap; },
+    allowsImage(size) { return spent + size <= deckCap; },
+    spend(size) { spent += size; }
+  };
+}
 
 // Read intrinsic pixel dimensions from a raster image buffer WITHOUT decoding/re-encoding it
 // (no sips/magick — the bytes are never touched; we only parse the header). Returns
@@ -1842,6 +2128,44 @@ const DATA_URI_CACHE_LIMIT_BYTES = 256 * 1024 * 1024;
 const dataUriCache = new Map(); // absolute -> { mtimeMs, size, uri, dims }
 let dataUriCacheBytes = 0;
 
+async function pictureKeysForModel(model, sourceDir) {
+  const digestsByPath = new Map();
+  async function imageDigest(src) {
+    if (typeof src !== "string" || /^(data:|https?:)/.test(src)) return null;
+    let absolute = resolve(sourceDir, src);
+    try { await stat(absolute); } catch {
+      try { absolute = resolve(sourceDir, decodeURIComponent(src)); await stat(absolute); }
+      catch { return null; }
+    }
+    if (!digestsByPath.has(absolute)) {
+      const hash = createHash("sha256");
+      try {
+        for await (const chunk of createReadStream(absolute)) hash.update(chunk);
+        digestsByPath.set(absolute, hash.digest("hex"));
+      } catch { return null; }
+    }
+    return digestsByPath.get(absolute);
+  }
+  async function collect(value, entries) {
+    if (!value || typeof value !== "object") return;
+    if (value.type === "image" || value.type === "title-poster") {
+      const src = value.type === "image" ? value.src : value.data?.logo;
+      const digest = await imageDigest(src);
+      if (digest) entries.push([src, digest]);
+    }
+    for (const child of Object.values(value)) {
+      if (Array.isArray(child)) for (const item of child) await collect(item, entries);
+      else if (child && typeof child === "object") await collect(child, entries);
+    }
+  }
+  return Promise.all(model.slides.map(async (slide) => {
+    const entries = [];
+    await collect(slide.blocks, entries);
+    await collect(slide.carousel, entries);
+    return pictureKeyForSlide(slide, entries);
+  }));
+}
+
 async function inlineDataUri(absolute, mime) {
   const info = await stat(absolute);
   const hit = dataUriCache.get(absolute);
@@ -1868,7 +2192,7 @@ async function inlineDataUri(absolute, mime) {
   return entry;
 }
 
-async function inlineAndCollectAssets(model, sourceDir) {
+async function inlineAndCollectAssets(model, sourceDir, budget = createMediaInlineBudget()) {
   const collected = []; // { absolute, name }
   if (!sourceDir) return collected;
   // Obsidian (and other editors) write URL-encoded links — `assets/Pasted%20image.png` for a
@@ -1893,14 +2217,49 @@ async function inlineAndCollectAssets(model, sourceDir) {
   }
   async function visitBlock(block, slideId) {
     if (!block || typeof block !== "object") return block;
+    if (block.type === "title-poster" && block.data?.logo) {
+      const logo = String(block.data.logo);
+      if (/^(data:|https?:)/.test(logo)) return block;
+      const absolute = await resolveAsset(logo);
+      const mime = absolute ? MIME_TYPES.get(extname(absolute).toLowerCase()) : null;
+      if (!absolute) {
+        model.warnings.push(`missing-image:${slideId}:${logo}`);
+        return { ...block, data: { ...block.data, logo: "" } };
+      }
+      if (!mime) {
+        model.warnings.push(`unknown-image-type:${slideId}:${logo}`);
+        return { ...block, data: { ...block.data, logo: "" } };
+      }
+      try {
+        const { uri } = await inlineDataUri(absolute, mime);
+        return { ...block, data: { ...block.data, logo: uri } };
+      } catch {
+        model.warnings.push(`missing-image:${slideId}:${logo}`);
+        return { ...block, data: { ...block.data, logo: "" } };
+      }
+    }
     if (block.type === "image" && !/^(data:|https?:)/.test(block.src)) {
       const absolute = (await resolveAsset(block.src)) || resolve(sourceDir, block.src);
       const mime = MIME_TYPES.get(extname(absolute).toLowerCase());
       if (mime) {
+        // Once the per-deck budget is spent every FURTHER media file stays a reference, images
+        // included: a talk can carry two hundred screenshots whose sum is the problem even when
+        // no single one is large enough to trip a per-file limit.
+        if (budget.bounded) {
+          let size = 0;
+          try { size = (await stat(absolute)).size; } catch { /* a miss is reported by inlineDataUri below */ }
+          if (size && !budget.allowsImage(size)) {
+            const name = uniqueName(block.src);
+            collected.push({ absolute, name });
+            model.warnings.push(`media-budget-exhausted:${slideId}:${basename(block.src)}`);
+            return { ...block, src: `assets/${name}`, assetOnly: true };
+          }
+        }
         try {
           // The bytes are inlined VERBATIM — base64 of the exact file, never re-encoded. The
           // dimensions are read from the same buffer purely to cap display size at 1x.
-          const { uri, dims } = await inlineDataUri(absolute, mime);
+          const { uri, dims, size } = await inlineDataUri(absolute, mime);
+          budget.spend(size);
           return { ...block, src: uri, ...(dims || {}) };
         } catch {
           model.warnings.push(`missing-image:${slideId}:${block.src}`);
@@ -1924,17 +2283,25 @@ async function inlineAndCollectAssets(model, sourceDir) {
       for (const ext of [".png", ".jpg", ".jpeg", ".webp"]) {
         const posterPath = absolute.slice(0, -extname(absolute).length) + ext;
         try {
-          out.poster = (await inlineDataUri(posterPath, MIME_TYPES.get(ext))).uri;
+          const poster = await inlineDataUri(posterPath, MIME_TYPES.get(ext));
+          out.poster = poster.uri;
+          // Ticket 15: a video container does not expose dimensions at compile time, but its
+          // sibling poster normally has the same frame. Reuse the image-header dimensions already
+          // read for the poster so a mixed-media row need not fall back to the flagged 16:9 guess.
+          if (poster.dims) Object.assign(out, poster.dims);
           break;
         } catch { /* no poster with this ext */ }
       }
       const mime = VIDEO_MIME_TYPES.get(extname(absolute).toLowerCase()) || "video/mp4";
-      if (info.size <= VIDEO_INLINE_LIMIT_BYTES) {
-        return { ...out, src: (await inlineDataUri(absolute, mime)).uri };
+      if (budget.allowsVideo(info.size)) {
+        const inlined = await inlineDataUri(absolute, mime);
+        budget.spend(info.size);
+        return { ...out, src: inlined.uri };
       }
       const name = uniqueName(block.src);
       collected.push({ absolute, name });
       model.warnings.push(`video-asset-only:${slideId}:${out.videoName} (${Math.round(info.size / 1024 / 1024)}MB > inline limit; share exports show the poster)`);
+      if (budget.largeMediaMode === "poster" && !out.poster) out.poster = REFUSED_VIDEO_POSTER;
       return { ...out, src: `assets/${name}`, assetOnly: true };
     }
     if (block.type === "embed" && !/^https?:/.test(block.src)) {
@@ -2032,11 +2399,12 @@ export function injectPerSlideNotes(markdown) {
 // default for the presenter clock's amber/dark-amber thresholds. Main threads in the resolved
 // config value; a frontmatter `warn-at:`/`urgent-at:` on the deck still wins over it. Every existing
 // call site omits this arg and gets the compiler's own 5/1 fallback, so this is purely additive.
-export async function prepareSource(sourcePath, sourceText, explicitTitle, sourceStat, defaults) {
+export async function prepareSource(sourcePath, sourceText, explicitTitle, sourceStat, defaults, options = {}) {
   const fallbackTitle = explicitTitle || basename(sourcePath, extname(sourcePath));
   if (sourceStat?.isDirectory()) {
     const model = await adaptSourceProject(sourcePath, explicitTitle);
-    return { ...model, fullHtml: await buildDeckHtmlFromModel(model) };
+    const fullHtml = await buildDeckHtmlFromModel(model);
+    return { ...model, fullHtml };
   }
   const extension = extname(sourcePath).toLowerCase();
   if (extension === ".html" || extension === ".htm") {
@@ -2051,14 +2419,21 @@ export async function prepareSource(sourcePath, sourceText, explicitTitle, sourc
     };
   }
   if (extension === ".md" || extension === ".markdown") {
-    // v2 markers: frontmatter, `####` cards, an explicit `{key=value}` trailer, a bare-word
-    // `{trigger}` trailer (ADR-0004 shorthand — a heading ending in `{word}` / `{word word}` /
-    // `{word,word}` with no `=`), or an `[Embed:]`/`[Simulation:]`/`[Video:]` directive.
+    // v2 markers: frontmatter, `####` cards, any heading trailer or Trigger line accepted by the
+    // shared parser, or an `[Embed:]`/`[Simulation:]`/`[Video:]` directive. Do not re-state the
+    // trigger grammar as a regex here: the old `[a-z]+=[^}]*` discriminator selected the legacy
+    // adapter when a value token was followed by another brace group (or used a hyphenated/camel
+    // case key). The legacy adapter then discarded section slides and bookends without warnings.
+    const hasV2TriggerSyntax = sourceText.split(/\r?\n/).some((line) => {
+      const heading = line.match(/^#{1,6}\s+(.+)$/);
+      if (heading) return parseHeadingAttrs(heading[1]).title !== heading[1].trim();
+      return parseTriggerLine(line) !== null;
+    });
     const isV2 = /^---\r?\n[\s\S]*?\r?\n---/.test(sourceText)
       || /^####\s/m.test(sourceText)
-      || /\{[a-z]+=[^}]*\}\s*$/m.test(sourceText)
-      || /^#{1,4}\s.*\{[A-Za-z][\w-]*(?:[ ,][\w-]+)*\}\s*$/m.test(sourceText)
-      || /^\[(Embed|Simulation|Video):/mi.test(sourceText);
+      || hasV2TriggerSyntax
+      || /^\[(Embed|Simulation|Video):/mi.test(sourceText)
+      || pollDirectivesFor(sourceText.split(/\r?\n/)).directives.length > 0;
     const model = isV2 ? adaptMarkdownOutlineV2(sourceText, fallbackTitle, defaults) : adaptMarkdownOutline(sourceText, fallbackTitle);
     if (explicitTitle) model.title = explicitTitle;
     // v1 (legacy, no frontmatter support) never sets warnAtMinutes/urgentAtMinutes itself — but the
@@ -2095,15 +2470,27 @@ export async function prepareSource(sourcePath, sourceText, explicitTitle, sourc
         model.warnings.push(warn);
       }
     }
-    const assets = await inlineAndCollectAssets(model, dirname(resolve(sourcePath)));
-    return { ...model, assets, fullHtml: await buildDeckHtmlFromModel(model), sourceDir: dirname(resolve(sourcePath)) };
+    // Both compilation modes key the pre-inline model and the referenced file bytes. Inlining
+    // changes src and adds dimensions, but those representation details cannot change identity.
+    model.pictureKeys = await pictureKeysForModel(model, dirname(resolve(sourcePath)));
+    // Projections-only (search index / cross-talk search): buildPerSlideProjections reads model.slides
+    // ONLY — never fullHtml or assets. Skip media inlining + the full-HTML build so warming or
+    // searching a large media vault never loads video/image Buffers into the MAIN process. This was
+    // the whole-vault-compile that OOM-crashed the browser process (2026-07-20, [[talkweaver-vault-scale]]).
+    if (options.projectionsOnly) {
+      return { ...model, assets: [], fullHtml: "", sourceDir: dirname(resolve(sourcePath)) };
+    }
+    const assets = await inlineAndCollectAssets(model, dirname(resolve(sourcePath)), createMediaInlineBudget(options));
+    const fullHtml = await buildDeckHtmlFromModel(model);
+    return { ...model, assets, fullHtml, sourceDir: dirname(resolve(sourcePath)) };
   }
   if (extension === ".json") {
     const json = JSON.parse(sourceText);
     const isLearnWeaver = json.learnweaver_export_version || json.type === "learnweaver-export" || json.source_type === "learnweaver";
     const model = isLearnWeaver ? adaptLearnWeaverExport(json, fallbackTitle) : adaptCanonicalPptJson(json, fallbackTitle);
     if (explicitTitle) model.title = explicitTitle;
-    return { ...model, fullHtml: await buildDeckHtmlFromModel(model) };
+    const fullHtml = await buildDeckHtmlFromModel(model);
+    return { ...model, fullHtml };
   }
   throw new Error(`Unsupported source type: ${extension || "unknown"}`);
 }
@@ -2117,7 +2504,12 @@ export function collectDeckLinks(slides) {
   const seen = new Set();
   const result = [];
   for (const slide of slides) {
-    const lines = Array.isArray(slide.sourceLines) ? slide.sourceLines : [];
+    // MODEL slides carry their source as `sourceMarkdown` (flushSlide joins the lines); the raw
+    // working records carry `sourceLines`. Ticket 10: reading only `sourceLines` meant this always
+    // returned [] for a compiled deck, so `links_index: true` emitted no Links slide, ever.
+    const lines = Array.isArray(slide.sourceLines)
+      ? slide.sourceLines
+      : typeof slide.sourceMarkdown === "string" ? slide.sourceMarkdown.split("\n") : [];
     for (const line of lines) {
       let m;
       RE.lastIndex = 0;

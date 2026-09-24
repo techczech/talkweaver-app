@@ -1,4 +1,11 @@
-import { isVideoEmbedUrl, normalizeEmbedUrl, isBareUrl, groupTimelineRows, quoteFromQuotedParagraph, parseTrace } from "./02-triggers-layout.mjs";
+import { isVideoEmbedUrl, normalizeEmbedUrl, isBareUrl, timelineBlockFields, quoteFromQuotedParagraph, claimFromBoldParagraph, foldQuoteAttribution, parseTrace } from "./02-triggers-layout.mjs";
+import {
+  chartObjectTokenAt,
+  isMarkdownFenceClosingLine,
+  parseMarkdownFenceOpeningLine,
+  parseChartFenceBodyList,
+  parseChartObjectFenceInfo
+} from "./03-object-token.mjs";
 import { normalizeIconOverrideKey } from "./05-icons.mjs";
 
 // Playback intent for a video, from trailing curly tokens on the media line (ADR-0028):
@@ -119,15 +126,37 @@ export function lexMarkdownBlocks(lines) {
   // whitespace) so code, command transcripts, and tool-call traces survive intact. `lang=trace`
   // is parsed further into role-tagged turns (see parseTrace); every other lang is a monospace
   // code panel. An unterminated fence runs to end-of-input (tolerant).
-  function takeFence(lang) {
+  function takeFence(opening) {
     const body = [];
     i += 1; // consume the opening fence line
-    while (i < lines.length && lines[i].trim() !== "```") {
+    while (i < lines.length && !isMarkdownFenceClosingLine(lines[i], opening)) {
       body.push(lines[i]);
       i += 1;
     }
     if (i < lines.length) i += 1; // consume the closing fence
     const text = body.join("\n").replace(/\n+$/, "");
+    const rawInfo = opening.info;
+    const lang = rawInfo.toLowerCase();
+    const chart = opening.marker[0] === "`"
+      ? parseChartObjectFenceInfo(rawInfo)
+      : null;
+    // Re-enter this lexer for the fence body so fenced and block-token charts use the exact same
+    // list reader, including icon-token stripping and every future list normalisation pass.
+    const chartBodyBlocks = chart && parseChartFenceBodyList(body) !== null
+      ? lexMarkdownBlocks(body)
+      : [];
+    const chartList = chartBodyBlocks.length === 1 && chartBodyBlocks[0]?.type === "list"
+      ? chartBodyBlocks[0]
+      : null;
+    if (chart && chartList) {
+      return {
+        type: "object-chart",
+        token: chart.token,
+        shape: chart.shape,
+        list: chartList,
+        storage: "fence"
+      };
+    }
     if (lang === "trace") {
       return { type: "code", lang: "trace", text, turns: parseTrace(body) };
     }
@@ -140,8 +169,20 @@ export function lexMarkdownBlocks(lines) {
     let m;
     // Fenced code block must be tested before everything else: its body can contain lines that
     // otherwise look like lists, quotes, tables, or directives, and they must pass through raw.
-    if ((m = t.match(/^```(.*)$/))) {
-      blocks.push(takeFence(m[1].trim().toLowerCase()));
+    const fenceOpening = parseMarkdownFenceOpeningLine(t);
+    if (fenceOpening) {
+      blocks.push(takeFence(fenceOpening));
+      continue;
+    }
+    const chartObject = chartObjectTokenAt(lines, i);
+    if (chartObject) {
+      i = chartObject.listStart;
+      blocks.push({
+        type: "object-chart",
+        token: chartObject.token,
+        shape: chartObject.shape,
+        list: takeList()
+      });
       continue;
     }
     if ((m = t.match(/^\[Action:\s*(.+?)\s*(?:→|->)\s*(\S+?)\]$/i))
@@ -195,11 +236,9 @@ export function lexMarkdownBlocks(lines) {
       i += 1;
       while (peek() === "") i += 1;
       const rows = takeTimelineRows();
-      const groups = groupTimelineRows(rows);
-      // `items` retained for back-compat (flattened entry bodies); `groups` carries the
-      // structured shape. Consumers prefer `groups`.
-      const items = groups.flatMap((g) => g.items.map((it) => (it.date ? `${it.date} — ${it.body}` : it.body)));
-      blocks.push({ type: "timeline", groups, items });
+      // Ticket 22: the block form and a plain dated list yield ONE model — `stops` (date + text +
+      // detail lines); `groups`/`items` are derived views kept for older consumers.
+      blocks.push({ type: "timeline", ...timelineBlockFields(rows) });
       continue;
     }
     if (t.startsWith(">")) {
@@ -228,32 +267,12 @@ export function lexMarkdownBlocks(lines) {
         breakAfter.delete(quoteLines.length - 1);
         quoteLines.pop();
       } else {
-        // The attribution often follows the `>` block on its OWN line (not `>`-prefixed):
-        //   > A quote.
-        //   — Project manager, 2025
-        // When the next non-blank line is a dash-led attribution, fold it into this quote's cite
-        // (so the quote is self-contained and a quote-only slide stays quote-only). Skip blanks.
-        let j = i;
-        while (j < lines.length && lines[j].trim() === "") j += 1;
-        if (j < lines.length && /^[—–]\s+\S/.test(lines[j].trim())) {
-          cite = lines[j].trim().replace(/^[—–]\s*/, "");
-          i = j + 1;
-        } else if (
-          j < lines.length &&
-          /^[-*+]\s+\S/.test(lines[j].trim()) &&
-          !(j + 1 < lines.length && /^[-*+]\s+\S/.test(lines[j + 1].trim()))
-        ) {
-          // A LONE bullet right after a quote is its ATTRIBUTION, not a list:
-          //   > A quote.
-          //   - Senior researcher
-          // Fold it into the cite (renders as <cite> below the quote in every layout). Guarded to
-          // a SINGLE bullet — the next content line must NOT also be a bullet — so a real 2+ item
-          // list following a quote stays a list. (Em/en dash attributions are handled above; a
-          // hyphen would otherwise collide with the `- item` bullet syntax, which is why a lone
-          // bullet is the only safe hyphen case to fold.)
-          cite = lines[j].trim().replace(/^[-*+]\s*/, "");
-          i = j + 1;
-        }
+        // ADR-0023 §5: the attribution often follows the `>` block on its OWN line (not
+        // `>`-prefixed). foldQuoteAttribution is the ONE fold — the promoted quoted-paragraph
+        // path below calls the same function, so both quote paths attribute identically.
+        const folded = foldQuoteAttribution(lines, i);
+        cite = folded.cite;
+        i = folded.nextIndex;
       }
       // Group remaining lines into paragraphs honouring the blank-`>` breaks.
       const paras = [];
@@ -306,9 +325,22 @@ export function lexMarkdownBlocks(lines) {
         // G1: a paragraph that is wholly a double-quoted statement becomes a quote block.
         const promoted = quoteFromQuotedParagraph(paraText);
         if (promoted) {
-          blocks.push({ type: "quote", text: promoted.text, paragraphs: [promoted.text], cite: promoted.cite });
+          // ADR-0023 §5 D1: a promoted quote folds a following dash-led line into its cite by the
+          // SAME rule the `>` path uses. Before this, that line stayed a separate paragraph and
+          // rendered as a caption OUTSIDE the quote panel.
+          let cite = promoted.cite;
+          if (!cite) {
+            const folded = foldQuoteAttribution(lines, i);
+            cite = folded.cite;
+            i = folded.nextIndex;
+          }
+          blocks.push({ type: "quote", text: promoted.text, paragraphs: [promoted.text], cite });
         } else {
-          blocks.push({ type: "paragraph", text: paraText });
+          // ADR-0023 §4: a WHOLLY bold paragraph is a claim, not a bold paragraph. Partial bold
+          // stays prose and keeps its inline `<strong>` accent highlight.
+          const claim = claimFromBoldParagraph(paraText);
+          if (claim) blocks.push({ type: "claim", text: claim });
+          else blocks.push({ type: "paragraph", text: paraText });
         }
       }
     }
@@ -316,4 +348,3 @@ export function lexMarkdownBlocks(lines) {
   }
   return blocks;
 }
-

@@ -1,7 +1,9 @@
-// Real-Electron harness for the Slide Browser (Light Table, ADR-0034): ⌘K overlay, search,
+// Real-Electron harness for the Slide Browser (Light Table, ADR-0034): ⌘S overlay, search,
 // filter chips, index rail, density, selection + action tray + multi-insert, the version
 // filmstrip (badge → strip → version-insert), empty states, Esc ladder.
 import { _electron as electron } from 'playwright'
+import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'; import { dirname, join } from 'path'
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'fs'; import { tmpdir } from 'os'
 
@@ -43,7 +45,8 @@ writeFileSync(join(beta, 'beta-talk-outline.md'), [
 ].join('\n'))
 writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault }))
 
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO })
+await ensureFreshBuild(REPO)
+const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
 const page = await app.firstWindow()
 const consoleErrors = []
 // twthumb:// loads fail by design until a slide's preview has rendered (the card falls back
@@ -52,12 +55,12 @@ page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resourc
 await page.waitForLoadState('domcontentloaded'); await page.waitForTimeout(1200)
 
 try {
-  await page.locator('.talk-item', { hasText: 'Alpha Talk' }).first().click()
+  await openTalkByTitle(page, 'Alpha Talk')
   await page.waitForSelector('.cm-content', { timeout: 8000 })
   await page.waitForTimeout(400)
 
   // ── open + chrome ──
-  await page.keyboard.press('Meta+k')
+  await page.keyboard.press('Meta+s')
   // Gate-4 badge honesty: while an id's counts are still being fetched the stamped card may
   // show ONLY the silent skeleton pill; the dashed 'no versions yet' badge must never appear
   // for vfixt (which HAS versions) — dashed means a fetch confirmed zero. Poll through the
@@ -74,17 +77,17 @@ try {
   }))
   record('badge is silent (skeleton pill) before counts arrive; dashed badge never lies',
     ripen.sawSkeleton && !ripen.sawNovers, JSON.stringify(ripen))
-  record('⌘K opens the Slide Browser overlay', await page.locator('.lt-browser-root').count() === 1)
+  record('⌘S opens the Slide Browser overlay', await page.locator('.lt-browser-root').count() === 1)
   record('room label reads Slide Browser', (await page.locator('.lt-room').textContent()) === 'Slide Browser')
   record('Focus view tab is present but disabled', await page.locator('.lt-viewtabs button[disabled]').count() === 1)
   record('search input is autofocused on open', await page.evaluate(() => document.activeElement?.closest('.lt-searchfield') != null))
-  // Gate-4 micro-fix (Task 7c): ⌘K while the Browser is ALREADY open re-focuses + selects the
+  // Gate-4 micro-fix (Task 7c): ⌘S while the Browser is ALREADY open re-focuses + selects the
   // search field instead of toggling it closed. Blur search first (as arrowing into the grid
-  // does), then a second ⌘K must keep the overlay open AND return focus to the search input.
+  // does), then a second ⌘S must keep the overlay open AND return focus to the search input.
   await page.locator('.lt-searchfield input').blur(); await page.waitForTimeout(100)
   record('search blurs before the re-focus test', await page.evaluate(() => document.activeElement?.closest('.lt-searchfield') == null))
-  await page.keyboard.press('Meta+k'); await page.waitForTimeout(200)
-  record('⌘K while open keeps the Browser open and re-focuses the search input',
+  await page.keyboard.press('Meta+s'); await page.waitForTimeout(200)
+  record('⌘S while open keeps the Browser open and re-focuses the search input',
     (await page.locator('.lt-browser-root').count()) === 1 &&
     (await page.evaluate(() => document.activeElement?.closest('.lt-searchfield') != null)))
   const cards = () => page.locator('.lt-card:not(.skeleton)').count()
@@ -217,13 +220,13 @@ try {
   record('2 slide blocks inserted on disk', afterBlocks - beforeBlocks === 2, `blocks ${beforeBlocks} -> ${afterBlocks}`)
 
   // ── Esc closes from a clean state ──
-  await page.keyboard.press('Meta+k'); await page.waitForTimeout(600)
+  await page.keyboard.press('Meta+s'); await page.waitForTimeout(600)
   await page.keyboard.press('Escape'); await page.waitForTimeout(300)
   record('Esc closes the Browser when nothing is staged', await page.locator('.lt-browser-root').count() === 0)
 
   // ── REAL twthumb:// prints once previews have rendered ──
   await page.evaluate((p) => window.tw.talk.readOutline(p).then((c) => window.tw.talk.thumbnails(p, c)), alphaOutline)
-  await page.keyboard.press('Meta+k'); await page.waitForTimeout(900)
+  await page.keyboard.press('Meta+s'); await page.waitForTimeout(900)
   const realThumbs = await page.evaluate(() =>
     Array.from(document.querySelectorAll('.lt-thumb img')).filter((i) => i.complete && i.naturalWidth > 0).length)
   record('cards show REAL twthumb:// images once previews exist', realThumbs > 0, `loaded=${realThumbs}`)
@@ -250,7 +253,7 @@ try {
   const gammaRel = 'topic-z/gamma-talk/gamma-talk-outline.md'
   const deltaRel = 'topic-z/delta-talk/delta-talk-outline.md'
 
-  await page.keyboard.press('Meta+k'); await page.waitForTimeout(900)
+  await page.keyboard.press('Meta+s'); await page.waitForTimeout(900)
   await page.locator('.lt-vbadge').first().click(); await page.waitForTimeout(700)
   record('adopt entry: filmstrip prints carry the secondary Adopt action', (await page.locator('.lt-vact-adopt').count()) >= 2)
   await page.locator('.lt-vprint').nth(0).hover()
@@ -323,7 +326,7 @@ try {
   for (let i = 0; i < 5 && (await page.locator('.lt-browser-root').count()) === 1; i++) {
     await page.keyboard.press('Escape'); await page.waitForTimeout(250)
   }
-  await page.keyboard.press('Meta+k'); await page.waitForTimeout(900)
+  await page.keyboard.press('Meta+s'); await page.waitForTimeout(900)
   for (const d of ['2', '3', '4', '5', '6']) {
     await page.locator('.lt-density .lt-steps button', { hasText: d }).click(); await page.waitForTimeout(250)
     const m = await page.evaluate(() => {
@@ -355,7 +358,7 @@ try {
   for (let i = 0; i < 5 && (await page.locator('.lt-browser-root').count()) === 1; i++) {
     await page.keyboard.press('Escape'); await page.waitForTimeout(200)
   }
-  await page.keyboard.press('Meta+k'); await page.waitForTimeout(700)
+  await page.keyboard.press('Meta+s'); await page.waitForTimeout(700)
   await page.locator('.lt-searchfield input').fill('quokka'); await page.waitForTimeout(800)
   const dupCards = await page.locator('.lt-card:not(.skeleton)').count()
   record('byte-identical copies collapse to ONE stack card',
@@ -408,7 +411,7 @@ try {
     etaNow.includes('- quokka baseline tier') && etaNow.includes('- quokka ceiling tier'))
 
   // post-merge the stack reads "already one slide" — the merge action retires
-  await page.keyboard.press('Meta+k'); await page.waitForTimeout(700)
+  await page.keyboard.press('Meta+s'); await page.waitForTimeout(700)
   await page.locator('.lt-searchfield input').fill('quokka'); await page.waitForTimeout(800)
   await page.locator('.lt-clusterbadge').first().click(); await page.waitForTimeout(500)
   record('post-merge locations reads "already one slide" and drops the merge action',
@@ -428,7 +431,7 @@ try {
     ['---', 'title: Theta Talk', '---', '', '## Notes', '', '### Wombat overview', '', '- Shared Detail Here', ''].join('\n'))
   writeFileSync(join(iota, 'iota-talk-outline.md'),
     ['---', 'title: Iota Talk', '---', '', '## Notes', '', '### Wombat overview', '', '- shared detail here', ''].join('\n'))
-  await page.keyboard.press('Meta+k'); await page.waitForTimeout(700)
+  await page.keyboard.press('Meta+s'); await page.waitForTimeout(700)
   await page.locator('.lt-searchfield input').fill('wombat'); await page.waitForTimeout(800)
   const wombatCards = await page.locator('.lt-card:not(.skeleton)').count()
   record('case-only variants (same content_hash, different engine identity) collapse as NEAR — fanned/amber',
@@ -459,7 +462,7 @@ try {
     ['---', 'title: Kappa Talk', '---', '', '## Notes', '', '### Platypus note', '', '- platypus one detail', ''].join('\n'))
   writeFileSync(join(lambdaT, 'lambda-talk-outline.md'),
     ['---', 'title: Lambda Talk', '---', '', '## Notes', '', '### Platypus note', '', '- platypus two detail', ''].join('\n'))
-  await page.keyboard.press('Meta+k'); await page.waitForTimeout(700)
+  await page.keyboard.press('Meta+s'); await page.waitForTimeout(700)
   await page.locator('.lt-searchfield input').fill('platypus'); await page.waitForTimeout(800)
   const platyCards = await page.locator('.lt-card:not(.skeleton)').count()
   record('genuinely different slides are NOT collapsed (two singles, no stack/nearstack)',
@@ -494,7 +497,7 @@ try {
   const titleShown = (t) => page.locator('.lt-card:not(.skeleton) .lt-l-title', { hasText: t }).count()
   const search = async (q) => { await page.locator('.lt-searchfield input').fill(q); await page.waitForTimeout(800) }
 
-  await page.keyboard.press('Meta+k'); await page.waitForTimeout(700)
+  await page.keyboard.press('Meta+s'); await page.waitForTimeout(700)
   record('search placeholder advertises the operators', await page.evaluate(() =>
     (document.querySelector('.lt-searchfield input')?.getAttribute('placeholder') || '')
       .includes('t: title') && document.querySelector('.lt-searchfield input').getAttribute('placeholder').includes('e: exact')))

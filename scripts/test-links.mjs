@@ -9,7 +9,9 @@ function collectDeckLinks(slides) {
   const seen = new Set();
   const result = [];
   for (const slide of slides) {
-    const lines = Array.isArray(slide.sourceLines) ? slide.sourceLines : [];
+    const lines = Array.isArray(slide.sourceLines)
+      ? slide.sourceLines
+      : typeof slide.sourceMarkdown === "string" ? slide.sourceMarkdown.split("\n") : [];
     for (const line of lines) {
       let m;
       RE.lastIndex = 0;
@@ -85,6 +87,12 @@ ck(r7[1].url === "https://a-second.com", "order: second slide second");
 // 8. Slide with no sourceLines key → treated as empty (no crash)
 const r8 = collectDeckLinks([{ id: "no-source-lines" }]);
 ck(r8.length === 0, "missing sourceLines: no crash, empty result");
+
+// 9. A MODEL slide carries `sourceMarkdown`, not `sourceLines` — the shape collectDeckLinks is
+// actually called with (Ticket 10: reading only sourceLines made links_index dead).
+const r9 = collectDeckLinks([{ id: "model", sourceMarkdown: "See [the handbook](https://example.org/h).\nAnd [notes](https://example.org/n)." }]);
+ck(r9.length === 2, "model slide: both links collected from sourceMarkdown");
+ck(r9[0].url === "https://example.org/h" && r9[1].text === "notes", "model slide: text and url preserved in order");
 
 if (fail) { console.error(`\n${fail} check(s) failed`); process.exit(1); }
 console.log("PASS: collectDeckLinks (SD-17)");

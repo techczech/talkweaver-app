@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { History, RotateCcw, Search } from 'lucide-react'
 import type { BackupSettings, SettingsChangeEntry, TimerSettings, TranscriptionSettings } from '../../../preload/index'
 import { EDITOR_COMMANDS, displayKeys } from '../keymap/registry'
@@ -12,6 +12,13 @@ import {
   KEYMAP_CHANGED_EVENT
 } from '../keymap/store'
 import { notify } from '../lib/notify'
+import { METADATA_REGISTRY } from '../../../shared/metadata-registry'
+import {
+  metadataDefaultsViewModel,
+  type MetadataDefaults,
+  type SurfaceFieldModel
+} from '../../../shared/metadata-surfaces'
+import { ensureMetadataDefaults, saveMetadataDefaults } from '../lib/metadata-defaults'
 
 interface Props {
   isOpen: boolean
@@ -41,8 +48,10 @@ type Paths = {
 // Sections the search box matches against: id → searchable keyword blob (title + contents).
 const SECTION_KEYWORDS: Record<string, string> = {
   folders: 'folders vault root image archive powerpoint',
+  workspace: 'workspace action bar buttons row editor menus toolbar',
   backup: 'presentation backup onedrive dropbox folder interval check every back up now',
   timer: 'timer presenter clock amber dark warning minutes warn urgent',
+  metadefaults: 'presenter identity deck defaults author name email affiliation web licence license house style font palette colour logo series retype every talk',
   publishing: 'publishing cloudflare pages handout account id project custom domain short urls api token wrangler',
   recording: 'recording storage r2 s3 endpoint bucket credentials bitwarden secrets keychain access keys discard seconds',
   transcription: 'transcription parakeet python script ffmpeg speech to text runs',
@@ -63,11 +72,18 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
   // Presenter clock amber/dark-amber thresholds — the Settings global default (a deck's own
   // frontmatter warn-at:/urgent-at: overrides these per-talk).
   const [timer, setTimer] = useState<TimerSettings | null>(null)
+  // Action bar (ADR-0025) visibility — one app-wide setting; null while loading.
+  const [actionBar, setActionBar] = useState<boolean | null>(null)
+  // Presenter identity and deck defaults (Ticket 9b): one app-level value per identity /
+  // house-style metadata key, pre-filled into NEW talks so they are never retyped.
+  const [metaDefaults, setMetaDefaults] = useState<MetadataDefaults>({})
+  const metaGroups = useMemo(() => metadataDefaultsViewModel(METADATA_REGISTRY, metaDefaults), [metaDefaults])
   // Cloudflare publishing config (token is write-only here — we only ever learn hasToken).
   const [pub, setPub] = useState<{
     accountId: string
     project: string
     baseUrl: string
+    workerBaseUrl: string
     useShortIds: boolean
     hasToken: boolean
   } | null>(null)
@@ -79,7 +95,7 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
   const [changes, setChanges] = useState<SettingsChangeEntry[] | null>(null)
   // Baselines for blur/save-time diffing: the last values READ from the main process, so a
   // change can be logged as old → new even after the controlled inputs already hold the new text.
-  const pubBaseRef = useRef<{ accountId: string; project: string; baseUrl: string; useShortIds: boolean } | null>(null)
+  const pubBaseRef = useRef<{ accountId: string; project: string; baseUrl: string; workerBaseUrl: string; useShortIds: boolean } | null>(null)
   const recBaseRef = useRef<{ endpoint: string; bucket: string; credsSource: 'bws' | 'settings'; bwsSecretId: string; discardSeconds: number } | null>(null)
   const trBaseRef = useRef<{ python: string; script: string; ffmpeg: string } | null>(null)
   const timerBaseRef = useRef<TimerSettings | null>(null)
@@ -93,23 +109,24 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
   const refreshPub = (): void => {
     window.tw.publish.getConfig().then((p) => {
       setPub(p)
-      pubBaseRef.current = { accountId: p.accountId, project: p.project, baseUrl: p.baseUrl, useShortIds: p.useShortIds }
+      pubBaseRef.current = { accountId: p.accountId, project: p.project, baseUrl: p.baseUrl, workerBaseUrl: p.workerBaseUrl, useShortIds: p.useShortIds }
     }).catch(() => setPub(null))
   }
   // Diff the current publishing draft against the last-read baseline and log each changed field.
-  const recordPubDiff = (next: { accountId: string; project: string; baseUrl: string; useShortIds: boolean }): void => {
+  const recordPubDiff = (next: { accountId: string; project: string; baseUrl: string; workerBaseUrl: string; useShortIds: boolean }): void => {
     const base = pubBaseRef.current
     if (!base) return
     record('publish.accountId', 'Publishing — account ID', base.accountId, next.accountId)
     record('publish.project', 'Publishing — Pages project', base.project, next.project)
     record('publish.baseUrl', 'Publishing — custom domain', base.baseUrl, next.baseUrl)
+    record('publish.workerBaseUrl', 'Publishing — live Worker URL', base.workerBaseUrl, next.workerBaseUrl)
     record('publish.useShortIds', 'Publishing — short URLs', base.useShortIds ? 'on' : 'off', next.useShortIds ? 'on' : 'off')
   }
   // Publishing text fields persist on blur. The Short-URLs toggle already saved immediately, so
   // account/project/domain edits abandoned without the explicit Save button were silently lost.
   const persistPub = (): void => {
     if (!pub) return
-    const next = { accountId: pub.accountId, project: pub.project, baseUrl: pub.baseUrl, useShortIds: pub.useShortIds }
+    const next = { accountId: pub.accountId, project: pub.project, baseUrl: pub.baseUrl, workerBaseUrl: pub.workerBaseUrl, useShortIds: pub.useShortIds }
     recordPubDiff(next)
     void window.tw.publish.setConfig(next).then(refreshPub)
   }
@@ -167,6 +184,14 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
       .then(setTimer)
       .catch(() => setTimer(null))
   }
+  // Action bar (ADR-0025): one app-wide visibility flag. The broadcast subscription keeps the row
+  // honest if another window toggles it while this panel is open.
+  const refreshActionBar = (): void => {
+    window.tw.settings
+      .getActionBar()
+      .then((state) => setActionBar(state.visible))
+      .catch(() => setActionBar(null))
+  }
 
   useEffect(() => {
     if (!isOpen) return
@@ -179,16 +204,21 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
     refreshPaths()
     refreshBackup()
     refreshTimer()
+    refreshActionBar()
     refreshPub()
     refreshRec()
     refreshTranscription()
+    void ensureMetadataDefaults().then(setMetaDefaults).catch(() => {})
     // Live status pushes while a sweep runs (the timer or the manual button).
     const unsub = window.tw.backup.onStatus((run) => setBackup((b) => (b ? { ...b, lastRun: run } : b)))
+    // Another window toggled the action bar — keep this panel's row in step.
+    const unsubActionBar = window.tw.settings.onActionBarChanged((state) => setActionBar(state.visible))
     const onChanged = (): void => setTick((t) => t + 1)
     window.addEventListener(KEYMAP_CHANGED_EVENT, onChanged)
     return () => {
       window.removeEventListener(KEYMAP_CHANGED_EVENT, onChanged)
       unsub()
+      unsubActionBar()
     }
   }, [isOpen])
 
@@ -251,6 +281,7 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
     const seen = new Map<string, number>()
     for (const c of EDITOR_COMMANDS) {
       const k = effectiveKeys(c.id)
+      if (!k) continue
       seen.set(k, (seen.get(k) ?? 0) + 1)
     }
     const dup = new Set<string>()
@@ -287,10 +318,10 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
       else if (en.key === 'timer.urgentAtMinutes') setTimer(await window.tw.settings.setTimer({ urgentAtMinutes: Number(v) }))
       else if (en.key.startsWith('publish.')) {
         const cur = await window.tw.publish.getConfig()
-        const next = { accountId: cur.accountId, project: cur.project, baseUrl: cur.baseUrl, useShortIds: cur.useShortIds }
+        const next = { accountId: cur.accountId, project: cur.project, baseUrl: cur.baseUrl, workerBaseUrl: cur.workerBaseUrl, useShortIds: cur.useShortIds }
         const field = en.key.slice('publish.'.length)
         if (field === 'useShortIds') next.useShortIds = v === 'on'
-        else if (field === 'accountId' || field === 'project' || field === 'baseUrl') next[field] = v
+        else if (field === 'accountId' || field === 'project' || field === 'baseUrl' || field === 'workerBaseUrl') next[field] = v
         else throw new Error('unknown publish field')
         await window.tw.publish.setConfig(next)
         refreshPub()
@@ -456,6 +487,36 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
           </div>
           </>)}
 
+          {show('workspace') && (<>
+          {/* ── Workspace (ADR-0025) ─────────────────────────────────── */}
+          <div style={sectionHead}>Workspace</div>
+          <div style={rowFolder}>
+            <div style={{ minWidth: 0 }}>
+              <div style={folderLabel}>
+                Show the action bar{' '}
+                <span style={{ color: actionBar ? 'var(--oxford)' : 'var(--faint)', fontWeight: 500 }}>
+                  {actionBar ? '· on' : '· off'}
+                </span>
+              </div>
+              <div style={folderPath}>
+                A row of buttons above the editor, for people who prefer not to use the menus.
+              </div>
+            </div>
+            <button
+              style={actionBar ? btn : { ...btn, borderColor: 'var(--oxford)', color: 'var(--oxford)' }}
+              onClick={() => {
+                const old = actionBar ? 'on' : 'off'
+                window.tw.settings.setActionBarVisible(!actionBar).then((visible) => {
+                  setActionBar(visible)
+                  record('workspace.actionBar', 'Show the action bar', old, visible ? 'on' : 'off')
+                })
+              }}
+            >
+              {actionBar ? 'Turn off' : 'Turn on'}
+            </button>
+          </div>
+          </>)}
+
           {show('backup') && (<>
           {/* ── Presentation backup ─────────────────────────────── */}
           <div style={sectionHead}>Presentation backup</div>
@@ -526,28 +587,39 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
             </div>
           </div>
 
-          <div style={rowFolder}>
-            <div style={{ minWidth: 0 }}>
-              <div style={folderLabel}>Check every</div>
-              <div style={folderPath}>How often TalkWeaver re-saves changed talks</div>
+          {/* ADR-0024: backup covers the talks he is working on — the ones he edits in the app —
+              never the whole vault. This list is where that set is visible and editable. */}
+          <div style={{ ...rowFolder, alignItems: 'flex-start' }}>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={folderLabel}>Talks being backed up</div>
+              <div style={folderPath}>
+                The talks you have edited in TalkWeaver. Backups happen when you save, and once at
+                launch. A talk drops out after 14 days without being opened.
+              </div>
+              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {(backup?.talks ?? []).length === 0 && (
+                  <div style={{ ...folderPath, fontStyle: 'italic' }}>
+                    Nothing yet — edit a talk and it joins this list.
+                  </div>
+                )}
+                {(backup?.talks ?? []).map((t) => (
+                  <label key={t.slug} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12 }}>
+                    <input
+                      type="checkbox"
+                      checked={t.enrolled}
+                      onChange={(e) => { window.tw.backup.setEnrolled(t.slug, e.target.checked).then(setBackup) }}
+                    />
+                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {t.title}
+                    </span>
+                    <span style={{ color: 'var(--faint)', flexShrink: 0 }}>
+                      {t.lastBackupAt ? `saved ${relTime(t.lastBackupAt)}` : 'not saved yet'}
+                    </span>
+                  </label>
+                ))}
+              </div>
             </div>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
-              <select
-                value={backup?.intervalMin ?? 15}
-                onChange={(e) => {
-                  const old = String(backup?.intervalMin ?? 15)
-                  window.tw.settings.setBackup({ intervalMin: Number(e.target.value) }).then((b) => {
-                    setBackup(b)
-                    record('backup.intervalMin', 'Backup interval (minutes)', old, String(b.intervalMin))
-                  })
-                }}
-                style={selectStyle}
-              >
-                <option value={5}>5 min</option>
-                <option value={15}>15 min</option>
-                <option value={30}>30 min</option>
-                <option value={60}>60 min</option>
-              </select>
               <button
                 style={{ ...btn, opacity: backingUp || !backup?.folder ? 0.5 : 1 }}
                 disabled={backingUp || !backup?.folder}
@@ -626,6 +698,36 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
 
           </>)}
 
+          {show('metadefaults') && (<>
+          {/* ── Presenter identity and deck defaults ─────────────── */}
+          <div style={sectionHead}>Presenter identity and deck defaults</div>
+          <div style={hint}>
+            What a NEW talk starts with — your name, affiliation, licence and house style, so they
+            are never retyped. Every field here is the same setting the deck itself carries; leave
+            one blank for no default. Changing a default never touches a talk you have already
+            written: Deck settings offers “Use default” per field when you want it.
+          </div>
+          {metaGroups.map((group) => (
+            <div key={group.key}>
+              <div style={catHead}>{group.label}</div>
+              {group.fields.map((field) => (
+                <MetadataDefaultRow
+                  key={field.key}
+                  field={field}
+                  onChange={(value) => {
+                    const before = metaDefaults[field.key] ?? ''
+                    if (before === value) return
+                    void saveMetadataDefaults({ [field.key]: value }).then((next) => {
+                      setMetaDefaults(next)
+                      record(`metadataDefaults.${field.key}`, `Deck default — ${field.label}`, before, value)
+                    })
+                  }}
+                />
+              ))}
+            </div>
+          ))}
+          </>)}
+
           {show('publishing') && (<>
           {/* ── Publishing (Cloudflare) ─────────────────────────── */}
           <div style={sectionHead}>Publishing (Cloudflare)</div>
@@ -674,6 +776,20 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
           </div>
 
           <div style={rowFolder}>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={folderLabel}>Live Worker URL <span style={{ color: 'var(--faint)', fontWeight: 500 }}>· optional</span></div>
+              <input
+                style={inputStyle}
+                value={pub?.workerBaseUrl ?? ''}
+                placeholder="https://talkweaver-live-sessions.example.workers.dev"
+                onChange={(e) => setPub((p) => (p ? { ...p, workerBaseUrl: e.target.value } : p))}
+                onBlur={persistPub}
+              />
+              <div style={folderPath}>Leave empty to deploy with your token, or use local Wrangler when no token is configured.</div>
+            </div>
+          </div>
+
+          <div style={rowFolder}>
             <div style={{ minWidth: 0 }}>
               <div style={folderLabel}>Short URLs</div>
               <div style={folderPath}>Share <kbd style={kbd}>{'<base>/<id>'}</kbd> links instead of <kbd style={kbd}>{'<base>/<slug>/'}</kbd></div>
@@ -685,7 +801,7 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
                 setPub((p) => (p ? { ...p, useShortIds: next } : p))
                 if (pub) {
                   record('publish.useShortIds', 'Publishing — short URLs', pub.useShortIds ? 'on' : 'off', next ? 'on' : 'off')
-                  window.tw.publish.setConfig({ accountId: pub.accountId, project: pub.project, baseUrl: pub.baseUrl, useShortIds: next }).then(refreshPub)
+                  window.tw.publish.setConfig({ accountId: pub.accountId, project: pub.project, baseUrl: pub.baseUrl, workerBaseUrl: pub.workerBaseUrl, useShortIds: next }).then(refreshPub)
                 }
               }}
             >
@@ -747,7 +863,7 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
               style={{ ...btn, borderColor: 'var(--oxford)', color: 'var(--oxford)' }}
               onClick={() => {
                 if (!pub) return
-                const next = { accountId: pub.accountId, project: pub.project, baseUrl: pub.baseUrl, useShortIds: pub.useShortIds }
+                const next = { accountId: pub.accountId, project: pub.project, baseUrl: pub.baseUrl, workerBaseUrl: pub.workerBaseUrl, useShortIds: pub.useShortIds }
                 recordPubDiff(next)
                 window.tw.publish
                   .setConfig(next)
@@ -1042,9 +1158,9 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
                         onClick={() => setCapturingId(capturing ? null : c.id)}
                         aria-label={`Change shortcut for ${c.label}`}
                       >
-                        {capturing ? 'Press keys…' : displayKeys(keys).map((g, i) => (
-                          <kbd key={i} style={kbd}>{g}</kbd>
-                        ))}
+                        {capturing ? 'Press keys…' : keys
+                          ? displayKeys(keys).map((g, i) => <kbd key={i} style={kbd}>{g}</kbd>)
+                          : '—'}
                       </button>
                       {overridden && !capturing && (
                         <button
@@ -1139,6 +1255,66 @@ const selectStyle: React.CSSProperties = {
   fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--line)',
   background: 'var(--panel)', color: 'var(--ink)', cursor: 'pointer'
 }
+/**
+ * One default, rendered by exactly Ticket 9's rules: a closed vocabulary is a picker with every
+ * choice explained, everything else is a typed box, and the registry explanation sits under the
+ * control. Blank always means "no default".
+ */
+function MetadataDefaultRow({ field, onChange }: { field: SurfaceFieldModel; onChange: (value: string) => void }): React.JSX.Element {
+  const [draft, setDraft] = useState(field.value)
+  useEffect(() => { setDraft(field.value) }, [field.value])
+  const id = `metadefault-${field.key}`
+  return (
+    <div style={{ padding: '7px 0', borderBottom: '1px solid var(--line)' }}>
+      <div style={rowFolder}>
+        <div style={{ minWidth: 0 }}>
+          <label htmlFor={id} style={folderLabel}>{field.label}</label>
+          <div style={{ ...hint, margin: '2px 0 0' }}>{field.explanation}</div>
+        </div>
+        {field.options
+          ? (
+              <select
+                id={id}
+                value={field.options.some((option) => option.value === field.value) ? field.value : ''}
+                onChange={(e) => onChange(e.target.value)}
+                style={inputStyle}
+              >
+                {field.options.map((option) => (
+                  <option key={option.value || '(default)'} value={option.value} title={option.explanation}>
+                    {option.value === '' ? 'No default' : option.label}
+                  </option>
+                ))}
+              </select>
+            )
+          : (
+              <input
+                id={id}
+                type={field.control === 'url' ? 'url' : field.control === 'number' ? 'number' : 'text'}
+                value={draft}
+                placeholder={field.placeholder ?? 'No default'}
+                onChange={(e) => setDraft(e.target.value)}
+                onBlur={() => onChange(draft.trim())}
+                style={inputStyle}
+              />
+            )}
+      </div>
+      {field.options && (
+        <details style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+          <summary style={{ color: 'var(--oxford)', cursor: 'pointer' }}>What each choice does</summary>
+          <dl style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: '2px 10px', margin: '4px 0 0' }}>
+            {field.options.map((option) => (
+              <Fragment key={option.value || '(default)'}>
+                <dt style={{ fontWeight: 600 }}>{option.value === '' ? 'No default' : option.label}</dt>
+                <dd style={{ margin: 0, lineHeight: 1.45 }}>{option.explanation}</dd>
+              </Fragment>
+            ))}
+          </dl>
+        </details>
+      )}
+    </div>
+  )
+}
+
 const inputStyle: React.CSSProperties = {
   fontSize: 12, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)',
   background: 'var(--panel)', color: 'var(--ink)', width: '100%', marginTop: 3,

@@ -10,7 +10,7 @@
   .contrast-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
-    gap: clamp(16px, 1.8vw, 22px);
+    gap: clamp(16px, 1.8cqw, 22px);
     margin-top: 40px;
   }/* @order 0181 */
   /* {contrast} + #### groups (2026-06-09): static side-by-side comparison columns. All
@@ -18,7 +18,7 @@
   .contrast-cards {
     display: grid;
     grid-template-columns: repeat(var(--compare-cols, 2), minmax(0, 1fr));
-    gap: clamp(16px, 2vw, 28px);
+    gap: clamp(16px, 2cqw, 28px);
     align-content: center;
     margin-top: 28px;
     min-height: 0;
@@ -29,7 +29,7 @@
     border-top: 4px solid var(--accent);
     border-radius: 0;
     box-shadow: none;
-    padding: clamp(16px, 2vw, 28px);
+    padding: clamp(16px, 2cqw, 28px);
     min-width: 0;
     display: grid;
     align-content: start;
@@ -48,7 +48,7 @@
   .contrast-panels {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: clamp(20px, 2.4vw, 44px);
+    gap: clamp(20px, 2.4cqw, 44px);
     align-content: center;
     margin-top: 28px;
   }/* @order 0201 */
@@ -103,134 +103,142 @@
     background: var(--line);
   }/* @order 0211 */
   .contrast-pair strong::before { left: 0; }/* @order 0212 */
-  .contrast-pair strong::after { right: 0; }/* @order 0557 */
+  .contrast-pair strong::after { right: 0; }/* @order 0564 */
 
   /* CONTRAST — opposing arrows (the batch-2 DEFAULT pair device; {contrast=cards} keeps the
      legacy serif-/ pair-cards). Each pair is one row: left term in a right-pointing ink
      arrow, right term in a left-pointing accent arrow, points meeting at centre with a small
-     gap. CSS clip-path polygons — no images. *//* @order 0558 */
-  .contrast-arrows { display: flex; flex-direction: column; gap: clamp(12px, 1.6vh, 22px); }/* @order 0559 */
+     gap. CSS clip-path polygons — no images. *//* @order 0565 */
+  .contrast-arrows { display: flex; flex-direction: column; gap: clamp(12px, 1.6vh, 22px); }/* @order 0566 */
   /* The legacy pair-CARD rules (vertical rows template, 200px panel, ink/accent term colours,
-     16ch shrink) still match `.contrast-pair` — every one is re-asserted here for the arrows. *//* @order 0560 */
+     16ch shrink) still match `.contrast-pair` — every one is re-asserted here for the arrows. *//* @order 0567 */
   .contrast-arrows .contrast-pair {
     display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto; align-content: stretch;
     justify-items: stretch; gap: 10px; min-height: 0;
     background: none; border: 0; border-radius: 0; padding: 0; box-shadow: none;
-  }/* @order 0561 */
+  }/* @order 0568 */
   /* ADR-0005 INTERIM (the arrow chevrons were never designed — flagged for a design round):
      each pair is a LEDGER row — left term quiet and right-aligned, right term strong and
-     left-aligned, a hairline between rows, the divider a thin accent tick. *//* @order 0562 */
-  .contrast-arrows .contrast-pair { grid-template-columns: 1fr auto 1fr; align-items: center; gap: clamp(18px, 2vw, 36px); padding: clamp(10px, 1.4vh, 18px) 0; border-top: 1px solid var(--hairline); }/* @order 0563 */
-  .contrast-arrows .contrast-pair:first-child { border-top: 0; }/* @order 0564 */
+     left-aligned, a hairline between rows, the divider a thin accent tick. *//* @order 0569 */
+  .contrast-arrows .contrast-pair { grid-template-columns: 1fr auto 1fr; align-items: center; gap: clamp(18px, 2cqw, 36px); padding: clamp(10px, 1.4vh, 18px) 0; border-top: 1px solid var(--hairline); }/* @order 0570 */
+  .contrast-arrows .contrast-pair:first-child { border-top: 0; }/* @order 0571 */
   .contrast-arrows .contrast-pair span.ct-arrow,
   .contrast-arrows .contrast-pair span.ct-arrow:first-of-type,
   .contrast-arrows .contrast-pair span.ct-arrow:last-of-type {
     max-width: none; width: 100%;
     font-size: max(20px, 2.1cqw); letter-spacing: -0.01em; line-height: 1.2;
-  }/* @order 0568 */
-  /* Divider tick between the terms. *//* @order 0569 */
-  .contrast-arrows .contrast-pair::before { content: none; }/* @order 0570 */
-  .contrast-arrows .contrast-pair > .ct-left + .ct-right { position: relative; }/* @order 0571 */
+  }/* @order 0575 */
+  /* Divider tick between the terms. *//* @order 0576 */
+  .contrast-arrows .contrast-pair::before { content: none; }/* @order 0577 */
+  .contrast-arrows .contrast-pair > .ct-left + .ct-right { position: relative; }/* @order 0578 */
   .contrast-arrows .contrast-pair {
     position: relative;
-  }/* @order 0572 */
+  }/* @order 0579 */
   .contrast-arrows .contrast-pair::after {
     content: ""; grid-column: 2; grid-row: 1;
     width: 2.5px; height: 1.6em; background: var(--accent);
     justify-self: center; align-self: center;
-  }/* @order 0731 */
+  }/* @order 0738 */
 
   /* Opt-in contrast variants locked in the 2026-07-13 design round. Every treatment keeps one
-     direct `.contrast-pair` child per authored pair so reveal stepping remains intact. *//* @order 1756 */
+     direct `.contrast-pair` child per authored pair so reveal stepping remains intact. *//* @order 1782 */
   .contrast-grid:is(.contrast-ledger, .contrast-rows, .contrast-tint, .contrast-flip) {
     border: 0; background: none; margin-top: 40px;
-  }/* @order 1757 */
+  }/* @order 1783 */
   .contrast-grid:is(.contrast-ledger, .contrast-rows, .contrast-tint) {
     display: flex; flex-direction: column; gap: 0;
-  }/* @order 1758 */
+  }/* @order 1784 */
   .contrast-grid:is(.contrast-ledger, .contrast-rows, .contrast-tint, .contrast-flip) .contrast-pair {
     min-height: 0; border-radius: 0; background: none; box-shadow: none; text-align: left;
     /* The base pair rule centres items (justify-items at @order 0203); the trials' columns
        fill their tracks and read left-aligned — stretch wins for every variant. */
     justify-items: stretch;
-  }/* @order 1759 */
+  }/* @order 1785 */
   .contrast-grid:is(.contrast-ledger, .contrast-rows, .contrast-tint, .contrast-flip) .contrast-pair > span {
     width: auto; max-width: none; font-size: max(20px, 2.1cqw); letter-spacing: -0.01em;
-  }/* @order 1760 */
+  }/* @order 1786 */
   .contrast-ledger .contrast-pair {
-    display: grid !important; grid-template-columns: 1fr 1fr !important; gap: 0 3vw !important;
+    display: grid !important; grid-template-columns: 1fr 1fr !important; gap: 0 3cqw !important;
     align-items: start; padding: 2vh 0; margin: 0; border: 0; border-bottom: 1px solid var(--hairline);
-  }/* @order 1761 */
+  }/* @order 1787 */
   .contrast-ledger .ct-old {
     color: var(--muted); font-weight: 400; line-height: 1.35;
     text-decoration: line-through; text-decoration-color: var(--accent); text-decoration-thickness: 2px;
-  }/* @order 1762 */
-  .contrast-ledger .ct-new { color: var(--ink); font-weight: 600; line-height: 1.35; }/* @order 1763 */
+  }/* @order 1788 */
+  .contrast-ledger .ct-new { color: var(--ink); font-weight: 600; line-height: 1.35; }/* @order 1789 */
   .contrast-rows .contrast-pair {
-    display: grid !important; grid-template-columns: 1fr 2.2em 1fr !important; gap: 0 1.2vw !important;
+    display: grid !important; grid-template-columns: 1fr 2.2em 1fr !important; gap: 0 1.2cqw !important;
     align-items: baseline; padding: 2vh 0; margin: 0; border: 0; border-bottom: 1px solid var(--hairline);
-  }/* @order 1764 */
-  .contrast-rows .contrast-pair:first-child { border-top: 1px solid var(--hairline); }/* @order 1765 */
-  .contrast-rows .ct-old { color: var(--muted); font-weight: 400; line-height: 1.35; }/* @order 1766 */
-  .contrast-rows .ct-arrow { color: var(--accent); font-weight: 700; text-align: center; line-height: 1; }/* @order 1767 */
-  .contrast-rows .ct-new { color: var(--ink); font-weight: 600; line-height: 1.35; }/* @order 1768 */
+  }/* @order 1790 */
+  .contrast-rows .contrast-pair:first-child { border-top: 1px solid var(--hairline); }/* @order 1791 */
+  .contrast-rows .ct-old { color: var(--muted); font-weight: 400; line-height: 1.35; }/* @order 1792 */
+  .contrast-rows .ct-arrow { color: var(--accent); font-weight: 700; text-align: center; line-height: 1; }/* @order 1793 */
+  .contrast-rows .ct-new { color: var(--ink); font-weight: 600; line-height: 1.35; }/* @order 1794 */
   .contrast-tint .contrast-pair {
-    display: grid !important; grid-template-columns: 1fr 1fr !important; gap: 0 1.6vw !important;
+    display: grid !important; grid-template-columns: 1fr 1fr !important; gap: 0 1.6cqw !important;
     align-items: stretch; padding: 0; margin: 0 0 1.4vh; border: 0;
-  }/* @order 1769 */
+  }/* @order 1795 */
   .contrast-tint .ct-old {
     display: flex; align-items: center; color: var(--muted); font-weight: 400; line-height: 1.35;
-    padding: 1.8vh 1.2vw; border: 1px solid var(--hairline); background: var(--paper);
-  }/* @order 1770 */
+    padding: 1.8vh 1.2cqw; border: 1px solid var(--hairline); background: var(--paper);
+  }/* @order 1796 */
   .contrast-tint .ct-new {
     display: flex; align-items: center; color: var(--ink); font-weight: 600; line-height: 1.35;
-    padding: 1.8vh 1.2vw; border-left: 4px solid var(--accent); background: var(--tint);
-  }/* @order 1771 */
-  .contrast-flip { display: grid; grid-template-columns: 1fr 1fr; gap: 1.4vh 1.4vw; }/* @order 1772 */
+    padding: 1.8vh 1.2cqw; border-left: 4px solid var(--accent); background: var(--tint);
+  }/* @order 1797 */
+  .contrast-flip { display: grid; grid-template-columns: 1fr 1fr; gap: 1.4vh 1.4cqw; }/* @order 1798 */
   .contrast-flip .contrast-pair {
-    display: block !important; grid-template-columns: none !important; padding: 2.2vh 1.4vw; margin: 0;
+    display: block !important; grid-template-columns: none !important; padding: 2.2vh 1.4cqw; margin: 0;
     border: 1px solid var(--hairline); border-top: 3px solid var(--accent);
-  }/* @order 1773 */
+  }/* @order 1799 */
   .contrast-flip .ct-old {
     display: block; color: var(--muted); font-weight: 400; font-size: max(20px, 2.1cqw); line-height: 1.35;
     text-decoration: line-through; text-decoration-color: var(--accent); text-decoration-thickness: 1.5px; margin-bottom: 1vh;
-  }/* @order 1774 */
-  .contrast-flip .ct-new { display: block; color: var(--ink); font-weight: 600; font-size: max(28px, 3.1cqw); line-height: 1.3; }/* @order 1775 */
+  }/* @order 1800 */
+  .contrast-flip .ct-new { display: block; color: var(--ink); font-weight: 600; font-size: max(28px, 3.1cqw); line-height: 1.3; }/* @order 1801 */
 
-  /* COMPARE LAYOUT (ADR-0005 "50/50 comparison", mockup .t-half). Two halves side by side
-     filling the content box — half A on the section TINT, half B on PAPER. The nav-only
+  /* COMPARE LAYOUT (ADR-0005 "50/50 comparison", mockup .t-half). Two equal halves side by side
+     filling the stage — half A on the section TINT, half B on PAPER. The nav-only
      heading (.slide-head-quiet) is not drawn ({title=show} restores a normal head above).
      Each half: a small-caps mono label in --accent, then vertically-centred content. Half B
      is one reveal beat (MODE_SELECTOR .layout-compare .compare-half.half-b). No italics, no
-     underlines; boxed **strong** = accent chip with clone box-decoration. *//* @order 0732 */
-  .slide-content.layout-compare { width: min(1180px, 100%); align-content: stretch; }/* @order 0733 */
-  .slide-content.layout-compare > .slide-head-quiet { display: contents; }/* @order 0734 */
+     underlines; boxed **strong** = accent chip with clone box-decoration. *//* @order 0739 */
+  .slide-content.layout-compare {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    max-width: none;
+    min-height: 100%;
+    align-content: stretch;
+  }/* @order 0740 */
+  .slide-content.layout-compare > .slide-head-quiet { display: contents; }/* @order 0741 */
   .compare-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    min-height: min(820px, 86vh);
-  }/* @order 0735 */
+    min-height: 100%;
+  }/* @order 0742 */
   .compare-half {
     display: flex;
     flex-direction: column;
     justify-content: center;
-    padding: clamp(28px, 5vh, 60px) clamp(28px, 4vw, 64px);
+    padding: clamp(28px, 5vh, 60px) clamp(28px, 4cqw, 64px);
     min-width: 0;
-  }/* @order 0736 */
-  .compare-half.half-a { background: var(--tint); }/* @order 0737 */
-  .compare-half.half-b { background: var(--paper); }/* @order 0738 */
-  .compare-inner { max-width: 12em; }/* @order 0739 */
-  /* Small-caps mono label = the #### heading (mockup .lab), styled like a .kicker. *//* @order 0740 */
+  }/* @order 0743 */
+  .compare-half.half-a { background: var(--tint); }/* @order 0744 */
+  .compare-half.half-b { background: var(--paper); }/* @order 0745 */
+  .compare-inner { font-size: clamp(1.7rem, 3.4vw, 3rem); max-width: 12em; }/* @order 0746 */
+  /* The #### text is the mockup .t-half .half .lab: deliberately small presentation chrome,
+     not a running-text heading. *//* @order 0747 */
   .compare-half .compare-label {
-    margin: 0 0 clamp(16px, 2.5vh, 28px);
+    margin: 0 0 2.5vh;
     font-family: var(--mono);
-    font-size: max(13px, 1.05cqw);
-    font-weight: 500;
-    letter-spacing: 0.18em;
+    font-size: .58em;
+    font-weight: 400;
+    letter-spacing: .18em;
     text-transform: uppercase;
     color: var(--accent);
-  }/* @order 0741 */
-  /* Statements: big sans, weight 500, line-height 1.3 (clears boxed strong), capped at 12em. *//* @order 0742 */
+  }/* @order 0748 */
+  /* Statements: big sans, weight 500, line-height 1.3 (clears boxed strong), capped at 12em. *//* @order 0749 */
   .slide-content.layout-compare .compare-half .compare-inner .content-p,
   .slide-content.layout-compare .compare-half .compare-inner .statement {
     margin: 0;
@@ -239,20 +247,20 @@
     border-left: none;
     font-family: var(--sans);
     font-weight: 500;
-    font-size: max(28px, 3.4cqw);
+    font-size: 1em;
     line-height: 1.3;
     letter-spacing: -0.02em;
     color: var(--ink);
     max-width: 12em;
-  }/* @order 0743 */
-  .slide-content.layout-compare .compare-half .compare-inner .content-p + .content-p { margin-top: 0.6em; }/* @order 0744 */
-  /* Boxed emphasis (mockup .box): filled accent chip, clone across line wraps. *//* @order 0745 */
+  }/* @order 0750 */
+  .slide-content.layout-compare .compare-half .compare-inner .content-p + .content-p { margin-top: 0.6em; }/* @order 0751 */
+  /* Boxed emphasis (mockup .box): filled accent chip, clone across line wraps. *//* @order 0752 */
   .slide-content.layout-compare .compare-half .compare-inner strong {
     background: var(--accent); color: var(--paper);
     padding: 0.02em 0.18em; border-radius: 0.1em;
     box-decoration-break: clone; -webkit-box-decoration-break: clone;
-  }/* @order 1442 */
+  }/* @order 1451 */
 
   /* Contrast ledger (mockup slide 13): one bordered block, halves as columns, hairline-
-     separated rows; the YES side sits on tint. Neutral by default (no auto cross-out). *//* @order 1451 */
+     separated rows; the YES side sits on tint. Neutral by default (no auto cross-out). *//* @order 1460 */
   /* authored {contrast=strike}: the left column is explicitly crossed out in the accent */

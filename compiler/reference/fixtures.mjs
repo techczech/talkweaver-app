@@ -252,9 +252,9 @@ The shape of the slide is the shape of the thought.
     explicit: "{layout=title}",
     shorthand: "{title}",
     blurb: "Opening treatment. Normally auto-generated from frontmatter; can be authored.",
-    markdown: `### Understanding agents {layout=title role=opening kicker="AICC Workshop 2026" id=ref-title}
+    markdown: `### Mapping the garden {layout=title role=opening kicker="Community Garden Demo" id=ref-title}
 
-From a string to a system.`,
+From seed notes to a shared plan.`,
   },
   {
     id: "ref-section",
@@ -285,7 +285,7 @@ From a string to a system.`,
     blurb: "Closing treatment. Normally the auto thanks slide; can be authored.",
     markdown: `### Thank you {layout=closing role=ending id=ref-closing}
 
-Questions — dominik@example.org`,
+Questions — author@example.com`,
   },
   {
     id: "ref-timeline",
@@ -294,13 +294,13 @@ Questions — dominik@example.org`,
     explicit: "{timeline=rail} (auto on `**Timeline:**`)",
     shorthand: "{timeline}",
     blurb: "A `**Timeline:**` list becomes a dated rail; rail/columns/compact modes.",
-    markdown: `### A short history {timeline=rail id=ref-timeline}
+    markdown: `### A short garden history {timeline=rail id=ref-timeline}
 
 **Timeline:**
-- 1950 — Turing asks "can machines think?"
-- 2017 — Transformers arrive
-- 2022 — Chat interfaces reach everyone
-- 2024 — Tool-using agents become practical`,
+- 2020 — Neighbours sketch a garden plan
+- 2022 — The first seed beds open
+- 2024 — Volunteers add a watering rota
+- 2025 — A shared harvest table is built`,
   },
   {
     id: "ref-timeline-vertical",
@@ -309,13 +309,13 @@ Questions — dominik@example.org`,
     explicit: "{timeline=rail}",
     shorthand: "{timelinevertical}",
     blurb: "The conventional vertical dated rail named explicitly (an alias of rail).",
-    markdown: `### A vertical history {timelinevertical id=ref-timeline-vertical}
+    markdown: `### A vertical garden history {timelinevertical id=ref-timeline-vertical}
 
 **Timeline:**
-- 1950 — Turing asks "can machines think?"
-- 2017 — Transformers arrive
-- 2022 — Chat interfaces reach everyone
-- 2024 — Tool-using agents become practical`,
+- 2020 — Neighbours sketch a garden plan
+- 2022 — The first seed beds open
+- 2024 — Volunteers add a watering rota
+- 2025 — A shared harvest table is built`,
   },
   {
     id: "ref-timeline-horizontal",
@@ -324,13 +324,13 @@ Questions — dominik@example.org`,
     explicit: "{timeline=horizontal}",
     shorthand: "{timelinehorizontal}",
     blurb: "A left-to-right track of dated stops along a single line (collapses to a vertical rail when narrow).",
-    markdown: `### A horizontal history {timelinehorizontal id=ref-timeline-horizontal}
+    markdown: `### A horizontal garden history {timelinehorizontal id=ref-timeline-horizontal}
 
 **Timeline:**
-- 1950 — Turing's question
-- 2017 — Transformers
-- 2022 — Chat for everyone
-- 2024 — Agents`,
+- 2020 — The first sketch
+- 2022 — Seed beds
+- 2024 — A watering rota
+- 2025 — A harvest table`,
   },
   {
     id: "ref-timeline-spine",
@@ -338,22 +338,22 @@ Questions — dominik@example.org`,
     name: "Timeline — spine",
     explicit: "{timeline=spine}",
     shorthand: "{timelinespine}",
-    blurb: "A horizontal Oxford-blue spine; one dot per date stop on the line; the date label sits on the spine; event cards alternate above/below joined by dotted leaders. Built for ~6 legible stops — a longer timeline auto-splits into continuation slides (≤6 each).",
-    markdown: `### A history of the idea of thinking machines {timelinespine id=ref-timeline-spine}
+    blurb: "A horizontal blue spine; one dot per date stop on the line; the date label sits on the spine; event cards alternate above/below joined by dotted leaders. Built for ~6 legible stops — a longer timeline auto-splits into continuation slides (≤6 each).",
+    markdown: `### A fictional garden timeline {timelinespine id=ref-timeline-spine}
 
 **Timeline:**
-- 1950
-  - Turing asks "can machines think?"
-- 1966
-  - ELIZA fakes a conversation
-- 1997
-  - Deep Blue beats Kasparov
-- 2012
-  - AlexNet ignites deep learning
-- 2017
-  - Transformers arrive
+- 2020
+  - Neighbours sketch a garden plan
+- 2021
+  - The first raised bed is built
+- 2022
+  - Seed beds open for volunteers
+- 2023
+  - A tool shed is added
 - 2024
-  - Tool-using agents become practical`,
+  - Volunteers add a watering rota
+- 2025
+  - A shared harvest table is built`,
   },
   {
     id: "ref-timeline-pills",
@@ -362,21 +362,21 @@ Questions — dominik@example.org`,
     explicit: "{timeline=pills}",
     shorthand: "{timeline-pills}",
     blurb: "The spine in its uniform variant: the date renders as a solid accent pill on the spine, and a single event card hangs below each stop (no alternation), joined by a dotted leader. Scannable. Same ~6-stop cap and auto-split rule as the spine.",
-    markdown: `### The same history as date pills {timeline-pills id=ref-timeline-pills}
+    markdown: `### The garden timeline as date pills {timeline-pills id=ref-timeline-pills}
 
 **Timeline:**
-- 1950
-  - Turing asks "can machines think?"
-- 1966
-  - ELIZA fakes a conversation
-- 1997
-  - Deep Blue beats Kasparov
-- 2012
-  - AlexNet ignites deep learning
-- 2017
-  - Transformers arrive
+- 2020
+  - Neighbours sketch a garden plan
+- 2021
+  - The first raised bed is built
+- 2022
+  - Seed beds open for volunteers
+- 2023
+  - A tool shed is added
 - 2024
-  - Tool-using agents become practical`,
+  - Volunteers add a watering rota
+- 2025
+  - A shared harvest table is built`,
   },
   {
     id: "ref-grid",
@@ -757,13 +757,13 @@ https://www.youtube.com/watch?v=cNxadbrN_aI`,
     explicit: "{layout=image-quote}",
     shorthand: "{image-quote}",
     blurb: "Image beside the quotation with the attribution as a full-width accent bar — the classic PPT photo/tweet + quote slide. Title nav-only by default.",
-    markdown: `### What they said {image-quote id=ref-image-quote}
+    markdown: `### What the caretaker said {image-quote id=ref-image-quote}
 
 ![A diagram standing in for a portrait](assets/two-box.svg "The speaker")
 
-> The model is no longer the product — the loop around it is.
+> The labels help us find the right seeds before planting.
 
-— Dominik Lukeš, 2026`,
+— Maya Chen, fictional example`,
   },
   {
     id: "ref-image-grid",
@@ -772,19 +772,19 @@ https://www.youtube.com/watch?v=cNxadbrN_aI`,
     explicit: "{layout=image-grid}",
     shorthand: "{image-grid}",
     blurb: "A STATIC annotated grid: #### cards (image + note) or bare captioned images become figure cells, ALL visible at once (stepped galleries stay {cards}).",
-    markdown: `### Tools we tried {image-grid id=ref-image-grid}
+    markdown: `### Garden records {image-grid id=ref-image-grid}
 
-#### ChatGPT
-![ChatGPT](assets/two-box.svg)
-General-purpose assistant.
+#### Seed ledger
+![Seed ledger](assets/two-box.svg)
+Tracks the sample seed packets.
 
-#### Claude
-![Claude](assets/two-box.svg)
-- Strong with long documents
+#### Watering board
+![Watering board](assets/two-box.svg)
+- Shows the fictional weekly rota
 
-#### NotebookLM
-![NotebookLM](assets/two-box.svg)
-Grounded in your sources.`,
+#### Harvest map
+![Harvest map](assets/two-box.svg)
+Shows where the sample crops grow.`,
   },
 
   // ───────────────────────────────── MODES ──────────────────────────────────

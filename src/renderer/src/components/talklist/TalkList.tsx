@@ -1,19 +1,23 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { TalkInfo, TalkMeta, TalkHandouts } from '../../../../preload/index'
+import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
+import type { TalkInfo } from '../../../../preload/index'
 import { type TreeNode, topicOf, buildTree, focusNode } from '../talkTreeNav'
 import {
   type ViewMode, type TalkSortKey, type NamingMode, type PubState, type RowRef,
   VIEW_STORAGE_KEY, SORT_STORAGE_KEY, NAMING_STORAGE_KEY,
   readViewPreference, readSortPreference, readNamingPreference,
-  lastDeliveredBySlug, sortTalks, isIgnoredPath, flattenTree, flattenSearch,
+  sortTalks, isIgnoredPath, flattenTree, flattenSearch,
   allMoveTopics, folderKey
 } from './model'
+import { useTalkFacts } from '../../lib/talkFacts'
+import { cardStep, initialCardState } from './hoverIntent'
 import {
   buildLayout, mountedIndices, scrollTargetFor, windowRange, type RowHeights
 } from './window'
 import { useTalkActions, type Prompt, type Confirm } from './actions'
 import { makePanelKeyHandler } from './useKeyboard'
 import PanelHeader from './PanelHeader'
+import { IcFile } from './icons'
 import Tree, { type TreeCallbacks } from './Tree'
 import Flyout from './Flyout'
 import { SortPopover, TalkContextMenu, FolderContextMenu, MoveMenu } from './menus'
@@ -36,6 +40,10 @@ interface Props {
   onOpenMetadata?: (talk: TalkInfo) => void
   /** Await the App-level editor flush before renaming the ACTIVE talk (rename moves its folder). */
   flushActive?: () => Promise<void>
+  /** Drill-in folder to restore on mount — the panel unmounts on sidebar-tab switch (perf),
+   *  so App holds this so switching to Slide outline and back doesn't dump you to the vault root. */
+  initialFocusPath?: string
+  onFocusPathChange?: (path: string) => void
 }
 
 // viaKeyboard: opened by ⌘K — the menu starts with its first item highlighted (right-click starts blank).
@@ -47,22 +55,26 @@ type Menu =
 const liveCache = new Map<string, 'live' | 'offline'>()
 const liveInFlight = new Set<string>()
 const FALLBACK_ROW_HEIGHTS: RowHeights = { ledger: 26, shelf: 55, fhead: 24 }
+// A pointer click focuses the panel microseconds after its mousedown; only a LONGER gap
+// since the last pointer-down means focus arrived from the keyboard (tab-in) and may re-show
+// the keyboard preview (a click must never leave a card behind — T29).
+const CLICK_FOCUS_GRACE_MS = 200
 
 export default function TalkList({
   talks, folders = [], activeTalk, vaultRoot,
-  onSelectTalk, onDeletedTalk, onRefresh, onChangeVault, onNewTalk, onOpenMetadata, flushActive
+  onSelectTalk, onDeletedTalk, onRefresh, onChangeVault, onNewTalk, onOpenMetadata, flushActive,
+  initialFocusPath, onFocusPathChange
 }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>(readViewPreference)
   const [naming, setNaming] = useState<NamingMode>(readNamingPreference)
   const [sortKey, setSortKey] = useState<TalkSortKey>(readSortPreference)
   const [query, setQuery] = useState('')
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
-  const [focusPath, setFocusPath] = useState('') // drill-in ('' = whole vault)
+  const [focusPath, setFocusPath] = useState(initialFocusPath ?? '') // drill-in ('' = whole vault)
   const [selectedFolder, setSelectedFolder] = useState('')
   const [focusKey, setFocusKey] = useState<string | null>(null) // keyboard focus row
-  const [talkMeta, setTalkMeta] = useState<TalkMeta>({})
-  const [lastDelivered, setLastDelivered] = useState<Record<string, number>>({})
-  const [handouts, setHandouts] = useState<TalkHandouts>({})
+  const { meta: talkMeta, lastDelivered, handouts, reload } = useTalkFacts()
+  const [card, dispatchCard] = useReducer(cardStep, undefined, initialCardState) // preview-card intent (T29)
   const [, setLiveTick] = useState(0) // bumped when a lazy liveness probe lands
   const [menu, setMenu] = useState<Menu | null>(null)
   const [moveMenu, setMoveMenu] = useState<{ talk: TalkInfo; x: number; y: number } | null>(null)
@@ -77,6 +89,7 @@ export default function TalkList({
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const [panelFocused, setPanelFocused] = useState(false) // flyout shows only while we own the keyboard
   const draggingRef = useRef<TalkInfo | null>(null)
+  const pointerDownAtRef = useRef(0)
   const panelRef = useRef<HTMLElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const sortBtnRef = useRef<HTMLButtonElement>(null)
@@ -84,6 +97,19 @@ export default function TalkList({
   const scrollRafRef = useRef<number | null>(null)
   const pendingScrollTopRef = useRef(0)
   const rowRefs = useRef(new Map<string, HTMLDivElement>())
+
+  // Recent talks (collapsible, top of the panel): the 5 most-recently-edited talks across the WHOLE
+  // vault, so a talk buried deep in a folder hierarchy is one click away and never needs browsing to
+  // (Dominik 2026-07-20). Ordered by editedMs desc; hidden while searching (the search IS the filter).
+  const [recentOpen, setRecentOpen] = useState<boolean>(() => localStorage.getItem('tw-recent-open') !== '0')
+  useEffect(() => { localStorage.setItem('tw-recent-open', recentOpen ? '1' : '0') }, [recentOpen])
+  const recentTalks = useMemo(() => {
+    return talks
+      .filter((t) => !isIgnoredPath(topicOf(t, vaultRoot)) && (talkMeta[t.slug]?.editedMs ?? 0) > 0)
+      .slice()
+      .sort((a, b) => (talkMeta[b.slug]?.editedMs ?? 0) - (talkMeta[a.slug]?.editedMs ?? 0))
+      .slice(0, 5)
+  }, [talks, talkMeta, vaultRoot])
 
   const q = query.toLowerCase().trim()
   const searching = q.length > 0
@@ -140,29 +166,24 @@ export default function TalkList({
   })
 
   // ── data plumbing ──
+  // Facts (meta/delivered/handouts) come from the shared useTalkFacts store — one fetch for the
+  // panel AND the status bar, refreshed by main via onTalkMetaUpdated and saved delivery runs.
+  // What remains here: re-fetch whenever the vault's talk list changes (new/rename/move).
+  useEffect(() => { void reload() }, [talks, reload])
+
+  // The hover-card model: keyboard focus moves preview the card at once (below); the pending
+  // hover pause is owned by `card.pendingAt` — one timer answers it with `resolve`.
   useEffect(() => {
-    let alive = true
-    async function load(): Promise<void> {
-      try {
-        const [meta, sessions, hands] = await Promise.all([
-          window.tw.vault.talkMeta(),
-          window.tw.recording.listAllSessions(),
-          window.tw.history.talkHandouts()
-        ])
-        if (!alive) return
-        setTalkMeta(meta || {})
-        setLastDelivered(lastDeliveredBySlug(sessions || []))
-        setHandouts(hands || {})
-      } catch {
-        if (!alive) return
-        setTalkMeta({}); setLastDelivered({}); setHandouts({})
-      }
-    }
-    void load()
-    // Slide counts come from the search index; re-fetch when main says fresh counts landed.
-    const unsubscribe = window.tw.vault.onTalkMetaUpdated?.(() => { void load() })
-    return () => { alive = false; unsubscribe?.() }
-  }, [talks])
+    if (card.pendingAt == null) return
+    const id = window.setTimeout(
+      () => dispatchCard({ type: 'resolve', at: Date.now() }),
+      Math.max(0, card.pendingAt - Date.now())
+    )
+    return () => window.clearTimeout(id)
+  }, [card.pendingAt])
+  useEffect(() => {
+    if (focusKey) dispatchCard({ type: 'keymove', rowKey: focusKey, at: Date.now() })
+  }, [focusKey])
 
   // Lazy liveness probes: fire once per unknown URL per session; never block rendering.
   useEffect(() => {
@@ -179,6 +200,9 @@ export default function TalkList({
   useEffect(() => { try { window.localStorage.setItem(VIEW_STORAGE_KEY, viewMode) } catch { /* ignore */ } }, [viewMode])
   useEffect(() => { try { window.localStorage.setItem(SORT_STORAGE_KEY, sortKey) } catch { /* ignore */ } }, [sortKey])
   useEffect(() => { try { window.localStorage.setItem(NAMING_STORAGE_KEY, naming) } catch { /* ignore */ } }, [naming])
+
+  // Report the drill-in outward so App can restore it after this panel unmounts on a tab switch.
+  useEffect(() => { onFocusPathChange?.(focusPath) }, [focusPath, onFocusPathChange])
 
   // If the drilled-into / selected folder disappears (deleted or renamed), pop back to the root.
   useEffect(() => {
@@ -333,7 +357,9 @@ export default function TalkList({
     clearQuery: () => setQuery(''),
     focusSearch: () => { searchRef.current?.focus(); searchRef.current?.select() },
     anyOverlayOpen: !!(prompt || confirm || menu || moveMenu),
-    onSelectTalk,
+    // Enter/⌘O open the talk AND retire the keyboard preview (T29: the card follows the opened
+    // talk away — never stays behind).
+    onSelectTalk: (talk) => { dispatchCard({ type: 'open', at: Date.now() }); onSelectTalk(talk) },
     startRename: actions.startRename,
     startRenameFolder: (path) => actions.onFolderAction(path, 'rename'),
     startDuplicate: actions.startDuplicate,
@@ -341,6 +367,11 @@ export default function TalkList({
     startMove: actions.startMove,
     focusedRowRect
   })
+  // Escape hides the preview card whatever else the key does (clear search, blur the panel).
+  function handlePanelKeyDown(e: ReactKeyboardEvent<HTMLElement>): void {
+    if (e.key === 'Escape') dispatchCard({ type: 'escape', at: Date.now() })
+    handlePanelKey(e)
+  }
   function focusedRowRect(): { x: number; y: number } {
     const container = treeRef.current
     const index = focusKey ? rowIndexByKey.get(focusKey) : undefined
@@ -361,6 +392,7 @@ export default function TalkList({
       : { x: 120, y: 120 }
   }
   function handleTreeScroll(e: React.UIEvent<HTMLDivElement>): void {
+    dispatchCard({ type: 'scroll', at: Date.now() }) // rows moved under the pointer — card goes
     pendingScrollTopRef.current = e.currentTarget.scrollTop
     if (scrollRafRef.current != null) return
     scrollRafRef.current = requestAnimationFrame(() => {
@@ -393,6 +425,8 @@ export default function TalkList({
     // stopPropagation on the opening right-click: belt-and-braces with useDismiss's arming
     // delay — the same native contextmenu event must never reach the window dismiss listener.
     onOpenTalk: (talk, key) => { setFocusKey(key); onSelectTalk(talk); panelRef.current?.focus({ preventScroll: true }) },
+    onRowEnter: (_talk, key) => dispatchCard({ type: 'enter', rowKey: key, at: Date.now() }),
+    onRowLeave: (key) => dispatchCard({ type: 'leave', rowKey: key, at: Date.now() }),
     onTalkContext: (talk, key, e) => { e.preventDefault(); e.stopPropagation(); setFocusKey(key); setMenu({ kind: 'talk', talk, x: e.clientX, y: e.clientY }) },
     onToggleFolder: (path, key) => { setFocusKey(key); setSelectedFolder(path); toggleFolder(path); panelRef.current?.focus({ preventScroll: true }) },
     onFolderContext: (path, key, e) => { e.preventDefault(); e.stopPropagation(); setFocusKey(key); setMenu({ kind: 'folder', topic: path, x: e.clientX, y: e.clientY }) },
@@ -418,7 +452,15 @@ export default function TalkList({
 
   const targetFolder = focusPath // header ＋ / New-folder create in the drilled-in folder, else root
   const modalOpen = !!(menu || moveMenu || prompt || confirm)
-  const flyoutMeta = focusedTalk ? talkMeta[focusedTalk.slug] : undefined
+
+  // ── preview card ──
+  // The hover-intent model owns WHEN/WHERE: hover arms a pause (450ms, 150ms between rows),
+  // clicks never leave a card behind, keyboard browsing keeps today's focus-following preview.
+  const cardTarget = card.target
+  const cardRow = cardTarget ? rows.find((r) => r.key === cardTarget.key) ?? null : null
+  const cardTalk = cardRow?.kind === 'talk' ? cardRow.talk : null
+  const cardHover = cardTarget?.source === 'hover'
+  const cardAnchorEl = cardHover && cardTarget ? (rowRefs.current.get(cardTarget.key) ?? null) : anchorEl
 
   return (
     <aside
@@ -426,9 +468,30 @@ export default function TalkList({
       ref={panelRef}
       tabIndex={0}
       aria-label="Talks browser"
-      onKeyDown={handlePanelKey}
-      onFocus={() => setPanelFocused(true)}
-      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setPanelFocused(false) }}
+      onKeyDown={handlePanelKeyDown}
+      onMouseDownCapture={(e) => {
+        // ANY panel click dismisses the card — a click must never show one, nor leave one
+        // behind (T29). A LEFT click on a talk row also suppresses that row until the pointer
+        // leaves it; right-click (menu intent) dismisses only.
+        pointerDownAtRef.current = Date.now()
+        const rowKey = e.button === 0
+          ? (e.target as HTMLElement).closest?.('[data-row-key]')?.getAttribute('data-row-key') ?? undefined
+          : undefined
+        dispatchCard({ type: 'click', rowKey, at: Date.now() })
+      }}
+      onFocus={() => {
+        setPanelFocused(true)
+        // Tab-in restores the keyboard preview (today's behaviour); a pointer-click focus must not.
+        if (focusKey && Date.now() - pointerDownAtRef.current > CLICK_FOCUS_GRACE_MS) {
+          dispatchCard({ type: 'keymove', rowKey: focusKey, at: Date.now() })
+        }
+      }}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+          setPanelFocused(false)
+          dispatchCard({ type: 'panelblur', at: Date.now() })
+        }
+      }}
     >
       <PanelHeader
         viewMode={viewMode}
@@ -451,6 +514,39 @@ export default function TalkList({
         focusPath={focusPath}
         onFocusPath={setFocusPath}
       />
+
+      {!searching && recentTalks.length > 0 && (
+        <div className="tl-recent">
+          <button
+            type="button"
+            className="tl-recent-head"
+            aria-expanded={recentOpen}
+            onClick={() => setRecentOpen((v) => !v)}
+          >
+            <span className={`tl-recent-twist ${recentOpen ? 'is-open' : ''}`}>▸</span>
+            <span className="tl-recent-label">Recent</span>
+            <span className="tl-recent-count">{recentTalks.length}</span>
+          </button>
+          {recentOpen && (
+            <div className="tl-recent-rows" role="list">
+              {recentTalks.map((t) => (
+                <button
+                  type="button"
+                  key={t.slug}
+                  role="listitem"
+                  className={`tl-recent-row ${activeTalk?.outlinePath === t.outlinePath ? 'is-active' : ''}`}
+                  title={topicOf(t, vaultRoot) || 'vault root'}
+                  onClick={() => { onSelectTalk(t); panelRef.current?.focus({ preventScroll: true }) }}
+                >
+                  <span className="tl-recent-ficon"><IcFile size={11.5} /></span>
+                  <span className="tl-recent-name">{t.title}</span>
+                  <span className="tl-recent-count">{talkMeta[t.slug]?.slideCount ?? '—'}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <Tree
         searching={searching}
@@ -487,14 +583,17 @@ export default function TalkList({
         <span><b>⌘K</b>menu</span>
       </div>
 
-      {viewMode === 'ledger' && panelFocused && focusedTalk && !modalOpen && (
+      {/* Keyboard previews stay Ledger-only and panel-focus-bound (unchanged); hover previews
+          work in both view modes and need no focus. */}
+      {cardTalk && cardTarget && !modalOpen && (cardHover || (viewMode === 'ledger' && panelFocused)) && (
         <Flyout
-          talk={focusedTalk}
-          meta={flyoutMeta}
-          deliveredMs={lastDelivered[focusedTalk.slug]}
-          pub={pubFor(focusedTalk.slug)}
-          anchorEl={anchorEl}
+          talk={cardTalk}
+          meta={talkMeta[cardTalk.slug]}
+          deliveredMs={lastDelivered[cardTalk.slug]}
+          pub={pubFor(cardTalk.slug)}
+          anchorEl={cardAnchorEl}
           panelEl={panelRef.current}
+          hover={cardHover}
         />
       )}
 

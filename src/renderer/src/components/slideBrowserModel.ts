@@ -6,6 +6,8 @@
 // searchPaletteSelection.ts, which now re-exports them so SearchPalette keeps compiling
 // until Task 12 deletes it.
 
+import { fencedLineFlags } from '../../../shared/outline-normalize.ts'
+
 export interface SelRow {
   talkSlug: string
   slide_id?: string
@@ -427,47 +429,6 @@ export type SlideCluster =
    PRESERVES case, inline markdown, non-id triggers and line structure, dropping only {id=…} tokens. */
 const HEADING_RE = /^(#{1,6})\s/
 const ID_TOKEN_RE = /\{id=[A-Za-z0-9_-]+\}/
-
-// Per-line fence + HTML-comment flags — mirrors 13-slide-ledger.mjs fencedLineFlags (length-aware
-// fences; a comment state machine) so a `#` inside a code fence or HTML comment is never re-levelled
-// as a heading.
-function fencedLineFlags(lines: string[]): boolean[] {
-  const flags = new Array<boolean>(lines.length).fill(false)
-  let inFence = false
-  let fenceMark = ''
-  let inComment = false
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    const t = line.trim()
-    const visibleAtStart = !inComment
-    if (!inFence) {
-      let pos = 0
-      for (;;) {
-        if (inComment) {
-          const close = line.indexOf('-->', pos)
-          if (close === -1) break
-          inComment = false
-          pos = close + 3
-        } else {
-          const open = line.indexOf('<!--', pos)
-          if (open === -1) break
-          inComment = true
-          pos = open + 4
-        }
-      }
-    }
-    if (!visibleAtStart) { flags[i] = true; continue }
-    if (inFence) {
-      flags[i] = true
-      const close = t.match(/^(`{3,})\s*$/)
-      if (close && close[1].length >= fenceMark.length) { inFence = false; fenceMark = '' }
-      continue
-    }
-    const open = t.match(/^(`{3,})/)
-    if (open) { inFence = true; fenceMark = open[1]; flags[i] = true }
-  }
-  return flags
-}
 
 // normalizeDepth mirror (13-slide-ledger.mjs): re-level every heading so the root heading sits at ###.
 function normalizeDepth(markdown: string): string {

@@ -1,17 +1,21 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 
 /**
- * Palette to search the icon vocabulary (Lucide names/tags + SVGL brands) and pin a glyph onto
- * the caret's current list bullet (ADR-0021). The engine (html-presentations 05-icons.mjs) owns
- * the sets and the rendering; the main process exposes searchIcons/iconSvg over the
- * window.tw.icons bridge. On pick we emit onIconSelected(key); the parent writes
- * `{icon=KEY}` to the bullet via outline.setItemIcon.
+ * Palette to search the icon vocabulary (Lucide names/tags + SVGL brands + the full Tabler
+ * collection) and pin a glyph onto the caret's current list bullet (ADR-0021). The engine
+ * (html-presentations 05-icons.mjs) owns the sets and the rendering; the main process exposes
+ * searchIcons/iconSvg over the window.tw.icons bridge. On pick we emit onIconSelected(key); the
+ * parent writes `{icon=KEY}` to the bullet via outline.setItemIcon.
+ *
+ * Tabler here is deliberately the WHOLE 6,166-glyph collection, not just its auto-matching
+ * mood-* family: the compiler's auto-match gate narrows what it GUESSES, never what a person may
+ * explicitly choose, and a search is an explicit user action.
  *
  * Mirrors ArchiveImageSearch: debounced search, results grid, ←↑↓→ navigation, Enter pick,
  * Escape close, capture-phase key handling so the editor never also sees the keystroke.
  */
 
-type IconHit = { key: string; source: 'lucide' | 'svgl' }
+type IconHit = { key: string; source: 'lucide' | 'svgl' | 'tabler' }
 
 type IconsApi = {
   search: (query: string) => Promise<IconHit[]>
@@ -207,8 +211,8 @@ interface CardProps {
 
 function IconCard({ hit, active, onHover, onSelect }: CardProps) {
   const [svg, setSvg] = useState<string | null>(null)
-  // The bare name after the `lucide:` / `svgl:` prefix — the human-readable label.
-  const label = hit.key.replace(/^(lucide|svgl):/, '')
+  // The bare name after the `lucide:` / `svgl:` / `tabler:` prefix — the human-readable label.
+  const label = hit.key.replace(/^(lucide|svgl|tabler):/, '')
 
   // Fetch the rendered glyph for this key. The engine returns sanitized SVG markup
   // (no <script>); we inject it via dangerouslySetInnerHTML into a sized box.

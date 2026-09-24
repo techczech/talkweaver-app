@@ -1,5 +1,7 @@
 // Real-Electron harness for the Settings panel (⌘,): folders + live shortcut customisation.
 import { _electron as electron } from 'playwright'
+import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
@@ -24,7 +26,8 @@ mkdirSync(td, { recursive: true }); mkdirSync(ud, { recursive: true })
 writeFileSync(join(td, 'settings-fixture-outline.md'), FIX)
 writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault }, null, 2))
 
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO })
+await ensureFreshBuild(REPO)
+const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
 const page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded')
 await page.waitForTimeout(1200)
@@ -38,7 +41,7 @@ async function readDoc() {
 const has = (doc, line) => doc.split('\n').some((l) => l === line)
 
 try {
-  await page.locator('.talk-item', { hasText: 'Settings Fixture' }).first().click()
+  await openTalkByTitle(page, 'Settings Fixture')
   await page.waitForSelector('.cm-content', { timeout: 8000 })
   await page.waitForTimeout(300)
 

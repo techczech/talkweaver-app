@@ -1,5 +1,5 @@
-/* @order 1468 */
-  .pyramid { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; }/* @order 1469 */
+/* @order 1477 */
+  .pyramid { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; }/* @order 1478 */
   .pyramid .pyr-tier {
     display: flex;
     align-items: center;
@@ -12,15 +12,15 @@
     border: none;
     border-radius: 0;
     padding: .2em 1em;
-  }/* @order 1470 */
-  .pyramid .pyr-tier .pyr-label { color: inherit; }/* @order 1471 */
-  .pyramid .pyr-tier:nth-child(1) { width: 24%; }/* @order 1472 */
-  .pyramid .pyr-tier:nth-child(2) { width: 44%; opacity: .8; }/* @order 1473 */
-  .pyramid .pyr-tier:nth-child(3) { width: 64%; opacity: .6; }/* @order 1474 */
-  .pyramid .pyr-tier:nth-child(4) { width: 84%; opacity: .4; }/* @order 1475 */
-  .pyramid .pyr-tier:nth-child(5) { width: 96%; opacity: .3; }/* @order 1536 */
-  .flow-row { width: 100%; justify-content: space-between; gap: 1em; }/* @order 1537 */
-  .flow-row .flow-item { flex: 1 1 0; min-width: 0; }/* @order 1538 */
+  }/* @order 1479 */
+  .pyramid .pyr-tier .pyr-label { color: inherit; }/* @order 1480 */
+  .pyramid .pyr-tier:nth-child(1) { width: 24%; }/* @order 1481 */
+  .pyramid .pyr-tier:nth-child(2) { width: 44%; opacity: .8; }/* @order 1482 */
+  .pyramid .pyr-tier:nth-child(3) { width: 64%; opacity: .6; }/* @order 1483 */
+  .pyramid .pyr-tier:nth-child(4) { width: 84%; opacity: .4; }/* @order 1484 */
+  .pyramid .pyr-tier:nth-child(5) { width: 96%; opacity: .3; }/* @order 1545 */
+  .flow-row { width: 100%; justify-content: space-between; gap: 1em; }/* @order 1546 */
+  .flow-row .flow-item { flex: 1 1 0; min-width: 0; }/* @order 1547 */
   .flow-row .flow-node {
     width: 100%;
     box-sizing: border-box;
@@ -33,8 +33,8 @@
     font-size: max(28px, 1.05em);
     padding: 1em 1.1em;
     text-align: left;
-  }/* @order 1539 */
-  .flow-row .flow-arrow { color: var(--accent); font-size: max(30px, 1.4em); }/* @order 1550 */
+  }/* @order 1548 */
+  .flow-row .flow-arrow { color: var(--accent); font-size: max(30px, 1.4em); }/* @order 1559 */
   .flow.flow-horizontal {
     display: flex;
     align-items: center;
@@ -43,7 +43,7 @@
     width: 100%;
     max-width: none;
     margin: 0;
-  }/* @order 1551 */
+  }/* @order 1560 */
   .flow.flow-horizontal .flow-node {
     flex: 1 1 0;
     min-width: 0;
@@ -55,11 +55,11 @@
     box-shadow: none;
     padding: 1em 1.1em;
     text-align: left;
-  }/* @order 1552 */
-  .flow.flow-horizontal .flow-node .flow-label { font-weight: 600; font-size: max(28px, 1.05em); line-height: 1.25; }/* @order 1553 */
-  .flow.flow-horizontal .flow-connector { flex: 0 0 auto; }/* @order 1554 */
-  .flow.flow-horizontal .flow-arrow { color: var(--accent); font-size: max(30px, 1.3em); }/* @order 1556 */
-  .orgchart { font-size: max(26px, .95em); width: 100%; }/* @order 1557 */
+  }/* @order 1561 */
+  .flow.flow-horizontal .flow-node .flow-label { font-weight: 600; font-size: max(28px, 1.05em); line-height: 1.25; }/* @order 1562 */
+  .flow.flow-horizontal .flow-connector { flex: 0 0 auto; }/* @order 1563 */
+  .flow.flow-horizontal .flow-arrow { color: var(--accent); font-size: max(30px, 1.3em); }/* @order 1565 */
+  .orgchart { font-size: max(26px, .95em); width: 100%; }/* @order 1566 */
   .orgchart .org-box {
     font-weight: 400;
     font-size: 1em;
@@ -69,8 +69,8 @@
     border-radius: 0;
     box-shadow: none;
     background: var(--paper);
-  }/* @order 1558 */
-  .orgchart .org-root > .org-box { font-weight: 600; }/* @order 1618 */
-  .conceptmap { width: 100%; }/* @order 1619 */
-  .conceptmap svg { min-height: 60vh; width: 100%; }/* @order 1620 */
+  }/* @order 1567 */
+  .orgchart .org-root > .org-box { font-weight: 600; }/* @order 1644 */
+  .conceptmap { width: 100%; }/* @order 1645 */
+  .conceptmap svg { min-height: 60vh; width: 100%; }/* @order 1646 */
   .conceptmap svg text { font-weight: 400; }

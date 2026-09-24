@@ -1,0 +1,28 @@
+.poll-ranking, .poll-matrix, .poll-extended-results { min-width: 0; line-height: 1.45; }
+.poll-rank-list { list-style: none; padding: 0; margin: .6em 0; min-height: 3.5em; border: 1px dashed currentColor; border-radius: .6em; }
+.poll-rank-row { display: flex; align-items: center; gap: .45em; padding: .55em; border-bottom: 1px solid #8884; }
+.poll-rank-row:last-child { border-bottom: 0; }
+.poll-rank-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.poll-rank-position { font-variant-numeric: tabular-nums; opacity: .7; }
+.poll-rank-handle { touch-action: none; cursor: grab; }
+.poll-rank-actions { display: flex; flex-wrap: wrap; gap: .2em; }
+.poll-ranking button, .poll-matrix button { min-width: 44px; min-height: 44px; border: 1px solid #8887; border-radius: .35em; background: transparent; color: inherit; font: inherit; }
+.poll-ranking button:disabled { opacity: .35; cursor: default; }
+.poll-ranking button:focus-visible, .poll-matrix input:focus-visible, .poll-matrix button:focus-visible { outline: 3px solid #5875d5; outline-offset: 2px; }
+.poll-rank-status { margin-top: .6em; font-size: .85em; min-height: 1.5em; }
+.poll-rank-ghost { position: fixed; z-index: 2147483647; padding: .65em 1em; max-width: 60vw; overflow-wrap: anywhere; background: #26384f; color: white; border-radius: .4em; pointer-events: none; opacity: .9; box-shadow: 0 3px 14px #0005; }
+.poll-drop-target { outline: 3px solid #5875d5; outline-offset: -2px; }
+.poll-matrix-item { display: flex; flex-wrap: wrap; gap: .35em .5em; margin: .8em 0; padding: .7em; border: 1px solid #8886; border-radius: .5em; min-width: 0; }
+.poll-matrix-item legend { font-weight: 650; padding: 0 .3em; overflow-wrap: anywhere; }
+.poll-matrix-choice { display: flex; flex: 1 1 4rem; min-width: 0; align-items: center; gap: .6em; min-height: 44px; padding: .1em .35em; cursor: pointer; }
+.poll-matrix-choice input { flex: 0 0 auto; width: 1.15em; height: 1.15em; accent-color: #5875d5; }
+.poll-matrix-choice span { overflow-wrap: anywhere; }
+.poll-score-row { margin: .65em 0; }
+.poll-score-label { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .4em 1em; }
+.poll-score-label > span:first-child { overflow-wrap: anywhere; }
+.poll-score-track { height: .5em; border-radius: 1em; background: #8883; overflow: hidden; margin-top: .3em; }
+.poll-score-track i { display: block; height: 100%; background: #5875d5; border-radius: inherit; }
+.poll-score-rule { font-size: .85em; }
+.poll-matrix-result { margin-top: 1em; border-top: 1px solid #8885; padding-top: .7em; }
+.poll-matrix-result h4, .poll-matrix-result p { margin: .2em 0; }
+@media (prefers-reduced-motion: reduce) { .poll-ranking *, .poll-matrix * { transition: none !important; } }

@@ -64,7 +64,25 @@ export function findSlideSections(html) {
   return spans;
 }
 
+/**
+ * ADR-0018: the phone script companion is stamped into the compiled deck at build time
+ * (07-assembly). Read it here so every caller of extractSlides — the handout builders included —
+ * gets `slide.script` for free, with no second emission point to drift.
+ */
+export function extractSlideScript(html) {
+  const match = String(html).match(
+    /<script[^>]*id=["']twSlideScript["'][^>]*>([\s\S]*?)<\/script>/i);
+  if (!match) return {};
+  try {
+    const parsed = JSON.parse(match[1].replace(/\\u003c/g, "<"));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 export function extractSlides(html) {
+  const slideScript = extractSlideScript(html);
   return findSlideSections(html)
     .map((match, index) => {
       const sectionHtml = match.html;
@@ -86,6 +104,7 @@ export function extractSlides(html) {
         preparesFor,
         html: visualHtml,
         notes,
+        script: slideScript[id] || null,
       };
     });
 }

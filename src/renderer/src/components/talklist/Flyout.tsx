@@ -4,16 +4,18 @@ import type { TalkInfo, TalkMeta } from '../../../../preload/index'
 import { formatShortDate, type PubState } from './model'
 import { Cover } from './ShelfRow'
 
-// Preview flyout (Ledger mode only): follows the KEYBOARD focus, not the mouse — the
-// working view stays dense and the detail glides alongside as ↑↓ walk the list. Rendered
+// Preview flyout: follows the card target from hoverIntent — keyboard browsing (↑↓ walk the
+// list, Ledger mode) or a hovered row (after the intent pause; both view modes). Rendered
 // through a portal with fixed positioning so it overlays the editor area beside the panel.
+// pointer-events: none — it must never intercept the click that opens the talk.
 export default function Flyout({
   talk,
   meta,
   deliveredMs,
   pub,
   anchorEl,
-  panelEl
+  panelEl,
+  hover
 }: {
   talk: TalkInfo
   meta: TalkMeta[string] | undefined
@@ -21,6 +23,8 @@ export default function Flyout({
   pub: PubState
   anchorEl: HTMLElement | null
   panelEl: HTMLElement | null
+  /** Shown by hover (footer advertises the click) rather than by keyboard browsing. */
+  hover: boolean
 }) {
   const boxRef = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
@@ -82,8 +86,9 @@ export default function Flyout({
         <dd className="tl-mono tl-flyout-clip" title={talk.slug}>{talk.slug}</dd>
       </dl>
       <div className="tl-flyout-foot">
-        <span>Preview</span>
-        <span><b>↵</b> open</span>
+        {hover
+          ? <span>Click to open</span>
+          : <><span>Preview</span><span><b>↵</b> open</span></>}
       </div>
     </aside>,
     document.body

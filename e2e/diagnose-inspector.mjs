@@ -1,6 +1,7 @@
 // Real-Electron host gate for the Inspector pane (ADR-0011 Stage 4).
 // HOST-RUN ONLY: node e2e/diagnose-inspector.mjs
 import { _electron as electron } from 'playwright'
+import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { join } from 'path'
 import { mkdirSync, mkdtempSync, writeFileSync, statSync } from 'fs'
 import { tmpdir } from 'os'
@@ -11,13 +12,14 @@ const ud = join(tempRoot, 'userData')
 mkdirSync(ud, { recursive: true })
 const dir = join(vault, 'demo-talk')
 mkdirSync(dir, { recursive: true })
-const probeOutline = `---\ntitle: Demo\n---\n\n## Section A\n{accent=vermilion}\n\n### Contrast slide\n{id=aaaaa}{contrast}\n\n- Old / New\n- Slow / Fast\n\n<!-- from: elsewhere -->\n### Reveal slide\n{id=bbbbb}{reveal}\n\n- One\n- Two\n- Three\n\n## Section B\n\n### Final question - How much are you willing to invest in AI-assisted research?\n{iconlist}\n{id=uyee5} {split=50}\n\n- One\n- Two\n\n### Final question - editor-less\n{iconlist}\n{id=uyef6} {split=50}\n\n- One\n- Two\n\n### Not all Agents are Agents\n{sidebar} {id=hnwcx}\n{layout=media} {id=3plcu}\n\n- One\n- Two\n\n### Image grid slide\n{id=ccccc}{image-grid}\n\n- One\n- Two\n\n### Nested container probe\n{id=nesta}\n\n#### Nested child one\n{id=nestb}\n\n- First\n\n#### Nested child two\n{id=nestc}\n\n- Second\n`
+const probeOutline = `---\ntitle: Demo\n---\n\n## Section A\n{accent=vermilion}\n\n### Contrast slide\n{id=aaaaa}{contrast}\n\n- Old / New\n- Slow / Fast\n\n<!-- from: elsewhere -->\n### Reveal slide\n{id=bbbbb}{reveal}\n\n- One\n- Two\n- Three\n\n## Section B\n\n### Sample question - Which garden bed needs a label?\n{iconlist}\n{id=uyee5} {split=50}\n\n- One\n- Two\n\n### Final question - editor-less\n{iconlist}\n{id=uyef6} {split=50}\n\n- One\n- Two\n\n### Not all garden plots are planted\n{sidebar} {id=hnwcx}\n{layout=media} {id=3plcu}\n\n- One\n- Two\n\n### Image grid slide\n{id=ccccc}{image-grid}\n\n- One\n- Two\n\n### Nested container probe\n{id=nesta}\n\n#### Nested child one\n{id=nestb}\n\n- First\n\n#### Nested child two\n{id=nestc}\n\n- Second\n`
 const outlineFile = join(dir, 'demo-talk-outline.md')
 writeFileSync(outlineFile, probeOutline)
 const directModel = await prepareSource(outlineFile, probeOutline, 'demo-talk', statSync(outlineFile))
 const directAccent = directModel.fullHtml.match(/<section[^>]*data-id="aaaaa"[^>]*style="[^"]*--sec-accent:\s*([^;\"]+)/)?.[1]?.trim() ?? ''
 writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault }, null, 2))
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: process.cwd() })
+await ensureFreshBuild(process.cwd())
+const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: process.cwd(), env: { ...process.env, TW_E2E: '1' } })
 const page = await app.firstWindow()
 page.on('pageerror', (e) => console.log('PAGEERROR:', e.message.slice(0, 150)))
 await page.waitForLoadState('domcontentloaded')
@@ -137,9 +139,9 @@ const optBtns = await page.locator('.tw-inspector-options button, .tw-inspector-
 rec('option controls present', optBtns > 0, 'controls=' + optBtns)
 // click the Body-size 'L' segmented button (definitely non-default)
 await page.screenshot({ path: '/tmp/tw-inspector-options.png' })
-await page.locator('.tw-inspector-options button', { hasText: /^L$/ }).first().click()
+await page.locator('.tw-inspector-group[data-group="font-body"] button', { hasText: /^L$/ }).first().click()
 await page.waitForTimeout(400)
-const selState = await page.locator('.tw-inspector-options button', { hasText: /^L$/ }).first().getAttribute('class')
+const selState = await page.locator('.tw-inspector-group[data-group="font-body"] button', { hasText: /^L$/ }).first().getAttribute('class')
 rec('L control shows selected', /on|active|selected/.test(selState || ''), selState)
 await page.waitForTimeout(3000) // autosave
 const after = (await import('fs')).readFileSync(outlineFile, 'utf8')
@@ -180,13 +182,13 @@ if (steptext) {
 }
 
 // 5. Exact A1 shape: bare modifier then id-bearing split line, through both Inspector paths.
-rec('navigates to the mounted-editor A1 probe', await walkInspectorToTitle('Final question - How much are you willing to invest in AI-assisted research?'), await inspectorTitle())
-let exactPlacementGroup = page.locator('.tw-inspector-group', { hasText: 'Title placement' })
+rec('navigates to the mounted-editor A1 probe', await walkInspectorToTitle('Sample question - Which garden bed needs a label?'), await inspectorTitle())
+let exactPlacementGroup = page.locator('.tw-inspector-group[data-group="title-placement"]')
 await exactPlacementGroup.getByRole('button', { name: '50', exact: true }).click()
 await page.waitForTimeout(2300)
 let exactOutline = (await import('fs')).readFileSync(outlineFile, 'utf8')
 let exactLines = exactOutline.split('\n')
-let exactHeading = exactLines.indexOf('### Final question - How much are you willing to invest in AI-assisted research?')
+let exactHeading = exactLines.indexOf('### Sample question - Which garden bed needs a label?')
 let exactTriggers = []
 for (let line = exactHeading + 1; /^\s*(\{[^}]*\}\s*)+$/.test(exactLines[line] ?? ''); line += 1) exactTriggers.push(exactLines[line])
 rec('mounted-editor split commit consolidates the exact A1 block to one line',
@@ -195,7 +197,7 @@ rec('mounted-editor split commit consolidates the exact A1 block to one line',
 rec('navigates to the editor-less A1 probe', await walkInspectorToTitle('Final question - editor-less'), await inspectorTitle())
 await page.keyboard.press('Meta+3')
 await page.waitForTimeout(500)
-exactPlacementGroup = page.locator('.tw-inspector-group', { hasText: 'Title placement' })
+exactPlacementGroup = page.locator('.tw-inspector-group[data-group="title-placement"]')
 await exactPlacementGroup.getByRole('button', { name: '50', exact: true }).click()
 await page.waitForTimeout(2300)
 exactOutline = (await import('fs')).readFileSync(outlineFile, 'utf8')
@@ -209,19 +211,19 @@ await page.keyboard.press('Meta+2')
 await page.waitForTimeout(500)
 
 // 6. Sidebar placement + two-line Trigger integrity.
-rec('navigates to the two-line Sidebar probe', await walkInspectorToTitle('Not all Agents are Agents'), await inspectorTitle())
+rec('navigates to the two-line Sidebar probe', await walkInspectorToTitle('Not all garden plots are planted'), await inspectorTitle())
 rec('two-line Top probe runs with CodeMirror mounted', await page.locator('.cm-editor .cm-content').count() === 1)
-const sidebarPlacementGroup = page.locator('.tw-inspector-group', { hasText: 'Title placement' })
+const sidebarPlacementGroup = page.locator('.tw-inspector-group[data-group="title-placement"]')
 let sidebarClass = await sidebarPlacementGroup.getByRole('button', { name: 'Sidebar', exact: true }).getAttribute('class')
 rec('authored Sidebar is selected', /on|active|selected/.test(sidebarClass || ''), sidebarClass)
 await sidebarPlacementGroup.getByRole('button', { name: 'Top', exact: true }).click()
 await page.waitForTimeout(2300)
 let twoLineOutline = (await import('fs')).readFileSync(outlineFile, 'utf8')
 let probeLines = twoLineOutline.split('\n')
-let probeHeading = probeLines.indexOf('### Not all Agents are Agents')
+let probeHeading = probeLines.indexOf('### Not all garden plots are planted')
 let probeTriggers = []
 for (let line = probeHeading + 1; /^\s*(\{[^}]*\}\s*)+$/.test(probeLines[line] ?? ''); line += 1) probeTriggers.push(probeLines[line])
-const probeBlock = twoLineOutline.slice(twoLineOutline.indexOf('### Not all Agents are Agents'), twoLineOutline.indexOf('### Image grid slide'))
+const probeBlock = twoLineOutline.slice(twoLineOutline.indexOf('### Not all garden plots are planted'), twoLineOutline.indexOf('### Image grid slide'))
 rec('Top merges the two-line block, keeps the original lower id and mints no replacement',
   probeTriggers.length === 1 && probeTriggers[0].includes('{titletop}') && probeTriggers[0].includes('{id=3plcu}')
     && !probeBlock.includes('hnwcx') && (probeBlock.match(/\{id=/g) ?? []).length === 1,
@@ -230,9 +232,9 @@ await sidebarPlacementGroup.getByRole('button', { name: 'Sidebar', exact: true }
 await page.waitForTimeout(2300)
 twoLineOutline = (await import('fs')).readFileSync(outlineFile, 'utf8')
 probeLines = twoLineOutline.split('\n')
-probeHeading = probeLines.indexOf('### Not all Agents are Agents')
+probeHeading = probeLines.indexOf('### Not all garden plots are planted')
 const restoredTrigger = probeLines[probeHeading + 1] ?? ''
-const restoredBlock = twoLineOutline.slice(twoLineOutline.indexOf('### Not all Agents are Agents'), twoLineOutline.indexOf('### Image grid slide'))
+const restoredBlock = twoLineOutline.slice(twoLineOutline.indexOf('### Not all garden plots are planted'), twoLineOutline.indexOf('### Image grid slide'))
 sidebarClass = await sidebarPlacementGroup.getByRole('button', { name: 'Sidebar', exact: true }).getAttribute('class')
 rec('switching back restores Sidebar on the single Trigger line',
   /on|active|selected/.test(sidebarClass || '') && restoredTrigger.includes('{sidebar}')
@@ -242,7 +244,7 @@ rec('switching back restores Sidebar on the single Trigger line',
 // 7. Merged title placement: an explicit side width overrides a wide layout, Hidden replaces it,
 // and Auto removes the authored placement token entirely.
 rec('navigates to image-grid probe slide', await walkInspectorToTitle('Image grid slide'), await inspectorTitle())
-const titlePlacementGroup = page.locator('.tw-inspector-group', { hasText: 'Title placement' })
+const titlePlacementGroup = page.locator('.tw-inspector-group[data-group="title-placement"]')
 await titlePlacementGroup.getByRole('button', { name: '35', exact: true }).click()
 await page.waitForTimeout(2300)
 let title = await inspectorTitle()
@@ -271,7 +273,7 @@ rec('Auto removes explicit title placement', !/\{(?:notitle|split=\d+)\}/.test(i
 
 // 8. A child-bearing ### gets the same container controls as a ## section.
 rec('navigates to nested ### container probe', await walkInspectorToTitle('Nested container probe'), await inspectorTitle())
-const containerModeGroup = page.locator('.tw-inspector-group', { hasText: 'Container mode' })
+const containerModeGroup = page.locator('.tw-inspector-group[data-group="container-mode"]')
 const containerModeText = await containerModeGroup.textContent().catch(() => '')
 rec('nested ### shows all Container mode options',
   ['Linear', 'Carousel', 'Contents', 'Grid linear', 'Grid zoom'].every((label) => containerModeText?.includes(label)),

@@ -15,13 +15,8 @@
     "slide-quote",
     "quote-layout"
   ],
-  "contrast": [
-    "layout-contrast",
-    "contrast-",
-    "layout-compare",
-    "compare-"
-  ],
   "media": [
+    "slot",
     "layout-media",
     "layout-copy-visual",
     "copy-visual",
@@ -30,7 +25,14 @@
     "img-row",
     "image-grid",
     "image-quote",
-    "cta-screenshots"
+    "cta-screenshots",
+    "layout-image-claim"
+  ],
+  "contrast": [
+    "layout-contrast",
+    "contrast-",
+    "layout-compare",
+    "compare-"
   ],
   "cards": [
     "layout-cards",
@@ -74,12 +76,19 @@
     "layout-process",
     "process-",
     "layout-steps",
-    "steps-"
+    "steps-",
+    "mermaid-mm",
+    "slide-svg",
+    "svg-error-source",
+    "svg-error",
+    "mmd-error"
   ],
   "trace": [
     "layout-trace",
     "trace-",
     "slide-code",
+    "layout-code",
+    "code-overflow-marker",
     "code-block"
   ],
   "table": [

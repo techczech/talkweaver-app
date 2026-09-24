@@ -1,0 +1,17 @@
+{
+  "$schema": "https://raw.githubusercontent.com/cloudflare/workers-sdk/main/packages/wrangler/config-schema.json",
+  "name": "talkweaver-live-sessions",
+  "main": "index.ts",
+  "compatibility_date": "2026-05-14",
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "durable_objects": {
+    "bindings": [
+      { "name": "LIVE_SESSIONS", "class_name": "LiveSession" },
+      { "name": "SESSION_REGISTRY", "class_name": "SessionRegistry" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["LiveSession", "SessionRegistry"] }
+  ],
+  "observability": { "enabled": true }
+}

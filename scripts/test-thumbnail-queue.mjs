@@ -1,0 +1,50 @@
+import assert from 'node:assert/strict'
+const queueModule = await import('../src/main/thumbnail-queue.ts').catch(() => null)
+assert.ok(queueModule, 'thumbnail queue supports cancellation and latest-request replacement')
+const { createThumbnailQueue } = queueModule
+const starts = [], releases = []
+const queue = createThumbnailQueue(async (value, signal) => {
+  starts.push(value)
+  await new Promise(resolve => releases.push(resolve))
+  return signal.aborted ? {} : { [value]: value }
+})
+const first = queue('old', 'editor')
+await Promise.resolve()
+const middle = queue('middle', 'editor')
+const newest = queue('newest', 'editor')
+assert.deepEqual(await middle, {}, 'replaced pending caller settles without rendering')
+assert.deepEqual(starts, ['old'], 'only one render is active')
+releases.shift()()
+assert.deepEqual(await first, {}, 'active stale render observes cancellation')
+await new Promise(resolve => setImmediate(resolve))
+assert.deepEqual(starts, ['old', 'newest'], 'only latest pending document renders')
+releases.shift()()
+assert.deepEqual(await newest, {newest:'newest'})
+const other = queue('other', 'browser')
+const edit = queue('edit', 'editor')
+await Promise.resolve()
+releases.shift()()
+assert.deepEqual(await other, {other:'other'}, 'unrelated owner is preserved')
+await new Promise(resolve => setImmediate(resolve))
+releases.shift()()
+assert.deepEqual(await edit, {edit:'edit'})
+const failures = createThumbnailQueue(async value => { if (value==='fail') throw Error('test'); return {value} })
+await assert.rejects(failures('fail'), /test/)
+assert.deepEqual(await failures('ok'), {value:'ok'}, 'failure does not poison queue')
+console.log('PASS thumbnail queue: cancellation, bounded pending edits, independent owners, recovery')
+const {createLatestThumbnailRequestHandler}=await import('../src/main/thumbnail-queue.ts')
+assert.equal(typeof createLatestThumbnailRequestHandler,'function','request ordering begins before preparation')
+let releaseOld
+const rendered=[]
+const ordered=createLatestThumbnailRequestHandler(async input=>{
+ if(input==='old') await new Promise(resolve=>releaseOld=resolve)
+ return input
+},async(input,prepared)=>{rendered.push(prepared);return {[input]:input}}, {})
+const slow=ordered('editor','old')
+await Promise.resolve()
+const latest=await ordered('editor','newest')
+releaseOld()
+assert.deepEqual(await slow,{},'old preparation finishing last cannot enqueue')
+assert.deepEqual(latest,{newest:'newest'})
+assert.deepEqual(rendered,['newest'],'only newest revision reaches the renderer')
+console.log('PASS reversed preparation completion never cancels latest thumbnails')

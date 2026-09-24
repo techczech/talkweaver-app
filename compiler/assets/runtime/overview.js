@@ -66,18 +66,22 @@ function deriveSlideStatus(index, ctx) {
 function createOverview(host) {
   let expanded = false;
   let highlight = 0;           // index into the current visible order
+  let renderedCurrentIndex = null;
   let visibleOrder = [];       // { index, subIndex? } rows currently shown, in display order
 
   const statusGlyph = { shown: "●", skipped: "⊘", unseen: "○" };
 
-  function build(filter, preferQueryTarget = false) {
+  function build(filter, preferQueryTarget = false, followCurrent = false) {
     const list = host.listEl;
     list.replaceChildren();
     list.classList.toggle("tw-overview-grid", expanded);
-    const rankedParents = rankSlides(filter || "", host.slideData);
+    const skippedOnly = host.isPresenter && Boolean(host.skippedOnlyEl?.checked);
+    const rankedParents = rankSlides(filter || "", host.slideData)
+      .filter((index) => !skippedOnly || host.getStatus(index)?.status === "skipped");
     visibleOrder = [];
     const bySection = filter && filter.trim(); // when searching, skip section grouping (flat ranked list)
     const cur = host.getCurrentIndex();
+    renderedCurrentIndex = cur;
     let curSection = null, curSub = null;
     rankedParents.forEach((index) => {
       const s = host.slideData[index];
@@ -167,7 +171,10 @@ function createOverview(host) {
         }
       }
     });
-    if (preferQueryTarget) {
+    if (host.isPresenter && followCurrent && !bySection && !skippedOnly) {
+      const currentPos = visibleOrder.findIndex((row) => row.index === cur && row.subIndex === undefined);
+      highlight = currentPos >= 0 ? currentPos : 0;
+    } else if (preferQueryTarget) {
       const preferred = preferredOverviewRow(filter, host.slideData, rankedParents);
       const preferredPos = preferred ? visibleOrder.findIndex((row) => row.index === preferred.index
         && row.subIndex === preferred.subIndex) : -1;
@@ -177,6 +184,14 @@ function createOverview(host) {
     list.querySelectorAll(".slide-link[data-pos]").forEach((row) => {
       row.classList.toggle("tw-highlight", Number(row.dataset.pos) === highlight);
     });
+    if (skippedOnly && !visibleOrder.length) {
+      const empty = document.createElement("p");
+      empty.className = "tw-overview-empty";
+      empty.setAttribute("role", "status");
+      empty.textContent = bySection ? "No skipped slides match your search" : "No skipped slides";
+      list.appendChild(empty);
+    }
+    if (host.isPresenter && followCurrent && !bySection && !skippedOnly) revealHighlight();
     // Scale each thumbnail's fixed 1280x720 inner down to its (responsive) column width — done after
     // layout so clientWidth is real (the drawer is open by the time rAF fires).
     if (expanded && typeof requestAnimationFrame === "function") {
@@ -187,6 +202,14 @@ function createOverview(host) {
         });
       });
     }
+  }
+
+  // Wait for the open drawer and thumbnail layout; scroll only its selected row, without
+  // moving keyboard focus away from search. Same-slide refreshes must not undo browsing.
+  function revealHighlight() {
+    requestAnimationFrame(() => {
+      if (isOpen()) host.listEl.querySelector(".tw-highlight")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
   }
 
   function jump(index, subIndex) { host.onJump(index, subIndex); close(); }
@@ -214,23 +237,30 @@ function createOverview(host) {
     }
     else if (e.key === "Escape") { e.preventDefault(); close(); }
   }
-  function toggleExpand() { expanded = !expanded; build(host.searchEl ? host.searchEl.value : ""); }
+  function toggleExpand() { expanded = !expanded; build(host.searchEl ? host.searchEl.value : ""); revealHighlight(); }
 
   function open() {
     highlight = 0;
-    build(host.searchEl ? host.searchEl.value : "");
     host.drawerEl.classList.add("open");
-    host.searchEl?.focus();
+    build(host.searchEl ? host.searchEl.value : "", false, true);
+    host.searchEl?.focus({ preventScroll: true });
   }
   function close() { releaseFocus(); host.drawerEl.classList.remove("open"); }
   function isOpen() { return host.drawerEl.classList.contains("open"); }
   function toggle() { isOpen() ? close() : open(); }
 
-  host.searchEl?.addEventListener("input", () => { build(host.searchEl.value, true); });
+  // Filtering changes the navigation order, so begin at the first matching result. Returning
+  // to the full outline resumes following; a skipped-only list normally excludes the current slide.
+  host.skippedOnlyEl?.addEventListener("change", () => {
+    highlight = 0;
+    build(host.searchEl ? host.searchEl.value : "", true, !host.skippedOnlyEl.checked);
+    revealHighlight();
+  });
+  host.searchEl?.addEventListener("input", () => { build(host.searchEl.value, true, !host.searchEl.value.trim()); });
   host.searchEl?.addEventListener("keydown", onKey);
   host.drawerEl?.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
 
   // render() with no argument re-reads the live search value — so callers on slide change need not
   // know which drawer (standalone/presenter) is mounted.
-  return { render: (f) => build(f !== undefined ? f : (host.searchEl ? host.searchEl.value : "")), open, close, toggle, isOpen, toggleExpand };
+  return { render: (f) => build(f !== undefined ? f : (host.searchEl ? host.searchEl.value : ""), false, host.getCurrentIndex() !== renderedCurrentIndex), open, close, toggle, isOpen, toggleExpand };
 }

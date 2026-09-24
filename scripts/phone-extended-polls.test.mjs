@@ -1,0 +1,45 @@
+import assert from 'node:assert/strict'
+import { JSDOM } from 'jsdom'
+import { createAudiencePollRuntime, normalisePollState } from '../compiler/assets/runtime/live-follow.js'
+const options = ['a','b','c'].map(optionId => ({ optionId, label: optionId.toUpperCase() }))
+const rank = { type:'poll.state', pollId:'rank', pollType:'ranking', options, question:'Priorities', visibility:'held', open:true, revealed:false }
+const matrix = { ...rank, pollId:'rate',pollType:'rating',labels:[{optionId:'high',label:'A lot'},{optionId:'low',label:'A little'}],allowSkip:true }
+const dom = new JSDOM('<div id="poll"></div>', { url:'https://example.test' })
+const mount = dom.window.document.querySelector('#poll')
+const submissions = []
+const runtime = createAudiencePollRuntime({ mount, storage:dom.window.localStorage,sendVote:(pollId,choice) => { submissions.push({pollId,choice}); return `vote-${submissions.length}` } })
+const click = selector => { const el = mount.querySelector(selector); assert.ok(el,selector); el.click() }
+runtime.startSession('s')
+const held = normalisePollState({ ...rank,tallies:{a:4},firstPlaces:{a:2},responseCount:2 })
+assert.ok(held)
+assert.equal(held.firstPlaces,undefined);assert.equal(held.responseCount,undefined)
+runtime.receive(rank)
+click('[data-rank-up="c"]')
+runtime.receive({ ...rank,tallies:{a:99},firstPlaces:{a:99},responseCount:99 })
+click('.poll-submit')
+assert.deepEqual(submissions[0],{pollId:'rank',choice:['a','c','b']})
+assert.match(mount.textContent,/Submitting/)
+assert.equal(dom.window.localStorage.getItem('talkweaver:poll-vote:s:rank'),null)
+assert.ok(mount.querySelector('[data-rank-handle]').matches(':disabled'))
+runtime.onVoteStatus({submissionId:'vote-1',pollId:'rank',status:'confirmed',choice:['a','c','b']})
+assert.match(mount.textContent,/Answer recorded/)
+assert.deepEqual(JSON.parse(dom.window.localStorage.getItem('talkweaver:poll-vote:s:rank')),['a','c','b'])
+runtime.receive({...rank,open:false,revealed:true,tallies:{a:3,c:2,b:1},firstPlaces:{a:1,b:0,c:0},responseCount:1})
+assert.match(mount.textContent,/1 ballot/)
+assert.match(mount.textContent,/3 points/)
+runtime.receive(matrix)
+const radio=mount.querySelector('input[data-matrix-row="c"][value="high"]'); assert.ok(radio); radio.click()
+click('.poll-submit')
+assert.deepEqual(submissions[1],{pollId:'rate',choice:{c:'high'}})
+runtime.onVoteStatus({submissionId:'vote-2',pollId:'rate',status:'rejected',error:'Please try again'})
+assert.match(mount.textContent,/Please try again/)
+assert.ok(mount.querySelector('input[data-matrix-row="c"][value="high"]').checked)
+click('.poll-submit')
+runtime.onVoteStatus({submissionId:'vote-3',pollId:'rate',status:'confirmed',choice:{c:'high'}})
+assert.deepEqual(JSON.parse(dom.window.localStorage.getItem('talkweaver:poll-vote:s:rate')),{c:'high'})
+// Reconnect receipt restores a matrix ballot without a live pending submission.
+runtime.startSession('s2');runtime.receive(matrix)
+runtime.onVoteStatus({submissionId:'receipt-1',pollId:'rate',status:'confirmed',choice:{a:'low',b:'high'}})
+assert.match(mount.textContent,/Answer recorded/)
+console.log('Phone extended polls: draft order, pending acknowledgement, rejection, confirmed storage, results and matrix receipts passed')
+dom.window.close()

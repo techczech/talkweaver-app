@@ -37,9 +37,10 @@ export function useDismiss(onClose: () => void): void {
 export function useMenuKeyNav(
   count: number,
   onActivate: (index: number) => void,
-  startAtFirst: boolean
+  startAtFirst: boolean,
+  startAtIndex?: number
 ): [number, (i: number) => void] {
-  const [active, setActive] = useState(startAtFirst ? 0 : -1)
+  const [active, setActive] = useState(startAtIndex ?? (startAtFirst ? 0 : -1))
   const activeRef = useRef(active)
   useEffect(() => { activeRef.current = active }, [active])
   useEffect(() => {

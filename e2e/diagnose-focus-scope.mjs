@@ -13,6 +13,8 @@
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-focus-scope.mjs
 import { _electron as electron } from 'playwright'
+import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { mkdirSync, mkdtempSync, writeFileSync, readFileSync } from 'fs'
@@ -75,7 +77,8 @@ const fxPath = join(fxDir, 'fs-fixture-outline.md')
 writeFileSync(fxPath, FIX)
 writeFileSync(join(userDataDir, 'config.json'), JSON.stringify({ vaultRoot: tempVault }, null, 2))
 
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + userDataDir], cwd: REPO })
+await ensureFreshBuild(REPO)
+const app = await electron.launch({ args: ['.', '--user-data-dir=' + userDataDir], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
 const page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded')
 await page.waitForTimeout(1200)
@@ -108,14 +111,13 @@ async function clearFocus() {
   await page.waitForTimeout(200)
 }
 async function selectTalk(name) {
-  await page.locator('.talk-item', { hasText: name }).first().click()
-  await page.waitForSelector('.cm-content', { timeout: 8000 })
+  await openTalkByTitle(page, name)
   await page.waitForTimeout(400)
 }
 async function reset() {
   writeFileSync(fxPath, FIX)
-  await selectTalk('Other Talk')
-  await selectTalk('Fs Fixture')
+  await selectTalk('Other')
+  await selectTalk('FS Fixture')
   await clearFocus()
 }
 async function clickLine(text) {
@@ -128,7 +130,7 @@ function has(arr, needle) {
 const sameArr = (a, b) => a.length === b.length && a.every((v, i) => v === b[i])
 
 try {
-  await selectTalk('Fs Fixture')
+  await selectTalk('FS Fixture')
 
   // (a) lines outside the focused range are hidden; only the band's lines render.
   await reset()

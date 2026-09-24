@@ -3,8 +3,8 @@ import { join, resolve } from "node:path";
 import { scriptDir, escapeHtml } from "./01-cli-utils.mjs";
 
 // =============================================================================
-// 5. Icon System v3 — Vendored Lucide + svgl brands + extra supplementary set,
-// semantic matching, deck-level uniqueness. (F2)
+// 5. Icon System v3 — Vendored Lucide + svgl brands + extra supplementary set +
+// Tabler gap-fill tier, semantic matching, deck-level uniqueness. (F2)
 //
 // Sources:
 //   assets/icons/lucide.json  — lucide-static@1.17.0 (ISC licence)
@@ -15,6 +15,14 @@ import { scriptDir, escapeHtml } from "./01-cli-utils.mjs";
 //                               Extends svgl; svgl wins on key collision.
 //                               Grows via scripts/add-icon.mjs when builds emit
 //                               icon-gap:<term> warnings.
+//   assets/icons/tabler.json  — Tabler Icons via Iconify (MIT licence), 6,166 glyphs.
+//                               A FALLBACK TIER only: consulted when brand, concept
+//                               and Lucide all yield nothing. See
+//                               tablerCandidatesForItem for the gate that keeps it
+//                               from guessing.
+//
+// Icon keys therefore carry one of four prefixes: `lucide:`, `svgl:`, `tabler:` and the
+// `fallback:` sentinel for an explicit-but-unknown author pin.
 // =============================================================================
 
 // Load vendored icon data at startup (sync — small well-formed JSON, committed).
@@ -31,10 +39,80 @@ try {
 try {
   _extra = JSON.parse(readFileSync(join(_iconsDir, "extra.json"), "utf8"));
 } catch { /* graceful: extra.json is optional */ }
+let _tabler = {};
+try {
+  _tabler = JSON.parse(readFileSync(join(_iconsDir, "tabler.json"), "utf8"));
+} catch { /* graceful: matching returns no tabler candidates */ }
+let _simpleIcons = {};
+try {
+  _simpleIcons = JSON.parse(readFileSync(join(_iconsDir, "simple-icons.json"), "utf8"));
+} catch { /* graceful: optional tier */ }
+
+// A Simple Icons slug indexes both itself and its de-slugged words, so a compound HUMAN spelling
+// ("Alibaba Cloud") can still match a slug written without one ("alibabacloud").
+//
+// Splitting on non-alphanumeric characters (the obvious approach) does almost nothing in
+// practice: verified against all 3,450 vendored slugs, they are lowercase concatenations with NO
+// separator between words — only 6 carry a literal hyphen (e.g. "graphite-editor", upstream's
+// own disambiguation for a name that would otherwise collide with a generic term). So
+// "alibabacloud".split(/[^a-z0-9]+/i) returns ["alibabacloud"] whole; there is no character to
+// split on, and "Alibaba Cloud" would never resolve under that alone.
+//
+// Recovering the human spelling for a concatenated slug needs real word segmentation, and a
+// general segmenter run over all 3,450 slugs is the wrong tool for a task about NARROWING
+// false-positive surface — it would confidently mis-split ordinary slugs that happen to contain
+// short dictionary substrings, for a gain almost none of them need. So this stays a short,
+// HAND-VERIFIED table: only brands actually needed, added deliberately, never derived. Even so,
+// only the more distinctive HEAD word is added, never a generic tail ("cloud", "editor"…) that
+// would widen this same tier's own risk for no matching benefit — textWords() checks every word
+// in the item, so indexing "alibaba" alone is sufficient for "Alibaba Cloud" to resolve; the slug
+// does not also need "cloud" reachable to get there, and "cloud" is exactly the kind of generic
+// word this tier's containment (brand-context-only reachability, see below) exists to bound.
+const SIMPLE_ICONS_COMPOUND_HEAD = {
+  alibabacloud: "alibaba",
+  // "Moonshot" reaches the vendored moonshotai mark, but ONLY in brand context — Simple Icons
+  // tokens never enter the prose index. "moonshot" is a common English word ("a moonshot goal"),
+  // so it must summon the lab's logo only inside a {logolist}, never in ordinary prose.
+  moonshotai: "moonshot",
+};
+
+function simpleIconTokens(slug) {
+  const parts = String(slug).split(/[^a-z0-9]+/i).filter(Boolean);
+  const tokens = parts.length > 1 ? [slug, ...parts] : [slug];
+  const head = SIMPLE_ICONS_COMPOUND_HEAD[slug];
+  return head ? [...tokens, head] : tokens;
+}
+
+// Render a Simple Icons record ({w,h,body}) to its raw single-colour <svg>. Simple Icons marks are
+// monochrome BY DESIGN — Iconify writes fill="currentColor" on every shape — so the single fill on
+// the root carries the whole paint story. Shared by the _brandIndex build below and by the
+// slide-level monochrome swap (simpleIconsBrandSvg → applySlideMonochrome), which renders a brand's
+// Simple Icons twin in place of a colour-stripped knockout, so the two never drift.
+function simpleIconsSvg(rec) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${rec.w || 24} ${rec.h || 24}" fill="currentColor" aria-hidden="true">${rec.body}</svg>`;
+}
 
 // Merged brand set: svgl wins on collision; extra extends.
 // _brandIndex maps key → entry with a `_source` tag for iconSvg().
 const _brandIndex = {};
+// Lowest brand tier. Monochrome silhouettes: present so a brand svgl lacks renders its
+// real shape instead of a letter chip. svgl and extra overwrite on collision, so no
+// coloured mark is ever replaced by a silhouette.
+for (const [name, v] of Object.entries(_simpleIcons)) {
+  if (name === "_meta") continue;
+  _brandIndex[name] = {
+    title: name,
+    // Slug + de-slugged words. `tokens: [name]` alone would lose the human spelling of a
+    // compound slug: "alibabacloud" would never match the item text "Alibaba Cloud".
+    tokens: simpleIconTokens(name),
+    // Iconify normalises every Simple Icons body with its own explicit fill="currentColor" on
+    // the shape (all 3,450 bodies carry exactly that one paint value — Simple Icons marks are
+    // single-colour by design). See the classifyBrandSvg fix below for why that is safe to
+    // leave in verbatim rather than stripped.
+    svg: simpleIconsSvg(v),
+    _source: "simple-icons",
+  };
+}
 for (const [k, v] of Object.entries(_extra)) {
   if (k !== "_meta") _brandIndex[k] = { ...v, _source: "extra" };
 }
@@ -52,7 +130,7 @@ for (const [k, v] of Object.entries(_svgl)) {
 //      renders as icons instead of dropping to plain.
 //   2. Steer ANY item — a curated choice overrides the generic Lucide guess
 //      everywhere it appears, not only at gaps.
-// Entry value: { key: "lucide:name" | "svgl:name", note: "<reasoning>" }.
+// Entry value: { key: "lucide:name" | "svgl:name" | "tabler:name", note: "<reasoning>" }.
 // Lookup key: normalizeConceptPhrase(itemText). Grows via the semantic-icon
 // resolution procedure (see references/slide-design-language.md).
 // ---------------------------------------------------------------------------
@@ -79,12 +157,14 @@ for (const [phrase, entry] of Object.entries(_conceptIconsRaw)) {
   _conceptIconMap.set(normalizeConceptPhrase(phrase), { key: entry.key, note: entry.note || "" });
 }
 // A concept key is usable only if it resolves to a renderable icon: a "lucide:NAME"
-// whose NAME exists in _lucide, or an "svgl:NAME" that is a renderable brand. This
-// guards a typo'd or stale curated key from becoming a blank slot.
+// whose NAME exists in _lucide, an "svgl:NAME" that is a renderable brand, or a
+// "tabler:NAME" that exists in the vendored Tabler set. This guards a typo'd or stale
+// curated key from becoming a blank slot.
 function isConceptKeyRenderable(key) {
   if (typeof key !== "string") return false;
   if (key.startsWith("lucide:")) return Boolean(_lucide[key.slice(7)]);
   if (key.startsWith("svgl:")) return isBrandRenderable(key.slice(5));
+  if (key.startsWith("tabler:")) return Boolean(_tabler[key.slice(7)]);
   return false;
 }
 // Return the curated icon key for an item text, or null. Consulted by the matcher
@@ -139,6 +219,14 @@ const ALIAS_MAP = [
   [/\bmistral\b/i,                  "mistral-ai"],
   [/\bhugging\s*face\b/i,           "hugging-face"],
   [/\bstabilit/i,                   "stability-ai"],
+  // Z.ai (extra.json). deriveTokens("Z.ai") = ["z","ai"] — "z" is dropped by textWords (min 2
+  // chars) and "ai" is an ambiguous token, so the index alone can never reach this mark; the
+  // alias carries every surface form. Tight by design: matches "Z.ai"/"Z ai"/"zai" but not
+  // "zaire", "pizzaai" or "the z axis".
+  [/\bz\.?\s?ai\b/i,                "zai"],
+  // Liquid AI (extra.json). Requires the "ai" so bare "liquid" ("liquid cooling") never summons
+  // the logo; matches "Liquid AI" and "LiquidAI" only.
+  [/\bliquid\s*ai\b/i,             "liquidai"],
   [/\bcolab\b|google\s+colab/i,     "google-colaboratory"],
   [/\btweets?\b|twitter\b|\bx\.com\b|\bx\/twitter\b/i, "twitter"],
   [/\bkubernetes\b|\bk8s\b/i,       "kubernetes"],
@@ -169,13 +257,17 @@ const ALIAS_MAP = [
 // generic English nouns/verbs, or multi-brand tokens with ambiguous precedence.
 // Distinctive brand names (discord, slack, figma, obsidian, ollama, etc.) are
 // left in the index — they are uncommon enough to safely match on whole-word hits.
-// For each excluded token, the alias map above handles the cases that should fire.
+// A handful of these excluded tokens have an ALIAS_MAP entry that covers the surface
+// form the author actually means ("go lang" → go, "node.js" → node-js); the rest are
+// reachable only in a brand context — see _svglAmbiguousIndex below svglBrandMatch.
 const AMBIG_SKIP_TOKENS = new Set([
   // Too short or acronym-overloaded (covered via ALIAS_MAP or not needed)
   "go",  "ai",  "js",  "css", "net", "sql", "com", "dev", "api",
   "ide", "lua", "lit", "lit",
   // Generic English words that happen to be brand names — too risky in prose
-  "meta",      // common prefix/word (meta-analysis, metadata); covered by ALIAS_MAP
+  "meta",      // common prefix/word (meta-analysis, metadata); prose-only exclusion —
+               // resolves in brand context via _svglAmbiguousIndex (no ALIAS_MAP entry
+               // for the bare word "Meta"; only "llama" aliases to it)
   "next",      // "next steps", "next.js" → alias
   "node",      // "node in a graph", "node.js" → alias
   "base",      // "base case", "database" → Base UI brand ambiguous
@@ -273,7 +365,11 @@ const AMBIG_SKIP_TOKENS = new Set([
 // "GitHub" has 1 token "github" and beats "GitHub Copilot" with 2 tokens for
 // the "github" token). Title length is the tiebreaker (shorter = more canonical).
 // brandStore: any object mapping key → { tokens, title } (svgl, _brandIndex, etc.)
-function buildSvglTokenIndex(brandStore) {
+// `skipAmbig` (default true): drop AMBIG_SKIP_TOKENS entries, as the prose index always has.
+// The Simple Icons tier's OWN index below passes false — its containment is "brand-context-only
+// reachability", not this blocklist, and most of its risk (arc, ai, box, medium, steam, zap…)
+// is exactly the vocabulary AMBIG_SKIP_TOKENS exists to name.
+function buildSvglTokenIndex(brandStore, { skipAmbig = true } = {}) {
   const index = new Map(); // token → brand key
   const entries = Object.entries(brandStore)
     .filter(([k]) => k !== "_meta" && brandStore[k]?.tokens)
@@ -287,7 +383,7 @@ function buildSvglTokenIndex(brandStore) {
 
   for (const [key, entry] of entries) {
     for (const token of (entry.tokens ?? [])) {
-      if (AMBIG_SKIP_TOKENS.has(token)) continue;
+      if (skipAmbig && AMBIG_SKIP_TOKENS.has(token)) continue;
       // Exact key match always wins (overwrite any existing mapping).
       if (token === key || !index.has(token)) {
         index.set(token, key);
@@ -297,8 +393,27 @@ function buildSvglTokenIndex(brandStore) {
   return index;
 }
 
-// Build token index over the merged brand set (svgl + extra; svgl wins collisions).
-const _svglTokenIndex = buildSvglTokenIndex(_brandIndex);
+// Split `_brandIndex` by FINAL winning `_source` (after all three merge loops above have run,
+// so a key simple-icons contributed but svgl or extra overwrote already carries the winner's
+// `_source` and is correctly excluded from the simple-icons-only view).
+function _brandIndexBySource(predicate) {
+  return Object.fromEntries(Object.entries(_brandIndex).filter(([, v]) => predicate(v._source)));
+}
+
+// PROSE index: svgl + extra tokens only — byte-for-byte the pre-Task-6 index. Simple Icons
+// tokens are excluded here BY DESIGN, not merely by AMBIG_SKIP_TOKENS: measured against 5,516
+// distinct real Vault bullet texts (Task 6 report), wiring the ~3,450 new slugs into this SAME
+// shared index as an ordinary peer produced 24 items where an ALREADY-correct brand match was
+// REPLACED by a wrong one — e.g. the single-word Simple Icons slug "slides" (1 token) outranked
+// svgl's existing "google-slides" (2 tokens) under the fewest-tokens-wins priority above and
+// stole the bare word "slides" away from it deck-wide; "Chatbot from OpenAI" lost its OpenAI mark
+// to a generic "chatbot" slug. That is not a false positive on a new word; it is a regression on
+// an item that already rendered correctly, exactly the failure class test-icon-parity.mjs exists
+// to catch — on top of 173 further items that newly (and wrongly) acquired a brand logo in plain
+// prose ("Works on uploaded files" -> a "files" mark, "Use telegraph style." -> Telegraph the
+// platform). Simple Icons is reachable only through _simpleIconsTokenIndex below, gated to brand
+// context — see that index's comment for the full measured numbers.
+const _svglTokenIndex = buildSvglTokenIndex(_brandIndexBySource((s) => s !== "simple-icons"));
 
 // ---------------------------------------------------------------------------
 // Common-word brand guard (false-positive bug: "summarise material …" → Material UI).
@@ -422,10 +537,54 @@ export function brandMatchIsSubstantive(text, matchText) {
   return contentWords[0] === matchWords[0];
 }
 
+// Tokens excluded from the prose index because they are ambiguous English words, but
+// which ARE real vendored brands. Reachable only in a brand context (a {logolist}),
+// where a company name is what the slide is for. Seventeen of the 117 blocklisted
+// tokens are vendored keys; the rest resolve to nothing and are simply absent here.
+const _svglAmbiguousIndex = new Map();
+for (const token of AMBIG_SKIP_TOKENS) {
+  if (_brandIndex[token] && isBrandRenderable(token)) _svglAmbiguousIndex.set(token, token);
+}
+
+// Simple Icons tier — reachable ONLY in brand context, full stop, never through the prose index
+// above. This is a stricter containment than _svglAmbiguousIndex's (which excludes one fixed
+// blocklist but is still a single shared index svgl/extra tokens also live in): every one of the
+// ~3,450 Simple Icons slugs is common-word-shaped often enough that the same per-token judgement
+// AMBIG_SKIP_TOKENS applies by hand to svgl/extra is not practical at this scale, and Task 4's
+// lesson (broad automatic matching over a large vendored name set fills real slides with
+// confidently wrong glyphs) is a brand-dimension risk here, not a semantic-icon one.
+//
+// MEASURED (Task 6 report, full detail there): of 3,450 slugs (+ curated compound heads), 581
+// (16.8%) are themselves dictionary words. Wiring the tier as an ordinary PROSE peer (same index
+// as svgl/extra, same AMBIG_SKIP_TOKENS filter) against 5,516 distinct real Vault bullet texts
+// produced 197 defects: 24 items where an already-correct brand match was REPLACED by a wrong one
+// (svgl's "google-slides" losing the bare word "slides" to a single-token Simple Icons slug that
+// outranks it under the fewest-tokens-wins priority; "Chatbot from OpenAI" losing its OpenAI mark
+// to a generic "chatbot" slug) plus 173 items that newly, and wrongly, acquired a brand logo in
+// plain prose that had none before ("Works on uploaded files" -> a "files" mark, "Use telegraph
+// style." -> the Telegraph platform, "Canvas" -> a design-tool mark instead of the LMS meaning
+// intended). Excluding Simple Icons from the shared index entirely, as done above, and reaching
+// it only here — consulted solely when `brandContext` is true, i.e. from inside a {logolist},
+// where the whole slide is naming companies — reproduces zero regressions and zero new prose
+// logos (re-verified after this change; see the report). An unresolved brand keeps its honest
+// monogram in prose exactly as before; the real mark is reachable only where the author is
+// deliberately naming brands.
+const _simpleIconsTokenIndex = buildSvglTokenIndex(
+  _brandIndexBySource((s) => s === "simple-icons"),
+  { skipAmbig: false }
+);
+
 // Returns the brand key for an item text if a brand alias or token is found
 // in the merged brand index (svgl + extra), else null.
-export function svglBrandMatch(text) {
+//
+// `opts.brandContext` (default false): true only from a {logolist} slot, whose entire
+// purpose is naming companies. In that context the ambiguity blocklist (AMBIG_SKIP_TOKENS)
+// is bypassed — "Meta" resolves — but brandMatchIsSubstantive still applies, so a long
+// prose line that merely mentions a brand word keeps refusing even inside a misused
+// {logolist}. Prose (the default) is unaffected: the blocklist still protects it.
+export function svglBrandMatch(text, opts = {}) {
   const t = String(text);
+  const brandContext = opts.brandContext === true;
 
   // 1. Explicit alias map (handles chatgpt, tweet, k8s, node.js, etc.)
   for (const [re, key] of ALIAS_MAP) {
@@ -437,11 +596,16 @@ export function svglBrandMatch(text) {
   //    A token must appear as a WHOLE WORD (word boundary) in the item text.
   //    Common-word brand tokens (material, medium, notion, arc…) only fire when the
   //    brand also reads AS a brand in the text — see commonWordBrandGuardPasses.
+  //    In a brand context, a token missing from the prose index (blocklisted as
+  //    ambiguous, or a Simple Icons silhouette) is still tried against the two
+  //    brand-context-only indices — svgl/extra's ambiguous set first, so a coloured mark
+  //    always wins over a silhouette when both vend the same word.
   const words = textWords(t);
   for (const word of words) {
-    const key = _svglTokenIndex.get(word);
+    const key = _svglTokenIndex.get(word)
+      || (brandContext ? (_svglAmbiguousIndex.get(word) || _simpleIconsTokenIndex.get(word)) : undefined);
     if (!key || !_brandIndex[key] || !isBrandRenderable(key)) continue;
-    if (COMMON_WORD_BRAND_TOKENS.has(word) && !commonWordBrandGuardPasses(word, key, t)) continue;
+    if (!brandContext && COMMON_WORD_BRAND_TOKENS.has(word) && !commonWordBrandGuardPasses(word, key, t)) continue;
     if (!brandMatchIsSubstantive(t, word)) continue;
     return key;
   }
@@ -616,8 +780,117 @@ function lucideCandidatesForItem(text) {
   return deduped; // [{key: "lucide:brain", score: N}, …]
 }
 
-// Full candidate list for an item: svgl brand (score=100) then lucide by score.
-// Returns [{key, score, source}] — key is "svgl:name" or "lucide:name".
+// WHY ONLY `mood-*` AUTO-MATCHES.
+//
+// Tabler was vendored for one thing: its ~40-strong `mood-*` family of human emotional states.
+// Lucide draws five face expressions and has no glyph at all for confused, anxious, sceptical,
+// unamused or tired, so an emotion item had nowhere to go. That family is worth having, and it is
+// the ONLY part of the collection consulted automatically.
+//
+// `mood-` earns that place because it is a genuine semantic CATEGORY and the item is an INSTANCE
+// of it: "happy" IS a mood, so mood-happy draws what the item means. The head is inferred rather
+// than read in the text, but for this family the inference is always sound, because every tail is
+// an emotion word and an item naming an emotion is about that emotion.
+//
+// The rest of the collection is CURATION-ONLY. 6,166 names carrying no tags, matched against
+// unrestricted English prose, filled roughly two slots in five with a confidently wrong glyph:
+// "Constantly changing field" drew soccer-field (a football pitch), "NanoClaw — a self-hosted
+// Claude assistant on a Raspberry Pi" drew math-pi (π), "Doesn't get tired" drew http-get (the
+// word GET in a box), "Plausible but not real" drew currency-real (R$), "Humans/LLMs excel" drew
+// file-excel, "Go to LMSys" drew go-game (a Go board). That is not a tuning problem with a list of
+// exceptions behind it — it is what unrestricted name matching does, and an earlier enumerated
+// stoplist only silenced the examples that had been sampled. The cost of stopping is small and the
+// benefit is not: an unfilled slot renders as honest plain text and emits `icon-semantic-needed`,
+// which is the signal that gets a deliberate glyph curated for the item. A confident wrong glyph
+// is worse than nothing AND it suppresses that signal.
+//
+// Whole-name fills the old gate did get right — `api`, `prompt`, `sandbox`, `nurse`,
+// `chalkboard-teacher` — are the accepted, deliberate cost (decision: Dominik, 2026-07-23). They
+// remain reachable, because NOTHING here restricts the collection itself: every `tabler:<name>`
+// key still works as a concept-icons.json curation and as an author's explicit `{tabler:name}`
+// pin, and the Edit-icons picker still searches all 6,166. Only the automatic path is narrowed.
+const TABLER_AUTO_HEAD = "mood-";
+
+// The auto-match set, enumerated once per process rather than per call: iconCandidatesV3 runs two
+// or three times per list item across a whole-Vault sweep, and re-listing 6,166 keys each time was
+// pure waste. Only the `mood-*` family can auto-match, so only it is materialised.
+//
+// `-filled` is excluded here (Fix 2). Those 1,019 names are solid fill="currentColor" shapes with
+// no stroke, so beside Lucide's hairlines they read as black blobs — and mood-happy-filled sits at
+// rank 3 for the item "happy", well inside the depth assignFeatureIconsV3 walks to when the top
+// glyph is already bound deck-wide. Excluding the family is the only way one never reaches a
+// slide. They stay pinnable by name, like the rest of the collection.
+//
+// About fifteen of the remaining 52 tails are not emotion words at all — they are Tabler's
+// LIBRARY-WIDE MODIFIER SUFFIXES applied to a face, the same suffix vocabulary the collection
+// puts on `user-*`, `file-*` and `folder-*` (user-check, file-off, folder-plus…). mood-check,
+// mood-off, mood-search and their siblings are the generic "checked / disabled / added / found"
+// annotation glyphs, not expressions, and auto-matching them draws a human face on ordinary
+// technical prose that happens to contain one of these short common words: "Check the output",
+// "Search the web", "Share your findings" and "Edit the outline" would otherwise all earn a mood
+// glyph. This is a rule about the vocabulary Tabler reuses everywhere, not a list of accidents
+// spotted on this corpus — hence excluding the whole suffix set rather than the four words above.
+const TABLER_MOOD_MODIFIER_TAILS = new Set([
+  "bitcoin", "check", "cog", "dollar", "edit", "heart", "minus", "off", "pin", "plus",
+  "search", "share", "spark", "up", "x",
+]);
+// mood-empty is excluded on separate grounds: it IS a genuine blank-faced expression (unlike the
+// modifiers above), but "empty" collides constantly with technical English, and the collision is
+// not hypothetical — "Empty object {} is the default stub" resolved to tabler:mood-empty (drawing
+// a human face for a programming concept) before this exclusion existed. A category judgement
+// (the modifier set above) and a collision judgement (this one) happen to sit in the same set, so
+// they are named separately to keep the reasoning legible to a later reader.
+const TABLER_MOOD_COLLISION_TAILS = new Set(["empty"]);
+const TABLER_AUTO_NAMES = Object.keys(_tabler).filter((n) => {
+  if (n === "_meta" || !n.startsWith(TABLER_AUTO_HEAD) || n.endsWith("-filled")) return false;
+  const tail = n.slice(TABLER_AUTO_HEAD.length);
+  return !TABLER_MOOD_MODIFIER_TAILS.has(tail) && !TABLER_MOOD_COLLISION_TAILS.has(tail);
+});
+
+// Every drawable Tabler name, for the Edit-icons picker's free-text search. Hoisted for the same
+// reason: searchIcons runs per (debounced) keystroke. The picker deliberately sees the WHOLE
+// collection — see searchIcons.
+const TABLER_SEARCHABLE_NAMES = Object.keys(_tabler).filter((n) => n !== "_meta");
+
+// Function words, merged from the two stoplists this file already trusts (tokenize()'s _STOP and
+// the brand matcher's BRAND_SUBSTANTIVE_STOP_WORDS). One job: a tail made only of function words
+// carries no meaning even when the item does contain it — mood-off and mood-up are a crossed-out
+// and an eyes-up face, and "Switching off" is not about either.
+const TABLER_FUNCTION_WORDS = new Set([..._STOP, ...BRAND_SUBSTANTIVE_STOP_WORDS]);
+
+// Tabler gap-fill candidates. A glyph qualifies when its name begins `mood-` and EVERY remaining
+// part appears as a whole word in the item: "confused" earns mood-confused, "crazy happy" earns
+// mood-crazy-happy, and nothing outside the family is ever considered. Iconify's Tabler data
+// carries no tags, so the name is all there is to match on — one more reason the matchable set is
+// a family whose tails are known to be single meaningful words rather than the whole collection.
+//
+// "Matches the item text" means the item is ABOUT that mood, not merely that the word occurs in
+// it, and this file already has one answer to that question: brandMatchIsSubstantive, the test
+// that decides whether "Sign in with your ChatGPT Edu account" earns the OpenAI logo. Reusing it
+// unchanged keeps the two matchers honest in the same way — measured over the Vault it is what
+// stops "Effort to learn and keep up" and "Set up skills for repeatable actions" drawing mood-up,
+// a face glancing upward, on the incidental particle "up".
+function tablerCandidatesForItem(text) {
+  const words = textWords(text);
+  if (!words.size) return [];
+  const out = [];
+  for (const name of TABLER_AUTO_NAMES) {
+    const tail = name.slice(TABLER_AUTO_HEAD.length).split("-");
+    if (!tail.every((p) => words.has(p))) continue;
+    if (tail.every((p) => TABLER_FUNCTION_WORDS.has(p) || /^\d+$/.test(p))) continue;
+    if (!brandMatchIsSubstantive(text, tail.join(" "))) continue;
+    out.push({ key: `tabler:${name}`, score: 2 });
+  }
+  // Shortest name first: "mood-sad" beats "mood-sad-squint" for the item "sad". Ties break on the
+  // name itself so the result never depends on the vendored JSON's key order, which is Iconify's
+  // and could change under us on a re-vendor.
+  out.sort((a, b) => a.key.length - b.key.length || a.key.localeCompare(b.key));
+  return out.slice(0, 5);
+}
+
+// Full candidate list for an item: svgl brand (score=100), curated concept (90), lucide by
+// score, and — only when all of those are empty — the Tabler gap-fill tier.
+// Returns [{key, score, source}] — key is "svgl:name", "lucide:name" or "tabler:name".
 export function iconCandidatesV3(text) {
   const out = [];
   const brand = svglBrandMatch(text);
@@ -629,13 +902,26 @@ export function iconCandidatesV3(text) {
   if (concept && concept !== `svgl:${brand}`) out.push({ key: concept, score: 90, source: "concept" });
   const lucide = lucideCandidatesForItem(text);
   for (const { key, score } of lucide) out.push({ key, score, source: "lucide" });
+  // Tabler is a FALLBACK TIER, not a peer, and only its `mood-*` family is consulted
+  // automatically (see tablerCandidatesForItem). It runs only when nothing above it matched, so
+  // the vendored set cannot re-resolve any item that renders today.
+  // Guarded by scripts/test-icon-parity.mjs.
+  if (out.length === 0) {
+    for (const c of tablerCandidatesForItem(text)) out.push({ ...c, source: "tabler" });
+  }
   return out;
 }
 
 // Free-text icon search for the Edit-icons picker (so a bullet can take ANY glyph, not only the
-// ranked auto-matches). Scores Lucide (names + tags) and brands (key + title + tokens) by
-// exact(3) / prefix(2) / substring(1) and returns the top `limit` as {key, source}. Pure read of
-// the vendored sets; fast enough to call per keystroke locally.
+// ranked auto-matches). Scores Lucide (names + tags), brands (key + title + tokens) and Tabler
+// (name only — Iconify's Tabler data has no tags) by exact(3) / prefix(2) / substring(1) and
+// returns the top `limit` as {key, source}. Pure read of the vendored sets; fast enough to call
+// per keystroke locally.
+//
+// THE WHOLE Tabler collection is searchable here, `-filled` variants and all — the auto-match gate
+// narrows what the compiler GUESSES, not what a person may deliberately choose, and a search is an
+// explicit user action. The solid variants are only demoted a further half point so the stroked
+// glyph a query names outranks its filled twin instead of alternating with it.
 export function searchIcons(query, limit = 40) {
   const q = String(query || "").trim().toLowerCase();
   if (q.length < 2) return [];
@@ -650,6 +936,10 @@ export function searchIcons(query, limit = 40) {
     let s = Math.max(scoreName(key.toLowerCase()), scoreName(String(entry.title || "").toLowerCase()));
     if (!s && Array.isArray(entry.tokens) && entry.tokens.some((t) => String(t).toLowerCase().includes(q))) s = 1;
     if (s) pool.push({ key: `svgl:${key}`, source: "svgl", s });
+  }
+  for (const name of TABLER_SEARCHABLE_NAMES) {
+    const s = scoreName(name);
+    if (s) pool.push({ key: `tabler:${name}`, source: "tabler", s: s - (name.endsWith("-filled") ? 1 : 0.5) });
   }
   pool.sort((a, b) => b.s - a.s || a.key.length - b.key.length);
   return pool.slice(0, limit).map(({ key, source }) => ({ key, source }));
@@ -780,10 +1070,11 @@ export function resolveIconOverrides(items, perItem, deckIconMap) {
 export const ICON_FALLBACK_PREFIX = "fallback:";
 
 // LAYER 2 OVERRIDE — normalise an authored icon name into a renderable icon key.
-// Accepts a bare lucide/brand name ("brain" → "lucide:brain") or an explicit prefixed key
-// ("svgl:github", "lucide:zap").
+// Accepts a bare lucide/brand/tabler name ("brain" → "lucide:brain") or an explicit prefixed key
+// ("svgl:github", "lucide:zap", "tabler:mood-confused"). A bare name prefers Lucide, then a brand,
+// then Tabler, so adding the fallback set never re-points an existing bare pin.
 //   - A valid name resolves to its real key (unchanged).
-//   - An EXPLICITLY PREFIXED but unknown name ("lucide:no-such-name", "svgl:no-such-brand") is an
+//   - An EXPLICITLY PREFIXED but unknown name ("lucide:no-such-name", "tabler:no-such-glyph") is an
 //     unambiguous author choice → a `fallback:<name>` sentinel (rendered as a neutral placeholder),
 //     so the deliberate pin fails visibly rather than being silently reassigned by Layer 1.
 //   - A BARE unresolvable token still returns null: the `{name}` shorthand relies on that to leave
@@ -794,8 +1085,10 @@ export function normalizeIconOverrideKey(raw) {
   if (!v) return null;
   if (v.startsWith("lucide:")) return _lucide[v.slice(7)] ? v : `${ICON_FALLBACK_PREFIX}${v}`;
   if (v.startsWith("svgl:")) return isBrandRenderable(v.slice(5)) ? v : `${ICON_FALLBACK_PREFIX}${v}`;
+  if (v.startsWith("tabler:")) return _tabler[v.slice(7)] ? v : `${ICON_FALLBACK_PREFIX}${v}`;
   if (_lucide[v]) return `lucide:${v}`;
   if (isBrandRenderable(v)) return `svgl:${v}`;
+  if (_tabler[v]) return `tabler:${v}`;
   return null;
 }
 
@@ -804,7 +1097,8 @@ export function normalizeIconOverrideKey(raw) {
 function conceptKeyForItem(text, sources = null) {
   const sourceOk = (src) => !sources || sources.includes(src);
   for (const { key } of iconCandidatesV3(text)) {
-    if (sourceOk(key.startsWith("svgl:") ? "svgl" : key.startsWith("lucide:") ? "lucide" : "concept")) return key;
+    const src = key.startsWith("svgl:") ? "svgl" : key.startsWith("lucide:") ? "lucide" : key.startsWith("tabler:") ? "tabler" : "concept";
+    if (sourceOk(src)) return key;
   }
   return null;
 }
@@ -813,8 +1107,9 @@ function conceptKeyForItem(text, sources = null) {
 //   - first time a concept is seen → assign + record (concept↔icon).
 //   - same concept again (this slide or a later one) → REUSE its icon (consistency).
 //   - distinct concepts get distinct icons (an icon is bound to one concept deck-wide).
-// `sources` (optional): restrict candidates. `{iconlist}` → SEMANTIC (concept+lucide+svgl-as-icon);
-//   the non-applied auto suggestion leaves it unset (all sources).
+// `sources` (optional): restrict candidates. `{iconlist}` → SEMANTIC (concept+lucide+svgl-as-icon,
+//   plus Tabler's mood-* gap-fill tier, run unrestricted like every other caller); the non-applied
+//   auto suggestion leaves it unset (all sources).
 // `overrides` (optional, Layer 2): array aligned to items; a non-empty entry is an explicit icon
 //   key that WINS over the algorithmic pick and is recorded as that item's concept icon.
 // Returns array of icon keys (one per item) or null → fall back to plain.
@@ -946,7 +1241,7 @@ function resolveBrandLogos(items, overrides = null) {
   for (let idx = 0; idx < items.length; idx += 1) {
     const override = overrides && overrides[idx];
     if (override) { out[idx] = override; continue; }
-    const brand = svglBrandMatch(items[idx]);
+    const brand = svglBrandMatch(items[idx], { brandContext: true });
     out[idx] = brand ? `svgl:${brand}` : `monogram:${monogramLetter(items[idx])}`;
   }
   return out;
@@ -1026,9 +1321,10 @@ export function decideFeatureListStyle(items, ordered = false, vocab = null, for
   }
   if (forceStyle === "icons") {
     // {iconlist} = "give this list icons" — the broadest semantic set (brand svgl + curated
-    // concept + lucide). The vocabulary assigns/reuses per concept: same idea → same glyph
-    // deck-wide; distinct ideas → distinct glyphs. Falls back to plain if any slot cannot be
-    // resolved (never a half-iconed list).
+    // concept + lucide, with Tabler's mood-* tier as the last resort for whatever none of those
+    // three drew). The vocabulary assigns/reuses per concept: same idea → same glyph deck-wide;
+    // distinct ideas → distinct glyphs. Falls back to plain if any slot cannot be resolved (never
+    // a half-iconed list).
     const icons = assignFeatureIconsV3(items, lex, null, overrides);
     return icons ? { style: "icons", icons } : { style: "plain", icons: null };
   }
@@ -1106,8 +1402,16 @@ function classifyBrandSvg(svg) {
   const rootFill = ((svg.match(/<\s*svg\b[^>]*?\bfill\s*=\s*["']([^"']*)["']/i) || [])[1] || "").trim();
   let sawWhite = false;
   let sawColored = false;
+  // A shape whose OWN fill/stroke is explicitly "currentColor" (Iconify's Simple Icons export
+  // always writes this on every path, rather than leaving the shape unpainted) is genuinely
+  // visible — it inherits the surrounding colour exactly like an unpainted shape does — but it
+  // does not fall into `hasUnpaintedShape` below, because that regex only tests for the ABSENCE
+  // of a fill attribute, and this shape has one. Tracked separately so it decides renderability
+  // only when nothing else on the SVG already did (a real colour or real white always wins).
+  let sawExplicitCurrentColor = false;
   for (const { value } of paints) {
-    if (!value || value.toLowerCase() === "none" || value.toLowerCase() === "currentcolor") continue;
+    if (!value || value.toLowerCase() === "none") continue;
+    if (value.toLowerCase() === "currentcolor") { sawExplicitCurrentColor = true; continue; }
     if (value.toLowerCase().startsWith("url(")) { sawColored = true; continue; } // gradient/pattern
     if (isWhitePaint(value)) sawWhite = true;
     else sawColored = true;
@@ -1118,6 +1422,7 @@ function classifyBrandSvg(svg) {
   }
   if (sawColored) return "colored";
   if (sawWhite) return "white-mono";
+  if (sawExplicitCurrentColor) return "colored";
   return "empty";
 }
 
@@ -1129,11 +1434,201 @@ function recolorWhiteToCurrent(svg) {
     .replace(/(fill|stroke)\s*:\s*([^;"']+)/gi, (m, prop, val) => isWhitePaint(val) ? `${prop}:currentColor` : m);
 }
 
+// Strip the stroke-width presentation attribute out of a Tabler body so the wrapper <svg> can
+// carry it instead (see the tabler branch of iconSvg for why). Memoised per glyph rather than
+// rewritten for all 6,166 at load: a deck touches a few dozen, and the work is a regex over a
+// few hundred bytes. Every vendored body carries at most one such attribute (5,112 of 6,166 have
+// exactly one; the 1,054 `-filled` bodies have none), so this is a whole-body replace, not a
+// first-match one.
+const _tablerBodyCache = new Map();
+function tablerStrokeHoistedBody(name, body) {
+  let hoisted = _tablerBodyCache.get(name);
+  if (hoisted === undefined) {
+    hoisted = String(body).replace(/\s*stroke-width\s*=\s*["'][^"']*["']/gi, "");
+    _tablerBodyCache.set(name, hoisted);
+  }
+  return hoisted;
+}
+
+// ---------------------------------------------------------------------------
+// Slide-level monochrome coherence (Task 7).
+//
+// Task 6 added Simple Icons as a brand tier of MONOCHROME silhouettes, below svgl's mostly
+// full-colour marks. On a logolist mixing the two, some brands render vivid and others grey —
+// which reads as broken rather than as a deliberate choice. The rule (Dominik's decision): when
+// ANY mark on a slide can only be drawn monochrome (a Simple Icons mark), EVERY mark on that slide
+// renders monochrome, with svgl's colour stripped; a slide whose marks all resolve within svgl is
+// left untouched in full colour.
+//
+// The decision is SLIDE-level, not list-level: an all-svgl list on the same slide as a
+// monochrome-only list must also go grey. It is made structurally, not by re-resolving icons —
+// iconSvg tags each Simple Icons mark with data-mono, and one pass over the assembled slide body
+// (applySlideMonochrome, called from 07-assembly) repaints every brand mark when any marker is
+// present. slideNeedsMonochrome below is the same decision as a pure helper over a resolved key set.
+//
+// The colour-strip preserves geometry, but it cannot preserve a KNOCKOUT: a mark whose shape is
+// carried by colour CONTRAST (Facebook's white `f` cut out of a blue disc, Telegram's white plane on
+// a gradient disc) collapses to a solid blob once field and knockout become one colour. Dominik's
+// fix: on a mono slide, a brand that ALSO exists in Simple Icons renders that silhouette (single-
+// colour by design, hence correct in monochrome) instead of its colour-stripped svgl mark. iconSvg
+// tags each svgl/extra mark with its brand key in data-brand, and applySlideMonochrome swaps any
+// twinned mark for its silhouette while a twinless mark still colour-strips. See applySlideMonochrome.
+// ---------------------------------------------------------------------------
+
+// True when any key on the slide can ONLY be drawn monochrome — i.e. it resolves to a Simple Icons
+// silhouette (_source "simple-icons"). Monograms, Lucide/Tabler glyphs and svgl marks that carry
+// real colour never force the decision (a svgl mark that happens to be drawn in currentColor is
+// still a coloured tier — it does not force its neighbours grey). Non-arrays and empty lists are
+// false.
+export function slideNeedsMonochrome(keys) {
+  if (!Array.isArray(keys)) return false;
+  return keys.some((k) => {
+    if (typeof k !== "string" || !k.startsWith("svgl:")) return false;
+    const entry = _brandIndex[k.slice(5)];
+    // Simple Icons marks are monochrome-only by their tier; a frontier mark added to extra.json as
+    // a single-colour silhouette carries `mono: true` to declare the same constraint (it has no
+    // Simple Icons twin to swap in, so it colour-strips harmlessly — it is already currentColor).
+    return !!entry && (entry._source === "simple-icons" || entry.mono === true);
+  });
+}
+
+// Repaint every brand-colour instruction in an svgl mark to currentColor — WITHOUT disturbing the
+// geometry the mark is built from. <defs> (and the body, for marks that define outside <defs>,
+// e.g. Angular, VS Code) holds two unrelated things:
+//   • PAINT: <linearGradient>, <radialGradient>, <pattern> — these exist only to be url(#…)-
+//     referenced from a fill/stroke and carry the brand's actual hex in <stop stop-color="#…">.
+//   • GEOMETRY: <clipPath>, <mask> — referenced via clip-path="url(#…)" / mask="url(#…)", these
+//     shape the mark's SILHOUETTE. Measured across the vendored svgl set: of 240 marks using
+//     <defs>, 97 use a clipPath and 28 a mask — Figma, Facebook, Angular, Tailwind CSS, VS Code,
+//     Runway and OpenSea among them. Dropping the whole <defs> block (as this function used to)
+//     removes the clip/mask along with the gradient, so the mark renders as an unclipped blob
+//     instead of its real shape. So: ONLY <linearGradient>/<radialGradient>/<pattern> elements are
+//     removed; <clipPath>/<mask> and the <defs> wrapper holding them survive. Do not "simplify"
+//     this back to a blanket <defs> drop — that is precisely the bug this rewrite fixes.
+//
+// A <mask>'s CONTENT is not brand colour either, even though it looks like a fill attribute: mask
+// luminance/alpha *is* the visibility data (VS Code's alpha-mask and Angular's luminance-mask both
+// key a plain white shape), so repainting it to an unrelated currentColor can make the masked
+// shape vanish or invert. Each <mask>…</mask> block is lifted out before any repaint pass runs and
+// spliced back verbatim afterwards. A <clipPath>'s content has no such hazard — clipping uses only
+// the child shapes' outlines, never their paint — so it is left in place and may harmlessly pick
+// up currentColor like anything else.
+//
+// Colour itself arrives in three shapes: hex/named fill & stroke attributes, the same inside
+// inline style="…" (or a CSS class rule in a <style> block, e.g. ".b{fill:url(#a)}"), and
+// gradient/pattern REFERENCES (fill="url(#…)"). Only fill=/stroke= (attribute or style/class-rule
+// form) are repainted to currentColor — never clip-path=/mask=/clip=/clip-rule=, which point at
+// geometry that still exists and must render exactly as before. Because the gradient/pattern
+// element behind a fill="url(#…)" is now gone, repainting it to currentColor is what keeps the
+// mark painted rather than a dangling reference that paints nothing. An explicit fill/stroke of
+// "none" is left alone (it hides geometry deliberately). Simple Icons marks are already
+// currentColor, so this is a no-op on them.
+//
+// Known residual gap: the mask-content protection above only catches luminance colour written
+// INSIDE the <mask>…</mask> block. A few marks (e.g. amazon-q, microsoft-todo) instead give mask
+// children a class="…" and set that class's fill in a <style> rule that lives OUTSIDE the mask —
+// that rule still gets repainted, so the mask's true luminance is not preserved for those. Fixing
+// this properly needs tracking which class names are used exclusively inside <mask> blocks (they
+// use compound selectors like ".st16, .st17, .st11{…}", so it is not a small addition) — left as a
+// known limitation rather than building a CSS-cascade-aware class tracker into a regex-based pass.
+function stripBrandColour(svg) {
+  // Protect mask content first: pull each <mask>…</mask> out to a placeholder so nothing below can
+  // touch its luminance/alpha-defining fill or stroke, then restore it verbatim at the end.
+  const maskBlocks = [];
+  let out = String(svg).replace(/<mask\b[^>]*>[\s\S]*?<\/mask>/gi, (block) => {
+    maskBlocks.push(block);
+    return ` MASKBLOCK${maskBlocks.length - 1} `;
+  });
+
+  out = out
+    // Self-closing gradient/pattern forms (e.g. a gradient defined purely by xlink:href-ing
+    // another one) are removed FIRST, before the paired-tag pass below — otherwise the paired
+    // pass's lazy closing-tag search can leap over a self-closed element's absent close tag and
+    // over-consume whatever real content sits between it and the next matching close tag.
+    .replace(/<(linearGradient|radialGradient|pattern)\b[^>]*\/>/gi, "")
+    .replace(/<(linearGradient|radialGradient|pattern)\b[^>]*>[\s\S]*?<\/\1>/gi, "")
+    .replace(/\b(fill|stroke)\s*=\s*"(?!none")[^"]*"/gi, '$1="currentColor"')
+    .replace(/\b(fill|stroke)\s*=\s*'(?!none')[^']*'/gi, "$1='currentColor'")
+    // Colon form covers both an element's own style="fill:…" attribute and a CSS class rule inside
+    // a <style> block. Bounded on "}" as well as ";"/quotes — a class rule with no trailing
+    // semicolon before its close brace (real example: Netflix's ".cls-1{fill:#e50914}") would
+    // otherwise let the greedy match run straight past the brace into whatever markup follows.
+    .replace(/\b(fill|stroke)\s*:\s*(?!none)[^;}"']+/gi, "$1:currentColor");
+
+  return out.replace(/ MASKBLOCK(\d+) /g, (_, i) => maskBlocks[Number(i)]);
+}
+
+// Wrap a raw brand <svg> in the normalised fl-svg / fl-svg-brand container iconSvg uses for every
+// brand mark: CSS sizes it via .fl-svg-brand, the mark keeps its own viewBox and fill (brand colour
+// or currentColor), and any explicit width/height on the outer tag is dropped. `extraAttr` is
+// spliced in verbatim as a leading-space attribute (e.g. ` data-mono`, ` data-brand="figma"`) that
+// the slide-level pass reads back without re-resolving.
+function wrapBrandSvg(rawSvg, extraAttr = "") {
+  return rawSvg.replace(/<svg([^>]*)>/i, (_, attrs) => {
+    const cleaned = attrs.replace(/\s*(width|height)\s*=\s*["’][^"’]*["’]/gi, "");
+    return `<svg class="fl-svg fl-svg-brand"${cleaned}${extraAttr} aria-hidden="true">`;
+  });
+}
+
+// Render a brand's Simple Icons silhouette as a wrapped fl-svg-brand mark, tagged data-mono — the
+// single-colour form that is correct in monochrome BY DESIGN. Reads the body from the RAW
+// _simpleIcons set, never _brandIndex: for a brand present in BOTH sets, svgl overwrote the Simple
+// Icons entry in _brandIndex on merge, so the silhouette survives only in _simpleIcons. Returns ""
+// when the brand has no Simple Icons twin. Used by the slide-level monochrome swap below.
+// Find a brand's Simple Icons twin. svgl and Simple Icons disagree on hyphenation for the same
+// mark — svgl writes `hugging-face`, `google-drive`, `tailwind-css`; Simple Icons collapses them to
+// `huggingface`, `googledrive`, `tailwindcss`. 51 svgl keys twin only after collapsing hyphens, so
+// an exact-key lookup misses them and their mark (e.g. Hugging Face, a Sketch mask/knockout export)
+// falls through to colour-stripping and collapses to a black blob on a mono slide. Try the exact key
+// first, then the hyphen-collapsed form.
+function simpleIconsTwin(key) {
+  if (typeof key !== "string") return null;
+  return _simpleIcons[key] || _simpleIcons[key.replace(/-/g, "")] || null;
+}
+
+function simpleIconsBrandSvg(key) {
+  const rec = simpleIconsTwin(key);
+  if (!rec) return "";
+  return wrapBrandSvg(simpleIconsSvg(rec), " data-mono");
+}
+
+// The slide-level pass. iconSvg tags each monochrome-only (Simple Icons) mark with data-mono and
+// each svgl/extra mark with its brand key in data-brand; when the fully-assembled slide body carries
+// ANY data-mono marker, every brand mark on the slide is brought down to a single colour in one pass
+// over the already-rendered HTML — icons are resolved exactly once, upstream, so this never disturbs
+// assignFeatureIconsV3's deck-wide glyph vocabulary. Per mark:
+//   • data-mono (a Simple Icons silhouette): left whole — single-colour by design already.
+//   • an svgl/extra mark WITH a Simple Icons twin: the whole <svg> is SWAPPED for that silhouette. A
+//     knockout mark (Facebook's white `f` in a blue disc, Telegram's plane on a gradient disc) carries
+//     its shape in colour CONTRAST, so colour-stripping collapses it to a solid blob; its twin is
+//     single-colour by design and stays recognisable. The rule is uniform — ANY twinned brand swaps,
+//     with no knockout detection; a clean-geometry mark like Figma swaps too, which is fine and the
+//     simplest correct rule. 95 svgl brands have such a twin.
+//   • an svgl/extra mark with NO twin: colour-stripped via stripBrandColour, which preserves the
+//     mark's geometry (clipPath/mask) — the accepted residual is that a twinless knockout may still
+//     degrade.
+// A slide with no data-mono marker is returned unchanged (its marks stay in full colour).
+export function applySlideMonochrome(html) {
+  if (typeof html !== "string" || !html.includes("data-mono")) return html;
+  return html.replace(
+    /<svg\b[^>]*\bfl-svg-brand\b[^>]*>[\s\S]*?<\/svg>/gi,
+    (svg) => {
+      if (/\bdata-mono\b/.test(svg)) return svg; // already a silhouette — do not re-process
+      const key = (svg.match(/\bdata-brand\s*=\s*"([^"]*)"/i) || [])[1];
+      if (key && simpleIconsTwin(key)) return simpleIconsBrandSvg(key);
+      return stripBrandColour(svg);
+    }
+  );
+}
+
 // Render an icon key to HTML.
-// "lucide:brain" → Lucide stroke SVG (currentColor)
-// "svgl:github"  → brand SVG from svgl or extra (own fill / currentColor, normalised box)
-// "monogram:V"   → honest first-letter chip when no real brand mark exists (logolist fallback)
-export function iconSvg(key) {
+// "lucide:brain"        → Lucide stroke SVG (currentColor)
+// "svgl:github"         → brand SVG from svgl or extra (own fill / currentColor, normalised box)
+// "tabler:mood-happy"   → Tabler stroke SVG, stroke-width hoisted to the root so the skin's CSS
+//                         override reaches it exactly as it reaches Lucide
+// "monogram:V"          → honest first-letter chip when no real brand mark exists (logolist fallback)
+// "fallback:<name>"     → neutral placeholder for an explicit-but-unknown author pin
+export function iconSvg(key, opts = {}) {
   if (!key) return "";
   if (key.startsWith("monogram:")) {
     // Honest fallback: a neutral rounded-square chip holding the company's first letter.
@@ -1155,6 +1650,23 @@ export function iconSvg(key) {
     if (!entry) return "";
     return `<svg class="fl-svg fl-svg-lucide" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${entry.body}</svg>`;
   }
+  if (key.startsWith("tabler:")) {
+    const name = key.slice(7);
+    const entry = _tabler[name];
+    if (!entry) return "";
+    // Tabler bodies carry their own paint attributes, including stroke-width, on the inner
+    // <g>/<path>. That is the one attribute that must NOT stay there. The design skin thins
+    // icons with `… > li svg { stroke-width: 1.5 }` (assets/styles/skin/list.css), and CSS on the
+    // <svg> beats a presentation attribute on the SAME element but loses to one on a CHILD — so
+    // Lucide, which carries stroke-width="2" on its root, obeys the skin at 1.5px while Tabler
+    // painted at 2px: 33% heavier, visible at slide scale (measured with Playwright under the
+    // real selector). Hoisting the attribute to the wrapper mirrors Lucide's structure exactly
+    // and needs no re-vendoring. The rest of the body is left alone: its fill/stroke/linecap are
+    // Tabler's own and differ per glyph. Safe for the solid `-filled` family too — those set no
+    // stroke at all, and stroke-width is inert when stroke is none.
+    const body = tablerStrokeHoistedBody(name, entry.body);
+    return `<svg class="fl-svg fl-svg-tabler" viewBox="0 0 ${entry.w || 24} ${entry.h || 24}" stroke-width="2" aria-hidden="true">${body}</svg>`;
+  }
   if (key.startsWith("svgl:")) {
     const name = key.slice(5);
     // Look up in merged brand index (covers both svgl and extra entries).
@@ -1168,14 +1680,35 @@ export function iconSvg(key) {
     const klass = classifyBrandSvg(rawSvg);
     if (klass === "empty") return "";
     if (klass === "white-mono") rawSvg = recolorWhiteToCurrent(rawSvg);
-    // Wrap the brand SVG in a normalised container. The SVG keeps its own viewBox
-    // and fill (brand colour or currentColor) — CSS controls sizing via .fl-svg-brand.
-    // Strip any explicit width/height attrs from the outer <svg> tag.
-    const cleanSvg = rawSvg.replace(/<svg([^>]*)>/i, (_, attrs) => {
-      const cleaned = attrs.replace(/\s*(width|height)\s*=\s*["’][^"’]*["’]/gi, "");
-      return `<svg class="fl-svg fl-svg-brand"${cleaned} aria-hidden="true">`;
-    });
-    return cleanSvg;
+    // Task 7 — slide-level monochrome coherence. Two roles, neither of which re-resolves an icon:
+    //   • opts.monochrome === true: repaint THIS mark's brand colour to currentColor now (the unit
+    //     surface, and the caller that wants a single mark forced grey).
+    //   • otherwise, if this mark can ONLY be drawn monochrome (a Simple Icons silhouette), tag the
+    //     <svg> data-mono. iconSvg does NOT decide the slide here — it leaves a marker that the one
+    //     per-slide pass (applySlideMonochrome, in 07-assembly) reads, so a mixed slide brings every
+    //     mark down to monochrome together. A Simple Icons mark is already currentColor, so the tag
+    //     is the whole job; svgl colour is stripped only when its slide actually goes monochrome.
+    const monochrome = opts.monochrome === true;
+    if (monochrome) rawSvg = stripBrandColour(rawSvg);
+    // Two markers the slide-level monochrome pass (applySlideMonochrome, in 07-assembly) reads back
+    // WITHOUT re-resolving any icon: data-mono flags a monochrome-only Simple Icons silhouette (it is
+    // already currentColor, so this tags it so a mixed slide can detect it); data-brand carries an
+    // svgl/extra mark's brand KEY so the pass can swap it for its Simple Icons twin when the slide
+    // goes mono (a knockout mark survives monochrome as a silhouette but collapses to a blob if
+    // colour-stripped). A mark already forced grey inline (opts.monochrome) is resolved for this
+    // render, so it carries neither marker.
+    let extraAttr = "";
+    if (!monochrome) {
+      // A Simple Icons silhouette, or a frontier extra.json mark declared `mono: true`, is
+      // monochrome-only: tag it data-mono so a mixed slide detects it and leaves it whole (it is
+      // already currentColor). Any other svgl/extra mark carries its brand key for a possible twin
+      // swap when the slide goes mono.
+      const monoOnly = entry._source === "simple-icons" || entry.mono === true;
+      extraAttr = monoOnly ? " data-mono" : ` data-brand="${escapeHtml(name)}"`;
+    }
+    // Wrap the brand SVG in a normalised container. The SVG keeps its own viewBox and fill (brand
+    // colour or currentColor) — CSS controls sizing via .fl-svg-brand; explicit width/height dropped.
+    return wrapBrandSvg(rawSvg, extraAttr);
   }
   return "";
 }
@@ -1421,6 +1954,17 @@ export function collectIconlistNoIcons(slides) {
           }
         }
         if (b.type === "cards" && Array.isArray(b.cards)) {
+          // Ticket 21: the cards Icons option ({icons} / {iconlist} on a cards slide) resolves the
+          // card TITLES through the same decider; when not one resolves the cards render without
+          // icons, and the author is told the same way an icon list tells them.
+          if (b.icons) {
+            const titles = b.cards.map((card) => String(card.title ?? ""));
+            const overrides = resolveIconOverrides(titles, b.cards.map((card) => card.icon || null), null);
+            if (titles.length && !iconlistResolves(titles, overrides) && !seen.has(slideId)) {
+              seen.add(slideId);
+              out.push(`iconlist-no-icons:${slideId}`);
+            }
+          }
           for (const card of b.cards) {
             if (Array.isArray(card.blocks)) scanBlocks(card.blocks);
           }

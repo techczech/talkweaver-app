@@ -12,6 +12,8 @@
 //   5. clicking a layout with a real preview inserts its trigger
 // Run after `npm run build`.
 import { _electron as electron } from 'playwright'
+import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
@@ -36,15 +38,14 @@ const fxPath = join(td, 'preview-fixture-outline.md')
 writeFileSync(fxPath, FIX)
 writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault }, null, 2))
 
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO })
+await ensureFreshBuild(REPO)
+const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
 const page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded')
 await page.waitForTimeout(1200)
 
 async function selectTalk(name) {
-  await page.locator('.sidebar-mode-btn', { hasText: 'Talks' }).click().catch(() => {})
-  await page.locator('.talk-item', { hasText: name }).first().click()
-  await page.waitForSelector('.cm-content', { timeout: 8000 })
+  await openTalkByTitle(page, name)
   await page.waitForTimeout(350)
 }
 async function openPalette() {
