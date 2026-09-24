@@ -32,24 +32,19 @@ everything else is a view of it.**
 
 ### macOS (Apple Silicon)
 
-1. Download `TalkWeaver-<version>-arm64.dmg` from the
-   [latest release](https://github.com/techczech/talkweaver-app/releases/latest).
-2. Open the DMG and drag TalkWeaver to Applications.
-3. **First launch:** the build is not yet code-signed with an Apple Developer ID, so macOS
-   Gatekeeper will refuse it. Clear the quarantine flag once, then open it:
+1. Download [`TalkWeaver-mac-arm64.dmg`](https://github.com/techczech/talkweaver-app/releases/latest/download/TalkWeaver-mac-arm64.dmg)
+   from the [latest release](https://github.com/techczech/talkweaver-app/releases/latest).
+2. Open the DMG and drag TalkWeaver to Applications, then open it.
 
-   ```sh
-   xattr -cr /Applications/TalkWeaver.app
-   open /Applications/TalkWeaver.app
-   ```
-
-   (This is only needed until signed, notarized builds ship.)
+The build is signed with an Apple Developer ID and notarised by Apple, so it opens normally.
 
 ### Windows
 
-Download and run `TalkWeaver-Setup-<version>.exe` from the
-[latest release](https://github.com/techczech/talkweaver-app/releases/latest). SmartScreen may warn
-about an unrecognised publisher (the build is unsigned) — choose **More info → Run anyway**.
+Download and run [`TalkWeaver-windows-x64-setup.exe`](https://github.com/techczech/talkweaver-app/releases/latest/download/TalkWeaver-windows-x64-setup.exe)
+from the [latest release](https://github.com/techczech/talkweaver-app/releases/latest). The Windows
+build is unsigned, so SmartScreen warns about an unrecognised publisher on first launch: choose
+**More info → Run anyway**. A few macOS-only features (text recognition in images, some media
+tools) are not available on Windows.
 
 ## First run
 
