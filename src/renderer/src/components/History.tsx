@@ -4,9 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   BarChart3, CalendarDays, Check, Clock, Copy, ExternalLink, FileText, HardDrive, History as HistoryIcon,
   MoreVertical, PanelLeftClose, PanelLeftOpen, Pencil, Play, Radio,
-  Plus, RefreshCw, Search, Settings, Tag, Trash2, UploadCloud, VolumeX, X
+  Plus, RefreshCw, Search, Settings, Tag, Trash2, UploadCloud, VolumeX, X, FileInput
 } from 'lucide-react'
 import type { HistoryLiveCheck, Pathway, RecordingKind, RecordingSession, RunSlideSet, TalkHandouts } from '../../../preload/index'
+import { unresolvedTriggerBlock } from '../../../shared/layout-doctor'
 import '../history.css'
 
 type SortMode = 'newest' | 'talk' | 'length'
@@ -149,11 +150,13 @@ function groupKey(row: Row, group: GroupMode): { key: string; name: string; when
 export default function History({
   isOpen,
   onClose,
-  onShowStudio
+  onShowStudio,
+  onShowImporter
 }: {
   isOpen: boolean
   onClose: () => void
   onShowStudio?: (sessionId?: string) => void
+  onShowImporter?: () => void
 }): JSX.Element | null {
   const [sessions, setSessions] = useState<RecordingSession[]>([])
   const [planned, setPlanned] = useState<RecordingSession[]>([])
@@ -201,10 +204,19 @@ export default function History({
   }, [])
 
   const reload = useCallback(async (): Promise<void> => {
-    const [all, talks] = await Promise.all([
-      window.tw.history.listRuns(),
-      window.tw.history.talkHandouts()
-    ])
+    let all, talks
+    try {
+      [all, talks] = await Promise.all([
+        window.tw.history.listRuns(),
+        window.tw.history.talkHandouts()
+      ])
+    } catch (cause) {
+      // A failing IPC call must not silently blank History while the recordings sit right there on
+      // disk (this happened once: a .DS_Store in _PRESENTATIONS threw ENOTDIR). Surface it; keep state.
+      console.error('[history] reload failed', cause)
+      flash("Couldn't load History — see the console. Your recordings are safe on disk.")
+      return
+    }
     // Guard against a malformed/partial session.json (e.g. a write interrupted mid-save): the UI keys,
     // sorts and seeds avatars off id/startedAt/talkSlug, and one missing field would crash the whole
     // window. Drop invalid sessions at this single load boundary rather than defending every access.
@@ -215,7 +227,7 @@ export default function History({
     setPlanned(valid.filter((run) => run.status === 'planned'))
     setSessions(valid.filter((run) => run.status !== 'planned'))
     setHandouts(talks)
-  }, [])
+  }, [flash])
 
   useEffect(() => {
     if (!planTalk) setPlanTalk(Object.keys(handouts)[0] ?? '')
@@ -291,6 +303,8 @@ export default function History({
     if (!talk?.outlinePath) { flash('Talk outline not found'); return }
     const source = await window.tw.talk.readOutline(talk.outlinePath)
     if (source === null) { flash('Talk outline could not be read'); return }
+    const blocked = unresolvedTriggerBlock(source)
+    if (blocked) { flash(blocked.message); return }
     const set = run.slideSet ?? (run.pathwayId ? { kind: 'pathway' as const, pathwayId: run.pathwayId } : { kind: 'full' as const })
     const result = set.kind === 'pathway'
       ? await window.tw.pathways.present(talk.outlinePath, source, set.pathwayId, run.id)
@@ -319,6 +333,12 @@ export default function History({
   const detailRow = useMemo(() => rows.find((row) => row.session.id === detailId) ?? null, [detailId, rows])
 
   const publishRunHandout = useCallback(async (row: Row): Promise<void> => {
+    const talk = handouts[row.session.talkSlug]
+    if (!talk?.outlinePath) { flash('Talk outline not found'); return }
+    const source = await window.tw.talk.readOutline(talk.outlinePath)
+    if (source === null) { flash('Talk outline could not be read'); return }
+    const blocked = unresolvedTriggerBlock(source)
+    if (blocked) { flash(blocked.message); return }
     setHandoutBusy(true)
     const result = await window.tw.history.publishRunHandout(row.session.talkSlug, row.session.id)
     setHandoutBusy(false)
@@ -326,7 +346,7 @@ export default function History({
     await reload()
     if (result.missing?.length) flash(`Run handout published; skipped ${result.missing.length} missing slide id${result.missing.length === 1 ? '' : 's'}`)
     else flash('Run handout published')
-  }, [flash, reload])
+  }, [flash, handouts, reload])
 
   const unpublishRunHandout = useCallback(async (row: Row): Promise<void> => {
     setHandoutBusy(true)
@@ -638,6 +658,7 @@ export default function History({
         <nav className="twh-viewtabs" aria-label="Tools mode">
           <button onClick={() => openStudio()} title="TalkWeaver Studio — review, trim and manage recordings"><Radio className="lt-icon" /> Studio</button>
           <button className="active" title="TalkWeaver History — every talk you have delivered"><BarChart3 className="lt-icon" /> History</button>
+          <button onClick={onShowImporter} title="TalkWeaver Importer — bring PowerPoint slides into the vault"><FileInput className="lt-icon" /> Importer</button>
         </nav>
         <div className="twh-top-spacer" />
         <button className="twh-tool twh-plan-button" onClick={() => { setPlanOpen(true); window.setTimeout(() => planEventRef.current?.focus(), 0) }}><Plus className="lt-icon" /> Plan a Run</button>

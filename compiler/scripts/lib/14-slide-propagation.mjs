@@ -6,6 +6,7 @@
 // heading or Trigger line).
 import { readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { scanFencedLines } from "./03-object-token.mjs";
 import {
   extractIdSlides, normalizeDepth, listVersions,
   recordOutlineSave, sealSlideHead, whereUsed, ID_TOKEN_RE, idLineIndex,
@@ -31,52 +32,11 @@ function writeFileAtomic(path, data) {
   }
 }
 
-// Local copy of 13's per-line fence + comment flags (not exported there):
-// length-aware ``` fences, HTML-comment state machine. Needed so re-depthing
-// and deep-block location never mistake fenced/commented `#` lines for headings.
-function fencedLineFlags(lines) {
-  const flags = new Array(lines.length).fill(false);
-  let inFence = false;
-  let fenceMark = "";
-  let inComment = false;
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    const t = line.trim();
-    const visibleAtStart = !inComment;
-    if (!inFence) {
-      let pos = 0;
-      for (;;) {
-        if (inComment) {
-          const close = line.indexOf("-->", pos);
-          if (close === -1) break;
-          inComment = false;
-          pos = close + 3;
-        } else {
-          const open = line.indexOf("<!--", pos);
-          if (open === -1) break;
-          inComment = true;
-          pos = open + 4;
-        }
-      }
-    }
-    if (!visibleAtStart) { flags[i] = true; continue; }
-    if (inFence) {
-      flags[i] = true;
-      const close = t.match(/^(`{3,})\s*$/);
-      if (close && close[1].length >= fenceMark.length) { inFence = false; fenceMark = ""; }
-      continue;
-    }
-    const open = t.match(/^(`{3,})/);
-    if (open) { inFence = true; fenceMark = open[1]; flags[i] = true; }
-  }
-  return flags;
-}
-
 // Shift a block so its root heading sits at `targetDepth` — same delta logic
 // as 13's normalizeDepth (which is fixed at depth 3); fenced lines are opaque.
 function redepthTo(markdown, targetDepth) {
   const lines = String(markdown).split("\n");
-  const fenced = fencedLineFlags(lines);
+  const fenced = scanFencedLines(lines).flags;
   const root = fenced[0] ? null : lines[0]?.match(HEADING_RE);
   if (!root) return markdown;
   const delta = targetDepth - root[1].length;
@@ -109,7 +69,7 @@ function locateBlock(lines, id) {
   // Fallback: a block whose root heading sits deeper than ### (re-indented
   // placement, ADR-0033 readiness) is invisible to extractIdSlides; scan for
   // any deeper heading carrying the id on itself or its Trigger line.
-  const fenced = fencedLineFlags(lines);
+  const fenced = scanFencedLines(lines).flags;
   for (let i = 0; i < lines.length; i += 1) {
     const m = fenced[i] ? null : lines[i].match(HEADING_RE);
     if (!m || m[1].length < 3) continue;

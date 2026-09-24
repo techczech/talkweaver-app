@@ -43,6 +43,42 @@ assert.match(iconRows.html, /class="feature-list[^"\n]*fl-iconlist-list[^"\n]*"/
 const iconRowsMarkup = iconRows.html.match(/<ul class="feature-list[^"\n]*fl-iconlist-list[^"\n]*">[\s\S]*?<\/ul>/)?.[0] ?? ''
 assert.doesNotMatch(iconRowsMarkup, /fl-num/, 'fully resolved list-variant icons do not render fallback numbers')
 
+// A value-form {iconlist=…} must never override a list style the author wrote — that was the
+// dead List-style toggle (Dominik, 2026-09-21): the treatment value is still recorded, but the
+// authored style wins and a numbered or logo list never takes the icon-row chrome.
+const fiveItems = [
+  '- Item one {icon=lucide:tally-1}',
+  '- Item two {icon=lucide:tally-2}',
+  '- Item three {icon=lucide:tally-3}',
+  '- Item four {icon=lucide:tally-4}',
+  '- Item five {icon=lucide:tally-5}'
+].join('\n')
+const numberedWithVariant = await compile('Numbered with variant', '{numbered}{iconlist=list}', fiveItems)
+const numberedBlock = numberedWithVariant.model.slides[0].blocks.find((block) => block.type === 'feature-list')
+assert.equal(numberedBlock.liststyle, 'numbers', '{numbered}{iconlist=list} resolves liststyle numbers')
+assert.equal(numberedBlock.iconlistVariant, 'list', '{numbered}{iconlist=list} still records the treatment value')
+const numberedMarkup = numberedWithVariant.html.match(/<ul class="feature-list[^"\n]*">[\s\S]*?<\/ul>/)?.[0] ?? ''
+assert.doesNotMatch(numberedMarkup, /fl-iconlist-list/, 'a numbered list never takes the icon-row chrome')
+assert.match(numberedMarkup, /fl-num/, 'the numbered list keeps its numbered discs')
+const variantFirst = await compile('Variant first numbered', '{iconlist=list}{numbered}', fiveItems)
+const variantFirstBlock = variantFirst.model.slides[0].blocks.find((block) => block.type === 'feature-list')
+assert.equal(variantFirstBlock.liststyle, 'numbers', 'token order cannot resurrect the override')
+const variantFirstMarkup = variantFirst.html.match(/<ul class="feature-list[^"\n]*">[\s\S]*?<\/ul>/)?.[0] ?? ''
+assert.doesNotMatch(variantFirstMarkup, /fl-iconlist-list/, 'token order cannot put the row chrome on a numbered list')
+const logoWithVariant = await compile('Logos with variant', '{logolist}{iconlist=list}', fiveItems)
+const logoBlock = logoWithVariant.model.slides[0].blocks.find((block) => block.type === 'feature-list')
+assert.equal(logoBlock.liststyle, 'logos', '{logolist}{iconlist=list} keeps the authored logo style')
+
+// The bare-{iconlist} count rule is unchanged at both sides of the 3/4 boundary.
+const fourItems = [
+  '- Speed {icon=lucide:zap}',
+  '- Judgement {icon=lucide:brain}',
+  '- Craft {icon=lucide:wrench}',
+  '- Care {icon=lucide:heart}'
+].join('\n')
+const fourAutoRows = await compile('Four auto rows', '{iconlist}', fourItems)
+assert.match(fourAutoRows.html, /class="feature-list[^"\n]*fl-iconlist-list/, 'the >3-item auto rule still takes the plain icon rows')
+
 const iconUnknown = await compile('Icon unknown', '{iconlist=tiles}', iconBody)
 assert(iconUnknown.model.warnings.includes('iconlist-unknown:tiles'), 'unknown iconlist value warns')
 const iconUnknownMarkup = iconUnknown.html.match(/<ul class="feature-list[^"\n]*">[\s\S]*?<\/ul>/)?.[0] ?? ''

@@ -1,6 +1,6 @@
-import { DYNAMIC_PATTERNS, TRIGGER_DICTIONARY, VALUE_TRIGGER_DICTIONARY } from './lib/trigger-dictionary.generated.mjs';
+import { DYNAMIC_PATTERNS, OPEN_PATTERN_TOKENS, SECTION_ONLY_TRIGGER_KEYS, TRIGGER_DICTIONARY, VALUE_TRIGGER_DICTIONARY } from './lib/trigger-dictionary.generated.mjs';
 
-export { TRIGGER_DICTIONARY, VALUE_TRIGGER_DICTIONARY };
+export { OPEN_PATTERN_TOKENS, SECTION_ONLY_TRIGGER_KEYS, TRIGGER_DICTIONARY, VALUE_TRIGGER_DICTIONARY };
 
 // Trigger Dictionary — generated from the shared layout registry (ADR-0004 / ADR-0010).
 //

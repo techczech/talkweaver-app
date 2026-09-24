@@ -61,8 +61,8 @@ function Badges({ talk, deliveredMs, pub, warningCount, pathwayCount, pathwayNam
 // becomes badges (green Delivered ✓+recency · oxford Published ↗ · amber ⚠), quiet edited date.
 export default function ShelfRow({
   talk, depth, selected, focused, menuAnchor, warningCount, pathwayCount, pathwayNames, pub, label, fileMode,
-  slideCount, coverKey, deliveredMs, editedMs, event,
-  rowRef, onOpen, onContextMenu, onDragStart, onDragEnd
+  slideCount, coverKey, deliveredMs, editedMs, event, rowKey,
+  rowRef, onOpen, onContextMenu, onDragStart, onDragEnd, onHoverEnter, onHoverLeave
 }: TalkRowShared & {
   slideCount: number | null
   coverKey: string | null
@@ -87,6 +87,9 @@ export default function ShelfRow({
       title={talk.slug}
       data-talk-slug={talk.slug}
       data-talk-title={talk.title}
+      data-row-key={rowKey}
+      onMouseEnter={onHoverEnter}
+      onMouseLeave={onHoverLeave}
       onClick={onOpen}
       onContextMenu={onContextMenu}
       draggable

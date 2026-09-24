@@ -12,6 +12,7 @@
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-recording.mjs
 import { _electron as electron } from 'playwright'
+import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { mkdirSync, mkdtempSync, writeFileSync, existsSync, readFileSync, readdirSync } from 'fs'
@@ -77,10 +78,11 @@ async function waitFor(pred, timeoutMs, stepMs = 150) {
   return false
 }
 
+await ensureFreshBuild(REPO)
 const app = await electron.launch({
   args: ['.', '--user-data-dir=' + userDataDir],
   cwd: REPO,
-  env: { ...process.env, TW_REC_TEST: '1' }
+  env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
 })
 let page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded')

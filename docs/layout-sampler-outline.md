@@ -1,6 +1,13 @@
 ---
-title: "TalkWeaver Layout Sampler"
+title: "TalkWeaver **Layout Sampler**"
+subtitle: "Every registered layout in one compiler-backed deck."
+series: TalkWeaver
+event: Layout sampler
 author: Dominik Lukeš
+affiliation: University of Oxford
+web: dominiklukes.net
+date: 18 July 2026
+colour: cobalt
 ---
 # TalkWeaver Layout Sampler
 
@@ -20,6 +27,10 @@ Trigger syntax is compiler-validated: keep the **Timeline:** blocks, the
 
 ### Nobody can change your brain for you
 {statement}
+
+### AI intern can help you draft your schedules and manage your calendar {reveal}
+
+### Clear thinking matters {titletop}
 
 ### Statement default variant — current treatment
 {statement=default}
@@ -56,7 +67,7 @@ One **boxed phrase** can carry the whole poster.
 - question to answer {icon=lucide:message-circle-question-mark}
 - problem-to-plan {icon=lucide:puzzle}
 
-### Icon list boxes variant — cards and mono numbers
+### Icon list boxes variant — hairline cards
 {iconlist=boxes}
 
 - Translate {icon=lucide:languages}
@@ -69,6 +80,39 @@ One **boxed phrase** can carry the whole poster.
 - Translate {icon=lucide:languages}
 - Structure {icon=lucide:boxes}
 - Build {icon=lucide:hammer}
+
+### Icon list nested icons — every level (T28)
+{icons=all}{id=t28-iconlist-nested}
+
+- Chat answers questions
+    - great for thinking out loud
+    - you copy the results back yourself
+- Codex changes the code
+    - it acts in the repo and makes commits
+    - you review the diff
+
+### Icon list auto rule — three items keep boxes (T28)
+{iconlist}{id=t28-iconlist-3}
+
+- Translate {icon=lucide:languages}
+- Structure {icon=lucide:boxes}
+- Build {icon=lucide:hammer}
+
+### Icon list auto rule — four items take rows (T28)
+{iconlist}{id=t28-iconlist-4}
+
+- Translate {icon=lucide:languages}
+- Structure {icon=lucide:boxes}
+- Build {icon=lucide:hammer}
+- Ship {icon=lucide:rocket}
+
+### Icon list boxes pinned on four items (T28)
+{iconlist=boxes}{id=t28-iconlist-boxes-4}
+
+- Translate {icon=lucide:languages}
+- Structure {icon=lucide:boxes}
+- Build {icon=lucide:hammer}
+- Ship {icon=lucide:rocket}
 
 ### Background cobalt variant — readable cobalt tint
 {bg=cobalt}
@@ -109,7 +153,56 @@ One **boxed phrase** can carry the whole poster.
 
 - Alex LeBlanc, "AI amplifies expertise, not replaces it"
 
-### contrast-cards — what changed with agents
+### Quote width — about 100 characters
+{quote}{id=quote-width-100}
+
+> A short quotation fills the one quote panel: the full content width and the shared display type, nothing else.
+
+- Layout sampler, short quotation
+
+### Quote width — about 220 characters
+{quote}{id=quote-width-220}
+
+> A somewhat longer quotation keeps exactly the same panel and the same type as the short one. When its sentences no longer fit the panel, the compiler splits it across slides instead of narrowing the type or widening the panel.
+
+- Layout sampler, medium quotation
+
+### Quote width — about 330 characters
+{quote}{id=quote-width-330}
+
+> A longer quotation still uses the same display type and the same width. More words become more slides, each part cut at a sentence boundary where one exists, so the audience always reads the panel at one size. The attribution stays inside the panel and appears on the last part only, in the same relationship to the quotation.
+
+- Layout sampler, long quotation
+
+### Quote width — about 600 characters
+{quote}{id=quote-width-600}
+
+> A substantially longer quotation is split across several slides at compile time. Every part renders the identical panel: the same width, the same display type, the same tint, accent rule and quotation mark. Parts before the last carry a small continuation mark at the bottom right of the panel, and the attribution renders once, on the final part. The split falls at sentence boundaries, then clause boundaries, then word boundaries, and never inside a bold or emphasised span. This fixture contains enough prose to require more than one continuation slide at the sixteen-hundred by nine-hundred stage.
+
+- Layout sampler, very long quotation
+
+### Quote width — about 900 characters
+{quote}{id=quote-width-900}
+
+> The longest sampler quotation exercises the splitter across many continuation slides. The compiler estimates the lines each part needs from the characters that fit one line of the panel at the shared type size, and from the lines the fit box between the slide margins and the footer band can hold. Each part must fit at both the sixteen-hundred by nine-hundred stage and the smaller twelve-eighty by seven-twenty stage, so the tighter of the two decides. At presentation time the runtime never widens the panel and never changes its type for a part that fits; only when real font metrics differ from the estimate does it step the type down towards the thirty-one pixel floor as a fallback, and it reports that fallback rather than hiding it. A quotation that still cannot fit one panel at the floor without breaking a protected span is the only case the compiler warns about as too long.
+
+- Layout sampler, maximum quotation
+
+### Real-deck quote — Stephen King
+{quote}{id=quote-real-stephen-king}
+
+> "I want to suggest that to write to your best abilities, it behooves you to construct your own toolbox and then build up enough muscle so you can carry it with you. Then, instead of looking at a hard job and getting discouraged, you will perhaps seize the correct tool and get immediately to work."
+
+- Stephen King, On Writing
+
+### Real-deck quote — Dean W. Ball
+{quote}{id=quote-real-dean-ball}
+
+> "By the end of this year, the least important thing you will be able to do with frontier AI systems will be getting chatbots to answer questions."
+
+- Dean W. Ball, Among the Agents, 9 Jan 2026
+
+### Contrast — cards variant
 {contrast=cards}
 
 - Complex algorithms / How your computer works
@@ -136,6 +229,53 @@ One **boxed phrase** can carry the whole poster.
 {media}
 
 ![](assets/sample-image.png)
+
+### Media row — video and image
+
+[Video: https://example.com/media-row.mp4]
+
+![Landscape screenshot](assets/slide_0010.webp)
+
+### Media row — measured 4:3 video and image
+{id=media-row-measured-video}
+
+[Video: ../e2e/fixtures/media-row-4x3.mp4]
+
+![Landscape screenshot](assets/slide_0010.webp)
+
+### Media row — image, video and image
+
+![First landscape screenshot](assets/sample-image.png)
+
+[Video: https://example.com/media-row.mp4]
+
+![Second landscape screenshot](assets/slide_0010.webp)
+
+### Media row — portrait and landscape
+
+![Portrait screenshot](assets/07-minister-portrait.png)
+
+![Landscape screenshot](assets/slide_0010.webp)
+
+### Media gallery — four mixed media
+
+![Portrait screenshot](assets/07-minister-portrait.png)
+
+[Video: https://example.com/media-row.mp4]
+
+[Embed: https://example.com]
+
+![Landscape screenshot](assets/slide_0010.webp)
+
+### Media slot — list, video and image
+{id=media-slot-list-video-and-image}
+
+- The video and image share the media column.
+- The two figures remain stacked beside this list.
+
+[Video: ../e2e/fixtures/media-row-4x3.mp4]
+
+![Landscape screenshot](assets/slide_0010.webp)
 
 ### Image beside copy — left
 {list}{image=left}
@@ -292,8 +432,14 @@ TalkWeaver Layout Sampler
 
 - The parent renders as a subsection divider under the current section.
 
-### The ChatGPT timeline
-{timeline}{reveal}
+### Bare heading with children
+
+#### Bare heading child
+
+- The bodyless parent remains a subsection divider because it has a child heading.
+
+### The ChatGPT timeline — rail
+{timeline=rail}{reveal}
 
 - 30 Nov 2022
   - ChatGPT is released as a research preview
@@ -305,6 +451,29 @@ TalkWeaver Layout Sampler
   - 1 billion people use ChatGPT every week
 - 2026
   - AI agents happen
+
+### Timeline — columns
+{timeline=columns}
+
+**Timeline:**
+
+- Research
+  - 2022: ChatGPT launches
+- Adoption
+  - 2024: Mass use
+- Scale
+  - 2025: A billion weekly users
+- Agents
+  - 2026: Multi-step work
+
+### Timeline — compact
+{timeline=compact}
+
+- 2022: ChatGPT launches
+- 2023: GPT-4 arrives
+- 2024: Tool use expands
+- 2025: Weekly use reaches a billion
+- 2026: Agents take multi-step work
 
 ### Timeline — vertical
 {timelinevertical}
@@ -359,6 +528,19 @@ TalkWeaver Layout Sampler
 - 2025
 - 2026
 
+### Timeline — dynamic
+{timelinedynamic}{reveal}
+
+- 2022
+  - ChatGPT released as a research preview
+  - A research preview becomes a product overnight
+- 2023
+  - GPT-4, plugins and the first tools
+  - Tool use turns a chat box into a worker
+- 2024
+  - Agents take multi-step work
+  - Long-running tasks stop needing a human at every step
+
 ### sidebar-40 — pinned rail width
 {sidebar-40}
 
@@ -368,8 +550,9 @@ TalkWeaver Layout Sampler
 ### font-body — per-slide type override
 {font-body=l}{font-title=s}
 
-- Body steps up one size
-- The title steps down one
+- M is the default: body 3.2, title 5.2 and sidebar title 3.8 hundredths of the stage width
+- Body ladder xs 2.0, s 2.6, l 3.5, xl 3.9; title 3.3, 4.4, 5.7, 6.2; sidebar title 2.5, 3.2, 4.1, 4.5
+- This slide asks for body l and title s
 
 ### novalues — effort, shape only
 {barchart}{novalues}
@@ -395,6 +578,24 @@ TalkWeaver Layout Sampler
 - Channel — where you meet it
 
 ## Specialised
+
+### Timeline with a comment
+{timeline-visual}
+
+- 2024: First draft
+- 2025: Registry
+- 2026: The law
+
+The chronology stays visible while the comment provides context beside it.
+
+### Feature list with media
+{list-visual}
+
+- One
+- Two
+- Three
+
+![](assets/sample-image.png)
 
 ### Strengths of cognition and tools (SmartArt)
 {smartart}
@@ -477,7 +678,7 @@ def judgement(time, effort, learning):
 ```
 
 ### Three roles of AI (table)
-{table}
+{table}{reveal}
 
 - Capabilities
   - answer questions, summarise, translate
@@ -490,11 +691,11 @@ def judgement(time, effort, learning):
 
 ### qr — QR code element
 
-[QR: https://example.com | example.com]
+[QR: https://dominiklukes.net | dominiklukes.net]
 
 ### action — Action button element
 
-[Action: Explore the deliberate practice guide → https://deliberatepractice.example.com]
+[Action: Explore the deliberate practice guide → https://deliberatepractice.dominiklukes.net]
 
 ### Embed element
 
@@ -514,13 +715,22 @@ https://example.com
 - Cloudflare
 
 ### Image + quote
-{image-quote}
+{image-quote}{id=image-quote-width-short}
 
 ![](assets/sample-image.png)
 
 > AI agents have crossed a threshold I didn't expect so soon. Not just impressive demos — but practical tools for daily use.
 
 - Vivian Balakrishnan, Foreign Minister of Singapore
+
+### Image + long quote
+{image-quote}{id=image-quote-width-long}
+
+![](assets/sample-image.png)
+
+> A long image quotation keeps its own text column beside the image and the same constant display type as every other quote; there is no width ramp and no character-count typography tier. An image quotation is not split across slides, so when the words, image and attribution cannot fit together at the thirty-one pixel floor the compiler reports quote-too-long and the runtime steps the type down as far as the floor and marks the slide, leaving the exceptional case visible to the author. This fixture deliberately continues beyond a normal pull quote so the renderer has to exercise that fallback path. The quote never becomes an arbitrarily small caption merely because it shares the stage with an image.
+
+- Layout sampler, long image quotation
 
 ### Image grid
 {image-grid}
@@ -554,6 +764,64 @@ https://example.com
 - 2023: 100
 - 2024: 400
 - 2025: 1000
+
+### Block-scoped bar chart
+{id=block-chart-bar}
+
+{chart=bar}
+
+- Alpha: 40
+- Beta: 25
+- Gamma: 35
+
+### Block-scoped pie chart
+{id=block-chart-pie}
+
+{piechart}
+
+- Deep work: 35
+- Meetings: 25
+- Email and admin: 20
+- Learning: 20
+
+### Block-scoped line chart
+{id=block-chart-line}
+
+{chart=line}
+
+- 2022: 1
+- 2023: 100
+- 2024: 400
+- 2025: 1000
+
+### Fenced bar chart
+{id=fenced-chart-bar}
+
+```chart=bar
+- Alpha: 40
+- Beta: 25
+- Gamma: 35
+```
+
+### Fenced pie chart
+{id=fenced-chart-pie}
+
+```chart=pie
+- Deep work: 35
+- Meetings: 25
+- Email and admin: 20
+- Learning: 20
+```
+
+### Fenced line chart
+{id=fenced-chart-line}
+
+```chart=line
+- 2022: 1
+- 2023: 100
+- 2024: 400
+- 2025: 1000
+```
 
 ### Agent adoption (S-curve)
 {sigmoid}
@@ -611,7 +879,7 @@ https://example.com
   - Tools and infrastructure
 
 ### Mind map
-{mindmap}
+{mindmap}{reveal}
 
 - AI as Oracle
   - Capabilities
@@ -626,6 +894,21 @@ https://example.com
     - NotebookLM
     - Elicit
     - Consensus
+
+### Mermaid diagram
+
+```mermaid
+flowchart LR
+  A[Draft] --> B[Feedback]
+```
+
+### SVG illustration
+
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180">
+  <rect width="320" height="180" rx="12" fill="#f2f0ea"/>
+</svg>
+```
 
 ### Concept map
 {conceptmap}
@@ -735,6 +1018,13 @@ https://example.com
 
 Discuss with your neighbour: what was the last thing you used a chatbot for?
 
+### Which tool do you reach for first?
+{poll=single}
+
+- A notebook
+- A chat assistant
+- A search engine
+
 ### trigger-line
 {contrast}
 
@@ -778,11 +1068,11 @@ Good slow judgment needs good fast judgment.
 ### links
 {links}
 
-[Deliberate Practice — a universal learning method](https://deliberatepractice.example.com)
+[Deliberate Practice — a universal learning method](https://deliberatepractice.dominiklukes.net)
 
 [AI news round-up](https://ainewsroundup.pages.dev)
 
-[example.com](https://example.com)
+[dominiklukes.net](https://dominiklukes.net)
 
 ### chart
 {chart}
@@ -882,13 +1172,6 @@ thin agenda rail. For sections where seeing the slides matters more than their n
 
 - Names would only get in the way
 
-### timer-audience
-{timer=10min}{timer-audience}
-
-#### Timed child
-
-- The section timer is visible to the room while you work.
-
 ### multicolour
 {system-map}{multicolour}
 
@@ -896,6 +1179,13 @@ thin agenda rail. For sections where seeing the slides matters more than their n
 - Reflection
 - Feedback
 - Time
+
+## timer-audience
+{timer=10min}{timer-audience}
+
+### Timed child
+
+- The section timer is visible to the room while you work.
 
 ## accent — pinned section colour
 {accent=vermilion}
@@ -905,6 +1195,498 @@ thin agenda rail. For sections where seeing the slides matters more than their n
 - The author chooses a name
 - The compiler owns the accent and tint pair
 
+## Rendered geometry doctor
+
+<!--
+These six slides exercise the rendered Doctor's seams: sparse coverage, the type floor,
+one-word lines, stage clipping, quote/figure measurements, and last-step reveal state.
+They are examples for the report rather than new layout-registry entries.
+-->
+
+### Doctor fixture — sparse content coverage
+{id=doctor-underfill}
+
+A deliberately brief point.
+
+### Doctor fixture — computed type floor
+{id=doctor-type-floor}{quote}
+
+> The rendered Doctor records the computed size of every visible text node so a dense composition cannot shrink silently below the thirty-one pixel presentation floor.
+
+- Layout sampler
+
+### Doctor fixture — one-word line
+{id=doctor-one-word-line}{statement}
+
+**Every multi-word claim should avoid a stranded final word**
+
+### Doctor fixture — stage clipping
+{id=doctor-stage-clip}{links}
+
+[A deliberately long link label checks that link content stays inside the stage](https://example.org/a-deliberately-long-path-that-exercises-the-rendered-stage-edge-without-editing-the-compiler-layout)
+
+### Doctor fixture — quote panel and figure geometry
+{id=doctor-panel-figure}{image-quote}
+
+![TalkWeaver handout at desktop size](assets/sample-image.png)
+
+> Panel width and figure dimensions are recorded against the stage.
+
+- Layout sampler
+
+### Doctor fixture — last reveal step
+{id=doctor-last-step}{reveal}
+
+- The first point establishes the composition.
+- The second point must be present in the final measurement.
+- The last point proves that the Doctor did not stop at arrival state.
+
+<!-- ticket-17-fixtures:start -->
+
+### Type-floor fixture — nested content at every depth
+{id=type-floor-nested}
+
+- Group heading
+  - First-level nested content stays readable
+    - Second-level nested content stays readable too
+- A second group
+  - Nested content uses the same face and ink as its parent
+
+### Type-floor fixture — key/value columns
+{annotated}{id=type-floor-key-value}
+
+- Computer commands
+  - cd
+  - ls
+  - mkdir
+- CLI tools
+  - git
+  - gh
+  - wrangler
+- API services
+  - Lab notebooks
+  - Canvas
+
+### Type-floor fixture — table and inline code
+{table}{id=type-floor-table}
+
+| Element | Example |
+| --- | --- |
+| Command | Run `npm test` |
+| Result | Every table cell stays readable |
+
+### Type-floor fixture — quote cite
+{quote}{id=type-floor-cite}
+
+> A quotation and its attribution are both running content.
+
+- Layout sampler
+
+### Type-floor fixture — statement copy
+{statement}{id=type-floor-statement}
+
+Statement copy never falls below the presentation floor.
+
+### Type-floor fixture — card copy
+{cards}{id=type-floor-card}
+
+- Card heading
+  - Card copy remains readable.
+- Code card
+  - `inline code` remains readable too.
+
+### Type-floor fixture — timeline labels
+{timeline}{id=type-floor-timeline}
+
+- 2025 — The first event establishes the sequence
+- 2026 — The second event completes the sequence
+
+### Type-floor fixture — portrait image containment
+{media}{id=type-floor-portrait}
+
+![Portrait screenshot](assets/07-minister-portrait.png)
+
+### Type-floor fixture — compare column titles
+{compare}{id=type-floor-compare}
+
+#### First column title
+
+The first comparison statement stays readable.
+
+#### Second column title
+
+The second comparison statement stays readable.
+
+### Body-less cards use their labels as claims
+{cards}{id=t19-cards-bare}
+
+- AI as Oracle
+- AI as Intern
+- AI as Toolmaker
+
+### Numbered body-less cards keep requested ordinals
+{cards}{numbered}{id=t19-cards-numbered}
+
+- Research
+- Build
+- Verify
+
+### Ordered body-less cards keep requested ordinals
+{cards}{id=t19-cards-ordered}
+
+1. Research
+2. Build
+3. Verify
+
+### Compare copy uses the body scale
+{compare}{id=t19-compare-body}
+
+#### What TalkWeaver decides
+
+Where the title goes, how wide a quote is, how pictures share a row, how big the type is.
+
+#### What you decide
+
+The words, the order, the pictures, and any override you write as a token.
+
+### Nested list markers keep a readable gap
+{id=t19-list-markers}
+
+- Computer commands
+  - cd
+    - change directory
+  - ls
+- CLI tools
+  - git
+
+### Four items at the default type
+{id=t18-list-4}
+
+- The default body type is the former extra-large step
+- Titles and sidebar titles rise with it
+- A short list keeps its full leading and air
+- The block stays centred on both axes
+
+### Twelve items compress their leading, not their type
+{id=t18-list-12}
+
+- Leading first
+- Then item air
+- Type last
+- Never below floor
+- Margins kept
+- Density stamped
+- Print tightens
+- Runtime measures
+- Slots join in
+- Groups join in
+- Cards keep theirs
+- Zoom is last
+
+### Grouped list at the default type
+{id=t18-list-grouped}
+
+- Strengths
+  - Group headings and their bullets read as one block
+  - Nested items are ink at body size
+- Dangers
+  - A short list can leave most of its column empty
+  - Growing the type is the answer this ticket gives
+
+### Key-value list at the default type
+{id=t18-list-keyvalue}
+
+- Computer commands
+  - cd
+  - ls
+- CLI tools
+  - git
+  - gh
+- API services
+  - Lab notebooks
+  - Canvas
+
+### Which layout would you write by hand?
+{poll=single}{id=t19-poll-pending}
+
+- A quote
+- A list beside a picture
+- A statement
+- I let the slide decide
+
+### Type-floor fixture — fenced code
+{code}{id=type-floor-code}
+
+```javascript
+const floor = 31
+render({ floor })
+```
+
+### Type-floor fixture — 80-character code lines wrap
+{code}{id=type-floor-code-wrap}
+
+```text
+12345678901234567890123456789012345678901234567890123456789012345678901234567890
+abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij
+```
+
+### Type-floor fixture — code that cannot fit at the floor
+{code}{id=type-floor-code-too-long}
+
+```javascript
+line01()
+line02()
+line03()
+line04()
+line05()
+line06()
+line07()
+line08()
+line09()
+line10()
+line11()
+line12()
+line13()
+line14()
+line15()
+line16()
+line17()
+line18()
+line19()
+line20()
+line21()
+line22()
+line23()
+line24()
+line25()
+line26()
+line27()
+line28()
+line29()
+line30()
+line31()
+line32()
+line33()
+line34()
+line35()
+line36()
+line37()
+line38()
+line39()
+line40()
+```
+
+### Type-floor fixture — links and URLs
+{links}{id=type-floor-links}
+
+[TalkWeaver](https://example.com/talkweaver)
+
+<!-- ticket-17-fixtures:end -->
+
+<!-- ticket-21-fixtures:start -->
+
+### Table at the body type with a tinted header
+{table}{id=t21-table-default}
+
+| Role | Capabilities | Where |
+| --- | --- | --- |
+| Oracle | answer questions, summarise, translate | ChatGPT, Gemini, Claude |
+| Tool maker | write code, manage a code base | Cursor, Lovable, AI Studio |
+| Tool user | plan, work with files, run utilities | Codex, Claude Code, Antigravity |
+
+### Table without a header row
+{table}{table-header=off}{id=t21-table-noheader}
+
+| Oracle | answer questions, summarise, translate |
+| --- | --- |
+| Tool maker | write code, manage a code base |
+| Tool user | plan, work with files, run utilities |
+
+### Table without column rules
+{table}{table-columns=off}{id=t21-table-nocolumns}
+
+| Role | Capabilities |
+| --- | --- |
+| Oracle | answer questions, summarise, translate |
+| Tool maker | write code, manage a code base |
+| Tool user | plan, work with files, run utilities |
+
+### Table with plain rows only
+{table}{table-header=off}{table-columns=off}{id=t21-table-plain}
+
+| Oracle | answer questions, summarise, translate |
+| --- | --- |
+| Tool maker | write code, manage a code base |
+| Tool user | plan, work with files, run utilities |
+
+### Long table steps padding before type
+{table}{id=t21-table-long}
+
+| Step | What happens |
+| --- | --- |
+| One | The rows share the band |
+| Two | Padding grows to fill it |
+| Three | A crowded table tightens |
+| Four | Leading first |
+| Five | Then padding |
+| Six | Then type |
+| Seven | Never below the floor |
+| Eight | Never past the band |
+| Nine | The runtime measures |
+| Ten | Print stays tight too |
+
+### Bullets with nested items beside a picture
+{list-visual}{id=t21-list-visual-nested}
+
+- Computer commands
+  - cd
+  - ls
+- CLI tools
+  - git
+  - gh
+- API services
+
+![Sample image](assets/sample-image.png)
+
+### Claims beside a picture at claim size
+{image-claim}{id=t21-image-claim}
+
+![Sample image](assets/sample-image.png)
+
+- Grep is retrieval — exact, literal, tireless
+- Grok is understanding — fuzzy, contextual, judgemental
+
+### Cards with icons
+{cards}{icons}{id=t21-cards-icons}
+
+- Speed {icon=lucide:zap}
+- Judgement {icon=lucide:brain}
+- Craft {icon=lucide:wrench}
+
+### Cards with icons via the iconlist alias
+{cards}{iconlist}{id=t21-cards-iconlist}
+
+- Speed {icon=lucide:zap}
+- Judgement {icon=lucide:brain}
+- Craft {icon=lucide:wrench}
+
+<!-- ticket-21-fixtures:end -->
+
+<!-- ticket-22-fixtures:start -->
+
+<!-- Ticket 22: every timeline mode over the SAME five-entry dated list (the showcase
+     orm-timeline source). Each must render five distinct dated stops, text at the floor,
+     centred in the band and clear of the footer. -->
+
+### Five years of AI — Auto
+{timeline}{id=t22-auto}
+
+- 2022: ChatGPT launches
+- 2023: GPT-4 arrives
+- 2024: Tool use expands
+- 2025: Weekly use reaches a billion
+- 2026: Agents take multi-step work
+
+### Five years of AI — Rail
+{timeline=rail}{id=t22-rail}
+
+- 2022: ChatGPT launches
+- 2023: GPT-4 arrives
+- 2024: Tool use expands
+- 2025: Weekly use reaches a billion
+- 2026: Agents take multi-step work
+
+### Five years of AI — Columns
+{timeline=columns}{id=t22-columns}
+
+- 2022: ChatGPT launches
+- 2023: GPT-4 arrives
+- 2024: Tool use expands
+- 2025: Weekly use reaches a billion
+- 2026: Agents take multi-step work
+
+### Five years of AI — Compact
+{timeline=compact}{id=t22-compact}
+
+- 2022: ChatGPT launches
+- 2023: GPT-4 arrives
+- 2024: Tool use expands
+- 2025: Weekly use reaches a billion
+- 2026: Agents take multi-step work
+
+### Five years of AI — Horizontal
+{timeline=horizontal}{id=t22-horizontal}
+
+- 2022: ChatGPT launches
+- 2023: GPT-4 arrives
+- 2024: Tool use expands
+- 2025: Weekly use reaches a billion
+- 2026: Agents take multi-step work
+
+### Five years of AI — Spine
+{timeline=spine}{id=t22-spine}
+
+- 2022: ChatGPT launches
+- 2023: GPT-4 arrives
+- 2024: Tool use expands
+- 2025: Weekly use reaches a billion
+- 2026: Agents take multi-step work
+
+### Five years of AI — Pills
+{timeline=pills}{id=t22-pills}
+
+- 2022: ChatGPT launches
+- 2023: GPT-4 arrives
+- 2024: Tool use expands
+- 2025: Weekly use reaches a billion
+- 2026: Agents take multi-step work
+
+### Five years of AI — Dynamic
+{timeline=dynamic}{reveal}{id=t22-dynamic}
+
+- 2022: ChatGPT launches
+- 2023: GPT-4 arrives
+- 2024: Tool use expands
+- 2025: Weekly use reaches a billion
+- 2026: Agents take multi-step work
+
+### Five years of AI — pills continuation
+{timeline=pills}{id=t22-pills-split}
+
+- 2019: GPT-2 is held back
+- 2020: GPT-3 writes prose
+- 2021: Codex writes code
+- 2022: ChatGPT launches
+- 2023: GPT-4 arrives
+- 2024: Tool use expands
+- 2025: Weekly use reaches a billion
+- 2026: Agents take multi-step work
+
+### Five years of AI — horizontal continuation
+{timeline=horizontal}{id=t22-horizontal-split}
+
+**Timeline:**
+
+- 2019
+  - GPT-2 is held back
+- 2020
+  - GPT-3 writes prose
+- 2021
+  - Codex writes code
+- 2022
+  - ChatGPT launches
+- 2023
+  - GPT-4 arrives
+- 2024
+  - Tool use expands
+- 2025
+  - Weekly use reaches a billion
+- 2026
+  - Agents take multi-step work
+
+<!-- ticket-22-fixtures:end -->
+
+
 ## Closing
 
 ### Thank you
@@ -912,4 +1694,4 @@ thin agenda rail. For sections where seeing the slides matters more than their n
 
 **Thank you**
 
-example.com
+dominiklukes.net

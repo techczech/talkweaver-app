@@ -3,6 +3,9 @@ import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  addRunPoll,
+  addRunPollResponse,
+  applyRunPollBuffer,
   attachDeliveryToPlanned,
   clearRunHandoutUrl,
   createPlannedRun,
@@ -11,6 +14,8 @@ import {
   listRuns,
   normaliseRun,
   plannedRunCandidates,
+  persistRun,
+  readRun,
   resolveRunSlideSet,
   runHandoutSlug,
   setRunHandoutUrl,
@@ -50,6 +55,54 @@ const legacy = normaliseRun({
 })
 assert.equal(legacy.status, 'delivered')
 assert.deepEqual(legacy.slideSet, { kind: 'pathway', pathwayId: 'short' })
+assert.deepEqual(legacy.polls, [])
+assert.deepEqual(legacy.pollResponses, [])
+
+const pollDefinition = {
+  id: 'poll-s1', type: 'single', question: 'Choose one',
+  options: [{ optionId: 'poll-s1-option-1', label: 'First' }], visibility: 'held'
+}
+const withPoll = addRunPoll(legacy, pollDefinition)
+assert.deepEqual(withPoll.polls, [pollDefinition])
+const withResponse = addRunPollResponse(withPoll, {
+  pollId: 'poll-s1', choice: 'poll-s1-option-1', tMs: 1_250, slideId: 's1'
+})
+assert.deepEqual(withResponse.pollResponses, [{
+  pollId: 'poll-s1', choice: 'poll-s1-option-1', tMs: 1_250, slideId: 's1'
+}])
+
+const normalisedPollRun = normaliseRun({
+  ...legacy,
+  polls: [pollDefinition, null, { id: '', type: 'invalid' }],
+  pollResponses: [
+    { pollId: 'poll-s1', text: 'An answer', tMs: 2_500, slideId: 's1' },
+    { pollId: '', choice: 'bad', tMs: 1, slideId: 's1' }
+  ]
+})
+assert.deepEqual(normalisedPollRun.polls, [pollDefinition])
+assert.deepEqual(normalisedPollRun.pollResponses, [
+  { pollId: 'poll-s1', text: 'An answer', tMs: 2_500, slideId: 's1' }
+])
+
+const bufferedPollRun = applyRunPollBuffer(legacy, {
+  polls: [
+    pollDefinition,
+    { id: 'poll-open', type: 'open', question: 'What matters?', options: [], visibility: 'live' }
+  ],
+  responses: [
+    { pollId: 'poll-s1', choice: ['poll-s1-option-1'], tMs: 3_000, slideId: 's1' },
+    { pollId: 'poll-open', text: 'Accountability', tMs: 3_250, slideId: 's2' },
+    { pollId: 'poll-open', text: 'Judgement', tMs: 3_500, slideId: 's2' }
+  ]
+})
+assert.deepEqual(bufferedPollRun.polls.map((poll) => poll.id), ['poll-s1', 'poll-open'])
+assert.deepEqual(bufferedPollRun.pollResponses, [
+  { pollId: 'poll-s1', choice: ['poll-s1-option-1'], tMs: 3_000, slideId: 's1' },
+  { pollId: 'poll-open', text: 'Accountability', tMs: 3_250, slideId: 's2' },
+  { pollId: 'poll-open', text: 'Judgement', tMs: 3_500, slideId: 's2' }
+])
+persistRun(root, bufferedPollRun)
+assert.deepEqual(readRun(root, legacy.talkSlug, legacy.id)?.pollResponses, bufferedPollRun.pollResponses)
 
 const attached = attachDeliveryToPlanned(
   { ...planned, status: 'planned' },
@@ -107,4 +160,16 @@ assert.deepEqual(Buffer.from(outline), before)
 const persisted = createPlannedRun(root, { ...baseInput, eventTitle: 'Persistence check' }, () => 'persisted')
 assert.equal(JSON.parse(readFileSync(join(root, '_PRESENTATIONS', baseInput.talkSlug, 'persisted.json'), 'utf8')).eventTitle, persisted.eventTitle)
 
-console.log('runs: planned CRUD, legacy interpretation, attach, slide sets, cover and URLs passed')
+// A non-directory entry in _PRESENTATIONS (e.g. a Finder .DS_Store) must NOT make listRuns throw —
+// otherwise the whole History window silently blanks even though the recordings are right there.
+import { writeFileSync as _writeFileSync, mkdirSync as _mkdirSync } from 'node:fs'
+const dsRoot = mkdtempSync(join(tmpdir(), 'talkweaver-dsstore-'))
+_mkdirSync(join(dsRoot, '_PRESENTATIONS'), { recursive: true })
+_writeFileSync(join(dsRoot, '_PRESENTATIONS', '.DS_Store'), 'not a directory', 'utf8')
+_writeFileSync(join(dsRoot, '_PRESENTATIONS', 'stray-file.txt'), 'also not a directory', 'utf8')
+createPlannedRun(dsRoot, { ...baseInput, eventTitle: 'Survives DS_Store' }, () => 'survivor')
+const survived = listRuns(dsRoot) // no slug → enumerates every _PRESENTATIONS child
+assert.equal(survived.length, 1, 'listRuns must skip non-directory entries and still return real runs')
+assert.equal(survived[0].id, 'survivor')
+
+console.log('runs: planned CRUD, legacy interpretation, attach, slide sets, cover and URLs, DS_Store tolerance passed')

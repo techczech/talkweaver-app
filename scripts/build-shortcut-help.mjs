@@ -16,7 +16,9 @@ export async function buildShortcutHelp() {
     presenterReveal: 'presenter.reveal', presenterFocus: 'presenter.focus', presenterHighlight: 'presenter.highlight',
     outlineBtn: 'presenter.overview', presenterAudienceApp: 'presenter.audience', twClockBtn: 'presenter.timer',
     twDurationBtn: 'presenter.duration', previewSizeBtn: 'presenter.preview-size',
-    presenterMediaPlay: 'presenter.media', presenterGalleryBtn: 'presenter.gallery'
+    presenterMediaPlay: 'presenter.media', presenterGalleryBtn: 'presenter.gallery', presenterVideoFullscreen: 'presenter.video-fullscreen', liveGoButton: 'presenter.live',
+    presenterPollOpen: 'presenter.poll-primary', presenterPollClose: 'presenter.poll-primary',
+    presenterPollReveal: 'presenter.poll-reveal', presenterQuickPollButton: 'presenter.poll-compose'
   }
   const tooltipKeys = Object.fromEntries(Object.entries(tooltipIds).map(([target, id]) => [target, byId.get(id).keys]))
   const groups = []

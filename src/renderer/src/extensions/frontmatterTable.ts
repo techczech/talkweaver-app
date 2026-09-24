@@ -1,14 +1,32 @@
-// Renders the YAML frontmatter (`--- … ---`) as an inline TABLE of typed controls
-// (dropdowns for enums, checkboxes for flags, text for the rest), with a raw ↔ table toggle.
-// Editing a control rewrites the frontmatter block in the doc; the table is the default view.
-import { EditorView, Decoration, DecorationSet, WidgetType } from '@codemirror/view'
+// Renders the YAML frontmatter (`--- … ---`) as an inline TABLE of typed controls, with a
+// raw ↔ table toggle. Editing a control rewrites the frontmatter block in the doc; the table is
+// the default view.
+//
+// EVERY label, control type, choice and explanation comes from the metadata registry through
+// `frontmatterSurfaceViewModel` (src/shared/metadata-surfaces.ts). This file must never carry its
+// own field list again: it used to know 15 keys with hand-written labels and no explanations,
+// which is exactly why two thirds of the deck settings were unreachable here.
+//
+// Writes go through the shared byte-preserving `editFrontmatterText`, so comments and nested map
+// blocks (`defaults:`, `sections:`, `icons:`) survive an edit to an unrelated field.
+import { EditorView, Decoration, type DecorationSet, WidgetType } from '@codemirror/view'
 import { StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state'
+import { METADATA_REGISTRY } from '../../../shared/metadata-registry.ts'
+import {
+  frontmatterSurfaceViewModel,
+  initialValueFor,
+  type SurfaceFieldModel,
+  type SurfaceOptionModel
+} from '../../../shared/metadata-surfaces.ts'
+import { editFrontmatterText, parseFrontmatterPairs } from '../../../shared/frontmatter-editor.ts'
+import { metadataDefaultsSnapshot } from '../lib/metadata-defaults.ts'
 
 // ── frontmatter parse / serialize ─────────────────────────────────────────────
 interface Pair { key: string; value: string }
-interface Parsed { from: number; to: number; pairs: Pair[] }
+interface Parsed { from: number; to: number; text: string; pairs: Pair[] }
 
-// Locate the `--- … ---` block at the very top and parse its flat key: value lines.
+// Locate the `--- … ---` block at the very top and parse it with the SHARED parser, so the table
+// and Deck settings never disagree about what a key holds.
 function parseFrontmatter(state: EditorState): Parsed | null {
   const doc = state.doc
   if (doc.lines < 2) return null
@@ -18,52 +36,11 @@ function parseFrontmatter(state: EditorState): Parsed | null {
     if (doc.line(n).text.trim() === '---') { closing = n; break }
   }
   if (closing < 0) return null
-  const pairs: Pair[] = []
-  for (let n = 2; n < closing; n += 1) {
-    const t = doc.line(n).text
-    const m = t.match(/^([A-Za-z0-9_-]+):\s?(.*)$/)
-    if (m) pairs.push({ key: m[1], value: unquote(m[2]) })
-  }
-  return { from: doc.line(1).from, to: doc.line(closing).to, pairs }
+  const from = doc.line(1).from
+  const to = doc.line(closing).to
+  const text = doc.sliceString(from, to)
+  return { from, to, text, pairs: parseFrontmatterPairs(text) }
 }
-function unquote(s: string): string {
-  const t = s.trim()
-  if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) {
-    return t.slice(1, -1).replace(/\\"/g, '"')
-  }
-  return t
-}
-function serializeValue(v: string): string {
-  if (v === 'true' || v === 'false') return v
-  if (v === '') return '""'
-  if (/[:#"']/.test(v) || /^\s|\s$/.test(v)) return '"' + v.replace(/"/g, '\\"') + '"'
-  return v
-}
-function serialize(pairs: Pair[]): string {
-  return '---\n' + pairs.map((p) => `${p.key}: ${serializeValue(p.value)}`).join('\n') + '\n---'
-}
-
-// ── known field definitions (what gets a typed control) ───────────────────────
-type FieldType = 'text' | 'bool' | 'select'
-interface FieldDef { key: string; label: string; type: FieldType; options?: string[]; placeholder?: string }
-const FIELDS: FieldDef[] = [
-  { key: 'title', label: 'Title', type: 'text' },
-  { key: 'subtitle', label: 'Subtitle / event', type: 'text' },
-  { key: 'event', label: 'Event', type: 'text' },
-  { key: 'author', label: 'Author', type: 'text' },
-  { key: 'duration', label: 'Duration', type: 'text', placeholder: '45min · 1:30 · 90' },
-  { key: 'auto_title_slide', label: 'Auto title slide', type: 'bool' },
-  { key: 'auto_thanks_slide', label: 'Auto thanks slide', type: 'bool' },
-  { key: 'section_labels', label: 'Section labels on slides', type: 'bool' },
-  { key: 'thanks', label: 'Thanks text', type: 'text' },
-  { key: 'cta', label: 'Call to action', type: 'text' },
-  { key: 'palette', label: 'Palette', type: 'select', options: ['', 'green'] },
-  { key: 'handout_url', label: 'Handout URL', type: 'text', placeholder: 'https://your-project.pages.dev/…' },
-  { key: 'license', label: 'License', type: 'select', options: ['', 'by', 'by-sa', 'by-nc', 'by-nd', 'by-nc-sa', 'by-nc-nd', 'CC0'] },
-  { key: 'license-note', label: 'License note', type: 'text' },
-  { key: 'triggers', label: 'Deck-wide triggers', type: 'text', placeholder: 'reveal numbered …' }
-]
-const FIELD_BY_KEY = new Map(FIELDS.map((f) => [f.key, f]))
 
 // ── raw ↔ table toggle (StateField) ───────────────────────────────────────────
 const toggleRawEffect = StateEffect.define<boolean>()
@@ -75,40 +52,42 @@ const rawField = StateField.define<boolean>({
   }
 })
 
-// Replace the frontmatter `pairs` and write back to the document.
-function writeBack(view: EditorView, parsed: Parsed, pairs: Pair[]): void {
-  view.dispatch({ changes: { from: parsed.from, to: parsed.to, insert: serialize(pairs) } })
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
+  const node = document.createElement(tag)
+  if (className) node.className = className
+  if (text != null) node.textContent = text
+  return node
 }
 
-class FrontmatterWidget extends WidgetType {
-  constructor(private readonly pairs: Pair[]) {
+// Exported for the DOM gate (scripts/test-frontmatter-table-dom.mjs), which drives the "?"
+// disclosure directly. The widget is otherwise internal to this extension.
+export class FrontmatterWidget extends WidgetType {
+  readonly pairs: Pair[]
+  constructor(pairs: Pair[]) {
     super()
+    this.pairs = pairs
   }
   eq(other: FrontmatterWidget): boolean {
     return JSON.stringify(other.pairs) === JSON.stringify(this.pairs)
   }
   // Declare the rendered height so CodeMirror maps click coordinates for the lines BELOW the
-  // widget correctly (without this, clicks in the body land one line off).
+  // widget correctly (without this, clicks in the body land one line off). Rows are collapsed by
+  // default — the explanation lives behind the row's "?" (T27) — so a collapsed row measures about
+  // 40px; opening a help block calls view.requestMeasure(), which re-measures the real DOM height.
   get estimatedHeight(): number {
-    return 38 /* header */ + this.pairs.length * 26 /* rows */ + 34 /* add control + padding */
+    return 38 /* header */ + this.pairs.length * 40 /* collapsed rows */ + 34 /* add control + padding */
   }
   ignoreEvent(): boolean {
     return true // let the inputs handle their own events
   }
   toDOM(view: EditorView): HTMLElement {
-    const wrap = document.createElement('div')
-    wrap.className = 'cm-frontmatter-table'
+    const wrap = el('div', 'cm-frontmatter-table')
     wrap.dataset.frontmatterTable = 'true'
 
-    const header = document.createElement('div')
-    header.className = 'cm-fm-header'
-    const title = document.createElement('span')
-    title.textContent = 'Metadata'
-    header.appendChild(title)
-    const rawBtn = document.createElement('button')
+    const header = el('div', 'cm-fm-header')
+    header.appendChild(el('span', undefined, 'Metadata'))
+    const rawBtn = el('button', 'cm-fm-raw-btn', '</> raw')
     rawBtn.type = 'button'
-    rawBtn.className = 'cm-fm-raw-btn'
-    rawBtn.textContent = '</> raw'
     rawBtn.title = 'Edit raw YAML'
     rawBtn.addEventListener('mousedown', (e) => {
       e.preventDefault()
@@ -117,48 +96,50 @@ class FrontmatterWidget extends WidgetType {
     header.appendChild(rawBtn)
     wrap.appendChild(header)
 
-    const setKey = (key: string, value: string | null): void => {
+    // One edit through the shared byte-preserving editor: comments, nested maps and unrelated
+    // keys keep their bytes, and an alias spelling already in the file is edited in place.
+    const setKey = (key: string, value: string | null, aliases: string[] = [], raw = false): void => {
       const parsed = parseFrontmatter(view.state)
       if (!parsed) return
-      const pairs = parsed.pairs.slice()
-      const idx = pairs.findIndex((p) => p.key === key)
-      if (value === null) {
-        if (idx >= 0) pairs.splice(idx, 1)
-      } else if (idx >= 0) {
-        pairs[idx] = { key, value }
-      } else {
-        pairs.push({ key, value })
-      }
-      writeBack(view, parsed, pairs)
+      const next = editFrontmatterText(parsed.text, [{ key, value, aliases, raw }])
+      if (next === parsed.text) return
+      view.dispatch({ changes: { from: parsed.from, to: parsed.to, insert: next } })
     }
 
-    const grid = document.createElement('div')
-    grid.className = 'cm-fm-grid'
+    const model = frontmatterSurfaceViewModel(METADATA_REGISTRY, this.pairs)
 
-    const present = new Map(this.pairs.map((p) => [p.key, p.value]))
-    // Render present pairs in document order; known keys get typed controls.
-    for (const p of this.pairs) {
-      grid.appendChild(makeRow(p.key, p.value, setKey))
-    }
+    // Settings → Presenter identity and deck defaults: shown as placeholder text so an empty
+    // field says what it WOULD be, without writing anything. Refreshed on the next doc change.
+    const defaults = metadataDefaultsSnapshot()
+
+    const grid = el('div', 'cm-fm-grid')
+    for (const row of model.rows) grid.appendChild(makeRow(row, setKey, defaults[row.key] ?? '', () => view.requestMeasure()))
     wrap.appendChild(grid)
 
-    // "+ add field" — surface known keys that aren't set yet.
-    const unset = FIELDS.filter((f) => !present.has(f.key) && !(f.key === 'event' && present.has('subtitle')))
-    if (unset.length) {
-      const add = document.createElement('select')
-      add.className = 'cm-fm-add'
-      const ph = document.createElement('option')
-      ph.value = ''
-      ph.textContent = '+ add field…'
-      add.appendChild(ph)
-      for (const f of unset) {
-        const o = document.createElement('option')
-        o.value = f.key
-        o.textContent = f.label
-        add.appendChild(o)
+    // "+ add field" — every registry key not yet written, grouped and ordered by the registry.
+    if (model.addable.length > 0) {
+      const add = el('select', 'cm-fm-add')
+      add.title = 'Add a deck setting to this outline'
+      const placeholder = el('option', undefined, '+ add field…')
+      placeholder.value = ''
+      add.appendChild(placeholder)
+      const groups = new Map<string, HTMLOptGroupElement>()
+      for (const option of model.addable) {
+        let group = groups.get(option.group)
+        if (!group) {
+          group = document.createElement('optgroup')
+          group.label = option.group
+          groups.set(option.group, group)
+          add.appendChild(group)
+        }
+        const item = el('option', undefined, option.label)
+        item.value = option.key
+        item.title = option.explanation
+        group.appendChild(item)
       }
       add.addEventListener('change', () => {
-        if (add.value) setKey(add.value, FIELD_BY_KEY.get(add.value)?.type === 'bool' ? 'true' : '')
+        const entry = METADATA_REGISTRY.find((candidate) => candidate.key === add.value)
+        if (entry) setKey(entry.key, initialValueFor(entry), entry.aliases ?? [])
       })
       wrap.appendChild(add)
     }
@@ -167,63 +148,143 @@ class FrontmatterWidget extends WidgetType {
   }
 }
 
-function makeRow(
-  key: string,
-  value: string,
-  setKey: (key: string, value: string | null) => void
-): HTMLElement {
-  const def = FIELD_BY_KEY.get(key)
-  const row = document.createElement('div')
-  row.className = 'cm-fm-row'
-  row.dataset.fmKey = key
+type SetKey = (key: string, value: string | null, aliases?: string[], raw?: boolean) => void
 
-  const label = document.createElement('label')
-  label.className = 'cm-fm-label'
-  label.textContent = def ? def.label : key
-  row.appendChild(label)
-
-  let control: HTMLElement
-  if (def?.type === 'bool') {
-    const cb = document.createElement('input')
-    cb.type = 'checkbox'
-    cb.className = 'cm-fm-checkbox'
-    cb.checked = value === 'true'
-    cb.addEventListener('change', () => setKey(key, cb.checked ? 'true' : 'false'))
-    control = cb
-  } else if (def?.type === 'select') {
-    const sel = document.createElement('select')
-    sel.className = 'cm-fm-select'
-    const opts = def.options ?? []
-    const all = opts.includes(value) ? opts : [...opts, value]
-    for (const o of all) {
-      const opt = document.createElement('option')
-      opt.value = o
-      opt.textContent = o === '' ? '(default)' : o
-      if (o === value) opt.selected = true
-      sel.appendChild(opt)
-    }
-    sel.addEventListener('change', () => setKey(key, sel.value))
-    control = sel
-  } else {
-    const input = document.createElement('input')
-    input.type = 'text'
-    input.className = 'cm-fm-input'
-    input.value = value
-    if (def?.placeholder) input.placeholder = def.placeholder
-    input.addEventListener('change', () => setKey(key, input.value))
-    control = input
+/** The expandable list of what each documented choice actually does. */
+function makeChoiceList(options: SurfaceOptionModel[]): HTMLElement {
+  const details = el('details', 'cm-fm-choices')
+  details.appendChild(el('summary', undefined, 'What each choice does'))
+  const list = el('dl', 'cm-fm-choice-list')
+  for (const option of options) {
+    list.appendChild(el('dt', undefined, option.label))
+    list.appendChild(el('dd', undefined, option.explanation))
   }
-  row.appendChild(control)
+  details.appendChild(list)
+  return details
+}
 
-  // remove (×) — unknown keys + optional known keys can be cleared
-  const del = document.createElement('button')
-  del.type = 'button'
-  del.className = 'cm-fm-del'
-  del.textContent = '×'
-  del.title = 'Remove field'
-  del.addEventListener('mousedown', (e) => { e.preventDefault(); setKey(key, null) })
-  row.appendChild(del)
+function makePicker(field: SurfaceFieldModel, setKey: SetKey): HTMLElement {
+  const options = field.options as SurfaceOptionModel[]
+  const write = (value: string): void =>
+    setKey(field.key, value === '' ? null : value, field.aliases, field.control === 'map')
+  if (field.control === 'select') {
+    const select = el('select', 'cm-fm-select')
+    if (!options.some((option) => option.value === field.value)) {
+      const current = el('option', undefined, `custom: ${field.value}`)
+      current.value = field.value
+      current.selected = true
+      select.appendChild(current)
+    }
+    for (const option of options) {
+      const item = el('option', undefined, option.label)
+      item.value = option.value
+      item.title = option.explanation
+      if (option.selected) item.selected = true
+      select.appendChild(item)
+    }
+    select.addEventListener('change', () => write(select.value))
+    return select
+  }
+  const group = el('div', 'cm-fm-seg')
+  group.setAttribute('role', 'group')
+  group.setAttribute('aria-label', field.label)
+  for (const option of options) {
+    const button = el('button', 'cm-fm-seg-btn', option.label)
+    button.type = 'button'
+    button.title = option.explanation
+    button.setAttribute('aria-pressed', option.selected ? 'true' : 'false')
+    if (option.selected) button.classList.add('is-on')
+    if (option.swatch) {
+      const swatch = el('span', 'cm-fm-swatch')
+      swatch.style.background = option.swatch
+      button.prepend(swatch)
+    }
+    button.addEventListener('mousedown', (e) => { e.preventDefault(); write(option.value) })
+    group.appendChild(button)
+  }
+  return group
+}
 
+function makeControl(field: SurfaceFieldModel, setKey: SetKey, appDefault: string): HTMLElement {
+  if (field.readOnly || field.control === 'map') {
+    const value = el('div', 'cm-fm-ro', field.value.trim() ? field.value.trim() : '(not set)')
+    return value
+  }
+  if (field.options) return makePicker(field, setKey)
+  const input = el('input', 'cm-fm-input')
+  input.type = field.control === 'url' ? 'url' : field.control === 'number' ? 'number' : 'text'
+  input.value = field.value
+  input.placeholder = appDefault ? `${appDefault} (your default)` : (field.placeholder ?? '')
+  input.addEventListener('change', () => setKey(field.key, input.value === '' ? null : input.value, field.aliases))
+  return input
+}
+
+function makeRow(field: SurfaceFieldModel, setKey: SetKey, appDefault = '', requestMeasure: () => void = () => {}): HTMLElement {
+  const row = el('div', 'cm-fm-row')
+  row.dataset.fmKey = field.key
+  if (field.readOnly) row.classList.add('is-readonly')
+
+  const main = el('div', 'cm-fm-rowmain')
+  const label = el('label', 'cm-fm-label', field.label)
+  label.title = field.key
+  main.appendChild(label)
+  main.appendChild(makeControl(field, setKey, appDefault))
+  if (field.unit) main.appendChild(el('span', 'cm-fm-unit', field.unit))
+
+  if (!field.readOnly) {
+    const del = el('button', 'cm-fm-del', '×')
+    del.type = 'button'
+    del.title = `Remove ${field.label}`
+    del.addEventListener('mousedown', (e) => { e.preventDefault(); setKey(field.key, null, field.aliases) })
+    main.appendChild(del)
+  }
+
+  // T27: the explanation and notes live behind a small round "?" at the right end of the row
+  // instead of sitting in the always-visible flow (reverses the 2026-06 decision recorded in
+  // styles.css — Dominik, 2026-09-17). Click / Enter / Space toggles the block; Escape, while the
+  // button or the opened block has focus, closes it and returns focus to the button.
+  const helpId = `cm-fm-help-${field.key}`
+  const helpBlock = el('div', 'cm-fm-helpblock')
+  helpBlock.id = helpId
+  helpBlock.hidden = true
+  helpBlock.tabIndex = -1
+  helpBlock.appendChild(el('div', 'cm-fm-help', field.explanation))
+  if (appDefault && field.options) {
+    helpBlock.appendChild(el('div', 'cm-fm-note', `Your default: ${appDefault} — set in Settings → Presenter identity and deck defaults.`))
+  }
+  if (field.note) helpBlock.appendChild(el('div', 'cm-fm-note', field.note))
+  if (field.control === 'map' && !field.readOnly) {
+    helpBlock.appendChild(el('div', 'cm-fm-note', 'Structured value — edit it in Deck settings or the raw view.'))
+  }
+  if (field.custom) {
+    helpBlock.appendChild(el('div', 'cm-fm-note', `This outline holds “${field.custom.value}”, which is not one of the documented choices. Pick one to return to them.`))
+  }
+  if (field.options) helpBlock.appendChild(makeChoiceList(field.options))
+
+  const helpBtn = el('button', 'cm-fm-help-btn', '?')
+  helpBtn.type = 'button'
+  helpBtn.setAttribute('aria-label', `Explain ${field.label}`)
+  helpBtn.setAttribute('aria-expanded', 'false')
+  helpBtn.setAttribute('aria-controls', helpId)
+  helpBtn.title = field.explanation.match(/^[^.!?]+[.!?]/)?.[0]?.trim() ?? field.explanation
+  const setExpanded = (open: boolean): void => {
+    helpBlock.hidden = !open
+    helpBtn.setAttribute('aria-expanded', open ? 'true' : 'false')
+    requestMeasure()
+  }
+  helpBtn.addEventListener('click', () => setExpanded(helpBlock.hidden))
+  helpBtn.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !helpBlock.hidden) setExpanded(false)
+  })
+  helpBlock.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      setExpanded(false)
+      helpBtn.focus()
+    }
+  })
+  main.appendChild(helpBtn)
+  row.appendChild(main)
+  row.appendChild(helpBlock)
   return row
 }
 
@@ -231,10 +292,8 @@ function makeRow(
 class RawToggleWidget extends WidgetType {
   eq(): boolean { return true }
   toDOM(view: EditorView): HTMLElement {
-    const btn = document.createElement('button')
+    const btn = el('button', 'cm-fm-table-btn', '⊞ table')
     btn.type = 'button'
-    btn.className = 'cm-fm-table-btn'
-    btn.textContent = '⊞ table'
     btn.title = 'Edit metadata as a table'
     btn.addEventListener('mousedown', (e) => {
       e.preventDefault()

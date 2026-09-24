@@ -17,18 +17,23 @@ export interface TalkRowShared {
   label: string
   /** True in filename naming mode — the label renders in the mono font so it reads as a file. */
   fileMode: boolean
+  /** The keyboard/card row key, exposed as data-row-key (the hover-card click dismissal reads it). */
+  rowKey: string
   rowRef: (el: HTMLDivElement | null) => void
   onOpen: () => void
   onContextMenu: (e: React.MouseEvent) => void
   onDragStart: () => void
   onDragEnd: () => void
+  /** Hover intent for the preview card (T29): enter arms the pause, leave disarms/hides. */
+  onHoverEnter: () => void
+  onHoverLeave: () => void
 }
 
 // Ledger row (26px dense): file icon · title · ⚠count · handout dot · mono slide count.
 // The working view — density first; detail lives in the flyout that follows keyboard focus.
 export default function LedgerRow({
-  talk, depth, selected, focused, menuAnchor, warningCount, pathwayCount, pathwayNames, pub, label, fileMode, slideCount,
-  rowRef, onOpen, onContextMenu, onDragStart, onDragEnd
+  talk, depth, selected, focused, menuAnchor, warningCount, pathwayCount, pathwayNames, pub, label, fileMode, slideCount, rowKey,
+  rowRef, onOpen, onContextMenu, onDragStart, onDragEnd, onHoverEnter, onHoverLeave
 }: TalkRowShared & { slideCount: number | null }) {
   const cls = ['tl-row']
   if (selected) cls.push('tl-row--selected')
@@ -45,6 +50,9 @@ export default function LedgerRow({
       title={talk.slug}
       data-talk-slug={talk.slug}
       data-talk-title={talk.title}
+      data-row-key={rowKey}
+      onMouseEnter={onHoverEnter}
+      onMouseLeave={onHoverLeave}
       onClick={onOpen}
       onContextMenu={onContextMenu}
       draggable

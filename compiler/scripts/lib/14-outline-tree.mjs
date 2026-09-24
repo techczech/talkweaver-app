@@ -1,3 +1,4 @@
+import { parseMarkdownFenceOpeningLine, isMarkdownFenceClosingLine } from "./03-object-token.mjs";
 import { parseHeadingAttrs, parseTriggerLine } from "./02-triggers-layout.mjs";
 
 // =============================================================================
@@ -13,9 +14,8 @@ import { parseHeadingAttrs, parseTriggerLine } from "./02-triggers-layout.mjs";
 //     title + attrs + warnings) — same resolver the compiler's slide scanner uses.
 //   - parseTriggerLine (02-triggers-layout.mjs) for the ADR-0015 Trigger line (a body line that
 //     is ONLY `{…}` groups) right after a heading.
-//   - The length-aware code-fence guard, copied verbatim (adjusted variable names only) from
-//     08-source-adapters.mjs:1168-1189 — a closing fence must be a backticks-only line at least
-//     as long as the opener, so a nested fence (e.g. inside a ```md wrapper) never closes early.
+//   - Shared Markdown fence parsing (03-object-token.mjs), matching the content lexer for
+//     both backticks and tildes, including marker character and opening length.
 
 // Fold a heading's attr-resolver warnings into the deck-level warnings list, mirroring the
 // non-exported `parseHeading` helper in 08-source-adapters.mjs (built from the same
@@ -89,8 +89,7 @@ export function parseOutlineTree(text) {
 
   let deckTitle = "";
   let inNotes = false;
-  let inFence = false;
-  let fenceMark = "";
+  let fenceOpening = null;
 
   const pushLine = (line) => {
     if (inNotes) top().notesLines.push(line);
@@ -102,20 +101,19 @@ export function parseOutlineTree(text) {
     const t = line.trim();
     let m;
 
-    // Fence guard (LENGTH-AWARE, copied from 08-source-adapters.mjs:1168-1189): while inside a
+    // Fence guard: while inside a
     // fence EVERY line goes to the current node's body untouched — never matched as a heading
     // or a :::notes marker — so `#`/`##` lines in code/trace blocks stay out of the scanner. A
-    // closing fence must be a backticks-only line at least as long as the opener.
-    if (inFence) {
+    // closing fence must use the same marker character and be at least as long as the opener.
+    if (fenceOpening) {
       pushLine(line);
-      const close = t.match(/^(`{3,})\s*$/);
-      if (close && close[1].length >= fenceMark.length) { inFence = false; fenceMark = ""; }
+      if (isMarkdownFenceClosingLine(line, fenceOpening)) fenceOpening = null;
       continue;
     }
-    const open = t.match(/^(`{3,})/);
+    const open = parseMarkdownFenceOpeningLine(line);
     if (open) {
       pushLine(line);
-      inFence = true; fenceMark = open[1];
+      fenceOpening = open;
       continue;
     }
 

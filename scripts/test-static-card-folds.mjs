@@ -72,7 +72,15 @@ assert(rowsBlock?.rows === true, 'cards=rows marks the cards block as rows')
 assert(rowsBlock?.cards?.length === 3, 'cards=rows produces three cards')
 assert(rows.html.includes('card-gallery card-grid cards-rows'), 'cards=rows HTML includes the rows class')
 assert(count(rows.html, /class="lblgrp"/g) === 9, 'cards=rows HTML contains nine label groups')
-assert(count(rows.html, /<h4(?:\s|>)/g) === 3, 'cards=rows HTML contains three card h4 titles')
+// The h4 contract is scoped to the cards gallery: a {cards=rows} block emits exactly ONE h4 per
+// card, so an authored card title can never be dropped. The whole-document count is NOT pinned:
+// since cd6a192 (poll ranking/matrix ballots) every compiled deck inlines the poll runtime, whose
+// template strings contain two unrelated h4s (matrix result label, "Unranked choices").
+const rowsGallery = rows.html.slice(
+  rows.html.indexOf('<div class="card-gallery card-grid cards-rows"'),
+  rows.html.indexOf('</section>', rows.html.indexOf('<div class="card-gallery card-grid cards-rows"'))
+)
+assert(count(rowsGallery, /<h4(?:\s|>)/g) === 3, 'cards=rows gallery contains three card h4 titles (one per card)')
 
 const grid = await compile('Grid', [
   '### Three roles of AI {id=grid-parent}',
@@ -118,6 +126,14 @@ const contrastFourParent = contrastFour.model.slides.find((slide) => slide.id ==
 assert(contrastFour.model.slides.length === 5, 'contrast with four children leaves the parent and four child slides')
 assert(contrastFourParent?.layout === 'section-title', 'unfolded contrast parent remains a section-title slide')
 assert(contrastFour.model.warnings.some((warning) => warning.startsWith('contrast-groups-count:contrast-four')), 'contrast with four children emits the count warning')
+// AUTHOR WINS (Composition ticket 1) stops at an empty slide: {contrast} is an explicit layout word,
+// but its fold was refused, so the contrast layout has nothing to draw. The divider default was
+// never suppressed here and must not be reported as such — contrast-groups-count above is the
+// warning that names the real problem.
+assert(
+  !contrastFour.model.warnings.some((warning) => warning.startsWith('divider-default-suppressed-by-tokens:contrast-four')),
+  'a refused fold does not report a suppressed divider default'
+)
 
 const imageGrid = await compile('Image grid', [
   '### Two images {id=image-grid-parent}',

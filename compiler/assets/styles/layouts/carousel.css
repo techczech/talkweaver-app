@@ -1,12 +1,39 @@
-/* @order 0769 */
+/* @order 0776 */
 
   /* ── ADR-0022 CAROUSEL — stepped FULL-BLEED sub-slides ──────────────────────────────────
      A carousel reuses the data-exclusive stepping container, but each sub-slide is a real
      full-bleed slide (its content ran through inferLayout + the normal renderers), NOT a card.
      So strip ALL card chrome from .carousel-subslide and let its inner .slide-content fill the
      frame and lay out exactly as a top-level slide would. The runtime's applyExclusiveCards
-     toggles .active-card on the visible sub-slide (same machinery as a gallery). *//* @order 0770 */
-  .slide-content.layout-carousel { display: flex; flex-direction: column; height: 100%; }/* @order 0777 */
+     toggles .active-card on the visible sub-slide (same machinery as a gallery). *//* @order 0777 */
+  .slide-content.layout-carousel { display: flex; flex-direction: column; height: 100%; }/* @order 0784 */
   /* The sub-slide draws its own visible title; the parent carousel head already shows the shared
-     section · parent-title eyebrow above the stepped frames, so the parent head stays compact. *//* @order 0778 */
-  .slide-content.layout-carousel > .slide-head-compact { margin: 0 0 10px; flex: 0 0 auto; }
+     section · parent-title eyebrow above the stepped frames, so the parent head stays compact. */
+  /* ADR-0023 §2 + ADR-0005 (whitespace balance on BOTH axes): the parent carousel slide now takes
+     the `top` regime, so its title owns the top band and the stepped frames own the rest. A
+     sub-slide is ONE block — its own title and its body together — vertically centred in that
+     band, never a title pinned under the slide title with the body floating mid-stage. The
+     sub-slide title reads one step below the slide title (--fs-rail under --fs-title) so the two
+     never compete. */
+  .card-gallery.carousel .card.carousel-subslide > .slide-content {
+    display: flex !important;
+    flex-direction: column;
+    justify-content: center;
+    align-items: stretch;
+    gap: clamp(10px, 1.8vh, 24px);
+  }
+  .card-gallery.carousel .card.carousel-subslide > .slide-content > .slide-head {
+    display: block !important;
+    flex: 0 0 auto;
+    margin: 0 !important;
+    padding-bottom: 0 !important;
+    border-bottom: 0 !important;
+  }
+  .card-gallery.carousel .card.carousel-subslide > .slide-content > .slide-head > h1 {
+    font-size: var(--fs-rail);
+    max-width: none;
+  }
+  .card-gallery.carousel .card.carousel-subslide > .slide-content > *:not(.slide-head) {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+  }

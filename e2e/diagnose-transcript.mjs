@@ -13,6 +13,7 @@
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-transcript.mjs
 import { _electron as electron } from 'playwright'
+import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'fs'
@@ -89,10 +90,11 @@ writeFileSync(sessionPath, JSON.stringify(session, null, 2), 'utf8')
 
 const readSession = () => JSON.parse(readFileSync(sessionPath, 'utf8'))
 
+await ensureFreshBuild(REPO)
 const app = await electron.launch({
   args: ['.', '--user-data-dir=' + userDataDir],
   cwd: REPO,
-  env: { ...process.env, TW_REC_TEST: '1' }
+  env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
 })
 const page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded')

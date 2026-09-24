@@ -10,11 +10,14 @@ import MetadataPanel from './components/MetadataPanel'
 import Studio from './components/Studio'
 import History from './components/History'
 import Pathways from './components/Pathways'
+import TalkText from './components/TalkText'
+import Importer from './components/Importer'
 import Toasts from './components/Toasts'
 import { notify } from './lib/notify'
+import { armOutlineSwitch, consumeEditorEngagement } from './lib/outlineSwitch'
 import { effectiveKeys, eventToCMKey, KEYMAP_CHANGED_EVENT } from './keymap/store'
 
-type ToolsView = 'studio' | 'history' | 'pathways'
+type ToolsView = 'studio' | 'history' | 'pathways' | 'talktext' | 'importer'
 
 // The flat "Outline" view was retired: every slide already lives in the file, and the Slides
 // view (now labelled "Slide outline") is the structure people actually want. Two sidebar tabs.
@@ -43,6 +46,16 @@ type AppState =
   | { phase: 'setup' }
   | { phase: 'ready'; vaultRoot: string; talks: TalkInfo[]; folders: string[] }
 
+// A vault scan streams talks in fixed-size batches; several UI surfaces can each kick off a scan,
+// and overlapping scans' non-reset (tail) batches would otherwise stack in the accumulator and
+// render the same talk 2–3× (display-only — the files on disk are untouched). Upsert by
+// outlinePath so an append can never duplicate a talk already present; a reset batch starts fresh.
+function mergeTalkBatch(existing: TalkInfo[], batch: TalkInfo[], reset: boolean): TalkInfo[] {
+  const byPath = new Map<string, TalkInfo>((reset ? [] : existing).map((talk) => [talk.outlinePath, talk]))
+  for (const talk of batch) byPath.set(talk.outlinePath, talk)
+  return [...byPath.values()]
+}
+
 export default function App() {
   const toolsView = readToolsView()
   return toolsView ? <ToolsShell initialView={toolsView} /> : <MainApp />
@@ -50,12 +63,13 @@ export default function App() {
 
 function readToolsView(): ToolsView | null {
   const view = new URLSearchParams(window.location.search).get('view')
-  return view === 'studio' || view === 'history' || view === 'pathways' ? view : null
+  return view === 'studio' || view === 'history' || view === 'pathways' || view === 'talktext' || view === 'importer' ? view : null
 }
 
 function ToolsShell({ initialView }: { initialView: ToolsView }): JSX.Element {
   const [view, setView] = useState<ToolsView>(initialView)
   const [studioInitialSessionId, setStudioInitialSessionId] = useState<string | null>(null)
+  const [talkTextSessionId, setTalkTextSessionId] = useState<string | null>(null)
   const [pathwayContext, setPathwayContext] = useState<PathwayWindowContext | null>(null)
 
   const showStudio = useCallback((sessionId?: string): void => {
@@ -67,23 +81,56 @@ function ToolsShell({ initialView }: { initialView: ToolsView }): JSX.Element {
     setView('history')
   }, [])
 
+  const showImporter = useCallback((): void => {
+    setView('importer')
+  }, [])
+
+  const showTalkText = useCallback((sessionId: string): void => {
+    setTalkTextSessionId(sessionId)
+    setView('talktext')
+  }, [])
+
   useEffect(() => {
-    document.title = view === 'studio' ? 'TalkWeaver Studio' : view === 'history' ? 'TalkWeaver History' : 'TalkWeaver Pathways'
+    document.title = view === 'studio'
+      ? 'TalkWeaver Studio'
+      : view === 'history'
+        ? 'TalkWeaver History'
+        : view === 'importer'
+          ? 'TalkWeaver Importer'
+        : view === 'talktext'
+          ? 'TalkWeaver — Manage notes'
+          : 'TalkWeaver Pathways'
   }, [view])
 
   useEffect(() => {
     return window.tw.tools.onShow(({ view: nextView, sessionId, pathway }) => {
       if (nextView === 'studio') showStudio(sessionId)
       else if (nextView === 'history') setView('history')
-      else {
+      else if (nextView === 'importer') setView('importer')
+      else if (nextView === 'talktext') {
+        if (sessionId) showTalkText(sessionId)
+        else {
+          setTalkTextSessionId(null)
+          setView('talktext')
+        }
+      }
+      else if (nextView === 'pathways') {
         setPathwayContext(pathway ?? null)
         setView('pathways')
       }
     })
-  }, [showStudio])
+  }, [showStudio, showTalkText])
 
   if (view === 'pathways') {
     return <Pathways context={pathwayContext} onClose={() => window.close()} />
+  }
+
+  if (view === 'talktext') {
+    return <TalkText isOpen sessionId={talkTextSessionId} onBackToStudio={showStudio} onClose={() => window.close()} />
+  }
+
+  if (view === 'importer') {
+    return <Importer isOpen onClose={() => window.close()} onShowStudio={showStudio} onShowHistory={showHistory} />
   }
 
   return view === 'studio' ? (
@@ -92,12 +139,15 @@ function ToolsShell({ initialView }: { initialView: ToolsView }): JSX.Element {
       onClose={() => window.close()}
       initialSessionId={studioInitialSessionId}
       onShowHistory={showHistory}
+      onShowImporter={showImporter}
+      onOpenTalkText={showTalkText}
     />
   ) : (
     <History
       isOpen
       onClose={() => window.close()}
       onShowStudio={showStudio}
+      onShowImporter={showImporter}
     />
   )
 }
@@ -105,6 +155,11 @@ function ToolsShell({ initialView }: { initialView: ToolsView }): JSX.Element {
 function MainApp() {
   const [state, setState] = useState<AppState>({ phase: 'loading' })
   const pendingTalkBatchesRef = useRef<Array<{ batch: TalkInfo[]; reset: boolean }>>([])
+  const talkBatchRevisionRef = useRef(0)
+  // The Talks panel unmounts when the sidebar switches to Slide outline (deliberate, for perf),
+  // so hold its drill-in folder here to restore on return instead of dumping back to the root.
+  const talkFocusPathRef = useRef('')
+  const rememberTalkFocusPath = useCallback((path: string) => { talkFocusPathRef.current = path }, [])
   const [activeTalk, setActiveTalk] = useState<TalkInfo | null>(null)
   // null = closed; a string (possibly '') = open with that subfolder pre-selected.
   const [newTalkTopic, setNewTalkTopic] = useState<string | null>(null)
@@ -180,6 +235,30 @@ function MainApp() {
     // Fire-and-forget: flushSave reads the outgoing doc + path synchronously before the switch.
     if (prev && talk?.outlinePath !== prev.outlinePath) void flushSaveRef.current?.()
     setActiveTalk(talk)
+  }, [])
+
+  // T29b (2026-09-19): opening a talk from the Talks panel leaves the sidebar on Talks — the user
+  // scrolls the editor to see if it is the right file — and the FIRST engagement with the editor
+  // (pointerdown inside it, or the first document-changing keydown) then switches the sidebar to
+  // the Slide outline, once per opened talk. Armed ONLY in this panel wrapper: the shared
+  // selectTalk above serves every open route (launch restore, deep links, History/Studio, ⌘N
+  // windows, new-talk creation) and none of those may arm. Keyed by outlinePath, so an arm goes
+  // stale (and is dropped) if a non-panel route changes the active talk before engagement.
+  const outlineSwitchArmedRef = useRef<string | null>(null)
+  const selectTalkFromPanel = useCallback((talk: TalkInfo | null) => {
+    outlineSwitchArmedRef.current = armOutlineSwitch(talk?.outlinePath ?? null)
+    void selectTalk(talk)
+  }, [selectTalk])
+  // WorkspaceLayout calls this on the editor's two engagement triggers (see Editor.onEditorEngaged).
+  // Talks-panel folder position is untouched: the panel unmounts on the switch and talkFocusPathRef
+  // restores it when the user comes back via the tab or sidebar.talks.
+  const onEditorEngaged = useCallback(() => {
+    const result = consumeEditorEngagement(outlineSwitchArmedRef.current, activeTalkRef.current?.outlinePath ?? null)
+    outlineSwitchArmedRef.current = result.armed
+    if (result.switchToOutline) {
+      setSidebarMode('slides')
+      setSidebarCollapsed(false)
+    }
   }, [])
 
   useEffect(() => { window.localStorage.setItem('tw-sidebar-mode', sidebarMode) }, [sidebarMode])
@@ -262,6 +341,7 @@ function MainApp() {
     const openHistory = (): void => {
       void window.tw.tools.open('history')
     }
+    const openImporter = (): void => { void window.tw.tools.open('importer') }
     const newTalk = (): void => setNewTalkTopic('')
     const newFolder = (): void => setNewFolderOpen(true)
     const refresh = (): void => { void refreshTalks() }
@@ -272,6 +352,7 @@ function MainApp() {
     window.addEventListener('tw-open-settings', openSettings)
     window.addEventListener('tw-open-studio', openStudio)
     window.addEventListener('tw-open-history', openHistory)
+    window.addEventListener('tw-open-importer', openImporter)
     window.addEventListener('tw-new-talk', newTalk)
     window.addEventListener('tw-new-folder', newFolder)
     window.addEventListener('tw-refresh-talks', refresh)
@@ -283,6 +364,7 @@ function MainApp() {
       window.removeEventListener('tw-open-settings', openSettings)
       window.removeEventListener('tw-open-studio', openStudio)
       window.removeEventListener('tw-open-history', openHistory)
+      window.removeEventListener('tw-open-importer', openImporter)
       window.removeEventListener('tw-new-talk', newTalk)
       window.removeEventListener('tw-new-folder', newFolder)
       window.removeEventListener('tw-refresh-talks', refresh)
@@ -325,12 +407,13 @@ function MainApp() {
 
   useEffect(() => {
     const unsubscribe = window.tw.vault.onTalksBatch(({ batch, reset }) => {
+      talkBatchRevisionRef.current += 1
       setState((current) => {
         if (current.phase !== 'ready') {
           pendingTalkBatchesRef.current.push({ batch, reset })
           return current
         }
-        const talks = reset ? batch : [...current.talks, ...batch]
+        const talks = mergeTalkBatch(current.talks, batch, reset)
         return { ...current, talks }
       })
     })
@@ -342,7 +425,7 @@ function MainApp() {
       }
       const talks = await window.tw.vault.listTalks()
       const queued = pendingTalkBatchesRef.current.splice(0)
-      const indexedTalks = queued.reduce((all, item) => item.reset ? item.batch : [...all, ...item.batch], talks)
+      const indexedTalks = queued.reduce((all, item) => mergeTalkBatch(all, item.batch, item.reset), talks)
       setState({ phase: 'ready', vaultRoot: root, talks: indexedTalks, folders: [] })
       void window.tw.vault.listFolders().then((folders) => {
         setState((current) => current.phase === 'ready' && current.vaultRoot === root
@@ -360,9 +443,17 @@ function MainApp() {
   }
 
   async function refreshTalks() {
-    if (state.phase !== 'ready') return
+    // The command listener retains this function from mount, so read the current vault
+    // through IPC instead of capturing the initial loading state forever.
+    const root = await window.tw.vault.getRoot()
+    if (!root) return
+    const batchRevision = talkBatchRevisionRef.current
     const [talks, folders] = await Promise.all([window.tw.vault.listTalks(), window.tw.vault.listFolders()])
-    setState({ ...state, talks, folders: folders || [] })
+    // listTalks returns a cached snapshot while the fresh scan streams separately. A slow
+    // folder walk can let that stream finish first; never replace it with the older cache.
+    setState((current) => current.phase === 'ready' && current.vaultRoot === root
+      ? { ...current, talks: batchRevision === talkBatchRevisionRef.current ? talks : current.talks, folders: folders || [] }
+      : current)
   }
 
   if (state.phase === 'loading') {
@@ -437,7 +528,7 @@ function MainApp() {
               talks={state.talks}
               folders={state.folders}
               activeTalk={activeTalk}
-              onSelectTalk={selectTalk}
+              onSelectTalk={selectTalkFromPanel}
               onDeletedTalk={(outlinePath) => { if (activeTalk?.outlinePath === outlinePath) { setActiveTalk(null); void window.tw.windows?.claimTalk?.(null) } }}
               onRefresh={refreshTalks}
               vaultRoot={state.vaultRoot}
@@ -450,6 +541,8 @@ function MainApp() {
               // Rename safety (ADR-0008): the panel awaits the editor's pending-autosave flush
               // BEFORE renaming the active talk's folder, so no late write recreates the old path.
               flushActive={async () => { await flushSaveRef.current?.() }}
+              initialFocusPath={talkFocusPathRef.current}
+              onFocusPathChange={rememberTalkFocusPath}
             />
           )}
           {sidebarMode === 'slides' && (
@@ -501,6 +594,7 @@ function MainApp() {
         registerOutlineOps={registerOutlineOps}
         onOpenSettings={() => setSettingsOpen(true)}
         onSelectTalk={selectTalk}
+        onEditorEngaged={onEditorEngaged}
         registerFlushSave={(fn) => { flushSaveRef.current = fn }}
         registerAdoptOutline={(fn) => { adoptOutlineRef.current = fn }}
         onActiveLineChange={slidesOutlineVisible ? setActiveOutlineLine : undefined}

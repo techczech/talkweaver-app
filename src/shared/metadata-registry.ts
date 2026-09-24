@@ -57,6 +57,14 @@ export interface MetadataEntry {
   deleteConsequence?: string
   /** Present = declared for a FUTURE stage (reserved); the version/wave that activates it. */
   since?: string
+  /**
+   * True when the key is IDENTITY or HOUSE STYLE — stable across talks, so the app may hold one
+   * value in Settings and pre-fill it into new outlines (Ticket 9b). Never set on per-talk
+   * content (title, event, date, duration), on a map key, on a key that already has its own
+   * app-wide default elsewhere in Settings (warn-at / urgent-at → Settings → Timer), or on a
+   * system key.
+   */
+  defaultable?: boolean
 }
 
 const bool = (onWhat: string, offWhat: string): MetadataVocabulary => ({
@@ -112,6 +120,7 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     group: 'Cover & identity',
     explanation:
       'Who is giving the talk. Shown on the cover slide and woven into the closing slide’s sign-off line.',
+    defaultable: true,
     ownership: 'user'
   },
   {
@@ -127,6 +136,7 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     group: 'Cover & identity',
     explanation:
       'Strips any e-mail address from the author line on the compiled cover slide — useful when the deck will be published.',
+    defaultable: true,
     ownership: 'user'
   },
 
@@ -151,7 +161,7 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     label: 'Warn at (minutes left)',
     group: 'Presenting',
     explanation:
-      'How many minutes before the deadline the presenter clock turns amber. Overrides the app-wide Timer setting for this talk (default 5).',
+      'How many minutes before the deadline the presenter clock turns amber. Overrides the app-wide Timer setting for this talk (default 5). A value that is not a number of minutes falls back to that setting and raises a compiler warning.',
     ownership: 'user'
   },
   {
@@ -163,7 +173,7 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     label: 'Urgent at (minutes left)',
     group: 'Presenting',
     explanation:
-      'How many minutes before the deadline the presenter clock turns dark amber — the final warning. Overrides the app-wide Timer setting for this talk (default 1).',
+      'How many minutes before the deadline the presenter clock turns dark amber — the final warning. Overrides the app-wide Timer setting for this talk (default 1). It can never be earlier than the amber threshold: a larger value is brought back to “Warn at”, with a compiler warning saying so.',
     ownership: 'user'
   },
 
@@ -179,7 +189,8 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     label: 'Automatic title slide',
     group: 'Opening & closing',
     explanation:
-      'Whether the compiler builds the opening cover slide from title, event and author. Turn off when you author your own opening slide.',
+      'Whether the compiler builds the opening cover slide from title, event and author. Turn off when you author your own opening slide — a slide you mark {role=opening} already suppresses it without this key.',
+    defaultable: true,
     ownership: 'user'
   },
   {
@@ -193,7 +204,8 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     label: 'Automatic thanks slide',
     group: 'Opening & closing',
     explanation:
-      'Whether the compiler appends a closing slide built from the thanks text, call to action, author and event.',
+      'Whether the compiler appends a closing slide built from the thanks text, call to action, author and event. A slide you mark {role=ending} already suppresses it without this key.',
+    defaultable: true,
     ownership: 'user'
   },
   {
@@ -204,6 +216,7 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     label: 'Thanks text',
     group: 'Opening & closing',
     explanation: 'The automatic closing slide’s headline. Defaults to “Thank you”.',
+    defaultable: true,
     ownership: 'user'
   },
   {
@@ -214,6 +227,7 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     label: 'Series name',
     group: 'Title & identity',
     explanation: 'The talk-series line on the title poster (e.g. “AI & Expertise series”).',
+    defaultable: true,
     ownership: 'user'
   },
   {
@@ -234,6 +248,7 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     label: 'Web address',
     group: 'Title & identity',
     explanation: 'The speaker’s web address on the title and closing posters.',
+    defaultable: true,
     ownership: 'user'
   },
   {
@@ -244,26 +259,84 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     label: 'Affiliation',
     group: 'Title & identity',
     explanation: 'The speaker’s affiliation on the title and closing posters.',
+    defaultable: true,
+    ownership: 'user'
+  },
+  {
+    key: 'colour',
+    aliases: ['accent'],
+    location: 'frontmatter',
+    type: 'text',
+    vocabulary: {
+      kind: 'closed',
+      options: [
+        { value: '', label: 'Automatic', explanation: 'Key absent — the title slides use the section accent the palette cycle gives them.' },
+        { value: 'cobalt', label: 'Cobalt', explanation: 'Use the cobalt section accent on the title slides.' },
+        { value: 'emerald', label: 'Emerald', explanation: 'Use the emerald section accent on the title slides.' },
+        { value: 'vermilion', label: 'Vermilion', explanation: 'Use the vermilion section accent on the title slides.' },
+        { value: 'forest', label: 'Forest', explanation: 'Use the forest accent from the green palette on the title slides.' }
+      ]
+    },
+    label: 'Title colour',
+    group: 'Title & identity',
+    explanation:
+      'The named section accent used for the opening and closing title slides. All four names work whatever the palette — forest is the green palette’s lead accent but is honoured on a default-palette deck too. An unlisted name keeps the automatic accent and raises a compiler warning.',
+    defaultable: true,
+    ownership: 'user'
+  },
+  {
+    key: 'logo',
+    location: 'frontmatter',
+    type: 'text',
+    vocabulary: { kind: 'freeform' },
+    label: 'Title-slide logo',
+    group: 'Title & identity',
+    explanation: 'Title-slide logo — asset path or registered logo key.',
+    defaultable: true,
     ownership: 'user'
   },
   {
     key: 'title_style',
     location: 'frontmatter',
     type: 'text',
-    vocabulary: { kind: 'closed', options: [{ value: 'poster', label: 'Poster', explanation: 'White poster with metadata bands (default).' }, { value: 'split', label: 'Split', explanation: 'Narrow tinted sidebar; title and author in the main column.' }, { value: 'banner', label: 'Banner', explanation: 'Centred title with an accent identity footer.' }] },
+    vocabulary: { kind: 'closed', options: [{ value: '', label: 'Default (poster)', explanation: 'Key absent — the compiler uses the poster design.' }, { value: 'poster', label: 'Poster', explanation: 'White poster with metadata bands (default).' }, { value: 'split', label: 'Split', explanation: 'Narrow tinted sidebar; title and author in the main column.' }, { value: 'banner', label: 'Banner', explanation: 'Centred title with an accent identity footer.' }] },
     label: 'Title slide style',
     group: 'Title & identity',
-    explanation: 'Which locked ADR-0005 title design the poster uses: poster (default), split or banner.',
+    explanation:
+      'Which locked ADR-0005 title design the poster uses: poster (default), split or banner. It sets the OPENING slide only — the closing slide always uses the closing poster. An unlisted style falls back to poster and raises a compiler warning.',
+    defaultable: true,
     ownership: 'user'
   },
   {
     key: 'font',
     location: 'frontmatter',
     type: 'text',
-    vocabulary: { kind: 'closed', options: [{ value: 'trebuchet', label: 'Trebuchet', explanation: 'Trebuchet MS — the locked deck face (default).' }, { value: 'gill-sans', label: 'Gill Sans', explanation: 'Gill Sans / Gill Sans MT.' }, { value: 'verdana', label: 'Verdana', explanation: 'Verdana — widest, most conservative.' }] },
+    vocabulary: { kind: 'closed', options: [{ value: '', label: 'Default (Trebuchet MS)', explanation: 'Key absent — the locked Trebuchet MS deck face.' }, { value: 'trebuchet', label: 'Trebuchet', explanation: 'Trebuchet MS — the locked deck face (default).' }, { value: 'gill-sans', label: 'Gill Sans', explanation: 'Gill Sans / Gill Sans MT.' }, { value: 'verdana', label: 'Verdana', explanation: 'Verdana — widest, most conservative.' }] },
     label: 'Deck face',
     group: 'Design',
-    explanation: 'Deck font option: trebuchet (default), gill-sans or verdana (ADR-0005).',
+    explanation:
+      'Deck font option: trebuchet (default), gill-sans or verdana (ADR-0005). Choosing Trebuchet renders exactly as leaving the key out — it is the locked house face. An unlisted face keeps the house face and raises a compiler warning.',
+    defaultable: true,
+    ownership: 'user'
+  },
+  {
+    key: 'claim_style',
+    aliases: ['claim-style'],
+    location: 'frontmatter',
+    type: 'text',
+    vocabulary: {
+      kind: 'closed',
+      options: [
+        { value: '', label: 'Default (plain)', explanation: 'Key absent — a claim is set one type step larger, in ink, with no bar.' },
+        { value: 'plain', label: 'Plain', explanation: 'One type step larger than body copy, in ink, no bar (the default).' },
+        { value: 'bar', label: 'Bar', explanation: 'Body size with a section-accent bar down the left of the claim.' }
+      ]
+    },
+    label: 'Claim style',
+    group: 'Design',
+    explanation:
+      'How a wholly bold paragraph is set: plain (one step larger) or bar (ADR-0023 §4). A claim is never bold. A slide’s own {claim=…} overrides this; an unlisted style falls back to plain and raises a compiler warning.',
+    defaultable: true,
     ownership: 'user'
   },
   {
@@ -275,6 +348,7 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     group: 'Opening & closing',
     explanation:
       'One line shown on the automatic closing slide beneath the thanks — where to find you, what to read next.',
+    defaultable: true,
     ownership: 'user'
   },
   {
@@ -289,7 +363,8 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     label: 'Automatic links slide',
     group: 'Opening & closing',
     explanation:
-      'Adds an automatic slide near the end collecting every URL used in the deck, so the audience can find them in one place.',
+      'Adds an automatic slide near the end collecting every URL used in the deck, so the audience can find them in one place. It needs at least one link in the deck (a compiler warning says so when there is none), and a slide you mark {links} yourself takes its place.',
+    defaultable: true,
     ownership: 'user'
   },
 
@@ -308,7 +383,8 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     label: 'Palette',
     group: 'Appearance',
     explanation:
-      'The deck’s accent colour cycle. Only the documented alternate is honoured; any other value silently keeps the default.',
+      'The deck’s accent colour cycle. Only the documented alternate is honoured; any other value keeps the default and raises a compiler warning naming the value.',
+    defaultable: true,
     ownership: 'user'
   },
   {
@@ -326,7 +402,8 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     label: 'Section labels',
     group: 'Appearance',
     explanation:
-      'Shows each section’s title as a small kicker label on its slides. Off by default; an explicit {kicker=…} on a slide always shows.',
+      'Shows each section’s title as a small kicker label on its slides. Off by default; an explicit {kicker=…} on a slide always shows. On, true, yes and show all switch it on.',
+    defaultable: true,
     ownership: 'user'
   },
   {
@@ -338,6 +415,7 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     group: 'Appearance',
     explanation:
       'Default trigger words applied to every slide — the same vocabulary as a slide’s {…} line (e.g. reveal numbered), overridden by anything a slide sets itself. layout and id are ignored here.',
+    defaultable: true,
     ownership: 'user'
   },
   {
@@ -373,6 +451,26 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
       'A concept-phrase → icon-name map that overrides the automatic icon vocabulary for this deck. Advanced; edited as raw YAML in the outline.',
     ownership: 'user'
   },
+  {
+    key: 'logo-colour',
+    aliases: ['logo-color'],
+    location: 'frontmatter',
+    type: 'text',
+    vocabulary: {
+      kind: 'closed',
+      options: [
+        { value: '', label: 'Default', explanation: 'Key absent — a slide mixing colour and silhouette-only brand marks is brought to the deck accent colour (the unified default).' },
+        { value: 'unified', label: 'Unified accent', explanation: 'A slide mixing colour and silhouette-only brand marks renders every mark in the deck accent colour, so the row reads as one system.' },
+        { value: 'brand', label: 'Brand colours', explanation: 'Each brand keeps its real colours where TalkWeaver has them; brands that exist only as a single-colour silhouette render flat, which is more recognisable but visually uneven.' }
+      ]
+    },
+    label: 'Logo colour',
+    group: 'Appearance',
+    explanation:
+      'How brand logos on a {logolist} slide are coloured when the slide mixes full-colour marks with single-colour silhouettes. The default brings the whole row down to the deck accent so it reads as one system; “Brand colours” keeps each brand’s real colours instead, at the cost of an uneven row. It changes nothing on a deck with no brand marks, and an unlisted value raises a compiler warning.',
+    defaultable: true,
+    ownership: 'user'
+  },
 
   // ── Licence & credits ────────────────────────────────────────────────────────
   {
@@ -395,7 +493,8 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     label: 'Licence',
     group: 'Licence & credits',
     explanation:
-      'A Creative Commons licence for the deck — shown as a footer popup on the compiled presentation and its handout, linking to the licence text.',
+      'A Creative Commons licence for the deck — shown as a footer popup on the compiled presentation and its handout, linking to the licence text. A licence outside this list is not ignored: it is shown verbatim as written, and Licence URL supplies its link.',
+    defaultable: true,
     ownership: 'user'
   },
   {
@@ -407,6 +506,7 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     label: 'Licence note',
     group: 'Licence & credits',
     explanation: 'A free-text line added to the licence popup — exceptions, requests, or context.',
+    defaultable: true,
     ownership: 'user'
   },
   {
@@ -418,6 +518,7 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     label: 'Licence URL',
     group: 'Licence & credits',
     explanation: 'Overrides the link the licence popup points to (otherwise the standard CC deed).',
+    defaultable: true,
     ownership: 'user'
   },
   {
@@ -430,6 +531,7 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     group: 'Licence & credits',
     explanation:
       'Attribution lines (images, icons, sources) listed in the licence popup. Accepts a single line here; a YAML list in the outline also works.',
+    defaultable: true,
     ownership: 'user'
   },
 
@@ -484,6 +586,64 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     explanation:
       'Curated labels on a slide’s {id=… tags=…} line, lowercase-kebab, per slide copy. Set them from the Slide Browser (select slides, press T) or “Tag current slide…” in the command palette; every tag used anywhere in the vault is offered with counts. Browser tag FILTERS arrive with the unified rail.',
     ownership: 'user'
+  },
+  {
+    key: 'poll',
+    location: 'trigger',
+    type: 'text',
+    vocabulary: { kind: 'closed', options: [
+      { value: 'single', label: 'Single choice', explanation: 'Each audience member chooses one option from the slide list.' },
+      { value: 'multiple', label: 'Multiple choice', explanation: 'Each audience member chooses one or more options from the slide list.' },
+      { value: 'open', label: 'Open response', explanation: 'Each audience member submits a free-text response; slide list items are not used.' },
+      { value: 'ranking', label: 'Ranking', explanation: 'Rank every list item, or exactly the number specified by polltop.' },
+      { value: 'rating', label: 'Rating', explanation: 'Rate each list item using the ordered labels in [scale: …].' },
+      { value: 'categorisation', label: 'Categorisation', explanation: 'Assign each list item a label from [categories: …].' }
+    ] },
+    label: 'Poll type',
+    explanation: 'Turns the slide into a live poll whose question is the slide title and whose choice options are its list items.',
+    ownership: 'user'
+  },
+  {
+    key: 'polltop',
+    location: 'trigger',
+    type: 'number',
+    vocabulary: { kind: 'open' },
+    label: 'Number to rank',
+    explanation: 'Ranking polls require exactly this many choices, from 1 to the number of list items. Omit to rank all items.',
+    ownership: 'user'
+  },
+  {
+    key: 'pollskip',
+    location: 'trigger',
+    type: 'boolean',
+    vocabulary: { kind: 'closed', options: [
+      { value: 'false', label: 'Required', explanation: 'Every rating or categorisation row requires an answer; this is the default.' },
+      { value: 'true', label: 'Allow skipping', explanation: 'Audience members may explicitly skip a rating or categorisation row.' }
+    ] },
+    label: 'Allow skipped rows',
+    explanation: 'Controls whether audience members may skip rows in rating and categorisation polls.',
+    ownership: 'user'
+  },
+  {
+    key: 'pollresults',
+    location: 'trigger',
+    type: 'text',
+    vocabulary: { kind: 'closed', options: [
+      { value: 'live', label: 'Live', explanation: 'Audience results update as votes arrive; this is the default when the key is absent.' },
+      { value: 'held', label: 'Held', explanation: 'Audience members see only that their answer was recorded until the presenter reveals results.' }
+    ] },
+    label: 'Poll result visibility',
+    explanation: 'Controls whether the audience sees poll results immediately or waits for the presenter to reveal them.',
+    ownership: 'user'
+  },
+
+  {
+    key: 'pollselections', location: 'trigger', type: 'number', vocabulary: { kind: 'freeform' },
+    label: 'Select up to', explanation: 'Maximum distinct options in a multiple-choice answer. Omit to allow all options. Submissions are final.', ownership: 'user'
+  },
+  {
+    key: 'pollsubmissions', location: 'trigger', type: 'text', vocabulary: { kind: 'freeform' },
+    label: 'Submissions per participant', explanation: 'Free-text submissions per anonymous participant: a positive integer or unlimited. Defaults to one. Reopening preserves the allowance.', ownership: 'user'
   },
 
   // ── Reserved for later v0.15+ stages (declared now, built later — ADR-0036) ──
@@ -582,6 +742,26 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     explanation: 'The independently published handout for this Run. It never changes the evergreen handout_url in the talk outline.',
     ownership: 'system',
     deleteConsequence: 'History loses the link to this Run’s published handout; the evergreen talk handout remains unchanged.'
+  },
+  {
+    key: 'polls',
+    location: 'run',
+    type: 'map',
+    vocabulary: { kind: 'freeform' },
+    label: 'Run polls',
+    explanation: 'The poll definitions available during this Run, including their questions, choices and result visibility.',
+    ownership: 'system',
+    deleteConsequence: 'History loses the definitions needed to interpret this Run’s recorded poll responses.'
+  },
+  {
+    key: 'pollResponses',
+    location: 'run',
+    type: 'map',
+    vocabulary: { kind: 'freeform' },
+    label: 'Run poll responses',
+    explanation: 'The audience choices or free-text answers recorded during this Run, stamped with time and slide identity.',
+    ownership: 'system',
+    deleteConsequence: 'The audience poll responses for this Run are permanently absent from its Presentation Ledger record.'
   }
 ]
 
@@ -615,6 +795,16 @@ export function activeUserFrontmatterEntries(): MetadataEntry[] {
 export function systemFrontmatterEntries(): MetadataEntry[] {
   return METADATA_REGISTRY.filter(
     (e) => e.ownership === 'system' && e.location === 'frontmatter' && !e.since
+  )
+}
+
+/**
+ * Identity / house-style frontmatter keys the app may hold a default for (Ticket 9b). Active,
+ * user-owned frontmatter only — Settings never offers a default for a key TalkWeaver writes.
+ */
+export function defaultableEntries(): MetadataEntry[] {
+  return METADATA_REGISTRY.filter(
+    (e) => e.defaultable === true && e.ownership === 'user' && e.location === 'frontmatter' && !e.since
   )
 }
 

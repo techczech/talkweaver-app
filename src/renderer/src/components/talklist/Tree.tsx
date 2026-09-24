@@ -11,6 +11,9 @@ import { FolderHeader, FolderRow } from './FolderRows'
 export interface TreeCallbacks {
   setRowRef: (key: string) => (el: HTMLDivElement | null) => void
   onOpenTalk: (talk: TalkInfo, key: string) => void
+  // Hover intent for the preview card (T29): rows report enter/leave, TalkList feeds the model.
+  onRowEnter: (talk: TalkInfo, key: string) => void
+  onRowLeave: (key: string) => void
   onTalkContext: (talk: TalkInfo, key: string, e: React.MouseEvent) => void
   onToggleFolder: (path: string, key: string) => void
   onFolderContext: (path: string, key: string, e: React.MouseEvent) => void
@@ -87,8 +90,11 @@ export default function Tree({
       pub: pubFor(talk.slug),
       label: displayName(talk, naming),
       fileMode: naming === 'file',
+      rowKey: key,
       rowRef: cb.setRowRef(key),
       onOpen: () => cb.onOpenTalk(talk, key),
+      onHoverEnter: () => cb.onRowEnter(talk, key),
+      onHoverLeave: () => cb.onRowLeave(key),
       onContextMenu: (e: React.MouseEvent) => cb.onTalkContext(talk, key, e),
       onDragStart: () => cb.onDragStartTalk(talk, key),
       onDragEnd: cb.onDragEndTalk

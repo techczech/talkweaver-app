@@ -1,6 +1,7 @@
 // Real-Electron harness for vault management: clone a talk, create a folder, move a talk between
 // folders. Drives the IPC layer (the sidebar UI calls exactly these), then checks the on-disk vault.
 import { _electron as electron } from 'playwright'
+import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { fileURLToPath } from 'url'; import { dirname, join } from 'path'
 import { mkdirSync, mkdtempSync, writeFileSync, existsSync, readFileSync, readdirSync } from 'fs'; import { tmpdir } from 'os'
 
@@ -17,7 +18,8 @@ writeFileSync(fxPath, ['---', 'title: Demo Talk', 'handout_url: https://handouts
 writeFileSync(join(td, 'demo-talk-notes.txt'), 'notes')
 writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault }))
 
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO })
+await ensureFreshBuild(REPO)
+const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
 const page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded'); await page.waitForTimeout(1200)
 

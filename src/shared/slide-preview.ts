@@ -31,16 +31,21 @@ export type SlidePreviewStore = {
 }
 
 /** Create the small FIFO store used by the main process for scheme-hosted preview documents. */
-export function createSlidePreviewStore(maxEntries = 8): SlidePreviewStore {
+export function createSlidePreviewStore(maxEntries = 8, maxBytes = 128 * 1024 * 1024): SlidePreviewStore {
   const previews = new Map<string, string>()
+  let bytes = 0
   return {
     get: (id) => previews.get(id),
     set: (id, html) => {
+      bytes -= (previews.get(id)?.length ?? 0) * 2
       previews.delete(id)
       previews.set(id, html)
-      while (previews.size > maxEntries) {
+      bytes += html.length * 2
+      // The latest URL must remain loadable even if its document alone exceeds the budget.
+      while (previews.size > 1 && (previews.size > maxEntries || bytes > maxBytes)) {
         const oldest = previews.keys().next().value
         if (oldest === undefined) break
+        bytes -= previews.get(oldest)!.length * 2
         previews.delete(oldest)
       }
     }
@@ -63,9 +68,52 @@ export function slidePreviewIdFromUrl(rawUrl: string): string | null {
   }
 }
 
-/** Keep a logical slide key while invalidating its PNG whenever the full deck document changes. */
+/** Low-level filename encoding; whole-document identity is the legacy/raw-HTML fallback only. */
 export function thumbnailDocumentCacheKey(documentId: string, slideKey: string): string {
   return `${documentId}-${slideKey}`
+}
+
+export interface ThumbnailProjectionRow {
+  slide_id?: string
+  render_hash?: string
+  thumbnail_hash?: string
+  content_hash?: string
+  layout?: string
+  triggers?: Record<string, string>
+}
+
+export interface IndexedThumbnailSlide {
+  key: string
+  cacheKey: string
+  layout?: string
+  index: number
+}
+
+/** One picture identity policy for editor, background and selected-slide thumbnails. */
+function thumbnailSlideAt(row: ThumbnailProjectionRow, index: number, documentId: string): IndexedThumbnailSlide | null {
+  const key = row.render_hash || row.content_hash || row.slide_id || ''
+  if (!key) return null
+  return {
+    key,
+    cacheKey: thumbnailDocumentCacheKey(row.thumbnail_hash?.slice(0, 16) || documentId, key),
+    layout: row.triggers?.layout ?? row.layout,
+    index
+  }
+}
+
+export function thumbnailSlides(rows: ThumbnailProjectionRow[], documentId: string): IndexedThumbnailSlide[] {
+  return rows.map((row, index) => thumbnailSlideAt(row, index, documentId))
+    .filter((slide): slide is IndexedThumbnailSlide => slide !== null)
+}
+
+/** Build one thumbnail request while retaining its position in the full compiled deck. */
+export function selectedThumbnailSlide(
+  rows: ThumbnailProjectionRow[],
+  slideId: string,
+  documentId: string
+): IndexedThumbnailSlide | null {
+  const index = rows.findIndex((row) => row.slide_id === slideId)
+  return index < 0 ? null : thumbnailSlideAt(rows[index], index, documentId)
 }
 
 /** Mark shared preview HTML so Slide Focus and Inspector use the same chrome-free stage. */

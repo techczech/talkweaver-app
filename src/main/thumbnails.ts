@@ -4,14 +4,17 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { existsSync, mkdirSync, writeFileSync, unlinkSync } from 'fs'
 import { createHash, randomBytes } from 'crypto'
+import { createThumbnailQueue } from './thumbnail-queue'
 import { markSlidePreviewHtml } from '../shared/slide-preview'
 
 export interface RenderThumbnailsOptions {
   /** Full compiled single-file presentation HTML (the presenter-popup runtime). */
   fullHtml: string
+  /** Replaces obsolete pending renders from the same editor. */
+  requestKey?: string
   /** Ordered slides — one per ProjectionRow, in presentation order. key is the cache key;
    *  layout (when a multi-part one) drives per-part sub-thumbnail capture. */
-  slides: Array<{ key: string; cacheKey?: string; layout?: string }>
+  slides: Array<{ key: string; cacheKey?: string; layout?: string; index?: number }>
   /** Absolute directory to write PNGs into. Created if missing. */
   cacheDir: string
 }
@@ -33,7 +36,7 @@ let renderWin: BrowserWindow | null = null
 let renderWinHtmlKey: string | null = null
 let renderWinIdleTimer: NodeJS.Timeout | null = null
 // Calls are serialized: two overlapping runs would fight over the shared window's active slide.
-let renderQueue: Promise<unknown> = Promise.resolve()
+const enqueueRender = createThumbnailQueue(renderThumbnailsSerialized)
 
 const RENDER_WIN_IDLE_MS = 60_000
 
@@ -55,7 +58,7 @@ async function ensureDeckLoaded(fullHtml: string): Promise<BrowserWindow> {
       show: false,
       width: 1280,
       height: 720,
-      webPreferences: { offscreen: false }
+      webPreferences: { offscreen: false, backgroundThrottling: false }
     })
     win.on('closed', () => { renderWin = null; renderWinHtmlKey = null })
     renderWin = win
@@ -66,14 +69,7 @@ async function ensureDeckLoaded(fullHtml: string): Promise<BrowserWindow> {
   const tmpHtmlPath = join(tmpdir(), `talk-weaver-thumb-${randomBytes(8).toString('hex')}.html`)
   try {
     writeFileSync(tmpHtmlPath, fullHtml, 'utf8')
-    const finished = new Promise<void>((resolve, reject) => {
-      win.webContents.once('did-finish-load', () => resolve())
-      win.webContents.once('did-fail-load', (_e, code, desc) =>
-        reject(new Error(`did-fail-load ${code}: ${desc}`))
-      )
-    })
     await win.loadFile(tmpHtmlPath)
-    await finished
     renderWinHtmlKey = key
     return win
   } catch (err) {
@@ -107,14 +103,12 @@ async function ensureDeckLoaded(fullHtml: string): Promise<BrowserWindow> {
 export async function renderThumbnails(
   opts: RenderThumbnailsOptions
 ): Promise<Record<string, string>> {
-  // Serialize via the shared-window queue; each call still resolves to its own result.
-  const run = renderQueue.then(() => renderThumbnailsSerialized(opts))
-  renderQueue = run.catch(() => {})
-  return run
+  return enqueueRender(opts, opts.requestKey)
 }
 
 async function renderThumbnailsSerialized(
-  opts: RenderThumbnailsOptions
+  opts: RenderThumbnailsOptions,
+  signal: AbortSignal
 ): Promise<Record<string, string>> {
   const { fullHtml, slides, cacheDir } = opts
   const result: Record<string, string> = {}
@@ -123,7 +117,7 @@ async function renderThumbnailsSerialized(
 
   // Decide up front which slides actually need rendering; if all are cached, skip the window.
   const pending: Array<{ index: number; key: string; cacheKey: string; layout?: string; pngPath: string }> = []
-  slides.forEach((slide, index) => {
+  slides.forEach((slide, arrayIndex) => {
     const cacheKey = slide.cacheKey ?? slide.key
     const pngPath = join(cacheDir, `${cacheKey}.png`)
     if (existsSync(pngPath)) {
@@ -135,11 +129,11 @@ async function renderThumbnailsSerialized(
         i += 1
       }
     } else {
-      pending.push({ index, key: slide.key, cacheKey, layout: slide.layout, pngPath })
+      pending.push({ index: slide.index ?? arrayIndex, key: slide.key, cacheKey, layout: slide.layout, pngPath })
     }
   })
 
-  if (pending.length === 0) return result
+  if (signal.aborted || pending.length === 0) return result
 
   if (renderWinIdleTimer) { clearTimeout(renderWinIdleTimer); renderWinIdleTimer = null }
 
@@ -147,9 +141,11 @@ async function renderThumbnailsSerialized(
     const win = await ensureDeckLoaded(fullHtml)
 
     for (const item of pending) {
+      if (signal.aborted) break
       try {
         await navigateToSlide(win, item.index)
         const { pending: stillPending } = await settle(win)
+        if (signal.aborted) break
         // DETERMINISM: never persist an INCOMPLETE render. A large image (e.g. an 8MP paste) can
         // miss settle's decode window under load — capturing a blank. Caching that blank made it
         // STICK (the cache key is the slide model, stable until the slide changes), so the preview

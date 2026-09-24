@@ -1,7 +1,7 @@
 {
   "_meta": {
     "purpose": "Curated concept->icon map. A high-priority semantic layer the matcher consults for ALL feature-list items, after exact brand/alias and before generic Lucide scoring. Its primary job: resolve `icon-semantic-needed` gaps (an icon-resolvable list with 1-2 items that no brand/Lucide rule matches) into a deliberate, human/agent-chosen icon, so the whole list can render as icons instead of dropping to plain. Curated choices apply everywhere, not only at gaps.",
-    "schema": "phrase -> { key, note }. `phrase` is the NORMALIZED concept phrase (see normalization below). `key` is a vendored icon key: \"lucide:<name>\" (assets/icons/lucide.json) or \"svgl:<name>\" (svgl + extra brand index). `note` records the human/agent reasoning for the choice (why this icon means this concept).",
+    "schema": "phrase -> { key, note }. `phrase` is the NORMALIZED concept phrase (see normalization below). `key` is a vendored icon key: \"lucide:<name>\" (assets/icons/lucide.json), \"svgl:<name>\" (svgl + extra brand index) or \"tabler:<name>\" (assets/icons/tabler.json, 6,166 glyphs — curation is the only path to the collection beyond its auto-matching mood-* family; see 05-icons.mjs TABLER_AUTO_HEAD). `note` records the human/agent reasoning for the choice (why this icon means this concept).",
     "normalization": "Match key = item text, lowercased, markdown/list-marker stripped, punctuation collapsed to single spaces, trimmed. Build-time normalizeConceptPhrase() produces the same form for lookup. Author phrases in this normalized form.",
     "uniqueness": "Concept-resolved icons participate in deck-level icon uniqueness exactly like brand/Lucide picks. If a chosen key is already taken in the deck, the assigner falls back as for any genuine candidate.",
     "workflow": "Builds emit `icon-semantic-needed:<slide-id>:<exact item text>` when an icon-resolvable list has an unmatched item NOT covered here; that list renders PLAIN until resolved. The agent step: read the warning, judge the item by MEANING, pick the most apt vendored icon, add a `{ normalized-phrase: { key, note } }` entry here, commit, rebuild. See references/slide-design-language.md (Icon System) and the aicc agent-instructions/presentation-deck-building.md.",
@@ -226,5 +226,45 @@
   "communicating perceiving and acting": {
     "key": "lucide:radio",
     "note": "ai-history (russell-and-norvig). The AIMA part covering NLP / perception / robotics — communicating, sensing, and acting in the world -> `radio` (communication/signal). Unique vs graduation-cap and the siblings; message-square (the obvious 'communicate' pick) is already used by the why-me list in this deck, so radio preserves deck uniqueness."
+  },
+
+  "a lawyer": {
+    "key": "tabler:gavel",
+    "note": "Task 4 (Tabler gap-fill tier) curation example. Neither Lucide nor Tabler's own word-scorer resolves 'lawyer' (Tabler's scorer requires an exact word match on a name part, and no Tabler glyph is literally named 'lawyer'). Curated to `tabler:gavel` — the same profession-icon remedy the spec names for exactly this kind of gap. Exercises the isConceptKeyRenderable/tabler curation path (Step 4b) with committed data, not a test-only stub."
+  },
+
+  "anxious": {
+    "key": "tabler:mood-nervous",
+    "note": "Task 4 mood-family gap-fill (2026-07-23): Tabler draws this expression — a wavering, uneven mouth — but names the glyph mood-nervous, not mood-anxious, so the literal word never auto-matches even though the glyph exists and is exactly the emotion meant. Lucide has no equivalent (its five expressions are happy/sad/smile/frown/meh). Considered mood-unamused (wrong sense: flat disbelief, not worry — that reading is reserved for 'sceptical' below) and mood-annoyed (wrong sense: furrowed anger, not unease)."
+  },
+
+  "sceptical": {
+    "key": "tabler:mood-unamused",
+    "note": "Task 4 mood-family gap-fill (2026-07-23): the raised-eyebrow, flat-mouth face of guarded disbelief is named mood-unamused; neither the British 'sceptical' nor the American 'skeptical' spelling matches it literally. Reads as doubt held back rather than expressed, which is the register 'sceptical' names on a slide. Considered mood-puzzled (wrong sense: confusion, not doubt) and mood-neutral (too blank — loses the raised eyebrow that carries the scepticism)."
+  },
+
+  "tired": {
+    "key": "tabler:mood-empty",
+    "note": "Task 4 mood-family gap-fill (2026-07-23): the closest Tabler draws to drained/exhausted is mood-empty — eyes open, a flat mouth, nothing behind them. It is named for the blankness, not for tiredness, so it never auto-matches on the word 'tired'; it is also excluded from the auto-match gate entirely because 'empty' collides with technical English (an {} object is empty). Curation sidesteps that collision cleanly: the lookup key here is 'tired', never 'empty'. Considered mood-neutral (too alert-looking, no sense of depletion) and mood-sick (wrong sense: illness, not fatigue)."
+  },
+
+  "worried": {
+    "key": "tabler:mood-nervous",
+    "note": "Task 4 mood-family gap-fill (2026-07-23): a plain synonym of 'anxious' above, deliberately pointed at the same glyph rather than a different one — Tabler draws one wavering-mouth face for this whole register of unease, and 'worried' names the same expression 'anxious' does. If both words land on one slide, deck-level uniqueness treats an identical top candidate as the same concept and reuses the icon rather than duplicating it, which is the correct outcome: they are the same face."
+  },
+
+  "frustrated": {
+    "key": "tabler:mood-annoyed",
+    "note": "Task 4 mood-family gap-fill (2026-07-23): Tabler's furrowed-brow, tight-mouth face is named mood-annoyed; 'frustrated' is the word presentation prose actually reaches for, and it never matches that Tabler name literally. Distinct from mood-nervous (anxious/worried, above — unease, not irritation) and mood-angry (open hostility, stronger than frustration). Considered the mood-annoyed-2 variant (same brow, different eye treatment) and kept the base glyph as the more legible of the pair at slide scale."
+  },
+
+  "delighted": {
+    "key": "tabler:mood-smile-beam",
+    "note": "Task 4 mood-family gap-fill (2026-07-23): plain 'happy' already auto-matches mood-happy on the literal name, so this entry earns its place by naming a STRONGER state — mood-smile-beam draws curved, beaming cheeks rather than happy's plain grin, matching the intensity 'delighted' carries over ordinary happiness. Considered mood-crazy-happy (overshoots — reads as manic/ecstatic, not simply delighted) and mood-smile (too close to the already-auto-matching happy to justify a separate entry)."
+  },
+
+  "upset": {
+    "key": "tabler:mood-sad",
+    "note": "Task 4 mood-family gap-fill (2026-07-23): plain 'sad' already auto-matches mood-sad on the literal name; 'upset' is the common near-synonym presentation prose reaches for instead, and it never matches the Tabler name literally, so it earns its own entry pointing at the same honest glyph. Considered mood-cry (overshoots — tears read as distraught, stronger than 'upset') and mood-annoyed (wrong register — irritation at someone, not being upset)."
   }
 }

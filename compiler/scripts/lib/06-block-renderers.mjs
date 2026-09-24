@@ -1,9 +1,27 @@
 import { basename } from "node:path";
 import { highlightCode } from "../highlight.mjs";
 import { slugify, chooseBalancedColumns, escapeHtml, makeQrSvg, cleanQrUrl } from "./01-cli-utils.mjs";
-import { parseConceptRelations, spineFontScale, timelineDateOf, groupTimelineRows, autoTimelineMode, renderInline, TRACE_ROLES, autoSpeakerClass } from "./02-triggers-layout.mjs";
+import { parseConceptRelations, spineFontScale, timelineDateOf, timelineBlockFields, timelineStopsFromGroups, timelineGroupsForRender, timelineEntriesFromStops, autoTimelineMode, renderInline, TRACE_ROLES, autoSpeakerClass } from "./02-triggers-layout.mjs";
 import { withoutScripts } from "./04-html-extraction.mjs";
 import { resolveIconOverrides, decideFeatureListStyle, iconSvg } from "./05-icons.mjs";
+import { parseChartItems, renderChartBlock } from "./06-chart-renderer.mjs";
+import { plainListForcedIcons } from "./11-frame.mjs";
+import { stripWrappingQuoteMarks } from "./quote-layout.mjs";
+import { VALUE_TRIGGER_DICTIONARY } from "../triggers.mjs";
+
+export { parseChartItems } from "./06-chart-renderer.mjs";
+
+let sanitiseSvgForCompiler = null;
+
+// The bundle contains the shared sanitiser, DOMPurify and JSDOM. The async deck-builder loads it
+// only after finding an SVG fence, so ordinary decks never parse or retain the bundle.
+export async function loadCompilerSvgSanitiser() {
+  if (!sanitiseSvgForCompiler) {
+    const vendor = await import("../../assets/vendor/svg-sanitiser.mjs");
+    sanitiseSvgForCompiler = vendor.sanitiseSvgForCompiler;
+  }
+  return sanitiseSvgForCompiler;
+}
 
 // Snake-flow row distribution (2026-06-12): max 4 nodes per row, rows as EVEN as possible so
 // a wrap never strands a dangling single terminal (5 -> 3+2, 7 -> 4+3, 9 -> 3+3+3, 10 -> 4+3+3).
@@ -34,10 +52,28 @@ function imageSizeAttrs(block) {
   return ` width="${block.width}" height="${block.height}"`;
 }
 
+const ROW_MEDIA_TYPES = new Set(["image", "video", "embed"]);
+const ASSUMED_MEDIA_ASPECT = 16 / 9;
+
+function mediaAspectOf(block) {
+  const width = Number(block?.width);
+  const height = Number(block?.height);
+  if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
+    return { value: width / height, source: "intrinsic" };
+  }
+  return { value: ASSUMED_MEDIA_ASPECT, source: "assumed-16:9" };
+}
+
+function mediaAspectAttrs(block) {
+  if (!block?.mediaRowAspect) return "";
+  const value = Number(block.mediaRowAspect).toFixed(4);
+  return ` style="--media-aspect:${value}" data-media-aspect-source="${block.mediaAspectSource}"`;
+}
+
 function renderImageFigure(block) {
   // SD-4: figure.fig gives the centred-caption flex column; slide-figure is kept for the
   // lightbox selector (figure.slide-figure img) and all existing CSS that targets it.
-  return `<figure class="slide-figure fig"><img src="${escapeHtml(block.src)}"${imageSizeAttrs(block)} alt="${escapeHtml(block.alt)}">${block.caption ? `<figcaption>${renderInline(block.caption)}</figcaption>` : ""}</figure>`;
+  return `<figure class="slide-figure fig"${mediaAspectAttrs(block)}><img src="${escapeHtml(block.src)}"${imageSizeAttrs(block)} alt="${escapeHtml(block.alt)}">${block.caption ? `<figcaption>${renderInline(block.caption)}</figcaption>` : ""}</figure>`;
 }
 
 // G5: collapse each run of 2+ consecutive image blocks into one synthetic `image-row` block so
@@ -55,6 +91,32 @@ export function groupImageRows(blocks) {
   for (const b of blocks) {
     if (b && typeof b === "object" && b.type === "image") run.push(b);
     else { flush(); out.push(b); }
+  }
+  flush();
+  return out;
+}
+
+// Ticket 15: the media-only layout treats image, video and embed figures as one visual alphabet.
+// Collapse each consecutive run into one row record and attach the smallest geometry contract the
+// stylesheet needs: each figure's aspect and the sum for the row. Other layouts keep the narrower
+// image-only grouping above; 07-assembly opts into this function only for layout=media.
+export function groupMediaRows(blocks) {
+  if (!Array.isArray(blocks)) return blocks;
+  const out = [];
+  let run = [];
+  const flush = () => {
+    if (run.length >= 2) {
+      const media = run.map((block) => {
+        const aspect = mediaAspectOf(block);
+        return { ...block, mediaRowAspect: aspect.value, mediaAspectSource: aspect.source };
+      });
+      out.push({ type: "media-row", media, aspect: media.reduce((sum, block) => sum + block.mediaRowAspect, 0) });
+    } else if (run.length === 1) out.push(run[0]);
+    run = [];
+  };
+  for (const block of blocks) {
+    if (block && typeof block === "object" && ROW_MEDIA_TYPES.has(block.type)) run.push(block);
+    else { flush(); out.push(block); }
   }
   flush();
   return out;
@@ -98,6 +160,22 @@ function renderActionRow(actions) {
   return buttons ? `<div class="slide-actions">${buttons}</div>` : "";
 }
 
+function renderQr(block, className = "slide-figure slide-qr slide-qr-corner") {
+  const url = String(block.url || "");
+  const cleaned = cleanQrUrl(url);
+  const svg = makeQrSvg(url);
+  const safe = /^(https?|mailto):/i.test(url) ? url : null;
+  if (!svg) {
+    return `<figure class="${className} qr-too-long">${safe ? `<a href="${escapeHtml(safe)}" target="_blank" rel="noopener">${escapeHtml(cleaned)}</a>` : escapeHtml(cleaned)}</figure>`;
+  }
+  const caption = safe
+    ? `<figcaption class="qr-caption"><a href="${escapeHtml(safe)}" target="_blank" rel="noopener">${escapeHtml(cleaned)}</a></figcaption>`
+    : `<figcaption class="qr-caption">${escapeHtml(cleaned)}</figcaption>`;
+  return `<figure class="${className}">`
+    + `<button type="button" class="qr-code" data-qr-url="${escapeHtml(url)}" aria-label="Show QR code for ${escapeHtml(url)} full screen">${svg}</button>`
+    + caption + `</figure>`;
+}
+
 // Collapse consecutive `action` blocks into a single `actions` block so a run of action
 // directives renders as one .slide-actions row. Non-action blocks pass through unchanged.
 export function groupActionBlocks(blocks) {
@@ -123,31 +201,39 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
   if (block.type === "heading" || block.type === "title") return `<h2>${escapeHtml(text)}</h2>`;
   if (block.type === "subheading") return `<h3>${renderInline(text)}</h3>`;
   if (block.type === "quote") {
-    let paras = Array.isArray(block.paragraphs) && block.paragraphs.length
-      ? block.paragraphs
-      : [block.text ?? ""];
-    // G1: the decorative quote-mark device SUPPLIES the quotation marks, so strip a single
-    // wrapping pair of literal double quotes off the quote body — covers `> "…"` quotes
-    // (author wrote the marks) and any quote whose first/last paragraph is wrapped. Curly and
-    // straight pairs both handled. Marks INSIDE the quote (e.g. a nested "human being") stay.
-    if (paras.length) {
-      const first = paras[0];
-      const last = paras[paras.length - 1];
-      const opensQuote = /^\s*["“]/.test(first);
-      const closesQuote = /["”]\s*$/.test(last);
-      if (opensQuote && closesQuote) {
-        paras = paras.slice();
-        paras[0] = paras[0].replace(/^\s*["“]\s*/, "");
-        paras[paras.length - 1] = paras[paras.length - 1].replace(/\s*["”]\s*$/, "");
-      }
-    }
+    // G1: the decorative quote-mark device SUPPLIES the quotation marks, so a single wrapping
+    // pair of literal double quotes comes off the body — covers `> "…"` quotes (author wrote the
+    // marks) and any quote whose first/last paragraph is wrapped. Curly and straight pairs both
+    // handled; marks INSIDE the quote (e.g. a nested "human being") stay. The splitter applies the
+    // same strip before it cuts, so a split part never inherits a stray mark.
+    const paras = stripWrappingQuoteMarks(
+      Array.isArray(block.paragraphs) && block.paragraphs.length ? block.paragraphs : [block.text ?? ""]
+    );
     const fullText = paras.join(" ");
-    // Length bucket scales quote typography in CSS — long multi-paragraph quotes would
-    // otherwise overflow the card at full clamp() size. Tuned by eye: short reads big.
+    // Card galleries still read the legacy bucket. Quote-only slides ignore it: ADR-0023 §9 gives
+    // every quote panel ONE width and ONE type size; length is absorbed by splitting (quotePart).
     const len = fullText.length;
     const bucket = len <= 220 ? "short" : len <= 600 ? "medium" : "long";
+    const part = block.quotePart && block.quotePart.count > 1 ? block.quotePart : null;
+    const sizing = ` data-quote-chars="${len}"${part ? ` data-quote-part="${part.index}" data-quote-parts="${part.count}"` : ""}`;
     const body = paras.map((p) => `<p>${renderInline(p)}</p>`).join("");
-    return `<blockquote data-quote-length="${bucket}">${body}${block.cite ? `<cite>${renderInline(block.cite)}</cite>` : ""}</blockquote>`;
+    const cite = block.cite ? `<cite>${renderInline(block.cite)}</cite>` : "";
+    // Parts 1..n−1 carry a small mono continuation mark at the panel's bottom-right; the cite
+    // renders on the last part only (the splitter leaves it there).
+    const continuation = part && part.index < part.count
+      ? `<span class="quote-continuation">${part.index} / ${part.count}</span>`
+      : "";
+    return `<blockquote data-quote-length="${bucket}"${sizing}>${body}${cite}${continuation}</blockquote>`;
+  }
+  // ADR-0023 §4 — CLAIM. A wholly bold paragraph (lexed as a `claim` block, normalised into a
+  // flagged paragraph at the render entry point) is the speaker's point. It keeps `.content-p`,
+  // so every container rule and the stepping selector still reach it, and adds `.claim` plus the
+  // resolved treatment: `plain` (C1) is one type step larger in ink; `bar` (C2) is body size with
+  // a section-accent bar at the left. NEITHER is bold — the markers are consumed here and no
+  // `<strong>` is emitted, so the ADR-0005 inline-highlight accent stays a deliberate act.
+  if (block.type === "paragraph" && block.claim === true) {
+    const style = block.claimStyle === "bar" ? "bar" : "plain";
+    return text ? `<p class="content-p claim" data-claim-style="${style}">${renderInline(text)}</p>` : "";
   }
   if (block.type === "image") {
     return renderImageFigure(block);
@@ -165,6 +251,14 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     }
     return `<div class="img-row count-${images.length}">${images.map(renderImageFigure).join("")}</div>`;
   }
+  if (block.type === "media-row") {
+    const media = (block.media || []).filter(Boolean);
+    if (media.length === 0) return "";
+    if (media.length === 1) return renderBlock(media[0], deckUsed, frameIcons);
+    const gallery = media.length >= 4 ? " figure-row-gallery" : "";
+    const aspect = Number(block.aspect).toFixed(4);
+    return `<div class="figure-row${gallery} count-${media.length}" style="--media-row-aspect:${aspect}">${media.map((entry) => renderBlock(entry, deckUsed, frameIcons)).join("")}</div>`;
+  }
   if (block.type === "video") {
     // Playback attributes from the media-line tokens (ADR-0028). Default (no tokens) = a manual,
     // control-barred clip; a converted GIF carries {autoplay}{loop}{muted} → ambient, no chrome.
@@ -179,7 +273,12 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     const poster = block.poster ? ` poster="${escapeHtml(block.poster)}"` : "";
     const assetOnly = block.assetOnly ? ` data-video-asset-only data-video-name="${escapeHtml(block.videoName || basename(block.src))}"` : "";
     const caption = block.caption ? `<figcaption>${renderInline(block.caption)}</figcaption>` : "";
-    return `<figure class="slide-figure slide-video"${assetOnly}><video${attrStr}${poster} src="${escapeHtml(block.src)}"></video>${caption}</figure>`;
+    // Ticket 24 (Dominik 2026-09-13, orm-slot-stacked): every slide video carries ONE enlarge
+    // affordance. The deck runtime opens the lightbox on it — the same seam images use — moving
+    // this very <video> element to the stage (playback position and state ride along). Hidden in
+    // print (media.css). The presenter's V key / button and the Z gallery reach the same lightbox.
+    const enlarge = `<button class="video-enlarge" type="button" title="Enlarge video (v)" aria-label="Enlarge video">\u2922</button>`;
+    return `<figure class="slide-figure slide-video"${mediaAspectAttrs(block)}${assetOnly}><video${attrStr}${poster} src="${escapeHtml(block.src)}"></video>${enlarge}${caption}</figure>`;
   }
   if (block.type === "qr") {
     // [QR: url | label] → a build-time QR SVG (no dependency, no runtime fetch) with the
@@ -194,23 +293,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     // (scheme + www. stripped, ellipsis if long); the full URL stays in data-qr-url + the aria-label.
     // The caption under the code shows the LINKED URL, cleaned (refinement 6) — NOT the author's
     // label. (The label, if any, still feeds the QR's accessible name via the aria-label.)
-    const url = String(block.url || "");
-    const cleaned = cleanQrUrl(url);
-    const svg = makeQrSvg(url);
-    if (!svg) {
-      const safe = /^(https?|mailto):/i.test(url) ? url : "#";
-      return `<figure class="slide-figure slide-qr slide-qr-corner qr-too-long"><a href="${escapeHtml(safe)}" target="_blank" rel="noopener">${escapeHtml(cleaned)}</a></figure>`;
-    }
-    // The cleaned URL beneath the code is also a click-through link (so you can reach the
-    // destination quickly when viewing on screen), but only when the URL is a real http(s)/
-    // mailto target — otherwise it stays plain text (a "#" link would just jump to top).
-    const safe = /^(https?|mailto):/i.test(url) ? url : null;
-    const caption = safe
-      ? `<figcaption class="qr-caption"><a href="${escapeHtml(safe)}" target="_blank" rel="noopener">${escapeHtml(cleaned)}</a></figcaption>`
-      : `<figcaption class="qr-caption">${escapeHtml(cleaned)}</figcaption>`;
-    return `<figure class="slide-figure slide-qr slide-qr-corner">`
-      + `<button type="button" class="qr-code" data-qr-url="${escapeHtml(url)}" aria-label="Show QR code for ${escapeHtml(url)} full screen">${svg}</button>`
-      + caption + `</figure>`;
+    return renderQr(block);
   }
   if (block.type === "qr-row") {
     const codes = (block.codes || []).filter(Boolean);
@@ -224,15 +307,16 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     // at the runtime. Video players are excluded — a click on them is "play", and they keep their
     // normal interactive behaviour — so the chip is omitted for them below.
     const interactChip = `<button class="embed-interact-chip" type="button" title="Interact with this embed (press e)" aria-label="Interact with this embed">Interact <kbd>e</kbd></button>`;
+    const aspectAttrs = mediaAspectAttrs(block);
     // Self-contained local HTML embed: inline the document via srcdoc (same-origin → mirror-ready,
     // no external file, no 404). Set by inlineAndCollectAssets in 08-source-adapters.
     if (block.srcdoc != null) {
       // For self-contained embeds the local file path must not appear in the output (no external ref).
-      return `<figure class="slide-embed${block.variant === "simulation" ? " slide-simulation" : ""}"><iframe srcdoc="${escapeHtml(block.srcdoc)}" scrolling="no" title="${escapeHtml(block.title || "")}" loading="lazy" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>${interactChip}</figure>`;
+      return `<figure class="slide-embed${block.variant === "simulation" ? " slide-simulation" : ""}"${aspectAttrs}><iframe srcdoc="${escapeHtml(block.srcdoc)}" scrolling="no" title="${escapeHtml(block.title || "")}" loading="lazy" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>${interactChip}</figure>`;
     }
     // A local embed whose source file was missing: show a visible placeholder, never a broken iframe.
     if (block.missing) {
-      return `<figure class="slide-embed slide-embed-missing"><p class="embed-missing">Missing embed: ${escapeHtml(block.src || "")}</p></figure>`;
+      return `<figure class="slide-embed slide-embed-missing"${aspectAttrs}><p class="embed-missing">Missing embed: ${escapeHtml(block.src || "")}</p></figure>`;
     }
     const rawSrc = block.src ?? "";
     const src = escapeHtml(rawSrc);
@@ -249,14 +333,20 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
       try { host = new URL(rawSrc).hostname.replace(/^www\./, ""); } catch { /* keep raw */ }
       openLink = `<a class="embed-open-link" href="${src}" target="_blank" rel="noopener">Open ${escapeHtml(host)} ↗</a>`;
     }
-    return `<figure class="slide-embed${block.variant === "simulation" ? " slide-simulation" : ""}${isVideo ? " slide-embed-video" : ""}"><iframe data-src="${src}"${remote ? ` data-embed-url="${src}"` : ` scrolling="no"`}${isVideo ? ` data-embed-video="1"` : ""} title="${escapeHtml(block.title || block.src || "")}" loading="lazy" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>${openLink}${isVideo ? "" : interactChip}</figure>`;
+    return `<figure class="slide-embed${block.variant === "simulation" ? " slide-simulation" : ""}${isVideo ? " slide-embed-video" : ""}"${aspectAttrs}><iframe data-src="${src}"${remote ? ` data-embed-url="${src}"` : ` scrolling="no"`}${isVideo ? ` data-embed-video="1"` : ""} title="${escapeHtml(block.title || block.src || "")}" loading="lazy" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>${openLink}${isVideo ? "" : interactChip}</figure>`;
   }
   if (block.type === "timeline") {
-    // Normalise to groups. Older blocks carry only flat `items` (strings); wrap them as a
-    // single ungrouped group so the structured renderer always has a uniform shape.
-    let groups = Array.isArray(block.groups) && block.groups.length
-      ? block.groups
-      : [{ label: "", items: (block.items || []).map((it) => timelineDateOf(it)) }];
+    // Ticket 22 — ONE model for every source form: `stops` [{date, text, details, category}]
+    // (02-triggers-layout timelineStopsFromGroups). Older blocks carry only `groups` or flat
+    // `items`; derive the stops from those so the renderer always has the uniform shape.
+    const stops = Array.isArray(block.stops)
+      ? block.stops
+      : timelineStopsFromGroups(Array.isArray(block.groups) && block.groups.length
+        ? block.groups
+        : [{ label: "", items: (block.items || []).map((it) => timelineDateOf(it)) }]);
+    // The group view (by category when authored, else one group per stop) feeds the modes that
+    // draw a group as a unit — rail, columns, horizontal — and the auto-mode heuristic.
+    const groups = timelineGroupsForRender(stops);
     // Timeline presentation mode: explicit {timeline=rail|columns|compact|horizontal} wins; else
     // auto. ORIENTATION VARIANTS (new-layouts batch): {timelinevertical} → `vertical`, an alias
     // for the conventional `rail` (the vertical dated rail); {timelinehorizontal} → `horizontal`,
@@ -264,93 +354,93 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     // are full by default and step only when reveal/focus mode is on (the runtime walks
     // .timeline .tl-entries > li as units).
     const rawMode = block.mode === "vertical" ? "rail" : block.mode; // vertical is an alias of rail
-    const explicit = rawMode && ["rail", "columns", "compact", "horizontal", "spine", "pills", "dynamic"].includes(rawMode) ? rawMode : "";
+    const TIMELINE_MODES = VALUE_TRIGGER_DICTIONARY.timeline ?? [];
+    const explicit = rawMode && TIMELINE_MODES.includes(rawMode) ? rawMode : "";
     const mode = explicit || autoTimelineMode(groups);
+    // Every mode stamps the same three hooks so one geometry check covers them all (Ticket 22
+    // e2e): data-tl-stop on the stop element, data-tl-date on its marker, data-tl-text on its text.
+    const dateNode = (cls, date) => (date ? `<span class="${cls}" data-tl-date>${renderInline(date)}</span>` : "");
+    const textNode = (cls, text) => (text ? `<span class="${cls}" data-tl-text>${renderInline(text)}</span>` : "");
     // SPINE ({timelinespine}, treatment A) and PILLS ({timeline-pills}, treatment D) — the classic
     // illustrated horizontal timeline. A central Oxford-blue spine bar runs across the slide with
-    // ONE dot per DATE marker (group). Both share the spine machinery; they differ only in how the
-    // date reads and where the card sits:
+    // ONE dot per STOP. Both share the spine machinery; they differ only in how the date reads and
+    // where the card sits:
     //   • SPINE (A): a dot on the line, the date LABEL on the spine by its dot, and the event CARD
-    //     ALTERNATING above/below the spine by index parity, joined to the dot by a dotted leader.
+    //     ALTERNATING above/below the spine by index parity.
     //   • PILLS (D): the date renders as a solid accent PILL sitting on the spine, and a single
-    //     event CARD hangs BELOW every stop (uniform, all the same side), joined by a dotted leader.
-    // Each is built for ~6 legible stops across the slide width; >SPINE_STOPS_PER_SLIDE stops
-    // auto-split into continuation slides upstream (flushSlide), so a render here is always ≤cap.
-    // The card lists that date's events (one line each); stops are absolutely positioned over an
-    // even N-column track, so spacing stays generous and nothing overlaps. Stop <li> are steppable.
+    //     event CARD hangs BELOW every stop (uniform, all the same side).
+    // More stops than TIMELINE_STOPS_PER_SLIDE[mode] (timeline-layout.mjs) auto-split into
+    // continuation slides upstream (flushSlide), so a render here is always ≤cap. Stops are laid
+    // over an even N-column track, so spacing stays generous and nothing overlaps. Stop <li> are
+    // steppable.
     if (mode === "dynamic") {
       // Mockup .tl-dyn (locked slide 3b): 38% event list on a hairline rail, the CURRENT event's
-      // detail on a tint card right. Entry 1 = list headline; entry 2 = detail headline; the rest
-      // = detail prose. CSS pairs list group N to detail N and tracks the last revealed beat.
-      const list = groups.map((g) => {
-        const date = g.label ? `<span class="tl-dyn-date">${renderInline(g.label)}</span>` : "";
-        const first = g.items[0];
-        const headline = first ? `<span class="tl-dyn-w">${renderInline(first.body || first.date || "")}</span>` : "";
-        return `<div class="tl-group"><ol class="tl-dyn-entries"><li>${date}${headline}</li></ol></div>`;
+      // detail on a tint card right. Stop text = list headline; detail line 1 = detail headline;
+      // further detail lines = detail prose. A stop without detail lines repeats its text as the
+      // detail headline. CSS pairs list group N to detail N and tracks the last revealed beat.
+      const list = stops.map((s) => {
+        return `<div class="tl-group" data-tl-stop><ol class="tl-dyn-entries"><li>${dateNode("tl-dyn-date", s.date)}${textNode("tl-dyn-w", s.text || s.date)}</li></ol></div>`;
       }).join("");
-      const details = groups.map((g) => {
-        const big = g.items[1] ? renderInline(g.items[1].body || "") : (g.items[0] ? renderInline(g.items[0].body || "") : "");
-        const more = g.items.slice(2).map((it) => `<p>${renderInline(it.body || "")}</p>`).join("");
+      const details = stops.map((s) => {
+        const big = renderInline(s.details[0] || s.text || s.date || "");
+        const more = s.details.slice(1).map((d) => `<p>${renderInline(d)}</p>`).join("");
         return `<div class="tl-detail"><div class="tl-detail-big">${big}</div>${more ? `<div class="tl-detail-more">${more}</div>` : ""}</div>`;
       }).join("");
-      return `<div class="timeline timeline-dynamic" data-timeline-mode="dynamic"><div class="tl-dyn-list">${list}</div><div class="tl-dyn-pane">${details}</div></div>`;
+      return `<div class="timeline timeline-dynamic" data-timeline-mode="dynamic" data-tl-stops="${stops.length}"><div class="tl-dyn-list">${list}</div><div class="tl-dyn-pane">${details}</div></div>`;
     }
     if (mode === "spine" || mode === "pills") {
-      // Each GROUP is a dated stop. The stop's date = the group label (the canonical date header)
-      // or, when the group is unlabelled, the first item's leading date. The card lists the
-      // group's event bodies (each item's body; its own date prefix, if any, leads the line).
-      const stops = groups.map((g) => {
-        const headDate = g.label && timelineDateOf(g.label).date ? timelineDateOf(g.label).date : g.label;
-        const firstDate = g.items.find((it) => it.date);
-        const date = headDate || (firstDate ? firstDate.date : "");
-        const events = g.items.map((it) =>
-          it.date && it.date !== date
-            ? `<li><span class="tl-event-date">${renderInline(it.date)}</span> ${renderInline(it.body)}</li>`
-            : `<li>${renderInline(it.body || it.date || "")}</li>`
-        ).join("");
-        return { date, events };
-      }).filter((s) => s.date || s.events);
+      // Each STOP is a dated stop on the spine. The card lists the stop's text and its detail lines.
+      const cardOf = (s) => {
+        const lines = [s.text, ...s.details].filter(Boolean);
+        if (!lines.length) return "";
+        const events = lines.map((line, i) => `<li${i === 0 ? ' data-tl-text' : ""}>${renderInline(line)}</li>`).join("");
+        return `<div class="tl-spine-card"><ol class="tl-spine-events">${events}</ol></div>`;
+      };
       const dot = `<span class="tl-spine-dot" aria-hidden="true"></span>`;
       const lead = `<span class="tl-spine-leader" aria-hidden="true"></span>`;
-      if (mode === "pills") {
-        // PILLS (D): the date PILL sits on the spine and IS the stop marker (no separate dot —
-        // the pill covers it, exactly as in the sampler). One card hangs below each stop, joined
-        // by a dotted leader. Uniform — no alternation.
-        const renderStop = (s) => {
-          const card = `<div class="tl-spine-card"><ol class="tl-spine-events">${s.events}</ol></div>`;
-          const pill = s.date ? `<span class="tl-spine-pill">${renderInline(s.date)}</span>` : "";
-          return `<li class="tl-spine-stop" data-side="below">${pill}${lead}${card}</li>`;
-        };
-        const inner = stops.map(renderStop).join("");
-        const cols = Math.max(1, stops.length);
-        const scale = spineFontScale(cols);
-        return `<div class="timeline timeline-pills" data-timeline-mode="pills" style="--tl-spine-cols:${cols};--tl-spine-scale:${scale}"><ol class="tl-spine-track">${inner}</ol></div>`;
-      }
-      // SPINE (A): card alternates above/below by parity; date label sits on the spine.
-      const renderStop = (s, idx) => {
-        const side = idx % 2 === 0 ? "above" : "below"; // even index → card above the spine
-        const card = `<div class="tl-spine-card"><ol class="tl-spine-events">${s.events}</ol></div>`;
-        const label = s.date ? `<p class="tl-spine-date">${renderInline(s.date)}</p>` : "";
-        return `<li class="tl-spine-stop" data-side="${side}">${card}${label}${dot}${lead}</li>`;
-      };
-      const inner = stops.map(renderStop).join("");
       const cols = Math.max(1, stops.length);
       const scale = spineFontScale(cols);
-      return `<div class="timeline timeline-spine" data-timeline-mode="spine" style="--tl-spine-cols:${cols};--tl-spine-scale:${scale}"><ol class="tl-spine-track">${inner}</ol></div>`;
-    }
-    // A single dotted entry. Dated entries split the date into an accent column.
-    const renderEntry = (it) => {
-      if (it.date) {
-        return `<li><span class="tl-date">${renderInline(it.date)}</span><span class="tl-body">${renderInline(it.body)}</span></li>`;
+      if (mode === "pills") {
+        // PILLS (D): the date PILL sits on the spine and IS the stop marker (no separate dot —
+        // the pill covers it). One card hangs below each stop. Uniform — no alternation.
+        const inner = stops.map((s) => `<li class="tl-spine-stop" data-side="below" data-tl-stop>${dateNode("tl-spine-pill", s.date)}${lead}${cardOf(s)}</li>`).join("");
+        return `<div class="timeline timeline-pills" data-timeline-mode="pills" data-tl-stops="${stops.length}" style="--tl-spine-cols:${cols};--tl-spine-scale:${scale}"><ol class="tl-spine-track">${inner}</ol></div>`;
       }
-      return `<li><span class="tl-body">${renderInline(it.body || "")}</span></li>`;
+      // SPINE (A): card alternates above/below by parity; date label sits on the spine.
+      const inner = stops.map((s, idx) => {
+        const side = idx % 2 === 0 ? "above" : "below"; // even index → card above the spine
+        const label = s.date ? `<p class="tl-spine-date" data-tl-date>${renderInline(s.date)}</p>` : "";
+        return `<li class="tl-spine-stop" data-side="${side}" data-tl-stop>${cardOf(s)}${label}${dot}${lead}</li>`;
+      }).join("");
+      return `<div class="timeline timeline-spine" data-timeline-mode="spine" data-tl-stops="${stops.length}" style="--tl-spine-cols:${cols};--tl-spine-scale:${scale}"><ol class="tl-spine-track">${inner}</ol></div>`;
+    }
+    if (mode === "compact") {
+      // COMPACT: dense date-led rows in a two-column flow; a stop's detail lines follow it as
+      // undated rows. The row IS the stop.
+      const rows = stops.map((s) => {
+        const detail = s.details.map((d) => `<li><span class="tl-body">${renderInline(d)}</span></li>`).join("");
+        return `<li data-tl-stop>${dateNode("tl-date", s.date)}${textNode("tl-body", s.text)}</li>${detail}`;
+      }).join("");
+      return `<div class="timeline timeline-compact" data-timeline-mode="compact" data-tl-stops="${stops.length}"><div class="tl-group"><ol class="tl-entries">${rows}</ol></div></div>`;
+    }
+    // RAIL / COLUMNS / HORIZONTAL draw the group view: one group per stop (date as the group head,
+    // text and detail lines as its entries — mockup .tl-simple / .tl-dyn .list), or one group per
+    // CATEGORY when the author grouped dated stops under undated headers (entries keep their dates).
+    const byCategory = stops.some((s) => s.category);
+    const renderEntry = (it, isStopText) => {
+      if (it.date) {
+        return `<li${byCategory ? ' data-tl-stop' : ""}>${dateNode("tl-date", it.date)}${textNode("tl-body", it.body)}</li>`;
+      }
+      return `<li>${isStopText ? textNode("tl-body", it.body) : `<span class="tl-body">${renderInline(it.body || "")}</span>`}</li>`;
     };
     const renderGroup = (g) => {
-      const head = g.label ? `<p class="tl-group-head">${renderInline(g.label)}</p>` : "";
-      return `<div class="tl-group">${head}<ol class="tl-entries">${g.items.map(renderEntry).join("")}</ol></div>`;
+      const head = g.label ? `<p class="tl-group-head"${byCategory ? "" : " data-tl-date"}>${renderInline(g.label)}</p>` : "";
+      const entries = g.items.map((it, i) => renderEntry(it, !byCategory && i === 0)).join("");
+      return `<div class="tl-group"${byCategory ? "" : " data-tl-stop"}>${head}<ol class="tl-entries">${entries}</ol></div>`;
     };
     const grouped = groups.some((g) => g.label) ? " timeline-grouped" : "";
-    return `<div class="timeline timeline-${mode}${grouped}" data-timeline-mode="${mode}">${groups.map(renderGroup).join("")}</div>`;
+    const cols = mode === "columns" ? ` style="--tl-cols:${Math.max(1, groups.length)}"` : "";
+    return `<div class="timeline timeline-${mode}${grouped}" data-timeline-mode="${mode}" data-tl-stops="${stops.length}"${cols}>${groups.map(renderGroup).join("")}</div>`;
   }
   if (block.type === "flow") {
     // A connected sequence of NODE cards joined by accent connectors (CSS-drawn chevrons). Each
@@ -429,9 +519,37 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     // numericCols (layout batch 2): an all-numeric column right-aligns. Set only by the
     // {table} outline consumer; markdown pipe tables have no numericCols and render as before.
     const numClass = (i) => (Array.isArray(block.numericCols) && block.numericCols[i] ? ` class="num"` : "");
-    return `<table class="slide-table"><thead><tr>${block.header.map((h, i) => `<th${numClass(i)}>${renderInline(h)}</th>`).join("")}</tr></thead><tbody>${block.rows.map((r) => `<tr>${r.map((c, i) => `<td${numClass(i)}>${renderInline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+    // Ticket 21 — table options + the long-list fitting seam. `--table-rows` lets the stylesheet
+    // scale row padding to the band (skin/table.css @order 1980); data-list-density is the same
+    // compile-time stamp a long list carries, so print and static renders tighten too and the
+    // presenter runtime (fitLists) steps padding, then type, never below the floor.
+    const rowCount = block.rows.length + 1;
+    const density = rowCount >= 10 ? ' data-list-density="dense"' : rowCount >= 7 ? ' data-list-density="long"' : "";
+    const classes = ["slide-table"];
+    if (block.headerRow === false) classes.push("table-noheader");
+    if (block.columnRules === false) classes.push("table-nocolumns");
+    const renderRow = (cells, tag) => `<tr>${cells.map((c, i) => `<${tag}${numClass(i)}>${renderInline(c)}</${tag}>`).join("")}</tr>`;
+    // {table-header=off}: the first row IS a plain row — it lives in tbody with the others (and
+    // steps with them in reveal mode) rather than as a de-styled thead.
+    const head = block.headerRow === false ? "" : `<thead>${renderRow(block.header, "th")}</thead>`;
+    const bodyRows = block.headerRow === false ? [block.header, ...block.rows] : block.rows;
+    return `<table class="${classes.join(" ")}" style="--table-rows:${rowCount}"${density}>${head}<tbody>${bodyRows.map((r) => renderRow(r, "td")).join("")}</tbody></table>`;
   }
   if (block.type === "code") {
+    if (block.lang === "svg") {
+      const source = block.text || "";
+      if (typeof sanitiseSvgForCompiler !== "function") {
+        throw new Error("Compiler SVG sanitiser was not loaded before rendering an SVG fence.");
+      }
+      const result = sanitiseSvgForCompiler(source);
+      if ("error" in result) {
+        return `<pre class="svg-error-source">${escapeHtml(source)}</pre><div class="svg-error">${escapeHtml(result.error)}</div>`;
+      }
+      return `<figure class="slide-svg">${result.svg}</figure>`;
+    }
+    if (block.lang === "mermaid") {
+      return `<div class="mermaid-mm" data-mmd-src="${escapeHtml(block.text || "")}" role="img" aria-label="Diagram"></div>`;
+    }
     // A `trace` code block renders as a transcript of role-tagged turns: each turn is a labelled
     // row (the role colours the label and a left accent bar) with a monospace body. Trace turns
     // are the slide's content units, so reveal/focus stepping walks them (.trace .turn matches
@@ -454,7 +572,8 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     // matching the old monospace panel. No runtime highlighter, no CDN, no network — ever.
     const langClass = block.lang ? ` lang-${escapeHtml(slugify(block.lang))}` : "";
     const tag = block.lang ? `<span class="code-lang">${escapeHtml(block.lang)}</span>` : "";
-    return `<pre class="slide-code${langClass}">${tag}<code>${highlightCode(block.text || "", block.lang)}</code></pre>`;
+    const codeLayout = block.codeLayout || {};
+    return `<pre class="slide-code${langClass}" data-code-fit="base" data-code-lines="${Number(codeLayout.lines) || 0}" data-code-max-line="${Number(codeLayout.maxLineChars) || 0}">${tag}<code>${highlightCode(block.text || "", block.lang)}</code></pre>`;
   }
   if (block.type === "contrast") {
     // Opt-in contrast vocabulary from the 2026-07-13 design round. Explicit variants win at
@@ -674,27 +793,47 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
       emitLeaves((br.children || []).filter((c) => c && (c.text || (c.children || []).length)), 0);
     });
     const outline = lines.join("\n");
-    return `<div class="mindmap-mm" data-mm-outline="${escapeHtml(outline)}" role="img" aria-label="Mind map: ${escapeHtml(clean(root.text))}"></div>`;
+    // ADR-0005 amend (2026-07-19): under {reveal}, a mindmap unfolds ONE top-level branch per step.
+    // markmap builds its nodes at runtime, so they can't be compile-time reveal units. Emit one
+    // hidden `.mm-step` marker per branch instead: the existing reveal machinery counts and steps
+    // THESE (so stepping/step-count/live-sync all work unchanged), and the runtime translates the
+    // current step into "show N branches" by re-rendering the markmap (see applyMindmapReveal).
+    const stepMarkers = branches.map(() => '<span class="mm-step" aria-hidden="true"></span>').join("");
+    return `<div class="mindmap-mm" data-mm-outline="${escapeHtml(outline)}" data-mm-branches="${branches.length}" role="img" aria-label="Mind map: ${escapeHtml(clean(root.text))}">${stepMarkers}</div>`;
   }
   // ── PPT-replication batch (2026-06-11) — stats / process / steps / iconrow / image-quote /
   // image-grid. All static build-time HTML+CSS: no runtime drawing, so no share-parity hooks. ──
   if (block.type === "title-poster") {
-    // ADR-0005 locked title designs (docs/design/2026-07-07-slide-designs/title-variations.html).
+    // ADR-0015 locked default: docs/design/2026-07-18-title-slide/corrected-poster.html.
     const d = block.data || {};
     const meta1 = [d.series, d.event].filter(Boolean).join(" \u00b7 ");
     const bottomRight = [d.web, d.date].filter(Boolean).join(" \u00b7 ");
-    const speaker = [d.author && `<b>${renderInline(String(d.author))}</b>`, d.affiliation && renderInline(String(d.affiliation))].filter(Boolean).join(" \u00b7 ");
+    const speaker = [d.author && `<span class="tp-name">${renderInline(String(d.author))}</span>`, d.affiliation && `<span class="tp-soft">${renderInline(String(d.affiliation))}</span>`].filter(Boolean).join(" \u00b7 ");
     const sub = d.subtitle ? `<p class="tp-sub">${renderInline(String(d.subtitle))}</p>` : "";
-    if (block.variant === "closing") {
-      return `<div class="tp tp-poster tp-closing">${meta1 ? `<div class="tp-top"><span class="tp-mono">${escapeHtml(meta1)}</span></div>` : ""}<div class="tp-mid"><h2 class="tp-title">${renderInline(String(d.title || ""))}</h2>${d.subtitle ? `<p class="tp-cta">${renderInline(String(d.subtitle))}</p>` : ""}</div><div class="tp-bottom"><span>${speaker}</span><span class="tp-soft">${escapeHtml(bottomRight)}</span></div></div>`;
-    }
+    // ADR-0023 \u00a76: an AUTHORED {title}/{closing} slide keeps every block past its subtitle
+    // paragraph. They ride here as `data.body` and render under the byline at byline type size \u2014
+    // never dropped. The auto bookends carry no body, so their markup is unchanged.
+    const bodyBlocks = Array.isArray(d.body) ? d.body.filter(Boolean) : [];
+    const tpBody = bodyBlocks.length
+      ? `<div class="tp-body">${renderBlocks(mapBlocksToLayout(block.variant === "closing" ? "closing" : "title", bodyBlocks), "", deckUsed, frameIcons)}</div>`
+      : "";
     if (block.variant === "banner") {
-      return `<div class="tp tp-banner"><div class="tp-main"><div class="tp-inner">${meta1 ? `<div class="tp-series">${escapeHtml(meta1)}</div>` : ""}<h2 class="tp-title">${renderInline(String(d.title || ""))}</h2>${sub}</div></div><div class="tp-band"><span>${speaker}</span><span class="tp-mono">${escapeHtml(bottomRight)}</span></div></div>`;
+      return `<div class="tp tp-banner"><div class="tp-main"><div class="tp-inner">${meta1 ? `<div class="tp-series">${escapeHtml(meta1)}</div>` : ""}<h2 class="tp-title">${renderInline(String(d.title || ""))}</h2>${sub}${tpBody}</div></div><div class="tp-band"><span>${speaker}</span><span class="tp-mono">${escapeHtml(bottomRight)}</span></div></div>`;
     }
     if (block.variant === "split") {
-      return `<div class="tp tp-split"><div class="tp-side">${d.series ? `<div class="tp-series">${escapeHtml(String(d.series))}</div>` : ""}<div class="tp-event">${[d.event, d.date].filter(Boolean).map((x) => escapeHtml(String(x))).join("<br>")}</div></div><div class="tp-main-col"><h2 class="tp-title">${renderInline(String(d.title || ""))}</h2>${sub}<p class="tp-author">${speaker}${d.web ? ` \u00b7 <span class="tp-web">${escapeHtml(String(d.web))}</span>` : ""}</p></div></div>`;
+      return `<div class="tp tp-split"><div class="tp-side">${d.series ? `<div class="tp-series">${escapeHtml(String(d.series))}</div>` : ""}<div class="tp-event">${[d.event, d.date].filter(Boolean).map((x) => escapeHtml(String(x))).join("<br>")}</div></div><div class="tp-main-col"><h2 class="tp-title">${renderInline(String(d.title || ""))}</h2>${sub}<p class="tp-author">${speaker}${d.web ? ` \u00b7 <span class="tp-web">${escapeHtml(String(d.web))}</span>` : ""}</p>${tpBody}</div></div>`;
     }
-    return `<div class="tp tp-poster">${meta1 ? `<div class="tp-top"><span class="tp-mono">${escapeHtml(meta1)}</span></div>` : ""}<div class="tp-mid"><h2 class="tp-title">${renderInline(String(d.title || ""))}</h2>${sub}</div><div class="tp-bottom"><span>${speaker}</span><span class="tp-soft">${escapeHtml(bottomRight)}</span></div></div>`;
+    const logo = d.logo ? `<img class="tp-logo" src="${escapeHtml(String(d.logo))}" alt="">` : "";
+    const qr = d.handoutUrl ? renderQr({ url: d.handoutUrl }, "tp-qr slide-qr") : "";
+    const closingClass = block.variant === "closing" ? " tp-closing" : "";
+    const subtitle = d.subtitle
+      ? `<p class="${block.variant === "closing" ? "tp-cta" : "tp-sub"}">${renderInline(String(d.subtitle))}</p>`
+      : "";
+    const rightMeta = [
+      d.web ? `<span class="tp-web">${escapeHtml(String(d.web))}</span>` : "",
+      d.date ? escapeHtml(String(d.date)) : ""
+    ].filter(Boolean).join("<br>");
+    return `<div class="tp tp-poster${closingClass}"><div class="tp-side">${logo}${qr}</div><div class="tp-main">${meta1 ? `<div class="tp-kicker">${escapeHtml(meta1)}</div>` : "<div></div>"}<div class="tp-mid"><h2 class="tp-title">${renderInline(String(d.title || ""))}</h2>${subtitle}</div><div class="tp-foot"><div class="tp-who">${speaker}</div><div class="tp-whenweb">${rightMeta}</div></div>${tpBody}</div></div>`;
   }
   if (block.type === "stats") {
     // Big-number row. Each cell: huge accent value, label beneath, optional small caption from
@@ -713,51 +852,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
   // no share-parity hooks. Bar columns and cycle nodes are steppable units (MODE_SELECTOR);
   // pie and line are one composition each in v1; equation reads as one statement.
   if (block.type === "chart") {
-    const shape = block.shape === "pie" || block.shape === "line" ? block.shape : "bar";
-    const pts = (block.points || []).filter((p) => p && Number.isFinite(p.value));
-    if (!pts.length) return "";
-    if (shape === "bar") {
-      // Vertical columns, bottom-aligned (the {steps} grammar): height % of max computed at
-      // build time; authored value text above the column, label beneath.
-      const max = Math.max(...pts.map((p) => Math.abs(p.value))) || 1;
-      const cols = pts.map((p) => {
-        const h = Math.max(3, Math.round((Math.abs(p.value) / max) * 100));
-        return `<div class="chart-col"><div class="chart-col-plot"><span class="chart-val">${renderInline(p.valueText)}</span><div class="chart-bar" style="height:${h}%"></div></div><span class="chart-label">${renderInline(p.label || "")}</span></div>`;
-      }).join("");
-      return `<div class="chart-cols count-${pts.length}">${cols}</div>`;
-    }
-    const COLOURS = ["#0b3a6b", "#9f1239", "#166534", "#c08a1d", "#7c3aed", "#be185d"];
-    if (shape === "pie") {
-      // Build-time SVG arcs from percentage shares + a legend column (label · value · %).
-      const total = pts.reduce((sum, p) => sum + Math.abs(p.value), 0) || 1;
-      const cx = 200, cy = 200, r = 184;
-      let angle = -90;
-      const slices = pts.map((p, i) => {
-        const share = Math.abs(p.value) / total;
-        if (share >= 0.9999) return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${COLOURS[i % COLOURS.length]}"/>`;
-        const a0 = angle;
-        const a1 = angle + share * 360;
-        angle = a1;
-        const pt = (a) => `${(cx + r * Math.cos((a * Math.PI) / 180)).toFixed(2)} ${(cy + r * Math.sin((a * Math.PI) / 180)).toFixed(2)}`;
-        return `<path d="M ${cx} ${cy} L ${pt(a0)} A ${r} ${r} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${pt(a1)} Z" fill="${COLOURS[i % COLOURS.length]}"/>`;
-      }).join("");
-      const legend = pts.map((p, i) => {
-        const pc = Math.round((Math.abs(p.value) / total) * 100);
-        return `<li><span class="chart-swatch" style="background:${COLOURS[i % COLOURS.length]}"></span><span class="chart-leg-label">${renderInline(p.label || "")}</span><span class="chart-leg-val">${renderInline(p.valueText)} · ${pc}%</span></li>`;
-      }).join("");
-      return `<div class="chart-pie"><svg viewBox="0 0 400 400" role="img" aria-label="Pie chart">${slices}</svg><ul class="chart-legend">${legend}</ul></div>`;
-    }
-    // line: build-time SVG polyline + dots, x labels beneath, y scaled to max, baseline rule.
-    const max = Math.max(...pts.map((p) => p.value), 0) || 1;
-    const min = Math.min(...pts.map((p) => p.value), 0);
-    const span = max - min || 1;
-    const X0 = 60, X1 = 940, Y0 = 60, Y1 = 360;
-    const x = (i) => (pts.length === 1 ? (X0 + X1) / 2 : X0 + (i * (X1 - X0)) / (pts.length - 1));
-    const y = (v) => Y1 - ((v - min) / span) * (Y1 - Y0);
-    const linePts = pts.map((p, i) => `${x(i).toFixed(1)},${y(p.value).toFixed(1)}`).join(" ");
-    const dots = pts.map((p, i) => `<circle class="chart-dot" cx="${x(i).toFixed(1)}" cy="${y(p.value).toFixed(1)}" r="9"/><text class="chart-val-svg" x="${x(i).toFixed(1)}" y="${(y(p.value) - 22).toFixed(1)}" text-anchor="middle">${escapeHtml(p.valueText)}</text>`).join("");
-    const labels = pts.map((p, i) => `<text class="chart-label-svg" x="${x(i).toFixed(1)}" y="404" text-anchor="middle">${escapeHtml(p.label || "")}</text>`).join("");
-    return `<div class="chart-line"><svg viewBox="0 0 1000 430" role="img" aria-label="Line chart"><line class="chart-baseline" x1="${X0}" y1="${Y1}" x2="${X1}" y2="${Y1}"/><polyline class="chart-poly" points="${linePts}"/>${dots}${labels}</svg></div>`;
+    return renderChartBlock(block);
   }
   if (block.type === "sigmoid") {
     // {sigmoid} / {curve=sigmoid} (2026-06-13): a conceptual S-curve (NOT a data plot). Items are
@@ -920,14 +1015,14 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     const img = block.image;
     const q = block.quote || {};
     const paras = Array.isArray(q.paragraphs) && q.paragraphs.length ? q.paragraphs : [q.text ?? ""];
-    const fullText = paras.join(" ");
-    const bucket = fullText.length <= 220 ? "short" : fullText.length <= 600 ? "medium" : "long";
+    // ADR-0023 §9: the image-quote keeps its own column at the one constant type; no width ramp.
+    const sizing = ` data-quote-chars="${paras.join(" ").length}"`;
     const body = paras.map((p) => `<p>${renderInline(p)}</p>`).join("");
     const cap = img && img.caption ? `<figcaption>${renderInline(img.caption)}</figcaption>` : "";
     const contain = img && img.width && img.height && img.width / img.height > 4 / 3 ? " iq-contain" : "";
     const figure = img ? `<figure class="iq-figure${contain}"><img src="${escapeHtml(img.src)}"${imageSizeAttrs(img)} alt="${escapeHtml(img.alt || "")}">${cap}</figure>` : "";
     const citeBar = q.cite ? `<p class="iq-cite">${renderInline(q.cite)}</p>` : "";
-    return `<div class="image-quote">${figure}<blockquote data-quote-length="${bucket}">${body}</blockquote>${citeBar}</div>`;
+    return `<div class="image-quote">${figure}<blockquote${sizing}>${body}</blockquote>${citeBar}</div>`;
   }
   if (block.type === "image-grid") {
     // Annotated image grid: a STATIC grid of figure cells — image on top, note card (title +
@@ -978,8 +1073,8 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     return `<div class="cta-layout"><div class="cta-images">${shots}</div><div class="cta-aside">${callouts}${actions}</div></div>`;
   }
   if (block.type === "compare") {
-    // {compare} (ADR-0005 "50/50 comparison"): two halves filling the stage. Half A sits on the
-    // section tint, half B on paper; each carries a small-caps mono label + vertically-centred
+    // {compare} (ADR-0005 "50/50 comparison"): two halves filling the stage. Both sit on the
+    // paper treatment and carry a small-caps mono label + vertically-centred
     // content. The slide's own title is nav-only (assembly emits the quiet head). Half B is one
     // reveal beat — the runtime steps it via MODE_SELECTOR (.layout-compare .compare-half.half-b).
     const sideClass = ["half-a", "half-b"];
@@ -1042,29 +1137,43 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
       }
       return renderBlock(b, deckUsed, frameIcons);
     };
+    // Ticket 21 — the cards Icons option ({icons} / alias {iconlist}). Card titles resolve through
+    // the icon-list pipeline: per-card {icon=…} overrides and the deck `icons:` map win over the
+    // vocabulary pick. The decider never half-icons a set: an unresolvable title leaves every card
+    // without an icon (the numbered ordinal is the separate {numbered} option).
+    let cardIcons = null;
+    if (block.icons) {
+      const titles = block.cards.map((card) => String(card.title ?? ""));
+      const overrides = resolveIconOverrides(titles, block.cards.map((card) => card.icon || null), deckUsed && deckUsed.iconMap);
+      const decided = decideFeatureListStyle(titles, false, deckUsed, "icons", overrides);
+      cardIcons = decided.style === "icons" ? decided.icons : null;
+    }
     const contentCards = block.cards.map((card, cardIndex) => {
       const blocks = Array.isArray(card.blocks) ? card.blocks : [];
       const hasMedia = blocks.some((b) => b && CARD_MEDIA_TYPES.has(b.type));
       const hasText = blocks.some((b) => b && CARD_TEXT_TYPES.has(b.type));
       const fragmentAttr = stepped && cardIndex + offset > 0 ? " data-fragment" : "";
-      const headHtml = card.title ? `<h4>${renderInline(card.title)}</h4>` : "";
+      const claimClass = blocks.length === 0 && card.title ? " card-claim" : "";
+      const iconSvgHtml = cardIcons ? iconSvg(cardIcons[cardIndex]) : "";
+      const iconHtml = iconSvgHtml ? `<span class="card-icon">${iconSvgHtml}</span>` : "";
+      const headHtml = `${iconHtml}${card.title ? `<h4>${renderInline(card.title)}</h4>` : ""}`;
       if (hasMedia && hasText) {
         // G5: group the media column's consecutive images into a side-by-side row.
         const mediaHtml = groupImageRows(blocks.filter((b) => b && CARD_MEDIA_TYPES.has(b.type))).map((b) => renderBlock(b, deckUsed, frameIcons)).filter(Boolean).join("\n");
         const textHtml = blocks.filter((b) => !(b && CARD_MEDIA_TYPES.has(b.type))).map(renderCardBlock).filter(Boolean).join("\n");
-        return `<article class="card card-media-split"${fragmentAttr}>${headHtml}<div class="card-split-grid"><div class="card-media-col">${mediaHtml}</div><div class="card-text-col">${textHtml}</div></div></article>`;
+        return `<article class="card card-media-split${claimClass}"${fragmentAttr}>${headHtml}<div class="card-split-grid"><div class="card-media-col">${mediaHtml}</div><div class="card-text-col">${textHtml}</div></div></article>`;
       }
       // G5: a media-only / mixed card with consecutive images lays them side-by-side too.
-      return `<article class="card"${fragmentAttr}>${headHtml}${groupImageRows(blocks).map(renderCardBlock).join("\n")}</article>`;
+      return `<article class="card${claimClass}"${fragmentAttr}>${headHtml}${groupImageRows(blocks).map(renderCardBlock).join("\n")}</article>`;
     }).join("");
     if (stepped) {
       return `<div class="card-gallery" data-exclusive>${titleCard}${contentCards}</div>`;
     }
-    // Static grid: the slide title rides above the grid (cards has no slide-level title stamp).
-    const header = block.title
-      ? `<div class="cards-grid-head">${block.kicker ? `<p class="card-title-kicker">${escapeHtml(block.kicker)}</p>` : ""}<h2 class="cards-grid-title">${renderInline(block.title)}</h2></div>`
-      : "";
-    return `${header}<div class="card-gallery card-grid${block.rows ? " cards-rows" : ""}">${contentCards}</div>`;
+    // ADR-0023 §2: the STATIC grid draws no title of its own. It used to ("cards has no
+    // slide-level title stamp"), because a cards slide demoted its heading to a compact kicker
+    // eyebrow. Cards now take the `top` regime, so the slide head carries the title — a second
+    // <h2> above the grid would repeat it (ADR-0005: no duplicated information).
+    return `<div class="card-gallery card-grid${block.rows ? " cards-rows" : ""}${block.numbered ? " cards-numbered" : ""}">${contentCards}</div>`;
   }
   if (block.type === "feature-list" && Array.isArray(block.items)) {
     // H1 — nested children: `block.children[i]` (when present) is item i's nested sub-tree
@@ -1080,7 +1189,6 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     // Declared BEFORE wide/hasKids so those can suppress themselves for the annotated path.
     const annotated = block.sublist === "aside" && anyChildren;
     const annotatedClass = annotated ? " fl-annotated" : "";
-    const iconlistVariantClass = block.iconlistVariant === "list" ? " fl-iconlist-list" : "";
     // fl-wide interplay (judged visually): a list with nested children reads better as a
     // full-width single column so each parent card has room for its sub-list; otherwise the
     // existing >6-items width rule applies.
@@ -1105,11 +1213,13 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     //   - frame.icons="all"  → top-level icons AND sub-bullet icons (depth ≥ 1)
     //   - frame.icons="off"  → no override; liststyle still decides
     // Rule: effectiveIcons = "all" when frame says all; "top" when frame says top OR
-    // liststyle already makes the list an icon-list; "off" otherwise.
+    // liststyle already makes the list an icon-list; "off" otherwise. The frame-forces-plain-list
+    // predicate is `plainListForcedIcons` (11-frame.mjs) — the same condition the Inspector's
+    // List style row reads, so the lit button is always the style the compiled slide renders.
     const liststyleIsIcons = block.liststyle === "icons" || block.liststyle === "logos";
     const effectiveIcons = frameIcons === "all"
       ? "all"
-      : (frameIcons === "top" || liststyleIsIcons)
+      : (plainListForcedIcons(frameIcons) || liststyleIsIcons)
         ? "top"
         : "off";
     // When frame.icons forces icons on a list that has no explicit liststyle ("icons/logos"),
@@ -1117,6 +1227,18 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     const resolvedListstyle = effectiveIcons !== "off" ? (block.liststyle || "icons") : (block.liststyle || "");
     const { style, icons } = decideFeatureListStyle(block.items, block.ordered, deckUsed, resolvedListstyle, overrides);
     const plainClass = style === "plain" ? " fl-plain" : "";
+    // T28 (Dominik, 2026-09-17): icon-list treatment. An explicit {iconlist=boxes} /
+    // {iconlist=list} value always wins. With NO value token on the slide, an icon list
+    // (style "icons" — {iconlist}, its aliases, or {icons=top}/{icons=all} forcing icons on)
+    // picks by top-level item count: ≤ 3 keeps the hairline card grid (boxes, today's look),
+    // > 3 takes the plain vertical icon rows (.fl-iconlist-list). Non-icon lists are never
+    // re-styled by the count rule, and an unresolvable icon list falls back to plain anyway.
+    const autoIconlistList = !block.iconlistVariant && style === "icons" && block.items.length > 3;
+    // Belt and braces with the adapter's conditional liststyle assignment: the treatment chrome
+    // rides only on a list the compiler decided IS an icon list. A numbered, logo or plain list
+    // never takes the row class, however stale an {iconlist=…} variant token in an existing file
+    // is; {icons=top}/{icons=all} forcing icons on still lands here with style "icons".
+    const iconlistVariantClass = style === "icons" && (block.iconlistVariant === "list" || autoIconlistList) ? " fl-iconlist-list" : "";
     // Feature lists NEVER emit data-fragment: items render fully visible by default. Stepping
     // is opt-in via reveal/focus mode (runtime walks .feature-list > li and .fl-sublist > li as
     // content units). The old always-on per-item fragment was removed in Dominik's redesign.
@@ -1151,13 +1273,19 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     // {group}: the whole list reveals as one beat — MODE_SELECTOR treats [data-reveal-group] as a
     // single unit and excludes its bullets from individual stepping.
     const groupAttr = block.revealGroup ? " data-reveal-group" : "";
+    // Ticket 18 — compile-time long-list density. Count every item at every depth; the CSS
+    // (base.css @order 1900) tightens leading and gaps for a crowded list before the runtime
+    // fitter (fitLists) measures the real column, so print and static renders compress too.
+    const countNodes = (nodes) => (Array.isArray(nodes) ? nodes : []).reduce((sum, node) => sum + 1 + countNodes(node && node.children), 0);
+    const totalItems = block.items.length + children.reduce((sum, nodes) => sum + countNodes(nodes), 0);
+    const densityAttr = totalItems >= 13 ? ' data-list-density="dense"' : totalItems >= 9 ? ' data-list-density="long"' : "";
     const resolveSubIcons = effectiveIcons === "all";
     // SD-9 (Task 6): annotated shared-axis grid. Each <li> is display:contents (CSS), so lead
     // and ann lift directly into the parent grid columns. The lead wraps icon + text in .fl-lead
     // (column 1, max-content); annotation children render as a flat .fl-ann span (column 2).
     // Annotation text: join depth-0 child texts with " · " so multiple children stay readable.
     if (annotated) {
-      return `<ul class="feature-list${annotatedClass}${iconlistVariantClass}"${groupAttr}>${block.items.map((item, itemIndex) => {
+      return `<ul class="feature-list${annotatedClass}${iconlistVariantClass}"${groupAttr}${densityAttr}>${block.items.map((item, itemIndex) => {
         let iconHtml = "";
         if (style === "icons") {
           const svg = iconSvg(icons[itemIndex]);
@@ -1183,7 +1311,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
         return `<li><span class="fl-lead">${iconHtml}<span class="fl-text">${renderInline(item)}</span></span>${annHtml}</li>`;
       }).join("")}</ul>`;
     }
-    return `<ul class="feature-list${wide}${plainClass}${hasKids}${annotatedClass}${iconlistVariantClass}"${groupAttr}>${block.items.map((item, itemIndex) => {
+    return `<ul class="feature-list${wide}${plainClass}${hasKids}${annotatedClass}${iconlistVariantClass}"${groupAttr}${densityAttr}>${block.items.map((item, itemIndex) => {
       let icon = "";
       if (style === "icons") {
         // Icon-or-number: a slot whose icon doesn't resolve (e.g. one invalid {icon=name} among
@@ -1226,75 +1354,6 @@ export function parseStatItem(text) {
   const m = t.match(/^(\S*\d\S*)\s+(.+)$/);
   if (m) return { value: m[1], label: m[2] };
   return { value: "", label: t };
-}
-
-// === {chart} item parsing (layout batch 2, 2026-06-12) ===
-// A chart point is one depth-0 list item in one of three authored shapes:
-//   - a bare numeric item whose FIRST CHILD is the label (Dominik's outline shape);
-//   - `label · 30` / `30 · label` — the side containing a digit is the value;
-//   - `value label` / `label value` single-line (the parseStatItem grammar).
-// The DISPLAY text stays AS AUTHORED ("2,000+" math-parses as 2000 but renders "2,000+").
-// Items with no parseable number land in `unparsed` so flushSlide can warn
-// (`chart-unparsed:<line>`) — never a silent skip.
-export function parseChartItems(items, childTrees) {
-  const kids = Array.isArray(childTrees) ? childTrees : [];
-  const points = [];
-  const unparsed = [];
-  const numberOf = (s) => {
-    const m = String(s).replace(/,/g, "").match(/-?\d+(\.\d+)?/);
-    return m ? Number(m[0]) : null;
-  };
-  // A VALUE-shaped token starts with a digit (optionally signed/currency-prefixed): "80",
-  // "2,000+", "£2m", "95%". "Q3" or "v2" merely CONTAIN digits — they are labels.
-  const isValueish = (s) => /^[£$€+~-]?\d/.test(String(s).trim());
-  (items || []).forEach((raw, i) => {
-    const t = String(raw || "").trim();
-    const childText = (Array.isArray(kids[i]) ? kids[i] : []).filter((c) => c && c.text).map((c) => c.text).join(" · ");
-    // Separators (2026-06-12): the middot was untypeable — any space-surrounded dash family,
-    // `=`, or `:` splits label/value too ("Writing the outline - 50", "Q3 = 31", "2024: 60").
-    const sepMatch = t.match(/\s[·—–=:-]\s|:\s+/);
-    if (sepMatch) {
-      const left = t.slice(0, sepMatch.index).trim();
-      const right = t.slice(sepMatch.index + sepMatch[0].length).trim();
-      const leftValue = isValueish(left);
-      const rightValue = isValueish(right);
-      if (leftValue !== rightValue) {
-        const valueSide = leftValue ? left : right;
-        points.push({ value: numberOf(valueSide), valueText: valueSide, label: leftValue ? right : left });
-        return;
-      }
-      // BOTH sides value-shaped (`2023 · 10` — a year label and its value, the canonical
-      // line-chart shape): reading order wins, left = label, right = value. Neither → unparsed.
-      if (leftValue && rightValue) {
-        points.push({ value: numberOf(right), valueText: right, label: left });
-        return;
-      }
-      unparsed.push(t);
-      return;
-    }
-    if (/^\S+$/.test(t) && isValueish(t) && numberOf(t) != null) {
-      points.push({ value: numberOf(t), valueText: t, label: childText });
-      return;
-    }
-    const m = t.match(/^(\S+)\s+(.+)$/) || [];
-    if (m.length) {
-      const a = m[1].trim();
-      const b = m[2].trim();
-      if (isValueish(a) && !isValueish(b)) {
-        points.push({ value: numberOf(a), valueText: a, label: b });
-        return;
-      }
-      const tail = b.match(/^(.+?)\s+(\S+)$/);
-      const lastTok = tail ? tail[2] : b;
-      const head = tail ? `${a} ${tail[1]}` : a;
-      if (!isValueish(a) && isValueish(lastTok) && /^\S+$/.test(lastTok)) {
-        points.push({ value: numberOf(lastTok), valueText: lastTok, label: head });
-        return;
-      }
-    }
-    unparsed.push(t);
-  });
-  return { points, unparsed };
 }
 
 // === {sigmoid} item parsing (2026-06-13) ===
@@ -1386,6 +1445,18 @@ function featurizeRemainingLists(blocks) {
 }
 
 export function mapBlocksToLayout(layout, blocks) {
+  blocks = blocks.map((block) => {
+    if (block?.type !== "object-chart" || !block.list) return block;
+    const { points, unparsed } = parseChartItems(block.list.items, block.list.children);
+    return {
+      type: "chart",
+      points,
+      unparsed,
+      shape: block.shape,
+      objectToken: block.token
+    };
+  });
+  const hasObjectChart = blocks.some((block) => block?.type === "chart" && block.objectToken);
   const firstList = blocks.find((b) => b.type === "list");
   const firstImage = blocks.find((b) => b.type === "image");
   const rest = (skip) => blocks.filter((b) => !skip.includes(b));
@@ -1518,16 +1589,15 @@ export function mapBlocksToLayout(layout, blocks) {
         if (kid && kid.text) rows.push({ indent: 1, text: kid.text });
       }
     });
-    const groups = groupTimelineRows(rows);
-    const items = groups.flatMap((g) => g.items.map((it) => (it.date ? `${it.date} — ${it.body}` : it.body)));
-    return featurizeRemainingLists([...rest([firstList]), { type: "timeline", groups, items }]);
+    // Ticket 22: same model as the `**Timeline:**` block (stops + derived groups/items).
+    return featurizeRemainingLists([...rest([firstList]), { type: "timeline", ...timelineBlockFields(rows) }]);
   }
 
   // ── Layout batch 2 (2026-06-12) ──
   // chart: the first list parses into {value, valueText, label} points (parseChartItems);
   // unparseable items ride on the block so flushSlide warns (`chart-unparsed:` — never silent).
   // The shape (bar default | pie | line) is wired on in flushSlide from the `chart` attr.
-  if (layout === "chart" && firstList) {
+  if (layout === "chart" && firstList && !hasObjectChart) {
     const { points, unparsed } = parseChartItems(firstList.items, firstList.children);
     return featurizeRemainingLists([...rest([firstList]), { type: "chart", points, unparsed }]);
   }
@@ -1647,5 +1717,11 @@ export function renderBlocks(blocks, fallbackText = "", deckUsed = null, frameIc
   // `[Action:]` directives groups into one .slide-actions button row (rendered after the
   // other blocks, in document order).
   const html = groupActionBlocks(groupQrRows(groupImageRows(normalized))).map((b) => renderBlock(b, deckUsed, frameIcons)).filter(Boolean).join("\n");
+  return html || "<p></p>";
+}
+
+export function renderMediaBlocks(blocks, fallbackText = "", deckUsed = null, frameIcons = "off") {
+  const normalized = Array.isArray(blocks) ? blocks : fallbackText ? [{ type: "paragraph", text: fallbackText }] : [];
+  const html = groupActionBlocks(groupQrRows(groupMediaRows(normalized))).map((block) => renderBlock(block, deckUsed, frameIcons)).filter(Boolean).join("\n");
   return html || "<p></p>";
 }

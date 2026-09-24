@@ -1,24 +1,21 @@
-/* @order 1546 */
+/* @order 1555 */
 
-  /* {novalues}: charts keep only their shape — value labels vanish, bars keep heights. *//* @order 1547 */
+  /* {novalues}: charts keep only their shape — value labels vanish, bars keep heights. *//* @order 1556 */
   .slide[data-novalues] .chart-val,
   .slide[data-novalues] .chart-legend .legend-val,
-  .slide[data-novalues] .stat-value { display: none; }/* @order 1656 */
-  /* content centres VERTICALLY in the space below the title zone (centre is the default;
-     the title stays pinned with its divider) *//* @order 1657 */
-  .slide:not([data-title-layout="left"]) .slide-content:not(.layout-title):not(.layout-section-title):not(.layout-statement):not(.layout-closing) > *:not(.slide-head):first-of-type {
-    margin-top: auto;
-  }/* @order 1658 */
-  .slide:not([data-title-layout="left"]) .slide-content:not(.layout-title):not(.layout-section-title):not(.layout-statement):not(.layout-closing) > *:last-child:not(.slide-head) {
-    margin-bottom: auto;
-  }/* @order 1659 */
+  .slide[data-novalues] .stat-value { display: none; }/* @order 1685 */
 
-  /* ── PER-SLIDE TYPE OPTIONS: {font-body=…} / {font-title=…} (xs s m l xl; m = ramp) ── *//* @order 1660 */
-  .slide[data-font-body="xs"] { --fs-body: max(22px, 1.7cqw); --fs-dense: max(18px, 1.4cqw); }/* @order 1661 */
-  .slide[data-font-body="s"]  { --fs-body: max(25px, 2.0cqw); --fs-dense: max(20px, 1.65cqw); }/* @order 1662 */
-  .slide[data-font-body="l"]  { --fs-body: max(31px, 2.7cqw); --fs-dense: max(24px, 2.2cqw); }/* @order 1663 */
-  .slide[data-font-body="xl"] { --fs-body: max(36px, 3.2cqw); --fs-dense: max(28px, 2.6cqw); }/* @order 1664 */
-  .slide[data-font-title="xs"] { --fs-title: max(26px, 2.8cqw); --fs-rail: max(24px, 2.2cqw); }/* @order 1665 */
-  .slide[data-font-title="s"]  { --fs-title: max(30px, 3.3cqw); --fs-rail: max(28px, 2.5cqw); }/* @order 1666 */
-  .slide[data-font-title="l"]  { --fs-title: max(38px, 4.4cqw); --fs-rail: max(34px, 3.2cqw); }/* @order 1667 */
-  .slide[data-font-title="xl"] { --fs-title: max(44px, 5.2cqw); --fs-rail: max(38px, 3.8cqw); }
+  /* ── PER-SLIDE TYPE OPTIONS: {font-body=…} / {font-title=…} (xs s m l xl; m = the skin default) ──
+     Ticket 18 ladder (2026-09-13). M is set once in skin/base.css (body 3.2 / dense 2.6 / title
+     max(44px, 5.2) / rail max(38px, 3.8)); the four steps here stay monotone around it:
+       body  xs 2.0 · s 2.6 · [M 3.2] · l 3.5 · xl 3.9 cqw    dense 1.65 · 2.1 · [2.6] · 2.85 · 3.2
+       title xs 3.3 · s 4.4 · [M 5.2] · l 5.7 · xl 6.2 cqw    rail  2.5 · 3.2 · [3.8] · 4.1 · 4.5
+     Every body/dense step is clamped to --type-floor; titles carry their own px floors. *//* @order 1686 */
+  .slide[data-font-body="xs"] { --fs-body: max(var(--type-floor), 2.0cqw); --fs-dense: max(var(--type-floor), 1.65cqw); }/* @order 1687 */
+  .slide[data-font-body="s"]  { --fs-body: max(var(--type-floor), 2.6cqw); --fs-dense: max(var(--type-floor), 2.1cqw); }/* @order 1688 */
+  .slide[data-font-body="l"]  { --fs-body: max(var(--type-floor), 3.5cqw); --fs-dense: max(var(--type-floor), 2.85cqw); }/* @order 1689 */
+  .slide[data-font-body="xl"] { --fs-body: max(var(--type-floor), 3.9cqw); --fs-dense: max(var(--type-floor), 3.2cqw); }/* @order 1690 */
+  .slide[data-font-title="xs"] { --fs-title: max(30px, 3.3cqw); --fs-rail: max(28px, 2.5cqw); }/* @order 1691 */
+  .slide[data-font-title="s"]  { --fs-title: max(38px, 4.4cqw); --fs-rail: max(34px, 3.2cqw); }/* @order 1692 */
+  .slide[data-font-title="l"]  { --fs-title: max(48px, 5.7cqw); --fs-rail: max(42px, 4.1cqw); }/* @order 1693 */
+  .slide[data-font-title="xl"] { --fs-title: max(52px, 6.2cqw); --fs-rail: max(44px, 4.5cqw); }

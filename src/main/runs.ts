@@ -1,3 +1,4 @@
+import { parsePollDefinition, parsePollChoice, type PollDefinition, type PollChoice } from '../../worker/protocol.ts'
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { resolvePathways, type Pathway, type PathwaySlideRow } from './pathways.ts'
@@ -6,6 +7,19 @@ export type RunStatus = 'planned' | 'delivered'
 export type RunSlideSet = { kind: 'full' } | { kind: 'pathway'; pathwayId: string }
 export type RunKind = 'delivery' | 'rehearsal' | 'recording'
 export type RunMark = { event: string; slideId?: string; tMs: number; hidden?: number; marks?: number }
+export type RunPollType = PollDefinition['type']
+export type RunPollVisibility = 'live' | 'held'
+export interface RunPoll extends Omit<PollDefinition, 'pollId'> {
+  id: string
+}
+export interface RunPollResponse {
+  responseId?: string
+  pollId: string
+  choice?: PollChoice
+  text?: string
+  tMs: number
+  slideId: string
+}
 
 export interface RunRecord {
   id: string
@@ -29,6 +43,8 @@ export interface RunRecord {
   transcript: unknown | null
   trims?: Array<{ start: number; end: number }>
   slideTimeIndex: RunMark[]
+  polls: RunPoll[]
+  pollResponses: RunPollResponse[]
 }
 
 export type PlannedRunInput = Pick<RunRecord, 'talkSlug' | 'talkTitle' | 'plannedDate' | 'eventTitle' | 'audience' | 'slideSet'>
@@ -54,6 +70,41 @@ function normaliseSlideSet(value: unknown, pathwayId?: unknown): RunSlideSet {
   if (candidate?.kind === 'full') return { kind: 'full' }
   const legacyPathway = asText(pathwayId)
   return legacyPathway ? { kind: 'pathway', pathwayId: legacyPathway } : { kind: 'full' }
+}
+
+function normalisePolls(value: unknown): RunPoll[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== 'object') return []
+    const raw = candidate as Record<string, unknown>
+    const id = asText(raw.id)
+    const parsed = parsePollDefinition({ ...raw, pollId: id, visibility: raw.visibility === 'held' ? 'held' : 'live' })
+    if (!parsed) return []
+    const { pollId, ...definition } = parsed
+    return [{ id: pollId, ...definition }]
+  })
+}
+
+function normalisePollResponses(value: unknown): RunPollResponse[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== 'object') return []
+    const raw = candidate as Record<string, unknown>
+    const pollId = asText(raw.pollId)
+    const slideId = asText(raw.slideId)
+    const tMs = Number(raw.tMs)
+    if (!pollId || !slideId || !Number.isFinite(tMs)) return []
+    const text = asText(raw.text)
+    const choice = parsePollChoice(raw.choice)
+    if (!text && !choice) return []
+    return [{
+      pollId,
+      ...(asText(raw.responseId) ? { responseId: asText(raw.responseId) } : {}),
+      ...(text ? { text } : { choice: choice as PollChoice }),
+      tMs: Math.max(0, tMs),
+      slideId,
+    }]
+  })
 }
 
 export function normaliseRun(value: unknown): RunRecord {
@@ -87,8 +138,34 @@ export function normaliseRun(value: unknown): RunRecord {
     pathwayId,
     audio: raw.audio && typeof raw.audio === 'object' ? raw.audio as RunRecord['audio'] : null,
     transcript: raw.transcript ?? null,
-    slideTimeIndex: Array.isArray(raw.slideTimeIndex) ? raw.slideTimeIndex as RunMark[] : []
+    slideTimeIndex: Array.isArray(raw.slideTimeIndex) ? raw.slideTimeIndex as RunMark[] : [],
+    polls: normalisePolls(raw.polls),
+    pollResponses: normalisePollResponses(raw.pollResponses)
   }
+}
+
+export function addRunPoll(run: RunRecord, poll: RunPoll): RunRecord {
+  const normalised = normalisePolls([poll])[0]
+  if (!normalised) throw new Error('poll-definition-invalid')
+  return normaliseRun({
+    ...run,
+    polls: [...run.polls.filter((existing) => existing.id !== normalised.id), normalised]
+  })
+}
+
+export function addRunPollResponse(run: RunRecord, response: RunPollResponse): RunRecord {
+  const normalised = normalisePollResponses([response])[0]
+  if (!normalised) throw new Error('poll-response-invalid')
+  if (normalised.responseId && run.pollResponses.some((item) => item.responseId === normalised.responseId)) return run
+  return normaliseRun({ ...run, pollResponses: [...run.pollResponses, normalised] })
+}
+
+export function applyRunPollBuffer(
+  run: RunRecord,
+  buffer: { polls: RunPoll[]; responses: RunPollResponse[] }
+): RunRecord {
+  const withPolls = buffer.polls.reduce((current, poll) => addRunPoll(current, poll), run)
+  return buffer.responses.reduce((current, response) => addRunPollResponse(current, response), withPolls)
 }
 
 function runPath(vaultRoot: string, talkSlug: string, runId: string): string {
@@ -109,12 +186,15 @@ export function readRun(vaultRoot: string, talkSlug: string, runId: string): Run
 export function listRuns(vaultRoot: string, talkSlug?: string): RunRecord[] {
   const root = join(vaultRoot, '_PRESENTATIONS')
   if (!existsSync(root)) return []
-  const slugs = talkSlug ? [talkSlug] : readdirSync(root)
+  // Only iterate DIRECTORIES: _PRESENTATIONS routinely picks up a Finder .DS_Store (and other stray
+  // files). readdirSync on such a file throws ENOTDIR — if that escaped, History blanked entirely.
+  const slugs = talkSlug ? [talkSlug] : readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name)
   const runs: RunRecord[] = []
   for (const slug of slugs) {
     const dir = join(root, slug)
-    if (!existsSync(dir)) continue
-    for (const name of readdirSync(dir)) {
+    let names: string[]
+    try { names = readdirSync(dir) } catch { continue } // not a directory / unreadable — skip, never throw
+    for (const name of names) {
       if (!name.endsWith('.json') || name === 'manifest.json') continue
       try {
         const run = normaliseRun(JSON.parse(readFileSync(join(dir, name), 'utf8')))

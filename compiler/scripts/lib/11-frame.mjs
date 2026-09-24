@@ -50,6 +50,15 @@ function readKey(key, src) {
   return undefined;
 }
 
+// T32 (Decision 1A, locked 2026-09-23): THE one predicate for what the frame's universal icon
+// setting does to a list that carries NO explicit list-style token. 06-block-renderers.mjs
+// forces icons on such a list exactly when the resolved frame icons setting is "top" or "all"
+// (its effectiveIcons rule), and the Inspector's List style row reads the same predicate to light
+// the button the compiled slide actually renders. Keep this the single home of the condition.
+export function plainListForcedIcons(frameIcons) {
+  return frameIcons === "top" || frameIcons === "all";
+}
+
 export function resolveSlideFrame(slideAttrs = {}, sectionDefaults = {}, deckDefaults = {}) {
   const out = {};
   for (const key of Object.keys(FRAME_BUILTINS)) {

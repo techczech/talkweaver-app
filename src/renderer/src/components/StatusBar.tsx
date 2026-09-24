@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { APP_VERSION, BUILD_SHA, BUILD_TIME } from '../buildInfo'
+import { formatTalkDates, type TalkDates } from '../lib/talkFacts'
 
 interface Props {
   slideCount?: number | null
@@ -10,6 +11,8 @@ interface Props {
   compiling?: boolean
   buildStatus?: 'idle' | 'building' | 'done' | 'error'
   buildPath?: string | null
+  /** Created/edited/delivered for the active talk (T29) — nothing renders until loaded. */
+  dates?: TalkDates | null
   /** Version-only bar for the no-talk-open empty state. */
   minimal?: boolean
 }
@@ -35,6 +38,7 @@ export default function StatusBar({
   compiling = false,
   buildStatus = 'idle',
   buildPath = null,
+  dates = null,
   minimal = false,
 }: Props) {
   const [, tick] = useState(0)
@@ -51,6 +55,11 @@ export default function StatusBar({
     slideCount === null ? '—' : `${slideCount} slides${compiling ? '…' : ''}`
   const wordLabel = `${wordCount} words`
   const savedLabel = dirty ? '● Unsaved' : lastSaved ? formatAge(lastSaved) : '—'
+
+  // Talk dates (T29): `Created … · Edited … · Delivered never|<date>` right after the slide
+  // count. Each date carries the full date+time as its title; nothing renders until the
+  // talk's metadata has loaded (no placeholder dashes).
+  const dateParts = minimal || !dates ? [] : formatTalkDates(dates)
 
   // buildPath is a filesystem path for local builds and an https URL after a publish — the chip
   // must say which it is, and clicking a URL must open the browser (shell.openPath is a no-op on
@@ -91,6 +100,19 @@ export default function StatusBar({
           <>
             <span style={styles.sep}>|</span>
             <span style={styles.item}>{slideLabel}</span>
+            {dateParts.length > 0 && (
+              <>
+                <span style={styles.sep}>|</span>
+                <span style={styles.item}>
+                  {dateParts.map((part, index) => (
+                    <span key={part.text}>
+                      {index > 0 && ' · '}
+                      <span title={part.title}>{part.text}</span>
+                    </span>
+                  ))}
+                </span>
+              </>
+            )}
             <span style={styles.sep}>|</span>
             <span style={styles.item}>{wordLabel}</span>
             <span style={styles.sep}>|</span>

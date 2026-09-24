@@ -1,8 +1,9 @@
+import { runActionBarEditorCommand } from './actionBar/command-runner'
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import type { TalkInfo, ProjectionRow } from '../../../preload/index'
 import { dismissToast, notify } from '../lib/notify'
-import Editor from './Editor'
+import Editor, { type ObjectInsertHandler } from './Editor'
 import SlideFocus from './SlideFocus'
 import type { FocusRange } from '../extensions/focusScope'
 import { focusRangeForSlideLine, firstFocusableFrom, nextFocusableSlide, readableSectionLabel } from './slideFocusModel'
@@ -10,6 +11,7 @@ import Inspector from './Inspector'
 import SlideStrip from './SlideStrip'
 import GridView from './GridView'
 import StatusBar from './StatusBar'
+import { useTalkFacts } from '../lib/talkFacts'
 import CommandPalette from './CommandPalette'
 import { selectionFromTriggerLine, toggleLayoutSelection, type LayoutPickerContext } from './layoutPickerModel'
 import { LAYOUTS, type LayoutDef, type OptionGroup } from '../data/layouts'
@@ -27,18 +29,26 @@ import ToolbarMenu, { Icon, type MenuItem } from './ToolbarMenu'
 import ExplainPanel from './ExplainPanel'
 import WhereUsedPanel from './WhereUsedPanel'
 import EmbedCheckPanel from './EmbedCheckPanel'
+import LayoutDoctorPanel from './LayoutDoctorPanel'
 import ResizablePanes from './ResizablePanes'
 import ImageMetaPanel from './ImageMetaPanel'
 import AbstractPanel from './AbstractPanel'
 import DeckDesignPanel from './DeckDesignPanel'
 import CommandMenu, { type Command } from './CommandMenu'
 import {
-  commandShortcutLabel,
   paletteCommands,
   toolbarCommands,
   type PaletteCommandHandlerId,
   type ToolbarMenuName
 } from '../../../shared/command-registry'
+import { liveCommandShortcutLabel, onKeymapChanged } from '../keymap/store'
+import ActionBar from './actionBar/ActionBar'
+import {
+  DEFAULT_ACTION_BAR_ITEMS,
+  resolveActionBarItems,
+  type RunnableActionBarCommand
+} from './actionBar/model'
+import { actionBarItemsFrom } from '../../../shared/action-bar-settings'
 import SlideContextMenu, { type SlideMenuAction } from './SlideContextMenu'
 import type { CursorListItemContext } from '../extensions/outliner'
 import {
@@ -51,6 +61,12 @@ import {
   resolveInspectedSlide,
   type PaneState
 } from './inspectorModel'
+import {
+  attributeOrphanedTriggerFindings,
+  scanOutlineTriggers,
+  unresolvedTriggerBlock,
+  type LayoutDoctorFinding
+} from '../../../shared/layout-doctor'
 
 export type OutlineOps = {
   move: (line: number, dir: 'up' | 'down') => void
@@ -72,6 +88,10 @@ interface Props {
   /** Switch the active Talk (App owns activeTalk). Slide Focus uses it to open a DIFFERENT talk's
    *  slide picked in the Browser before scoping onto it. */
   onSelectTalk?: (talk: TalkInfo) => void
+  /** T29b: editor engagement ping (first pointerdown in the editor / first user document change),
+   *  fired by the Editor; App consumes it to switch the sidebar to the Slide outline once per
+   *  opened talk. Pure pass-through. */
+  onEditorEngaged?: () => void
   /** Hand App a "flush the current editor's pending edit" fn. App calls it BEFORE a genuine talk
    *  switch so a sub-1.5s edit made just before switching is persisted to the OUTGOING talk's file
    *  (data-loss guard, 2026-07-05). No-op when nothing is pending. */
@@ -171,8 +191,39 @@ function computeSlideLines(rows: ProjectionRow[] | null, content: string): (numb
   })
 }
 
-export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange, registerJump, onOpenSettings, registerOutlineOps, onSelectTalk, registerFlushSave, registerAdoptOutline, onActiveLineChange }: Props) {
+export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange, registerJump, onOpenSettings, registerOutlineOps, onSelectTalk, onEditorEngaged, registerFlushSave, registerAdoptOutline, onActiveLineChange }: Props) {
   const commandHandlersRef = useRef<Record<PaletteCommandHandlerId, () => void> | null>(null)
+  const [, setKeymapRevision] = useState(0)
+  useEffect(
+    // Keep this subscription in the label-owning component: React.memo on a command child would
+    // otherwise turn an incidental parent render into a latent stale-shortcut-label trap.
+    () => onKeymapChanged(() => setKeymapRevision((revision) => revision + 1)),
+    []
+  )
+  // ── Action bar (ADR-0025): one app-wide setting, on until explicitly switched off ────────────────────────
+  // Loaded once here and then kept current by the main process's `action-bar:changed` broadcast, so
+  // a toggle in one window's Settings redraws the bar in every open window without a restart. The
+  // raw stored list rides the same state; only the default populates it today (configure sheet is
+  // a later parcel), but a stored list is what the bar reads.
+  const [actionBarVisible, setActionBarVisible] = useState(true)
+  const [actionBarItemsStored, setActionBarItemsStored] = useState<unknown>(null)
+  useEffect(() => {
+    let cancelled = false
+    window.tw.settings.getActionBar()
+      .then((state) => {
+        if (cancelled) return
+        setActionBarVisible(state.visible)
+        setActionBarItemsStored(state.items)
+      })
+      .catch(() => { /* settings unavailable — retain the visible default */ })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  useEffect(() => window.tw.settings.onActionBarChanged((state) => {
+    setActionBarVisible(state.visible)
+    setActionBarItemsStored(state.items)
+  }), [])
   const runRegisteredCommand = useCallback((handlerId: PaletteCommandHandlerId): void => {
     commandHandlersRef.current?.[handlerId]()
   }, [])
@@ -185,6 +236,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   const [iconPickerOpen, setIconPickerOpen] = useState<boolean>(false)
   const [outlineContent, setOutlineContent] = useState<string>('')
   const [compiledSlides, setCompiledSlides] = useState<ProjectionRow[] | null>(null)
+  const [triggerFindings, setTriggerFindings] = useState<LayoutDoctorFinding[]>([])
   const [thumbnails, setThumbnails] = useState<Record<string, string> | null>(null)
   const compileTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const inspectorSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -197,6 +249,9 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   const [publishElapsed, setPublishElapsed] = useState<number>(0)
   const [wordCount, setWordCount] = useState<number>(0)
   const [lastSaved, setLastSaved] = useState<Date | null>(null)
+  // Shared talk facts (T29): the status bar's dates segment reads the SAME store as the Talks
+  // panel — one IPC fetch for both, refreshed by main on index updates and saved deliveries.
+  const talkFacts = useTalkFacts()
   // Unsaved-edit indicator: set by the Editor on real user edits, cleared only by a REAL save —
   // a refused or failed write leaves it standing, so save health is visible at a glance.
   const [dirty, setDirty] = useState(false)
@@ -224,10 +279,23 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   const [whereUsedId, setWhereUsedId] = useState<string | null>(null)
   // "Check embeds" preflight panel open state.
   const [embedCheckOpen, setEmbedCheckOpen] = useState<boolean>(false)
+  const [layoutDoctorOpen, setLayoutDoctorOpen] = useState<boolean>(false)
+  const [unresolvedBlock, setUnresolvedBlock] = useState<{
+    count: number
+    firstTitle: string
+    firstLine: number
+    message: string
+  } | null>(null)
   // The editor's slide context menu (v0.15 stage 4): ⌘K with the editor focused, or right-click
   // inside .cm-content. startAtFirst mirrors the Talks-panel convention (⌘K highlights the first
   // row, right-click starts blank); withText adds the cut/copy/paste group on right-click only.
-  const [slideMenu, setSlideMenu] = useState<{ x: number; y: number; startAtFirst: boolean; withText: boolean } | null>(null)
+  const [slideMenu, setSlideMenu] = useState<{
+    x: number
+    y: number
+    startAtFirst: boolean
+    startAtAction?: SlideMenuAction
+    withText: boolean
+  } | null>(null)
 
   // Strip ↔ editor sync + reorder/insert plumbing
   const [activeSlide, setActiveSlide] = useState<number>(0)
@@ -291,6 +359,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // here on mount; the cross-talk search palette calls it to splice an imported
   // slide at the live caret instead of appending at EOF.
   const editorInsertRef = useRef<((text: string) => void) | null>(null)
+  const editorInsertObjectRef = useRef<ObjectInsertHandler | null>(null)
   // Replaces the whole doc in place, preserving caret + scroll (icon pin → no jump-to-top).
   const editorReplaceRef = useRef<((text: string) => void) | null>(null)
   const editorLayoutContextRef = useRef<(() => LayoutPickerContext | null) | null>(null)
@@ -304,6 +373,11 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     moveTo: (fromLine: number, toLine: number) => void
     undo: () => void
     redo: () => void
+    newSlide: () => void
+    promoteHeading: () => void
+    demoteHeading: () => void
+    bulletedList: () => void
+    numberedList: () => void
     normalizeTriggers: () => void
     deleteSlide: () => void
     flushSave: () => Promise<void>
@@ -313,6 +387,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     cutSelection: () => void
     copySelection: () => void
     pasteClipboard: () => void
+    runFormat: (id: 'bold' | 'italic' | 'inline-code' | 'highlight' | 'link') => void
   } | null>(null)
   // Reads the caret's current top-level list-item context for the icon picker (ADR-0021).
   const iconContextRef = useRef<(() => CursorListItemContext | null) | null>(null)
@@ -545,25 +620,36 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   useEffect(() => {
     overlayOpenRef.current =
       browserOpen || paletteOpen || searchOpen || archiveOpen || iconPickerOpen || helpOpen ||
-      cmdMenuOpen || abstractOpen || deckDesignOpen || embedCheckOpen ||
+      cmdMenuOpen || abstractOpen || deckDesignOpen || embedCheckOpen || layoutDoctorOpen ||
       explainIndex != null || whereUsedId != null || imageMetaId != null ||
       adoptTarget != null || mergeRequest != null || tagSlide != null || slideMenu != null
   }, [
     browserOpen, paletteOpen, searchOpen, archiveOpen, iconPickerOpen, helpOpen, cmdMenuOpen,
-    abstractOpen, deckDesignOpen, embedCheckOpen, explainIndex, whereUsedId, imageMetaId,
+    abstractOpen, deckDesignOpen, embedCheckOpen, layoutDoctorOpen, explainIndex, whereUsedId, imageMetaId,
     adoptTarget, mergeRequest, tagSlide, slideMenu
   ])
 
   // Open the slide context menu anchored near the caret's slide: the editor's live cursor
   // coordinates (CodeMirror coordsAtPos) when the caret is in the viewport, else under the
   // toolbar — never nowhere.
-  const openSlideMenu = useCallback((opts: { startAtFirst: boolean; withText: boolean; at?: { x: number; y: number } }) => {
+  const openSlideMenu = useCallback((opts: {
+    startAtFirst: boolean
+    startAtAction?: SlideMenuAction
+    withText: boolean
+    at?: { x: number; y: number }
+  }) => {
     let anchor = opts.at ?? editorCmdsRef.current?.cursorCoords() ?? null
     if (!anchor) {
       const bar = document.querySelector('.workspace-toolbar')?.getBoundingClientRect()
       anchor = bar ? { x: bar.left + 16, y: bar.bottom + 8 } : { x: 80, y: 80 }
     }
-    setSlideMenu({ x: anchor.x, y: anchor.y, startAtFirst: opts.startAtFirst, withText: opts.withText })
+    setSlideMenu({
+      x: anchor.x,
+      y: anchor.y,
+      startAtFirst: opts.startAtFirst,
+      startAtAction: opts.startAtAction,
+      withText: opts.withText
+    })
   }, [])
   const openSlideMenuRef = useRef(openSlideMenu)
   useEffect(() => { openSlideMenuRef.current = openSlideMenu }, [openSlideMenu])
@@ -904,6 +990,8 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       if (e.key === 'F5' && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault()
         e.stopPropagation()
+        const content = outlineContentRef.current
+        if (blockedByUnresolved(content)) return
         const t = activeTalkRef.current
         if (t) {
           let startSlideId: string | undefined
@@ -912,7 +1000,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
             if (!startSlideId) notify('This slide isn’t stamped yet — starting from the top. Save the outline to enable present-from-here.', 'info')
           }
           void window.tw.talk
-            .present(t.outlinePath, outlineContentRef.current, 'presenter', startSlideId)
+            .present(t.outlinePath, content, 'presenter', startSlideId)
             .then((r) => { if (r && r.success === false) notify('Present failed: ' + (r.error || 'unknown error'), 'error') })
         }
         return
@@ -940,11 +1028,13 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         if (focusSlideRef.current == null) enterFocusRef.current(activeSlideRef.current)
         return
       }
-      // ⌘⇧P opens the command palette (all app commands). Capture + stopPropagation.
+      // ⌘⇧P opens the command palette (all app commands). Capture + stopPropagation. Routes
+      // through the SAME registered handler the Tools menu's "All commands…" uses — one toggle
+      // path, no drift.
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'p' || e.key === 'P')) {
         e.preventDefault()
         e.stopPropagation()
-        setCmdMenuOpen(prev => !prev)
+        runRegisteredCommand('app.command-palette')
         return
       }
       // ⌘P uses the same registered dispatch channel as Deck → Inspector and the command palette.
@@ -954,15 +1044,9 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         runRegisteredCommand('toggle-inspector')
         return
       }
-      // ⌘N opens a NEW editor window (work on two presentations at once). Not a default menu
-      // accelerator, so a window keydown owns it. A given talk can only be active in one window, so
-      // the second window opens empty and you pick a different talk (see the same-talk guard).
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'n' || e.key === 'N')) {
-        e.preventDefault()
-        e.stopPropagation()
-        void window.tw.windows?.open?.()
-        return
-      }
+      // ⌘N (New Window — work on two presentations at once) is now owned by the File-menu
+      // accelerator in main (installApplicationMenu), so it is discoverable and works from any
+      // focus. The old renderer keydown was removed 2026-07-19 to avoid a double-open.
       // ⌘1/2/3 for pane switching (also clears grid mode); ⌘4 enters the grid. All preserve the
       // editor's scroll position rather than snapping to the top.
       if ((e.metaKey || e.ctrlKey) && e.key === '1') { e.preventDefault(); selectPane('editor') }
@@ -1007,6 +1091,17 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       case 'icon': setIconPickerOpen(true); break
       case 'image': setArchiveOpen(true); break
       case 'tag': openTagCurrentSlide(); break
+      case 'insert-table': editorInsertObjectRef.current?.('table'); break
+      case 'insert-mindmap': editorInsertObjectRef.current?.('mindmap'); break
+      case 'insert-chart': editorInsertObjectRef.current?.('chart'); break
+      case 'insert-mermaid': editorInsertObjectRef.current?.('mermaid'); break
+      case 'insert-diagram': editorInsertObjectRef.current?.('diagram'); break
+      case 'insert-svg': editorInsertObjectRef.current?.('svg'); break
+      case 'fmt-bold': editorCmdsRef.current?.runFormat('bold'); break
+      case 'fmt-italic': editorCmdsRef.current?.runFormat('italic'); break
+      case 'fmt-code': editorCmdsRef.current?.runFormat('inline-code'); break
+      case 'fmt-highlight': editorCmdsRef.current?.runFormat('highlight'); break
+      case 'fmt-link': editorCmdsRef.current?.runFormat('link'); break
       case 'focus': enterFocusRef.current(activeSlideRef.current); break
       case 'where-used': openWhereUsed(); break
       case 'explain': setExplainIndex(activeSlideRef.current); break
@@ -1062,6 +1157,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         content = await window.tw.talk.readOutline(outlinePath)
       }
       if (content == null) return
+      if (blockedByUnresolved(content)) return
       await window.tw.present.rebuild(deckWcId, outlinePath, content, slideId)
     })
     return off
@@ -1071,6 +1167,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // never leave the scoped editor pointing at the previous talk's offsets.
   useEffect(() => {
     setCompiledSlides(null)
+    setTriggerFindings([])
     setThumbnails(null)
     // Also drop the previous talk's text: until the new outline loads, SlideStrip falls back to
     // parseSlides(outlineContent) — the OLD talk's cards briefly rendered under the NEW talk's title.
@@ -1091,6 +1188,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // After a successful compile, also fetch thumbnails (fire-and-forget).
   useEffect(() => {
     if (!activeTalk || !outlineContent) return
+    let cancelled = false
     const outlinePath = activeTalk.outlinePath
     if (compileTimer.current) clearTimeout(compileTimer.current)
     compileTimer.current = setTimeout(async () => {
@@ -1098,6 +1196,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       // WorkspaceLayout re-render on every character typed during the debounce window.
       setCompiling(true)
       const slides = await window.tw.talk.compile(outlinePath, outlineContent)
+      if (cancelled) return
       // Surface a compile failure instead of silently showing the client-side fallback strip.
       if (slides === null) {
         notify('Couldn’t compile this talk — the html-presentations compiler wasn’t found or errored. Slides/previews won’t update.', 'error', 'compile-fail')
@@ -1107,11 +1206,15 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         dismissToast('compile-fail')
       }
       setCompiledSlides(slides)
+      setTriggerFindings(slides === null
+        ? []
+        : attributeOrphanedTriggerFindings(outlineContent, slides, scanOutlineTriggers(outlineContent)))
       setCompiling(false)
       // Thumbnails: do not block the strip. A null map = the render couldn't run at all.
       window.tw.talk
         .thumbnails(outlinePath, outlineContent)
         .then((map) => {
+          if (cancelled) return
           setThumbnails(map)
           if (map && slides && slides.length) {
             // Slides whose preview couldn't render (e.g. an image too slow to decode) are NOT cached
@@ -1120,9 +1223,10 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
             if (missing > 0) notify(`${missing} slide preview${missing === 1 ? '' : 's'} couldn’t render — use the Refresh button to retry.`, 'warning', 'thumb-missing')
           }
         })
-        .catch(() => { setThumbnails(null); notify('Slide previews failed to render.', 'warning', 'thumb-missing') })
+        .catch(() => { if (cancelled) return; setThumbnails(null); notify('Slide previews failed to render.', 'warning', 'thumb-missing') })
     }, 900)
     return () => {
+      cancelled = true
       if (compileTimer.current) clearTimeout(compileTimer.current)
     }
   }, [outlineContent, activeTalk?.outlinePath])
@@ -1132,8 +1236,21 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     setWordCount(outlineContent.split(/\s+/).filter(Boolean).length)
   }, [outlineContent])
 
+  function blockedByUnresolved(content: string): boolean {
+    const block = unresolvedTriggerBlock(content)
+    if (!block) return false
+    setUnresolvedBlock({
+      count: block.count,
+      firstTitle: block.first.slideTitle,
+      firstLine: block.first.headingLine,
+      message: block.message
+    })
+    return true
+  }
+
   async function handlePresent(mode: 'window' | 'presenter' | 'audience' = 'window') {
     if (!activeTalk || !outlineContent) return
+    if (blockedByUnresolved(outlineContent)) return
     const result = await window.tw.talk.present(activeTalk.outlinePath, outlineContent, mode)
     if (result && result.success === false) notify('Present failed: ' + (result.error || 'unknown error'), 'error')
   }
@@ -1142,6 +1259,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // current slide has no {id=…} to deep-link to, so it falls back to the top with a hint.
   async function presentFromHere() {
     if (!activeTalk || !outlineContent) return
+    if (blockedByUnresolved(outlineContent)) return
     const id = currentSlideId()
     if (!id) notify('This slide isn’t stamped yet — starting from the top. Save the outline to enable present-from-here.', 'info')
     const result = await window.tw.talk.present(activeTalk.outlinePath, outlineContent, 'presenter', id ?? undefined)
@@ -1150,14 +1268,15 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
 
   // The ⌘L layout picker, also reachable from the toolbar Insert → Layout. A bare trigger lands on
   // the slide's Trigger line; a multi-line template is spliced as a new block at the caret.
-  function openLayoutPicker(): void {
-    setPaletteQuery('')
+  function openLayoutPicker(query = ''): void {
+    setPaletteQuery(query)
     setPaletteContext(editorLayoutContextRef.current?.() ?? null)
     setPaletteOpen(true)
   }
 
   async function handleBuild() {
     if (!activeTalk || !outlineContent) return
+    if (blockedByUnresolved(outlineContent)) return
     setBuildStatus('building')
     const result = await window.tw.talk.buildVariants(activeTalk.outlinePath, outlineContent)
     if (result?.success) {
@@ -1178,6 +1297,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // can be copied/moved). Reuses the build chip for progress/result.
   async function handleExportHandout() {
     if (!activeTalk || !outlineContent) return
+    if (blockedByUnresolved(outlineContent)) return
     setBuildStatus('building')
     const result = await window.tw.talk.exportHandout(activeTalk.outlinePath, outlineContent)
     if (result?.success && result.path) {
@@ -1196,6 +1316,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // otherwise the editor's debounced autosave would overwrite the stamp it just wrote.
   async function handlePublishHandout() {
     if (!activeTalk || !outlineContent) return
+    if (blockedByUnresolved(outlineContent)) return
     setBuildStatus('building')
     setPublishElapsed(0)
     setPublishing(true)
@@ -1520,11 +1641,18 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     'optimize-images': () => { void handleOptimizeImages() },
     'ocr-index': () => { void handleOcrIndex() },
     'check-embeds': () => setEmbedCheckOpen(true),
+    'layout-doctor': () => {
+      void (async () => {
+        await editorCmdsRef.current?.flushSave()
+        setLayoutDoctorOpen(true)
+      })()
+    },
     'where-used': openWhereUsed,
     'focus-slide': () => enterFocus(activeSlideRef.current),
     'toggle-inspector': toggleInspector,
     studio: () => window.dispatchEvent(new Event('tw-open-studio')),
     history: () => window.dispatchEvent(new Event('tw-open-history')),
+    importer: () => window.dispatchEvent(new Event('tw-open-importer')),
     'plan-run': () => {
       window.dispatchEvent(new Event('tw-open-history'))
       window.setTimeout(() => window.dispatchEvent(new Event('tw-plan-run')), 0)
@@ -1558,6 +1686,17 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     image: () => setArchiveOpen(true),
     search: () => setBrowserOpen(true),
     'icon-picker': () => setIconPickerOpen(true),
+    'insert-object-table': () => editorInsertObjectRef.current?.('table'),
+    'insert-object-mindmap': () => editorInsertObjectRef.current?.('mindmap'),
+    'insert-object-chart': () => editorInsertObjectRef.current?.('chart'),
+    'insert-object-mermaid': () => editorInsertObjectRef.current?.('mermaid'),
+    'insert-object-diagram': () => editorInsertObjectRef.current?.('diagram'),
+    'insert-object-svg': () => editorInsertObjectRef.current?.('svg'),
+    'format-bold': () => editorCmdsRef.current?.runFormat('bold'),
+    'format-italic': () => editorCmdsRef.current?.runFormat('italic'),
+    'format-inline-code': () => editorCmdsRef.current?.runFormat('inline-code'),
+    'format-highlight': () => editorCmdsRef.current?.runFormat('highlight'),
+    'format-link': () => editorCmdsRef.current?.runFormat('link'),
     'deck-design': () => setDeckDesignOpen(true),
     metadata: () => window.dispatchEvent(new Event('tw-open-metadata')),
     'tag-slide': openTagCurrentSlide,
@@ -1569,26 +1708,41 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     'fold-all': () => editorCmdsRef.current?.foldAll(),
     'unfold-all': () => editorCmdsRef.current?.unfoldAll(),
     'normalize-triggers': () => editorCmdsRef.current?.normalizeTriggers(),
+    undo: () => runActionBarEditorCommand(editorCmdsRef.current, 'undo'),
+    redo: () => runActionBarEditorCommand(editorCmdsRef.current, 'redo'),
+    'new-slide': () => runActionBarEditorCommand(editorCmdsRef.current, 'new-slide'),
+    'promote-heading': () => runActionBarEditorCommand(editorCmdsRef.current, 'promote-heading'),
+    'demote-heading': () => runActionBarEditorCommand(editorCmdsRef.current, 'demote-heading'),
+    'bulleted-list': () => runActionBarEditorCommand(editorCmdsRef.current, 'bulleted-list'),
+    'numbered-list': () => runActionBarEditorCommand(editorCmdsRef.current, 'numbered-list'),
     'delete-slide': handleDeleteSlide,
     help: () => setHelpOpen(true),
-    settings: () => onOpenSettings?.()
+    settings: () => onOpenSettings?.(),
+    'app.command-palette': () => setCmdMenuOpen(prev => !prev)
   }
 
-  const toolbarItems = (menu: ToolbarMenuName, excludedHandlerIds: string[] = []): MenuItem[] =>
-    toolbarCommands(menu).flatMap((registered) => {
+  const toolbarItems = (menu: ToolbarMenuName, excludedHandlerIds: string[] = []): MenuItem[] => {
+    let lastGroup: string | undefined
+    return toolbarCommands(menu).flatMap((registered) => {
       if (excludedHandlerIds.includes(registered.handlerId)) return []
       const handler = commandHandlersRef.current?.[registered.handlerId as PaletteCommandHandlerId]
       if (!handler) {
         if (import.meta.env.DEV) throw new Error(`Toolbar command has no renderer handler: ${registered.handlerId}`)
         return []
       }
+      // A command carrying a placement group starts a new visual group when the previous item did
+      // not share it — the object inserts (T27) draw one hairline under the built-in insert items.
+      const separatorBefore = Boolean(registered.toolbar!.group) && registered.toolbar!.group !== lastGroup
+      lastGroup = registered.toolbar!.group
       return [{
         icon: registered.toolbar!.icon,
-        label: registered.label,
+        label: registered.toolbar!.menuLabel ?? registered.label,
         onClick: handler,
-        hint: commandShortcutLabel(registered) || undefined
+        hint: liveCommandShortcutLabel(registered) || undefined,
+        ...(separatorBefore ? { separatorBefore: true } : {})
       }]
     })
+  }
 
   // onSaved is ALSO a dep of that registration effect — inline it and every save-path
   // re-render re-arms the same loop the stable registerEditorCommands exists to break.
@@ -1709,7 +1863,17 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       focusLine={focusLine}
       onCursorLine={handleCursorLine}
       onImageWidgetClick={(id) => setImageMetaId(id)}
+      onOpenHelp={() => setHelpOpen(true)}
       registerInsert={(fn) => { editorInsertRef.current = fn }}
+      registerInsertObject={(fn) => { editorInsertObjectRef.current = fn }}
+      onEditorEngaged={onEditorEngaged}
+      onOpenObjectLayoutFamily={(kind) => openLayoutPicker(kind === 'diagram' ? 'smartart' : kind)}
+      onInsertObjectMenu={(coords) => openSlideMenu({
+        startAtFirst: false,
+        startAtAction: 'insert-table',
+        withText: false,
+        at: coords
+      })}
       registerEditorCommands={registerEditorCommands}
       registerIconContext={(fn) => { iconContextRef.current = fn }}
       registerReplaceDoc={(fn) => { editorReplaceRef.current = fn }}
@@ -1727,9 +1891,34 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   )
 
   // Normal-mode editor pane: an empty slot the reverse-portal host is moved into (see attachEditorSlot).
-  const editorPane = (
-    <div className="pane pane--editor">
-      <div className="editor-portal-slot" ref={attachEditorSlot} />
+  // The action bar (ADR-0025) sits at the top of the SAME column, so the shelf starts where the
+  // editor starts — the sidebar and the slide-strip/preview column never move. In Strip and Grid
+  // view there is no editor pane, and this column is not rendered at all, so nor is the bar.
+  //
+  // The bar's rows are rebuilt every render from the SAME palette rows the ⌘⇧P surface lists, so
+  // the effective chords re-resolve on the keymap-changed re-render above (a rebinding shows in
+  // the tooltip). Hidden, the bar is not rendered at all — no lip, no reserved height.
+  const actionBarCommands: ReadonlyMap<string, RunnableActionBarCommand> = new Map(
+    paletteCommands().map((command) => {
+      const keys = liveCommandShortcutLabel(command)
+      return [command.id, {
+        label: command.label,
+        ...(command.toolbar ? { icon: command.toolbar.icon } : {}),
+        ...(keys && keys !== 'no default' ? { keys } : {}),
+        run: () => runRegisteredCommand(command.handlerId)
+      }]
+    })
+  )
+  const actionBarSections = resolveActionBarItems(
+    actionBarItemsFrom(actionBarItemsStored, DEFAULT_ACTION_BAR_ITEMS),
+    actionBarCommands
+  )
+  const editorColumn = (
+    <div className="editor-column">
+      {actionBarVisible && <ActionBar sections={actionBarSections} />}
+      <div className="pane pane--editor">
+        <div className="editor-portal-slot" ref={attachEditorSlot} />
+      </div>
     </div>
   )
 
@@ -1773,18 +1962,27 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     setFocusLine({ line: target, takeFocus: true })
   }
 
+  function handleDoctorJumpToLine(line: number): void {
+    if (gridModeRef.current) setGridMode(false)
+    if (paneState === 'strip') setPaneState('both')
+    if (focusSlideRef.current != null) exitFocus()
+    setFocusLine({ line, takeFocus: true })
+  }
+
   const inspectorPane = (
     <div className="pane pane--inspector">
       <Inspector
         talk={activeTalk}
         compiledSlides={compiledSlides}
         outlineContent={outlineContent}
+        triggerFindings={triggerFindings}
         activeIndex={inspectedSlideIndex}
         headingLine={slideLines[inspectedSlideIndex] ?? null}
         onPrev={() => handleSelectInspectorSlide(navigateInspectorSlide(inspectedSlideIndex, -1, compiledSlides?.length ?? 0))}
         onNext={() => handleSelectInspectorSlide(navigateInspectorSlide(inspectedSlideIndex, 1, compiledSlides?.length ?? 0))}
         onEdit={() => handleEditSlide(inspectedSlideIndex)}
         onExplain={() => setExplainIndex(inspectedSlideIndex)}
+        onOpenLayoutDoctor={() => runRegisteredCommand('layout-doctor')}
         onCommitOption={applyInspectorOption}
       />
     </div>
@@ -1796,6 +1994,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         talk={activeTalk}
         compiledSlides={compiledSlides}
         outlineContent={outlineContent}
+        triggerFindings={triggerFindings}
         thumbnails={thumbnails}
         activeIndex={activeSlide}
         onSelectSlide={handleSelectSlide}
@@ -1813,6 +2012,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       <GridView
         talk={activeTalk}
         compiledSlides={compiledSlides}
+        triggerFindings={triggerFindings}
         thumbnails={thumbnails}
         activeIndex={activeSlide}
         onSelectSlide={handleSelectSlide}
@@ -1826,6 +2026,13 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
 
   // The focused slide's compiled row supplies the crumb's section + title (authored case).
   const focusRow = focusSlide != null ? (compiledSlides?.[focusSlide] ?? null) : null
+
+  // Status-bar dates (T29) for the active talk — hidden entirely until the talk's metadata has
+  // loaded (no placeholder dashes); updates ride the shared facts store.
+  const activeMeta = activeTalk ? talkFacts.meta[activeTalk.slug] : undefined
+  const talkDates = activeTalk && activeMeta
+    ? { createdMs: activeMeta.createdMs, editedMs: activeMeta.editedMs, deliveredMs: talkFacts.lastDelivered[activeTalk.slug] }
+    : null
 
   return (
     <div className="workspace">
@@ -1956,11 +2163,11 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
           gridPane
         ) : (
           <>
-            {paneState === 'editor' && editorPane}
+            {paneState === 'editor' && editorColumn}
             {paneState === 'strip' && stripSurface}
             {paneState === 'both' && (
               <ResizablePanes
-                left={editorPane}
+                left={editorColumn}
                 right={stripSurface}
                 storageKey="tw-split"
                 initialLeftPct={55}
@@ -1977,6 +2184,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         compiling={compiling}
         buildStatus={buildStatus}
         buildPath={buildPath}
+        dates={talkDates}
       />
       </>
       ) : (
@@ -2134,13 +2342,52 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         outlinePath={activeTalk.outlinePath}
         content={outlineContent}
       />
+      <LayoutDoctorPanel
+        isOpen={layoutDoctorOpen}
+        onClose={() => setLayoutDoctorOpen(false)}
+        talk={activeTalk}
+        outlineText={outlineContent}
+        slideRows={compiledSlides}
+        onJumpToLine={handleDoctorJumpToLine}
+      />
+      {unresolvedBlock && createPortal(
+        <div
+          className="tw-unresolved-block-backdrop"
+          onMouseDown={(event) => { if (event.target === event.currentTarget) setUnresolvedBlock(null) }}
+        >
+          <div className="tw-unresolved-block" role="dialog" aria-modal="true" aria-labelledby="tw-unresolved-block-title">
+            <h2 id="tw-unresolved-block-title">Unresolved triggers</h2>
+            <p>
+              {unresolvedBlock.message}
+              {' '}The first is “{unresolvedBlock.firstTitle}” at line {unresolvedBlock.firstLine}.
+            </p>
+            <div className="tw-unresolved-block-actions">
+              <button
+                type="button"
+                className="tw-unresolved-block-primary"
+                onClick={() => {
+                  setUnresolvedBlock(null)
+                  runRegisteredCommand('layout-doctor')
+                }}
+              >
+                Open Layout Doctor
+              </button>
+              <button type="button" onClick={() => setUnresolvedBlock(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
       <CommandMenu
         isOpen={cmdMenuOpen}
         onClose={() => setCmdMenuOpen(false)}
-        commands={paletteCommands().map((command): Command => ({
+        commands={paletteCommands()
+          // Palette-hidden commands ("All commands…" opens the palette; it must not list itself).
+          .filter((command) => command.palette.visible)
+          .map((command): Command => ({
           id: command.id,
           title: command.label,
-          hint: commandShortcutLabel(command),
+          hint: liveCommandShortcutLabel(command),
           keywords: command.palette.keywords,
           run: () => runRegisteredCommand(command.handlerId)
         }))}
@@ -2150,6 +2397,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
           x={slideMenu.x}
           y={slideMenu.y}
           startAtFirst={slideMenu.startAtFirst}
+          startAtAction={slideMenu.startAtAction}
           withText={slideMenu.withText}
           onAction={handleSlideMenuAction}
           currentLayoutName={selectionFromTriggerLine(

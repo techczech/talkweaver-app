@@ -1,11 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react'
 import type { TalkInfo, ProjectionRow } from '../../../preload/index'
-import { warningsForSurface, type WarningSurface } from '../../../../compiler/scripts/lib/warning-registry.mjs'
+import type { LayoutDoctorFinding } from '../../../shared/layout-doctor'
+import { triggerWarningPayloadsForSlide } from '../../../shared/layout-doctor'
+import { warningBadgesForSurface, type WarningSurface } from '../../../../compiler/scripts/lib/warning-registry.mjs'
+
+export type SurfaceWarningBadge = ReturnType<typeof warningBadgesForSurface>[number]
 
 interface Props {
   talk: TalkInfo
   compiledSlides: ProjectionRow[] | null
   outlineContent: string
+  triggerFindings: readonly LayoutDoctorFinding[]
   thumbnails?: Record<string, string> | null
   activeIndex: number
   onSelectSlide: (index: number) => void
@@ -30,8 +35,8 @@ interface SlidePreview {
   excerpt: string
   layout: string
   role: string
-  // High-priority compiler warnings for this slide (already filtered, human-readable).
-  warnings: string[]
+  // High-priority compiler warnings for this slide, retaining severity for visible error styling.
+  warnings: SurfaceWarningBadge[]
   row: ProjectionRow | null
 }
 
@@ -40,9 +45,24 @@ interface SlidePreview {
 // author needs to act on. `iconlist-no-icons` = an explicit {iconlist}/{iconrow} that
 // resolved to NO icons and silently rendered plain.
 // Pick the warnings assigned to this surface and render their shared message + remedy.
-export function surfacedWarnings(row: ProjectionRow | null, surface: WarningSurface = 'strip-badge'): string[] {
-  if (!row || !Array.isArray(row.warnings)) return []
-  return warningsForSurface(row.warnings, surface)
+export function surfacedWarnings(
+  row: ProjectionRow | null,
+  surface: WarningSurface = 'strip-badge',
+  triggerFindings: readonly LayoutDoctorFinding[] = []
+): SurfaceWarningBadge[] {
+  if (!row) return []
+  const compilerWarnings = Array.isArray(row.warnings)
+    ? warningBadgesForSurface(row.warnings, surface).filter((warning) =>
+      warning.id !== 'unresolved-trigger'
+      && warning.id !== 'unknown-trigger'
+      && warning.id !== 'trigger-conflict'
+    )
+    : []
+  const triggerWarnings = warningBadgesForSurface(
+    triggerWarningPayloadsForSlide(row, triggerFindings),
+    surface
+  )
+  return [...compilerWarnings, ...triggerWarnings]
 }
 
 // Fast client-side parse — used when compiler result is not yet available. Every
@@ -321,6 +341,7 @@ type DropEdge = 'above' | 'below' | null
 
 interface SlideCardProps {
   slide: SlidePreview
+  warnings: SurfaceWarningBadge[]
   isActive: boolean
   isDragging: boolean
   thumbnailUrl: string | null
@@ -338,6 +359,7 @@ interface SlideCardProps {
 
 function SlideCard({
   slide,
+  warnings,
   isActive,
   isDragging,
   thumbnailUrl,
@@ -355,8 +377,6 @@ function SlideCard({
   const layout = slide.layout.toLowerCase() || 'default'
   const title = slide.title || 'Slide'
   const excerpt = slide.excerpt || undefined
-  const warnings = slide.warnings
-
   // Insertion bar that floats over the card's top or bottom edge. Sits in the
   // 4px margin gutter so it never shifts layout (no reflow → no flicker).
   const dropBar = (where: 'above' | 'below') => (
@@ -411,9 +431,9 @@ function SlideCard({
       <div style={{ position: 'relative' as const, paddingTop: '56.25%', background: 'var(--paper)' }}>
         {warnings.length > 0 && (
           <span
-            className="tw-slide-warning"
+            className={`tw-slide-warning ${warnings.some((warning) => warning.severity === 'error') ? 'tw-slide-warning--error' : ''}`}
             data-slide-warning
-            title={warnings.join('\n')}
+            title={warnings.map((warning) => warning.text).join('\n')}
             style={{
               position: 'absolute' as const,
               top: '3px',
@@ -423,7 +443,6 @@ function SlideCard({
               fontWeight: 700,
               lineHeight: 1,
               color: '#fff',
-              background: '#d97706',
               borderRadius: '3px',
               padding: '2px 4px',
               boxShadow: '0 0 0 1px var(--paper)',
@@ -460,6 +479,7 @@ const MemoSlideCard = React.memo(
   SlideCard,
   (prev, next) =>
     prev.slide === next.slide &&
+    prev.warnings === next.warnings &&
     prev.isActive === next.isActive &&
     prev.isDragging === next.isDragging &&
     prev.thumbnailUrl === next.thumbnailUrl &&
@@ -546,6 +566,7 @@ export default function SlideStrip({
   talk,
   compiledSlides,
   outlineContent,
+  triggerFindings,
   thumbnails,
   activeIndex,
   onSelectSlide,
@@ -739,6 +760,9 @@ export default function SlideStrip({
   function renderCard(slide: SlidePreview) {
     const key = thumbKey(slide.row)
     const thumbnailUrl = key && thumbnails ? thumbnails[key] ?? null : null
+    const warnings = slide.row
+      ? surfacedWarnings(slide.row, 'strip-badge', triggerFindings)
+      : slide.warnings
     // Carousel sub-slides (ADR-0022): a #### / {carousel} slide captures one full-bleed
     // thumbnail per stepped sub-slide, keyed `${key}__N`. Static multi-part layouts (columns,
     // contrast, image-grid, cards-grid, gallery) emit no `__N` keys, so they show no sub-cards.
@@ -768,6 +792,7 @@ export default function SlideStrip({
       <div ref={(el) => { cardRefs.current[slide.index] = el }}>
         <MemoSlideCard
           slide={slide}
+          warnings={warnings}
           isActive={activeIndex === slide.index}
           isDragging={dragFromIndex === slide.index}
           thumbnailUrl={thumbnailUrl}

@@ -1,4 +1,5 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu, net, protocol, shell, session, safeStorage, screen, type MenuItemConstructorOptions } from 'electron'
+import { createLatestThumbnailRequestHandler } from './thumbnail-queue'
+import { app, BrowserWindow, ipcMain, dialog, Menu, net, protocol, shell, session, safeStorage, screen, powerMonitor, type MenuItemConstructorOptions } from 'electron'
 import { join, basename, dirname, extname } from 'path'
 
 // EPIPE guard: when the packaged binary is launched with stdout/stderr piped and the pipe
@@ -7,6 +8,43 @@ import { join, basename, dirname, extname } from 'path'
 // must never kill the app.
 process.stdout.on('error', () => {})
 process.stderr.on('error', () => {})
+
+const E2E = process.env.TW_E2E === '1'
+
+// Renderer heap headroom (2026-07-20). NOTE (2026-09-15): this switch reaches RENDERER processes
+// only — Electron honours --js-flags for the main process solely when it is passed on the command
+// line that launched the binary, so the main process keeps V8's own ceiling whatever is appended
+// here. That ceiling was MEASURED on this build at 4096 MB
+// (`ELECTRON_RUN_AS_NODE=1 TalkWeaver -e 'console.log(require("v8").getHeapStatistics().heap_size_limit)'`),
+// and the main process died against it twice on 2026-09-15 while the Slide Browser rendered
+// thumbnails for the whole vault. The fix is to make main-process work FIT 4096 MB — one deck
+// inlined at a time, no video in a thumbnail render, nothing retained after a background pass —
+// never to raise the ceiling. See thumbnail-media-policy.ts and [[talkweaver-vault-scale]].
+app.commandLine.appendSwitch('js-flags', '--max-old-space-size=8192')
+
+// Crash safety net: Electron embeds Node, whose default --unhandled-rejections=throw turns
+// ANY unhandled promise rejection into a fatal abort (SIGTRAP) — e.g. a best-effort cache
+// write that fails under file-descriptor pressure during a vault rescan of a large imported
+// deck. A presentation tool must never hard-crash on a stray async error, so log and swallow;
+// genuine bugs still surface in the log. (The specific offenders are also guarded at source.)
+// Swallowing keeps the app alive, but a console the user never sees makes any real crash
+// undiagnosable — and a SILENTLY swallowed uncaughtException can leave corrupt state that later
+// traps natively (SIGTRAP). So also APPEND every main-process error to a log file on disk with a
+// full stack, so the next occurrence is diagnosable from the user's machine (2026-07-19, after a
+// SIGTRAP on delete whose symbolicated stack was unusable).
+function logMainError(kind: string, err: unknown): void {
+  try { console.error(`[main] ${kind}:`, err) } catch {}
+  try {
+    const e = err as Error
+    const line = `\n[${new Date().toISOString()}] ${kind}: ${e?.stack || e?.message || String(err)}\n`
+    const dir = app.getPath('userData')
+    appendFileSync(join(dir, 'tw-main-errors.log'), line)
+  } catch {
+    // app not ready yet, or disk unavailable — the console.error above still fired.
+  }
+}
+process.on('unhandledRejection', (reason) => { logMainError('unhandledRejection', reason) })
+process.on('uncaughtException', (error) => { logMainError('uncaughtException', error) })
 
 // Custom schemes must be registered as privileged BEFORE app ready so the renderer
 // treats twasset:// and twthumb:// as standard secure schemes (CSP matching,
@@ -27,11 +65,25 @@ protocol.registerSchemesAsPrivileged([
 ])
 import { pathToFileURL } from 'url'
 import { homedir, tmpdir } from 'os'
-import { existsSync, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, realpathSync, cpSync, rmSync, renameSync, createReadStream, linkSync, copyFileSync, mkdtempSync, openSync, readSync, closeSync } from 'fs'
+import { existsSync, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, realpathSync, cpSync, rmSync, renameSync, createReadStream, mkdtempSync, openSync, readSync, closeSync, appendFileSync } from 'fs'
 import { createHash, randomBytes } from 'crypto'
-import { execFile, execFileSync } from 'child_process'
+import { execFile, execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { resolve as resolvePath, sep as pathSep, relative as relativePath } from 'path'
 import { renderThumbnails } from './thumbnails'
+import { resolveThumbFile } from './thumb-key-resolution'
+import { resolveImageRefs } from './image-refs'
+import { isSearchIndexEntryFresh } from './search-index-freshness'
+import { sweepOrphanedThumbCaches } from './thumbnail-cache-gc'
+import { createPreparedTalkCache, preparedTalkGroup } from './prepared-talk-cache'
+import { createSingleFlight } from './single-flight'
+import {
+  BROWSER_THUMBNAIL_LANE,
+  THUMBNAIL_HEAP_WAIT_MAX_MS,
+  heapGuardDecision,
+  thumbnailMediaOptions,
+  waitForHeap
+} from './thumbnail-media-policy'
+import { createAppendLog } from './main-log'
 import {
   contentHashForPrerender,
   loadPrerenderLedger,
@@ -40,12 +92,19 @@ import {
   shouldPrerenderTalk
 } from './prerender-ledger'
 import { createVaultListHandler } from './vault-list-handler.mjs'
+import { createBackupSweep } from './backup-sweep.mjs'
+import {
+  loadScope, recordAppEdit, recordAppOpen, recordBackup, setEnrolled, enrolledSlugs,
+  appEditedTalks, expireStale, enrolmentDecision, applyEnrolmentChoice, talksNeedingLaunchBackup,
+  AUTO_ENROL_LIMIT, SAVE_DEBOUNCE_MS, type BackupScopeState
+} from './backup-scope.mjs'
 import {
   createSlidePreviewStore,
   markSlidePreviewHtml,
   slidePreviewIdFromUrl,
   slidePreviewUrl,
-  thumbnailDocumentCacheKey
+  selectedThumbnailSlide,
+  thumbnailSlides
 } from '../shared/slide-preview'
 import { readFile as readFileAsync, readdir as readdirAsync } from 'fs/promises'
 import {
@@ -54,6 +113,8 @@ import {
   registerRecordingContext,
   unregisterRecordingContext,
   shouldOfferRunSave,
+  recordingAudioArmed,
+  recordingRunReference,
   sendRecordingCloseOffer,
   recordingAudioPath
 } from './recording'
@@ -63,9 +124,25 @@ import {
   DEFAULT_TRANSCRIPTION_SCRIPT,
   registerTranscriptionIpc
 } from './transcription'
-import { registeredKeyNames, openVocabularyFrontmatterKeys } from '../shared/metadata-registry'
-import { editFrontmatterText } from '../shared/frontmatter-editor'
+import { registerTalkTextIpc } from './talkTextIpc'
+import { registeredKeyNames, openVocabularyFrontmatterKeys, METADATA_REGISTRY } from '../shared/metadata-registry'
+import {
+  applyMetadataDefaults,
+  normaliseMetadataDefaults,
+  type MetadataDefaults
+} from '../shared/metadata-surfaces'
+import { editFrontmatterText, parseFrontmatterPairs } from '../shared/frontmatter-editor'
 import { commandElectronAccelerator, menuCommands } from '../shared/command-registry'
+import { actionBarVisibleFrom } from '../shared/action-bar-settings'
+import {
+  LAYOUT_DOCTOR_VOCABULARY,
+  scanOutlineTriggers,
+  unresolvedOutboundFailure,
+  unresolvedTriggerBlock,
+  type LayoutDoctorFinding
+} from '../shared/layout-doctor'
+import { DEFAULT_IMPORTER_SETTINGS, type ImporterSettings } from '../shared/importer'
+import { registerImporterIpc } from './importer/ipc'
 import { vocabularyFromTagLists } from '../shared/tags'
 import {
   createPathwayInManifest,
@@ -101,6 +178,13 @@ import {
   buildRedirects,
   stampHandoutUrl
 } from './publishing-logic'
+import { isTerminalLiveStatus, type LiveStatus } from './live-presenter-client'
+import { createLiveSessionManager } from './live-session-manager'
+import { createLiveSessionStore, type SessionRecoveryRecord } from './live-session-store'
+import { flushLiveSessionHistory } from './live-session-history'
+import { LIVE_WORKER_BUILD, parseRecoveredVoteRecord, supportsCurrentLiveWorker } from '../../worker/recovery-protocol'
+import { resolveLiveWorkerCloudflareToken } from './live-worker-cloudflare-token'
+import { parsePresenterMessage, parsePresenterServerMessage, type PollStateMessage } from '../../worker/protocol'
 
 const slidePreviewStore = createSlidePreviewStore(8)
 
@@ -117,6 +201,8 @@ type Config = {
   cfAccountId?: string
   cfPagesProject?: string
   publishBaseUrl?: string // optional custom domain, e.g. https://handouts.example.com
+  liveWorkerBaseUrl?: string // deployed Worker origin; empty means auto-deploy or local wrangler dev
+  liveWorkerVersion?: string // LIVE_WORKER_VERSION last deployed to liveWorkerBaseUrl; mismatch → re-deploy
   publishUseShortIds?: boolean // <base>/<id> links instead of <base>/<slug>/
   publishSiteDir?: string // advanced override; default {userData}/cloudflare-pages-site
   publishProdBranch?: string // advanced override; default 'main'
@@ -144,6 +230,20 @@ type Config = {
   transcriptionPython?: string
   transcriptionScript?: string
   transcriptionFfmpeg?: string
+  importerSettings?: ImporterSettings
+  // Presenter identity and deck defaults (Ticket 9b — Settings). One map of metadata-registry key
+  // → the value to pre-fill into NEW talks, so the author line, affiliation, licence and house
+  // style are not retyped per talk. Only registry keys marked `defaultable` are ever stored, and
+  // a blank default is deleted rather than kept as an empty string. Applying a default NEVER
+  // overwrites an authored value except on an explicit click in Deck settings.
+  metadataDefaults?: MetadataDefaults
+  // Action bar (ADR-0025): one app-wide visibility flag, OFF until switched on in Settings, plus
+  // the bar's ordered button list (command ids with '|' separator tokens). Only the default
+  // populates the list today — the configure sheet is a later parcel. Both are read tolerantly on
+  // the renderer side (src/shared/action-bar-settings.ts); a malformed list falls back to the
+  // default rather than breaking the bar.
+  actionBarVisible?: boolean
+  actionBarItems?: string[]
 }
 function configPath() {
   return join(app.getPath('userData'), 'config.json')
@@ -159,6 +259,18 @@ function writeConfig(patch: Partial<Config>) {
 function getConfig<K extends keyof Config>(key: K, fallback: Config[K]): Config[K] {
   return readConfig()[key] ?? fallback
 }
+
+registerImporterIpc({
+  ipcMain,
+  dialog,
+  shell,
+  platform: process.platform,
+  getVaultRoot: () => getConfig('vaultRoot', undefined) ?? null,
+  getSettings: () => getConfig('importerSettings', DEFAULT_IMPORTER_SETTINGS) ?? DEFAULT_IMPORTER_SETTINGS,
+  setSettings: (settings) => writeConfig({ importerSettings: settings }),
+  resourcesDir: app.isPackaged ? join(process.resourcesPath, 'agent-import') : join(process.cwd(), 'resources', 'agent-import'),
+  onVaultChanged: () => invalidateTalkCache()
+})
 // Window drags fire resize/move continuously, and each writeConfig is a synchronous
 // read+rewrite of config.json on the main process — jank for the whole drag. Coalesce to a
 // single write after the drag settles. Callers must guard against a destroyed window.
@@ -201,22 +313,108 @@ ipcMain.handle('publish:get-config', () => ({
   accountId: getConfig('cfAccountId', undefined) ?? '',
   project: getConfig('cfPagesProject', undefined) ?? '',
   baseUrl: getConfig('publishBaseUrl', undefined) ?? '',
+  workerBaseUrl: getConfig('liveWorkerBaseUrl', undefined) ?? '',
   useShortIds: getConfig('publishUseShortIds', false) ?? false,
   hasToken: tokenExists()
 }))
 
 ipcMain.handle(
   'publish:set-config',
-  (_event, cfg: { accountId?: string; project?: string; baseUrl?: string; useShortIds?: boolean }) => {
+  (_event, cfg: { accountId?: string; project?: string; baseUrl?: string; workerBaseUrl?: string; useShortIds?: boolean }) => {
     writeConfig({
       cfAccountId: (cfg.accountId || '').trim() || undefined,
       cfPagesProject: (cfg.project || '').trim() || undefined,
       publishBaseUrl: (cfg.baseUrl || '').trim() || undefined,
+      liveWorkerBaseUrl: (cfg.workerBaseUrl || '').trim().replace(/\/+$/, '') || undefined,
       publishUseShortIds: !!cfg.useShortIds
     })
     return { success: true }
   }
 )
+
+function attachLiveWindow(wcId: number) {
+  const context = livePresenterContexts.get(wcId)
+  if (context) liveSessions?.attach(wcId, context.talkSlug, getConfig('vaultRoot', null))
+  liveSessions?.bindRun(wcId, recordingRunReference(wcId))
+  return liveSessions?.record(wcId) ?? null
+}
+
+ipcMain.handle('live:go', async (event) => {
+  const wcId = event.sender.id
+  const context = livePresenterContexts.get(wcId)
+  if (!context) return { success: false, error: 'Live sessions are available in the presenter window only.' }
+  try {
+    if (!liveSessions || !liveRecoveryStore) throw new Error('Secure live session recovery is unavailable. Restart TalkWeaver to retry.')
+    liveRecoveryStore.check()
+    const existing = attachLiveWindow(wcId)
+    if (existing && !isTerminalLiveStatus(existing.status)) return { success: true, ...liveSessions.snapshot(wcId) }
+    if (liveSessions.inUse(context.talkSlug, getConfig('vaultRoot', null), wcId)) throw new Error('This talk is already live in another presenter window. Close that presentation and keep it live before reopening it here.')
+    if (!context.shortUrl) throw new Error('Publish or export this handout before going live.')
+    const endpoint = await ensureLiveWorker()
+    const capabilityResponse = await fetch(`${endpoint.baseUrl}/capabilities`, { signal: AbortSignal.timeout(10_000) })
+    const capabilities = capabilityResponse.ok ? await capabilityResponse.json() as { protocol?: number; build?: string } : null
+    if (!supportsCurrentLiveWorker(capabilities)) throw new Error('The live service needs the current poll response limits update before you can go live.')
+    const joinUrl = await ensureLiveJoinUrl(context)
+    const compilerDir = getCompilerPath()
+    if (!compilerDir) throw new Error('Compiler not found.')
+    const { makeQrSvg } = await import(pathToFileURL(join(compilerDir, 'lib/01-cli-utils.mjs')).href)
+    const qrSvg = String(makeQrSvg(joinUrl) || '')
+    const response = await fetch(`${endpoint.baseUrl}/sessions`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${endpoint.adminSecret}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ talkSlug: context.talkSlug }),
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (!response.ok) throw new Error(await liveHttpError(response, 'Could not create a live session.'))
+    const created = await response.json() as { sessionId: string; presenterToken: string; shortId: string; expiresAt: number }
+    if (!created.sessionId || !created.presenterToken || !created.shortId || !Number.isFinite(created.expiresAt)) throw new Error('The live service returned an incomplete session.')
+    const record: SessionRecoveryRecord = {
+      ...created, baseUrl: endpoint.baseUrl, shortUrl: joinUrl, qrSvg,
+      talkSlug: context.talkSlug, vaultRoot: getConfig('vaultRoot', null),
+      status: 'connecting', startedAtMs: Date.now(), endRequested: false,
+      latest: null, pending: [], polls: [], voteRecords: [], cursor: 0,
+    }
+    liveSessions.detach(wcId)
+    liveSessions.create(record, wcId)
+    liveSessions.bindRun(wcId, recordingRunReference(wcId))
+    return { success: true, ...liveSessions.snapshot(wcId) }
+  } catch (cause) {
+    return { success: false, error: cause instanceof Error ? cause.message : String(cause) }
+  }
+})
+
+ipcMain.handle('live:end', async (event) => {
+  try {
+    attachLiveWindow(event.sender.id)
+    return await liveSessions?.end(event.sender.id) ?? { success: true, status: 'ended' }
+  } catch (cause) {
+    return { success: false, error: cause instanceof Error ? cause.message : String(cause) }
+  }
+})
+ipcMain.handle('live:snapshot', (event) => { attachLiveWindow(event.sender.id); return liveSessions?.snapshot(event.sender.id) ?? null })
+ipcMain.handle('live:status', (event): LiveStatus => attachLiveWindow(event.sender.id)?.status ?? 'ended')
+ipcMain.on('live:publish-slide', (event, state: { slideId?: string; reveal?: number; focus?: unknown }) => {
+  if (!state || typeof state.slideId !== 'string' || !Number.isInteger(state.reveal) || Number(state.reveal) < 0) return
+  const focus = state.focus == null ? null : state.focus as { kind: 'reveal' | 'focus'; step: number }
+  if (focus && ((focus.kind !== 'reveal' && focus.kind !== 'focus') || !Number.isInteger(focus.step) || focus.step < 0)) return
+  try {
+    attachLiveWindow(event.sender.id)
+    liveSessions?.publish(event.sender.id, { slideId: state.slideId, reveal: Number(state.reveal), focus })
+  } catch { event.sender.send('live:status', 'paused-reconnecting') }
+})
+function queueLivePoll(wcId: number, value: unknown) {
+  try {
+    attachLiveWindow(wcId)
+    const message = parsePresenterMessage(JSON.stringify(value))
+    if (!message || message.type === 'slide.publish') return { success: false, error: 'Invalid poll control.' }
+    if (message.type === 'poll.open' && !message.poll.slideId) message.poll.slideId = liveSessions?.record(wcId)?.latest?.slideId
+    return liveSessions?.poll(wcId, message) ?? { success: false, error: 'No live session.' }
+  } catch (cause) { return { success: false, error: cause instanceof Error ? cause.message : String(cause) } }
+}
+ipcMain.handle('live:poll-open', (event, poll: unknown) => queueLivePoll(event.sender.id, { type: 'poll.open', poll }))
+ipcMain.handle('live:poll-close', (event, pollId: unknown) => queueLivePoll(event.sender.id, { type: 'poll.close', pollId }))
+ipcMain.handle('live:poll-reveal', (event, pollId: unknown) => queueLivePoll(event.sender.id, { type: 'poll.reveal', pollId }))
+ipcMain.handle('live:poll-hide', (event, pollId: unknown, responseId: unknown, hidden: unknown) => queueLivePoll(event.sender.id, { type: 'poll.hide', pollId, responseId, hidden }))
 
 ipcMain.handle('publish:set-token', (_event, token: string) => {
   if (!safeStorage.isEncryptionAvailable()) {
@@ -353,6 +551,7 @@ function createWindow(): BrowserWindow {
 
   const win = new BrowserWindow({
     ...bounds,
+    ...(E2E ? { show: false } : {}),
     minWidth: 800,
     minHeight: 600,
     titleBarStyle: 'hiddenInset',
@@ -360,7 +559,8 @@ function createWindow(): BrowserWindow {
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      ...(E2E ? { backgroundThrottling: false } : {})
     }
   })
 
@@ -434,7 +634,17 @@ function installApplicationMenu(): void {
   }
   const template: MenuItemConstructorOptions[] = [
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
-    { role: 'fileMenu' },
+    // File menu: the OS-standard role PLUS a discoverable "New Window" (⌘N). New Window is driven
+    // from MAIN so it opens a window regardless of which surface has focus, and is prepended so it
+    // reads first. Working on two presentations at once (2026-07-19).
+    {
+      label: 'File',
+      submenu: [
+        { label: 'New Window', accelerator: 'CmdOrCtrl+N', click: () => { createWindow() } },
+        { type: 'separator' },
+        { role: 'close' }
+      ]
+    },
     { role: 'editMenu' },
     ...[...customMenus].map(([label, submenu]) => ({ label, submenu })),
     { role: 'viewMenu' },
@@ -446,6 +656,70 @@ function installApplicationMenu(): void {
 // Live deck windows opened by talk:present, so ⌘R (refresh-in-place) can recompile the right talk
 // and reload the deck at its current slide. wcId → { outlinePath, mode }.
 const presentWindows = new Map<number, { outlinePath: string; mode: string; pathwayId?: string }>()
+const livePresenterContexts = new Map<number, { talkSlug: string; shortUrl: string | null }>()
+let liveSessions: ReturnType<typeof createLiveSessionManager> | null = null
+let liveRecoveryStore: ReturnType<typeof createLiveSessionStore> | null = null
+
+async function probeLiveSession(record: SessionRecoveryRecord): Promise<LiveStatus | null> {
+  if (record.expiresAt <= Date.now()) return 'expired'
+  const response = await fetch(`${record.baseUrl}/sessions/${encodeURIComponent(record.sessionId)}/status`, {
+    headers: { authorization: `Bearer ${record.presenterToken}` }, signal: AbortSignal.timeout(10_000),
+  })
+  if (response.status === 401 || response.status === 403) return 'authentication-failed'
+  if (response.status === 404) return 'ended'
+  if (!response.ok) return null
+  const result = await response.json() as { protocol?: number; status?: string }
+  if (result.protocol !== 2) return 'incompatible'
+  return result.status === 'ended' || result.status === 'expired' ? result.status : null
+}
+async function closeLiveWorkerSession(record: SessionRecoveryRecord): Promise<'ended' | 'expired'> {
+  if (record.expiresAt <= Date.now()) return 'expired'
+  const response = await fetch(`${record.baseUrl}/sessions/${encodeURIComponent(record.sessionId)}/close`, {
+    method: 'POST', headers: { authorization: `Bearer ${record.presenterToken}` }, signal: AbortSignal.timeout(10_000),
+  })
+  if (!response.ok && response.status !== 404) throw new Error('Could not confirm that the live session has ended.')
+  return 'ended'
+}
+function initialiseLiveSessions() {
+  try {
+    liveRecoveryStore = createLiveSessionStore(join(app.getPath('userData'), 'live-sessions.enc'), safeStorage)
+    liveSessions = createLiveSessionManager({
+      load: () => liveRecoveryStore!.load(), save: (records) => liveRecoveryStore!.save(records),
+      endRemote: closeLiveWorkerSession, probe: probeLiveSession,
+      recoverFinal: async (record) => {
+        let cursor = record.cursor
+        const voteRecords = [...record.voteRecords]
+        while (true) {
+          const response = await fetch(`${record.baseUrl}/sessions/${encodeURIComponent(record.sessionId)}/recovery?afterSequence=${cursor}`, {
+            headers: { authorization: `Bearer ${record.presenterToken}` }, signal: AbortSignal.timeout(10_000),
+          })
+          if (!response.ok) throw new Error('Final answers could not be recovered yet.')
+          const page = await response.json() as { polls: unknown[]; voteRecords: unknown[]; moreRecords: boolean }
+          if (!Array.isArray(page.polls) || !Array.isArray(page.voteRecords)) throw new Error('Invalid final history.')
+          const polls = page.polls.map((poll) => parsePresenterServerMessage(JSON.stringify(poll)))
+          if (polls.some((poll) => poll?.type !== 'poll.state')) throw new Error('Invalid final polls.')
+          for (const value of page.voteRecords) {
+            const vote = parseRecoveredVoteRecord(value)
+            if (!vote || vote.sequence !== cursor + 1) throw new Error('Incomplete final answer history.')
+            if (!voteRecords.some((item) => item.sequence === vote.sequence)) voteRecords.push(vote)
+            cursor = vote.sequence
+          }
+          if (!page.moreRecords) return { polls: polls as PollStateMessage[], voteRecords, cursor }
+          if (!page.voteRecords.length) throw new Error('Final history cursor did not advance.')
+        }
+      },
+      notify: (id, channel, value) => {
+        const win = BrowserWindow.getAllWindows().find((item) => item.webContents.id === id)
+        if (win && !win.isDestroyed()) win.webContents.send(channel, value)
+      },
+      flushHistory: flushLiveSessionHistory,
+      diagnostic: (event) => console.info('[live-recovery]', JSON.stringify(event)),
+    })
+    liveSessions.restore()
+    powerMonitor.on('resume', () => liveSessions?.reconnect())
+    powerMonitor.on('unlock-screen', () => liveSessions?.reconnect())
+  } catch { console.error('[live-recovery] Secure recovery store unavailable; live session creation is disabled.') }
+}
 
 // Bumped on every deck reload and appended as a ?_r= cache-buster: reloading to the exact same
 // file:// URL + #hash is a same-document no-op in Chromium (the recompiled file never re-reads), so a
@@ -479,14 +753,15 @@ async function refreshDeckFromEditor(win: BrowserWindow): Promise<void> {
   editor.webContents.send('present:refresh', { outlinePath: info.outlinePath, slideId: state.slideId, deckWcId: win.webContents.id })
 }
 
-type ToolsView = 'studio' | 'history' | 'pathways'
+type ToolsView = 'studio' | 'history' | 'pathways' | 'talktext' | 'importer'
 type PathwayWindowContext = { outlinePath: string; talkSlug: string; talkTitle: string }
 let toolsWindow: BrowserWindow | null = null
+let talkTextIpcController: ReturnType<typeof registerTalkTextIpc> | null = null
 let pathwayWindow: BrowserWindow | null = null
 let pathwayWindowContext: PathwayWindowContext | null = null
 
 function isToolsView(view: unknown): view is Exclude<ToolsView, 'pathways'> {
-  return view === 'studio' || view === 'history'
+  return view === 'studio' || view === 'history' || view === 'talktext' || view === 'importer'
 }
 
 function loadRenderer(win: BrowserWindow, view?: ToolsView): void {
@@ -514,6 +789,7 @@ function createToolsWindow(view: ToolsView, sessionId?: string): BrowserWindow {
   const bounds = getConfig('toolsWindowBounds', { width: 1400, height: 900 })
   const win = new BrowserWindow({
     ...bounds,
+    ...(E2E ? { show: false } : {}),
     minWidth: 1000,
     minHeight: 680,
     title: 'TalkWeaver Tools',
@@ -522,7 +798,8 @@ function createToolsWindow(view: ToolsView, sessionId?: string): BrowserWindow {
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      ...(E2E ? { backgroundThrottling: false } : {})
     }
   })
 
@@ -532,6 +809,7 @@ function createToolsWindow(view: ToolsView, sessionId?: string): BrowserWindow {
   win.on('resize', persistBounds)
   win.on('move', persistBounds)
   win.on('closed', () => {
+    talkTextIpcController?.releaseAllWatchers()
     if (toolsWindow === win) toolsWindow = null
   })
 
@@ -559,6 +837,7 @@ function openPathwayWindow(context: PathwayWindowContext): void {
   const existing = pathwayWindow && !pathwayWindow.isDestroyed() ? pathwayWindow : null
   const win = existing ?? new BrowserWindow({
     ...getConfig('pathwayWindowBounds', { width: 1240, height: 820 }),
+    ...(E2E ? { show: false } : {}),
     minWidth: 960,
     minHeight: 620,
     title: 'TalkWeaver Pathways',
@@ -567,7 +846,8 @@ function openPathwayWindow(context: PathwayWindowContext): void {
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      ...(E2E ? { backgroundThrottling: false } : {})
     }
   })
   if (!existing) {
@@ -687,95 +967,211 @@ ipcMain.handle('settings:clear-archive', () => {
 // timer. The folder lives inside OneDrive/Dropbox, whose own client does the cloud sync — so this
 // needs no logins or APIs. Files are named `<slug>-backup.html` so they can't be mistaken for
 // originals, and only changed Talks are re-written (so the sync client isn't churned).
-type BackupRun = { at: number; ok: boolean; exported: number; skipped: number; failed: number; folder?: string; error?: string }
+type BackupSkip = { slug: string; reason: string }
+type BackupRun = {
+  at: number
+  ok: boolean
+  exported: number
+  skipped: number
+  failed: number
+  // Added by Ticket 11: which talks did NOT get a copy, and why. The counts alone could not say
+  // whether a run that reported "3 saved" had quietly refused a fourth.
+  skippedTalks: BackupSkip[]
+  folder?: string
+  error?: string
+}
 let lastBackup: BackupRun | null = null
-let backingUp = false
-let backupTimer: ReturnType<typeof setInterval> | null = null
+let backupSweep: ReturnType<typeof createBackupSweep> | null = null
+let enrolmentAskOpen = false
+const backupDebounce = new Map<string, ReturnType<typeof setTimeout>>()
 
 function backupStateFile(): string { return join(app.getPath('userData'), 'backup-state.json') }
-function loadBackupState(): Record<string, string> {
-  try { return JSON.parse(readFileSync(backupStateFile(), 'utf8')) } catch { return {} }
+function loadBackupScope(): BackupScopeState {
+  try { return loadScope(JSON.parse(readFileSync(backupStateFile(), 'utf8'))) } catch { return loadScope(null) }
 }
-function saveBackupState(state: Record<string, string>): void {
+function saveBackupScope(state: BackupScopeState): void {
   try { writeFileSync(backupStateFile(), JSON.stringify(state), 'utf8') } catch { /* ignore */ }
 }
-// A change signature for a Talk: the outline bytes + the newest mtime among its LOCAL assets/ files.
-// Pool assets (img-/vid-) are content-addressed (immutable), so they need no tracking.
-function talkBackupSignature(outlinePath: string): string {
-  let sig: string
-  try { sig = createHash('sha256').update(readFileSync(outlinePath)).digest('hex') } catch { return '' }
+function backupSlugFor(outlinePath: string): string {
+  return basename(outlinePath).replace('-outline.md', '')
+}
+// The size the backup export would have to inline. Measured from the LOCAL assets folder, which is
+// where the 208MB deck kept its thirteen videos.
+function talkAssetsBytes(outlinePath: string): number {
   try {
     const assetsDir = join(dirname(outlinePath), 'assets')
-    let maxM = 0
-    for (const f of readdirSync(assetsDir)) { try { maxM = Math.max(maxM, statSync(join(assetsDir, f)).mtimeMs) } catch { /* skip */ } }
-    sig += ':' + Math.round(maxM)
-  } catch { /* no local assets dir */ }
-  return sig
+    let total = 0
+    for (const f of readdirSync(assetsDir)) { try { total += statSync(join(assetsDir, f)).size } catch { /* skip */ } }
+    return total
+  } catch { return 0 }
 }
-// Build a Talk's full self-contained HTML from its on-disk outline (same pipeline as present/build).
+// Build a Talk's full self-contained HTML from its on-disk outline (same pipeline as present/build,
+// but under the backup media budget — see BACKUP_EXPORT_MEDIA_OPTIONS).
 async function buildTalkFullHtml(
   outlinePath: string,
-  prepareSource: (...a: unknown[]) => Promise<{ [k: string]: unknown }>
+  prepareSource: (...a: unknown[]) => Promise<{ [k: string]: unknown }>,
+  mediaOptions: Record<string, unknown>
 ): Promise<string> {
   const stat = statSync(outlinePath)
-  const slug = basename(outlinePath).replace('-outline.md', '')
+  const slug = backupSlugFor(outlinePath)
   const content = readFileSync(outlinePath, 'utf8')
   const vaultRoot = getConfig('vaultRoot', undefined)
   const resolved = vaultRoot ? resolveImageRefs(content, vaultRoot) : content
-  const model = await prepareSource(outlinePath, resolved, slug, stat, timerSettings())
+  const model = await prepareSource(outlinePath, resolved, slug, stat, timerSettings(), mediaOptions)
   return String(model.fullHtml ?? '')
 }
-// One sweep: export every changed Talk to <backupFolder>/<slug>-backup.html. `force` re-exports all.
-async function runBackupSweep(force = false): Promise<BackupRun> {
-  if (backingUp) return lastBackup ?? { at: Date.now(), ok: false, exported: 0, skipped: 0, failed: 0, error: 'busy' }
+
+// Export exactly the talks handed in — never a vault scan (ADR-0024). The caller has already
+// decided who is enrolled; this only compiles, writes and records.
+async function runBackupFor(talks: Array<{ slug: string; outlinePath: string }>): Promise<BackupRun> {
   const folder = getConfig('backupFolder', undefined)
-  const vaultRoot = getConfig('vaultRoot', undefined)
   const compilerDir = getCompilerPath()
-  if (!folder) return (lastBackup = { at: Date.now(), ok: false, exported: 0, skipped: 0, failed: 0, error: 'No backup folder set' })
-  if (!vaultRoot || !compilerDir) return (lastBackup = { at: Date.now(), ok: false, exported: 0, skipped: 0, failed: 0, error: 'No vault/compiler' })
-  backingUp = true
-  let exported = 0, skipped = 0, failed = 0
-  try {
-    if (!existsSync(folder)) mkdirSync(folder, { recursive: true })
-    const state = loadBackupState()
-    const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
-    for (const talk of findTalks(vaultRoot)) {
-      try {
-        const sig = talkBackupSignature(talk.outlinePath)
-        const dest = join(folder, talk.slug + '-backup.html')
-        if (!force && sig && state[talk.slug] === sig && existsSync(dest)) { skipped++; continue }
-        const html = await buildTalkFullHtml(talk.outlinePath, prepareSource as never)
-        if (!html) { failed++; continue }
-        writeFileSync(dest, html, 'utf8')
-        state[talk.slug] = sig
-        exported++
-      } catch (e) { failed++; console.error('[backup]', talk.slug, e) }
-    }
-    saveBackupState(state)
-    lastBackup = { at: Date.now(), ok: failed === 0, exported, skipped, failed, folder }
-  } catch (e) {
-    lastBackup = { at: Date.now(), ok: false, exported, skipped, failed, error: String(e), folder }
-  } finally {
-    backingUp = false
-  }
+  const empty = { at: Date.now(), ok: false, exported: 0, skipped: 0, failed: 0, skippedTalks: [] as BackupSkip[] }
+  if (!folder) return (lastBackup = { ...empty, error: 'No backup folder set' })
+  if (!compilerDir) return (lastBackup = { ...empty, error: 'No compiler' })
+  if (!talks.length) return (lastBackup = { ...empty, ok: true, folder })
+  const { prepareSource, BACKUP_EXPORT_MEDIA_OPTIONS } = await import(
+    pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href
+  )
+  const state = loadBackupScope()
+  backupSweep = createBackupSweep({
+    assetBytesOf: talkAssetsBytes,
+    buildHtml: (outlinePath: string) =>
+      buildTalkFullHtml(outlinePath, prepareSource as never, BACKUP_EXPORT_MEDIA_OPTIONS),
+    writeFile: (dest: string, html: string) => writeFileSync(dest, html, 'utf8'),
+    destFor: (folderPath: string, slug: string) => join(folderPath, slug + '-backup.html'),
+    ensureDir: (folderPath: string) => { if (!existsSync(folderPath)) mkdirSync(folderPath, { recursive: true }) },
+    onExported: (slug: string) => { recordBackup(state, slug, Date.now()) },
+    log: (line: string) => console.error(line)
+  })
+  lastBackup = await backupSweep.run({ folder, talks })
+  saveBackupScope(state)
   try { BrowserWindow.getAllWindows()[0]?.webContents.send('backup:status', lastBackup) } catch { /* ignore */ }
   return lastBackup
 }
-// (Re)start the timer to match current settings. Clears any existing timer first.
-function startBackupScheduler(): void {
-  if (backupTimer) { clearInterval(backupTimer); backupTimer = null }
+
+// A save made IN THE APP — the only event that can enrol a talk (ADR-0024 §1). An outline whose
+// mtime moved because of a migration, an importer, an agent or OneDrive never reaches here.
+function noteAppEdit(outlinePath: string): void {
   if (!getConfig('backupEnabled', false)) return
-  const min = Math.max(5, Math.round(Number(getConfig('backupIntervalMin', 15)) || 15))
-  backupTimer = setInterval(() => { runBackupSweep(false).catch(() => {}) }, min * 60 * 1000)
+  const slug = backupSlugFor(outlinePath)
+  const state = loadBackupScope()
+  recordAppEdit(state, { slug, title: slug, outlinePath, atMs: Date.now() })
+  expireStale(state, Date.now())
+  const decision = enrolmentDecision(appEditedTalks(state), enrolledSlugs(state))
+  if (decision.kind === 'auto') {
+    for (const s of decision.enrol) setEnrolled(state, s, true, Date.now())
+    saveBackupScope(state)
+  } else {
+    saveBackupScope(state)
+    void askEnrolment(decision)
+  }
+  if (loadBackupScope().talks[slug]?.enrolled) scheduleBackup(slug, outlinePath)
 }
-function backupSettings(): { enabled: boolean; folder: string | null; intervalMin: number; lastRun: BackupRun | null } {
+
+// Opening a talk keeps an enrolled talk alive against the 14-day expiry without enrolling it.
+function noteAppOpen(outlinePath: string): void {
+  if (!getConfig('backupEnabled', false)) return
+  const state = loadBackupScope()
+  recordAppOpen(state, { slug: backupSlugFor(outlinePath), title: backupSlugFor(outlinePath), outlinePath, atMs: Date.now() })
+  saveBackupScope(state)
+}
+
+// Backup on save, debounced: he saves constantly, and a backup is a full compile.
+function scheduleBackup(slug: string, outlinePath: string): void {
+  const pending = backupDebounce.get(slug)
+  if (pending) clearTimeout(pending)
+  backupDebounce.set(slug, setTimeout(() => {
+    backupDebounce.delete(slug)
+    runBackupFor([{ slug, outlinePath }]).catch(() => {})
+  }, SAVE_DEBOUNCE_MS))
+}
+
+// The third-talk question. Native message box — the same surface the app already uses for the
+// outline-migration choice. It carries the candidate list and pre-selects the two most recently
+// app-edited; per-talk ticking lives in Settings, which is where the set is managed.
+async function askEnrolment(decision: { candidates: Array<{ slug: string; title: string; lastAppEditAt: number }>; defaults: string[] }): Promise<void> {
+  if (enrolmentAskOpen) return
+  enrolmentAskOpen = true
+  try {
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+    const lines = decision.candidates.map((c) => {
+      const mark = decision.defaults.includes(c.slug) ? '✓' : '·'
+      return `${mark} ${c.title} — last edited ${new Date(c.lastAppEditAt).toLocaleString()}`
+    })
+    const opts: Electron.MessageBoxOptions = {
+      type: 'question',
+      buttons: ['Back up these', 'Not now'],
+      defaultId: 0,
+      cancelId: 1,
+      message: 'Back up the talks you are working on?',
+      detail: `TalkWeaver keeps presentable copies of the ${AUTO_ENROL_LIMIT} talks you are working on.\n\n${lines.join('\n')}\n\nThe ticked talks will be backed up. Change the set any time in Settings.`
+    }
+    const { response } = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts)
+    if (response !== 0) return
+    const state = loadBackupScope()
+    applyEnrolmentChoice(state, decision.defaults, Date.now())
+    saveBackupScope(state)
+    const due = talksNeedingLaunchBackup(state)
+    if (due.length) await runBackupFor(due)
+  } catch { /* a failed prompt must never break the save that triggered it */ }
+  finally { enrolmentAskOpen = false }
+}
+
+// One pass at launch over the ENROLLED talks whose in-app edit is newer than their last backup —
+// so a crash or a quit before the debounce elapsed still lands a copy. No vault scan, no timer.
+async function runLaunchBackup(): Promise<BackupRun | null> {
+  if (!getConfig('backupEnabled', false) || !getConfig('backupFolder', undefined)) return null
+  const state = loadBackupScope()
+  const dropped = expireStale(state, Date.now())
+  if (dropped.length) saveBackupScope(state)
+  const due = talksNeedingLaunchBackup(state)
+  if (!due.length) return null
+  return runBackupFor(due)
+}
+
+function backupSettings(): {
+  enabled: boolean
+  folder: string | null
+  intervalMin: number
+  lastRun: BackupRun | null
+  talks: Array<{ slug: string; title: string; enrolled: boolean; lastAppEditAt: number; lastBackupAt: number }>
+} {
+  const state = loadBackupScope()
   return {
     enabled: getConfig('backupEnabled', false) ?? false,
     folder: getConfig('backupFolder', undefined) ?? null,
     intervalMin: getConfig('backupIntervalMin', 15) ?? 15,
-    lastRun: lastBackup
+    lastRun: lastBackup,
+    talks: Object.entries(state.talks)
+      .filter(([, r]) => r.enrolled || r.appEditedAt > 0)
+      .sort((a, b) => b[1].appEditedAt - a[1].appEditedAt)
+      .map(([slug, r]) => ({
+        slug, title: r.title, enrolled: r.enrolled, lastAppEditAt: r.appEditedAt, lastBackupAt: r.lastBackupAt
+      }))
   }
 }
+
+// ── Action bar (ADR-0025): one app-wide visibility setting + the stored button list ────────
+// The renderer parses `items` tolerantly (missing/malformed → default), so the main process hands
+// back the raw stored value untouched. A change is broadcast to EVERY window, so a toggle in one
+// window's Settings redraws the bar in the others without a restart.
+function actionBarState(): { visible: boolean; items: unknown } {
+  const config = readConfig()
+  return { visible: actionBarVisibleFrom(config.actionBarVisible), items: config.actionBarItems ?? null }
+}
+function broadcastActionBar(): void {
+  const state = actionBarState()
+  for (const win of BrowserWindow.getAllWindows()) {
+    try { if (!win.isDestroyed()) win.webContents.send('action-bar:changed', state) } catch { /* window closing */ }
+  }
+}
+ipcMain.handle('settings:get-action-bar', () => actionBarState())
+ipcMain.handle('settings:set-action-bar-visible', (_event, visible: boolean) => {
+  writeConfig({ actionBarVisible: visible === true })
+  broadcastActionBar()
+  return actionBarState().visible
+})
 
 ipcMain.handle('settings:get-backup', () => backupSettings())
 
@@ -784,10 +1180,9 @@ ipcMain.handle('settings:set-backup', (_event, patch: { enabled?: boolean; inter
   if (typeof patch.enabled === 'boolean') next.backupEnabled = patch.enabled
   if (Number.isFinite(patch.intervalMin)) next.backupIntervalMin = Math.max(5, Math.round(patch.intervalMin as number))
   writeConfig(next)
-  startBackupScheduler()
-  // Turning it on (or already on) does a sweep shortly so the user sees files appear.
+  // Turning it on backs up whatever is already enrolled and stale — it never scans the vault.
   if (getConfig('backupEnabled', false) && getConfig('backupFolder', undefined)) {
-    setTimeout(() => { runBackupSweep(false).catch(() => {}) }, 400)
+    setTimeout(() => { runLaunchBackup().catch(() => {}) }, 400)
   }
   return backupSettings()
 })
@@ -800,8 +1195,7 @@ ipcMain.handle('settings:choose-backup-folder', async () => {
   })
   if (result.canceled || !result.filePaths.length) return backupSettings()
   writeConfig({ backupFolder: result.filePaths[0] })
-  startBackupScheduler()
-  if (getConfig('backupEnabled', false)) setTimeout(() => { runBackupSweep(false).catch(() => {}) }, 400)
+  if (getConfig('backupEnabled', false)) setTimeout(() => { runLaunchBackup().catch(() => {}) }, 400)
   return backupSettings()
 })
 
@@ -809,7 +1203,6 @@ ipcMain.handle('settings:clear-backup-folder', () => {
   const c = readConfig()
   delete c.backupFolder
   writeFileSync(configPath(), JSON.stringify(c, null, 2), 'utf8')
-  startBackupScheduler()
   return backupSettings()
 })
 
@@ -830,6 +1223,20 @@ ipcMain.handle('settings:set-timer', (_event, patch: { warnAtMinutes?: number; u
   if (Number.isFinite(patch.urgentAtMinutes)) next.timerUrgentAtMinutes = Math.max(1, Math.round(patch.urgentAtMinutes as number))
   writeConfig(next)
   return timerSettings()
+})
+
+// ── Presenter identity and deck defaults (Ticket 9b) ─────────────────────────
+// The SAME config.json the rest of Settings uses. The renderer renders the section from the
+// metadata registry; this end only stores and sanitises.
+function metadataDefaults(): MetadataDefaults {
+  return normaliseMetadataDefaults(METADATA_REGISTRY, getConfig('metadataDefaults', {}) ?? {})
+}
+
+ipcMain.handle('settings:get-metadata-defaults', () => metadataDefaults())
+
+ipcMain.handle('settings:set-metadata-defaults', (_event, patch: MetadataDefaults) => {
+  writeConfig({ metadataDefaults: normaliseMetadataDefaults(METADATA_REGISTRY, { ...metadataDefaults(), ...(patch ?? {}) }) })
+  return metadataDefaults()
 })
 
 // ── Settings changelog (Gate-5) ──────────────────────────────────────────────
@@ -858,7 +1265,19 @@ ipcMain.handle('settings:changelog-log', (_event, entry: { key: string; label: s
 })
 
 // Manual "Back up now" — force-exports every Talk regardless of change signature.
-ipcMain.handle('backup:run-now', async () => runBackupSweep(true))
+ipcMain.handle('backup:run-now', async () => {
+  const state = loadBackupScope()
+  const talks = enrolledSlugs(state).map((slug) => ({ slug, outlinePath: state.talks[slug].outlinePath }))
+  return runBackupFor(talks.filter((t) => t.outlinePath))
+})
+
+// Settings: tick/untick a talk. Unticking is how a talk leaves the set before the 14 days are up.
+ipcMain.handle('backup:set-enrolled', (_event, slug: string, enrolled: boolean) => {
+  const state = loadBackupScope()
+  setEnrolled(state, slug, enrolled, Date.now())
+  saveBackupScope(state)
+  return backupSettings()
+})
 
 // ── Talk discovery ─────────────────────────────────────────────────────────
 
@@ -889,6 +1308,7 @@ function invalidateTalkCache(): void {
   // window there would show phantom unregistered keys. Declared below (ADR-0036 section);
   // only ever called at runtime, so the later `let` cache binding is initialised by then.
   invalidateMetadataCaches()
+  invalidateLayoutDoctorCache()
 }
 
 function findTalks(root: string): TalkInfo[] {
@@ -1122,89 +1542,15 @@ function thumbCacheRoot(): string {
       tag = 'base'
     }
   }
-  // v8: bumped so imported talks (relative-path / URL-encoded image refs) re-render their strip
-  // thumbnails from scratch — earlier blank captures for those slides were stale-cached.
-  thumbCacheTag = 'thumb-cache-v8-' + tag
-  seedThumbCacheFromPriorTag(thumbCacheTag)
+  // v9: picture keys now include referenced media bytes and are shared by both compile modes.
+  thumbCacheTag = 'thumb-cache-v9-' + tag
   return thumbCacheTag
 }
 
-// When the compiler changes, thumbCacheRoot()'s hash changes and the cache dir name changes —
-// which would otherwise force a full re-render of EVERY slide's thumbnail (thousands), leaving the
-// slide picker blank until the rebuild finishes. But thumbnails are content-addressed by
-// render_hash (the filename), so a thumbnail from a prior tag is still correct for any slide whose
-// MODEL is unchanged. So, once per session, seed the new tag by hardlinking the most-recent prior
-// tag's PNGs in: unchanged slides reuse their existing thumbnail instantly, and only slides whose
-// render_hash actually changed re-render. (A pure CSS/renderer change that alters pixels WITHOUT
-// changing the model is the one case this can leave a thumbnail visually stale — use the
-// `talk:clear-thumb-cache` escape hatch then.)
-let thumbSeedDone = false
-function seedThumbCacheFromPriorTag(currentTag: string): void {
-  if (thumbSeedDone) return
-  thumbSeedDone = true
-  try {
-    const base = app.getPath('userData')
-    const priors = readdirSync(base)
-      .filter((d) => d.startsWith('thumb-cache-v8-') && d !== currentTag && statSync(join(base, d)).isDirectory())
-      .map((d) => ({ d, m: statSync(join(base, d)).mtimeMs }))
-      .sort((a, b) => b.m - a.m)
-    if (priors.length === 0) return
-    hardlinkPngTree(join(base, priors[0].d), join(base, currentTag))
-  } catch (e) {
-    console.warn('[thumb-seed] skipped:', e)
-  }
-}
-
-// Recursively hardlink every *.png from srcDir into dstDir, never overwriting a file already there
-// (so thumbnails re-rendered this session win). Falls back to a copy if hardlinking fails
-// (e.g. cross-device). Content-addressed filenames make a reused PNG safe to serve.
-function hardlinkPngTree(srcDir: string, dstDir: string): void {
-  if (!existsSync(dstDir)) mkdirSync(dstDir, { recursive: true })
-  for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
-    const s = join(srcDir, entry.name)
-    const d = join(dstDir, entry.name)
-    if (entry.isDirectory()) hardlinkPngTree(s, d)
-    else if (entry.name.endsWith('.png') && !existsSync(d)) {
-      try {
-        linkSync(s, d)
-      } catch {
-        try {
-          copyFileSync(s, d)
-        } catch {
-          /* skip a single unreadable file rather than abort the whole seed */
-        }
-      }
-    }
-  }
-}
-
-// ── Image pre-resolution (ADR-0020) ──────────────────────────────────────────
-// Rewrite markdown image refs that point at a vault asset id (img-XXXXXXX) to the
-// ABSOLUTE on-disk path of the matching file in {vaultRoot}/_assets. The compiler's
-// inlineAndCollectAssets then base64-embeds them into compiled/presented/built output.
-// Refs whose asset file does not exist are left untouched.
-// Also tolerates the legacy double-prefixed id (img-img-XXXXXXX) that an earlier import bug
-// wrote, normalising it to the real asset id so existing outlines still embed correctly.
-// Matches both image (img-) and video (vid-) pool refs. Trailing media tokens ({loop} etc.) sit
-// OUTSIDE the parens, so they survive the replacement untouched and reach the compiler's lexer.
-const IMAGE_REF_RE = /!\[([^\]]*)\]\((img-(?:img-)?[0-9a-f]{7}|vid-[0-9a-f]{7})\)/g
-const ASSET_EXTS = ['webp', 'png', 'jpg', 'jpeg', 'gif']
-const VIDEO_ASSET_EXTS = ['mp4', 'mov', 'm4v', 'webm']
-function resolveImageRefs(content: string, vaultRoot: string): string {
-  if (!vaultRoot) return content
-  const assetsDir = join(vaultRoot, '_assets')
-  return content.replace(IMAGE_REF_RE, (whole, alt: string, rawId: string) => {
-    const id = rawId.replace(/^img-img-/, 'img-')
-    // vid- → the pool video file; the compiler emits <video> off the .mp4 extension and finds the
-    // sibling vid-<id>.jpg poster automatically. img- → the image file as before.
-    const exts = id.startsWith('vid-') ? VIDEO_ASSET_EXTS : ASSET_EXTS
-    for (const ext of exts) {
-      const p = join(assetsDir, id + '.' + ext)
-      if (existsSync(p)) return `![${alt}](${p})`
-    }
-    return whole
-  })
-}
+// A changed compiler starts a new cache namespace. Do not migrate prior namespaces here:
+// this runs on the main thread during deck opening, and long-lived profiles can contain
+// hundreds of thousands of historical PNGs. Render only requested slides in the current
+// namespace; same-version thumbnails are still reused. Keep old caches untouched.
 
 // Blank Layout templates (ADR-0021): the single source lives beside the Reference Deck fixtures
 // in html-presentations (reference/layout-templates.mjs). The picker imports these so ⌘-Enter
@@ -1328,8 +1674,9 @@ ipcMain.handle('layout:preview-thumbnails', async () => {
 })
 
 // Icon vocabulary (ADR-0021 icon picker): the engine's 05-icons.mjs owns the Lucide + SVGL
-// brand sets and renders glyphs deterministically. Cache the imported module so per-keystroke
-// search and per-result svg() don't re-import it. Invalidated when getCompilerPath() changes.
+// brand sets and the Tabler gap-fill tier, and renders glyphs deterministically. Cache the
+// imported module so per-keystroke search and per-result svg() don't re-import it. Invalidated
+// when getCompilerPath() changes.
 type IconsModule = {
   searchIcons: (q: string, n?: number) => Array<{ key: string; source: string }>
   iconSvg: (key: string) => string
@@ -1350,8 +1697,10 @@ ipcMain.handle('icons:search', async (_event, query: string) => {
     const mod = await loadIconsModule()
     if (!mod) return []
     const hits = mod.searchIcons(query ?? '', 40) ?? []
-    // Narrow source to the picker's union; the engine only ever emits 'lucide' | 'svgl' here.
-    return hits.map((h) => ({ key: h.key, source: h.source as 'lucide' | 'svgl' }))
+    // Narrow source to the picker's union; the engine emits 'lucide' | 'svgl' | 'tabler' here —
+    // the picker deliberately searches the WHOLE Tabler collection (an explicit user action),
+    // even though the compiler's auto-match gate only ever reaches its mood-* family.
+    return hits.map((h) => ({ key: h.key, source: h.source as 'lucide' | 'svgl' | 'tabler' }))
   } catch (e) {
     console.error('[icons:search]', e)
     return []
@@ -1372,22 +1721,31 @@ ipcMain.handle('icons:svg', async (_event, key: string) => {
 
 // Prepared-model memo: talk:compile and talk:thumbnails fire back-to-back on the SAME
 // (outlinePath, content) after every edit-pause debounce, and each prepareSource pass walks and
-// inlines the whole deck. The key fully identifies the preparation inputs, so a hit cannot become
-// stale with time. Keep the six most-recently-used path/default/content combinations; edits mint
-// new keys and evict old-content entries while buildPerSlideProjections remains shared and pure.
+// inlines the whole deck. Coalesce simultaneous requests and keep one revision per path/defaults
+// group. Bound retained HTML at 256 MiB (estimated UTF-16 bytes), except one oversized current
+// document retained alone for the follow-up thumbnail request. This is not a total heap limit.
 interface PreparedTalk {
-  at: number
   slug: string
   model: { fullHtml?: unknown; [k: string]: unknown }
   rows: Array<{ [k: string]: unknown }> | null
 }
-const preparedTalkCache = new Map<string, PreparedTalk>()
-const PREPARED_TALK_MAX_ENTRIES = 6
+const preparedTalkCache = createPreparedTalkCache<PreparedTalk>({
+  maxEntries: 6,
+  maxBytes: 256 * 1024 * 1024,
+  sizeOf: (entry) => typeof entry.model.fullHtml === 'string' ? entry.model.fullHtml.length * 2 : 0
+})
+
+// One full-deck preparation in flight at a time. prepareSource base64-inlines a whole deck into a
+// single enormous string; two lanes preparing at once (the editor strip and the Slide Browser's
+// background sweep) put two of them in the heap together. The render QUEUE serialises renders, not
+// preparation — this gate is what makes T11's "one deck in memory" law hold here (2026-09-15 OOM).
+const preparePass = createSingleFlight()
 
 async function prepareTalk(
   outlinePath: string,
   content: string,
-  defaults?: Record<string, unknown>
+  defaults?: Record<string, unknown>,
+  options?: Record<string, unknown>
 ): Promise<PreparedTalk | null> {
   const compilerDir = getCompilerPath()
   if (!compilerDir) return null
@@ -1395,39 +1753,52 @@ async function prepareTalk(
   const slug = basename(outlinePath).replace('-outline.md', '')
   const vaultRoot = getConfig('vaultRoot', undefined)
   const resolved = vaultRoot ? resolveImageRefs(content, vaultRoot) : content
-  const key =
-    outlinePath +
-    ' ' +
-    JSON.stringify(defaults ?? null) +
-    ' ' +
-    createHash('sha256').update(resolved).digest('hex')
-  const hit = preparedTalkCache.get(key)
-  if (hit) {
-    hit.at = Date.now()
-    preparedTalkCache.delete(key)
-    preparedTalkCache.set(key, hit)
-    return hit
+  const group = preparedTalkGroup(outlinePath, defaults, options)
+  const key = group + '\0' + createHash('sha256').update(resolved).digest('hex')
+  return preparedTalkCache.get(key, group, async () => {
+    if (process.env.TW_REC_TEST === '1') {
+      const testGlobal = globalThis as typeof globalThis & { __twPrepareCount?: number }
+      testGlobal.__twPrepareCount = (testGlobal.__twPrepareCount ?? 0) + 1
+    }
+    const { prepareSource } = await import(
+      pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href
+    )
+    const { buildPerSlideProjections } = await import(
+      pathToFileURL(join(compilerDir, 'lib/10-projections.mjs')).href
+    )
+    const model = await preparePass(() => prepareSource(outlinePath, resolved, slug, stat, defaults, options ?? {}))
+    const rows = buildPerSlideProjections(model, slug) ?? null
+    return { slug, model, rows }
+  })
+}
+
+// The background thumbnail lane decides things on its own — defer, skip, evict — and the packaged
+// app has no console to say so in. Everything it does goes to {userData}/tw-thumbnails.log as well
+// as stdout, so the next blank-card report can be read instead of inferred (2026-09-15).
+let thumbnailLogFile: ((message: string) => void) | null = null
+function logThumbnails(message: string): void {
+  try { console.log(`[thumbnails] ${message}`) } catch { /* EPIPE-guarded above */ }
+  try {
+    if (!thumbnailLogFile) {
+      thumbnailLogFile = createAppendLog(join(app.getPath('userData'), 'tw-thumbnails.log'))
+    }
+    thumbnailLogFile(`[thumbnails] ${message}`)
+  } catch { /* logging must never take the app down */ }
+}
+
+/** The compiler's video-free thumbnail media contract, loaded from the live compiler directory. */
+async function browserThumbnailMediaOptions(): Promise<Record<string, unknown> | undefined> {
+  const compilerDir = getCompilerPath()
+  if (!compilerDir) return undefined
+  try {
+    const { THUMBNAIL_MEDIA_OPTIONS } = await import(
+      pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href
+    )
+    return THUMBNAIL_MEDIA_OPTIONS as Record<string, unknown> | undefined
+  } catch (e) {
+    console.error('[thumbnails] could not load the thumbnail media contract', e)
+    return undefined
   }
-  if (process.env.TW_REC_TEST === '1') {
-    const testGlobal = globalThis as typeof globalThis & { __twPrepareCount?: number }
-    testGlobal.__twPrepareCount = (testGlobal.__twPrepareCount ?? 0) + 1
-  }
-  const { prepareSource } = await import(
-    pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href
-  )
-  const { buildPerSlideProjections } = await import(
-    pathToFileURL(join(compilerDir, 'lib/10-projections.mjs')).href
-  )
-  const model = await prepareSource(outlinePath, resolved, slug, stat, defaults)
-  const rows = buildPerSlideProjections(model, slug) ?? null
-  const entry: PreparedTalk = { at: Date.now(), slug, model, rows }
-  preparedTalkCache.delete(key)
-  preparedTalkCache.set(key, entry)
-  for (const cachedKey of preparedTalkCache.keys()) {
-    if (preparedTalkCache.size <= PREPARED_TALK_MAX_ENTRIES) break
-    preparedTalkCache.delete(cachedKey)
-  }
-  return entry
 }
 
 async function pathwaySnapshot(outlinePath: string, content: string) {
@@ -1526,6 +1897,27 @@ ipcMain.handle('talk:compile', async (_event, outlinePath: string, content: stri
     return prepared?.rows ?? null
   } catch (e) {
     console.error('[compile]', e)
+    return null
+  }
+})
+
+ipcMain.handle('talk:selected-thumbnail', async (_event, outlinePath: string, content: string, slideId: string) => {
+  try {
+    const prepared = await prepareTalk(outlinePath, content)
+    if (!prepared) return null
+    const fullHtml = prepared.model.fullHtml
+    if (typeof fullHtml !== 'string' || !prepared.rows) return null
+    const documentId = thumbnailDocumentId(fullHtml)
+    const selected = selectedThumbnailSlide(prepared.rows, String(slideId), documentId)
+    if (!selected) return null
+    const cacheDir = join(app.getPath('userData'), thumbCacheRoot(), prepared.slug)
+    const rendered = await renderThumbnails({ fullHtml, slides: [selected], cacheDir })
+    const renderedPath = rendered[selected.key]
+    return renderedPath
+      ? { slideId: String(slideId), url: `twthumb://${prepared.slug}/${basename(renderedPath, '.png')}` }
+      : null
+  } catch (e) {
+    console.error('[selected-thumbnail]', e)
     return null
   }
 })
@@ -1730,7 +2122,10 @@ ipcMain.handle('talk:explain-slide', async (_event, outlinePath: string, content
 // ── Cross-talk search (cached index, ADR-0019) ───────────────────────────────
 // Recompiling every talk per keystroke is wasteful. Cache compiled projection rows
 // per outline keyed by mtimeMs; reuse unless the file changed since last compile.
-type SearchCacheEntry = { mtimeMs: number; rows: ProjectionRowMain[]; talkTitle: string; meta?: string }
+// `compilerTag` = the compiler namespace (thumbCacheRoot()) the rows' render_hash values were
+// built with; rows from another compiler address thumbnails no build will write (see
+// search-index-freshness.ts). Absent on entries persisted before 2026-09-15 → stale.
+type SearchCacheEntry = { mtimeMs: number; compilerTag?: string; rows: ProjectionRowMain[]; talkTitle: string; meta?: string }
 
 // Lowercased frontmatter keywords (title/subtitle/event/author/license/…) for the search's metadata
 // filter. A single haystack string — the filter is a substring match over it.
@@ -1817,20 +2212,22 @@ async function ensureTalkRows(
   if (!existsSync(talk.outlinePath)) return null
   const stat = statSync(talk.outlinePath)
   const entry = searchCache.get(talk.outlinePath)
-  // Entries built before the tags field existed (rows lack `tags`) are treated as stale so
-  // one warm pass upgrades the whole persisted index — tags:vocabulary reads it live.
-  const rowsCarryTags = !entry || entry.rows.length === 0 || Array.isArray(entry.rows[0].tags)
-  if (entry && entry.mtimeMs === stat.mtimeMs && rowsCarryTags) {
+  const compilerTag = thumbCacheRoot()
+  // Fresh = same outline mtime AND same compiler (render_hash is a compiled-model hash; a new
+  // compiler renames every changed slide's thumbnail) AND rows carry `tags`.
+  if (entry && isSearchIndexEntryFresh(entry, stat.mtimeMs, compilerTag)) {
     // Backfill meta for entries loaded from an older on-disk index (cheap; frontmatter only).
     if (entry.meta === undefined) { try { entry.meta = parseTalkMeta(readFileSync(talk.outlinePath, 'utf8')) } catch { entry.meta = '' } }
     return entry.rows
   }
   const content = readFileSync(talk.outlinePath, 'utf8')
   const resolved = resolveImageRefs(content, vaultRoot)
-  const model = await prepareSource(talk.outlinePath, resolved, talk.slug, stat)
+  // projectionsOnly: search rows are pure TEXT — never inline this talk's media (video/image Buffers)
+  // into the main process. A whole-vault warm/search over a heavy-media vault used to OOM-crash here.
+  const model = await prepareSource(talk.outlinePath, resolved, talk.slug, stat, undefined, { projectionsOnly: true })
   const rows = buildPerSlideProjections(model, talk.slug)
   if (!rows) return null
-  searchCache.set(talk.outlinePath, { mtimeMs: stat.mtimeMs, rows, talkTitle: talk.title, slug: talk.slug, meta: parseTalkMeta(content) })
+  searchCache.set(talk.outlinePath, { mtimeMs: stat.mtimeMs, compilerTag, rows, talkTitle: talk.title, slug: talk.slug, meta: parseTalkMeta(content) })
   persistSearchIndexSoon()
   return rows
 }
@@ -1894,6 +2291,7 @@ async function prerenderAllThumbnails(): Promise<void> {
         const rows = (buildPerSlideProjections(model, talk.slug) ?? []) as Array<{
           content_hash?: string
           render_hash?: string
+          thumbnail_hash?: string
           slide_id?: string
           layout?: string
           triggers?: Record<string, string>
@@ -1903,12 +2301,7 @@ async function prerenderAllThumbnails(): Promise<void> {
         // (render_hash ≠ content_hash) missed the warm cache and re-rendered on first open.
         const fullHtml = model.fullHtml as string
         const documentId = thumbnailDocumentId(fullHtml)
-        const slides = rows
-          .map((r) => {
-            const key = r.render_hash || r.content_hash || r.slide_id || ''
-            return { key, cacheKey: thumbnailDocumentCacheKey(documentId, key), layout: r.triggers?.layout ?? r.layout }
-          })
-          .filter((s) => s.key)
+        const slides = thumbnailSlides(rows, documentId)
         const rendered = slides.length
           ? await renderThumbnails({ fullHtml, slides, cacheDir })
           : (mkdirSync(cacheDir, { recursive: true }), {})
@@ -2035,6 +2428,10 @@ function gatherVaultImages(vaultRoot: string): string[] {
 // Background pass: OCR every vault image not already cached (or changed). Idempotent + cached.
 async function ocrAllVaultImages(): Promise<void> {
   if (ocring) return
+  // Opt-in (default off): OCR of every vault image is the heaviest background pass and only powers
+  // image-text search. On a large imported vault it saturates the machine, so it never runs unless
+  // Dominik turns it on (SCALE policy, 2026-07-20).
+  if (!getConfig('ocrEnabled', false)) return
   const vaultRoot = getConfig('vaultRoot', undefined)
   if (!vaultRoot || !resolveOcrBin()) return
   ocring = true
@@ -2201,6 +2598,7 @@ function outlineHasV2Stamp(text: string): boolean {
 // A modal dialog would hang those runs. TW_MIGRATE_PROMPT=0 is the explicit off-switch.
 function migrationPromptSuppressed(): boolean {
   return (
+    process.env.TW_E2E === '1' ||
     process.env.TW_REC_TEST === '1' ||
     process.env.TW_MIGRATE_PROMPT === '0' ||
     app.commandLine.hasSwitch('user-data-dir')
@@ -2348,6 +2746,8 @@ ipcMain.handle('talk:write-outline', async (_event, outlinePath: string, content
     return false
   }
   notifyPathwaysChanged(outlinePath)
+  // ADR-0024: this is the app-edit event that enrolment is keyed on — a real save, made here.
+  try { noteAppEdit(outlinePath) } catch { /* backup bookkeeping must never break a save */ }
   // Ledger records only on a REAL write (a refused write above returns before here). Records the
   // STAMPED content so newly-minted ids are ledgered in the same save that created them.
   const collisions = await ledgerRecord(outlinePath, toWrite)
@@ -2445,6 +2845,31 @@ function metadataScan(root: string): NonNullable<typeof metadataScanCache> {
   return metadataScanCache
 }
 
+type LayoutDoctorTalk = { talk: string; slug: string; outlinePath: string; findings: LayoutDoctorFinding[] }
+let layoutScanCache: { root: string; at: number; report: LayoutDoctorTalk[] } | null = null
+function invalidateLayoutDoctorCache(): void { layoutScanCache = null }
+function layoutScan(root: string): LayoutDoctorTalk[] {
+  if (layoutScanCache && layoutScanCache.root === root && Date.now() - layoutScanCache.at < TALK_CACHE_TTL_MS) {
+    return layoutScanCache.report
+  }
+  const report: LayoutDoctorTalk[] = []
+  for (const talk of findTalks(root)) {
+    let text = ''
+    try { text = readFileSync(talk.outlinePath, 'utf8') } catch { continue }
+    const findings = scanOutlineTriggers(text, LAYOUT_DOCTOR_VOCABULARY)
+    if (findings.length > 0) report.push({ talk: talk.title, slug: talk.slug, outlinePath: talk.outlinePath, findings })
+  }
+  layoutScanCache = { root, at: Date.now(), report }
+  return report
+}
+
+// Doctor: every outline's unresolved trigger findings. The panel filters to one talk; the
+// vault view shows the whole report. Main only reports — fixes go through the editor.
+ipcMain.handle('layout:doctor', () => {
+  const root = getConfig('vaultRoot', undefined)
+  return root ? layoutScan(root) : []
+})
+
 // Doctor: every outline's unregistered frontmatter keys (respecting the ignore list). The panel
 // filters to one talk; a future vault-health surface can show the whole report. NO auto-fixing
 // here — main only reports; removal goes through metadata:edit-frontmatter on explicit request.
@@ -2477,6 +2902,7 @@ ipcMain.handle('metadata:ignore-key', (_event, outlinePath: string, key: string)
     }
   }
   invalidateMetadataCaches()
+  invalidateLayoutDoctorCache()
   return { ok: true as const }
 })
 
@@ -2507,6 +2933,7 @@ ipcMain.handle(
     frontmatterCache.delete(outlinePath) // sidebar meta must not serve the pre-edit head
     invalidateTalkCache()
     invalidateMetadataCaches()
+    invalidateLayoutDoctorCache()
     return { ok: true as const, content: next, changed: true as const }
   }
 )
@@ -2885,8 +3312,13 @@ function talkBySlug(slug: string): TalkInfo | null {
 }
 
 ipcMain.handle('talk:present', async (_event, outlinePath: string, content: string, mode?: string, startSlideId?: string, pathwayId?: string, plannedRunId?: string) => {
+  const blocked = unresolvedOutboundFailure(content)
+  if (blocked) return blocked
   try {
     const { slug, title, presentPath } = await buildTalkPresentFile(outlinePath, content, true, pathwayId)
+    const localHandoutPath = join(dirname(outlinePath), 'dist', `${slug}-handout.html`)
+    const publishedUrl = readHandoutUrl(content)
+      ?? (existsSync(localHandoutPath) ? pathToFileURL(localHandoutPath).href : null)
     // Window title by role + talk (e.g. "TalkWeaver Presenter — AI 2026 Agents") so ⌘` / Mission
     // Control / the Window menu name each deck by what's in it. Kept via page-title-updated below.
     const roleLabel = mode === 'presenter' ? 'Presenter' : mode === 'audience' ? 'Audience' : 'Presentation'
@@ -2913,6 +3345,7 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
           rec = s.r
         } catch { /* fall through: refresh from the top */ }
         if (existing.isMinimized()) existing.restore()
+        if (mode === 'presenter') livePresenterContexts.set(wcId, { talkSlug: slug, shortUrl: publishedUrl })
         existing.setTitle(winTitle)
         existing.focus()
         const recordingArmed = rec && rec !== 'idle' && rec !== 'saved' && rec !== 'error'
@@ -2946,11 +3379,13 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
       : join(__dirname, '../preload/presentEdit.js')
     const win = new BrowserWindow({
       width: 1440, height: 900, fullscreen: false,
+      ...(E2E ? { show: false } : {}),
       title: winTitle,
       backgroundColor: '#f7f3ea',
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
+        ...(E2E ? { backgroundThrottling: false } : {}),
         ...(bridgePreload ? { preload: bridgePreload, sandbox: false } : {})
       }
     })
@@ -2971,11 +3406,6 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
         pathwayId: pathwayId ?? null,
         preferredPlannedRunId: plannedRunId ?? null
       })
-      win.on('close', (event) => {
-        if (!shouldOfferRunSave(wcId)) return
-        event.preventDefault()
-        sendRecordingCloseOffer(win)
-      })
       win.on('closed', () => unregisterRecordingContext(wcId))
     }
     // mode: 'presenter' → presenter view (notes + controls); 'audience' → chromeless audience view;
@@ -2991,7 +3421,21 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
     // default menu's Reload accelerator (which would reload to slide 0 without recompiling).
     const deckWcId = win.webContents.id
     presentWindows.set(deckWcId, { outlinePath, mode: mode ?? 'window', pathwayId })
-    win.on('closed', () => presentWindows.delete(deckWcId))
+    if (mode === 'presenter') livePresenterContexts.set(deckWcId, { talkSlug: slug, shortUrl: publishedUrl })
+    win.on('close', (event) => {
+      const record = attachLiveWindow(deckWcId)
+      const live = !!record && !['ended', 'expired'].includes(record.status)
+      const offerRunSave = shouldOfferRunSave(deckWcId)
+      const audioArmed = recordingAudioArmed(deckWcId)
+      if (!live && !offerRunSave && !audioArmed) return
+      event.preventDefault()
+      sendRecordingCloseOffer(win, { live, offerRunSave, audioArmed })
+    })
+    win.on('closed', () => {
+      liveSessions?.detach(deckWcId)
+      presentWindows.delete(deckWcId)
+      livePresenterContexts.delete(deckWcId)
+    })
     win.webContents.on('before-input-event', (event, input) => {
       if (input.type !== 'keyDown') return
       // 2026-07-08: F5 / ⇧F5 in a deck window REFRESH the deck in place (same as ⌘R), matching
@@ -3009,7 +3453,15 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
     })
     // F5 in the presenter opens the audience view via window.open(?audience=1). Send it FULL-SCREEN
     // to a second display if one exists; otherwise leave it as a normal window on this screen.
-    win.webContents.setWindowOpenHandler(() => ({ action: 'allow' }))
+    win.webContents.setWindowOpenHandler(() => ({
+      action: 'allow',
+      ...(E2E ? {
+        overrideBrowserWindowOptions: {
+          show: false,
+          webPreferences: { backgroundThrottling: false }
+        }
+      } : {})
+    }))
     win.webContents.on('did-create-window', (child, details) => {
       if (!details?.url || !details.url.includes('audience=1')) return
       // The presenter-spawned audience window gets its own role title too.
@@ -3020,7 +3472,7 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
         const external = screen.getAllDisplays().find((d) => d.id !== here.id)
         if (external) {
           child.setBounds(external.bounds)
-          setTimeout(() => { try { child.setFullScreen(true) } catch { /* ignore */ } }, 120)
+          if (!E2E) setTimeout(() => { try { child.setFullScreen(true) } catch { /* ignore */ } }, 120)
         }
       } catch (e) { console.warn('[present] audience display placement failed:', e) }
     })
@@ -3042,7 +3494,7 @@ ipcMain.handle('present:edit-slide', (event, payload: { slideId?: string; index?
   const win = targetEditorFor(deckInfo?.outlinePath ?? null)
   if (!win || win.isDestroyed()) return { ok: false }
   if (win.isMinimized()) win.restore()
-  win.show()
+  if (!E2E) win.show()
   win.focus()
   win.webContents.send('present:edit-slide', payload)
   return { ok: true }
@@ -3057,11 +3509,13 @@ ipcMain.handle('window:new', () => { createWindow(); return { ok: true } })
 // current talk); otherwise record it as this window's active talk. null releases (window has no talk).
 ipcMain.handle('window:claim-talk', (event, outlinePath: string | null) => {
   const entry = editorWindows.get(event.sender.id)
+  // Opening a talk does not enrol it, but it does keep an enrolled talk alive (ADR-0024 §2).
+  if (outlinePath) { try { noteAppOpen(outlinePath) } catch { /* never block opening a talk */ } }
   if (outlinePath) {
     for (const [wcId, e] of editorWindows) {
       if (wcId !== event.sender.id && e.outlinePath === outlinePath && !e.win.isDestroyed()) {
         if (e.win.isMinimized()) e.win.restore()
-        e.win.show()
+        if (!E2E) e.win.show()
         e.win.focus()
         return { ok: false, reason: 'open-elsewhere' }
       }
@@ -3075,6 +3529,8 @@ ipcMain.handle('window:claim-talk', (event, outlinePath: string | null) => {
 // the deck window at the slide it was on. Reuses the present-from-here hash so the reload lands in
 // place. The preload persists across loadFile, so the ⌘E/⌘R bridges re-mount automatically.
 ipcMain.handle('present:rebuild', async (_event, deckWcId: number, outlinePath: string, content: string, slideId?: string) => {
+  const block = unresolvedTriggerBlock(content)
+  if (block) return { ok: false, error: block.message }
   try {
     const deck = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === deckWcId)
     if (!deck) return { ok: false }
@@ -3105,6 +3561,8 @@ ipcMain.handle('replay:build', async (_event, talkSlug: string): Promise<{ succe
     const talk = talkBySlug(slug)
     if (!talk) return { success: false, error: 'Talk not found' }
     const content = readFileSync(talk.outlinePath, 'utf8')
+    const blocked = unresolvedOutboundFailure(content)
+    if (blocked) return blocked
     const built = await buildTalkPresentFile(talk.outlinePath, content, false)
     return {
       success: true,
@@ -3130,7 +3588,20 @@ registerRecordingIpc({
     bwsSecretId: getConfig('recordingR2BwsSecretId', undefined) ?? ''
   }),
   readSafeKeys: () => readR2Keys(),
-  testMode: () => process.env.TW_REC_TEST === '1'
+  testMode: () => process.env.TW_REC_TEST === '1',
+  beforeCloseWindow: async (id, action) => {
+    const record = attachLiveWindow(id)
+    if (record && !['ended', 'expired'].includes(record.status)) {
+      if (action !== 'end' && action !== 'keep') return { ok: false, error: 'Choose whether to end the live session or keep it live.' }
+      if (action === 'end') await liveSessions!.end(id)
+    }
+    liveSessions?.detach(id)
+    return { ok: true }
+  },
+  // A saved run changes the vault's presentation facts (last delivered); ping every window so
+  // the panel and the status-bar dates refresh WITHOUT a reload (T29). Reuses the existing
+  // 'talk meta changed' channel — pathways already ride it.
+  onSessionSaved: () => notifyTalkMetaUpdated(),
 })
 
 // TalkWeaver History IPC (handout URLs + cached live checks). Registered once; deps are lazy.
@@ -3155,9 +3626,23 @@ registerTranscriptionIpc({
   testMode: () => process.env.TW_REC_TEST === '1'
 })
 
+talkTextIpcController = registerTalkTextIpc({
+  vaultRoot: () => getConfig('vaultRoot', undefined) ?? null,
+  listTalks: (root) => vaultIndex.cached(root),
+  compile: async (outlinePath, content) => (await prepareTalk(outlinePath, content))?.rows ?? null,
+  readSidecar: (id) => readAssetSidecar(id),
+  resources: () => app.isPackaged
+    ? { resourcesPath: process.resourcesPath }
+    : { devRoot: app.getAppPath() },
+  // Turn-into-text IPC is authorised only for the actual Tools window.
+  toolsWindow: () => toolsWindow
+})
+
 // ── Build ──────────────────────────────────────────────────────────────────
 
 ipcMain.handle('talk:build', async (_event, outlinePath: string, content: string) => {
+  const blocked = unresolvedOutboundFailure(content)
+  if (blocked) return blocked
   const compilerDir = getCompilerPath()
   if (!compilerDir) return { success: false, error: 'Compiler not found' }
   try {
@@ -3182,6 +3667,8 @@ ipcMain.handle('talk:build', async (_event, outlinePath: string, content: string
 
 // ── Build variants (ADR-0012): full + share-notes + share-no-notes + projections JSONL ──
 ipcMain.handle('talk:build-variants', async (_event, outlinePath: string, content: string) => {
+  const blocked = unresolvedOutboundFailure(content)
+  if (blocked) return blocked
   const compilerDir = getCompilerPath()
   if (!compilerDir) return { success: false, error: 'Compiler not found' }
   try {
@@ -3269,10 +3756,15 @@ type RunHandoutArtifact = {
   missing: string[]
 }
 
-async function buildRunHandoutArtifact(talk: TalkInfo, run: RunRecord, outputSlug?: string): Promise<RunHandoutArtifact> {
+async function buildRunHandoutArtifact(
+  talk: TalkInfo,
+  run: RunRecord,
+  content: string,
+  outputSlug?: string,
+  workerBaseUrl?: string
+): Promise<RunHandoutArtifact> {
   const compilerDir = getCompilerPath()
   if (!compilerDir) throw new Error('Compiler not found')
-  const content = readFileSync(talk.outlinePath, 'utf8')
   let compiled = await compileTalkForPresent(talk.outlinePath, content)
   let slideIds: string[] = []
   let missing: string[] = []
@@ -3299,7 +3791,10 @@ async function buildRunHandoutArtifact(talk: TalkInfo, run: RunRecord, outputSlu
   const styles = extractStyles(datedHtml)
   const slides = extractSlides(datedHtml)
   const slug = outputSlug ?? runHandoutSlug(talk.slug, run.eventTitle ?? 'run', run.plannedDate ?? run.startedAt.slice(0, 10), [])
-  const html = buildShareHtml({ title: compiled.title, slides, styles, includeNotes: false, slug }) as string
+  const html = buildShareHtml({
+    title: compiled.title, slides, styles, includeNotes: false, slug,
+    workerBaseUrl: workerBaseUrl ?? '', liveTalkSlug: talk.slug,
+  }) as string
   const distDir = join(dirname(talk.outlinePath), 'dist')
   if (!existsSync(distDir)) mkdirSync(distDir, { recursive: true })
   const path = join(distDir, `${slug}-handout.html`)
@@ -3312,6 +3807,8 @@ async function buildRunHandoutArtifact(talk: TalkInfo, run: RunRecord, outputSlu
 // exactly via the real buildShareHtml(includeNotes:false) — the same content the compiler's launcher
 // treats as the handout. Phase 2 (Cloudflare Pages publish) builds on this.
 ipcMain.handle('talk:export-handout', async (_event, outlinePath: string, content: string) => {
+  const blocked = unresolvedOutboundFailure(content)
+  if (blocked) return blocked
   const compilerDir = getCompilerPath()
   if (!compilerDir) return { success: false, error: 'Compiler not found' }
   try {
@@ -3333,7 +3830,10 @@ ipcMain.handle('talk:export-handout', async (_event, outlinePath: string, conten
     const styles = extractStyles(fullHtml)
     const slides = extractSlides(fullHtml)
     const license = (model as { license?: unknown }).license
-    const handoutHtml = buildShareHtml({ title, slides, styles, includeNotes: false, slug, license })
+    const handoutHtml = buildShareHtml({
+      title, slides, styles, includeNotes: false, slug, license,
+      workerBaseUrl: localHandoutWorkerBaseUrl(), liveTalkSlug: slug,
+    })
 
     const distDir = join(talkDir, 'dist')
     if (!existsSync(distDir)) mkdirSync(distDir, { recursive: true })
@@ -3384,57 +3884,103 @@ function wranglerFoundOn(pathStr: string): boolean {
 // The handout builder: (1) drops the data of large inlined videos to a "plays live" note;
 // (2) recompress big inlined PNGs to near-lossless WebP (cwebp), falling back to sips JPEG, never
 // growing a file. Best-effort: if cwebp/sips are missing it returns the html unchanged.
+// Slim a self-contained handout to fit Cloudflare Pages' 25 MiB per-file limit — BUDGET-AWARE
+// (2026-07-20). The old pass compressed images at ONE fixed quality (near_lossless 60) and stripped
+// only videos over 8 MB; a video-heavy imported deck (6 clips ≤8 MB inlined + 40+ screenshots) still
+// landed at ~28 MB and wrangler rejected it. Now: try TOP quality first (unchanged for the ~90% of
+// talks that already fit — they return on the first tier, untouched), and only for the heavy ones
+// escalate — first nudging image quality/dimensions down, and only if even the lowest image tier
+// can't fit, strip progressively smaller videos to placeholders. Videos stay playable as long as
+// possible; quality drops just enough to clear the limit. Verified: a 28.6 MB deck → 24.2 MB with
+// every video still inlined. See [[talkweaver-vault-scale]].
 function slimHandoutHtml(html: string): string {
-  const HANDOUT_VIDEO_LIMIT = 8 * 1024 * 1024
-  html = html.replace(/<figure class="slide-figure slide-video"[^>]*>[\s\S]*?<\/figure>/g, (fig) => {
-    if (/video-placeholder/.test(fig)) return fig
-    const data = fig.match(/src="data:video\/[^;]+;base64,([A-Za-z0-9+/=]+)"/)
-    const bytes = data ? Math.floor(data[1].length * 0.75) : Infinity
-    if (bytes <= HANDOUT_VIDEO_LIMIT) return fig
-    return '<figure class="slide-figure slide-video video-placeholder"><div class="video-placeholder-note"><span class="vp-glyph" aria-hidden="true">▶</span><span>Video plays in the live presentation</span></div></figure>'
-  })
+  const TARGET = 24 * 1024 * 1024 // ~1 MiB under the 25 MiB Cloudflare Pages ceiling
   const CWEBP = existsSync('/opt/homebrew/bin/cwebp') ? '/opt/homebrew/bin/cwebp' : 'cwebp'
-  const MAX_DIM = 2400
-  const BUDGET = 2 * 1024 * 1024
-  let tmp: string
-  try { tmp = mkdtempSync(join(tmpdir(), 'handout-slim-')) } catch { return html }
-  let idx = 0
-  try {
-    html = html.replace(/data:image\/png;base64,([A-Za-z0-9+/=]+)/g, (match, b64) => {
-      if (b64.length < 300 * 1024 * 1.34) return match // skip small images
-      const i = idx++
-      const pngPath = join(tmp, `i${i}.png`)
-      writeFileSync(pngPath, Buffer.from(b64, 'base64'))
-      const origBytes = Buffer.byteLength(b64, 'base64')
-      let resize: string[] = []
-      try {
-        const g = execFileSync('sips', ['-g', 'pixelWidth', '-g', 'pixelHeight', pngPath], { encoding: 'utf8' })
-        const w = Number((g.match(/pixelWidth:\s*(\d+)/) || [])[1]) || 0
-        const h = Number((g.match(/pixelHeight:\s*(\d+)/) || [])[1]) || 0
-        if (Math.max(w, h) > MAX_DIM) resize = w >= h ? ['-resize', String(MAX_DIM), '0'] : ['-resize', '0', String(MAX_DIM)]
-      } catch { /* dims unknown → encode at native size */ }
-      const webpPath = join(tmp, `i${i}.webp`)
-      try {
-        execFileSync(CWEBP, ['-quiet', '-near_lossless', '60', ...resize, pngPath, '-o', webpPath], { stdio: 'ignore' })
-        let out = readFileSync(webpPath)
-        if (out.length > BUDGET) {
-          execFileSync(CWEBP, ['-quiet', '-q', '80', ...resize, pngPath, '-o', webpPath], { stdio: 'ignore' })
-          out = readFileSync(webpPath)
-        }
-        if (out.length >= origBytes) return match // never grow a file
-        return 'data:image/webp;base64,' + out.toString('base64')
-      } catch {
-        try {
-          const jpgPath = join(tmp, `i${i}.jpg`)
-          execFileSync('sips', ['-Z', String(MAX_DIM), '-s', 'format', 'jpeg', '-s', 'formatOptions', '82', pngPath, '--out', jpgPath], { stdio: 'ignore' })
-          return 'data:image/jpeg;base64,' + readFileSync(jpgPath).toString('base64')
-        } catch { return match }
-      }
+  const VIDEO_PLACEHOLDER =
+    '<figure class="slide-figure slide-video video-placeholder"><div class="video-placeholder-note"><span class="vp-glyph" aria-hidden="true">▶</span><span>Video plays in the live presentation</span></div></figure>'
+
+  // Replace every inlined video larger than `limit` bytes with a poster placeholder.
+  const stripVideos = (h: string, limit: number): string =>
+    h.replace(/<figure class="slide-figure slide-video"[^>]*>[\s\S]*?<\/figure>/g, (fig) => {
+      if (/video-placeholder/.test(fig)) return fig
+      const data = fig.match(/src="data:video\/[^;]+;base64,([A-Za-z0-9+/=]+)"/)
+      const bytes = data ? Math.floor(data[1].length * 0.75) : Infinity
+      return bytes <= limit ? fig : VIDEO_PLACEHOLDER
     })
-  } finally {
-    try { rmSync(tmp, { recursive: true, force: true }) } catch { /* ignore */ }
+
+  // Re-encode every inlined image (png / jpeg / webp, over ~120 KB) to webp at the given cwebp
+  // quality flag and max dimension. Always re-encodes from the ORIGINAL `h`, so escalating tiers
+  // never stack lossy-on-lossy. `qualityFlag` is a cwebp arg pair, e.g. ['-near_lossless','60'] or
+  // ['-q','84'].
+  const compressImages = (h: string, qualityFlag: string[], maxDim: number): string => {
+    let tmp: string
+    try { tmp = mkdtempSync(join(tmpdir(), 'handout-slim-')) } catch { return h }
+    let idx = 0
+    try {
+      return h.replace(/data:image\/(png|jpe?g|webp);base64,([A-Za-z0-9+/=]+)/g, (match, fmt: string, b64: string) => {
+        const origBytes = Buffer.byteLength(b64, 'base64')
+        if (origBytes < 120 * 1024) return match // leave small images alone
+        const i = idx++
+        const ext = fmt === 'jpeg' ? 'jpg' : fmt
+        const inPath = join(tmp, `i${i}.${ext}`)
+        writeFileSync(inPath, Buffer.from(b64, 'base64'))
+        // cwebp reads png/jpeg but not webp — transcode a webp source to png via sips first.
+        let src = inPath
+        try {
+          if (fmt === 'webp') {
+            const p = join(tmp, `i${i}s.png`)
+            execFileSync('sips', ['-s', 'format', 'png', inPath, '--out', p], { stdio: 'ignore' })
+            src = p
+          }
+        } catch { return match }
+        let resize: string[] = []
+        try {
+          const g = execFileSync('sips', ['-g', 'pixelWidth', '-g', 'pixelHeight', src], { encoding: 'utf8' })
+          const w = Number((g.match(/pixelWidth:\s*(\d+)/) || [])[1]) || 0
+          const ht = Number((g.match(/pixelHeight:\s*(\d+)/) || [])[1]) || 0
+          if (Math.max(w, ht) > maxDim) resize = w >= ht ? ['-resize', String(maxDim), '0'] : ['-resize', '0', String(maxDim)]
+        } catch { /* dims unknown → encode at native size */ }
+        const webpPath = join(tmp, `i${i}.webp`)
+        try {
+          execFileSync(CWEBP, ['-quiet', ...qualityFlag, ...resize, src, '-o', webpPath], { stdio: 'ignore' })
+          const out = readFileSync(webpPath)
+          if (out.length >= origBytes) return match // never grow a file
+          return 'data:image/webp;base64,' + out.toString('base64')
+        } catch {
+          try {
+            const jpgPath = join(tmp, `i${i}.jpg`)
+            execFileSync('sips', ['-Z', String(maxDim), '-s', 'format', 'jpeg', '-s', 'formatOptions', '82', src, '--out', jpgPath], { stdio: 'ignore' })
+            return 'data:image/jpeg;base64,' + readFileSync(jpgPath).toString('base64')
+          } catch { return match }
+        }
+      })
+    } finally {
+      try { rmSync(tmp, { recursive: true, force: true }) } catch { /* ignore */ }
+    }
   }
-  return html
+
+  // Phase 1: keep every clip playable (strip only >8 MB, as before) and escalate image quality only.
+  const base = stripVideos(html, 8 * 1024 * 1024)
+  const imageTiers: Array<[string[], number]> = [
+    [['-near_lossless', '60'], 2400], // top quality — unchanged from the old behaviour; most talks stop here
+    [['-q', '84'], 2000],
+    [['-q', '80'], 1700],
+    [['-q', '74'], 1500]
+  ]
+  let last = base
+  for (const [flag, dim] of imageTiers) {
+    const out = compressImages(base, flag, dim)
+    if (Buffer.byteLength(out, 'utf8') <= TARGET) return out
+    last = out
+  }
+  // Phase 2: images already at the lowest tier and still over budget — strip progressively smaller
+  // videos to placeholders until it fits.
+  for (const mb of [4, 2, 1]) {
+    const out = compressImages(stripVideos(html, mb * 1024 * 1024), ['-q', '74'], 1500)
+    if (Buffer.byteLength(out, 'utf8') <= TARGET) return out
+    last = out
+  }
+  return last // best effort — still over 25 MiB only if a single clip ≤1 MB + text already exceeds it
 }
 
 // The handout's landing/viewer page (Open + Download + QR + short link) — the same page the old
@@ -3475,6 +4021,9 @@ function escapeHtmlAttr(s: string): string {
 }
 
 ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, content: string) => {
+  const blocked = unresolvedOutboundFailure(content)
+  if (blocked) return blocked
+
   const compilerDir = getCompilerPath()
   if (!compilerDir) return { success: false, error: 'Compiler not found' }
 
@@ -3497,6 +4046,7 @@ ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, conte
   if (!pre.ok) return { success: false, error: pre.error }
 
   try {
+    const liveWorker = await ensureLiveWorker()
     // Flush the latest editor text to disk first (we may stamp handout_url back into it below).
     try { writeFileSync(outlinePath, content, 'utf8') } catch { /* fall through */ }
 
@@ -3521,7 +4071,10 @@ ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, conte
     const styles = extractStyles(fullHtml)
     const slides = extractSlides(fullHtml)
     const license = (model as { license?: unknown }).license
-    const handoutHtml = buildShareHtml({ title, slides, styles, includeNotes: false, slug, license })
+    const handoutHtml = buildShareHtml({
+      title, slides, styles, includeNotes: false, slug, license,
+      workerBaseUrl: liveWorker.baseUrl, liveTalkSlug: slug,
+    })
 
     // Publish output: each handout
     // folder gets the slimmed handout as <slug>.html PLUS a viewer/landing index.html (Open +
@@ -3622,6 +4175,205 @@ async function deployPublishedSite(siteDir: string): Promise<{ ok: boolean; erro
   })
 }
 
+type LiveWorkerCredentials = { adminSecret: string; signingSecret: string }
+let localLiveWorker: { process: ChildProcessWithoutNullStreams; baseUrl: string; adminSecret: string } | null = null
+
+function liveWorkerDir(): string {
+  return app.isPackaged ? join(process.resourcesPath, 'worker') : join(process.cwd(), 'worker')
+}
+function liveCredentialsBlobPath(): string {
+  return join(app.getPath('userData'), 'live-worker-credentials.bin')
+}
+function readLiveWorkerCredentials(): LiveWorkerCredentials | null {
+  try {
+    if (!safeStorage.isEncryptionAvailable() || !existsSync(liveCredentialsBlobPath())) return null
+    const value = JSON.parse(safeStorage.decryptString(readFileSync(liveCredentialsBlobPath()))) as Partial<LiveWorkerCredentials>
+    return value.adminSecret && value.signingSecret
+      ? { adminSecret: value.adminSecret, signingSecret: value.signingSecret }
+      : null
+  } catch { return null }
+}
+function getOrCreateLiveWorkerCredentials(): LiveWorkerCredentials {
+  const existing = readLiveWorkerCredentials()
+  if (existing) return existing
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('OS keychain encryption is unavailable; live Worker credentials cannot be stored securely.')
+  const credentials = {
+    adminSecret: randomBytes(32).toString('base64url'),
+    signingSecret: randomBytes(32).toString('base64url'),
+  }
+  writeFileSync(liveCredentialsBlobPath(), safeStorage.encryptString(JSON.stringify(credentials)))
+  return credentials
+}
+
+function runWrangler(
+  args: string[], env: NodeJS.ProcessEnv, input?: string,
+): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+  return new Promise((resolveRun) => {
+    const child = spawn('wrangler', args, {
+      cwd: app.getPath('userData'), env, stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (chunk) => { stdout += String(chunk) })
+    child.stderr.on('data', (chunk) => { stderr += String(chunk) })
+    const timer = setTimeout(() => child.kill('SIGTERM'), 180_000)
+    child.on('error', (error) => { clearTimeout(timer); resolveRun({ ok: false, stdout, stderr: `${stderr}\n${error.message}` }) })
+    child.on('close', (code) => { clearTimeout(timer); resolveRun({ ok: code === 0, stdout, stderr }) })
+    if (input) child.stdin.end(input)
+    else child.stdin.end()
+  })
+}
+
+async function deployLiveWorker(env: NodeJS.ProcessEnv): Promise<{ ok: true; baseUrl: string; adminSecret: string } | { ok: false; error: string }> {
+  const accountId = getConfig('cfAccountId', undefined)
+  const PATH = augmentedPath(env.PATH)
+  if (!accountId) return { ok: false, error: 'Configure a Cloudflare account in Settings → Publishing.' }
+  if (!wranglerFoundOn(PATH)) return { ok: false, error: 'wrangler not found — install it before starting a live session.' }
+  const config = join(liveWorkerDir(), 'wrangler.jsonc')
+  if (!existsSync(config)) return { ok: false, error: 'Live Worker files are missing from this TalkWeaver installation.' }
+  let token: string
+  try {
+    token = await resolveLiveWorkerCloudflareToken()
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Could not resolve the live Worker Cloudflare API token from Bitwarden Secrets Manager.' }
+  }
+  const credentials = getOrCreateLiveWorkerCredentials()
+  const cloudflareEnv = { ...env, PATH, CLOUDFLARE_API_TOKEN: token, CLOUDFLARE_ACCOUNT_ID: accountId }
+  const deployed = await runWrangler(['deploy', '--config', config], cloudflareEnv)
+  if (!deployed.ok) return { ok: false, error: `wrangler deploy failed: ${String(deployed.stderr || deployed.stdout).slice(-600)}` }
+  const secrets = await runWrangler(
+    ['secret', 'bulk', '--config', config],
+    cloudflareEnv,
+    JSON.stringify({ ADMIN_SECRET: credentials.adminSecret, SESSION_SIGNING_SECRET: credentials.signingSecret }),
+  )
+  if (!secrets.ok) return { ok: false, error: `Worker secret setup failed: ${String(secrets.stderr || secrets.stdout).slice(-600)}` }
+  const output = `${deployed.stdout}\n${deployed.stderr}`
+  const baseUrl = output.match(/https:\/\/[^\s]+\.workers\.dev\b/)?.[0]
+  if (!baseUrl) return { ok: false, error: 'Worker deployed, but Wrangler did not report its workers.dev URL. Set the Worker base URL in Settings.' }
+  writeConfig({ liveWorkerBaseUrl: baseUrl, liveWorkerVersion: LIVE_WORKER_VERSION })
+  return { ok: true, baseUrl, adminSecret: credentials.adminSecret }
+}
+
+async function startLocalLiveWorker(requestedBaseUrl = 'http://127.0.0.1:8787'): Promise<{ baseUrl: string; adminSecret: string }> {
+  if (localLiveWorker && !localLiveWorker.process.killed) {
+    return { baseUrl: localLiveWorker.baseUrl, adminSecret: localLiveWorker.adminSecret }
+  }
+  const PATH = augmentedPath(process.env.PATH)
+  if (!wranglerFoundOn(PATH)) throw new Error('wrangler not found — install it to run live sessions locally.')
+  const config = join(liveWorkerDir(), 'wrangler.jsonc')
+  if (!existsSync(config)) throw new Error('Live Worker files are missing from this TalkWeaver installation.')
+  const adminSecret = randomBytes(24).toString('base64url')
+  const signingSecret = randomBytes(24).toString('base64url')
+  const requested = new URL(requestedBaseUrl)
+  const port = requested.port || '8787'
+  const wranglerState = join(app.getPath('userData'), 'live-worker-local-state')
+  const child = spawn('wrangler', [
+    'dev', '--config', config, '--ip', '127.0.0.1', '--port', port,
+    '--var', `ADMIN_SECRET:${adminSecret}`, '--var', `SESSION_SIGNING_SECRET:${signingSecret}`,
+    '--persist-to', wranglerState, '--show-interactive-dev-session=false',
+  ], {
+    cwd: app.getPath('userData'),
+    env: { ...process.env, PATH, WRANGLER_LOG_PATH: join(app.getPath('userData'), 'live-worker-wrangler.log') },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  const baseUrl = await new Promise<string>((resolveStart, rejectStart) => {
+    let output = ''
+    const timer = setTimeout(() => { child.kill('SIGTERM'); rejectStart(new Error(`Local live Worker did not start. ${output.slice(-600)}`)) }, 30_000)
+    const inspect = (chunk: Buffer): void => {
+      output = `${output}${String(chunk)}`.slice(-4000)
+      const found = output.match(/https?:\/\/(?:127\.0\.0\.1|localhost):\d+/)?.[0]
+      if (!found) return
+      clearTimeout(timer)
+      child.stdout.off('data', inspect)
+      child.stderr.off('data', inspect)
+      child.stdout.resume()
+      child.stderr.resume()
+      resolveStart(found.replace('localhost', '127.0.0.1'))
+    }
+    child.stdout.on('data', inspect)
+    child.stderr.on('data', inspect)
+    child.once('error', (error) => { clearTimeout(timer); rejectStart(error) })
+    child.once('exit', (code) => { clearTimeout(timer); rejectStart(new Error(`Local live Worker stopped during startup (${code}). ${output.slice(-600)}`)) })
+  })
+  localLiveWorker = { process: child, baseUrl, adminSecret }
+  child.once('exit', () => { if (localLiveWorker?.process === child) localLiveWorker = null })
+  return { baseUrl, adminSecret }
+}
+
+// Bump whenever worker/ changes so ensureLiveWorker RE-DEPLOYS instead of reusing a stale Worker.
+// (Reuse-forever meant the Stage-1 Worker — with no poll handling — kept serving live sessions and
+// silently dropped poll.open; a re-deploy is safe: same URL, same reused secrets.)
+const LIVE_WORKER_VERSION = LIVE_WORKER_BUILD
+
+async function ensureLiveWorker(): Promise<{ baseUrl: string; adminSecret: string }> {
+  const configured = getConfig('liveWorkerBaseUrl', undefined)?.replace(/\/+$/, '')
+  if (configured) {
+    const url = new URL(configured)
+    if (url.hostname === '127.0.0.1' || url.hostname === 'localhost') return startLocalLiveWorker(configured)
+    // Re-deploy when the bundled Worker is newer than what was last deployed to this URL, if we
+    // have the credentials to do so. On failure, fall through and reuse the URL rather than break go-live.
+    const canDeploy = Boolean(readToken()) && Boolean(getConfig('cfAccountId', undefined))
+    if (getConfig('liveWorkerVersion', undefined) !== LIVE_WORKER_VERSION && canDeploy) {
+      const redeployed = await deployLiveWorker(process.env)
+      if (redeployed.ok) return redeployed
+    }
+    const credentials = readLiveWorkerCredentials()
+    const envSecret = process.env.TALKWEAVER_LIVE_ADMIN_SECRET?.trim()
+    const adminSecret = credentials?.adminSecret ?? envSecret
+    if (!adminSecret) throw new Error('The configured live Worker has no stored admin credential. Clear its URL to deploy or run a local Worker.')
+    return { baseUrl: configured, adminSecret }
+  }
+  if (process.env.TW_LIVE_LOCAL === '1' || !readToken() || !getConfig('cfAccountId', undefined)) return startLocalLiveWorker()
+  const deployed = await deployLiveWorker(process.env)
+  if (!deployed.ok) throw new Error(deployed.error)
+  return deployed
+}
+
+async function liveHttpError(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = await response.json() as { error?: { message?: string } }
+    return body.error?.message || fallback
+  } catch { return fallback }
+}
+
+function localHandoutWorkerBaseUrl(): string {
+  const configured = getConfig('liveWorkerBaseUrl', undefined)?.replace(/\/+$/, '')
+  if (configured) return configured
+  return !readToken() || process.env.TW_LIVE_LOCAL === '1' ? 'http://127.0.0.1:8787' : ''
+}
+
+async function ensureLiveJoinUrl(context: { talkSlug: string; shortUrl: string | null }): Promise<string> {
+  if (!context.shortUrl) throw new Error('Publish or export this handout before going live.')
+  const current = new URL(context.shortUrl)
+  if (current.protocol === 'file:') return current.toString()
+  const project = getConfig('cfPagesProject', undefined)
+  if (!project) return current.toString()
+  const base = resolveBase({ baseUrl: getConfig('publishBaseUrl', undefined), project })
+  if (!current.toString().startsWith(`${base}/`)) return current.toString()
+  const siteDir = publishSiteDir()
+  if (!existsSync(join(siteDir, context.talkSlug, 'index.html'))) return current.toString()
+  const registry = readHandoutRegistry()
+  const picked = pickShortId({
+    registry,
+    slug: context.talkSlug,
+    recoveredId: recoverIdFromUrl(current.toString(), base),
+    gen: () => generateShortId((n) => Uint8Array.from(randomBytes(n))),
+  })
+  writeHandoutRegistry(picked.registry)
+  const slugs = existsSync(siteDir)
+    ? readdirSync(siteDir).filter((name) => existsSync(join(siteDir, name, 'index.html')))
+    : []
+  const redirects = buildRedirects(picked.registry, slugs)
+  const redirectPath = join(siteDir, '_redirects')
+  const currentRedirects = existsSync(redirectPath) ? readFileSync(redirectPath, 'utf8') : ''
+  if (redirects !== currentRedirects) {
+    writeFileSync(redirectPath, redirects, 'utf8')
+    const deployed = await deployPublishedSite(siteDir)
+    if (!deployed.ok) throw new Error(deployed.error || 'Could not deploy the live short URL.')
+  }
+  return publishUrl({ base, slug: context.talkSlug, id: picked.id, useShortIds: true })
+}
+
 ipcMain.handle('run:build-handout', async (_event, payload: { talkSlug: string; runId: string }) => {
   try {
     const vault = getConfig('vaultRoot', undefined)
@@ -3629,7 +4381,10 @@ ipcMain.handle('run:build-handout', async (_event, payload: { talkSlug: string; 
     const run = readRun(vault, String(payload.talkSlug), String(payload.runId))
     const talk = talkBySlug(String(payload.talkSlug))
     if (!run || !talk) return { success: false, error: 'run-or-talk-not-found' }
-    const artifact = await buildRunHandoutArtifact(talk, run)
+    const content = readFileSync(talk.outlinePath, 'utf8')
+    const blocked = unresolvedOutboundFailure(content)
+    if (blocked) return blocked
+    const artifact = await buildRunHandoutArtifact(talk, run, content, undefined, localHandoutWorkerBaseUrl())
     return { success: true, path: artifact.path, slideIds: artifact.slideIds, missing: artifact.missing }
   } catch (cause) {
     return { success: false, error: cause instanceof Error ? cause.message : String(cause) }
@@ -3643,8 +4398,14 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
     const run = readRun(vault, String(payload.talkSlug), String(payload.runId))
     const talk = talkBySlug(String(payload.talkSlug))
     if (!run || !talk || run.status !== 'delivered') return { success: false, error: 'delivered-run-not-found' }
+    const content = readFileSync(talk.outlinePath, 'utf8')
+    const blocked = unresolvedOutboundFailure(content)
+    if (blocked) return blocked
     const project = getConfig('cfPagesProject', undefined) ?? (process.env.TW_REC_TEST === '1' ? 'talkweaver-test' : undefined)
     if (!project) return { success: false, error: 'Configure Cloudflare publishing in Settings → Publishing (see docs/PUBLISHING.md)' }
+    const liveWorkerBaseUrl = process.env.TW_REC_TEST === '1'
+      ? getConfig('liveWorkerBaseUrl', undefined) ?? ''
+      : (await ensureLiveWorker()).baseUrl
     const siteDir = publishSiteDir()
     if (!existsSync(siteDir)) mkdirSync(siteDir, { recursive: true })
     const existing = readdirSync(siteDir).filter((name) => existsSync(join(siteDir, name, 'index.html')))
@@ -3657,7 +4418,7 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
       } catch { /* derive a fresh collision-safe slug below */ }
     }
     const slug = stableSlug ?? runHandoutSlug(talk.slug, run.eventTitle ?? 'run', run.plannedDate ?? run.startedAt.slice(0, 10), existing)
-    const artifact = await buildRunHandoutArtifact(talk, run, slug)
+    const artifact = await buildRunHandoutArtifact(talk, run, content, slug, liveWorkerBaseUrl)
     const talkOutDir = join(siteDir, slug)
     if (!existsSync(talkOutDir)) mkdirSync(talkOutDir, { recursive: true })
     const handoutFile = `${slug}.html`
@@ -3788,10 +4549,10 @@ ipcMain.handle('talk:optimize-images', async (_event, outlinePath: string, conte
 })
 
 // Cross-talk reuse (ADR-0003/0020): when a slide is inserted from ANOTHER talk, its relative-path
-// images (`assets/foo.png`, relative to the SOURCE talk) would break in the destination talk (no
+// images and videos (`assets/foo.png`, relative to the SOURCE talk) would break in the destination talk (no
 // such file beside it → grey placeholder). Materialize each into the VAULT POOL — content-addressed
-// `_assets/img-<hash>.<ext>` (WebP-normalised like paste), which resolves from ANY talk — and rewrite
-// the slide markdown's refs to `img-<hash>`. Pool ids / http / data refs are left alone. Returns the
+// `_assets/<img-or-vid>-<hash>.<ext>`, which resolves from ANY talk. Images may be WebP-normalised;
+// videos retain their bytes. Rewrite refs to the pool id; leave pool / http / data refs alone. Returns the
 // rewritten markdown (the renderer inserts THAT). `sourceOutlinePath` locates the source assets.
 ipcMain.handle('talk:materialize-slide-assets', async (_event, sourceOutlinePath: string, markdown: string) => {
   const vaultRoot = getConfig('vaultRoot', undefined)
@@ -3805,8 +4566,8 @@ ipcMain.handle('talk:materialize-slide-assets', async (_event, sourceOutlinePath
     let m: RegExpExecArray | null
     while ((m = re.exec(markdown)) !== null) {
       const raw = m[1].trim().replace(/\s+"[^"]*"$/, '')
-      if (/^(https?:|data:|img-)/.test(raw)) continue
-      if (!/\.(png|jpe?g|gif|webp)$/i.test(raw)) continue
+      if (/^(https?:|data:|img-|vid-)/.test(raw)) continue
+      if (!/\.(png|jpe?g|gif|webp|mp4|mov|m4v|webm)$/i.test(raw)) continue
       refs.add(raw)
     }
     let out = markdown
@@ -3819,14 +4580,15 @@ ipcMain.handle('talk:materialize-slide-assets', async (_event, sourceOutlinePath
       try {
         const origBuf = readFileSync(abs)
         const originalFormat = extname(abs).slice(1).toLowerCase() || 'png'
+        const isVideo = /^(mp4|mov|m4v|webm)$/.test(originalFormat)
         let storeBuf: Buffer = origBuf
         let storeExt = originalFormat
-        try {
+        if (!isVideo) try {
           const webp = await normaliseToWebp(origBuf)
           if (webp.length > 0 && webp.length <= origBuf.length) { storeBuf = webp; storeExt = 'webp' }
         } catch { /* keep original format */ }
         const hash = createHash('sha256').update(storeBuf).digest('hex').slice(0, 7)
-        const id = 'img-' + hash
+        const id = (isVideo ? 'vid-' : 'img-') + hash
         const assetPath = join(assetsDir, id + '.' + storeExt)
         if (!existsSync(assetPath)) {
           writeFileSync(assetPath, storeBuf)
@@ -3839,6 +4601,17 @@ ipcMain.handle('talk:materialize-slide-assets', async (_event, sourceOutlinePath
               'note: "materialized from cross-talk reuse"',
               'alt: ""', 'caption: ""', 'source: ""', 'tags: []'
             ].join('\n') + '\n', 'utf8')
+          }
+        }
+        // Posters belong to the source clip, never a same-named file elsewhere in the vault.
+        if (isVideo) {
+          const stem = abs.slice(0, -extname(abs).length)
+          for (const extension of ['png', 'jpg', 'jpeg', 'webp']) {
+            const poster = `${stem}.${extension}`
+            if (!existsSync(poster)) continue
+            const destination = join(assetsDir, `${id}.${extension}`)
+            if (!existsSync(destination)) writeFileSync(destination, readFileSync(poster))
+            break
           }
         }
         out = out.split(ref).join(id) // ![alt](assets/foo.png) → ![alt](img-hash)
@@ -3866,7 +4639,7 @@ function buildVaultAssetIndex(vaultRoot: string): Map<string, string> {
       const p = join(dir, e.name)
       if (e.isDirectory()) {
         if (e.name !== 'dist' && e.name !== 'node_modules' && !e.name.startsWith('.')) walk(p, depth + 1)
-      } else if (/\.(png|jpe?g|gif|webp)$/i.test(e.name) && !idx.has(e.name)) {
+      } else if (/\.(png|jpe?g|gif|webp|mp4|mov|m4v|webm)$/i.test(e.name) && !idx.has(e.name)) {
         idx.set(e.name, p)
       }
     }
@@ -3892,7 +4665,7 @@ ipcMain.handle('talk:materialize-pasted-assets', async (_event, markdown: string
     while ((m = re.exec(markdown)) !== null) {
       const raw = m[1].trim().replace(/\s+"[^"]*"$/, '')
       if (/^(https?:|data:|img-|vid-)/.test(raw)) continue
-      if (!/\.(png|jpe?g|gif|webp)$/i.test(raw)) continue
+      if (!/\.(png|jpe?g|gif|webp|mp4|mov|m4v|webm)$/i.test(raw)) continue // images AND videos (2026-07-20: videos were silently dropped)
       refs.add(raw)
     }
     if (refs.size === 0) return { success: true, markdown, materialized: 0 }
@@ -3913,14 +4686,19 @@ ipcMain.handle('talk:materialize-pasted-assets', async (_event, markdown: string
       try {
         const origBuf = readFileSync(abs)
         const originalFormat = extname(abs).slice(1).toLowerCase() || 'png'
+        const isVideo = /^(mp4|mov|m4v|webm)$/.test(originalFormat)
         let storeBuf: Buffer = origBuf
         let storeExt = originalFormat
-        try {
-          const webp = await normaliseToWebp(origBuf)
-          if (webp.length > 0 && webp.length <= origBuf.length) { storeBuf = webp; storeExt = 'webp' }
-        } catch { /* keep original format */ }
+        // Images are WebP-normalised to shrink the pool; videos keep their exact bytes (webp is a
+        // still-image codec — never re-encode a clip here).
+        if (!isVideo) {
+          try {
+            const webp = await normaliseToWebp(origBuf)
+            if (webp.length > 0 && webp.length <= origBuf.length) { storeBuf = webp; storeExt = 'webp' }
+          } catch { /* keep original format */ }
+        }
         const hash = createHash('sha256').update(storeBuf).digest('hex').slice(0, 7)
-        const id = 'img-' + hash
+        const id = (isVideo ? 'vid-' : 'img-') + hash // vid- so the resolver emits <video> + finds the poster
         const assetPath = join(assetsDir, id + '.' + storeExt)
         if (!existsSync(assetPath)) {
           writeFileSync(assetPath, storeBuf)
@@ -3933,6 +4711,19 @@ ipcMain.handle('talk:materialize-pasted-assets', async (_event, markdown: string
             ].join('\n') + '\n', 'utf8')
           }
         }
+        // A clip's poster is a sibling image with the same stem next to the source video; copy it into
+        // the pool as vid-<hash>.<ext> so the compiler paints a first frame before playback.
+        if (isVideo) {
+          const stem = base.replace(/\.[^.]+$/, '')
+          for (const pext of ['png', 'jpg', 'jpeg', 'webp']) {
+            const posterSrc = vaultAssetIndex.get(stem + '.' + pext)
+            if (posterSrc && existsSync(posterSrc)) {
+              const posterDst = join(assetsDir, id + '.' + pext)
+              if (!existsSync(posterDst)) writeFileSync(posterDst, readFileSync(posterSrc))
+              break
+            }
+          }
+        }
         out = out.split(ref).join(id)
         materialized += 1
       } catch (e) { console.warn('[materialize-pasted-assets] failed for', ref, e) }
@@ -3943,6 +4734,9 @@ ipcMain.handle('talk:materialize-pasted-assets', async (_event, markdown: string
     return { success: false, error: String(e), markdown }
   }
 })
+
+// App version, so any screen can show which build is running (dev-confusion guard).
+ipcMain.handle('app:version', () => process.env.npm_package_version ?? app.getVersion())
 
 // Manual rebuild escape hatch: wipe a talk's thumbnail cache so the next thumbnails() call
 // re-renders every slide from scratch. The renderer follows this with a fresh compile + thumbnails.
@@ -3957,14 +4751,24 @@ ipcMain.handle('talk:clear-thumb-cache', (_event, slug: string) => {
   }
 })
 
-ipcMain.handle('talk:thumbnails', async (_event, outlinePath: string, content: string) => {
-  try {
-    const prepared = await prepareTalk(outlinePath, content)
+interface ThumbnailRequest {
+  outlinePath: string
+  content: string
+  lane: string
+  /** The media contract this lane compiles under; part of the prepared-cache identity. */
+  mediaOptions?: Record<string, unknown>
+}
+
+const latestThumbnailRequest = createLatestThumbnailRequestHandler(
+  ({ outlinePath, content, mediaOptions }: ThumbnailRequest) =>
+    prepareTalk(outlinePath, content, undefined, mediaOptions),
+  async (input, prepared, owner): Promise<Record<string, string> | null> => {
     if (!prepared) return null
     const { slug, model } = prepared
     const rows = (prepared.rows ?? []) as Array<{
       content_hash?: string
       render_hash?: string
+      thumbnail_hash?: string
       slide_id?: string
       layout?: string
       triggers?: Record<string, string>
@@ -3973,14 +4777,24 @@ ipcMain.handle('talk:thumbnails', async (_event, outlinePath: string, content: s
     // the same content_hash, so keying on it served a STALE thumbnail after every layout edit.
     const fullHtml = model.fullHtml as string
     const documentId = thumbnailDocumentId(fullHtml)
-    const slides = rows
-      .map((r) => {
-        const key = r.render_hash || r.content_hash || r.slide_id || ''
-        return { key, cacheKey: thumbnailDocumentCacheKey(documentId, key), layout: r.triggers?.layout ?? r.layout }
-      })
-      .filter((s) => s.key)
+    const slides = thumbnailSlides(rows, documentId)
     const cacheDir = join(app.getPath('userData'), thumbCacheRoot(), slug)
-    const rendered = await renderThumbnails({ fullHtml, slides, cacheDir })
+    let rendered: Record<string, string> = {}
+    try {
+      rendered = await renderThumbnails({ fullHtml, slides, cacheDir, requestKey: `editor:${owner}` })
+    } finally {
+      // The background sweep has no follow-up request for this deck, so nothing may keep its
+      // (possibly 200MB+) model alive once the render is done — including the cache's "one
+      // oversized current document" retention. The editor lane keeps its entry: compile ->
+      // thumbnails on the same model is exactly what that retention is for. (2026-09-15 OOM.)
+      if (input.lane === BROWSER_THUMBNAIL_LANE) {
+        preparedTalkCache.evict(preparedTalkGroup(input.outlinePath, undefined, input.mediaOptions))
+        logThumbnails(
+          `${slug}: rendered ${Object.keys(rendered).length} of ${slides.length} slides, ` +
+          `prepared model evicted, heap at ${heapGuardDecision(process.memoryUsage().heapUsed).heapMb} MB`
+        )
+      }
+    }
     // renderThumbnails returns key -> absolute png path; expose as twthumb:// URLs the
     // protocol handler resolves back to {userData}/thumb-cache/{slug}/{key}.png.
     const map: Record<string, string> = {}
@@ -3988,6 +4802,66 @@ ipcMain.handle('talk:thumbnails', async (_event, outlinePath: string, content: s
       map[key] = 'twthumb://' + slug + '/' + basename(rendered[key], '.png')
     }
     return map
+  },
+  {} as Record<string, string>
+)
+
+// Latest-wins is scoped per OWNER = window + lane. One window hosts two independent requesters —
+// the editor strip (re-requests on every compile, 900ms after any content change) and the Slide
+// Browser's background per-talk render. With a window-wide owner the strip's re-request ABORTED
+// the browser's render mid-talk: a partial cache, `{}` back, and the browser marked the talk done —
+// half its cards blank for the rest of the session (2026-09-15).
+ipcMain.handle('talk:thumbnails', async (_event, outlinePath: string, content: string, opts?: { lane?: string }) => {
+  try {
+    const lane = typeof opts?.lane === 'string' && /^[a-z-]{1,32}$/.test(opts.lane) ? opts.lane : ''
+    const owner = String(_event.sender.id) + (lane ? ':' + lane : '')
+    // Defence in depth. The browser lane walks the whole vault unattended; if the heap is already
+    // halfway to the measured 4096MB ceiling, one more full-deck inline is what tips it over.
+    //
+    // It DEFERS rather than giving up. The first version of this guard returned an empty map
+    // immediately, and the Browser counted that as one of a talk's two attempts — so while the
+    // editor lane held the heaviest deck inlined (a 3.2GB spike), a whole vault's worth of talks
+    // burned both attempts in seconds and every card stayed schematic until relaunch, with the
+    // PNGs already on disk. The heap comes down on its own; the sweep can wait for it.
+    if (lane === BROWSER_THUMBNAIL_LANE) {
+      const slug = basename(outlinePath).replace('-outline.md', '')
+      const first = heapGuardDecision(process.memoryUsage().heapUsed)
+      if (first.skip) {
+        logThumbnails(`heap at ${first.heapMb} MB — deferring ${slug} until it drops`)
+        // Outside the single-flight gate on purpose: holding it for up to three minutes would
+        // stall the editor lane, which is both the thing using the heap and the thing the user
+        // is watching. The wait takes its turn in the gate only when it is ready to prepare.
+        const waited = await waitForHeap(() => process.memoryUsage().heapUsed)
+        const seconds = Math.round(waited.waitedMs / 1000)
+        if (!waited.proceeded) {
+          logThumbnails(
+            `heap at ${waited.heapMb} MB after ${seconds}s of a ${Math.round(THUMBNAIL_HEAP_WAIT_MAX_MS / 1000)}s wait ` +
+            `(${waited.reads} reads) — skipping ${slug} this pass; the Browser will offer it again`
+          )
+          return {}
+        }
+        logThumbnails(`heap at ${waited.heapMb} MB after ${seconds}s — resuming ${slug}`)
+      }
+    }
+    const mediaOptions = thumbnailMediaOptions(lane, await browserThumbnailMediaOptions())
+    if (lane === BROWSER_THUMBNAIL_LANE && !mediaOptions) {
+      // Never fall back to the standing defaults here: inlining every video of every talk in the
+      // vault is precisely the crash. A missing thumbnail is the safe answer.
+      logThumbnails('the video-free media contract is unavailable — skipping the background pass')
+      return {}
+    }
+    const result = await latestThumbnailRequest(owner, { outlinePath, content, lane, mediaOptions })
+    // Backstop for the path the render callback never reaches: a superseded request still
+    // PREPARED its deck, and that model would otherwise sit retained with no follow-up to use it.
+    if (lane === BROWSER_THUMBNAIL_LANE) {
+      preparedTalkCache.evict(preparedTalkGroup(outlinePath, undefined, mediaOptions))
+    }
+    if (result && Object.keys(result).length === 0 && content.trim()) {
+      const message = `request for ${basename(outlinePath)} (owner ${owner}) was superseded or aborted before it finished`
+      if (lane === BROWSER_THUMBNAIL_LANE) logThumbnails(message)
+      else console.warn(`[thumbnails] ${message}`)
+    }
+    return result
   } catch (e) {
     console.error('[thumbnails]', e)
     return null
@@ -4048,7 +4922,7 @@ function serializeSidecar(prev: { id: string; created?: string }, meta: { alt: s
   return lines.join('\n') + '\n'
 }
 
-ipcMain.handle('asset:read-sidecar', (_event, id: string): AssetSidecar | null => {
+function readAssetSidecar(id: string): AssetSidecar | null {
   const vaultRoot = getConfig('vaultRoot', undefined)
   if (!vaultRoot) return null
   const path = join(vaultRoot, '_assets', id + '.yml')
@@ -4060,7 +4934,9 @@ ipcMain.handle('asset:read-sidecar', (_event, id: string): AssetSidecar | null =
     console.error('[asset:read-sidecar]', e)
     return null
   }
-})
+}
+
+ipcMain.handle('asset:read-sidecar', (_event, id: string): AssetSidecar | null => readAssetSidecar(id))
 
 ipcMain.handle(
   'asset:write-sidecar',
@@ -4437,7 +5313,12 @@ ipcMain.handle('vault:create-talk', async (_event, opts: { title: string; slug: 
         'Your content here.',
         '',
       ].join('\n')
-      writeFileSync(outlinePath, initialContent, 'utf8')
+      // Pre-fill the presenter's identity and house style (Settings → Presenter identity and deck
+      // defaults). fill-missing only: nothing already in the template is touched, and a blank
+      // default writes nothing at all.
+      const { edits } = applyMetadataDefaults(parseFrontmatterPairs(initialContent), metadataDefaults(), { mode: 'fill-missing' })
+      const seeded = edits.length > 0 ? editFrontmatterText(initialContent, edits) : initialContent
+      writeFileSync(outlinePath, seeded, 'utf8')
     }
     invalidateTalkCache()
     return { name: slug, path: talkDir, outlinePath, title, slug } satisfies TalkInfo
@@ -5058,6 +5939,7 @@ ipcMain.handle(
 // ── App lifecycle ──────────────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
+  initialiseLiveSessions()
   installApplicationMenu()
   // Let embedded iframes load sites that would otherwise refuse framing (X-Frame-Options /
   // CSP frame-ancestors). Scoped to SUB-FRAMES only, so app/editor chrome and top-level loads
@@ -5123,8 +6005,16 @@ app.whenReady().then(async () => {
       const slug = url.hostname
       const key = decodeURIComponent(url.pathname.replace(/^\//, ''))
       if (!slug || !key) { callback({ error: -2 }); return }
-      const p = join(app.getPath('userData'), thumbCacheRoot(), slug, key + '.png')
-      if (existsSync(p)) { callback({ path: p }); return }
+      const dir = join(app.getPath('userData'), thumbCacheRoot(), slug)
+      // Fallback: the pre-render writes DOCUMENT-SCOPED filenames `<documentId>-<render_hash>.png`
+      // (thumbnailDocumentCacheKey), but the Slide Browser can only address a slide by its bare
+      // `render_hash` — it never compiles the talk, so it cannot know the documentId. Resolve the
+      // bare key to `<documentId>-<key>.png`. This is safe: render_hash is the PICTURE identity
+      // (it already folds in layout + section accent), so any file with that suffix is the same
+      // picture. Without this, tens of thousands of correctly-built thumbnails were unreachable and
+      // every browser card rendered blank (2026-07-19).
+      const hit = resolveThumbFile(dir, key)
+      if (hit) { callback({ path: hit }); return }
     } catch { /* fall through */ }
     callback({ error: -2 })
   })
@@ -5206,28 +6096,58 @@ app.whenReady().then(async () => {
   // for unchanged talks while keeping cross-Talk search backed by rendered slides (ADR-0019).
   loadSearchIndexFromDisk()
   loadOcrCache()
+  // SCALE (2026-07-20, Dominik): a vault can now hold thousands of imported slides. The old startup
+  // ran an EAGER whole-vault sweep — render every changed slide's thumbnail in a hidden window, then
+  // OCR every image — which, dumped 1400+ slides at once, beachballed and natively crashed the app.
+  // New policy = lazy + bounded: thumbnails render ON DEMAND as talks are browsed (the Slide Browser
+  // already requests a per-talk render on a cache miss), and OCR (image-text search, the heaviest and
+  // least essential pass) is OPT-IN via `ocrEnabled` (default off). Only the light search-index warm
+  // still runs at startup so cross-talk ⌘K stays instant; prerenderAllThumbnails remains available
+  // for an explicit "rebuild previews" action.
   setTimeout(() => {
     warmSearchIndex()
       .catch(() => {})
       .finally(() => {
-        // Thumbnails first (visible payoff), then OCR-index the vault images for image-text search.
-        setTimeout(() => {
-          prerenderAllThumbnails()
-            .catch(() => {})
-            .finally(() => { setTimeout(() => { ocrAllVaultImages().catch(() => {}) }, 1500) })
-        }, 1200)
+        if (getConfig('ocrEnabled', false)) {
+          setTimeout(() => { ocrAllVaultImages().catch(() => {}) }, 3000)
+        }
       })
   }, 800)
-  // Presentation backup: start the timer, and (if enabled) do one sweep a bit after launch so the
-  // OneDrive/Dropbox folder is fresh from the first run, not only after the first interval elapses.
-  startBackupScheduler()
-  if (getConfig('backupEnabled', false) && getConfig('backupFolder', undefined)) {
-    setTimeout(() => { runBackupSweep(false).catch(() => {}) }, 8000)
+  // Presentation backup (ADR-0024): ONE pass over the enrolled talks that are stale, never a
+  // vault scan and never a timer. It waits for the first window to be on screen and then a further
+  // 30s, so nothing competes with launch — the old startup sweep OOM-killed the app at ~13.6s.
+  {
+    const first = BrowserWindow.getAllWindows()[0]
+    const armLaunchBackup = (): void => {
+      setTimeout(() => { runLaunchBackup().catch(() => {}) }, 30_000)
+    }
+    if (!first || first.isVisible()) armLaunchBackup()
+    else first.once('ready-to-show', armLaunchBackup)
+  }
+  // Orphaned thumbnail namespaces (a profile held 56 of them, 52 GB): one async sweep per
+  // session, 90s after the first window so launch and the backup pass (30s) run first. Never the
+  // live namespace, never one with activity in the last 7 days (thumbnail-cache-gc.ts).
+  {
+    const first = BrowserWindow.getAllWindows()[0]
+    const armThumbSweep = (): void => {
+      setTimeout(() => {
+        sweepOrphanedThumbCaches(app.getPath('userData'), thumbCacheRoot(), { log: (m) => console.log(m) })
+          .catch((e) => console.error('[thumbnails] cache sweep failed', e))
+      }, 90_000)
+    }
+    if (!first || first.isVisible()) armThumbSweep()
+    else first.once('ready-to-show', armThumbSweep)
   }
 })
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+app.on('will-quit', () => {
+  liveSessions?.shutdown()
+  try { localLiveWorker?.process.kill('SIGTERM') } catch { /* already stopped */ }
+  localLiveWorker = null
 })
 
 app.on('activate', () => {

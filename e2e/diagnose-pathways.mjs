@@ -1,5 +1,6 @@
 // Host gate for ADR-0038 parcel 1. Runs only against an isolated temp Vault/userData.
 import { _electron as electron } from 'playwright'
+import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -44,7 +45,8 @@ const waitForManifest = async (predicate, timeout = 8000) => {
   throw new Error('Timed out waiting for pathway manifest')
 }
 
-const app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`], cwd: repo, env: { ...process.env, TW_REC_TEST: '1' } })
+await ensureFreshBuild(repo)
+const app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`], cwd: repo, env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' } })
 const editor = await app.firstWindow()
 await editor.waitForLoadState('domcontentloaded')
 await editor.getByText('Pathway probe', { exact: true }).first().click()

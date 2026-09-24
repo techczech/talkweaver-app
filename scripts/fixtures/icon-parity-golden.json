@@ -1,0 +1,2655 @@
+{
+ "format": 3,
+ "items": {
+  "Choose a calendar for the imaginary field station.": [
+   24,
+   "f364a28aa997",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The calendar belongs on this sample card.": [
+   25,
+   "5570f04a0a59",
+   "lucide:id-card",
+   "lucide:calendar-1",
+   "lucide:calendar-arrow-down"
+  ],
+  "CALENDAR — label for the practice board!": [
+   22,
+   "971104fb350f",
+   "lucide:calendar-1",
+   "lucide:calendar-arrow-down",
+   "lucide:calendar-arrow-up"
+  ],
+  "Where should the calendar icon appear?": [
+   21,
+   "626960e18c32",
+   "lucide:calendar-1",
+   "lucide:calendar-arrow-down",
+   "lucide:calendar-arrow-up"
+  ],
+  "Choose a schedule for the imaginary field station.": [
+   3,
+   "f8f1479d11c7",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The schedule belongs on this sample card.": [
+   4,
+   "fb13888f2ebd",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ],
+  "SCHEDULE — label for the practice board!": [
+   1,
+   "5c2ef5d324eb",
+   "lucide:circuit-board"
+  ],
+  "Where should the schedule icon appear?": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "Choose a timetable for the imaginary field station.": [
+   3,
+   "f8f1479d11c7",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The timetable belongs on this sample card.": [
+   4,
+   "fb13888f2ebd",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ],
+  "TIMETABLE — label for the practice board!": [
+   2,
+   "efc3d725cf15",
+   "lucide:circuit-board",
+   "lucide:metronome"
+  ],
+  "Where should the timetable icon appear?": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "Choose a clock for the imaginary field station.": [
+   31,
+   "e682ee7c7a7f",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The clock belongs on this sample card.": [
+   32,
+   "2873520316c4",
+   "lucide:calendar-clock",
+   "lucide:clipboard-clock",
+   "lucide:file-clock"
+  ],
+  "CLOCK — label for the practice board!": [
+   29,
+   "32b3c7acc2ac",
+   "lucide:calendar-clock",
+   "lucide:clipboard-clock",
+   "lucide:file-clock"
+  ],
+  "Where should the clock icon appear?": [
+   28,
+   "4122032dab01",
+   "lucide:calendar-clock",
+   "lucide:clipboard-clock",
+   "lucide:file-clock"
+  ],
+  "Choose a timer for the imaginary field station.": [
+   8,
+   "902a16f03d5d",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The timer belongs on this sample card.": [
+   9,
+   "487e2239fa5f",
+   "lucide:timer-off",
+   "lucide:timer-reset",
+   "lucide:timer"
+  ],
+  "TIMER — label for the practice board!": [
+   6,
+   "bf25799f7ca9",
+   "lucide:timer-off",
+   "lucide:timer-reset",
+   "lucide:timer"
+  ],
+  "Where should the timer icon appear?": [
+   5,
+   "43dd631bd6a7",
+   "lucide:timer-off",
+   "lucide:timer-reset",
+   "lucide:timer"
+  ],
+  "Choose a countdown for the imaginary field station.": [
+   6,
+   "422b76da6cea",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The countdown belongs on this sample card.": [
+   7,
+   "1f86052f42ae",
+   "lucide:calculator",
+   "lucide:sigma",
+   "lucide:percent"
+  ],
+  "COUNTDOWN — label for the practice board!": [
+   4,
+   "e918f9da93e1",
+   "lucide:calculator",
+   "lucide:sigma",
+   "lucide:percent"
+  ],
+  "Where should the countdown icon appear?": [
+   3,
+   "06b1819a2990",
+   "lucide:calculator",
+   "lucide:sigma",
+   "lucide:percent"
+  ],
+  "Choose a date for the imaginary field station.": [
+   7,
+   "66cd92867a18",
+   "lucide:clock",
+   "lucide:timer",
+   "lucide:history"
+  ],
+  "The date belongs on this sample card.": [
+   8,
+   "3e580b10ae3e",
+   "lucide:clock",
+   "lucide:timer",
+   "lucide:history"
+  ],
+  "DATE — label for the practice board!": [
+   5,
+   "a7997d283320",
+   "lucide:clock",
+   "lucide:timer",
+   "lucide:history"
+  ],
+  "Where should the date icon appear?": [
+   4,
+   "cfcd57cb9053",
+   "lucide:clock",
+   "lucide:timer",
+   "lucide:history"
+  ],
+  "Choose a time for the imaginary field station.": [
+   11,
+   "4fe6a2cb57b4",
+   "lucide:clock",
+   "lucide:timer",
+   "lucide:history"
+  ],
+  "The time belongs on this sample card.": [
+   12,
+   "62bf860e9757",
+   "lucide:clock",
+   "lucide:timer",
+   "lucide:history"
+  ],
+  "TIME — label for the practice board!": [
+   9,
+   "47be982d0241",
+   "lucide:clock",
+   "lucide:timer",
+   "lucide:history"
+  ],
+  "Where should the time icon appear?": [
+   8,
+   "e207b3d138d2",
+   "lucide:clock",
+   "lucide:timer",
+   "lucide:history"
+  ],
+  "Choose a map for the imaginary field station.": [
+   22,
+   "a084b589873b",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The map belongs on this sample card.": [
+   23,
+   "a104b130a091",
+   "lucide:map",
+   "lucide:compass",
+   "lucide:navigation"
+  ],
+  "MAP — label for the practice board!": [
+   20,
+   "189bfeefb75e",
+   "lucide:map",
+   "lucide:compass",
+   "lucide:navigation"
+  ],
+  "Where should the map icon appear?": [
+   19,
+   "c22eeb2a990a",
+   "lucide:map",
+   "lucide:compass",
+   "lucide:navigation"
+  ],
+  "Choose a compass for the imaginary field station.": [
+   5,
+   "2f30b68c26f4",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The compass belongs on this sample card.": [
+   6,
+   "7a1ddd35aa25",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:compass"
+  ],
+  "COMPASS — label for the practice board!": [
+   3,
+   "b1429e499d87",
+   "lucide:circuit-board",
+   "lucide:compass",
+   "lucide:drafting-compass"
+  ],
+  "Where should the compass icon appear?": [
+   2,
+   "0c7cb16cfa0a",
+   "lucide:compass",
+   "lucide:drafting-compass"
+  ],
+  "Choose a route for the imaginary field station.": [
+   5,
+   "e79a7a93605d",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The route belongs on this sample card.": [
+   6,
+   "fc8767390055",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ],
+  "ROUTE — label for the practice board!": [
+   3,
+   "6d7b58ec894a",
+   "lucide:circuit-board",
+   "lucide:route-off",
+   "lucide:route"
+  ],
+  "Where should the route icon appear?": [
+   2,
+   "4a94e05d0299",
+   "lucide:route-off",
+   "lucide:route"
+  ],
+  "Choose a location for the imaginary field station.": [
+   3,
+   "f8f1479d11c7",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The location belongs on this sample card.": [
+   4,
+   "fb13888f2ebd",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ],
+  "LOCATION — label for the practice board!": [
+   1,
+   "5c2ef5d324eb",
+   "lucide:circuit-board"
+  ],
+  "Where should the location icon appear?": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "Choose a pin for the imaginary field station.": [
+   19,
+   "3261082b4061",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The pin belongs on this sample card.": [
+   19,
+   "b485cb796d1e",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ],
+  "PIN — label for the practice board!": [
+   17,
+   "2a943bb55c72",
+   "lucide:bookmark",
+   "lucide:circuit-board",
+   "lucide:map-pin-check-inside"
+  ],
+  "Where should the pin icon appear?": [
+   15,
+   "cb6dc9061f83",
+   "lucide:map-pin-check-inside",
+   "lucide:map-pin-check",
+   "lucide:map-pin-house"
+  ],
+  "Choose a home for the imaginary field station.": [
+   4,
+   "13974e37bcc3",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The home belongs on this sample card.": [
+   5,
+   "c36cc6b78a2f",
+   "lucide:id-card",
+   "lucide:house-heart",
+   "lucide:card-sim"
+  ],
+  "HOME — label for the practice board!": [
+   2,
+   "b17920834711",
+   "lucide:house-heart",
+   "lucide:circuit-board"
+  ],
+  "Where should the home icon appear?": [
+   3,
+   "8326b035fa4c",
+   "lucide:house-heart",
+   "lucide:layout-grid",
+   "lucide:layout-panel-left"
+  ],
+  "Choose a house for the imaginary field station.": [
+   9,
+   "8cfc2835f79b",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The house belongs on this sample card.": [
+   10,
+   "7da439278739",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ],
+  "HOUSE — label for the practice board!": [
+   7,
+   "42183973b4c1",
+   "lucide:circuit-board",
+   "lucide:house-heart",
+   "lucide:house-plug"
+  ],
+  "Where should the house icon appear?": [
+   6,
+   "a71700749983",
+   "lucide:house-heart",
+   "lucide:house-plug",
+   "lucide:house-plus"
+  ],
+  "Choose a building for the imaginary field station.": [
+   7,
+   "2fc8e7b018c2",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The building belongs on this sample card.": [
+   8,
+   "db21a330392d",
+   "lucide:landmark",
+   "lucide:building-2",
+   "lucide:scale"
+  ],
+  "BUILDING — label for the practice board!": [
+   5,
+   "0b8e7467f3c9",
+   "lucide:landmark",
+   "lucide:building-2",
+   "lucide:scale"
+  ],
+  "Where should the building icon appear?": [
+   4,
+   "746e39e8a3a1",
+   "lucide:landmark",
+   "lucide:building-2",
+   "lucide:scale"
+  ],
+  "Choose a garden for the imaginary field station.": [
+   3,
+   "f8f1479d11c7",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The garden belongs on this sample card.": [
+   4,
+   "fb13888f2ebd",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ],
+  "GARDEN — label for the practice board!": [
+   1,
+   "5c2ef5d324eb",
+   "lucide:circuit-board"
+  ],
+  "Where should the garden icon appear?": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "Choose a tree for the imaginary field station.": [
+   10,
+   "57467a5e51e6",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The tree belongs on this sample card.": [
+   11,
+   "c426ee263012",
+   "lucide:folder-tree",
+   "lucide:id-card",
+   "lucide:list-tree"
+  ],
+  "TREE — label for the practice board!": [
+   8,
+   "355ceca20a21",
+   "lucide:folder-tree",
+   "lucide:list-tree",
+   "lucide:tree-deciduous"
+  ],
+  "Where should the tree icon appear?": [
+   7,
+   "cf41c4bad32a",
+   "lucide:folder-tree",
+   "lucide:list-tree",
+   "lucide:tree-deciduous"
+  ],
+  "Choose a flower for the imaginary field station.": [
+   5,
+   "4a9bc8115109",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The flower belongs on this sample card.": [
+   6,
+   "28bdf1b1ee78",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ],
+  "FLOWER — label for the practice board!": [
+   3,
+   "0beecd23c74d",
+   "lucide:circuit-board",
+   "lucide:flower-2",
+   "lucide:flower"
+  ],
+  "Where should the flower icon appear?": [
+   2,
+   "a7ed21375301",
+   "lucide:flower-2",
+   "lucide:flower"
+  ],
+  "Choose a leaf for the imaginary field station.": [
+   4,
+   "ac9bebfeed6c",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The leaf belongs on this sample card.": [
+   5,
+   "5d32b1d9f657",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ],
+  "LEAF — label for the practice board!": [
+   2,
+   "f0e39b8b8040",
+   "lucide:circuit-board",
+   "lucide:leaf"
+  ],
+  "Where should the leaf icon appear?": [
+   1,
+   "1f87aca14c51",
+   "lucide:leaf"
+  ],
+  "Choose a seed for the imaginary field station.": [
+   3,
+   "f8f1479d11c7",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The seed belongs on this sample card.": [
+   4,
+   "fb13888f2ebd",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ],
+  "SEED — label for the practice board!": [
+   1,
+   "5c2ef5d324eb",
+   "lucide:circuit-board"
+  ],
+  "Where should the seed icon appear?": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "Choose a sun for the imaginary field station.": [
+   12,
+   "7889aa25abbd",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The sun belongs on this sample card.": [
+   13,
+   "df8e4ee70852",
+   "lucide:id-card",
+   "lucide:sun-moon",
+   "lucide:parasol"
+  ],
+  "SUN — label for the practice board!": [
+   10,
+   "a780211c2b06",
+   "lucide:sun-moon",
+   "lucide:parasol",
+   "lucide:circuit-board"
+  ],
+  "Where should the sun icon appear?": [
+   9,
+   "bf3b48ea4aaa",
+   "lucide:sun-moon",
+   "lucide:parasol",
+   "lucide:cloud-sun-rain"
+  ],
+  "Choose a moon for the imaginary field station.": [
+   8,
+   "1f338275c402",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The moon belongs on this sample card.": [
+   9,
+   "1f0ab7a4d860",
+   "lucide:id-card",
+   "lucide:sun-moon",
+   "lucide:card-sim"
+  ],
+  "MOON — label for the practice board!": [
+   6,
+   "9ab6073c38d7",
+   "lucide:sun-moon",
+   "lucide:circuit-board",
+   "lucide:cloud-moon-rain"
+  ],
+  "Where should the moon icon appear?": [
+   5,
+   "7a86a8ada78f",
+   "lucide:sun-moon",
+   "lucide:cloud-moon-rain",
+   "lucide:cloud-moon"
+  ],
+  "Choose a star for the imaginary field station.": [
+   10,
+   "f7c99e28ab5c",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The star belongs on this sample card.": [
+   11,
+   "a110c2adc7d6",
+   "lucide:id-card",
+   "lucide:moon-star",
+   "lucide:card-sim"
+  ],
+  "STAR — label for the practice board!": [
+   8,
+   "2cf06b79a536",
+   "lucide:moon-star",
+   "lucide:circle-star",
+   "lucide:circuit-board"
+  ],
+  "Where should the star icon appear?": [
+   7,
+   "d74f601b4da6",
+   "lucide:moon-star",
+   "lucide:circle-star",
+   "lucide:square-star"
+  ],
+  "Choose a cloud for the imaginary field station.": [
+   26,
+   "f9e8ceb2e7f7",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The cloud belongs on this sample card.": [
+   27,
+   "3ffbbd12e121",
+   "lucide:cloud",
+   "lucide:server",
+   "lucide:database"
+  ],
+  "CLOUD — label for the practice board!": [
+   24,
+   "7fa93548bb31",
+   "lucide:cloud",
+   "lucide:server",
+   "lucide:database"
+  ],
+  "Where should the cloud icon appear?": [
+   23,
+   "f788f6a1f570",
+   "lucide:cloud",
+   "lucide:server",
+   "lucide:database"
+  ],
+  "Choose a rain for the imaginary field station.": [
+   7,
+   "8b0c8b62a15f",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The rain belongs on this sample card.": [
+   8,
+   "b9cf0660edd1",
+   "lucide:id-card",
+   "lucide:cloud-moon-rain",
+   "lucide:cloud-rain-wind"
+  ],
+  "RAIN — label for the practice board!": [
+   5,
+   "5e0e23a0ec67",
+   "lucide:cloud-moon-rain",
+   "lucide:cloud-rain-wind",
+   "lucide:cloud-rain"
+  ],
+  "Where should the rain icon appear?": [
+   4,
+   "1780d08d7354",
+   "lucide:cloud-moon-rain",
+   "lucide:cloud-rain-wind",
+   "lucide:cloud-rain"
+  ],
+  "Choose a snow for the imaginary field station.": [
+   7,
+   "88bafb6afb6a",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The snow belongs on this sample card.": [
+   8,
+   "7d3beb565fea",
+   "lucide:id-card",
+   "lucide:mountain-snow",
+   "lucide:card-sim"
+  ],
+  "SNOW — label for the practice board!": [
+   5,
+   "63d2c6bdb1f2",
+   "lucide:mountain-snow",
+   "lucide:circuit-board",
+   "lucide:cloud-snow"
+  ],
+  "Where should the snow icon appear?": [
+   4,
+   "ad67e5f0f574",
+   "lucide:mountain-snow",
+   "lucide:cloud-snow",
+   "lucide:snowflake"
+  ],
+  "Choose a wind for the imaginary field station.": [
+   6,
+   "52ded2b952f3",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The wind belongs on this sample card.": [
+   7,
+   "003e45351297",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:cloud-rain-wind"
+  ],
+  "WIND — label for the practice board!": [
+   4,
+   "64f65fd6e09a",
+   "lucide:circuit-board",
+   "lucide:cloud-rain-wind",
+   "lucide:wind-arrow-down"
+  ],
+  "Where should the wind icon appear?": [
+   3,
+   "fd20854ebdf3",
+   "lucide:cloud-rain-wind",
+   "lucide:wind-arrow-down",
+   "lucide:wind"
+  ],
+  "Choose a water for the imaginary field station.": [
+   5,
+   "487e9e4befc3",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The water belongs on this sample card.": [
+   5,
+   "9346a4506365",
+   "lucide:glass-water",
+   "lucide:id-card",
+   "lucide:card-sim"
+  ],
+  "WATER — label for the practice board!": [
+   2,
+   "edd65736a9ae",
+   "lucide:glass-water",
+   "lucide:circuit-board"
+  ],
+  "Where should the water icon appear?": [
+   1,
+   "c533d16a5850",
+   "lucide:glass-water"
+  ],
+  "Choose a fire for the imaginary field station.": [
+   6,
+   "cbb85218fb4b",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The fire belongs on this sample card.": [
+   8,
+   "98e00b77d973",
+   "lucide:fire-extinguisher",
+   "lucide:id-card",
+   "lucide:bell-electric"
+  ],
+  "FIRE — label for the practice board!": [
+   5,
+   "1ab90ea0495c",
+   "lucide:fire-extinguisher",
+   "lucide:bell-electric",
+   "lucide:brick-wall-fire"
+  ],
+  "Where should the fire icon appear?": [
+   4,
+   "442ec0ff218d",
+   "lucide:fire-extinguisher",
+   "lucide:bell-electric",
+   "lucide:brick-wall-fire"
+  ],
+  "Choose a light for the imaginary field station.": [
+   3,
+   "f8f1479d11c7",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The light belongs on this sample card.": [
+   4,
+   "fb13888f2ebd",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ],
+  "LIGHT — label for the practice board!": [
+   1,
+   "5c2ef5d324eb",
+   "lucide:circuit-board"
+  ],
+  "Where should the light icon appear?": [
+   1,
+   "f5f594c9dc29",
+   "lucide:sun-moon"
+  ],
+  "Choose a battery for the imaginary field station.": [
+   10,
+   "aef7a98c3c59",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The battery belongs on this sample card.": [
+   11,
+   "9d0bd5e032ed",
+   "lucide:id-card",
+   "lucide:battery-charging",
+   "lucide:battery-full"
+  ],
+  "BATTERY — label for the practice board!": [
+   8,
+   "6f2c60721464",
+   "lucide:battery-charging",
+   "lucide:battery-full",
+   "lucide:battery-low"
+  ],
+  "Where should the battery icon appear?": [
+   7,
+   "a830c4698688",
+   "lucide:battery-charging",
+   "lucide:battery-full",
+   "lucide:battery-low"
+  ],
+  "Choose a power for the imaginary field station.": [
+   11,
+   "e69dd9381f71",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The power belongs on this sample card.": [
+   11,
+   "ff3cd1f64e25",
+   "lucide:zap",
+   "lucide:bolt",
+   "lucide:battery"
+  ],
+  "POWER — label for the practice board!": [
+   8,
+   "c670b3f1b4b7",
+   "lucide:zap",
+   "lucide:bolt",
+   "lucide:battery"
+  ],
+  "Where should the power icon appear?": [
+   7,
+   "4ed98b43f8e0",
+   "lucide:zap",
+   "lucide:bolt",
+   "lucide:battery"
+  ],
+  "Choose a plug for the imaginary field station.": [
+   8,
+   "4780b3806079",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The plug belongs on this sample card.": [
+   8,
+   "f8438f420eda",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ],
+  "PLUG — label for the practice board!": [
+   5,
+   "a690ad44d89d",
+   "lucide:circuit-board",
+   "lucide:house-plug",
+   "lucide:plug-2"
+  ],
+  "Where should the plug icon appear?": [
+   4,
+   "6a40f8ef2a77",
+   "lucide:house-plug",
+   "lucide:plug-2",
+   "lucide:plug-zap"
+  ],
+  "Choose a phone for the imaginary field station.": [
+   11,
+   "73f3cd01eb8b",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The phone belongs on this sample card.": [
+   11,
+   "3e87d4a7edf4",
+   "lucide:card-sim",
+   "lucide:id-card",
+   "lucide:credit-card"
+  ],
+  "PHONE — label for the practice board!": [
+   9,
+   "0f92df5d28c8",
+   "lucide:card-sim",
+   "lucide:circuit-board",
+   "lucide:phone-call"
+  ],
+  "Where should the phone icon appear?": [
+   7,
+   "c27a042657fc",
+   "lucide:phone-call",
+   "lucide:phone-forwarded",
+   "lucide:phone-incoming"
+  ],
+  "Choose a computer for the imaginary field station.": [
+   4,
+   "ff54509cf18c",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The computer belongs on this sample card.": [
+   6,
+   "4332a1290eb7",
+   "lucide:id-card",
+   "lucide:gpu",
+   "lucide:card-sim"
+  ],
+  "COMPUTER — label for the practice board!": [
+   2,
+   "1f304202ee6d",
+   "lucide:circuit-board",
+   "lucide:computer"
+  ],
+  "Where should the computer icon appear?": [
+   1,
+   "994b83b08fbe",
+   "lucide:computer"
+  ],
+  "Choose a laptop for the imaginary field station.": [
+   6,
+   "8f649bed2434",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The laptop belongs on this sample card.": [
+   7,
+   "b4862ad91e9b",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ],
+  "LAPTOP — label for the practice board!": [
+   4,
+   "055f693ee4ea",
+   "lucide:circuit-board",
+   "lucide:laptop-minimal-check",
+   "lucide:laptop-minimal"
+  ],
+  "Where should the laptop icon appear?": [
+   3,
+   "c4e95a8fcc43",
+   "lucide:laptop-minimal-check",
+   "lucide:laptop-minimal",
+   "lucide:laptop"
+  ],
+  "Choose a tablet for the imaginary field station.": [
+   5,
+   "0d5a7082c9d4",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The tablet belongs on this sample card.": [
+   6,
+   "1b5f49ce7b74",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ],
+  "TABLET — label for the practice board!": [
+   10,
+   "c94d62918b06",
+   "lucide:circuit-board",
+   "lucide:dice-1",
+   "lucide:dice-2"
+  ],
+  "Where should the tablet icon appear?": [
+   2,
+   "d176dfa9bc28",
+   "lucide:tablet-smartphone",
+   "lucide:tablet"
+  ],
+  "Choose a keyboard for the imaginary field station.": [
+   9,
+   "d5c3adccaf5b",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The keyboard belongs on this sample card.": [
+   11,
+   "93a01dd49d09",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:command"
+  ],
+  "KEYBOARD — label for the practice board!": [
+   7,
+   "333b3d2d40ef",
+   "lucide:circuit-board",
+   "lucide:command",
+   "lucide:keyboard-music"
+  ],
+  "Where should the keyboard icon appear?": [
+   6,
+   "fc7e9da277b6",
+   "lucide:command",
+   "lucide:keyboard-music",
+   "lucide:keyboard-off"
+  ],
+  "Choose a mouse for the imaginary field station.": [
+   14,
+   "7864e3c4dfe3",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The mouse belongs on this sample card.": [
+   15,
+   "031f346346e0",
+   "lucide:id-card",
+   "lucide:mouse-pointer-2-off",
+   "lucide:square-dashed-mouse-pointer"
+  ],
+  "MOUSE — label for the practice board!": [
+   12,
+   "e562d03cdeee",
+   "lucide:mouse-pointer-2-off",
+   "lucide:square-dashed-mouse-pointer",
+   "lucide:square-mouse-pointer"
+  ],
+  "Where should the mouse icon appear?": [
+   11,
+   "b61a8bcf6717",
+   "lucide:mouse-pointer-2-off",
+   "lucide:square-dashed-mouse-pointer",
+   "lucide:square-mouse-pointer"
+  ],
+  "Choose a camera for the imaginary field station.": [
+   12,
+   "63d03f6ad0a6",
+   "lucide:history",
+   "lucide:scroll",
+   "lucide:archive"
+  ],
+  "The camera belongs on this sample card.": [
+   13,
+   "d1eb751986b6",
+   "lucide:history",
+   "lucide:scroll",
+   "lucide:archive"
+  ],
+  "CAMERA — label for the practice board!": [
+   10,
+   "01b37cac58f8",
+   "lucide:history",
+   "lucide:scroll",
+   "lucide:archive"
+  ],
+  "Where should the camera icon appear?": [
+   9,
+   "867e39091fa4",
+   "lucide:history",
+   "lucide:scroll",
+   "lucide:archive"
+  ],
+  "Choose a photo for the imaginary field station.": [
+   6,
+   "09c1585ac3fd",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The photo belongs on this sample card.": [
+   7,
+   "8aeaa4c82559",
+   "lucide:camera",
+   "lucide:image",
+   "lucide:film"
+  ],
+  "PHOTO — label for the practice board!": [
+   4,
+   "0cec3eb4a303",
+   "lucide:camera",
+   "lucide:image",
+   "lucide:film"
+  ],
+  "Where should the photo icon appear?": [
+   3,
+   "9f7349e7bebb",
+   "lucide:camera",
+   "lucide:image",
+   "lucide:film"
+  ],
+  "Choose a image for the imaginary field station.": [
+   15,
+   "fbd5c4e08cb7",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The image belongs on this sample card.": [
+   17,
+   "7af40497fbc3",
+   "lucide:camera",
+   "lucide:image",
+   "lucide:film"
+  ],
+  "IMAGE — label for the practice board!": [
+   13,
+   "e478374bd80a",
+   "lucide:camera",
+   "lucide:image",
+   "lucide:film"
+  ],
+  "Where should the image icon appear?": [
+   12,
+   "6f2f403d6fdb",
+   "lucide:camera",
+   "lucide:image",
+   "lucide:film"
+  ],
+  "Choose a video for the imaginary field station.": [
+   9,
+   "a31ef59b699a",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The video belongs on this sample card.": [
+   11,
+   "a30585041ffa",
+   "lucide:film",
+   "lucide:video",
+   "lucide:camera"
+  ],
+  "VIDEO — label for the practice board!": [
+   7,
+   "2dbb1e2e19ea",
+   "lucide:film",
+   "lucide:video",
+   "lucide:camera"
+  ],
+  "Where should the video icon appear?": [
+   6,
+   "8fc6d09a81eb",
+   "lucide:film",
+   "lucide:video",
+   "lucide:camera"
+  ],
+  "Choose a microphone for the imaginary field station.": [
+   8,
+   "6cac761e31d8",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The microphone belongs on this sample card.": [
+   9,
+   "42f5d1ce66d7",
+   "lucide:mic",
+   "lucide:radio",
+   "lucide:headphones"
+  ],
+  "MICROPHONE — label for the practice board!": [
+   6,
+   "2c354ef21de0",
+   "lucide:mic",
+   "lucide:radio",
+   "lucide:headphones"
+  ],
+  "Where should the microphone icon appear?": [
+   5,
+   "99152eab615d",
+   "lucide:mic",
+   "lucide:radio",
+   "lucide:headphones"
+  ],
+  "Choose a audio for the imaginary field station.": [
+   9,
+   "2eb542f9d086",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The audio belongs on this sample card.": [
+   10,
+   "57c96a981910",
+   "lucide:ear",
+   "lucide:mic",
+   "lucide:volume-2"
+  ],
+  "AUDIO — label for the practice board!": [
+   8,
+   "18b15453b55d",
+   "lucide:ear",
+   "lucide:mic",
+   "lucide:volume-2"
+  ],
+  "Where should the audio icon appear?": [
+   6,
+   "c02adb68b001",
+   "lucide:ear",
+   "lucide:mic",
+   "lucide:volume-2"
+  ],
+  "Choose a music for the imaginary field station.": [
+   12,
+   "934af0596707",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The music belongs on this sample card.": [
+   13,
+   "26b99ed1c91d",
+   "lucide:music",
+   "lucide:headphones",
+   "lucide:radio"
+  ],
+  "MUSIC — label for the practice board!": [
+   11,
+   "c7682b516879",
+   "lucide:music",
+   "lucide:headphones",
+   "lucide:radio"
+  ],
+  "Where should the music icon appear?": [
+   9,
+   "69e8fc9949a4",
+   "lucide:music",
+   "lucide:headphones",
+   "lucide:radio"
+  ],
+  "Choose a speaker for the imaginary field station.": [
+   5,
+   "0e4e78084bd8",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The speaker belongs on this sample card.": [
+   6,
+   "def622917bbd",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ],
+  "SPEAKER — label for the practice board!": [
+   3,
+   "a05d0e515be5",
+   "lucide:circuit-board",
+   "lucide:monitor-speaker",
+   "lucide:speaker"
+  ],
+  "Where should the speaker icon appear?": [
+   2,
+   "3113c61b80ff",
+   "lucide:monitor-speaker",
+   "lucide:speaker"
+  ],
+  "Choose a book for the imaginary field station.": [
+   31,
+   "0df14dec2b51",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The book belongs on this sample card.": [
+   32,
+   "2a0e32fa3d29",
+   "lucide:book",
+   "lucide:book-open",
+   "lucide:file-text"
+  ],
+  "BOOK — label for the practice board!": [
+   31,
+   "06346bdfd2e9",
+   "lucide:book",
+   "lucide:book-open",
+   "lucide:file-text"
+  ],
+  "Where should the book icon appear?": [
+   28,
+   "a101b91a1ccf",
+   "lucide:book",
+   "lucide:book-open",
+   "lucide:file-text"
+  ],
+  "Choose a library for the imaginary field station.": [
+   6,
+   "e755924ba68c",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The library belongs on this sample card.": [
+   7,
+   "814fec0081f2",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ],
+  "LIBRARY — label for the practice board!": [
+   4,
+   "61e272e1776d",
+   "lucide:circuit-board",
+   "lucide:library-big",
+   "lucide:library"
+  ],
+  "Where should the library icon appear?": [
+   4,
+   "c1b88a8b3857",
+   "lucide:book-a",
+   "lucide:library-big",
+   "lucide:library"
+  ],
+  "Choose a document for the imaginary field station.": [
+   13,
+   "fdb1e2200024",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The document belongs on this sample card.": [
+   8,
+   "1d0860163b3f",
+   "lucide:scroll",
+   "lucide:file-text",
+   "lucide:pen"
+  ],
+  "DOCUMENT — label for the practice board!": [
+   5,
+   "7d1f9eb2cd9d",
+   "lucide:scroll",
+   "lucide:file-text",
+   "lucide:pen"
+  ],
+  "Where should the document icon appear?": [
+   4,
+   "85b10df86ec9",
+   "lucide:scroll",
+   "lucide:file-text",
+   "lucide:pen"
+  ],
+  "Choose a file for the imaginary field station.": [
+   60,
+   "7cbdc593733f",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The file belongs on this sample card.": [
+   61,
+   "b00c9b61f036",
+   "lucide:file-text",
+   "lucide:book",
+   "lucide:clipboard"
+  ],
+  "FILE — label for the practice board!": [
+   59,
+   "f905c64898e7",
+   "lucide:file-text",
+   "lucide:book",
+   "lucide:clipboard"
+  ],
+  "Where should the file icon appear?": [
+   57,
+   "8d3118173f9c",
+   "lucide:file-text",
+   "lucide:book",
+   "lucide:clipboard"
+  ],
+  "Choose a folder for the imaginary field station.": [
+   34,
+   "43b8aa5da3aa",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The folder belongs on this sample card.": [
+   35,
+   "f4d511c0353e",
+   "lucide:folder-bookmark",
+   "lucide:id-card",
+   "lucide:card-sim"
+  ],
+  "FOLDER — label for the practice board!": [
+   32,
+   "e02820b3e0ad",
+   "lucide:folder-bookmark",
+   "lucide:folder-kanban",
+   "lucide:circuit-board"
+  ],
+  "Where should the folder icon appear?": [
+   31,
+   "8b66434643b7",
+   "lucide:folder-bookmark",
+   "lucide:folder-archive",
+   "lucide:folder-check"
+  ],
+  "Choose a archive for the imaginary field station.": [
+   11,
+   "2bd9830ea3e5",
+   "lucide:database",
+   "lucide:file-text",
+   "lucide:layers"
+  ],
+  "The archive belongs on this sample card.": [
+   12,
+   "bc419c6a1b02",
+   "lucide:database",
+   "lucide:file-text",
+   "lucide:layers"
+  ],
+  "ARCHIVE — label for the practice board!": [
+   9,
+   "a3a9abc9751c",
+   "lucide:database",
+   "lucide:file-text",
+   "lucide:layers"
+  ],
+  "Where should the archive icon appear?": [
+   8,
+   "25aa2e55d2ce",
+   "lucide:database",
+   "lucide:file-text",
+   "lucide:layers"
+  ],
+  "Choose a search for the imaginary field station.": [
+   25,
+   "ec056b5bf067",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The search belongs on this sample card.": [
+   25,
+   "10de7ede8b2a",
+   "lucide:search",
+   "lucide:telescope",
+   "lucide:calendar-search"
+  ],
+  "SEARCH — label for the practice board!": [
+   22,
+   "24485e93f59f",
+   "lucide:search",
+   "lucide:telescope",
+   "lucide:calendar-search"
+  ],
+  "Where should the search icon appear?": [
+   21,
+   "f87d987777dd",
+   "lucide:search",
+   "lucide:telescope",
+   "lucide:calendar-search"
+  ],
+  "Choose a filter for the imaginary field station.": [
+   5,
+   "91132fd9947d",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The filter belongs on this sample card.": [
+   6,
+   "eeb804c0d7e6",
+   "lucide:id-card",
+   "lucide:list-filter-plus",
+   "lucide:card-sim"
+  ],
+  "FILTER — label for the practice board!": [
+   3,
+   "7438abae6604",
+   "lucide:list-filter-plus",
+   "lucide:circuit-board",
+   "lucide:list-filter"
+  ],
+  "Where should the filter icon appear?": [
+   6,
+   "c8cd3d5a7b3b",
+   "lucide:list-filter-plus",
+   "lucide:arrow-down-a-z",
+   "lucide:arrow-down-z-a"
+  ],
+  "Choose a sort for the imaginary field station.": [
+   3,
+   "f8f1479d11c7",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The sort belongs on this sample card.": [
+   4,
+   "fb13888f2ebd",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ],
+  "SORT — label for the practice board!": [
+   1,
+   "5c2ef5d324eb",
+   "lucide:circuit-board"
+  ],
+  "Where should the sort icon appear?": [
+   4,
+   "042de07873f8",
+   "lucide:arrow-down-a-z",
+   "lucide:arrow-down-z-a",
+   "lucide:arrow-up-a-z"
+  ],
+  "Choose a chart for the imaginary field station.": [
+   32,
+   "4d8249671704",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The chart belongs on this sample card.": [
+   33,
+   "739ea576fec8",
+   "lucide:trending-up",
+   "lucide:id-card",
+   "lucide:card-sim"
+  ],
+  "CHART — label for the practice board!": [
+   30,
+   "8fc078c3f71f",
+   "lucide:trending-up",
+   "lucide:chart-area",
+   "lucide:chart-bar-big"
+  ],
+  "Where should the chart icon appear?": [
+   29,
+   "e207921858a3",
+   "lucide:trending-up",
+   "lucide:chart-area",
+   "lucide:chart-bar-big"
+  ],
+  "Choose a graph for the imaginary field station.": [
+   7,
+   "385df658f06d",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The graph belongs on this sample card.": [
+   9,
+   "95c530c195f5",
+   "lucide:network",
+   "lucide:share-2",
+   "lucide:git-branch"
+  ],
+  "GRAPH — label for the practice board!": [
+   5,
+   "e506dce7ef5f",
+   "lucide:network",
+   "lucide:share-2",
+   "lucide:git-branch"
+  ],
+  "Where should the graph icon appear?": [
+   4,
+   "2b03b8ca6368",
+   "lucide:network",
+   "lucide:share-2",
+   "lucide:git-branch"
+  ],
+  "Choose a table for the imaginary field station.": [
+   11,
+   "e8a406ab4858",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The table belongs on this sample card.": [
+   12,
+   "e50997d27b68",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ],
+  "TABLE — label for the practice board!": [
+   16,
+   "b8cb865fbe3e",
+   "lucide:circuit-board",
+   "lucide:dice-1",
+   "lucide:dice-2"
+  ],
+  "Where should the table icon appear?": [
+   8,
+   "9adcc356cc3f",
+   "lucide:table-2",
+   "lucide:table-cells-merge",
+   "lucide:table-cells-split"
+  ],
+  "Choose a list for the imaginary field station.": [
+   26,
+   "988fc4864edd",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The list belongs on this sample card.": [
+   27,
+   "a199bfea9e92",
+   "lucide:id-card",
+   "lucide:list-check",
+   "lucide:card-sim"
+  ],
+  "LIST — label for the practice board!": [
+   24,
+   "cc06bb6c45ad",
+   "lucide:list-check",
+   "lucide:circuit-board",
+   "lucide:clipboard-list"
+  ],
+  "Where should the list icon appear?": [
+   23,
+   "65605cf23960",
+   "lucide:list-check",
+   "lucide:clipboard-list",
+   "lucide:layout-list"
+  ],
+  "Choose a checklist for the imaginary field station.": [
+   4,
+   "89a57f845159",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The checklist belongs on this sample card.": [
+   4,
+   "fb13888f2ebd",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ],
+  "CHECKLIST — label for the practice board!": [
+   1,
+   "5c2ef5d324eb",
+   "lucide:circuit-board"
+  ],
+  "Where should the checklist icon appear?": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "Choose a checkmark for the imaginary field station.": [
+   4,
+   "89a57f845159",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The checkmark belongs on this sample card.": [
+   4,
+   "fb13888f2ebd",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ],
+  "CHECKMARK — label for the practice board!": [
+   1,
+   "5c2ef5d324eb",
+   "lucide:circuit-board"
+  ],
+  "Where should the checkmark icon appear?": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "Choose a warning for the imaginary field station.": [
+   7,
+   "b013daadfd4a",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The warning belongs on this sample card.": [
+   8,
+   "2dc3eb3a53c5",
+   "lucide:id-card",
+   "lucide:battery-warning",
+   "lucide:card-sim"
+  ],
+  "WARNING — label for the practice board!": [
+   5,
+   "52dc35bf7732",
+   "lucide:battery-warning",
+   "lucide:circuit-board",
+   "lucide:mail-warning"
+  ],
+  "Where should the warning icon appear?": [
+   4,
+   "a1107bc4e791",
+   "lucide:battery-warning",
+   "lucide:mail-warning",
+   "lucide:message-circle-warning"
+  ],
+  "Choose a question for the imaginary field station.": [
+   9,
+   "542d040c79cc",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The question belongs on this sample card.": [
+   10,
+   "ff8a21dc741a",
+   "lucide:circle-question-mark",
+   "lucide:file-question-mark",
+   "lucide:id-card"
+  ],
+  "QUESTION — label for the practice board!": [
+   7,
+   "4f7e4b30fa95",
+   "lucide:circle-question-mark",
+   "lucide:file-question-mark",
+   "lucide:shield-question-mark"
+  ],
+  "Where should the question icon appear?": [
+   6,
+   "2c75393210b5",
+   "lucide:circle-question-mark",
+   "lucide:file-question-mark",
+   "lucide:shield-question-mark"
+  ],
+  "Choose a idea for the imaginary field station.": [
+   9,
+   "f35720abaa87",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The idea belongs on this sample card.": [
+   7,
+   "3bdd2c2f1552",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "IDEA — label for the practice board!": [
+   4,
+   "0b7125341b8e",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "Where should the idea icon appear?": [
+   3,
+   "f8f1479d11c7",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "Choose a message for the imaginary field station.": [
+   33,
+   "92a26428b4df",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The message belongs on this sample card.": [
+   34,
+   "a8712435a01d",
+   "lucide:id-card",
+   "lucide:bot-message-square",
+   "lucide:card-sim"
+  ],
+  "MESSAGE — label for the practice board!": [
+   31,
+   "a9ee80ba8204",
+   "lucide:bot-message-square",
+   "lucide:circuit-board",
+   "lucide:message-circle-check"
+  ],
+  "Where should the message icon appear?": [
+   30,
+   "e403538bd594",
+   "lucide:bot-message-square",
+   "lucide:message-circle-check",
+   "lucide:message-circle-code"
+  ],
+  "Choose a email for the imaginary field station.": [
+   3,
+   "f8f1479d11c7",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The email belongs on this sample card.": [
+   4,
+   "fb13888f2ebd",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ],
+  "EMAIL — label for the practice board!": [
+   1,
+   "5c2ef5d324eb",
+   "lucide:circuit-board"
+  ],
+  "Where should the email icon appear?": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "Choose a chat for the imaginary field station.": [
+   6,
+   "935388f89c1d",
+   "lucide:message-square",
+   "lucide:book-open",
+   "lucide:pen-line"
+  ],
+  "The chat belongs on this sample card.": [
+   7,
+   "942654b62b3c",
+   "lucide:message-square",
+   "lucide:book-open",
+   "lucide:pen-line"
+  ],
+  "CHAT — label for the practice board!": [
+   4,
+   "5e8d1ae2e908",
+   "lucide:message-square",
+   "lucide:book-open",
+   "lucide:pen-line"
+  ],
+  "Where should the chat icon appear?": [
+   3,
+   "fc778ce21644",
+   "lucide:message-square",
+   "lucide:book-open",
+   "lucide:pen-line"
+  ],
+  "Choose a team for the imaginary field station.": [
+   3,
+   "f8f1479d11c7",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The team belongs on this sample card.": [
+   4,
+   "fb13888f2ebd",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ],
+  "TEAM — label for the practice board!": [
+   1,
+   "5c2ef5d324eb",
+   "lucide:circuit-board"
+  ],
+  "Where should the team icon appear?": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "Choose a person for the imaginary field station.": [
+   6,
+   "13e6915b316e",
+   "lucide:users",
+   "lucide:user-check",
+   "lucide:hand"
+  ],
+  "The person belongs on this sample card.": [
+   7,
+   "a21ed974484f",
+   "lucide:users",
+   "lucide:user-check",
+   "lucide:hand"
+  ],
+  "PERSON — label for the practice board!": [
+   4,
+   "8c42abdc7410",
+   "lucide:users",
+   "lucide:user-check",
+   "lucide:hand"
+  ],
+  "Where should the person icon appear?": [
+   3,
+   "24c6af0e3f2a",
+   "lucide:users",
+   "lucide:user-check",
+   "lucide:hand"
+  ],
+  "Choose a group for the imaginary field station.": [
+   4,
+   "7704b33d0f99",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The group belongs on this sample card.": [
+   5,
+   "b8174397c839",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ],
+  "GROUP — label for the practice board!": [
+   2,
+   "e34425c90e82",
+   "lucide:circuit-board",
+   "lucide:group"
+  ],
+  "Where should the group icon appear?": [
+   1,
+   "b5550cc6d1b4",
+   "lucide:group"
+  ],
+  "Choose a handshake for the imaginary field station.": [
+   5,
+   "d7c7ed2d55ae",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The handshake belongs on this sample card.": [
+   6,
+   "5b757672afc3",
+   "lucide:heart-handshake",
+   "lucide:id-card",
+   "lucide:card-sim"
+  ],
+  "HANDSHAKE — label for the practice board!": [
+   3,
+   "bab0f75c42ce",
+   "lucide:heart-handshake",
+   "lucide:circuit-board",
+   "lucide:handshake"
+  ],
+  "Where should the handshake icon appear?": [
+   2,
+   "eb879a89635f",
+   "lucide:heart-handshake",
+   "lucide:handshake"
+  ],
+  "Choose a heart for the imaginary field station.": [
+   20,
+   "a9196a165711",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The heart belongs on this sample card.": [
+   21,
+   "bf042e076efd",
+   "lucide:calendar-heart",
+   "lucide:file-heart",
+   "lucide:folder-heart"
+  ],
+  "HEART — label for the practice board!": [
+   18,
+   "627d5dc39b52",
+   "lucide:calendar-heart",
+   "lucide:file-heart",
+   "lucide:folder-heart"
+  ],
+  "Where should the heart icon appear?": [
+   17,
+   "ea5ddc6dd9ca",
+   "lucide:calendar-heart",
+   "lucide:file-heart",
+   "lucide:folder-heart"
+  ],
+  "Choose a gift for the imaginary field station.": [
+   4,
+   "e62281345455",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The gift belongs on this sample card.": [
+   5,
+   "337d6d2ec252",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ],
+  "GIFT — label for the practice board!": [
+   2,
+   "210e1e48bb0a",
+   "lucide:circuit-board",
+   "lucide:gift"
+  ],
+  "Where should the gift icon appear?": [
+   1,
+   "3a0fc39dd3f8",
+   "lucide:gift"
+  ],
+  "Choose a OpenAI for the imaginary field station.": [
+   3,
+   "f8f1479d11c7",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The OpenAI belongs on this sample card.": [
+   5,
+   "3ebf04e10aaf",
+   "svgl:openai",
+   "lucide:id-card",
+   "lucide:card-sim"
+  ],
+  "OPENAI — label for the practice board!": [
+   2,
+   "44c546f1ceab",
+   "svgl:openai",
+   "lucide:circuit-board"
+  ],
+  "Where should the OpenAI icon appear?": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "Choose a Anthropic for the imaginary field station.": [
+   3,
+   "f8f1479d11c7",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The Anthropic belongs on this sample card.": [
+   5,
+   "1d326569ec83",
+   "svgl:anthropic",
+   "lucide:id-card",
+   "lucide:card-sim"
+  ],
+  "ANTHROPIC — label for the practice board!": [
+   2,
+   "b8ecc1110d70",
+   "svgl:anthropic",
+   "lucide:circuit-board"
+  ],
+  "Where should the Anthropic icon appear?": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "Choose a Google for the imaginary field station.": [
+   3,
+   "f8f1479d11c7",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The Google belongs on this sample card.": [
+   5,
+   "f11b0359626a",
+   "svgl:google",
+   "lucide:id-card",
+   "lucide:card-sim"
+  ],
+  "GOOGLE — label for the practice board!": [
+   2,
+   "462880c1ed80",
+   "svgl:google",
+   "lucide:circuit-board"
+  ],
+  "Where should the Google icon appear?": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "Choose a Microsoft for the imaginary field station.": [
+   3,
+   "f8f1479d11c7",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The Microsoft belongs on this sample card.": [
+   5,
+   "42364b05292e",
+   "svgl:microsoft",
+   "lucide:id-card",
+   "lucide:card-sim"
+  ],
+  "MICROSOFT — label for the practice board!": [
+   2,
+   "e1dd9099d0e4",
+   "svgl:microsoft",
+   "lucide:circuit-board"
+  ],
+  "Where should the Microsoft icon appear?": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "Choose a GitHub for the imaginary field station.": [
+   5,
+   "ec29b30d2e33",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The GitHub belongs on this sample card.": [
+   5,
+   "7f61eda6081e",
+   "svgl:github",
+   "lucide:id-card",
+   "lucide:card-sim"
+  ],
+  "GITHUB — label for the practice board!": [
+   1,
+   "5c2ef5d324eb",
+   "lucide:circuit-board"
+  ],
+  "Where should the GitHub icon appear?": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "Choose a Notion for the imaginary field station.": [
+   3,
+   "f8f1479d11c7",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The Notion belongs on this sample card.": [
+   5,
+   "d86ba418a847",
+   "svgl:notion",
+   "lucide:id-card",
+   "lucide:card-sim"
+  ],
+  "NOTION — label for the practice board!": [
+   1,
+   "5c2ef5d324eb",
+   "lucide:circuit-board"
+  ],
+  "Where should the Notion icon appear?": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "Choose a Slack for the imaginary field station.": [
+   3,
+   "f8f1479d11c7",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The Slack belongs on this sample card.": [
+   5,
+   "0df4c34f5a2a",
+   "svgl:slack",
+   "lucide:id-card",
+   "lucide:card-sim"
+  ],
+  "SLACK — label for the practice board!": [
+   2,
+   "1a1663ab0bce",
+   "svgl:slack",
+   "lucide:circuit-board"
+  ],
+  "Where should the Slack icon appear?": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "Choose a Zoom for the imaginary field station.": [
+   5,
+   "122bb83f22c2",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The Zoom belongs on this sample card.": [
+   7,
+   "86dcd33ca00c",
+   "svgl:zoom",
+   "lucide:id-card",
+   "lucide:card-sim"
+  ],
+  "ZOOM — label for the practice board!": [
+   3,
+   "de9a4b1e59c6",
+   "lucide:circuit-board",
+   "lucide:zoom-in",
+   "lucide:zoom-out"
+  ],
+  "Where should the Zoom icon appear?": [
+   2,
+   "c60726f187d7",
+   "lucide:zoom-in",
+   "lucide:zoom-out"
+  ],
+  "Choose a Figma for the imaginary field station.": [
+   3,
+   "f8f1479d11c7",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The Figma belongs on this sample card.": [
+   5,
+   "109def35f964",
+   "svgl:figma",
+   "lucide:id-card",
+   "lucide:card-sim"
+  ],
+  "FIGMA — label for the practice board!": [
+   2,
+   "391bc812c290",
+   "svgl:figma",
+   "lucide:circuit-board"
+  ],
+  "Where should the Figma icon appear?": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "Choose a Dropbox for the imaginary field station.": [
+   3,
+   "f8f1479d11c7",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The Dropbox belongs on this sample card.": [
+   5,
+   "8781b684e92b",
+   "svgl:dropbox",
+   "lucide:id-card",
+   "lucide:card-sim"
+  ],
+  "DROPBOX — label for the practice board!": [
+   2,
+   "c129d84c0815",
+   "svgl:dropbox",
+   "lucide:circuit-board"
+  ],
+  "Where should the Dropbox icon appear?": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "Choose a YouTube for the imaginary field station.": [
+   3,
+   "f8f1479d11c7",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The YouTube belongs on this sample card.": [
+   5,
+   "cb91f8d434cb",
+   "svgl:youtube",
+   "lucide:id-card",
+   "lucide:card-sim"
+  ],
+  "YOUTUBE — label for the practice board!": [
+   2,
+   "0d30a6e35db4",
+   "svgl:youtube",
+   "lucide:circuit-board"
+  ],
+  "Where should the YouTube icon appear?": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "Choose a Spotify for the imaginary field station.": [
+   3,
+   "f8f1479d11c7",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The Spotify belongs on this sample card.": [
+   5,
+   "491a6865ef87",
+   "svgl:spotify",
+   "lucide:id-card",
+   "lucide:card-sim"
+  ],
+  "SPOTIFY — label for the practice board!": [
+   2,
+   "7736331ff530",
+   "svgl:spotify",
+   "lucide:circuit-board"
+  ],
+  "Where should the Spotify icon appear?": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "A quiet interval between two invented scenes.": [
+   6,
+   "78ac624e45fc",
+   "lucide:align-vertical-space-between",
+   "lucide:align-horizontal-space-between",
+   "lucide:between-horizontal-end"
+  ],
+  "Fold the paper into three equal parts.": [
+   14,
+   "25e309199faa",
+   "lucide:book",
+   "lucide:book-open",
+   "lucide:file-text"
+  ],
+  "The amber pebble sits beside the blue tile.": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "Move the imaginary marker after lunch.": [
+   19,
+   "cc22c9cd905b",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "There is no symbol for flinderwick.": [
+   1,
+   "809aaa5d1ad8",
+   "lucide:fish-symbol"
+  ],
+  "Could the practice board be less crowded?": [
+   1,
+   "5c2ef5d324eb",
+   "lucide:circuit-board"
+  ],
+  "An unrelated sentence about a soft grey cushion.": [
+   3,
+   "01eab4ed4fdc",
+   "lucide:link",
+   "lucide:network",
+   "lucide:git-merge"
+  ],
+  "Repeat the label without choosing a picture.": [
+   9,
+   "74096c54f811",
+   "lucide:camera",
+   "lucide:image",
+   "lucide:film"
+  ],
+  "A made-up noun, brambletron, appears here.": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "Keep this line deliberately abstract.": [
+   24,
+   "556ec711324f",
+   "lucide:arrows-up-from-line",
+   "lucide:line-squiggle",
+   "lucide:line-style"
+  ],
+  "Use a two-column arrangement for the sample cards.": [
+   11,
+   "e3b69ce202bf",
+   "lucide:chart-column-big",
+   "lucide:chart-column-decreasing",
+   "lucide:chart-column-increasing"
+  ],
+  "Nothing in this sentence requests a pictogram.": [
+   2,
+   "5e38a37ea106",
+   "lucide:circle-off",
+   "lucide:circle-slash"
+  ],
+  "The local clock is set to a fictional time.": [
+   35,
+   "13063f6e1163",
+   "lucide:clock",
+   "lucide:timer",
+   "lucide:history"
+  ],
+  "A paper clip holds the practice cards together.": [
+   7,
+   "7d397f233dc1",
+   "lucide:book",
+   "lucide:book-open",
+   "lucide:file-text"
+  ],
+  "The rehearsal uses invented names and dates.": [
+   1,
+   "231cbc0ee430",
+   "lucide:calendars"
+  ],
+  "An empty line has no image to suggest.": [
+   36,
+   "9214f44179e8",
+   "lucide:camera",
+   "lucide:image",
+   "lucide:film"
+  ],
+  "Open AI as two ordinary words on a practice card.": [
+   18,
+   "3e633f19afae",
+   "lucide:id-card",
+   "lucide:package-open",
+   "lucide:book-open-check"
+  ],
+  "Git Hub written as two separate words.": [
+   21,
+   "82c883c077e3",
+   "svgl:git",
+   "lucide:folder-git-2",
+   "lucide:folder-git"
+  ],
+  "A starfish is not the same as a star.": [
+   7,
+   "d74f601b4da6",
+   "lucide:moon-star",
+   "lucide:circle-star",
+   "lucide:square-star"
+  ],
+  "A firefighter is not a fire icon.": [
+   5,
+   "b25321cd05d5",
+   "lucide:fire-extinguisher",
+   "lucide:bell-electric",
+   "lucide:flame"
+  ],
+  "The greenhouse is not a house.": [
+   6,
+   "a71700749983",
+   "lucide:house-heart",
+   "lucide:house-plug",
+   "lucide:house-plus"
+  ],
+  "Watercolour is not a glass of water.": [
+   2,
+   "bdbbb8bedfb3",
+   "lucide:glass-water",
+   "lucide:palette"
+  ],
+  "A bookkeeper is not a book.": [
+   28,
+   "a101b91a1ccf",
+   "lucide:book",
+   "lucide:book-open",
+   "lucide:file-text"
+  ],
+  "A keyboardist is not a keyboard.": [
+   6,
+   "fc7e9da277b6",
+   "lucide:command",
+   "lucide:keyboard-music",
+   "lucide:keyboard-off"
+  ],
+  "The mailbox is not necessarily email.": [
+   12,
+   "e84bd0982026",
+   "lucide:mailbox",
+   "lucide:mail-check",
+   "lucide:mail-minus"
+  ],
+  "A blueprint is not simply blue.": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "The clockwork toy is not a wall clock.": [
+   34,
+   "deb9829c9383",
+   "lucide:calendar-clock",
+   "lucide:clipboard-clock",
+   "lucide:file-clock"
+  ],
+  "A moonflower is not the moon.": [
+   5,
+   "7a86a8ada78f",
+   "lucide:sun-moon",
+   "lucide:cloud-moon-rain",
+   "lucide:cloud-moon"
+  ],
+  "A train of thought is not a locomotive.": [
+   3,
+   "683a51f814f9",
+   "lucide:train-front-tunnel",
+   "lucide:train-front",
+   "lucide:train-track"
+  ],
+  "The catapult is not a cat.": [
+   1,
+   "afc3bc5845b3",
+   "lucide:cat"
+  ],
+  "Point to the traffic light on the sample map.": [
+   21,
+   "905023ace8be",
+   "lucide:map",
+   "lucide:compass",
+   "lucide:navigation"
+  ],
+  "Mark the first aid kit in the store room.": [
+   13,
+   "f09966941947",
+   "lucide:bandage",
+   "lucide:circle-question-mark",
+   "lucide:shield-question-mark"
+  ],
+  "Place the speech bubble beside the volunteer.": [
+   34,
+   "167f6f684286",
+   "lucide:ear",
+   "lucide:mic",
+   "lucide:volume-2"
+  ],
+  "Show the magnifying glass over the seed card.": [
+   17,
+   "a6d9538dcf81",
+   "lucide:glass-water",
+   "lucide:id-card",
+   "lucide:search-alert"
+  ],
+  "Draw a bar chart for invented harvest totals.": [
+   34,
+   "1f6bc4088926",
+   "lucide:trending-up",
+   "lucide:chart-bar-big",
+   "lucide:chart-bar-decreasing"
+  ],
+  "Add a line graph for sample temperatures.": [
+   28,
+   "174932b3da76",
+   "lucide:network",
+   "lucide:share-2",
+   "lucide:git-branch"
+  ],
+  "A pie chart divides the fictional allotments.": [
+   29,
+   "55efbdbbc3aa",
+   "lucide:trending-up",
+   "lucide:chart-pie",
+   "lucide:file-chart-pie"
+  ],
+  "Put a location pin on the imaginary town.": [
+   20,
+   "cdd03a1b190e",
+   "lucide:lightbulb",
+   "lucide:sparkles",
+   "lucide:flame"
+  ],
+  "The QR code opens the practice schedule.": [
+   19,
+   "a7e8cadb3a73",
+   "lucide:terminal",
+   "lucide:braces",
+   "lucide:message-circle-code"
+  ],
+  "A cloud upload is queued for the sample file.": [
+   87,
+   "cd052a4b6857",
+   "lucide:file-text",
+   "lucide:book",
+   "lucide:clipboard"
+  ],
+  "A cloud download brings back the sample file.": [
+   93,
+   "15657b3a74d5",
+   "lucide:file-text",
+   "lucide:book",
+   "lucide:clipboard"
+  ],
+  "The notification bell rings at noon.": [
+   10,
+   "c8fb4a9d3413",
+   "lucide:bell-electric",
+   "lucide:bell-ring",
+   "lucide:bell-check"
+  ],
+  "Use a warning triangle for the missing label.": [
+   10,
+   "1da2d58dba9b",
+   "lucide:triangle-alert",
+   "lucide:battery-warning",
+   "lucide:flag-triangle-left"
+  ],
+  "A check mark confirms the practice task.": [
+   51,
+   "be613e93551d",
+   "lucide:check-check",
+   "lucide:sticky-note-check",
+   "lucide:book-check"
+  ],
+  "The recycling symbol appears on the box.": [
+   4,
+   "0dbee157e05b",
+   "lucide:file-box",
+   "lucide:boom-box",
+   "lucide:box"
+  ],
+  "A person using a wheelchair enters the garden.": [
+   4,
+   "17c8108088be",
+   "lucide:users",
+   "lucide:user-check",
+   "lucide:hand"
+  ],
+  "constructor": [
+   5,
+   "91f399456425",
+   "lucide:wrench",
+   "lucide:settings",
+   "lucide:hammer"
+  ],
+  "__proto__": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "toString": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "valueOf": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "hasOwnProperty": [
+   0,
+   "4f53cda18c2b"
+  ],
+  "Prototype label on an invented card.": [
+   4,
+   "fb13888f2ebd",
+   "lucide:id-card",
+   "lucide:card-sim",
+   "lucide:credit-card"
+  ]
+ }
+}

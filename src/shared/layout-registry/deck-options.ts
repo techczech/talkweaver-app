@@ -24,7 +24,8 @@ export interface DeckOptionGroup {
   options: DeckOption[]
 }
 
-const INPUT_OVERRIDES: Record<string, DeckOption['input']> = {
+/** Typed-input hints for keys whose registry `type` is too coarse (unit, placeholder, url). */
+export const INPUT_OVERRIDES: Record<string, DeckOption['input']> = {
   duration: { type: 'string', unit: 'seconds, minutes or m:ss', placeholder: '60min' },
   'warn-at': { type: 'number', unit: 'minutes left' },
   'urgent-at': { type: 'number', unit: 'minutes left' },
@@ -32,8 +33,13 @@ const INPUT_OVERRIDES: Record<string, DeckOption['input']> = {
   'license-url': { type: 'url', placeholder: 'https://…' }
 }
 
-const SWATCHES: Record<string, string> = {
-  green: '#166534'
+/** Colour chips for the two palette-shaped vocabularies. */
+export const SWATCHES: Record<string, string> = {
+  green: '#166534',
+  cobalt: '#0f4bd8',
+  emerald: '#0a7a5c',
+  vermilion: '#c2410c',
+  forest: '#166534'
 }
 
 function optionFromMetadata(entry: MetadataEntry): DeckOption {
@@ -51,7 +57,7 @@ function optionFromMetadata(entry: MetadataEntry): DeckOption {
           value: value.value,
           label: value.label,
           description: value.explanation,
-          swatch: entry.key === 'palette' ? SWATCHES[value.value] : undefined
+          swatch: entry.key === 'palette' || entry.key === 'colour' ? SWATCHES[value.value] : undefined
         }))
       : undefined
   }

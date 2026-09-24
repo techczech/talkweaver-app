@@ -7,6 +7,7 @@
 //
 // Run: cd talk-weaver && node e2e/diagnose-presenter-qol.mjs
 import { _electron as electron } from 'playwright'
+import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { dirname, join } from 'path'
 import { mkdtempSync, mkdirSync, writeFileSync, statSync } from 'fs'
@@ -78,7 +79,8 @@ const standaloneUrl = pathToFileURL(presentPath).href
 console.log('present file: ' + presentPath)
 
 // ── Launch Electron and drive its window straight to the compiled present HTML ──
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO })
+await ensureFreshBuild(REPO)
+const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
 const page = await app.firstWindow()
 const consoleErrors = []
 page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()) })

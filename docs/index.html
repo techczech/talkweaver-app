@@ -54,6 +54,11 @@
   .gallery img { width: 100%; height: auto; display: block; border: 1px solid var(--line); border-radius: 10px;
     box-shadow: 0 12px 32px -16px rgba(11,58,107,0.3); background: var(--card); }
   .gallery figcaption { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  .new { margin: 30px auto 0; max-width: 760px; text-align: left; background: var(--card);
+    border: 1px solid var(--line); border-radius: 12px; padding: 16px 22px; }
+  .new h2 { font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--claret); margin: 0 0 8px; }
+  .new ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 15px; }
+  .new li { margin: 3px 0; }
   .subnote { color: var(--muted); font-size: 15px; margin: -8px 0 22px; }
   footer { padding: 40px 0 80px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); text-align: center; }
   a { color: var(--oxford); }
@@ -67,14 +72,27 @@
     <h1>Talk<span class="mark">·</span>Weaver</h1>
     <p class="tagline">Write your talk as an outline. Present it as polished slides.</p>
     <div class="btns">
-      <a class="btn primary" href="https://github.com/techczech/talkweaver-app/releases">Download</a>
+      <a class="btn primary" href="https://github.com/techczech/talkweaver-app/releases/latest/download/TalkWeaver-mac-arm64.dmg">Download for Mac (Apple Silicon)</a>
+      <a class="btn primary" href="https://github.com/techczech/talkweaver-app/releases/latest/download/TalkWeaver-windows-x64-setup.exe">Download for Windows</a>
       <a class="btn ghost" href="https://github.com/techczech/talkweaver-app">View source</a>
     </div>
-    <p class="note">Free &amp; open source (MIT) · macOS &amp; Windows · your talks never leave your computer.</p>
+    <p class="note">Signed and notarised for macOS · Windows build is unsigned (SmartScreen: More info → Run anyway) · Free &amp; open source (MIT) · your talks never leave your computer.</p>
+
+    <div class="new">
+      <h2>New in 0.32</h2>
+      <ul>
+        <li>An action bar above the editor puts layout, media, slide insertion, presenting, handouts and publishing within reach.</li>
+        <li>The Inspector groups its options into sections, with shortcuts to each section at the top.</li>
+        <li>Rating, ranking and matrix polls, and quick polls you can open during a presentation.</li>
+        <li>PowerPoint files import with their slide structure and embedded videos.</li>
+        <li>Handouts adapt to a phone screen, with a script companion that follows the slide.</li>
+        <li>The macOS build is signed and notarised by Apple.</li>
+      </ul>
+    </div>
 
     <figure class="shot">
-      <img src="screenshots/home.png" alt="TalkWeaver: a Markdown outline of a talk on the left, the same talk rendered as slides in a preview strip on the right." onerror="this.closest('.shot').style.display='none'" />
-      <figcaption>Your Markdown outline on the left; the same talk rendering as slides on the right.</figcaption>
+      <img src="screenshots/home.png" alt="TalkWeaver: the slide outline on the left, the Markdown outline in the middle under the action bar, and the Inspector on the right showing the current slide with its Contrast, Title, Slide, Steps and Poll sections." onerror="this.closest('.shot').style.display='none'" />
+      <figcaption>Your Markdown outline in the middle, with the action bar above it; the Inspector on the right shows the current slide and its options in sections.</figcaption>
     </figure>
   </header>
 
@@ -83,16 +101,16 @@
     <div class="grid">
       <div class="card"><h3>Every heading is a slide</h3><p>Write your talk as a Markdown outline; it compiles to slides as you type. No dragging boxes, no fighting a canvas.</p></div>
       <div class="card"><h3>Self-contained decks</h3><p>Each talk becomes one HTML file with a real presenter view — notes, a clock, step-through — that runs anywhere, no server or export dance.</p></div>
-      <div class="card"><h3>Keyboard-first</h3><p>A command palette, a shortcut for everything, and a <kbd>?</kbd> cheat-sheet. Your hands never have to leave the keyboard.</p></div>
+      <div class="card"><h3>Keyboard-first</h3><p>A command palette, a shortcut for everything, and a <kbd>⌘/</kbd> cheat-sheet. Your hands never have to leave the keyboard.</p></div>
     </div>
   </section>
 
   <section>
     <h2>Designed slides, not default ones</h2>
     <div class="grid">
-      <div class="card"><h3>A registry of layouts</h3><p>Statements, two-column, image grids, carousels, contents pages, diagrams — chosen with a keyboard picker or an inline <code>{ }</code> syntax.</p></div>
-      <div class="card"><h3>The Inspector</h3><p>Pre-render any slide and tweak its options live with <kbd>⌘P</kbd> — see exactly what the audience will see before you present.</p></div>
-      <div class="card"><h3>Consistent by construction</h3><p>Section colours, type scale, and spacing all follow one design language, so every deck looks considered — not like a template.</p></div>
+      <div class="card"><h3>A registry of layouts</h3><p>Statements, two-column, image grids, carousels, contents pages, diagrams — chosen with a keyboard picker or an inline <code>{ }</code> syntax. They share one design language: titles keep the same size across layouts, and body text stays above a readable minimum size.</p></div>
+      <div class="card"><h3>The Inspector</h3><p>Open it with <kbd>⌘P</kbd> to see the current slide as the audience will. Its options are grouped into sections — layout, title, slide, steps and polls — with a shortcut to each at the top, and settings that depend on another appear only when they apply.</p></div>
+      <div class="card"><h3>The action bar</h3><p>A row of buttons above the editor for layout, media, inserting slides, the Inspector, presenting, handouts and publishing, plus undo, redo and list formatting. On a narrow window the rest move into a menu; you can turn the bar off in Workspace settings.</p></div>
     </div>
   </section>
 
@@ -106,6 +124,24 @@
       <figure><img src="screenshots/slides/pathways.png" alt="A ledger slide contrasting the full talk with a twenty-minute Pathway." loading="lazy" /><figcaption>Contrast ledger — one talk, many cuts.</figcaption></figure>
       <figure><img src="screenshots/slides/present-record-handout.png" alt="A card slide: present, record the room, transcribe, and publish a handout." loading="lazy" /><figcaption>Present, record, hand out.</figcaption></figure>
       <figure><img src="screenshots/slides/how-you-work.png" alt="A numbered-card slide: write, render, tick a Pathway, present." loading="lazy" /><figcaption>Numbered steps, section-tinted.</figcaption></figure>
+    </div>
+  </section>
+
+  <section>
+    <h2>Live polls and audience participation</h2>
+    <div class="grid">
+      <div class="card"><h3>Ask the room</h3><p>Write single-choice, multiple-choice and open-answer polls in the outline, as well as rating, ranking and matrix polls. Quick polls can be opened during a presentation without preparing a slide.</p></div>
+      <div class="card"><h3>The audience view</h3><p>The poll uses the same slide frame in the presenter preview and on the audience's screens, with results shown behind the answer options. After a poll is dismissed, the audience can return to the slides.</p></div>
+      <div class="card"><h3>In control while you present</h3><p>Reopen or dismiss a poll from the presenter. Responses are recovered after a connection interruption, and you get confirmation when your controls are acknowledged.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Bring your PowerPoint</h2>
+    <div class="grid">
+      <div class="card"><h3>Import a deck</h3><p>Open a PowerPoint file in TalkWeaver. Its slide structure and embedded videos are kept.</p></div>
+      <div class="card"><h3>Pick and map slides</h3><p>Select the slides you want, preview them, and map each one to a TalkWeaver layout before adding them to a talk.</p></div>
+      <div class="card"><h3>Reuse what you have</h3><p>Slides inserted from another talk keep their images and video. Search covers text inside images as well as slide text, so slides with scanned or photographed text can be found.</p></div>
     </div>
   </section>
 
@@ -128,6 +164,15 @@
   </section>
 
   <section>
+    <h2>Phone handouts</h2>
+    <div class="grid">
+      <div class="card"><h3>Sized for a phone</h3><p>A published handout shows slides at a size that adapts to a phone screen, with a slide list, a focused slide view, and full screen when the phone is rotated.</p></div>
+      <div class="card"><h3>A script companion</h3><p>The script follows the selected slide, however the reader moves through the handout.</p></div>
+      <div class="card"><h3>Fits the host</h3><p>Published handouts are reduced to fit the hosting size limit, including when they contain images or video.</p></div>
+    </div>
+  </section>
+
+  <section>
     <h2>Keyboard, everywhere</h2>
     <div class="keys">
       <div><kbd>⌘⇧P</kbd> command palette</div>
@@ -135,27 +180,32 @@
       <div><kbd>⌘L</kbd> layout</div>
       <div><kbd>⌘⌥P</kbd> pathways</div>
       <div><kbd>F5</kbd> presenter</div>
-      <div><kbd>?</kbd> shortcuts</div>
+      <div><kbd>⌘/</kbd> shortcuts</div>
     </div>
     <p class="note">Every click target has a keyboard path, and every shortcut is listed in the in-app cheat-sheet.</p>
   </section>
 
   <section>
+    <h2>Install</h2>
+    <div class="grid">
+      <div class="card"><h3>macOS (Apple Silicon)</h3><p>Open the <code>.dmg</code> and drag <strong>TalkWeaver</strong> to Applications. The build is signed and notarised by Apple, so it opens normally.</p></div>
+      <div class="card"><h3>Windows</h3><p>Run the installer. The build is unsigned, so SmartScreen warns on first launch: choose <strong>More info → Run anyway</strong>. A few macOS-only features are absent on Windows.</p></div>
+      <div class="card"><h3>No account</h3><p>There is nothing to sign up for. Your talks are Markdown files in a folder on your computer.</p></div>
+    </div>
+  </section>
+
+  <section>
     <h2>Get started</h2>
-    <p><strong>macOS (Apple Silicon):</strong> open the <code>.dmg</code> and drag <strong>TalkWeaver</strong> to Applications.
-       The app isn't notarised yet, so the first launch is blocked — clear the quarantine flag once in Terminal:
-       <code>xattr -cr /Applications/TalkWeaver.app</code>, then open it normally.<br/>
-       <strong>Windows:</strong> run <code>TalkWeaver-Setup.exe</code>; at the SmartScreen prompt choose
-       <strong>More info → Run anyway</strong>.</p>
-    <p class="callout">
-      Early release: the downloads aren't code-signed or notarised yet, so both systems warn you the
-      first time (that's the step above, not a problem with the app). Windows is best-effort — a few
-      macOS-only features are absent there. If anything misbehaves, please
+    <p>Download the app for your system and start writing a talk as a Markdown outline: every heading becomes a slide.</p>
+    <div class="btns" style="justify-content:flex-start;margin-top:18px">
+      <a class="btn primary" href="https://github.com/techczech/talkweaver-app/releases/latest/download/TalkWeaver-mac-arm64.dmg">Download for Mac (Apple Silicon)</a>
+      <a class="btn primary" href="https://github.com/techczech/talkweaver-app/releases/latest/download/TalkWeaver-windows-x64-setup.exe">Download for Windows</a>
+      <a class="btn ghost" href="https://github.com/techczech/talkweaver-app/releases">All releases</a>
+    </div>
+    <p class="callout" style="margin-top:18px">
+      If anything misbehaves, please
       <a href="https://github.com/techczech/talkweaver-app/issues">open an issue on GitHub</a>.
     </p>
-    <div class="btns" style="justify-content:flex-start;margin-top:18px">
-      <a class="btn primary" href="https://github.com/techczech/talkweaver-app/releases">Download for Mac &amp; Windows</a>
-    </div>
   </section>
 
   <footer>

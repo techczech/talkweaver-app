@@ -1,50 +1,101 @@
-/* @order 0709 */
+/* @order 0716 */
 
   /* QUOTE LAYOUT (quote-only slide, title hidden by default). The blockquote owns the whole
      stage: centred, full-bleed, larger than the inline pull-quote since no title competes. The
      nav-only heading (.slide-head-quiet) holds an sr-only h1 and is not drawn. {title=show}
-     restores a normal .slide-head above the quote. *//* @order 0710 */
+     restores a normal .slide-head above the quote. *//* @order 0717 */
   /* ADR-0005 quote (mockup .t-quote / .qpanel): a tinted panel with an accent left rule and an
      oversized quotation mark — "unmistakably a quote". Upright sans (NO italics), line-height
-     1.42 so boxed strong emphasis clears its neighbours; the text line caps at 17em. Block
-     centred both axes, text left inside. Attribution reads below with a short accent rule. *//* @order 0711 */
-  .slide-content.layout-quote { justify-content: center; align-content: center; justify-items: center; }/* @order 0712 */
-  .slide-content.layout-quote > .slide-head-quiet { display: contents; }/* @order 0713 */
-  .slide-content.layout-quote > blockquote {
-    margin: 0;
-    background: var(--tint);
-    border-left: 6px solid var(--accent);
-    padding: clamp(28px, 5vh, 52px) clamp(28px, 4vw, 56px) clamp(28px, 5vh, 52px) clamp(52px, 5.5vw, 92px);
-    font-family: var(--sans);
-    font-weight: 400;
-    font-size: max(28px, 3.4cqw);
-    line-height: 1.42;
-    max-width: min(62vw, 24em);
-  }/* @order 0714 */
-  .slide-content.layout-quote > blockquote > p { max-width: 17em; }/* @order 0715 */
-  .slide-content.layout-quote > blockquote[data-quote-length="medium"] { font-size: max(24px, 2.6cqw); }/* @order 0716 */
-  .slide-content.layout-quote > blockquote[data-quote-length="long"] { font-size: max(19px, 1.9cqw); }/* @order 0717 */
-  /* Mark sits in the panel's corner, CLEAR of the text (padding-left reserves its column). *//* @order 0718 */
-  .slide-content.layout-quote > blockquote::before { font-size: 2.9em; opacity: 0.9; top: 0.05em; left: 0.16em; }/* @order 0719 */
-  /* Boxed emphasis inside the quote (mockup .box): filled accent chip, clone across line wraps. *//* @order 0720 */
+     1.42 so boxed strong emphasis clears its neighbours. Block centred both axes, text left
+     inside. Attribution reads below with a short accent rule. *//* @order 0718 */
+  /* The fixed footer occupies 56px above its 3px progress tick. Add that 59px band to the
+     lower safe area, while the existing --slide-pad-y supplies equal air above and below the
+     usable quote box. The asymmetric slide padding shifts the box itself up by half the chrome
+     band, so CSS-only thumbnails, handouts and PDF renders share the runtime's balance. */
+  .slide:has(> .slide-content.layout-quote) {
+    --quote-chrome-band: 59px;
+    padding-bottom: calc(var(--slide-pad-y) + var(--quote-chrome-band));
+  }/* @order 0719 */
+  .slide-content.layout-quote {
+    justify-content: center;
+    align-content: center;
+    justify-items: center;
+    min-height: min(820px, calc(86vh - var(--quote-chrome-band)));
+  }/* @order 0720 */
+  .slide-content.layout-quote > .slide-head-quiet { display: contents; }/* @order 0721 */
+  /* Boxed emphasis inside the quote (mockup .box): filled accent chip, clone across line wraps. *//* @order 0727 */
   .slide-content.layout-quote > blockquote strong {
     background: var(--accent); color: var(--paper);
     padding: 0.02em 0.18em; border-radius: 0.1em;
     box-decoration-break: clone; -webkit-box-decoration-break: clone;
-  }/* @order 0721 */
-  /* Attribution: upright, muted, led by a short accent rule (mockup .attr .rule). *//* @order 0722 */
-  .slide-content.layout-quote > blockquote cite {
-    margin-top: 1.3em;
-    font-size: 0.42em;
-  }/* @order 0723 */
+  }/* @order 0728 */
+  /* Quote panel owner. The old skin duplicate is gone: layout geometry and its visual device now
+     change together here. ADR-0023 §9: EVERY quote-only panel has the one width — the full content
+     column, min(84cqw, 100%) of the 1180px-capped column (1180px at 1600) — and the one type,
+     max(31px, 3.4cqw). Length never changes either: a quote that does not fit is split across
+     continuation slides at compile time (compiler/scripts/lib/quote-layout.mjs mirrors the
+     geometry below; change them together). The paragraph measure caps at 34em. *//* @order 1403 */
+  .slide-content.layout-quote > blockquote {
+    background: var(--tint);
+    border-left: .22em solid var(--accent);
+    border-radius: 0;
+    box-shadow: none;
+    margin: 0;
+    padding: 1.4em 1.6em 1.2em 2.4em;
+    width: min(84cqw, 100%);
+    max-width: none;
+    --quote-fitted-size: max(31px, 3.4cqw);
+    font-family: var(--sans);
+    font-weight: 400;
+    font-size: var(--quote-fitted-size);
+    line-height: 1.42;
+    letter-spacing: -.01em;
+  }/* @order 1404 */
+  .slide-content.layout-quote > blockquote::before {
+    content: "\201C";
+    position: absolute;
+    left: .28em;
+    top: .18em;
+    font-size: 2.6em;
+    line-height: 1;
+    font-family: Georgia, serif;
+    font-weight: 700;
+    color: var(--accent);
+    opacity: 1;
+  }/* @order 1405 */
+  .slide-content.layout-quote > blockquote p { max-width: 34em; }/* @order 1406 */
+  .slide-content.layout-quote > blockquote cite,
+  .slide-content.layout-quote > blockquote + cite {
+    display: flex;
+    align-items: center;
+    gap: 1em;
+    margin-top: 1.2em;
+    font-style: normal;
+    font-family: var(--sans);
+    font-size: max(var(--type-floor), .58em);
+    font-weight: 600;
+    color: var(--ink);
+    letter-spacing: .01em;
+  }/* @order 1407 */
   .slide-content.layout-quote > blockquote cite::before {
     content: "";
-    display: inline-block;
-    width: 3em; height: 2px;
+    flex: none;
+    width: 3em;
+    height: 2px;
     background: var(--accent);
-    vertical-align: middle;
-    margin-right: 0.8em;
-  }/* @order 1393 */
-
-  /* Quote (mockup .t-quote): tint panel, thick accent left border, giant serif mark,
-     rule-then-name attribution */
+  }/* @order 1950 */
+  /* ADR-0023 §9 continuation mark: parts 1..n−1 of a split quote say "n / N" in small mono chrome
+     at the panel's bottom-right, inside the padding so the text block keeps its budget. The doctor
+     lists .quote-continuation as small chrome. */
+  .slide-content.layout-quote > blockquote .quote-continuation {
+    position: absolute;
+    right: .6em;
+    bottom: .42em;
+    font-family: var(--mono);
+    font-size: .34em;
+    font-weight: 500;
+    letter-spacing: .04em;
+    line-height: 1;
+    color: var(--ink);
+    opacity: .62;
+  }

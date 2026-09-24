@@ -1,43 +1,104 @@
-/* @order 1454 */
-  .slide-table { border: 1px solid var(--hairline); border-collapse: collapse; font-size: 1em; }/* @order 1455 */
+/* @order 1463 */
+  .slide-table { border: 1px solid var(--hairline); border-collapse: collapse; font-size: max(var(--type-floor), 1em); }/* @order 1464 */
   .slide-table thead th {
     background: var(--tint);
     color: var(--ink);
     font-weight: 700;
-    font-size: 1.05em;
+    font-size: max(var(--type-floor), 1.05em);
     text-align: left;
     padding: .6em .8em;
     border-left: 1px solid var(--hairline);
     letter-spacing: 0;
     text-transform: none;
-  }/* @order 1456 */
+  }/* @order 1465 */
   .slide-table tbody th:first-child,
   .slide-table tbody td:first-child {
     font-family: var(--mono);
-    font-size: .62em;
+    font-size: max(var(--type-floor), .62em);
     letter-spacing: .14em;
     text-transform: uppercase;
     color: var(--accent);
     font-weight: 400;
     vertical-align: middle;
-  }/* @order 1457 */
+  }/* @order 1466 */
   .slide-table tbody td, .slide-table tbody th {
     padding: .55em .8em;
     border-top: 1px solid var(--hairline);
     border-left: 1px solid var(--hairline);
     line-height: 1.35;
-    font-size: .95em;
-  }/* @order 1522 */
-  .slide-table { font-size: .9em; }/* @order 1523 */
+    /* Ticket 21: cells read at the table's type (the body token), never a step under it. */
+    font-size: max(var(--type-floor), 1em);
+  }/* @order 1531 */
+  .slide-table { font-size: max(var(--type-floor), .9em); }/* @order 1532 */
   .slide-table tbody th:first-child,
   .slide-table tbody td:first-child {
     font-family: var(--sans);
-    font-size: .95em;
+    font-size: max(var(--type-floor), 1em);
     letter-spacing: 0;
     text-transform: none;
     color: var(--accent);
     font-weight: 600;
-  }/* @order 1571 */
-  .slide-table { font-size: .85em; }/* @order 1646 */
-  .slide-table { font-size: var(--fs-dense) !important; }/* @order 1647 */
+  }/* @order 1580 */
+  .slide-table { font-size: max(var(--type-floor), .85em); }/* @order 1672 */
+  /* Ticket 21 (Dominik, 2026-09-13: "larger font — eqv of current xl is minimum"): the table's
+     type is the BODY token, not the dense step. --fs-body is also what the runtime fitter steps,
+     so a table that cannot fit at the token joins the list seam (leading, air, then type). */
+  .slide-table { font-size: max(var(--type-floor), var(--fs-body)) !important; }/* @order 1673 */
   .slide-table tbody th:first-child, .slide-table tbody td:first-child { font-weight: 500; }
+
+  /* @order 1980 */
+  /* === Ticket 21 — TABLE FILLS THE BAND (Dominik: "adjust table size to minimise vertical white
+     space"). Row padding scales with the room the band leaves: --table-band is a conservative
+     estimate of the title-to-footer band (stage minus the 6vh title offset, the title bar, the
+     slide margins and the 59px footer band, ~85% of the real band at 1600x900 and 1280x720), and
+     --table-rows is stamped by the compiler. The padding is clamped so a two-row table never
+     balloons (1.1em) and a crowded one never crushes (.45em); the auto margins the top regime gives
+     the first/last child keep the table centred with equal air above and below. A table taller than
+     the band is measured by the presenter runtime (fitLists, the Ticket 18 seam): --list-lh steps
+     the cell leading, --list-gap the padding, then --fs-body the type, never below the floor. */
+  .slide-table {
+    --table-band: calc(77vh - 150px);
+    --table-row-pad: clamp(.45em, calc((var(--table-band) - var(--table-rows, 4) * 1.35em) / (2 * var(--table-rows, 4))), 1.1em);
+    width: 100%;
+    max-width: none;
+  }
+  /* @order 1981 */
+  .slide-table thead th,
+  .slide-table tbody td,
+  .slide-table tbody th {
+    padding-top: calc(var(--table-row-pad) * var(--list-gap, 1));
+    padding-bottom: calc(var(--table-row-pad) * var(--list-gap, 1));
+    line-height: var(--list-lh, 1.35);
+    vertical-align: middle;
+  }
+  /* @order 1982 */
+  /* {table-columns=off}: hairline rules between rows only — no column dividers, no side borders. */
+  .slide-table.table-nocolumns,
+  .slide-table.table-nocolumns thead th,
+  .slide-table.table-nocolumns tbody td,
+  .slide-table.table-nocolumns tbody th {
+    border-left: 0;
+    border-right: 0;
+  }
+  /* @order 1983 */
+  /* {table-header=off}: the compiler renders the first row inside tbody, so it already reads as a
+     plain row; the table keeps its top hairline where the tinted header used to sit. */
+  .slide-table.table-noheader tbody tr:first-child td { border-top: 0; }
+  /* @order 1984 */
+  /* Compile-time density for tables — the same two properties the list seam and fitLists write. */
+  .slide-content:has(> .slide-table[data-list-density="long"]) { --list-lh: 1.25; --list-gap: .82; }
+  /* @order 1985 */
+  .slide-content:has(> .slide-table[data-list-density="dense"]) { --list-lh: 1.18; --list-gap: .64; }
+  /* @order 1997 */
+  /* The visible footer band starts 61px above the stage bottom (headless Chromium, 2026-09-13:
+     .footer rect top = 839 at 900; media.css @order 0280 reserves the band the same way for a lone
+     figure): reserve what the slide margin does not already clear, and replace the title bar's
+     fixed gap with the same 2vh on both sides so the top regime's auto margins split the exact
+     title-to-footer band — equal air above and below the table. */
+  .slide[data-title-layout="top"] > .slide-content:has(> .slide-table) {
+    padding-bottom: calc(max(0px, calc(61px - var(--slide-pad-y))) + 2vh);
+  }
+  /* @order 1998 */
+  /* 2vh is the minimum air on both sides: a table that needs the whole band never touches the
+     title rule or the footer. The head's margin sits inside the span fitLists measures. */
+  .slide[data-title-layout="top"] > .slide-content:has(> .slide-table) > .slide-head { margin-bottom: 2vh !important; }

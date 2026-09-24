@@ -1,80 +1,13 @@
-// Replica test for normalizeTriggerLines. The function below MUST match
-// src/renderer/src/extensions/outliner.ts verbatim; if that changes, update here.
 import { strict as assert } from "node:assert";
+import {
+  collapseDuplicateLayouts,
+  fencedLineFlags,
+  normalizePositions,
+  scanFencedLines,
+  normalizeTriggerLines
+} from '../src/shared/outline-normalize.ts'
 
-// ---- BEGIN MUST-MATCH (copies of fencedLineFlags + normalizeTriggerLines from outliner.ts) ----
-const TRIGGER_LINE_RE = /^\s*(\{[^}]*\}\s*)+$/;
-const TRAILING_BRACES_RE = /\s*(\{[^}]*\}(?:\s*\{[^}]*\})*)\s*$/;
-
-// Per-line fence + HTML-comment mask — mirrors 12-outline-edit.mjs structuralHeadings.
-function fencedLineFlags(lines) {
-  const flags = new Array(lines.length).fill(false);
-  let inFence = false;
-  let fenceMark = '';
-  let inComment = false;
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    const t = line.trim();
-    const visibleAtStart = !inComment;
-    if (!inFence) {
-      let pos = 0;
-      for (;;) {
-        if (inComment) {
-          const close = line.indexOf('-->', pos);
-          if (close === -1) break;
-          inComment = false;
-          pos = close + 3;
-        } else {
-          const open = line.indexOf('<!--', pos);
-          if (open === -1) break;
-          inComment = true;
-          pos = open + 4;
-        }
-      }
-    }
-    if (!visibleAtStart) { flags[i] = true; continue; }
-    if (inFence) {
-      flags[i] = true;
-      const close = t.match(/^(`{3,})\s*$/);
-      if (close && close[1].length >= fenceMark.length) { inFence = false; fenceMark = ''; }
-      continue;
-    }
-    const open = t.match(/^(`{3,})/);
-    if (open) { inFence = true; fenceMark = open[1]; flags[i] = true; }
-  }
-  return flags;
-}
-
-function normalizeTriggerLines(text) {
-  const lines = text.split('\n');
-  const fenced = fencedLineFlags(lines);
-  const out = [];
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    const isSlideHeading = !fenced[i] && /^#{2,6} /.test(line);
-    if (!isSlideHeading) { out.push(line); i += 1; continue; }
-    const m = line.match(TRAILING_BRACES_RE);
-    if (!m) { out.push(line); i += 1; continue; }
-    const cleanTitle = line.slice(0, line.length - m[0].length);
-    const movedGroups = m[1];
-    let j = i + 1;
-    while (j < lines.length && lines[j].trim() === '') j += 1;
-    const existingTrigger =
-      j < lines.length && !fenced[j] && lines[j].trim() !== '' && TRIGGER_LINE_RE.test(lines[j]);
-    if (existingTrigger) {
-      out.push(cleanTitle);
-      out.push(movedGroups + lines[j].trim());
-      i = j + 1;
-    } else {
-      out.push(cleanTitle);
-      out.push(movedGroups);
-      i += 1;
-    }
-  }
-  return out.join('\n');
-}
-// ---- END MUST-MATCH ----
+const outlineNormalize = await import('../src/shared/outline-normalize.ts')
 
 let n = 0;
 const ok = (m) => { n++; console.log("  ok " + m); };
@@ -198,5 +131,170 @@ ok("merge across blanks: no duplicate trigger line, merged line sits directly be
 const blankMergeOnce = normalizeTriggerLines('### My title {statement}\n\n{id=musc1}\n\n- body');
 assert.equal(normalizeTriggerLines(blankMergeOnce), blankMergeOnce);
 ok("idempotent (blank-separated merge): running twice produces identical output");
+
+// 13. A CRLF Trigger line is still the existing merge target. The normaliser has always emitted
+//     LF for lines it rewrites; the regression is that it must not insert a duplicate Trigger line.
+assert.equal(
+  normalizeTriggerLines('### T {quote}\r\n{statement}\r\n'),
+  '### T\n{quote}{statement}\n'
+);
+ok("CRLF trigger line remains the merge target; no duplicate line is inserted");
+
+// 14. Trailing whitespace on a Trigger line is tolerated by the read rule and must not make the
+//     normaliser insert a second Trigger line above it.
+assert.equal(
+  normalizeTriggerLines('### T {quote}\n{statement}   \n'),
+  '### T\n{quote}{statement}\n'
+);
+ok("trailing-space trigger line remains the merge target; no duplicate line is inserted");
+
+// 15. Position-only normalisation removes blanks between a heading and its Trigger line.
+assert.equal(normalizePositions('### T\n\n\n{statement}\nBody'), '### T\n{statement}\nBody')
+ok("position pass removes blanks between heading and Trigger line")
+
+// 16. Position-only normalisation includes the existing title-brace pull-down.
+assert.equal(normalizePositions('### T {statement}\nBody'), '### T\n{statement}\nBody')
+ok("position pass pulls title braces down")
+
+// 17. Position-only normalisation never changes authored tokens.
+assert.equal(normalizePositions('### T\n{statement}{quote}\nBody'), '### T\n{statement}{quote}\nBody')
+ok("position pass leaves tokens byte-identical")
+
+// 18. Fenced content is never structurally normalised.
+assert.equal(normalizePositions('```\n### T {x}\n```'), '```\n### T {x}\n```')
+ok("position pass leaves fenced content untouched")
+
+// 18b. The autosave position pass uses the compiler's complete Markdown-fence rule. A tilde
+//      fence is just as opaque as a backtick fence, including heading- and Trigger-shaped lines.
+const tildeFencedPositionSource = [
+  '### Real slide',
+  '{id=real-slide}',
+  '',
+  '~~~md',
+  '### Example title {statement}{title=side}',
+  '{chart=pie}',
+  '~~~',
+].join('\n')
+assert.equal(
+  normalizePositions(tildeFencedPositionSource),
+  tildeFencedPositionSource,
+  'normalizePositions must leave a tilde-fenced heading and trigger-shaped line byte-identical'
+)
+ok("position pass leaves tilde-fenced heading and trigger-shaped lines untouched")
+
+// 18c. The Doctor's whole-document reset scan must stay linear even when every slide contains an
+// unterminated fence. Count line reads instead of timing a particular machine.
+const resetStressLines = Array.from(
+  { length: 400 },
+  (_, index) => index % 2 === 0 ? `### Slide ${index / 2 + 1}` : '```text'
+)
+let resetStressReads = 0
+const countedResetStressLines = new Proxy(resetStressLines, {
+  get(target, property, receiver) {
+    if (typeof property === 'string' && /^\d+$/.test(property)) resetStressReads += 1
+    return Reflect.get(target, property, receiver)
+  }
+})
+scanFencedLines(countedResetStressLines, {
+  resetAtLine: (line) => /^### /.test(line)
+})
+assert(
+  resetStressReads <= resetStressLines.length * 6,
+  `fence-reset scan read ${resetStressReads} line slots for ${resetStressLines.length} lines`
+)
+ok("unterminated-fence reset lookahead performs a linear number of line reads")
+
+// 19. Duplicate layouts collapse to the compiler's final authored winner and report the change.
+const collapsed = collapseDuplicateLayouts('### T\n{statement}{quote}\nBody')
+assert.equal(collapsed.text, '### T\n{quote}\nBody')
+assert.deepEqual(collapsed.tokenChanges, ['duplicate-layout:quote'])
+ok("duplicate layouts collapse to the last layout and report it")
+
+// 20. Non-layout tokens ride along untouched.
+assert.equal(collapseDuplicateLayouts('### T\n{statement}{reveal}\n').text, '### T\n{statement}{reveal}\n')
+ok("non-layout tokens survive duplicate-layout pass")
+
+// 21. A clean outline reports no token changes.
+assert.deepEqual(collapseDuplicateLayouts('### T\n{statement}\n').tokenChanges, [])
+ok("clean outline reports no token changes")
+
+// 22. The flagged same-key pass keeps the compiler-effective final id and preserves provenance.
+assert.equal(typeof outlineNormalize.collapseDuplicateKeys, 'function',
+  'manual normalise exposes the flagged duplicate-key pass')
+const duplicateIds = outlineNormalize.collapseDuplicateKeys(
+  '### Reused\n{id=B1 layout=statement}{from=source-talk}{id=faio6}\nBody'
+)
+assert.equal(
+  duplicateIds.text,
+  '### Reused\n{layout=statement}{from=source-talk}{id=faio6}\nBody'
+)
+assert.deepEqual(duplicateIds.tokenChanges, ['duplicate-key:id:faio6'])
+ok("duplicate ids collapse to the last id with provenance intact")
+
+// 23. A single id is byte-identical and unreported.
+assert.deepEqual(
+  outlineNormalize.collapseDuplicateKeys('### T\n{id=only}{statement}\n'),
+  { text: '### T\n{id=only}{statement}\n', tokenChanges: [] }
+)
+ok("single id is untouched by the duplicate-key pass")
+
+// 24. Provenance keys are append-only evidence, even if the same key occurs more than once.
+assert.deepEqual(
+  outlineNormalize.collapseDuplicateKeys('### T\n{from=one}{from=two}{clonedFrom=three}{clonedFrom=four}\n'),
+  {
+    text: '### T\n{from=one}{from=two}{clonedFrom=three}{clonedFrom=four}\n',
+    tokenChanges: []
+  }
+)
+ok("from and clonedFrom provenance tokens are never collapsed")
+
+// 25. Removing a now-empty group removes its preceding space run with it.
+assert.equal(
+  outlineNormalize.collapseDuplicateKeys('### T\n{statement}   {id=old}  {id=new}\n').text,
+  '### T\n{statement}  {id=new}\n'
+)
+ok("empty duplicate-key groups and their preceding spaces are removed")
+
+// 26. Removing a token from inside one group also removes its orphaned comma separator.
+assert.equal(
+  outlineNormalize.collapseDuplicateKeys('{id=old,id=new}').text,
+  '{id=new}'
+)
+ok("duplicate token inside one group leaves no orphaned separator")
+
+// 27. Removing a line-leading group consumes its following separator space.
+assert.equal(
+  outlineNormalize.collapseDuplicateKeys('{id=old} {id=new}{reveal}').text,
+  '{id=new}{reveal}'
+)
+ok("line-leading duplicate group leaves no leading space")
+
+// 28. Removing the first trigger group after heading text preserves the heading separator.
+assert.equal(
+  outlineNormalize.collapseDuplicateKeys('### T {id=old}{id=new}').text,
+  '### T {id=new}'
+)
+ok("heading keeps one space before its surviving trigger group")
+
+// 29. The silent automatic path remains position-only and never collapses duplicate ids.
+assert.equal(
+  normalizePositions('### T\n\n{id=old}{id=new}\nBody'),
+  '### T\n{id=old}{id=new}\nBody'
+)
+ok("auto normalise moves positions only and leaves duplicate ids authored")
+
+// 30. Tabs are token separators too, so removing an in-group duplicate consumes the tab.
+assert.equal(
+  outlineNormalize.collapseDuplicateKeys('{id=old\tid=new}').text,
+  '{id=new}'
+)
+ok("duplicate token inside one group consumes an adjacent tab separator")
+
+// 31. Braces in heading prose do not make the first trailing trigger group eat its separator.
+assert.equal(
+  outlineNormalize.collapseDuplicateKeys('### Use {curly} here {id=old}{id=new}').text,
+  '### Use {curly} here {id=new}'
+)
+ok("braces in a heading title do not remove the space before its first trigger group")
 
 console.log(`\nnormalize-trigger-lines: all ${n} checks passed`);

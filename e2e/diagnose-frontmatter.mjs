@@ -1,5 +1,7 @@
 // Real-Electron harness for the frontmatter table editor (raw ↔ table, typed controls, write-back).
 import { _electron as electron } from 'playwright'
+import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
@@ -37,7 +39,8 @@ mkdirSync(td, { recursive: true }); mkdirSync(ud, { recursive: true })
 writeFileSync(join(td, 'fm-fixture-outline.md'), FIX)
 writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault }, null, 2))
 
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO })
+await ensureFreshBuild(REPO)
+const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
 const page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded')
 await page.waitForTimeout(1200)
@@ -48,8 +51,7 @@ const rawLines = () =>
   )
 
 try {
-  await page.locator('.sidebar-mode-btn', { hasText: 'Talks' }).click().catch(() => {})
-  await page.locator('.talk-item', { hasText: 'FM Fixture' }).first().click()
+  await openTalkByTitle(page, 'FM Fixture')
   await page.waitForSelector('.cm-content', { timeout: 8000 })
   await page.waitForTimeout(800)
 

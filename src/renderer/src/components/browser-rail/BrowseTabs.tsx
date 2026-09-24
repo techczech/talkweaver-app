@@ -3,7 +3,7 @@
 // click); Collections are lenses (recently edited, recently delivered, Pathways v0.16
 // placeholder). Both tabs' rows scope the grid: plain click replaces, ⌘click adds.
 import { useState } from 'react'
-import { ChevronRight, FileText, Folder, FolderOpen, Layers, Monitor, Pencil, Waypoints } from 'lucide-react'
+import { ChevronRight, FileText, Folder, FolderOpen, Layers, Monitor, Pencil } from 'lucide-react'
 import type { CollectionRow, ScopeFn, TreeFolder } from './railTypes'
 
 function additive(e: React.MouseEvent): boolean {
@@ -147,15 +147,9 @@ export function Collections({ recent, delivered, isScoped, onScope, currentTalkS
       <div className="lt-coll-label">Recently delivered</div>
       {delivered.map((r) => row(r, <Monitor className="lt-icon lt-ficon" />, 'Scope to the talk behind this delivery (⌘click adds)'))}
       {delivered.length === 0 && <div className="lt-fzero">No deliveries recorded yet.</div>}
-      {/* Pathways land in v0.16 (ADR-0009: pathway rows live HERE, never in Files) —
-          dimmed, non-interactive placeholder so the shape of the shelf is already visible. */}
-      <div className="lt-coll-soon" aria-disabled="true">
-        <div className="lt-coll-label">Pathways <span className="lt-vbadge-soon">v0.16</span></div>
-        <div className="lt-crow soon">
-          <Waypoints className="lt-icon lt-ficon" />
-          <span className="lt-tn">Reusable slide pathways</span>
-        </div>
-      </div>
+      {/* The old dimmed "Pathways — v0.16" placeholder was removed 2026-07-19: pathways shipped
+          long ago and open via tools:open-pathways (WorkspaceLayout / PathwayBadge). A stale
+          version-badge on a delivered feature was misleading. */}
     </div>
   )
 }

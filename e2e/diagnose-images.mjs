@@ -4,6 +4,8 @@
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-images.mjs
 import { _electron as electron } from 'playwright'
+import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { mkdirSync, mkdtempSync, writeFileSync, copyFileSync, existsSync } from 'fs'
@@ -33,7 +35,8 @@ const outlinePath = join(talkDir, 'img-fixture-outline.md')
 writeFileSync(outlinePath, '---\ntitle: Img Fixture\n---\n\n## S\n\n### Slide\n\nplaceholder\n')
 writeFileSync(join(userDataDir, 'config.json'), JSON.stringify({ vaultRoot: tempVault }, null, 2))
 
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + userDataDir], cwd: REPO })
+await ensureFreshBuild(REPO)
+const app = await electron.launch({ args: ['.', '--user-data-dir=' + userDataDir], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
 const page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded')
 await page.waitForTimeout(1200)
@@ -71,7 +74,7 @@ try {
   writeFileSync(outlinePath, outline)
 
   // Open the talk (toggle selection forces a fresh load from disk).
-  await page.locator('.talk-item', { hasText: 'Img Fixture' }).first().click()
+  await openTalkByTitle(page, 'Img Fixture')
   await page.waitForSelector('.cm-content', { timeout: 8000 })
   await page.waitForTimeout(2500)
 

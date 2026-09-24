@@ -24,6 +24,7 @@ import TagPicker from './TagPicker'
 import InsertViewer from './InsertViewer'
 import BrowserRail from './browser-rail/BrowserRail'
 import EchoLine from './browser-rail/EchoLine'
+import { createThumbRegenQueue } from '../lib/thumbnailRegenQueue'
 import {
   type ContentKey, type RailFacets, type ScopeEntry,
   CONTENT_KEYS, CONTENT_LABELS, agoLabel, anyFacetActive, emptyFacets, facetKindBases,
@@ -265,17 +266,18 @@ export default function SlideBrowser({
   // whose twthumb:// prints 404 (their thumbnail cache was never built — only talks opened
   // in the editor get a tw.talk.thumbnails run) are rendered in the background from the
   // Browser, strictly ONE talk at a time (each run opens a hidden window). When a talk's run
-  // resolves, its nonce bumps and that talk's <img>s remount and retry. Guards: chain runs
-  // only while the Browser is open; a talk is requested at most once per session.
+  // renders something, its nonce bumps and that talk's <img>s remount and retry. Guards: the
+  // chain runs only while the Browser is open, and a talk has at most one request in flight.
   const [thumbNonces, setThumbNonces] = useState<Record<string, number>>({})
   const [regenTalk, setRegenTalk] = useState<string | null>(null)
-  const missingThumbTalksRef = useRef(new Map<string, string>()) // slug → outlinePath
-  const requestedThumbTalksRef = useRef(new Set<string>()) // once per session, ever
+  // The queue rule lives in lib/thumbnailRegenQueue: an empty result is "not now" (deferred, no
+  // attempt consumed, no cap), a fault is capped at two attempts, a rendered talk is done.
+  const thumbQueueRef = useRef(createThumbRegenQueue())
   const regenRunningRef = useRef(false)
   const isOpenRef = useRef(isOpen)
   useEffect(() => {
     isOpenRef.current = isOpen
-    if (!isOpen) missingThumbTalksRef.current.clear() // stop the chain's queue on close
+    if (!isOpen) thumbQueueRef.current.reset() // stop the chain's queue on close
   }, [isOpen])
 
   async function runThumbRegenChain(): Promise<void> {
@@ -283,19 +285,33 @@ export default function SlideBrowser({
     regenRunningRef.current = true
     try {
       while (isOpenRef.current) {
-        const first = missingThumbTalksRef.current.entries().next()
-        if (first.done) break
-        const [slug, outlinePath] = first.value
-        missingThumbTalksRef.current.delete(slug)
-        if (requestedThumbTalksRef.current.has(slug)) continue
-        requestedThumbTalksRef.current.add(slug)
+        const step = thumbQueueRef.current.next(Date.now())
+        if (step.kind === 'idle') break
+        if (step.kind === 'wait') {
+          // A deferred talk is coming back. Sleep in short slices so closing the Browser stops
+          // the chain promptly instead of after the full deferral.
+          await new Promise((resolve) => setTimeout(resolve, Math.min(Math.max(step.ms, 250), 2000)))
+          continue
+        }
+        const { slug, outlinePath } = step
         setRegenTalk(slug)
+        // null = a fault (unreadable outline, main returned null, or the call threw) — capped.
+        // 0 = main said "not now" — deferred, uncapped. > 0 = prints written.
+        let rendered: number | null = null
         try {
           const content = await window.tw.talk.readOutline(outlinePath)
-          if (!isOpenRef.current) break
-          if (content != null) await window.tw.talk.thumbnails(outlinePath, content)
-          if (isOpenRef.current) setThumbNonces((n) => ({ ...n, [slug]: (n[slug] ?? 0) + 1 }))
+          if (content != null && isOpenRef.current) {
+            // Own lane: the editor strip's compile→thumbnails cycle must never supersede this render.
+            const map = await window.tw.talk.thumbnails(outlinePath, content, { lane: 'browser' })
+            rendered = map ? Object.keys(map).length : null
+          } else if (content != null) {
+            rendered = 0 // closed mid-run: not a fault, offer the talk again next opening
+          }
         } catch { /* one bad talk must not stall the rest of the chain */ }
+        const settled = thumbQueueRef.current.settle(slug, { rendered }, Date.now())
+        if (settled.bumpNonce && isOpenRef.current) {
+          setThumbNonces((n) => ({ ...n, [slug]: (n[slug] ?? 0) + 1 }))
+        }
         setRegenTalk(null)
       }
     } finally {
@@ -304,9 +320,8 @@ export default function SlideBrowser({
     }
   }
   function noteThumbUnavailable(row: SearchResult): void {
-    if (!row.outlinePath || requestedThumbTalksRef.current.has(row.talkSlug)) return
-    if (!isOpenRef.current) return
-    missingThumbTalksRef.current.set(row.talkSlug, row.outlinePath)
+    if (!row.outlinePath || !isOpenRef.current) return
+    if (!thumbQueueRef.current.note(row.talkSlug, row.outlinePath)) return
     void runThumbRegenChain()
   }
 
@@ -320,6 +335,10 @@ export default function SlideBrowser({
     setOpenStrip(null); setFlashFile(null); setNearExpanded(new Set()); setOpenLoc(null)
     setTagPickerOpen(false)
     setViewer(null)
+    // A fresh opening looks at every talk again: one rendered by the editor lane since the last
+    // opening, or deferred while the heap was high, must get another chance at a real print
+    // rather than staying on its schematic until the app is relaunched (2026-09-15).
+    thumbQueueRef.current.reset()
     // Badge counts refetch per opening: an adoption/save between openings changes the
     // version/talk counts, so a cache carried across openings would show stale badges.
     countsRef.current.clear()

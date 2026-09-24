@@ -1,12 +1,29 @@
-# Repo-scoped gitleaks config. The layout registry (ADR-0011) declares option VALUES whose
-# field is literally named `token:` — the exact trigger-token text a UI choice writes, e.g.
-# `token: 'contrast=ledger'`. The generic-api-key rule reads that as a credential. Allowlist
-# ONLY that shape in the registry file; everything else scans as normal.
+# Repo-scoped gitleaks config. Trigger tokens are authored TEXT (`{contrast=ledger}`), not
+# credentials, but they are declared in fields literally named `token:` / `valueToken:`, which
+# the generic-api-key rule reads as secrets. Match only the six reviewed trigger-token values.
 [extend]
 useDefault = true
 
-[allowlist]
-condition = "AND"
+# The layout registry (ADR-0011) declares five option values that trigger the generic rule.
+[[allowlists]]
+regexTarget = "secret"
+regexes = ['''^(?:poll=categorisation|contrast=ledger|contrast=flip|equation=pills|equation=circle)$''']
+
+# The order-invariance fixture contains this one false positive.
+[[allowlists]]
+regexTarget = "secret"
+regexes = ['''^curve=sigmoid$''']
+
+# The desktop-rendering baseline (ADR-0018) stores one compressed PIXEL SIGNATURE per slide
+# fixture, keyed by the fixture's name. Two fixtures exercise key/value lists, so their names
+# end `-key-value` / `-keyvalue` and are followed by a very long opaque string — exactly the
+# shape the generic-api-key rule looks for. The values are rendering signatures written by
+# `npm run test:slide-canvas -- --update`; the file holds no credentials.
+#
+# Deliberately regex-only, with NO `paths`. Verified against gitleaks 8.30.1: an allowlist
+# carrying `paths` suppresses EVERY finding in those files regardless of `condition = "AND"`,
+# which would blind the scanner to a real secret committed there. Match only the two
+# reviewed baseline fixture names; a different key field remains visible to the scanner.
+[[allowlists]]
 regexTarget = "line"
-regexes = ['''token: '[a-z0-9=_-]*'''']
-paths = ['''src/shared/layout-registry/entries\.ts''']
+regexes = ['''"(?:type-floor-key-value|t18-list-keyvalue)": "[A-Za-z0-9+/=]{1000,}"''']

@@ -13,11 +13,31 @@
 // the Editor routes id-clicks to the where-used panel and trigger-clicks to the ⌘L picker.
 // Programmatic rewrites (normalizer, merge-trigger IPC, propagation) are exempt from the
 // changeFilter — only user events (input/delete/move via drag) are filtered.
-import { EditorView, Decoration, type DecorationSet, ViewPlugin, type ViewUpdate, keymap } from '@codemirror/view'
-import { EditorState, RangeSetBuilder, Prec, type Extension, type Transaction } from '@codemirror/state'
+import {
+  EditorView,
+  Decoration,
+  WidgetType,
+  type DecorationSet,
+  ViewPlugin,
+  type ViewUpdate,
+  keymap
+} from '@codemirror/view'
+import {
+  EditorState,
+  Prec,
+  type Extension,
+  type Range,
+  type Transaction,
+} from '@codemirror/state'
+import {
+  scanOutlineTriggers,
+  type LayoutDoctorFinding
+} from '../../../shared/layout-doctor'
+import { parseTriggerLine } from '../../../shared/trigger-line'
 import { notify } from '../lib/notify'
 import { effectiveKeys } from '../keymap/store'
 import { displayKeys } from '../keymap/registry'
+import { triggerEchoRange, triggerEchoState } from './triggerEcho'
 
 // `{id=<chars>}` — opaque short id (letters/digits/_/-). Matches the autocomplete's inserted form.
 const ID_RE = /\{id=[A-Za-z0-9_-]+\}/g
@@ -64,21 +84,106 @@ function lineTokenSpans(lineText: string, lineFrom: number): TokenSpan[] {
 
 const idMark = Decoration.mark({ class: 'cm-id-chip' })
 const triggerMark = Decoration.mark({ class: 'cm-trigger-chip' })
+const idEchoMark = Decoration.mark({ class: 'cm-id-chip cm-trigger-echo' })
+const triggerEchoMark = Decoration.mark({ class: 'cm-trigger-chip cm-trigger-echo' })
+const triggerConflictMark = Decoration.mark({
+  class: 'cm-trigger-chip cm-inline-conflict-token'
+})
+const triggerConflictEchoMark = Decoration.mark({
+  class: 'cm-trigger-chip cm-trigger-echo cm-inline-conflict-token'
+})
+const conflictLineMark = Decoration.line({ class: 'cm-inline-conflict-line' })
 
-function buildDecorations(view: EditorView): DecorationSet {
-  const builder = new RangeSetBuilder<Decoration>()
+class ConflictWarningPoint extends WidgetType {
+  toDOM(): HTMLElement {
+    const point = document.createElement('span')
+    point.className = 'cm-inline-conflict-dot'
+    point.dataset.warningPoint = 'true'
+    point.setAttribute('aria-label', 'Layout Doctor warning')
+    point.title = 'Layout Doctor warning'
+    return point
+  }
+
+  ignoreEvent(): boolean {
+    return true
+  }
+}
+
+const conflictWarningPoint = Decoration.widget({
+  widget: new ConflictWarningPoint(),
+  side: 1
+})
+
+const INLINE_CONFLICT_KINDS = new Set<LayoutDoctorFinding['kind']>([
+  'unregistered-value',
+  'trigger-conflict',
+  'duplicate-layout'
+])
+
+export function inlineConflictFindings(
+  text: string,
+  focusedLines: readonly number[] = []
+): LayoutDoctorFinding[] {
+  const focused = new Set(focusedLines)
+  return scanOutlineTriggers(text)
+    .filter((finding) =>
+      INLINE_CONFLICT_KINDS.has(finding.kind)
+      && !focused.has(finding.line)
+    )
+    .sort((left, right) => left.line - right.line)
+}
+
+function spanCarriesFinding(span: TokenSpan, findings: readonly LayoutDoctorFinding[]): boolean {
+  if (span.kind !== 'trigger') return false
+  const tokens = parseTriggerLine(span.text)
+  return findings.some((finding) =>
+    tokens.some((token) => token.raw === finding.token)
+  )
+}
+
+function buildDecorations(
+  view: EditorView,
+  findings: readonly LayoutDoctorFinding[]
+): DecorationSet {
+  const ranges: Array<Range<Decoration>> = []
+  const echo = triggerEchoRange(view.state)
+  const focusedLines = view.state.selection.ranges.map(({ head }) =>
+    view.state.doc.lineAt(head).number
+  )
+  const findingsByLine = new Map<number, LayoutDoctorFinding[]>()
+  for (const finding of findings) {
+    if (focusedLines.includes(finding.line)) continue
+    const lineFindings = findingsByLine.get(finding.line) ?? []
+    lineFindings.push(finding)
+    findingsByLine.set(finding.line, lineFindings)
+  }
   for (const { from, to } of view.visibleRanges) {
     let pos = from
     while (pos <= to) {
       const line = view.state.doc.lineAt(pos)
+      const lineFindings = findingsByLine.get(line.number) ?? []
+      if (lineFindings.length > 0) {
+        ranges.push(conflictLineMark.range(line.from))
+      }
       for (const span of lineTokenSpans(line.text, line.from)) {
-        builder.add(span.from, span.to, span.kind === 'id' ? idMark : triggerMark)
+        const echoes = echo && span.from >= echo.from && span.to <= echo.to
+        const conflicts = spanCarriesFinding(span, lineFindings)
+        ranges.push((
+          span.kind === 'id'
+            ? echoes ? idEchoMark : idMark
+            : conflicts
+              ? echoes ? triggerConflictEchoMark : triggerConflictMark
+              : echoes ? triggerEchoMark : triggerMark
+        ).range(span.from, span.to))
+      }
+      if (lineFindings.length > 0) {
+        ranges.push(conflictWarningPoint.range(line.to))
       }
       if (line.to + 1 > to) break
       pos = line.to + 1
     }
   }
-  return builder.finish()
+  return Decoration.set(ranges, true)
 }
 
 // Block interactive edits that endanger slide identity. Two guards, checked against the
@@ -279,11 +384,23 @@ function protectPlugin(getClickHandler?: () => ProtectedTokenClickHandler | null
   return ViewPlugin.fromClass(
     class {
       decorations: DecorationSet
+      findings: LayoutDoctorFinding[]
       constructor(view: EditorView) {
-        this.decorations = buildDecorations(view)
+        this.findings = inlineConflictFindings(view.state.doc.toString())
+        this.decorations = buildDecorations(view, this.findings)
       }
       update(u: ViewUpdate): void {
-        if (u.docChanged || u.viewportChanged) this.decorations = buildDecorations(u.view)
+        if (u.docChanged) {
+          this.findings = inlineConflictFindings(u.state.doc.toString())
+        }
+        if (
+          u.docChanged
+          || u.viewportChanged
+          || u.selectionSet
+          || triggerEchoRange(u.startState) !== triggerEchoRange(u.state)
+        ) {
+          this.decorations = buildDecorations(u.view, this.findings)
+        }
       }
     },
     {
@@ -336,6 +453,23 @@ const chipTheme = EditorView.baseTheme({
     padding: '0 4px',
     border: '1px solid rgba(11, 58, 107, 0.10)',
     cursor: 'pointer'
+  },
+  '.cm-line.cm-inline-conflict-line': {
+    backgroundColor: 'rgba(165, 42, 42, 0.055)'
+  },
+  '.cm-trigger-chip.cm-inline-conflict-token': {
+    background: 'rgba(165, 42, 42, 0.10)',
+    color: '#9a3c3c',
+    borderColor: 'rgba(165, 42, 42, 0.24)'
+  },
+  '.cm-inline-conflict-dot': {
+    display: 'inline-block',
+    width: '5px',
+    height: '5px',
+    marginLeft: '6px',
+    borderRadius: '50%',
+    backgroundColor: '#b54a4a',
+    verticalAlign: 'middle'
   }
 })
 
@@ -344,7 +478,13 @@ const chipTheme = EditorView.baseTheme({
 export function tokenProtectExtension(
   getClickHandler?: () => ProtectedTokenClickHandler | null
 ): Extension {
-  return [protectPlugin(getClickHandler), idChangeGuard, headingDeleteKeymap, chipTheme]
+  return [
+    triggerEchoState,
+    protectPlugin(getClickHandler),
+    idChangeGuard,
+    headingDeleteKeymap,
+    chipTheme
+  ]
 }
 
 // Back-compat name (pre-2026-07-03): id-only protection is now a subset of token protection.

@@ -1,9 +1,9 @@
 /* ============================================================
-   TalkWeaver Studio — the recordings player (ADR-0035, direction-1).
+   TalkWeaver Studio — the recordings player (ADR-0035).
    A warm-paper editor: the session player dominates, a full-width
    waveform with the slide-time index pinned along it as thumbnail
-   markers; the sessions are a compact rail. Ported from
-   docs/design/2026-07-05-recording/direction-1-studio-timeline.html,
+   markers; sessions use the grouped left sidebar treatment from
+   docs/design/2026-07-05-recording/direction-3-transcript-ready-split.html,
    scoped under .twstudio, reusing the global --lt-* tokens (the root
    node carries `lt`, so every token cascades). Real slide thumbnails
    (twthumb://) replace the mockup's schematic slides.
@@ -79,14 +79,35 @@
 .tws-pop .tws-pop-foot { margin-top: 11px; padding-top: 9px; border-top: 1px solid var(--lt-hair-soft); font-size: 11px; color: var(--lt-ink-faint); font-style: italic; }
 .tws-pop .tws-link { color: var(--lt-oxford); font-weight: 500; }
 
-/* ---------------- session rail ---------------- */
-.tws-rail { flex: none; background: var(--lt-chrome); border-bottom: 1px solid var(--lt-hair); padding: 11px 18px 13px; }
-.tws-rail-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
-.tws-rail-head .tws-r-title { font-size: 10.5px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--lt-ink-faint); font-weight: 500; }
-.tws-r-count { font-family: var(--lt-mono); font-size: 11px; color: var(--lt-ink-faint); }
+/* ---------------- session sidebar ---------------- */
+.tws-workbench { flex: 1; min-height: 0; display: flex; }
+.tws-sidebar {
+  flex: none; width: 328px; min-height: 0; display: flex; flex-direction: column;
+  border-right: 1px solid var(--lt-hair);
+  background: linear-gradient(to right, rgba(236, 229, 212, 0.52), rgba(236, 229, 212, 0.18));
+  transition: width 0.22s var(--lt-ease);
+}
+.tws-sidebar.collapsed { width: 34px; overflow: hidden; }
+.tws-sidebar-head { flex: none; padding: 14px 14px 12px; border-bottom: 1px solid var(--lt-hair); }
+.tws-sidebar-title-row { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+.tws-sidebar-title-row h2 { font-family: var(--lt-serif); font-weight: 500; font-size: 15.5px; letter-spacing: 0.005em; }
+.tws-r-count { margin-left: auto; font-family: var(--lt-mono); font-size: 10.5px; color: var(--lt-ink-faint); }
+.tws-sidebar-toggle {
+  flex: none; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; border-radius: 7px; color: var(--lt-ink-faint); background: transparent;
+  transition: color 0.16s var(--lt-ease), background 0.16s var(--lt-ease), border-color 0.16s var(--lt-ease);
+}
+.tws-sidebar-toggle:hover { color: var(--lt-oxford); background: var(--lt-oxford-soft); border-color: var(--lt-oxford-mid); }
+.tws-sidebar-toggle:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--lt-oxford-soft); border-color: var(--lt-oxford-mid); }
+.tws-sidebar-toggle .lt-icon { width: 15px; height: 15px; }
+.tws-sidebar-collapsed-strip { width: 34px; height: 100%; display: flex; flex-direction: column; align-items: center; padding-top: 4px; }
+.tws-sidebar-vertical-label {
+  margin-top: 12px; writing-mode: vertical-rl; transform: rotate(180deg);
+  font-family: var(--lt-mono); font-size: 9px; letter-spacing: 0.12em; color: var(--lt-ink-faint);
+}
 .tws-search {
   display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 11px; border-radius: 8px;
-  background: var(--lt-print); border: 1px solid var(--lt-hair); min-width: 220px; flex: 1; max-width: 360px;
+  background: var(--lt-print); border: 1px solid var(--lt-hair); width: 100%;
   box-shadow: inset 0 1px 2px rgba(72, 58, 34, 0.05);
 }
 .tws-search:focus-within { border-color: var(--lt-oxford-mid); box-shadow: 0 0 0 3px var(--lt-oxford-soft); }
@@ -97,27 +118,51 @@
 .tws-seg button { padding: 5px 10px; font-size: 12px; color: var(--lt-ink-faint); border-right: 1px solid var(--lt-hair-soft); }
 .tws-seg button:last-child { border-right: none; }
 .tws-seg button.on { background: var(--lt-oxford); color: #fff; font-weight: 500; }
-.tws-reassure { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--lt-ink-soft); font-style: italic; }
+.tws-sidebar-controls { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
+.tws-sort-label { font-size: 11px; color: var(--lt-ink-faint); }
+.tws-sidebar-controls .tws-seg { margin-left: auto; }
+.tws-sidebar-controls .tws-seg button { padding: 4px 9px; font-size: 11px; }
+.tws-reassure { display: flex; align-items: center; gap: 6px; margin-top: 9px; font-size: 11.5px; color: var(--lt-ink-soft); font-style: italic; }
 .tws-reassure .lt-icon { width: 13px; height: 13px; color: var(--lt-green); }
 
-.tws-sessions { display: flex; gap: 11px; overflow-x: auto; padding: 3px 2px 5px; }
-.tws-scard {
-  flex: none; width: 224px; text-align: left; position: relative;
-  border: 1px solid var(--lt-hair); border-radius: 10px; background: var(--lt-print);
-  padding: 11px 13px 12px; cursor: pointer;
-  transition: box-shadow 0.2s var(--lt-ease), border-color 0.2s var(--lt-ease), transform 0.2s var(--lt-ease);
+.tws-sidebar-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 10px 20px; }
+.tws-talkgroup { margin-bottom: 8px; }
+.tws-talkgroup + .tws-talkgroup { margin-top: 14px; padding-top: 11px; border-top: 1px solid var(--lt-hair); }
+.tws-talkgroup-head {
+  display: flex; align-items: center; gap: 7px; width: 100%; padding: 7px 7px 8px 5px;
+  text-align: left; border-radius: 7px; color: var(--lt-ink);
 }
-.tws-scard:hover { box-shadow: var(--lt-shadow-print); transform: translateY(-2px); }
-.tws-scard.active { border-color: var(--lt-oxford-mid); box-shadow: 0 0 0 1.5px var(--lt-oxford), var(--lt-shadow-print); }
-.tws-sc-top { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
-.tws-sc-date { font-family: var(--lt-mono); font-size: 11px; color: var(--lt-ink-soft); }
+.tws-talkgroup-head:hover { background: rgba(253, 250, 242, 0.5); color: var(--lt-ink); }
+.tws-talkgroup-head .lt-icon { width: 13px; height: 13px; color: var(--lt-oxford); }
+.tws-talkgroup-title {
+  min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--lt-serif); font-weight: 650; font-size: 14px; color: var(--lt-ink);
+}
+.tws-talkgroup-count {
+  flex: none; font-family: var(--lt-mono); font-size: 9px; color: var(--lt-oxford);
+  padding: 2px 6px; border-radius: 999px; background: var(--lt-oxford-soft);
+}
+.tws-sessions {
+  display: flex; flex-direction: column; gap: 3px; margin-left: 12px; padding-left: 10px;
+  border-left: 1px solid var(--lt-oxford-mid);
+}
+.tws-scard {
+  width: 100%; text-align: left; position: relative;
+  border: 1px solid transparent; border-radius: 9px; background: transparent;
+  padding: 10px 11px 11px 13px; cursor: pointer;
+  transition: box-shadow 0.2s var(--lt-ease), border-color 0.2s var(--lt-ease), background 0.18s var(--lt-ease);
+}
+.tws-scard:hover { background: rgba(253, 250, 242, 0.75); }
+.tws-scard.active { border-color: var(--lt-hair); background: var(--lt-print); box-shadow: 0 1px 2px rgba(72, 58, 34, 0.08), 0 3px 9px rgba(72, 58, 34, 0.1); }
+.tws-scard.active::before { content: ""; position: absolute; left: 0; top: 9px; bottom: 9px; width: 3px; border-radius: 0 3px 3px 0; background: var(--lt-oxford); }
+.tws-sc-top { display: flex; align-items: center; gap: 7px; margin-bottom: 4px; }
+.tws-sc-date { font-family: var(--lt-mono); font-size: 10px; color: var(--lt-ink-faint); white-space: nowrap; }
 .tws-sc-up { margin-left: auto; display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--lt-green); }
 .tws-sc-up.local { color: var(--lt-amber); }
 .tws-sc-up.failed { color: var(--lt-red); }
 .tws-sc-up .lt-icon { width: 13px; height: 13px; }
-.tws-sc-talk { font-family: var(--lt-serif); font-size: 14px; color: var(--lt-ink); font-weight: 500; line-height: 1.25; }
-.tws-sc-ctx { font-size: 11.5px; color: var(--lt-ink-soft); font-style: italic; margin: 1px 0 8px; min-height: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tws-sc-len { display: flex; align-items: baseline; gap: 7px; }
+.tws-sc-ctx { font-size: 11.5px; color: var(--lt-ink-soft); font-style: italic; margin: 0 0 7px; min-height: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tws-sc-len { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .tws-sc-rec { font-family: var(--lt-mono); font-size: 15px; color: var(--lt-ink); font-weight: 500; }
 .tws-sc-plan { font-family: var(--lt-mono); font-size: 10.5px; color: var(--lt-ink-faint); }
 .tws-delta { font-family: var(--lt-mono); font-size: 10px; padding: 1.5px 6px; border-radius: 8px; white-space: nowrap; }
@@ -132,9 +177,14 @@
 }
 .tws-scard:hover .tws-sc-play, .tws-scard.active .tws-sc-play { opacity: 1; transform: scale(1); }
 .tws-sc-play .lt-icon { width: 13px; height: 13px; fill: #fff; stroke: none; margin-left: 1px; }
+.tws-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+
+@media (prefers-reduced-motion: reduce) {
+  .tws-sidebar { transition: none; }
+}
 
 /* empty state */
-.tws-empty { display: flex; align-items: center; gap: 20px; padding: 26px 8px; }
+.tws-empty { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 46px 18px; text-align: center; }
 .tws-empty .tws-e-frame {
   flex: none; width: 132px; aspect-ratio: 16/9; border-radius: 5px;
   border: 1.5px dashed var(--lt-hair); background: rgba(253, 250, 242, 0.5);
@@ -142,7 +192,7 @@
 }
 .tws-empty .tws-e-frame .lt-icon { width: 26px; height: 26px; stroke-width: 1.4; }
 .tws-empty h3 { font-family: var(--lt-serif); font-weight: 500; font-size: 19px; margin-bottom: 5px; }
-.tws-empty p { font-size: 13px; color: var(--lt-ink-soft); line-height: 1.55; max-width: 480px; }
+.tws-empty p { font-size: 13px; color: var(--lt-ink-soft); line-height: 1.55; max-width: 250px; }
 .tws-empty p .tws-q { font-family: var(--lt-mono); font-size: 12px; background: var(--lt-paper-deep); padding: 1px 6px; border-radius: 4px; color: var(--lt-ink); }
 
 .tws-btn {
@@ -169,7 +219,7 @@
 .tws-nh-tag { margin-left: auto; font-family: var(--lt-mono); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 7px; border-radius: 4px; background: var(--lt-paper-deep); color: var(--lt-ink-soft); flex: none; }
 .tws-monitor-wrap { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
 .tws-monitor-frame {
-  width: min(100%, 620px, calc((100vh - 636px) * 16 / 9)); aspect-ratio: 16/9;
+  width: min(100%, 720px, calc((100vh - 390px) * 16 / 9)); aspect-ratio: 16/9;
   background: var(--lt-print); border-radius: 7px; padding: 9px; box-shadow: var(--lt-shadow-lift);
 }
 .tws-monitor-slide {

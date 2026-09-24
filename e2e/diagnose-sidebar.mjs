@@ -8,11 +8,15 @@
 //   (b) typing filters; ↓↓ + Enter opens the second match.
 //   (c) Cmd+Shift+O switches to the Slide outline search; ↓ + Enter jumps the editor.
 //   (d) Cmd+Shift+[ collapses and re-expands the sidebar with focus restored.
-//   (e) metadata toggle shows cached slide count + last-presented fixture date.
+//   (e) the focused-talk preview shows cached slide count + last-delivered fixture date.
 //   (f) sorting by Edited reorders talks by mtime descending.
+//   (g) T29b: openFirstTalk leaves the sidebar on Talks; the first click in the editor switches
+//       it to the Slide outline and unmounts the Talks panel.
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-sidebar.mjs
 import { _electron as electron } from 'playwright'
+import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { activeTalkRow, talkRows as mountedTalkRows, waitForTalkList, openFirstTalk } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { mkdirSync, mkdtempSync, writeFileSync, utimesSync } from 'fs'
@@ -123,25 +127,27 @@ writeFileSync(join(tempVault, '_PRESENTATIONS', 'c10-beta', `${session.id}.json`
 writeFileSync(join(userDataDir, 'config.json'), JSON.stringify({ vaultRoot: tempVault }, null, 2), 'utf8')
 writeFileSync(join(userDataDir, 'search-index.json'), JSON.stringify(searchIndex), 'utf8')
 
+await ensureFreshBuild(REPO)
 const app = await electron.launch({
   args: ['.', '--user-data-dir=' + userDataDir],
   cwd: REPO,
-  env: { ...process.env, TW_REC_TEST: '1' }
+  env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
 })
 const page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded')
 await page.waitForTimeout(1200)
 
-const talkRows = () => page.locator('[data-talk-slug]')
-const activeTalkSlug = async () => page.locator('.talk-item--active').getAttribute('data-talk-slug').catch(() => null)
+const talkRows = () => mountedTalkRows(page)
+const activeTalkSlug = async () => activeTalkRow(page).getAttribute('data-talk-slug').catch(() => null)
 const focusedLabel = () => page.evaluate(() => document.activeElement?.getAttribute('aria-label') || '')
 const activeEditorText = () => page.locator('.cm-activeLine').first().textContent().catch(() => '')
 
 try {
+  await waitForTalkList(page)
   await page.waitForSelector('[data-talk-slug="c10-alpha"]', { timeout: 8000 })
 
   await page.keyboard.press('Meta+Shift+T')
-  const talksFocused = await waitFor(async () => (await focusedLabel()) === 'Search talks', 4000)
+  const talksFocused = await waitFor(async () => (await focusedLabel()) === 'Filter talks', 4000)
   record('⌘⇧T focuses the Talks search', talksFocused)
 
   await page.keyboard.type('C10')
@@ -175,11 +181,22 @@ try {
   record('⌘⇧[ collapses and re-expands with active panel search focused', collapsed && expandedFocus, `collapsed=${collapsed} focus=${await focusedLabel()}`)
 
   await page.keyboard.press('Meta+Shift+T')
-  await page.locator('[data-talklist-meta-toggle]').click()
-  const betaMeta = page.locator('[data-talk-slug="c10-beta"] [data-talk-meta]')
-  const metaText = await betaMeta.textContent().catch(() => '')
-  const metaOk = /6 slides/.test(metaText || '') && /presented/.test(metaText || '') && !/presented\s+—/.test(metaText || '')
-  record('meta toggle renders cached slide count and last-presented fixture value', metaOk, `meta=${metaText}`)
+  // T29: the preview card appears on HOVER (after the intent pause) — a click opens the talk
+  // and must never show, nor leave behind, a card.
+  const betaRow = page.locator('[data-talk-slug="c10-beta"]')
+  // The card may already be up for the keyboard-focused row (⌘⇧T focuses the panel's search),
+  // so wait for C10 Beta's own card (its slug shows in the File row), not just any flyout.
+  const betaCard = page.locator('[data-talklist-flyout]').filter({ hasText: 'c10-beta' })
+  await betaRow.hover()
+  await betaCard.waitFor({ timeout: 4000 })
+  const metaText = await betaCard.locator('.tl-flyout-meta').innerText().catch(() => '')
+  const metaOk = /Slides\s+6 slides/.test(metaText || '') && /Delivered\s+2d ago/.test(metaText || '')
+  record('hover preview renders cached slide count and last-delivered fixture value', metaOk, `meta=${JSON.stringify(metaText)}`)
+
+  await betaRow.click()
+  const flyoutGone = await waitFor(async () => !(await page.locator('[data-talklist-flyout]').isVisible().catch(() => false)), 4000)
+  const editorOpen = await page.locator('.cm-content').first().waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false)
+  record('click opens the talk and leaves no preview card behind', flyoutGone && editorOpen, `flyoutGone=${flyoutGone} editor=${editorOpen}`)
 
   await page.locator('[data-talklist-sort]').click()
   await page.locator('[data-sort-key="edited"]').click()
@@ -189,6 +206,27 @@ try {
   }, 5000)
   const order = await talkRows().evaluateAll((els) => els.map((el) => el.getAttribute('data-talk-slug')))
   record('sort by Edited reorders talks by edited date descending', sortedEdited, `order=${JSON.stringify(order)}`)
+
+  // T29b: opening a talk from the Talks panel leaves the sidebar on Talks; the FIRST click inside
+  // the editor text is what switches it to the Slide outline — once per opened talk (re-opening
+  // from the panel re-arms; further clicks in the same talk do not switch again).
+  await openFirstTalk(page)
+  const talksStillUp = await waitFor(async () => page.locator('.tl-panel').isVisible(), 4000)
+  const talksTabActive = await waitFor(
+    async () => (await page.getByRole('tab', { name: 'Talks', exact: true }).getAttribute('aria-selected')) === 'true',
+    4000
+  )
+  record('openFirstTalk leaves the sidebar on Talks (no switch on open)', talksStillUp && talksTabActive,
+    `panel=${talksStillUp} talksTabActive=${talksTabActive}`)
+
+  await page.locator('.cm-content').first().click()
+  const outlineTabActive = await waitFor(
+    async () => (await page.getByRole('tab', { name: 'Slide outline', exact: true }).getAttribute('aria-selected')) === 'true',
+    5000
+  )
+  const talksPanelGone = await waitFor(async () => (await page.locator('.tl-panel').count()) === 0, 3000)
+  record('first click in the editor switches the sidebar to the Slide outline', outlineTabActive && talksPanelGone,
+    `outlineTabActive=${outlineTabActive} talksPanelGone=${talksPanelGone}`)
 } catch (e) {
   record('sidebar harness completed without throwing', false, String(e && e.stack ? e.stack : e))
 } finally {

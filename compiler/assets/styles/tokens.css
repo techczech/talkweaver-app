@@ -38,11 +38,11 @@
        every layout via .slide. Content sits the same distance from the slide edge regardless of
        layout — no more ad-hoc per-layout padding. Change here to reflow the whole deck's margins. */
     --slide-pad-y: 5vh;
-    --slide-pad-x: 5.6vw;
+    --slide-pad-x: 5.6cqw;
   }/* @order 0326 */
   /* Refinement 7 (2026-06-09): keep a consistent GUTTER between text and any graphical element
      (action/CTA row, accent bars, rules, diagrams) so they never sit cramped against adjacent text.
      ONE token (--gutter-graphic); the visible offender was the CTA button row butting straight onto
      the statement above it (and onto the statement's accent bar). A button row that FOLLOWS any
      sibling gets the gutter above it. *//* @order 0327 */
-  :root { --gutter-graphic: clamp(18px, 2.2vw, 32px); }
+  :root { --gutter-graphic: clamp(18px, 2.2cqw, 32px); }

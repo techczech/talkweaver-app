@@ -92,6 +92,10 @@ export const TRIGGER_DICTIONARY = {
     "key": "timeline",
     "value": "pills"
   },
+  "timelinedynamic": {
+    "key": "timeline",
+    "value": "dynamic"
+  },
   "grid": {
     "key": "layout",
     "value": "grid"
@@ -103,6 +107,14 @@ export const TRIGGER_DICTIONARY = {
   "smartart": {
     "key": "layout",
     "value": "smartart"
+  },
+  "timeline-visual": {
+    "key": "layout",
+    "value": "timeline-visual"
+  },
+  "list-visual": {
+    "key": "layout",
+    "value": "list-visual"
   },
   "flow": {
     "key": "layout",
@@ -353,11 +365,39 @@ export const VALUE_TRIGGER_DICTIONARY = {
     "tint",
     "poster"
   ],
+  "icons": [
+    "top",
+    "all",
+    "off",
+    "none",
+    "on",
+    "yes"
+  ],
   "iconlist": [
     "boxes",
     "list"
   ],
+  "liststyle": [
+    "icons",
+    "numbers",
+    "logos",
+    "plain"
+  ],
+  "sublist": [
+    "aside"
+  ],
+  "title": [
+    "side",
+    "sidebar",
+    "off",
+    "none",
+    "hide",
+    "top",
+    "compact",
+    "show"
+  ],
   "contrast": [
+    "cards",
     "ledger",
     "rows",
     "tint",
@@ -368,11 +408,56 @@ export const VALUE_TRIGGER_DICTIONARY = {
     "rows",
     "stepped"
   ],
+  "role": [
+    "section-title",
+    "opening",
+    "ending",
+    "subsection-title",
+    "content",
+    "linking"
+  ],
+  "timeline": [
+    "vertical",
+    "rail",
+    "columns",
+    "compact",
+    "horizontal",
+    "spine",
+    "pills",
+    "dynamic"
+  ],
   "flow": [
     "horizontal",
     "vertical",
     "loop",
     "branch"
+  ],
+  "media": [
+    "left",
+    "right"
+  ],
+  "align": [
+    "top",
+    "center",
+    "centre",
+    "middle"
+  ],
+  "image": [
+    "left",
+    "right"
+  ],
+  "table-header": [
+    "on",
+    "off"
+  ],
+  "table-columns": [
+    "on",
+    "off"
+  ],
+  "chart": [
+    "bar",
+    "pie",
+    "line"
   ],
   "equation": [
     "pills",
@@ -380,11 +465,27 @@ export const VALUE_TRIGGER_DICTIONARY = {
     "square",
     "oval"
   ],
+  "mode": [
+    "reveal",
+    "focus"
+  ],
   "accent": [
     "cobalt",
     "emerald",
     "vermilion",
     "forest"
+  ],
+  "font-body": [
+    "l",
+    "xs",
+    "s",
+    "xl"
+  ],
+  "font-title": [
+    "xl",
+    "xs",
+    "s",
+    "l"
   ],
   "contents": [
     "strip"
@@ -401,35 +502,315 @@ export const VALUE_TRIGGER_DICTIONARY = {
     "40",
     "50"
   ],
-  "title": [
+  "section": [
+    "on",
     "show",
-    "compact"
+    "none",
+    "hide",
+    "corner",
+    "off"
   ],
-  "media": [
-    "left",
-    "right"
-  ],
-  "image": [
-    "left",
-    "right"
-  ],
-  "mode": [
-    "reveal",
-    "focus"
+  "claim": [
+    "plain",
+    "bar"
   ],
   "reveal": [
     "steps"
   ],
-  "font-body": [
-    "xs",
-    "s",
-    "l",
-    "xl"
+  "poll": [
+    "single",
+    "multiple",
+    "open",
+    "ranking",
+    "rating",
+    "categorisation"
   ],
-  "font-title": [
-    "xs",
-    "s",
-    "l",
-    "xl"
+  "pollskip": [
+    "false",
+    "true"
+  ],
+  "pollresults": [
+    "live",
+    "held"
+  ],
+  "layout": [
+    "statement",
+    "list",
+    "quote",
+    "media",
+    "contrast",
+    "compare",
+    "copy-visual",
+    "cards",
+    "title",
+    "section",
+    "subsection",
+    "closing",
+    "timeline",
+    "grid",
+    "system-map",
+    "smartart",
+    "timeline-visual",
+    "list-visual",
+    "flow",
+    "image-claim",
+    "cta-screenshots",
+    "trace",
+    "trace-dialogue",
+    "code",
+    "table",
+    "image-quote",
+    "image-grid",
+    "chart",
+    "barchart",
+    "piechart",
+    "linechart",
+    "sigmoid",
+    "timetable",
+    "table-outline",
+    "stmt-list",
+    "links",
+    "columns",
+    "pyramid",
+    "orgchart",
+    "mindmap",
+    "conceptmap",
+    "stats",
+    "process",
+    "steps",
+    "iconrow",
+    "cycle",
+    "equation"
   ]
+}
+
+export const OPEN_PATTERN_TOKENS = [
+  {
+    "key": "pollselections",
+    "form": "equals",
+    "pattern": "[1-9][0-9]*",
+    "description": "Maximum options per multiple-choice answer.",
+    "justification": "Positive integer configured in poll controls."
+  },
+  {
+    "key": "pollsubmissions",
+    "form": "equals",
+    "pattern": "[1-9][0-9]*|unlimited",
+    "description": "Free-text submissions per participant.",
+    "justification": "Positive integer or unlimited configured in poll controls."
+  },
+  {
+    "key": "id",
+    "form": "equals",
+    "pattern": "[A-Za-z0-9-]+",
+    "description": "Stable slide identity.",
+    "justification": "System-managed stable slide identity."
+  },
+  {
+    "key": "tags",
+    "form": "equals",
+    "pattern": "[^\\s]+",
+    "description": "Comma-separated author tags.",
+    "justification": "Author metadata managed by the tag picker."
+  },
+  {
+    "key": "from",
+    "form": "equals",
+    "pattern": ".+",
+    "description": "Provenance of an adopted slide.",
+    "justification": "System provenance for adopted slides."
+  },
+  {
+    "key": "clonedFrom",
+    "form": "equals",
+    "pattern": ".+",
+    "description": "Provenance of a cloned slide.",
+    "justification": "System provenance for cloned slides."
+  },
+  {
+    "key": "icon",
+    "form": "equals",
+    "pattern": ".+",
+    "description": "Icon payload chosen by the icon picker.",
+    "justification": "Free icon payload chosen by the icon picker."
+  },
+  {
+    "key": "kicker",
+    "form": "equals",
+    "pattern": ".+",
+    "description": "Authored kicker text.",
+    "justification": "Free authored display text."
+  },
+  {
+    "key": "remind",
+    "form": "equals",
+    "pattern": ".+",
+    "description": "Presenter reminder text.",
+    "justification": "Free presenter-reminder text."
+  },
+  {
+    "key": "remind-at",
+    "form": "equals",
+    "pattern": ".+",
+    "description": "Reminder wall-clock time.",
+    "justification": "Free wall-clock time for a presenter reminder."
+  },
+  {
+    "key": "remind-in",
+    "form": "equals",
+    "pattern": ".+",
+    "description": "Reminder relative duration.",
+    "justification": "Free relative duration for a presenter reminder."
+  },
+  {
+    "key": "countdown",
+    "form": "equals",
+    "pattern": ".+",
+    "description": "Countdown duration (30s, 3min, 1:30).",
+    "justification": "Free countdown duration; the compiler validates and warns countdown-unparsed."
+  },
+  {
+    "key": "timer",
+    "form": "equals",
+    "pattern": ".+",
+    "description": "Section timer duration (10min, 10m, 1:30).",
+    "justification": "Free section-timer duration; the compiler validates and warns section-timer-unparsed."
+  },
+  {
+    "key": "countdown-style",
+    "form": "equals",
+    "pattern": "digits|bar",
+    "description": "Countdown rendering style.",
+    "justification": "Generated by the countdown dynamic trigger."
+  },
+  {
+    "key": "blocks",
+    "form": "colon",
+    "pattern": "\\d+x\\d+",
+    "description": "Grid rows-by-columns, e.g. 3x3.",
+    "justification": "Free RxC grid dimensions."
+  },
+  {
+    "key": "polltop",
+    "form": "equals",
+    "pattern": "\\d+",
+    "description": "Exact number of choices to rank.",
+    "justification": "Author chooses an integer bounded by the number of poll options; the compiler validates the range."
+  },
+  {
+    "key": "cols",
+    "form": "equals",
+    "pattern": "\\d+",
+    "description": "Column count.",
+    "justification": "Free column count; bare {2col}/{3col} resolve here."
+  },
+  {
+    "key": "palette",
+    "form": "equals",
+    "pattern": ".+",
+    "description": "Legacy slide-level palette escape hatch.",
+    "justification": "Deck settings owns the UI."
+  },
+  {
+    "key": "centre",
+    "form": "equals",
+    "pattern": ".+",
+    "description": "Diagram centre label.",
+    "justification": "Free diagram centre label text."
+  },
+  {
+    "key": "center",
+    "form": "equals",
+    "pattern": ".+",
+    "description": "US-spelling alias for centre.",
+    "justification": "US-spelling alias for the free diagram centre label."
+  },
+  {
+    "key": "curve",
+    "form": "equals",
+    "pattern": "sigmoid",
+    "description": "Conceptual S-curve layout.",
+    "justification": "Legacy chart-shape alias retained for source compatibility."
+  },
+  {
+    "key": "titlestyle",
+    "form": "equals",
+    "pattern": ".+",
+    "description": "Compiler-internal title-rail style.",
+    "justification": "Emitted by the registered sidebar trigger."
+  }
+]
+
+export const SECTION_ONLY_TRIGGER_KEYS = [
+  {
+    "name": "accent",
+    "key": "accent"
+  },
+  {
+    "name": "grid-linear",
+    "key": "grid-linear"
+  },
+  {
+    "name": "grid-zoom",
+    "key": "grid-zoom"
+  },
+  {
+    "name": "contents",
+    "key": "contents"
+  },
+  {
+    "name": "timer-audience",
+    "key": "timer-show"
+  }
+]
+
+// ADR-0023 §2: title regime per compiled layout slug. The compiler's single source.
+export const TITLE_REGIME_BY_LAYOUT = {
+  "barchart": "top",
+  "cards": "top",
+  "carousel": "top",
+  "chart": "top",
+  "closing": "own",
+  "code": "top",
+  "columns": "top",
+  "compare": "hidden",
+  "conceptmap": "top",
+  "contrast": "sidebar",
+  "copy-visual": "top",
+  "cta-screenshots": "top",
+  "cycle": "top",
+  "equation": "top",
+  "flow": "top",
+  "grid": "top",
+  "iconrow": "top",
+  "image-claim": "top",
+  "image-grid": "top",
+  "image-quote": "hidden",
+  "linechart": "top",
+  "links": "sidebar",
+  "list": "sidebar",
+  "list-visual": "top",
+  "media": "top",
+  "mindmap": "top",
+  "orgchart": "top",
+  "piechart": "top",
+  "process": "top",
+  "pyramid": "top",
+  "quote": "hidden",
+  "section": "own",
+  "section-title": "own",
+  "sigmoid": "top",
+  "smartart": "top",
+  "statement": "sidebar",
+  "stats": "top",
+  "steps": "top",
+  "stmt-list": "top",
+  "subsection": "own",
+  "system-map": "top",
+  "table": "top",
+  "timeline": "top",
+  "timeline-visual": "top",
+  "timetable": "top",
+  "title": "own",
+  "trace": "top"
 }

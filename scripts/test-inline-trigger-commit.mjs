@@ -29,6 +29,20 @@ const noTriggerFrom = noTrigger.indexOf('{sta')
 const noTriggerPlan = commitInlineTriggerSelection(noTrigger, noTriggerFrom, noTriggerFrom + 4, () => '{statement}')
 assert.equal(apply(noTrigger, noTriggerPlan.changes), '### Slide\n{statement}\n\nBody ')
 
+const noTriggerFence = '### Slide\n\nBody {mer'
+const noTriggerFenceFrom = noTriggerFence.indexOf('{mer')
+const noTriggerFencePlan = commitInlineTriggerSelection(
+  noTriggerFence,
+  noTriggerFenceFrom,
+  noTriggerFenceFrom + 4,
+  () => ''
+)
+assert.equal(
+  apply(noTriggerFence, noTriggerFencePlan.changes),
+  '### Slide\n\nBody ',
+  'a fenced picker with no Trigger line removes only its provisional token and inserts no blank line'
+)
+
 const duplicate = '### Not all Agents are Agents\n{sidebar} {id=hnwcx}\n{layout=media} {id=3plcu}\n\nBody {rev'
 const duplicateFrom = duplicate.indexOf('{rev')
 const duplicatePlan = commitInlineTriggerSelection(duplicate, duplicateFrom, duplicateFrom + 4, (line) => `${line}{reveal}`)

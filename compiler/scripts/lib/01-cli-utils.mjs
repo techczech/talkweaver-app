@@ -1,6 +1,12 @@
+import { extendedPollRuntimeSource } from '../../assets/runtime/poll-extended.js';
+import { quickPollRuntimeSource } from '../../assets/runtime/poll-quick.js';
+import { pollFrameRuntimeSource } from './poll-frame.mjs';
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { escapeHtml } from "./00-html.mjs";
+
+export { escapeHtml };
 
 // =============================================================================
 // 1. CLI utils + offline QR encoder — arg parsing, slugify, shared QR source (build-time + injected runtime)
@@ -102,14 +108,6 @@ export function parseGridDims(value) {
   return { rows, cols };
 }
 
-export function escapeHtml(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
 // QR code generator — SINGLE SOURCE OF TRUTH for both build-time and runtime QR.
 //
 // The algorithm (Version-4, byte mode, EC level L, mask 0 — capacity 78 UTF-8 bytes) is a pure
@@ -135,6 +133,10 @@ export const timerRuntimeSource = readFileSync(join(scriptDir, "..", "assets", "
 // the presenter template AND the handout via the `<!--OVERVIEW_RUNTIME-->` placeholder — SINGLE
 // SOURCE OF TRUTH, also loaded directly by scripts/test-overview.mjs. No `export` so it inlines cleanly.
 export const overviewRuntimeSource = readFileSync(join(scriptDir, "..", "assets", "runtime", "overview.js"), "utf8");
+// Ticket 23: the poll frame renderer (poll-frame.mjs) is injected FIRST — poll-display.js calls
+// renderPollFrame, so the live poll is the compiled frame with its state filled. One composition.
+export const pollDisplayRuntimeSource = [pollFrameRuntimeSource(), ...["poll-display.js", "poll-projection.js"]
+  .map((name) => readFileSync(join(scriptDir, "..", "assets", "runtime", name), "utf8"))].join("\n");
 // Vendored markmap runtime for the {mindmap} layout (ADR-0005: "Mindmaps are rendered by markmap …
 // never hand-positioned"). Three minified browser builds, concatenated as VALUES (never re-quoted)
 // into ONE <script> that runs at document top-level so each vendor IIFE sees `this === window`:
@@ -157,6 +159,19 @@ export const markmapVendorSource = [
   readFileSync(join(MARKMAP_VENDOR_DIR, "markmap-lib.min.js"), "utf8"),
   "/* --- END VENDOR markmap-lib --- */",
   "/* END VENDOR markmap */</script>",
+].join("\n");
+// Vendored Mermaid runtime for fenced ```mermaid objects. The single browser bundle is injected
+// verbatim through the `<!--MERMAID_VENDOR-->` placeholder before any Mermaid initialisation or
+// render call. No CDN fallback is permitted: published decks remain self-contained. Every consumer
+// must initialise the global with `securityLevel: "strict"` per ADR-0019 before rendering. Editor ↔
+// deck parity also requires every deck initialiser to set `htmlLabels: false` and, when sanitising
+// rendered SVG, admit `foreignobject` exactly as the editor boundary does; Task 15 implements this,
+// and this comment is the standing instruction so widget and published labels keep the same typography.
+const MERMAID_VENDOR_DIR = join(scriptDir, "..", "assets", "vendor", "mermaid");
+export const mermaidVendorSource = [
+  "<script>/* BEGIN VENDOR mermaid@11.16.0 (minified, security configured by each consumer) */",
+  readFileSync(join(MERMAID_VENDOR_DIR, "mermaid.min.js"), "utf8"),
+  "/* END VENDOR mermaid */</script>",
 ].join("\n");
 export function qrGeneratorSource(ariaExpr) {
   return "\n  const qrcode = (() => {\n    const module = { exports: {} };\n    (function (module, exports) {\n"
@@ -210,3 +225,5 @@ export function cleanQrUrl(raw, maxLen = QR_URL_MAX_LEN) {
   return s;
 }
 
+export const pollExtendedSource = extendedPollRuntimeSource() + '\n' + quickPollRuntimeSource();
+export const pollExtendedStyles = readFileSync(resolve(scriptDir, '../assets/styles/poll-extended.css'), 'utf8');

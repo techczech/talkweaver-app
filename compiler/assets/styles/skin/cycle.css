@@ -1,11 +1,11 @@
-/* @order 1622 */
-  .slide-content:has(> .cycle-diagram) { max-width: none; width: calc(100% - 2 * var(--slide-pad-x, 48px)); }/* @order 1623 */
+/* @order 1648 */
+  .slide-content:has(> .cycle-diagram) { max-width: none; width: calc(100% - 2 * var(--slide-pad-x, 48px)); }/* @order 1649 */
   .cycle-diagram {
     position: relative;
     width: min(72cqw, 118vh);
     aspect-ratio: 1000 / 620;
     margin: 0 auto;
-  }/* @order 1624 */
+  }/* @order 1650 */
   .cycle-diagram .cycle-node {
     position: absolute;
     transform: translate(-50%, -50%);
@@ -20,8 +20,8 @@
     white-space: normal;
     max-width: 16ch;
     text-align: center;
-  }/* @order 1625 */
-  .cycle-diagram .cycle-node:last-of-type { border-color: var(--accent); color: var(--accent); }/* @order 1626 */
-  .cycle-diagram .cycle-arc-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }/* @order 1627 */
-  .cycle-diagram .cycle-arc { fill: none; stroke: var(--hairline); stroke-width: 3; }/* @order 1628 */
+  }/* @order 1651 */
+  .cycle-diagram .cycle-node:last-of-type { border-color: var(--accent); color: var(--accent); }/* @order 1652 */
+  .cycle-diagram .cycle-arc-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }/* @order 1653 */
+  .cycle-diagram .cycle-arc { fill: none; stroke: var(--hairline); stroke-width: 3; }/* @order 1654 */
   .cycle-diagram .cycle-arc-svg marker path { fill: var(--accent); }

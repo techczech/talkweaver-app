@@ -1,8 +1,14 @@
 import type { ProjectionRow } from '../../../preload/index.ts'
+import type { LayoutDoctorFinding } from '../../../shared/layout-doctor.ts'
+import { triggerFindingsForSlide } from '../../../shared/layout-doctor.ts'
 import type { LayoutDef } from '../../../shared/layout-registry/entries.ts'
 import type { OptionGroup } from '../../../shared/layout-registry/entries.ts'
-import { groupApplies, optionGroupsForSlide, type ApplicableOptionGroup } from '../../../shared/layout-registry/options.ts'
-import { commitOptionSelection, logicalTriggerBlockAfterHeading, selectionForGroup } from '../../../shared/trigger-line.ts'
+import {
+  groupApplies, layoutEntryFor, optionGroupsForSlide, sectionedOptionGroups,
+  type ApplicableOptionGroup, type InspectorOptionSection, type SectionedOptionBinding
+} from '../../../shared/layout-registry/options.ts'
+import { commitOptionSelection, groupHasSelection, logicalTriggerBlockAfterHeading, selectionForGroup } from '../../../shared/trigger-line.ts'
+import { DECK_DECIDED_GROUP, deckCommitContext, type DeckListStyle } from '../../../shared/deck-frame.ts'
 import { selectionFromTriggerLine } from './layoutPickerModel.ts'
 
 export type PaneState = 'both' | 'editor' | 'strip'
@@ -93,7 +99,9 @@ export function applyInspectorOptionToOutline(
   if (!/^(#{1,6})\s/.test(lines[headingIndex] ?? '')) return null
 
   const block = logicalTriggerBlockAfterHeading(lines, headingIndex)
-  const committed = commitOptionSelection(block?.line ?? '', group, token)
+  // T32: the sweep reads the DECIDED list style — the authored token, or the deck's choice for the
+  // line being produced — so a treatment on a deck-icons slide stays relevant.
+  const committed = commitOptionSelection(block?.line ?? '', group, token, deckCommitContext(content, headingLine))
 
   if (block) {
     if (committed === block.line && block.end === block.start + 1 && block.warnings.length === 0) return content
@@ -131,7 +139,13 @@ export function stepModelForSlide(row: Partial<ProjectionRow> | null | undefined
 export interface InspectorModel {
   title: string
   layoutName?: string
+  unresolved: boolean
+  unresolvedFindings: LayoutDoctorFinding[]
   groups: ApplicableOptionGroup[]
+  /** The groups of `groups`, sectioned and ordered for the options column (T32, Decision 2A). */
+  sections: InspectorSectionModel[]
+  /** What an unstyled list on this slide renders as — the deck's List style choice (T32, 1A). */
+  deckListStyle: DeckListStyle
   selectedTokens: Record<string, string>
   steps: InspectorStepModel
 }
@@ -143,20 +157,96 @@ export function inspectorModel(
   triggerLine: string,
   layouts: readonly LayoutDef[],
   sourceMarkdown?: string,
-  hasChildren = false
+  hasChildren = false,
+  triggerFindings: readonly LayoutDoctorFinding[] = [],
+  deckListStyle: DeckListStyle = ''
 ): InspectorModel {
   const row = rows?.[activeIndex] ?? null
-  const layoutName = selectionFromTriggerLine(triggerLine, layouts).find((entry) => entry.kind === 'layout')?.name
+  const layoutName = selectionFromTriggerLine(triggerLine, [...layouts]).find((entry) => entry.kind === 'layout')?.name
     ?? row?.triggers?.layout
     ?? row?.layout
+  const unresolvedFindings = triggerFindingsForSlide(row, triggerFindings).filter((finding) =>
+    finding.kind === 'unknown-word'
+    || finding.kind === 'unregistered-key'
+    || finding.kind === 'unregistered-value'
+  )
+  const unresolved = unresolvedFindings.length > 0
   const candidates = optionGroupsForSlide({ layoutName, headingLevel, hasChildren })
-  const selectedTokens = Object.fromEntries(candidates.map(({ group }) => [group.key, selectionForGroup(triggerLine, group)]))
-  const groups = candidates.filter(({ group }) => groupApplies(group, { headingLevel, hasChildren, layoutName, selectedTokens }))
+  // T32: applicability reads the DECIDED selection — for List style with no authored token that is
+  // the deck's choice, so the treatment is offered exactly when the compiled list is an icon list.
+  const selectedTokens = Object.fromEntries(candidates.map(({ group }) => [
+    group.key,
+    group.key === DECK_DECIDED_GROUP && !groupHasSelection(triggerLine, group) ? deckListStyle : selectionForGroup(triggerLine, group)
+  ]))
+  const groups = unresolved
+    ? []
+    : candidates.filter(({ group }) => groupApplies(group, { headingLevel, hasChildren, layoutName, selectedTokens }))
   return {
     title: row?.nav_title || row?.title || '(untitled)',
     layoutName,
+    unresolved,
+    unresolvedFindings,
     groups,
+    sections: sectionedOptionGroups(groups, layoutEntryFor(layoutName)?.label).map((section) => ({
+      ...section,
+      bindings: section.bindings.map((binding) => bindingModel(binding, selectedTokens, deckListStyle))
+    })),
+    deckListStyle,
     selectedTokens,
     steps: stepModelForSlide(row ? { ...row, source_markdown: sourceMarkdown ?? row.source_markdown } : null)
   }
+}
+
+// ── T32 (Decision 1A): the List style row against a deck default ───────────────────────
+//
+// Invariant: the lit List style button is always the style the compiled slide renders. An
+// authored token wins (the {plainlist} override included — Plain accepts it as an alt token);
+// with NO authored token the deck's choice is lit (deck-frame.ts reads it with the compiler's
+// own frame code). The button matching the deck's choice carries the "deck" mark, lit or not.
+// Clicking it removes the slide's token so the slide follows the deck again — never a copy of
+// the deck setting; clicking Plain against an Icons deck writes {plainlist}. Every write still
+// goes through commitOptionSelection, so the 09-21 relevance sweep runs on it unchanged.
+
+
+export interface InspectorBindingModel extends SectionedOptionBinding {
+  /** The value token whose button is lit. */
+  selectedToken: string
+  /** The value token the deck decides for this group, when it decides one (the "deck" mark). */
+  deckToken?: string
+}
+
+export interface InspectorSectionModel extends Omit<InspectorOptionSection, 'bindings'> {
+  bindings: InspectorBindingModel[]
+}
+
+function bindingModel(
+  binding: SectionedOptionBinding,
+  selectedTokens: Readonly<Record<string, string>>,
+  deckListStyle: DeckListStyle
+): InspectorBindingModel {
+  if (binding.group.key !== DECK_DECIDED_GROUP) {
+    return { ...binding, selectedToken: selectedTokens[binding.group.key] ?? '' }
+  }
+  return { ...binding, selectedToken: selectedTokens[binding.group.key] ?? '', deckToken: deckListStyle }
+}
+
+/** The token an Inspector click WRITES for a value button: the deck-marked button removes the
+ *  group's token, and Plain against an Icons deck writes the {plainlist} override. */
+export function inspectorCommitToken(binding: Pick<InspectorBindingModel, 'deckToken'>, clickedToken: string): string {
+  const deck = binding.deckToken
+  if (deck === undefined) return clickedToken
+  if (clickedToken === deck) return ''
+  if (clickedToken === '' && deck === 'iconlist') return 'plainlist'
+  return clickedToken
+}
+
+/** The section currently at the top of the options scroll area: the last section whose top has
+ *  reached the reading line (the scroll position plus the sticky jump row that covers it). */
+export function sectionIdAtScrollTop(
+  sections: readonly { id: string; top: number }[],
+  readingLine: number
+): string | null {
+  let active: string | null = sections[0]?.id ?? null
+  for (const section of sections) if (section.top <= readingLine) active = section.id
+  return active
 }

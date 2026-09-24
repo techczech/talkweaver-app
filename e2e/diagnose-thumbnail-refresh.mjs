@@ -5,6 +5,7 @@
 // content_hash stays stable, AND that the live thumbnail map re-keys.
 // Run after `npm run build`.
 import { _electron as electron } from 'playwright'
+import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
@@ -25,20 +26,21 @@ const ud = join(tempRoot, 'userData')
 const td = join(vault, 'thr')
 mkdirSync(td, { recursive: true }); mkdirSync(ud, { recursive: true })
 const outlinePath = join(td, 'thr-outline.md')
-writeFileSync(outlinePath, '---\ntitle: T\n---\n\n## S\n\n### Why agents?\n{list}\n\n- car\n- horse\n- boat\n')
+writeFileSync(outlinePath, '---\ntitle: T\n---\n\n## S\n\n### Why maps?\n{list}\n\n- car\n- horse\n- boat\n')
 writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault }, null, 2))
 
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO })
+await ensureFreshBuild(REPO)
+const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
 const page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded')
 await page.waitForTimeout(1200)
 
-const mk = (trig) => `---\ntitle: T\n---\n\n## S\n\n### Why agents?\n${trig}\n\n- car\n- horse\n- boat\n`
+const mk = (trig) => `---\ntitle: T\n---\n\n## S\n\n### Why maps?\n${trig}\n\n- car\n- horse\n- boat\n`
 async function rowFor(content) {
   return page.evaluate(async ({ p, c }) => {
     const rows = await window.tw.talk.compile(p, c)
     if (!rows) return null
-    const r = rows.find((x) => /Why agents/.test(x.title || '')) || null
+    const r = rows.find((x) => /Why maps/.test(x.title || '')) || null
     return r ? { layout: r.layout, content_hash: r.content_hash, render_hash: r.render_hash } : null
   }, { p: outlinePath, c: content })
 }

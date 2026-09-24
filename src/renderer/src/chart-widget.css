@@ -1,0 +1,185 @@
+/*
+ * RIVER chart geometry is scoped to the authoring widget. The compiled deck keeps its own
+ * untouched chart CSS. The widget intentionally uses TalkWeaver's current fixed chart skin;
+ * following each deck's selected skin is deferred to the live visual review.
+ */
+.tw-obj-chart {
+  container-name: tw-object-chart;
+  container-type: inline-size;
+}
+
+.tw-obj-chart .chart-cols {
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: clamp(10px, 3cqw, 18px);
+  width: 100%;
+  height: clamp(150px, 42cqw, 220px);
+  margin: 4px 0 0;
+}
+
+.tw-obj-chart .chart-col {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  flex-direction: column;
+  text-align: left;
+}
+
+.tw-obj-chart .chart-col-plot {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.tw-obj-chart .chart-bar {
+  width: 100%;
+  max-width: none;
+  border: 0;
+  border-radius: 0;
+  background: var(--accent);
+}
+
+.tw-obj-chart .chart-col:nth-child(1) .chart-bar { opacity: .35; }
+.tw-obj-chart .chart-col:nth-child(2) .chart-bar { opacity: .55; }
+.tw-obj-chart .chart-col:nth-child(3) .chart-bar { opacity: .75; }
+
+.tw-obj-chart .chart-val {
+  margin-bottom: 2px;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.1;
+  text-align: left;
+}
+
+.tw-obj-chart .chart-label {
+  align-self: stretch;
+  min-height: 2.8em;
+  margin-top: 7px;
+  border-top: 1px solid var(--hairline);
+  padding-top: 6px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.25;
+  text-align: left;
+}
+
+.tw-obj-chart .chart-pie {
+  display: grid;
+  width: 100%;
+  margin: 2px 0 0;
+  grid-template-columns: minmax(128px, .8fr) minmax(12rem, 1.2fr);
+  align-items: center;
+  justify-content: center;
+  gap: clamp(14px, 4cqw, 24px);
+}
+
+.tw-obj-chart .chart-pie svg {
+  display: block;
+  width: 100%;
+  max-width: 210px;
+  height: auto;
+  justify-self: center;
+}
+
+.tw-obj-chart .chart-legend {
+  display: flex;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+}
+
+.tw-obj-chart .chart-legend li {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 12px minmax(8ch, 1fr) auto;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.tw-obj-chart .chart-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  align-self: center;
+}
+
+.tw-obj-chart .chart-leg-label {
+  min-width: 8ch;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.tw-obj-chart .chart-leg-val {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.tw-obj-chart .chart-line {
+  width: 100%;
+  margin: 2px 0 0;
+}
+
+.tw-obj-chart .chart-line svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.tw-obj-chart .chart-poly {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tw-obj-chart .chart-dot {
+  fill: var(--accent);
+  stroke: var(--tint);
+  stroke-width: 3;
+}
+
+.tw-obj-chart .chart-baseline {
+  stroke: var(--line);
+  stroke-width: 2;
+}
+
+.tw-obj-chart .chart-val-svg {
+  fill: var(--accent);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.tw-obj-chart .chart-label-svg {
+  fill: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 640;
+}
+
+@container tw-object-chart (max-width: 420px) {
+  .tw-obj-chart .chart-pie {
+    grid-template-columns: 1fr;
+  }
+
+  .tw-obj-chart .chart-pie svg {
+    max-width: 170px;
+  }
+}

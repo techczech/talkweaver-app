@@ -1,6 +1,8 @@
 // Real-Electron harness: "Optimize images to WebP" converts a talk's relative PNG/JPG images to
 // WebP, rewrites the outline refs, and moves originals to the Trash (recoverable).
 import { _electron as electron } from 'playwright'
+import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { openFirstTalk } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'; import { dirname, join } from 'path'
 import { mkdirSync, mkdtempSync, writeFileSync, existsSync, readFileSync } from 'fs'; import { tmpdir } from 'os'
 
@@ -21,12 +23,13 @@ const ref = 'assets/Pasted%20image%201.png'
 writeFileSync(fxPath, ['---', 'title: Opt Fixture', '---', '', '### A slide', '', `![shot](${ref})`, ''].join('\n'))
 writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault }))
 
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO })
+await ensureFreshBuild(REPO)
+const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
 const page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded'); await page.waitForTimeout(1200)
 
 try {
-  await page.locator('.talk-item').first().click()
+  await openFirstTalk(page)
   await page.waitForSelector('.cm-content', { timeout: 8000 })
 
   const content = readFileSync(fxPath, 'utf8')

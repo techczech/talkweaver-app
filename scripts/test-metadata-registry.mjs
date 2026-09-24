@@ -23,6 +23,24 @@ import { fileURLToPath } from 'node:url'
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const registryMod = await import(new URL('../src/shared/metadata-registry.ts', import.meta.url))
 const { METADATA_REGISTRY, registeredKeyNames } = registryMod
+const titleColour = METADATA_REGISTRY.find((entry) => entry.key === 'colour')
+assert(titleColour, 'Title colour key is registered')
+assert.deepEqual(titleColour.aliases, ['accent'], 'Title accent is the registered alias of colour')
+assert.equal(titleColour.group, 'Title & identity', 'Title colour belongs to Title & identity')
+assert.equal(titleColour.vocabulary.kind, 'closed', 'Title colour uses a closed vocabulary')
+// '' is the state the compiler treats as the default (08-source-adapters.mjs:1726 reads an empty
+// accent and lets the section's own palette accent stand), so the vocabulary must offer it —
+// otherwise an unset deck's value matches no choice on either metadata surface.
+assert.deepEqual(
+  titleColour.vocabulary.options.map((option) => option.value),
+  ['', 'cobalt', 'emerald', 'vermilion', 'forest'],
+  'Title colour vocabulary matches the compiler section accents, plus the automatic default'
+)
+const titleLogo = METADATA_REGISTRY.find((entry) => entry.key === 'logo')
+assert(titleLogo, 'Title logo key is registered')
+assert.equal(titleLogo.location, 'frontmatter', 'Title logo is frontmatter')
+assert.equal(titleLogo.ownership, 'user', 'Title logo is user-managed')
+assert.equal(titleLogo.vocabulary.kind, 'freeform', 'Title logo remains a dynamic freeform field')
 assert.equal(
   METADATA_REGISTRY.some((entry) => entry.key === 'pathways' && entry.location === 'manifest'),
   true,

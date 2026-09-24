@@ -45,6 +45,7 @@ import { EditorView, Decoration, type DecorationSet } from '@codemirror/view'
 import {
   EditorState,
   EditorSelection,
+  Facet,
   StateEffect,
   StateField,
   Transaction,
@@ -137,6 +138,10 @@ export const setFocusRangeEffect = StateEffect.define<FocusRange | null>()
 // and forwards to setFocusRange, mirroring KEYMAP_CHANGED_EVENT.
 export const FOCUS_SCOPE_EVENT = 'tw-focus-scope'
 
+const focusRangeFacet = Facet.define<FocusRange | null, FocusRange | null>({
+  combine: (values) => values.find((range) => range !== null) ?? null
+})
+
 function makeField(getRange?: () => FocusRange | null): StateField<ScopeState> {
   return StateField.define<ScopeState>({
     create(state) {
@@ -161,8 +166,16 @@ function makeField(getRange?: () => FocusRange | null): StateField<ScopeState> {
       if (range === value.range && !tr.docChanged) return value
       return { range, deco: buildHideDecorations(tr.newDoc, range) }
     },
-    provide: (f) => EditorView.decorations.from(f, (v) => v.deco)
+    provide: (f) => [
+      EditorView.decorations.from(f, (v) => v.deco),
+      focusRangeFacet.from(f, (v) => v.range)
+    ]
   })
+}
+
+/** Read the live Slide Focus range so composing StateFields can omit decorations in hidden bands. */
+export function currentFocusRange(state: EditorState): FocusRange | null {
+  return state.facet(focusRangeFacet)
 }
 
 function makeGuard(field: StateField<ScopeState>): Extension {

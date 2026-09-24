@@ -13,6 +13,21 @@
 // logical line/column, so onContentChange + autosave stay in sync (ADR-0001 canonical).
 import { EditorView } from '@codemirror/view'
 import { EditorSelection } from '@codemirror/state'
+import {
+  collapseDuplicateKeys,
+  collapseDuplicateLayouts,
+  fencedLineFlags,
+  normalizePositions
+} from '../../../shared/outline-normalize'
+import {
+  caretLineAfterTriggerBlock,
+  logicalTriggerBlockAfterHeading,
+  PROTECTED_HEADING_RE,
+  TRIGGER_LINE_RE
+} from '../../../shared/trigger-line'
+import { chartObjectTokenAt } from '../../../../compiler/scripts/lib/03-object-token.mjs'
+import { notify } from '../lib/notify'
+import { hasOpenObjectBlock } from './objectBlocks/field'
 import { relocateBlock } from './slideOutline'
 
 const INDENT = '  ' // one list level = two spaces
@@ -31,53 +46,6 @@ export function listMatch(s: string): { indent: number } | null {
 }
 export function isBlank(s: string): boolean {
   return /^\s*$/.test(s)
-}
-
-// A line that is ONLY curly-attribute triggers — a Trigger line (ADR-0015).
-const TRIGGER_LINE_RE = /^\s*(\{[^}]*\}\s*)+$/
-
-// Per-line fence + HTML-comment mask — mirrors 12-outline-edit.mjs structuralHeadings (length-aware
-// fences; a sequential comment state machine), the engine's proven implementation. A flagged line
-// is INVISIBLE to structural decisions: a `# fake` inside a ``` fence or an HTML comment must never
-// act as a block boundary, a move receiver, or a re-level target — otherwise a cross-container move
-// tears the fence in half and rewrites its contents (reviewer scenarios (c)/(d), 2026-07-08). Both
-// fence-marker lines are flagged too, so a fence travels whole inside its block.
-export function fencedLineFlags(lines: string[]): boolean[] {
-  const flags = new Array<boolean>(lines.length).fill(false)
-  let inFence = false
-  let fenceMark = ''
-  let inComment = false
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i]
-    const t = line.trim()
-    const visibleAtStart = !inComment
-    if (!inFence) {
-      let pos = 0
-      for (;;) {
-        if (inComment) {
-          const close = line.indexOf('-->', pos)
-          if (close === -1) break
-          inComment = false
-          pos = close + 3
-        } else {
-          const open = line.indexOf('<!--', pos)
-          if (open === -1) break
-          inComment = true
-          pos = open + 4
-        }
-      }
-    }
-    if (!visibleAtStart) { flags[i] = true; continue }
-    if (inFence) {
-      flags[i] = true
-      const close = t.match(/^(`{3,})\s*$/)
-      if (close && close[1].length >= fenceMark.length) { inFence = false; fenceMark = '' }
-      continue
-    }
-    const open = t.match(/^(`{3,})/)
-    if (open) { inFence = true; fenceMark = open[1]; flags[i] = true }
-  }
-  return flags
 }
 
 // headingLevel gated by the fence mask: a fenced/comment-hidden line is structurally level 0.
@@ -649,6 +617,137 @@ export function getCursorListItemContext(view: EditorView): CursorListItemContex
 
 const LIST_RE = /^(\s*)([-*+]|\d+[.)])(\s+)(.*)$/
 
+function landAfterTriggerBlock(
+  view: EditorView,
+  lines: string[],
+  headingIndex: number
+): boolean {
+  const target = caretLineAfterTriggerBlock(lines, headingIndex)
+  if (!target) return false
+  if (target.insertBlankAt !== null) {
+    // Two cases: append '\n' at doc end (caret after it), or open a fresh line by inserting
+    // '\n' at the START of the following line (caret at that start, i.e. on the new blank line).
+    const atDocEnd = target.insertBlankAt >= lines.length
+    const at = atDocEnd
+      ? view.state.doc.length
+      : view.state.doc.line(target.insertBlankAt + 1).from // doc.line is 1-based
+    view.dispatch({
+      changes: { from: at, insert: '\n' },
+      selection: EditorSelection.cursor(atDocEnd ? at + 1 : at)
+    })
+    return true
+  }
+  view.dispatch({ selection: EditorSelection.cursor(view.state.doc.line(target.targetLine + 1).from) })
+  return true
+}
+
+function landAfterUnstampedHeading(
+  view: EditorView,
+  lines: string[],
+  headingIndex: number
+): boolean {
+  const next = headingIndex + 1
+  if (next >= lines.length) {
+    const at = view.state.doc.length
+    view.dispatch({
+      changes: { from: at, insert: '\n' },
+      selection: EditorSelection.cursor(at + 1)
+    })
+    return true
+  }
+  const at = view.state.doc.line(next + 1).from
+  if (/^(#{1,6})\s/.test(lines[next])) {
+    view.dispatch({
+      changes: { from: at, insert: '\n' },
+      selection: EditorSelection.cursor(at)
+    })
+    return true
+  }
+  view.dispatch({ selection: EditorSelection.cursor(at) })
+  return true
+}
+
+// Enter anywhere in a canonical slide heading: skip over the protected Trigger block onto the
+// first body line. A newly typed heading without a Trigger block lands on or creates its body line.
+export function enterFromHeading(view: EditorView): boolean {
+  const sel = view.state.selection.main
+  if (hasOpenObjectBlock(view.state)) return false
+  const lines = view.state.doc.toString().split('\n')
+  const fenced = fencedLineFlags(lines)
+  if (!sel.empty) {
+    return selectionIntersectsLines(view, sel.from, sel.to, (index) =>
+      !fenced[index] && PROTECTED_HEADING_RE.test(lines[index])
+    )
+  }
+  const line = view.state.doc.lineAt(sel.head)
+  if (!PROTECTED_HEADING_RE.test(line.text)) return false
+  if (fenced[line.number - 1]) return false
+  return landAfterTriggerBlock(view, lines, line.number - 1)
+    || landAfterUnstampedHeading(view, lines, line.number - 1)
+}
+
+function canonicalTriggerHeading(
+  lines: string[],
+  fenced: boolean[],
+  triggerIndex: number
+): number | null {
+  if (!TRIGGER_LINE_RE.test(lines[triggerIndex].trim())) return null
+  for (let index = triggerIndex - 1; index >= 0; index -= 1) {
+    if (fenced[index]) continue
+    if (!/^(#{1,6})\s/.test(lines[index])) continue
+    if (!PROTECTED_HEADING_RE.test(lines[index])) return null
+    const block = logicalTriggerBlockAfterHeading(lines, index)
+    return block?.start === triggerIndex ? index : null
+  }
+  return null
+}
+
+function selectionIntersectsLines(
+  view: EditorView,
+  from: number,
+  to: number,
+  matches: (lineIndex: number) => boolean
+): boolean {
+  const first = view.state.doc.lineAt(from).number
+  const last = view.state.doc.lineAt(Math.max(from, to - 1)).number
+  for (let number = first; number <= last; number += 1) {
+    const line = view.state.doc.line(number)
+    if (from >= line.to || to <= line.from) continue
+    if (matches(number - 1)) return true
+  }
+  return false
+}
+
+// The second non-consuming Enter command protects structural lines other than the heading:
+// the canonical Trigger line lands in the slide body, while a compiler-recognised block token
+// lands in the first list item it owns.
+export function enterFromProtectedLine(view: EditorView): boolean {
+  const sel = view.state.selection.main
+  if (hasOpenObjectBlock(view.state)) return false
+  const lines = view.state.doc.toString().split('\n')
+  const fenced = fencedLineFlags(lines)
+  if (!sel.empty) {
+    return selectionIntersectsLines(view, sel.from, sel.to, (index) => {
+      if (fenced[index]) return false
+      return canonicalTriggerHeading(lines, fenced, index) !== null
+        || chartObjectTokenAt(lines, index) !== null
+    })
+  }
+  const line = view.state.doc.lineAt(sel.head)
+  const lineIndex = line.number - 1
+  if (fenced[lineIndex]) return false
+
+  const headingIndex = canonicalTriggerHeading(lines, fenced, lineIndex)
+  if (headingIndex !== null) return landAfterTriggerBlock(view, lines, headingIndex)
+
+  const token = chartObjectTokenAt(lines, lineIndex)
+  if (!token) return false
+  view.dispatch({
+    selection: EditorSelection.cursor(view.state.doc.line(token.listStart + 1).from)
+  })
+  return true
+}
+
 // Enter on a list item: continue the list (new marker, ordered numbers increment). An empty
 // item outdents one level, or exits the list when already at column 0.
 export function continueList(view: EditorView): boolean {
@@ -707,70 +806,6 @@ export function moveBlockTo(view: EditorView, fromLine: number, toLine: number):
   return true
 }
 
-// ── Trigger-line normalizer (ADR-0015) ───────────────────────────────────────
-//
-// Author metadata must live on the trigger line — the line immediately below the
-// `### ` heading — not trailing the heading text itself. `normalizeTriggerLines`
-// migrates any `### My title {group}{title=side}` form to two lines:
-//   `### My title`
-//   `{group}{title=side}`
-// If a trigger-only line already exists directly below, the title's groups are
-// prepended to it (merged), preserving any existing tokens.
-// Rules:
-//  - Every slide heading (`##`–`######`) is touched; the deck title (`# `) is left unchanged.
-//  - Only a TRAILING run of `{…}` groups is moved — text to the left of the first
-//    trailing brace group is the clean title and is left intact.
-//  - Idempotent (running twice changes nothing).
-//  - All other lines (blank, content, trigger-only) are preserved exactly.
-//  - Fenced/comment-hidden lines are never touched: a heading-shaped line inside a ``` fence is
-//    code, not a slide heading, and a fenced `{…}` line is never a merge target.
-
-// Regex: one or more `{…}` groups that form the ENTIRE tail of a line.
-const TRAILING_BRACES_RE = /\s*(\{[^}]*\}(?:\s*\{[^}]*\})*)\s*$/
-
-export function normalizeTriggerLines(text: string): string {
-  const lines = text.split('\n')
-  const fenced = fencedLineFlags(lines)
-  const out: string[] = []
-  let i = 0
-  while (i < lines.length) {
-    const line = lines[i]
-    // Act on any slide heading (##–######) that has trailing brace groups; skip the deck title (#)
-    // and anything inside a fence or HTML comment (heading-shaped code lines).
-    const isSlideHeading = !fenced[i] && /^#{2,6} /.test(line)
-    if (!isSlideHeading) { out.push(line); i += 1; continue }
-    const m = line.match(TRAILING_BRACES_RE)
-    if (!m) { out.push(line); i += 1; continue }
-    // Strip the trailing braces from the title.
-    const cleanTitle = line.slice(0, line.length - m[0].length)
-    const movedGroups = m[1] // e.g. `{statement}{title=side}`
-    // Find the heading's existing Trigger line: the FIRST non-blank line below, if it is a
-    // (non-fenced) {…}-only line — blank lines between the heading and it are TOLERATED (the shared
-    // read rule, id-churn hotfix 2026-07-10). Merging must never create a duplicate Trigger line above
-    // a blank-separated existing one, so scan past the blanks and merge into it.
-    let j = i + 1
-    while (j < lines.length && lines[j].trim() === '') j += 1
-    const existingTrigger =
-      j < lines.length && !fenced[j] && lines[j].trim() !== '' && TRIGGER_LINE_RE.test(lines[j])
-    if (existingTrigger) {
-      // Merge: prepend the moved groups to the existing trigger line and place it DIRECTLY below the
-      // heading (dropping the intervening blanks), so a migrated heading never leaves a blank between
-      // itself and the Trigger line it just merged into.
-      out.push(cleanTitle)
-      out.push(movedGroups + lines[j].trim())
-      i = j + 1
-    } else {
-      // Insert a new trigger line directly below the heading.
-      out.push(cleanTitle)
-      out.push(movedGroups)
-      i += 1
-    }
-  }
-  return out.join('\n')
-}
-
-// Command: apply normalizeTriggerLines to the current document via the whole-doc
-// replace channel (preserving caret + scroll via minimalChange).
 // Delete the slide under the caret: the nearest heading at/above plus everything until the
 // next heading of the same-or-shallower level. This is THE sanctioned way to remove a slide —
 // the Trigger line (with its {id=…}) is protected against direct deletion (idProtect
@@ -799,12 +834,24 @@ export function deleteSlideAtCursor(view: EditorView): boolean {
   return true
 }
 
+// Command: apply position normalisation plus the flagged duplicate-layout collapse through the
+// whole-doc replace channel (preserving caret + scroll via minimalChange).
 export function normalizeTriggersCommand(view: EditorView): boolean {
   const old = view.state.doc.toString()
-  const next = normalizeTriggerLines(old)
+  const layoutResult = collapseDuplicateLayouts(normalizePositions(old))
+  const keyResult = collapseDuplicateKeys(layoutResult.text)
+  const tokenChanges = [...layoutResult.tokenChanges, ...keyResult.tokenChanges]
+  const next = keyResult.text
   if (next === old) return false // nothing to do
   const ch = minimalChange(old, next)
   view.dispatch({ changes: { from: ch.from, to: ch.to, insert: ch.insert } })
+  if (tokenChanges.length > 0) {
+    notify(
+      `Normalised. Collapsed ${tokenChanges.length} duplicate trigger token(s).`,
+      'success',
+      'normalise-trigger-lines'
+    )
+  }
   return true
 }
 
