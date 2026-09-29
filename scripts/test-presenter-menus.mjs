@@ -108,9 +108,9 @@ try {
   'live:poll-open': { success: true, status: 'confirmed' }, 'live:poll-close': { success: true, status: 'confirmed' }, 'live:poll-reveal': { success: true, status: 'confirmed' },
   'live:instant-action': { success: false, error: 'No live session.' }
 }
-window.__ipcCalls = []; window.__ipcArgs = []; window.__ipcOn = {}; window.__clipboardWrites = []; window.__clipboardText = ''
+window.__ipcCalls = []; window.__ipcArgs = []; window.__ipcOn = {}; window.__ipcDelay = {}; window.__clipboardWrites = []; window.__clipboardText = ''
 export const ipcRenderer = {
-  invoke: async (channel, ...args) => { window.__ipcArgs.push([channel, args[0]]); window.__ipcCalls.push([channel, args[0] && typeof args[0] === 'object' ? (args[0].pollId || args[0].type || 'object') : args[0] ?? null]); return channel in answers ? answers[channel] : {} },
+  invoke: async (channel, ...args) => { window.__ipcArgs.push([channel, args[0]]); window.__ipcCalls.push([channel, args[0] && typeof args[0] === 'object' ? (args[0].pollId || args[0].type || 'object') : args[0] ?? null]); const ms = window.__ipcDelay?.[channel]; if (ms) await new Promise((r) => setTimeout(r, ms)); return channel in answers ? answers[channel] : {} },
   on(channel, fn) { (window.__ipcOn[channel] ||= []).push(fn) }, send() {}, removeListener() {}
 }
 window.__push = (channel, value) => { for (const fn of window.__ipcOn[channel] || []) fn(null, value) }
@@ -352,6 +352,20 @@ if (window === window.top && window.twLivePollBridge) window.twLivePollBridge.on
   await compare('End live session', {
     setup: async (p) => { await goLive(p); await p.keyboard.press('Escape') },
     menu: 'presenterMenuLive', item: 'liveGoButton', old: (p) => p.keyboard.press('g'), fields: ['calls']
+  })
+  // Go live disables its own item while it works ("Going live…"); the menu still closes, or it
+  // covers the join panel's close button (poll-launch e2e, 2026-09-29). The main process takes
+  // real time to answer live:go, so the stub holds the answer back.
+  await guard('Go live closes the Live menu', async () => {
+    const { page, context } = await open([1440, 900], 'two')
+    await page.evaluate(() => { window.__ipcDelay['live:go'] = 400 })
+    await tap(page, '#presenterMenuLive')
+    await tap(page, '#liveGoButton')
+    const during = await probe(page)
+    await settle(page, 600)
+    const after = await probe(page)
+    check(during.openMenu === '' && after.openMenu === '', `Live: choosing Go live closes the menu (open while going live: "${during.openMenu}", after: "${after.openMenu}")`)
+    await context.close()
   })
   await guard('End live session item', async () => {
     const { page, context } = await open([1440, 900], 'two')

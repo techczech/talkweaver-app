@@ -83,10 +83,15 @@ async function waitForAllPictures(limitMs) {
   }
   return { cards: last, elapsedMs: Date.now() - t0 }
 }
+// The cache namespace is `thumb-cache-v<N>-<compiler hash>` (src/main/index.ts; the version moved
+// v8 → v9 in 7cfa812). The test does not pin N: it demands that the persisted compilerTag names a
+// namespace of that shape and that the six-talk PNGs live in exactly that namespace.
+const CACHE_NS = /^thumb-cache-v\d+-[0-9a-z]+$/
+let persistedTag = null
 const sixCacheDir = () => {
-  const ns = readdirSync(ud).filter((n) => n.startsWith('thumb-cache-v8-'))
-  for (const n of ns) { const d = join(ud, n, 'six-talk'); if (existsSync(d)) return d }
-  return null
+  if (!persistedTag) return null
+  const d = join(ud, persistedTag, 'six-talk')
+  return existsSync(d) ? d : null
 }
 const pngStamps = (dir) => (dir ? readdirSync(dir).filter((f) => f.endsWith('.png')).sort().map((f) => `${f}:${statSync(join(dir, f)).mtimeMs}`) : [])
 
@@ -113,7 +118,9 @@ try {
   await page.waitForTimeout(900) // persist is trailing-debounced at 500ms
   const persisted = JSON.parse(readFileSync(join(ud, 'search-index.json'), 'utf8'))
   const entry = persisted[sixOutline]
-  record('search-index.json entry now carries the compiler tag', typeof entry?.compilerTag === 'string' && entry.compilerTag.startsWith('thumb-cache-v8-'), String(entry?.compilerTag))
+  if (typeof entry?.compilerTag === 'string' && CACHE_NS.test(entry.compilerTag)) persistedTag = entry.compilerTag
+  record('search-index.json entry now carries the compiler tag of an existing cache namespace',
+    Boolean(persistedTag) && existsSync(join(ud, persistedTag)), `${entry?.compilerTag}; namespaces=${readdirSync(ud).filter((n) => CACHE_NS.test(n)).join(',')}`)
   record('persisted rows carry the fresh render_hash values', Boolean(entry) && entry.rows.every((r, i) => r.render_hash === freshRows[i].render_hash))
 
   // ── second opening is served from the cache: no PNG rewritten, pictures immediate ──
