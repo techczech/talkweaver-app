@@ -22,8 +22,8 @@
 //      size the moment the presenter goes live; that is a failure, not a report line. (The T27b
 //      defect was the audience stage's min-height: with container-type:size an auto height resolved
 //      through min-height is indefinite, every cqh in the live frame collapsed to its clamp
-//      minimum, and the ladder settled elsewhere; base.css now gives the audience stage a definite
-//      height: 100vh.)
+//      minimum, and the ladder settled elsewhere; the stage now has a definite height in every mode:
+//      ADR-0030 lays it out as the fixed 1280x720 canvas and scales it into the window.)
 // Mutation: with the fitLists guard narrowed back (TW_REINSTATE_POLL_FIT_DEFECT=1 strips the poll
 // selectors from the guard), every zoom assertion FAILS.
 // TW_POLL_SHOTS=<dir> saves hidden-window screenshots.
@@ -221,6 +221,7 @@ try {
       const presenter = await context.newPage()
       await presenter.goto(`${deck}?presenter=1&session=fit-${id}-${w}#${id}`)
       const audiencePromise = context.waitForEvent('page')
+      await presenter.locator('#presenterMenuLive').click() // in the Live menu since presenter redesign ticket 04
       await presenter.locator('#presenterAudienceApp').click()
       const audience = await audiencePromise
       await audience.waitForLoadState()

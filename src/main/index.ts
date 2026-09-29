@@ -65,7 +65,16 @@ protocol.registerSchemesAsPrivileged([
 ])
 import { pathToFileURL } from 'url'
 import { homedir, tmpdir } from 'os'
-import { existsSync, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, realpathSync, cpSync, rmSync, renameSync, createReadStream, mkdtempSync, openSync, readSync, closeSync, appendFileSync } from 'fs'
+import { canonicalOutlinePath, editorEntryForOutline, outlineIdentity, type EditorWindowEntry } from './outline-identity'
+import {
+  configureTalkWriter, emptyOverNonemptyMessage, flushTalkForPublish, isStructurallyEmptyOutline, readTalkOutline, withTalkFileLock, writeTalkOutline,
+  type EditorBuffer, type TalkWriteOptions, type TalkWriteOrigin,
+} from './talk-writer'
+import { createOutlineDiskGuard } from './outline-disk-guard'
+import { createOutlineRecovery } from './outline-recovery'
+import { createDirectoryWatcherRegistry } from './talkTextWatchers'
+import type { OutlineDiskChange } from '../shared/outline-disk-change'
+import { existsSync, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, realpathSync, cpSync, rmSync, renameSync, createReadStream, mkdtempSync, openSync, readSync, closeSync, appendFileSync, watch } from 'fs'
 import { createHash, randomBytes } from 'crypto'
 import { execFile, execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { resolve as resolvePath, sep as pathSep, relative as relativePath } from 'path'
@@ -98,6 +107,9 @@ import {
   appEditedTalks, expireStale, enrolmentDecision, applyEnrolmentChoice, talksNeedingLaunchBackup,
   AUTO_ENROL_LIMIT, SAVE_DEBOUNCE_MS, type BackupScopeState
 } from './backup-scope.mjs'
+import { scanTalkFoldersSync } from './talk-scan.mjs'
+import { createTalkSearch, handleTalkSearchRequest } from './talk-search'
+import { createTalkFolderStateStore, type StoredFolderStates } from './talk-folder-state'
 import {
   createSlidePreviewStore,
   markSlidePreviewHtml,
@@ -132,6 +144,7 @@ import {
   type MetadataDefaults
 } from '../shared/metadata-surfaces'
 import { editFrontmatterText, parseFrontmatterPairs } from '../shared/frontmatter-editor'
+import { extractSection, type SectionLocation } from '../shared/insert-section'
 import { commandElectronAccelerator, menuCommands } from '../shared/command-registry'
 import { actionBarVisibleFrom } from '../shared/action-bar-settings'
 import {
@@ -162,6 +175,7 @@ import {
   injectRunCoverMetadata,
   persistRun,
   readRun,
+  readRunForTalk,
   runHandoutSlug,
   setRunHandoutUrl,
   type RunRecord
@@ -183,8 +197,26 @@ import { createLiveSessionManager } from './live-session-manager'
 import { createLiveSessionStore, type SessionRecoveryRecord } from './live-session-store'
 import { flushLiveSessionHistory } from './live-session-history'
 import { LIVE_WORKER_BUILD, parseRecoveredVoteRecord, supportsCurrentLiveWorker } from '../../worker/recovery-protocol'
+import { fitInstantImage } from './instant-image'
+import { decodeToWebp, storePastedImage } from './pasted-image-asset'
+import {
+  addRunInstantSlide, fileOutlineDocument, loadOutlineTools, OutlineRefusal, resolveInstantAnchors,
+  type OutlineDocument, type OutlineTools
+} from './instant-slide-insert'
+import { changeNoun, INSTANT_SLIDE_ORIGIN, type EditorDocumentReply, type EditorDocumentRequestBody } from '../shared/editor-document'
 import { resolveLiveWorkerCloudflareToken } from './live-worker-cloudflare-token'
-import { parsePresenterMessage, parsePresenterServerMessage, type PollStateMessage } from '../../worker/protocol'
+import { createSharedTalks, readRevisionSnapshot, type SharedTalks } from './shared-talk'
+import { createFeedbackMirror } from './feedback-mirror'
+import { createSharedTalkFeedback, type SharedTalkFeedback } from './shared-talk-feedback'
+import { parseAcceptRecord, type FeedbackStatus } from '../shared/feedback'
+// What the rail may set: Done, Dismiss, Accept (with the splice it made, for Undo) and back to new
+// (Undo). Every status reaches the Worker from here, never from the renderer.
+const RAIL_STATUSES: readonly FeedbackStatus[] = ['done', 'dismissed', 'accepted', 'new']
+import { buildSharedTalkPayload, ownerNameFrom } from './shared-talk-build'
+import { stampShareUrl } from '../shared/handout-stamp'
+import { isValidShareDomain } from '../shared/shared-talk'
+import { deckWindowKeyAction, deckWindowMode, OPEN_AUDIENCE_SCRIPT } from './deck-window-keys'
+import { parsePresenterMessage, parsePresenterServerMessage, parseSlideLightbox, type PollStateMessage } from '../../worker/protocol'
 
 const slidePreviewStore = createSlidePreviewStore(8)
 
@@ -203,6 +235,9 @@ type Config = {
   publishBaseUrl?: string // optional custom domain, e.g. https://handouts.example.com
   liveWorkerBaseUrl?: string // deployed Worker origin; empty means auto-deploy or local wrangler dev
   liveWorkerVersion?: string // LIVE_WORKER_VERSION last deployed to liveWorkerBaseUrl; mismatch → re-deploy
+  // Share for comments: the host colleagues' links use (ticket 07 sets https://drafts.handouts.fyi once
+  // the Worker has that route). Empty = the Worker origin serves shares at /shares/<id>.
+  sharedTalkLinkBase?: string
   publishUseShortIds?: boolean // <base>/<id> links instead of <base>/<slug>/
   publishSiteDir?: string // advanced override; default {userData}/cloudflare-pages-site
   publishProdBranch?: string // advanced override; default 'main'
@@ -244,6 +279,9 @@ type Config = {
   // default rather than breaking the bar.
   actionBarVisible?: boolean
   actionBarItems?: string[]
+  // Talks browser folders left open or closed (ADR-0029 §3): vault root → vault-relative folder
+  // path → open. Only the user's choices; read tolerantly (src/main/talk-folder-state.ts).
+  talkListFolders?: StoredFolderStates
 }
 function configPath() {
   return join(app.getPath('userData'), 'config.json')
@@ -309,24 +347,50 @@ function readToken(): string | null {
   }
 }
 
+// Share link domain (ticket 07): Settings shows and takes a bare hostname ("drafts.handouts.fyi");
+// the share module and the live-Worker deploy both want it as a full origin, so config keeps the
+// one canonical value (`sharedTalkLinkBase`) and this pair converts at the Settings boundary only.
+// `hostname` throughout, never `.host` (which can carry a port isValidShareDomain must refuse).
+function shareDomainFromLinkBase(): string {
+  const base = getConfig('sharedTalkLinkBase', undefined)
+  if (!base) return ''
+  try { return new URL(base).hostname } catch { return '' }
+}
+
 ipcMain.handle('publish:get-config', () => ({
   accountId: getConfig('cfAccountId', undefined) ?? '',
   project: getConfig('cfPagesProject', undefined) ?? '',
   baseUrl: getConfig('publishBaseUrl', undefined) ?? '',
   workerBaseUrl: getConfig('liveWorkerBaseUrl', undefined) ?? '',
   useShortIds: getConfig('publishUseShortIds', false) ?? false,
+  shareDomain: shareDomainFromLinkBase(),
   hasToken: tokenExists()
 }))
 
 ipcMain.handle(
   'publish:set-config',
-  (_event, cfg: { accountId?: string; project?: string; baseUrl?: string; workerBaseUrl?: string; useShortIds?: boolean }) => {
+  (_event, cfg: { accountId?: string; project?: string; baseUrl?: string; workerBaseUrl?: string; useShortIds?: boolean; shareDomain?: string }):
+    { success: true } | { success: false; error: string } => {
+    const hostnameInput = (cfg.shareDomain || '').trim().toLowerCase()
+    if (hostnameInput && !isValidShareDomain(hostnameInput)) {
+      return {
+        success: false,
+        error: 'Share link domain must be a bare hostname, like drafts.example.com — no https://, port, path, space, wildcard, IP address or localhost.'
+      }
+    }
+    const nextLinkBase = hostnameInput ? `https://${hostnameInput}` : undefined
+    const previousLinkBase = getConfig('sharedTalkLinkBase', undefined)
     writeConfig({
       cfAccountId: (cfg.accountId || '').trim() || undefined,
       cfPagesProject: (cfg.project || '').trim() || undefined,
       publishBaseUrl: (cfg.baseUrl || '').trim() || undefined,
       liveWorkerBaseUrl: (cfg.workerBaseUrl || '').trim().replace(/\/+$/, '') || undefined,
-      publishUseShortIds: !!cfg.useShortIds
+      publishUseShortIds: !!cfg.useShortIds,
+      sharedTalkLinkBase: nextLinkBase,
+      // A domain set, changed or cleared means the deployed Worker's route no longer matches
+      // Settings — mark the deploy stale so ensureLiveWorker redeploys before the next share link
+      // is issued, rather than a colleague's link 404ing until some unrelated redeploy catches up.
+      ...(nextLinkBase !== previousLinkBase ? { liveWorkerVersion: undefined } : {})
     })
     return { success: true }
   }
@@ -393,13 +457,17 @@ ipcMain.handle('live:end', async (event) => {
 })
 ipcMain.handle('live:snapshot', (event) => { attachLiveWindow(event.sender.id); return liveSessions?.snapshot(event.sender.id) ?? null })
 ipcMain.handle('live:status', (event): LiveStatus => attachLiveWindow(event.sender.id)?.status ?? 'ended')
-ipcMain.on('live:publish-slide', (event, state: { slideId?: string; reveal?: number; focus?: unknown }) => {
+ipcMain.on('live:publish-slide', (event, state: { slideId?: string; reveal?: number; focus?: unknown; lightbox?: unknown; talkQr?: unknown }) => {
   if (!state || typeof state.slideId !== 'string' || !Number.isInteger(state.reveal) || Number(state.reveal) < 0) return
   const focus = state.focus == null ? null : state.focus as { kind: 'reveal' | 'focus'; step: number }
   if (focus && ((focus.kind !== 'reveal' && focus.kind !== 'focus') || !Number.isInteger(focus.step) || focus.step < 0)) return
+  const lightbox = state.lightbox === undefined ? undefined : parseSlideLightbox(state.lightbox)
+  if (state.lightbox !== undefined && !lightbox) return
+  if (state.talkQr !== undefined && typeof state.talkQr !== 'boolean') return
   try {
     attachLiveWindow(event.sender.id)
-    liveSessions?.publish(event.sender.id, { slideId: state.slideId, reveal: Number(state.reveal), focus })
+    liveSessions?.publish(event.sender.id, { slideId: state.slideId, reveal: Number(state.reveal), focus,
+      ...(lightbox ? { lightbox } : {}), ...(state.talkQr ? { talkQr: true } : {}) })
   } catch { event.sender.send('live:status', 'paused-reconnecting') }
 })
 function queueLivePoll(wcId: number, value: unknown) {
@@ -415,6 +483,34 @@ ipcMain.handle('live:poll-open', (event, poll: unknown) => queueLivePoll(event.s
 ipcMain.handle('live:poll-close', (event, pollId: unknown) => queueLivePoll(event.sender.id, { type: 'poll.close', pollId }))
 ipcMain.handle('live:poll-reveal', (event, pollId: unknown) => queueLivePoll(event.sender.id, { type: 'poll.reveal', pollId }))
 ipcMain.handle('live:poll-hide', (event, pollId: unknown, responseId: unknown, hidden: unknown) => queueLivePoll(event.sender.id, { type: 'poll.hide', pollId, responseId, hidden }))
+ipcMain.handle('live:instant-action', async (event, action: unknown) => {
+  const wcId = event.sender.id
+  if (!livePresenterContexts.has(wcId)) return { success: false, error: 'Instant slides are available in the presenter window only.' }
+  const candidate = action && typeof action === 'object' ? { ...(action as Record<string, unknown>) } : {}
+  if (candidate.type === 'instant.show' && candidate.slide && typeof candidate.slide === 'object') {
+    const slide = { ...(candidate.slide as Record<string, unknown>) }
+    if (slide.kind === 'link' && typeof slide.url === 'string') {
+      try {
+        const url = new URL(slide.url)
+        if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Only web links can be shown.')
+        const compilerDir = getCompilerPath()
+        if (!compilerDir) throw new Error('Compiler not found.')
+        const { makeQrSvg } = await import(pathToFileURL(join(compilerDir, 'lib/01-cli-utils.mjs')).href)
+        slide.qrSvg = String(makeQrSvg(slide.url) || '')
+      } catch (error) { return { success: false, error: error instanceof Error ? error.message : 'Invalid link.' } }
+    }
+    candidate.slide = slide
+  }
+  const message = parsePresenterMessage(JSON.stringify(candidate))
+  if (!message || (message.type !== 'instant.show' && message.type !== 'instant.clear')) return { success: false, error: 'Invalid instant slide.' }
+  const result = liveSessions?.poll(wcId, message) ?? { success: false, error: 'No live session.' }
+  return !result.success && message.type === 'instant.show' ? { ...result, slide: message.slide } : result
+})
+ipcMain.handle('live:fit-instant-image', async (event, bytes: Uint8Array) => {
+  if (!livePresenterContexts.has(event.sender.id)) return { success: false, error: 'Open the presenter window to show an image.' }
+  if (!(bytes instanceof Uint8Array) || bytes.byteLength > 50_000_000) return { success: false, error: 'This image is too large to process. Try a smaller screenshot.' }
+  return fitInstantImage(bytes)
+})
 
 ipcMain.handle('publish:set-token', (_event, token: string) => {
   if (!safeStorage.isEncryptionAvailable()) {
@@ -591,8 +687,47 @@ function createWindow(): BrowserWindow {
   const wcId = win.webContents.id
   editorWindows.set(wcId, { win, outlinePath: null })
   mainWindow = win
-  win.on('focus', () => { mainWindow = win })
+  win.on('focus', () => {
+    mainWindow = win
+    // External-change guard: a sync client can change the file without a watcher event reaching us
+    // (network folders, files on demand); coming back to the window is a natural moment to look.
+    const open = editorWindows.get(wcId)?.outlinePath
+    if (open) void outlineDiskGuard.check(open).catch(() => undefined)
+  })
+  // External-change guard: while this window's talk differs from its file on disk (the bar is up), a
+  // close — the window's own, or one ⌘Q asks for — waits for the person's choice. The renderer shows
+  // the same sheet as a talk switch (Reload / Keep mine / Stay here) and calls window:confirm-close
+  // once the choice has completed; Stay here leaves the window (and cancels the quit).
+  // If the renderer does not acknowledge the request within 5 s (hung, crashed), main lets the close go
+  // ahead after writing the recovery copy from the last text the editor tried to save.
+  win.on('close', (event) => {
+    const pending = outlineDiskGuard.pendingFor(String(wcId))
+    if (closeConfirmed.has(wcId) || !pending) return
+    event.preventDefault()
+    const quit = quitting
+    quitting = false // this quit is cancelled until the person chooses (it resumes via confirm-close)
+    clearTimeout(closeHolds.get(wcId))
+    closeHolds.set(wcId, setTimeout(() => {
+      closeHolds.delete(wcId)
+      if (win.isDestroyed()) return
+      const real = canonicalOutlinePath(pending.outlinePath)
+      const text = lastUnsavedText.get(real)
+      console.warn(`[outline-guard] the window did not answer the close request within 5 s; closing it${text !== undefined ? ' after keeping its unsaved text in a recovery copy' : ''} (${pending.outlinePath})`)
+      const finish = (): void => {
+        closeConfirmed.add(wcId)
+        if (quit) app.quit()
+        else if (!win.isDestroyed()) win.close()
+      }
+      if (text === undefined) { finish(); return }
+      outlineRecovery.save(real, text).catch((e) => console.error('[outline-recovery] save', e)).finally(finish)
+    }, 5000))
+    try { win.webContents.send('outline:close-requested', { quit }) } catch { /* destroyed: the timer closes it */ }
+  })
   win.on('closed', () => {
+    clearTimeout(closeHolds.get(wcId))
+    closeHolds.delete(wcId)
+    closeConfirmed.delete(wcId)
+    outlineDiskGuard.release(String(wcId))
     editorWindows.delete(wcId)
     if (mainWindow === win) mainWindow = editorWindows.size ? [...editorWindows.values()][0].win : null
   })
@@ -602,17 +737,22 @@ function createWindow(): BrowserWindow {
 
 // Editor windows and the talk each currently has active (outlinePath), so a deck's ⌘E/⌘R targets the
 // RIGHT window and the same-talk guard can block opening one talk in two windows. mainWindow is the
-// last-focused editor window (fallback target + activate).
-const editorWindows = new Map<number, { win: BrowserWindow; outlinePath: string | null }>()
+// last-focused editor window (fallback target + activate). Every "same talk" comparison is by file
+// identity (outline-identity.ts), resolved at the comparison, so an alias or a replaced inode matches.
+const editorWindows = new Map<number, EditorWindowEntry<BrowserWindow>>()
+const liveWindow = (win: BrowserWindow): boolean => !win.isDestroyed()
+// The editor window, other than `except`, whose open talk is the same file as `outlinePath`.
+function otherEditorHolding(outlinePath: string, except: BrowserWindow | undefined): BrowserWindow | null {
+  return editorEntryForOutline(editorWindows.values(), outlinePath, liveWindow, except)?.win ?? null
+}
 let mainWindow: BrowserWindow | null = null
 
 // The editor window currently showing `outlinePath` (a deck's ⌘E/⌘R target), else the last-focused
 // editor window, else any. Never returns a destroyed window.
 function targetEditorFor(outlinePath: string | null): BrowserWindow | null {
   if (outlinePath) {
-    for (const { win, outlinePath: op } of editorWindows.values()) {
-      if (op === outlinePath && !win.isDestroyed()) return win
-    }
+    const holder = otherEditorHolding(outlinePath, undefined)
+    if (holder) return holder
   }
   if (mainWindow && !mainWindow.isDestroyed()) return mainWindow
   for (const { win } of editorWindows.values()) if (!win.isDestroyed()) return win
@@ -1300,10 +1440,26 @@ const vaultIndex = createVaultListHandler({
   cachePath: join(app.getPath('userData'), 'vault-index.json'),
   log: (message: string) => console.log(message)
 })
+// Talk search (ADR-0029 §1, talk-search.ts): the one search for talks. It searches the Talks
+// browser's own list (the persisted vault index) and reads slide text from the slide-search cache
+// below; talks not read yet start the warm pass. The closures run at call time only, so the later
+// `searchCache` / `warmSearchIndex` bindings are initialised by then.
+const talkSearch = createTalkSearch({
+  vaultRoot: () => getConfig('vaultRoot', undefined) ?? null,
+  talks: async () => {
+    const root = getConfig('vaultRoot', undefined) ?? null
+    if (!root) return []
+    const listed = await vaultIndex.cached(root)
+    return listed.length > 0 ? listed : findTalks(root)
+  },
+  slideRows: (outlinePath) => searchCache.get(outlinePath)?.rows ?? (slideTextUnreadable.has(outlinePath) ? [] : null),
+  onSlideTextMissing: () => { void warmSearchIndex() }
+})
 const TALK_CACHE_TTL_MS = 5_000
 function invalidateTalkCache(): void {
   talkCache = null
   vaultIndex.invalidate()
+  talkSearch.invalidate()
   // The metadata doctor/vocabulary scans walk the same outlines — a vault mutation staleness
   // window there would show phantom unregistered keys. Declared below (ADR-0036 section);
   // only ever called at runtime, so the later `let` cache binding is initialised by then.
@@ -1353,52 +1509,26 @@ function outlineFrontmatter(outlinePath: string, mtimeMs: number): OutlineFrontm
   return fm
 }
 
+// The synchronous walk behind findTalks (slide text warm pass, slide search, thumbnails). Its
+// depth limit and skip rule are the persisted vault index's (talk-scan.mjs): a talk the Talks
+// browser lists must also get slide text (talk search ticket 01; the York talks sit 4 levels down).
 function scanTalks(root: string): TalkInfo[] {
+  if (!existsSync(root)) return []
   const talks: TalkInfo[] = []
-
-  function scanDir(dir: string, depth = 0) {
-    if (depth > 3) return
-    let entries: string[]
+  for (const { dir, outlineName } of scanTalkFoldersSync(root)) {
+    const outlinePath = join(dir, outlineName)
+    const slug = outlineName.replace('-outline.md', '')
+    // The REAL title lives in the outline's frontmatter; the slug-derived title-case form is
+    // only the fallback (it capitalises every word and loses punctuation — live finding, 0.14.0).
+    const fallback = slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+    let title = fallback
     try {
-      entries = readdirSync(dir)
+      title = outlineFrontmatter(outlinePath, statSync(outlinePath).mtimeMs).title ?? fallback
     } catch {
-      return
+      // stat raced a rename/delete — the fallback title still lists the talk.
     }
-
-    // Find outline files in this directory
-    const outlines = entries.filter(
-      (e) => e.endsWith('-outline.md') && statSync(join(dir, e)).isFile()
-    )
-    if (outlines.length > 0) {
-      const outlineName = outlines[0]
-      const outlinePath = join(dir, outlineName)
-      const slug = outlineName.replace('-outline.md', '')
-      // The REAL title lives in the outline's frontmatter; the slug-derived title-case form is
-      // only the fallback (it capitalises every word and loses punctuation — live finding, 0.14.0).
-      const fallback = slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-      let title = fallback
-      try {
-        title = outlineFrontmatter(outlinePath, statSync(outlinePath).mtimeMs).title ?? fallback
-      } catch {
-        // stat raced a rename/delete — the fallback title still lists the talk.
-      }
-      talks.push({ name: slug, path: dir, outlinePath, title, slug })
-      return // don't recurse into Talk folders
-    }
-
-    // Recurse into subdirectories (`_`-prefixed = system areas: _assets, _SLIDE-VERSIONS)
-    for (const entry of entries) {
-      if (entry.startsWith('.') || entry.startsWith('_') || entry === 'node_modules') continue
-      const full = join(dir, entry)
-      try {
-        if (statSync(full).isDirectory()) scanDir(full, depth + 1)
-      } catch {
-        // skip inaccessible
-      }
-    }
+    talks.push({ name: slug, path: dir, outlinePath, title, slug })
   }
-
-  if (existsSync(root)) scanDir(root)
   return talks.sort((a, b) => a.title.localeCompare(b.title))
 }
 
@@ -2154,6 +2284,8 @@ interface ProjectionRowMain {
   [k: string]: unknown
 }
 const searchCache = new Map<string, SearchCacheEntry & { slug: string }>()
+// Outlines the warm pass could not compile (talk search treats them as read, with no slide text).
+const slideTextUnreadable = new Set<string>()
 
 // Persist the compiled index to disk so search is fast on a cold app start, not just
 // within one session. Keyed by outlinePath; each entry carries the mtimeMs it was built
@@ -2246,7 +2378,13 @@ async function warmSearchIndex(): Promise<void> {
     const { buildPerSlideProjections } = await import(pathToFileURL(join(compilerDir, 'lib/10-projections.mjs')).href)
     const talks = findTalks(vaultRoot)
     for (const talk of talks) {
-      try { await ensureTalkRows(talk, vaultRoot, prepareSource, buildPerSlideProjections) } catch { /* skip */ }
+      // A talk the compiler cannot read counts as read (no slide text) for talk search, so its
+      // "Reading slide text" line ends and searches stop restarting this pass for it.
+      try {
+        const rows = await ensureTalkRows(talk, vaultRoot, prepareSource, buildPerSlideProjections)
+        if (rows) slideTextUnreadable.delete(talk.outlinePath)
+        else slideTextUnreadable.add(talk.outlinePath)
+      } catch { slideTextUnreadable.add(talk.outlinePath) }
     }
     console.log('[search] index warmed: ' + searchCache.size + ' talks')
   } catch (e) {
@@ -2514,6 +2652,25 @@ function matchHay(hayLower: string, q: SearchQuery): boolean {
   return q.terms.every((t) => hayLower.includes(t))
 }
 
+// Talk search over IPC (ADR-0029 §1): the Talks browser today, the picker's "Find a talk" next.
+ipcMain.handle('talks:search', (_event, query: unknown, options: unknown) => handleTalkSearchRequest(talkSearch, query, options))
+// The fo: completion source (ADR-0029 §2): folders at every depth with their talk counts, from
+// the same talk scan the search uses (vault:list-folders stops at depth 3).
+ipcMain.handle('talks:folders', () => talkSearch.folders())
+
+// Talks browser folders stay open or closed as left, across restarts (ADR-0029 §3).
+const talkFolderState = createTalkFolderStateStore({
+  vaultRoot: () => getConfig('vaultRoot', undefined) ?? null,
+  readValue: () => readConfig().talkListFolders,
+  writeValue: (value) => writeConfig({ talkListFolders: value })
+})
+ipcMain.handle('talks:folder-state', () => {
+  try { return talkFolderState.read() } catch { return {} }
+})
+ipcMain.handle('talks:set-folder-state', (_event, changes: unknown) => {
+  try { return talkFolderState.write(changes) } catch { return {} }
+})
+
 ipcMain.handle('search:all-slides', async (_event, query: string | SearchQuery) => {
   const vaultRoot = getConfig('vaultRoot', undefined)
   if (!vaultRoot) return null
@@ -2658,7 +2815,9 @@ async function maybeOfferOutlineMigration(outlinePath: string, text: string): Pr
       return fresh
     }
     writeFileSync(`${outlinePath}.bak`, fresh, 'utf8') // backup FIRST, then the migrated text
-    writeFileSync(outlinePath, result.text, 'utf8')
+    // Open-time: the buffer does not exist yet, so this writes the file (talk-writer.ts, never routed).
+    const migrated = await writeTalkOutline(outlinePath, result.text, 'migration')
+    if (!migrated.ok) throw new Error(migrated.error)
     console.log(`[outline-migrate] migrated ${outlinePath} (${result.report.length} change(s); backup: ${outlinePath}.bak)`)
     return result.text
   } catch (e) {
@@ -2671,28 +2830,95 @@ async function maybeOfferOutlineMigration(outlinePath: string, text: string): Pr
   }
 }
 
-ipcMain.handle('talk:read-outline', async (_event, outlinePath: string) => {
+// `forEditor`: the editor window is loading this talk (Editor.tsx) — the text it gets is the external-
+// change guard's baseline for the file (outline-disk-guard.ts). Every other reader leaves it alone.
+ipcMain.handle('talk:read-outline', async (event, outlinePath: string, opts?: { forEditor?: boolean }) => {
   try {
     const text = await readFileAsync(outlinePath, 'utf8')
-    return await maybeOfferOutlineMigration(outlinePath, text)
+    const loaded = await maybeOfferOutlineMigration(outlinePath, text)
+    if (opts?.forEditor === true && typeof loaded === 'string') {
+      // Only the window that has claimed this talk (window:claim-talk) becomes its guard owner.
+      const claimed = editorWindows.get(event.sender.id)?.outlinePath
+      if (claimed && outlineIdentity(claimed).key === outlineIdentity(outlinePath).key) {
+        outlineDiskGuard.track(String(event.sender.id), outlinePath, loaded)
+      } else {
+        console.warn(`[outline-guard] an editor load of ${outlinePath} from a window that has not claimed it was not tracked`)
+      }
+    }
+    return loaded
   } catch (e) {
     return null
   }
 })
 
-// Data-loss backstop (2026-07-05). A structurally-empty payload is one that is empty/whitespace-only,
-// OR carries neither YAML frontmatter NOR any Markdown heading — i.e. it is not a real outline. An
-// outline never legitimately becomes empty via autosave: even a deck with every slide deleted keeps
-// its frontmatter. So the ONLY thing this predicate ever catches is a bug (a renderer remount/`doc:''`
-// transient, a stale autosave, a botched load) about to overwrite real work — never a genuine save.
-function isStructurallyEmptyOutline(content: string): boolean {
-  if (typeof content !== 'string' || content.trim() === '') return true
-  const trimmed = content.replace(/^﻿/, '').trimStart()
-  const hasFrontmatter = /^---\s*(?:\n|$)/.test(trimmed)
-  const hasHeading = /^#{1,6}[ \t]/m.test(content)
-  return !hasFrontmatter && !hasHeading
-}
+// External-change guard (shared-talk ticket 01): the file's text and version as it stands on disk
+// (Reload), and accepting the version the person saw (Keep mine, and Reload once the text is in the
+// editor). See outline-disk-guard.ts.
+// Every request must come from the window that has the talk open (the guard's owner for that file).
+ipcMain.handle('talk:outline-disk-version', async (event, outlinePath: unknown) => {
+  if (typeof outlinePath !== 'string' || !outlinePath || !outlineDiskGuard.owns(String(event.sender.id), outlinePath)) return null
+  try { return await outlineDiskGuard.diskVersion(outlinePath) } catch { return null }
+})
+ipcMain.handle('talk:outline-accept-disk', async (event, outlinePath: unknown, hash: unknown, opts?: { keepPending?: boolean }) => {
+  if (typeof outlinePath !== 'string' || !outlinePath || typeof hash !== 'string') return { ok: false, change: null, error: 'Nothing to accept.' }
+  if (!outlineDiskGuard.owns(String(event.sender.id), outlinePath)) {
+    return { ok: false, change: null, error: 'This window does not have that talk open, so nothing was accepted.' }
+  }
+  try { return await outlineDiskGuard.accept(outlinePath, hash, { keepPending: opts?.keepPending === true }) } catch (e) {
+    return { ok: false, change: null, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+// Recovery copies (outline-recovery.ts): the text a refused save kept, for the talk this window has
+// open (the bar's "Restore my unsaved text"), and dropping it (restored and saved, or Discard).
+ipcMain.handle('talk:outline-recovery', async (event, outlinePath: unknown) => {
+  if (typeof outlinePath !== 'string' || !outlinePath || !outlineDiskGuard.owns(String(event.sender.id), outlinePath)) return null
+  try { return await outlineRecovery.read(canonicalOutlinePath(outlinePath)) } catch { return null }
+})
+ipcMain.handle('talk:outline-recovery-discard', async (event, outlinePath: unknown) => {
+  if (typeof outlinePath !== 'string' || !outlinePath || !outlineDiskGuard.owns(String(event.sender.id), outlinePath)) return false
+  try { await outlineRecovery.clear(canonicalOutlinePath(outlinePath)); return true } catch { return false }
+})
+// The talk was removed on disk and the person chose Discard: the window lets the talk go without
+// saving it again, and its recovery copy is dropped. The guard keeps the file tracked (every save still
+// refused, so nothing recreates it) until the window releases the talk.
+ipcMain.handle('talk:outline-discard', async (event, outlinePath: unknown) => {
+  if (typeof outlinePath !== 'string' || !outlinePath || !outlineDiskGuard.owns(String(event.sender.id), outlinePath)) return false
+  try { await outlineRecovery.clear(canonicalOutlinePath(outlinePath)) } catch { /* best effort */ }
+  return true
+})
+// The renderer resolved the close sheet (Reload or Keep mine completed): close for real, and finish
+// the quit that asked for it.
+// The renderer received outline:close-requested (its sheet is up): the 5-second fallback is off.
+ipcMain.handle('window:close-request-ack', (event) => {
+  clearTimeout(closeHolds.get(event.sender.id))
+  closeHolds.delete(event.sender.id)
+  return true
+})
+ipcMain.handle('window:confirm-close', (event, opts?: { quit?: boolean }) => {
+  const entry = editorWindows.get(event.sender.id)
+  if (!entry || entry.win.isDestroyed()) return false
+  closeConfirmed.add(event.sender.id)
+  if (opts?.quit === true) app.quit()
+  else entry.win.close()
+  return true
+})
 
+// Insert section (talk search 07; ADR-0029 §5): the section a picker heading names, read from its
+// talk as it stands now (the open editor's buffer when a window has it, else the file — readTalkOutline,
+// the one writer's read) and cut by the shared headless operation. Read-only: the insert itself happens
+// in the target talk's editor buffer (renderer, lib/outlineMutation) and is saved from there.
+ipcMain.handle('talk:extract-section', async (_event, sourceOutlinePath: string, at: SectionLocation) => {
+  let text: string
+  try {
+    text = await readTalkOutline(sourceOutlinePath)
+  } catch (e) {
+    return { ok: false, error: `The talk the section comes from could not be read (${e instanceof Error ? e.message : String(e)}). Nothing was inserted.` }
+  }
+  return extractSection(text, at)
+})
+
+// Data-loss backstop (2026-07-05): isStructurallyEmptyOutline and its refusal message live in
+// talk-writer.ts, which applies the same backstop to every other origin's writes.
 ipcMain.handle('talk:write-outline', async (_event, outlinePath: string, content: string) => {
   // HARD BACKSTOP: refuse to write a structurally-empty payload OVER a file that still holds real
   // content. This is the last line of defence against the data-loss bug (a full 58-slide outline was
@@ -2702,10 +2928,7 @@ ipcMain.handle('talk:write-outline', async (_event, outlinePath: string, content
     let existing = ''
     try { existing = readFileSync(outlinePath, 'utf8') } catch { /* absent = nothing to protect */ }
     if (existing.trim() !== '') {
-      console.warn(
-        `[write-outline] REFUSED empty-over-nonempty write to ${outlinePath} — ` +
-        `incoming ${content?.length ?? 0} bytes vs existing ${existing.length} bytes (data-loss backstop)`
-      )
+      console.warn(emptyOverNonemptyMessage(outlinePath, content, existing))
       return { ok: false as const, refused: 'empty-over-nonempty' as const }
     }
   }
@@ -2740,12 +2963,35 @@ ipcMain.handle('talk:write-outline', async (_event, outlinePath: string, content
       }
     }
   } catch { /* stamping must never block a save */ }
-  try {
-    writeFileSync(outlinePath, toWrite, 'utf8')
-  } catch {
+  // The editor's own queued save: written to disk (atomically, under the file's lock), never routed.
+  const written = await writeTalkOutline(outlinePath, toWrite, 'editor')
+  if (!written.ok && written.changedOnDisk) {
+    // External-change guard: the file differs from what the editor holds. Nothing was written; the
+    // renderer shows the bar (the change is named by the path this window uses). The editor's text is
+    // kept in a recovery copy meanwhile, so a forced quit or a crash before the choice loses nothing.
+    lastUnsavedText.set(canonicalOutlinePath(outlinePath), toWrite)
+    await outlineRecovery.save(canonicalOutlinePath(outlinePath), toWrite).catch((e) => console.error('[outline-recovery] save', e))
+    return { ok: false as const, refused: 'changed-on-disk' as const, change: { ...written.changedOnDisk, outlinePath } }
+  }
+  if (!written.ok) {
+    const real = canonicalOutlinePath(outlinePath)
+    if (outlineDiskGuard.tracks(real)) {
+      // Any failed save of a guarded (open) talk keeps the editor's text in a recovery copy.
+      lastUnsavedText.set(real, toWrite)
+      await outlineRecovery.save(real, toWrite).catch((e) => console.error('[outline-recovery] save', e))
+      // The person chose (Keep mine / Save it again) and that save failed: the bar stays, saying why.
+      const pending = outlineDiskGuard.pending(outlinePath)
+      if (pending) return { ok: false as const, refused: 'changed-on-disk' as const, change: { ...pending, outlinePath, saveError: written.error } }
+    }
     return false
   }
+  // Saved: an older recovery copy of this talk is no longer needed.
+  lastUnsavedText.delete(canonicalOutlinePath(outlinePath))
+  await outlineRecovery.clear(canonicalOutlinePath(outlinePath)).catch(() => undefined)
   notifyPathwaysChanged(outlinePath)
+  // Share for comments: a shared talk pushes this save in the background (switch 1). Returns at
+  // once and never throws — a push failure lands on the share, never on the save.
+  try { sharedTalks().noteSaved(outlinePath, toWrite) } catch { /* sharing must never break a save */ }
   // ADR-0024: this is the app-edit event that enrolment is keyed on — a real save, made here.
   try { noteAppEdit(outlinePath) } catch { /* backup bookkeeping must never break a save */ }
   // Ledger records only on a REAL write (a refused write above returns before here). Records the
@@ -2912,7 +3158,7 @@ ipcMain.handle('metadata:ignore-key', (_event, outlinePath: string, key: string)
 // adoption pattern — otherwise the next autosave would overwrite this write).
 ipcMain.handle(
   'metadata:edit-frontmatter',
-  (_event, outlinePath: string, edits: Array<{ key: string; value: string | null; aliases?: string[] }>) => {
+  async (_event, outlinePath: string, edits: Array<{ key: string; value: string | null; aliases?: string[] }>) => {
     if (!insideVault(outlinePath) || !Array.isArray(edits) || edits.length === 0) {
       return { ok: false as const, error: 'bad-request' }
     }
@@ -2920,16 +3166,15 @@ ipcMain.handle(
       if (typeof e?.key !== 'string' || !/^[A-Za-z0-9_-]+$/.test(e.key)) return { ok: false as const, error: 'bad-key' }
       if (e.value !== null && typeof e.value !== 'string') return { ok: false as const, error: 'bad-value' }
     }
-    let text = ''
-    try { text = readFileSync(outlinePath, 'utf8') } catch { return { ok: false as const, error: 'unreadable' } }
-    const next = editFrontmatterText(text, edits)
-    if (next === text) return { ok: true as const, content: text, changed: false as const }
-    try {
-      writeFileSync(outlinePath, next, 'utf8')
-    } catch (e) {
-      console.error('[metadata:edit-frontmatter]', e)
+    try { readFileSync(outlinePath, 'utf8') } catch { return { ok: false as const, error: 'unreadable' } }
+    // The talk's current text — the open editor's buffer when a window has it (talk-writer.ts).
+    const written = await writeTalkOutline(outlinePath, (text) => editFrontmatterText(text, edits), 'frontmatter')
+    if (!written.ok) {
+      console.error('[metadata:edit-frontmatter]', written.error)
       return { ok: false as const, error: 'write-failed' }
     }
+    if (!written.changed) return { ok: true as const, content: written.text, changed: false as const }
+    const next = written.text
     frontmatterCache.delete(outlinePath) // sidebar meta must not serve the pre-edit head
     invalidateTalkCache()
     invalidateMetadataCaches()
@@ -2982,30 +3227,36 @@ ipcMain.handle(
       const failed: Array<{ outline: string; error: string }> = []
       for (const [abs, outlineTargets] of byOutline) {
         try {
-          const original = readFileSync(abs, 'utf8')
-          let text = original
-          const finalTags: string[][] = []
-          for (const target of outlineTargets) {
-            // Refs are recomputed against the CURRENT text each step: applySlideTags may scrub
-            // a hand-authored heading tags token, which changes that heading's verbatim line.
-            const refs: Array<{ heading: string; occurrence: number }> =
-              target.id != null ? mod.blockRefsForId(text, target.id) : []
-            if (refs.length === 0 && typeof target.heading === 'string' && target.heading) {
-              refs.push({ heading: target.heading, occurrence: target.occurrence ?? 1 })
+          // Applied to the talk's current text — the open editor's buffer when a window has it
+          // (talk-writer.ts). finalTags is from the run that produced the written text.
+          let finalTags: string[][] = []
+          const applyTags = (original: string): string => {
+            let text = original
+            finalTags = []
+            for (const target of outlineTargets) {
+              // Refs are recomputed against the CURRENT text each step: applySlideTags may scrub
+              // a hand-authored heading tags token, which changes that heading's verbatim line.
+              const refs: Array<{ heading: string; occurrence: number }> =
+                target.id != null ? mod.blockRefsForId(text, target.id) : []
+              if (refs.length === 0 && typeof target.heading === 'string' && target.heading) {
+                refs.push({ heading: target.heading, occurrence: target.occurrence ?? 1 })
+              }
+              if (refs.length === 0) throw new Error(`slide not found (id=${target.id ?? '—'})`)
+              const eol = mod.dominantEol(text)
+              for (const ref of refs) {
+                const result = mod.applySlideTags(text, ref, { add: addNorm, remove: removeNorm }, eol)
+                text = result.text
+                finalTags.push(result.tags)
+              }
             }
-            if (refs.length === 0) throw new Error(`slide not found (id=${target.id ?? '—'})`)
-            const eol = mod.dominantEol(text)
-            for (const ref of refs) {
-              const result = mod.applySlideTags(text, ref, { add: addNorm, remove: removeNorm }, eol)
-              text = result.text
-              finalTags.push(result.tags)
-            }
+            return text
           }
-          if (text !== original) {
-            writeFileSync(abs, text, 'utf8')
+          const written = await writeTalkOutline(abs, applyTags, 'tags')
+          if (!written.ok) throw new Error(written.error)
+          if (written.changed) {
             // Same post-write housekeeping as talk:write-outline: ledger the save (best-effort)
             // and drop the search-cache entry so the Browser reflects the new tags on next query.
-            try { await ledgerRecord(abs, text) } catch { /* ledgering must never fail the write */ }
+            try { await ledgerRecord(abs, written.text) } catch { /* ledgering must never fail the write */ }
             try { searchCache.delete(abs) } catch { /* cache only */ }
           }
           applied.push({ outline: abs, tags: finalTags })
@@ -3063,18 +3314,29 @@ ipcMain.handle('ledger:detach', async (_event, outlinePath: string, content: str
   if (!compilerDir) return null
   try {
     const mod = await import(pathToFileURL(join(compilerDir, 'lib/12-outline-edit.mjs')).href)
-    const result = mod.detachSlideId(content, ref)
-    if (!result) return null
-    writeFileSync(outlinePath, result.text, 'utf8')
     const vaultRoot = getConfig('vaultRoot', undefined)
     const lib = await ledgerLib()
-    if (vaultRoot && lib) {
-      lib.recordOutlineSave(vaultRoot, outlinePath, result.text, {
+    // Detached against the talk's current text — the open editor's buffer when a window has it
+    // (talk-writer.ts). The lineage hint must be the FIRST ledger record of the new id: on the editor
+    // route it is recorded before the editor's own save ledgers the text.
+    const detached: { result: { text: string; newId: string; oldId: string } | null; hinted: boolean } = { result: null, hinted: false }
+    const recordHint = (text: string): void => {
+      const result = detached.result
+      if (detached.hinted || !result || !vaultRoot || !lib) return
+      detached.hinted = true
+      lib.recordOutlineSave(vaultRoot, outlinePath, text, {
         now: Date.now(),
         lineageHints: new Map([[result.newId, result.oldId]])
       })
     }
-    return result
+    const written = await writeTalkOutline(outlinePath, (current) => {
+      detached.result = mod.detachSlideId(current, ref) ?? null
+      if (!detached.result) throw new Error('slide not found')
+      return detached.result.text
+    }, 'ledger-detach', { beforeEditorApply: recordHint })
+    if (!written.ok || !detached.result) return null
+    recordHint(written.text)
+    return detached.result
   } catch { return null }
 })
 
@@ -3106,6 +3368,15 @@ ipcMain.handle('ledger:diff', async (_event, a: string, b: string) => {
   } catch { return [] }
 })
 
+// The engine's outline reads and writes (14-slide-propagation / 15-slide-merge `io`) go through the
+// one writer (talk-writer.ts): an open talk is read from and written through its editor buffer.
+function talkOutlineIO(origin: TalkWriteOrigin) {
+  return {
+    read: (abs: string) => readTalkOutline(abs),
+    write: (abs: string, transform: (current: string) => string, opts?: TalkWriteOptions) => writeTalkOutline(abs, transform, origin, opts),
+  }
+}
+
 ipcMain.handle('ledger:adopt', async (_event, id: string, versionMarkdown: string, targetOutlines: string[]) => {
   if (typeof id !== 'string' || !/^[A-Za-z0-9_-]+$/.test(id)) return null
   if (!Array.isArray(targetOutlines) || targetOutlines.some((t) => typeof t !== 'string')) return null
@@ -3121,7 +3392,7 @@ ipcMain.handle('ledger:adopt', async (_event, id: string, versionMarkdown: strin
       const abs = resolvePath(vaultRoot, t)
       if (!abs.startsWith(rootAbs + pathSep)) return null
     }
-    const result = lib.adoptVersion(vaultRoot, id, String(versionMarkdown ?? ''), targetOutlines)
+    const result = await lib.adoptVersion(vaultRoot, id, String(versionMarkdown ?? ''), targetOutlines, { io: talkOutlineIO('ledger-adopt') })
     // Adoption rewrote those outlines on disk behind the search index's back — drop the
     // affected talks' cache entries (same invalidation vault:set-root relies on) so the
     // Browser reflects the adopted content on its next query.
@@ -3166,7 +3437,7 @@ ipcMain.handle(
           occurrence: Number.isFinite(t.occurrence) ? t.occurrence : 1
         })
       }
-      const result = lib.mergeDuplicateSlides(vaultRoot, safeTargets, { now: Date.now() })
+      const result = await lib.mergeDuplicateSlides(vaultRoot, safeTargets, { now: Date.now(), io: talkOutlineIO('ledger-merge') })
       // Merge rewrote those outlines behind the search index's back — drop the affected talks'
       // cache entries (same invalidation ledger:adopt relies on) so the Browser reflects the shared
       // id on its next query. Applies to every touched outline, merged or failed-after-write.
@@ -3436,20 +3707,18 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
       presentWindows.delete(deckWcId)
       livePresenterContexts.delete(deckWcId)
     })
+    // F5 in the presenter opens the audience view (its Audience button); ⇧F5 there, F5 / ⇧F5 in the
+    // other deck windows and ⌘R everywhere refresh the deck in place (deck-window-keys.ts).
+    // preventDefault here also keeps the menu's F5 "Present from the top" from firing.
     win.webContents.on('before-input-event', (event, input) => {
-      if (input.type !== 'keyDown') return
-      // 2026-07-08: F5 / ⇧F5 in a deck window REFRESH the deck in place (same as ⌘R), matching
-      // the editor's F5 semantics — instead of falling through to the runtime's F5 binding,
-      // which launches ANOTHER window (the audience view; still available via its button).
-      if (input.key === 'F5' && !input.meta && !input.control && !input.alt) {
-        event.preventDefault()
-        void refreshDeckFromEditor(win)
-        return
-      }
-      if (input.shift || input.alt) return
-      if (!(input.meta || input.control) || input.key.toLowerCase() !== 'r') return
+      const action = deckWindowKeyAction(deckWindowMode(mode), input)
+      if (!action) return
       event.preventDefault()
-      void refreshDeckFromEditor(win)
+      if (action === 'open-audience') {
+        win.webContents.executeJavaScript(OPEN_AUDIENCE_SCRIPT, true).catch((e) => console.warn('[present] F5 audience failed:', e))
+      } else {
+        void refreshDeckFromEditor(win)
+      }
     })
     // F5 in the presenter opens the audience view via window.open(?audience=1). Send it FULL-SCREEN
     // to a second display if one exists; otherwise leave it as a normal window on this screen.
@@ -3484,6 +3753,13 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
   }
 })
 
+// The presenter's More → Refresh with latest edits (presenter redesign ticket 05): the same
+// refresh-in-place ⌘R runs, for the deck window that asked.
+ipcMain.handle('present:refresh-deck', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  if (win && !win.isDestroyed()) await refreshDeckFromEditor(win)
+})
+
 // ⌘E in a live deck window (presenter / presentation window): bring the editor window to the front
 // and jump it to this slide. The bridge sends the deck's current slide — its ledger id AND compiled
 // index — and the renderer resolves whichever it can. The deck window is left open (recording, if
@@ -3511,17 +3787,24 @@ ipcMain.handle('window:claim-talk', (event, outlinePath: string | null) => {
   const entry = editorWindows.get(event.sender.id)
   // Opening a talk does not enrol it, but it does keep an enrolled talk alive (ADR-0024 §2).
   if (outlinePath) { try { noteAppOpen(outlinePath) } catch { /* never block opening a talk */ } }
+  // Compared by file identity (device + inode), so a talk reached through a symlinked outline or
+  // folder, or through a second hard link, is still one talk: two windows on one file would hold two
+  // buffers and two save queues (ticket 07, third review; one-writer spec D3).
   if (outlinePath) {
-    for (const [wcId, e] of editorWindows) {
-      if (wcId !== event.sender.id && e.outlinePath === outlinePath && !e.win.isDestroyed()) {
-        if (e.win.isMinimized()) e.win.restore()
-        if (!E2E) e.win.show()
-        e.win.focus()
-        return { ok: false, reason: 'open-elsewhere' }
-      }
+    const holder = otherEditorHolding(outlinePath, entry?.win)
+    if (holder) {
+      if (holder.isMinimized()) holder.restore()
+      if (!E2E) holder.show()
+      holder.focus()
+      return { ok: false, reason: 'open-elsewhere' }
     }
   }
-  if (entry) entry.outlinePath = outlinePath
+  if (entry) {
+    // The outgoing talk is no longer watched for outside changes (its baseline is kept for a grace
+    // period, so its last flush save is still checked); the editor's load of the new talk tracks it.
+    if (entry.outlinePath && entry.outlinePath !== outlinePath) outlineDiskGuard.release(String(event.sender.id))
+    entry.outlinePath = outlinePath
+  }
   return { ok: true }
 })
 
@@ -3754,6 +4037,7 @@ type RunHandoutArtifact = {
   slug: string
   slideIds: string[]
   missing: string[]
+  venueSource: { slides: Array<{ html: string; notes: string }>; styles: string; license: null; liveTalkSlug: string }
 }
 
 async function buildRunHandoutArtifact(
@@ -3799,7 +4083,8 @@ async function buildRunHandoutArtifact(
   if (!existsSync(distDir)) mkdirSync(distDir, { recursive: true })
   const path = join(distDir, `${slug}-handout.html`)
   writeFileSync(path, html, 'utf8')
-  return { path, html, title: compiled.title, slug, slideIds, missing }
+  return { path, html, title: compiled.title, slug, slideIds, missing,
+    venueSource: { slides, styles, license: null, liveTalkSlug: talk.slug } }
 }
 
 // ── Export handout (Phase 1) — the audience-facing reading HTML (ADR-0012 share-no-notes). One
@@ -4021,6 +4306,8 @@ function escapeHtmlAttr(s: string): string {
 }
 
 ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, content: string) => {
+  // `content` is the renderer's copy of the buffer, which can trail the last keystrokes: it gates the
+  // request early, but the handout, the ledger seal and the stamp use the flushed text below.
   const blocked = unresolvedOutboundFailure(content)
   if (blocked) return blocked
 
@@ -4046,14 +4333,21 @@ ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, conte
   if (!pre.ok) return { success: false, error: pre.error }
 
   try {
+    // What is published is the editor's buffer as it stands when Publish was pressed: flush it to disk
+    // first (a forced save of the open editor's buffer through the one writer, talk-writer.ts; a
+    // closed talk's file is read as it is) and build from the text the flush returns — never from
+    // `content`, and never by writing the file here.
+    const flushed = await flushTalkForPublish(outlinePath)
+    if (!flushed.ok) return { success: false, error: flushed.error }
+    const published = flushed.text
+    const blockedNow = unresolvedOutboundFailure(published)
+    if (blockedNow) return blockedNow
     const liveWorker = await ensureLiveWorker()
-    // Flush the latest editor text to disk first (we may stamp handout_url back into it below).
-    try { writeFileSync(outlinePath, content, 'utf8') } catch { /* fall through */ }
 
     const stat = statSync(outlinePath)
     const slug = basename(outlinePath).replace('-outline.md', '')
     const vaultRoot = getConfig('vaultRoot', undefined)
-    const resolved = vaultRoot ? resolveImageRefs(content, vaultRoot) : content
+    const resolved = vaultRoot ? resolveImageRefs(published, vaultRoot) : published
 
     // Build the handout HTML exactly like talk:export-handout (share-no-notes).
     const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
@@ -4061,7 +4355,7 @@ ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, conte
     // Title for the handout <title> + viewer page: prefer the outline's frontmatter `title:`
     // (the canonical deck title), like the old publisher did — model.title falls back to the slug
     // for plain-markdown decks the v1 adapter routes, which would show the slug instead of the title.
-    const fmTitle = (content.match(/^title:\s*["']?(.+?)["']?\s*$/m) || [])[1]
+    const fmTitle = (published.match(/^title:\s*["']?(.+?)["']?\s*$/m) || [])[1]
     const title = (fmTitle && fmTitle.trim()) || (model.title as string) || slug
     const fullHtml = model.fullHtml as string
     const { extractStyles, extractSlides } = await import(
@@ -4089,7 +4383,7 @@ ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, conte
     let id: string | undefined
     if (useShortIds) {
       const registry = readHandoutRegistry()
-      const recoveredId = recoverIdFromUrl(readHandoutUrl(content), base)
+      const recoveredId = recoverIdFromUrl(readHandoutUrl(published), base)
       const gen = (): string => generateShortId((n) => Uint8Array.from(randomBytes(n)))
       const picked = pickShortId({ registry, slug, recoveredId, gen })
       id = picked.id
@@ -4103,6 +4397,14 @@ ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, conte
     const { makeQrSvg } = await import(pathToFileURL(join(compilerDir, 'lib/01-cli-utils.mjs')).href)
     const qr = (makeQrSvg(url) as string) || ''
     writeFileSync(join(talkOutDir, 'index.html'), viewerPageHtml({ title, handoutFile, url, qr }), 'utf8')
+    const { buildVenuePageHtml, buildUnavailableVenuePageHtml } = await import(pathToFileURL(join(compilerDir, 'lib/venue-page.mjs')).href)
+    const venueDir = join(talkOutDir, 'p')
+    mkdirSync(venueDir, { recursive: true })
+    writeFileSync(join(venueDir, 'index.html'), slimHandoutHtml(buildVenuePageHtml({
+      title, slides, styles, slug, license, workerBaseUrl: liveWorker.baseUrl,
+      liveTalkSlug: slug, qr, handoutUrl: url,
+    })), 'utf8')
+    writeFileSync(join(siteDir, '404.html'), buildUnavailableVenuePageHtml(), 'utf8')
 
     // _redirects regenerated AFTER the viewer index.html exists (the scan keys off each folder's index.html).
     if (useShortIds) {
@@ -4137,13 +4439,17 @@ ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, conte
     })
     if (!deploy.ok) return { success: false, error: `wrangler deploy failed: ${deploy.err}` }
 
-    // Best-effort: stamp handout_url into the outline frontmatter so the renderer adopts it (and the
-    // short id is recoverable later). No frontmatter → left unchanged.
-    const updatedOutline = stampHandoutUrl(content, url)
-    if (updatedOutline !== content) {
-      try { writeFileSync(outlinePath, updatedOutline, 'utf8') } catch { /* keep going */ }
+    // Best-effort: stamp handout_url into the outline frontmatter (so the short id is recoverable
+    // later). No frontmatter → left unchanged. Stamped onto the talk's CURRENT text through the one
+    // writer (the deploy can take minutes; the open editor's buffer may have moved on). `updatedOutline`
+    // reports the text the writer applied; the renderer does not adopt it — it stamps its own buffer
+    // as it stands (WorkspaceLayout.handlePublishHandout), a no-op when this stamp landed.
+    let updatedOutline = stampHandoutUrl(published, url)
+    if (updatedOutline !== published) {
+      const stamped = await writeTalkOutline(outlinePath, (current) => stampHandoutUrl(current, url), 'publish-handout')
+      if (stamped.ok) updatedOutline = stamped.text
     }
-    void ledgerSeal(outlinePath, content, 'publish')
+    void ledgerSeal(outlinePath, published, 'publish')
     return { success: true, url, display: url, updatedOutline }
   } catch (e) {
     console.error('[publish-handout]', e)
@@ -4224,13 +4530,84 @@ function runWrangler(
   })
 }
 
+// Strips `//` line comments and `/* … */` block comments from JSONC text, leaving string contents
+// untouched, so wrangler.jsonc — which may legitimately carry either, per its own extension — reads
+// as plain JSON. Self-contained rather than depending on a parser package: none of this repo's own
+// declared dependencies ships one, and wrangler.jsonc here is never large.
+function stripJsonComments(text: string): string {
+  let out = ''
+  let inString = false
+  let escaped = false
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]
+    if (inString) {
+      out += ch
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') { inString = true; out += ch; continue }
+    if (ch === '/' && text[i + 1] === '/') {
+      while (i < text.length && text[i] !== '\n') i += 1
+      out += '\n'
+      continue
+    }
+    if (ch === '/' && text[i + 1] === '*') {
+      i += 2
+      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i += 1
+      i += 1
+      continue
+    }
+    out += ch
+  }
+  return out
+}
+
+// Share link domain (ticket 07): the shipped wrangler.jsonc never hardcodes a custom domain — it is
+// per-user (each person deploys the live Worker to their own Cloudflare account). When Settings has
+// a valid domain, the deploy config gets a `routes: [{ pattern, custom_domain: true }]` entry;
+// Workers custom domains create the DNS record and certificate themselves (verified against
+// Cloudflare's docs — no separate DNS-record step is needed here, unlike attaching a domain via the
+// raw API). Unset, or a stored value that no longer passes isValidShareDomain (edited by hand, or
+// saved before that rule existed): the base wrangler.jsonc deploys unchanged, same as sharedTalkLink
+// falling back to the Worker origin for the same reason.
+function liveWorkerDeployConfigPath(baseConfig: string): { ok: true; path: string } | { ok: false; error: string } {
+  try {
+    const linkBase = getConfig('sharedTalkLinkBase', undefined)
+    const hostname = (() => { try { return linkBase ? new URL(linkBase).hostname : null } catch { return null } })()
+    if (!hostname || !isValidShareDomain(hostname)) return { ok: true, path: baseConfig }
+    const source = JSON.parse(stripJsonComments(readFileSync(baseConfig, 'utf8'))) as Record<string, unknown>
+    // Written outside the (possibly read-only, once signed) app resources directory, so `main` is
+    // made absolute rather than left relative to the generated file's own location.
+    const generated = {
+      ...source,
+      main: join(liveWorkerDir(), String(source.main ?? 'index.ts')),
+      // Wrangler disables the workers.dev route by default once any `routes` entry is present unless
+      // `workers_dev` says otherwise — keep it on: the app's own API calls (ensureLiveWorker's baseUrl,
+      // parsed from this same deploy's output below) still go through workers.dev; only the colleague
+      // link moves to the custom domain.
+      workers_dev: true,
+      routes: [{ pattern: hostname, custom_domain: true }],
+    }
+    const generatedPath = join(app.getPath('userData'), 'live-worker-wrangler.generated.jsonc')
+    writeFileSync(generatedPath, JSON.stringify(generated, null, 2), 'utf8')
+    return { ok: true, path: generatedPath }
+  } catch (error) {
+    return { ok: false, error: `Could not generate the live Worker's deploy config: ${error instanceof Error ? error.message : String(error)}` }
+  }
+}
+
 async function deployLiveWorker(env: NodeJS.ProcessEnv): Promise<{ ok: true; baseUrl: string; adminSecret: string } | { ok: false; error: string }> {
   const accountId = getConfig('cfAccountId', undefined)
   const PATH = augmentedPath(env.PATH)
   if (!accountId) return { ok: false, error: 'Configure a Cloudflare account in Settings → Publishing.' }
   if (!wranglerFoundOn(PATH)) return { ok: false, error: 'wrangler not found — install it before starting a live session.' }
-  const config = join(liveWorkerDir(), 'wrangler.jsonc')
-  if (!existsSync(config)) return { ok: false, error: 'Live Worker files are missing from this TalkWeaver installation.' }
+  const baseConfig = join(liveWorkerDir(), 'wrangler.jsonc')
+  if (!existsSync(baseConfig)) return { ok: false, error: 'Live Worker files are missing from this TalkWeaver installation.' }
+  const generatedConfig = liveWorkerDeployConfigPath(baseConfig)
+  if (!generatedConfig.ok) return generatedConfig
+  const config = generatedConfig.path
   let token: string
   try {
     token = await resolveLiveWorkerCloudflareToken()
@@ -4309,7 +4686,13 @@ async function ensureLiveWorker(): Promise<{ baseUrl: string; adminSecret: strin
   const configured = getConfig('liveWorkerBaseUrl', undefined)?.replace(/\/+$/, '')
   if (configured) {
     const url = new URL(configured)
-    if (url.hostname === '127.0.0.1' || url.hostname === 'localhost') return startLocalLiveWorker(configured)
+    if (url.hostname === '127.0.0.1' || url.hostname === 'localhost') {
+      // A local Worker someone else already runs (the e2e harness, a developer's wrangler dev) and
+      // whose admin secret is handed over explicitly: use it rather than spawning a second one.
+      const externalSecret = process.env.TALKWEAVER_LIVE_ADMIN_SECRET?.trim()
+      if (externalSecret) return { baseUrl: configured, adminSecret: externalSecret }
+      return startLocalLiveWorker(configured)
+    }
     // Re-deploy when the bundled Worker is newer than what was last deployed to this URL, if we
     // have the credentials to do so. On failure, fall through and reuse the URL rather than break go-live.
     const canDeploy = Boolean(readToken()) && Boolean(getConfig('cfAccountId', undefined))
@@ -4328,6 +4711,170 @@ async function ensureLiveWorker(): Promise<{ baseUrl: string; adminSecret: strin
   if (!deployed.ok) throw new Error(deployed.error)
   return deployed
 }
+
+// ── Share for comments (ticket 03) ──────────────────────────────────────────────────────────────
+// The shared-talk module (shared-talk.ts) owns the share registry, the Worker calls and the push
+// queue; this is its wiring: the live Worker endpoint, the share build, the share_url stamp and the
+// window broadcast. Built lazily — app.getPath needs a ready app.
+let sharedTalkService: SharedTalks | null = null
+function sharedTalkSlug(outlinePath: string): string {
+  return basename(outlinePath).replace('-outline.md', '')
+}
+function sharedTalks(): SharedTalks {
+  if (sharedTalkService) return sharedTalkService
+  sharedTalkService = createSharedTalks({
+    registryPath: join(app.getPath('userData'), 'shared-talk-registry.json'),
+    endpoint: () => ensureLiveWorker(),
+    linkBase: () => getConfig('sharedTalkLinkBase', undefined),
+    identityOf: (outlinePath) => outlineIdentity(outlinePath),
+    slugOf: sharedTalkSlug,
+    peekOutline: (outlinePath) => readFileSync(outlinePath, 'utf8'),
+    readOutline: async (outlinePath) => {
+      // The talk as it stands (publish's flush: the open editor's buffer, saved when it differs from
+      // the file). A refused flush — an empty talk, or the file changed on disk under the external-
+      // change guard — fails the push rather than pushing whatever the file holds.
+      const flushed = await flushTalkForPublish(outlinePath)
+      if (!flushed.ok) throw new Error(flushed.error)
+      return flushed.text
+    },
+    build: ({ outlinePath, content, slug, proposals }) => preparePass.background(async () => {
+      const blocked = unresolvedOutboundFailure(content)
+      if (blocked) throw new Error(blocked.error)
+      const compilerDir = getCompilerPath()
+      if (!compilerDir) throw new Error('Compiler not found.')
+      const vaultRoot = getConfig('vaultRoot', undefined)
+      const payload = await buildSharedTalkPayload({
+        compilerDir, outlinePath, content, slug, proposals,
+        compileContent: vaultRoot ? resolveImageRefs(content, vaultRoot) : content,
+        ownerName: ownerNameFrom(content, String(metadataDefaults().author ?? '')),
+      })
+      // The Worker takes up to 32 MiB per push; slim media only when a deck comes near it.
+      return payload.html.length > 24 * 1024 * 1024 ? { ...payload, html: slimHandoutHtml(payload.html) } : payload
+    }),
+    stampShareUrl: async (outlinePath, url) => {
+      const written = await writeTalkOutline(outlinePath, (current) => stampShareUrl(current, url), 'share-for-comments')
+      if (!written.ok) throw new Error(written.error)
+    },
+    qrSvg: async (url) => {
+      const compilerDir = getCompilerPath()
+      if (!compilerDir) return ''
+      const { makeQrSvg } = await import(pathToFileURL(join(compilerDir, 'lib/01-cli-utils.mjs')).href)
+      return String(makeQrSvg(url) || '')
+    },
+    fetch: (input, init) => fetch(input, init),
+    onChange: (key, state, previousKey) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        try { win.webContents.send('shared-talk:changed', previousKey ? { key, state, previousKey } : { key, state }) } catch { /* window closing */ }
+      }
+      // A share created, moved or stopped: its owner socket follows.
+      sharedTalkFeedbackService?.sync()
+    },
+    log: (message) => console.warn(message),
+  })
+  return sharedTalkService
+}
+
+// ── Feedback rail (ticket 05) ────────────────────────────────────────────────────────────────────
+// One owner socket per share, every item mirrored into <talk>/feedback/<share-id>.jsonl by one
+// serialised writer (feedback-mirror.ts); the rail reads that file. Started at app ready.
+let sharedTalkFeedbackService: SharedTalkFeedback | null = null
+function sharedTalkFeedback(): SharedTalkFeedback {
+  if (sharedTalkFeedbackService) return sharedTalkFeedbackService
+  sharedTalkFeedbackService = createSharedTalkFeedback({
+    shares: () => sharedTalks().owners(),
+    mirror: createFeedbackMirror(),
+    fetch: (input, init) => fetch(input, init),
+    revisionSlides: (outlinePath, shareId, revision) => {
+      const kept = readRevisionSnapshot(outlinePath, shareId, revision)
+      return kept ? { slides: kept.slides, pushedAt: kept.pushedAt } : null
+    },
+    // The owner socket found the share stopped, retired or refusing the token: record it.
+    onEnded: (shareId, reason) => sharedTalks().markEnded(shareId, reason),
+    onChange: (shareId, summary) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        try { win.webContents.send('shared-talk:feedback-changed', { shareId, summary }) } catch { /* window closing */ }
+      }
+    },
+    log: (message) => console.warn(message),
+  })
+  return sharedTalkFeedbackService
+}
+async function feedbackShareIdFor(outlinePath: unknown): Promise<string | null> {
+  if (typeof outlinePath !== 'string' || !outlinePath) return null
+  return (await sharedTalks().status(outlinePath))?.shareId ?? null
+}
+ipcMain.handle('shared-talk:feedback-summaries', () => {
+  try { return sharedTalkFeedback().summaries() } catch { return [] }
+})
+ipcMain.handle('shared-talk:feedback-list', async (_event, outlinePath: unknown) => {
+  try {
+    const shareId = await feedbackShareIdFor(outlinePath)
+    return shareId ? sharedTalkFeedback().list(shareId) : null
+  } catch (error) {
+    console.warn('[shared-talk] feedback list failed', error)
+    return null
+  }
+})
+ipcMain.handle('shared-talk:feedback-set-status', async (event, outlinePath: unknown, itemId: unknown, status: unknown, edit?: unknown) => {
+  if (typeof itemId !== 'string' || !itemId || !RAIL_STATUSES.includes(status as FeedbackStatus)) return { success: false, error: 'Bad request.' }
+  // Only the window that has the talk open (the external-change guard's owner for that file) may set
+  // an item's status: an accept records a change that window's editor made.
+  if (typeof outlinePath !== 'string' || !outlinePath || !outlineDiskGuard.owns(String(event.sender.id), outlinePath)) {
+    return { success: false, error: 'This window does not have that talk open, so nothing was changed.' }
+  }
+  // An accept names the splice it made (Undo needs it); nothing else carries one.
+  const accepted = status === 'accepted' ? parseAcceptRecord(edit) : null
+  if (status === 'accepted' && edit != null && !accepted) return { success: false, error: 'Bad request.' }
+  if (status !== 'accepted' && edit != null) return { success: false, error: 'Bad request.' }
+  try {
+    const shareId = await feedbackShareIdFor(outlinePath)
+    if (!shareId) return { success: false, error: 'This talk is not shared.' }
+    const list = await sharedTalkFeedback().setStatus(shareId, itemId, status as FeedbackStatus, accepted)
+    return { success: true, list }
+  } catch (error) { return sharedTalkError(error) }
+})
+function sharedTalkError(error: unknown): { success: false; error: string } {
+  return { success: false, error: error instanceof Error ? error.message : String(error) }
+}
+ipcMain.handle('shared-talk:status', async (_event, outlinePath: unknown) => {
+  if (typeof outlinePath !== 'string' || !outlinePath) return null
+  try { return await sharedTalks().status(outlinePath) } catch { return null }
+})
+ipcMain.handle('shared-talk:inspect', async (_event, outlinePath: unknown) => {
+  if (typeof outlinePath !== 'string' || !outlinePath) return { share: null, foreignShareUrl: null }
+  try { return await sharedTalks().inspect(outlinePath) } catch { return { share: null, foreignShareUrl: null } }
+})
+ipcMain.handle('shared-talk:list', () => {
+  try { return sharedTalks().list() } catch { return [] }
+})
+ipcMain.handle('shared-talk:share', async (_event, outlinePath: unknown, title: unknown) => {
+  if (typeof outlinePath !== 'string' || !outlinePath) return { success: false, error: 'No talk is open.' }
+  try {
+    const blocked = unresolvedOutboundFailure(readFileSync(outlinePath, 'utf8'))
+    if (blocked) return blocked
+    const state = await sharedTalks().share(outlinePath, typeof title === 'string' ? title : undefined)
+    return { success: true, share: state }
+  } catch (error) { return sharedTalkError(error) }
+})
+ipcMain.handle('shared-talk:set-options', async (_event, outlinePath: unknown, options: unknown) => {
+  if (typeof outlinePath !== 'string' || !outlinePath || !options || typeof options !== 'object') return { success: false, error: 'Bad request.' }
+  const { liveUpdates, proposals } = options as { liveUpdates?: unknown; proposals?: unknown }
+  try {
+    const state = await sharedTalks().setOptions(outlinePath, {
+      ...(typeof liveUpdates === 'boolean' ? { liveUpdates } : {}),
+      ...(typeof proposals === 'boolean' ? { proposals } : {}),
+    })
+    return { success: true, share: state }
+  } catch (error) { return sharedTalkError(error) }
+})
+ipcMain.handle('shared-talk:update', async (_event, outlinePath: unknown) => {
+  if (typeof outlinePath !== 'string' || !outlinePath) return { success: false, error: 'No talk is open.' }
+  try { return { success: true, share: await sharedTalks().update(outlinePath) } } catch (error) { return sharedTalkError(error) }
+})
+ipcMain.handle('shared-talk:stop', async (_event, outlinePath: unknown) => {
+  if (typeof outlinePath !== 'string' || !outlinePath) return { success: false, error: 'No talk is open.' }
+  try { return { success: true, ...(await sharedTalks().stop(outlinePath)) } } catch (error) { return sharedTalkError(error) }
+})
 
 async function liveHttpError(response: Response, fallback: string): Promise<string> {
   try {
@@ -4381,7 +4928,11 @@ ipcMain.handle('run:build-handout', async (_event, payload: { talkSlug: string; 
     const run = readRun(vault, String(payload.talkSlug), String(payload.runId))
     const talk = talkBySlug(String(payload.talkSlug))
     if (!run || !talk) return { success: false, error: 'run-or-talk-not-found' }
-    const content = readFileSync(talk.outlinePath, 'utf8')
+    // An open talk's unsaved edits belong in the handout: flush the editor's buffer through the one
+    // writer first and build from the text it returns (a closed talk's file is read as it is).
+    const flushed = await flushTalkForPublish(talk.outlinePath)
+    if (!flushed.ok) return { success: false, error: flushed.error }
+    const content = flushed.text
     const blocked = unresolvedOutboundFailure(content)
     if (blocked) return blocked
     const artifact = await buildRunHandoutArtifact(talk, run, content, undefined, localHandoutWorkerBaseUrl())
@@ -4398,7 +4949,10 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
     const run = readRun(vault, String(payload.talkSlug), String(payload.runId))
     const talk = talkBySlug(String(payload.talkSlug))
     if (!run || !talk || run.status !== 'delivered') return { success: false, error: 'delivered-run-not-found' }
-    const content = readFileSync(talk.outlinePath, 'utf8')
+    // As run:build-handout: the open editor's buffer, flushed through the one writer, is what is published.
+    const flushed = await flushTalkForPublish(talk.outlinePath)
+    if (!flushed.ok) return { success: false, error: flushed.error }
+    const content = flushed.text
     const blocked = unresolvedOutboundFailure(content)
     if (blocked) return blocked
     const project = getConfig('cfPagesProject', undefined) ?? (process.env.TW_REC_TEST === '1' ? 'talkweaver-test' : undefined)
@@ -4442,7 +4996,16 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
     const compilerDir = getCompilerPath()
     if (!compilerDir) return { success: false, error: 'Compiler not found' }
     const { makeQrSvg } = await import(pathToFileURL(join(compilerDir, 'lib/01-cli-utils.mjs')).href)
-    writeFileSync(join(talkOutDir, 'index.html'), viewerPageHtml({ title: `${artifact.title} — ${run.eventTitle ?? 'Run'}`, handoutFile, url, qr: (makeQrSvg(url) as string) || '' }), 'utf8')
+    const qr = (makeQrSvg(url) as string) || ''
+    writeFileSync(join(talkOutDir, 'index.html'), viewerPageHtml({ title: `${artifact.title} — ${run.eventTitle ?? 'Run'}`, handoutFile, url, qr }), 'utf8')
+    const { buildVenuePageHtml, buildUnavailableVenuePageHtml } = await import(pathToFileURL(join(compilerDir, 'lib/venue-page.mjs')).href)
+    const venueDir = join(talkOutDir, 'p')
+    mkdirSync(venueDir, { recursive: true })
+    writeFileSync(join(venueDir, 'index.html'), slimHandoutHtml(buildVenuePageHtml({
+      title: artifact.title, ...artifact.venueSource, slug,
+      workerBaseUrl: liveWorkerBaseUrl, qr, handoutUrl: url,
+    })), 'utf8')
+    writeFileSync(join(siteDir, '404.html'), buildUnavailableVenuePageHtml(), 'utf8')
     if (useShortIds) {
       const registry = readHandoutRegistry()
       const slugs = readdirSync(siteDir).filter((name) => existsSync(join(siteDir, name, 'index.html')))
@@ -4507,6 +5070,7 @@ ipcMain.handle('talk:optimize-images', async (_event, outlinePath: string, conte
       refs.add(raw)
     }
     let newContent = content
+    const rewrites: Array<[string, string]> = []
     let converted = 0
     let savedBytes = 0
     const failed: string[] = []
@@ -4526,6 +5090,7 @@ ipcMain.handle('talk:optimize-images', async (_event, outlinePath: string, conte
           .toFile(webpAbs)
         const after = statSync(webpAbs).size
         newContent = newContent.split(ref).join(webpRef)
+        rewrites.push([ref, webpRef])
         savedBytes += Math.max(0, before - after)
         converted += 1
         if (resolvePath(webpAbs) !== resolvePath(abs)) {
@@ -4537,7 +5102,11 @@ ipcMain.handle('talk:optimize-images', async (_event, outlinePath: string, conte
       }
     }
     if (converted > 0) {
-      writeFileSync(outlinePath, newContent, 'utf8')
+      // The same ref rewrites, applied to the talk's CURRENT text — the open editor's buffer when a
+      // window has it (talk-writer.ts), so edits made during the conversion survive.
+      const written = await writeTalkOutline(outlinePath, (current) => rewrites.reduce((text, [from, to]) => text.split(from).join(to), current), 'optimize-images')
+      if (!written.ok) throw new Error(written.error)
+      newContent = written.text
       searchCache.clear()
       invalidateTalkCache()
     }
@@ -5002,12 +5571,13 @@ ipcMain.handle('abstract:write', (_event, talkPath: string, raw: string): boolea
 // and could park a section below its own subsection. Map grid indices to depth-3 heading
 // blocks and move each with its WHOLE SUBTREE (its ####–###### children travel with it),
 // which is the only structurally sound move under heading-is-slide. Returns new text;
-// does NOT write the file (renderer sets editor content which autosaves).
-ipcMain.handle('outline:reorder', async (_event, outlinePath: string, fromIndex: number, toIndex: number) => {
+// does NOT write the file. `content` is the text to reorder — the open editor's buffer (one-writer
+// spec D1: the renderer mutates its buffer, then saves it); without it the file is read.
+ipcMain.handle('outline:reorder', async (_event, outlinePath: string, fromIndex: number, toIndex: number, content?: unknown) => {
   const compilerDir = getCompilerPath()
   if (!compilerDir) return null
   try {
-    const text = readFileSync(outlinePath, 'utf8')
+    const text = typeof content === 'string' ? content : readFileSync(outlinePath, 'utf8')
     const { listSlideBlocks } = await import(
       pathToFileURL(join(compilerDir, 'lib/12-outline-edit.mjs')).href
     )
@@ -5120,58 +5690,184 @@ ipcMain.handle('asset:paste-image', async (_event, bytes: ArrayBuffer | Uint8Arr
   if (!vaultRoot) return null
   try {
     // The renderer sends an ArrayBuffer over IPC; crypto/fs need a Buffer/TypedArray.
-    const origBuf = Buffer.from(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes))
-    const originalFormat = ext
-
-    // Try WebP normalisation; on ANY failure keep the original bytes/ext (non-regressing).
-    let storeBuf = origBuf
-    let storeExt = ext
-    let note = 'stored as-is (no conversion)'
-    try {
-      const webp = await normaliseToWebp(origBuf)
-      // Keep the smaller file; if WebP is larger (rare for already-compressed inputs)
-      // fall back to the original per ADR-0020 ("If conversion produces a larger file
-      // or fails, the original format is kept").
-      if (webp.length > 0 && webp.length <= origBuf.length) {
-        storeBuf = webp
-        storeExt = 'webp'
-        note = 'converted to webp via sharp (quality 82)'
-      } else {
-        note = 'webp larger than original; kept ' + originalFormat
-      }
-    } catch (convErr) {
-      console.warn('[asset:paste-image] sharp webp conversion unavailable, falling back to original:', convErr)
-      note = 'webp conversion failed; kept ' + originalFormat
-    }
-
-    // Hash the STORED (post-conversion) bytes for the id per ADR-0020.
-    const hash = createHash('sha256').update(storeBuf).digest('hex').slice(0, 7)
-    const id = 'img-' + hash
-    const assetsDir = join(vaultRoot, '_assets')
-    if (!existsSync(assetsDir)) mkdirSync(assetsDir, { recursive: true })
-    const assetPath = join(assetsDir, id + '.' + storeExt)
-    if (!existsSync(assetPath)) {
-      writeFileSync(assetPath, storeBuf)
-      // Write minimal sidecar yml recording the original format and a conversion note.
-      const sidecarPath = join(assetsDir, id + '.yml')
-      if (!existsSync(sidecarPath)) {
-        writeFileSync(sidecarPath, [
-          'id: ' + id,
-          'created: ' + new Date().toISOString().slice(0, 10),
-          'original_format: ' + originalFormat,
-          'note: ' + JSON.stringify(note),
-          'alt: ""',
-          'caption: ""',
-          'source: ""',
-          'tags: []',
-        ].join('\n') + '\n', 'utf8')
-      }
-    }
-    return { id, ext: storeExt, path: assetPath }
+    return await storePastedImage(vaultRoot, bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes), ext, normaliseToWebp)
   } catch (e) {
     console.error('[asset:paste-image]', e)
     return null
   }
+})
+
+// ── Instant slides after the talk (live-presenting ticket 07, frame L6) ─────────────────────
+// "Add to talk" writes the talk's source outline. If an editor window has the talk open, the
+// insertion is planned against that window's BUFFER and applied there (apply-only-if-unchanged,
+// then saved through the editor's normal save path), so an unsaved edit is never overwritten and
+// the next autosave cannot undo the slide. Otherwise the file is re-read, checked unchanged and
+// written atomically. Either way the operation itself is addRunInstantSlide (instant-slide-insert.ts).
+const editorDocumentReplies = new Map<string, (value: EditorDocumentReply | null) => void>()
+ipcMain.handle('outline:editor-reply', (_event, requestId: unknown, value: unknown) => {
+  const resolve = typeof requestId === 'string' ? editorDocumentReplies.get(requestId) : undefined
+  if (!resolve) return
+  editorDocumentReplies.delete(requestId as string)
+  resolve(value && typeof value === 'object' ? value as EditorDocumentReply : null)
+})
+function requestEditorDocument(win: BrowserWindow, request: EditorDocumentRequestBody): Promise<EditorDocumentReply | null> {
+  return new Promise((resolve) => {
+    const requestId = randomBytes(12).toString('hex')
+    const timer = setTimeout(() => { editorDocumentReplies.delete(requestId); resolve(null) }, 10_000)
+    editorDocumentReplies.set(requestId, (value) => { clearTimeout(timer); resolve(value) })
+    try { win.webContents.send('outline:editor-request', { ...request, requestId }) } catch { clearTimeout(timer); editorDocumentReplies.delete(requestId); resolve(null) }
+  })
+}
+// Also the talk writer's editor route (talk-writer.ts EditorBuffer): `origin` names the writer so the
+// window words its refusal; "Add to talk" calls commit without one (its own words are kept).
+function editorOutlineDocument(win: BrowserWindow, outlinePath: string): OutlineDocument & EditorBuffer {
+  return {
+    async read() {
+      const reply = await requestEditorDocument(win, { kind: 'read', outlinePath })
+      if (!reply) throw new OutlineRefusal('The editor window with this talk did not respond. Nothing was added; try again.')
+      if (!reply.ok || typeof reply.text !== 'string') throw new OutlineRefusal(reply.ok ? 'The editor did not return the talk.' : reply.error)
+      return reply.text
+    },
+    // The editor replies ok only once the insertion's save has been written to disk; a failed save
+    // is a refusal (the entry stays un-added; the edit stays in the editor, undoable).
+    async commit(base: string, next: string, origin?: TalkWriteOrigin) {
+      const reply = await requestEditorDocument(win, { kind: 'apply', outlinePath, base, next, origin: origin ?? INSTANT_SLIDE_ORIGIN })
+      if (!reply) {
+        return {
+          ok: false as const,
+          error: origin
+            ? `The editor window with this talk did not confirm the save of ${changeNoun(origin)}. Check the talk in the editor before trying again.`
+            : 'The editor window with this talk did not confirm the save, so the slide is not marked as added. Check the talk in the editor before adding it again.',
+        }
+      }
+      return reply.ok
+        ? { ok: true as const, ...(typeof reply.text === 'string' ? { text: reply.text } : {}) }
+        : { ok: false as const, error: reply.error, moved: reply.moved === true }
+    },
+  }
+}
+// The editor window holding this talk's real file, whichever path (link or real) History and the
+// window each use; requests to it carry the WINDOW's own path, which is what its buffer is bound to.
+function editorWindowForOutline(outlinePath: string): { win: BrowserWindow; outlinePath: string } | null {
+  const entry = editorEntryForOutline(editorWindows.values(), outlinePath, liveWindow)
+  return entry ? { win: entry.win, outlinePath: entry.outlinePath } : null
+}
+// One writer for talk files (talk-writer.ts): a main-process write of a talk an editor window has open
+// goes through that window's buffer, by the same read / apply messages as "Add to talk".
+// External-change guard (shared-talk ticket 01, outline-disk-guard.ts): watches each open talk's folder
+// (the same watcher registry as TalkText) and tells the window when its outline changed behind it.
+const outlineDiskWatchers = createDirectoryWatcherRegistry((directory, onChange) => watch(directory, onChange))
+const outlineRecovery = createOutlineRecovery(join(app.getPath('userData'), 'recovery'))
+// Windows whose close the person confirmed (the close sheet), and whether ⌘Q is under way.
+const closeConfirmed = new Set<number>()
+// A close held for the person's choice, until the renderer acknowledges it (the 5-second fallback).
+const closeHolds = new Map<number, ReturnType<typeof setTimeout>>()
+// The last text each guarded talk's editor failed to save (real path → text): the fallback close's
+// recovery copy. Cleared by the next successful save.
+const lastUnsavedText = new Map<string, string>()
+// ⌘Q in progress. Set by before-quit; a close that holds for the person takes it (and resets it); and it
+// is cleared once the close cycle is over, so a quit cancelled anywhere else never lingers to quit the
+// app on some later close.
+let quitting = false
+let quittingTimer: ReturnType<typeof setTimeout> | null = null
+app.on('before-quit', () => {
+  quitting = true
+  if (quittingTimer) clearTimeout(quittingTimer)
+  quittingTimer = setTimeout(() => { quitting = false; quittingTimer = null }, 1500)
+})
+const outlineDiskGuard = createOutlineDiskGuard({
+  canonical: canonicalOutlinePath,
+  async readText(realPath) {
+    try { return await readFileAsync(realPath, 'utf8') } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null
+      throw error
+    }
+  },
+  async mtime(realPath) { try { return statSync(realPath).mtimeMs } catch { return null } },
+  withLock: (outlinePath, work) => withTalkFileLock(outlinePath, () => work()),
+  watch: (realPath, onChange, onError) => outlineDiskWatchers.acquire(dirname(realPath), realPath, onChange, onError),
+  unwatch: (realPath) => outlineDiskWatchers.releaseOwner(realPath),
+  notify(owner, outlinePath, change: OutlineDiskChange | null) {
+    const win = editorWindows.get(Number(owner))?.win
+    if (win && !win.isDestroyed()) win.webContents.send('outline:changed-on-disk', { outlinePath, change })
+  },
+})
+app.on('will-quit', () => { outlineDiskGuard.dispose(); outlineDiskWatchers.releaseAll() })
+configureTalkWriter({
+  diskGuard: outlineDiskGuard,
+  editorBufferFor(outlinePath) {
+    const editor = editorWindowForOutline(outlinePath)
+    return editor ? editorOutlineDocument(editor.win, editor.outlinePath) : null
+  },
+  trace({ outlinePath, origin, result }) {
+    if (origin === 'editor' && result.ok) return
+    console.log(`[talk-writer] ${origin} ${outlinePath}: ${result.ok ? `${result.changed ? 'written' : 'unchanged'} via ${result.via}` : `refused: ${result.error}`}`)
+  },
+})
+// The renderer keys its per-file save queue by the identity key (lib/saveQueue.ts), resolved on every
+// write, so every alias of one outline shares one queue and a retargeted link moves to its new file.
+ipcMain.handle('talk:outline-identity', (_event, outlinePath: unknown) =>
+  typeof outlinePath === 'string' && outlinePath ? outlineIdentity(outlinePath) : null)
+ipcMain.handle('outline:canonical-path', (_event, outlinePath: unknown) =>
+  typeof outlinePath === 'string' && outlinePath ? outlineIdentity(outlinePath).realPath : null)
+let instantOutlineTools: Promise<OutlineTools> | null = null
+function outlineTools(): Promise<OutlineTools> {
+  const compilerDir = getCompilerPath()
+  if (!compilerDir) return Promise.reject(new Error('Compiler not found.'))
+  instantOutlineTools ??= loadOutlineTools(compilerDir).catch((error) => { instantOutlineTools = null; throw error })
+  return instantOutlineTools
+}
+
+ipcMain.handle('history:instant-anchors', async (_event, payload: { talkSlug?: unknown; runId?: unknown }) => {
+  const vaultRoot = getConfig('vaultRoot', undefined)
+  const talkSlug = String(payload?.talkSlug ?? ''), runId = String(payload?.runId ?? '')
+  // Only this talk's own Run, from this talk's folder (the names are validated as path segments).
+  const run = vaultRoot ? readRunForTalk(vaultRoot, talkSlug, runId) : null
+  const talk = run ? talkBySlug(talkSlug) : null
+  if (!run?.instantSlides?.length || !talk) return {}
+  try {
+    // The open editor's buffer is what "Add to talk" will plan against, so the numbers shown match it.
+    const editor = editorWindowForOutline(talk.outlinePath)
+    const text = editor ? await editorOutlineDocument(editor.win, editor.outlinePath).read().catch(() => readFileSync(talk.outlinePath, 'utf8'))
+      : readFileSync(talk.outlinePath, 'utf8')
+    const anchors = await resolveInstantAnchors(talk.outlinePath, text, run.instantSlides.map((entry) => entry.afterSlideId), await outlineTools())
+    return Object.fromEntries(run.instantSlides.map((entry) => [entry.id, entry.afterSlideId ? anchors[entry.afterSlideId] ?? null : null]))
+  } catch (error) {
+    console.error('[history:instant-anchors]', error)
+    return {}
+  }
+})
+
+ipcMain.handle('history:add-instant-slide', async (_event, payload: { talkSlug?: unknown; runId?: unknown; entryId?: unknown }) => {
+  const vaultRoot = getConfig('vaultRoot', undefined)
+  if (!vaultRoot) return { ok: false, error: 'No vault is open.' }
+  const talkSlug = String(payload?.talkSlug ?? ''), runId = String(payload?.runId ?? ''), entryId = String(payload?.entryId ?? '')
+  const talk = talkBySlug(talkSlug)
+  if (!talk) return { ok: false, error: 'This talk is no longer in the vault, so nothing was added.' }
+  let tools: OutlineTools
+  try { tools = await outlineTools() } catch { return { ok: false, error: 'The talk compiler is unavailable, so nothing was added.' } }
+  const editor = editorWindowForOutline(talk.outlinePath)
+  const result = await addRunInstantSlide({
+    vaultRoot, talkSlug, runId, entryId, outlinePath: talk.outlinePath, tools,
+    document: editor ? editorOutlineDocument(editor.win, editor.outlinePath) : fileOutlineDocument(talk.outlinePath),
+    // `format` is the image's real type by its header (checked in addInstantSlideToTalk). The image
+    // must fully decode (sharp reads a real size and converts it) or nothing is stored and the Add
+    // refuses — never the paste route's keep-the-original fallback.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    storeImage: async (bytes, format) => (await storePastedImage(vaultRoot, bytes, format, (buf) => decodeToWebp(require('sharp'), buf), { requireDecode: true })).id,
+  })
+  if (!result.ok) return result
+  if (!editor) {
+    // The file route bypassed talk:write-outline, so do its bookkeeping here (the editor route's
+    // save went through talk:write-outline itself).
+    notifyPathwaysChanged(talk.outlinePath)
+    try { noteAppEdit(talk.outlinePath) } catch { /* backup bookkeeping never breaks a write */ }
+    try { await ledgerRecord(talk.outlinePath, readFileSync(talk.outlinePath, 'utf8')) } catch { /* ledger is best-effort */ }
+    return result
+  }
+  // The editor route reported success only after its save reached the disk (the renderer's D1 seam,
+  // lib/outlineMutation.ts applyFromMain), so there is nothing left to reconcile here.
+  return result
 })
 
 // Store an image buffer under the img- namespace (used as the GIF fallback path). Returns the id.
@@ -5318,7 +6014,8 @@ ipcMain.handle('vault:create-talk', async (_event, opts: { title: string; slug: 
       // default writes nothing at all.
       const { edits } = applyMetadataDefaults(parseFrontmatterPairs(initialContent), metadataDefaults(), { mode: 'fill-missing' })
       const seeded = edits.length > 0 ? editFrontmatterText(initialContent, edits) : initialContent
-      writeFileSync(outlinePath, seeded, 'utf8')
+      const created = await writeTalkOutline(outlinePath, seeded, 'create-talk')
+      if (!created.ok) throw new Error(created.error)
     }
     invalidateTalkCache()
     return { name: slug, path: talkDir, outlinePath, title, slug } satisfies TalkInfo
@@ -5346,31 +6043,34 @@ function renameSlugFiles(dir: string, oldSlug: string, newSlug: string): void {
     if (renamed) renameSync(join(dir, file), join(dir, renamed))
   }
 }
-function retitleOutline(outlinePath: string, newTitle: string): void {
+// Both edit the talk's current text through the one writer (talk-writer.ts): the open editor's
+// buffer when a window has the talk, else the file.
+async function retitleOutline(outlinePath: string, newTitle: string): Promise<void> {
   if (!existsSync(outlinePath)) return
-  const text = readFileSync(outlinePath, 'utf8')
   const line = `title: "${newTitle.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
-  const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/)
-  let next: string
-  if (fm && /^\s*title:/m.test(fm[1])) {
-    next = text.slice(0, fm.index! + fm[0].length).replace(/^\s*title:.*$/m, line) + text.slice(fm.index! + fm[0].length)
-  } else if (fm) {
-    next = text.replace(/^---\r?\n/, `---\n${line}\n`)
-  } else {
-    next = `---\n${line}\n---\n\n${text}`
-  }
-  writeFileSync(outlinePath, next)
+  const written = await writeTalkOutline(outlinePath, (text) => {
+    const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+    if (fm && /^\s*title:/m.test(fm[1])) {
+      return text.slice(0, fm.index! + fm[0].length).replace(/^\s*title:.*$/m, line) + text.slice(fm.index! + fm[0].length)
+    } else if (fm) {
+      return text.replace(/^---\r?\n/, `---\n${line}\n`)
+    }
+    return `---\n${line}\n---\n\n${text}`
+  }, 'retitle')
+  if (!written.ok) throw new Error(written.error)
 }
 // A clone is NOT published — drop handout_url so it doesn't inherit the original's live link.
-function stripPublishedFields(outlinePath: string): void {
+async function stripPublishedFields(outlinePath: string): Promise<void> {
   if (!existsSync(outlinePath)) return
-  const text = readFileSync(outlinePath, 'utf8')
-  const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/)
-  if (!fm) return
-  const lines = fm[1].split(/\r?\n/)
-  const kept = lines.filter((l) => !/^\s*handout_url\s*:/.test(l))
-  if (kept.length === lines.length) return
-  writeFileSync(outlinePath, text.slice(0, fm.index!) + `---\n${kept.join('\n')}\n---` + text.slice(fm.index! + fm[0].length))
+  const written = await writeTalkOutline(outlinePath, (text) => {
+    const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+    if (!fm) return text
+    const lines = fm[1].split(/\r?\n/)
+    const kept = lines.filter((l) => !/^\s*handout_url\s*:/.test(l))
+    if (kept.length === lines.length) return text
+    return text.slice(0, fm.index!) + `---\n${kept.join('\n')}\n---` + text.slice(fm.index! + fm[0].length)
+  }, 'strip-published')
+  if (!written.ok) throw new Error(written.error)
 }
 function findOutlineIn(dir: string): string | null {
   try {
@@ -5408,7 +6108,7 @@ ipcMain.handle('vault:clone-talk', async (_event, outlinePath: string, newTitle:
     })
     renameSlugFiles(target, oldSlug, newSlug)
     const newOutline = findOutlineIn(target)
-    if (newOutline) { retitleOutline(newOutline, newTitle); stripPublishedFields(newOutline) }
+    if (newOutline) { await retitleOutline(newOutline, newTitle); await stripPublishedFields(newOutline) }
     searchCache.clear()
     invalidateTalkCache()
     return talkInfoFor(target)
@@ -5430,11 +6130,7 @@ ipcMain.handle('vault:rename-talk', async (event, outlinePath: string, newTitle:
     // Refuse while ANOTHER window holds this talk open: its autosave would recreate the old
     // path after the move and the two files would drift apart (same hazard class as the
     // 2026-07-05 empty-write incident). The requesting window is expected to flush + re-select.
-    for (const [wcId, e] of editorWindows) {
-      if (wcId !== event.sender.id && e.outlinePath === outlinePath && !e.win.isDestroyed()) {
-        return { error: 'open-elsewhere' }
-      }
-    }
+    if (otherEditorHolding(outlinePath, editorWindows.get(event.sender.id)?.win)) return { error: 'open-elsewhere' }
     const srcDir = dirname(outlinePath)
     const oldSlug = basename(outlinePath).replace('-outline.md', '')
     const newSlug = slugifyTalk(title) || oldSlug
@@ -5442,12 +6138,17 @@ ipcMain.handle('vault:rename-talk', async (event, outlinePath: string, newTitle:
     if (newSlug !== oldSlug) {
       const target = join(dirname(srcDir), newSlug)
       if (existsSync(target)) return { error: 'target-exists' }
+      const oldReal = canonicalOutlinePath(outlinePath)
+      outlineDiskGuard.forget(srcDir) // the app's own move or delete: never reported as a removal on disk
       renameSync(srcDir, target)
       renameSlugFiles(target, oldSlug, newSlug)
       dir = target
+      // The talk's recovery copy (if any) moves with it, so its next open still offers it.
+      const moved = findOutlineIn(target)
+      if (moved) await outlineRecovery.rekey(oldReal, canonicalOutlinePath(moved)).catch((e) => console.error('[outline-recovery] rekey', e))
     }
     const newOutline = findOutlineIn(dir)
-    if (newOutline) retitleOutline(newOutline, title)
+    if (newOutline) await retitleOutline(newOutline, title)
     searchCache.clear()
     invalidateTalkCache()
     return talkInfoFor(dir)
@@ -5493,7 +6194,10 @@ ipcMain.handle('vault:rename-folder', (_event, folderRel: string, newName: strin
     const src = join(vaultRoot, folderRel)
     const dest = join(dirname(src), clean)
     if (!existsSync(src) || existsSync(dest)) return null
+    const oldReal = canonicalOutlinePath(src)
+    outlineDiskGuard.forget(src) // the app's own move or delete: never reported as a removal on disk
     renameSync(src, dest)
+    void outlineRecovery.rekey(oldReal, canonicalOutlinePath(dest), { under: true }).catch((e) => console.error('[outline-recovery] rekey', e))
     searchCache.clear()
     invalidateTalkCache()
     return vaultRel(dest)
@@ -5514,7 +6218,10 @@ ipcMain.handle('vault:move-talk', (_event, outlinePath: string, destFolderRel: s
     const dest = join(destParent, basename(srcDir))
     if (resolvePath(dest) === resolvePath(srcDir)) return talkInfoFor(srcDir) // no-op (same folder)
     if (existsSync(dest)) return null // a talk of that name already lives there
+    const oldReal = canonicalOutlinePath(srcDir)
+    outlineDiskGuard.forget(srcDir) // the app's own move or delete: never reported as a removal on disk
     renameSync(srcDir, dest)
+    void outlineRecovery.rekey(oldReal, canonicalOutlinePath(dest), { under: true }).catch((e) => console.error('[outline-recovery] rekey', e))
     searchCache.clear()
     invalidateTalkCache()
     return talkInfoFor(dest)
@@ -5558,6 +6265,7 @@ ipcMain.handle('vault:list-folders', async () => {
 // create/clone can be undone from Finder.
 ipcMain.handle('vault:delete-talk', async (_event, outlinePath: string) => {
   try {
+    outlineDiskGuard.forget(dirname(outlinePath)) // the app's own move or delete: never reported as a removal on disk
     await shell.trashItem(dirname(outlinePath))
     searchCache.clear()
     invalidateTalkCache()
@@ -5573,7 +6281,12 @@ ipcMain.handle('vault:delete-folder', async (_event, folderRel: string) => {
   const vaultRoot = getConfig('vaultRoot', undefined)
   if (!vaultRoot || !folderRel) return false
   try {
+    // A talk open in a window inside the folder is NOT forgotten: once the folder is in the Bin its
+    // window shows the removed-file bar (shared-talk ticket 08), its saves are refused (a recovery copy
+    // keeps the typing) and nothing is recreated unless the person chooses Save it again.
+    const open = outlineDiskGuard.openUnder(join(vaultRoot, folderRel))
     await shell.trashItem(join(vaultRoot, folderRel))
+    for (const realPath of open) await outlineDiskGuard.check(realPath).catch((e) => console.error('[vault:delete-folder] check', e))
     searchCache.clear()
     invalidateTalkCache()
     return true
@@ -5940,6 +6653,8 @@ ipcMain.handle(
 
 app.whenReady().then(async () => {
   initialiseLiveSessions()
+  // Feedback rail: open the owner socket of every shared talk (never blocks launch).
+  try { sharedTalkFeedback().sync() } catch (error) { console.warn('[shared-talk] feedback start failed', error) }
   installApplicationMenu()
   // Let embedded iframes load sites that would otherwise refuse framing (X-Frame-Options /
   // CSP frame-ancestors). Scoped to SUB-FRAMES only, so app/editor chrome and top-level loads
@@ -6105,6 +6820,8 @@ app.whenReady().then(async () => {
   // still runs at startup so cross-talk ⌘K stays instant; prerenderAllThumbnails remains available
   // for an explicit "rebuild previews" action.
   setTimeout(() => {
+    // Frontmatter details and delivery summaries for talk search: cheap, read before first use.
+    talkSearch.warm().catch(() => {})
     warmSearchIndex()
       .catch(() => {})
       .finally(() => {
@@ -6146,6 +6863,7 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   liveSessions?.shutdown()
+  sharedTalkFeedbackService?.stopAll()
   try { localLiveWorker?.process.kill('SIGTERM') } catch { /* already stopped */ }
   localLiveWorker = null
 })

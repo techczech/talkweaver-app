@@ -4,8 +4,11 @@
      big accent icons, a bold label under each, quiet description lines beneath. Icons resolve
      through the same semantic vocabulary as feature-lists ({icon=…} overrides + deck icons:). *//* @order 0464 */
   .icon-row {
-    display: flex; align-items: flex-start; justify-content: center; gap: 22px;
-    margin: 46px auto 0; width: min(1180px, 100%);
+    /* ADR-0028 §5: a grid whose columns share one heading row and one items row (each .ir-item is a
+       two-row subgrid, skin/icon-row.css), so items start at the same height when a heading wraps. */
+    display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); grid-template-rows: auto auto;
+    align-items: start; gap: 0 22px;
+    margin: 46px auto 0; width: min(92.1875cqw, 100%); /* ADR-0030: 1180px of the 1280px canvas */
   }/* @order 1533 */
 
   /* Icon rows (mockup .quad, corrected): heading is icon+label INLINE and left-aligned;

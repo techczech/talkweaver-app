@@ -21,18 +21,18 @@ function harness() {
       setAlarm: async () => {}, deleteAlarm: async () => {},
     },
     blockConcurrencyWhile: (fn: () => void) => fn(),
-    getWebSockets: () => sockets, acceptWebSocket: () => {},
+    getWebSockets: () => sockets.filter((s) => !s.closed), acceptWebSocket: (s: any) => sockets.push(s),
   }
   const registry: any = { idFromName: () => '', get: () => ({ fetch: async () => {
     unregisters++; return new Response('{}')
   } }) }
   const env: any = { SESSION_REGISTRY: registry, SESSION_SIGNING_SECRET: 'test-secret', ADMIN_SECRET: 'test-admin-secret' }
   const worker = new LiveSession(ctx, env)
-  function socket(role: 'presenter' | 'audience', connectionId: string, protocol = 2, participantId = 'participant-test') {
+  function socket(role: 'presenter' | 'audience', connectionId: string, protocol = 2, participantId = 'participant-test', kind?: 'screen') {
     const sent: any[] = []
     const ws: any = {
       sent, closed: false,
-      deserializeAttachment: () => ({ role, connectionId, protocol, participantId }),
+      deserializeAttachment: () => ({ role, connectionId, protocol, participantId, kind }),
       send: (message: string) => sent.push(JSON.parse(message)),
       close: () => { ws.closed = true },
     }
@@ -51,6 +51,77 @@ const poll = {
 const deliver = (worker: LiveSession, socket: any, message: unknown) => worker.webSocketMessage(socket, JSON.stringify(message))
 
 describe('live recovery through actual Worker handlers', () => {
+  test('broadcasts gallery steps and restores the current image to a joining screen', async () => {
+    const h = harness()
+    const presenter = h.socket('presenter', 'presenter-gallery')
+    const screen = h.socket('audience', 'screen-gallery', 2, 'participant-screen-gallery', 'screen')
+    await deliver(h.worker, presenter, { type: 'slide.publish', slideId: 'gallery', reveal: 0,
+      focus: null, lightbox: { open: true, index: 1 } })
+    expect(screen.sent.findLast((m: any) => m.type === 'slide.state')?.lightbox).toEqual({ open: true, index: 1 })
+    const rejoined = h.socket('audience', 'screen-rejoined', 2, 'participant-screen-rejoined', 'screen')
+    await deliver(h.reload(), rejoined, { type: 'session.sync', syncId: 'sync-gallery-screen' })
+    expect(rejoined.sent.findLast((m: any) => m.type === 'session.snapshot')?.slideState.lightbox)
+      .toEqual({ open: true, index: 1 })
+  })
+  test('broadcasts the talk QR overlay and restores it to a joining screen', async () => {
+    const h = harness()
+    const presenter = h.socket('presenter', 'presenter-qr')
+    const screen = h.socket('audience', 'screen-qr', 2, 'participant-screen-qr', 'screen')
+    await deliver(h.worker, presenter, { type: 'slide.publish', slideId: 'slide-2', reveal: 0, focus: null, talkQr: true })
+    expect(screen.sent.findLast((m: any) => m.type === 'slide.state')?.talkQr).toBe(true)
+    const rejoined = h.socket('audience', 'screen-qr-rejoined', 2, 'participant-screen-qr-rejoined', 'screen')
+    await deliver(h.reload(), rejoined, { type: 'session.sync', syncId: 'sync-qr-screen' })
+    expect(rejoined.sent.findLast((m: any) => m.type === 'session.snapshot')?.slideState.talkQr).toBe(true)
+    await deliver(h.worker, presenter, { type: 'slide.publish', slideId: 'slide-2', reveal: 0, focus: null })
+    expect(screen.sent.findLast((m: any) => m.type === 'slide.state')?.talkQr).toBeUndefined()
+  })
+  test('screen sockets count across hibernation, and presenter loss and return reach audiences', async () => {
+    const h = harness()
+    const presenter = h.socket('presenter', 'presenter-one')
+    const screen1 = h.socket('audience', 'screen-one', 2, 'participant-screen-one', 'screen')
+    const screen2 = h.socket('audience', 'screen-two', 2, 'participant-screen-two', 'screen')
+    const phone = h.socket('audience', 'phone-one')
+    await deliver(h.worker, presenter, { type: 'session.sync', syncId: 'sync-presenter-one' })
+    expect(presenter.sent.findLast((m: any) => m.type === 'session.snapshot')?.presence).toEqual({ presenterConnected: true, venueScreens: 2 })
+    await h.worker.webSocketClose(presenter, 1006, '', false)
+    expect(screen1.sent.findLast((m: any) => m.type === 'session.presence')).toEqual({ type: 'session.presence', presenterConnected: false, venueScreens: 2 })
+    expect(phone.sent.findLast((m: any) => m.type === 'session.presence')?.presenterConnected).toBe(false)
+    await deliver(h.reload(), screen2, { type: 'session.sync', syncId: 'sync-screen-two' })
+    expect(screen2.sent.findLast((m: any) => m.type === 'session.snapshot')?.presence).toEqual({ presenterConnected: false, venueScreens: 2 })
+    const next = h.socket('presenter', 'presenter-two')
+    await deliver(h.reload(), next, { type: 'session.sync', syncId: 'sync-presenter-two' })
+    expect(screen1.sent.findLast((m: any) => m.type === 'session.presence')?.presenterConnected).toBe(true)
+    await h.worker.webSocketClose(screen2, 1000, '', true)
+    expect(next.sent.findLast((m: any) => m.type === 'session.presence')?.venueScreens).toBe(1)
+  })
+  test('instant slide broadcasts and survives an audience reconnect until cleared', async () => {
+    const h = harness()
+    const presenter = h.socket('presenter', 'presenter-one')
+    const audience = h.socket('audience', 'audience-one')
+    const slide = { kind: 'link', url: 'https://example.test/topic', qrSvg: '<svg viewBox="0 0 1 1"></svg>', shownAt: 1000 }
+    await deliver(h.worker, presenter, { type: 'operation', operationId: 'instant-show-1', action: { type: 'instant.show', slide } })
+    expect(presenter.sent.at(-1)).toMatchObject({ type: 'operation.ack', status: 'confirmed' })
+    expect(audience.sent.at(-1)).toEqual({ type: 'instant.state', slide })
+    const rejoined = h.socket('audience', 'audience-two')
+    await deliver(h.reload(), rejoined, { type: 'session.sync', syncId: 'sync-instant-1' })
+    expect(rejoined.sent.at(-1).instantSlide).toEqual(slide)
+    await deliver(h.worker, presenter, { type: 'operation', operationId: 'instant-clear-1', action: { type: 'instant.clear' } })
+    expect(audience.sent.at(-1)).toEqual({ type: 'instant.state', slide: null })
+    expect(h.state().instantSlide).toBeNull()
+  })
+  test('image instant slide reaches a following phone and survives the stored snapshot', async () => {
+    const h = harness()
+    const presenter = h.socket('presenter', 'presenter-image')
+    const phone = h.socket('audience', 'phone-image')
+    const slide = { kind: 'image', dataUrl: 'data:image/webp;base64,' + 'A'.repeat(119_976), width: 960, height: 600, shownAt: 1000 }
+    await deliver(h.worker, presenter, { type: 'operation', operationId: 'image-show-1', action: { type: 'instant.show', slide } })
+    expect(presenter.sent.at(-1)).toMatchObject({ status: 'confirmed' })
+    expect(phone.sent.at(-1)).toEqual({ type: 'instant.state', slide })
+    expect(JSON.stringify(h.state()).length).toBeLessThan(130_000)
+    const reconnecting = h.socket('audience', 'phone-image-reconnected')
+    await deliver(h.reload(), reconnecting, { type: 'session.sync', syncId: 'sync-image-1' })
+    expect(reconnecting.sent.at(-1).instantSlide).toEqual(slide)
+  })
   for (const handler of ['webSocketClose', 'webSocketError'] as const) {
     test(`${handler} preserves the session and its joining registration`, async () => {
       const h = harness()

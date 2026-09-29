@@ -78,16 +78,9 @@ export function buildRedirects(registry: Record<string, string>, existingSlugs: 
   const lines = Object.entries(registry)
     .filter(([slug]) => exists.has(slug))
     .sort((a, b) => a[1].localeCompare(b[1]))
-    .map(([slug, id]) => `/${id}  /${slug}/  302`)
+    .flatMap(([slug, id]) => [`/${id}  /${slug}/  302`, `/${id}/p  /${slug}/p/  302`])
   return lines.length ? lines.join('\n') + '\n' : ''
 }
 
-export function stampHandoutUrl(outlineText: string, url: string): string {
-  const fm = outlineText.match(/^---\r?\n([\s\S]*?)\r?\n---/)
-  if (!fm) return outlineText
-  const lines = fm[1].split(/\r?\n/)
-  const idx = lines.findIndex((l) => /^\s*handout_url\s*:/.test(l))
-  if (idx >= 0) lines[idx] = `handout_url: ${url}`
-  else lines.push(`handout_url: ${url}`)
-  return outlineText.slice(0, fm.index!) + `---\n${lines.join('\n')}\n---` + outlineText.slice(fm.index! + fm[0].length)
-}
+// Pure, shared with the renderer (which stamps an open talk's buffer, one-writer spec D1).
+export { stampHandoutUrl } from '../shared/handout-stamp.ts'

@@ -3,7 +3,10 @@ import type { RowRef, ViewMode } from './model.ts'
 // Pure grouped-window maths for the Talks browser. React and DOM measurement stay in the
 // orchestrator so this model can be exercised with the same plain-node tests as model.ts.
 
-export type RowHeights = { ledger: number; shelf: number; fhead: number }
+// ledgerTwo / shelfTwo: two-line rows — talk-search results (what matched) and, in Ledger, every
+// tree talk row at rest (its folder or event and last delivery).
+export type RowHeights = { ledger: number; shelf: number; fhead: number; ledgerTwo?: number; shelfTwo?: number }
+export const TWO_LINE_EXTRA_PX = 10
 export type WindowGroup = { headerIndex: number | null; start: number; end: number }
 export type WindowRange = { start: number; end: number }
 
@@ -17,7 +20,13 @@ export interface WindowLayout {
 
 export function heightOf(row: RowRef, viewMode: ViewMode, heights: RowHeights): number {
   if (row.kind === 'folder') return row.depth === 0 ? heights.fhead : heights.ledger
-  return viewMode === 'ledger' ? heights.ledger : heights.shelf
+  // Ledger: search results and at-rest tree rows with a second line (ADR-0029 §3) are 36 px.
+  // Shelf keeps its own rows at rest (they already show the event and recency); only search
+  // results grow there.
+  if (viewMode === 'ledger') {
+    return row.hit || row.line != null ? heights.ledgerTwo ?? heights.ledger + TWO_LINE_EXTRA_PX : heights.ledger
+  }
+  return row.hit ? heights.shelfTwo ?? heights.shelf + TWO_LINE_EXTRA_PX + 4 : heights.shelf
 }
 
 // A group owns one sticky depth-0 header and its descendants. Root talks (and search rows)
@@ -126,4 +135,31 @@ export function scrollTargetFor(
 
   const unclamped = rowTop < visibleTop ? rowTop - stickyInset : rowBottom - viewportH
   return Math.min(Math.max(0, unclamped), Math.max(0, layout.total - viewportH))
+}
+
+/** One sample's offsetHeight per row kind; undefined where no row of that kind is mounted. */
+export type MeasuredRowHeights = {
+  ledger: number | undefined
+  shelf: number | undefined
+  fhead: number | undefined
+  ledgerTwo: number | undefined
+  shelfTwo: number | undefined
+}
+
+/** Fold one DOM measurement pass into the current row heights. A kind with no mounted sample
+ *  (undefined or 0) keeps its current height. Returns `current` itself when no height changed,
+ *  so the caller writes state only for a real change: a no-op write still queues a React update,
+ *  and a queued update re-applied on a later render must not mint a new heights object. */
+export function mergeRowHeights(current: RowHeights, measured: MeasuredRowHeights): RowHeights {
+  const next: RowHeights = {
+    ledger: measured.ledger || current.ledger,
+    shelf: measured.shelf || current.shelf,
+    fhead: measured.fhead || current.fhead,
+    ledgerTwo: measured.ledgerTwo || current.ledgerTwo,
+    shelfTwo: measured.shelfTwo || current.shelfTwo
+  }
+  return next.ledger === current.ledger && next.shelf === current.shelf && next.fhead === current.fhead &&
+    next.ledgerTwo === current.ledgerTwo && next.shelfTwo === current.shelfTwo
+    ? current
+    : next
 }

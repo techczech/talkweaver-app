@@ -1,0 +1,243 @@
+/* Presenter status bar (ADR-0031 §2 and §5, presenter redesign ticket 02; drawn in
+   docs/design/2026-09-26-presenter-redesign/round-2/, shots idle-*, L1-*, clock-popover-*).
+   The top bar is one 40px row: talk title, the clock (the pause/resume button) with its chevron
+   and popover, Start timer, the slide counter; then the status strip (recording block, live status
+   with End live, section, reactions, questions); then the Live, Poll and View menus (ticket 04,
+   presenter-top-menus.css).
+   One chrome type scale, fixed: 26px clock, 16px counter / recorded length / stepper number, 14px
+   control labels, 13px status, shortcuts, headings and hints. One UI typeface; monospace only for
+   the clock, the counter and the recorded length. When the row runs short the title shrinks to
+   120px, then fitTopBar() in the template adds the collapse steps c1-c10 in order until it fits. */
+/* The chrome's colour and type tokens, shared with the bottom bar (presenter-bottom-bar.css). */
+#presenterTopBar,
+#presenterBottomBar {
+  --tb-text: #f7f3ea;
+  --tb-muted: #a3b3c2;
+  --tb-dim: #71849a;
+  --tb-line: #ffffff1c;
+  --tb-ctl: #1f2c39;
+  --tb-ctl-hover: #283a4c;
+  --tb-live: #f0645c;
+  --tb-live-bg: #3a1a1a;
+  --tb-amber: #f5b64a;
+  --tb-go: #1f9d55;
+  --tb-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --tb-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+}
+#presenterTopBar {
+  position: relative;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 14px;
+  height: 40px;
+  min-height: 40px;
+  box-sizing: border-box;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid #ffffff10;
+  border-radius: 0;
+  font-family: var(--tb-ui);
+  color: var(--tb-text);
+  white-space: nowrap;
+  -webkit-font-smoothing: antialiased;
+}
+#presenterTopBar [hidden] { display: none !important; }
+#presenterTopBar .tw-ico,
+#presenterTopBar .tw-ico.tw-btn-ico { width: 16px; height: 16px; margin: 0; flex: none; vertical-align: middle; }
+#presenterTopBar button { font-family: var(--tb-ui); cursor: pointer; }
+
+/* Left: title · clock · Start timer · counter */
+#presenterTopBar .tw-topbar-left { display: flex; align-items: center; gap: 14px; min-width: 0; flex: 0 1 auto; }
+#presenterTopBar #presenterTitle {
+  flex: 0 1 auto; min-width: 120px; max-width: none; margin: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 600 14px/1.2 var(--tb-ui); color: var(--tb-muted);
+}
+#presenterTopBar .tw-topbar-sep { width: 1px; height: 22px; background: #ffffff1a; flex: none; }
+#presenterTopBar .tw-clock-bar { position: relative; display: inline-flex; align-items: center; gap: 2px; flex: none; z-index: auto; }
+#presenterTopBar .tw-clock-btn {
+  display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 6px; margin-left: -6px;
+  border: 1px solid transparent; border-radius: 7px; background: none; color: inherit; font: inherit; font-weight: 400;
+}
+#presenterTopBar .tw-clock-btn:hover { background: #ffffff0d; border-color: var(--tb-line); filter: none; }
+#presenterTopBar .tw-clock {
+  font: 700 26px/1 var(--tb-mono); font-variant-numeric: tabular-nums; letter-spacing: -0.01em;
+  color: var(--tb-text); background: none; padding: 0; border-radius: 0; opacity: 1; animation: none;
+}
+#presenterTopBar .tw-clock[data-status="idle"] { color: #7d8e9e; }
+#presenterTopBar .tw-clock[data-status="paused"] { color: var(--tb-amber); }
+#presenterTopBar .tw-clock[data-level="warn"] { color: var(--tb-amber); }
+#presenterTopBar .tw-clock[data-level="urgent"] { color: #f0913a; }
+#presenterTopBar .tw-clock[data-level="over"] { color: var(--tb-live); animation: tw-clock-pulse 1s ease-in-out infinite; }
+#presenterTopBar .tw-clock-sub { font: 500 13px/1 var(--tb-ui); color: var(--tb-dim); white-space: nowrap; }
+#presenterTopBar .tw-clock-sub:empty { display: none; }
+#presenterTopBar .tw-duration-btn {
+  display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 26px; padding: 0;
+  border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--tb-muted);
+}
+#presenterTopBar .tw-duration-btn:hover { background: var(--tb-ctl-hover); border-color: transparent; }
+#presenterTopBar .tw-duration-btn[aria-expanded="true"] { background: #2a3f55; border-color: #5b86b5; color: var(--tb-text); }
+#presenterTopBar .tw-start-timer {
+  display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; box-sizing: border-box; flex: none;
+  border: 1px solid var(--tb-go); border-radius: 6px; background: var(--tb-go); color: #fff; font: 600 13px/1 var(--tb-ui);
+}
+#presenterTopBar .tw-start-timer:hover { filter: brightness(1.08); }
+#presenterTopBar .tw-start-timer.tw-resume-timer { background: var(--tb-ctl); border-color: var(--tb-line); color: var(--tb-text); font-weight: 500; }
+#presenterTopBar .tw-count { font: 600 16px/1 var(--tb-mono); font-variant-numeric: tabular-nums; color: var(--tb-text); white-space: nowrap; flex: none; }
+#presenterTopBar .tw-count-word { font: 500 13px/1 var(--tb-ui); color: var(--tb-dim); margin-right: 5px; }
+
+/* The clock popover: talk length, presets, reminders, Reset timer */
+#presenterTopBar .tw-duration-setter {
+  position: absolute; top: calc(100% + 8px); left: -6px; transform: none; z-index: 200;
+  width: 300px; box-sizing: border-box; padding: 12px;
+  display: flex; flex-direction: column; gap: 0;
+  background: #16202a; border: 1px solid #ffffff26; border-radius: 10px; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+  font-family: var(--tb-ui); color: var(--tb-text); text-align: left; white-space: normal;
+}
+#presenterTopBar .tw-pop-head { display: flex; align-items: baseline; justify-content: space-between; padding: 0 2px 10px; }
+#presenterTopBar .tw-pop-title { font: 600 14px/1 var(--tb-ui); }
+#presenterTopBar .tw-pop-key { font: 500 13px/1 var(--tb-ui); color: var(--tb-muted); }
+#presenterTopBar .tw-setter-input { display: flex; align-items: center; gap: 0; padding: 0 2px; }
+#presenterTopBar .tw-setter-input .tw-step {
+  display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0;
+  border: 1px solid var(--tb-line); background: #111a22; color: var(--tb-muted);
+}
+#presenterTopBar #twDurationMinus { border-radius: 7px 0 0 7px; border-right: 0; }
+#presenterTopBar #twDurationPlus { border-radius: 0 7px 7px 0; border-left: 0; }
+#presenterTopBar .tw-setter-input .tw-step:hover { background: var(--tb-ctl-hover); filter: none; }
+#presenterTopBar .tw-setter-input input {
+  width: 44px; height: 32px; box-sizing: border-box; padding: 0; margin: 0; text-align: center;
+  border: 1px solid var(--tb-line); border-left: 0; border-right: 0; border-radius: 0; background: #111a22;
+  color: var(--tb-text); font: 600 16px/1 var(--tb-mono); font-variant-numeric: tabular-nums; -moz-appearance: textfield;
+}
+#presenterTopBar .tw-setter-input input::-webkit-inner-spin-button,
+#presenterTopBar .tw-setter-input input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+#presenterTopBar .tw-setter-unit { margin-left: 10px; font: 500 13px/1 var(--tb-ui); color: var(--tb-muted); opacity: 1; }
+#presenterTopBar .tw-duration-presets { display: flex; flex-wrap: nowrap; gap: 4px; padding: 10px 2px 2px; }
+#presenterTopBar .tw-duration-presets button {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; height: 28px; padding: 0;
+  border: 1px solid var(--tb-line); border-radius: 6px; background: #111a22; color: var(--tb-muted);
+  font: 500 13px/1 var(--tb-ui); font-variant-numeric: tabular-nums;
+}
+#presenterTopBar .tw-duration-presets button:hover { background: var(--tb-ctl-hover); filter: none; }
+#presenterTopBar .tw-duration-presets button.on { background: #244d88; border-color: #6293ec; color: #fff; font-weight: 500; }
+#presenterTopBar .tw-setter-title {
+  padding: 14px 2px 7px; font: 600 13px/1 var(--tb-ui); color: var(--tb-dim);
+  text-transform: none; letter-spacing: 0; opacity: 1;
+}
+#presenterTopBar .tw-reminder-presets { display: flex; flex-wrap: nowrap; gap: 6px; padding: 0 2px; }
+#presenterTopBar .tw-reminder {
+  display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 10px; white-space: nowrap;
+  border: 1px solid var(--tb-line); border-radius: 999px; background: transparent; color: var(--tb-muted);
+  font: 500 13px/1 var(--tb-ui);
+}
+#presenterTopBar .tw-reminder:hover { background: var(--tb-ctl-hover); filter: none; }
+#presenterTopBar .tw-reminder.on { background: #1f3550; border-color: #3f6ea3; color: #fff; font-weight: 500; }
+#presenterTopBar .tw-reminder .tw-ico { color: #8fc0ff; }
+#presenterTopBar .tw-reminder:not(.on) .tw-ico { display: none; }
+#presenterTopBar .tw-pop-rule { height: 1px; background: #ffffff14; margin: 12px 0 6px; }
+#presenterTopBar .tw-pop-item {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 8px; box-sizing: border-box;
+  border: 0; border-radius: 6px; background: none; color: var(--tb-text); text-align: left;
+  font: 500 14px/1.2 var(--tb-ui); white-space: normal;
+}
+#presenterTopBar .tw-pop-item:hover { background: #ffffff0d; }
+#presenterTopBar .tw-pop-item .tw-ico { color: var(--tb-muted); }
+#presenterTopBar .tw-pop-sub { display: block; margin-top: 2px; font: 500 13px/1.25 var(--tb-ui); color: var(--tb-dim); }
+#presenterTopBar .tw-pop-hint { margin: 0; padding: 6px 2px 0; font: 500 13px/1.35 var(--tb-ui); color: var(--tb-dim); }
+
+/* The status strip */
+#presenterTopBar .tw-status {
+  display: flex; align-items: center; height: 32px; box-sizing: border-box; padding: 0 4px; margin: 0 auto; flex: none;
+  border: 1px solid var(--tb-line); border-radius: 8px; background: #151f29; white-space: nowrap;
+}
+#presenterTopBar .tw-status:not(:has(> .tw-st:not([hidden]):not(:empty))) { display: none; }
+#presenterTopBar .tw-status:not(:has(> .tw-st:not([hidden]):not(:empty))) + .presenter-header-actions { margin-left: auto; }
+#presenterTopBar .tw-st {
+  display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px;
+  font: 600 13px/1 var(--tb-ui); color: var(--tb-muted);
+}
+#presenterTopBar .tw-st:empty { display: none; }
+#presenterTopBar .tw-st:not([hidden]):not(:empty) ~ .tw-st { box-shadow: -1px 0 0 #ffffff14; }
+#presenterTopBar .tw-st-live { color: var(--tb-dim); font-weight: 500; }
+#presenterTopBar .tw-st-live[data-tone="live"] { color: var(--tb-live); font-weight: 600; }
+#presenterTopBar .tw-st-live[data-tone="reconnecting"] { color: var(--tb-amber); font-weight: 600; }
+#presenterTopBar .tw-st-live[data-tone="connecting"] { color: var(--tb-muted); font-weight: 600; }
+#presenterTopBar .tw-live-icon { display: inline-flex; }
+#presenterTopBar .tw-live-icon:empty { display: none; }
+#presenterTopBar .tw-st-btn {
+  display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; margin-left: 2px; box-sizing: border-box;
+  border: 1px solid #f0645c55; border-radius: 6px; background: var(--tb-live-bg); color: #ffd2cf; font: 500 13px/1 var(--tb-ui);
+}
+#presenterTopBar .tw-st-btn:hover { border-color: var(--tb-live); }
+/* "Not live" is the Go live button before a session (Dominik's preview.8 feedback, 28 Sep):
+   the status's radio icon and words in a bordered control, 26px like End live, tooltip
+   "Go live  G". The slot's plain icon and words are hidden while it shows (present-live-bridge.ts). */
+#presenterTopBar .tw-st-go {
+  display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; margin: 0 -4px; box-sizing: border-box;
+  border: 1px solid var(--tb-line); border-radius: 6px; background: var(--tb-ctl); color: var(--tb-muted); font: 500 13px/1 var(--tb-ui);
+}
+#presenterTopBar .tw-st-go:hover { background: var(--tb-ctl-hover); border-color: #ffffff33; color: var(--tb-text); }
+#presenterTopBar .tw-st-go:focus-visible { outline: 2px solid #5b86b5; outline-offset: 1px; }
+/* The venue-screen notice, beside the live status (ADR-0026 §3; presenter redesign ticket 06;
+   shots venue-lost-*, venue-back-*): amber "Venue screen not following · reconnecting" while the
+   venue screen has no connection, then "Venue screen following again" in green for three seconds.
+   The live preload fills it from the session's presence count (present-live-state.ts). */
+#presenterTopBar .tw-st-venue[data-tone="lost"] { color: var(--tb-amber); }
+#presenterTopBar .tw-st-venue[data-tone="back"] { color: #7fd6a1; }
+#presenterTopBar .tw-st-section { color: #9cc3f5; }
+#presenterTopBar .tw-st-section .tw-btn-label { display: inline-flex; align-items: center; gap: 4px; }
+#presenterTopBar .tw-st-time { font: 600 13px/1 var(--tb-ui); font-variant-numeric: tabular-nums; color: var(--tb-text); }
+#presenterTopBar .tw-st-section.talk-crit .tw-st-time { color: var(--tb-live); }
+#presenterTopBar .tw-st-reactions { gap: 10px; }
+#presenterTopBar .tw-st-reactions > span { display: inline-flex; align-items: center; gap: 4px; color: var(--tb-text); font-variant-numeric: tabular-nums; }
+#presenterTopBar .tw-st-reactions > span .tw-ico { color: var(--tb-muted); }
+#presenterTopBar .tw-st-questions { color: var(--tb-text); }
+#presenterTopBar .tw-st-questions .tw-ico { color: #e9c46a; }
+
+/* The REC cluster: the recording preload mounts it in #presenterRecSlot and carries its own
+   styles in the chrome type scale (src/preload/present-rec-ui.ts, presenter redesign ticket 03).
+   This sheet owns only its collapse steps, c5 and c6 below. */
+
+/* Right: the Live, Poll and View menus (ticket 04; presenter-top-menus.css). */
+#presenterTopBar .presenter-header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex: none; }
+
+/* The mode chip (ticket 05): amber while Reveal, Focus or Highlight is on, with × to leave (and
+   Clear for Highlight). Drawn in round-2 shots mode-focus-*, mode-highlight-*, mode-reveal-*. */
+#presenterTopBar .tw-st-mode { gap: 6px; margin: 0 2px; padding: 0 3px 0 8px; border-radius: 5px; background: #3a3210; color: #ffe08a; font-weight: 600; }
+#presenterTopBar .tw-st-mode:not([hidden]) + .tw-st:not([hidden]):not(:empty) { box-shadow: none; }
+#presenterTopBar .tw-st:not([hidden]):not(:empty) ~ .tw-st-mode { box-shadow: none; }
+#presenterTopBar .tw-mode-mark { display: inline-flex; }
+#presenterTopBar .tw-mode-btn { margin-left: 2px; border-color: #ffe08a44; background: #4a4015; color: #fff0c2; }
+#presenterTopBar .tw-mode-btn + .tw-mode-btn { margin-left: 0; }
+#presenterTopBar .tw-mode-btn:hover { border-color: #ffe08a99; }
+#presenterTopBar .tw-mode-btn:disabled { opacity: 0.55; cursor: default; }
+#presenterTopBar .tw-mode-btn .tw-ico { width: 14px; height: 14px; }
+#presenterTopBar #presenterModeExit,
+#presenterTopBar #presenterHighlightExit { width: 26px; padding: 0; justify-content: center; }
+
+/* Collapse steps, added one at a time by fitTopBar() until the row fits (surfaces-drawn.md).
+   c5 and c6 act on the REC cluster; c7 on the venue notice; c8 (menu buttons icon-only) is in
+   presenter-top-menus.css; c10 is the mode chip's. */
+#presenterTopBar.c1 .tw-clock-sub { display: none; }
+#presenterTopBar.c1 .tw-topbar-left, #presenterTopBar.c2 .tw-topbar-left { gap: 11px; }
+#presenterTopBar.c2 .tw-st-section .tw-st-word { display: none; }
+#presenterTopBar.c3 .tw-count-word { display: none; }
+#presenterTopBar.c4 #presenterEndLive { width: 26px; padding: 0; justify-content: center; }
+#presenterTopBar.c4 #presenterEndLive > .tw-btn-label { display: none; }
+/* c5: "Not recording" / "Recording paused" go; the dot's colour and the button's tooltip carry it. */
+#presenterTopBar.c5 #twrec-label[data-collapse="c5"] { display: none; }
+/* c6: Record and Change become icon-only (their tooltips name them). */
+#presenterTopBar.c6 :is(#twrec-primary, #twrec-change-kind) { width: 26px; padding: 0; justify-content: center; }
+#presenterTopBar.c6 :is(#twrec-primary, #twrec-change-kind) > .tw-btn-label { display: none; }
+/* c7: the venue notice shortens to "Venue screen reconnecting" (its tooltip keeps the full words). */
+#presenterTopBar.c7 .tw-venue-long { display: none; }
+#presenterTopBar.c9 .tw-st-section { display: none; }
+/* c10: the mode chip keeps its icon, colour and buttons but drops its words (the pressed
+   bottom-bar button, or Reveal checked in More, names the mode). */
+#presenterTopBar.c10 .tw-mode-word { display: none; }
+#presenterTopBar.c10 #presenterHighlightChipClear { width: 26px; padding: 0; justify-content: center; }
+#presenterTopBar.c10 #presenterHighlightChipClear > .tw-btn-label { display: none; }

@@ -1,0 +1,45 @@
+/* Presenter chrome icons and tooltips (ADR-0031 §6, presenter redesign ticket 01). Icons are lucide
+   SVGs placed by the presenter runtime from src/shared/presenter-controls.ts: one stroke width
+   (the SVG's own stroke-width 2) and one size step, 16px, everywhere in the chrome. The layout of
+   the bars is unchanged here; later tickets restyle them. The tooltip shows "Name  Shortcut" in
+   the chrome's 13px text size, opening below the control when it sits in the top bar. */
+.tw-ico {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  vertical-align: -3px;
+  stroke-width: 2;
+}
+.presenter-root .tw-ico.tw-btn-ico { margin: 0 6px 0 0; opacity: 1; font-size: inherit; }
+.presenter-root .tw-btn-label + .tw-ico.tw-btn-ico { margin: 0 0 0 6px; }
+.presenter-root .tw-btn-label[hidden] + .tw-ico,
+.presenter-root .tw-ico.tw-btn-ico:has(+ .tw-btn-label[hidden]),
+.presenter-root .tw-ico.tw-btn-ico:only-child { margin: 0; }
+.presenter-root .tw-btn-label:empty + .tw-ico.tw-btn-ico,
+.presenter-root .tw-ico.tw-btn-ico:has(+ .tw-btn-label:empty) { margin: 0; }
+.presenter-root .tw-duration-btn,
+.presenter-root .tw-step,
+.presenter-root .presenter-poll-dismiss,
+.presenter-root .live-go-panel-close,
+.presenter-root .quick-poll-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.presenter-root .tw-step .tw-ico { margin: 0; }
+.presenter-root .live-go-panel-label .tw-ico { width: 16px; height: 16px; margin: 0 5px 0 0; vertical-align: -4px; }
+
+.tw-tip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transform: translate(-50%, -100%);
+  padding: 6px 9px;
+  border-radius: 6px;
+  border: 1px solid #ffffff30;
+  font: 500 13px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  z-index: 300;
+}
+.tw-tip.below { transform: translate(-50%, 0); }
+.tw-tip-key { color: #c9d6e2; }
+.tw-tip-key[hidden] { display: none; }

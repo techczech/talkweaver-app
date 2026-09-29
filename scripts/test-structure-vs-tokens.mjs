@@ -123,9 +123,11 @@ assert.equal(titleTopBare.titleTop, true, '{titletop}: the inferred statement re
 const renderedTitleTop = renderedSlideWithTitle(titleTopText)
 assert.equal(renderedTitleTop.getAttribute('data-layout'), 'statement', '{titletop}: emitted markup records statement')
 assert.equal(renderedTitleTop.getAttribute('data-title-layout'), 'top', '{titletop}: the statement title is drawn at the top')
-assert.equal(renderedTitleTop.querySelector('.layout-statement > .slide-head:not(.slide-head-quiet) h1')?.textContent, titleTopText, '{titletop}: the visible top title retains the heading text')
-assert.equal(renderedTitleTop.querySelector('.layout-statement > p')?.textContent, titleTopText, '{titletop}: the heading text also becomes the statement body')
+assert.equal(renderedTitleTop.querySelector('.layout-statement > .slide-head:not(.slide-head-quiet) h1')?.textContent.replace(/\u00a0/g, ' '), titleTopText, '{titletop}: the visible top title retains the heading text')
+assert.equal(renderedTitleTop.querySelector('.layout-statement > p')?.textContent.replace(/\u00a0/g, ' '), titleTopText, '{titletop}: the heading text also becomes the statement body')
 
+// ADR-0028 §10: statement and title text carry a no-break space between their last two words,
+// so text comparisons read it as the plain space the outline has.
 // A stepping-only token likewise leaves layout inference alone. With no title-placement override,
 // the promoted statement keeps the established quiet-heading treatment and reveal mode survives.
 const revealText = 'AI intern can help you draft your schedules and manage your calendar'
@@ -137,7 +139,7 @@ const renderedReveal = renderedSlideWithTitle(revealText)
 assert.equal(renderedReveal.getAttribute('data-layout'), 'statement', '{reveal}: emitted markup records statement')
 assert.equal(renderedReveal.getAttribute('data-title-layout'), 'hidden', '{reveal}: the promoted statement keeps its quiet heading')
 assert.equal(renderedReveal.querySelector('.slide-head-quiet .sr-only')?.textContent, revealText, '{reveal}: navigation text remains in the quiet heading')
-assert.equal(renderedReveal.querySelector('.layout-statement > p')?.textContent, revealText, '{reveal}: the heading text becomes the statement body')
+assert.equal(renderedReveal.querySelector('.layout-statement > p')?.textContent.replace(/\u00a0/g, ' '), revealText, '{reveal}: the heading text becomes the statement body')
 
 // The already-lexed inference mirror serves carousel children. A heading-only child follows the
 // same statement-of-itself rule rather than becoming an empty list sub-slide.
@@ -199,7 +201,10 @@ try {
     geometry.push({ viewport: `${viewport.width}x${viewport.height}`, ...measured })
     assert(measured.fontPx >= 31, `${viewport.width}x${viewport.height}: statement type stays at or above the 31px floor; got ${measured.fontPx}px`)
     assert(measured.lines.length <= 3, `${viewport.width}x${viewport.height}: the 12-word statement uses at most three lines; got ${measured.lines.length}`)
-    assert(measured.lines.every((line) => line.length > 1), `${viewport.width}x${viewport.height}: no line contains one word (${JSON.stringify(measured.lines)})`)
+    // ADR-0005: "a box's text must fit more than one word per line". Since ADR-0028 §1 (14em measure)
+    // the paragraph's LAST line may hold a single word — the locked statement shots show one
+    // ("Dresden"?"); every line that wrapped must still hold more than one word.
+    assert(measured.lines.slice(0, -1).every((line) => line.length > 1), `${viewport.width}x${viewport.height}: no wrapped line contains one word (${JSON.stringify(measured.lines)})`)
     assert(measured.coverage >= 0.5, `${viewport.width}x${viewport.height}: the statement covers at least half the stage width; got ${measured.coverage}`)
     assert(measured.horizontalGapDeltaPx <= 2, `${viewport.width}x${viewport.height}: horizontal whitespace is balanced; gap delta ${measured.horizontalGapDeltaPx}px`)
     assert(measured.verticalGapDeltaPx <= 2, `${viewport.width}x${viewport.height}: vertical whitespace is balanced; gap delta ${measured.verticalGapDeltaPx}px`)

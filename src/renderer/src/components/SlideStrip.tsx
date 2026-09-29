@@ -3,6 +3,7 @@ import type { TalkInfo, ProjectionRow } from '../../../preload/index'
 import type { LayoutDoctorFinding } from '../../../shared/layout-doctor'
 import { triggerWarningPayloadsForSlide } from '../../../shared/layout-doctor'
 import { warningBadgesForSurface, type WarningSurface } from '../../../../compiler/scripts/lib/warning-registry.mjs'
+import type { GhostRow, SlideMarker, SlideMarkers } from '../../../shared/feedback-markers'
 
 export type SurfaceWarningBadge = ReturnType<typeof warningBadgesForSurface>[number]
 
@@ -20,6 +21,12 @@ interface Props {
   onReorder?: (fromIndex: number, toIndex: number) => void
   // Right-click a card → explain why it rendered this way (ADR-0024). Index = display index.
   onExplain?: (index: number) => void
+  // Shared talk feedback (ticket 06, frame 2): a badge per slide, ghost rows for proposed new slides.
+  markers?: SlideMarkers | null
+  // A marker clicked: open the rail on that slide (display index).
+  onMarker?: (index: number) => void
+  // A ghost row clicked: open the rail at that item.
+  onGhost?: (itemId: string) => void
 }
 
 interface SlidePreview {
@@ -355,6 +362,51 @@ interface SlideCardProps {
   onDrop: (e: React.DragEvent) => void
   onDragEnd: () => void
   onContextMenu?: (e: React.MouseEvent) => void
+  marker?: SlideMarker | null
+  onMarker?: () => void
+}
+
+/** The feedback badge on a thumbnail's corner: a count of new items (red when one proposes deleting
+ *  the slide), a quiet tick once all are handled. Opens the rail on the slide. */
+function FeedbackBadge({ marker, onClick }: { marker: SlideMarker; onClick?: () => void }) {
+  const tick = marker.count === 0
+  return (
+    <button
+      type="button"
+      className={`tw-fb-badge${tick ? ' tw-fb-badge--done' : marker.deletion ? ' tw-fb-badge--del' : ''}`}
+      data-testid="slide-feedback-badge"
+      data-count={marker.count}
+      data-handled={tick ? 'true' : 'false'}
+      title={tick ? 'Feedback on this slide: all handled' : `${marker.count} new from the shared talk${marker.deletion ? ' (a proposed deletion)' : ''}`}
+      onClick={(e) => { e.stopPropagation(); onClick?.() }}
+      onDoubleClick={(e) => e.stopPropagation()}
+    >
+      {tick ? '✓' : marker.count}
+    </button>
+  )
+}
+
+/** A proposed new slide, dashed, where it would go (frame 2's ghost row). */
+function GhostCard({ ghost, onClick }: { ghost: GhostRow; onClick?: () => void }) {
+  return (
+    <div
+      className="tw-ghost-card"
+      data-testid="slide-ghost"
+      data-item-id={ghost.itemId}
+      role="button"
+      tabIndex={-1}
+      onClick={onClick}
+      title="Proposed new slide: open it in the feedback rail"
+    >
+      <span className="tw-ghost-plus">+</span>
+      <div className="tw-ghost-text">
+        <div className="tw-ghost-title">{ghost.title}</div>
+        <div className="tw-ghost-sub">Proposed new slide · {ghost.afterNumber ? `after ${ghost.afterNumber}` : 'at the start'}</div>
+        {ghost.section && <div className="tw-ghost-sec">New section: {ghost.section}</div>}
+      </div>
+      <span className="tw-fb-badge tw-fb-badge--ins" aria-hidden="true">1</span>
+    </div>
+  )
 }
 
 function SlideCard({
@@ -372,7 +424,9 @@ function SlideCard({
   onDragOver,
   onDrop,
   onDragEnd,
-  onContextMenu
+  onContextMenu,
+  marker,
+  onMarker
 }: SlideCardProps) {
   const layout = slide.layout.toLowerCase() || 'default'
   const title = slide.title || 'Slide'
@@ -429,6 +483,7 @@ function SlideCard({
       {dropEdge === 'below' && dropBar('below')}
       {/* 16:9 thumbnail */}
       <div style={{ position: 'relative' as const, paddingTop: '56.25%', background: 'var(--paper)' }}>
+        {marker && <FeedbackBadge marker={marker} onClick={onMarker} />}
         {warnings.length > 0 && (
           <span
             className={`tw-slide-warning ${warnings.some((warning) => warning.severity === 'error') ? 'tw-slide-warning--error' : ''}`}
@@ -471,6 +526,7 @@ function SlideCard({
           <span style={{ fontSize: '8px', color: 'var(--oxford)', background: 'rgba(11,58,107,0.1)', borderRadius: '2px', padding: '1px 3px', flexShrink: 0, marginLeft: 'auto' }}>{layout}</span>
         )}
       </div>
+      {marker?.deletion && <div className="tw-fb-del-note">Proposed deletion</div>}
     </div>
   )
 }
@@ -484,7 +540,8 @@ const MemoSlideCard = React.memo(
     prev.isDragging === next.isDragging &&
     prev.thumbnailUrl === next.thumbnailUrl &&
     prev.draggable === next.draggable &&
-    prev.dropEdge === next.dropEdge
+    prev.dropEdge === next.dropEdge &&
+    prev.marker === next.marker
 )
 
 interface SectionHeaderProps {
@@ -572,7 +629,10 @@ export default function SlideStrip({
   onSelectSlide,
   onEdit,
   onReorder,
-  onExplain
+  onExplain,
+  markers,
+  onMarker,
+  onGhost
 }: Props) {
   const [slides, setSlides] = useState<SlidePreview[]>([])
   const [usingCompiler, setUsingCompiler] = useState(false)
@@ -752,6 +812,7 @@ export default function SlideStrip({
   // Slides grouped into consecutive section runs, each with its own collapsible header
   // so the strip mirrors the talk's heading structure (ADR-0019 sidebar).
   const groups = groupBySection(slides)
+  const ghostsAfter = (slideId: string): GhostRow[] => markers?.ghosts.filter((ghost) => ghost.afterSlideId === slideId) ?? []
 
   // Render one card. Kept as a closure (not a child component) so it captures the live
   // drag refs/state and handlers unchanged from the pre-grouping flat list — every
@@ -759,6 +820,7 @@ export default function SlideStrip({
   // behaviour is identical whether or not sections are collapsed.
   function renderCard(slide: SlidePreview) {
     const key = thumbKey(slide.row)
+    const slideId = slide.row?.slide_id ?? null
     const thumbnailUrl = key && thumbnails ? thumbnails[key] ?? null : null
     const warnings = slide.row
       ? surfacedWarnings(slide.row, 'strip-badge', triggerFindings)
@@ -848,8 +910,13 @@ export default function SlideStrip({
             }
           }}
           onDragEnd={resetDrag}
+          marker={slideId ? markers?.bySlide[slideId] ?? null : null}
+          onMarker={onMarker ? () => onMarker(slide.index) : undefined}
         />
       </div>
+      {slideId && ghostsAfter(slideId).map((ghost) => (
+        <GhostCard key={`ghost-${ghost.itemId}`} ghost={ghost} onClick={onGhost ? () => onGhost(ghost.itemId) : undefined} />
+      ))}
       {/* Carousel sub-slides: each stepped full-bleed sub-slide of a carousel, nested under it. */}
       {subUrls.map((u, i) => (
         <div
@@ -939,6 +1006,9 @@ export default function SlideStrip({
           }
         }}
       >
+        {ghostsAfter('start').map((ghost) => (
+          <GhostCard key={`ghost-${ghost.itemId}`} ghost={ghost} onClick={onGhost ? () => onGhost(ghost.itemId) : undefined} />
+        ))}
         {groups.map((group) => {
           const collapsed = collapsedSections.has(group.key)
           return (

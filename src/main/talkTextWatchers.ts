@@ -8,11 +8,13 @@ export type DirectoryWatchFactory = (directory: string, onChange: () => void) =>
 type WatchEntry = {
   watcher: DirectoryWatcher
   owners: Map<string, () => void>
+  /** Told when the watcher stopped on an error (the outline external-change guard falls back). */
+  onErrors: Map<string, () => void>
   timer: ReturnType<typeof setTimeout> | null
 }
 
 export function createDirectoryWatcherRegistry(createWatcher: DirectoryWatchFactory): {
-  acquire: (directory: string, owner: string, onChange: () => void) => void
+  acquire: (directory: string, owner: string, onChange: () => void, onError?: () => void) => void
   releaseOwner: (owner: string) => void
   releaseAllExcept: (owner: string) => void
   releaseAll: () => void
@@ -25,14 +27,15 @@ export function createDirectoryWatcherRegistry(createWatcher: DirectoryWatchFact
     entry.watcher.close()
   }
 
-  const acquire = (directory: string, owner: string, onChange: () => void): void => {
+  const acquire = (directory: string, owner: string, onChange: () => void, onError?: () => void): void => {
     const existing = entries.get(directory)
     if (existing) {
       existing.owners.set(owner, onChange)
+      if (onError) existing.onErrors.set(owner, onError)
       return
     }
 
-    const entry: WatchEntry = { watcher: null as unknown as DirectoryWatcher, owners: new Map([[owner, onChange]]), timer: null }
+    const entry: WatchEntry = { watcher: null as unknown as DirectoryWatcher, owners: new Map([[owner, onChange]]), onErrors: new Map(onError ? [[owner, onError]] : []), timer: null }
     const watcher = createWatcher(directory, () => {
       if (entry.timer) clearTimeout(entry.timer)
       entry.timer = setTimeout(() => {
@@ -41,13 +44,17 @@ export function createDirectoryWatcherRegistry(createWatcher: DirectoryWatchFact
       }, 150)
     })
     entry.watcher = watcher
-    watcher.on('error', () => closeEntry(directory, entry))
+    watcher.on('error', () => {
+      closeEntry(directory, entry)
+      for (const notify of entry.onErrors.values()) { try { notify() } catch { /* an owner never breaks the others */ } }
+    })
     entries.set(directory, entry)
   }
 
   const releaseOwner = (owner: string): void => {
     for (const [directory, entry] of entries) {
       entry.owners.delete(owner)
+      entry.onErrors.delete(owner)
       if (entry.owners.size === 0) closeEntry(directory, entry)
     }
   }

@@ -125,9 +125,26 @@ export async function talkRowByTitle(page, title, { timeout = DEFAULT_TIMEOUT } 
   throw new Error(`Talk row "${requestedTitle}" did not appear in the Talks list within ${timeout}ms`)
 }
 
+// The file list starts with every folder closed (0.34.0-preview.2 check), so a vault whose talks
+// all live in folders shows no talk row at first. The helpers that walk the tree rather than search
+// open every folder first, as ⌘→ (expand all subfolders) does for a person.
+export async function expandAllFolders(page) {
+  await page.locator(TALKS_PANEL).first().focus()
+  await page.keyboard.press('Meta+ArrowRight')
+  await page.waitForTimeout(100)
+}
+
+async function ensureTalkRowsShowing(page, timeout = DEFAULT_TIMEOUT) {
+  // Wait for the tree to hold rows (talks or folders) before deciding the folders need opening.
+  await page.locator(`${TALKS_TREE} [data-talk-title], ${TALKS_TREE} [data-folder-path]`).first()
+    .waitFor({ state: 'attached', timeout }).catch(() => {})
+  if (await talkRows(page).count() === 0) await expandAllFolders(page)
+}
+
 async function otherTalkRow(page, title, timeout) {
   await returnToVaultRoot(page)
   await talkSearchInput(page).fill('')
+  await ensureTalkRowsShowing(page)
   const normalisedTitle = normaliseTalkTitle(title)
   return scrollForTalkRow(
     page,
@@ -163,6 +180,7 @@ export async function openFirstTalk(page, { timeout = DEFAULT_TIMEOUT } = {}) {
   await waitForTalkList(page, { timeout })
   await returnToVaultRoot(page)
   await talkSearchInput(page).fill('')
+  await ensureTalkRowsShowing(page)
 
   const row = await scrollForTalkRow(page, () => true, timeout)
   if (!row) {

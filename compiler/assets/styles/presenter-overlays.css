@@ -1,0 +1,99 @@
+/* Presenter overlays over the current slide: the Quick-poll and instant-slide composers and the
+   go-live panel (ADR-0031, presenter redesign ticket 06; drawn in
+   docs/design/2026-09-26-presenter-redesign/round-2/, shots quickpoll-composer, instant-composer,
+   golive-panel). Dark cards on the chrome type scale (ADR-0031 §5): 16px card titles and the join
+   link, 14px control labels and fields, 13px field labels, keys and hints.
+   The composers are short-lived overlays: under a larger slide they may run down over the notes,
+   to the bottom bar, and their Cancel / primary row is pinned to the card's foot, so the action is
+   in view without scrolling however long the form is. The instant-slide runtime injects its own
+   rules for the composer (compiler/assets/runtime/instant-slide.js); the rules here are scoped
+   under .presenter-root to win over them. */
+
+/* ---------- composers ---------- */
+/* While a composer is open the current-slide panel lets it run past its foot. */
+.presenter-root .presenter-current-panel:has(> .quick-poll-compose:not([hidden])) { overflow: visible; }
+.presenter-root .quick-poll-compose {
+  top: 12px; right: 12px; width: min(480px, calc(100% - 24px));
+  max-height: calc(100dvh - 134px); overflow: auto;
+  padding: 16px 16px 0;
+  border: 1px solid #ffffff2a; border-radius: 12px; background: #16202a; color: #f7f3ea;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .55);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.presenter-root .quick-poll-compose .tw-ico { width: 16px; height: 16px; flex: none; margin: 0; }
+.presenter-root .quick-poll-title-row { margin-bottom: 12px; }
+.presenter-root .quick-poll-title { display: flex; align-items: center; gap: 8px; font: 600 16px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; }
+.presenter-root .quick-poll-title .tw-ico { color: #a3b3c2; }
+.presenter-root .quick-poll-close { width: 28px; height: 28px; border-radius: 6px; color: #a3b3c2; }
+.presenter-root .quick-poll-close:hover { background: #ffffff10; color: #f7f3ea; }
+.presenter-root .quick-poll-field { margin-bottom: 10px; }
+.presenter-root .quick-poll-field > span,
+.presenter-root .quick-poll-field > label:first-child {
+  color: #71849a; font: 600 13px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; letter-spacing: 0; text-transform: none;
+}
+.presenter-root .quick-poll-segments button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 32px; font: 500 13px/1.1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+}
+.presenter-root .quick-poll-segments button .tw-ico { width: 14px; height: 14px; }
+.presenter-root .quick-poll-presets button { padding: 6px 10px; font: 500 13px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; }
+.presenter-root .quick-poll-compose input,
+.presenter-root .quick-poll-compose textarea { font: 400 14px/1.3 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; }
+.presenter-root .quick-poll-compose input { min-height: 34px; }
+.presenter-root .quick-poll-compose input[type="checkbox"] { min-height: 0; }
+.presenter-root .instant-compose textarea { min-height: 72px; padding: 8px 10px; }
+.presenter-root .quick-poll-option-row { margin-bottom: 6px; }
+.presenter-root .quick-poll-actions button,
+.presenter-root .quick-poll-add,
+.presenter-root .quick-poll-remove {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  height: 32px; min-height: 32px; padding: 0 12px; box-sizing: border-box;
+  border: 1px solid #ffffff1c; border-radius: 7px; background: #1f2c39; color: #f7f3ea;
+  font: 500 14px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; white-space: nowrap;
+}
+.presenter-root .quick-poll-remove { width: 32px; min-width: 32px; padding: 0; }
+.presenter-root .quick-poll-add { width: max-content; }
+.presenter-root .quick-poll-actions .tw-btn-label { display: inline-flex; align-items: center; gap: 7px; }
+.presenter-root .quick-poll-actions .kbd { margin-left: 2px; color: inherit; opacity: .75; font: 500 13px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; }
+.presenter-root .quick-poll-actions .quick-poll-open { border-color: #0f4bd8; font-weight: 600; }
+/* The action row stays at the card's foot while the form scrolls above it. */
+.presenter-root .quick-poll-compose .quick-poll-actions {
+  position: sticky; bottom: 0; z-index: 1;
+  margin: 6px -16px 0; padding: 12px 16px 14px;
+  border-top: 1px solid #ffffff14; background: #16202a;
+}
+
+/* ---------- go-live panel ---------- */
+.presenter-root .live-go-panel {
+  top: 12px; right: 12px; width: 300px; padding: 14px;
+  border: 1px solid #ffffff2a; border-radius: 12px; background: #16202a; color: #f7f3ea;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .55); text-align: left;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.presenter-root .live-go-panel-label {
+  display: flex; align-items: center; gap: 7px;
+  color: #f0645c; font: 600 14px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; letter-spacing: 0; text-transform: none;
+}
+.presenter-root .live-go-panel-label .tw-ico { margin: 0; }
+.presenter-root .live-go-panel-qr { width: 150px; height: 150px; margin: 12px auto 10px; padding: 8px; box-sizing: content-box; border-radius: 8px; background: #fff; }
+.presenter-root .live-go-panel-url { color: #9cc3f5; font: 600 16px/1.2 ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace; text-align: center; }
+.presenter-root .live-go-panel-venue { margin-top: 12px; padding-top: 10px; border-top-color: #ffffff1a; }
+.presenter-root .live-go-panel-venue-heading { color: #71849a; font: 600 13px/1.3 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; }
+.presenter-root .live-go-panel-venue-row { gap: 8px; margin-top: 6px; }
+.presenter-root .live-go-panel-venue-url { color: #9cc3f5; font: 500 13px/1.3 ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.presenter-root .live-go-panel-copy {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  height: 28px; padding: 0 10px; box-sizing: border-box;
+  border: 1px solid #ffffff1c; border-radius: 6px; background: #1f2c39; color: #f7f3ea;
+  font: 500 13px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+}
+.presenter-root .live-go-panel-copy .tw-ico { width: 14px; height: 14px; margin: 0; }
+.presenter-root .live-go-panel-count { display: flex; align-items: center; gap: 6px; margin-top: 8px; color: #7fd6a1; font: 500 13px/1.3 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; }
+.presenter-root .live-go-panel-count[hidden] { display: none; }
+.presenter-root .live-go-panel-count .tw-ico { width: 15px; height: 15px; margin: 0; }
+.presenter-root .live-go-panel-close { top: 8px; right: 8px; width: 28px; height: 28px; border-radius: 6px; color: #a3b3c2; }
+.presenter-root .live-go-panel-close:hover { background: #ffffff10; color: #f7f3ea; }
+.presenter-root .live-go-panel-hint { margin: 10px 0 0; color: #71849a; font: 500 13px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; }
+.presenter-root .live-go-panel-hint .kbd { padding: 1px 5px; border: 1px solid #ffffff30; border-radius: 4px; color: #f7f3ea; }

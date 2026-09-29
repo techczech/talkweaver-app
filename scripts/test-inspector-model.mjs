@@ -15,7 +15,8 @@ import {
   headingLineForSlideId,
   stepModelForSlide
 } from '../src/renderer/src/components/inspectorModel.ts'
-import { deckListStyleForSlide } from '../src/shared/deck-frame.ts'
+import { deckListStyleForSlide, deckStatementTokenForOutline } from '../src/shared/deck-frame.ts'
+import { commitOptionSelection } from '../src/shared/trigger-line.ts'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { buildDeckHtmlFromModel } from '../compiler/scripts/lib/07-assembly.mjs'
 
@@ -573,5 +574,117 @@ assert.equal(sectionIdAtScrollTop(jumpTops, 199), 'layout', 'a section stays lit
 assert.equal(sectionIdAtScrollTop(jumpTops, 200), 'title', 'the section at the reading line is lit')
 assert.equal(sectionIdAtScrollTop(jumpTops, 900), 'slide', 'the last section is lit past its top')
 assert.equal(sectionIdAtScrollTop([], 0), null, 'no sections, no lit pill')
+
+// ADR-0028 §10, ticket 02 (Dominik, 29 Sep): a statement's options are separate choices — Sidebar,
+// Background, Alignment, Bar and Sidebar colour. Each lights what the compiled slide renders: its own
+// token, the older one-word option it is part of, the deck's claim_style, and (Sidebar) the
+// compiler's own title placement on the row.
+{
+  const { buildPerSlideProjections } = await import('../compiler/scripts/lib/10-projections.mjs')
+  const { applyInspectorOptionToOutline } = inspectorModule
+  const statementOutline = [
+    '---', 'title: Statement options', 'auto_title_slide: false', 'auto_thanks_slide: false', '---', '',
+    '## Statements', '',
+    '### Agents need a place to keep their work.', '{id=untitled}{statement}', '',
+    '### Where to start', '{id=titled}{statement=poster}', '', 'Agents need a place to keep their work.', ''
+  ].join('\n')
+  const statementModel = await prepareSource('/tmp/statement-options-outline.md', statementOutline, 'statement-options')
+  const statementRows = buildPerSlideProjections(statementModel, 'statement-options')
+  const at = (id) => statementRows.findIndex((row) => row.slide_id === id)
+  assert.equal(statementRows[at('untitled')].title_layout, 'hidden', 'a heading-only statement compiles without a title')
+  assert.equal(statementRows[at('titled')].title_layout, 'left', 'a statement with a body sits beside the rail')
+  const KEYS = ['statement-sidebar', 'statement-bg', 'statement-align', 'statement-bar', 'statement-colour']
+  const bindingsOf = (index, line, rowsIn = statementRows, deckStatement = '') =>
+    inspectorModel(rowsIn, index, 3, line, LAYOUTS, undefined, false, [], '', deckStatement).sections.flatMap((section) => section.bindings)
+  const lit = (id, line, deckStatement = '', rowsIn = statementRows) => Object.fromEntries(bindingsOf(at(id), line, rowsIn, deckStatement)
+    .filter((binding) => KEYS.includes(binding.group.key))
+    .map((binding) => [binding.group.key.replace('statement-', ''), binding.values.find((value) => value.token === binding.selectedToken)?.label ?? '—']))
+  const layoutSection = inspectorModel(statementRows, at('untitled'), 3, '{id=untitled}{statement}', LAYOUTS).sections[0]
+  assert.equal(layoutSection.heading, 'Statement', 'the Statement section comes first')
+  assert.deepEqual(layoutSection.bindings.map((binding) => binding.group.key), KEYS, 'the Statement section holds the five choices, in order')
+  assert.deepEqual(layoutSection.bindings.map((binding) => binding.group.sectionLabel ?? binding.group.label),
+    ['Sidebar', 'Background', 'Alignment', 'Bar', 'Sidebar colour'], 'each choice carries its short label')
+  assert.deepEqual(layoutSection.bindings.map((binding) => binding.values.map(({ label }) => label)), [
+    ['With sidebar', 'No sidebar'], ['Halo', 'Full', 'None'], ['Aligned', 'Centred'], ['None', 'Left', 'Top', 'Bottom'],
+    ['Section', 'Cobalt', 'Emerald', 'Vermilion', 'Forest']
+  ], 'the Inspector offers the ticket\'s values (Sidebar without its Auto)')
+  const titledValues = bindingsOf(at('titled'), '{id=titled}{statement=poster}').filter((binding) => KEYS.includes(binding.group.key))
+  assert.deepEqual(titledValues.find((binding) => binding.group.key === 'statement-align').values.map(({ label }) => label), ['Aligned', 'Centred'],
+    'Centred is offered beside a title too')
+  assert.equal(bindingsOf(at('untitled'), '{id=untitled}{statement}').some((binding) => binding.group.key === 'claim-style'), false,
+    'a statement slide does not offer the older Claim style row')
+
+  const DEFAULTS = { sidebar: 'No sidebar', bg: 'Halo', align: 'Aligned', bar: 'None', colour: 'Section' }
+  assert.deepEqual(lit('untitled', '{id=untitled}{statement}'), DEFAULTS, 'an untokened statement without a title: no sidebar, Halo, Aligned, no bar, section colour')
+  assert.deepEqual(lit('titled', '{id=titled}{statement=poster}'), { ...DEFAULTS, sidebar: 'With sidebar' }, 'beside a title the sidebar is lit; a former Poster is the Default')
+  // The five older options light their mapped values (untitled slide).
+  const PRESETS = {
+    '{statement}{statement=default}': DEFAULTS,
+    '{statement=centred}': { ...DEFAULTS, align: 'Centred' },
+    '{statement=tint}': { ...DEFAULTS, bar: 'Left' },
+    '{statement=bar}': { ...DEFAULTS, bg: 'None', bar: 'Left' },
+    '{statement=full}': { ...DEFAULTS, bg: 'Full' },
+    '{statement}{claim=bar}{bg=emerald}': { ...DEFAULTS, bg: 'None', bar: 'Left' },
+    '{statement}{claim=plain}{bg=emerald}': DEFAULTS,
+    '{statement}{statement=bar}{claim=plain}': { ...DEFAULTS, bg: 'None', bar: 'Left' },
+    '{statement}{statement=tint}{claim=bar}': { ...DEFAULTS, bar: 'Left' },
+    '{statement=tint}{statement-bar=top}': { ...DEFAULTS, bar: 'Top' },
+    '{statement}{statement-bg=full}{statement-bar=bottom}{statement-align=centred}{accent=vermilion}': { ...DEFAULTS, bg: 'Full', bar: 'Bottom', align: 'Centred', colour: 'Vermilion' },
+    '{statement}{statement-sidebar=on}': { ...DEFAULTS, sidebar: 'With sidebar' }
+  }
+  for (const [tokens, want] of Object.entries(PRESETS)) {
+    assert.deepEqual(lit('untitled', `{id=untitled}${tokens}`), want, `${tokens} lights ${JSON.stringify(want)}`)
+  }
+  // The older Centred rendered as the Default beside a title (preview.11), and lights so.
+  assert.equal(lit('titled', '{id=titled}{statement=centred}').align, 'Aligned', 'the older {statement=centred} beside a title lights Aligned')
+  assert.equal(lit('titled', '{id=titled}{statement}{statement-align=centred}').align, 'Centred', 'the Alignment choice centres beside a title')
+  // The deck's claim_style: bar decides an untokened statement (no colour, left bar); a slide token wins.
+  assert.deepEqual(lit('untitled', '{id=untitled}{statement}', 'statement=bar'), { ...DEFAULTS, bg: 'None', bar: 'Left' }, 'a Bar deck lights None + Left')
+  assert.deepEqual(lit('untitled', '{id=untitled}{statement}{claim=plain}', 'statement=bar'), DEFAULTS, 'a slide {claim=plain} wins over the deck')
+  assert.deepEqual(lit('untitled', '{id=untitled}{statement}{statement-bar=top}', 'statement=bar'), { ...DEFAULTS, bar: 'Top' }, 'a choice of its own ends following the deck')
+  const statementBindings = bindingsOf(at('untitled'), '{id=untitled}{statement}', statementRows, 'statement=bar').filter((binding) => KEYS.includes(binding.group.key))
+  assert.equal(statementBindings.some((binding) => binding.deckToken !== undefined), false, 'the statement choices carry no deck mark')
+  for (const binding of statementBindings) assert.equal(inspectorCommitToken(binding, ''), '', `${binding.group.key}: a click writes its own token`)
+  // A row without the compiled title regime (an old cache) lights no Sidebar button rather than guess.
+  const oldRows = statementRows.map(({ title_layout: _dropped, ...row }) => row)
+  assert.equal(lit('untitled', '{id=untitled}{statement}', '', oldRows).sidebar, '—', 'an old cache row lights no Sidebar choice')
+  for (const line of ['{id=titled}{statement=poster}', '{id=titled}{statement}{statement-bg=none}{statement-bar=bottom}{accent=forest}{statement-sidebar=off}']) {
+    assert.equal(inspectorModel(statementRows, at('titled'), 3, line, LAYOUTS).unresolved, false, `${line}: registry vocabulary, no unresolved-trigger panel`)
+  }
+
+  // The write, end to end through the Inspector's own outline writer (deckCommitContext reads the
+  // deck's claim_style and whether the slide paints its title from the outline).
+  const bindingFor = (key) => layoutSection.bindings.find((binding) => binding.group.key === key).group
+  const lineAfter = (outline, id, key, token) => {
+    const heading = outline.split('\n').findIndex((line) => line.includes(`{id=${id}}`))
+    const next = applyInspectorOptionToOutline(outline, heading, bindingFor(key), token)
+    return next.split('\n')[heading]
+  }
+  const legacy = statementOutline.replace('{id=untitled}{statement}', '{id=untitled}{statement=centred}').replace('{id=titled}{statement=poster}', '{id=titled}{statement=centred}')
+  assert.equal(lineAfter(legacy, 'untitled', 'statement-bar', 'statement-bar=top'), '{id=untitled}{statement}{statement-bar=top}{statement-align=centred}',
+    'Bar Top on the older Centred without a title: the lines stay centred')
+  assert.equal(lineAfter(legacy, 'titled', 'statement-bar', 'statement-bar=top'), '{id=titled}{statement}{statement-bar=top}',
+    'Bar Top on the older Centred beside a title (rendered Aligned): stays aligned')
+  const barDeck = statementOutline.replace('auto_thanks_slide: false', 'auto_thanks_slide: false\nclaim_style: bar')
+  assert.equal(lineAfter(barDeck, 'untitled', 'statement-bg', ''), '{id=untitled}{statement}{statement-bar=left}',
+    'Halo on a Bar deck keeps the deck\'s left bar as a token of its own')
+  assert.equal(lineAfter(barDeck, 'untitled', 'statement-colour', 'accent=emerald'), '{id=untitled}{statement}{accent=emerald}{statement-bg=none}{statement-bar=left}',
+    'the colour on a Bar deck: the deck\'s look is written out so it stays')
+  assert.equal(deckStatementTokenForOutline(barDeck), 'statement=bar', 'a deck claim_style: bar decides Bar')
+  assert.equal(deckStatementTokenForOutline(statementOutline), '', 'no claim_style decides nothing')
+  const groupKeys = (index, line, rowsIn) => bindingsOf(index, line, rowsIn).map((binding) => binding.group.key)
+  console.log('PASS statement choices: five rows, lit from the compiled look (older options, claim tokens, deck claim_style, title placement); writes change one dimension')
+
+  // {stmt-list}: its statement column is the slide's claim, not an ADR-0028 §10 statement slide —
+  // the statement options are not offered there; Claim style (Plain / Bar) is, and applies.
+  const stmtListOutline = ['---', 'title: Stmt list', 'auto_title_slide: false', 'auto_thanks_slide: false', '---', '',
+    '### Statement beside a list', '{stmt-list}{claim=plain}{id=stmtl}', '', 'Is the time worth it?', '', '- One', '- Two', ''].join('\n')
+  const stmtListModel = await prepareSource('/tmp/stmt-list-outline.md', stmtListOutline, 'stmt-list')
+  const stmtListRows = buildPerSlideProjections(stmtListModel, 'stmt-list')
+  const stmtKeys = groupKeys(stmtListRows.findIndex((row) => row.slide_id === 'stmtl'), '{stmt-list}{claim=plain}{id=stmtl}', stmtListRows)
+  assert.equal(stmtKeys.some((key) => key.startsWith('statement-')), false, 'stmt-list does not offer the statement options')
+  assert.equal(stmtKeys.includes('claim-style'), true, 'stmt-list offers Claim style for its statement column')
+  console.log('PASS one set of statement options: claim tokens and claim_style map onto them; stmt-list keeps Claim style')
+}
 
 console.log('inspector model: pane migration, navigation, applicable groups and step derivation pass')

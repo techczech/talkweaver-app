@@ -1,11 +1,18 @@
 import { isExtendedPoll, normaliseExtendedPollFields, normaliseExtendedPollAggregates, normaliseBallotChoice, samePollChoice, renderExtendedPollResults, createExtendedBallot, extendedPollRuntimeSource } from './poll-extended.js'
+import { createInstantSlideSurface, instantSlideRuntimeSource } from './instant-slide.js'
 
-/** @typedef {import('../../../worker/protocol').SlideStateMessage | import('../../../worker/protocol').SessionClosedMessage | import('../../../worker/protocol').PollStateMessage} FollowServerMessage */
+/** @typedef {import('../../../worker/protocol').SlideStateMessage | import('../../../worker/protocol').InstantSlideMessage | import('../../../worker/protocol').SessionClosedMessage | import('../../../worker/protocol').PollStateMessage | import('../../../worker/recovery-protocol').SessionPresence} FollowServerMessage */
 
 export function normaliseFocus(value) {
   if (!value || typeof value !== 'object') return null
   if ((value.kind !== 'reveal' && value.kind !== 'focus') || !Number.isInteger(value.step) || value.step < 0) return null
   return { kind: value.kind, step: value.step }
+}
+
+export function normaliseLightbox(value) {
+  if (!value || typeof value !== 'object' || typeof value.open !== 'boolean'
+    || !Number.isSafeInteger(value.index) || value.index < 0) return null
+  return { open: value.open, index: value.index }
 }
 
 export function audienceSocketUrl(baseUrl, sessionId) {
@@ -90,16 +97,41 @@ export function parseServerMessage(value) {
   try {
     const message = JSON.parse(String(value))
     if (message?.type === 'session.closed') return { type: 'session.closed' }
+    if (message?.type === 'session.presence' && typeof message.presenterConnected === 'boolean'
+      && Number.isSafeInteger(message.venueScreens) && message.venueScreens >= 0) {
+      return { type: 'session.presence', presenterConnected: message.presenterConnected, venueScreens: message.venueScreens }
+    }
     if (message?.type === 'poll.state') return normalisePollState(message)
+    if (message?.type === 'instant.state') return message.slide == null || normaliseInstantSlide(message.slide)
+      ? { type: 'instant.state', slide: message.slide ?? null } : null
     const focus = message?.focus == null ? null : normaliseFocus(message.focus)
+    const lightbox = message?.lightbox === undefined ? undefined : normaliseLightbox(message.lightbox)
     if (
       message?.type !== 'slide.state' || typeof message.slideId !== 'string' || !message.slideId
       || !Number.isInteger(message.reveal) || message.reveal < 0
       || !Number.isInteger(message.revision) || message.revision < 0
       || (message.focus != null && !focus)
+      || (message.lightbox !== undefined && !lightbox)
+      || (message.talkQr !== undefined && typeof message.talkQr !== 'boolean')
     ) return null
-    return { type: 'slide.state', slideId: message.slideId, reveal: message.reveal, focus, revision: message.revision }
+    return { type: 'slide.state', slideId: message.slideId, reveal: message.reveal, focus, revision: message.revision,
+      ...(lightbox ? { lightbox } : {}), ...(message.talkQr ? { talkQr: true } : {}) }
   } catch { return null }
+}
+
+export function normaliseInstantSlide(slide) {
+  if (!slide || typeof slide !== 'object' || !Number.isSafeInteger(slide.shownAt)) return null
+  if (slide.kind === 'text') return typeof slide.text === 'string' && slide.text.trim() && slide.text.length <= 2000 ? slide : null
+  if (slide.kind === 'link') return typeof slide.url === 'string' && /^https?:\/\//i.test(slide.url)
+    && typeof slide.qrSvg === 'string' && /^<svg\b/i.test(slide.qrSvg.trim()) ? slide : null
+  if (slide.kind === 'time') return slide
+  if (slide.kind === 'image') return typeof slide.dataUrl === 'string'
+    && /^data:image\/webp;base64,[A-Za-z0-9+/]+={0,2}$/.test(slide.dataUrl) && slide.dataUrl.length <= 120000
+    && Number.isSafeInteger(slide.width) && Number.isSafeInteger(slide.height)
+    && slide.width > 0 && slide.height > 0 && Math.max(slide.width, slide.height) <= 1600 ? slide : null
+  if (slide.kind === 'countdown') return Number.isSafeInteger(slide.startedAt) && Number.isSafeInteger(slide.durationMs)
+    && slide.durationMs >= 1000 && slide.durationMs <= 86400000 && (slide.label == null || typeof slide.label === 'string') ? slide : null
+  return null
 }
 
 export function escapePollHtml(value) {
@@ -556,12 +588,19 @@ export function createAudienceFollowRuntime(options) {
   let sessionLive = false
   let following = false
   let diverged = false
+  let presenterConnected = true
   const pollMount = document.getElementById('audiencePollSurface')
   const pollRuntime = pollMount ? createAudiencePollRuntime({
     mount: pollMount,
     storage,
     sendVote: (pollId, choice) => client?.sendVote(pollId, choice) || false,
   }) : null
+  const instantSurface = document.body ? createInstantSlideSurface(document.body) : { show() {} }
+  let currentInstant = null
+  function receiveInstant(slide) {
+    currentInstant = slide
+    instantSurface.show(following ? slide : null)
+  }
 
   function renderControls() {
     button.hidden = !sessionLive || diverged
@@ -580,8 +619,12 @@ export function createAudienceFollowRuntime(options) {
     following = false
     diverged = false
     latestState = null
+    presenterConnected = true
+    currentInstant = null
+    instantSurface.show(null)
     pollRuntime?.end()
     renderControls()
+    options.onEnded?.(reason)
     statusEl.textContent = reason === 'expired' ? 'The live session has expired.' : 'The live session has ended.'
     statusEl.hidden = false
   }
@@ -611,9 +654,11 @@ export function createAudienceFollowRuntime(options) {
     client = (options.createClient || createAudienceFollowClient)({
       baseUrl: options.liveConfig.workerBaseUrl,
       sessionId,
+      kind: options.venue ? 'screen' : undefined,
       storage,
       probe: () => probeAudienceSession(options.liveConfig.workerBaseUrl, sessionId),
       onStatus: (status) => {
+        if (status !== 'live') presenterConnected = true
         statusEl.textContent = status === 'live' ? 'live'
           : status === 'ended' ? 'the live session has ended'
           : status === 'expired' ? 'the live session has expired'
@@ -621,6 +666,12 @@ export function createAudienceFollowRuntime(options) {
           : 'live paused · reconnecting'
       },
       onSlideState: receiveLiveState,
+      onPresence: (presence) => {
+        const reconnected = !presenterConnected && presence.presenterConnected
+        presenterConnected = presence.presenterConnected
+        if (options.venue && sessionLive && reconnected && latestState) options.applyLiveSlideState(latestState)
+      },
+      onInstantSlide: receiveInstant,
       onPollState: (message) => pollRuntime?.receive(message),
       onVoteStatus: (receipt) => pollRuntime?.onVoteStatus?.(receipt),
       onEnded: markEnded,
@@ -629,10 +680,12 @@ export function createAudienceFollowRuntime(options) {
   function resumeFollowing() {
     if (!sessionLive) return
     following = true
+    instantSurface.show(currentInstant)
     diverged = false
     ensureClient()
     if (latestState && !options.applyLiveSlideState(latestState)) {
       following = false
+      instantSurface.show(null)
       diverged = true
     }
     renderControls()
@@ -641,6 +694,7 @@ export function createAudienceFollowRuntime(options) {
     if (!sessionLive || !latestState) return
     diverged = !audiencePositionsMatch(options.getViewerPosition(), latestState)
     if (diverged) following = false
+    if (diverged) instantSurface.show(null)
     renderControls()
   }
   returnButton.addEventListener('click', resumeFollowing)
@@ -682,7 +736,7 @@ export function createAudienceFollowRuntime(options) {
   }
   void discoverSession()
   ;(options.scheduleDiscovery || ((callback) => window.setInterval(callback, 5000)))(discoverSession)
-  return { discoverSession, viewerMoved, markEnded }
+  return { discoverSession, viewerMoved, markEnded, venueKeyboardAvailable: () => Boolean(options.venue && !(sessionLive && presenterConnected)) }
 }
 
 /** @param {any} message */
@@ -806,6 +860,10 @@ export function createAudienceFollowClient(options) {
     revision = parsed.revision
     options.onSlideState?.(parsed)
   }
+  function applyInstant(message) {
+    const parsed = parseServerMessage(JSON.stringify(message))
+    if (parsed?.type === 'instant.state') options.onInstantSlide?.(parsed.slide)
+  }
   function connect() {
     if (stopped) return
     generation++
@@ -814,6 +872,7 @@ export function createAudienceFollowClient(options) {
       const url = new URL(audienceSocketUrl(options.baseUrl, options.sessionId))
       url.searchParams.set('protocol', '2')
       url.searchParams.set('participantId', participantId)
+      if (options.kind === 'screen') url.searchParams.set('kind', 'screen')
       const current = createSocket(url.toString())
       socket = current
       later('handshake', fail, options.handshakeTimeoutMs ?? 10_000)
@@ -845,6 +904,11 @@ export function createAudienceFollowClient(options) {
               if (state?.type !== 'slide.state') return
               applySlide(state, true)
             }
+            if (message.presence) {
+              const presence = parseServerMessage(JSON.stringify({ type: 'session.presence', ...message.presence }))
+              if (presence) options.onPresence?.(presence)
+            }
+            applyInstant({ type: 'instant.state', slide: message.instantSlide ?? null })
             for (const poll of polls) options.onPollState?.(poll)
             for (const ack of message.receipts) receipt(ack)
             syncId = ''; attempt = 0
@@ -856,6 +920,8 @@ export function createAudienceFollowClient(options) {
           const parsed = parseServerMessage(event.data)
           if (parsed?.type === 'poll.state') options.onPollState?.(parsed)
           else if (parsed?.type === 'slide.state') applySlide(parsed)
+          else if (parsed?.type === 'session.presence') options.onPresence?.(parsed)
+          else if (parsed?.type === 'instant.state') applyInstant(parsed)
         } catch { fail() }
       }
     } catch { fail() }
@@ -900,7 +966,7 @@ export function createAudienceFollowClient(options) {
 }
 
 export function liveFollowRuntimeSource() {
-  return extendedPollRuntimeSource() + '\n' + [normaliseFocus, audienceSocketUrl, normalisePollState, parseServerMessage, escapePollHtml,
+  return extendedPollRuntimeSource() + '\n' + instantSlideRuntimeSource() + '\n' + [normaliseFocus, normaliseLightbox, audienceSocketUrl, normalisePollState, normaliseInstantSlide, parseServerMessage, escapePollHtml,
     pollTypeLabel, submissionLimit, renderAudiencePollMarkup, shouldRenderAudiencePollUpdate, createAudiencePollRuntime, reconnectDelay,
     audiencePositionsMatch, createAudienceFollowRuntime, normaliseVoteReceipt, probeAudienceSession, createAudienceFollowClient]
     .map((fn) => fn.toString()).join('\n')

@@ -80,8 +80,8 @@
      grid whose implicit `auto` track let the block collapse to its min-content (~300px) — the
      "tiny in the centre" bug. justify-self:stretch + width:100% claim the full column; the SVG
      then scales to that width (viewBox preserves the graph) and uses the available height. *//* @order 0235 */
-  .conceptmap { margin: 18px auto 0; width: 100%; max-width: 1180px; justify-self: stretch; }/* @order 0236 */
-  .conceptmap svg { width: 100%; height: auto; max-height: 70vh; display: block; }/* @order 0237 */
+  .conceptmap { margin: 18px auto 0; width: 100%; max-width: 92.1875cqw; justify-self: stretch; } /* ADR-0030: 1180px of the 1280px canvas *//* @order 0236 */
+  .conceptmap svg { width: 100%; height: auto; max-height: 70cqh; display: block; }/* @order 0237 */
   .conceptmap line.cm-edge, .conceptmap .cm-edge line { stroke: color-mix(in srgb, var(--accent) 55%, var(--line)); stroke-width: 2; }/* @order 0238 */
   .conceptmap .cm-edge-label-bg { fill: var(--paper); stroke: color-mix(in srgb, var(--accent) 30%, var(--line)); stroke-width: 1; }/* @order 0239 */
   .conceptmap .cm-edge-label { fill: var(--muted); font-family: var(--mono, inherit); font-size: 14px; letter-spacing: 0.04em; }/* @order 0240 */
@@ -200,7 +200,7 @@
      slide overflow the stage, which the runtime autofit then shrinks (zoom) — squashing the map to a
      sliver. height:100% + align-self:stretch lets the map take the region it is given; the modest
      min-height only guards degenerate (unsized) parents. *//* @order 0423 */
-  .mindmap-mm { position: relative; width: 100%; height: 100%; align-self: stretch; min-height: 68vh; margin: 16px auto 0; max-width: none; }/* @order 0424 */
+  .mindmap-mm { position: relative; width: 100%; height: 100%; align-self: stretch; min-height: 68cqh; margin: 16px auto 0; max-width: none; }/* @order 0424 */
   .mindmap-mm svg { font-size: max(22px, 1.7cqw); }/* @order 0425 */
   .mindmap-mm > svg.markmap {
     width: 100%; height: 100%; display: block;
@@ -219,16 +219,16 @@
   /* Fenced Mermaid and SVG objects own the full structural stage band (ADR-0005/0019). *//* @order 0429 */
   .mermaid-mm,
   .slide-svg {
-    position: relative; width: 100%; height: 100%; min-height: 68vh; max-width: none;
+    position: relative; width: 100%; height: 100%; min-height: 68cqh; max-width: none;
     align-self: stretch; margin: 16px auto 0;
   }/* @order 0430 */
   .mermaid-mm { display: grid; place-items: center; }/* @order 0432 */
   .slide-svg { display: flex; align-items: center; justify-content: center; }/* @order 0434 */
   .mermaid-mm > svg,
-  .slide-svg > svg { display: block; width: 100%; max-width: 100%; max-height: 68vh; height: auto; }/* @order 0436 */
+  .slide-svg > svg { display: block; width: 100%; max-width: 100%; max-height: 68cqh; height: auto; }/* @order 0436 */
   .svg-error-source,
   .mermaid-mm > pre {
-    width: 100%; max-height: 52vh; overflow: auto; margin: 0; padding: 18px;
+    width: 100%; max-height: 52cqh; overflow: auto; margin: 0; padding: 18px;
     border: 1px solid #e7c4cd; border-radius: 8px; background: var(--paper);
     color: var(--ink); font: 500 max(18px, 1.35cqw)/1.55 var(--mono); white-space: pre-wrap;
   }/* @order 0439 */
@@ -243,7 +243,7 @@
      The connector is drawn per-step (::before spans the disc row; trimmed at the ends). *//* @order 0443 */
   .process-strip {
     display: flex; align-items: flex-start; justify-content: center;
-    margin: 44px auto 0; width: min(1180px, 100%);
+    margin: 44px auto 0; width: min(92.1875cqw, 100%); /* ADR-0030: 1180px of the 1280px canvas */
   }/* @order 0455 */
 
   /* STEPS ({steps} / {stairs}). Ascending stairs: bottom-aligned columns rising left-to-right
@@ -251,7 +251,7 @@
      so the highest step is the accent-filled one. *//* @order 0456 */
   .steps-diagram {
     display: flex; align-items: flex-end; justify-content: center; gap: 12px;
-    margin: 34px auto 0; width: min(1080px, 100%); height: min(48vh, 440px);
+    margin: 34px auto 0; width: min(1080px, 100%); height: min(48cqh, 440px);
   }/* @order 0602 */
   .flow-node {
     flex: 0 1 auto;
@@ -334,7 +334,7 @@
   .flow-turn {
     align-self: flex-end;
     width: clamp(44px, 5cqw, 86px);
-    height: clamp(42px, 7vh, 80px);
+    height: clamp(42px, 7cqh, 80px);
     border-top: 3.5px solid var(--accent);
     border-right: 3.5px solid var(--accent);
     border-radius: 0 16px 0 0;

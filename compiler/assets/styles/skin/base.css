@@ -120,19 +120,19 @@
   .tp-poster .tp-whenweb { text-align: right; font-size: max(var(--type-floor), 1.85cqw); color: var(--muted); line-height: 1.55; flex: none; }/* @order 1628 */
   .tp-poster .tp-web { color: var(--accent); font-weight: 600; }/* @order 1631 */
   .tp-split { align-items: stretch; }/* @order 1601 */
-  .tp-split .tp-side { width: 22cqw; flex: none; background: var(--tint); display: flex; flex-direction: column; justify-content: space-between; padding: 6vh 2.2vw; }/* @order 1603 */
+  .tp-split .tp-side { width: 22cqw; flex: none; background: var(--tint); display: flex; flex-direction: column; justify-content: space-between; padding: 3.38cqw 2.2cqw; }/* @order 1603 */
   .tp-split .tp-side .tp-event { font-size: max(22px, .85em); color: var(--muted); line-height: 1.5; }/* @order 1605 */
-  .tp-split .tp-main-col { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 0 5vw; }/* @order 1607 */
+  .tp-split .tp-main-col { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 0 5cqw; }/* @order 1607 */
   .tp-split .tp-title { font-size: max(40px, 5.6cqw); line-height: 1.16; letter-spacing: -.03em; max-width: 12em; }/* @order 1609 */
   .tp-split .tp-author { margin: 2.2em 0 0; font-size: max(22px, .95em); }/* @order 1611 */
   .tp-split .tp-web { color: var(--accent); font-weight: 500; }/* @order 1615 */
   .tp-banner { flex-direction: column; }/* @order 1617 */
   .tp-banner .tp-main { flex: 1; display: flex; align-items: center; justify-content: center; }/* @order 1619 */
-  .tp-banner .tp-inner { width: fit-content; max-width: 76vw; }/* @order 1621 */
+  .tp-banner .tp-inner { width: fit-content; max-width: 76cqw; }/* @order 1621 */
   .tp-banner .tp-series { display: flex; align-items: center; gap: 1em; margin-bottom: 1.4em; }/* @order 1623 */
   .tp-banner .tp-series::after { content: ""; width: 4em; height: 2px; background: var(--accent); }/* @order 1625 */
   .tp-banner .tp-title { font-size: max(40px, 5.8cqw); line-height: 1.16; letter-spacing: -.03em; max-width: 12em; }/* @order 1627 */
-  .tp-banner .tp-band { background: var(--accent); color: var(--paper); display: flex; align-items: center; justify-content: space-between; padding: 2.6vh 6vw 4.5vh; gap: 3em; font-size: max(20px, .9em); }/* @order 1629 */
+  .tp-banner .tp-band { background: var(--accent); color: var(--paper); display: flex; align-items: center; justify-content: space-between; padding: 1.46cqw 6cqw 2.53cqw; gap: 3em; font-size: max(20px, .9em); }/* @order 1629 */
   .tp-banner .tp-band .tp-mono { color: var(--paper); opacity: .9; }/* @order 1666 */
   .slide {
     --fs-display: max(40px, 5.6cqw);   /* statements, posters */
@@ -156,7 +156,7 @@
   .slide-content:has(> .trace) { max-width: none; width: calc(100% - 2 * var(--slide-pad-x, 48px)); }/* @order 1778 */
   .trace {
     font-size: max(22px, 1.6cqw);
-    min-height: 56vh;
+    min-height: 56cqh;
     padding: 1.6em 1.8em;
     width: 100%;
     box-sizing: border-box;

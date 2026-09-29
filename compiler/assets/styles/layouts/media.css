@@ -20,7 +20,7 @@
     width: auto;
     height: auto;
     max-width: 100%;
-    max-height: min(100%, 78vh);
+    max-height: min(100%, 78cqh);
     object-fit: contain;
     justify-self: center;
     align-self: center;
@@ -68,15 +68,15 @@
     flex: 1;
     min-width: 0;
     margin: 0;
-    max-height: 70vh;
+    max-height: 70cqh;
   }/* @order 0272 */
   .img-row figure.slide-figure.fig img,
-  .img-row figure.slide-figure.fig video { max-height: 60vh; cursor: zoom-in; }/* @order 0279 */
+  .img-row figure.slide-figure.fig video { max-height: 60cqh; cursor: zoom-in; }/* @order 0279 */
   /* The visible footer occupies the bottom 59px of the viewport. The slide's ordinary safe-area
      padding already clears most of it; reserve only the remainder, then remove the generic title
      gap so the row's auto margins split the exact title-to-footer media band equally. *//* @order 0280 */
   .slide[data-title-layout="top"] > .slide-content.layout-media {
-    height: min(820px, 86vh);
+    height: min(820px, 86cqh);
     min-height: 0;
     padding-bottom: max(0px, calc(61px - var(--slide-pad-y)));
   }/* @order 0281 */
@@ -105,7 +105,7 @@
     object-fit: contain;
   }
   /* Ticket 15: a media-only run of 2-3 image, video or embed figures is one aspect-weighted
-     row. The row fills the available band below the title, up to the established 70vh cap. Each
+     row. The row fills the available band below the title, up to the established 70cqh cap. Each
      figure takes its intrinsic aspect as its flex share: a portrait stays narrower than a
      landscape, the full row width is used, and object-fit containment prevents clipping.
      Videos or embeds without dimensions carry the compiler's flagged 16:9 assumption. *//* @order 0283 */
@@ -120,7 +120,7 @@
     width: 100%;
     min-width: 0;
     min-height: 0;
-    max-height: 70vh;
+    max-height: 70cqh;
     margin-top: auto !important;
     margin-bottom: auto !important;
   }/* @order 0284 */
@@ -134,7 +134,7 @@
     min-width: 0;
     min-height: 0;
     margin: 0;
-    max-height: 72vh;
+    max-height: 72cqh;
   }/* @order 0285 */
   .slide-content.layout-media > .figure-row > figure > img,
   .slide-content.layout-media > .figure-row > figure > video,
@@ -143,7 +143,7 @@
     height: auto;
     aspect-ratio: var(--media-aspect, 1);
     max-width: 100%;
-    max-height: 70vh;
+    max-height: 70cqh;
     min-width: 0;
     min-height: 0;
     object-fit: contain;
@@ -159,12 +159,12 @@
     grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
     align-content: center;
     aspect-ratio: auto;
-    max-height: 78vh;
+    max-height: 78cqh;
   }/* @order 0288 */
-  .slide-content.layout-media > .figure-row.figure-row-gallery > figure { max-height: 38vh; }/* @order 0289 */
+  .slide-content.layout-media > .figure-row.figure-row-gallery > figure { max-height: 38cqh; }/* @order 0289 */
   .slide-content.layout-media > .figure-row.figure-row-gallery > figure > img,
   .slide-content.layout-media > .figure-row.figure-row-gallery > figure > video,
-  .slide-content.layout-media > .figure-row.figure-row-gallery > figure > iframe { max-height: 36vh; }/* @order 0290 */
+  .slide-content.layout-media > .figure-row.figure-row-gallery > figure > iframe { max-height: 36cqh; }/* @order 0290 */
   /* A click target reads as interactive: the gallery image lifts slightly on hover. *//* @order 0291 */
   .slide-content.layout-media > .figure-row .slide-figure img { cursor: zoom-in; }/* @order 0309 */
   .figure-row.qr-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: clamp(14px, 1.6cqw, 24px); align-items: start; margin: 0; }/* @order 0474 */
@@ -176,7 +176,7 @@
   .slide-content.layout-image-quote {
     justify-content: center;
     align-content: center;
-    min-height: min(820px, calc(86vh - var(--quote-chrome-band)));
+    min-height: min(820px, calc(86cqh - var(--quote-chrome-band)));
   }/* @order 0476 */
   .slide-content.layout-image-quote > .slide-head-quiet { display: contents; }/* @order 0477 */
   .slide:has(> .slide-content.layout-image-quote) {
@@ -188,12 +188,12 @@
     display: grid;
     grid-template-columns: minmax(0, 0.62fr) minmax(0, 1fr);
     grid-template-rows: 1fr auto;
-    column-gap: clamp(28px, 3.2cqw, 56px); row-gap: clamp(20px, 3vh, 36px);
+    column-gap: clamp(28px, 3.2cqw, 56px); row-gap: clamp(20px, 3cqh, 36px);
     align-items: center; width: 100%; align-self: center;
   }/* @order 0478 */
   .image-quote .iq-figure { grid-column: 1; grid-row: 1; margin: 0; display: grid; justify-items: center; row-gap: 8px; }/* @order 0479 */
   .image-quote .iq-figure img {
-    max-width: 100%; max-height: 56vh; width: auto; height: auto;
+    max-width: 100%; max-height: 56cqh; width: auto; height: auto;
     border-radius: 0; border: 1px solid var(--hairline); box-shadow: none;
   }/* @order 0480 */
   .image-quote .iq-figure figcaption { font-size: max(12px, 1cqw); color: var(--muted); text-align: center; }/* @order 0481 */
@@ -248,7 +248,7 @@
      the aspect; small rasters are not upscaled past the box). *//* @order 0496 */
   .image-grid .ig-media {
     position: relative;
-    height: clamp(120px, 20vh, 210px);
+    height: clamp(120px, 20cqh, 210px);
     background: color-mix(in srgb, var(--ink) 4%, var(--tint));
   }/* @order 0497 */
   .image-grid .ig-media img {
@@ -514,9 +514,11 @@
   /* @order 1838 */
   .slot > .slot-media .timeline { margin-top: 0; }
   /* @order 1839 */
-  /* Narrow viewports (phone slide view): the two columns stack, copy first. */
+  /* A narrow stage: the two columns stack, copy first. ADR-0030: keyed to the stage (the slide
+     canvas), not the window, like every other layout's narrow rule — a slide view scales the
+     canvas and never re-lays the slide out for a narrow window. */
   /* @order 1840 */
-  @media (max-width: 950px) {
+  @container (max-width: 950px) {
     .slot,
     .slot[data-slot-side="left"] { grid-template-columns: minmax(0, 1fr); row-gap: 18px; }
     .slot[data-slot-side="left"] > .slot-copy,

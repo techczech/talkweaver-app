@@ -11,7 +11,7 @@ export type IconName =
   | 'file-plus' | 'folder-plus' | 'collapse' | 'swap'
   | 'pane-editor' | 'pane-both' | 'pane-strip' | 'pane-grid'
   | 'design' | 'trash' | 'sort' | 'strip' | 'command' | 'undo' | 'redo' | 'newslide' | 'promote' | 'demote' | 'bullets' | 'numbered' | 'more'
-  | 'table' | 'mindmap' | 'chart' | 'mermaid' | 'diagram' | 'svg'
+  | 'table' | 'mindmap' | 'chart' | 'mermaid' | 'diagram' | 'svg' | 'comment' | 'inbox'
 
 const PATHS: Record<IconName, string> = {
   'chevron-down': 'M6 9l6 6 6-6',
@@ -70,6 +70,10 @@ const PATHS: Record<IconName, string> = {
   chart: 'M3 3v18h18 M8 17v-6 M13 17V7 M18 17v-3',
   mermaid: 'M3 3h8v8H3z M13 13h8v8h-8z M7 11v4h6',
   diagram: 'M12 3l5 8H7z M4 21h7v-6H4z M17.5 20a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7',
+  // Share for comments: a speech bubble (LOCKED-share-sheet.html frame 1).
+  comment: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
+  // Feedback rail: an inbox tray (LOCKED-feedback-rail-and-markers.html toolbar).
+  inbox: 'M3 13l3-8h12l3 8v6H3z M3 13h5l1 3h6l1-3h5',
   svg: 'M12 19l7-7 3 3-7 7-3-3z M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z M11 9.5a1.5 1.5 0 1 0 0-.01'
 }
 

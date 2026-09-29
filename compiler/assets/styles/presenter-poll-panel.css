@@ -1,0 +1,70 @@
+/* Presenter poll panel (ADR-0031, presenter redesign ticket 06; drawn in
+   docs/design/2026-09-26-presenter-redesign/round-2/, shots poll-armed, poll-collecting,
+   poll-collecting-held, poll-results-shown). The panel sits under the current slide
+   (presenter-notes-placement.css sizes it per placement). Its head row holds the phase chip and
+   every action of the phase: Open poll / Reopen responses (Q), Reveal results (⇧Q), Stop
+   accepting responses (Q), then Show question / Show results, the page buttons and Dismiss Quick
+   poll, then the × that hides the panel. Actions in the head stay in view however little height
+   the panel has; when the panel is narrower than its actions (the camera column) they wrap onto a
+   second head row rather than clip. No live chip: live status is the status bar's (ADR-0031 §7).
+   The body: the question, the type and results badges in sentence case, the count, and under them
+   the held note in amber while results are held; the private tallies take the right column.
+   One chrome type scale (ADR-0031 §5): 14px control labels, 13px chip, badges, keys, notes. */
+.presenter-root .presenter-poll-panel {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.presenter-root .presenter-poll-panel [hidden] { display: none !important; }
+.presenter-root .presenter-poll-head {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  padding: 8px 10px 8px 13px;
+}
+.presenter-root .presenter-poll-chip {
+  flex: none; white-space: nowrap;
+  padding: 5px 9px; font: 600 13px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; letter-spacing: 0;
+}
+.presenter-root .presenter-poll-head > .presenter-poll-controls,
+.presenter-root .presenter-poll-head > .presenter-poll-display-controls {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin: 0; padding: 0; border: 0;
+}
+.presenter-root .presenter-poll-head > .presenter-poll-controls { margin-left: auto; }
+.presenter-root .presenter-poll-head > .presenter-poll-dismiss { margin-left: 4px; width: 30px; height: 30px; }
+.presenter-root .presenter-poll-dismiss .tw-ico { margin: 0; }
+
+/* A head action: icon, label, then its key in lighter text (the key comes from the controls
+   table through data-key, so the markup never repeats it). */
+.presenter-root .presenter-poll-head button:not(.presenter-poll-dismiss) {
+  display: inline-flex; align-items: center; gap: 7px; flex: none;
+  height: 32px; min-height: 32px; padding: 0 12px; box-sizing: border-box;
+  border: 1px solid #ffffff1c; border-radius: 7px; background: #1f2c39; color: #f7f3ea;
+  font: 500 14px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; white-space: nowrap; cursor: pointer;
+}
+.presenter-root .presenter-poll-head button:not(.presenter-poll-dismiss):hover { background: #283a4c; }
+.presenter-root .presenter-poll-head button:not(.presenter-poll-dismiss):disabled { opacity: .5; cursor: default; }
+.presenter-root .presenter-poll-head button:not(.presenter-poll-dismiss) .tw-ico { width: 16px; height: 16px; margin: 0; }
+.presenter-root .presenter-poll-head button[data-key]:not([data-key=""])::after {
+  content: attr(data-key); margin-left: 4px; font: 500 13px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; color: #c8d5e1;
+}
+.presenter-root .presenter-poll-head .presenter-poll-open { background: #0f4bd8; border-color: #0f4bd8; color: #fff; }
+.presenter-root .presenter-poll-head .presenter-poll-open:hover { background: #1b5ae8; }
+.presenter-root .presenter-poll-head .presenter-poll-reveal { background: #f59e0b; border-color: #f59e0b; color: #3a2600; }
+.presenter-root .presenter-poll-head .presenter-poll-reveal:hover { background: #fbb13c; }
+.presenter-root .presenter-poll-head .presenter-poll-reveal[data-key]::after { color: #6b4700; }
+
+/* Body: badges and count on one line, the held note under them. */
+.presenter-root .presenter-poll-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; }
+.presenter-root .presenter-poll-badge {
+  white-space: nowrap; text-transform: none;
+  padding: 5px 9px; font: 500 13px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; letter-spacing: 0;
+}
+.presenter-root .presenter-poll-count { color: #8aa0b4; font-size: 13px; }
+.presenter-root .presenter-poll-meta > .presenter-poll-held-note {
+  flex-basis: 100%; margin: 2px 0 0;
+  color: #ffe08a; font: 500 13px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+}
+.presenter-root .presenter-poll-display-status,
+.presenter-root .presenter-poll-operation { font: 500 13px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; }
+.presenter-root .presenter-poll-display-status { color: #a3b3c2; }
+.presenter-root .presenter-poll-bar-label { font-size: 14px; }
+.presenter-root .presenter-poll-bar-value { font: 600 13px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; }

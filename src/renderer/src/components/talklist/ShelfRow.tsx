@@ -3,6 +3,7 @@ import { relDays, type PubState } from './model'
 import type { TalkRowShared } from './LedgerRow'
 import { IcCheck, IcWarn } from './icons'
 import PathwayBadge from './PathwayBadge'
+import { Marked, SearchLine } from './SearchLine'
 
 // Real 16:9 cover from the thumb cache, with the schematic serif fallback while the
 // thumbnail is missing (cold cache) or the coverKey hasn't been indexed yet.
@@ -60,9 +61,9 @@ function Badges({ talk, deliveredMs, pub, warningCount, pathwayCount, pathwayNam
 // Shelf row (cover-led, two-line): the recognising view — cover thumbnail leads, status
 // becomes badges (green Delivered ✓+recency · oxford Published ↗ · amber ⚠), quiet edited date.
 export default function ShelfRow({
-  talk, depth, selected, focused, menuAnchor, warningCount, pathwayCount, pathwayNames, pub, label, fileMode,
+  talk, depth, selected, focused, menuAnchor, warningCount, pathwayCount, pathwayNames, pub, shared = false, feedbackCount = 0, label, fileMode,
   slideCount, coverKey, deliveredMs, editedMs, event, rowKey,
-  rowRef, onOpen, onContextMenu, onDragStart, onDragEnd, onHoverEnter, onHoverLeave
+  rowRef, onOpen, onContextMenu, onDragStart, onDragEnd, onHoverEnter, onHoverLeave, hit, focusPath = ''
 }: TalkRowShared & {
   slideCount: number | null
   coverKey: string | null
@@ -75,6 +76,7 @@ export default function ShelfRow({
   if (selected) cls.push('tl-shrow--selected')
   if (focused) cls.push('tl-shrow--kfocus')
   if (menuAnchor) cls.push('tl-shrow--menu')
+  if (hit) cls.push('tl-shrow--two')
   const edited = relDays(editedMs)
   return (
     <div
@@ -98,13 +100,19 @@ export default function ShelfRow({
     >
       <Cover slug={talk.slug} coverKey={coverKey} title={talk.title} />
       <div className="tl-shrow-main">
-        <div className={`tl-shrow-title ${fileMode ? 'tl-shrow-title--file' : ''}`}>{label}</div>
+        <div className={`tl-shrow-title ${fileMode ? 'tl-shrow-title--file' : ''}`}>
+          {hit && !fileMode ? <Marked text={label} ranges={hit.titleHighlights} /> : label}
+        </div>
         <div className="tl-shrow-meta">
           <span className="tl-shrow-slides">{slideCount != null ? `${slideCount}sl` : '—'}</span>
           <Badges talk={talk} deliveredMs={deliveredMs} pub={pub} warningCount={warningCount} pathwayCount={pathwayCount} pathwayNames={pathwayNames} />
+          {shared && <span className="tl-row-shared" title="Shared for comments" data-testid="talk-row-shared">Shared</span>}
+          {feedbackCount > 0 && <span className="tl-row-fb-count" title={`${feedbackCount} new feedback`} data-testid="talk-row-feedback-count">{feedbackCount}</span>}
           {event && <span className="tl-shrow-event" title={event}>{event}</span>}
           {edited && <span className="tl-shrow-quiet">ed. {edited}</span>}
         </div>
+        {/* Search results: what matched, under the event line, beside the cover (frame L10). */}
+        {hit && <div className="tl-shrow-match"><SearchLine hit={hit} focusPath={focusPath} /></div>}
       </div>
     </div>
   )

@@ -4,12 +4,15 @@ import type { ProjectionRow, TalkInfo } from '../../../preload/index'
 import type { LayoutDoctorFinding } from '../../../shared/layout-doctor'
 import type { LayoutDef, OptionGroup } from '../data/layouts'
 import { LAYOUTS } from '../data/layouts'
-import { deckListStyleForSlide } from '../../../shared/deck-frame'
+import { deckListStyleForSlide, deckStatementTokenForOutline } from '../../../shared/deck-frame'
 import {
   extractInspectorSlideBlock, inspectorCommitToken, inspectorModel, sectionIdAtScrollTop,
   type InspectorBindingModel
 } from './inspectorModel'
 import { OptionControl } from './CommandPalette'
+import {
+  PaneMemory, paneAnchorAt, paneScrollTarget, tabJumpScrollTop, tabTrailingSpace, type PaneNode
+} from './inspectorScroll'
 import { surfacedWarnings } from './SlideStrip'
 import { useLiveSlidePreview } from './useLiveSlidePreview'
 import FixedDeckPreview from './FixedDeckPreview'
@@ -50,11 +53,12 @@ export default function Inspector({
     ? false
     : headingHasChildSlides(outlineContent.split('\n'), headingLine - 1)
   const deckListStyle = useMemo(() => deckListStyleForSlide(outlineContent, headingLine), [outlineContent, headingLine])
+  const deckStatementToken = useMemo(() => deckStatementTokenForOutline(outlineContent), [outlineContent])
   const model = useMemo(
     () => inspectorModel(
-      compiledSlides, activeIndex, headingLevel, triggerLine, LAYOUTS, block, hasChildren, triggerFindings, deckListStyle
+      compiledSlides, activeIndex, headingLevel, triggerLine, LAYOUTS, block, hasChildren, triggerFindings, deckListStyle, deckStatementToken
     ),
-    [compiledSlides, activeIndex, headingLevel, triggerLine, block, hasChildren, triggerFindings, deckListStyle]
+    [compiledSlides, activeIndex, headingLevel, triggerLine, block, hasChildren, triggerFindings, deckListStyle, deckStatementToken]
   )
   const entry = LAYOUTS.find((candidate) => candidate.name === model.layoutName)
   const warnings = surfacedWarnings(row, 'inspector', triggerFindings)
@@ -81,43 +85,90 @@ export default function Inspector({
     setStep(next)
   }
 
-  // T32 (Decision 2A): the jump row. The Inspector itself is the scroll area; the row is sticky
-  // at its top. The lit pill is read from scroll position on every scroll event — no timers. A
-  // pill click lights its section at once and keeps it lit while the smooth scroll runs (a short
-  // last section can never reach the top); any user scroll input hands control back to position.
-  const scrollerRef = useRef<HTMLElement | null>(null)
-  const jumpRowRef = useRef<HTMLDivElement | null>(null)
+  // The options pane works as tabs (Dominik's preview.11 check, 29 Sep): the preview head and the
+  // chip row stay pinned; only the options scroll. A chip puts its section's heading at the top of
+  // the pane (trailing space lets the last one get there); the lit chip is the section at the top,
+  // read from scroll position. The pane's place is held as an anchor per slide (inspectorScroll.ts)
+  // and put back after every render, so an option change never moves what the user is looking at.
+  const paneRef = useRef<HTMLDivElement | null>(null)
+  const tailRef = useRef<HTMLDivElement | null>(null)
   const sectionRefs = useRef(new Map<string, HTMLElement>())
-  const jumpTargetRef = useRef<string | null>(null)
-  const sectionIds = model.sections.map((section) => section.id).join(' ')
+  const paneMemory = useRef(new PaneMemory())
+  const paneSlideRef = useRef<string | null>(null)
+  const slideKey = row?.slide_id || `index:${activeIndex}`
+  const slideKeyRef = useRef(slideKey)
+  slideKeyRef.current = slideKey
   const [litSection, setLitSection] = useState<string | null>(null)
 
-  const readLitSection = (): void => {
-    const scroller = scrollerRef.current
-    if (!scroller) return
-    if (jumpTargetRef.current) { setLitSection(jumpTargetRef.current); return }
-    const scrollerTop = scroller.getBoundingClientRect().top
-    const tops = model.sections.map((section) => ({
-      id: section.id,
-      top: (sectionRefs.current.get(section.id)?.getBoundingClientRect().top ?? 0) - scrollerTop + scroller.scrollTop
+  const paneNodes = (pane: HTMLElement): PaneNode[] => {
+    const origin = pane.getBoundingClientRect().top - pane.scrollTop
+    return [...pane.querySelectorAll<HTMLElement>('.tw-inspector-section, .tw-inspector-group')].map((element) => ({
+      key: element.dataset.section ? `section:${element.dataset.section}` : `group:${element.dataset.group ?? ''}`,
+      top: element.getBoundingClientRect().top - origin
     }))
-    // The reading line sits just below the sticky row: a section whose heading shows directly
-    // under the pills is the one being read.
-    const readingLine = scroller.scrollTop + (jumpRowRef.current?.offsetHeight ?? 0) + 12
-    setLitSection(sectionIdAtScrollTop(tops, readingLine))
   }
-  useLayoutEffect(() => { jumpTargetRef.current = null; readLitSection() }, [sectionIds, model.unresolved])
+  const sectionTops = (nodes: readonly PaneNode[]): { id: string; top: number }[] => nodes
+    .filter((node) => node.key.startsWith('section:'))
+    .map((node) => ({ id: node.key.slice('section:'.length), top: node.top }))
+  const readLitSection = (pane: HTMLElement, nodes: readonly PaneNode[]): void => {
+    setLitSection(sectionIdAtScrollTop(sectionTops(nodes), pane.scrollTop + 2))
+  }
+  const sizeTail = (pane: HTMLElement): void => {
+    const tail = tailRef.current
+    const last = [...pane.querySelectorAll<HTMLElement>('.tw-inspector-section')].at(-1)
+    if (!tail) return
+    if (!last) { tail.style.height = '0px'; return }
+    const origin = pane.getBoundingClientRect().top - pane.scrollTop
+    const rect = last.getBoundingClientRect()
+    const contentEnd = rect.bottom - origin + (parseFloat(getComputedStyle(pane).paddingBottom) || 0)
+    tail.style.height = `${tabTrailingSpace(pane.clientHeight, rect.top - origin, contentEnd)}px`
+  }
+  // After every render (and whenever the pane or its content changes size): size the trailing
+  // space, then put the pane back at this slide's anchor.
+  const settlePane = (): void => {
+    const pane = paneRef.current
+    if (!pane) return
+    // Read before re-sizing the trailing space: a pane the render cut short shows as pulled back.
+    const current = pane.scrollTop
+    const maxScrollTop = pane.scrollHeight - pane.clientHeight
+    sizeTail(pane)
+    const nodes = paneNodes(pane)
+    const key = slideKeyRef.current
+    const target = paneScrollTarget(paneMemory.current, key, paneSlideRef.current, nodes, current, maxScrollTop)
+    paneSlideRef.current = key
+    if (Math.abs(pane.scrollTop - target) > 1) pane.scrollTop = target
+    if (nodes.length > 0) paneMemory.current.remember(key, paneAnchorAt(nodes, pane.scrollTop))
+    readLitSection(pane, nodes)
+  }
+  const settleRef = useRef(settlePane)
+  settleRef.current = settlePane
+  useLayoutEffect(() => { settlePane() })
+  useLayoutEffect(() => {
+    const pane = paneRef.current
+    if (!pane) return
+    const observer = new ResizeObserver(() => settleRef.current())
+    observer.observe(pane)
+    return () => observer.disconnect()
+  }, [model.unresolved])
 
-  const releaseJump = (): void => { jumpTargetRef.current = null }
+  const onPaneScroll = (): void => {
+    const pane = paneRef.current
+    if (!pane) return
+    const nodes = paneNodes(pane)
+    // A pane emptied for a moment (a recompile) must not overwrite the slide's place.
+    if (nodes.length > 0) paneMemory.current.remember(slideKeyRef.current, paneAnchorAt(nodes, pane.scrollTop))
+    readLitSection(pane, nodes)
+  }
   const scrollToSection = (id: string): void => {
-    const scroller = scrollerRef.current
+    const pane = paneRef.current
     const section = sectionRefs.current.get(id)
-    if (!scroller || !section) return
-    const target = section.getBoundingClientRect().top - scroller.getBoundingClientRect().top
-      + scroller.scrollTop - (jumpRowRef.current?.offsetHeight ?? 0)
-    jumpTargetRef.current = id
+    if (!pane || !section) return
+    sizeTail(pane)
+    const top = section.getBoundingClientRect().top - pane.getBoundingClientRect().top + pane.scrollTop
+    pane.scrollTop = tabJumpScrollTop(top, pane.scrollHeight - pane.clientHeight)
+    const nodes = paneNodes(pane)
+    paneMemory.current.remember(slideKeyRef.current, paneAnchorAt(nodes, pane.scrollTop))
     setLitSection(id)
-    scroller.scrollTo({ top: Math.max(0, target), behavior: 'smooth' })
   }
 
   const renderGroup = (binding: InspectorBindingModel, children: InspectorBindingModel[] = []): React.JSX.Element => (
@@ -130,6 +181,7 @@ export default function Inspector({
       <OptionControl
         entry={binding.source === 'entry' ? (binding.owner ?? entry) : undefined}
         binding={{ group: binding.group, selectedToken: binding.selectedToken }}
+        values={binding.values}
         deckToken={binding.deckToken}
         onSelect={(group, token) => {
           onCommitOption(binding.source === 'entry' ? (binding.owner ?? entry) : undefined, group, inspectorCommitToken(binding, token))
@@ -140,7 +192,6 @@ export default function Inspector({
   )
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLElement>): void => {
-    releaseJump()
     if (!event.altKey) return
     if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
       event.preventDefault()
@@ -154,10 +205,7 @@ export default function Inspector({
   }
 
   return (
-    <aside
-      className="tw-inspector" aria-label="Inspector" tabIndex={-1} onKeyDown={onKeyDown}
-      ref={scrollerRef} onScroll={readLitSection} onWheel={releaseJump} onPointerDown={releaseJump} onTouchMove={releaseJump}
-    >
+    <aside className="tw-inspector" aria-label="Inspector" tabIndex={-1} onKeyDown={onKeyDown}>
       <div className="tw-inspector-preview-head">
         <div className="tw-inspector-nav">
           <button type="button" onClick={onPrev} disabled={activeIndex <= 0} title="Previous slide (⌥↑)" aria-label="Previous slide"><ChevronLeft /></button>
@@ -202,49 +250,57 @@ export default function Inspector({
         )}
       </div>
 
-      {model.unresolved ? (
-        <div className="tw-inspector-unresolved" role="alert">
-          <div className="tw-inspector-unresolved-title"><AlertTriangle /> Unresolved trigger</div>
-          <div className="tw-inspector-unresolved-list">
-            {unresolvedTokens.map((warning, index) => (
-              <div className="tw-inspector-unresolved-row" key={`${warning.token}:${index}`}>
-                <code>{warning.token}</code>
-                <span>{warning.text}</span>
-              </div>
-            ))}
-          </div>
-          <button type="button" onClick={onOpenLayoutDoctor}>Open Layout Doctor</button>
-        </div>
-      ) : (
-        <div className="tw-inspector-options">
-          {model.sections.length > 0 && (
-            <div className="tw-inspector-jumplist" ref={jumpRowRef} role="navigation" aria-label="Option sections">
-              {model.sections.map((section) => (
-                <button
-                  key={section.id}
-                  type="button"
-                  className={litSection === section.id ? 'is-lit' : undefined}
-                  aria-current={litSection === section.id ? 'true' : undefined}
-                  onClick={() => scrollToSection(section.id)}
-                >{section.heading}</button>
-              ))}
-            </div>
-          )}
+      {!model.unresolved && model.sections.length > 0 && (
+        <div className="tw-inspector-jumplist" role="navigation" aria-label="Option sections">
           {model.sections.map((section) => (
-            <section
+            <button
               key={section.id}
-              className="tw-inspector-section"
-              data-section={section.id}
-              aria-label={section.heading}
-              ref={(element) => { if (element) sectionRefs.current.set(section.id, element); else sectionRefs.current.delete(section.id) }}
-            >
-              <h3 className="tw-inspector-section-heading">{section.heading}</h3>
-              {section.bindings.filter((binding) => !binding.nestedUnder).map((binding) =>
-                renderGroup(binding, section.bindings.filter((child) => child.nestedUnder === binding.group.key)))}
-            </section>
+              type="button"
+              className={litSection === section.id ? 'is-lit' : undefined}
+              aria-current={litSection === section.id ? 'true' : undefined}
+              onClick={() => scrollToSection(section.id)}
+            >{section.heading}</button>
           ))}
         </div>
       )}
+
+      <div
+        className={`tw-inspector-pane${model.unresolved ? '' : ' tw-inspector-options'}`}
+        ref={paneRef}
+        onScroll={onPaneScroll}
+      >
+        {model.unresolved ? (
+          <div className="tw-inspector-unresolved" role="alert">
+            <div className="tw-inspector-unresolved-title"><AlertTriangle /> Unresolved trigger</div>
+            <div className="tw-inspector-unresolved-list">
+              {unresolvedTokens.map((warning, index) => (
+                <div className="tw-inspector-unresolved-row" key={`${warning.token}:${index}`}>
+                  <code>{warning.token}</code>
+                  <span>{warning.text}</span>
+                </div>
+              ))}
+            </div>
+            <button type="button" onClick={onOpenLayoutDoctor}>Open Layout Doctor</button>
+          </div>
+        ) : (
+          <>
+            {model.sections.map((section) => (
+              <section
+                key={section.id}
+                className="tw-inspector-section"
+                data-section={section.id}
+                aria-label={section.heading}
+                ref={(element) => { if (element) sectionRefs.current.set(section.id, element); else sectionRefs.current.delete(section.id) }}
+              >
+                <h3 className="tw-inspector-section-heading">{section.heading}</h3>
+                {section.bindings.filter((binding) => !binding.nestedUnder).map((binding) =>
+                  renderGroup(binding, section.bindings.filter((child) => child.nestedUnder === binding.group.key)))}
+              </section>
+            ))}
+            <div className="tw-inspector-tail" ref={tailRef} aria-hidden="true" />
+          </>
+        )}
+      </div>
     </aside>
   )
 }

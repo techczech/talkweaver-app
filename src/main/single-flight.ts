@@ -13,24 +13,44 @@
 export interface SingleFlight {
   /** Queue `task`; it starts only once every earlier task has settled. */
   <T>(task: () => Promise<T>): Promise<T>
+  /** Queue `task` at background priority: it still runs one at a time with everything else, but
+   *  never starts while an ordinary task is waiting — a background share build cannot hold the
+   *  editor strip's preparation up behind it. Background tasks keep their own order. */
+  background<T>(task: () => Promise<T>): Promise<T>
   /** Tasks queued and not yet settled, including the running one. Diagnostics only. */
   waiting(): number
 }
 
 export function createSingleFlight(): SingleFlight {
-  let tail: Promise<unknown> = Promise.resolve()
+  type Job = () => Promise<void>
+  const normal: Job[] = []
+  const low: Job[] = []
+  let running = false
   let queued = 0
-  function run<T>(task: () => Promise<T>): Promise<T> {
-    queued += 1
-    const result = tail.then(() => task())
-    // The gate must survive a failing task: swallow here so the NEXT task still starts, while
-    // the caller keeps the real rejection.
-    tail = result.then(
-      () => { queued -= 1 },
-      () => { queued -= 1 }
-    )
-    return result
+  function pump(): void {
+    if (running) return
+    const next = normal.shift() ?? low.shift()
+    if (!next) return
+    running = true
+    // The gate must survive a failing task: the job settles either way and the NEXT one starts,
+    // while the caller keeps the real rejection.
+    void next().finally(() => { running = false; pump() })
   }
+  function enqueue<T>(lane: Job[], task: () => Promise<T>): Promise<T> {
+    queued += 1
+    return new Promise<T>((resolve, reject) => {
+      lane.push(async () => {
+        let value: T
+        try { value = await task() } catch (error) { queued -= 1; reject(error); return }
+        queued -= 1
+        resolve(value)
+      })
+      // Start on a later microtask, as the chained gate did: a caller never runs inside its own call.
+      void Promise.resolve().then(pump)
+    })
+  }
+  const run = (<T>(task: () => Promise<T>): Promise<T> => enqueue(normal, task)) as SingleFlight
+  run.background = <T>(task: () => Promise<T>): Promise<T> => enqueue(low, task)
   run.waiting = (): number => queued
   return run
 }

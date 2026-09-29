@@ -97,7 +97,7 @@
     list-style: none; margin: 0; padding: 0; position: relative; width: 100%;
     display: grid; grid-template-columns: repeat(var(--tl-spine-cols), 1fr);
     /* Fill the stage so the spine centres with symmetric room for cards above AND below. */
-    align-items: center; min-height: clamp(320px, 56vh, 480px);
+    align-items: center; min-height: clamp(320px, 56cqh, 480px);
   }/* @order 0985 */
   /* The spine bar: a continuous rounded Oxford-blue band running across the centre row. *//* @order 0986 */
   .timeline-spine .tl-spine-track::before {
@@ -203,15 +203,15 @@
   /* The track is a flex child of the top-regime column: it must never grow past the band. */
   .slide[data-title-layout="top"] > .slide-content.layout-timeline > .timeline { flex: 0 1 auto; min-height: 0; margin-top: 0; }/* @order 2023 */
 
-  /* RAIL over stops (mockup .tl-dyn .list): one hairline rail, a ring dot per STOP, the mono date
-     above its text. Five stops must fit the band at both stages, so the group rhythm is tightened
-     and the text sits at max(floor, 2.2cqw) rather than the 3cqw timeline base (five stops of
-     mono date + one text line + rhythm = 5 × ~108px inside the ~600px band under a two-line head). *//* @order 2024 */
-  .timeline.timeline-rail[data-tl-stops] { font-size: max(var(--type-floor), 2.2cqw); }/* @order 2025 */
-  .timeline.timeline-rail[data-tl-stops] .tl-group { padding: .2em 0 .2em 1.6em; }/* @order 2026 */
+  /* RAIL over stops (ADR-0028 §3, round-2 timeline B): one hairline rail, a ring dot per STOP, the
+     bold sans date BESIDE its text (skin/timeline.css @order 1446-1455). Five stops must fit the
+     band at both stages: the text sits on the dense step (--fs-dense, 2.6cqw) and each stop is one
+     row, so five one-line stops take 5 x ~1.9em inside the ~600px band under a two-line head. *//* @order 2024 */
+  .timeline.timeline-rail[data-tl-stops] { font-size: var(--fs-dense); }/* @order 2025 */
+  .timeline.timeline-rail[data-tl-stops] .tl-group { padding: .3em 0 .3em 1.9em; }/* @order 2026 */
   .timeline.timeline-rail[data-tl-stops] .tl-group + .tl-group { margin-top: 0; }/* @order 2027 */
-  .timeline.timeline-rail[data-tl-stops] .tl-group::before { top: .48em; }/* @order 2028 */
-  .timeline.timeline-rail[data-tl-stops] .tl-group-head { margin: 0 0 .1em; line-height: 1.15; }/* @order 2029 */
+  .timeline.timeline-rail[data-tl-stops] .tl-group::before { top: calc(1.02em - 7px); }/* @order 2028 */
+  .timeline.timeline-rail[data-tl-stops] .tl-group-head { margin: 0; line-height: 1.15; }/* @order 2029 */
   .timeline.timeline-rail[data-tl-stops] .tl-entries { gap: .2em; }/* @order 2030 */
   /* One marker per stop: the skin's ring dot on the rail (mockup). The layout sheet's filled dot
      on the group head (@order 0960) would draw a second dot beside the date. */
@@ -227,9 +227,9 @@
   .timeline.timeline-columns[data-tl-stops] .tl-group-head { font-size: max(var(--type-floor), .62em); margin-bottom: .45em; }/* @order 2033 */
   .timeline.timeline-columns[data-tl-stops] li { display: block; }/* @order 2034 */
 
-  /* HORIZONTAL over stops (mockup .tl-simple): the date reads mono accent above its text, the
-     text wraps at the floor inside its column. *//* @order 2035 */
-  .timeline.timeline-horizontal[data-tl-stops] .tl-entries li { font-size: max(var(--type-floor), .95em); max-width: none; text-align: left; padding-top: 0; }/* @order 2036 */
+  /* HORIZONTAL over stops (ADR-0028 §3): the bold sans label reads above its text, the text wraps
+     on the dense step inside its column. *//* @order 2035 */
+  .timeline.timeline-horizontal[data-tl-stops] .tl-entries li { font-size: max(var(--type-floor), 1em); max-width: none; text-align: left; padding-top: 0; }/* @order 2036 */
   /* The per-group entry list is a plain stack: the old auto-flow column grid gave every entry an
      8em minimum, which pushed a five-stop track past the stage edge (the fifth stop clipped). */
   .timeline.timeline-horizontal[data-tl-stops] .tl-entries { display: block; border-top: 0; padding-top: 0; }/* @order 2045 */

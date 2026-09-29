@@ -86,7 +86,11 @@ assert.deepEqual(
 const deckPanelSource = readFileSync(join(root, 'src/renderer/src/components/DeckDesignPanel.tsx'), 'utf8')
 assert.match(deckPanelSource, /visibleGroups\.map/, 'Deck settings must render the groups derived from DECK_OPTION_GROUPS')
 assert.match(deckPanelSource, /type="search"/, 'Deck settings must remain searchable')
-assert.match(deckPanelSource, /editFrontmatterText\(outlineContent, edits\)/, 'Deck settings must use the shared byte-preserving frontmatter editor')
+// Since the one-writer change the panel only builds FrontmatterEdit[]; the host applies them.
+assert.match(deckPanelSource, /import \{[^}]*type FrontmatterEdit[^}]*\} from '[^']*shared\/frontmatter-editor'/, 'Deck settings must use the shared byte-preserving frontmatter editor (builds FrontmatterEdit edits)')
+assert.match(deckPanelSource, /onSave\(edits\)/, 'Deck settings must hand their built edits to the host onSave')
+const workspaceLayoutSource = readFileSync(join(root, 'src/renderer/src/components/WorkspaceLayout.tsx'), 'utf8')
+assert.match(workspaceLayoutSource, /applyOutlineMutation\(talk\.outlinePath, \(text\) => editFrontmatterText\(text, edits\)\)/, 'Deck settings must use the shared byte-preserving frontmatter editor through the one writer (applyOutlineMutation)')
 assert.match(deckPanelSource, /unknown\.map/, 'Deck settings must show unknown frontmatter keys read-only in Other')
 
 console.log(`deck options parity: ${options.length} declared options cover ${compilerMetaReads().size} compiler metadata reads`)

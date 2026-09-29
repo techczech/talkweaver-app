@@ -12,12 +12,28 @@ import {
   publishSlideState,
   revealPoll,
   socketRoleReceivesSlideState,
+  setInstantSlide,
   voteInPoll,
   type StoredLiveSession,
 } from './session-state'
 import * as sessionState from './session-state'
 
 describe('LiveSession state', () => {
+  test('retains the gallery image for a venue snapshot', () => {
+    const session = openSession()
+    publishSlideState(session, { slideId: 'gallery', reveal: 0, focus: null, lightbox: { open: true, index: 1 } })
+    expect(currentStateMessage(session)).toMatchObject({ slideId: 'gallery', lightbox: { open: true, index: 1 } })
+  })
+  test('holds an instant slide across snapshots while preserving the current slide', () => {
+    const session = openSession()
+    publishSlideState(session, { slideId: 'slide-7', reveal: 1, focus: null })
+    const instant = { kind: 'time' as const, shownAt: 1234 }
+    expect(setInstantSlide(session, instant)).toEqual({ type: 'instant.state', slide: instant })
+    expect(session.instantSlide).toEqual(instant)
+    expect(currentStateMessage(session)?.slideId).toBe('slide-7')
+    expect(setInstantSlide(session, null)).toEqual({ type: 'instant.state', slide: null })
+    expect(currentStateMessage(session)?.slideId).toBe('slide-7')
+  })
   test('creates an open session with no current slide', () => {
     const session = createSession({
       sessionId: 'session-1',

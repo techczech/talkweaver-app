@@ -1,0 +1,95 @@
+/* Presenter bottom bar (ADR-0031 §4, presenter redesign ticket 05; drawn in
+   docs/design/2026-09-26-presenter-redesign/round-2/, shots L1-*, menu-more-open, mode-*).
+   One 40px row under a hairline: Outline on the left; Previous, Next (primary) and Skip next in
+   the centre, centred on the window, with Return and the media and gallery controls after them
+   when a slide has them; Quick poll, Instant slide, a divider, Focus and Highlight (amber and
+   pressed while on), "…" More, a divider and the edit pencil on the right. Controls are 32px
+   high (Skip next 32px square; More and the pencil 26px wide), labels 14px, icons 16px (the chrome type scale, ADR-0031 §5). The More menu opens upward
+   and takes the top-bar menus' card and item styles (presenter-top-menus.css).
+   When the row runs short, fitBottomBar() in the template adds n1-n3 in order until it fits:
+   n1 centres the centre group between the side groups instead of on the window; n2 makes Focus
+   and Highlight icon-only; n3 makes Quick poll and Instant slide icon-only. */
+/* The frame's side padding is the drawn 12px (round-2 overrides: .presenter-root padding 10px
+   12px): with it the three groups fit side by side at 1440x900 with nothing collapsed, as drawn;
+   with the older 18px the right group ran 6px short and n1 applied at 1440 too. */
+.presenter-root { padding-left: 12px; padding-right: 12px; }
+#presenterBottomBar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  height: 40px;
+  min-height: 40px;
+  box-sizing: border-box;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-top: 1px solid #ffffff10;
+  border-radius: 0;
+  position: relative;
+  z-index: 40;
+  font-family: var(--tb-ui);
+  color: var(--tb-text);
+  white-space: nowrap;
+  -webkit-font-smoothing: antialiased;
+}
+#presenterBottomBar [hidden] { display: none !important; }
+#presenterBottomBar .tw-nav-left,
+#presenterBottomBar .tw-nav-mid,
+#presenterBottomBar .tw-nav-right { display: flex; align-items: center; gap: 6px; min-width: 0; }
+#presenterBottomBar .tw-nav-right { justify-content: flex-end; }
+#presenterBottomBar .tw-nav-sep { width: 1px; height: 22px; margin: 0 4px; flex: none; background: #ffffff1a; }
+#presenterBottomBar .tw-nav-edit { display: inline-flex; flex: none; }
+#presenterBottomBar .tw-nav-edit:empty { display: none; }
+#presenterBottomBar .tw-nav-sep:has(+ .tw-nav-edit:empty) { display: none; }
+
+/* A control: icon and label, 32px high; icon-only controls are 32px square. */
+#presenterBottomBar button,
+#presenterBottomBar .btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px; flex: none;
+  height: 32px; padding: 0 12px; margin: 0; box-sizing: border-box;
+  border: 1px solid var(--tb-line); border-radius: 7px; background: var(--tb-ctl); color: var(--tb-text);
+  font: 500 14px/1 var(--tb-ui); white-space: nowrap; cursor: pointer;
+}
+#presenterBottomBar button:hover { background: var(--tb-ctl-hover); border-color: var(--tb-line); }
+#presenterBottomBar button:focus-visible { outline: 2px solid #6ea8e6; outline-offset: 1px; }
+#presenterBottomBar .tw-ico,
+#presenterBottomBar .tw-ico.tw-btn-ico { width: 16px; height: 16px; margin: 0; flex: none; vertical-align: middle; opacity: 1; }
+#presenterBottomBar button:has(> .tw-btn-label[hidden]),
+#presenterBottomBar #presenterMore { width: 32px; padding: 0; }
+/* More and the pencil are narrower, as drawn (26px wide, 32px high). */
+#presenterBottomBar #presenterMore,
+#presenterBottomBar #twedit-btn { width: 26px; }
+#presenterBottomBar .tw-nav-wide { min-width: 120px; }
+#presenterBottomBar button.primary { background: #2f6db5; border-color: #2f6db5; color: #fff; font-weight: 600; }
+#presenterBottomBar button.primary:hover { background: #3a7cc6; border-color: #3a7cc6; }
+#presenterBottomBar button[aria-expanded="true"] { background: #2a3f55; border-color: #5b86b5; }
+/* Focus and Highlight while on: pressed, in amber (the mode chip's colour). */
+#presenterBottomBar .tw-nav-mode[aria-pressed="true"] { background: #4a4015; border-color: #ffe08a88; color: #fff0c2; }
+#presenterBottomBar .tw-nav-mode[aria-pressed="true"] > .tw-ico { color: #ffe08a; }
+
+/* Media and gallery controls, on slides that have them: in the centre group, after Skip next. */
+#presenterBottomBar .presenter-media,
+#presenterBottomBar .presenter-gallery { display: flex; align-items: center; gap: 6px; flex: none; min-width: 0; }
+/* The runtime shows the media row on a slide with images only (for the gallery beside it); with no
+   media control in it, it takes no room. */
+#presenterBottomBar .presenter-media:not(:has(> button:not([hidden]))) { display: none; }
+#presenterBottomBar .presenter-media-label { max-width: 22ch; font: 500 13px/1 var(--tb-ui); color: var(--tb-muted); overflow: hidden; text-overflow: ellipsis; }
+#presenterBottomBar .presenter-media-select { height: 32px; box-sizing: border-box; padding: 0 8px; border: 1px solid var(--tb-line); border-radius: 7px; background: var(--tb-ctl); color: var(--tb-text); font: 500 13px/1 var(--tb-ui); }
+
+/* The More menu opens upward, right-aligned on "…". */
+#presenterBottomBar .tw-menu-anchor { position: relative; display: inline-flex; flex: none; }
+#presenterBottomBar .tw-menu.tw-menu-up { top: auto; bottom: calc(100% + 8px); right: 0; width: 330px; box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.5); }
+#presenterBottomBar .tw-menu[hidden] { display: none !important; }
+#presenterBottomBar .tw-menu .tw-mi { height: auto; min-height: 34px; padding: 0 10px; border: 0; border-radius: 6px; background: none; justify-content: normal; }
+#presenterBottomBar .tw-menu .tw-mi:has(.tw-mi-sub) { padding-top: 7px; padding-bottom: 7px; }
+#presenterBottomBar .tw-menu .tw-mi:disabled { cursor: default; }
+
+/* Collapse steps (fitBottomBar). */
+#presenterBottomBar.n1 { display: flex; }
+#presenterBottomBar.n1 .tw-nav-left,
+#presenterBottomBar.n1 .tw-nav-right { flex: 1 1 0; min-width: max-content; }
+#presenterBottomBar.n2 .tw-nav-mode,
+#presenterBottomBar.n3 .tw-nav-tool { width: 32px; padding: 0; }
+#presenterBottomBar.n2 .tw-nav-mode > .tw-btn-label,
+#presenterBottomBar.n3 .tw-nav-tool > .tw-btn-label { display: none; }

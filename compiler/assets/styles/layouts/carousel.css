@@ -20,7 +20,7 @@
     flex-direction: column;
     justify-content: center;
     align-items: stretch;
-    gap: clamp(10px, 1.8vh, 24px);
+    gap: clamp(10px, 1.8cqh, 24px);
   }
   .card-gallery.carousel .card.carousel-subslide > .slide-content > .slide-head {
     display: block !important;

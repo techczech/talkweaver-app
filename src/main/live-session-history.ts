@@ -1,4 +1,4 @@
-import { applyRunPollBuffer, persistRun, readRun } from './runs'
+import { applyRunInstantSlides, applyRunPollBuffer, persistRun, readRun } from './runs'
 import type { SessionRecoveryRecord } from './live-session-store'
 
 export function flushLiveSessionHistory(record: SessionRecoveryRecord): boolean {
@@ -19,7 +19,7 @@ export function flushLiveSessionHistory(record: SessionRecoveryRecord): boolean 
     ...(record.polls.find((poll) => poll.pollId === vote.pollId)?.pollType === 'open' && typeof vote.choice === 'string'
       ? { text: vote.choice } : { choice: vote.choice }),
   }))
-  const updated = applyRunPollBuffer(run, { polls, responses })
+  const updated = applyRunInstantSlides(applyRunPollBuffer(run, { polls, responses }), record.instantHistory ?? [])
   if (JSON.stringify(updated) !== JSON.stringify(run)) persistRun(record.vaultRoot, updated)
   return true
 }

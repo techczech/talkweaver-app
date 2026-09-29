@@ -68,7 +68,8 @@ check('whole-bold paragraph becomes a claim', () => {
   const claim = plain.section.querySelector('p.claim')
   assert(claim, 'a whole-bold paragraph renders a p.claim')
   assert.equal(claim.getAttribute('data-claim-style'), 'plain', 'C1 is the default style')
-  assert.equal(claim.textContent, CLAIM_TEXT, 'the bold markers are consumed by the claim')
+  // ADR-0028 §10: a statement's last two words are joined by a no-break space; compare as plain text.
+  assert.equal(claim.textContent.replace(/\u00a0/g, ' '), CLAIM_TEXT, 'the bold markers are consumed by the claim')
   assert.equal(claim.querySelector('strong'), null, 'a claim never carries <strong>')
   assert(claim.classList.contains('content-p'), 'a claim is still a content paragraph')
 })

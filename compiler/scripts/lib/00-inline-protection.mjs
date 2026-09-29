@@ -4,7 +4,7 @@ function markerRegex() {
   return new RegExp(MARK_SOURCE, "g");
 }
 
-function codeSpanAt(source, from, closeByOpen) {
+export function codeSpanAt(source, from, closeByOpen) {
   if (source[from] !== "`") return null;
   const match = closeByOpen.get(from);
   if (!match) return null;
@@ -22,7 +22,7 @@ function codeSpanAt(source, from, closeByOpen) {
  * each line. An opening may begin inside a longer run (the historical scanner allowed that), but
  * a closer must be an exact maximal run. Clearing at every newline keeps code spans block-local.
  */
-function indexCodeSpanClosers(source) {
+export function indexCodeSpanClosers(source) {
   const closeByOpen = new Map();
   let lineRuns = [];
 
@@ -59,7 +59,7 @@ function indexCodeSpanClosers(source) {
   return closeByOpen;
 }
 
-function markdownLinkAt(source, from) {
+export function markdownLinkAt(source, from) {
   if (source[from] !== "[") return null;
   const match = source.slice(from).match(
     /^\[([^\]\n]+)\]\(\s*([^\s)\n]+)(?:\s+(?:"([^"\n]*)"|&quot;((?:(?!&quot;)[^\n])*)&quot;))?\s*\)/
@@ -76,7 +76,7 @@ function markdownLinkAt(source, from) {
   };
 }
 
-function bareUrlAt(source, from) {
+export function bareUrlAt(source, from) {
   const prefix = source.slice(from, from + 8).toLowerCase();
   if (!prefix.startsWith("http://") && !prefix.startsWith("https://")) return null;
   if (from > 0 && !/[\s(]/.test(source[from - 1])) return null;

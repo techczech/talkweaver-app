@@ -3,7 +3,8 @@
   .slide-content > .feature-list.fl-wide:not(.fl-annotated):has(.fl-icon) {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(16ch, 100%), 1fr));
-    gap: .55em;
+    /* ADR-0028 §5: cards read at the body size, so the gutter between them tightens (.55em -> .4em). */
+    gap: .4em;
     align-content: center;
     max-width: none;
   }/* @order 1410 */
@@ -12,11 +13,16 @@
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    justify-content: space-between;
-    gap: .9em;
+    /* ADR-0028 §4: cards stack from the top, so every card's heading sits at one height
+       (space-between pushed each heading down by its own card's spare height). */
+    justify-content: flex-start;
+    /* ADR-0028 §5: cards spend their padding before their type (padding 1em .8em -> .8em .6em, gap
+       .9em -> .5em, no 21vh floor); both vertical spacings ride --list-gap, so fitLists' spacing
+       step tightens them further before it steps the type. */
+    gap: calc(.5em * var(--list-gap, 1));
     border: 1px solid var(--hairline);
-    padding: 1em .8em;
-    min-height: 21vh;
+    padding: calc(.8em * var(--list-gap, 1)) .6em;
+    min-height: 0;
     font-size: max(26px, 1.05em);
     font-weight: 500;
     line-height: 1.25;
@@ -29,8 +35,9 @@
      the sub-bullet text. Nested sub-icons keep base.css's 20px box with the svg inside it. */
   .slide-content > .feature-list:not(.fl-annotated):has(.fl-icon) > li > .fl-icon,
   .slide-content > .feature-list:not(.fl-annotated):has(.fl-icon) > li > .fl-icon > svg {
-    width: 1.8em;
-    height: 1.8em;
+    /* ADR-0028 §5: 1.9em of the body size (was 1.8em of the dense step); icon lists set their own. */
+    width: 1.9em;
+    height: 1.9em;
     color: var(--accent);
     stroke-width: 1.5;
     flex: none;
@@ -44,10 +51,29 @@
   }/* @order 1639 */
   .slide-content > .feature-list:not(:has(.fl-icon)) > li:last-child { border-bottom: 1px solid var(--hairline); }/* @order 1668 */
   .slide-content > .feature-list:has(.fl-icon) > li { font-size: var(--fs-dense) !important; font-weight: 400; }
+  /* ADR-0028 §5 (amends ADR-0005): cards (boxes / logolist) no longer take the dense step — they
+     read at the body size. Annotated icon lists keep the rule above. When a card is too narrow for a
+     word at this size, fitLists steps --fs-body down by 0.1cqw (never under --fs-dense). */
+  .slide-content > .feature-list:not(.fl-annotated):not(.fl-iconlist-list):has(.fl-icon) > li { font-size: var(--fs-body) !important; }
+  /* A card with sub-items has a heading: bold, 1.15x its items (it rides the same --fs-body, so the
+     ratio holds at every fitted size). A childless card's text is the item itself and stays at 1em. */
+  .slide-content > .feature-list:not(.fl-annotated):not(.fl-iconlist-list):has(.fl-icon) > li:has(> .fl-sublist) > .fl-text {
+    font-size: 1.15em;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+  .slide-content > .feature-list:not(.fl-annotated):not(.fl-iconlist-list):has(.fl-icon) > li > .fl-sublist > li {
+    font-size: 1em;
+    font-weight: 400;
+  }
 
   /* {iconlist=list}: restore the pre-skin icon rows at today's type scale. The icon is the
      accent device; rows have no card chrome and no numbers. Same T28 scoping as the boxes
-     variant: 1.25em sizes only the top-level icon, never the nested .fl-sub-icon svgs. */
+     variant: the icon size applies only to the top-level icon, never the nested .fl-sub-icon svgs.
+     ADR-0028 §4: the icon is larger (1.75em, was 1.25em), further from the text (1.1em, was
+     .7em) and centred on its item; rows are divided by a faint dotted line between items (ink at
+     22%) instead of solid hairlines above every row and below the last; the row padding grows
+     .55em -> .7em to keep the rhythm without the rules. */
   .slide-content > .feature-list.fl-iconlist-list:not(.fl-annotated),
   .slide-content > .feature-list.fl-wide.fl-iconlist-list:not(.fl-annotated) {
     display: grid;
@@ -63,32 +89,44 @@
     grid-template-columns: auto minmax(0, 1fr);
     align-items: center;
     justify-content: initial;
-    gap: .7em;
+    gap: .7em 1.1em;
     min-height: 0;
-    padding: calc(.55em * var(--list-gap, 1)) 0;
+    padding: calc(.7em * var(--list-gap, 1)) 0;
     border: 0;
-    border-top: 1px solid var(--hairline);
     font-size: var(--fs-body) !important;
     font-weight: 400;
     line-height: var(--list-lh, 1.35);
   }
-  .slide-content > .feature-list.fl-iconlist-list:not(.fl-annotated) > li:last-child {
-    border-bottom: 1px solid var(--hairline);
+  /* Both selectors: the row rule above resets `border: 0` at the .fl-wide specificity. */
+  .slide-content > .feature-list.fl-iconlist-list:not(.fl-annotated) > li + li,
+  .slide-content > .feature-list.fl-wide.fl-iconlist-list:not(.fl-annotated) > li + li {
+    border-top: 2px dotted color-mix(in srgb, var(--ink) 22%, transparent);
   }
   .slide-content > .feature-list.fl-iconlist-list:not(.fl-annotated) > li::after { content: none; }
   .slide-content > .feature-list.fl-iconlist-list:not(.fl-annotated) > li > .fl-icon,
   .slide-content > .feature-list.fl-iconlist-list:not(.fl-annotated) > li > .fl-icon > svg {
-    width: 1.25em;
-    height: 1.25em;
+    width: 1.75em;
+    height: 1.75em;
     color: var(--accent);
-    stroke-width: 1.6;
+    stroke-width: 1.4;
+  }
+
+  /* ADR-0028 §4, cards (boxes / logolist with children): the same faint dotted line separates
+     the sub-items inside each card — between sub-items only, none above the first or below the
+     last. The sub-list stretches to the card's inner width so the line spans the card. */
+  .slide-content > .feature-list:not(.fl-annotated):not(.fl-iconlist-list):has(.fl-icon) > li > .fl-sublist { align-self: stretch; }
+  .slide-content > .feature-list:not(.fl-annotated):not(.fl-iconlist-list):has(.fl-icon) > li > .fl-sublist > li + li {
+    border-top: 2px dotted color-mix(in srgb, var(--ink) 22%, transparent);
+    /* Rides fitLists' spacing step, but never closer than .15em to the dotted line (legibility floor). */
+    padding-top: max(.15em, calc(.3em * var(--list-gap, 1)));
+    margin-top: max(.15em, calc(.3em * var(--list-gap, 1)));
   }
 
   /* @order 1986 */
   /* === Ticket 21 — GROUPED / KEY-VALUE LISTS (Dominik: "smaller between-list spacing using subtle
      division lines"). A plain list whose items carry sub-lists is a run of groups: the groups sit
      in a tight hairline-separated rhythm — ~.5em above and below each group, a hairline between
-     them and closing the run — instead of the open 14px + 2.8vh row gaps a flat list keeps. Items
+     them and closing the run — instead of the open 14px + 2.8cqh row gaps a flat list keeps. Items
      inside a group keep the Ticket 18 leading (--list-lh) and their own 4px sub-list gap. */
   .slide-content > .feature-list.fl-has-children:not(:has(.fl-icon)) {
     gap: 0;
@@ -102,4 +140,86 @@
   /* @order 1988 */
   .slide-content > .feature-list.fl-has-children:not(:has(.fl-icon)) > li:last-child {
     border-bottom: 1px solid var(--hairline);
+  }
+
+  /* ADR-0028 §6 — NUMBERED LISTS take the icon-list layout with the number in the icon's box
+     (the compiler stamps .fl-numbered on a numbered list and gives it the icon-list treatment:
+     rows above three items or with {iconlist=list}, cards otherwise). Default style: the number
+     in an outlined square — outline only, no fill: beside the tint rail a filled square would be
+     a second tint. In rows the square is the 1.75em row-icon box with the numeral at 1.05em of
+     the text; in cards it is the card icon's 1.9em box with the numeral at 1.1em. Both are in em
+     of the item, so the number rides the same --fs-body / --list-gap fitting as the icons.
+     Replaces, for numbered lists: base.css's tinted .fl-num disc (@order 0108) and the 15px
+     .fl-num in wide lists (layouts/list.css @order 0109). */
+  .slide-content > .feature-list.fl-numbered:not(.fl-annotated) > li > .fl-icon.fl-num {
+    background: none;
+    border: 2px solid var(--accent);
+    border-radius: .14em;
+    display: grid;
+    place-items: center;
+    color: var(--accent);
+    font-family: var(--sans);
+    font-weight: 700;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    box-sizing: border-box;
+  }
+  .slide-content > .feature-list.fl-iconlist-list.fl-numbered:not(.fl-annotated) > li > .fl-icon.fl-num {
+    font-size: 1.05em;
+    width: calc(1.75em / 1.05);
+    height: calc(1.75em / 1.05);
+  }
+  .slide-content > .feature-list.fl-numbered:not(.fl-iconlist-list):not(.fl-annotated) > li > .fl-icon.fl-num {
+    font-size: 1.1em;
+    width: calc(1.9em / 1.1);
+    height: calc(1.9em / 1.1);
+  }
+  /* {numbered=plain}: the numeral set like the text — same size, accent, 700, with a full stop,
+     right-aligned in a fixed 1.4em column so the text starts at one x for 1–9 and 10+; the item
+     aligns to the top so the numeral sits on the first line. Each style restates the row and card
+     selectors so it outranks the square's box at the same specificity. */
+  .slide-content > .feature-list.fl-iconlist-list.fl-numbered-plain:not(.fl-annotated) > li > .fl-icon.fl-num {
+    border: 0;
+    display: block;
+    width: 1.4em;
+    height: auto;
+    font-size: 1em;
+    line-height: var(--list-lh, 1.35);
+    text-align: right;
+  }
+  .slide-content > .feature-list.fl-numbered-plain:not(.fl-annotated) > li > .fl-icon.fl-num::after { content: "."; }
+  .slide-content > .feature-list.fl-iconlist-list.fl-numbered-plain:not(.fl-annotated) > li,
+  .slide-content > .feature-list.fl-wide.fl-iconlist-list.fl-numbered-plain:not(.fl-annotated) > li { align-items: start; }
+  /* Not drawn — the row treatment carried to cards: the plain numeral heads the card at the
+     heading's size, left-aligned. */
+  .slide-content > .feature-list.fl-numbered-plain:not(.fl-iconlist-list):not(.fl-annotated) > li > .fl-icon.fl-num {
+    border: 0;
+    display: block;
+    width: auto;
+    height: auto;
+    font-size: 1.1em;
+    line-height: 1.2;
+    text-align: left;
+  }
+  /* {numbered=styled}: a large light numeral, two text lines tall, weight 300, accent, centred on
+     its item like the icons. */
+  .slide-content > .feature-list.fl-iconlist-list.fl-numbered-styled:not(.fl-annotated) > li > .fl-icon.fl-num {
+    border: 0;
+    width: 1.1em;
+    height: auto;
+    font-size: 2.1em;
+    font-weight: 300;
+    line-height: .9;
+    letter-spacing: -.04em;
+  }
+  /* Not drawn — the row treatment carried to cards: the styled numeral heads the card, left-aligned. */
+  .slide-content > .feature-list.fl-numbered-styled:not(.fl-iconlist-list):not(.fl-annotated) > li > .fl-icon.fl-num {
+    border: 0;
+    display: block;
+    width: auto;
+    height: auto;
+    font-size: 2.1em;
+    font-weight: 300;
+    line-height: .9;
+    letter-spacing: -.04em;
   }

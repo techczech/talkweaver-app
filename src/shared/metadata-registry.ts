@@ -562,6 +562,19 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
       'the QR code and short link disappear from the next build, and History stops listing this talk as published. Re-publishing stamps it again.'
   },
 
+  {
+    key: 'share_url',
+    location: 'frontmatter',
+    type: 'text',
+    vocabulary: { kind: 'freeform' },
+    label: 'Shared for comments',
+    explanation:
+      'Stamped when you share the talk for comments (Share → Share for comments…): the link colleagues open to read the talk and comment. Stop sharing removes it.',
+    ownership: 'system',
+    deleteConsequence:
+      'the outline no longer records its comment link. Sharing itself carries on until you choose Stop sharing; sharing again writes it back.'
+  },
+
   // ── System-managed (Trigger line) ────────────────────────────────────────────
   {
     key: 'id',

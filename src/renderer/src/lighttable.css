@@ -116,7 +116,7 @@
   background:var(--lt-print);
 }
 .lt .lt-steps button{
-  width:28px; height:26px; font-family:var(--lt-mono); font-size:12px;
+  width:28px; height:26px; font-family:var(--lt-mono); font-size:12px; text-align:center;
   color:var(--lt-ink-faint); border-right:1px solid var(--lt-hair-soft);
   transition:background .18s var(--lt-ease), color .18s var(--lt-ease);
 }
@@ -311,10 +311,12 @@
 
 /* ---------- keyboard hint footer (mockup 575-583) ---------- */
 .lt .lt-hintbar{
-  flex:none; display:flex; align-items:center; gap:18px;
-  height:32px; padding:0 20px;
+  flex:none; display:flex; align-items:center; gap:6px 18px;
+  /* Talk search 08: the hints wrap onto a second row rather than clip — at the app's 1512px the
+     single row had already cut off clear scope, close and ? (since ticket 06 added O). */
+  flex-wrap:wrap; min-height:32px; padding:7px 20px; box-sizing:border-box;
   background:var(--lt-chrome); border-top:1px solid var(--lt-hair);
-  font-size:11.5px; color:var(--lt-ink-faint); overflow:hidden; white-space:nowrap;
+  font-size:11.5px; color:var(--lt-ink-faint); white-space:nowrap;
 }
 .lt .lt-hintbar .lt-h{display:flex; align-items:center; gap:5px}
 .lt .lt-hintbar .lt-push{margin-left:auto}
@@ -478,7 +480,12 @@
    ============================================================ */
 
 /* ---------- root frame (mockup body 46-54 + .app 67, as a fixed overlay) ---------- */
+/* no-drag: the picker covers the editor window's .workspace-toolbar, a drag region (T28). Chromium
+   builds the window's drag shape from every app-region box in document order whatever covers it, so
+   without this opt-out the toolbar's drag strip swallowed real clicks on the picker's top rows (the
+   ACROSS 2–6 buttons; Dominik, 0.34.0-preview.8 check). */
 .lt.lt-browser-root{
+  -webkit-app-region:no-drag;
   position:fixed; inset:0; z-index:900;
   display:flex; flex-direction:column;
   font-family:var(--lt-sans); font-size:15px; color:var(--lt-ink);
@@ -1221,24 +1228,83 @@ button.lt-rghead:hover{background:var(--lt-paper-deep); color:var(--lt-ink-soft)
   font-size:10.5px; color:var(--lt-ink-faint); line-height:1.45;
 }
 
-/* ---------- search group (relocated field + the talk-hit cluster) ---------- */
+/* ---------- search group: "Find a talk" above "Search slides" (ADR-0029 §4; frames K1–K4) ---------- */
 .lt .lt-rail-search{padding:2px 2px 6px}
 .lt .lt-searchfield.rail{max-width:none; height:30px; padding:0 9px; font-size:12.5px}
 .lt .lt-searchfield.rail input{font-size:12.5px}
-.lt .lt-talk-hits{margin-top:7px}
-.lt .lt-th-label{
+.lt .lt-slides-label{margin-top:4px}
+.lt .lt-find{padding:0 2px 2px}
+.lt .lt-findfield{
+  display:flex; flex-wrap:wrap; align-items:center; gap:5px 7px; min-height:30px; padding:4px 9px;
+  border-radius:8px; background:var(--lt-print); border:1px solid var(--lt-hair);
+  box-shadow:inset 0 1px 2px rgba(72,58,34,.05); cursor:text;
+  transition:border-color .2s var(--lt-ease), box-shadow .2s var(--lt-ease);
+}
+.lt .lt-findfield:focus-within{border-color:var(--lt-oxford-mid); box-shadow:0 0 0 3px var(--lt-oxford-soft)}
+.lt .lt-findfield > .lt-icon{color:var(--lt-ink-faint); width:13px; height:13px; flex:none}
+.lt .lt-findfield input{flex:1 1 24px; min-width:24px; border:none; outline:none; background:transparent; font-size:12.5px; padding:0}
+.lt .lt-findfield input::placeholder{color:var(--lt-ink-faint); font-style:italic}
+.lt .lt-find-chip{
+  display:inline-flex; align-items:center; gap:4px; max-width:calc(100% - 60px); min-width:0;
+  background:var(--lt-oxford-soft); color:var(--lt-oxford); border-radius:5px; padding:1px 2px 1px 6px;
+  font-size:12px; line-height:1.5;
+}
+.lt .lt-find-chip > .lt-icon{width:11px; height:11px; flex:none}
+.lt .lt-find-chip-nm{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.lt .lt-find-chip-x{display:flex; flex:none; padding:2px; border-radius:3px; color:var(--lt-ink-faint)}
+.lt .lt-find-chip-x:hover{background:rgba(11,58,107,.12); color:var(--lt-oxford)}
+.lt .lt-find-chip-x .lt-icon{width:10px; height:10px}
+/* the file list's hint row (L3 → K2) and completion (L4), in the Light Table's tokens */
+.lt .lt-find .tl-pfx-row{display:flex; flex-wrap:wrap; gap:4px; padding:6px 0 2px}
+.lt .lt-find .tl-pfx{
+  appearance:none; font:10.5px var(--lt-sans); color:var(--lt-ink-soft); cursor:pointer;
+  border:1px solid var(--lt-hair); border-radius:10px; padding:1px 7px; background:var(--lt-print);
+}
+.lt .lt-find .tl-pfx:hover{background:var(--lt-paper-deep); color:var(--lt-ink)}
+.lt .lt-find .tl-pfx b{font-family:var(--lt-mono); font-weight:600; color:var(--lt-oxford)}
+.lt .lt-find .tl-cpl{
+  margin:5px 0 2px; border:1px solid var(--lt-hair); border-radius:6px; overflow:hidden;
+  background:var(--lt-print); box-shadow:0 6px 18px rgba(72,58,34,.13); font-size:12px; color:var(--lt-ink);
+}
+.lt .lt-find .tl-cpl-h{font-size:9.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--lt-ink-faint); padding:6px 9px 3px}
+.lt .lt-find .tl-cpl-o{display:flex; justify-content:space-between; gap:8px; padding:4px 9px; cursor:pointer}
+.lt .lt-find .tl-cpl-o span{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.lt .lt-find .tl-cpl-o i{flex:none; font-style:normal; color:var(--lt-ink-faint); font-family:var(--lt-mono); font-size:10px}
+.lt .lt-find .tl-cpl-o.is-on{background:var(--lt-oxford-soft)}
+.lt .lt-find .tl-cpl-f{border-top:1px solid var(--lt-hair-soft); padding:5px 9px; font-size:10px; color:var(--lt-ink-faint)}
+/* results (K3): the file list's rows — title with the words marked, the match line under it */
+.lt .lt-find-results{margin-top:6px}
+.lt .lt-find-note{padding:3px 6px; font-size:10.5px; line-height:1.3; color:var(--lt-amber); background:var(--lt-amber-soft); border-radius:5px; margin-bottom:4px}
+.lt .lt-find-head{
   font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--lt-ink-faint);
-  font-weight:600; padding:0 6px 4px;
+  font-weight:600; padding:0 6px 3px;
 }
-.lt .lt-th-row{
-  display:flex; align-items:center; gap:8px; width:100%; text-align:left;
-  padding:4px 6px; border-radius:6px; font-size:12px; color:var(--lt-ink);
+.lt .lt-find-list{max-height:38vh; overflow-y:auto}
+.lt .lt-find-row{
+  display:flex; align-items:center; gap:7px; width:100%; text-align:left;
+  padding:4px 6px; border-radius:6px; color:var(--lt-ink); border:1px solid transparent;
 }
-.lt .lt-th-row:hover{background:var(--lt-paper-deep)}
-.lt .lt-th-row .lt-tn{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-.lt .lt-th-row .lt-tn.serif{font-family:var(--lt-serif); font-size:12.5px}
-.lt .lt-th-row .lt-tc{font-family:var(--lt-mono); font-size:10px; color:var(--lt-ink-faint)}
-.lt .lt-th-act{font-size:10px; color:var(--lt-oxford); font-weight:550; flex:none}
+.lt .lt-find-row.on{background:var(--lt-oxford-soft); border-color:rgba(58,96,140,.35)}
+.lt .lt-find-row.current{opacity:.55; cursor:default}
+.lt .lt-find-row .lt-ficon{flex:none; width:12px; height:12px; color:var(--lt-ink-faint)}
+.lt .lt-find-text{flex:1; min-width:0; display:flex; flex-direction:column}
+.lt .lt-find-name{font-family:var(--lt-serif); font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.lt .lt-find-row .tl-row-sub{display:block; font-size:10.5px; line-height:1.3; color:var(--lt-ink-faint); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.lt .lt-find-row .tl-row-match em{font-style:normal; font-family:var(--lt-mono); font-size:9.5px; color:var(--lt-oxford); text-transform:lowercase; margin-right:1px}
+.lt .lt-find-row mark{background:#f3e3b5; color:inherit; border-radius:2px; padding:0 1px}
+.lt .lt-find-beside{
+  flex:none; font-size:9px; font-weight:600; color:#fff; background:var(--lt-oxford);
+  border-radius:4px; padding:1px 5px; white-space:nowrap;
+}
+.lt .lt-find-row .lt-tc{flex:none; font-family:var(--lt-mono); font-size:10px; color:var(--lt-ink-faint)}
+.lt .lt-find-empty{padding:2px 6px; font-size:11.5px; color:var(--lt-ink-soft); line-height:1.45}
+.lt .lt-find-empty p + p{margin-top:4px}
+.lt .lt-find-empty b{font-weight:600; color:var(--lt-ink)}
+.lt .lt-find-sugg{font:inherit; color:var(--lt-oxford); padding:0; background:none; border:0; cursor:pointer}
+.lt .lt-find-sugg:hover{text-decoration:underline}
+/* the Files tree dims while Find a talk lists talks or holds one (K3, K4); still usable */
+.lt .lt-browse-dim{opacity:.45; transition:opacity .15s var(--lt-ease)}
+.lt .lt-browse-dim:hover, .lt .lt-browse-dim:focus-within{opacity:1}
 
 /* ---------- scope rows (full-width furniture — NEVER chips) ---------- */
 .lt .lt-scope-row{
@@ -1300,8 +1366,10 @@ button.lt-rghead:hover{background:var(--lt-paper-deep); color:var(--lt-ink-soft)
 .lt .lt-trow.sec{font-size:11.5px; color:var(--lt-ink-soft)}
 .lt .lt-trow.sec.scoped{color:var(--lt-oxford)}
 .lt .lt-trow .lt-tc{font-family:var(--lt-mono); font-size:10px; color:var(--lt-ink-faint)}
-.lt .lt-trow.d1{padding-left:22px}
-.lt .lt-trow.d2{padding-left:44px}
+/* Rows indent by their depth in the shared tree (inline padding, ADR-0029 §4). The Archive
+   (old PowerPoint imports) is dimmed, as in the file list. */
+.lt .lt-trow.archive{opacity:.55}
+.lt .lt-trow.archive:hover, .lt .lt-trow.archive.scoped{opacity:1}
 
 .lt .lt-coll-label{
   font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--lt-ink-faint);
@@ -1433,6 +1501,19 @@ button.lt-rghead:hover{background:var(--lt-paper-deep); color:var(--lt-ink-soft)
   font-size:12px; color:var(--lt-ink-soft);
 }
 .lt .lt-sec-head .lt-sec-n{font-family:var(--lt-mono); font-size:10px; color:var(--lt-ink-faint); margin-left:auto}
+/* "Select section · N slides" (talk search 07's heading button, turned into a selection by Dominik's
+   0.34.0-preview.8 check, 28 Sep): always visible on every section heading, beside the section's
+   name; filled while every slide of the section is in the selection */
+.lt .lt-sel-sec{
+  display:inline-flex; align-items:center; gap:5px; align-self:center; margin-left:4px;
+  font-family:var(--lt-sans); font-size:12px; line-height:1.3; color:var(--lt-oxford);
+  background:transparent; border:1px solid var(--lt-oxford-mid); border-radius:6px; padding:1px 8px;
+  cursor:pointer; white-space:nowrap;
+}
+.lt .lt-sel-sec .lt-icon{width:12px; height:12px}
+.lt .lt-sel-sec:hover{background:var(--lt-oxford-soft)}
+.lt .lt-sel-sec.on{background:var(--lt-oxford); color:#fff; border-color:var(--lt-oxford)}
+.lt .lt-sel-sec:focus-visible{outline:2px solid var(--lt-oxford); outline-offset:2px}
 .lt .lt-ordn{
   position:absolute; top:10px; right:10px; z-index:2; font-family:var(--lt-mono); font-size:8.5px;
   color:var(--lt-ink-faint); background:var(--lt-print); border:1px solid var(--lt-hair);
@@ -1579,3 +1660,47 @@ button.lt-rghead:hover{background:var(--lt-paper-deep); color:var(--lt-ink-soft)
    clickable (clicking explains the emptiness honestly). Active chips keep full strength. */
 .lt .lt-lchip.zero:not(.on), .lt .lt-fchip.zero:not(.on){opacity:.45}
 .lt .lt-lchip.zero:not(.on):hover, .lt .lt-fchip.zero:not(.on):hover{opacity:.7}
+
+/* ============================================================
+   A slide-search result's talk beside the results (talk search 06;
+   ADR-0029 §4; frame K5): results left (42%, two across), the
+   result's whole talk right under its header, the slide highlighted.
+   ============================================================ */
+.lt .lt-split{flex:1; min-height:0; display:flex}
+.lt .lt-split > .lt-table-scroll{flex:1; min-width:0}
+.lt .lt-split.open > .lt-table-scroll{flex:0 0 42%; padding-right:22px; border-right:1px solid var(--lt-hair)}
+.lt .lt-beside-lh{font-family:var(--lt-mono); font-size:12px; color:var(--lt-ink-soft); margin-bottom:14px}
+.lt .lt-beside{flex:1; min-width:0; min-height:0; display:flex; flex-direction:column}
+.lt .lt-beside-head{
+  flex:none; display:flex; align-items:center; gap:10px; margin:26px 30px 0 22px; padding:6px 10px;
+  background:var(--lt-chrome); border:1px solid var(--lt-hair); border-radius:7px;
+  font-size:12.5px; color:var(--lt-ink-soft); min-width:0;
+}
+.lt .lt-beside-head .lt-icon{width:13px; height:13px; flex:none}
+.lt .lt-beside-talk{color:var(--lt-ink); font-weight:500; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.lt .lt-beside-sec, .lt .lt-beside-pos{flex:none; white-space:nowrap}
+.lt .lt-beside-sec::before, .lt .lt-beside-pos::before{content:'·'; margin-right:10px; color:var(--lt-ink-faint)}
+.lt .lt-beside-x{
+  margin-left:auto; flex:none; font-size:11.5px; color:var(--lt-ink-soft);
+  padding:2px 8px; border-radius:5px; border:1px solid transparent;
+}
+.lt .lt-beside-x:hover{border-color:var(--lt-hair); color:var(--lt-ink); background:var(--lt-print)}
+.lt .lt-beside-scroll{flex:1; min-height:0; overflow-y:auto; position:relative; padding:14px 30px 120px 22px}
+.lt .lt-beside-scroll::-webkit-scrollbar-track{margin:10px}
+.lt .lt-beside .lt-sec-head{
+  font-family:var(--lt-serif); font-size:16px; color:var(--lt-ink);
+  margin:8px 2px 16px; padding-bottom:8px; border-bottom:1px solid var(--lt-hair-soft);
+}
+.lt .lt-beside .lt-sec-head .lt-sec-n{font-size:10.5px}
+/* the result's slide in its talk: amber, outside the selection and focus rings */
+.lt .lt-card.hl .lt-print{outline:3px solid var(--lt-amber); outline-offset:2px}
+/* "In talk" on a result: shown on the focused card (and on hover) — the click twin of O */
+.lt .lt-inctx{
+  position:absolute; right:10px; bottom:10px; z-index:3; display:none; align-items:center; gap:4px;
+  padding:2px 8px; border-radius:9px; font-size:10.5px; white-space:nowrap;
+  background:var(--lt-print); border:1px solid var(--lt-hair); color:var(--lt-ink-soft);
+  box-shadow:0 1px 3px rgba(72,58,34,.14);
+}
+.lt .lt-card.focused .lt-inctx, .lt .lt-card:hover .lt-inctx{display:flex}
+.lt .lt-inctx:hover{border-color:var(--lt-oxford-mid); color:var(--lt-oxford)}
+.lt .lt-inctx .lt-icon{width:11px; height:11px}

@@ -12,7 +12,7 @@
   .slide-table th,
   .slide-table td {
     border: 1px solid var(--hairline);
-    padding: clamp(12px, 1.6vh, 20px) clamp(14px, 1.2cqw, 22px);
+    padding: clamp(12px, 1.6cqh, 20px) clamp(14px, 1.2cqw, 22px);
     text-align: left;
     vertical-align: top;
   }/* @order 0652 */

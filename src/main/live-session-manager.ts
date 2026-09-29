@@ -1,6 +1,9 @@
 import { createLivePresenterClient, isTerminalLiveStatus, type LiveStatus } from './live-presenter-client'
-import type { PollStateMessage, PresenterPollMessage, SlideState } from '../../worker/protocol'
+import type { InstantSlide, PollStateMessage, PresenterInstantMessage, PresenterPollMessage, SlideState } from '../../worker/protocol'
 import type { SessionRecoveryRecord } from './live-session-store'
+import { runInstantSlideFrom } from './runs'
+
+const instantKey = (slide: InstantSlide): string => `${slide.kind}-${slide.shownAt}`
 
 type Client = Pick<ReturnType<typeof createLivePresenterClient>, 'disconnect' | 'reconnect' | 'publish' | 'sendPoll'>
 interface Runtime {
@@ -11,6 +14,7 @@ interface Runtime {
   historyTimer?: ReturnType<typeof setTimeout>
   endAttempt: number
   ending: boolean
+  venueScreens: number
 }
 export function createLiveSessionManager(deps: {
   load(): SessionRecoveryRecord[]
@@ -32,7 +36,7 @@ export function createLiveSessionManager(deps: {
   const cancelSchedule = deps.cancelSchedule ?? clearTimeout
   const now = deps.now ?? Date.now
   let stopped = false
-  for (const record of deps.load()) sessions.set(record.sessionId, { record, windowId: null, client: null, endAttempt: 0, ending: false })
+  for (const record of deps.load()) sessions.set(record.sessionId, { record, windowId: null, client: null, endAttempt: 0, ending: false, venueScreens: 0 })
 
   function commit(runtime: Runtime, patch: Partial<SessionRecoveryRecord>) {
     const record = { ...runtime.record, ...patch }
@@ -54,6 +58,23 @@ export function createLiveSessionManager(deps: {
     if (runtime.historyTimer !== undefined) return
     deps.diagnostic?.({ sessionId: runtime.record.sessionId, event: 'history-write-pending' })
     runtime.historyTimer = schedule(() => { runtime.historyTimer = undefined; history(runtime) }, 30_000)
+  }
+  // Ticket 07: every instant slide shown is kept with the slide it followed, then flushed to the Run.
+  // The slide it followed is the presenter's slide at the moment of the show (captured in poll()
+  // when instant.show is sent, and kept durably in `instantAnchors`), never the slide the presenter
+  // has reached by the time the server confirms it. Confirmation, the server's instant.state echo
+  // and a recovery snapshot may all report the same show; its `<kind>-<shownAt>` id records it once.
+  // A show this presenter did not send (no captured anchor) falls back to the current slide.
+  function recordInstant(runtime: Runtime, slide: InstantSlide | null | undefined) {
+    if (!slide) return
+    const id = instantKey(slide)
+    const captured = runtime.record.instantAnchors
+    const anchor = captured && Object.prototype.hasOwnProperty.call(captured, id) ? captured[id] : runtime.record.latest?.slideId ?? null
+    const entry = runInstantSlideFrom(slide, anchor)
+    const list = runtime.record.instantHistory ?? []
+    if (list.some((item) => item.id === entry.id)) return
+    commit(runtime, { instantHistory: [...list, entry] })
+    history(runtime)
   }
   function status(runtime: Runtime, value: LiveStatus) {
     if (value === 'ended' || value === 'expired') {
@@ -90,13 +111,30 @@ export function createLiveSessionManager(deps: {
         }
         notify(runtime, 'live:poll-state', message)
       },
-      onSnapshot: (snapshot) => { commit(runtime, { polls: snapshot.polls, expiresAt: snapshot.expiresAt }); history(runtime) },
+      onSnapshot: (snapshot) => {
+        commit(runtime, { polls: snapshot.polls, instantSlide: snapshot.instantSlide ?? null, expiresAt: snapshot.expiresAt })
+        recordInstant(runtime, snapshot.instantSlide)
+        history(runtime)
+      },
+      onPresence: (presence) => {
+        runtime.venueScreens = presence.venueScreens
+        notify(runtime, 'live:presence', presence)
+      },
+      onInstantSlide: (slide) => { commit(runtime, { instantSlide: slide }); recordInstant(runtime, slide); notify(runtime, 'live:instant-state', slide) },
       onPollVoteRecord: (vote) => {
         if (runtime.record.voteRecords.some((record) => record.sequence === vote.sequence)) return
         commit(runtime, { voteRecords: [...runtime.record.voteRecords, vote] })
         history(runtime)
       },
-      onOperation: (operation) => notify(runtime, 'live:poll-operation', operation),
+      onOperation: (operation) => {
+        if (operation.status === 'confirmed' && (operation.message.type === 'instant.show' || operation.message.type === 'instant.clear')) {
+          const slide = operation.message.type === 'instant.show' ? operation.message.slide : null
+          commit(runtime, { instantSlide: slide })
+          recordInstant(runtime, slide)
+          notify(runtime, 'live:instant-state', slide)
+        }
+        notify(runtime, 'live:poll-operation', operation)
+      },
       onDiagnostic: (event) => deps.diagnostic?.({ sessionId: record.sessionId, ...event }),
     })
   }
@@ -142,7 +180,7 @@ export function createLiveSessionManager(deps: {
     create(record: SessionRecoveryRecord, windowId: number) {
       if (sessions.has(record.sessionId)) throw new Error('Live session already exists.')
       deps.save([...sessions.values()].map((item) => item.record).concat(record))
-      const runtime: Runtime = { record, windowId: null, client: null, endAttempt: 0, ending: false }
+      const runtime: Runtime = { record, windowId: null, client: null, endAttempt: 0, ending: false, venueScreens: 0 }
       sessions.set(record.sessionId, runtime)
       return attachRuntime(runtime, windowId)
     },
@@ -160,10 +198,13 @@ export function createLiveSessionManager(deps: {
         && !isTerminalLiveStatus(runtime.record.status))
     },
     snapshot(windowId: number) {
-      const record = runtimeForWindow(windowId)?.record
+      const runtime = runtimeForWindow(windowId)
+      const record = runtime?.record
       if (!record) return null
       return { status: record.status, shortUrl: record.shortUrl, qrSvg: record.qrSvg,
+        venueScreens: runtime.venueScreens,
         polls: structuredClone(record.polls), expiresAt: record.expiresAt,
+        instantSlide: record.instantSlide ?? null,
         pending: structuredClone(record.pending) }
     },
     record(windowId: number) { return runtimeForWindow(windowId)?.record ?? null },
@@ -177,11 +218,15 @@ export function createLiveSessionManager(deps: {
       const runtime = runtimeForWindow(windowId)
       if (!runtime || runtime.record.endRequested || isTerminalLiveStatus(runtime.record.status)) return
       commit(runtime, { latest: slide })
-      runtime.client?.publish(slide.slideId, slide.reveal, slide.focus)
+      runtime.client?.publish(slide.slideId, slide.reveal, slide.focus, slide.lightbox, slide.talkQr === true)
     },
-    poll(windowId: number, action: PresenterPollMessage) {
+    poll(windowId: number, action: PresenterPollMessage | PresenterInstantMessage) {
       const runtime = runtimeForWindow(windowId)
       if (!runtime || runtime.record.endRequested || isTerminalLiveStatus(runtime.record.status)) return { success: false, error: 'Live session is not accepting controls.' }
+      if (action.type === 'instant.show' && runtime.client) {
+        // The slide this instant slide follows is the one on screen NOW, as it is shown.
+        commit(runtime, { instantAnchors: { ...(runtime.record.instantAnchors ?? {}), [instantKey(action.slide)]: runtime.record.latest?.slideId ?? null } })
+      }
       const operationId = runtime.client?.sendPoll(action)
       return operationId ? { success: true, operationId, status: 'pending' as const } : { success: false, error: 'Live control could not be queued.' }
     },

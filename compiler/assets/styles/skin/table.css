@@ -49,7 +49,7 @@
   /* @order 1980 */
   /* === Ticket 21 — TABLE FILLS THE BAND (Dominik: "adjust table size to minimise vertical white
      space"). Row padding scales with the room the band leaves: --table-band is a conservative
-     estimate of the title-to-footer band (stage minus the 6vh title offset, the title bar, the
+     estimate of the title-to-footer band (stage minus the 6cqh title offset, the title bar, the
      slide margins and the 59px footer band, ~85% of the real band at 1600x900 and 1280x720), and
      --table-rows is stamped by the compiler. The padding is clamped so a two-row table never
      balloons (1.1em) and a crowded one never crushes (.45em); the auto margins the top regime gives
@@ -57,7 +57,7 @@
      the band is measured by the presenter runtime (fitLists, the Ticket 18 seam): --list-lh steps
      the cell leading, --list-gap the padding, then --fs-body the type, never below the floor. */
   .slide-table {
-    --table-band: calc(77vh - 150px);
+    --table-band: calc(77cqh - 150px);
     --table-row-pad: clamp(.45em, calc((var(--table-band) - var(--table-rows, 4) * 1.35em) / (2 * var(--table-rows, 4))), 1.1em);
     width: 100%;
     max-width: none;
@@ -93,12 +93,12 @@
   /* The visible footer band starts 61px above the stage bottom (headless Chromium, 2026-09-13:
      .footer rect top = 839 at 900; media.css @order 0280 reserves the band the same way for a lone
      figure): reserve what the slide margin does not already clear, and replace the title bar's
-     fixed gap with the same 2vh on both sides so the top regime's auto margins split the exact
+     fixed gap with the same 2cqh on both sides so the top regime's auto margins split the exact
      title-to-footer band — equal air above and below the table. */
   .slide[data-title-layout="top"] > .slide-content:has(> .slide-table) {
-    padding-bottom: calc(max(0px, calc(61px - var(--slide-pad-y))) + 2vh);
+    padding-bottom: calc(max(0px, calc(61px - var(--slide-pad-y))) + 2cqh);
   }
   /* @order 1998 */
-  /* 2vh is the minimum air on both sides: a table that needs the whole band never touches the
+  /* 2cqh is the minimum air on both sides: a table that needs the whole band never touches the
      title rule or the footer. The head's margin sits inside the span fitLists measures. */
-  .slide[data-title-layout="top"] > .slide-content:has(> .slide-table) > .slide-head { margin-bottom: 2vh !important; }
+  .slide[data-title-layout="top"] > .slide-content:has(> .slide-table) > .slide-head { margin-bottom: 2cqh !important; }

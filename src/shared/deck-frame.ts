@@ -90,7 +90,29 @@ export const DECK_DECIDED_GROUP = 'list-style'
  */
 export function deckCommitContext(outline: string, headingLine: number | null): OptionCommitContext {
   const deckListStyleFor = deckListStyleResolver(outline, headingLine)
-  return { unwrittenSelections: (line) => ({ [DECK_DECIDED_GROUP]: deckListStyleFor(line) }) }
+  return {
+    unwrittenSelections: (line) => ({ [DECK_DECIDED_GROUP]: deckListStyleFor(line) }),
+    statement: { deckClaimStyle: deckClaimStyleForOutline(outline), titleHidden: statementTitleHidden(outline, headingLine) }
+  }
+}
+
+/**
+ * Ticket 02: whether a statement slide paints no title, read from the outline — the case the older
+ * {statement=centred} centres (07-assembly: the heading is the statement when the slide has no
+ * body, or {notitle}/{title=off}; an explicit rail, top title or {title=show} paints it). Unknown
+ * (no slide at that line) is `undefined`.
+ */
+export function statementTitleHidden(outline: string, headingLine: number | null): boolean | undefined {
+  if (headingLine == null) return undefined
+  const { body } = splitFrontmatter(outline)
+  const slide = findSlide(parseOutlineTree(body).root, headingLine)
+  if (!slide) return undefined
+  const line = slide.node.triggerLine ?? ''
+  const has = (pattern: RegExp): boolean => pattern.test(line)
+  const paintsTitle = has(/(?<![\w-])(titletop|sidebar|title=side|title=top|title=show|split=\d+)(?![\w-])/)
+  if (has(/(?<![\w-])(notitle|title=off)(?![\w-])/) && !has(/(?<![\w-])(title=show|title=side|titletop)(?![\w-])/)) return true
+  const hasBody = slide.node.contentLines.some((text) => text.trim() !== '' && !/^\s*(\{[^}]*\}\s*)+$/.test(text))
+  return !hasBody && !paintsTitle
 }
 
 /** The deck's List style choice for the slide as the outline stands. */
@@ -99,4 +121,23 @@ export function deckListStyleForSlide(outline: string, headingLine: number | nul
   const { body } = splitFrontmatter(outline)
   const slide = findSlide(parseOutlineTree(body).root, headingLine)
   return slide ? deckListStyleResolver(outline, headingLine)(slide.node.triggerLine) : ''
+}
+
+/**
+ * ADR-0028 §10, preview.9 fix: the Statement treatment the DECK decides. The compiler maps the
+ * older deck-wide claim treatment onto the statement options (statement-options.mjs: a deck
+ * `claim_style: bar` makes every statement slide with no statement or claim token of its own the
+ * Bar preset — no colour, left bar), so the Inspector lights those values exactly then. `''` = the
+ * deck decides nothing (the Default).
+ */
+export type DeckStatementToken = '' | 'statement=bar'
+
+export function deckStatementTokenForOutline(outline: string): DeckStatementToken {
+  return deckClaimStyleForOutline(outline) === 'bar' ? 'statement=bar' : ''
+}
+
+/** The deck's `claim_style:` as written ('' when absent). */
+export function deckClaimStyleForOutline(outline: string): string {
+  const { meta } = splitFrontmatter(outline)
+  return String(meta.claim_style ?? meta['claim-style'] ?? '').trim().toLowerCase()
 }

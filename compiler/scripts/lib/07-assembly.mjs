@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { scriptDir, slugify, escapeHtml, timerRuntimeSource, overviewRuntimeSource, pollDisplayRuntimeSource, pollExtendedSource, markmapVendorSource, mermaidVendorSource } from "./01-cli-utils.mjs";
+import { scriptDir, slugify, escapeHtml, makeQrSvg, timerRuntimeSource, overviewRuntimeSource, slideFitRuntimeSource, stageFitRuntimeSource, pollDisplayRuntimeSource, pollExtendedSource, markmapVendorSource, mermaidVendorSource } from "./01-cli-utils.mjs";
 import { accentForSectionIndex, accentForSectionName, accentForDeckColour, titlePlacementFor, titleRegimeForLayout, renderInline, withRenderedClaims, quoteCiteEqualsTitle } from "./02-triggers-layout.mjs";
 import { findSlideSections, updateDeckTitle, withoutScripts } from "./04-html-extraction.mjs";
 import { createIconVocabulary, buildDeckIconMap, applySlideMonochrome } from "./05-icons.mjs";
@@ -9,6 +9,8 @@ import { groupImageRows, groupQrRows, groupActionBlocks, loadCompilerSvgSanitise
 import { renderLicenseBody } from "./08-source-adapters.mjs";
 import { pollFrameEligible, renderPollFrame } from "./poll-frame.mjs";
 import { buildSlideScriptPayload, renderSlideScriptTag } from './slide-script.mjs';
+import { instantSlideRuntimeSource, instantSlideStyles } from '../../assets/runtime/instant-slide.js';
+import { keepLastTwoWordsTogether, keepStatementLastWordsTogether } from "./no-lone-word.mjs";
 import { slotCompositionFor, renderSlotComposition } from "./slot-composition.mjs";
 
 // =============================================================================
@@ -49,7 +51,10 @@ function renderSlideHead({ title, kicker, showTitle, hidden }) {
     return `<header class="slide-head slide-head-quiet"><h1 class="sr-only">${safeTitle}</h1></header>\n`;
   }
   const kickerHtml = kicker ? `<p class="kicker">${escapeHtml(kicker)}</p>` : "";
-  const titleHtml = showTitle ? `<h1>${safeTitle}</h1>` : "";
+  // ADR-0028 §10 (and its 2026-09-28 amendment): a painted title never ends on one word alone —
+  // the compiler joins its last two words with a no-break space (no-lone-word.mjs); CSS
+  // `text-wrap: pretty` is the other half. The nav-only (sr-only) title above is left verbatim.
+  const titleHtml = showTitle ? `<h1>${keepLastTwoWordsTogether(safeTitle)}</h1>` : "";
   return (kickerHtml || titleHtml) ? `<header class="slide-head">${kickerHtml}${titleHtml}</header>\n` : "";
 }
 
@@ -118,7 +123,14 @@ function renderSlideContent(slide, deckUsed, brandLogoColour = "unified") {
     if (stmtListLayout) {
       const paraBlocks = bodyBlocks.filter((b) => b && b.type === "paragraph");
       const listBlocks = bodyBlocks.filter((b) => b && b.type !== "paragraph");
-      const stmtInner = paraBlocks.map((b) => renderBlock(b, deckUsed, frameIcons)).filter(Boolean).join("");
+      // preview.9 fix: the .stmt column IS the slide's claim (the registry sample: "The claim sits
+      // beside the list"), bold or not, so it takes the claim treatment the slide resolves
+      // (ADR-0023 §4: {claim=plain|bar} → deck claim_style → plain). Plain is the ADR-0005 mockup's
+      // "plain large type — no bars"; Bar keeps the accent bar. A wholly bold paragraph already
+      // renders as a .claim carrying the same attribute.
+      const stmtClaimStyle = slide.claimStyle === "bar" ? "bar" : "plain";
+      const stmtInner = paraBlocks.map((b) => renderBlock(b, deckUsed, frameIcons)).filter(Boolean).join("")
+        .replace(/<p class="content-p"(?![^>]*data-claim-style)/g, `<p class="content-p" data-claim-style="${stmtClaimStyle}"`);
       const listInner = renderBlocks(listBlocks, "", deckUsed, frameIcons);
       bodyHtml = `<div class="stmt-list"><div class="stmt">${stmtInner}</div><div class="list-side">${listInner}</div></div>`;
     } else if (slotComposition.kind === "beside") {
@@ -228,13 +240,23 @@ function renderSlideContent(slide, deckUsed, brandLogoColour = "unified") {
     const hideTitleByLayout = hidePromotedStatementTitle
       || (!authorForcesRail && !authorForcesTop && (hideByQuoteDefault || hideByNotitle || hideTitleByFrame) && showTitle);
     // ONE resolver, ONE stamp: override → registry regime → data-title-layout / data-split.
-    const titlePlacement = titlePlacementFor({
+    const placedTitle = titlePlacementFor({
       layout,
       attrs: { titletop: slide.titleTop === true, split: slide.split || "" },
       frameTitle,
       frameTitleExplicit: slide.frameTitleExplicit === true,
       titleHidden: hideTitleByLayout,
     });
+    // Ticket 02 (29 Sep): a statement's own Sidebar choice places the rail and outranks the title
+    // placement tokens. With sidebar: the rail, with the title in it when the slide paints one and
+    // empty (still in the slide's colour) when it does not. No sidebar: a painted title goes to the
+    // top and the statement runs the full width; a slide without a painted title is unchanged.
+    const statementLook = layout === "statement" ? slide.statementOptions ?? null : null;
+    const titlePlacement = statementLook?.sidebar === "on"
+      ? { mode: "left", split: placedTitle.mode === "left" && placedTitle.split ? placedTitle.split : (slide.split || "35") }
+      : statementLook?.sidebar === "off"
+        ? { mode: hideTitleByLayout ? "hidden" : "top", split: "" }
+        : placedTitle;
     // 2026-07-08: the blue "sidebar" panel is retired — frame.title === "side" now renders the
     // PLAIN left rail (data-title-layout="left" only). Legacy {titlestyle=sidebar} still stamps
     // the attr, but no CSS paints it.
@@ -264,9 +286,23 @@ function renderSlideContent(slide, deckUsed, brandLogoColour = "unified") {
     const cornerSectionHtml = (slide.frame?.section === "corner" && slide.section)
       ? `<div class="corner-section" aria-hidden="true">${escapeHtml(slide.section)}</div>`
       : "";
-    const statementVariantClass = layout === "statement" && (slide.statementVariant === "tint" || slide.statementVariant === "poster")
-      ? ` statement-${slide.statementVariant}`
-      : "";
+    // ADR-0028 §10, ticket 02: each statement dimension stamps its own hook on .slide-content
+    // (skin/statement.css). Halo, Aligned, no bar and a sidebar that follows the title are the
+    // defaults and stamp nothing, so a plain {statement} keeps its markup. Centred from the older
+    // {statement=centred} alone applies only without a painted title, as it did in preview.11;
+    // the Alignment choice centres beside a title too. `statement-rail`: the sidebar is on but no
+    // title is painted in it. `statement-no-sidebar`: the sidebar is off and the title went to the top.
+    const statementHooks = [];
+    if (statementLook) {
+      if (statementLook.bg === "full" || statementLook.bg === "none") statementHooks.push(`statement-bg-${statementLook.bg}`);
+      if (statementLook.align === "centred" && (!statementLook.centredNeedsNoTitle || titlePlacement.mode === "hidden")) statementHooks.push("statement-centred");
+      if (statementLook.bar === "left" || statementLook.bar === "top" || statementLook.bar === "bottom") statementHooks.push(`statement-bar-${statementLook.bar}`);
+      if (titlePlacement.mode === "left" && hideTitleByLayout) statementHooks.push("statement-rail");
+      if (statementLook.sidebar === "off" && titlePlacement.mode === "top") statementHooks.push("statement-no-sidebar");
+    }
+    const statementVariantClass = statementHooks.length ? ` ${statementHooks.join(" ")}` : "";
+    // ADR-0028 §10: no statement ends on one word alone (the compile-time half; CSS carries the rest).
+    if (layout === "statement") bodyHtml = keepStatementLastWordsTogether(bodyHtml);
     const contentHtml = `<div class="slide-content layout-${escapeHtml(layout)}${statementVariantClass}">
 ${headHtml}${bodyHtml}
   </div>`;
@@ -331,7 +367,12 @@ function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = n
     // A deck `colour:` resolves across the whole accent vocabulary, not only the deck's own
     // palette cycle — see accentForDeckColour (Ticket 10).
     const titleSkin = accentForDeckColour(slide.titleAccent, palette);
-    const sectionSkin = titleSkin || accentBySection.get(slide.section || "") || null;
+    // Ticket 02: a statement's Sidebar colour ({accent=…} on the slide) is the section accent pinned
+    // on this one slide — its rail, halo, full colour and bar all follow it.
+    const statementSkin = slide.layout === "statement" && slide.statementOptions?.accent
+      ? accentForDeckColour(slide.statementOptions.accent, palette)
+      : null;
+    const sectionSkin = titleSkin || statementSkin || accentBySection.get(slide.section || "") || null;
     const styleDeclarations = sectionSkin
       ? [`--accent: ${sectionSkin.accent}`, `--sec-accent: ${sectionSkin.accent}`, `--sec-tint: ${sectionSkin.tint}`]
       : [];
@@ -416,13 +457,26 @@ ${headHtml}<div class="card-gallery carousel" data-exclusive>${subHtml}</div>${s
     // (authored, or filled from the title by rule 2) the painted title would just repeat the cite.
     const framedSlide = pollFrameEligible(slide) || quoteCiteEqualsTitle(slide) ? { ...slide, noTitle: true } : slide;
     let { contentHtml, cornerQrHtml, cornerSectionHtml, layout, titlePlacement, effectiveTitleStyle } = renderSlideContent(framedSlide, deckUsed, brandLogoColour);
+    // ADR-0028 §10 (preview.9, preview.10, ticket 02): the statement's Background choice decides
+    // where colour goes. Halo: an authored {bg=…} colours the PANEL, not the slide — the panel takes
+    // the authored colour in place of the section's sidebar colour and the rest of the slide stays
+    // white (a full-tint slide reads like a section divider; tint on tint hides the panel). None:
+    // there is no panel, so an authored colour paints the slide as on any other slide. Full: the
+    // WHOLE slide in the authored colour when there is one (already on the section), else in the
+    // slide's sidebar colour. The section still carries --slide-bg; skin/statement.css reads it.
+    const statementBg = layout === "statement" ? (slide.statementOptions?.bg ?? "halo") : ""
+    const slideStyle = statementBg === "full"
+      ? (slide.backgroundTint ? accentStyle : accentStyle.replace(/"$/, "") + `${accentStyle ? "; " : ' style="'}background: var(--tint)"`)
+      : statementBg === "halo" && slide.backgroundTint
+        ? accentStyle.replace("; background: var(--slide-bg)", "")
+        : accentStyle;
     // SD-17: for a links-layout slide, append the deck link list into the content HTML (inside
     // the .slide-content div, after the authored blocks but before the closing </div>).
     if (layout === "links" && Array.isArray(deckLinks) && deckLinks.length) {
       const linksHtml = renderLinksBlock(deckLinks);
       contentHtml = contentHtml.replace(/(\s*<\/div>\s*)$/, `\n${linksHtml}$1`);
     }
-    return `<section class="slide" data-id="${escapeHtml(id)}" data-section="${escapeHtml(section)}" data-subsection="${escapeHtml(subsection)}" data-role="${escapeHtml(role)}" data-layout="${escapeHtml(layout)}" data-nav-title="${escapeHtml(title)}"${pollAttr}${authoredMode ? ` data-mode="${escapeHtml(authoredMode)}"` : ""}${preparesFor ? ` data-prepares-for="${escapeHtml(preparesFor)}"` : ""}${slide.noStep ? " data-nostep" : ""}${slide.noValues ? " data-novalues" : ""}${slide.fontBody ? ` data-font-body="${slide.fontBody}"` : ""}${slide.fontTitle ? ` data-font-title="${slide.fontTitle}"` : ""}${slide.countdownSeconds ? ` data-countdown="${slide.countdownSeconds}" data-countdown-style="${slide.countdownStyle || "digits"}"` : ""}${slide.sectionTimerSeconds ? ` data-section-timer="${slide.sectionTimerSeconds}" data-section-timer-show="${slide.sectionTimerShow || "presenter"}"` : ""}${slide.remindText ? ` data-remind="${escapeHtml(slide.remindText)}"${slide.remindAtMinutes != null ? ` data-remind-at="${slide.remindAtMinutes}"` : ""}${slide.remindInSeconds != null ? ` data-remind-in="${slide.remindInSeconds}"` : ""}` : ""}${titlePlacement.mode ? ` data-title-layout="${titlePlacement.mode}"` : ""}${effectiveTitleStyle ? ` data-title-style="${escapeHtml(effectiveTitleStyle)}"` : ""}${titlePlacement.split ? ` data-split="${titlePlacement.split}"` : ""}${containerAttrs}${accentStyle}>
+    return `<section class="slide" data-id="${escapeHtml(id)}" data-section="${escapeHtml(section)}" data-subsection="${escapeHtml(subsection)}" data-role="${escapeHtml(role)}" data-layout="${escapeHtml(layout)}" data-nav-title="${escapeHtml(title)}"${pollAttr}${authoredMode ? ` data-mode="${escapeHtml(authoredMode)}"` : ""}${preparesFor ? ` data-prepares-for="${escapeHtml(preparesFor)}"` : ""}${slide.noStep ? " data-nostep" : ""}${slide.noValues ? " data-novalues" : ""}${slide.fontBody ? ` data-font-body="${slide.fontBody}"` : ""}${slide.fontTitle ? ` data-font-title="${slide.fontTitle}"` : ""}${slide.countdownSeconds ? ` data-countdown="${slide.countdownSeconds}" data-countdown-style="${slide.countdownStyle || "digits"}"` : ""}${slide.sectionTimerSeconds ? ` data-section-timer="${slide.sectionTimerSeconds}" data-section-timer-show="${slide.sectionTimerShow || "presenter"}"` : ""}${slide.remindText ? ` data-remind="${escapeHtml(slide.remindText)}"${slide.remindAtMinutes != null ? ` data-remind-at="${slide.remindAtMinutes}"` : ""}${slide.remindInSeconds != null ? ` data-remind-in="${slide.remindInSeconds}"` : ""}` : ""}${titlePlacement.mode ? ` data-title-layout="${titlePlacement.mode}"` : ""}${effectiveTitleStyle ? ` data-title-style="${escapeHtml(effectiveTitleStyle)}"` : ""}${titlePlacement.split ? ` data-split="${titlePlacement.split}"` : ""}${containerAttrs}${slideStyle}>
   ${contentHtml}
 ${cornerQrHtml ? `  ${cornerQrHtml}\n` : ""}${cornerSectionHtml ? `  ${cornerSectionHtml}\n` : ""}  ${notes ? `<aside class="notes">${notes}</aside>` : ""}
 </section>`;
@@ -437,6 +491,13 @@ function replaceSlideSections(templateHtml, slideMarkup) {
   return `${templateHtml.slice(0, first.index)}${slideMarkup}${templateHtml.slice(last.end)}`;
 }
 
+export function talkQrTemplateTag(handoutUrl) {
+  const url = typeof handoutUrl === "string" ? handoutUrl.trim() : "";
+  if (!/^https?:\/\//i.test(url)) return "";
+  const svg = makeQrSvg(url);
+  return svg ? `<template id="twTalkQr" data-url="${escapeHtml(url)}">${svg}</template>` : "";
+}
+
 export async function buildDeckHtmlFromModel(model) {
   const templateHtml = await readFile(resolve(scriptDir, "..", "assets/templates/presenter-popup-single-html.html"), "utf8");
   if (modelHasCodeBlock(model.slides, "svg")) await loadCompilerSvgSanitiser();
@@ -445,9 +506,15 @@ export async function buildDeckHtmlFromModel(model) {
   let html = updateDeckTitle(replaceSlideSections(templateHtml, allSlides), model.title);
   // Inline the pure presenter timer core (fmtClock / bigTimerState) verbatim — single source of truth.
   html = html.replace("<!--TIMER_RUNTIME-->", timerRuntimeSource);
+  html = html.replace("<!--INSTANT_RUNTIME-->", () => instantSlideRuntimeSource());
+  html = html.replace("/*INSTANT_STYLES*/", () => instantSlideStyles);
   // Inline the shared overview runtime (rankSlides / deriveSlideStatus / createOverview) verbatim —
   // the presenter drawer runs the SAME factory the handout does. Single source of truth.
   html = html.replace("<!--OVERVIEW_RUNTIME-->", overviewRuntimeSource);
+  // The one slide fit pipeline (runtime/slide-fit.js); the share page inlines the same source.
+  html = html.replace("<!--SLIDE_FIT_RUNTIME-->", () => slideFitRuntimeSource);
+  // The fixed slide canvas, scaled to the window (runtime/stage-fit.js; ADR-0030).
+  html = html.replace("<!--STAGE_FIT_RUNTIME-->", () => stageFitRuntimeSource);
   html = html.replace("<!--POLL_EXTENDED_RUNTIME-->", () => pollExtendedSource);
   html = html.replace("<!--POLL_DISPLAY_RUNTIME-->", () => pollDisplayRuntimeSource);
   // Inline the vendored markmap runtime (d3 + markmap-view + markmap-lib) for the {mindmap} layout
@@ -510,6 +577,19 @@ export async function buildDeckHtmlFromModel(model) {
   const shellHash = createHash("sha256").update(html.replace(allSlides, "").replace(companionTag, "")).digest("hex");
   model.thumbnailHashes = slideMarkup.map(markup =>
     createHash("sha256").update(shellHash).update(markup).digest("hex"));
+  // ADR-0028 §10: the title regime each slide was rendered with (its <section>'s
+  // data-title-layout: "left" | "top" | "hidden" | ""), so the Inspector can tell a statement
+  // WITHOUT a title (Centred is offered only there) from the compiler's own decision.
+  model.titleLayouts = slideMarkup.map((markup) =>
+    String(markup).match(/^\s*<section\b[^>]*?\sdata-title-layout="([^"]*)"[^>]*>/)?.[1] ?? "");
+  // Live-presenting ticket 04: the published handout's short link and its QR code, for the
+  // presenter's "Show the talk's QR code" when not live. Stamped AFTER the thumbnail hash so
+  // publishing (which writes handout_url) does not invalidate every slide picture.
+  const talkQr = talkQrTemplateTag(model.meta?.handout_url);
+  if (talkQr) {
+    const closeIndex = html.lastIndexOf("</body>");
+    html = closeIndex >= 0 ? html.slice(0, closeIndex) + talkQr + "\n" + html.slice(closeIndex) : html + talkQr;
+  }
   return html;
 }
 

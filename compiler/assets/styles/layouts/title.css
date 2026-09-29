@@ -1,13 +1,19 @@
 /* @order 0049 */
   /* ADR-0005 section divider (mockup .t-section): the whole slide fills with the section TINT;
-     a mono accent eyebrow sits above a large sans title. Block centred both axes, text left
-     inside (whitespace rule). NO underline — the tint field is the "you are here" cue. *//* @order 0050 */
+     a large sans title, with an authored kicker (if any) as a mono accent eyebrow above it. No
+     automatic "Section" eyebrow (2026-09-24): the tint already says it is a divider. Block
+     centred both axes, text left inside (whitespace rule). NO underline — the tint field is the
+     "you are here" cue. *//* @order 0050 */
   .slide:has(> .slide-content.layout-section-title) { background: var(--tint); }/* @order 0051 */
   .slide-content.layout-section-title {
     justify-items: center;
     align-content: center;
     text-align: left;
-  }/* @order 0052 */
+  }
+  /* ADR-0028 §7: the head is ONE grid item, so the block (kicker + title) is centred on the stage
+     while the kicker — the parent-section label on a subsection divider — shares the title's left
+     edge. As separate items, justify-items: center centred the kicker over the title. */
+  .slide-content.layout-section-title > .slide-head { display: block; }/* @order 0052 */
   .slide-content.layout-section-title h1 {
     font-family: var(--sans);
     font-weight: 700;
@@ -15,26 +21,12 @@
     font-size: max(38px, 5.6cqw);
     line-height: 1.24;
     letter-spacing: -0.025em;
-  }/* @order 0053 */
-  /* Mono accent eyebrow above section titles, even when no kicker is authored. *//* @order 0054 */
-  .slide-content.layout-section-title h1::before {
-    content: "Section";
-    display: block;
-    margin-bottom: 0.7em;
-    color: var(--accent);
-    font-family: var(--mono);
-    font-size: max(13px, 1.1cqw);
-    font-weight: 500;
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
-    border: 0;
   }/* @order 0055 */
   .slide-content.layout-section-title .kicker {
     font-family: var(--mono);
     font-weight: 500;
     color: var(--accent);
-  }/* @order 0056 */
-  .slide-content.layout-section-title .kicker + h1::before { display: none; }/* @order 0057 */
+  }/* @order 0057 */
 
   /* === H2 subsection-title (level-2 interstitial) === *//* @order 0058 */
   /* Progressive de-emphasis from a section title: noticeably smaller h1, LEFT-aligned (not
@@ -84,7 +76,7 @@
     grid-template-rows: auto 1fr auto;
     align-content: stretch;
     justify-items: start;
-    padding-bottom: clamp(18px, 3.5vh, 44px);
+    padding-bottom: clamp(18px, 3.5cqh, 44px);
   }/* @order 0068 */
   .slide-content.layout-title > .slide-head,
   .slide-content.layout-title > h1,

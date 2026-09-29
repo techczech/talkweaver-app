@@ -32,6 +32,29 @@ function writeFileAtomic(path, data) {
   }
 }
 
+// Where an outline's text comes from and goes to (one writer for talk files, 2026-09-27). The default
+// is the file itself (tests, headless callers). The app passes its one writer
+// (src/main/talk-writer.ts): an open talk is read from and written through its editor buffer, and a
+// closed one is written in place under the file's lock.
+//   read(abs)                          → Promise<string>
+//   write(abs, transform, { beforeEditorApply? })
+//        → Promise<{ ok: true, changed, text } | { ok: false, error }>
+//     transform(current) returns the new text (its input → nothing written) or throws to refuse;
+//     beforeEditorApply(next) runs just before an editor buffer applies it (editor route only).
+export const fileOutlineIO = {
+  async read(abs) { return readFileSync(abs, "utf8"); },
+  async write(abs, transform) {
+    try {
+      const current = readFileSync(abs, "utf8");
+      const next = transform(current);
+      if (next !== current) writeFileAtomic(abs, next);
+      return { ok: true, changed: next !== current, text: next };
+    } catch (err) {
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  },
+};
+
 // Shift a block so its root heading sits at `targetDepth` — same delta logic
 // as 13's normalizeDepth (which is fixed at depth 3); fenced lines are opaque.
 function redepthTo(markdown, targetDepth) {
@@ -158,27 +181,30 @@ export function lineDiff(a, b) {
 //   1. pre-record the target's CURRENT content — versions any unsaved drift
 //   2. sealSlideHead — closes the coalesce window, so a post-adoption record
 //      can never coalesce over (and destroy) the content just replaced
-//   3. replace the block, write the outline atomically
+//   3. replace the block, write the outline (through `io`, see fileOutlineIO)
 //   4. post-record — the adopted state becomes the (fresh, unsealed) head
+// Steps 1–3 run on the talk's CURRENT text as `io` has it (the open editor buffer in the app).
 // Per-target isolation: one failing target must not abort the rest.
 // `targetOutlines` are vault-relative paths, as returned by whereUsed/slideStatus.
-export function adoptVersion(vaultRoot, id, versionMarkdown, targetOutlines, { now = Date.now() } = {}) {
+export async function adoptVersion(vaultRoot, id, versionMarkdown, targetOutlines, { now = Date.now(), io = fileOutlineIO } = {}) {
   const replaced = [];
   const failed = [];
   for (const outline of targetOutlines) {
     const talk = basename(outline).replace(/-outline\.md$/, "");
     try {
       const abs = join(vaultRoot, outline);
-      const current = readFileSync(abs, "utf8");
-      const pre = recordOutlineSave(vaultRoot, abs, current, { now });
-      if (pre.collisions.includes(id)) {
-        throw new Error(`duplicate {id=${id}} in ${outline}: current content cannot be versioned, not adopting`);
-      }
-      const next = replaceSlideBlock(current, id, versionMarkdown);
-      if (next === null) throw new Error(`{id=${id}} not found in ${outline}`);
-      sealSlideHead(vaultRoot, id, "replaced-by-adoption");
-      writeFileAtomic(abs, next);
-      recordOutlineSave(vaultRoot, abs, next, { now });
+      const written = await io.write(abs, (current) => {
+        const pre = recordOutlineSave(vaultRoot, abs, current, { now });
+        if (pre.collisions.includes(id)) {
+          throw new Error(`duplicate {id=${id}} in ${outline}: current content cannot be versioned, not adopting`);
+        }
+        const next = replaceSlideBlock(current, id, versionMarkdown);
+        if (next === null) throw new Error(`{id=${id}} not found in ${outline}`);
+        sealSlideHead(vaultRoot, id, "replaced-by-adoption");
+        return next;
+      });
+      if (!written.ok) throw new Error(written.error);
+      recordOutlineSave(vaultRoot, abs, written.text, { now });
       replaced.push({ talk, outline });
     } catch (err) {
       failed.push({ talk, outline, error: String(err?.message ?? err) });

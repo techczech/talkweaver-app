@@ -762,3 +762,80 @@ export function tagTargetsFromRows(
   }
   return targets
 }
+
+/* ============================================================
+   Insert section (ADR-0029 §5; talk search 07; frame K4) — what a section heading's
+   "Insert section · N slides" button inserts, read from the index rows of the WHOLE talk (the
+   unqueried snapshot, never the filtered results): the section's heading slide (its source line
+   and heading text, which the main process uses to read the section from the talk itself) and N,
+   the heading slide plus every slide under it.
+   ============================================================ */
+
+export interface SectionInsertRow extends BrowserRow {
+  source_line?: number | null
+  outlinePath?: string
+}
+
+export interface SectionInsertSource {
+  talkSlug: string
+  outlinePath: string
+  /** 1-based line of the section heading in its talk, as the index saw it. */
+  line: number
+  /** The section heading line's exact text. */
+  heading: string
+  /** The heading slide plus every slide under it. */
+  slides: number
+}
+
+/** The insert source of `section` in `talkSlug`, or null when the rows do not show its own heading
+ *  slide (the unsectioned title/closing chunk, a talk the index has no source lines for, or rows that
+ *  are not the whole talk — a search's results can leave only a slide under the heading). `rows` must
+ *  be the talk's WHOLE index (the unqueried snapshot); never pass filtered results. The heading slide
+ *  is the section's first slide and must be its `##` heading, the only level the compiler makes a
+ *  section from (08-source-adapters emitNodeSlides). Each slide counts once: rows sharing a source
+ *  line (a container's return slide) are one slide. */
+export function sectionInsertSource(rows: readonly SectionInsertRow[], talkSlug: string, section: string): SectionInsertSource | null {
+  if (!section) return null
+  const mine = rows
+    .filter((r) => r.talkSlug === talkSlug && (r.section ?? '') === section && typeof r.source_line === 'number')
+    .sort((a, b) => (a.source_line as number) - (b.source_line as number))
+  if (mine.length === 0) return null
+  const head = mine[0]
+  const heading = ((head.source_markdown ?? '').split('\n')[0] ?? '').replace(/\r$/, '')
+  if (!/^##\s+\S/.test(heading) || !head.outlinePath) return null
+  return {
+    talkSlug,
+    outlinePath: head.outlinePath,
+    line: head.source_line as number,
+    heading,
+    slides: new Set(mine.map((r) => r.source_line)).size,
+  }
+}
+
+/** The heading button's words: "Select section · 12 slides" (Dominik, 0.34.0-preview.8 check, 28 Sep:
+ *  the button selects the whole section rather than inserting it, so single slides can still be
+ *  taken out before ⌘↵ inserts the selection). */
+export function selectSectionLabel(slides: number): string {
+  return `Select section · ${slides} slide${slides === 1 ? '' : 's'}`
+}
+
+/** The selection keys (`talkSlug:slide_id`, the picker's selRowKey for a stamped row) of every slide
+ *  of `section` in `talkSlug` — its heading slide first, then every slide under it, in source order —
+ *  read from the talk's WHOLE index rows, as sectionInsertSource reads N, so the selection is the N
+ *  slides the button names whether or not a search or filter left them showing. One key per slide:
+ *  rows sharing a source line (a container's return slide) are the one slide. Empty when the rows do
+ *  not show the section's own heading slide (sectionInsertSource is null). */
+export function sectionSelectionKeys(rows: readonly SectionInsertRow[], talkSlug: string, section: string): string[] {
+  if (!sectionInsertSource(rows, talkSlug, section)) return []
+  const mine = rows
+    .filter((r) => r.talkSlug === talkSlug && (r.section ?? '') === section && typeof r.source_line === 'number' && r.slide_id != null)
+    .sort((a, b) => (a.source_line as number) - (b.source_line as number))
+  const lines = new Set<number>()
+  const out: string[] = []
+  for (const r of mine) {
+    if (lines.has(r.source_line as number)) continue
+    lines.add(r.source_line as number)
+    out.push(`${talkSlug}:${r.slide_id}`)
+  }
+  return out
+}

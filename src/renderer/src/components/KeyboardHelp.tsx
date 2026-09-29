@@ -34,10 +34,12 @@ function group<T>(items: T[], cat: (t: T) => string, row: (t: T) => ShortcutRow)
   return order.map((h) => ({ heading: h, rows: map.get(h)! }))
 }
 
+const SCOPE_HEADINGS: Partial<Record<string, string>> = { app: 'App', 'slide-picker': 'Slide picker' }
+
 function sections(): Section[] {
   return group(
     SHORTCUT_REGISTRY.filter((shortcut) => shortcut.scope !== 'presenter'),
-    (shortcut) => `${shortcut.scope === 'app' ? 'App' : shortcut.scope[0].toUpperCase() + shortcut.scope.slice(1)} · ${shortcut.group}`,
+    (shortcut) => `${SCOPE_HEADINGS[shortcut.scope] ?? shortcut.scope[0].toUpperCase() + shortcut.scope.slice(1)} · ${shortcut.group}`,
     (shortcut) => ({ keys: [liveShortcutLabel(shortcut.id)], action: shortcut.label })
   )
 }

@@ -1,10 +1,11 @@
 import type { TalkInfo, TalkMeta } from '../../../../preload/index'
 import type { TreeNode } from '../talkTreeNav'
-import { displayName, type NamingMode, type PubState, type RowRef, type ViewMode } from './model'
+import { ARCHIVE_FOLDER, ARCHIVE_LABEL, displayName, folderTotals, type NamingMode, type PubState, type RowRef, type ViewMode } from './model'
 import type { WindowLayout } from './window'
 import LedgerRow from './LedgerRow'
 import ShelfRow from './ShelfRow'
 import { FolderHeader, FolderRow } from './FolderRows'
+import type { Suggestion } from './prefixAssist'
 
 // The scrolling tree renders the exact RowRef[] used by keyboard navigation. Folder-tree
 // traversal below only indexes display metadata; it never derives render order.
@@ -29,13 +30,14 @@ export interface TreeCallbacks {
 
 type FolderInfo = { node: TreeNode; talkCount: number }
 
+// Display metadata per folder: its node and its talk total, subfolders included (the shared
+// tree's 'talks' count mode; the slide picker uses 'slides').
 function folderIndex(view: TreeNode): Map<string, FolderInfo> {
+  const totals = folderTotals(view, 'talks')
   const index = new Map<string, FolderInfo>()
-  const visit = (node: TreeNode): number => {
-    let talkCount = node.talks.length
-    for (const child of node.children) talkCount += visit(child)
-    if (node.path) index.set(node.path, { node, talkCount })
-    return talkCount
+  const visit = (node: TreeNode): void => {
+    if (node.path) index.set(node.path, { node, talkCount: totals.get(node.path) ?? 0 })
+    node.children.forEach(visit)
   }
   visit(view)
   return index
@@ -49,12 +51,23 @@ function spacerHeight(layout: WindowLayout, start: number, end: number): number 
 }
 
 export default function Tree({
-  searching, query, rows, view, isEmptyVault,
+  searching, query, searchSettled = true, focusPath = '', everywhereCount = null, onSearchEverywhere,
+  suggestions = [], onSuggest,
+  rows, view, isEmptyVault,
   viewMode, naming, collapsed, focusKey, activeTalkPath, menuTalkPath, dragTopic,
-  talkMeta, lastDelivered, pubFor, layout, mounted, containerRef, onScroll, cb
+  talkMeta, lastDelivered, pubFor, sharedFor = () => false, feedbackCountFor = () => 0, layout, mounted, containerRef, onScroll, cb
 }: {
   searching: boolean
   query: string
+  /** False while the first result for the typed query is still on its way (no "No talks match" flash). */
+  searchSettled?: boolean
+  focusPath?: string
+  /** With a drilled-in folder: how many talks match everywhere (offered when none match here). */
+  everywhereCount?: number | null
+  onSearchEverywhere?: () => void
+  /** Under "No talks match" (L8): the nearest folder, "Drop <term>", slide text. */
+  suggestions?: Suggestion[]
+  onSuggest?: (query: string) => void
   rows: RowRef[]
   view: TreeNode
   isEmptyVault: boolean
@@ -68,6 +81,10 @@ export default function Tree({
   talkMeta: TalkMeta
   lastDelivered: Record<string, number>
   pubFor: (slug: string) => PubState
+  /** Share for comments: whether the talk has an active share (matched by path, not name). */
+  sharedFor?: (talk: TalkInfo) => boolean
+  /** Feedback rail: unread feedback items for the talk's share (0 when none or not shared). */
+  feedbackCountFor?: (talk: TalkInfo) => number
   layout: WindowLayout
   mounted: Set<number>
   containerRef: React.RefObject<HTMLDivElement>
@@ -81,6 +98,8 @@ export default function Tree({
     const meta = talkMeta[talk.slug]
     const shared = {
       talk, depth,
+      hit: row.hit,
+      focusPath,
       selected: activeTalkPath === talk.outlinePath,
       focused: focusKey === key,
       menuAnchor: menuTalkPath === talk.outlinePath,
@@ -88,6 +107,8 @@ export default function Tree({
       pathwayCount: meta?.pathwayCount ?? 0,
       pathwayNames: meta?.pathwayNames ?? [],
       pub: pubFor(talk.slug),
+      shared: sharedFor(talk),
+      feedbackCount: feedbackCountFor(talk),
       label: displayName(talk, naming),
       fileMode: naming === 'file',
       rowKey: key,
@@ -100,7 +121,7 @@ export default function Tree({
       onDragEnd: cb.onDragEndTalk
     }
     return viewMode === 'ledger'
-      ? <LedgerRow key={key} {...shared} slideCount={meta?.slideCount ?? null} />
+      ? <LedgerRow key={key} {...shared} slideCount={meta?.slideCount ?? null} line={row.line} />
       : <ShelfRow key={key} {...shared} slideCount={meta?.slideCount ?? null} coverKey={meta?.coverKey ?? null} deliveredMs={lastDelivered[talk.slug]} editedMs={meta?.editedMs} event={naming === 'title' ? meta?.event ?? null : null} />
   }
 
@@ -123,7 +144,9 @@ export default function Tree({
       onDrop: (e: React.DragEvent) => cb.onFolderDrop(row.path, e)
     }
     return row.depth === 0
-      ? <FolderHeader key={row.key} {...shared} />
+      ? row.path === ARCHIVE_FOLDER
+        ? <FolderHeader key={row.key} {...shared} name={ARCHIVE_LABEL} archive />
+        : <FolderHeader key={row.key} {...shared} />
       : <FolderRow key={row.key} {...shared} depth={row.depth} onDrill={() => cb.onDrill(row.path)} />
   }
 
@@ -143,7 +166,23 @@ export default function Tree({
       onDrop={cb.onTreeDrop}
     >
       {searching && rows.length === 0 ? (
-        <div className="tl-empty">No talks match “{query}”.</div>
+        searchSettled ? (
+          <div className="tl-empty tl-empty--search">
+            <p>No talks match <b>“{query}”</b>.</p>
+            {everywhereCount != null && everywhereCount > 0 && onSearchEverywhere && (
+              <p className="tl-empty-sugg"><button type="button" className="tl-res-wide" onClick={onSearchEverywhere}>Search everywhere ({everywhereCount})</button></p>
+            )}
+            {suggestions.map((s) => (
+              <p key={s.key} className="tl-empty-sugg" data-suggestion={s.kind}>
+                {s.kind === 'folder' ? (
+                  <>Did you mean folder <button type="button" className="tl-res-wide" onClick={() => onSuggest?.(s.query)}>{s.name}</button>? · {s.count} {s.count === 1 ? 'talk' : 'talks'}</>
+                ) : (
+                  <button type="button" className="tl-res-wide" onClick={() => onSuggest?.(s.query)}>{s.label}</button>
+                )}
+              </p>
+            ))}
+          </div>
+        ) : null
       ) : isEmptyVault ? (
         <div className="tl-empty">No talks found in vault.</div>
       ) : layout.groups.map((group) => {

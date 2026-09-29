@@ -1,17 +1,20 @@
-// The unified Slide Browser rail (ADR-0009): Search → Scope → Browse → Filters, stacked
-// collapsible groups that COMPOSE (no modes). Scope is full-width rows, never chips; the
-// Files tree is disk truth; lenses live in Collections; filters follow the ADR-0037 chip
-// grammar. Group collapse + the Browse tab persist via localStorage across openings.
+// The unified Slide Browser rail (ADR-0009): Find a talk + Search slides (ADR-0029 §4) → Scope →
+// Browse → Filters, stacked collapsible groups that COMPOSE (no modes). Scope is full-width rows
+// (Find a talk's own picks also show as chips in its box, as ADR-0029 draws); the Files tree is
+// disk truth; lenses live in Collections; filters follow the ADR-0037 chip grammar. Group collapse
+// + the Browse tab persist via localStorage across openings.
 import { useEffect, useState } from 'react'
 import { ChevronDown, Clock, Filter, Folder, FolderTree, Frame, Search, X } from 'lucide-react'
 import { scopeDisplayName, scopeKeyOf } from './railModel'
 import type { FsubKey } from './FilterGroups'
 import FilterGroups from './FilterGroups'
 import { Collections, FilesTree } from './BrowseTabs'
+import FindTalk, { type FindTalkProps } from './FindTalk'
 import type {
-  CollectionRow, ContentItem, FacetItem, RailFacets, ScopeEntry, ScopeFn, TalkHit,
-  ToggleFacetFn, TreeFolder
+  CollectionRow, ContentItem, FacetItem, RailFacets, ScopeEntry, ScopeFn,
+  ToggleFacetFn
 } from './railTypes'
+import type { FilesTreeSource } from './filesTreeModel'
 
 const RAIL_STATE_KEY = 'tw-browser-rail-v1'
 
@@ -49,7 +52,10 @@ export interface BrowserRailProps {
   inputRef: React.RefObject<HTMLInputElement | null>
   query: string
   onQueryChange: (q: string) => void
-  talkHits: TalkHit[]
+  /** "Find a talk" (ADR-0029 §4): its query, results and the chips it keeps in the scope. */
+  find: FindTalkProps
+  /** Find a talk has words typed or a talk picked: the Files tree dims under it (K3, K4). */
+  findActive: boolean
   /** The active talk's slug — its rows render dimmed + "current" in Files/Collections and
    *  never scope (the Browser never shows its slides; the tree still tells disk truth). */
   currentTalkSlug: string
@@ -59,7 +65,8 @@ export interface BrowserRailProps {
   onScope: ScopeFn
   onRemoveScope: (index: number) => void
   onClearScope: () => void
-  tree: TreeFolder[]
+  /** The Files tab's source: the file list's tree, drawn with slide counts (ADR-0029 §4). */
+  filesSource: FilesTreeSource
   recentEdits: CollectionRow[]
   deliveries: CollectionRow[]
   facets: RailFacets
@@ -94,10 +101,12 @@ export default function BrowserRail(props: BrowserRailProps) {
 
   return (
     <>
-      {/* 1 · SEARCH — always visible; reports both kinds (talk hits below, slides in the grid) */}
+      {/* 1 · FIND A TALK above SEARCH SLIDES (ADR-0029 §4; frames K1–K4). Find a talk is the file
+          list's talk search and scopes; the slide search finds slides only (no talk-name hits). */}
       <div className="lt-rgroup">
-        <div className="lt-rghead static">
-          <Search className="lt-icon" /> Search
+        <FindTalk {...props.find} />
+        <div className="lt-rghead static lt-slides-label">
+          <Search className="lt-icon" /> Search slides
         </div>
         <div className="lt-rail-search">
           <div className="lt-searchfield rail">
@@ -107,34 +116,13 @@ export default function BrowserRail(props: BrowserRailProps) {
               type="text"
               value={props.query}
               onChange={(e) => props.onQueryChange(e.target.value)}
-              placeholder="Search talks and slides"
+              placeholder="Words on slides — all words match"
               autoComplete="off"
-              aria-label="Search talks and slides — t: title · s: slide · e: exact · i: image text"
+              aria-label="Search slides — t: title · s: slide · e: exact · i: image text"
               title="t: title · s: slide body · e: exact phrase · i: image text"
             />
             <kbd>⌘S</kbd>
           </div>
-          {props.talkHits.length > 0 && (
-            <div className="lt-talk-hits">
-              <div className="lt-th-label">Talks ({props.talkHits.length})</div>
-              {props.talkHits.map((h) => (
-                <button
-                  key={h.slug}
-                  type="button"
-                  className="lt-th-row"
-                  title="Scope to this talk (⌘click adds)"
-                  onClick={(e) => props.onScope(
-                    { kind: 'talk', talk: h.slug, talkTitle: h.title },
-                    e.metaKey || e.ctrlKey
-                  )}
-                >
-                  <span className="lt-tn serif">{h.title}</span>
-                  <span className="lt-tc">{h.count}</span>
-                  <span className="lt-th-act">scope →</span>
-                </button>
-              ))}
-            </div>
-          )}
         </div>
       </div>
 
@@ -190,7 +178,7 @@ export default function BrowserRail(props: BrowserRailProps) {
           <ChevronDown className="lt-icon lt-chev" />
         </button>
         {ui.browse && (
-          <div>
+          <div className={props.findActive ? 'lt-browse-dim' : undefined}>
             <div className="lt-btabs" role="tablist" aria-label="Browse by">
               <button type="button" role="tab" aria-selected={ui.tab === 'files'} className={ui.tab === 'files' ? 'on' : ''} onClick={() => setTab('files')}>
                 <Folder className="lt-icon" /> Files
@@ -200,7 +188,7 @@ export default function BrowserRail(props: BrowserRailProps) {
               </button>
             </div>
             {ui.tab === 'files'
-              ? <FilesTree tree={props.tree} isScoped={isScoped} onScope={props.onScope} currentTalkSlug={props.currentTalkSlug} />
+              ? <FilesTree source={props.filesSource} isScoped={isScoped} onScope={props.onScope} />
               : <Collections recent={props.recentEdits} delivered={props.deliveries} isScoped={isScoped} onScope={props.onScope} currentTalkSlug={props.currentTalkSlug} />}
           </div>
         )}

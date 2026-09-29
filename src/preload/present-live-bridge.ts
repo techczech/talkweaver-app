@@ -1,13 +1,26 @@
 /// <reference lib="dom" />
-import { contextBridge, ipcRenderer } from 'electron'
+import { clipboard, contextBridge, ipcRenderer } from 'electron'
 import type { LiveStatus } from '../main/live-presenter-client'
-import type { PollStateMessage, PresenterPollMessage } from '../../worker/protocol'
+import { venueScreenLinkFromUrl } from '../shared/venue-screen-link'
+import { dressPresenterButton, presenterControl, presenterIconSvg } from '../shared/presenter-controls.ts'
+import { SHORTCUT_REGISTRY } from '../shared/shortcut-registry.ts'
+import { LIVE_BRIDGE_ATTRIBUTE } from '../shared/presenter-palette.ts'
+import type { InstantSlide, PollStateMessage, PresenterInstantMessage, PresenterPollMessage } from '../../worker/protocol'
 import {
+  linkLabel,
   liveControlPresentation,
+  liveSessionCanStart,
+  liveSessionFinished,
   liveSlideStateKey,
-  presenterFocusState,
-  presenterRevealState,
-  slideIdForAudience,
+  liveToggleIntent,
+  liveStatusView,
+  nextVenueWatch,
+  presenterLiveSlideState,
+  settleVenueWatch,
+  VENUE_BACK_MS,
+  VENUE_WATCH_START,
+  venueNoticeView,
+  venueScreenCountLabel,
 } from './present-live-state'
 
 type LiveGoResult = {
@@ -27,10 +40,13 @@ type LiveGoResult = {
 let pollStateHandler: ((message: PollStateMessage) => void) | null = null
 let liveStatusHandler: ((status: LiveStatus) => void) | null = null
 type PollActionResult = { success: boolean; operationId?: string; status?: 'pending' | 'confirmed' | 'rejected'; error?: string }
-type PollOperation = { operationId: string; status: 'pending' | 'confirmed' | 'rejected'; message: PresenterPollMessage; error?: string }
+type PollOperation = { operationId: string; status: 'pending' | 'confirmed' | 'rejected'; message: PresenterPollMessage | PresenterInstantMessage; error?: string }
 type PollJoin = { shortUrl: string; qrSvg: string }
 let joinHandler: ((value: PollJoin) => void) | null = null
 let operationHandler: ((value: PollOperation) => void) | null = null
+let instantHandler: ((value: InstantSlide | null) => void) | null = null
+let cachedInstant: InstantSlide | null = null
+let instantRevision = 0
 const cachedPolls = new Map<string, PollStateMessage>()
 const cachedOperations = new Map<string, PollOperation>()
 let cachedJoin: PollJoin | null = null
@@ -39,11 +55,19 @@ let statusRevision = 0
 let sessionEpoch = 0
 let joinRevision = 0
 let statusRenderer: ((status: LiveStatus) => void) | null = null
-function sessionFinished(status: LiveStatus): boolean { return ['ended', 'expired'].includes(status) }
-function sessionCanStart(status: LiveStatus): boolean { return ['ended', 'expired', 'authentication-failed', 'incompatible'].includes(status) }
+let venueCountRenderer: ((count: number) => void) | null = null
+let venueLinkRenderer: ((url: string) => void) | null = null
+let cachedVenueScreens = 0
+let presenceRevision = 0
+const sessionFinished = liveSessionFinished
+const sessionCanStart = liveSessionCanStart
 function updateStatus(status: LiveStatus): void {
   cachedStatus = status
-  if (sessionFinished(status)) { sessionEpoch++; cachedPolls.clear(); cachedOperations.clear(); cachedJoin = null }
+  if (sessionFinished(status)) {
+    sessionEpoch++; cachedPolls.clear(); cachedOperations.clear(); cachedJoin = null
+    cachedVenueScreens = 0; venueCountRenderer?.(0)
+    cachedInstant = null
+  }
   try { statusRenderer?.(status) } catch { /* inert */ }
   try { liveStatusHandler?.(status) } catch { /* inert */ }
 }
@@ -51,16 +75,25 @@ ipcRenderer.on('live:status', (_event, status: LiveStatus) => {
   statusRevision++
   updateStatus(status)
 })
+ipcRenderer.on('live:presence', (_event, presence: { venueScreens?: number }) => {
+  if (!Number.isSafeInteger(presence?.venueScreens) || presence.venueScreens! < 0) return
+  cachedVenueScreens = presence.venueScreens!
+  presenceRevision++
+  venueCountRenderer?.(cachedVenueScreens)
+})
 
 function updateJoin(value: PollJoin): void {
   joinRevision++
   cachedJoin = value
+  venueLinkRenderer?.(value.shortUrl)
   try { joinHandler?.(value) } catch { /* presenting stays independent */ }
 }
 
-async function forwardPollAction(message: PresenterPollMessage): Promise<PollActionResult> {
+async function forwardPollAction(message: PresenterPollMessage | PresenterInstantMessage): Promise<PollActionResult> {
   if (!message) return { success: false, status: 'rejected', error: 'Invalid poll action.' }
-  const invoke = message.type === 'poll.open'
+  const invoke = message.type === 'instant.show' || message.type === 'instant.clear'
+    ? ipcRenderer.invoke('live:instant-action', message)
+    : message.type === 'poll.open'
     ? ipcRenderer.invoke('live:poll-open', message.poll)
     : message.type === 'poll.close'
       ? ipcRenderer.invoke('live:poll-close', message.pollId)
@@ -74,7 +107,18 @@ async function forwardPollAction(message: PresenterPollMessage): Promise<PollAct
 
 try {
   contextBridge.exposeInMainWorld('twLivePollBridge', {
-    action: (message: PresenterPollMessage) => forwardPollAction(message),
+    fitImage: (bytes: Uint8Array) => ipcRenderer.invoke('live:fit-instant-image', bytes),
+    // The Live menu's "Instant slide from clipboard" (presenter redesign ticket 04): a menu press
+    // has no paste event, and the window's permission handler denies the web clipboard.
+    readClipboard: () => {
+      const image = clipboard.readImage()
+      return { text: clipboard.readText(), image: image && !image.isEmpty() ? new Uint8Array(image.toPNG()) : null }
+    },
+    action: (message: PresenterPollMessage | PresenterInstantMessage) => forwardPollAction(message),
+    onInstant: (callback: (value: InstantSlide | null) => void) => {
+      instantHandler = callback
+      queueMicrotask(() => { try { callback(cachedInstant) } catch { /* inert */ } })
+    },
     onState: (callback: (message: PollStateMessage) => void) => {
       pollStateHandler = callback
       queueMicrotask(() => { for (const value of cachedPolls.values()) { try { callback(value) } catch { /* inert */ } } })
@@ -99,6 +143,11 @@ ipcRenderer.on('live:poll-state', (_event, message: PollStateMessage) => {
   cachedPolls.set(message.pollId, message)
   try { pollStateHandler?.(message) } catch { /* inert */ }
 })
+ipcRenderer.on('live:instant-state', (_event, slide: InstantSlide | null) => {
+  instantRevision++
+  cachedInstant = slide
+  try { instantHandler?.(slide) } catch { /* inert */ }
+})
 ipcRenderer.on('live:poll-operation', (_event, operation: PollOperation) => {
   cachedOperations.set(operation.operationId, operation)
   try { operationHandler?.(operation) } catch { /* inert */ }
@@ -106,11 +155,21 @@ ipcRenderer.on('live:poll-operation', (_event, operation: PollOperation) => {
 const snapshotSessionEpoch = sessionEpoch
 const snapshotStatusRevision = statusRevision
 const snapshotJoinRevision = joinRevision
-void ipcRenderer.invoke('live:snapshot').then((value: { status?: LiveStatus; shortUrl?: string; qrSvg?: string; polls?: PollStateMessage[]; pending?: Array<{ operationId: string; action: PresenterPollMessage }> }) => {
+const snapshotPresenceRevision = presenceRevision
+const snapshotInstantRevision = instantRevision
+void ipcRenderer.invoke('live:snapshot').then((value: { status?: LiveStatus; shortUrl?: string; qrSvg?: string; venueScreens?: number; polls?: PollStateMessage[]; instantSlide?: InstantSlide | null; pending?: Array<{ operationId: string; action: PresenterPollMessage | PresenterInstantMessage }> }) => {
   if (!value || sessionEpoch !== snapshotSessionEpoch) return
   if (statusRevision !== snapshotStatusRevision && cachedStatus && sessionFinished(cachedStatus)) return
   if (value.status && statusRevision === snapshotStatusRevision) cachedStatus = value.status
   if (value.shortUrl && joinRevision === snapshotJoinRevision) updateJoin({ shortUrl: value.shortUrl, qrSvg: value.qrSvg || '' })
+  if (presenceRevision === snapshotPresenceRevision && Number.isSafeInteger(value.venueScreens) && value.venueScreens! >= 0) {
+    cachedVenueScreens = value.venueScreens!
+    venueCountRenderer?.(cachedVenueScreens)
+  }
+  if (instantRevision === snapshotInstantRevision) {
+    cachedInstant = value.instantSlide ?? null
+    try { instantHandler?.(cachedInstant) } catch { /* inert */ }
+  }
   for (const message of value.polls || []) {
     // Push events received while the request was in flight are newer than its snapshot.
     if (cachedPolls.has(message.pollId)) continue
@@ -126,15 +185,9 @@ void ipcRenderer.invoke('live:snapshot').then((value: { status?: LiveStatus; sho
   if (cachedStatus) updateStatus(cachedStatus)
 }).catch(() => { /* an older app lacks snapshot IPC; live push events still work */ })
 
-function currentSlideState(): { slideId: string; reveal: number; focus: ReturnType<typeof presenterFocusState> } | null {
-  const slideId = location.hash.startsWith('#') ? decodeURIComponent(location.hash.slice(1)) : ''
+function currentSlideState(): ReturnType<typeof presenterLiveSlideState> {
   const active = document.querySelector('.slide.active')
-  if (!slideId || !active) return null
-  return {
-    slideId: slideIdForAudience(slideId, active as HTMLElement),
-    reveal: presenterRevealState(document.documentElement.dataset),
-    focus: presenterFocusState(document.documentElement.dataset),
-  }
+  return presenterLiveSlideState(location.hash, active as HTMLElement | null, document.documentElement.dataset)
 }
 
 export function mountLiveBridge(): void {
@@ -143,29 +196,145 @@ export function mountLiveBridge(): void {
   const panelClose = document.getElementById('liveGoPanelClose')
   const qr = document.getElementById('liveQr')
   const url = document.getElementById('liveShortUrl')
+  const venueUrl = document.getElementById('liveVenueUrl')
+  const venueCopy = document.getElementById('liveVenueCopy') as HTMLButtonElement | null
+  const venueCount = document.getElementById('liveVenueCount')
   if (!goButton || !panel || !qr || !url) return
+  // The venue-screen notice in the status bar, beside the live status (presenter redesign ticket
+  // 06; ADR-0026 §3): the session's presence count through nextVenueWatch(); "following again"
+  // clears after VENUE_BACK_MS.
+  const venueNotice = document.getElementById('presenterVenueNotice')
+  let venueWatch = VENUE_WATCH_START
+  let venueBackTimer: ReturnType<typeof setTimeout> | undefined
+  const renderVenueNotice = (): void => {
+    if (!venueNotice) return
+    const view = venueNoticeView(venueWatch.notice)
+    venueNotice.hidden = view.hidden
+    venueNotice.dataset.tone = view.tone
+    if (view.tip) venueNotice.dataset.tip = view.tip
+    else delete venueNotice.dataset.tip
+    const doc = venueNotice.ownerDocument
+    const label = doc.createElement('span')
+    label.className = 'tw-venue-label'
+    label.append(view.lead)
+    if (view.long) {
+      const long = doc.createElement('span')
+      long.className = 'tw-venue-long'
+      long.textContent = view.long
+      label.append(long)
+    }
+    label.append(view.tail)
+    venueNotice.innerHTML = view.icon ? presenterIconSvg(view.icon) : ''
+    venueNotice.append(label)
+  }
+  const updateVenueWatch = (): void => {
+    const previous = venueWatch
+    venueWatch = nextVenueWatch(previous, cachedStatus || 'ended', cachedVenueScreens)
+    if (venueWatch.notice === 'back' && previous.notice !== 'back') {
+      clearTimeout(venueBackTimer)
+      venueBackTimer = setTimeout(() => { venueWatch = settleVenueWatch(venueWatch); renderVenueNotice() }, VENUE_BACK_MS)
+    }
+    if (venueWatch.notice !== previous.notice) renderVenueNotice()
+  }
+  const showVenueCount = (count: number): void => {
+    if (venueCount) {
+      const label = venueScreenCountLabel(count)
+      venueCount.innerHTML = label ? presenterIconSvg('monitor-check') : ''
+      venueCount.append(label)
+      venueCount.hidden = count === 0
+    }
+    updateVenueWatch()
+  }
+  venueCountRenderer = showVenueCount
+  showVenueCount(cachedVenueScreens)
+  // The Live menu's Show join link and Copy venue-screen link (presenter redesign ticket 04).
+  const showJoin = document.getElementById('liveShowJoin') as HTMLButtonElement | null
+  const copyVenueItem = document.getElementById('liveCopyVenueLink') as HTMLButtonElement | null
+  venueLinkRenderer = (shortUrl: string): void => {
+    // Shown without the scheme, as drawn, so it fits the panel; Copy takes the whole link.
+    const link = venueScreenLinkFromUrl(shortUrl) || ''
+    if (venueUrl) { venueUrl.textContent = linkLabel(link); venueUrl.dataset.link = link }
+    if (copyVenueItem) copyVenueItem.disabled = !link
+  }
+  if (cachedJoin) venueLinkRenderer(cachedJoin.shortUrl)
+  const copyVenueLink = (): void => {
+    const link = venueUrl?.dataset.link
+    if (link) clipboard.writeText(link)
+  }
+  venueCopy?.addEventListener('click', copyVenueLink)
+  copyVenueItem?.addEventListener('click', copyVenueLink)
+  showJoin?.addEventListener('click', () => {
+    if (cachedJoin && !url.textContent) {
+      qr.innerHTML = cachedJoin.qrSvg || ''
+      url.textContent = linkLabel(cachedJoin.shortUrl)
+    }
+    panel.hidden = false
+  })
 
+  // The live button takes its key from the registry; the label (the live status) and the name
+  // (what pressing it does) change with the state. As an item of the Live menu (presenter redesign
+  // ticket 04) it reads as the action, Go live or End live session (radio-off, in red), and stays.
+  const inMenu = !!goButton.closest('[role="menu"]')
+  const setGoButton = (label: string, name: string, ending = false): void =>
+    dressPresenterButton(goButton, presenterControl('liveGoButton'), SHORTCUT_REGISTRY, { label: inMenu ? name : label, name, icon: inMenu && ending ? 'radio-off' : undefined })
+  // The status bar's live slot (ADR-0031 §2 and §7): live status shows once, there, with End live
+  // while a session can be ended; the Go live button steps aside while a session is up.
+  const liveSlot = document.getElementById('presenterLiveStatus')
+  const liveIcon = document.getElementById('presenterLiveIcon')
+  const liveLabel = document.getElementById('presenterLiveLabel')
+  const endLive = document.getElementById('presenterEndLive') as HTMLButtonElement | null
+  if (endLive) dressPresenterButton(endLive, presenterControl('presenterEndLive'), SHORTCUT_REGISTRY, { label: 'End live' })
+  // "Not live" is the Go live button (Dominik's preview.8 feedback): it carries the status's icon
+  // and words, is named "Go live" with G from the registry, and runs the Live menu's Go live.
+  // While it shows, the slot's plain icon and words step aside; every other state is status text.
+  const goLive = document.getElementById('presenterGoLive') as HTMLButtonElement | null
+  if (goLive) {
+    dressPresenterButton(goLive, presenterControl('presenterGoLive'), SHORTCUT_REGISTRY, { label: 'Not live' })
+    // Its visible words start the accessible name (label in name), then what pressing it does.
+    goLive.setAttribute('aria-label', 'Not live. Go live')
+  }
+  const renderLiveSlot = (view: ReturnType<typeof liveStatusView>): void => {
+    if (!liveSlot || !liveLabel) return
+    liveSlot.hidden = false
+    liveSlot.dataset.tone = view.tone
+    liveLabel.textContent = view.label
+    if (liveIcon && liveIcon.dataset.icon !== view.icon) {
+      liveIcon.innerHTML = presenterIconSvg(view.icon)
+      liveIcon.dataset.icon = view.icon
+    }
+    const asButton = !!goLive && view.canStart
+    if (goLive) goLive.hidden = !asButton
+    liveLabel.hidden = asButton
+    if (liveIcon) liveIcon.hidden = asButton
+    if (endLive) endLive.hidden = !view.canEnd
+  }
   let status: LiveStatus = cachedStatus || 'ended'
   const renderStatus = (next: LiveStatus): void => {
     status = next
     cachedStatus = next
     const presentation = liveControlPresentation(next)
-    goButton.textContent = presentation.label
-    goButton.title = presentation.title
+    const view = liveStatusView(next)
+    setGoButton(presentation.label, presentation.title, view.canEnd)
+    goButton.classList.toggle('is-danger', view.canEnd)
     goButton.dataset.liveTone = presentation.tone
     goButton.classList.toggle('is-live', next === 'live')
     goButton.classList.toggle('is-reconnecting', next === 'paused-reconnecting')
-    goButton.setAttribute('aria-label', presentation.title)
     goButton.disabled = next === 'ending'
+    // Only where the status bar can show it: without the slot the button still carries the status.
+    // In the Live menu it stays, as End live session.
+    if (liveSlot && !inMenu) goButton.hidden = view.active
+    if (showJoin) showJoin.disabled = !view.active
+    renderLiveSlot(view)
+    updateVenueWatch()
     if (sessionFinished(next)) panel.hidden = true
   }
   statusRenderer = renderStatus
   renderStatus(status)
   const showError = (message: string): void => {
     window.setTimeout(() => {
-      goButton.textContent = message
-      goButton.title = message
+      setGoButton(message, message)
       goButton.dataset.liveTone = 'idle'
+      renderLiveSlot({ ...liveStatusView(status), label: message, canStart: false })
       window.setTimeout(() => renderStatus(status), 4200)
     }, 0)
   }
@@ -173,10 +342,13 @@ export function mountLiveBridge(): void {
   const toggleLive = async (): Promise<void> => {
     if (goButton.disabled) return
     goButton.disabled = true
-    goButton.textContent = sessionCanStart(status) ? 'Going live…' : 'Ending live…'
+    const intent = liveToggleIntent(status)
+    setGoButton(intent.action === 'start' ? 'Going live…' : 'Ending live…', liveControlPresentation(status).title)
     try {
-      if (!sessionCanStart(status)) {
-        if (!window.confirm('End this live session?')) return
+      // The one question seam: End live asks before ending; Go live over a session another window
+      // took over asks before starting here. Cancel leaves the state as it is.
+      if (intent.confirm && !window.confirm(intent.confirm)) return
+      if (intent.action === 'end') {
         const result = await ipcRenderer.invoke('live:end') as LiveGoResult
         if (!result.success) showError(result.error || 'Could not end the live session')
         else updateStatus(result.status ?? 'ended')
@@ -188,7 +360,7 @@ export function mountLiveBridge(): void {
         return
       }
       qr.innerHTML = result.qrSvg || ''
-      url.textContent = result.shortUrl
+      url.textContent = linkLabel(result.shortUrl)
       updateJoin({ shortUrl: result.shortUrl, qrSvg: result.qrSvg || '' })
       panel.hidden = false
       updateStatus(result.status ?? 'connecting')
@@ -202,6 +374,8 @@ export function mountLiveBridge(): void {
     }
   }
   goButton.addEventListener('click', () => { void toggleLive() })
+  endLive?.addEventListener('click', () => { if (!sessionCanStart(status)) void toggleLive() })
+  goLive?.addEventListener('click', () => { if (sessionCanStart(status)) void toggleLive() })
   panelClose?.addEventListener('click', () => { panel.hidden = true })
   window.addEventListener('keydown', (event) => {
     const target = event.target
@@ -218,6 +392,10 @@ export function mountLiveBridge(): void {
       void toggleLive()
     }
   }, true)
+  // G is bound and the live bridge is exposed: the presenter's ? sheet and palette list the live
+  // keys (G, Q, ⇧Q, K) only while this mark is there (PRESENTER_KEY_NEEDS; presenter redesign
+  // ticket 08).
+  document.documentElement.setAttribute(LIVE_BRIDGE_ATTRIBUTE, '')
   // Poll open/close/reveal/hide and results now cross the isolation boundary via the
   // contextBridge `twLivePollBridge` (exposed above), NOT window events.
   const requestedStatusRevision = statusRevision

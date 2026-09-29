@@ -45,7 +45,8 @@ assert.doesNotMatch(iconRowsMarkup, /fl-num/, 'fully resolved list-variant icons
 
 // A value-form {iconlist=…} must never override a list style the author wrote — that was the
 // dead List-style toggle (Dominik, 2026-09-21): the treatment value is still recorded, but the
-// authored style wins and a numbered or logo list never takes the icon-row chrome.
+// authored style wins. ADR-0028 §6 (2026-09-25): a numbered list now takes the icon-list layout
+// with its numbers, so {iconlist=list} gives it the rows — the numbers stay, no icon replaces them.
 const fiveItems = [
   '- Item one {icon=lucide:tally-1}',
   '- Item two {icon=lucide:tally-2}',
@@ -58,13 +59,14 @@ const numberedBlock = numberedWithVariant.model.slides[0].blocks.find((block) =>
 assert.equal(numberedBlock.liststyle, 'numbers', '{numbered}{iconlist=list} resolves liststyle numbers')
 assert.equal(numberedBlock.iconlistVariant, 'list', '{numbered}{iconlist=list} still records the treatment value')
 const numberedMarkup = numberedWithVariant.html.match(/<ul class="feature-list[^"\n]*">[\s\S]*?<\/ul>/)?.[0] ?? ''
-assert.doesNotMatch(numberedMarkup, /fl-iconlist-list/, 'a numbered list never takes the icon-row chrome')
-assert.match(numberedMarkup, /fl-num/, 'the numbered list keeps its numbered discs')
+assert.match(numberedMarkup, /^<ul class="[^"]*\bfl-iconlist-list\b[^"]*\bfl-numbered\b/, 'a numbered list with {iconlist=list} takes the rows as a numbered list')
+assert.match(numberedMarkup, /fl-num/, 'the numbered list keeps its numbers')
+assert.doesNotMatch(numberedMarkup, /<svg/, 'no icon replaces a number')
 const variantFirst = await compile('Variant first numbered', '{iconlist=list}{numbered}', fiveItems)
 const variantFirstBlock = variantFirst.model.slides[0].blocks.find((block) => block.type === 'feature-list')
 assert.equal(variantFirstBlock.liststyle, 'numbers', 'token order cannot resurrect the override')
 const variantFirstMarkup = variantFirst.html.match(/<ul class="feature-list[^"\n]*">[\s\S]*?<\/ul>/)?.[0] ?? ''
-assert.doesNotMatch(variantFirstMarkup, /fl-iconlist-list/, 'token order cannot put the row chrome on a numbered list')
+assert.equal(variantFirstMarkup.replace(/data-id="[^"]*"/g, ''), numberedMarkup.replace(/data-id="[^"]*"/g, ''), 'token order does not change the numbered rows')
 const logoWithVariant = await compile('Logos with variant', '{logolist}{iconlist=list}', fiveItems)
 const logoBlock = logoWithVariant.model.slides[0].blocks.find((block) => block.type === 'feature-list')
 assert.equal(logoBlock.liststyle, 'logos', '{logolist}{iconlist=list} keeps the authored logo style')
@@ -87,12 +89,38 @@ assert.doesNotMatch(iconUnknownMarkup, /fl-iconlist-list/, 'unknown iconlist val
 const statementDefault = await compile('Statement default', '{statement}')
 assert.match(statementDefault.html, /class="slide-content layout-statement"/, 'bare statement markup stays unchanged')
 
+// Ticket 02: the older one-word options are presets over the separate choices, and stamp each
+// choice's own hook (Halo, Aligned, no bar stamp nothing).
 const statementTint = await compile('Statement tint', '{statement=tint}')
-assert.match(statementTint.html, /class="slide-content layout-statement statement-tint"/, 'tint variant stamps its rendering hook')
+assert.match(statementTint.html, /class="slide-content layout-statement statement-bar-left"/, 'Tint is Halo + the left bar')
 
+const statementBar = await compile('Statement bar', '{statement=bar}')
+assert.match(statementBar.html, /class="slide-content layout-statement statement-bg-none statement-bar-left"/, 'Bar is no colour + the left bar')
+
+const statementFull = await compile('Statement full', '{statement=full}')
+assert.match(statementFull.html, /class="slide-content layout-statement statement-bg-full"/, 'Full colour is the Full background')
+
+const statementChoices = await compile('Statement choices', '{statement}{statement-bg=none}{statement-align=centred}{statement-bar=bottom}{statement-sidebar=off}')
+assert.match(statementChoices.html, /class="slide-content layout-statement statement-bg-none statement-centred statement-bar-bottom statement-no-sidebar"/,
+  'each choice stamps its own hook; No sidebar beside a title puts the title on top')
+assert.match(statementChoices.html, /data-title-layout="top"/, 'No sidebar beside a title: the title goes to the top')
+const statementDimensionsOnly = await compile('Statement dimensions only', '{statement-bar=top}')
+assert.match(statementDimensionsOnly.html, /class="slide-content layout-statement statement-bar-top"/, 'a statement choice alone implies the statement layout')
+const statementBadValue = await compile('Statement bad value', '{statement}{statement-bar=middle}')
+assert(statementBadValue.model.warnings.includes('statement-unknown:statement-bar=middle'), 'an unknown choice value warns')
+assert.match(statementBadValue.html, /class="slide-content layout-statement"/, 'an unknown choice value falls back to the default')
+
+// ADR-0028 §10: Centred only without a title — beside the rail it renders as the Default.
+const statementCentredTitled = await compile('Statement centred titled', '{statement=centred}')
+assert.match(statementCentredTitled.html, /class="slide-content layout-statement"/, 'Centred with a title renders as the Default')
+assert.equal(statementCentredTitled.model.warnings.some((warning) => warning.startsWith('statement-unknown')), false, 'centred is a registered value')
+
+// Poster is retired: the token still parses, silently, and the slide renders as the Default.
 const statementPoster = await compile('Statement poster', '{statement=poster}')
-assert.match(statementPoster.html, /class="slide-content layout-statement statement-poster"/, 'poster variant stamps its rendering hook')
-assert.match(statementPoster.html, /<strong>boxed phrase<\/strong>/, 'poster preserves boxed key-phrase markup')
+assert.match(statementPoster.html, /class="slide-content layout-statement"/, 'a Poster slide renders as the Default')
+assert.doesNotMatch(statementPoster.html, /class="slide-content layout-statement[^"]*statement-poster/, 'Poster no longer stamps a class')
+assert.equal(statementPoster.model.warnings.some((warning) => warning.startsWith('statement-unknown')), false, '{statement=poster} does not warn')
+assert.match(statementPoster.html, /<strong>boxed phrase<\/strong>/, 'a former Poster keeps its boxed key-phrase markup')
 
 const statementUnknown = await compile('Statement unknown', '{statement=placard}')
 assert(statementUnknown.model.warnings.includes('statement-unknown:placard'), 'unknown statement value warns')

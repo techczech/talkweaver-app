@@ -40,6 +40,13 @@ function harness(initial: any[] = [], endRemote = async () => 'ended', extra: an
   return { manager, clients, windows, history, timers, saved: () => saved }
 }
 describe('durable live session ownership', () => {
+  test('forwards venue count to the presenter window and its snapshot', () => {
+    const h = harness()
+    h.manager.create(record(), 10)
+    h.clients[0].options.onPresence({ presenterConnected: true, venueScreens: 2 })
+    expect(h.windows.at(-1)).toMatchObject({ id: 10, channel: 'live:presence', value: { presenterConnected: true, venueScreens: 2 } })
+    expect(h.manager.snapshot(10)?.venueScreens).toBe(2)
+  })
   test('closing the presentation while keeping live retains its session and attaches to a reopened window', () => {
     const h = harness()
     h.manager.create(record(), 10)
@@ -206,4 +213,53 @@ test('recovered mixed polls preserve limits, definitions and every ballot shape 
     expect(run.polls[4]).toMatchObject({ type: 'open', maxSubmissions: null })
     expect(run.pollResponses.map(r => r.choice ?? r.text)).toEqual(choices)
   } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+// Live-presenting ticket 07: every instant slide shown is kept with the slide it followed and lands
+// on the Run once, however many times the presenter client reports it.
+test('instant slides shown are recorded with their anchor slide and flushed onto the Run once', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tw-instant-history-'))
+  try {
+    persistRun(dir, normaliseRun({ id: 'run-original', talkSlug: 'talk-test', startedAt: new Date(1000).toISOString() }))
+    const h = harness()
+    h.manager.create({ ...record(), vaultRoot: dir } as any, 10)
+    h.manager.bindRun(10, { talkSlug: 'talk-test', runId: 'run-original' })
+    h.manager.publish(10, { slideId: 'slide-5', reveal: 0, focus: null })
+    const link = { kind: 'link', url: 'https://example.org/a', qrSvg: '<svg/>', shownAt: 2000 }
+    const show = { type: 'instant.show', slide: link }
+    h.clients[0].options.onOperation({ operationId: 'op-1', status: 'pending', message: show })
+    expect(h.saved()[0].instantHistory ?? []).toEqual([])
+    h.clients[0].options.onOperation({ operationId: 'op-1', status: 'confirmed', message: show })
+    h.manager.publish(10, { slideId: 'slide-6', reveal: 0, focus: null })
+    h.clients[0].options.onInstantSlide(link) // server echo of the same show: not a second entry
+    h.clients[0].options.onInstantSlide({ kind: 'countdown', startedAt: 3000, durationMs: 60000, shownAt: 3000 })
+    h.clients[0].options.onOperation({ operationId: 'op-2', status: 'confirmed', message: { type: 'instant.clear' } })
+    expect(h.saved()[0].instantHistory).toEqual([
+      { id: 'link-2000', kind: 'link', shownAt: 2000, afterSlideId: 'slide-5', url: 'https://example.org/a' },
+      { id: 'countdown-3000', kind: 'countdown', shownAt: 3000, afterSlideId: 'slide-6', durationMs: 60000 },
+    ])
+    const row = h.history.at(-1)
+    expect(flushLiveSessionHistory(row)).toBe(true)
+    expect(flushLiveSessionHistory(row)).toBe(true)
+    const run = readRun(dir, 'talk-test', 'run-original')!
+    expect(run.instantSlides?.map((e) => [e.id, e.afterSlideId])).toEqual([['link-2000', 'slide-5'], ['countdown-3000', 'slide-6']])
+    expect(JSON.parse(readFileSync(join(dir, '_PRESENTATIONS', 'talk-test', 'run-original.json'), 'utf8')).instantSlides).toHaveLength(2)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+// Review fix (ticket 07): the slide an instant slide followed is the presenter's slide when it was
+// SHOWN, not the slide reached by the time the server confirms it (or echoes it back).
+test('an instant slide is anchored to the slide on screen when it was shown, even if the presenter moves before confirmation', () => {
+  const h = harness()
+  h.manager.create(record() as any, 10)
+  h.manager.publish(10, { slideId: 'slide-5', reveal: 0, focus: null })
+  const text = { kind: 'text', text: 'Try it now', shownAt: 7000 }
+  expect(h.manager.poll(10, { type: 'instant.show', slide: text } as any)).toMatchObject({ success: true })
+  h.manager.publish(10, { slideId: 'slide-6', reveal: 0, focus: null }) // presenter advances first
+  h.manager.publish(10, { slideId: 'slide-7', reveal: 0, focus: null })
+  h.clients[0].options.onInstantSlide(text) // the server's echo arrives before the confirmation
+  h.clients[0].options.onOperation({ operationId: 'operation-test', status: 'confirmed', message: { type: 'instant.show', slide: text } })
+  expect(h.saved()[0].instantHistory).toEqual([{ id: 'text-7000', kind: 'text', shownAt: 7000, afterSlideId: 'slide-5', text: 'Try it now' }])
+  // The anchor is kept durably with the session, so a restart before confirmation keeps it too.
+  expect(h.saved()[0].instantAnchors).toEqual({ 'text-7000': 'slide-5' })
 })

@@ -205,17 +205,20 @@ function MainApp() {
   // editor's pending edit" fn here; every talk switch funnels through selectTalk, which flushes the
   // OUTGOING editor to the OUTGOING talk's file BEFORE the switch remounts it — so a sub-1.5s edit
   // made just before switching is persisted, not silently dropped. Fires ONLY on a genuine talk change
-  // (outlinePath differs); a same-talk re-select and every reorderNonce remount (which never reaches
-  // App) are untouched, so the reorder/grid-undo clobber the earlier unmount-flush caused stays gone.
+  // (outlinePath differs); a same-talk re-select and every in-buffer change (reorder, grid undo — none
+  // of which remounts the editor) are untouched, so the clobber the earlier unmount-flush caused stays gone.
   const flushSaveRef = useRef<(() => Promise<void>) | null>(null)
+  // Outline external-change guard (shared-talk ticket 01): WorkspaceLayout's leave check. It flushes the
+  // outgoing talk's pending typing and, while that talk's file differs from the editor, holds the
+  // switch behind the sheet (Reload / Keep mine / Stay here) until the choice has completed.
+  const leaveGuardRef = useRef<(() => Promise<boolean>) | null>(null)
   const activeTalkRef = useRef<TalkInfo | null>(activeTalk)
   useEffect(() => { activeTalkRef.current = activeTalk }, [activeTalk])
   // Per-talk Metadata panel (ADR-0036) — opened from the Talks-panel context menu (any talk) or
-  // the tw-open-metadata event (toolbar Deck menu / command palette → the active talk). When the
-  // panel writes the ACTIVE talk's outline on disk, adoptOutlineRef pushes the new text into the
-  // live editor buffer (WorkspaceLayout registers it) so the next autosave can't clobber the edit.
+  // the tw-open-metadata event (toolbar Deck menu / command palette → the active talk). Its writes go
+  // to main's metadata:edit-frontmatter, which edits an open talk's editor BUFFER (talk-writer.ts →
+  // the window's D1 seam, saved through its queue) and any other talk on disk — nothing to adopt.
   const [metadataTalk, setMetadataTalk] = useState<TalkInfo | null>(null)
-  const adoptOutlineRef = useRef<((content: string) => void) | null>(null)
   // Name the editor window by the talk it's editing (e.g. "TalkWeaver Edit — AI 2026 Agents") so
   // ⌘` / Mission Control / the Window menu make it easy to pick the right window (esp. with ⌘N open).
   // Electron uses the page <title> for the window title, so setting document.title is enough here.
@@ -223,6 +226,14 @@ function MainApp() {
     document.title = activeTalk ? `TalkWeaver Edit — ${activeTalk.title}` : 'TalkWeaver'
   }, [activeTalk])
   const selectTalk = useCallback(async (talk: TalkInfo | null) => {
+    const prev = activeTalkRef.current
+    // Leaving the talk: its pending typing is flushed to ITS file first (awaited, before the claim moves
+    // the window on), and the switch waits for the person while that file differs from the editor.
+    if (prev && talk?.outlinePath !== prev.outlinePath) {
+      const guard = leaveGuardRef.current
+      const mayLeave = guard ? await guard() : (await flushSaveRef.current?.(), true)
+      if (!mayLeave) return
+    }
     // Same-talk guard (multi-window, ⌘N): claim this talk for this window. If another window already
     // has it active, main focuses that window and refuses — we keep our current talk rather than
     // opening the same file in two windows (which would let their autosaves clobber each other).
@@ -231,9 +242,6 @@ function MainApp() {
       notify(`“${talk.title}” is already open in another window — brought it to the front.`, 'info')
       return
     }
-    const prev = activeTalkRef.current
-    // Fire-and-forget: flushSave reads the outgoing doc + path synchronously before the switch.
-    if (prev && talk?.outlinePath !== prev.outlinePath) void flushSaveRef.current?.()
     setActiveTalk(talk)
   }, [])
 
@@ -541,6 +549,8 @@ function MainApp() {
               // Rename safety (ADR-0008): the panel awaits the editor's pending-autosave flush
               // BEFORE renaming the active talk's folder, so no late write recreates the old path.
               flushActive={async () => { await flushSaveRef.current?.() }}
+              // …and the external-change guard's leave check before any move of the active talk.
+              leaveActive={async () => { const guard = leaveGuardRef.current; if (guard) return guard(); await flushSaveRef.current?.(); return true }}
               initialFocusPath={talkFocusPathRef.current}
               onFocusPathChange={rememberTalkFocusPath}
             />
@@ -596,7 +606,8 @@ function MainApp() {
         onSelectTalk={selectTalk}
         onEditorEngaged={onEditorEngaged}
         registerFlushSave={(fn) => { flushSaveRef.current = fn }}
-        registerAdoptOutline={(fn) => { adoptOutlineRef.current = fn }}
+        registerLeaveGuard={(fn) => { leaveGuardRef.current = fn }}
+        onDiscardTalk={() => { void selectTalk(null) }}
         onActiveLineChange={slidesOutlineVisible ? setActiveOutlineLine : undefined}
       />
       <MetadataPanel
@@ -604,16 +615,15 @@ function MainApp() {
         vaultRoot={state.vaultRoot}
         isOpen={metadataTalk !== null}
         onClose={() => setMetadataTalk(null)}
-        // Flush the live editor buffer to disk before the panel reads/writes the ACTIVE talk, so
-        // it always operates on current bytes (other talks have no buffer — the flush is a no-op).
+        // Flush the live editor buffer to disk before the panel READS the active talk, so it shows
+        // current bytes (other talks have no buffer — the flush is a no-op). Writes need no flush.
         flushBeforeIO={async () => {
           if (metadataTalk && activeTalkRef.current?.outlinePath === metadataTalk.outlinePath) {
             await flushSaveRef.current?.()
           }
         }}
-        // Adopt disk writes into the live buffer when the edited talk is the one being edited.
-        onSaved={(outlinePath, content) => {
-          if (activeTalkRef.current?.outlinePath === outlinePath) adoptOutlineRef.current?.(content)
+        // The edit is already in the open talk's buffer (or on disk for any other talk).
+        onSaved={() => {
           void refreshTalks() // sidebar title/subtitle/event may have changed
         }}
       />

@@ -9,14 +9,17 @@ import {
   type SurfaceOptionModel
 } from '../../../shared/metadata-surfaces'
 import { ensureMetadataDefaults } from '../lib/metadata-defaults'
-import { editFrontmatterText, parseFrontmatterPairs } from '../../../shared/frontmatter-editor'
+import { parseFrontmatterPairs, type FrontmatterEdit } from '../../../shared/frontmatter-editor'
 
 interface Props {
   isOpen: boolean
   outlineContent: string
   activeTalk: { title: string; outlinePath: string } | null
   onClose: () => void
-  onSave: (newOutline: string) => void
+  /** The frontmatter edits to make. The host applies them to the talk's text as it stands (the
+   *  editor buffer, one-writer spec D1) — never a whole outline worked out from `outlineContent`,
+   *  which can be older than the buffer. */
+  onSave: (edits: FrontmatterEdit[]) => void
 }
 
 /** Everything searchable about a field: its own words AND every choice's words. */
@@ -102,7 +105,7 @@ export default function DeckDesignPanel({ isOpen, outlineContent, activeTalk, on
 
   function handleSave() {
     if (!dirty) return
-    const edits = editableFields
+    const edits: FrontmatterEdit[] = editableFields
       .filter((field) => draft[field.key] !== baseline[field.key])
       .map((field) => ({
         key: field.key,
@@ -110,8 +113,7 @@ export default function DeckDesignPanel({ isOpen, outlineContent, activeTalk, on
         value: draft[field.key] === '' ? null : draft[field.key],
         raw: field.control === 'map'
       }))
-    const next = editFrontmatterText(outlineContent, edits)
-    onSave(next)
+    onSave(edits)
     setBaseline({ ...draft })
     setSaved(true)
   }

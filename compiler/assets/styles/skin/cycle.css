@@ -2,7 +2,7 @@
   .slide-content:has(> .cycle-diagram) { max-width: none; width: calc(100% - 2 * var(--slide-pad-x, 48px)); }/* @order 1649 */
   .cycle-diagram {
     position: relative;
-    width: min(72cqw, 118vh);
+    width: min(72cqw, 118cqh);
     aspect-ratio: 1000 / 620;
     margin: 0 auto;
   }/* @order 1650 */

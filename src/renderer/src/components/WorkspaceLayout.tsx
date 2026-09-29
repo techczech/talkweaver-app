@@ -1,4 +1,5 @@
 import { runActionBarEditorCommand } from './actionBar/command-runner'
+import { venueScreenLinkFromOutline } from '../../../shared/venue-screen-link'
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import type { TalkInfo, ProjectionRow } from '../../../preload/index'
@@ -19,6 +20,14 @@ import SearchPalette from './SearchPalette'
 import SlideBrowser from './SlideBrowser'
 import PropagationChecklist, { type AdoptVersion } from './PropagationChecklist'
 import MergeConfirm from './MergeConfirm'
+import ShareSheet from './ShareSheet'
+import { shareForTalk, useSharedTalks } from '../lib/sharedTalks'
+import FeedbackRail, { type FeedbackFocus } from './FeedbackRail'
+import { useFeedbackList, useFeedbackSummaries } from '../lib/feedback'
+import { acceptProposal, DISK_CHANGED, undoAccepted, type FeedbackAcceptDeps } from '../lib/feedbackAccept'
+import { slideMarkers } from '../../../shared/feedback-markers'
+import { ENDED_LABEL, PAUSED_LABEL, type RailSlide } from '../../../shared/feedback'
+import { sharedStatusLabel } from '../../../shared/shared-talk'
 import TagPicker from './TagPicker'
 import { stampedIdOf, type MergeRequest } from './slideBrowserModel'
 import { tagsOfBlock } from '../../../shared/tags'
@@ -41,8 +50,13 @@ import {
   type PaletteCommandHandlerId,
   type ToolbarMenuName
 } from '../../../shared/command-registry'
-import { liveCommandShortcutLabel, onKeymapChanged } from '../keymap/store'
+import { liveCommandShortcutLabel, liveShortcutLabel, onKeymapChanged } from '../keymap/store'
+import { surfaceKey } from '../keymap/surfaceKeys'
+import type { PickerCommandOutcome, SlidePickerCommands } from './slidePickerCommands'
 import ActionBar from './actionBar/ActionBar'
+import OutlineDiskChangeBar, { OutlineDiskChangeSheet } from './OutlineDiskChangeBar'
+import { useOutlineDiskChange } from './useOutlineDiskChange'
+import { noteOutlineSaveReply } from '../lib/outlineDiskChange'
 import {
   DEFAULT_ACTION_BAR_ITEMS,
   resolveActionBarItems,
@@ -50,9 +64,12 @@ import {
 } from './actionBar/model'
 import { actionBarItemsFrom } from '../../../shared/action-bar-settings'
 import SlideContextMenu, { type SlideMenuAction } from './SlideContextMenu'
+import { outlineWritesSettled, queueOutlineWrite } from '../lib/saveQueue'
+import { createOutlineMutator, type OutlineMutate, type OutlineMutationOptions, type OutlineMutationResult, type OutlineMutator } from '../lib/outlineMutation'
+import { stampHandoutUrl } from '../../../shared/handout-stamp'
+import { editFrontmatterText, type FrontmatterEdit } from '../../../shared/frontmatter-editor'
 import type { CursorListItemContext } from '../extensions/outliner'
 import {
-  applyInspectorOptionToOutline,
   headingLineForSlideId,
   inspectedSlideIdAfterCursorChange,
   migrateInspectorMode,
@@ -73,6 +90,9 @@ export type OutlineOps = {
   reLevel: (line: number, dir: -1 | 1, withSubtree: boolean) => void
   moveTo: (fromLine: number, toLine: number) => void
 }
+
+// What a queued outline save answers (window.tw.talk.writeOutline).
+type OutlineSaveResult = Awaited<ReturnType<typeof window.tw.talk.writeOutline>>
 
 interface Props {
   activeTalk: TalkInfo | null
@@ -96,10 +116,12 @@ interface Props {
    *  switch so a sub-1.5s edit made just before switching is persisted to the OUTGOING talk's file
    *  (data-loss guard, 2026-07-05). No-op when nothing is pending. */
   registerFlushSave?: (fn: () => Promise<void>) => void
-  /** Hand App an "adopt this outline text into the live editor buffer" fn (the publish-handout
-   *  adoption pattern). The Metadata panel writes the active talk's frontmatter on DISK; without
-   *  adoption the editor's stale buffer would clobber that write on its next autosave. */
-  registerAdoptOutline?: (fn: (content: string) => void) => void
+  /** Hand App the outline external-change guard's leave check: App awaits it before a talk switch
+   *  (it flushes pending typing, and holds the switch behind the sheet while the talk's file differs
+   *  from the editor). Resolves false when the person chose Stay here. */
+  registerLeaveGuard?: (fn: () => Promise<boolean>) => void
+  /** The person discarded the open talk (removed on disk): App lets it go. */
+  onDiscardTalk?: () => void
   /** The source line of the slide the editor cursor is now in, so App's Slide-outline sidebar can
    *  follow the cursor (highlight + scroll to the current slide). Fires only when the active slide
    *  changes, not on every keystroke. null = the cursor is above the first slide (cover/frontmatter). */
@@ -115,7 +137,6 @@ const GRID_COLS_MIN = 1
 const GRID_COLS_MAX = 6
 const PANE_STATE_STORAGE_KEY = 'tw-pane-state'
 const INSPECTOR_MODE_STORAGE_KEY = 'tw-inspector-mode'
-const INSPECTOR_AUTOSAVE_MS = 1500
 
 function readPaneState(): PaneState {
   try { return migratePaneState(window.localStorage.getItem(PANE_STATE_STORAGE_KEY)) }
@@ -191,7 +212,7 @@ function computeSlideLines(rows: ProjectionRow[] | null, content: string): (numb
   })
 }
 
-export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange, registerJump, onOpenSettings, registerOutlineOps, onSelectTalk, onEditorEngaged, registerFlushSave, registerAdoptOutline, onActiveLineChange }: Props) {
+export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange, registerJump, onOpenSettings, registerOutlineOps, onSelectTalk, onEditorEngaged, registerFlushSave, registerLeaveGuard, onDiscardTalk, onActiveLineChange }: Props) {
   const commandHandlersRef = useRef<Record<PaletteCommandHandlerId, () => void> | null>(null)
   const [, setKeymapRevision] = useState(0)
   useEffect(
@@ -239,13 +260,15 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   const [triggerFindings, setTriggerFindings] = useState<LayoutDoctorFinding[]>([])
   const [thumbnails, setThumbnails] = useState<Record<string, string> | null>(null)
   const compileTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const inspectorSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [buildStatus, setBuildStatus] = useState<'idle' | 'building' | 'done' | 'error'>('idle')
   const [buildPath, setBuildPath] = useState<string | null>(null)
   // Publishing is a long, opaque wrangler deploy (no streamed progress) — show a prominent
   // blocking overlay with an elapsed-seconds ticker so it never looks hung.
   const [publishing, setPublishing] = useState<boolean>(false)
+  // Share for comments (ticket 03): the sheet, and every shared talk (status bar chip).
+  const [shareSheetOpen, setShareSheetOpen] = useState<boolean>(false)
+  const sharedTalks = useSharedTalks()
   const [publishElapsed, setPublishElapsed] = useState<number>(0)
   const [wordCount, setWordCount] = useState<number>(0)
   const [lastSaved, setLastSaved] = useState<Date | null>(null)
@@ -304,7 +327,6 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // should land in the editor) from strip/grid card CLICKS, which only aim the editor's viewport:
   // stealing focus there killed the strip's own arrow-key navigation for mouse users.
   const [focusLine, setFocusLine] = useState<{ line: number; takeFocus: boolean } | null>(null)
-  const [reorderNonce, setReorderNonce] = useState<number>(0)
   const [imageMetaId, setImageMetaId] = useState<string | null>(null)
   const [abstractOpen, setAbstractOpen] = useState<boolean>(false)
   const [deckDesignOpen, setDeckDesignOpen] = useState<boolean>(false)
@@ -360,8 +382,12 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // slide at the live caret instead of appending at EOF.
   const editorInsertRef = useRef<((text: string) => void) | null>(null)
   const editorInsertObjectRef = useRef<ObjectInsertHandler | null>(null)
-  // Replaces the whole doc in place, preserving caret + scroll (icon pin → no jump-to-top).
-  const editorReplaceRef = useRef<((text: string) => void) | null>(null)
+  // Puts rewritten text into the buffer in place as ONE minimal change (caret mapped, scroll and undo
+  // history kept, no remount); `{ save: true }` also supersedes the autosave and returns the text to
+  // save now (Editor registerReplaceDoc). editorReadRef reads the buffer itself — the doc CodeMirror
+  // holds — never the outlineContent mirror (one-writer spec D1).
+  const editorReplaceRef = useRef<((text: string, opts?: { save?: boolean }) => string | null) | null>(null)
+  const editorReadRef = useRef<(() => { path: string; text: string; caret: number } | null) | null>(null)
   const editorLayoutContextRef = useRef<(() => LayoutPickerContext | null) | null>(null)
   const editorApplyLayoutRef = useRef<((initial: LayoutDef[], selected: LayoutDef[]) => void) | null>(null)
   const editorApplyOptionRef = useRef<((entry: LayoutDef | undefined, group: OptionGroup, token: string, headingLine?: number, slideId?: string | null) => string | null) | null>(null)
@@ -406,14 +432,17 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // The Browser registers a "focus + select the search field" fn here (registerFocusSearch);
   // ⌘S calls it when the Browser is already open.
   const browserFocusSearchRef = useRef<(() => void) | null>(null)
+  // The Browser's talk-search actions (registerCommands), for the palette and ⇧⌘S (talk search 08).
+  const pickerCommandsRef = useRef<SlidePickerCommands | null>(null)
+  const registerPickerCommands = useCallback((commands: SlidePickerCommands) => { pickerCommandsRef.current = commands }, [])
   // True while ANY overlay covers the workspace — the ⌘K/right-click slide menu must never
   // open (or swallow the key) underneath one. Synced by an effect below (after the overlay
   // states are all declared); read by the deps-[] global key handler.
   const overlayOpenRef = useRef(false)
 
-  // Grid-reorder undo. A grid drag rewrites the outline file directly (handleReorder) — it never
-  // dispatches through CodeMirror, so the editor's own history can't undo it. We keep our own
-  // stack of pre-reorder outline snapshots; ⌘Z / ⌘⇧Z walk it while the grid is the active view.
+  // Grid-reorder undo. The grid has no editor focus, so ⌘Z there cannot reach CodeMirror's history:
+  // we keep our own stack of pre-reorder buffer snapshots; ⌘Z / ⌘⇧Z walk it while the grid is the
+  // active view (each step goes back into the buffer through the D1 seam, handleReorder).
   const reorderUndoRef = useRef<string[]>([])
   const reorderRedoRef = useRef<string[]>([])
   const gridModeRef = useRef(gridMode)
@@ -573,41 +602,23 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // own insert-decision viewer. The old cross-talk pendingFocus flow — which silently switched
   // activeTalk under the editor — is deliberately gone.
 
-  // Detach (B3): flush the pending autosave FIRST (else the engine reads a stale on-disk copy — the
-  // progress ledger flagged this race), then ledger.detach, apply the re-id'd text in place, toast.
+  // Detach (B3). Main detaches against this window's BUFFER (talk-writer.ts routes the open talk
+  // here) and the re-id'd text arrives through the D1 seam as one minimal change, saved through the
+  // queue — so there is no flush first and no reload after (one-writer spec D1).
   async function handleDetach(ref: { heading: string; occurrence: number }): Promise<boolean> {
     const talk = activeTalkRef.current
     if (!talk) return false
-    await editorCmdsRef.current?.flushSave()
     const res = await window.tw.ledger.detach(talk.outlinePath, outlineContentRef.current, ref)
     if (!res) { notify('Couldn’t detach this slide — the ledger didn’t return a result.', 'error'); return false }
-    if (editorReplaceRef.current) editorReplaceRef.current(res.text)
-    else { setOutlineContent(res.text); setReorderNonce((n) => n + 1) }
-    setLastSaved(new Date())
     notify(`Detached — new id {id=${res.newId}}`, 'success')
     return true
   }
 
   // ── Slide tags (ADR-0037) ────────────────────────────────────────────────────
-  // Browser tag writes: flush the active talk's pending autosave BEFORE a tags:apply that
-  // targets it (the detach/adopt flush rule), and re-read + adopt the rewritten text AFTER
-  // (handleAdopted pattern) so the next autosave can't clobber the tag write.
-  const flushBeforeTagWrite = useCallback(async (outlinePaths: string[]) => {
-    const talk = activeTalkRef.current
-    if (talk && outlinePaths.includes(talk.outlinePath)) await editorCmdsRef.current?.flushSave()
-  }, [])
-  const handleTagsApplied = useCallback(async (outlinePaths: string[]) => {
-    const talk = activeTalkRef.current
-    if (!talk || !outlinePaths.includes(talk.outlinePath)) return
-    const fresh = await window.tw.talk.readOutline(talk.outlinePath)
-    if (fresh == null) {
-      notify('Tags written on disk, but the outline could not be reloaded — reopen this Talk before editing.', 'error')
-      return
-    }
-    if (fresh === outlineContentRef.current) return
-    if (editorReplaceRef.current) editorReplaceRef.current(fresh)
-    else { setOutlineContent(fresh); setReorderNonce((n) => n + 1) }
-  }, [])
+  // Tag writes (the Browser's and "Tag current slide…") go to main's tags:apply, which applies an
+  // open talk's tags to its editor BUFFER (talk-writer.ts routes it to this window's D1 seam): the
+  // change is in the buffer and saved through the queue when the call returns. No flush before, no
+  // reload after (one-writer spec D1); a talk open nowhere is written on disk by main.
 
   // "Tag current slide…" (command palette): the SAME locked picker, anchored under the toolbar,
   // applying to the slide the cursor/strip is on. The ⌘K editor slide menu arrives in a later
@@ -691,7 +702,6 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     if (!talk || !tagSlide || tagSlideBusy) return
     setTagSlideBusy(true)
     try {
-      await editorCmdsRef.current?.flushSave()
       const target = tagSlide.id
         ? { outline: talk.outlinePath, id: tagSlide.id }
         : { outline: talk.outlinePath, heading: tagSlide.heading, occurrence: tagSlide.occurrence }
@@ -704,7 +714,6 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         notify('Couldn’t write the tag — nothing was changed.', 'error')
         return
       }
-      await handleTagsApplied(res.applied.map((a) => a.outline))
       // Keep the picker's states honest without re-parsing the (asynchronously adopting) buffer.
       // An unstamped slide whose HEADING carried tags= keeps its heading address only until the
       // scrub — stamped slides (the norm: every save stamps) are id-addressed and immune.
@@ -719,7 +728,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   }
 
   // Adopt-current (B3): open the host-mounted PropagationChecklist with the CURRENT block as the
-  // version to push across the other talks carrying this id (reuses adoptTarget + handleAdopted).
+  // version to push across the other talks carrying this id (reuses adoptTarget).
   function handleAdoptCurrent(slideId: string, currentMarkdown: string): void {
     const talk = activeTalkRef.current
     setAdoptTarget({
@@ -727,6 +736,88 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       version: { file: '__current__', markdown: currentMarkdown, savedAt: Date.now(), talk: talk?.slug ?? '', canonical: false }
     })
   }
+
+  // Every outline write from the workspace goes through the outline's shared save queue — the
+  // same queue as the Editor's saves — so a workspace write made before an instant-slide save
+  // ("Add to talk") can never land on disk after it (live-presenting ticket 07).
+  function writeOutline(outlinePath: string, text: string): ReturnType<typeof window.tw.talk.writeOutline> {
+    return queueOutlineWrite(outlinePath, () => window.tw.talk.writeOutline(outlinePath, text))
+  }
+
+  // One writer for talk files, renderer side (spec D1, lib/outlineMutation.ts). Every programmatic
+  // change of the talk open here — reorder, grid undo, the publish stamp, and every main-process write
+  // T1 routes to this window (tags, frontmatter, detach, image optimisation, "Add to talk") — reads
+  // the editor's buffer, works out the new text, puts it into the buffer as one minimal change and
+  // saves that buffer through writeOutline. The editor is never remounted for it.
+  // Built once from refs only, so the deps-[] handlers (⌘Z, editor requests) can use it too.
+  const outlineMutatorRef = useRef<OutlineMutator<OutlineSaveResult> | null>(null)
+  if (!outlineMutatorRef.current) {
+    outlineMutatorRef.current = createOutlineMutator<OutlineSaveResult>({
+      bufferFor: (outlinePath) => activeTalkRef.current?.outlinePath !== outlinePath ? null : {
+        read: (path) => {
+          const doc = editorReadRef.current?.()
+          return doc && doc.path === path ? doc.text : null
+        },
+        apply: (path, next) => {
+          const doc = editorReadRef.current?.()
+          if (!doc || doc.path !== path) return null
+          return editorReplaceRef.current?.(next, { save: true }) ?? null
+        },
+        adopt: (path, sent, saved) => {
+          // The save stamped ids: adopt them only while the buffer is still what was sent (never
+          // over newer typing; the next save stamps it again).
+          const doc = editorReadRef.current?.()
+          if (doc && doc.path === path && doc.text === sent) editorReplaceRef.current?.(saved)
+        },
+        insertAtCaret: (path, block) => {
+          // The editor's own insert channel: one change at the live caret, scrolled into view.
+          const doc = editorReadRef.current?.()
+          const insert = editorInsertRef.current
+          if (!doc || doc.path !== path || !insert) return false
+          insert(block)
+          return true
+        },
+      },
+      settled: (outlinePath) => outlineWritesSettled(outlinePath),
+      write: (outlinePath, text) => writeOutline(outlinePath, text),
+      onSaved: (_outlinePath, reply) => {
+        setLastSaved(new Date())
+        setDirty(false)
+        notifyCollisions(reply)
+      },
+      onSaveFailed: (_outlinePath, reply) => {
+        // External-change guard: the bar at the top of the talk explains and offers the choice.
+        if (noteOutlineSaveReply(reply)) {
+          notify('Not saved: this talk’s file differs from what TalkWeaver has open. Choose in the bar at the top of the talk.', 'warning', 'changed-on-disk')
+          return
+        }
+        if (reply && reply.ok === false) notify('Save skipped — the app refused to overwrite the outline with empty content. Your file on disk is unchanged.', 'warning', 'save-refused')
+        else notify('Save FAILED — the outline could not be written to disk. Your recent edits are not saved.', 'error', 'save-failed')
+      },
+    })
+  }
+
+  /** The D1 seam: applies `mutate` to the open talk's buffer (read from the editor itself), puts the
+   *  result in as a minimal change and saves it through the file's queue. A talk not open in this
+   *  window answers 'not-open' — its callers write it through the main-process handler instead. */
+  function applyOutlineMutation(outlinePath: string, mutate: OutlineMutate, opts?: OutlineMutationOptions): Promise<OutlineMutationResult<OutlineSaveResult>> {
+    return outlineMutatorRef.current!.apply(outlinePath, mutate, opts)
+  }
+
+  // Outline external-change guard (shared-talk ticket 01): the bar at the top of the talk (every view),
+  // the sheet that holds a switch or a close, and the recovery offer (useOutlineDiskChange).
+  const diskGuard = useOutlineDiskChange({
+    activeOutlinePath: activeTalk?.outlinePath ?? null,
+    readDoc: () => editorReadRef.current?.() ?? null,
+    replaceDoc: (text) => editorReplaceRef.current?.(text) ?? null,
+    saveBuffer: async (outlinePath) => (await applyOutlineMutation(outlinePath, (current) => current, { force: true })).ok,
+    flush: async () => { await editorCmdsRef.current?.flushSave() },
+    onDiscardTalk: () => onDiscardTalk?.(),
+  })
+  useEffect(() => { registerLeaveGuard?.(diskGuard.guardLeave) }, [registerLeaveGuard, diskGuard.guardLeave])
+  const diskChangeBar = diskGuard.change && (
+    <OutlineDiskChangeBar change={diskGuard.change} busy={diskGuard.busy} onChoose={diskGuard.choose} />
+  )
 
   // Save-path collision surfacing (ADR-0032): writeOutline now reports duplicate {id=…}s in the
   // outline it just recorded. Called only at AWAITED call sites — fire-and-forget saves stay as-is.
@@ -745,6 +836,47 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   const focusEditor = (): void => {
     requestAnimationFrame(() => (document.querySelector('.cm-content') as HTMLElement | null)?.focus())
   }
+
+  const activeShare = shareForTalk(sharedTalks, activeTalk?.outlinePath)
+  const closeShareSheet = useCallback(() => {
+    setShareSheetOpen(false)
+    requestAnimationFrame(() => (document.querySelector('.cm-content') as HTMLElement | null)?.focus())
+  }, [])
+  // The sheet belongs to the talk it opened on.
+  useEffect(() => { setShareSheetOpen(false) }, [activeTalk?.outlinePath])
+
+  // Feedback rail (ticket 05): takes the Inspector's slot beside the outline while open. Counts and
+  // the owner socket's state come from main's summaries; the list from the talk's feedback file.
+  const [feedbackOpen, setFeedbackOpen] = useState<boolean>(false)
+  const feedbackSummaries = useFeedbackSummaries()
+  const activeFeedback = activeShare ? feedbackSummaries[activeShare.shareId] ?? null : null
+  const feedbackPaused = activeFeedback?.connection === 'paused'
+  const shareEnded = Boolean(activeShare?.ended) || activeFeedback?.connection === 'ended'
+  const railOpen = feedbackOpen && Boolean(activeShare)
+  // Read while the talk is shared, rail open or not: the slide pane's markers come from it too.
+  const feedback = useFeedbackList(activeTalk?.outlinePath ?? null, activeFeedback, Boolean(activeShare))
+  const railSlides = useMemo<RailSlide[]>(
+    () => (compiledSlides ?? []).map((row) => ({ slideId: row.slide_id, title: row.nav_title || row.title, line: row.source_line ?? null })),
+    [compiledSlides]
+  )
+  // Stopping the share (here or in another window) closes the rail with it.
+  useEffect(() => { if (!activeShare) setFeedbackOpen(false) }, [activeShare])
+  // Markers on the slide pane (ticket 06, frame 2): badges per slide, ghost rows for new slides.
+  const feedbackMarkers = useMemo(
+    () => (activeShare && feedback.list ? slideMarkers(feedback.list.items, (compiledSlides ?? []).map((row) => row.slide_id)) : null),
+    [activeShare, feedback.list, compiledSlides]
+  )
+  // Opened from a marker, the rail sits beside the slide pane (frame 2); from the toolbar, it takes
+  // the pane's slot (frame 1).
+  const [railWithStrip, setRailWithStrip] = useState(false)
+  const [feedbackFocus, setFeedbackFocus] = useState<FeedbackFocus | null>(null)
+  const [feedbackBusy, setFeedbackBusy] = useState<string | null>(null)
+  // The guard's refusal of an Accept is moot once its bar is answered.
+  const diskHeld = diskGuard.change != null
+  useEffect(() => {
+    if (!diskHeld && feedback.error === DISK_CHANGED) feedback.setError(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [diskHeld])
 
   // Mirror the live outline up to App so the left sidebar's Outline/Slides views stay current.
   // App only passes the callback while the Slide-outline sidebar is visible (perf: a hidden
@@ -766,16 +898,19 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     registerFlushSave?.(async () => { await editorCmdsRef.current?.flushSave() })
   }, [registerFlushSave])
 
-  // Hand App an "adopt outline text written on disk into the live buffer" fn (Metadata panel,
-  // ADR-0036) — the same adoption move publish-handout does with its updatedOutline.
+  // Main-process writes of the talk open here (talk-writer.ts: "Add to talk", tags, frontmatter,
+  // detach, image optimisation, the publish stamp and flush) come through THIS buffer: main reads it,
+  // works out the change, then asks us to apply it only if the buffer has not moved on — through the
+  // same D1 seam as every workspace mutation, so an unsaved edit is never overwritten and the next
+  // autosave cannot undo the change. The reply is ok only once the save has reached the disk.
   useEffect(() => {
-    registerAdoptOutline?.((content: string) => {
-      if (content === outlineContentRef.current) return
-      if (editorReplaceRef.current) editorReplaceRef.current(content)
-      else { setOutlineContent(content); setReorderNonce((n) => n + 1) }
-      setLastSaved(new Date())
+    // Optional-chained: the browser-only dev mock (tw-mock.ts) has no outline bridge.
+    return window.tw.outline?.onEditorDocumentRequest?.(async (request) => {
+      const mutator = outlineMutatorRef.current!
+      if (request.kind === 'read') return mutator.readForMain(request.outlinePath)
+      return mutator.applyFromMain(request.outlinePath, request.base, request.next, request.origin)
     })
-  }, [registerAdoptOutline])
+  }, [])
 
   // Expose a jump-to-line to App: scroll/cursor the editor there AND sync the strip's active
   // card. Re-registered when the line→slide mapping changes so it always resolves correctly.
@@ -901,15 +1036,22 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
           const pushTo = e.shiftKey ? reorderUndoRef : reorderRedoRef
           const text = popFrom.current.pop()
           if (text == null) return // nothing left to undo/redo
-          pushTo.current.push(outlineContentRef.current)
-          window.tw.talk.writeOutline(talk.outlinePath, text).then((res) => {
-            if (!res || res.ok !== true) notify('Undo applied on screen but could not be written to disk.', 'error', 'save-failed')
+          // Through the buffer (one-writer spec D1): one minimal change, saved through the queue, no
+          // remount. The buffer it replaced goes on the other stack.
+          void applyOutlineMutation(talk.outlinePath, () => text).then((result) => {
+            if (result.ok || result.applied) { if (result.base != null) pushTo.current.push(result.base) }
+            else { popFrom.current.push(text); notify(`Couldn’t undo the move — ${result.error}`, 'warning') }
           })
-          setOutlineContent(text)
-          setLastSaved(new Date())
-          setReorderNonce((n) => n + 1)
         } else if (e.shiftKey) editorCmdsRef.current?.redo()
         else editorCmdsRef.current?.undo()
+        return
+      }
+      // ⇧⌘S (app.find-talk, rebindable): the same picker, with the cursor in Find a talk.
+      if (surfaceKey(e, 'find-talk')) {
+        e.preventDefault()
+        e.stopPropagation()
+        if (focusSlideRef.current != null) return
+        runRegisteredCommand('find-talk')
         return
       }
       // ⌘S opens the Slide Browser (the Light Table; moved off ⌘K 2026-07-11 — the app autosaves,
@@ -1312,21 +1454,27 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   }
 
   // Publish the handout to the user's Cloudflare Pages site (Settings → Publishing). The publisher
-  // STAMPS handout_url into the outline, so we adopt the returned `updatedOutline` in place FIRST —
-  // otherwise the editor's debounced autosave would overwrite the stamp it just wrote.
+  // STAMPS handout_url into the outline. For the talk open here main stamps this window's BUFFER
+  // (talk-writer.ts routes it through the D1 seam), never the file behind it; the stamp is then
+  // adopted by stamping the buffer as it stands NOW (idempotent: a no-op when main's stamp landed),
+  // so a stamp main could not apply — the buffer moved during the minutes-long deploy — still lands,
+  // and newer typing is never replaced by the text the publish started from (one-writer spec D1).
   async function handlePublishHandout() {
     if (!activeTalk || !outlineContent) return
     if (blockedByUnresolved(outlineContent)) return
+    const outlinePath = activeTalk.outlinePath
     setBuildStatus('building')
     setPublishElapsed(0)
     setPublishing(true)
     const ticker = setInterval(() => setPublishElapsed((s) => s + 1), 1000)
     try {
-      const res = await window.tw.talk.publishHandout(activeTalk.outlinePath, outlineContent)
-      if (res?.updatedOutline && res.updatedOutline !== outlineContentRef.current) {
-        if (editorReplaceRef.current) editorReplaceRef.current(res.updatedOutline)
-        else { setOutlineContent(res.updatedOutline); setReorderNonce((n) => n + 1) }
-        setLastSaved(new Date())
+      const res = await window.tw.talk.publishHandout(outlinePath, outlineContent)
+      if (res?.success && res.url) {
+        const url = res.url
+        const stamped = await applyOutlineMutation(outlinePath, (current) => stampHandoutUrl(current, url))
+        if (!stamped.ok && stamped.reason !== 'not-open') {
+          notify(`Published, but the link could not be written into the outline: ${stamped.error}`, 'warning')
+        }
       }
       if (res?.success && res.url) {
         setBuildStatus('done')
@@ -1351,6 +1499,23 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     }
   }
 
+  // Share for comments: the sheet shares the talk the moment it opens (LOCKED-share-sheet.html).
+  function handleShareForComments() {
+    if (!activeTalkRef.current) return
+    if (blockedByUnresolved(outlineContentRef.current)) return
+    setShareSheetOpen(true)
+  }
+
+  async function handleCopyVenueScreenLink() {
+    if (!activeTalkRef.current) return
+    const link = venueScreenLinkFromOutline(outlineContentRef.current)
+    if (!link) { notify('Publish this talk before copying its venue-screen link.', 'info'); return }
+    try {
+      await navigator.clipboard.writeText(link)
+      notify('Venue-screen link copied.', 'success')
+    } catch { notify('Couldn’t copy the venue-screen link.', 'warning') }
+  }
+
   // Manual rebuild (the escape hatch Dominik asked for): wipe this talk's thumbnail cache, then
   // recompile + re-render thumbnails from scratch. For when a preview ever looks stale/wrong.
   async function handleRefresh() {
@@ -1368,7 +1533,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
 
   // Optimize the talk's images to WebP (smaller → faster previews + handouts). Imported talks carry
   // large relative-path PNGs; this converts + downscales them, rewrites refs in place, trashes the
-  // originals (recoverable). The in-place content update triggers a fresh compile → faster previews.
+  // originals (recoverable). The buffer change triggers a fresh compile → faster previews.
   async function handleOptimizeImages() {
     if (!activeTalk) return
     notify('Optimizing images…', 'info', 'optimize')
@@ -1377,10 +1542,9 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       notify('Image optimization failed: ' + (res?.error || 'unknown error'), 'error', 'optimize')
       return
     }
+    // The rewritten refs are already in the buffer: main applied them through the D1 seam
+    // (talk-writer.ts routes the open talk to this window) and saved them through the queue.
     if ((res.converted ?? 0) > 0 && res.newContent) {
-      if (editorReplaceRef.current) editorReplaceRef.current(res.newContent)
-      else { setOutlineContent(res.newContent); setReorderNonce((n) => n + 1) }
-      setLastSaved(new Date())
       const mb = ((res.savedBytes ?? 0) / 1048576).toFixed(1)
       const failNote = res.failed ? ` (${res.failed} couldn’t convert)` : ''
       notify(`Optimized ${res.converted} image${res.converted === 1 ? '' : 's'} to WebP — saved ${mb} MB${failNote}. Previews will rebuild faster.`, 'success', 'optimize')
@@ -1430,43 +1594,46 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     }
   }
 
-  // Drag-reorder: ask the compiler lib for the rewritten outline, persist it to disk, then apply
-  // the new text IN PLACE via the editor's replace-doc channel. The old remount path (reorderNonce)
-  // wiped CodeMirror's history, so a drag could never be ⌘Z'd — and destroyed all pre-drag typing
-  // undo with it. The in-place dispatch records the move in CM history like ⌘⇧↑/↓ moves already are.
+  // Drag-reorder (one-writer spec D1): the compiler lib reorders the editor's BUFFER (not the file,
+  // which lags the debounced autosave), the result goes into the buffer as one minimal change —
+  // recorded in CM history like ⌘⇧↑/↓ moves, caret kept, no remount — and that buffer is saved
+  // through the queue. The old remount path re-read the file before the reorder's own write landed
+  // and wiped the undo history.
   async function handleReorder(from: number, to: number) {
-    if (!activeTalk) return
-    // Flush any pending in-memory edits FIRST: the reorder IPC reads the file from
-    // disk, so an unflushed autosave would be silently dropped by the rewrite.
-    await window.tw.talk.writeOutline(activeTalk.outlinePath, outlineContent)
-    const newText = await window.tw.outline.reorder(activeTalk.outlinePath, from, to)
-    if (newText == null) return
-    // Snapshot the pre-reorder text for the GRID-mode ⌘Z stack (no editor focus there); a fresh
-    // move invalidates any redo. In "both" view the CM history is the undo authority.
-    reorderUndoRef.current.push(outlineContentRef.current)
-    if (reorderUndoRef.current.length > 50) reorderUndoRef.current.shift()
-    reorderRedoRef.current = []
-    notifyCollisions(await window.tw.talk.writeOutline(activeTalk.outlinePath, newText))
-    setLastSaved(new Date())
-    if (editorReplaceRef.current) {
-      editorReplaceRef.current(newText) // docChanged → onContentChange → compile/strip refresh
-    } else {
-      setOutlineContent(newText)
-      setReorderNonce((n) => n + 1)
+    const talk = activeTalkRef.current
+    if (!talk) return
+    const result = await applyOutlineMutation(talk.outlinePath, async (text) =>
+      (await window.tw.outline.reorder(talk.outlinePath, from, to, text)) ?? text) // null: not a possible move
+    const moved = result.ok ? result.changed : result.applied
+    if (moved && result.base != null) {
+      // Snapshot the pre-reorder buffer for the GRID-mode ⌘Z stack (no editor focus there); a fresh
+      // move invalidates any redo. In "both" view the CM history is the undo authority.
+      reorderUndoRef.current.push(result.base)
+      if (reorderUndoRef.current.length > 50) reorderUndoRef.current.shift()
+      reorderRedoRef.current = []
     }
+    if (!result.ok && !result.applied) notify(`Couldn’t move the slide — ${result.error}`, 'warning')
   }
 
-  // Cross-Talk reuse insert (ADR-0013). The Editor registers an imperative
-  // insert-at-cursor channel (editorInsertRef); we splice the imported slide
-  // at the live caret. Provenance is implicit: the block keeps its `{id=…}`
-  // verbatim and the ledger records the arrival on save (ADR-0032). The Editor's
-  // docChanged then drives onContentChange (→ outlineContentRef), and we flush
-  // that post-insert text to disk right away rather than waiting on the Editor's
-  // debounced autosave. We do NOT bump reorderNonce: that would remount the Editor
-  // and re-read from disk, discarding the in-memory insert. Falls back to an
-  // EOF-append only if the Editor has not registered an insert channel.
+  // Inserts at the live caret (cross-talk reuse, archive images): one change through the editor's
+  // insert channel, then the buffer is saved as it stands through the file's queue (the D1 seam's
+  // insertAtCaret; onSaved stamps "saved" and reports collisions). Never a remount, never a disk
+  // write ahead of the buffer. The target is always the talk open here; if its text is not loaded in
+  // the editor yet there is no caret and no buffer, so nothing is inserted and the person is told.
+  const INSERT_NOT_READY = 'The talk is not ready in the editor yet. Nothing was inserted; try again.'
+  async function insertAtCaretAndSave(block: string): Promise<boolean> {
+    const talk = activeTalkRef.current
+    if (!talk) return false
+    const result = await outlineMutatorRef.current!.insertAtCaret(talk.outlinePath, block)
+    if (!result.ok && !result.applied) notify(INSERT_NOT_READY, 'warning', 'insert-not-ready')
+    return result.ok || result.applied
+  }
+
+  // Cross-Talk reuse insert (ADR-0013): the imported slide goes in at the live caret. Provenance is
+  // implicit: the block keeps its `{id=…}` verbatim and the ledger records the arrival on save
+  // (ADR-0032). Saved at once rather than after the debounced autosave, so a read-back sees it.
   async function handleSearchInsert(markdown: string, _fromSlug: string, sourceOutlinePath?: string) {
-    if (!activeTalk) return
+    if (!activeTalkRef.current) return
     // Cross-talk reuse: materialize the slide's relative images into the vault pool first, so they
     // resolve in THIS talk (a relative assets/ ref points at the SOURCE talk and would go grey).
     let md = markdown
@@ -1476,34 +1643,13 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         if (mat?.success) md = mat.markdown
       } catch { /* fall back to the raw markdown */ }
     }
-    const block = md.replace(/\s*$/, '')
-
-    const insertFn = editorInsertRef.current
-    if (insertFn) {
-      insertFn(block)
-      // Let React commit the docChanged → onContentChange → outlineContentRef
-      // update, then flush the new text to disk so a read-back sees it.
-      await new Promise((r) => setTimeout(r, 0))
-      const newText = outlineContentRef.current
-      notifyCollisions(await window.tw.talk.writeOutline(activeTalk.outlinePath, newText))
-      setLastSaved(new Date())
-      return
-    }
-
-    // Fallback: no insert channel — append at EOF (legacy behaviour).
-    const trimmed = outlineContent.replace(/\s*$/, '')
-    const newText = `${trimmed}\n\n${block}\n`
-    notifyCollisions(await window.tw.talk.writeOutline(activeTalk.outlinePath, newText))
-    setOutlineContent(newText)
-    setLastSaved(new Date())
-    setReorderNonce((n) => n + 1)
+    await insertAtCaretAndSave(md.replace(/\s*$/, ''))
   }
 
-  // Insert SEVERAL searched slides at once (multi-select), each its own block,
-  // at the caret in result order. Inserts via the same channel, then flushes once.
+  // Insert SEVERAL searched slides at once (multi-select), each its own block, at the caret in
+  // result order: one insertion, one save.
   async function handleSearchInsertMany(items: { markdown: string; fromSlug: string; sourceOutlinePath?: string }[]) {
-    if (!activeTalk || items.length === 0) return
-    const insertFn = editorInsertRef.current
+    if (!activeTalkRef.current || items.length === 0) return
     // Materialize each slide's relative images into the vault pool (cross-talk reuse) before insert.
     const mdById = await Promise.all(items.map(async (it) => {
       if (!it.sourceOutlinePath) return it.markdown
@@ -1513,124 +1659,76 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       } catch { return it.markdown }
     }))
     const blocks = items.map((_it, i) => mdById[i].replace(/\s*$/, ''))
-    if (insertFn) {
-      insertFn(blocks.join('\n\n'))
-      await new Promise((r) => setTimeout(r, 0))
-      notifyCollisions(await window.tw.talk.writeOutline(activeTalk.outlinePath, outlineContentRef.current))
-      setLastSaved(new Date())
+    if (await insertAtCaretAndSave(blocks.join('\n\n'))) {
       notify(`Inserted ${items.length} slide${items.length === 1 ? '' : 's'}.`, 'success')
-      return
     }
-    const trimmed = outlineContent.replace(/\s*$/, '')
-    const newText = `${trimmed}\n\n${blocks.join('\n\n')}\n`
-    notifyCollisions(await window.tw.talk.writeOutline(activeTalk.outlinePath, newText))
-    setOutlineContent(newText)
-    setLastSaved(new Date())
-    setReorderNonce((n) => n + 1)
-    notify(`Inserted ${items.length} slides.`, 'success')
   }
 
-  // Archive image insert (ADR-0019 archive reuse). ArchiveImageSearch already copied the
-  // chosen archive image into the current vault's _assets (content-addressed) and resolved
-  // its id; we splice `![](img-<id>)` at the live caret via the same imperative
-  // insert-at-cursor channel the cross-talk search uses, then flush to disk right away so a
-  // read-back sees it (the Editor's own autosave is debounced 1.5s, too slow).
+  // Archive image insert (ADR-0019 archive reuse). ArchiveImageSearch already copied the chosen
+  // archive image into the current vault's _assets (content-addressed) and resolved its id; we
+  // splice `![](img-<id>)` at the live caret, like the cross-talk insert.
   async function handleArchiveInsert(imgId: string) {
-    if (!activeTalk) return
+    if (!activeTalkRef.current) return
     // importImage already returns a full `img-<hash>` id — do NOT re-prefix (that produced
     // the `img-img-…` refs that the inline-image widget regex could not match).
     const id = imgId.startsWith('img-') ? imgId : `img-${imgId}`
-    const markdown = `![](${id})`
-    const insertFn = editorInsertRef.current
-    if (insertFn) {
-      insertFn(markdown)
-      await new Promise((r) => setTimeout(r, 0))
-      const newText = outlineContentRef.current
-      notifyCollisions(await window.tw.talk.writeOutline(activeTalk.outlinePath, newText))
-      setLastSaved(new Date())
-      return
-    }
-    // Fallback: no insert channel — append at EOF.
-    const trimmed = outlineContent.replace(/\s*$/, '')
-    const newText = `${trimmed}\n\n${markdown}\n`
-    notifyCollisions(await window.tw.talk.writeOutline(activeTalk.outlinePath, newText))
-    setOutlineContent(newText)
-    setLastSaved(new Date())
-    setReorderNonce((n) => n + 1)
+    await insertAtCaretAndSave(`![](${id})`)
   }
 
   // Icon pick (ADR-0021). The IconPicker resolved a glyph key; we pin it to the caret's current
   // top-level list bullet. The editor's registered reader gives us {heading, occurrence, itemIndex}
-  // for the live caret; the main process rewrites the in-memory outline (NOT the on-disk file,
-  // which lags the debounced autosave) via setListItemIcon. The rewrite is a tiny `{icon=…}` token
-  // addition, so we apply it IN PLACE via the editor's replace-doc channel (preserving caret +
-  // scroll) instead of bumping reorderNonce — a remount snapped the editor to the top of the file
-  // (it reloaded fresh + the focusLine effect yanked the caret to the last strip slide). The
-  // in-place replace's docChanged drives onContentChange → compile/strip refresh. We still flush to
-  // disk right away so a read-back sees the token. No-op with a hint when the caret is not in a bullet.
+  // for the live caret; main's setListItemIcon rewrites the BUFFER's text (the D1 seam reads it from
+  // the editor, and works it out again if the person typed during the round trip). The rewrite is a
+  // tiny `{icon=…}` token, so it lands as one minimal change — caret and scroll kept, no remount —
+  // and is saved at once through the queue. No-op with a hint when the caret is not in a bullet.
   async function handleIconPicked(iconKey: string) {
-    if (!activeTalk) return
+    const talk = activeTalkRef.current
+    if (!talk) return
     const ctx = iconContextRef.current?.() ?? null
     if (!ctx) {
       notify('Place the caret in a top-level list item first — an icon pins to a bullet.', 'info', 'icon-pick')
       return
     }
-    const newText = await window.tw.outline.setItemIcon(
-      outlineContentRef.current,
-      ctx.slideHeading,
-      ctx.slideOccurrence,
-      ctx.itemIndex,
-      iconKey
-    )
-    if (newText == null) {
-      notify('Couldn’t pin the icon to that item — the outline was left unchanged.', 'warning', 'icon-pick')
-      return
-    }
-    notifyCollisions(await window.tw.talk.writeOutline(activeTalk.outlinePath, newText))
-    setLastSaved(new Date())
-    // Apply in place (no remount → no jump-to-top). Falls back to a remount only if the editor
-    // never registered a replace channel.
-    if (editorReplaceRef.current) {
-      editorReplaceRef.current(newText)
-    } else {
-      setOutlineContent(newText)
-      setReorderNonce((n) => n + 1)
-    }
-  }
-
-  // After an adoption (PropagationChecklist): if the CURRENT outline was among the replaced
-  // targets, its file changed on disk behind the editor's back — re-read it and apply via the
-  // same in-place replace channel the icon/publish flows use (preserves caret + scroll; the
-  // reorderNonce remount is only the no-channel fallback, exactly like handlePublishHandout).
-  async function handleAdopted(result: { replaced: { talk: string; outline: string }[] }): Promise<void> {
-    const talk = activeTalkRef.current
-    if (!talk) return
-    const root = vaultRoot.replace(/\/$/, '')
-    if (!result.replaced.some((r) => `${root}/${r.outline}` === talk.outlinePath)) return
-    const fresh = await window.tw.talk.readOutline(talk.outlinePath)
-    if (fresh == null) {
-      // The adopted file is on disk but the editor still holds pre-adopt text — the next
-      // debounced autosave would silently write that stale text back OVER the adoption.
-      // Surface it loudly; nothing here can safely repair the reload.
-      notify('Adopted on disk, but the outline could not be reloaded — reopen this Talk before editing.', 'error')
-      return
-    }
-    if (fresh === outlineContentRef.current) return
-    if (editorReplaceRef.current) {
-      editorReplaceRef.current(fresh)
-    } else {
-      setOutlineContent(fresh)
-      setReorderNonce((n) => n + 1)
-    }
-  }
-
-  function handleDeckDesignSave(newOutline: string) {
-    setOutlineContent(newOutline)
-    if (editorReplaceRef.current) editorReplaceRef.current(newOutline)
-    window.tw.talk.writeOutline(activeTalk!.outlinePath, newOutline).then((res) => {
-      if (!res || res.ok !== true) notify('Design change applied on screen but could not be written to disk.', 'error', 'save-failed')
+    const NO_ITEM = 'icon-item-gone'
+    const result = await applyOutlineMutation(talk.outlinePath, async (text) => {
+      const next = await window.tw.outline.setItemIcon(text, ctx.slideHeading, ctx.slideOccurrence, ctx.itemIndex, iconKey)
+      if (next == null) throw new Error(NO_ITEM)
+      return next
     })
-    setLastSaved(new Date())
+    if (result.ok || result.applied) return
+    if (result.reason === 'refused' && result.error === NO_ITEM) {
+      notify('Couldn’t pin the icon to that item — the outline was left unchanged.', 'warning', 'icon-pick')
+    } else {
+      notify(`Couldn’t pin the icon — ${result.error}`, 'warning', 'icon-pick')
+    }
+  }
+
+  // Deck settings (DeckDesignPanel) hand back the frontmatter EDITS, not a whole outline worked out
+  // from the panel's copy of the text: they are applied to the buffer as it stands (D1 seam), so
+  // typing since the panel opened is kept. A talk whose text is not in the editor goes to main's
+  // metadata:edit-frontmatter, which writes it through writeTalkOutline.
+  async function handleDeckDesignSave(edits: FrontmatterEdit[]) {
+    const talk = activeTalkRef.current
+    if (!talk || edits.length === 0) return
+    const result = await applyOutlineMutation(talk.outlinePath, (text) => editFrontmatterText(text, edits))
+    if (result.ok) return
+    if (result.reason === 'not-open') {
+      const res = await window.tw.metadata.editFrontmatter(talk.outlinePath, edits)
+      if (!res.ok) notify('Design change could not be written to disk.', 'error', 'save-failed')
+      return
+    }
+    if (!result.applied) notify(`Design change not applied — ${result.error}`, 'warning')
+  }
+
+  // A picker command from the palette or a key: it acts on the open picker, or says why it cannot.
+  const runPickerCommand = (run: (commands: SlidePickerCommands) => PickerCommandOutcome): void => {
+    const commands = pickerCommandsRef.current
+    if (!browserOpenRef.current || !commands) {
+      notify(`Open the slide picker (${liveShortcutLabel('app.slide-search')}) first.`, 'info', 'picker-command')
+      return
+    }
+    const outcome = run(commands)
+    if (outcome !== true) notify(outcome, 'info', 'picker-command')
   }
 
   // Every generated palette, native-menu, and toolbar item reaches renderer behaviour through
@@ -1682,9 +1780,19 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     handout: () => { void handleExportHandout() },
     build: () => { void handleBuild() },
     'publish-handout': () => { void handlePublishHandout() },
+    'share-for-comments': () => handleShareForComments(),
+    'copy-venue-screen-link': () => { void handleCopyVenueScreenLink() },
     layout: openLayoutPicker,
     image: () => setArchiveOpen(true),
     search: () => setBrowserOpen(true),
+    'find-talk': () => {
+      pickerCommandsRef.current?.focusFindTalk()
+      if (!browserOpenRef.current) setBrowserOpen(true)
+    },
+    'add-talk-beside': () => runPickerCommand((picker) => picker.addTalkBeside()),
+    'talk-beside': () => runPickerCommand((picker) => picker.talkBeside()),
+    'close-talk-beside': () => runPickerCommand((picker) => picker.closeTalkBeside()),
+    'select-whole-section': () => runPickerCommand((picker) => picker.selectWholeSection()),
     'icon-picker': () => setIconPickerOpen(true),
     'insert-object-table': () => editorInsertObjectRef.current?.('table'),
     'insert-object-mindmap': () => editorInsertObjectRef.current?.('mindmap'),
@@ -1748,35 +1856,14 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // re-render re-arms the same loop the stable registerEditorCommands exists to break.
   const handleEditorSaved = useCallback(() => { setLastSaved(new Date()); setDirty(false) }, [])
 
+  // The Editor's CodeMirror buffer is the one authoritative copy of the outline text in this window:
+  // every save (autosave, flushSave, "Add to talk") writes it, and outlineContent only mirrors it
+  // (onContentChange). The Editor stays mounted in every pane state (reverse portal, see
+  // editorHostRef), so an option commit goes into that buffer in the slides-only view as well. The
+  // old editor-less fallback changed only outlineContent: the buffer's next save — an "Add to talk"
+  // made at once, or any later keystroke — wrote the older text and dropped the option.
   function applyOption(entry: LayoutDef | undefined, group: OptionGroup, token: string, targetHeadingLine?: number, targetSlideId?: string | null): string | null {
-    const isEditorMounted = paneState !== 'strip'
-    if (isEditorMounted) {
-      return editorApplyOptionRef.current?.(entry, group, token, targetHeadingLine, targetSlideId) ?? null
-    }
-
-    const talk = activeTalkRef.current
-    const headingLine = targetHeadingLine ?? slideLinesRef.current[activeSlideRef.current] ?? null
-    if (!talk || headingLine == null) return null
-    const next = applyInspectorOptionToOutline(outlineContentRef.current, headingLine, group, token)
-    if (next == null || next === outlineContentRef.current) return next
-
-    outlineContentRef.current = next
-    setOutlineContent(next)
-    setDirty(true)
-    if (inspectorSaveTimer.current) clearTimeout(inspectorSaveTimer.current)
-    const outlinePath = talk.outlinePath
-    inspectorSaveTimer.current = setTimeout(() => {
-      inspectorSaveTimer.current = null
-      window.tw.talk.writeOutline(outlinePath, next).then((saved) => {
-        if (!saved || saved.ok !== true) return
-        notifyCollisions(saved)
-        if (activeTalkRef.current?.outlinePath === outlinePath && outlineContentRef.current === next) {
-          setLastSaved(new Date())
-          setDirty(false)
-        }
-      })
-    }, INSPECTOR_AUTOSAVE_MS)
-    return next
+    return editorApplyOptionRef.current?.(entry, group, token, targetHeadingLine, targetSlideId) ?? null
   }
 
   function applyInspectorOption(entry: LayoutDef | undefined, group: OptionGroup, token: string): string | null {
@@ -1785,8 +1872,8 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       inspectedSlideIdRef.current
     )
     if (headingLine == null) return null
-    // In both mode CodeMirror remains the undo/autosave authority; in strip mode the existing
-    // unmounted-editor fallback applies. Both paths receive the ID-derived heading explicitly.
+    // CodeMirror is the undo/autosave authority in every pane state (applyOption); the commit
+    // receives the ID-derived heading explicitly.
     inspectorCommitInProgressRef.current = true
     try {
       return applyOption(entry, group, token, headingLine, inspectedSlideIdRef.current)
@@ -1842,7 +1929,9 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // is now provably safe instead: the load effect gates autosave on `loadedPathRef`, empty text is never
   // autosaved/flushed, stale timers are cleared on unmount + talk change, and the main process refuses
   // any empty-over-nonempty write. See Editor.tsx + src/main talk:write-outline.
-  const editorKey = `${activeTalk.outlinePath}#${reorderNonce}`
+  // The editor remounts only on a talk switch. Nothing that changes the open talk remounts it (the old
+  // reorderNonce bump re-read the file behind the buffer): every change goes through the buffer (D1).
+  const editorKey = activeTalk.outlinePath
 
   // The live Editor — rendered ONCE via a reverse-portal into a persistent host div (editorHostRef),
   // so it survives entering/leaving Focus without a remount. focusRange scopes it to the focused
@@ -1877,6 +1966,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       registerEditorCommands={registerEditorCommands}
       registerIconContext={(fn) => { iconContextRef.current = fn }}
       registerReplaceDoc={(fn) => { editorReplaceRef.current = fn }}
+      registerReadDoc={(fn) => { editorReadRef.current = fn }}
       onProtectedTokenClick={(token, kind) => {
         if (kind === 'id') {
           const m = token.match(/\{id=([A-Za-z0-9_-]+)\}/)
@@ -2001,11 +2091,103 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         onEdit={handleEditSlide}
         onReorder={handleReorder}
         onExplain={(i) => setExplainIndex(i)}
+        markers={feedbackMarkers}
+        onMarker={openFeedbackOnSlide}
+        onGhost={openFeedbackOnItem}
       />
     </div>
   )
 
-  const stripSurface = inspectorMode ? inspectorPane : stripPane
+  const feedbackPane = (
+    <div className="pane pane--feedback">
+      <FeedbackRail
+        list={feedback.list}
+        slides={railSlides}
+        outline={outlineContent}
+        activeSlideId={compiledSlides?.[activeSlide]?.slide_id ?? null}
+        error={feedback.error}
+        focus={feedbackFocus}
+        busy={feedbackBusy}
+        onSetStatus={(itemId, status) => { void feedback.setStatus(itemId, status) }}
+        onAccept={(itemId) => { void handleFeedbackAccept(itemId) }}
+        onUndo={(itemId) => { void handleFeedbackUndo(itemId) }}
+        onOpenSlide={handleFeedbackOpenSlide}
+        onClose={() => setFeedbackOpen(false)}
+      />
+    </div>
+  )
+
+  // Accept / Use hers and Undo (ticket 06): through the one-writer seam, never a file write
+  // (lib/feedbackAccept). The external-change guard's bar holds them while it is up.
+  function feedbackAcceptDeps(): FeedbackAcceptDeps<unknown> {
+    return {
+      targetPath: () => activeTalkRef.current?.outlinePath ?? null,
+      diskChanged: () => diskGuard.change != null,
+      apply: (outlinePath, mutate) => applyOutlineMutation(outlinePath, mutate),
+      setStatus: (itemId, status, edit) => feedback.setStatus(itemId, status, edit),
+    }
+  }
+  async function handleFeedbackAccept(itemId: string): Promise<void> {
+    const item = feedback.list?.items.find((i) => i.itemId === itemId)
+    if (!item || feedbackBusy) return
+    const slideId = item.kind === 'insert' ? item.afterSlideId : item.slideId
+    const line = railSlides.find((slide) => slide.slideId === slideId)?.line ?? null
+    setFeedbackBusy(itemId)
+    feedback.setError(null)
+    try {
+      const outcome = await acceptProposal(itemId, item, { text: item.baseText, line }, feedbackAcceptDeps())
+      if (!outcome.ok) feedback.setError(outcome.error)
+    } finally { setFeedbackBusy(null) }
+  }
+  async function handleFeedbackUndo(itemId: string): Promise<void> {
+    const item = feedback.list?.items.find((i) => i.itemId === itemId)
+    if (!item?.acceptedEdit || feedbackBusy) return
+    setFeedbackBusy(itemId)
+    feedback.setError(null)
+    try {
+      const outcome = await undoAccepted(itemId, item.acceptedEdit, feedbackAcceptDeps())
+      if (!outcome.ok) feedback.setError(outcome.error)
+    } finally { setFeedbackBusy(null) }
+  }
+  // Open slide to merge: the caret into the slide's block; the rail stays open beside it with her text.
+  function handleFeedbackOpenSlide(slideId: string): void {
+    const index = (compiledSlides ?? []).findIndex((row) => row.slide_id === slideId)
+    if (index >= 0) handleEditSlide(index)
+  }
+  // A marker on the slide pane: the rail beside the pane, on that slide (frame 2).
+  function openFeedbackBeside(focus: Omit<FeedbackFocus, 'nonce'>): void {
+    if (gridModeRef.current) setGridMode(false)
+    if (paneStateRef.current !== 'both') setPaneState('both')
+    setRailWithStrip(true)
+    setFeedbackOpen(true)
+    setFeedbackFocus((prev) => ({ ...focus, nonce: (prev?.nonce ?? 0) + 1 }))
+  }
+  function openFeedbackOnSlide(index: number): void {
+    const slideId = compiledSlides?.[index]?.slide_id
+    if (!slideId) return
+    handleSelectSlide(index)
+    openFeedbackBeside({ slideId })
+  }
+  function openFeedbackOnItem(itemId: string): void {
+    openFeedbackBeside({ itemId })
+  }
+
+  function toggleFeedback(): void {
+    setRailWithStrip(false)
+    setFeedbackFocus(null) // from the toolbar: every item, not the last marker's slide
+    setFeedbackOpen((open) => {
+      if (!open) {
+        // The rail sits beside the outline: bring both on screen.
+        if (gridModeRef.current) setGridMode(false)
+        if (paneStateRef.current === 'editor') setPaneState('both')
+      }
+      return !open
+    })
+  }
+
+  const stripSurface = railOpen
+    ? (railWithStrip ? <div className="pane pane--strip-rail">{stripPane}{feedbackPane}</div> : feedbackPane)
+    : inspectorMode ? inspectorPane : stripPane
 
   const gridPane = (
     <div className="pane pane--grid">
@@ -2120,6 +2302,22 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
           </div>
         )}
         <div className="toolbar-actions">
+          {activeShare && (
+            <button
+              type="button"
+              className={`toolbar-btn${railOpen ? ' is-on' : ''}`}
+              onClick={toggleFeedback}
+              title={railOpen ? 'Close feedback' : 'Feedback from the shared talk'}
+              aria-pressed={railOpen}
+              data-testid="toolbar-feedback"
+            >
+              <span className="toolbar-btn-content">
+                <Icon name="inbox" size={15} />
+                <span>Feedback</span>
+                {(activeFeedback?.unread ?? 0) > 0 && <span className="fb-n" data-testid="toolbar-feedback-count">{activeFeedback!.unread}</span>}
+              </span>
+            </button>
+          )}
           <ToolbarMenu
             icon="share"
             label="Share"
@@ -2127,7 +2325,8 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
             items={[
               { icon: 'handout', label: 'Handout (reveal in Finder)', onClick: handleExportHandout },
               { icon: 'html', label: 'HTML presentation (reveal in Finder)', onClick: handleBuild },
-              { icon: 'publish', label: 'Publish to Cloudflare', onClick: handlePublishHandout }
+              { icon: 'publish', label: 'Publish to Cloudflare', onClick: handlePublishHandout },
+              { icon: 'comment', label: 'Share for comments…', onClick: handleShareForComments, separatorBefore: true }
             ]}
           />
           <ToolbarMenu
@@ -2158,6 +2357,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         </div>
       </div>
 
+      {diskChangeBar}
       <div className={`workspace-panes workspace-panes--${gridMode ? 'grid' : paneState}`}>
         {gridMode ? (
           gridPane
@@ -2185,6 +2385,18 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         buildStatus={buildStatus}
         buildPath={buildPath}
         dates={talkDates}
+        shared={activeShare ? {
+          label: shareEnded ? ENDED_LABEL : feedbackPaused ? PAUSED_LABEL : sharedStatusLabel(activeShare),
+          title: shareEnded
+            ? 'This link no longer takes comments. Open to stop sharing or share again.'
+            : feedbackPaused
+              ? 'Editing and saving carry on as normal. What she sends arrives when the link is back.'
+              : activeShare.lastError ? `Her page is not up to date: ${activeShare.lastError}` : activeShare.url,
+          error: !feedbackPaused && !shareEnded && Boolean(activeShare.lastError),
+          paused: feedbackPaused && !shareEnded,
+          ended: shareEnded,
+          onClick: () => setShareSheetOpen(true),
+        } : null}
       />
       </>
       ) : (
@@ -2199,6 +2411,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
           headingLine={slideLines[focusSlide] ?? null}
           outlineContent={outlineContent}
           editorSlotRef={attachEditorSlot}
+          banner={diskChangeBar || null}
           onPrev={() => focusStep(-1)}
           onNext={() => focusStep(1)}
           onExit={exitFocus}
@@ -2208,6 +2421,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
           suspendKeys={helpOpen || adoptTarget != null}
         />
       )}
+      {diskGuard.sheet && <OutlineDiskChangeSheet change={diskGuard.sheet} onAnswer={diskGuard.answerSheet} />}
       <CommandPalette
         isOpen={paletteOpen}
         query={paletteQuery}
@@ -2238,13 +2452,13 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         currentTalkSlug={activeTalk?.slug ?? ''}
         vaultRoot={vaultRoot}
         onOpenHelp={() => setHelpOpen(true)}
-        suspendKeys={helpOpen || adoptTarget != null || mergeRequest != null}
+        // The command palette opens above the Browser: its keys are the palette's alone.
+        suspendKeys={helpOpen || cmdMenuOpen || adoptTarget != null || mergeRequest != null}
         onAdoptVersion={(slideId, version) => setAdoptTarget({ slideId, version })}
         onRequestMerge={(req) => setMergeRequest(req)}
         refreshNonce={mergeNonce}
         registerFocusSearch={(fn) => { browserFocusSearchRef.current = fn }}
-        flushBeforeTagWrite={flushBeforeTagWrite}
-        onTagsApplied={handleTagsApplied}
+        registerCommands={registerPickerCommands}
       />
       {tagSlide && (
         <TagPicker
@@ -2258,6 +2472,11 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         />
       )}
       {adoptTarget && (
+        // No onAdopted re-read: ledger:adopt writes every target through the one writer
+        // (talk-writer.ts), so the talk open here was changed IN THIS BUFFER through the D1 seam and
+        // saved through its queue before the adopt resolved; other targets are closed talks main
+        // wrote on disk. (Re-reading the file and replacing the buffer with it reverted anything
+        // typed between that save and the read.)
         <PropagationChecklist
           isOpen
           onClose={() => setAdoptTarget(null)}
@@ -2265,7 +2484,6 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
           adoptVersion={adoptTarget.version}
           currentOutlinePath={activeTalk?.outlinePath ?? null}
           vaultRoot={vaultRoot}
-          onAdopted={handleAdopted}
           suspendKeys={helpOpen}
         />
       )}
@@ -2333,6 +2551,14 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         content={outlineContent}
         index={explainIndex}
       />
+      {shareSheetOpen && (
+        <ShareSheet
+          key={activeTalk.outlinePath}
+          talk={activeTalk}
+          title={activeTalk.title || activeTalk.slug}
+          onClose={closeShareSheet}
+        />
+      )}
       {whereUsedId && (
         <WhereUsedPanel slideId={whereUsedId} onClose={() => setWhereUsedId(null)} />
       )}

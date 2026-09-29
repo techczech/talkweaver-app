@@ -1,11 +1,32 @@
-import { createSignedToken, hashSecret, verifySignedToken } from './auth'
+import { createSignedToken, verifySignedToken } from './auth'
+import {
+  adminAuthorised,
+  bearerToken,
+  cors,
+  errorResponse,
+  jsonResponse,
+  registryShareUrl,
+  registryStub,
+  validTalkSlug,
+  type Env,
+  type SocketAttachment,
+} from './http'
 import { parseAudienceMessage, parsePresenterMessage } from './protocol'
 import {
   LIVE_PROTOCOL_VERSION, LIVE_WORKER_BUILD, parseRecoveryClientMessage, validRecoveryId,
-  type RecoveryClientMessage, type SessionSnapshot,
+  type RecoveryClientMessage, type SessionSnapshot, type SessionPresence,
 } from './recovery-protocol'
 import { acceptSubmission, applyPollOperation, recoveryState } from './recovery-state'
-import { lookupSession, registerSession, removeSession, type RegistryEntry } from './registry-state'
+import {
+  lookupSession,
+  lookupShare,
+  registerSession,
+  registerShare,
+  removeSession,
+  removeShare,
+  type RegistryEntry,
+  type ShareRegistryEntry,
+} from './registry-state'
 import {
   closePoll,
   closeSession,
@@ -18,72 +39,32 @@ import {
   pollStateMessage,
   publishSlideState,
   revealPoll,
+  setInstantSlide,
   socketRoleReceivesSlideState,
   voteInPoll,
   type StoredLiveSession,
   type StoredPoll,
 } from './session-state'
+import { createShare, forwardToShare, parseShareRoute } from './shared-talk'
 import { generateShortId } from './short-id'
 
-const SESSION_TTL_MS = 12 * 60 * 60 * 1_000
-const REGISTRY_NAME = 'talkweaver-session-registry'
+export { SharedTalk } from './shared-talk'
 
-interface Env {
-  LIVE_SESSIONS: DurableObjectNamespace
-  SESSION_REGISTRY: DurableObjectNamespace
-  ADMIN_SECRET: string
-  SESSION_SIGNING_SECRET: string
-}
+const SESSION_TTL_MS = 12 * 60 * 60 * 1_000
 
 interface CreateSessionBody {
   talkSlug?: string
 }
 
-interface SocketAttachment {
-  role: 'presenter' | 'audience'
-  connectionId: string
+/** LiveSession's socket attachment: the shared shape plus the recovery protocol's fields. */
+type LiveSocketAttachment = SocketAttachment<'presenter' | 'audience'> & {
   protocol?: number
   participantId?: string
-}
-
-function jsonResponse(value: unknown, status = 200): Response {
-  return new Response(JSON.stringify(value), {
-    status,
-    headers: { 'content-type': 'application/json; charset=utf-8' },
-  })
-}
-
-function errorResponse(code: string, message: string, status: number): Response {
-  return jsonResponse({ error: { code, message } }, status)
-}
-
-function cors(response: Response): Response {
-  const headers = new Headers(response.headers)
-  headers.set('access-control-allow-origin', '*')
-  headers.set('access-control-allow-headers', 'authorization, content-type')
-  headers.set('access-control-allow-methods', 'GET, POST, DELETE, OPTIONS')
-  return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+  kind?: 'screen'
 }
 
 function liveSessionStub(env: Env, sessionId: string): DurableObjectStub {
   return env.LIVE_SESSIONS.get(env.LIVE_SESSIONS.idFromName(sessionId))
-}
-
-function registryStub(env: Env): DurableObjectStub {
-  return env.SESSION_REGISTRY.get(env.SESSION_REGISTRY.idFromName(REGISTRY_NAME))
-}
-
-function bearerToken(request: Request): string | null {
-  return request.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ?? null
-}
-
-async function adminAuthorised(request: Request, env: Env): Promise<boolean> {
-  const bearer = bearerToken(request)
-  return Boolean(bearer) && await hashSecret(bearer!) === await hashSecret(env.ADMIN_SECRET)
-}
-
-function validTalkSlug(value: unknown): value is string {
-  return typeof value === 'string' && /^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$/.test(value)
 }
 
 async function createLiveSession(request: Request, env: Env): Promise<Response> {
@@ -124,13 +105,25 @@ export default {
       response = jsonResponse({ protocol: LIVE_PROTOCOL_VERSION, build: LIVE_WORKER_BUILD })
     } else if (url.pathname === '/sessions' && request.method === 'POST') {
       response = await createLiveSession(request, env)
+    } else if (url.pathname === '/shares' && request.method === 'POST') {
+      response = await createShare(request, env)
     } else {
       const discovery = url.pathname.match(/^\/session\/([^/]+)$/)
       const sessionRoute = url.pathname.match(/^\/sessions\/([^/]+)\/(presenter|audience|close|status|recovery)$/)
+      const shareLookup = url.pathname.match(/^\/shares\/by-talk\/([^/]+)$/)
+      const shareRoute = parseShareRoute(url.pathname)
       if (discovery && request.method === 'GET') {
         response = await registryStub(env).fetch(request)
       } else if (sessionRoute && (request.method === 'GET' || request.method === 'POST' || request.headers.get('upgrade') === 'websocket')) {
         response = await liveSessionStub(env, sessionRoute[1]).fetch(request)
+      } else if (shareLookup && request.method === 'GET') {
+        // Admin only: a public slug lookup would hand out share links to anyone guessing slugs.
+        response = await adminAuthorised(request, env)
+          ? await registryStub(env).fetch(new Request(registryShareUrl(shareLookup[1])))
+          : errorResponse('admin_auth_required', 'Admin authentication is required.', 401)
+      } else if (shareRoute) {
+        // Parsed once: the same route decides the body cap, the early owner check and the object.
+        response = await forwardToShare(request, env, shareRoute)
       } else {
         response = errorResponse('not_found', 'Route not found.', 404)
       }
@@ -146,6 +139,37 @@ export class SessionRegistry {
   constructor(state: DurableObjectState) {
     this.ctx = state
     state.storage.sql.exec('CREATE TABLE IF NOT EXISTS active_sessions (talk_slug TEXT PRIMARY KEY, session_id TEXT NOT NULL, expires_at INTEGER NOT NULL)')
+    state.storage.sql.exec('CREATE TABLE IF NOT EXISTS active_shares (talk_slug TEXT PRIMARY KEY, share_id TEXT NOT NULL)')
+  }
+
+  private shareEntries(): Map<string, ShareRegistryEntry> {
+    const rows = this.ctx.storage.sql.exec<{ talk_slug: string; share_id: string }>('SELECT talk_slug, share_id FROM active_shares')
+    return new Map([...rows].map((row) => [row.talk_slug, { talkSlug: row.talk_slug, shareId: row.share_id }]))
+  }
+
+  private saveShareEntries(entries: Map<string, ShareRegistryEntry>): void {
+    this.ctx.storage.sql.exec('DELETE FROM active_shares')
+    for (const entry of entries.values()) {
+      this.ctx.storage.sql.exec('INSERT INTO active_shares (talk_slug, share_id) VALUES (?, ?)', entry.talkSlug, entry.shareId)
+    }
+  }
+
+  private shareRoute(request: Request, url: URL, talkSlug: string): Response {
+    const entries = this.shareEntries()
+    if (request.method === 'POST') {
+      const shareId = url.searchParams.get('shareId')
+      if (!shareId) return errorResponse('invalid_registration', 'Share registration is invalid.', 400)
+      registerShare(entries, { talkSlug, shareId })
+      this.saveShareEntries(entries)
+      return jsonResponse({ ok: true })
+    }
+    if (request.method === 'DELETE') {
+      removeShare(entries, talkSlug, url.searchParams.get('shareId') ?? '')
+      this.saveShareEntries(entries)
+      return jsonResponse({ ok: true })
+    }
+    if (request.method === 'GET') return jsonResponse(lookupShare(entries, talkSlug))
+    return errorResponse('not_found', 'Registry route not found.', 404)
   }
 
   private entries(): Map<string, RegistryEntry> {
@@ -173,6 +197,8 @@ export class SessionRegistry {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url)
+    const internalShare = url.pathname.match(/^\/internal\/share\/([^/]+)$/)
+    if (internalShare) return this.shareRoute(request, url, decodeURIComponent(internalShare[1]))
     const internal = url.pathname.match(/^\/internal\/session\/([^/]+)$/)
     const discovery = url.pathname.match(/^\/session\/([^/]+)$/)
     const entries = this.entries()
@@ -253,10 +279,11 @@ export class LiveSession {
     return payload?.sessionId === this.session.sessionId
   }
 
-  private acceptSocket(role: SocketAttachment['role'], request: Request): Response {
+  private acceptSocket(role: LiveSocketAttachment['role'], request: Request): Response {
     const url = new URL(request.url)
     const protocol = url.searchParams.get('protocol') === '2' ? 2 : 1
     const participantId = url.searchParams.get('participantId')
+    const kind = role === 'audience' && url.searchParams.get('kind') === 'screen' ? 'screen' : undefined
     if (role === 'audience' && protocol === 2 && !validRecoveryId(participantId)) {
       return errorResponse('participant_required', 'A participant identity is required.', 400)
     }
@@ -266,7 +293,8 @@ export class LiveSession {
     const connectionId = crypto.randomUUID()
     server.serializeAttachment({ role, connectionId, protocol,
       ...(role === 'audience' && participantId ? { participantId } : {}),
-    } satisfies SocketAttachment)
+      ...(kind ? { kind } : {}),
+    } satisfies LiveSocketAttachment)
     this.ctx.acceptWebSocket(server)
     if (role === 'presenter' && this.session) {
       recoveryState(this.session).presenterConnectionId = connectionId
@@ -278,6 +306,7 @@ export class LiveSession {
         try { old.close(4001, 'Presenter connection replaced') } catch {}
       }
     }
+    this.broadcastPresence()
     if (protocol === 2) {
       this.send(server, { type: 'session.hello', protocol: 2, expiresAt: this.session!.expiresAt })
       return new Response(null, { status: 101, webSocket: client } as ResponseInit & { webSocket: WebSocket })
@@ -291,22 +320,34 @@ export class LiveSession {
     return new Response(null, { status: 101, webSocket: client } as ResponseInit & { webSocket: WebSocket })
   }
 
-  private sockets(role?: SocketAttachment['role']): HibernatingWebSocket[] {
-    return this.ctx.getWebSockets().filter((socket) => !role || socket.deserializeAttachment<SocketAttachment>()?.role === role)
+  private sockets(role?: LiveSocketAttachment['role']): HibernatingWebSocket[] {
+    return this.ctx.getWebSockets().filter((socket) => !role || socket.deserializeAttachment<LiveSocketAttachment>()?.role === role)
   }
 
   private send(socket: HibernatingWebSocket, message: unknown): void {
     try { socket.send(JSON.stringify(message)) } catch { /* the runtime removes disconnected sockets */ }
   }
 
+  private presence(): SessionPresence {
+    const sockets = this.sockets()
+    return { type: 'session.presence',
+      presenterConnected: sockets.some((socket) => socket.deserializeAttachment<LiveSocketAttachment>()?.role === 'presenter'),
+      venueScreens: sockets.filter((socket) => socket.deserializeAttachment<LiveSocketAttachment>()?.kind === 'screen').length }
+  }
+
+  private broadcastPresence(): void {
+    const message = this.presence()
+    for (const socket of this.sockets()) this.send(socket, message)
+  }
+
   private broadcastSlideState(message: unknown): void {
     for (const socket of this.sockets()) {
-      const role = socket.deserializeAttachment<SocketAttachment>()?.role
+      const role = socket.deserializeAttachment<LiveSocketAttachment>()?.role
       if (role && socketRoleReceivesSlideState(role)) this.send(socket, message)
     }
   }
 
-  private broadcastPollState(poll: StoredPoll, role: SocketAttachment['role']): void {
+  private broadcastPollState(poll: StoredPoll, role: LiveSocketAttachment['role']): void {
     const message = pollStateMessage(poll, role)
     for (const socket of this.sockets(role)) this.send(socket, message)
   }
@@ -325,7 +366,7 @@ export class LiveSession {
     const message = closeSession(this.session)
     this.save()
     for (const socket of this.sockets()) {
-      this.send(socket, socket.deserializeAttachment<SocketAttachment>()?.protocol === 2 ? { ...message, reason } : message)
+      this.send(socket, socket.deserializeAttachment<LiveSocketAttachment>()?.protocol === 2 ? { ...message, reason } : message)
       try { socket.close(1000, 'Session closed') } catch { /* already disconnected */ }
     }
     await this.ctx.storage.deleteAlarm()
@@ -390,7 +431,7 @@ export class LiveSession {
   }
 
   async webSocketMessage(socket: HibernatingWebSocket, value: string | ArrayBuffer): Promise<void> {
-    const attachment = socket.deserializeAttachment<SocketAttachment>()
+    const attachment = socket.deserializeAttachment<LiveSocketAttachment>()
     if (!attachment || !this.session || this.session.status !== 'open' || typeof value !== 'string') return
     if (this.session.expiresAt <= Date.now()) { await this.endSession('expired'); return }
     const owner = this.session.recovery?.presenterConnectionId
@@ -422,7 +463,7 @@ export class LiveSession {
         const poll = this.session.polls[message.pollId]
         this.save()
         for (const presenter of this.sockets('presenter')) {
-          this.send(presenter, presenter.deserializeAttachment<SocketAttachment>()?.protocol === 2 ? record
+          this.send(presenter, presenter.deserializeAttachment<LiveSocketAttachment>()?.protocol === 2 ? record
             : { type: 'poll.vote-record', pollId: message.pollId, choice: ack.choice })
         }
         this.broadcastPollState(poll, 'presenter')
@@ -443,7 +484,15 @@ export class LiveSession {
       if (message.type === 'slide.publish') {
         const state = publishSlideState(this.session, {
           slideId: message.slideId, reveal: message.reveal, focus: message.focus,
+          ...(message.lightbox ? { lightbox: message.lightbox } : {}),
+          ...(message.talkQr ? { talkQr: true } : {}),
         })
+        this.save()
+        this.broadcastSlideState(state)
+        return
+      }
+      if (message.type === 'instant.show' || message.type === 'instant.clear') {
+        const state = setInstantSlide(this.session, message.type === 'instant.show' ? message.slide : null)
         this.save()
         this.broadcastSlideState(state)
         return
@@ -474,17 +523,19 @@ export class LiveSession {
   async webSocketClose(socket: HibernatingWebSocket, code: number, reason: string, wasClean: boolean): Promise<void> {
     // A socket is a transport, not the session. Only authenticated End or expiry closes the session.
     try { socket.close(code === 1005 || code === 1006 ? 1000 : code, reason || (wasClean ? 'Closed' : 'Connection lost')) } catch {}
+    this.broadcastPresence()
   }
 
   async webSocketError(socket: HibernatingWebSocket): Promise<void> {
     try { socket.close(1011, 'WebSocket error') } catch { /* already disconnected */ }
+    this.broadcastPresence()
   }
 
   async alarm(): Promise<void> {
     if (this.session?.status === 'open' && this.session.expiresAt <= Date.now()) await this.endSession('expired')
   }
 
-  private handleRecoveryMessage(socket: HibernatingWebSocket, attachment: SocketAttachment, message: RecoveryClientMessage): void {
+  private handleRecoveryMessage(socket: HibernatingWebSocket, attachment: LiveSocketAttachment, message: RecoveryClientMessage): void {
     const session = this.session!
     if (message.type === 'session.ping') {
       this.send(socket, { type: 'session.pong', nonce: message.nonce })
@@ -496,11 +547,15 @@ export class LiveSession {
         this.save()
         this.broadcastSlideState(current)
       }
+      if (attachment.role === 'presenter') this.broadcastPresence()
       const recovery = recoveryState(session)
       const records = recovery.voteRecords.filter((r) => r.sequence > (message.afterSequence ?? 0))
+      const { presenterConnected, venueScreens } = this.presence()
       const snapshot: SessionSnapshot = {
         type: 'session.snapshot', protocol: 2, syncId: message.syncId, sessionId: session.sessionId,
         expiresAt: session.expiresAt, slideState: currentStateMessage(session),
+        presence: { presenterConnected, venueScreens },
+        instantSlide: session.instantSlide ?? null,
         polls: currentPollStateMessages(session, attachment.role),
         ...(attachment.role === 'presenter'
           ? { voteRecords: records.slice(0, 200), moreRecords: records.length > 200 }
@@ -516,7 +571,9 @@ export class LiveSession {
       const ack = applyPollOperation(session, message)
       this.save()
       if (!prior && ack.status === 'confirmed') {
-        for (const poll of Object.values(session.polls)) {
+        if (message.action.type === 'instant.show' || message.action.type === 'instant.clear') {
+          this.broadcastSlideState({ type: 'instant.state', slide: session.instantSlide ?? null })
+        } else for (const poll of Object.values(session.polls)) {
           this.broadcastPollState(poll, 'presenter')
           this.broadcastPollState(poll, 'audience')
         }
@@ -529,7 +586,7 @@ export class LiveSession {
       this.save()
       if (record) {
         for (const presenter of this.sockets('presenter')) this.send(presenter,
-          presenter.deserializeAttachment<SocketAttachment>()?.protocol === 2 ? record
+          presenter.deserializeAttachment<LiveSocketAttachment>()?.protocol === 2 ? record
             : { type: record.type, pollId: record.pollId, choice: record.choice })
         const poll = session.polls[message.pollId]
         this.broadcastPollState(poll, 'presenter')
@@ -538,7 +595,7 @@ export class LiveSession {
       this.send(socket, ack)
       // Other tabs belonging to this anonymous participant share the same allowance.
       if (record) for (const peer of this.sockets('audience')) {
-        const peerAttachment = peer.deserializeAttachment<SocketAttachment>()
+        const peerAttachment = peer.deserializeAttachment<LiveSocketAttachment>()
         if (peer !== socket && peerAttachment?.protocol === 2
           && peerAttachment.participantId === attachment.participantId) this.send(peer, ack)
       }
@@ -546,40 +603,4 @@ export class LiveSession {
     }
     this.send(socket, { type: 'protocol.error', code: 'wrong_role' })
   }
-}
-
-interface DurableObjectNamespace {
-  idFromName(name: string): unknown
-  get(id: unknown): DurableObjectStub
-}
-
-interface DurableObjectStub {
-  fetch(request: Request): Promise<Response>
-}
-
-interface SqlStorage {
-  exec<T = Record<string, unknown>>(query: string, ...bindings: unknown[]): Iterable<T>
-}
-
-interface DurableObjectStorage {
-  sql: SqlStorage
-  setAlarm(scheduledTime: number): Promise<void>
-  deleteAlarm(): Promise<void>
-}
-
-interface HibernatingWebSocket extends WebSocket {
-  serializeAttachment(value: unknown): void
-  deserializeAttachment<T>(): T | null
-}
-
-interface DurableObjectState {
-  storage: DurableObjectStorage
-  blockConcurrencyWhile<T>(callback: () => Promise<T>): void
-  acceptWebSocket(socket: HibernatingWebSocket): void
-  getWebSockets(): HibernatingWebSocket[]
-}
-
-declare class WebSocketPair {
-  0: WebSocket
-  1: HibernatingWebSocket
 }

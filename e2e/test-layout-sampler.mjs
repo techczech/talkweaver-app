@@ -88,7 +88,8 @@ assert.deepEqual(unknownWarnings, [], `sampler has no unknown trigger warnings: 
 function samplerSection(title) {
   return [...html.matchAll(/<section class="slide"[\s\S]*?<\/section>/g)]
     .map((match) => match[0])
-    .find((section) => section.includes(`<h1>${title}</h1>`)) ?? ''
+    // ADR-0028 §10: a painted title's last two words are joined by a no-break space.
+    .find((section) => section.replace(/&nbsp;/g, ' ').includes(`<h1>${title}</h1>`)) ?? ''
 }
 
 const videoImageRow = samplerSection('Media row — video and image')
@@ -124,12 +125,21 @@ assert.match(samplerSection('Long table steps padding before type'), /data-list-
 // Ticket 22: every timeline mode over the same five-entry dated list renders five stops, each
 // with a date node and a text node — no mode folds the list into one card. The rendered geometry
 // (floor, footer clearance, balanced air, dynamic last step) is scripts/test-timeline-modes.mjs.
+// A mode whose stop cap is under five (horizontal since ticket 08) renders the five stops across
+// its continuation slides, "(1/2)" and "(2/2)", which count together.
 for (const mode of ['Auto', 'Rail', 'Columns', 'Compact', 'Horizontal', 'Spine', 'Pills', 'Dynamic']) {
-  const section = samplerSection(`Five years of AI — ${mode}`)
+  const title = `Five years of AI — ${mode}`
+  const single = samplerSection(title)
+  const parts = single ? [single] : [...html.matchAll(/<section class="slide"[\s\S]*?<\/section>/g)]
+    .map((match) => match[0])
+    .filter((section) => new RegExp(`<h1>${title} \\(\\d+/\\d+\\)</h1>`).test(section.replace(/&nbsp;/g, ' ')))
+  const section = parts.join('')
+  assert(parts.length >= 1, `${mode}: the five-entry timeline renders`)
   assert.equal((section.match(/ data-tl-stop(?=[\s>])/g) || []).length, 5, `${mode}: five timeline stops render`)
   assert.equal((section.match(/data-tl-date/g) || []).length, 5, `${mode}: every stop carries its date`)
   assert.equal((section.match(/data-tl-text/g) || []).length, 5, `${mode}: every stop carries its text`)
-  assert.match(section, /data-tl-stops="5"/, `${mode}: the timeline reports five stops`)
+  const reported = [...section.matchAll(/data-tl-stops="(\d+)"/g)].reduce((sum, match) => sum + Number(match[1]), 0)
+  assert.equal(reported, 5, `${mode}: the timeline reports five stops`)
 }
 for (const base of ['t22-pills-split', 't22-horizontal-split']) {
   const parts = model.slides.filter((slide) => slide.id === base || slide.id.startsWith(`${base}-`))

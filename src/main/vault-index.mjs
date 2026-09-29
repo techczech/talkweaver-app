@@ -1,5 +1,6 @@
 import { mkdir, open, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { TALK_SCAN_MAX_DEPTH, isSkippedScanDir, pickOutlineEntry } from './talk-scan.mjs'
 
 function publicTalk(entry) {
   const { mtimeMs: _mtimeMs, birthtimeMs: _birthtimeMs, subtitle: _subtitle, event: _event, ...talk } = entry
@@ -87,14 +88,12 @@ export function createVaultIndex({ cachePath, batchSize = 32 }) {
     }
 
     async function scanDir(dir, depth = 0) {
-      // Backstop against runaway recursion (symlink loops), NOT a real nesting constraint:
-      // talks legitimately live several organisational levels deep (e.g. bucket/event/day/talk),
-      // so keep this generous. Recursion stops at each talk folder anyway (returns on finding
-      // an outline), so deep organisational trees cost little.
-      if (depth > 8) return
+      // Depth limit, skip rule and outline pick are shared with the synchronous walk in the
+      // main process (talk-scan.mjs), so every listed talk also gets slide text.
+      if (depth > TALK_SCAN_MAX_DEPTH) return
       let dirents
       try { dirents = await readdir(dir, { withFileTypes: true }) } catch { return }
-      const outline = dirents.find((entry) => entry.isFile() && entry.name.endsWith('-outline.md'))
+      const outline = pickOutlineEntry(dirents)
       if (outline) {
         const outlinePath = join(dir, outline.name)
         const slug = outline.name.replace(/-outline\.md$/, '')
@@ -119,7 +118,7 @@ export function createVaultIndex({ cachePath, batchSize = 32 }) {
         return
       }
       for (const entry of dirents) {
-        if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name.startsWith('_') || entry.name === 'node_modules') continue
+        if (!entry.isDirectory() || isSkippedScanDir(entry.name)) continue
         await scanDir(join(dir, entry.name), depth + 1)
       }
     }

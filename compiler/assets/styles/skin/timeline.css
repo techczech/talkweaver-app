@@ -1,3 +1,6 @@
+/* ADR-0028 §3 (2026-09-25, round-2 timeline B): more space between stops; the stop labels bold, in
+   the deck sans, in the case the author typed and 1.25x the entries; the entries on the dense step
+   (--fs-dense). Horizontal and rail only; columns, compact, spine, pills and dynamic are unchanged. */
 /* @order 1434 */
   .timeline.timeline-horizontal {
     display: grid;
@@ -6,65 +9,93 @@
     align-items: start;
     position: relative;
     border-top: 2px solid var(--hairline);
-    padding-top: 1.5em;
-    margin-top: 2.2em;
-    font-size: 1em;
+    padding-top: 1em;
+    margin-top: auto;
+    font-size: var(--fs-dense);
   }/* @order 1435 */
   .timeline.timeline-horizontal .tl-group {
     position: relative;
-    padding: 0 1em 0 0;
+    padding: 0 1.4em 0 0;
     margin: 0 !important;          /* the old design staggered alternate groups */
     border: none !important;
     background: none;
     transform: none !important;
   }/* @order 1436 */
   .timeline.timeline-horizontal .tl-group-head { border: none !important; background: none; padding: 0; }/* @order 1437 */
-  .timeline.timeline-horizontal .tl-entries li { border: none; background: none; }/* @order 1438 */
+  .timeline.timeline-horizontal .tl-entries li { border: none; background: none; }
+  /* The ring dot's centre sits on the track line: the group starts 2px (border) + 1em (padding)
+     below the line's top edge, so a 16px border-box dot at -1em - 9px centres 1px below it. */
+/* @order 1438 */
   .timeline.timeline-horizontal .tl-group::before {
     content: "";
     position: absolute;
     left: 0;
-    top: calc(-1.5em - 9px);
-    width: 14px;
-    height: 14px;
+    top: calc(-1em - 9px);
+    width: 16px;
+    height: 16px;
     border-radius: 50%;
     background: var(--paper);
     border: 3px solid var(--accent);
   }/* @order 1439 */
   .timeline.timeline-horizontal .tl-group:last-child::before { background: var(--accent); }/* @order 1440 */
   .timeline.timeline-horizontal .tl-group:last-child .tl-entries li { font-weight: 600; }/* @order 1441 */
-  .timeline.timeline-horizontal .tl-group-head {
-    font-family: var(--mono);
-    font-size: max(var(--type-floor), .62em);
-    letter-spacing: .1em;
-    text-transform: uppercase;
+  .timeline.timeline-horizontal .tl-group-head,
+  .timeline.timeline-rail .tl-group-head {
+    font-family: var(--sans);
+    font-size: 1.25em;
+    font-weight: 700;
+    letter-spacing: -.01em;
+    text-transform: none;
     color: var(--accent);
-    margin: 0 0 .8em;
-  }/* @order 1442 */
+    line-height: 1.15;
+  }/* @order 2067 */
+  .timeline.timeline-horizontal .tl-group-head { margin: 0 0 .45em; }/* @order 1442 */
   .timeline.timeline-horizontal .tl-entries { list-style: none; margin: 0; padding: 0; border: none !important; }/* @order 1443 */
-  .timeline.timeline-horizontal .tl-entries li { font-size: max(var(--type-floor), .95em); line-height: 1.35; max-width: 11em; padding: 0; }/* @order 1444 */
-  .timeline.timeline-horizontal .tl-entries li::before { display: none; }/* @order 1446 */
-  .timeline.timeline-rail { border-left: 2px solid var(--hairline); font-size: 1em; }/* @order 1447 */
-  .timeline.timeline-rail .tl-group { position: relative; padding: .55em 0 .55em 1.8em; }/* @order 1448 */
+  .timeline.timeline-horizontal .tl-entries li { font-size: max(var(--type-floor), 1em); line-height: 1.3; max-width: none; padding: 0; }/* @order 2068 */
+  .timeline.timeline-horizontal .tl-entries li + li { margin-top: .4em; }/* @order 1444 */
+  .timeline.timeline-horizontal .tl-entries li::before { display: none; }
+  /* Rail: ONE line with each stop's ring dot centred on it. The line is drawn per stop, from the
+     stop's dot to the next stop's dot (.tl-group::after), so it starts and ends on a dot however
+     tall the last stop is; the rail draws no border and no bar of its own. Label and entries share
+     one row; the label column is as wide as the widest label. --tl-rail-x is the line's centre from
+     the rail's left edge; the rail and its groups share one font size, so the em resolves the same
+     for every dot and every segment. */
+/* @order 1446 */
+  .timeline.timeline-rail {
+    border-left: 0; padding-left: 0; margin-top: auto; font-size: var(--fs-dense); --tl-rail-x: .45em;
+    display: grid; grid-template-columns: max-content minmax(0, 1fr); column-gap: 1.1em;
+  }/* @order 2069 */
+  .timeline.timeline-rail::before { content: none; }/* @order 1447 */
+  .timeline.timeline-rail .tl-group {
+    position: relative; grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: baseline;
+    padding: .3em 0 .3em 1.9em;
+  }/* @order 2070 */
+  .timeline.timeline-rail .tl-group + .tl-group { margin-top: 0; }
+  /* The dot sits on the label's centre line: .3em group padding + half the label's line box
+     (1.25em x 1.15 = 1.44em). */
+/* @order 1448 */
   .timeline.timeline-rail .tl-group::before {
     content: "";
     position: absolute;
-    left: -8px;
-    top: 1.1em;
-    width: 12px;
-    height: 12px;
+    left: calc(var(--tl-rail-x) - 7px);
+    top: calc(1.02em - 7px);
+    width: 14px;
+    height: 14px;
     border-radius: 50%;
     background: var(--paper);
     border: 3px solid var(--accent);
+  }/* @order 2071 */
+  .timeline.timeline-rail .tl-group-head::before,
+  .timeline.timeline-rail li::before { display: none; }
+  /* The line segment between this stop's dot and the next one's: the dot's centre sits 1.02em below
+     the group's top (@order 1448), and the next group starts where this one ends. */
+/* @order 2073 */
+  .timeline.timeline-rail .tl-group:not(:last-child)::after {
+    content: ""; position: absolute; left: calc(var(--tl-rail-x) - 1px); width: 2px;
+    top: calc(1.02em + 7px); bottom: calc(7px - 1.02em); background: var(--hairline);
   }/* @order 1449 */
-  .timeline.timeline-rail .tl-group-head {
-    font-family: var(--mono);
-    font-size: max(var(--type-floor), .6em);
-    letter-spacing: .1em;
-    text-transform: uppercase;
-    color: var(--accent);
-    margin: 0 0 .2em;
-  }/* @order 1450 */
+  .timeline.timeline-rail .tl-group-head { margin: 0; }/* @order 2072 */
+  .timeline.timeline-rail .tl-entries { grid-column: 2; margin: 0; }/* @order 1450 */
   .timeline.timeline-rail .tl-entries li { font-size: max(var(--type-floor), 1em); line-height: 1.3; }/* @order 1713 */
   .slide-content:has(> .timeline-dynamic) { max-width: none; width: calc(100% - 2 * var(--slide-pad-x, 48px)); }/* @order 1714 */
   .timeline.timeline-dynamic {
@@ -106,7 +137,7 @@
   .timeline-dynamic .tl-dyn-list li::before { display: none; }/* @order 1723 */
   .timeline-dynamic .tl-dyn-date { display: block; font-family: var(--mono); font-size: max(var(--type-floor), .6em); letter-spacing: .1em; text-transform: uppercase; }/* @order 1724 */
   .timeline-dynamic .tl-dyn-w { font-size: max(var(--type-floor), var(--fs-body)); line-height: 1.3; }/* @order 1725 */
-  .timeline-dynamic .tl-dyn-pane { position: relative; display: flex; align-items: center; min-height: 46vh; }/* @order 1726 */
+  .timeline-dynamic .tl-dyn-pane { position: relative; display: flex; align-items: center; min-height: 46cqh; }/* @order 1726 */
   .timeline-dynamic .tl-detail {
     position: absolute;
     left: 0; right: 0;

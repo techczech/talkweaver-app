@@ -1,0 +1,67 @@
+/* The presenter's outline drawer (ADR-0031 §5-6, presenter redesign ticket 08; drawn in
+   docs/design/2026-09-26-presenter-redesign/round-2/, shot outline-open-1440x900.png). Heading:
+   the list-tree icon and "Outline", the "O / Esc closes" hint, the Previews button and an × close
+   button. Under the search row, the legend for the slide marks: Shown (green circle), Skipped
+   (amber circle-slash), Not yet shown (grey circle-dashed). Each slide row starts with its mark.
+   Chrome type scale: 14px heading, search and slide titles; 13px hint, Previews, Skipped only,
+   legend and section heads. Scoped to the presenter drawer: the handout's overview (the same
+   runtime, compiler/assets/runtime/overview.js) shows no marks and is not restyled. */
+.presenter-outline-drawer {
+  --ol-text: #f7f3ea;
+  --ol-muted: #a3b3c2;
+  --ol-dim: #71849a;
+  --ol-line: #ffffff1c;
+  --ol-ctl: #1f2c39;
+  --ol-ctl-hover: #283a4c;
+  --ol-shown: #3fb950;
+  --ol-skipped: #d29922;
+  --ol-unseen: #6e7681;
+  --ol-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  font-family: var(--ol-ui);
+  -webkit-font-smoothing: antialiased;
+}
+.presenter-outline-drawer .presenter-panel { grid-template-rows: auto auto auto minmax(0, 1fr); }
+.presenter-outline-drawer .presenter-panel h2 {
+  display: flex; align-items: center; gap: 8px; margin: 0 0 10px;
+  font: 600 14px/1 var(--ol-ui); letter-spacing: 0; text-transform: none; color: var(--ol-text);
+}
+#presenterOutlineDrawer .tw-ico { width: 16px; height: 16px; margin: 0; flex: none; vertical-align: middle; }
+.presenter-outline-drawer .presenter-outline-title { display: inline-flex; align-items: center; gap: 8px; }
+.presenter-outline-drawer .presenter-outline-title > .tw-ico { color: var(--ol-muted); }
+.presenter-outline-drawer .presenter-outline-hint {
+  margin-left: 2px; font: 500 13px/1 var(--ol-ui); letter-spacing: 0; text-transform: none; color: var(--ol-dim);
+}
+.presenter-outline-drawer .presenter-outline-expand {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; box-sizing: border-box;
+  font: 500 13px/1 var(--ol-ui); letter-spacing: 0; text-transform: none;
+  border: 1px solid var(--ol-line); border-radius: 6px; background: var(--ol-ctl); color: var(--ol-text);
+}
+.presenter-outline-drawer .presenter-outline-expand:hover { background: var(--ol-ctl-hover); }
+#presenterOutlineDrawer .presenter-outline-expand .tw-ico { width: 14px; height: 14px; margin: 0; }
+.presenter-outline-drawer .presenter-outline-close {
+  display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; box-sizing: border-box;
+  border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--ol-muted); cursor: pointer;
+}
+.presenter-outline-drawer .presenter-outline-close:hover { background: var(--ol-ctl-hover); color: var(--ol-text); }
+.presenter-outline-drawer :is(.presenter-outline-expand, .presenter-outline-close):focus-visible { outline: 2px solid #6ea8e6; outline-offset: 1px; }
+.presenter-outline-drawer .presenter-outline-controls { font: 500 14px/1.2 var(--ol-ui); }
+.presenter-outline-drawer .presenter-outline-controls .presenter-search { height: 32px; box-sizing: border-box; padding: 0 8px; font: 400 14px/1.2 var(--ol-ui); }
+.presenter-outline-drawer .presenter-outline-filter { font: 500 13px/1.2 var(--ol-ui); color: var(--ol-muted); }
+.presenter-outline-legend {
+  display: flex; gap: 14px; padding: 6px 2px 6px;
+  font: 500 13px/1 var(--ol-ui); color: var(--ol-dim); white-space: nowrap;
+}
+.presenter-outline-legend > span { display: inline-flex; align-items: center; gap: 5px; }
+#presenterOutlineDrawer .presenter-outline-legend .tw-ico { width: 13px; height: 13px; }
+/* The list starts under the legend; its first section head drops its usual top margin (as drawn). */
+.presenter-outline-drawer .presenter-outline { margin-top: 0; }
+.presenter-outline-drawer .presenter-outline > .section-head:first-child { margin-top: 4px; }
+.presenter-outline-drawer .presenter-outline .section-head,
+.presenter-outline-drawer .presenter-outline .subsection-head { font: 600 13px/1.25 var(--ol-ui); letter-spacing: 0; }
+.presenter-outline-drawer .presenter-outline .slide-link { font: 500 14px/1.3 var(--ol-ui); }
+.presenter-outline-drawer .presenter-outline .slide-link.current { font-weight: 600; }
+.presenter-outline-drawer .tw-status { display: inline-flex; vertical-align: -2px; margin-right: 8px; }
+#presenterOutlineDrawer .tw-status .tw-ico { width: 14px; height: 14px; }
+.presenter-outline-legend .tw-shown > .tw-ico, .presenter-outline-drawer .slide-link.tw-shown .tw-status { color: var(--ol-shown); }
+.presenter-outline-legend .tw-skipped > .tw-ico, .presenter-outline-drawer .slide-link.tw-skipped .tw-status { color: var(--ol-skipped); }
+.presenter-outline-legend .tw-unseen > .tw-ico, .presenter-outline-drawer .slide-link.tw-unseen .tw-status { color: var(--ol-unseen); }

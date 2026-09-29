@@ -1233,12 +1233,21 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     // picks by top-level item count: ≤ 3 keeps the hairline card grid (boxes, today's look),
     // > 3 takes the plain vertical icon rows (.fl-iconlist-list). Non-icon lists are never
     // re-styled by the count rule, and an unresolvable icon list falls back to plain anyway.
-    const autoIconlistList = !block.iconlistVariant && style === "icons" && block.items.length > 3;
+    // ADR-0028 §6 (Dominik, 2026-09-25): a NUMBERED list takes the icon-list layout with the
+    // number in the icon's box — the same treatment rule (explicit {iconlist=list|boxes}, else
+    // ≤ 3 items → cards, > 3 → rows), so its number inherits the icon's size, gap, centring and
+    // fitting. {annotated} keeps its own shared-axis grid and never takes the row class for numbers.
+    const numbered = style === "numbers";
+    const takesTreatment = style === "icons" || (numbered && !annotated);
+    const autoIconlistList = !block.iconlistVariant && takesTreatment && block.items.length > 3;
     // Belt and braces with the adapter's conditional liststyle assignment: the treatment chrome
-    // rides only on a list the compiler decided IS an icon list. A numbered, logo or plain list
+    // rides only on a list the compiler decided IS an icon list or a numbered list. A plain list
     // never takes the row class, however stale an {iconlist=…} variant token in an existing file
     // is; {icons=top}/{icons=all} forcing icons on still lands here with style "icons".
-    const iconlistVariantClass = style === "icons" && (block.iconlistVariant === "list" || autoIconlistList) ? " fl-iconlist-list" : "";
+    const iconlistVariantClass = takesTreatment && (block.iconlistVariant === "list" || autoIconlistList) ? " fl-iconlist-list" : "";
+    // The number style ({numbered=plain|styled}; the square is the default and carries no class).
+    const numberStyle = block.numberStyle === "plain" || block.numberStyle === "styled" ? block.numberStyle : "";
+    const numberedClass = numbered && !annotated ? ` fl-numbered${numberStyle ? ` fl-numbered-${numberStyle}` : ""}` : "";
     // Feature lists NEVER emit data-fragment: items render fully visible by default. Stepping
     // is opt-in via reveal/focus mode (runtime walks .feature-list > li and .fl-sublist > li as
     // content units). The old always-on per-item fragment was removed in Dominik's redesign.
@@ -1311,7 +1320,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
         return `<li><span class="fl-lead">${iconHtml}<span class="fl-text">${renderInline(item)}</span></span>${annHtml}</li>`;
       }).join("")}</ul>`;
     }
-    return `<ul class="feature-list${wide}${plainClass}${hasKids}${annotatedClass}${iconlistVariantClass}"${groupAttr}${densityAttr}>${block.items.map((item, itemIndex) => {
+    return `<ul class="feature-list${wide}${plainClass}${hasKids}${annotatedClass}${iconlistVariantClass}${numberedClass}"${groupAttr}${densityAttr}>${block.items.map((item, itemIndex) => {
       let icon = "";
       if (style === "icons") {
         // Icon-or-number: a slot whose icon doesn't resolve (e.g. one invalid {icon=name} among

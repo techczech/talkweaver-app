@@ -1,4 +1,7 @@
-export const SHORTCUT_SCOPES = ['app', 'editor', 'browser', 'presenter', 'picker', 'pathway', 'studio', 'talktext', 'importer'] as const
+// 'slide-picker' is the ⌘S slide picker (SlideBrowser + its Find a talk box): its own surface with its own
+// keys, so its S (select section) and the Talks panel's S (sort, 'browser' scope) are two surfaces'
+// keys, never one keystroke claimed twice (talk search 08).
+export const SHORTCUT_SCOPES = ['app', 'editor', 'browser', 'slide-picker', 'presenter', 'picker', 'pathway', 'studio', 'talktext', 'importer'] as const
 export type ShortcutScope = (typeof SHORTCUT_SCOPES)[number]
 
 export interface ShortcutEntry {
@@ -33,6 +36,7 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['app.sidebar-toggle', '⌘⇧[ / ⌘\\', ['Mod-Shift-[', 'Mod-\\'], 'Collapse or expand sidebar', 'Toggles the current sidebar without changing its selected mode.', 'Sidebar'],
     ['app.settings', '⌘,', ['Mod-,'], 'Settings', 'Opens or closes the application settings panel.', 'App'],
     ['app.slide-search', '⌘S', ['Mod-s'], 'Search slides across all talks', 'Opens the cross-talk slide browser for finding and inserting slides.', 'Find & insert'],
+    ['app.find-talk', '⇧⌘S', ['Mod-Shift-s'], 'Find a talk', 'Opens the slide picker with the cursor in Find a talk, or moves it there when the picker is already open.', 'Find & insert'],
     ['app.context-menu', '⌘K', ['Mod-k'], 'Context menu', 'Opens the context menu for the focused talk, slide, or editor slide.', 'App'],
     ['app.layout-picker', '⌘L', ['Mod-l'], 'Layout picker', 'Opens the layout picker for the current slide.', 'Find & insert'],
     ['app.icon-picker', '⌘I', ['Mod-i'], 'Icon picker', 'Opens the icon picker for the current bullet.', 'Find & insert'],
@@ -52,8 +56,6 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['app.view-grid', '⌘4', ['Mod-4'], 'Grid', 'Switches the workspace to the slide grid view.', 'View'],
     ['app.present', 'F5', ['F5'], 'Present from the top', 'Opens presenter view at the first slide.', 'Present'],
     ['app.present-current', '⇧F5', ['Shift-F5'], 'Present from current slide', 'Opens presenter view at the selected slide.', 'Present'],
-    ['app.deck-edit', '⌘E', ['Mod-e'], 'Edit presented slide', 'Returns from a deck window to this slide in TalkWeaver.', 'Present'],
-    ['app.deck-refresh', '⌘R', ['Mod-r'], 'Refresh deck', 'Refreshes a deck window with the latest edits while retaining position.', 'Present'],
     ['app.pathways', '⌘⌥P', ['Mod-Alt-p'], 'Open Pathway view', 'Opens the current Talk’s Pathway manager in its own window.', 'Present']
   ]),
   ...entries('editor', [
@@ -96,20 +98,42 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['browser.close', 'Esc', ['Escape'], 'Close or go back', 'Closes the active browser surface and restores its previous focus.', 'Navigation'],
     ['browser.insert', '⌘↵', ['Mod-Enter'], 'Insert selected slides', 'Inserts the selected browser slides at the editor caret.', 'Slides'],
     ['browser.toggle-selection', 'Space / X', ['Space', 'x'], 'Toggle selection', 'Adds or removes the active slide from the insertion selection.', 'Slides'],
-    ['browser.tags', 'T', ['t'], 'Tag selected slides', 'Opens the tag picker for the selected browser slides.', 'Slides'],
     ['browser.preview', 'P', ['p'], 'Toggle preview', 'Shows or hides the active slide preview.', 'Slides'],
-    ['browser.rail', 'I', ['i'], 'Toggle rail', 'Collapses or expands the browser filter rail.', 'Slides'],
-    ['browser.edit-source', 'E', ['e'], 'Edit source slide', 'Opens the source slide of the active browser result.', 'Slides'],
-    ['browser.where-used', 'U', ['u'], 'Where used', 'Shows usage information for the active browser slide.', 'Slides'],
-    ['browser.clear-scope', '⌫', ['Backspace'], 'Clear scope', 'Clears the current browser rail scope.', 'Slides'],
     ['browser.talk-view', 'V', ['v'], 'Switch talk view', 'Switches the Talks panel between Ledger and Shelf.', 'Talks panel'],
     ['browser.talk-names', 'N', ['n'], 'Titles or filenames', 'Switches the Talks panel between display titles and filenames.', 'Talks panel'],
-    ['browser.filter', '/', ['/'], 'Focus filter', 'Moves focus to the Talks panel filter field.', 'Talks panel'],
+    ['browser.filter', '/', ['/'], 'Focus filter', 'Moves focus to the Talks panel search box — from the list, or from anywhere outside the talk editor and text fields while the list is open.', 'Talks panel'],
     ['browser.sort', 'S', ['s'], 'Sort talks', 'Opens Talks sorting; number keys select a sort order.', 'Talks panel'],
+    ['browser.open-talk', '⌘O', ['Mod-o'], 'Open talk or folder', 'Opens the focused talk, or goes into the focused folder, as ↵ does.', 'Talks panel'],
+    ['browser.up-level', '⌘↑', ['Mod-ArrowUp'], 'Up one folder level', 'Goes back up one folder and focuses the folder just left.', 'Talks panel'],
+    ['browser.fold-all', '⌘← / ⌘→', ['Mod-ArrowLeft', 'Mod-ArrowRight'], 'Collapse or expand all subfolders', 'Collapses or expands every subfolder of the folder being viewed.', 'Talks panel'],
     ['browser.rename', 'F2', ['F2'], 'Rename', 'Renames the focused talk or folder.', 'Talks panel'],
     ['browser.duplicate', '⌘D', ['Mod-d'], 'Duplicate talk', 'Duplicates the focused talk.', 'Talks panel'],
     ['browser.move-talk', 'M', ['m'], 'Move talk', 'Moves the focused talk into a folder.', 'Talks panel'],
     ['browser.delete-talk', '⌘⌫', ['Mod-Backspace'], 'Move talk to Bin', 'Moves the focused talk to the Bin after confirmation.', 'Talks panel']
+  ]),
+  // The ⌘S slide picker (SlideBrowser.tsx, browser-rail/FindTalk.tsx). The key-truth check in
+  // scripts/test-shortcut-registry.mjs holds this list to exactly the keys those handlers bind.
+  ...entries('slide-picker', [
+    ['slide-picker.move', '↑ ↓ ← →', ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'], 'Move through slides', 'Moves the focused card; with a talk beside the results, ← and → cross between the two sides.', 'Navigate'],
+    ['slide-picker.extend', '⇧↑ ⇧↓ ⇧← ⇧→', ['Shift-ArrowUp', 'Shift-ArrowDown', 'Shift-ArrowLeft', 'Shift-ArrowRight'], 'Extend the selection', 'Moves the focused card and selects every card from the anchor to it.', 'Navigate'],
+    ['slide-picker.view', '↵', ['Enter'], 'View and insert', 'Opens the focused slide in the insert viewer.', 'Navigate'],
+    ['slide-picker.tab', 'Tab / ⇧Tab', ['Tab', 'Shift-Tab'], 'Move between controls', 'Moves focus through the picker’s controls; focus stays inside the picker.', 'Navigate'],
+    ['slide-picker.close', 'Esc', ['Escape'], 'Close or go back', 'Closes the nearest thing first — a popover, the preview, versions, locations, the talk beside, the search words, the selection — and then the picker.', 'Navigate'],
+    ['slide-picker.clear-scope', '⌫', ['Backspace'], 'Clear scope', 'Clears the rail’s scope, so the picker shows every talk again.', 'Navigate'],
+    ['slide-picker.toggle-selection', 'X', ['x'], 'Select or deselect slide', 'Adds the focused slide to the selection, or takes it out.', 'Select & insert'],
+    ['slide-picker.select-section', 'S', ['s'], 'Select section', 'Selects every slide in the focused slide’s section.', 'Select & insert'],
+    ['slide-picker.insert', '⌘↵', ['Mod-Enter'], 'Insert selected slides', 'Inserts the selected slides at the editor caret.', 'Select & insert'],
+    ['slide-picker.select-whole-section', '⇧⌘↵', ['Mod-Shift-Enter'], 'Select whole section', 'Selects the focused slide’s whole section — its heading slide and every slide under it, showing or not — as its heading’s Select section button does. Take single slides out with X or a click, then insert the selection with ⌘↵.', 'Select & insert'],
+    ['slide-picker.tags', 'T', ['t'], 'Tag selected slides', 'Opens the tag picker for the selected slides.', 'Select & insert'],
+    ['slide-picker.preview', 'Space / P', ['Space', 'p'], 'Preview', 'Shows or hides a large preview of the focused slide.', 'View'],
+    ['slide-picker.versions', 'E', ['e'], 'Versions or locations', 'Opens the focused slide’s versions; on a stack of identical copies, where the copies live.', 'View'],
+    ['slide-picker.near', 'U', ['u'], 'Uncollapse near-identical slides', 'Opens a stack of near-identical slides into its variants, or closes it again.', 'View'],
+    ['slide-picker.density', '2–6', ['Digit2-Digit6'], 'Cards across', 'Sets how many cards the grid shows across.', 'View'],
+    ['slide-picker.rail', 'I', ['i'], 'Show or hide the rail', 'Collapses or expands the rail with the talk and slide searches.', 'View'],
+    ['slide-picker.talk-beside', 'O', ['o'], 'Show the result’s talk beside', 'Opens the focused result’s whole talk beside the results, scrolled to its section with the slide highlighted.', 'Talks'],
+    ['slide-picker.close-beside', 'Esc', ['Escape'], 'Close the talk beside', 'Closes the talk beside the results; the results, their scroll position and the selection are unchanged.', 'Talks'],
+    ['slide-picker.add-beside', '⌘↵', ['Mod-Enter'], 'Add the talk beside', 'In Find a talk, adds the highlighted talk as a further column (up to three) instead of replacing the scope.', 'Talks'],
+    ['slide-picker.remove-chip', '⌫', ['Backspace'], 'Remove the last talk chip', 'In an empty Find a talk box, takes the last talk picked from it out of the scope.', 'Talks']
   ]),
   ...entries('picker', [
     ['picker.navigate', '↑ ↓ ← →', ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'], 'Move through choices', 'Moves the active choice in command, icon, layout, tag, and search pickers.', 'Pickers'],
@@ -120,7 +144,7 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['picker.toggle', 'Space', ['Space'], 'Toggle choice', 'Toggles selection of the active item in a multi-select picker.', 'Pickers']
   ]),
   ...entries('presenter', [
-    ['presenter.next', '→ Space ↓ PgDn', ['ArrowRight', 'Space', 'ArrowDown', 'PageDown', 'MediaTrackNext'], 'Next', 'Advances through the current mode and then to the next presentation beat.', 'Navigation'],
+    ['presenter.next', '→ Space ↓ PgDn ↵', ['ArrowRight', 'Space', 'ArrowDown', 'PageDown', 'Enter', 'MediaTrackNext'], 'Next', 'Advances through the current mode and then to the next presentation beat.', 'Navigation'],
     ['presenter.previous', '← ↑ PgUp Backspace', ['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace', 'MediaTrackPrevious'], 'Previous', 'Retreats through the current mode and then to the previous presentation beat.', 'Navigation'],
     ['presenter.first', 'Home', ['Home'], 'First slide', 'Moves to the first slide in the deck.', 'Navigation'],
     ['presenter.last', 'End', ['End'], 'Last slide', 'Moves to the last slide in the deck.', 'Navigation'],
@@ -130,12 +154,16 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['presenter.overview', 'O', ['o'], 'Outline', 'Opens the searchable presenter outline.', 'Overview & timer'],
     ['presenter.timer', 'P', ['p'], 'Start or pause timer', 'Starts, pauses, or resumes the presentation timer.', 'Overview & timer'],
     ['presenter.duration', 'T', ['t'], 'Set duration', 'Opens the talk-duration and reminder controls.', 'Overview & timer'],
+    // Recording (src/preload/present-rec-ui.ts; present in the presenter window TalkWeaver opens).
+    ['presenter.record', '⇧R', ['Shift-r'], 'Start, or stop and save, recording', 'Starts recording the talk; while recording or paused, stops and saves it.', 'Recording'],
+    ['presenter.record-pause', '⇧P', ['Shift-p'], 'Pause or resume recording', 'Pauses the recording, or resumes a paused one.', 'Recording'],
+    ['presenter.save-run-as', 'L', ['l'], 'Save run as…', 'Opens the run-kind picker (Delivery, Rehearsal, Recording) to save or relabel this run in History.', 'Recording'],
+    ['presenter.save-run', '↵', ['Enter'], 'Save this run as a delivery', 'While the save offer shows at the last slide, saves the run to History as a delivery.', 'Recording'],
     ['presenter.reveal', 'R', ['r'], 'Reveal mode', 'Toggles progressive content reveal mode.', 'Modes & display'],
     ['presenter.focus', 'F', ['f'], 'Focus mode', 'Toggles focus mode for stepping through slide elements.', 'Modes & display'],
     ['presenter.highlight', 'H', ['h'], 'Highlight', 'Arms or disarms text highlight authoring in the presenter preview.', 'Modes & display'],
     ['presenter.preview-size', '[ / ]', ['BracketLeft', 'BracketRight'], 'Resize previews', 'Cycles the size of presenter preview panes.', 'Modes & display'],
-    ['presenter.notes', 'N', ['n'], 'Notes', 'Opens or closes the notes drawer where that role provides it.', 'Modes & display'],
-    ['presenter.chrome', 'C', ['c'], 'Pin control bar', 'Pins or unpins the deck control bar.', 'Modes & display'],
+    ['presenter.notes-scroll', 'J / ⇧J', ['j', 'Shift-j'], 'Scroll notes forward or back', 'Steps the speaker notes: a paragraph in the camera column, the visible lines less one elsewhere. Also works while automatic scroll runs.', 'Modes & display'],
     ['presenter.media', 'M', ['m'], 'Play audience media', 'Plays or pauses media on the audience display.', 'Modes & display'],
     ['presenter.gallery', 'Z', ['z'], 'Gallery or lightbox', 'Opens or closes the current slide image and video gallery.', 'Modes & display'],
     ['presenter.video-fullscreen', 'V', ['v'], 'Video: Fullscreen', 'Enlarges the current slide video to the stage and asks for full screen (on the audience display when presenting).', 'Modes & display'],
@@ -147,6 +175,14 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['presenter.poll-primary', 'Q', ['q'], 'Open or close current poll', 'Opens an armed poll or closes the poll currently collecting responses.', 'Audience'],
     ['presenter.poll-reveal', '⇧ Q', ['Shift-q'], 'Reveal held poll results', 'Reveals a held poll’s current results to the audience.', 'Audience'],
     ['presenter.poll-compose', 'K', ['k'], 'Compose a Quick poll', 'Opens the live Quick-poll composer.', 'Audience'],
+    ['presenter.instant-compose', '⌥⌘I', ['Mod-Alt-i'], 'Compose an instant slide', 'Opens the instant-slide composer.', 'Audience'],
+    ['presenter.instant-paste', '⌘V', ['Mod-v'], 'Preview clipboard as an instant slide', 'Shows a preview of the clipboard content.', 'Audience'],
+    ['presenter.instant-return', '→', ['ArrowRight'], 'Back to slide while instant slide is shown', 'Clears the instant slide and returns to the slide left.', 'Audience'],
+    ['presenter.talk-qr', 'U', ['u'], "Show the talk's QR code", 'Shows the live audience link, or the published handout link, as a full-screen QR code from any slide; U or Esc returns to the slide.', 'Audience'],
+    // Editor (src/preload/present-edit-bridge.ts for ⌘E; src/main/deck-window-keys.ts for ⌘R and ⇧F5).
+    ['presenter.edit', '⌘E', ['Mod-e'], 'Edit this slide in TalkWeaver', 'Returns from a deck window to this slide in the TalkWeaver editor.', 'Editor'],
+    ['presenter.refresh', '⌘R / ⇧F5', ['Mod-r', 'Shift-F5'], 'Refresh with latest edits', 'Refreshes a deck window with the latest edits while retaining position.', 'Editor'],
+    ['presenter.command-palette', '⌘⇧P', ['Mod-Shift-p'], 'Command palette', 'Opens the list of every presenter command, with its key.', 'Help'],
     ['presenter.help', '?', ['?'], 'Show shortcuts', 'Shows or hides this generated shortcut sheet.', 'Help'],
     ['presenter.close', 'Esc', ['Escape'], 'Close overlay or mode', 'Closes the most local overlay, interaction, or active presentation mode.', 'Help']
   ]),

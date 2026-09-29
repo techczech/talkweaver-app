@@ -72,7 +72,9 @@ const dependencies = {
   getConfig: (key) => key === 'vaultRoot' ? '/vault' : undefined,
   readRun: () => ({ status: 'delivered' }),
   talkBySlug: () => ({ slug: 'talk', outlinePath: '/vault/talk-outline.md' }),
-  readFileSync: () => brokenOutline
+  readFileSync: () => brokenOutline,
+  // The Run handlers build from the flushed text (talk-writer.ts flushTalkForPublish), not the file.
+  flushTalkForPublish: async () => ({ ok: true, via: 'disk', changed: false, text: brokenOutline })
 }
 
 const cases = [

@@ -1,0 +1,434 @@
+/* Presenter notes placement (ADR-0028 §8 and §9, tickets 04 and 07). The presenter window's root
+   carries data-notes-placement = off | bottom | sidebar | top-band | camera-column, set by
+   setNotesPlacement(). The placement is one setting for all talks with a per-talk override (see
+   the NOTES_PLACEMENT block in presenter-popup-single-html.html). These rules only move panels;
+   the header, the controls bar and the current-slide panel (instant strip, go-live panel, poll
+   panel, composers) keep their markup and their own styles. Each placement has its own
+   side-column width for each Preview size, so large > medium > small > off holds in every
+   placement (the old fr presets would make "small" wider than the slim medium columns below).
+   The drag divider still overrides them inline where the placement has one.
+
+   BOTTOM (default, drawn variant B): the current slide sits top-left at 16:9, Next and Then stack
+   beside it, and Notes run full width under both. Then stays visible when a slide has notes. The
+   Notes panel shows on every slide so the current slide does not change size as notes come and
+   go. */
+.presenter-root[data-notes-placement="bottom"] {
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+}
+.presenter-root[data-notes-placement="bottom"]:not([data-preview-size]) {
+  grid-template-columns: minmax(0, 1fr) 8px clamp(300px, 28vw, 440px);
+}
+.presenter-root[data-notes-placement="bottom"][data-preview-size="small"] {
+  grid-template-columns: minmax(0, 1fr) 8px clamp(220px, 20vw, 320px);
+}
+.presenter-root[data-notes-placement="bottom"][data-preview-size="large"] {
+  grid-template-columns: minmax(0, 1fr) 8px clamp(380px, 36vw, 600px);
+}
+.presenter-root[data-notes-placement="bottom"] > .presenter-main { grid-column: 1; grid-row: 2 / span 2; }
+.presenter-root[data-notes-placement="bottom"] > .presenter-divider { grid-column: 2; grid-row: 2 / span 2; }
+/* The side column dissolves so its three panels can take grid cells of the root. */
+.presenter-root[data-notes-placement="bottom"] > .presenter-side { display: contents; }
+.presenter-root[data-notes-placement="bottom"] > .presenter-side > .presenter-panel:first-child {
+  grid-column: 3;
+  grid-row: 2;
+  align-self: start;
+  grid-template-rows: auto auto;
+}
+.presenter-root[data-notes-placement="bottom"] > .presenter-side > .presenter-following {
+  grid-column: 3;
+  grid-row: 3;
+  align-self: start;
+  display: grid;
+  grid-template-rows: auto auto;
+}
+.presenter-root[data-notes-placement="bottom"] > .presenter-side > .presenter-panel:not(.presenter-notes) .preview {
+  height: auto;
+  aspect-ratio: 16 / 9;
+  /* In a short window the Next + Then stack, not the slide, would set the height of the slide
+     rows; each preview gives up height (letterboxing) before the notes row does. */
+  max-height: calc((100dvh - 350px) / 2 - 50px);
+}
+.presenter-root[data-notes-placement="bottom"] > .presenter-side > .presenter-notes {
+  grid-column: 1 / -1;
+  grid-row: 4;
+  display: grid;
+}
+.presenter-root[data-notes-placement="bottom"] > .presenter-controls { grid-row: 5; }
+.presenter-root[data-notes-placement="bottom"] .presenter-main > .presenter-panel:first-child {
+  grid-template-rows: auto auto;
+}
+/* The slide is 16:9 at the column's width, but never so tall that the Notes row drops below the
+   height it has at 1440x900 (on a wide 16:9 display the width alone would squeeze the notes to a
+   line or two). Above the cap the box letterboxes and the slide fits its height. */
+.presenter-root[data-notes-placement="bottom"] #currentPreview {
+  height: auto;
+  aspect-ratio: 16 / 9;
+  max-height: calc(100dvh - 350px);
+}
+/* The notes are one column as wide as a column of the two-column layout, and become two
+   balanced columns only when the runtime (layoutBottomColumns) has measured that the note does
+   not fit one column, does fit two, and leaves at least two lines in the second: a short note
+   never splits and leaves a word alone on the right. A note too long for two columns stays in one
+   column and scrolls (J / ⇧J, wheel), with the "more" cue below while text is hidden. */
+.presenter-root[data-notes-placement="bottom"] .presenter-notes-body {
+  font-size: 1.08rem;
+  line-height: 1.55;
+  column-gap: 2.4em;
+  max-width: max(24em, calc((100% - 2.4em) / 2));
+}
+.presenter-root[data-notes-placement="bottom"] .presenter-notes-body[data-notes-cols="2"] {
+  columns: 2 24em;
+  max-width: none;
+}
+/* While the poll panel or the instant-slide strip is up under the slide (ADR-0026: both stay in
+   the current-slide panel), the slide gives up height to them as in the other placements: the
+   slide rows become flexible, the preview letterboxes inside what is left, and the notes keep a
+   140px row (their height at 1440x900). */
+.presenter-root[data-notes-placement="bottom"]:has(.presenter-current-panel > :is(.presenter-poll-panel, .instant-strip):not([hidden])) {
+  grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr) minmax(0, 140px) auto;
+}
+.presenter-root[data-notes-placement="bottom"]:has(.presenter-current-panel > :is(.presenter-poll-panel, .instant-strip):not([hidden])) .presenter-main > .presenter-panel:first-child {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+.presenter-root[data-notes-placement="bottom"]:has(.presenter-current-panel > :is(.presenter-poll-panel, .instant-strip):not([hidden])) #currentPreview {
+  height: 100%;
+  aspect-ratio: auto;
+  max-height: none;
+}
+/* An open poll panel (ADR-0028 §9): the notes hide and the slide keeps its no-poll size. The
+   current-slide column takes the notes' row, and the poll panel fills what is left under the
+   slide, scrolling inside itself. (Placed after the rule above, which it overrides when both
+   match; the instant strip alone keeps that rule.) */
+.presenter-root[data-notes-placement="bottom"]:has(.presenter-current-panel > .presenter-poll-panel:not([hidden])) {
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+}
+.presenter-root[data-notes-placement="bottom"]:has(.presenter-current-panel > .presenter-poll-panel:not([hidden])) > .presenter-side > .presenter-notes {
+  display: none;
+}
+.presenter-root[data-notes-placement="bottom"]:has(.presenter-current-panel > .presenter-poll-panel:not([hidden])) > .presenter-main {
+  grid-row: 2 / span 3;
+}
+.presenter-root[data-notes-placement="bottom"]:has(.presenter-current-panel > .presenter-poll-panel:not([hidden])) > .presenter-divider {
+  grid-row: 2 / span 3;
+}
+.presenter-root[data-notes-placement="bottom"]:has(.presenter-current-panel > .presenter-poll-panel:not([hidden])) .presenter-main > .presenter-panel:first-child {
+  display: flex;
+  flex-direction: column;
+}
+.presenter-root[data-notes-placement="bottom"]:has(.presenter-current-panel > .presenter-poll-panel:not([hidden])) #currentPreview {
+  flex: none;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  max-height: calc(100dvh - 350px);
+}
+.presenter-root[data-notes-placement="bottom"]:has(.presenter-current-panel > .presenter-poll-panel:not([hidden])) .presenter-current-panel > .presenter-poll-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+/* Preview size "off" in this placement hides Next and Then only; the notes stay. */
+.presenter-root[data-notes-placement="bottom"][data-preview-size="off"] > .presenter-side > .presenter-panel:not(.presenter-notes) {
+  display: none;
+}
+
+/* SIDEBAR (drawn variant A): a slim side column holds a small Next at 16:9 with Notes filling the
+   rest (Then in that space when a slide has no notes, as before). The current slide takes all the
+   remaining width. */
+.presenter-root[data-notes-placement="sidebar"]:not([data-preview-size]) {
+  grid-template-columns: minmax(0, 1fr) 8px clamp(240px, 17vw, 340px);
+}
+.presenter-root[data-notes-placement="sidebar"][data-preview-size="small"] {
+  grid-template-columns: minmax(0, 1fr) 8px clamp(190px, 13vw, 260px);
+}
+.presenter-root[data-notes-placement="sidebar"][data-preview-size="large"] {
+  grid-template-columns: minmax(0, 1fr) 8px clamp(320px, 26vw, 480px);
+}
+.presenter-root[data-notes-placement="sidebar"] .presenter-side { grid-template-rows: auto minmax(0, 1fr); }
+.presenter-root[data-notes-placement="sidebar"] .presenter-side > .presenter-panel:not(.presenter-notes) {
+  grid-template-rows: auto auto;
+  align-self: start;
+}
+.presenter-root[data-notes-placement="sidebar"] .presenter-side > .presenter-panel:not(.presenter-notes) .preview {
+  height: auto;
+  aspect-ratio: 16 / 9;
+}
+
+/* OFF: no notes panel. The side column narrows to thumbnails of Next and Then, and the current
+   slide takes the freed width. */
+.presenter-root[data-notes-placement="off"]:not([data-preview-size]) {
+  grid-template-columns: minmax(0, 1fr) 8px clamp(180px, 14vw, 280px);
+}
+.presenter-root[data-notes-placement="off"][data-preview-size="small"] {
+  grid-template-columns: minmax(0, 1fr) 8px clamp(150px, 10vw, 220px);
+}
+.presenter-root[data-notes-placement="off"][data-preview-size="large"] {
+  grid-template-columns: minmax(0, 1fr) 8px clamp(280px, 22vw, 420px);
+}
+.presenter-root[data-notes-placement="off"] .presenter-side {
+  grid-template-rows: auto auto;
+  align-content: start;
+}
+.presenter-root[data-notes-placement="off"] .presenter-side > .presenter-panel:not(.presenter-notes) {
+  grid-template-rows: auto auto;
+}
+.presenter-root[data-notes-placement="off"] .presenter-side > .presenter-panel:not(.presenter-notes) .preview {
+  height: auto;
+  aspect-ratio: 16 / 9;
+}
+.presenter-root[data-notes-placement="off"] .presenter-side > .presenter-notes { display: none; }
+.presenter-root[data-notes-placement="off"] .presenter-side.has-notes > .presenter-following { display: grid; }
+
+/* "More below" cue for the scrolling placements (bottom, sidebar, top band): while text is hidden
+   under the panel's lower edge the runtime sets data-notes-more="1" on #presenterNotes; the last
+   line fades and the cue shows in the corner. The cue is a real button (#presenterNotesMore):
+   clicking it, or Enter / Space while it has keyboard focus, steps the notes as J does, and does
+   not pause or resume the automatic scroll. The camera column has no cue: its reading line is
+   the current paragraph, and every paragraph can scroll up to it. */
+.presenter-root:is([data-notes-placement="bottom"], [data-notes-placement="sidebar"]) .presenter-notes { position: relative; }
+.presenter-root:is([data-notes-placement="bottom"], [data-notes-placement="sidebar"], [data-notes-placement="top-band"]) .presenter-notes[data-notes-more="1"] .presenter-notes-body {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 1.2em), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 1.2em), transparent);
+}
+.presenter-notes-more { display: none; }
+.presenter-root:is([data-notes-placement="bottom"], [data-notes-placement="sidebar"], [data-notes-placement="top-band"]) .presenter-notes[data-notes-more="1"] .presenter-notes-more {
+  display: block;
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  margin: 0;
+  font: 600 12px/1 var(--sans);
+  letter-spacing: 0.08em;
+  white-space: pre;
+  color: #9fb3c6;
+  background: #243445;
+  border: 1px solid #ffffff24;
+  border-radius: 5px;
+  padding: 5px 7px;
+  cursor: pointer;
+}
+.presenter-root:is([data-notes-placement="bottom"], [data-notes-placement="sidebar"], [data-notes-placement="top-band"]) .presenter-notes[data-notes-more="1"] .presenter-notes-more:hover {
+  color: #dce7f1;
+  background: #2e4257;
+  border-color: #ffffff40;
+}
+.presenter-notes-more:focus-visible {
+  outline: 2px solid #7fb2ff;
+  outline-offset: 2px;
+}
+
+/* TOP BAND (ADR-0028 §9, drawn variant A; docs/design/2026-09-25-teleprompter/, overrides/
+   teleprompter-a-top-band.css). A notes band runs the full window width directly under the header,
+   so the line being read sits about 115px below the top edge (the laptop camera). The text is one
+   centred column of at most 58ch, in large type, with four full lines visible and a fifth peeking
+   (faded) when there is more. The current slide and a 16:9 Next sit below the band; Then is not
+   shown. The band keeps its height on every slide (no notes, open poll), so the slide never
+   changes size as you move through the talk. Preview sizes change only column 3; off hides Next
+   and gives column 3 to the slide. */
+.presenter-root[data-notes-placement="top-band"] {
+  /* 26px floor, 2vw (28.8px at 1440, 34.6px at 1728), 40px ceiling. */
+  --tp-size: clamp(26px, 2vw, 40px);
+  --tp-lh: 1.38;
+  --tp-lines: 4;
+  grid-template-columns: minmax(0, 1fr) 8px clamp(300px, 28vw, 520px);
+  /* Four lines plus 0.45 of a fifth, so a longer note shows that it goes on. */
+  grid-template-rows: auto calc(var(--tp-size) * var(--tp-lh) * (var(--tp-lines) + 0.45) + 30px) minmax(0, 1fr) auto;
+}
+.presenter-root[data-notes-placement="top-band"][data-preview-size="small"] {
+  grid-template-columns: minmax(0, 1fr) 8px clamp(220px, 20vw, 380px);
+}
+.presenter-root[data-notes-placement="top-band"][data-preview-size="large"] {
+  grid-template-columns: minmax(0, 1fr) 8px clamp(380px, 36vw, 640px);
+}
+.presenter-root[data-notes-placement="top-band"][data-preview-size="off"] {
+  grid-template-columns: minmax(0, 1fr) 0 0;
+}
+.presenter-root[data-notes-placement="top-band"] > .presenter-main { grid-column: 1; grid-row: 3; }
+.presenter-root[data-notes-placement="top-band"] > .presenter-divider { grid-column: 2; grid-row: 3; }
+.presenter-root[data-notes-placement="top-band"] > .presenter-side { display: contents; }
+.presenter-root[data-notes-placement="top-band"] > .presenter-side > .presenter-panel:first-child {
+  grid-column: 3;
+  grid-row: 3;
+  align-self: start;
+  grid-template-rows: auto auto;
+}
+.presenter-root[data-notes-placement="top-band"] > .presenter-side > .presenter-panel:first-child .preview {
+  height: auto;
+  aspect-ratio: 16 / 9;
+}
+.presenter-root[data-notes-placement="top-band"][data-preview-size="off"] > .presenter-side > .presenter-panel:first-child { display: none; }
+.presenter-root[data-notes-placement="top-band"] > .presenter-side > .presenter-following { display: none; }
+.presenter-root[data-notes-placement="top-band"] > .presenter-controls { grid-row: 4; }
+/* The band. */
+.presenter-root[data-notes-placement="top-band"] > .presenter-side > .presenter-notes {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: block;
+  position: relative;
+  padding: 15px 24px;
+  background: #121b24;
+}
+/* The label moves into the band's left margin so it costs no text line. */
+.presenter-root[data-notes-placement="top-band"] .presenter-notes > h2 {
+  position: absolute;
+  left: 16px;
+  top: 14px;
+  margin: 0;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.presenter-root[data-notes-placement="top-band"] .presenter-notes-body {
+  box-sizing: border-box;
+  height: 100%;
+  max-width: 58ch;
+  margin-inline: auto;
+  overflow: auto;
+  scrollbar-width: none;
+  font-family: var(--sans);
+  font-size: var(--tp-size);
+  line-height: var(--tp-lh);
+  font-weight: 500;
+  color: #f4f7fa;
+  text-wrap: pretty;
+}
+.presenter-root[data-notes-placement="top-band"] .presenter-notes-body aside.notes > * { margin: 0 0 calc(var(--tp-size) * var(--tp-lh) * 0.35); }
+.presenter-root[data-notes-placement="top-band"] .presenter-notes[data-notes-more="1"] .presenter-notes-body {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--tp-size) * var(--tp-lh) * 0.6), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--tp-size) * var(--tp-lh) * 0.6), transparent);
+}
+.presenter-root[data-notes-placement="top-band"] .presenter-notes[data-notes-more="1"] .presenter-notes-more {
+  right: 18px;
+  bottom: 14px;
+  font-size: 13px;
+  padding: 6px 8px;
+}
+/* A slide without notes: the band stays (the slide keeps its size) and says so, quietly. */
+.presenter-root[data-notes-placement="top-band"] .presenter-notes-body:empty::before {
+  content: "No notes on this slide";
+  display: block;
+  color: #6f8294;
+  font-weight: 400;
+  font-size: calc(var(--tp-size) * 0.8);
+}
+/* Open poll / instant strip: they stay under the slide in the current-slide panel (ticket 23);
+   the band keeps its four lines and the slide letterboxes into what is left. The base grid
+   already gives the panel's second row to the poll, so no rule is needed. */
+
+/* CAMERA COLUMN (ADR-0028 §9, drawn variant C; overrides/teleprompter-c-camera-column.css). The
+   notes are one narrow column (about 36 characters a line) close to the horizontal centre of the
+   window, directly under the laptop camera, from under the header to the controls bar. The
+   current slide sits to the left and Next to the right, both at the top. The paragraph being
+   spoken is the reading line: full white with an accent bar, pinned at the top of the column;
+   paragraphs already spoken dim to 30%, the ones still to come to 60% (the runtime sets
+   tp-current / tp-past). The column is shown on every slide, so nothing changes size. Preview
+   sizes change columns 1 and 3 together; off hides Next. */
+.presenter-root[data-notes-placement="camera-column"] {
+  /* 28px floor, 2.3vw (33.1px at 1440, 39.7px at 1728), 44px ceiling. */
+  --tp-size: clamp(28px, 2.3vw, 44px);
+  --tp-lh: 1.42;
+  --tp-accent: #3b82f6;
+  grid-template-columns: clamp(300px, 27vw, 520px) minmax(0, 1fr) clamp(200px, 17vw, 340px);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+.presenter-root[data-notes-placement="camera-column"][data-preview-size="small"] {
+  grid-template-columns: clamp(240px, 21vw, 420px) minmax(0, 1fr) clamp(160px, 13vw, 260px);
+}
+.presenter-root[data-notes-placement="camera-column"][data-preview-size="large"] {
+  grid-template-columns: clamp(360px, 33vw, 620px) minmax(0, 1fr) clamp(240px, 21vw, 420px);
+}
+.presenter-root[data-notes-placement="camera-column"][data-preview-size="off"] {
+  grid-template-columns: clamp(300px, 27vw, 520px) minmax(0, 1fr) 0;
+}
+.presenter-root[data-notes-placement="camera-column"] > .presenter-main { grid-column: 1; grid-row: 2; align-self: start; }
+.presenter-root[data-notes-placement="camera-column"] .presenter-main > .presenter-panel:first-child { grid-template-rows: auto auto; }
+.presenter-root[data-notes-placement="camera-column"] #currentPreview { height: auto; aspect-ratio: 16 / 9; }
+.presenter-root[data-notes-placement="camera-column"] > .presenter-divider { display: none; }
+.presenter-root[data-notes-placement="camera-column"] > .presenter-side { display: contents; }
+.presenter-root[data-notes-placement="camera-column"] > .presenter-side > .presenter-panel:first-child {
+  grid-column: 3;
+  grid-row: 2;
+  align-self: start;
+  grid-template-rows: auto auto;
+}
+.presenter-root[data-notes-placement="camera-column"] > .presenter-side > .presenter-panel:first-child .preview {
+  height: auto;
+  aspect-ratio: 16 / 9;
+}
+.presenter-root[data-notes-placement="camera-column"][data-preview-size="off"] > .presenter-side > .presenter-panel:first-child { display: none; }
+.presenter-root[data-notes-placement="camera-column"] > .presenter-side > .presenter-following { display: none; }
+.presenter-root[data-notes-placement="camera-column"] > .presenter-controls { grid-row: 3; }
+/* The column. */
+.presenter-root[data-notes-placement="camera-column"] > .presenter-side > .presenter-notes {
+  grid-column: 2;
+  grid-row: 2;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  /* The text column starts at the panel's left edge rather than centring in column 2: column 1
+     is wider than column 3, so this puts the text's centre within about 35px of the window's
+     centre line (the camera). */
+  justify-items: start;
+  position: relative;
+  padding: 12px 22px 16px;
+  background: #121b24;
+}
+.presenter-root[data-notes-placement="camera-column"] .presenter-notes > h2 { justify-self: start; margin: 0 0 6px; }
+.presenter-root[data-notes-placement="camera-column"] .presenter-notes-body {
+  width: 100%;
+  /* 34ch of text; the side padding holds the reading-line bar inside the scroll box. */
+  max-width: calc(34ch + 34px);
+  padding-inline: 17px;
+  overflow: auto;
+  scrollbar-width: none;
+  /* Room under the last paragraph so it, too, can scroll up to the reading line. */
+  padding-bottom: 60vh;
+  box-sizing: border-box;
+  font-family: var(--sans);
+  font-size: var(--tp-size);
+  line-height: var(--tp-lh);
+  font-weight: 500;
+  color: #f4f7fa;
+  text-wrap: pretty;
+}
+.presenter-root[data-notes-placement="camera-column"] .presenter-notes-body aside.notes > * {
+  margin: 0 0 calc(var(--tp-size) * var(--tp-lh) * 0.5);
+  padding-left: 14px;
+  margin-left: -17px;
+  border-left: 3px solid transparent;
+  opacity: 0.6;
+}
+.presenter-root[data-notes-placement="camera-column"] .presenter-notes-body aside.notes > .tp-past { opacity: 0.3; }
+.presenter-root[data-notes-placement="camera-column"] .presenter-notes-body aside.notes > .tp-current { opacity: 1; border-left-color: var(--tp-accent); }
+/* A one-paragraph note has nothing to step through; it reads as plain text, no bar. */
+.presenter-root[data-notes-placement="camera-column"] .presenter-notes-body aside.notes > :only-child { opacity: 1; border-left-color: transparent; }
+/* No notes: the reading line names what comes next, quietly. */
+.presenter-root[data-notes-placement="camera-column"] .presenter-notes-body:empty::before {
+  content: "No notes on this slide.\A Next: " attr(data-next-title);
+  white-space: pre-line;
+  display: block;
+  color: #6f8294;
+  font-weight: 400;
+  font-size: calc(var(--tp-size) * 0.8);
+}
+/* Open poll / instant strip: they stay under the current slide in column 1 (ADR-0026); the
+   column is as tall as the window, so the slide keeps its size and the poll panel grows down. */
+.presenter-root[data-notes-placement="camera-column"] .presenter-current-panel > .presenter-poll-panel { max-height: 52vh; }
+
+/* Automatic scroll state, shown under the Notes label in the teleprompter placements only. A
+   click on the notes pauses and resumes. */
+.presenter-notes-auto { display: none; }
+.presenter-root:is([data-notes-placement="top-band"], [data-notes-placement="camera-column"]) .presenter-notes[data-notes-auto] .presenter-notes-auto {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  color: #9fb3c6;
+  background: #1f2d3b;
+  white-space: nowrap;
+}
+.presenter-root[data-notes-placement="camera-column"] .presenter-notes[data-notes-auto] .presenter-notes-auto { margin: 0 0 0 8px; }
+.presenter-notes[data-notes-auto="paused"] .presenter-notes-auto { color: #f5c26b; }
+.presenter-notes[data-notes-auto] { cursor: pointer; }
+
+/* The Notes menu opens from the View menu since presenter redesign ticket 04; its styles are in
+   presenter-top-menus.css. */

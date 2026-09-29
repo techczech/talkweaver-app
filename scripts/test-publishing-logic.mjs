@@ -56,7 +56,7 @@ function buildRedirects(registry, existingSlugs) {
   const lines = Object.entries(registry)
     .filter(([slug]) => exists.has(slug))
     .sort((a, b) => a[1].localeCompare(b[1]))
-    .map(([slug, id]) => `/${id}  /${slug}/  302`)
+    .flatMap(([slug, id]) => [`/${id}  /${slug}/  302`, `/${id}/p  /${slug}/p/  302`])
   return lines.length ? lines.join('\n') + '\n' : ''
 }
 function stampHandoutUrl(outlineText, url) {
@@ -114,7 +114,8 @@ ck(pickShortId({ registry: {}, slug: 'z', recoveredId: 'dd44', gen: () => 'zz99'
 ck(pickShortId({ registry: { x: 'dd44' }, slug: 'z', recoveredId: 'dd44', gen: () => 'ee55' }).id === 'ee55', 'pickShortId ignores recovered id that collides')
 
 // buildRedirects
-ck(buildRedirects({ a: 'a1', b: 'b2', c: 'c3' }, ['a', 'b']) === '/a1  /a/  302\n/b2  /b/  302\n', 'buildRedirects only existing slugs, sorted by id')
+ck(buildRedirects({ a: 'a1', b: 'b2', c: 'c3' }, ['a', 'b']) === '/a1  /a/  302\n/a1/p  /a/p/  302\n/b2  /b/  302\n/b2/p  /b/p/  302\n', 'buildRedirects only existing slugs, sorted by id')
+ck(buildRedirects({ a: 'a1', b: 'b2' }, ['a']) === '/a1  /a/  302\n/a1/p  /a/p/  302\n', 'buildRedirects publishes the venue short link only for a published talk')
 ck(buildRedirects({}, []) === '', 'buildRedirects empty → empty string')
 
 // stampHandoutUrl

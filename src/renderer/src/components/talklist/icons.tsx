@@ -37,6 +37,8 @@ export const IcChevronRight = make('m9 18 6-6-6-6', 2.5)
 export const IcDrillIn = make('m13 17 5-5-5-5|m6 17 5-5-5-5')
 export const IcFolderClosed = make('M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z')
 export const IcFolderOpen = make('m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2')
+// The Archive (ADR-0029 §3): lucide archive — a lidded box.
+export const IcArchive = make('M3 3h18v5H3z|M5 8v11a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8|M10 12h4')
 export const IcFile = make('M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z|M14 2v4a2 2 0 0 0 2 2h4|M10 9H8|M16 13H8|M16 17H8')
 
 // Badges

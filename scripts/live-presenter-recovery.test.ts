@@ -50,6 +50,23 @@ function harness(extra: any = {}) {
   return { client, sockets, statuses, operations, records, advance, hello, snapshot, timers }
 }
 describe('live presenter recovery', () => {
+  test('publishes the current gallery image in live and recovery states', () => {
+    const h = harness()
+    h.client.publish('gallery', 0, null, { open: true, index: 1 })
+    h.hello()
+    expect(h.sockets[0].sent.at(-1).slideState.lightbox).toEqual({ open: true, index: 1 })
+    h.snapshot()
+    h.client.publish('gallery', 0, null, { open: false, index: 1 })
+    expect(h.sockets[0].sent.at(-1)).toMatchObject({ type: 'slide.publish', lightbox: { open: false, index: 1 } })
+  })
+  test('forwards counted venue presence from snapshot and later broadcasts', () => {
+    const presence: any[] = []
+    const h = harness({ onPresence: (value: any) => presence.push(value) })
+    h.hello()
+    h.snapshot(h.sockets[0], { presence: { presenterConnected: true, venueScreens: 1 } })
+    h.sockets[0].receive({ type: 'session.presence', presenterConnected: true, venueScreens: 2 })
+    expect(presence).toEqual([{ presenterConnected: true, venueScreens: 1 }, { presenterConnected: true, venueScreens: 2 }])
+  })
   test('negotiates recovery on the authenticated socket', () => {
     const url = new URL(presenterSocketUrl('https://live.example.test/', 'session 1', 'a+b'))
     expect(url.pathname).toBe('/sessions/session%201/presenter')
@@ -112,6 +129,17 @@ describe('live presenter recovery', () => {
     h.sockets[1].receive({ type: 'operation.ack', operationId: id, status: 'confirmed' })
     expect(saved.at(-1)).toEqual([])
     expect(h.operations.at(-1).status).toBe('confirmed')
+  })
+  test('instant slides use the acknowledged queue and restore from a snapshot', () => {
+    const seen: any[] = []
+    const h = harness({ onInstantSlide: (slide: any) => seen.push(slide) })
+    const slide = { kind: 'countdown' as const, shownAt: 1000, startedAt: 1000, durationMs: 300000, label: 'Discussion' }
+    const id = h.client.sendPoll({ type: 'instant.show', slide })
+    h.hello(); h.snapshot(h.sockets[0], { instantSlide: slide })
+    expect(seen.at(-1)).toEqual(slide)
+    expect(h.sockets[0].sent.at(-1)).toEqual({ type: 'operation', operationId: id, action: { type: 'instant.show', slide } })
+    h.sockets[0].receive({ type: 'operation.ack', operationId: id, status: 'confirmed' })
+    expect(h.operations.at(-1)).toMatchObject({ status: 'confirmed', message: { type: 'instant.show', slide } })
   })
   test('commands follow click order and rejection does not block the next command', () => {
     const h = harness()

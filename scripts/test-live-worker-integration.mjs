@@ -1,74 +1,6 @@
 import assert from 'node:assert/strict'
-import { createHmac, randomBytes } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { createServer } from 'node:net'
-import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
-import { spawn } from 'node:child_process'
-
-function freePort() {
-  return new Promise((resolvePort, reject) => {
-    const server = createServer()
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address()
-      const port = typeof address === 'object' && address ? address.port : 0
-      server.close((error) => error ? reject(error) : resolvePort(port))
-    })
-  })
-}
-
-async function waitForWorker(baseUrl, output) {
-  const deadline = Date.now() + 30_000
-  while (Date.now() < deadline) {
-    try { await fetch(baseUrl); return } catch {}
-    await new Promise((resolveWait) => setTimeout(resolveWait, 150))
-  }
-  throw new Error(`wrangler dev did not start\n${output().slice(-4000)}`)
-}
-
-function nextMessage(socket, timeoutMs = 5000) {
-  return new Promise((resolveMessage, reject) => {
-    const timer = setTimeout(() => reject(new Error('Timed out waiting for WebSocket message')), timeoutMs)
-    socket.addEventListener('message', (event) => {
-      clearTimeout(timer)
-      resolveMessage(JSON.parse(String(event.data)))
-    }, { once: true })
-  })
-}
-
-function nextMessages(socket, count, timeoutMs = 5000) {
-  return new Promise((resolveMessages, reject) => {
-    const messages = []
-    const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${count} WebSocket messages`)), timeoutMs)
-    const onMessage = (event) => {
-      messages.push(JSON.parse(String(event.data)))
-      if (messages.length < count) return
-      clearTimeout(timer)
-      socket.removeEventListener('message', onMessage)
-      resolveMessages(messages)
-    }
-    socket.addEventListener('message', onMessage)
-  })
-}
-
-function openSocket(url, timeoutMs = 5000) {
-  return new Promise((resolveSocket, reject) => {
-    const socket = new WebSocket(url)
-    const timer = setTimeout(() => {
-      socket.close()
-      reject(new Error(`Timed out opening WebSocket: ${url}`))
-    }, timeoutMs)
-    socket.addEventListener('open', () => {
-      clearTimeout(timer)
-      resolveSocket(socket)
-    }, { once: true })
-    socket.addEventListener('error', () => {
-      clearTimeout(timer)
-      reject(new Error(`WebSocket failed: ${url}`))
-    }, { once: true })
-  })
-}
+import { createHmac } from 'node:crypto'
+import { nextMessage, nextMessages, openSocket, startLiveWorker } from './lib/live-worker-harness.mjs'
 
 // Attach the inbox before the handshake so immediate v2 hello/snapshot messages cannot race a listener.
 async function openRecoverySocket(url) {
@@ -118,28 +50,9 @@ async function openRecoverySocket(url) {
   return inbox
 }
 
-const root = resolve(import.meta.dirname, '..')
-const scratch = await mkdtemp(join(tmpdir(), 'talkweaver-live-worker-'))
-const port = await freePort()
-const baseUrl = `http://127.0.0.1:${port}`
-const adminSecret = randomBytes(24).toString('hex')
-const signingSecret = randomBytes(24).toString('hex')
-let output = ''
-const child = spawn('wrangler', [
-  'dev', '--config', join(root, 'worker/wrangler.jsonc'), '--ip', '127.0.0.1', '--port', String(port),
-  '--var', `ADMIN_SECRET:${adminSecret}`, '--var', `SESSION_SIGNING_SECRET:${signingSecret}`,
-  '--persist-to', join(scratch, 'state'), '--show-interactive-dev-session=false', '--log-level=error',
-], {
-  cwd: root,
-  env: { ...process.env, WRANGLER_LOG_PATH: join(scratch, 'wrangler.log') },
-  stdio: ['ignore', 'pipe', 'pipe'],
-})
-child.stdout.on('data', (chunk) => { output += String(chunk) })
-child.stderr.on('data', (chunk) => { output += String(chunk) })
-
+const { baseUrl, adminSecret, signingSecret, stop } = await startLiveWorker()
 const sockets = []
 try {
-  await waitForWorker(baseUrl, () => output)
   const createdResponse = await fetch(`${baseUrl}/sessions`, {
     method: 'POST',
     headers: { authorization: `Bearer ${adminSecret}`, 'content-type': 'application/json' },
@@ -167,6 +80,10 @@ try {
   audience.close()
   const lateAudience = await openSocket(`${baseUrl.replace('http:', 'ws:')}/sessions/${created.sessionId}/audience`)
   sockets.push(lateAudience)
+  // A new join's connect-time `session.presence` broadcast (acceptSocket's `broadcastPresence()`)
+  // always precedes the direct `slide.state` current-state send that follows it in the same,
+  // synchronous handler — deterministic ordering, not a race, so asserted strictly.
+  assert.deepEqual(await nextMessage(lateAudience), { type: 'session.presence', presenterConnected: true, venueScreens: 0 })
   assert.deepEqual(await nextMessage(lateAudience), {
     type: 'slide.state', slideId: 'slide-2', reveal: 1, focus: { kind: 'reveal', step: 2 }, revision: 1,
   })
@@ -270,7 +187,13 @@ try {
 
   const secondAudience = await openSocket(`${baseUrl.replace('http:', 'ws:')}/sessions/${created.sessionId}/audience`)
   sockets.push(secondAudience)
-  const [, secondAudienceQuickState] = await nextMessages(secondAudience, 2)
+  // Same deterministic ordering as the late joiner above: presence, then the current slide state,
+  // then the one open poll's state — three sends in the same synchronous handler, always in order.
+  assert.deepEqual(await nextMessage(secondAudience), { type: 'session.presence', presenterConnected: true, venueScreens: 0 })
+  assert.deepEqual(await nextMessage(secondAudience), {
+    type: 'slide.state', slideId: 'slide-2', reveal: 1, focus: { kind: 'reveal', step: 2 }, revision: 1,
+  })
+  const secondAudienceQuickState = await nextMessage(secondAudience)
   assert.deepEqual(secondAudienceQuickState, quickOpenState)
 
   const firstAudienceUpdates = nextMessage(lateAudience)
@@ -328,7 +251,7 @@ try {
 
 
   assert.deepEqual(await fetch(`${baseUrl}/capabilities`).then(response => response.json()), {
-    protocol: 2, build: '7-integrated-polls',
+    protocol: 2, build: '13-shared-talk',
   })
   const recoveryResponse = await fetch(`${baseUrl}/sessions`, {
     method: 'POST',
@@ -627,11 +550,5 @@ try {
 
 } finally {
   for (const socket of sockets) try { socket.close() } catch {}
-  child.kill('SIGTERM')
-  await new Promise((resolveExit) => {
-    if (child.exitCode !== null) return resolveExit()
-    child.once('exit', resolveExit)
-    setTimeout(() => { child.kill('SIGKILL'); resolveExit() }, 2000).unref()
-  })
-  await rm(scratch, { recursive: true, force: true })
+  await stop()
 }

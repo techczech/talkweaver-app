@@ -28,12 +28,13 @@ class FakeSocket {
 }
 
 const sockets = []
+let phoneSocketUrl = ''
 const scheduled = new Map(); let timerId = 0
 const states = []
 const statuses = []
 const client = createAudienceFollowClient({
   baseUrl: 'http://localhost:8787', sessionId: 's1',
-  createSocket: () => { const socket = new FakeSocket(); sockets.push(socket); return socket },
+  createSocket: (url) => { phoneSocketUrl = url; const socket = new FakeSocket(); sockets.push(socket); return socket },
   schedule: (fn, delay) => { const id = ++timerId; scheduled.set(id, { fn, delay }); return id }, cancelSchedule: (id) => scheduled.delete(id),
   onSlideState: (state) => states.push(state), onStatus: (status) => statuses.push(status),
 })
@@ -45,6 +46,7 @@ function synchronise(socket, slideState = null) {
     expiresAt: Date.now() + 60000, slideState, polls: [], receipts: [] })
 }
 synchronise(sockets[0])
+assert.equal(new URL(phoneSocketUrl).searchParams.has('kind'), false, 'phone sockets do not claim to be venue screens')
 sockets[0].message({ type: 'slide.state', slideId: 'a', reveal: 0, focus: { kind: 'reveal', step: 2 }, revision: 2 })
 sockets[0].message({ type: 'slide.state', slideId: 'old', reveal: 0, focus: null, revision: 1 })
 assert.deepEqual(states.map((state) => state.slideId), ['a'])

@@ -432,3 +432,32 @@
 .twh-cs-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12.5px; color: var(--lt-ink-soft); }
 .twh-cs-row.muted { font-style: italic; color: var(--lt-ink-faint); }
 .twh-cs-row .keys { margin-left: auto; display: flex; gap: 3px; }
+
+/* ---------- Instant slides shown in a Run (live-presenting ticket 07, frame L6) ---------- */
+.twh-entry .isl { grid-column: 1 / -1; border-top: 1px solid var(--lt-hair-soft); margin: 12px 0 -2px; padding: 12px 0 2px 128px; cursor: default; }
+.isl-h { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.isl-h .t { font-size: 10px; letter-spacing: .15em; text-transform: uppercase; color: var(--lt-ink-faint); font-weight: 700; display: flex; align-items: center; gap: 6px; }
+.isl-h .t .lt-icon { width: 12px; height: 12px; color: var(--lt-oxford-mid); }
+.isl-h small { font-size: 11.5px; color: var(--lt-ink-faint); font-style: italic; }
+.isl-row { display: grid; grid-template-columns: 112px minmax(0, 1fr) 230px 150px; gap: 4px 16px; align-items: center; padding: 8px 0; border-top: 1px dashed var(--lt-hair-soft); }
+.isl-row:first-of-type { border-top: 0; }
+.isl-th { width: 112px; height: 63px; position: relative; overflow: hidden; border-radius: 4px; border: 1px solid var(--lt-hair); background: #fff; display: flex; align-items: center; justify-content: center; }
+.isl-th-img { width: 100%; height: 100%; object-fit: contain; background: #fff; }
+.isl-th-text { padding: 5px 7px; font-family: var(--lt-serif); font-size: 7.5px; line-height: 1.25; color: var(--lt-ink); display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.isl-th-clock { display: flex; flex-direction: column; align-items: center; font-family: var(--lt-mono); font-size: 17px; color: var(--lt-ink); line-height: 1.1; }
+.isl-th-clock small { font-family: var(--lt-sans); font-size: 7px; letter-spacing: .08em; text-transform: uppercase; color: var(--lt-ink-faint); }
+.isl-th-link { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 0 6px; font-family: var(--lt-mono); font-size: 7px; color: var(--lt-oxford); word-break: break-all; text-align: center; max-height: 100%; overflow: hidden; }
+.isl-th-link .lt-icon { width: 16px; height: 16px; }
+.isl-what { min-width: 0; }
+.isl-kind { display: inline-flex; align-items: center; gap: 5px; font-family: var(--lt-mono); font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--lt-oxford); }
+.twhistory .isl-kind .lt-icon { width: 11px; height: 11px; }
+.isl-text { margin-top: 3px; font-size: 13.5px; line-height: 1.35; color: var(--lt-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.isl-when { font-size: 12px; color: var(--lt-ink-soft); line-height: 1.4; min-width: 0; }
+.isl-when span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--lt-ink-faint); font-style: italic; }
+.isl-when b { font-family: var(--lt-mono); font-weight: 500; color: var(--lt-ink); font-size: 12px; }
+.twhistory .isl-add { justify-self: end; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--lt-oxford); border: 1px solid var(--lt-hair); border-radius: 6px; padding: 5px 10px; background: var(--lt-print); white-space: nowrap; }
+.twhistory button.isl-add:hover:not(:disabled) { background: var(--lt-oxford-soft); }
+.twhistory button.isl-add:disabled { opacity: .5; cursor: default; }
+.twhistory .isl-add .lt-icon { width: 13px; height: 13px; }
+.twhistory .isl-add.done { color: var(--lt-green); background: var(--lt-green-soft); border-color: rgba(61, 107, 70, .3); }
+.isl-err { grid-column: 2 / -1; font-size: 12px; color: var(--lt-red); line-height: 1.35; }

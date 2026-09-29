@@ -40,6 +40,12 @@ export interface OptionValue {
    * explicitly opts out of a deck-wide icons default still lights Plain.
    */
   altTokens?: string[]
+  /**
+   * ADR-0028 §10: when THIS value is relevant, read exactly as a group's `appliesTo` (every
+   * declared facet must hold; a fact the caller does not know never excludes). Centred statements
+   * declare `titlePainted: false`: the Inspector offers them only on a statement without a title.
+   */
+  appliesTo?: OptionApplicability
 }
 
 /**
@@ -79,6 +85,11 @@ export interface OptionApplicability {
   headingLevels?: readonly number[]
   /** The slide must have child slides beneath it. */
   requiresChildren?: boolean
+  /**
+   * Whether the compiled slide paints its title (true: a rail or top title; false: no title is
+   * painted, as on a heading-only statement). Judged only when the caller knows it.
+   */
+  titlePainted?: boolean
   /**
    * Another group's selection must already be one of the listed tokens — checked only when the
    * caller supplies `selectedTokens`, so a candidate listing never loses the group.
@@ -239,10 +250,13 @@ const STRUCTURED_BODY_LAYOUTS = [
  * ADR-0023 §4 claim and the claim-style choice is real. Charts, tables, diagrams, code and the
  * media wall render no paragraph at all; `quote` and `image-quote` render their body AS the
  * quotation (ADR-0023 §5 promotes the paragraph), so neither carries a claim either.
+ * `statement` is not listed: a statement slide has ONE set of options (ADR-0028 §10, Statement
+ * treatment below), which also reads the claim vocabulary — {claim=bar} is Bar, {claim=plain} the
+ * Default. `stmt-list` stays: its statement column IS the claim, so Plain / Bar apply to it.
  */
 const PROSE_BODY_LAYOUTS = [
   'cards', 'columns', 'compare', 'contrast', 'copy-visual', 'cta-screenshots', 'image-claim',
-  'links', 'list', 'list-visual', 'media', 'statement', 'stmt-list', 'timeline-visual', 'trace',
+  'links', 'list', 'list-visual', 'media', 'stmt-list', 'timeline-visual', 'trace',
   'trace-dialogue'
 ] as const
 
@@ -523,6 +537,24 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
       { token: 'iconlist=boxes', label: 'Boxes', description: 'Hairline card grid with icons, whatever the item count' },
       { token: 'iconlist=list', label: 'List', description: 'Plain icon rows without card chrome or numbers' }
     ]
+  },
+  {
+    // ADR-0028 §6 (Dominik, 2026-09-25): HOW a numbered list draws its number. A numbered list
+    // takes the icon-list layout with the number in the icon's box; the square is the default,
+    // plain and styled are the two alternatives. Declared global and adopted by the numbered
+    // entry exactly as iconlist-variant is by the iconlist entry, so it nests under List style.
+    key: 'number-style',
+    label: 'Number style',
+    preview: 'segmented',
+    sectionLabel: 'Numbers',
+    appliesTo: { requiresTokens: { 'list-style': ['numbered'] } },
+    // The explicit form of the default is registry vocabulary too (the Doctor stays clean for it).
+    dictionaryTokens: ['numbered=square'],
+    values: [
+      { token: '', label: 'Square', description: 'The number in an outlined square the size of a list icon' },
+      { token: 'numbered=plain', label: 'Plain', description: 'The number set like the text, with a full stop' },
+      { token: 'numbered=styled', label: 'Styled', description: 'A large light numeral centred on its item' }
+    ]
   }
 ]
 
@@ -544,17 +576,83 @@ The registry is the product contract.`,
     description: 'Single bold claim beside the title',
     category: 'everyday',
     cssModule: 'statement',
-    options: [{
-      key: 'statement-variant',
-      label: 'Statement treatment',
-      preview: 'thumbs',
-      dictionaryTokens: ['statement=default'],
-      values: [
-        { token: '', label: 'Default', description: 'Use the current statement treatment' },
-        { token: 'statement=tint', label: 'Tint', description: 'Tint panel with an accent left bar' },
-        { token: 'statement=poster', label: 'Poster', description: 'Oversized centred claim with boxed emphasis' }
-      ]
-    }]
+    // ADR-0028 §10, ticket 02 (Dominik, 29 Sep): the statement's options are separate choices,
+    // each a small segmented control, each its own trigger key — compiler/scripts/lib/
+    // statement-options.mjs is the one resolver both the compiler and the Inspector read. The older
+    // one-word options ({statement=default|centred|tint|bar|full|poster}, {claim=plain|bar}) stay
+    // valid as presets over these choices, and the Inspector lights their mapped values; a write
+    // from any control rewrites them as per-dimension tokens (src/shared/statement-options.ts).
+    options: [
+      {
+        key: 'statement-sidebar',
+        label: 'Statement sidebar',
+        sectionLabel: 'Sidebar',
+        preview: 'segmented',
+        // With no token the sidebar follows the title (a rail beside a painted title, none
+        // without). The Inspector offers only the two explicit choices and lights the one the
+        // slide renders; the typed surfaces (⌘L, the inline palette) keep Auto to clear the token.
+        values: [
+          { token: '', label: 'Auto', description: 'Follow the title: a sidebar beside a title, none without' },
+          { token: 'statement-sidebar=on', label: 'With sidebar', description: 'The coloured title sidebar, with the title in it when there is one' },
+          { token: 'statement-sidebar=off', label: 'No sidebar', description: 'No sidebar: the statement runs the full width (a title goes to the top)' }
+        ]
+      },
+      {
+        key: 'statement-bg',
+        label: 'Statement background',
+        sectionLabel: 'Background',
+        preview: 'segmented',
+        // The older one-word options stay registered vocabulary (old talks must not start
+        // warning); they are presets the Inspector reads, never buttons of their own.
+        dictionaryTokens: [
+          'statement-bg=halo', 'statement=default', 'statement=poster', 'statement=centred',
+          'statement=tint', 'statement=bar', 'statement=full'
+        ],
+        values: [
+          { token: '', label: 'Halo', description: 'A panel in the sidebar colour round the text', altTokens: ['statement-bg=halo'] },
+          { token: 'statement-bg=full', label: 'Full', description: 'The whole slide in the sidebar colour (or the Background you set)' },
+          { token: 'statement-bg=none', label: 'None', description: 'No colour behind the text' }
+        ]
+      },
+      {
+        key: 'statement-align',
+        label: 'Statement alignment',
+        sectionLabel: 'Alignment',
+        preview: 'segmented',
+        dictionaryTokens: ['statement-align=left'],
+        values: [
+          { token: '', label: 'Aligned', description: 'Lines aligned left', altTokens: ['statement-align=left'] },
+          { token: 'statement-align=centred', label: 'Centred', description: 'Centred, balanced lines (beside a sidebar, centred in the content column)' }
+        ]
+      },
+      {
+        key: 'statement-bar',
+        label: 'Statement bar',
+        sectionLabel: 'Bar',
+        preview: 'segmented',
+        dictionaryTokens: ['statement-bar=none'],
+        values: [
+          { token: '', label: 'None', description: 'No accent bar', altTokens: ['statement-bar=none'] },
+          { token: 'statement-bar=left', label: 'Left', description: 'The accent bar beside the text' },
+          { token: 'statement-bar=top', label: 'Top', description: 'The accent bar above the text' },
+          { token: 'statement-bar=bottom', label: 'Bottom', description: 'The accent bar below the text' }
+        ]
+      },
+      {
+        // The section-accent vocabulary pinned on this one slide: its rail, halo, full colour and
+        // bar take the named palette colour. Swatches as the Section accent choice draws them.
+        key: 'statement-colour',
+        label: 'Sidebar colour',
+        preview: 'segmented',
+        values: [
+          { token: '', label: 'Section', description: "The section's own colour" },
+          { token: 'accent=cobalt', label: 'Cobalt', swatch: '#0f4bd8' },
+          { token: 'accent=emerald', label: 'Emerald', swatch: '#0a7a5c' },
+          { token: 'accent=vermilion', label: 'Vermilion', swatch: '#c2410c' },
+          { token: 'accent=forest', label: 'Forest', swatch: '#166534' }
+        ]
+      }
+    ]
   },
   {
     name: 'list',
@@ -591,7 +689,7 @@ The registry is the product contract.`,
         },
         { token: 'iconlist', label: 'Icons', description: 'Semantic icon bullets' },
         { token: 'logolist', label: 'Logos', description: 'Use brand-logo bullets where mappings exist' },
-        { token: 'numbered', label: 'Numbered', description: 'Numbered discs' },
+        { token: 'numbered', label: 'Numbered', description: 'Numbers in place of icons' },
         { token: 'annotated', label: 'Annotated', description: 'Nested children become right-hand annotations' }
       ]
     }, {
@@ -651,9 +749,12 @@ The registry is the product contract.`,
 - Plan
 - Build
 - Verify`,
-    description: 'List styling flag: numbered discs',
+    description: 'List styling flag: the icon-list layout with numbers in place of icons',
     category: 'everyday',
-    cssModule: 'list'
+    cssModule: 'list',
+    // number-style is declared once in GLOBAL_OPTION_GROUPS and adopted here, the same pattern
+    // as iconlist → iconlist-variant.
+    options: [...GLOBAL_OPTION_GROUPS.filter((group) => group.key === 'number-style')]
   },
   {
     name: 'quote',

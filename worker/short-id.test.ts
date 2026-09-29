@@ -7,3 +7,8 @@ test('matches TalkWeaver publishing\'s four-character short-id style', () => {
   expect(id).toBe('ab09')
   expect(id).toMatch(/^[a-z0-9]{4}$/)
 })
+
+test('generates longer ids on request (shared talks use eight characters)', () => {
+  expect(generateShortId(undefined, 8)).toMatch(/^[a-z0-9]{8}$/)
+  expect(generateShortId((length) => new Uint8Array(length).fill(1), 8)).toBe('bbbbbbbb')
+})

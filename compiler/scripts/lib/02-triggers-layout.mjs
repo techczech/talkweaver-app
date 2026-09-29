@@ -477,8 +477,9 @@ export function parseConceptRelations(items) {
 
 // Spine/pills/horizontal timelines are built for legibility, not density: a single slide holds
 // at most a per-mode number of date stops — TIMELINE_STOPS_PER_SLIDE in timeline-layout.mjs,
-// derived from the measured text width at the type floor. A longer timeline AUTO-SPLITS into
-// continuation slides of ≤cap stops each (same title + a "(2/3)" marker) in flushSlide.
+// derived from the measured text width at the entry size (horizontal: the dense step since
+// ticket 08). A longer timeline AUTO-SPLITS into continuation slides of ≤cap stops each (same
+// title + a "(2/3)" marker) in flushSlide.
 
 // Density ramp for the spine/pills render. 1–6 stops sit at full size; 7–10 shrink fonts and card
 // widths linearly down to ~0.76 so a denser timeline stays on one slide and still reads. Returns

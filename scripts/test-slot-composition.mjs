@@ -546,6 +546,11 @@ try {
     await page.goto(`file://${geometryPath}`, { waitUntil: 'load' })
     await page.evaluate(() => document.fonts?.ready)
     const geometry = await page.evaluate(() => {
+      // Canvas px (ADR-0030): the slide lives on the 1280×720 stage, scaled to the window; a painted
+      // rect is read relative to the stage and divided by the stage's scale (the fixed footer too,
+      // so its top is where it lands on the canvas).
+      const stageEl = document.querySelector('.stage'), sr = stageEl.getBoundingClientRect(), k = sr.width / stageEl.offsetWidth
+      const C = (el) => { const r = el.getBoundingClientRect(); return { left: (r.left - sr.left) / k, right: (r.right - sr.left) / k, top: (r.top - sr.top) / k, bottom: (r.bottom - sr.top) / k, width: r.width / k, height: r.height / k } }
       const slides = [...document.querySelectorAll('.stage > .slide')]
       const slide = slides.find((node) => node.dataset.navTitle === 'Portrait and landscape')
       slides.forEach((node) => node.classList.toggle('active', node === slide))
@@ -553,11 +558,11 @@ try {
       const content = slide?.querySelector('.slide-content')
       const head = slide?.querySelector('.slide-head')
       if (!row || !content || !head) return null
-      const rowRect = row.getBoundingClientRect()
-      const contentRect = content.getBoundingClientRect()
-      const headRect = head.getBoundingClientRect()
+      const rowRect = C(row)
+      const contentRect = C(content)
+      const headRect = C(head)
       const figures = [...row.querySelectorAll(':scope > figure')].map((figure) => {
-        const rect = figure.getBoundingClientRect()
+        const rect = C(figure)
         return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height }
       })
       const style = getComputedStyle(row)
@@ -593,6 +598,11 @@ try {
     await landscapePage.evaluate(() => document.fonts?.ready)
     const landscapeGeometry = await landscapePage.evaluate(() => {
       document.body.classList.add('chrome-pinned')
+      // Canvas px (ADR-0030): the slide lives on the 1280×720 stage, scaled to the window; a painted
+      // rect is read relative to the stage and divided by the stage's scale (the fixed footer too,
+      // so its top is where it lands on the canvas).
+      const stageEl = document.querySelector('.stage'), sr = stageEl.getBoundingClientRect(), k = sr.width / stageEl.offsetWidth
+      const C = (el) => { const r = el.getBoundingClientRect(); return { left: (r.left - sr.left) / k, right: (r.right - sr.left) / k, top: (r.top - sr.top) / k, bottom: (r.bottom - sr.top) / k, width: r.width / k, height: r.height / k } }
       const slides = [...document.querySelectorAll('.stage > .slide')]
       const slide = slides.find((node) => node.dataset.navTitle === 'Video and image')
       slides.forEach((node) => node.classList.toggle('active', node === slide))
@@ -601,12 +611,12 @@ try {
       const head = slide?.querySelector('.slide-head')
       const footer = document.querySelector('.footer')
       if (!row || !content || !head || !footer) return null
-      const contentRect = content.getBoundingClientRect()
-      const headRect = head.getBoundingClientRect()
-      const rowRect = row.getBoundingClientRect()
-      const footerRect = footer.getBoundingClientRect()
+      const contentRect = C(content)
+      const headRect = C(head)
+      const rowRect = C(row)
+      const footerRect = C(footer)
       const figureArea = [...row.querySelectorAll(':scope > figure')]
-        .map((figure) => figure.getBoundingClientRect())
+        .map((figure) => C(figure))
         .reduce((sum, rect) => sum + rect.width * rect.height, 0)
       const bandArea = contentRect.width * Math.max(0, contentRect.bottom - headRect.bottom)
       return {
@@ -620,8 +630,17 @@ try {
     })
     assert(landscapeGeometry !== null, `${viewport.width}x${viewport.height}: landscape video + image row is present`)
     if (landscapeGeometry) {
-      assert(Math.abs(landscapeGeometry.topAir - landscapeGeometry.bottomAir) <= 4,
-        `${viewport.width}x${viewport.height}: width-limited row balances top and bottom air`)
+      // ADR-0030: the slide is the 1280×720 canvas scaled to the window, while the navigation is
+      // window chrome at its own px size. At scale 1 (1280×720) the row balances its air against
+      // the navigation exactly; on a larger window the navigation covers less of the canvas, so
+      // the air below can only grow (the composition itself is the same at every size).
+      if (viewport.width === 1280) {
+        assert(Math.abs(landscapeGeometry.topAir - landscapeGeometry.bottomAir) <= 4,
+          `${viewport.width}x${viewport.height}: width-limited row balances top and bottom air`)
+      } else {
+        assert(landscapeGeometry.bottomAir >= landscapeGeometry.topAir - 4,
+          `${viewport.width}x${viewport.height}: width-limited row keeps at least its top air below it`)
+      }
       assert(landscapeGeometry.rowBottom <= landscapeGeometry.navTop,
         `${viewport.width}x${viewport.height}: width-limited row clears the fixed navigation`)
       console.log(`LANDSCAPE ${viewport.width}x${viewport.height}: rowHeight=${landscapeGeometry.rowHeight.toFixed(2)}px coverage=${(landscapeGeometry.coverage * 100).toFixed(2)}% air=${landscapeGeometry.topAir.toFixed(2)}/${landscapeGeometry.bottomAir.toFixed(2)}px`)

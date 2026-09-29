@@ -16,7 +16,7 @@
 //     on a plain `###`.
 // =============================================================================
 import { GLOBAL_OPTION_GROUPS, LAYOUTS } from './entries.ts'
-import type { InspectorSectionId, LayoutDef, OptionApplicability, OptionGroup, TitleRegime } from './entries.ts'
+import type { InspectorSectionId, LayoutDef, OptionApplicability, OptionGroup, OptionValue, TitleRegime } from './entries.ts'
 
 export interface OptionContext {
   /** The layout's registry name, or a compiled slug/alias the registry can resolve back. */
@@ -27,6 +27,8 @@ export interface OptionContext {
   selectedTokens?: Readonly<Record<string, string>>
   /** Overrides the resolved entry's regime when a caller already compiled one. */
   titleRegime?: TitleRegime
+  /** Whether the compiled slide paints its title (ADR-0028 §10). Absent = not known. */
+  titlePainted?: boolean
 }
 
 export interface ApplicableOptionGroup {
@@ -63,6 +65,7 @@ function clauseHolds(clause: OptionApplicability, context: OptionContext, entry?
   if (clause.titleRegimes && titleRegime && !clause.titleRegimes.includes(titleRegime)) return false
   if (clause.headingLevels && !clause.headingLevels.includes(context.headingLevel)) return false
   if (clause.requiresChildren && !context.hasChildren) return false
+  if (clause.titlePainted !== undefined && context.titlePainted !== undefined && clause.titlePainted !== context.titlePainted) return false
   if (clause.requiresTokens && context.selectedTokens) {
     for (const [key, accepted] of Object.entries(clause.requiresTokens)) {
       if (!accepted.includes(context.selectedTokens[key] ?? '')) return false
@@ -92,6 +95,16 @@ export function groupApplies(group: OptionGroup, context: OptionContext): boolea
   // A group declared inside a layout's own `options` applies to that layout by construction.
   if (entry?.options?.includes(group)) return true
   return group.appliesTo ? clauseHolds(group.appliesTo, context, entry) : true
+}
+
+/**
+ * ADR-0028 §10: the values of a group this slide offers. A value's own `appliesTo` is read by the
+ * same interpreter as a group's; a value without one is always offered, and so is every value when
+ * the context does not know the fact a declaration reads.
+ */
+export function valuesForGroup(group: OptionGroup, context: OptionContext): OptionValue[] {
+  const entry = layoutEntryFor(context.layoutName)
+  return group.values.filter((value) => !value.appliesTo || clauseHolds(value.appliesTo, context, entry))
 }
 
 /** Every option group the registry declares, deduplicated by identity: the global groups plus
