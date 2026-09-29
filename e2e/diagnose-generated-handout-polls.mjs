@@ -83,6 +83,8 @@ app = await electron.launch({
   await presenter.waitForLoadState('domcontentloaded')
   presenter.setDefaultTimeout(45000)
   const errors = []; presenter.on('pageerror', error => errors.push(error.message))
+  // Go live is an item of the Live menu since presenter redesign ticket 04: open the menu, then the item.
+  await presenter.locator('#presenterMenuLive').click()
   await presenter.locator('#liveGoButton').click()
   await presenter.waitForFunction(() => document.querySelector('#liveGoButton')?.classList.contains('is-live'))
   await presenter.locator('#liveGoPanelClose').click()

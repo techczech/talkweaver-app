@@ -14134,9 +14134,14 @@
       button.addEventListener("click", (event) => toggle(button, event.detail === 0));
       const menu = menuOf(button);
       menu.addEventListener("mousedown", (event) => { if (event.target.closest("button")) event.preventDefault(); });
+      // Whether the item was disabled is read BEFORE its own click listener runs (capture): an item
+      // whose handler disables itself while it works (Go live → "Going live…") must still run
+      // here and close the menu, or the open menu covers what the item just showed.
+      let itemWasDisabled = false;
+      menu.addEventListener("click", (event) => { itemWasDisabled = !!event.target.closest("button")?.disabled; }, true);
       menu.addEventListener("click", (event) => {
         const item = event.target.closest("button");
-        if (!item || item.disabled || !menu.contains(item)) return;
+        if (!item || itemWasDisabled || !menu.contains(item)) return;
         if (item.matches("[data-preview-size-option]")) { setPreviewSize(item.dataset.previewSizeOption); return; }
         runItem(item);
       });

@@ -125,15 +125,22 @@ export function showPresentationCloseOffer(controller: CloseController, offer: P
     void controller.plannedRuns().then(planned => {
       if (!overlay.isConnected) return
       const list = overlay.querySelector('.twrec-planned-list')!
+      // ADR-0038: the planned Run this presentation was started from (main marks it `preferred`)
+      // is preselected — highlighted and, while focus is still on the default Cancel, focused —
+      // so attaching the delivery to it is one keystroke.
+      let preferredButton: HTMLButtonElement | null = null
       for (const plannedRun of planned) {
         const button = document.createElement('button')
         button.type = 'button'
-        button.className = 'twrec-planned'
+        button.className = plannedRun.preferred ? 'twrec-planned active' : 'twrec-planned'
+        button.dataset.plannedRun = plannedRun.id
+        if (plannedRun.preferred) { button.setAttribute('aria-current', 'true'); preferredButton ??= button }
         button.textContent = [plannedRun.eventTitle || 'Planned run', plannedRun.plannedDate, plannedRun.audience].filter(Boolean).join(' · ')
         button.addEventListener('click', () => { void run(async () => { saved(await controller.saveRun('delivery', plannedRun.id)) }) })
         list.appendChild(button)
       }
       sync()
+      if (preferredButton && !preferredButton.disabled && document.activeElement === cancel) preferredButton.focus()
     }).catch(() => { /* saving a new run remains available */ })
   }
   window.addEventListener('keydown', onKey, true)

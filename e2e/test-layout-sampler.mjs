@@ -170,55 +170,80 @@ console.log(`PASS compiler fixture: ${entries.length} registry entries, ${model.
 
 const geometryBrowser = await chromium.launch({ headless: true })
 try {
-  const geometryPage = await geometryBrowser.newPage({ viewport: { width: 1600, height: 900 } })
-  await geometryPage.goto(`file://${outPath}`, { waitUntil: 'load' })
-  await geometryPage.evaluate(() => {
-    document.body.classList.add('chrome-pinned')
-    const slides = [...document.querySelectorAll('.stage > .slide')]
-    const target = slides.find((slide) => slide.dataset.id === 'media-row-measured-video')
-    slides.forEach((slide) => slide.classList.toggle('active', slide === target))
-    target?.querySelector('video')?.load()
-    window.__autofitForTest?.()
-  })
-  await geometryPage.waitForFunction(() => {
-    const video = document.querySelector('.slide.active .figure-row video')
-    return video?.readyState >= 1 && video.closest('figure')?.dataset.mediaAspectSource === 'measured'
-  })
-  await geometryPage.evaluate(() => window.__autofitForTest?.())
-  await geometryPage.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(resolveFrame))))
-  const geometry = await geometryPage.evaluate(() => {
-    const slide = document.querySelector('.slide.active')
-    const row = slide?.querySelector('.figure-row')
-    const video = row?.querySelector('video')
-    const head = slide?.querySelector('.slide-head')
-    const footer = document.querySelector('.footer')
-    if (!slide || !row || !video || !head || !footer) return null
-    const rowRect = row.getBoundingClientRect()
-    const videoRect = video.getBoundingClientRect()
-    const headRect = head.getBoundingClientRect()
-    const footerRect = footer.getBoundingClientRect()
-    return {
-      aspectSource: video.closest('figure')?.dataset.mediaAspectSource,
-      boxAspect: videoRect.width / videoRect.height,
-      videoAspect: video.videoWidth / video.videoHeight,
-      topAir: rowRect.top - headRect.bottom,
-      bottomAir: footerRect.top - rowRect.bottom,
-      rowBottom: rowRect.bottom,
-      navTop: footerRect.top,
-      zoom: getComputedStyle(slide.querySelector('.slide-content')).zoom
+  // ADR-0030 (749b9e7): the slide is the 1280×720 canvas scaled to the window, while the
+  // navigation is window chrome at its own px size. Rects are read in canvas px (relative to the
+  // stage, divided by its scale; the fixed footer too, so its top is where it lands on the canvas).
+  // At scale 1 (1280×720) the media row balances its air against the navigation exactly; on a
+  // larger window the navigation covers less of the canvas, so the air below can only grow.
+  const openMeasuredVideo = async (viewport) => {
+    const page = await geometryBrowser.newPage({ viewport })
+    await page.goto(`file://${outPath}`, { waitUntil: 'load' })
+    await page.evaluate(() => {
+      document.body.classList.add('chrome-pinned')
+      const slides = [...document.querySelectorAll('.stage > .slide')]
+      const target = slides.find((slide) => slide.dataset.id === 'media-row-measured-video')
+      slides.forEach((slide) => slide.classList.toggle('active', slide === target))
+      target?.querySelector('video')?.load()
+      window.__autofitForTest?.()
+    })
+    await page.waitForFunction(() => {
+      const video = document.querySelector('.slide.active .figure-row video')
+      return video?.readyState >= 1 && video.closest('figure')?.dataset.mediaAspectSource === 'measured'
+    })
+    await page.evaluate(() => window.__autofitForTest?.())
+    await page.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(resolveFrame))))
+    return page
+  }
+  for (const viewport of [{ width: 1280, height: 720 }, { width: 1600, height: 900 }]) {
+    const size = `${viewport.width}x${viewport.height}`
+    const mediaPage = await openMeasuredVideo(viewport)
+    const geometry = await mediaPage.evaluate(() => {
+      const stage = document.querySelector('.stage')
+      const slide = document.querySelector('.slide.active')
+      const row = slide?.querySelector('.figure-row')
+      const video = row?.querySelector('video')
+      const head = slide?.querySelector('.slide-head')
+      const footer = document.querySelector('.footer')
+      if (!stage || !slide || !row || !video || !head || !footer) return null
+      const stageRect = stage.getBoundingClientRect()
+      const k = stageRect.width / stage.offsetWidth
+      const C = (el) => { const r = el.getBoundingClientRect(); return { top: (r.top - stageRect.top) / k, bottom: (r.bottom - stageRect.top) / k, width: r.width / k, height: r.height / k } }
+      const rowRect = C(row)
+      const videoRect = C(video)
+      const headRect = C(head)
+      const footerRect = C(footer)
+      return {
+        scale: k,
+        aspectSource: video.closest('figure')?.dataset.mediaAspectSource,
+        boxAspect: videoRect.width / videoRect.height,
+        videoAspect: video.videoWidth / video.videoHeight,
+        topAir: rowRect.top - headRect.bottom,
+        bottomAir: footerRect.top - rowRect.bottom,
+        rowBottom: rowRect.bottom,
+        navTop: footerRect.top,
+        zoom: getComputedStyle(slide.querySelector('.slide-content')).zoom
+      }
+    })
+    await mediaPage.close()
+    assert(geometry, `${size}: measured-video sampler geometry is available`)
+    assert.equal(geometry.aspectSource, 'measured', `${size}: loadedmetadata marks the video aspect as measured`)
+    assert(Math.abs(geometry.boxAspect - geometry.videoAspect) < 0.02,
+      `${size}: video figure follows measured aspect (${geometry.boxAspect.toFixed(3)} vs ${geometry.videoAspect.toFixed(3)})`)
+    if (viewport.width === 1280) {
+      assert(Math.abs(geometry.scale - 1) < 0.001, `${size}: the canvas is unscaled (${geometry.scale.toFixed(3)})`)
+      assert(Math.abs(geometry.topAir - geometry.bottomAir) <= 4,
+        `${size}: media row balances top and bottom air (${geometry.topAir.toFixed(1)}px vs ${geometry.bottomAir.toFixed(1)}px)`)
+    } else {
+      assert(geometry.bottomAir >= geometry.topAir - 4,
+        `${size}: media row keeps at least its top air below it (${geometry.topAir.toFixed(1)}px vs ${geometry.bottomAir.toFixed(1)}px)`)
     }
-  })
-  assert(geometry, 'measured-video sampler geometry is available')
-  assert.equal(geometry.aspectSource, 'measured', 'loadedmetadata marks the video aspect as measured')
-  assert(Math.abs(geometry.boxAspect - geometry.videoAspect) < 0.02,
-    `video figure follows measured aspect (${geometry.boxAspect.toFixed(3)} vs ${geometry.videoAspect.toFixed(3)})`)
-  assert(Math.abs(geometry.topAir - geometry.bottomAir) <= 4,
-    `media row balances top and bottom air (${geometry.topAir.toFixed(1)}px vs ${geometry.bottomAir.toFixed(1)}px)`)
-  assert(geometry.rowBottom <= geometry.navTop,
-    `media row clears fixed navigation (${geometry.rowBottom.toFixed(1)}px <= ${geometry.navTop.toFixed(1)}px)`)
-  assert.equal(geometry.zoom, '1', 'presenter autofit leaves the balanced media row at full scale')
-  console.log(`MEDIA GEOMETRY 1600x900: top=${geometry.topAir.toFixed(1)}px bottom=${geometry.bottomAir.toFixed(1)}px video=${geometry.boxAspect.toFixed(3)} metadata=${geometry.videoAspect.toFixed(3)}`)
+    assert(geometry.rowBottom <= geometry.navTop,
+      `${size}: media row clears fixed navigation (${geometry.rowBottom.toFixed(1)}px <= ${geometry.navTop.toFixed(1)}px)`)
+    assert.equal(geometry.zoom, '1', `${size}: presenter autofit leaves the balanced media row at full scale`)
+    console.log(`MEDIA GEOMETRY ${size} (canvas px): top=${geometry.topAir.toFixed(1)}px bottom=${geometry.bottomAir.toFixed(1)}px video=${geometry.boxAspect.toFixed(3)} metadata=${geometry.videoAspect.toFixed(3)}`)
+  }
 
+  const geometryPage = await openMeasuredVideo({ width: 1600, height: 900 })
   const activate = async (slideId) => {
     await geometryPage.evaluate((id) => {
       location.hash = `#${id}`
@@ -278,6 +303,7 @@ try {
     const bodyBackground = getComputedStyle(document.body).backgroundColor
     const stageRect = document.querySelector('.stage').getBoundingClientRect()
     return {
+      canvasWidth: document.querySelector('.stage').offsetWidth,
       widths: halves.map((half) => half.getBoundingClientRect().width),
       heights: halves.map((half) => half.getBoundingClientRect().height),
       stageWidth: stageRect.width,
@@ -305,11 +331,16 @@ try {
     'each compare column occupies half the stage')
   assert(compareGeometry.heights.every((height) => Math.abs(height - compareGeometry.stageHeight) <= 1),
     'the compare columns carry their backgrounds for the full stage height')
-  assert(compareGeometry.copyFonts.every((px) => Math.abs(px - 48) <= 0.1),
-    `compare copy uses the mockup's 48px cap (${compareGeometry.copyFonts.join('/')}px)`)
+  // The mockup's rule is .t-half .half p { font-size: clamp(1.7rem, 3.4vw, 3rem) }: 48px only where
+  // the width reaches 1412px. Since ADR-0030 (749b9e7) the rule is evaluated on the fixed
+  // 1280×720 canvas (cqw of the stage), whatever the window, so it gives 3.4% of 1280 = 43.52px
+  // and the 3rem cap no longer engages at this 1600×900 window.
+  const compareCopyPx = Math.min(48, Math.max(27.2, 0.034 * compareGeometry.canvasWidth))
+  assert(compareGeometry.copyFonts.every((px) => Math.abs(px - compareCopyPx) <= 0.1),
+    `compare copy follows the mockup's clamp(1.7rem, 3.4cqw, 3rem) on the ${compareGeometry.canvasWidth}px canvas: ${compareCopyPx.toFixed(2)}px (${compareGeometry.copyFonts.join('/')}px)`)
   assert.deepEqual(compareGeometry.copyWeights, ['500', '500'], 'compare copy uses the mockup weight 500')
-  assert(compareGeometry.copyMaxWidths.every((px) => Math.abs(px - 576) <= 0.1),
-    `compare copy keeps the mockup's 12em measure (${compareGeometry.copyMaxWidths.join('/')}px)`)
+  assert(compareGeometry.copyMaxWidths.every((px) => Math.abs(px - 12 * compareCopyPx) <= 0.1),
+    `compare copy keeps the mockup's 12em measure: ${(12 * compareCopyPx).toFixed(2)}px (${compareGeometry.copyMaxWidths.join('/')}px)`)
   assert(compareGeometry.labelFonts.every((px) => px < 31),
     `compare labels remain deliberate sub-floor chrome (${compareGeometry.labelFonts.join('/')}px)`)
   assert(compareGeometry.labelFonts.every((px, index) => Math.abs(px - compareGeometry.copyFonts[index] * 0.58) <= 0.1),
