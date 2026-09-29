@@ -9,7 +9,7 @@
   }/* @order 1506 */
   .image-quote .iq-figure {
     position: relative;
-    height: 64vh;
+    height: 64cqh;
     overflow: hidden;
     margin: 0;
     border: none;
@@ -90,7 +90,7 @@
   .slide-content.layout-media:has(> .slide-head-quiet) > .slide-figure figcaption {
     position: absolute;
     left: 6cqw;
-    bottom: 8vh;
+    bottom: 8cqh;
     color: #fff;
     background: none;
     border: none;

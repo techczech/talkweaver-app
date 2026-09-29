@@ -95,8 +95,12 @@ const titleRulesWithCqh = [...titleSkinCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
   .filter(([, selector, declarations]) => selector.includes('.tp') && /cqh\b/.test(declarations))
 assert(titleRulesWithCqh.length === 0, 'ADR-0015: title poster CSS contains no cqh units')
 assert(
-  titleSidebarModel.fullHtml.includes('.slide { display: grid !important; position: absolute; inset: 0; width: 100%; height: 100%; min-height: 100%; container-type: size; }'),
-  'ADR-0015: presenter preview clone slide carries the full-height size-container contract'
+  titleSidebarModel.fullHtml.includes('.slide { display: grid !important; position: absolute; inset: 0; width: 100%; height: 100%; min-height: 100%; }'),
+  'ADR-0015: presenter preview clone slide carries the full-height contract'
+)
+assert(
+  !/\.slide \{ display: grid !important; position: absolute; inset: 0;[^}]*container-type/.test(titleSidebarModel.fullHtml),
+  'ADR-0030: the preview clone slide is not a size container; its container is the 1280x720 stage, as on the projector'
 )
 
 const accentAliasPath = join(dir, 'title-accent-alias.md')
@@ -620,8 +624,9 @@ const iconsOffContent = [
 writeFileSync(iconsOffPath, iconsOffContent, 'utf8')
 const iconsOffStat = statSync(iconsOffPath)
 const iconsOffModel = await prepareSource(iconsOffPath, iconsOffContent, 'icons-off', iconsOffStat)
-// No fl-icon should be present for a plain list with icons=off
-const iconsOffBody = iconsOffModel.fullHtml.replace(/<style[\s\S]*?<\/style>/g, '').replace(/<aside[\s\S]*?<\/aside>/g, '')
+// No fl-icon should be present for a plain list with icons=off. Stylesheets and the runtime script
+// name the class in selectors (fitLists' card width step, ADR-0028 §5); only markup counts.
+const iconsOffBody = iconsOffModel.fullHtml.replace(/<style[\s\S]*?<\/style>/g, '').replace(/<script[\s\S]*?<\/script>/g, '').replace(/<aside[\s\S]*?<\/aside>/g, '')
 assert(!iconsOffBody.includes('fl-icon'), 'SD-10: no fl-icon for plain list with {icons=off}')
 
 // --- Task 5 SD-10 regression: bare {icons}/{iconlist} → top-level icons still work ---

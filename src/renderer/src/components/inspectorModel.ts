@@ -2,13 +2,14 @@ import type { ProjectionRow } from '../../../preload/index.ts'
 import type { LayoutDoctorFinding } from '../../../shared/layout-doctor.ts'
 import { triggerFindingsForSlide } from '../../../shared/layout-doctor.ts'
 import type { LayoutDef } from '../../../shared/layout-registry/entries.ts'
-import type { OptionGroup } from '../../../shared/layout-registry/entries.ts'
+import type { OptionGroup, OptionValue } from '../../../shared/layout-registry/entries.ts'
 import {
-  groupApplies, layoutEntryFor, optionGroupsForSlide, sectionedOptionGroups,
+  groupApplies, layoutEntryFor, optionGroupsForSlide, sectionedOptionGroups, valuesForGroup,
   type ApplicableOptionGroup, type InspectorOptionSection, type SectionedOptionBinding
 } from '../../../shared/layout-registry/options.ts'
 import { commitOptionSelection, groupHasSelection, logicalTriggerBlockAfterHeading, selectionForGroup } from '../../../shared/trigger-line.ts'
-import { DECK_DECIDED_GROUP, deckCommitContext, type DeckListStyle } from '../../../shared/deck-frame.ts'
+import { DECK_DECIDED_GROUP, deckCommitContext, type DeckListStyle, type DeckStatementToken } from '../../../shared/deck-frame.ts'
+import { isStatementOptionGroup, statementSelections } from '../../../shared/statement-options.ts'
 import { selectionFromTriggerLine } from './layoutPickerModel.ts'
 
 export type PaneState = 'both' | 'editor' | 'strip'
@@ -159,7 +160,8 @@ export function inspectorModel(
   sourceMarkdown?: string,
   hasChildren = false,
   triggerFindings: readonly LayoutDoctorFinding[] = [],
-  deckListStyle: DeckListStyle = ''
+  deckListStyle: DeckListStyle = '',
+  deckStatementToken: DeckStatementToken = ''
 ): InspectorModel {
   const row = rows?.[activeIndex] ?? null
   const layoutName = selectionFromTriggerLine(triggerLine, [...layouts]).find((entry) => entry.kind === 'layout')?.name
@@ -171,13 +173,27 @@ export function inspectorModel(
     || finding.kind === 'unregistered-value'
   )
   const unresolved = unresolvedFindings.length > 0
+  // ADR-0028 §10: whether the compiled slide paints its title, read from the compiler's own
+  // title regime on the row; a row without it (an old cached index row) is "not known".
+  const titleLayout = row?.title_layout
+  const titlePainted = typeof titleLayout === 'string' ? titleLayout !== 'hidden' && titleLayout !== '' : undefined
   const candidates = optionGroupsForSlide({ layoutName, headingLevel, hasChildren })
   // T32: applicability reads the DECIDED selection — for List style with no authored token that is
   // the deck's choice, so the treatment is offered exactly when the compiled list is an icon list.
-  const selectedTokens = Object.fromEntries(candidates.map(({ group }) => [
-    group.key,
-    group.key === DECK_DECIDED_GROUP && !groupHasSelection(triggerLine, group) ? deckListStyle : selectionForGroup(triggerLine, group)
-  ]))
+  const deckDecided = (key: string): string | undefined => key === DECK_DECIDED_GROUP ? deckListStyle : undefined
+  // Ticket 02: each statement control lights what the compiled slide renders — its own token, the
+  // older one-word option it is part of ({statement=tint} lights Halo and Left), or the deck's
+  // `claim_style: bar`; the sidebar with no token of its own follows the compiled title placement.
+  const statementLit = statementSelections(triggerLine, {
+    deckClaimStyle: deckStatementToken === 'statement=bar' ? 'bar' : '',
+    titleLayout: typeof titleLayout === 'string' ? titleLayout : undefined
+  })
+  const selectedTokens = Object.fromEntries(candidates.map(({ group }) => {
+    if (isStatementOptionGroup(group.key)) return [group.key, statementLit[group.key] ?? '']
+    const deck = deckDecided(group.key)
+    if (deck !== undefined && !groupHasSelection(triggerLine, group)) return [group.key, deck]
+    return [group.key, selectionForGroup(triggerLine, group)]
+  }))
   const groups = unresolved
     ? []
     : candidates.filter(({ group }) => groupApplies(group, { headingLevel, hasChildren, layoutName, selectedTokens }))
@@ -189,7 +205,9 @@ export function inspectorModel(
     groups,
     sections: sectionedOptionGroups(groups, layoutEntryFor(layoutName)?.label).map((section) => ({
       ...section,
-      bindings: section.bindings.map((binding) => bindingModel(binding, selectedTokens, deckListStyle))
+      bindings: section.bindings.map((binding) => bindingModel(binding, selectedTokens, deckListStyle, {
+        layoutName, headingLevel, hasChildren, selectedTokens, titlePainted
+      }))
     })),
     deckListStyle,
     selectedTokens,
@@ -213,6 +231,8 @@ export interface InspectorBindingModel extends SectionedOptionBinding {
   selectedToken: string
   /** The value token the deck decides for this group, when it decides one (the "deck" mark). */
   deckToken?: string
+  /** The group's values this slide offers (ADR-0028 §10: a value may declare its own relevance). */
+  values: OptionValue[]
 }
 
 export interface InspectorSectionModel extends Omit<InspectorOptionSection, 'bindings'> {
@@ -222,16 +242,22 @@ export interface InspectorSectionModel extends Omit<InspectorOptionSection, 'bin
 function bindingModel(
   binding: SectionedOptionBinding,
   selectedTokens: Readonly<Record<string, string>>,
-  deckListStyle: DeckListStyle
+  deckListStyle: DeckListStyle,
+  context: Parameters<typeof valuesForGroup>[1]
 ): InspectorBindingModel {
+  // Ticket 02: the statement's Sidebar row shows its two explicit choices, one of them always lit
+  // (the one the slide renders); its Auto value exists for the typed surfaces.
+  const values = valuesForGroup(binding.group, context)
+    .filter((value) => binding.group.key !== 'statement-sidebar' || value.token !== '')
   if (binding.group.key !== DECK_DECIDED_GROUP) {
-    return { ...binding, selectedToken: selectedTokens[binding.group.key] ?? '' }
+    return { ...binding, selectedToken: selectedTokens[binding.group.key] ?? '', values }
   }
-  return { ...binding, selectedToken: selectedTokens[binding.group.key] ?? '', deckToken: deckListStyle }
+  return { ...binding, selectedToken: selectedTokens[binding.group.key] ?? '', deckToken: deckListStyle, values }
 }
 
 /** The token an Inspector click WRITES for a value button: the deck-marked button removes the
- *  group's token, and Plain against an Icons deck writes the {plainlist} override. */
+ *  group's token, and Plain against an Icons deck writes the {plainlist} override. (A statement's
+ *  controls carry no deck mark: their write path rewrites a Bar deck's decision itself, ticket 02.) */
 export function inspectorCommitToken(binding: Pick<InspectorBindingModel, 'deckToken'>, clickedToken: string): string {
   const deck = binding.deckToken
   if (deck === undefined) return clickedToken

@@ -1,22 +1,30 @@
 import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { TalkInfo } from '../../../../preload/index'
-import { type TreeNode, topicOf, buildTree, focusNode } from '../talkTreeNav'
+import { type TreeNode, topicOf, focusNode } from '../talkTreeNav'
 import {
   type ViewMode, type TalkSortKey, type NamingMode, type PubState, type RowRef,
   VIEW_STORAGE_KEY, SORT_STORAGE_KEY, NAMING_STORAGE_KEY,
   readViewPreference, readSortPreference, readNamingPreference,
-  sortTalks, isIgnoredPath, flattenTree, flattenSearch,
-  allMoveTopics, folderKey
+  sortTalks, isIgnoredPath, flattenTree, flattenSearchHits,
+  allMoveTopics, folderKey,
+  collapsedFrom, folderChoices, secondLines, talkTree
 } from './model'
+import { useFolderMemory } from './folderMemory'
 import { useTalkFacts } from '../../lib/talkFacts'
+import { shareForTalk, useSharedTalks } from '../../lib/sharedTalks'
+import { useFeedbackSummaries } from '../../lib/feedback'
 import { cardStep, initialCardState } from './hoverIntent'
 import {
-  buildLayout, mountedIndices, scrollTargetFor, windowRange, type RowHeights
+  buildLayout, mergeRowHeights, mountedIndices, scrollTargetFor, windowRange, type RowHeights
 } from './window'
 import { useTalkActions, type Prompt, type Confirm } from './actions'
-import { makePanelKeyHandler } from './useKeyboard'
+import { makePanelKeyHandler, slashFocusesFileListSearch } from './useKeyboard'
 import PanelHeader from './PanelHeader'
+import { SearchHead } from './SearchLine'
+import { CompletionPop, PrefixHints, useSearchAssist } from './SearchAssist'
+import { noResultSuggestions } from './prefixAssist'
+import { useTalkSearch } from './useTalkSearch'
 import { IcFile } from './icons'
 import Tree, { type TreeCallbacks } from './Tree'
 import Flyout from './Flyout'
@@ -40,6 +48,8 @@ interface Props {
   onOpenMetadata?: (talk: TalkInfo) => void
   /** Await the App-level editor flush before renaming the ACTIVE talk (rename moves its folder). */
   flushActive?: () => Promise<void>
+  /** The external-change guard's leave check for the active talk (see talklist/actions.ts). */
+  leaveActive?: () => Promise<boolean>
   /** Drill-in folder to restore on mount — the panel unmounts on sidebar-tab switch (perf),
    *  so App holds this so switching to Slide outline and back doesn't dump you to the vault root. */
   initialFocusPath?: string
@@ -54,7 +64,7 @@ type Menu =
 // Handout liveness, cached per app session — checked lazily and NEVER blocking a render.
 const liveCache = new Map<string, 'live' | 'offline'>()
 const liveInFlight = new Set<string>()
-const FALLBACK_ROW_HEIGHTS: RowHeights = { ledger: 26, shelf: 55, fhead: 24 }
+const FALLBACK_ROW_HEIGHTS: RowHeights = { ledger: 26, shelf: 55, fhead: 24, ledgerTwo: 36, shelfTwo: 69 }
 // A pointer click focuses the panel microseconds after its mousedown; only a LONGER gap
 // since the last pointer-down means focus arrived from the keyboard (tab-in) and may re-show
 // the keyboard preview (a click must never leave a card behind — T29).
@@ -62,14 +72,17 @@ const CLICK_FOCUS_GRACE_MS = 200
 
 export default function TalkList({
   talks, folders = [], activeTalk, vaultRoot,
-  onSelectTalk, onDeletedTalk, onRefresh, onChangeVault, onNewTalk, onOpenMetadata, flushActive,
+  onSelectTalk, onDeletedTalk, onRefresh, onChangeVault, onNewTalk, onOpenMetadata, flushActive, leaveActive,
   initialFocusPath, onFocusPathChange
 }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>(readViewPreference)
   const [naming, setNaming] = useState<NamingMode>(readNamingPreference)
   const [sortKey, setSortKey] = useState<TalkSortKey>(readSortPreference)
   const [query, setQuery] = useState('')
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
+  // Only the user's choices (path → open); `collapsed` below derives the rest from defaults
+  // (every folder starts closed), so a folder that appears later still gets its default.
+  // Shared with the slide picker's Files tree (ADR-0029 §4) and persisted across restarts.
+  const [folderOpen, chooseFolders] = useFolderMemory(vaultRoot)
   const [focusPath, setFocusPath] = useState(initialFocusPath ?? '') // drill-in ('' = whole vault)
   const [selectedFolder, setSelectedFolder] = useState('')
   const [focusKey, setFocusKey] = useState<string | null>(null) // keyboard focus row
@@ -87,6 +100,10 @@ export default function TalkList({
   const [scrollTop, setScrollTop] = useState(0)
   const [viewportH, setViewportH] = useState(0)
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
+  // The last geometry written to state. Measurement compares against these and writes only a
+  // change, as a plain value (see the measuring layout effect).
+  const rowHeightsRef = useRef<RowHeights>(FALLBACK_ROW_HEIGHTS)
+  const viewportHRef = useRef(0)
   const [panelFocused, setPanelFocused] = useState(false) // flyout shows only while we own the keyboard
   const draggingRef = useRef<TalkInfo | null>(null)
   const pointerDownAtRef = useRef(0)
@@ -111,26 +128,41 @@ export default function TalkList({
       .slice(0, 5)
   }, [talks, talkMeta, vaultRoot])
 
-  const q = query.toLowerCase().trim()
-  const searching = q.length > 0
+  const assist = useSearchAssist({ query, setQuery, searchRef, talksVersion: talks })
   const sortedTalks = useMemo(() => sortTalks(talks, sortKey, talkMeta, lastDelivered), [talks, sortKey, talkMeta, lastDelivered])
-  const filtered = useMemo(
-    () => sortedTalks.filter((t) => {
-      const topic = topicOf(t, vaultRoot)
-      if (isIgnoredPath(topic)) return false
-      if (focusPath && topic !== focusPath && !topic.startsWith(focusPath + '/')) return false
-      return !q || t.title.toLowerCase().includes(q) || t.slug.toLowerCase().includes(q)
-    }),
-    [sortedTalks, q, focusPath, vaultRoot]
+  // Talk search (ADR-0029 §1): the one renderer call shared with the picker's "Find a talk",
+  // scoped to the drilled-in folder. A lone prefix (`fo:` while typing) is not yet a search: the
+  // tree stays under the completion.
+  const { searching, result: searchResult, settled: searchSettled } = useTalkSearch({ query, within: focusPath, talksVersion: talks })
+  // No results (L8): the nearest folder to a mistyped fo: term, "Drop <term>", slide text.
+  const suggestions = useMemo(
+    () => (searchSettled && searchResult && searchResult.hits.length === 0 ? noResultSuggestions(query, assist.folders) : []),
+    [searchSettled, searchResult, query, assist.folders]
+  )
+  const talksByPath = useMemo(() => new Map(talks.map((t) => [t.outlinePath, t])), [talks])
+  const searchRows = useMemo(
+    () => (searchResult ? flattenSearchHits(searchResult.hits, talksByPath) : []),
+    [searchResult, talksByPath]
   )
   const tree = useMemo(
-    () => buildTree(sortedTalks.filter((t) => !isIgnoredPath(topicOf(t, vaultRoot))), folders.filter((f) => !isIgnoredPath(f)), vaultRoot),
+    () => talkTree(sortedTalks, folders, vaultRoot),
     [sortedTalks, folders, vaultRoot]
   )
   const view = useMemo(() => focusNode(tree, focusPath), [tree, focusPath])
+  // Folders start closed; a remembered choice wins (defaultFolderOpen).
+  const collapsed = useMemo(() => collapsedFrom(tree, folderOpen), [tree, folderOpen])
+  // Line two of every talk row at rest (ADR-0029 §3): event or folder, last delivery; the
+  // file name where two same-titled talks would otherwise read alike. Ledger draws it.
+  const lines = useMemo(
+    () => secondLines(
+      talks.filter((t) => !isIgnoredPath(topicOf(t, vaultRoot))),
+      { vaultRoot, meta: talkMeta, lastDelivered, currentYear: new Date().getFullYear() }
+    ),
+    [talks, vaultRoot, talkMeta, lastDelivered]
+  )
   const rows: RowRef[] = useMemo(
-    () => (searching ? flattenSearch(filtered) : flattenTree(view, collapsed)),
-    [searching, filtered, view, collapsed]
+    () => (searching ? searchRows : flattenTree(view, collapsed, lines)),
+    [searching, searchRows, view, collapsed, lines]
   )
   const rowIndexByKey = useMemo(() => new Map(rows.map((row, index) => [row.key, index])), [rows])
   const layout = useMemo(() => buildLayout(rows, viewMode, rowHeights), [rows, viewMode, rowHeights])
@@ -154,6 +186,14 @@ export default function TalkList({
   const focusedRow = useMemo(() => rows.find((r) => r.key === focusKey) ?? null, [rows, focusKey])
   const focusedTalk = focusedRow?.kind === 'talk' ? focusedRow.talk : null
 
+  const sharedTalks = useSharedTalks()
+  const sharedFor = (talk: TalkInfo): boolean => Boolean(shareForTalk(sharedTalks, talk.outlinePath))
+  // Feedback rail (ticket 05): the talk row carries the count of unread items.
+  const feedbackSummaries = useFeedbackSummaries()
+  const feedbackCountFor = (talk: TalkInfo): number => {
+    const share = shareForTalk(sharedTalks, talk.outlinePath)
+    return share ? feedbackSummaries[share.shareId]?.unread ?? 0 : 0
+  }
   const pubFor = (slug: string): PubState => {
     const url = handouts[slug]?.handoutUrl
     if (!url) return 'none'
@@ -162,7 +202,7 @@ export default function TalkList({
 
   const actions = useTalkActions({
     talks, vaultRoot, activeTalk, onSelectTalk, onDeletedTalk, onRefresh, onNewTalk,
-    onOpenMetadata, flushActive, setPrompt, setConfirm, setMenu, setMoveMenu, setFocusKey
+    onOpenMetadata, flushActive, leaveActive, setPrompt, setConfirm, setMenu, setMoveMenu, setFocusKey
   })
 
   // ── data plumbing ──
@@ -223,25 +263,32 @@ export default function TalkList({
   // Measure one mounted sample of each available row kind, using a single observer rather
   // than one observer per row. CSS-derived fallbacks make first paint viable; real geometry
   // replaces each estimate after mount and whenever zoom/font metrics resize a sample.
+  // Writes only a real change, and as a plain value, never an updater (ticket 09): the observer
+  // fires outside React events, so an unchanged write there still queued a low-priority update.
+  // A later sync render (the Shelf click) skipped it and re-ran every later heights updater from
+  // the old base state, minting a new, equal heights object per render — a new `layout` each
+  // time, which re-ran the scroll effect below, whose state write rendered again: React #185.
   useLayoutEffect(() => {
     const container = treeRef.current
     if (!container) return
 
     const measure = (): void => {
-      setViewportH(container.clientHeight)
-      const ledger = container.querySelector<HTMLElement>('.tl-row')?.offsetHeight
-      const shelf = container.querySelector<HTMLElement>('.tl-shrow')?.offsetHeight
-      const fhead = container.querySelector<HTMLElement>('.tl-fhead')?.offsetHeight
-      setRowHeights((current) => {
-        const next = {
-          ledger: ledger || current.ledger,
-          shelf: shelf || current.shelf,
-          fhead: fhead || current.fhead
-        }
-        return next.ledger === current.ledger && next.shelf === current.shelf && next.fhead === current.fhead
-          ? current
-          : next
+      const height = container.clientHeight
+      if (height !== viewportHRef.current) {
+        viewportHRef.current = height
+        setViewportH(height)
+      }
+      const next = mergeRowHeights(rowHeightsRef.current, {
+        ledger: container.querySelector<HTMLElement>('.tl-row:not(.tl-row--two)')?.offsetHeight,
+        shelf: container.querySelector<HTMLElement>('.tl-shrow:not(.tl-shrow--two)')?.offsetHeight,
+        fhead: container.querySelector<HTMLElement>('.tl-fhead')?.offsetHeight,
+        ledgerTwo: container.querySelector<HTMLElement>('.tl-row--two')?.offsetHeight,
+        shelfTwo: container.querySelector<HTMLElement>('.tl-shrow--two')?.offsetHeight
       })
+      if (next !== rowHeightsRef.current) {
+        rowHeightsRef.current = next
+        setRowHeights(next)
+      }
     }
 
     measure()
@@ -250,7 +297,9 @@ export default function TalkList({
     const samples = [
       container.querySelector<HTMLElement>('.tl-fhead'),
       container.querySelector<HTMLElement>('.tl-row'),
-      container.querySelector<HTMLElement>('.tl-shrow')
+      container.querySelector<HTMLElement>('.tl-shrow'),
+      container.querySelector<HTMLElement>('.tl-row--two'),
+      container.querySelector<HTMLElement>('.tl-shrow--two')
     ].filter((sample): sample is HTMLElement => sample != null)
     for (const sample of samples) observer.observe(sample)
     return () => observer.disconnect()
@@ -258,16 +307,20 @@ export default function TalkList({
 
   // Offset scrolling works even before the target row has mounted. Pinning the focused index
   // makes the row and its focus ring commit together, avoiding a one-frame missing-row flash.
+  // The flyout anchor is written only when it changes: this effect re-runs on every new
+  // `layout`, and a state write here with nothing changed still costs a render (ticket 09).
   useLayoutEffect(() => {
     const container = treeRef.current
     const index = focusKey ? rowIndexByKey.get(focusKey) : undefined
-    if (!container || index == null) { setAnchorEl(null); return }
-    const target = scrollTargetFor(layout, index, container.scrollTop, container.clientHeight)
-    if (target != null && target !== container.scrollTop) {
-      container.scrollTop = target
-      setScrollTop(target)
+    const anchor = container && index != null && focusKey ? rowRefs.current.get(focusKey) ?? null : null
+    if (container && index != null) {
+      const target = scrollTargetFor(layout, index, container.scrollTop, container.clientHeight)
+      if (target != null && target !== container.scrollTop) {
+        container.scrollTop = target
+        setScrollTop(target)
+      }
     }
-    setAnchorEl(rowRefs.current.get(focusKey) ?? null)
+    if (anchor !== anchorEl) setAnchorEl(anchor)
   }, [focusKey, rowIndexByKey, layout, viewMode, viewportH])
 
   useEffect(() => () => {
@@ -279,6 +332,28 @@ export default function TalkList({
     const focus = (): void => { requestAnimationFrame(() => { searchRef.current?.focus(); searchRef.current?.select() }) }
     window.addEventListener('tw-search-talks', focus)
     return () => window.removeEventListener('tw-search-talks', focus)
+  }, [])
+
+  // / from outside the panel (browser.filter): while the file list is open, / pressed anywhere but the
+  // talk editor, a text field or a modal surface puts the caret in the search box. Bubble phase, after
+  // every surface's own key handling, so a key already taken (the panel's own /) is left alone.
+  useEffect(() => {
+    const onSlash = (e: KeyboardEvent): void => {
+      const target = e.target instanceof HTMLElement ? e.target : null
+      const facts = {
+        key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey,
+        defaultPrevented: e.defaultPrevented,
+        typing: !!target && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target.isContentEditable),
+        inEditor: !!target?.closest('.cm-editor'),
+        modalOpen: document.querySelector('[aria-modal="true"]') != null
+      }
+      if (!slashFocusesFileListSearch(facts) || !searchRef.current) return
+      e.preventDefault()
+      searchRef.current.focus()
+      searchRef.current.select()
+    }
+    window.addEventListener('keydown', onSlash)
+    return () => window.removeEventListener('keydown', onSlash)
   }, [])
 
   // ⌘K (WorkspaceLayout's universal context-menu chord) dispatches tw-context-menu: open the
@@ -298,14 +373,16 @@ export default function TalkList({
   })
 
   // ── folders / drag-drop ──
+  // Every open/close goes through chooseFolders (the shared folder memory): it updates the tree
+  // at once, in the picker too, and persists the choice.
   function toggleFolder(path: string): void {
-    setCollapsed((prev) => { const next = new Set(prev); next.has(path) ? next.delete(path) : next.add(path); return next })
+    chooseFolders({ [path]: collapsed.has(path) })
   }
   function collapseAll(): void {
-    const all = new Set<string>()
-    const walk = (n: TreeNode): void => { for (const c of n.children) { all.add(c.path); walk(c) } }
+    const all: string[] = []
+    const walk = (n: TreeNode): void => { for (const c of n.children) { all.push(c.path); walk(c) } }
     walk(tree)
-    setCollapsed(all)
+    chooseFolders(folderChoices(all, false))
   }
   function onDropTo(topic: string): void {
     const talk = draggingRef.current
@@ -329,14 +406,10 @@ export default function TalkList({
     return out
   }
   function collapseAllInView(): void {
-    setCollapsed((prev) => new Set([...prev, ...subfolderPathsInView()]))
+    chooseFolders(folderChoices(subfolderPathsInView(), false))
   }
   function expandAllInView(): void {
-    setCollapsed((prev) => {
-      const next = new Set(prev)
-      for (const p of subfolderPathsInView()) next.delete(p)
-      return next
-    })
+    chooseFolders(folderChoices(subfolderPathsInView(), true))
   }
 
   // ── keyboard (panel-scoped; identical in both modes) ──
@@ -464,7 +537,7 @@ export default function TalkList({
 
   return (
     <aside
-      className="talk-list tl-panel"
+      className={`talk-list tl-panel${assist.completion ? ' tl-panel--completing' : ''}`}
       ref={panelRef}
       tabIndex={0}
       aria-label="Talks browser"
@@ -505,9 +578,16 @@ export default function TalkList({
         onRefresh={onRefresh}
         onChangeVault={onChangeVault}
         query={query}
-        onQueryChange={setQuery}
+        onQueryChange={assist.onChange}
         searchRef={searchRef}
+        onSearchFocus={assist.onFocus}
+        onSearchBlur={assist.onBlur}
+        onSearchSelect={assist.onSelect}
+        assist={assist.completion
+          ? <CompletionPop completion={assist.completion} active={assist.active} onPick={assist.pick} onHover={assist.setActive} />
+          : assist.hintVisible ? <PrefixHints onPick={assist.pickHint} /> : null}
         onSearchKeyDown={(e) => {
+          if (assist.onKeyDown(e)) return
           if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (query) setQuery(''); else e.currentTarget.blur() }
           if (e.key === 'ArrowDown') { e.preventDefault(); panelRef.current?.focus() }
         }}
@@ -548,9 +628,23 @@ export default function TalkList({
         </div>
       )}
 
+      {searching && searchResult && (
+        <SearchHead
+          result={searchResult}
+          shown={rows.length}
+          onSearchEverywhere={() => setFocusPath('')}
+        />
+      )}
+
       <Tree
         searching={searching}
         query={query}
+        searchSettled={searchSettled}
+        focusPath={focusPath}
+        everywhereCount={searchResult?.within ? searchResult.everywhereCount : null}
+        onSearchEverywhere={() => setFocusPath('')}
+        suggestions={suggestions}
+        onSuggest={assist.replaceQuery}
         rows={rows}
         view={view}
         isEmptyVault={talks.length === 0 && folders.length === 0}
@@ -564,6 +658,8 @@ export default function TalkList({
         talkMeta={talkMeta}
         lastDelivered={lastDelivered}
         pubFor={pubFor}
+        sharedFor={sharedFor}
+        feedbackCountFor={feedbackCountFor}
         layout={layout}
         mounted={mounted}
         containerRef={treeRef}

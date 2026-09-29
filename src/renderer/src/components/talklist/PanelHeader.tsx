@@ -1,14 +1,18 @@
+import type { ReactNode } from 'react'
 import { breadcrumbCrumbs } from '../talkTreeNav'
+import { TALK_QUERY_HELP } from '../../../../shared/talk-query'
 import type { ViewMode } from './model'
 import { IcLedger, IcShelf, IcFilePlus, IcFolderPlus, IcSort, IcCollapse, IcRefresh, IcSwap, IcSearch, IcClear } from './icons'
 
 // The Talks browser's chrome above the tree: toolbar (label · Ledger⇄Shelf switch · actions),
-// the filter box, and the drill-in breadcrumb. Pure presentation — all state lives upstream.
+// the filter box with its hint row / completion (`assist`, SearchAssist.tsx), and the drill-in
+// breadcrumb. Pure presentation — all state lives upstream.
 export default function PanelHeader({
   viewMode, onSetViewMode,
   onNewTalk, onNewFolder, onToggleSort, sortOpen, sortBtnRef,
   onCollapseAll, onRefresh, onChangeVault,
   query, onQueryChange, searchRef, onSearchKeyDown,
+  onSearchFocus, onSearchBlur, onSearchSelect, assist,
   focusPath, onFocusPath
 }: {
   viewMode: ViewMode
@@ -22,9 +26,15 @@ export default function PanelHeader({
   onRefresh: () => void
   onChangeVault: () => void
   query: string
-  onQueryChange: (value: string) => void
+  /** `caret`: where the caret is after the change (completion works on the token before it). */
+  onQueryChange: (value: string, caret?: number | null) => void
   searchRef: React.RefObject<HTMLInputElement>
   onSearchKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void
+  onSearchFocus?: () => void
+  onSearchBlur?: () => void
+  onSearchSelect?: (caret: number | null) => void
+  /** Under the box: the prefix hint row (L3) or the completion list (L4). */
+  assist?: ReactNode
   focusPath: string
   onFocusPath: (path: string) => void
 }) {
@@ -52,9 +62,13 @@ export default function PanelHeader({
             ref={searchRef}
             type="text"
             value={query}
-            onChange={(e) => onQueryChange(e.target.value)}
+            onChange={(e) => onQueryChange(e.target.value, e.target.selectionStart)}
             onKeyDown={onSearchKeyDown}
-            placeholder="Filter talks…"
+            onFocus={onSearchFocus}
+            onBlur={onSearchBlur}
+            onSelect={(e) => onSearchSelect?.(e.currentTarget.selectionStart)}
+            placeholder="Search talks…"
+            title={TALK_QUERY_HELP}
             aria-label="Filter talks"
             autoComplete="off"
             spellCheck={false}
@@ -63,6 +77,7 @@ export default function PanelHeader({
           <button className="tl-search-clear" title="Clear filter (Esc)" aria-label="Clear filter" onClick={() => { onQueryChange(''); searchRef.current?.focus() }}><IcClear size={11} /></button>
         </div>
       </div>
+      {assist}
 
       {focusPath && (
         <nav className="tl-crumbs" aria-label="Location">

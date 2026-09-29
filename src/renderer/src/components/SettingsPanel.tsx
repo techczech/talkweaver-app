@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { History, RotateCcw, Search } from 'lucide-react'
 import type { BackupSettings, SettingsChangeEntry, TimerSettings, TranscriptionSettings } from '../../../preload/index'
 import { EDITOR_COMMANDS, displayKeys } from '../keymap/registry'
+import { shortcutById } from '../../../shared/shortcut-registry'
 import {
   readOverrides,
   setOverride,
@@ -52,7 +53,7 @@ const SECTION_KEYWORDS: Record<string, string> = {
   backup: 'presentation backup onedrive dropbox folder interval check every back up now',
   timer: 'timer presenter clock amber dark warning minutes warn urgent',
   metadefaults: 'presenter identity deck defaults author name email affiliation web licence license house style font palette colour logo series retype every talk',
-  publishing: 'publishing cloudflare pages handout account id project custom domain short urls api token wrangler',
+  publishing: 'publishing cloudflare pages handout account id project custom domain short urls api token wrangler sharing share link domain share for comments',
   recording: 'recording storage r2 s3 endpoint bucket credentials bitwarden secrets keychain access keys discard seconds',
   transcription: 'transcription parakeet python script ffmpeg speech to text runs',
   shortcuts: 'keyboard shortcuts keys chord bindings reset all',
@@ -85,6 +86,7 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
     baseUrl: string
     workerBaseUrl: string
     useShortIds: boolean
+    shareDomain: string
     hasToken: boolean
   } | null>(null)
   const [tokenInput, setTokenInput] = useState('')
@@ -95,7 +97,7 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
   const [changes, setChanges] = useState<SettingsChangeEntry[] | null>(null)
   // Baselines for blur/save-time diffing: the last values READ from the main process, so a
   // change can be logged as old → new even after the controlled inputs already hold the new text.
-  const pubBaseRef = useRef<{ accountId: string; project: string; baseUrl: string; workerBaseUrl: string; useShortIds: boolean } | null>(null)
+  const pubBaseRef = useRef<{ accountId: string; project: string; baseUrl: string; workerBaseUrl: string; useShortIds: boolean; shareDomain: string } | null>(null)
   const recBaseRef = useRef<{ endpoint: string; bucket: string; credsSource: 'bws' | 'settings'; bwsSecretId: string; discardSeconds: number } | null>(null)
   const trBaseRef = useRef<{ python: string; script: string; ffmpeg: string } | null>(null)
   const timerBaseRef = useRef<TimerSettings | null>(null)
@@ -109,11 +111,11 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
   const refreshPub = (): void => {
     window.tw.publish.getConfig().then((p) => {
       setPub(p)
-      pubBaseRef.current = { accountId: p.accountId, project: p.project, baseUrl: p.baseUrl, workerBaseUrl: p.workerBaseUrl, useShortIds: p.useShortIds }
+      pubBaseRef.current = { accountId: p.accountId, project: p.project, baseUrl: p.baseUrl, workerBaseUrl: p.workerBaseUrl, useShortIds: p.useShortIds, shareDomain: p.shareDomain }
     }).catch(() => setPub(null))
   }
   // Diff the current publishing draft against the last-read baseline and log each changed field.
-  const recordPubDiff = (next: { accountId: string; project: string; baseUrl: string; workerBaseUrl: string; useShortIds: boolean }): void => {
+  const recordPubDiff = (next: { accountId: string; project: string; baseUrl: string; workerBaseUrl: string; useShortIds: boolean; shareDomain: string }): void => {
     const base = pubBaseRef.current
     if (!base) return
     record('publish.accountId', 'Publishing — account ID', base.accountId, next.accountId)
@@ -121,14 +123,20 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
     record('publish.baseUrl', 'Publishing — custom domain', base.baseUrl, next.baseUrl)
     record('publish.workerBaseUrl', 'Publishing — live Worker URL', base.workerBaseUrl, next.workerBaseUrl)
     record('publish.useShortIds', 'Publishing — short URLs', base.useShortIds ? 'on' : 'off', next.useShortIds ? 'on' : 'off')
+    record('publish.shareDomain', 'Sharing — share link domain', base.shareDomain, next.shareDomain)
   }
   // Publishing text fields persist on blur. The Short-URLs toggle already saved immediately, so
   // account/project/domain edits abandoned without the explicit Save button were silently lost.
+  // An invalid share domain refuses the whole save (never partially applied) — record and refresh
+  // only when it actually saved, and surface the plain-language refusal otherwise; the person's
+  // own typed text stays in the field so they can fix it.
   const persistPub = (): void => {
     if (!pub) return
-    const next = { accountId: pub.accountId, project: pub.project, baseUrl: pub.baseUrl, workerBaseUrl: pub.workerBaseUrl, useShortIds: pub.useShortIds }
-    recordPubDiff(next)
-    void window.tw.publish.setConfig(next).then(refreshPub)
+    const next = { accountId: pub.accountId, project: pub.project, baseUrl: pub.baseUrl, workerBaseUrl: pub.workerBaseUrl, useShortIds: pub.useShortIds, shareDomain: pub.shareDomain }
+    void window.tw.publish.setConfig(next).then((result) => {
+      if (result.success) { recordPubDiff(next); refreshPub() }
+      else notify(result.error || 'Could not save this setting.', 'error')
+    })
   }
   // Recording storage (ADR-0035): where presenter recordings upload. Access keys are write-only
   // here — we only ever learn hasKeys (the keys live OS-keychain-encrypted in the main process).
@@ -276,16 +284,21 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, capturingId])
 
-  // Which effective chords are bound more than once (so we can warn).
+  // Which effective chords are bound more than once (so we can warn). The slide picker's keys are
+  // its own surface's (its ⌘↵ adds a talk beside only inside the picker, where the editor's ⌘↵
+  // never reaches), so a chord is a duplicate only within one surface.
+  const surfaceOf = (c: (typeof EDITOR_COMMANDS)[number]): string =>
+    shortcutById(c.shortcutId).scope === 'slide-picker' ? 'slide-picker' : 'workspace'
   const duplicates = useMemo(() => {
     const seen = new Map<string, number>()
     for (const c of EDITOR_COMMANDS) {
       const k = effectiveKeys(c.id)
       if (!k) continue
-      seen.set(k, (seen.get(k) ?? 0) + 1)
+      const at = `${surfaceOf(c)}\0${k}`
+      seen.set(at, (seen.get(at) ?? 0) + 1)
     }
     const dup = new Set<string>()
-    for (const [k, n] of seen) if (n > 1) dup.add(k)
+    for (const [at, n] of seen) if (n > 1) dup.add(at)
     return dup
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, capturingId])
@@ -318,12 +331,13 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
       else if (en.key === 'timer.urgentAtMinutes') setTimer(await window.tw.settings.setTimer({ urgentAtMinutes: Number(v) }))
       else if (en.key.startsWith('publish.')) {
         const cur = await window.tw.publish.getConfig()
-        const next = { accountId: cur.accountId, project: cur.project, baseUrl: cur.baseUrl, workerBaseUrl: cur.workerBaseUrl, useShortIds: cur.useShortIds }
+        const next = { accountId: cur.accountId, project: cur.project, baseUrl: cur.baseUrl, workerBaseUrl: cur.workerBaseUrl, useShortIds: cur.useShortIds, shareDomain: cur.shareDomain }
         const field = en.key.slice('publish.'.length)
         if (field === 'useShortIds') next.useShortIds = v === 'on'
-        else if (field === 'accountId' || field === 'project' || field === 'baseUrl' || field === 'workerBaseUrl') next[field] = v
+        else if (field === 'accountId' || field === 'project' || field === 'baseUrl' || field === 'workerBaseUrl' || field === 'shareDomain') next[field] = v
         else throw new Error('unknown publish field')
-        await window.tw.publish.setConfig(next)
+        const result = await window.tw.publish.setConfig(next)
+        if (!result.success) throw new Error(result.error || 'Could not restore this setting.')
         refreshPub()
       } else if (en.key.startsWith('recording.')) {
         const cur = await window.tw.recording.getStorage()
@@ -790,6 +804,24 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
           </div>
 
           <div style={rowFolder}>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={folderLabel}>Share link domain <span style={{ color: 'var(--faint)', fontWeight: 500 }}>· optional</span></div>
+              <input
+                style={inputStyle}
+                value={pub?.shareDomain ?? ''}
+                placeholder="drafts.example.com"
+                onChange={(e) => setPub((p) => (p ? { ...p, shareDomain: e.target.value } : p))}
+                onBlur={persistPub}
+              />
+              <div style={folderPath}>
+                A colleague&apos;s Share for comments link opens here instead of your live Worker&apos;s own address.
+                The domain needs a Cloudflare zone on this account; the next deploy attaches it and Cloudflare creates
+                its DNS record and certificate. Leave empty to keep sharing from the Worker&apos;s own address.
+              </div>
+            </div>
+          </div>
+
+          <div style={rowFolder}>
             <div style={{ minWidth: 0 }}>
               <div style={folderLabel}>Short URLs</div>
               <div style={folderPath}>Share <kbd style={kbd}>{'<base>/<id>'}</kbd> links instead of <kbd style={kbd}>{'<base>/<slug>/'}</kbd></div>
@@ -797,12 +829,15 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
             <button
               style={pub?.useShortIds ? { ...btn, borderColor: 'var(--oxford)', color: 'var(--oxford)' } : btn}
               onClick={() => {
-                const next = !(pub?.useShortIds ?? false)
+                if (!pub) return
+                const next = !pub.useShortIds
                 setPub((p) => (p ? { ...p, useShortIds: next } : p))
-                if (pub) {
-                  record('publish.useShortIds', 'Publishing — short URLs', pub.useShortIds ? 'on' : 'off', next ? 'on' : 'off')
-                  window.tw.publish.setConfig({ accountId: pub.accountId, project: pub.project, baseUrl: pub.baseUrl, workerBaseUrl: pub.workerBaseUrl, useShortIds: next }).then(refreshPub)
-                }
+                window.tw.publish
+                  .setConfig({ accountId: pub.accountId, project: pub.project, baseUrl: pub.baseUrl, workerBaseUrl: pub.workerBaseUrl, useShortIds: next, shareDomain: pub.shareDomain })
+                  .then((result) => {
+                    if (result.success) { record('publish.useShortIds', 'Publishing — short URLs', pub.useShortIds ? 'on' : 'off', next ? 'on' : 'off'); refreshPub() }
+                    else { setPub((p) => (p ? { ...p, useShortIds: pub.useShortIds } : p)); notify(result.error || 'Could not save this setting.', 'error') }
+                  })
               }}
             >
               {pub?.useShortIds ? 'On' : 'Off'}
@@ -863,11 +898,13 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
               style={{ ...btn, borderColor: 'var(--oxford)', color: 'var(--oxford)' }}
               onClick={() => {
                 if (!pub) return
-                const next = { accountId: pub.accountId, project: pub.project, baseUrl: pub.baseUrl, workerBaseUrl: pub.workerBaseUrl, useShortIds: pub.useShortIds }
-                recordPubDiff(next)
+                const next = { accountId: pub.accountId, project: pub.project, baseUrl: pub.baseUrl, workerBaseUrl: pub.workerBaseUrl, useShortIds: pub.useShortIds, shareDomain: pub.shareDomain }
                 window.tw.publish
                   .setConfig(next)
-                  .then(() => { setPubSaved(true); setTimeout(() => setPubSaved(false), 1500); refreshPub() })
+                  .then((result) => {
+                    if (result.success) { recordPubDiff(next); setPubSaved(true); setTimeout(() => setPubSaved(false), 1500); refreshPub() }
+                    else notify(result.error || 'Could not save these settings.', 'error')
+                  })
               }}
             >
               {pubSaved ? 'Saved ✓' : 'Save publishing settings'}
@@ -1143,7 +1180,7 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
                 const keys = effectiveKeys(c.id)
                 const overridden = keys !== c.keys
                 const capturing = capturingId === c.id
-                const collides = !capturing && duplicates.has(keys)
+                const collides = !capturing && duplicates.has(`${surfaceOf(c)}\0${keys}`)
                 return (
                   <div key={c.id} style={rowShortcut} data-shortcut-id={c.id}>
                     <span style={{ fontSize: 12.5, color: 'var(--ink)', lineHeight: 1.3 }}>{c.label}</span>

@@ -37,7 +37,7 @@
     /* Consistent margins (2026-06-09 title spec): ONE slide safe-area / content inset, applied to
        every layout via .slide. Content sits the same distance from the slide edge regardless of
        layout — no more ad-hoc per-layout padding. Change here to reflow the whole deck's margins. */
-    --slide-pad-y: 5vh;
+    --slide-pad-y: 5cqh;
     --slide-pad-x: 5.6cqw;
   }/* @order 0326 */
   /* Refinement 7 (2026-06-09): keep a consistent GUTTER between text and any graphical element

@@ -6,10 +6,10 @@
   /* E4 follow-up: the whole cards block (eyebrow + gallery/split) centres vertically in the
      stage; the two split columns keep their TOP edges level relative to each other. *//* @order 0755 */
   .slide-content.layout-cards { align-content: center; }/* @order 0760 */
-  .slide-content.layout-cards .card-gallery { min-height: 62vh; margin-top: 14px; }/* @order 0774 */
+  .slide-content.layout-cards .card-gallery { min-height: 62cqh; margin-top: 14px; }/* @order 0774 */
   .slide-content.layout-cards .card-gallery { /* leave room for the source line below */ }/* @order 0775 */
 
-  .card-gallery { position: relative; min-height: 56vh; margin-top: 28px; }/* @order 0778 */
+  .card-gallery { position: relative; min-height: 56cqh; margin-top: 28px; }/* @order 0778 */
   .card-gallery.carousel { position: relative; min-height: 0; margin-top: 8px; flex: 1 1 auto; display: block; }/* @order 0791 */
   .card-gallery.card-grid { position: static; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: clamp(12px, 1.6cqw, 24px); align-content: start; }/* @order 0792 */
   .slide-content.layout-cards .card-gallery.card-grid { min-height: 0; margin-top: 8px; }/* @order 0793 */
@@ -20,11 +20,11 @@
      A bottom gradient fade (the ::after, shown only while .is-scrollable) signals "more below". *//* @order 0795 */
   /* ADR-0005 gallery card: flat hairline card on paper — no tint fill, no top bar, no radius,
      no elevation. Chrome carries nothing; type and the accent carry the card. *//* @order 0796 */
-  .card-gallery .card { position: relative; background: var(--paper); border: 1px solid var(--hairline); border-radius: 0; box-shadow: none; padding: clamp(24px, 3.2cqw, 48px); height: 100%; max-height: 72vh; overflow-y: auto; overflow-x: hidden; display: grid; align-content: center; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--accent) 50%, transparent) transparent; }/* @order 0797 */
+  .card-gallery .card { position: relative; background: var(--paper); border: 1px solid var(--hairline); border-radius: 0; box-shadow: none; padding: clamp(24px, 3.2cqw, 48px); height: 100%; max-height: 72cqh; overflow-y: auto; overflow-x: hidden; display: grid; align-content: center; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--accent) 50%, transparent) transparent; }/* @order 0797 */
   .card-gallery .card::-webkit-scrollbar { width: 8px; }/* @order 0798 */
   .card-gallery .card::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 8px; }/* @order 0799 */
   .card-gallery .card::-webkit-scrollbar-track { background: transparent; }/* @order 0800 */
-  .card-gallery .card.is-scrollable::after { content: ""; position: sticky; bottom: -1px; left: 0; right: 0; display: block; height: clamp(28px, 4vh, 56px); margin: 0 calc(-1 * clamp(24px, 3.2cqw, 48px)) calc(-1 * clamp(24px, 3.2cqw, 48px)); background: linear-gradient(to bottom, transparent, var(--tint)); pointer-events: none; }/* @order 0801 */
+  .card-gallery .card.is-scrollable::after { content: ""; position: sticky; bottom: -1px; left: 0; right: 0; display: block; height: clamp(28px, 4cqh, 56px); margin: 0 calc(-1 * clamp(24px, 3.2cqw, 48px)) calc(-1 * clamp(24px, 3.2cqw, 48px)); background: linear-gradient(to bottom, transparent, var(--tint)); pointer-events: none; }/* @order 0801 */
   /* Card titles: sentence case, ink, weight 600 — never shouting caps, never accent-on-title
      (ADR-0005: accent lives in icons/numbers/keywords). *//* @order 0802 */
   .card-gallery .card h4 { margin: 0 0 .6em; font-size: max(var(--type-floor), 1.9cqw); font-weight: 600; letter-spacing: -0.01em; text-transform: none; color: var(--ink); }/* @order 0803 */
@@ -64,8 +64,8 @@
      or a paragraph), the quotation is the hero and the reference sits QUIETLY AT THE BOTTOM with a
      clear gap — not crowded directly under the quote. Only engages when a blockquote actually has a
      trailing sibling, so a quote-only card keeps its centred treatment. *//* @order 0823 */
-  .card-gallery .card:has(> blockquote + *) { display: flex; flex-direction: column; justify-content: flex-start; min-height: 56vh; }/* @order 0824 */
-  .card-gallery .card:has(> blockquote + *) > :last-child { margin-top: auto; padding-top: clamp(28px, 6vh, 80px); }/* @order 0830 */
+  .card-gallery .card:has(> blockquote + *) { display: flex; flex-direction: column; justify-content: flex-start; min-height: 56cqh; }/* @order 0824 */
+  .card-gallery .card:has(> blockquote + *) > :last-child { margin-top: auto; padding-top: clamp(28px, 6cqh, 80px); }/* @order 0830 */
   /* D6: scale quote type by length so long multi-paragraph quotes don't overflow. Buckets are
      set in the generator via data-quote-length. The runtime .card-dense step (scrollHeight >
      clientHeight) nudges one notch smaller before any scroll fallback kicks in. *//* @order 0831 */
@@ -86,7 +86,7 @@
   }/* @order 0838 */
   .card-gallery .card.card-media-split .card-media-col { min-width: 0; display: grid; gap: 10px; align-content: center; }/* @order 0839 */
   .card-gallery .card.card-media-split .card-media-col figure { margin: 0; }/* @order 0840 */
-  .card-gallery .card.card-media-split .card-media-col figure.slide-embed { aspect-ratio: 16 / 9; width: 100%; max-height: 56vh; }/* @order 0841 */
+  .card-gallery .card.card-media-split .card-media-col figure.slide-embed { aspect-ratio: 16 / 9; width: 100%; max-height: 56cqh; }/* @order 0841 */
   .card-gallery .card.card-media-split .card-media-col figure.slide-embed iframe { min-height: 0; height: 100%; }/* @order 0843 */
   .card-gallery .card.card-media-split .card-text-col { min-width: 0; }/* @order 0844 */
   .card-gallery .card.card-media-split .card-text-col blockquote { font-size: max(var(--type-floor), 1.7cqw); }/* @order 0845 */
@@ -104,14 +104,14 @@
   .card-gallery .card.card-media-split .card-text-col > p.card-comment strong { color: var(--accent); }/* @order 0850 */
   /* E2: media INSIDE a plain content card (an embed, optionally paired with a still image —
      no side-by-side text, so not .card-media-split). The base .slide-embed iframe carries
-     min-height: 52vh for full-bleed slide embeds; inside a height-capped, align-content:center
-     card that forces the embed to ~52vh AND lets a stacked image spill past the card's clip
+     min-height: 52cqh for full-bleed slide embeds; inside a height-capped, align-content:center
+     card that forces the embed to ~52cqh AND lets a stacked image spill past the card's clip
      box, so only a thin sliver of the image shows below the embed. Scope the embed to a 16:9
      box, drop the iframe min-height, and cap any stacked figure/image so embed + still compose
      cleanly within one card. When a card holds BOTH (embed + image), let the rows size to
      content and share the height instead of one element dominating. *//* @order 0851 */
   .card-gallery .card:not(.card-media-split):not(.card-title) figure.slide-embed {
-    margin: 0; aspect-ratio: 16 / 9; width: 100%; max-height: 56vh; justify-self: center;
+    margin: 0; aspect-ratio: 16 / 9; width: 100%; max-height: 56cqh; justify-self: center;
   }/* @order 0852 */
   .card-gallery .card:not(.card-media-split):not(.card-title) figure.slide-embed iframe { min-height: 0; height: 100%; }/* @order 0869 */
   .card-gallery[data-exclusive] .card { display: none; }/* @order 0870 */
@@ -165,7 +165,7 @@
     display: grid !important;
     height: auto;
     min-height: 150px;
-    max-height: 32vh;
+    max-height: 32cqh;
     overflow: hidden;
     cursor: pointer;
     padding: clamp(14px, 1.4cqw, 22px);
@@ -183,8 +183,8 @@
   .card-gallery.grid-view .card:hover { transform: translateY(-2px); box-shadow: var(--elevation); }/* @order 0885 */
   .card-gallery.grid-view .card blockquote { font-size: max(var(--type-floor), 1.4cqw); }/* @order 0886 */
   .card-gallery.grid-view .card figure img,
-  .card-gallery.grid-view .card figure video { max-height: 18vh; object-fit: contain; }/* @order 0887 */
-  .card-gallery.grid-view .card .slide-embed iframe { min-height: 0; height: 16vh; }/* @order 1416 */
+  .card-gallery.grid-view .card figure video { max-height: 18cqh; object-fit: contain; }/* @order 0887 */
+  .card-gallery.grid-view .card .slide-embed iframe { min-height: 0; height: 16cqh; }/* @order 1416 */
 
   /* Card gallery (mockup .cards): flat hairline cards, numbered, icon top / label / index bottom *//* @order 1701 */
 

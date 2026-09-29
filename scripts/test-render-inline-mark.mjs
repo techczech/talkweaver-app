@@ -183,9 +183,12 @@ try {
     slug: 'inline-marker',
     license: null
   })
+  // ADR-0028 §10: the statement's last two words are joined by a no-break space (the mark is
+  // inline and transparent to the join), so compare with it read as a plain space.
   const markerHtml = '<mark class="ink-marker">feedback is the lesson</mark>'
-  assert.ok(model.fullHtml.includes(markerHtml), 'compiled deck output contains ink-marker markup')
-  assert.ok(handout.includes(markerHtml), 'compiled handout output contains ink-marker markup')
+  const plainSpaces = (text) => text.replace(/&nbsp;/g, ' ')
+  assert.ok(plainSpaces(model.fullHtml).includes(markerHtml), 'compiled deck output contains ink-marker markup')
+  assert.ok(plainSpaces(handout).includes(markerHtml), 'compiled handout output contains ink-marker markup')
   console.log('fixture: deck ink-marker=present; handout ink-marker=present')
 } finally {
   rmSync(scratch, { recursive: true, force: true })

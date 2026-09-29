@@ -129,7 +129,7 @@ assert.deepEqual(
 );
 assert.deepEqual(VALUE_TRIGGER_DICTIONARY.accent, ['cobalt', 'emerald', 'vermilion', 'forest'], 'named section accents are generated into the value-trigger dictionary');
 assert.deepEqual(VALUE_TRIGGER_DICTIONARY.iconlist, ['boxes', 'list'], 'iconlist variants are generated into the value-trigger dictionary');
-assert.deepEqual(VALUE_TRIGGER_DICTIONARY.statement, ['default', 'tint', 'poster'], 'statement variants are generated into the value-trigger dictionary');
+assert.deepEqual(VALUE_TRIGGER_DICTIONARY.statement, ['default', 'poster', 'centred', 'tint', 'bar', 'full'], 'statement variants are generated into the value-trigger dictionary (ADR-0028 §10: poster stays accepted vocabulary)');
 assert.deepEqual(VALUE_TRIGGER_DICTIONARY.bg, ['cobalt', 'emerald', 'vermilion', 'forest'], 'named background tints are generated into the value-trigger dictionary');
 
 const { generateTriggerDictionarySource } = await import("./generate-trigger-dictionary.mjs");

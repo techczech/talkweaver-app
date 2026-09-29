@@ -27,8 +27,10 @@ import {
 } from '../../../shared/trigger-line'
 import { chartObjectTokenAt } from '../../../../compiler/scripts/lib/03-object-token.mjs'
 import { notify } from '../lib/notify'
+import { minimalChange } from '../lib/minimalChange'
 import { hasOpenObjectBlock } from './objectBlocks/field'
 import { relocateBlock } from './slideOutline'
+import { reLevelHeadingLines } from '../../../shared/heading-relevel'
 
 const INDENT = '  ' // one list level = two spaces
 
@@ -264,16 +266,8 @@ function siblingBlock(
 // is the mask slice aligned with `block`). Invariant: cross-container moves only SHALLOW the tree
 // (the destination parent is always shallower than the block root, so delta ≤ 0 and the shifted
 // levels stay within 2–6) — the 1–6 clamp is unreachable in practice and kept purely as defence.
-function reLevelLines(block: string[], delta: number, fenced?: boolean[]): string[] {
-  if (delta === 0) return block.slice()
-  return block.map((l, idx) => {
-    if (fenced && fenced[idx]) return l
-    const m = l.match(/^(#{1,6})(\s.*)$/)
-    if (!m) return l
-    const n = Math.max(1, Math.min(6, m[1].length + delta))
-    return '#'.repeat(n) + m[2]
-  })
-}
+// The shared helper (shared/heading-relevel.ts), also used by the section insert.
+const reLevelLines = reLevelHeadingLines
 
 // Cross-container heading move (spec §5, decision Q5). When a heading block has NO same-level
 // sibling in `dir` and the blocker is a heading boundary, the whole block (subtree included)
@@ -357,18 +351,8 @@ function offsetOfLine(lines: string[], lineIdx: number, col: number): number {
 // trimmed). A full `from:0,to:end` replace makes CodeMirror treat the whole doc as new and DROP its
 // scroll anchor (the viewport snaps to the top); a minimal change keeps the anchor, so an in-place
 // edit stays exactly where it is. Outliner ops rebuild the whole `lines` array, so we diff here.
-export function minimalChange(oldText: string, newText: string): { from: number; to: number; insert: string } {
-  let start = 0
-  const minLen = Math.min(oldText.length, newText.length)
-  while (start < minLen && oldText.charCodeAt(start) === newText.charCodeAt(start)) start += 1
-  let oldEnd = oldText.length
-  let newEnd = newText.length
-  while (oldEnd > start && newEnd > start && oldText.charCodeAt(oldEnd - 1) === newText.charCodeAt(newEnd - 1)) {
-    oldEnd -= 1
-    newEnd -= 1
-  }
-  return { from: start, to: oldEnd, insert: newText.slice(start, newEnd) }
-}
+// One implementation, shared with the workspace's buffer-first mutations (lib/minimalChange.ts).
+export { minimalChange }
 
 function applyDoc(view: EditorView, lines: string[], caretLine: number, caretCol: number): boolean {
   const newText = lines.join('\n')

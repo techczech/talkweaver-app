@@ -22,9 +22,10 @@ interface Props {
   vaultRoot: string
   isOpen: boolean
   onClose: () => void
-  /** Awaited before any disk read/write, so a live editor buffer's autosave lands first. */
+  /** Awaited before the panel reads the outline from disk, so a live editor buffer's autosave lands first. */
   flushBeforeIO?: () => Promise<void>
-  /** Called with the outline's new full text after every disk write (adoption path). */
+  /** Called with the outline's new full text after every write. An open talk's write already went
+   *  into its editor buffer (main routes it there, one-writer spec D1), so nothing needs adopting. */
   onSaved?: (outlinePath: string, content: string) => void
 }
 
@@ -124,7 +125,7 @@ export default function MetadataPanel({ talk, vaultRoot, isOpen, onClose, flushB
   const writeEdits = useCallback(
     async (edits: Array<{ key: string; value: string | null; aliases?: string[] }>): Promise<boolean> => {
       if (!talk) return false
-      await flushBeforeIO?.()
+      // No flush first: main edits the open talk's BUFFER (talk-writer.ts), not the file behind it.
       const res = await window.tw.metadata.editFrontmatter(talk.outlinePath, edits)
       if (!res.ok) {
         // Human-readable failure + recovery, never a raw code (Gate-5). Nothing was written.
@@ -142,7 +143,7 @@ export default function MetadataPanel({ talk, vaultRoot, isOpen, onClose, flushB
       if (res.changed) onSaved?.(talk.outlinePath, res.content)
       return true
     },
-    [talk, flushBeforeIO, onSaved]
+    [talk, onSaved]
   )
 
   async function handleSave() {

@@ -5,6 +5,7 @@ import {
 } from '../../../shared/layout-registry/vocabulary.ts'
 import { isContainerContext, optionGroupsForSlide } from '../../../shared/layout-registry/options.ts'
 import { deckCommitContext } from '../../../shared/deck-frame.ts'
+import { isStatementOptionGroup, statementSelections } from '../../../shared/statement-options.ts'
 import { LAYOUTS as REGISTRY_LAYOUTS } from '../../../shared/layout-registry/entries.ts'
 import {
   applyLayoutSelection,
@@ -97,7 +98,9 @@ export function optionGroupsForPickerEntry(
     .filter((applicable) => applicable.source === 'entry' && applicable.owner?.name === entry.name)
     .map(({ group }) => ({
       group,
-      selectedToken: selectionForGroup(triggerLine, group)
+      // Ticket 02: a statement's choices light what the line means, the older one-word options
+      // ({statement=tint} → Halo + Left bar) included.
+      selectedToken: isStatementOptionGroup(group.key) ? statementSelections(triggerLine)[group.key] ?? '' : selectionForGroup(triggerLine, group)
     }))
 }
 

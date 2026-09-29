@@ -63,6 +63,8 @@ function deriveSlideStatus(index, ctx) {
 // clickable, searchable list; expanded = scaled-thumbnail grid. Keyboard: type to filter, Up/Down
 // move a highlight, Enter jumps to the highlight (or the top-ranked result) and closes, Esc closes.
 // Shown/skipped markers render only when host.isPresenter and host.getStatus returns a status.
+// host.statusIcon(status), when given, draws a marker (the presenter's lucide icons, ticket 08);
+// without it, or when it returns nothing, the marker is the text glyph.
 function createOverview(host) {
   let expanded = false;
   let highlight = 0;           // index into the current visible order
@@ -142,7 +144,9 @@ function createOverview(host) {
         const markerEl = document.createElement("span");
         markerEl.className = "tw-status";
         markerEl.setAttribute("aria-hidden", "true");
-        markerEl.textContent = statusGlyph[status.status];
+        const icon = host.statusIcon ? host.statusIcon(status.status) : null;
+        if (icon) markerEl.appendChild(icon);
+        else markerEl.textContent = statusGlyph[status.status];
         label.appendChild(markerEl);
       }
       const titleEl = document.createElement("span");

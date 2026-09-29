@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { dirname } from 'path'
-import type { PollStateMessage, SlideState } from '../../worker/protocol'
+import type { InstantSlide, PollStateMessage, SlideState } from '../../worker/protocol'
 import type { RecoveredVoteRecord } from '../../worker/recovery-protocol'
 import type { LiveStatus, PendingPollOperation } from './live-presenter-client'
+import type { RunInstantSlide } from './runs'
 
 export interface SessionRecoveryRecord {
   sessionId: string
@@ -22,6 +23,11 @@ export interface SessionRecoveryRecord {
   voteRecords: RecoveredVoteRecord[]
   cursor: number
   latest: SlideState | null
+  instantSlide?: InstantSlide | null
+  /** Every instant slide shown in this session, in the Run's form, until it is flushed onto the Run. */
+  instantHistory?: RunInstantSlide[]
+  /** The presenter's slide id at the moment each instant slide was shown, keyed `<kind>-<shownAt>`. */
+  instantAnchors?: Record<string, string | null>
   runId?: string
 }
 interface Cipher {

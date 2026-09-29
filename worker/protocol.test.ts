@@ -1,7 +1,44 @@
 import { describe, expect, test } from 'bun:test'
+import { parseRecoveryServerMessage, parseRecoveryClientMessage } from './recovery-protocol'
+
+test('presence validates counts while older recovery snapshots remain readable', () => {
+  expect(parseRecoveryServerMessage('{"type":"session.presence","presenterConnected":false,"venueScreens":2}'))
+    .toEqual({ type: 'session.presence', presenterConnected: false, venueScreens: 2 })
+  expect(parseRecoveryServerMessage('{"type":"session.presence","presenterConnected":false,"venueScreens":-1}')).toBeNull()
+  const old = { type: 'session.snapshot', protocol: 2, syncId: 'sync-old-client', sessionId: 'session-one',
+    expiresAt: 12345, slideState: null, polls: [] }
+  expect(parseRecoveryServerMessage(JSON.stringify(old))).toMatchObject(old)
+})
+
+test('recovery preserves gallery state in presenter sync and venue snapshot', () => {
+  const slideState = { slideId: 'gallery', reveal: 0, focus: null, lightbox: { open: true, index: 1 } }
+  expect(parseRecoveryClientMessage(JSON.stringify({ type: 'session.sync', syncId: 'gallery-sync-1', slideState })))
+    .toMatchObject({ slideState })
+  expect(parseRecoveryServerMessage(JSON.stringify({ type: 'session.snapshot', protocol: 2,
+    syncId: 'gallery-sync-1', sessionId: 'session-one', expiresAt: 12345,
+    slideState: { type: 'slide.state', ...slideState, revision: 4 }, polls: [] })))
+    .toMatchObject({ slideState: { ...slideState, revision: 4 } })
+})
+test('recovery preserves the talk QR overlay in presenter sync and venue snapshot', () => {
+  const slideState = { slideId: 'slide-2', reveal: 0, focus: null, talkQr: true }
+  expect(parseRecoveryClientMessage(JSON.stringify({ type: 'session.sync', syncId: 'qr-sync-1', slideState })))
+    .toMatchObject({ slideState })
+  expect(parseRecoveryServerMessage(JSON.stringify({ type: 'session.snapshot', protocol: 2,
+    syncId: 'qr-sync-1', sessionId: 'session-one', expiresAt: 12345,
+    slideState: { type: 'slide.state', ...slideState, revision: 5 }, polls: [] })))
+    .toMatchObject({ slideState: { ...slideState, revision: 5 } })
+})
 import { parseAudienceMessage, parsePresenterMessage, parsePresenterServerMessage } from './protocol'
 
 describe('presenter message protocol', () => {
+  test('validates instant slides and clear without accepting an unbounded payload', () => {
+    const slide = { kind: 'countdown', shownAt: 1000, startedAt: 1000, durationMs: 300000, label: 'Discussion' }
+    expect(parsePresenterMessage(JSON.stringify({ type: 'instant.show', slide }))).toEqual({ type: 'instant.show', slide })
+    expect(parsePresenterMessage('{"type":"instant.clear"}')).toEqual({ type: 'instant.clear' })
+    expect(parsePresenterMessage(JSON.stringify({ type: 'instant.show', slide: { ...slide, durationMs: -1 } }))).toBeNull()
+    expect(parsePresenterMessage(JSON.stringify({ type: 'instant.show', slide: { kind: 'text', text: 'a'.repeat(2001), shownAt: 1 } }))).toBeNull()
+    expect(parsePresenterMessage(JSON.stringify({ type: 'instant.show', slide: { kind: 'link', url: 'javascript:alert(1)', qrSvg: '<svg/>', shownAt: 1 } }))).toBeNull()
+  })
   test('accepts a valid slide publish event', () => {
     expect(parsePresenterMessage(JSON.stringify({
       type: 'slide.publish', slideId: 'slide-4', reveal: 3, focus: { kind: 'focus', step: 2 },
@@ -11,6 +48,21 @@ describe('presenter message protocol', () => {
       reveal: 3,
       focus: { kind: 'focus', step: 2 },
     })
+  })
+
+  test('validates gallery state on slide publish', () => {
+    const base = { type: 'slide.publish', slideId: 'slide-4', reveal: 0, focus: null }
+    expect(parsePresenterMessage(JSON.stringify({ ...base, lightbox: { open: true, index: 1 } })))
+      .toEqual({ ...base, lightbox: { open: true, index: 1 } })
+    expect(parsePresenterMessage(JSON.stringify({ ...base, lightbox: { open: true, index: -1 } }))).toBeNull()
+    expect(parsePresenterMessage(JSON.stringify({ ...base, lightbox: { open: 'yes', index: 0 } }))).toBeNull()
+  })
+
+  test('validates the talk QR overlay flag on slide publish', () => {
+    const base = { type: 'slide.publish', slideId: 'slide-4', reveal: 0, focus: null }
+    expect(parsePresenterMessage(JSON.stringify({ ...base, talkQr: true }))).toEqual({ ...base, talkQr: true })
+    expect(parsePresenterMessage(JSON.stringify({ ...base, talkQr: false }))).toEqual(base)
+    expect(parsePresenterMessage(JSON.stringify({ ...base, talkQr: 'yes' }))).toBeNull()
   })
 
   test('normalises an omitted focus state for an older presenter', () => {

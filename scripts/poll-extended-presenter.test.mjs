@@ -119,6 +119,7 @@ try {
     { type: 'categorisation', labels: ['Individual', 'Shared'], allowSkip: false },
   ]
   for (const spec of quickCases) {
+    await page.locator('#presenterMenuPoll').click() // in the Poll menu since presenter redesign ticket 04
     await page.locator('#presenterQuickPollButton').click()
     assert.equal(await compose.isVisible(), true)
     await compose.locator(`[data-quick-poll-type="${spec.type}"]`).click()

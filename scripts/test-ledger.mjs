@@ -307,6 +307,22 @@ check("duplicateSlide wrapper returns text and still de-duplicates the id", () =
   assert.equal(new Set(ids).size, ids.length);
 });
 
+// Tilde fences (listSlideBlocks shares the compiler's fence parser): a `### …` line inside a `~~~`
+// or `~~~~` fence is code, not a slide — duplication copies it as part of its slide and can never
+// target it.
+check("duplicate: a heading inside a tilde fence is part of its slide, never a target", () => {
+  for (const [open, close] of [["~~~", "~~~"], ["~~~~md", "~~~~"]]) {
+    const src = `### Alpha {id=ab12c}\n\n${open}\n### Fake inside {id=zz999}\n${close}\n\n- a\n\n### Gamma\n\n- g\n`;
+    assert.deepEqual(listSlideBlocks(src).map((b) => b.heading), ["### Alpha {id=ab12c}", "### Gamma"]);
+    const { text, minted } = duplicateSlideWithLineage(src, refOf(src, 0), () => 0.123456789);
+    assert.ok(minted && minted.fromId === "ab12c", "the real slide's id is the one copied");
+    assert.equal((text.match(/### Fake inside \{id=zz999\}/g) || []).length, 2, "the fenced line travels with its slide, untouched");
+    assert.equal((text.match(/### Gamma/g) || []).length, 1, "the next slide is not copied");
+    assert.ok(text.indexOf("### Gamma") > text.lastIndexOf(close), "the copy (fence included) sits before the next slide");
+    assert.throws(() => duplicateSlideWithLineage(src, { heading: "### Fake inside {id=zz999}", occurrence: 1 }));
+  }
+});
+
 check("detachSlideId swaps the id in place and reports old/new", () => {
   const r = detachSlideId(DUP_SRC, refOf(DUP_SRC, 0));
   assert.ok(r && r.oldId === "ab12c" && r.newId !== "ab12c");

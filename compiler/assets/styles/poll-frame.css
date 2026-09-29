@@ -15,7 +15,7 @@
 .slide[data-title-layout] .slide-content > .poll-frame { align-self: stretch; }
 /* The live projection mounts the live frame directly after the compiled one (poll-projection.js);
    the pair occupies ONE slot. The hidden compiled frame must not turn the live frame into a
-   "trailing sibling" — stage.css @order 1357 would otherwise re-row it with a 5vh margin-top and
+   "trailing sibling" — stage.css @order 1357 would otherwise re-row it with a 5cqh margin-top and
    grow the stage by exactly that margin. */
 .slide[data-title-layout] .slide-content > .poll-frame ~ .poll-frame {
   grid-row: 1 / span 99 !important;

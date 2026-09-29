@@ -3,19 +3,30 @@
   .icon-row .ir-item {
     flex: 1 1 0;
     min-width: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
+    /* ADR-0028 §5: each column is a two-row subgrid of the row (layouts/icon-row.css), so every
+       column's items start at one height even when one heading wraps: row 1 = icon + label, row 2 =
+       the items. Its top padding rides --list-gap (fitLists' spacing step; was .9em). */
+    grid-row: span 2;
+    display: grid;
+    grid-template-rows: subgrid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: .4em;
+    row-gap: 0;
+    align-items: center;
     text-align: left !important;
-    gap: 0;
-    padding: .9em 0 0;
+    padding: calc(.35em * var(--list-gap, 1)) 0 0;
   }/* @order 1539 */
   .icon-row .ir-item .ir-icon {
-    margin: 0 .55em 0 0;
+    /* ADR-0028 §5: the icon sits inline beside the label, 1.35em of the body (~55px at 1280; was a
+       1.1em-of-dense float, ~37px). */
+    margin: 0;
     display: inline-flex;
     vertical-align: middle;
-    float: left;
-  }/* @order 1540 */
+    float: none;
+    width: 1.35em;
+    height: 1.35em;
+  }
+  .icon-row .ir-item .ir-icon > svg { width: 100%; height: 100%; }/* @order 1540 */
   .icon-row .ir-item .ir-label {
     font-weight: 600;
     font-size: 1.15em;
@@ -27,13 +38,31 @@
     gap: .55em;
   }/* @order 1541 */
   .icon-row .ir-item .ir-label::before { content: none; }/* @order 1542 */
-  .icon-row .ir-item .ir-desc { width: 100%; margin-top: .7em; }/* @order 1543 */
+  .icon-row .ir-item .ir-desc { width: 100%; grid-column: 1 / -1; align-self: start; margin-top: calc(.3em * var(--list-gap, 1)); }/* @order 1543 */
   .icon-row .ir-item .ir-desc li { text-align: left; overflow-wrap: break-word; }/* @order 1578 */
   .icon-row { font-size: .8em; }/* @order 1579 */
   .icon-row .ir-item .ir-desc li { color: var(--ink); font-size: .88em; }/* @order 1633 */
   .icon-row { font-size: .62em; }/* @order 1634 */
-  .icon-row .ir-item .ir-label { min-height: 2.6em; display: flex; align-items: center; }/* @order 1635 */
-  .icon-row .ir-item .ir-desc li { min-height: 2.4em; display: flex; align-items: center; }/* @order 1669 */
-  .icon-row { font-size: var(--fs-dense) !important; }/* @order 1670 */
-  .icon-row .ir-item .ir-label { font-size: 1.1em; font-weight: 500; }/* @order 1671 */
-  .icon-row .ir-item .ir-desc li { font-size: .92em; }
+  .icon-row .ir-item .ir-label {
+    /* ADR-0028 §5: the shared heading row (subgrid) replaces the fixed 2.6em / 2.4em min-heights
+       that lined the columns up. */
+    min-height: 0; display: flex; align-items: center;
+  }/* @order 1635 */
+  .icon-row .ir-item .ir-desc li { min-height: 0; display: flex; align-items: center; }/* @order 1669 */
+  .icon-row {
+    /* ADR-0028 §5 (amends ADR-0005): icon rows read at the body size, not the dense step; the
+       gutter between columns tightens 2em -> 1.5em. */
+    font-size: var(--fs-body) !important; gap: 0 1.5em;
+  }/* @order 1670 */
+  .icon-row .ir-item .ir-label { font-size: 1.15em; font-weight: 700; line-height: 1.2; }/* @order 1671 */
+  .icon-row .ir-item .ir-desc li {
+    /* Item lines already take the body size and the --list-lh leading from the global list floor
+       (base.css @order 0814, which outranks this rule); their padding rides --list-gap. */
+    font-weight: 400;
+    padding: calc(.15em * var(--list-gap, 1)) 0;
+  }
+  /* Narrow stages (the base.css 950px container query wraps icon rows): two columns per row; each
+     item still spans a heading row and an items row. */
+  @container (max-width: 950px) {
+    .slide-content > .icon-row { grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }

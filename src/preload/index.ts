@@ -1,6 +1,12 @@
+import type { EditorDocumentReply, EditorDocumentRequest } from '../shared/editor-document'
+import type { OutlineChangedOnDiskRefusal, OutlineDiskAccept, OutlineDiskChange, OutlineRecoveryCopy } from '../shared/outline-disk-change'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { PaletteCommandHandlerId } from '../shared/command-registry'
 import type { LayoutDoctorFinding } from '../shared/layout-doctor'
+import type { SharedTalkInspection, SharedTalkState } from '../shared/shared-talk'
+import type { FeedbackList, FeedbackStatus, FeedbackSummary } from '../shared/feedback'
+import type { AcceptRecord } from '../shared/feedback-accept'
+import type { TalkFolderCount, TalkSearchOptions, TalkSearchResult } from '../shared/talk-search'
 import type { TalkTextModel } from '../main/talkText'
 import type { DraftPart, NotesPart } from '../main/rewritePack'
 import type { CleanMode, CleanPrepareOptions, TalkTextExportOptions } from '../main/talkTextIpc'
@@ -18,6 +24,7 @@ import type {
 } from '../shared/importer'
 
 export type { TalkTextModel, DraftPart, NotesPart, CleanMode, CleanPrepareOptions, TalkTextExportOptions }
+export type { TalkFolderCount, TalkSearchOptions, TalkSearchResult, TalkSearchHit, TalkMatchLine } from '../shared/talk-search'
 export type {
   ImportPackRequest,
   ImportProgress,
@@ -139,6 +146,9 @@ export type ProjectionRow = {
   render_hash: string
   /** Per-slide compiler warnings (e.g. `iconlist-no-icons:<slide-id>`); surfaced as a slide badge. */
   warnings?: string[]
+  /** ADR-0028 §10: the compiled title regime — 'left' (rail), 'top', 'hidden' (no title painted)
+   *  or '' (structural). Absent on rows cached before it existed: read as not known. */
+  title_layout?: string
 }
 
 // One recorded version of a slide id in the vault's version store (_SLIDE-VERSIONS), as
@@ -256,7 +266,25 @@ export type RecordingSession = {
   // highlight = live highlight change (marks = count; ranges = reconstructed text spans when available) ·
   // pause/resume. All on the recording clock.
   slideTimeIndex: Array<{ event: string; slideId?: string; tMs: number; hidden?: number; marks?: number; ranges?: HighlightRange[] }>
+  /** Instant slides shown during a live session (ticket 07), oldest first. */
+  instantSlides?: RunInstantSlide[]
 }
+
+export type RunInstantSlide = {
+  id: string
+  kind: 'text' | 'link' | 'time' | 'countdown' | 'image'
+  shownAt: number
+  afterSlideId: string | null
+  text?: string
+  url?: string
+  durationMs?: number
+  label?: string
+  dataUrl?: string
+  width?: number
+  height?: number
+  added?: { afterSlideNumber: number; afterSlideTitle: string; slideId: string; at: string }
+}
+export type { EditorDocumentReply, EditorDocumentRequest }
 
 // Metadata Registry surfaces (ADR-0036). The registry itself (key definitions, explanations,
 // vocabularies) is shared code — src/shared/metadata-registry.ts — imported directly by the
@@ -428,8 +456,49 @@ const api = {
     }
   },
   talk: {
-    readOutline: (outlinePath: string): Promise<string | null> =>
-      ipcRenderer.invoke('talk:read-outline', outlinePath),
+    // `forEditor`: only the editor's own load (and Reload) — its text becomes the external-change
+    // guard's baseline for the file (shared-talk ticket 01).
+    readOutline: (outlinePath: string, opts?: { forEditor?: boolean }): Promise<string | null> =>
+      ipcRenderer.invoke('talk:read-outline', outlinePath, opts),
+    // External-change guard: the file's text + version on disk now (Reload), and accepting the version
+    // the person saw (Keep mine / Reload); a newer change refuses with it.
+    outlineDiskVersion: (outlinePath: string): Promise<{ text: string; hash: string } | null> =>
+      ipcRenderer.invoke('talk:outline-disk-version', outlinePath),
+    // `keepPending`: a save follows (Keep mine, Save it again, Save again) — the difference stays until it lands.
+    acceptOutlineDiskVersion: (outlinePath: string, hash: string, opts?: { keepPending?: boolean }): Promise<OutlineDiskAccept> =>
+      ipcRenderer.invoke('talk:outline-accept-disk', outlinePath, hash, opts),
+    // The recovery copy a refused save kept for this talk (userData/recovery), and dropping it.
+    outlineRecovery: (outlinePath: string): Promise<OutlineRecoveryCopy | null> =>
+      ipcRenderer.invoke('talk:outline-recovery', outlinePath),
+    discardOutlineRecovery: (outlinePath: string): Promise<boolean> =>
+      ipcRenderer.invoke('talk:outline-recovery-discard', outlinePath),
+    // The talk was removed on disk and the person chose Discard: main stops guarding it.
+    discardRemovedOutline: (outlinePath: string): Promise<boolean> =>
+      ipcRenderer.invoke('talk:outline-discard', outlinePath),
+    // Main's push: the window is closing (or ⌘Q) while its talk differs from the disk — show the sheet.
+    onCloseRequested: (cb: (request: { quit: boolean }) => void): (() => void) => {
+      const listener = (_e: unknown, request: { quit: boolean }): void => cb(request)
+      ipcRenderer.on('outline:close-requested', listener)
+      return () => ipcRenderer.removeListener('outline:close-requested', listener)
+    },
+    // The close request arrived (the sheet is up): main's 5-second fallback close is off.
+    ackCloseRequest: (): Promise<boolean> => ipcRenderer.invoke('window:close-request-ack'),
+    // The sheet's choice completed: close (and quit, when ⌘Q asked).
+    confirmClose: (opts: { quit: boolean }): Promise<boolean> =>
+      ipcRenderer.invoke('window:confirm-close', opts),
+    // Main's push: the open talk's outline changed on disk (change), or no longer differs (null).
+    onOutlineChangedOnDisk: (cb: (event: { outlinePath: string; change: OutlineDiskChange | null }) => void): (() => void) => {
+      const listener = (_e: unknown, event: { outlinePath: string; change: OutlineDiskChange | null }): void => cb(event)
+      ipcRenderer.on('outline:changed-on-disk', listener)
+      return () => ipcRenderer.removeListener('outline:changed-on-disk', listener)
+    },
+    // Insert section (talk search 07): the section headed at `at` in the talk at `sourceOutlinePath`,
+    // read as the talk stands now (its open buffer, else the file). Read-only.
+    extractSection: (
+      sourceOutlinePath: string,
+      at: { line: number; heading: string }
+    ): Promise<{ ok: true; markdown: string; level: number; slides: number; line: number } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('talk:extract-section', sourceOutlinePath, at),
     // Truthy on success (callers only truth-test it); `collisions` lists slide ids saved into a
     // second talk while another head exists (Slide Ledger, ADR-0032). False on write failure.
     // `{ ok: false, refused: 'empty-over-nonempty' }` when the data-loss backstop declined to
@@ -438,10 +507,12 @@ const api = {
     // bytes on disk: it is the STAMPED text the main process actually wrote. The caller should
     // adopt it into its buffer (Editor.tsx does, via minimalChange) so the next save sends
     // already-stamped text — otherwise the main process falls back to id reuse by heading.
+    // `{ ok: false, refused: 'changed-on-disk', change }`: the file changed on disk since the editor read
+    // it (external-change guard) — nothing was written until the person picks Reload or Keep mine.
     writeOutline: (
       outlinePath: string,
       content: string
-    ): Promise<{ ok: true; collisions: string[]; content?: string } | { ok: false; refused: 'empty-over-nonempty' } | false> =>
+    ): Promise<{ ok: true; collisions: string[]; content?: string } | { ok: false; refused: 'empty-over-nonempty' } | OutlineChangedOnDiskRefusal | false> =>
       ipcRenderer.invoke('talk:write-outline', outlinePath, content),
     compile: (outlinePath: string, content: string): Promise<ProjectionRow[] | null> =>
       ipcRenderer.invoke('talk:compile', outlinePath, content),
@@ -507,8 +578,8 @@ const api = {
     ): Promise<{ success: boolean; path?: string; error?: string }> =>
       ipcRenderer.invoke('talk:export-handout', outlinePath, content),
     // Publish the handout to the user's Cloudflare Pages site (Settings → Publishing). Returns the
-    // live URL; `updatedOutline` reflects the handout_url stamp written into the outline (the
-    // renderer must adopt it so autosave doesn't erase the stamp).
+    // live URL; `updatedOutline` reports the handout_url stamp main wrote through the one writer (the
+    // renderer does not adopt it: it stamps its own buffer as it stands, WorkspaceLayout).
     publishHandout: (
       outlinePath: string,
       content: string
@@ -598,6 +669,9 @@ const api = {
       baseUrl: string
       workerBaseUrl: string
       useShortIds: boolean
+      // Share link domain (ticket 07): the bare host, e.g. "drafts.handouts.fyi" — '' when unset,
+      // in which case a colleague's share link falls back to the live Worker's own origin.
+      shareDomain: string
       hasToken: boolean
     }> => ipcRenderer.invoke('publish:get-config'),
     setConfig: (cfg: {
@@ -606,7 +680,10 @@ const api = {
       baseUrl: string
       workerBaseUrl: string
       useShortIds: boolean
-    }): Promise<{ success: boolean }> => ipcRenderer.invoke('publish:set-config', cfg),
+      shareDomain: string
+      // Invalid shareDomain (not a bare hostname): refused whole, with a plain-language error, and
+      // never saved — see isValidShareDomain in src/shared/shared-talk.ts.
+    }): Promise<{ success: boolean; error?: string }> => ipcRenderer.invoke('publish:set-config', cfg),
     setToken: (token: string): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke('publish:set-token', token),
     clearToken: (): Promise<{ success: boolean }> => ipcRenderer.invoke('publish:clear-token')
@@ -640,8 +717,29 @@ const api = {
       ipcRenderer.invoke('abstract:write', talkPath, raw)
   },
   outline: {
-    reorder: (outlinePath: string, fromIndex: number, toIndex: number): Promise<string | null> =>
-      ipcRenderer.invoke('outline:reorder', outlinePath, fromIndex, toIndex),
+    // Live-presenting ticket 07: main routes an "Add to talk" insertion through the editor that has
+    // the talk open (read its buffer, then apply-if-unchanged). The handler's result is the reply.
+    onEditorDocumentRequest: (handler: (request: EditorDocumentRequest) => Promise<EditorDocumentReply>): (() => void) => {
+      const listener = (_e: unknown, request: EditorDocumentRequest): void => {
+        void Promise.resolve().then(() => handler(request))
+          .catch((): EditorDocumentReply => ({ ok: false, error: 'The editor could not apply the change.' }))
+          .then((reply) => ipcRenderer.invoke('outline:editor-reply', request.requestId, reply))
+      }
+      ipcRenderer.on('outline:editor-request', listener)
+      return () => ipcRenderer.removeListener('outline:editor-request', listener)
+    },
+    // The outline's real file (symlinks resolved). null for an empty path.
+    canonicalPath: (outlinePath: string): Promise<string | null> =>
+      ipcRenderer.invoke('outline:canonical-path', outlinePath),
+    // The file's identity (one-writer spec D3): `key` is device + inode (the real path while the file
+    // does not exist yet), so every alias of one outline — symlink, linked folder, hard link — shares
+    // one save queue (lib/saveQueue.ts). Resolved on every write. null for an empty path.
+    identity: (outlinePath: string): Promise<{ key: string; realPath: string } | null> =>
+      ipcRenderer.invoke('talk:outline-identity', outlinePath),
+    // The outline with grid block `fromIndex` moved to `toIndex`, worked out on `content` (the open
+    // editor's buffer) or, without it, on the file. Writes nothing. null when the move is not possible.
+    reorder: (outlinePath: string, fromIndex: number, toIndex: number, content?: string): Promise<string | null> =>
+      ipcRenderer.invoke('outline:reorder', outlinePath, fromIndex, toIndex, content),
     // Pin (or clear, iconKey=null) the icon on ONE top-level list item of a slide, by writing the
     // canonical `{icon=KEY}` token at the end of that bullet's line. The item is addressed by its
     // 0-based position among the slide block's top-level list-item lines (the same indexing the
@@ -658,6 +756,21 @@ const api = {
     // replaced (Trigger Dictionary), {id=…} and every other token kept verbatim (ADR-0032).
     mergeTrigger: (content: string, lineNumber: number, trigger: string): Promise<string | null> =>
       ipcRenderer.invoke('outline:merge-trigger', content, lineNumber, trigger)
+  },
+  talks: {
+    // Talk search (ADR-0029 §1, §2): ranked talks for plain words and field prefixes, each with the line saying what
+    // matched; `within` limits results to a folder (vault-relative) and its subfolders.
+    search: (query: string, options?: TalkSearchOptions): Promise<TalkSearchResult> =>
+      ipcRenderer.invoke('talks:search', query, options ?? {}),
+    // The fo: completion source: every folder holding talks (any depth), with the talks directly
+    // in it; ancestors listed with 0. Same talk scan as search.
+    folders: (): Promise<TalkFolderCount[]> => ipcRenderer.invoke('talks:folders'),
+    // Folders left open or closed in the Talks browser (ADR-0029 §3), for the current vault:
+    // vault-relative folder path → open. Stored in <userData>/config.json (`talkListFolders`).
+    folderState: (): Promise<Record<string, boolean>> => ipcRenderer.invoke('talks:folder-state'),
+    // Merge choices (path → open) and persist; resolves to the vault's stored map.
+    setFolderState: (changes: Record<string, boolean>): Promise<Record<string, boolean>> =>
+      ipcRenderer.invoke('talks:set-folder-state', changes)
   },
   search: {
     // Accepts either a bare string (legacy all-fields all-words) or the renderer's structured,
@@ -733,7 +846,14 @@ const api = {
       success: boolean; url?: string; path?: string; slideIds?: string[]; missing?: string[]; error?: string
     }> => ipcRenderer.invoke('run:publish-handout', { talkSlug, runId }),
     unpublishRunHandout: (talkSlug: string, runId: string): Promise<{ success: boolean; error?: string }> =>
-      ipcRenderer.invoke('run:unpublish-handout', { talkSlug, runId })
+      ipcRenderer.invoke('run:unpublish-handout', { talkSlug, runId }),
+    // Live-presenting ticket 07 (L6): where each recorded instant slide's anchor sits in the talk NOW
+    // (null = that slide is no longer in the talk), and "Add to talk" for one of them.
+    instantAnchors: (talkSlug: string, runId: string): Promise<Record<string, { slideNumber: number; title: string } | null>> =>
+      ipcRenderer.invoke('history:instant-anchors', { talkSlug, runId }),
+    addInstantSlide: (talkSlug: string, runId: string, entryId: string): Promise<
+      { ok: true; afterSlideNumber: number; afterSlideTitle: string; run: RecordingSession; warning?: string } | { ok: false; error: string }
+    > => ipcRenderer.invoke('history:add-instant-slide', { talkSlug, runId, entryId })
   },
   replay: {
     // Build a fresh present HTML for this Talk and return a twpresent:// replay iframe URL.
@@ -961,6 +1081,46 @@ const api = {
     open: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('window:new'),
     claimTalk: (outlinePath: string | null): Promise<{ ok: boolean; reason?: string }> =>
       ipcRenderer.invoke('window:claim-talk', outlinePath)
+  },
+  // Share for comments (ticket 03). The owner token stays in main; these states never carry it.
+  sharedTalk: {
+    status: (outlinePath: string): Promise<SharedTalkState | null> => ipcRenderer.invoke('shared-talk:status', outlinePath),
+    // The sheet's first look: this Mac's share, or a share_url in the outline from another Mac.
+    inspect: (outlinePath: string): Promise<SharedTalkInspection> => ipcRenderer.invoke('shared-talk:inspect', outlinePath),
+    list: (): Promise<SharedTalkState[]> => ipcRenderer.invoke('shared-talk:list'),
+    // Creates the share (or returns the talk's existing one) and pushes revision 1.
+    share: (outlinePath: string, title?: string): Promise<{ success: boolean; share?: SharedTalkState; error?: string }> =>
+      ipcRenderer.invoke('shared-talk:share', outlinePath, title),
+    setOptions: (outlinePath: string, options: { liveUpdates?: boolean; proposals?: boolean }): Promise<{ success: boolean; share?: SharedTalkState; error?: string }> =>
+      ipcRenderer.invoke('shared-talk:set-options', outlinePath, options),
+    // "Update shared copy": push the talk as it is now, whatever switch 1 says.
+    update: (outlinePath: string): Promise<{ success: boolean; share?: SharedTalkState; error?: string }> =>
+      ipcRenderer.invoke('shared-talk:update', outlinePath),
+    // serverClosed false: the Worker refused the owner token; the share is stopped here and `message`
+    // says so (the link retires on its own).
+    stop: (outlinePath: string): Promise<{ success: boolean; serverClosed?: boolean; message?: string | null; error?: string }> =>
+      ipcRenderer.invoke('shared-talk:stop', outlinePath),
+    // Fires for every change to any share (created, pushed, failed, options, stopped → state null).
+    // `previousKey`: the same share re-keyed (its outline was replaced by a new file) — one event.
+    onChanged: (cb: (change: { key: string; state: SharedTalkState | null; previousKey?: string }) => void): (() => void) => {
+      const listener = (_event: unknown, change: { key: string; state: SharedTalkState | null; previousKey?: string }): void => cb(change)
+      ipcRenderer.on('shared-talk:changed', listener)
+      return () => ipcRenderer.removeListener('shared-talk:changed', listener)
+    },
+    // Feedback rail (ticket 05). Counts and the owner socket's state for every share.
+    feedbackSummaries: (): Promise<FeedbackSummary[]> => ipcRenderer.invoke('shared-talk:feedback-summaries'),
+    // The talk's feedback as its feedback file holds it (null when the talk is not shared).
+    feedbackList: (outlinePath: string): Promise<FeedbackList | null> => ipcRenderer.invoke('shared-talk:feedback-list', outlinePath),
+    // Done / Dismiss / Accept / back to new (Undo): the file first, then the Worker. An accept carries
+    // the splice it made to the outline (the editor made it; main only records it, for Undo).
+    setFeedbackStatus: (outlinePath: string, itemId: string, status: FeedbackStatus, edit?: AcceptRecord | null): Promise<{ success: boolean; list?: FeedbackList | null; error?: string }> =>
+      ipcRenderer.invoke('shared-talk:feedback-set-status', outlinePath, itemId, status, edit ?? undefined),
+    // Fires when an item arrives, a status changes or the owner socket drops / comes back.
+    onFeedbackChanged: (cb: (change: { shareId: string; summary: FeedbackSummary | null }) => void): (() => void) => {
+      const listener = (_event: unknown, change: { shareId: string; summary: FeedbackSummary | null }): void => cb(change)
+      ipcRenderer.on('shared-talk:feedback-changed', listener)
+      return () => ipcRenderer.removeListener('shared-talk:feedback-changed', listener)
+    }
   },
   // Presentation recording (ADR-0035). The REC control itself lives in the presenter (injected by
   // the recorder bridge, not this API); here is the app-side config for where audio uploads.

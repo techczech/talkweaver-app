@@ -10,7 +10,7 @@
   .slide[data-title-layout="hidden"] .slide-content.layout-statement:has(> .slide-head-quiet) > *:not(.slide-head) {
     grid-column: 1 !important;
     align-self: center;
-    max-width: 12em;
+    max-width: 14em; /* ADR-0028 §1 (was 12em) */
     border-left: 0;
     padding-left: 0;
   }/* @order 1383 */
@@ -19,29 +19,157 @@
   .slide-content.layout-statement > .content-p {
     font-weight: 500;
     font-size: max(38px, 5.4cqw);
-    line-height: 1.3;
+    /* ADR-0028 §1: more line spacing and a longer measure (were 1.3 and 12em); type unchanged. */
+    line-height: 1.5;
     letter-spacing: -.02em;
-    max-width: 12em;
+    max-width: 14em;
   }
 
-  /* {statement=tint}: quote-panel presence without the quotation device or italics. */
-  .slide-content.layout-statement.statement-tint > p,
-  .slide-content.layout-statement.statement-tint > .content-p {
-    background: var(--tint);
+  /* ===== ADR-0028 §10: statement slides, revised (locked 2026-09-28) =====
+     S = a statement paragraph: a direct <p> of the statement layout that is not the kicker or the
+     source line. Unmarked, so these rules sort after every migrated block; the selectors carry
+     .slide[data-layout="statement"] so they also outrank the quiet-head repair (@order 1381),
+     whose max-width / border / padding reset used to strip Tint without a title.
+
+     ONE type and ONE measure for every option (preview.9 follow-up, coordinator ruling): Default,
+     Centred, Tint and Bar all set the statement at the statement size (5.4cqw: 69px without a
+     title; the same rule gives the rail's column its size beside a title) with the same line
+     height, and the same text measure — without a title at most 68cqw, so each side margin is at
+     least 16cqw; beside the rail 14em, centred in the content column. The runtime (slide-fit.js
+     fitStatements) steps a long statement's type down to the quote size before any whole-slide
+     zoom, and shrink-wraps the box to its longest line, for every option alike. The options differ
+     ONLY in the box (ticket 02: separate choices, each with its own hook below): the Halo panel in
+     the slide's sidebar colour (var(--tint), the colour the rail paints), the slide in the colour
+     (Full) or no colour (None); an accent bar left, above or below; Centred also centres and
+     balances its lines. Padding .7em 1em sits OUTSIDE the measure (content-box), and the bar
+     outside the padding, so the text column is identical whatever is chosen.
+
+     An authored {bg=…} (07-assembly: --slide-bg on the section, the slide itself left white when
+     there is a panel) is the panel's colour in place of the section's. border-left 0 so a
+     leftover claim bar (base.css @order 1850) never draws on the Default. */
+  .slide[data-layout="statement"] > .slide-content.layout-statement > p:not(.kicker):not(.slide-source) {
+    background: var(--slide-bg, var(--tint));
+    border-left: 0;
+    box-sizing: content-box;
+    padding: .7em 1em;
+  }
+  .slide[data-layout="statement"]:not([data-title-layout="left"]) > .slide-content.layout-statement > p:not(.kicker):not(.slide-source) {
+    max-width: min(68cqw, calc(100% - 2em));
+  }
+  .slide[data-layout="statement"][data-title-layout="left"] > .slide-content.layout-statement > p:not(.kicker):not(.slide-source) {
+    max-width: min(14em, calc(100% - 2em));
+    justify-self: center;
+  }
+  /* The bar sits outside the padding, so a barred box keeps the same text measure and leaves the
+     bar's width for it inside the column. */
+  .slide[data-layout="statement"]:not([data-title-layout="left"]) > .slide-content.layout-statement.statement-bar-left > p:not(.kicker):not(.slide-source) {
+    max-width: min(68cqw, calc(100% - 2.22em));
+  }
+  .slide[data-layout="statement"][data-title-layout="left"] > .slide-content.layout-statement.statement-bar-left > p:not(.kicker):not(.slide-source) {
+    max-width: min(14em, calc(100% - 2.22em));
+  }
+  /* A multi-part statement reads as ONE box: the parts share it (the runtime gives them one
+     width), the gap between them is the box's own padding. */
+  .slide[data-layout="statement"] > .slide-content.layout-statement > p:not(.kicker):not(.slide-source):has(+ p:not(.kicker):not(.slide-source)) {
+    padding-bottom: 0;
+  }
+  .slide[data-layout="statement"] > .slide-content.layout-statement > p:not(.kicker):not(.slide-source) + p:not(.kicker):not(.slide-source) {
+    margin-top: 0;
+    padding-top: .6em;
+  }
+
+  /* Ticket 02 (Dominik, 29 Sep): the options are separate choices, each with its own hook on
+     .slide-content (07-assembly), so any Background combines with any Alignment and any Bar.
+
+     Alignment — `statement-centred`: centred, balanced lines, with or without a title (beside the
+     rail the text centres in the content column; the older {statement=centred} still stamps it
+     only without a title, as preview.11 rendered it). The one sanctioned exception to "no centred
+     text". Chromium balances up to six lines and the compiler's no-break space covers the rest. */
+  .slide[data-layout="statement"] > .slide-content.layout-statement.statement-centred > p:not(.kicker):not(.slide-source) {
+    text-align: center;
+    text-wrap: balance;
+  }
+
+  /* Background — Halo is the panel above (no hook). `statement-bg-none`: no panel, so no tint and
+     no authored background on the text either (with {bg=…} the authored colour paints the slide,
+     07-assembly). `statement-bg-full` (preview.10's Full colour): the WHOLE slide in the colour —
+     the authored {bg=…} or else the slide's sidebar colour, painted by 07-assembly — and no panel.
+     The text keeps the box's padding either way, so its measure and position are the Halo's. */
+  .slide[data-layout="statement"] > .slide-content.layout-statement.statement-bg-none > p:not(.kicker):not(.slide-source),
+  .slide[data-layout="statement"] > .slide-content.layout-statement.statement-bg-full > p:not(.kicker):not(.slide-source) {
+    background: none;
+  }
+
+  /* Bar — the accent bar (.22em, the sidebar colour's accent) on the box's edge, outside the
+     padding, so the text always clears it by the padding (1em beside, .7em above or below).
+     A multi-part statement is one box: a top bar sits over its first part, a bottom bar under its
+     last. Left is today's Tint (Halo + Left) and Bar (None + Left). */
+  .slide[data-layout="statement"] > .slide-content.layout-statement.statement-bar-left > p:not(.kicker):not(.slide-source) {
     border-left: .22em solid var(--accent);
-    padding: 1.25em 1.5em;
-    max-width: 24em;
-    font-family: var(--sans);
-    font-size: max(31px, 3.4cqw);
-    font-style: normal;
-    line-height: 1.42;
+  }
+  .slide[data-layout="statement"] > .slide-content.layout-statement.statement-bar-top > p:not(.kicker):not(.slide-source):not(p:not(.kicker):not(.slide-source) ~ p) {
+    border-top: .22em solid var(--accent);
+  }
+  .slide[data-layout="statement"] > .slide-content.layout-statement.statement-bar-bottom > p:not(.kicker):not(.slide-source):not(:has(~ p:not(.kicker):not(.slide-source))) {
+    border-bottom: .22em solid var(--accent);
   }
 
-  /* {statement=poster}: sanctioned centred-stage statement block; its lines stay left-aligned. */
-  .slide-content.layout-statement.statement-poster > p,
-  .slide-content.layout-statement.statement-poster > .content-p {
-    font-weight: 500;
-    font-size: clamp(42px, 6.4cqw, 92px);
-    line-height: 1.22;
-    max-width: 12em;
+  /* Sidebar — `statement-rail`: With sidebar on a statement that paints no title (the heading is
+     the statement, or {notitle}). The rail is painted as beside a title, in the slide's sidebar
+     colour, and empty; the statement sits in the content column at the size it takes beside a
+     title. These outrank the quiet-head repairs (@order 1359-1360, 1380-1381) that collapse a
+     nav-only rail into one full-width column. */
+  .slide[data-layout="statement"][data-title-layout="left"]:has(> .slide-content.layout-statement.statement-rail) {
+    padding: 0;
+    background: linear-gradient(to right, var(--tint) 0, var(--tint) var(--rail-w), transparent var(--rail-w));
+  }
+  .slide[data-layout="statement"][data-title-layout="left"] > .slide-content.layout-statement.statement-rail {
+    display: grid !important;
+    width: 100%;
+    max-width: none;
+    min-height: 100%;
+    margin: 0;
+    grid-template-columns: var(--rail-w) 1fr !important;
+    column-gap: clamp(40px, 5cqw, 96px);
+    padding-top: max(6cqh, 61px);
+    padding-bottom: max(6cqh, 61px);
+    padding-right: var(--slide-pad-x);
+    align-content: center;
+    align-items: center;
+  }
+  .slide[data-layout="statement"][data-title-layout="left"] > .slide-content.layout-statement.statement-rail > *:not(.slide-head) {
+    grid-column: 2 !important;
+  }
+  .slide[data-layout="statement"][data-title-layout="left"] > .slide-content.layout-statement.statement-rail > p:not(.kicker):not(.slide-source) {
+    font-size: var(--fs-body);
+  }
+  /* No sidebar beside a painted title (`statement-no-sidebar`): the title goes to the top
+     (07-assembly) and the statement sits centred across the full width below it, as a statement
+     without a title does. A {titletop} statement keeps its preview.11 look. */
+  .slide[data-layout="statement"][data-title-layout="top"] > .slide-content.layout-statement.statement-no-sidebar > p:not(.kicker):not(.slide-source) {
+    align-self: center;
+  }
+
+  /* The statement follows the slide's text-size step (preview.10, Dominik): {font-body=xs|s|m|l|xl}
+     on the slide, or the deck's `triggers:` default, which reaches the slide as the same
+     data-font-body. Other layouts honour the step through --fs-body (overrides.css @order 1686-1690);
+     the statement is 1.6875 × --fs-body, which is exactly its 5.4cqw (69px) at M, and the runtime
+     scales its step-down floor by the same ratio (slide-fit.js fitStatements). Beside the rail the
+     statement is already set at --fs-body (base.css, .content-p beside a left title). A trailing
+     part of a multi-part statement stays the quieter line, at --fs-body. */
+  .slide[data-layout="statement"]:not([data-title-layout="left"]) > .slide-content.layout-statement > p:not(.kicker):not(.slide-source) {
+    font-size: calc(var(--fs-body) * 1.6875);
+  }
+  .slide[data-layout="statement"]:not([data-title-layout="left"]) > .slide-content.layout-statement > p:not(.kicker):not(.slide-source) ~ p:not(.kicker):not(.slide-source) {
+    font-size: var(--fs-body);
+  }
+
+  /* preview.9 fix — {stmt-list}: the statement column is the slide's claim and takes the claim
+     treatment (07-assembly stamps data-claim-style on its paragraphs). Plain is the ADR-0005
+     mockup's plain large type with no bar; the universal .content-p rule (layouts/statement.css
+     @order 0023, specificity 0,4,0) used to outrank the stmt-list reset there and paint a bar on
+     every stmt-list claim. Bar keeps that universal accent bar. */
+  .slide .slide-content.layout-stmt-list .stmt > p.content-p[data-claim-style="plain"] {
+    border-left: 0;
+    padding-left: 0;
   }

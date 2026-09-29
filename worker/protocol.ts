@@ -7,10 +7,18 @@ export interface SlideFocusState {
   step: number
 }
 
+export interface SlideLightboxState {
+  open: boolean
+  index: number
+}
+
 export interface SlideState {
   slideId: string
   reveal: number
   focus: SlideFocusState | null
+  lightbox?: SlideLightboxState
+  /** The talk's QR overlay is up on the projector (venue screens mirror it; phones ignore it). */
+  talkQr?: boolean
 }
 
 export interface SlideStateMessage extends SlideState {
@@ -25,6 +33,15 @@ export interface SessionClosedMessage {
 export interface SlidePublishMessage extends SlideState {
   type: 'slide.publish'
 }
+
+export type InstantSlide =
+  | { kind: 'text'; text: string; shownAt: number }
+  | { kind: 'link'; url: string; qrSvg: string; shownAt: number }
+  | { kind: 'time'; shownAt: number }
+  | { kind: 'countdown'; startedAt: number; durationMs: number; label?: string; shownAt: number }
+  | { kind: 'image'; dataUrl: string; width: number; height: number; shownAt: number }
+export type InstantSlideMessage = { type: 'instant.state'; slide: InstantSlide | null }
+export type PresenterInstantMessage = { type: 'instant.show'; slide: InstantSlide } | { type: 'instant.clear' }
 
 export type PollType = 'single' | 'multiple' | 'open' | 'ranking' | 'rating' | 'categorisation'
 export type PollVisibility = 'live' | 'held'
@@ -103,14 +120,40 @@ export type ReactionMessage =
   | { type: 'reaction.send'; emoji: string }
   | { type: 'reaction.echo'; emoji: string }
 
-export type PresenterMessage = SlidePublishMessage | PresenterPollMessage
+export type PresenterMessage = SlidePublishMessage | PresenterPollMessage | PresenterInstantMessage
 export type AudienceMessage = PollVoteMessage
 export type PresenterServerMessage = PollStateMessage | PollVoteRecordMessage
-export type ServerMessage = SlideStateMessage | SessionClosedMessage | PresenterServerMessage | QuestionMessage | ReactionMessage
+export type ServerMessage = SlideStateMessage | InstantSlideMessage | SessionClosedMessage | PresenterServerMessage | QuestionMessage | ReactionMessage
+
+export function parseInstantSlide(value: unknown): InstantSlide | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const v = value as Record<string, unknown>
+  if (!Number.isSafeInteger(v.shownAt) || Number(v.shownAt) < 0) return null
+  if (v.kind === 'text' && nonEmptyString(v.text) && v.text.length <= 2000) return { kind: 'text', text: v.text, shownAt: Number(v.shownAt) }
+  if (v.kind === 'link' && nonEmptyString(v.url) && v.url.length <= 2048 && /^https?:\/\//i.test(v.url)
+    && typeof v.qrSvg === 'string' && v.qrSvg.length <= 100_000 && /^<svg\b/i.test(v.qrSvg.trim()))
+    return { kind: 'link', url: v.url, qrSvg: v.qrSvg, shownAt: Number(v.shownAt) }
+  if (v.kind === 'time') return { kind: 'time', shownAt: Number(v.shownAt) }
+  if (v.kind === 'image' && typeof v.dataUrl === 'string' && /^data:image\/webp;base64,[A-Za-z0-9+/]+={0,2}$/.test(v.dataUrl)
+    && v.dataUrl.length <= 120_000 && Number.isSafeInteger(v.width) && Number.isSafeInteger(v.height)
+    && Number(v.width) > 0 && Number(v.height) > 0 && Math.max(Number(v.width), Number(v.height)) <= 1600)
+    return { kind: 'image', dataUrl: v.dataUrl, width: Number(v.width), height: Number(v.height), shownAt: Number(v.shownAt) }
+  if (v.kind === 'countdown' && Number.isSafeInteger(v.startedAt) && Number.isSafeInteger(v.durationMs)
+    && Number(v.durationMs) >= 1000 && Number(v.durationMs) <= 86_400_000
+    && (v.label === undefined || (typeof v.label === 'string' && v.label.length <= 120)))
+    return { kind: 'countdown', startedAt: Number(v.startedAt), durationMs: Number(v.durationMs),
+      ...(typeof v.label === 'string' ? { label: v.label } : {}), shownAt: Number(v.shownAt) }
+  return null
+}
 
 export function parsePresenterMessage(value: string): PresenterMessage | null {
   try {
     const message = JSON.parse(value) as Record<string, unknown>
+    if (message.type === 'instant.clear') return { type: 'instant.clear' }
+    if (message.type === 'instant.show') {
+      const slide = parseInstantSlide(message.slide)
+      return slide ? { type: 'instant.show', slide } : null
+    }
     if (message.type === 'poll.open') {
       const poll = parsePollDefinition(message.poll)
       return poll ? { type: 'poll.open', poll } : null
@@ -130,6 +173,7 @@ export function parsePresenterMessage(value: string): PresenterMessage | null {
       }
     }
     const focus = message.focus == null ? null : parseSlideFocus(message.focus)
+    const lightbox = message.lightbox === undefined ? undefined : parseSlideLightbox(message.lightbox)
     if (
       message.type !== 'slide.publish'
       || !nonEmptyString(message.slideId)
@@ -137,8 +181,11 @@ export function parsePresenterMessage(value: string): PresenterMessage | null {
       || !Number.isInteger(message.reveal)
       || message.reveal < 0
       || (message.focus != null && !focus)
+      || (message.lightbox !== undefined && !lightbox)
+      || (message.talkQr !== undefined && typeof message.talkQr !== 'boolean')
     ) return null
-    return { type: 'slide.publish', slideId: message.slideId, reveal: message.reveal, focus }
+    return { type: 'slide.publish', slideId: message.slideId, reveal: message.reveal, focus,
+      ...(lightbox ? { lightbox } : {}), ...(message.talkQr ? { talkQr: true } : {}) }
   } catch {
     return null
   }
@@ -323,6 +370,13 @@ export function parseSlideFocus(value: unknown): SlideFocusState | null {
   return { kind: focus.kind, step: focus.step }
 }
 
+export function parseSlideLightbox(value: unknown): SlideLightboxState | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const lightbox = value as Record<string, unknown>
+  return typeof lightbox.open === 'boolean' && Number.isSafeInteger(lightbox.index) && Number(lightbox.index) >= 0
+    ? { open: lightbox.open, index: Number(lightbox.index) } : null
+}
+
 export function isPollType(value: unknown): value is PollType {
   return typeof value === 'string' && ['single', 'multiple', 'open', 'ranking', 'rating', 'categorisation'].includes(value)
 }
@@ -339,5 +393,242 @@ function pollLimits(poll: Record<string, unknown>): Pick<PollDefinition, 'maxSel
   return {
     ...(poll.maxSelections !== undefined ? { maxSelections: poll.maxSelections as number } : {}),
     ...(poll.maxSubmissions !== undefined ? { maxSubmissions: poll.maxSubmissions as number | null } : {}),
+  }
+}
+
+// ── Shared talk (share for comments) ─────────────────────────────────────────────────────────
+// Wire types for the SharedTalk Durable Object: the owner's pushes, the colleague's items, and
+// the socket events both sides receive. Parsers return a value or a `{error}` naming the first
+// rule the input broke, so the Worker can answer with a precise 400 and clients can reuse them.
+
+export const SHARED_TALK_LIMITS = {
+  htmlChars: 16 * 1024 * 1024,
+  slides: 1_000,
+  slideIdChars: 200,
+  slideTitleChars: 500,
+  slideTextChars: 50_000,
+  itemIdChars: 100,
+  itemTextChars: 20_000,
+  reasonChars: 2_000,
+  sectionChars: 200,
+  nameChars: 80,
+  titleChars: 300,
+  itemsPerShare: 5_000,
+  /** Total UTF-8 bytes of item JSON one share holds; sized well inside Durable Object memory. */
+  itemBytesPerShare: 8 * 1024 * 1024,
+  /** Token bucket on new items per share: `itemBurst` at once, refilled at `itemsPerMinute`. */
+  itemBurst: 30,
+  itemsPerMinute: 30,
+} as const
+
+export interface SharedSlide {
+  slideId: string
+  title: string
+  text: string
+}
+
+export interface SharedTalkPush {
+  revision: number
+  html: string
+  slides: SharedSlide[]
+}
+
+export type SharedItemKind = 'note' | 'replace' | 'delete' | 'insert'
+export const SHARED_ITEM_KINDS: readonly SharedItemKind[] = ['note', 'replace', 'delete', 'insert']
+
+export type SharedItemBody =
+  | { kind: 'note'; slideId: string; text: string }
+  | { kind: 'replace'; slideId: string; baseRevision: number; text: string }
+  | { kind: 'delete'; slideId: string; baseRevision: number; reason?: string }
+  | { kind: 'insert'; afterSlideId: string; baseRevision: number; text: string; section?: string }
+
+/** What the colleague's page posts: the body plus an idempotency key and an optional name. */
+export type SharedItemPost = SharedItemBody & { itemId: string; name?: string }
+
+/** `done` closes a note; `new` reverts (Undo). The owner may move an item between any two. */
+export type SharedItemStatus = 'new' | 'accepted' | 'dismissed' | 'done'
+export const SHARED_ITEM_STATUSES: readonly SharedItemStatus[] = ['new', 'accepted', 'dismissed', 'done']
+export type SharedItemStatusUpdate = SharedItemStatus
+
+function sharedItemStatus(value: unknown): value is SharedItemStatus {
+  return typeof value === 'string' && (SHARED_ITEM_STATUSES as readonly string[]).includes(value)
+}
+
+/** An item as the Worker stores it and as the owner receives it. */
+export type SharedItem = SharedItemPost & {
+  createdAt: number
+  /** Share event sequence at which the item arrived. */
+  seq: number
+  status: SharedItemStatus
+  statusAt?: number
+  /** Share event sequence of the latest status change; equals `seq` while the item is new. */
+  statusSeq: number
+}
+
+export interface SharedTalkJson {
+  shareId: string
+  title: string
+  revision: number
+  updatedAt: number | null
+  slides: SharedSlide[]
+}
+
+/** Audience socket: the owner pushed a new revision; fetch talk.json (or reload the page). */
+export interface TalkUpdatedMessage { type: 'talk.updated'; revision: number; seq: number }
+/** Audience socket: the owner changed an item's status. */
+export interface ItemStatusMessage { type: 'item.status'; itemId: string; status: SharedItemStatus; at: number; seq: number }
+/** Owner socket: an item arrived (live or replayed after `?since=`). */
+export interface ItemNewMessage { type: 'item.new'; item: SharedItem; seq: number }
+/** Both sockets: Stop sharing or retirement. */
+export interface ShareClosedMessage { type: 'share.closed'; reason: 'stopped' | 'retired' }
+
+export type SharedTalkAudienceMessage = TalkUpdatedMessage | ItemStatusMessage | ShareClosedMessage
+export type SharedTalkOwnerMessage = ItemNewMessage | ShareClosedMessage
+
+export type Parsed<T> = { value: T } | { error: { code: string; message: string } }
+
+function invalid<T>(code: string, message: string): Parsed<T> {
+  return { error: { code, message } }
+}
+
+function boundedString(value: unknown, max: number): value is string {
+  return typeof value === 'string' && value.length <= max
+}
+
+function positiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1
+}
+
+export function parseSharedTalkPush(value: unknown): Parsed<SharedTalkPush> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid('invalid_push', 'Push body must be an object.')
+  const body = value as Record<string, unknown>
+  if (!positiveInteger(body.revision)) return invalid('invalid_revision', 'Revision must be a positive integer.')
+  if (!nonEmptyString(body.html)) return invalid('invalid_html', 'The handout HTML is required.')
+  if (body.html.length > SHARED_TALK_LIMITS.htmlChars) return invalid('html_too_large', 'The handout HTML is too large.')
+  if (!Array.isArray(body.slides)) return invalid('invalid_slides', 'Slides must be an array.')
+  if (body.slides.length > SHARED_TALK_LIMITS.slides) return invalid('too_many_slides', 'The talk has too many slides.')
+  const slides: SharedSlide[] = []
+  const seen = new Set<string>()
+  for (const entry of body.slides) {
+    if (!entry || typeof entry !== 'object') return invalid('invalid_slide', 'Each slide must be an object.')
+    const slide = entry as Record<string, unknown>
+    if (!nonEmptyString(slide.slideId) || slide.slideId.length > SHARED_TALK_LIMITS.slideIdChars) {
+      return invalid('invalid_slide', 'Each slide needs a slideId.')
+    }
+    if (!boundedString(slide.title, SHARED_TALK_LIMITS.slideTitleChars)) return invalid('invalid_slide', 'Slide titles must be short strings.')
+    if (typeof slide.text !== 'string') return invalid('invalid_slide', 'Slide text must be a string.')
+    if (slide.text.length > SHARED_TALK_LIMITS.slideTextChars) return invalid('slide_too_large', 'A slide\'s text is too large.')
+    if (seen.has(slide.slideId)) return invalid('duplicate_slide_id', 'Slide ids must be unique.')
+    seen.add(slide.slideId)
+    slides.push({ slideId: slide.slideId, title: slide.title, text: slide.text })
+  }
+  return { value: { revision: body.revision, html: body.html, slides } }
+}
+
+export function parseSharedItemPost(value: unknown): Parsed<SharedItemPost> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid('invalid_item', 'Item body must be an object.')
+  const body = value as Record<string, unknown>
+  if (typeof body.itemId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(body.itemId) || body.itemId.length > SHARED_TALK_LIMITS.itemIdChars) {
+    return invalid('invalid_item_id', 'itemId must be letters, numbers, hyphens or underscores.')
+  }
+  if (body.name !== undefined && body.name !== null && typeof body.name !== 'string') return invalid('invalid_name', 'Name must be a string.')
+  const name = typeof body.name === 'string' ? body.name.trim() : ''
+  if (name.length > SHARED_TALK_LIMITS.nameChars) return invalid('invalid_name', 'Name is too long.')
+  const common = { itemId: body.itemId, ...(name ? { name } : {}) }
+  if (typeof body.kind !== 'string' || !(SHARED_ITEM_KINDS as readonly string[]).includes(body.kind)) {
+    return invalid('invalid_item_kind', 'Item kind must be note, replace, delete or insert.')
+  }
+  const kind = body.kind as SharedItemKind
+
+  const text = (): Parsed<string> => {
+    if (!nonEmptyString(body.text)) return invalid('invalid_text', 'Text is required.')
+    if (body.text.length > SHARED_TALK_LIMITS.itemTextChars) return invalid('item_too_large', 'Text is too long.')
+    return { value: body.text }
+  }
+  const slideId = (field: 'slideId' | 'afterSlideId'): Parsed<string> => {
+    const candidate = body[field]
+    return nonEmptyString(candidate) && candidate.length <= SHARED_TALK_LIMITS.slideIdChars
+      ? { value: candidate }
+      : invalid('invalid_slide_id', `${field} is required.`)
+  }
+  const baseRevision = (): Parsed<number> => positiveInteger(body.baseRevision)
+    ? { value: body.baseRevision }
+    : invalid('invalid_base_revision', 'baseRevision must be a positive integer.')
+
+  if (kind === 'note') {
+    const s = slideId('slideId'); if ('error' in s) return s
+    const t = text(); if ('error' in t) return t
+    return { value: { ...common, kind, slideId: s.value, text: t.value } }
+  }
+  if (kind === 'replace') {
+    const s = slideId('slideId'); if ('error' in s) return s
+    const b = baseRevision(); if ('error' in b) return b
+    const t = text(); if ('error' in t) return t
+    return { value: { ...common, kind, slideId: s.value, baseRevision: b.value, text: t.value } }
+  }
+  if (kind === 'delete') {
+    const s = slideId('slideId'); if ('error' in s) return s
+    const b = baseRevision(); if ('error' in b) return b
+    if (body.reason !== undefined && body.reason !== null && typeof body.reason !== 'string') return invalid('invalid_reason', 'Reason must be a string.')
+    const reason = typeof body.reason === 'string' ? body.reason.trim() : ''
+    if (reason.length > SHARED_TALK_LIMITS.reasonChars) return invalid('item_too_large', 'Reason is too long.')
+    return { value: { ...common, kind, slideId: s.value, baseRevision: b.value, ...(reason ? { reason } : {}) } }
+  }
+  const a = slideId('afterSlideId'); if ('error' in a) return a
+  const b = baseRevision(); if ('error' in b) return b
+  const t = text(); if ('error' in t) return t
+  if (body.section !== undefined && body.section !== null && typeof body.section !== 'string') return invalid('invalid_section', 'Section must be a string.')
+  const section = typeof body.section === 'string' ? body.section.trim() : ''
+  if (section.length > SHARED_TALK_LIMITS.sectionChars) return invalid('invalid_section', 'Section title is too long.')
+  return { value: { ...common, kind, afterSlideId: a.value, baseRevision: b.value, text: t.value, ...(section ? { section } : {}) } }
+}
+
+export function parseItemStatusPatch(value: unknown): Parsed<SharedItemStatusUpdate> {
+  const status = value && typeof value === 'object' ? (value as Record<string, unknown>).status : undefined
+  return sharedItemStatus(status)
+    ? { value: status }
+    : invalid('invalid_status', 'Status must be new, accepted, dismissed or done.')
+}
+
+export function parseSharedTalkServerMessage(value: string): SharedTalkAudienceMessage | SharedTalkOwnerMessage | null {
+  try {
+    const message = JSON.parse(value) as Record<string, unknown>
+    if (message.type === 'talk.updated') {
+      return positiveInteger(message.revision) && positiveInteger(message.seq)
+        ? { type: 'talk.updated', revision: message.revision, seq: message.seq }
+        : null
+    }
+    if (message.type === 'item.status') {
+      return nonEmptyString(message.itemId)
+        && sharedItemStatus(message.status)
+        && typeof message.at === 'number' && positiveInteger(message.seq)
+        ? { type: 'item.status', itemId: message.itemId, status: message.status, at: message.at, seq: message.seq }
+        : null
+    }
+    if (message.type === 'item.new') {
+      const item = message.item as Record<string, unknown> | undefined
+      const parsed = parseSharedItemPost(item)
+      if ('error' in parsed || !item || !positiveInteger(message.seq)) return null
+      if (typeof item.createdAt !== 'number' || !positiveInteger(item.seq) || !positiveInteger(item.statusSeq)) return null
+      if (!sharedItemStatus(item.status)) return null
+      return {
+        type: 'item.new',
+        seq: message.seq,
+        item: {
+          ...parsed.value,
+          createdAt: item.createdAt,
+          seq: item.seq,
+          status: item.status,
+          statusSeq: item.statusSeq,
+          ...(typeof item.statusAt === 'number' ? { statusAt: item.statusAt } : {}),
+        },
+      }
+    }
+    if (message.type === 'share.closed') {
+      return message.reason === 'stopped' || message.reason === 'retired' ? { type: 'share.closed', reason: message.reason } : null
+    }
+    return null
+  } catch {
+    return null
   }
 }

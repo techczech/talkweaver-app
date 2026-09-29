@@ -37,6 +37,8 @@ interface Props {
   outlineContent: string
   /** Reverse-portal target: WorkspaceLayout appends the live editor host into this node. */
   editorSlotRef: (node: HTMLDivElement | null) => void
+  /** A notice shown between the top chrome and the body (the outline external-change bar). */
+  banner?: React.ReactNode
   onPrev: () => void
   onNext: () => void
   /** Esc / back button — return to the origin (Browser or workspace); WorkspaceLayout decides which. */
@@ -56,7 +58,7 @@ const STATUS_DEBOUNCE_MS = 600
 
 export default function SlideFocus({
   talk, vaultRoot, slideIndex, slideCount, section, slideTitle, compiledSlideId, headingLine, outlineContent,
-  editorSlotRef, onPrev, onNext, onExit, onAdoptCurrent, onDetach, onShowOutlineLine, suspendKeys
+  editorSlotRef, banner, onPrev, onNext, onExit, onAdoptCurrent, onDetach, onShowOutlineLine, suspendKeys
 }: Props) {
   // The focused block markdown + its id, derived live from the outline (recomputes each keystroke).
   const blockMarkdown = useMemo(() => extractSlideBlock(outlineContent, headingLine), [outlineContent, headingLine])
@@ -198,6 +200,7 @@ export default function SlideFocus({
         </div>
       </div>
 
+      {banner}
       <div className="lt-focus-body">
         {/* ---------- LEFT: scoped editor (the reused instance is reparented in here) ---------- */}
         <aside className="lt-md-pane">

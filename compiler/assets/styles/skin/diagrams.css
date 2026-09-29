@@ -72,5 +72,5 @@
   }/* @order 1567 */
   .orgchart .org-root > .org-box { font-weight: 600; }/* @order 1644 */
   .conceptmap { width: 100%; }/* @order 1645 */
-  .conceptmap svg { min-height: 60vh; width: 100%; }/* @order 1646 */
+  .conceptmap svg { min-height: 60cqh; width: 100%; }/* @order 1646 */
   .conceptmap svg text { font-weight: 400; }

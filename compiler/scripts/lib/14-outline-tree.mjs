@@ -55,7 +55,11 @@ function triggerLineAfter(lines, headingIdx) {
   return parsed ? { ...parsed, index: j } : null;
 }
 
-// parseOutlineTree(text) → { meta: {rawFrontmatter, title}, root, warnings }
+// parseOutlineTree(text) → { meta: {rawFrontmatter, title}, root, warnings, notesLineIndexes }
+//
+// `notesLineIndexes`: 0-based indexes (into the parsed body's lines) of every speaker-notes line
+// this parse routed away from slide content — the `:::notes` / `:::` markers and every line
+// between them (a notes block also ends at the next heading).
 //
 // `root` is a synthetic level-0 Node holding any preamble content before the first heading.
 // A single `#` line sets meta.title and is never a child node. Every `##`–`######` heading
@@ -90,15 +94,18 @@ export function parseOutlineTree(text) {
   let deckTitle = "";
   let inNotes = false;
   let fenceOpening = null;
+  const notesLineIndexes = [];
+  let lineIndex = 0;
 
   const pushLine = (line) => {
-    if (inNotes) top().notesLines.push(line);
+    if (inNotes) { top().notesLines.push(line); notesLineIndexes.push(lineIndex); }
     else top().contentLines.push(line);
   };
 
   for (let li = 0; li < lines.length; li += 1) {
     const line = lines[li];
     const t = line.trim();
+    lineIndex = li;
     let m;
 
     // Fence guard: while inside a
@@ -159,11 +166,11 @@ export function parseOutlineTree(text) {
 
     // `:::notes` / `:::` fences route subsequent lines to notesLines instead of contentLines
     // (same as the compiler's scan loop); the markers themselves are structural, not content.
-    if (t.toLowerCase() === ":::notes") { inNotes = true; continue; }
-    if (t === ":::" && inNotes) { inNotes = false; continue; }
+    if (t.toLowerCase() === ":::notes") { inNotes = true; notesLineIndexes.push(li); continue; }
+    if (t === ":::" && inNotes) { inNotes = false; notesLineIndexes.push(li); continue; }
 
     pushLine(line);
   }
 
-  return { meta: { rawFrontmatter, title: deckTitle }, root, warnings };
+  return { meta: { rawFrontmatter, title: deckTitle }, root, warnings, notesLineIndexes };
 }

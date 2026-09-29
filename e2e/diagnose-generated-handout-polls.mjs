@@ -104,7 +104,7 @@ app = await electron.launch({
     await presenter.waitForFunction(id => document.querySelector('.slide.active')?.dataset.id === id, slide)
     await presenter.locator('#presenterPollOpen').click()
     await presenter.waitForFunction(() => document.querySelector('#presenterPollChip')?.textContent === 'Poll open · 0')
-    assert.equal(await presenter.locator('#presenterPollType').textContent(), type.toUpperCase())
+    assert.equal(await presenter.locator('#presenterPollType').textContent(), type.charAt(0).toUpperCase() + type.slice(1)) // sentence case since presenter redesign ticket 06
     assert.match(await presenter.locator('#presenterPollDisplayStatus').textContent(), /Accepting responses/)
     assert.equal(await presenter.locator('#presenterPollOperation').isVisible(), false)
     console.log(`PASS ${type}: actual presenter click received local Worker confirmation`)

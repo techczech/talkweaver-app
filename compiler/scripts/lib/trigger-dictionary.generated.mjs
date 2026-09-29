@@ -360,10 +360,38 @@ export const DYNAMIC_PATTERNS = [
 ]
 
 export const VALUE_TRIGGER_DICTIONARY = {
+  "statement-sidebar": [
+    "on",
+    "off"
+  ],
+  "statement-bg": [
+    "halo",
+    "full",
+    "none"
+  ],
   "statement": [
     "default",
+    "poster",
+    "centred",
     "tint",
-    "poster"
+    "bar",
+    "full"
+  ],
+  "statement-align": [
+    "left",
+    "centred"
+  ],
+  "statement-bar": [
+    "none",
+    "left",
+    "top",
+    "bottom"
+  ],
+  "accent": [
+    "cobalt",
+    "emerald",
+    "vermilion",
+    "forest"
   ],
   "icons": [
     "top",
@@ -382,6 +410,11 @@ export const VALUE_TRIGGER_DICTIONARY = {
     "numbers",
     "logos",
     "plain"
+  ],
+  "numbered": [
+    "square",
+    "plain",
+    "styled"
   ],
   "sublist": [
     "aside"
@@ -468,12 +501,6 @@ export const VALUE_TRIGGER_DICTIONARY = {
   "mode": [
     "reveal",
     "focus"
-  ],
-  "accent": [
-    "cobalt",
-    "emerald",
-    "vermilion",
-    "forest"
   ],
   "font-body": [
     "l",

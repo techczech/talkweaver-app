@@ -1,13 +1,37 @@
-import { escapeHtml, qrGeneratorSource, overviewRuntimeSource, pollExtendedStyles, markmapVendorSource, mermaidVendorSource } from "./01-cli-utils.mjs";
+import { escapeHtml, qrGeneratorSource, overviewRuntimeSource, slideFitRuntimeSource, pollExtendedStyles, markmapVendorSource, mermaidVendorSource } from "./01-cli-utils.mjs";
 import { withoutScripts } from "./04-html-extraction.mjs";
 import { renderLicenseBody } from "./08-source-adapters.mjs";
 import { liveFollowRuntimeSource } from "../../assets/runtime/live-follow.js";
+import { instantSlideStyles } from "../../assets/runtime/instant-slide.js";
+import { sharedTalkRuntimeSource } from "../../assets/runtime/shared-talk-page.js";
+import { sharedTalkStyles } from "../../assets/runtime/shared-talk-styles.js";
+import { renderScriptBlocks, renderSlideNavTitle } from "./slide-script-render.mjs";
 
 // =============================================================================
 // 9. Output builders — share exports + local launch tools; mostly literal injected JS/CSS strings
 // =============================================================================
 
-export function buildShareHtml({ title, slides, styles, includeNotes, slug, license, workerBaseUrl = "", liveTalkSlug = slug }) {
+// Live-presenting ticket 04 (frame V6): the talk's QR overlay on the venue screen. Same shape as
+// the presenter template's .qr-fullscreen — the code large, the short link written the way
+// someone would copy it down (scheme, www. and trailing slash dropped) with the talk id in bold.
+function venueTalkQrMarkup(svg, url) {
+  const written = String(url || "").replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/^www\./i, "").replace(/\/+$/, "");
+  const slash = written.indexOf("/");
+  const link = slash > 0
+    ? `<span>${escapeHtml(written.slice(0, slash))}</span><strong>${escapeHtml(written.slice(slash))}</strong>`
+    : escapeHtml(written);
+  return `<div class="qr-fullscreen venue-talk-qr" id="venueTalkQr" role="dialog" aria-label="QR code, full screen" hidden>`
+    + `<div class="qr-fs-code">${svg || ""}</div>${written ? `<div class="qr-fs-url">${link}</div>` : ""}</div>`;
+}
+
+// `sharedTalk` (ticket 04, share for comments): true, or { proposals, ownerName }, builds the page the
+// shared-talk Worker serves — the handout with the colleague's comments runtime (LOCKED Margin
+// design). The runtime stays inert unless the Worker's #tw-shared-talk-config block is present.
+// `proposals: false` limits her to notes; `ownerName` is the name the page's copy uses.
+export function buildShareHtml({ title, slides, styles, includeNotes, slug, license, workerBaseUrl = "", liveTalkSlug = slug, venue = false, venueQr = "", venueUrl = "", sharedTalk = false }) {
+  const sharedTalkOptions = sharedTalk && !venue
+    ? JSON.stringify({ proposals: sharedTalk === true || sharedTalk.proposals !== false, ownerName: String((sharedTalk && sharedTalk.ownerName) || "").slice(0, 60) }).replace(/</g, "\\u003c")
+    : "null";
   const hasMermaid = slides.some((slide) => /\bclass=["'][^"']*\bmermaid-mm\b/.test(slide.html));
   const notesButton = includeNotes ? '<button class="btn" id="notesBtn" type="button"><span class="btn-label">Notes</span></button>' : "";
   // Public CC attribution travels into the share export as a no-JS <details> popover.
@@ -46,6 +70,7 @@ export function buildShareHtml({ title, slides, styles, includeNotes, slug, lice
 <style>
 ${pollExtendedStyles}
 ${styles}
+${sharedTalk && !venue ? sharedTalkStyles : ""}
 body { margin: 0; }
 .presenter-root, #presenterBtn { display: none !important; }
 .share-shell { min-height: 100vh; display: grid; grid-template-rows: 1fr auto; }
@@ -66,6 +91,9 @@ body { margin: 0; }
      implicit rows, the list stops being the scroller, and lazy row-filling never bites. */
   body.phone-list-mode .share-shell { grid-template-rows: 1fr; height: 100dvh; min-height: 0; }
   body.phone-detail-mode .share-shell { grid-template-rows: auto auto 1fr auto; height: 100dvh; min-height: 0; }
+  /* One column no wider than the phone: without minmax(0, …) the column grows to the phone
+     bar's min-content, which includes a long title's full nowrap width (found 2026-09-28). */
+  body.phone-list-mode .share-shell, body.phone-detail-mode .share-shell { grid-template-columns: minmax(0, 1fr); }
   body.phone-list-mode .stage-fit, body.phone-list-mode .share-footer { display: none; }
   body.phone-list-mode .phone-list { display: block; }
   body.phone-detail-mode .phone-bar { display: flex; }
@@ -86,7 +114,12 @@ body { margin: 0; }
   .phone-bar .phone-bar-title { font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   body.phone-detail-mode .stage-fit { aspect-ratio: 16 / 9; max-height: 52dvh; }
   body.phone-detail-mode .phone-script { display: block; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 14px 15px 24px; background: #fdfdfb; }
+  .phone-script, .pslide-title { min-width: 0; overflow-wrap: anywhere; }
   .phone-script .ps-title { margin: 0 0 10px; font-size: 19px; line-height: 1.25; letter-spacing: -.01em; }
+  .phone-script code { font-family: ui-monospace, Menlo, monospace; font-size: .88em; background: #f1f0ea; padding: 0 3px; }
+  .phone-script .ps-code { margin: 0 0 12px; padding: 10px 12px; background: #f1f0ea; white-space: pre-wrap; font-size: 14px; line-height: 1.45; }
+  .phone-script .ps-code code { background: none; padding: 0; font-size: inherit; }
+  .phone-script a { color: #0f4bd8; }
   .phone-script ul { margin: 0 0 12px; padding-left: 20px; }
   .phone-script ul ul { margin: 5px 0 6px; }
   .phone-script li { font-size: 17px; line-height: 1.5; margin: 0 0 6px; }
@@ -122,6 +155,7 @@ body { margin: 0; }
 .live-name { display: inline-flex; align-items: center; gap: 5px; color: #5b6572; font-size: 12px; }
 .live-name input { width: 105px; border: 1px solid #17202a22; border-radius: 6px; background: #fff; color: #17202a; padding: 5px 7px; font: inherit; }
 .live-follow-status { align-self: center; color: #5b6572; font-size: 12px; }
+${instantSlideStyles}
 /* Responsive foundation per IMPLEMENTATION-PLAN: reusable phone touch, gutter, viewport and safe-area primitives. */
 :root {
   --tw-touch-target: 44px;
@@ -243,9 +277,34 @@ mark.note-mark { background: #fde68a; padding: 0 1px; border-radius: 2px; }
   .slide { display: grid !important; break-after: page; min-height: 100vh; }
   .slide .notes { display: block; margin-top: 24px; border-top: 1px solid #0002; padding-top: 12px; }
 }
+${venue ? `
+/* The venue keeps the share slide renderer and live poll surface, but none of its reading chrome. */
+html, body, .share-shell { width: 100%; height: 100%; overflow: hidden; }
+.share-shell { display: block; min-height: 0; }
+.stage-fit { width: 100vw; height: 100dvh; }
+.share-footer, .phone-bar, .phone-list, .phone-script, .nav-panel, .notes-panel,
+.mynotes-panel, .help-fab, .help-overlay, .note-pop, .focus-banner, .fs-overlay,
+.gallery-nav, .now-live-badge, .live-follow-status { display: none !important; }
+.venue-screen .lightbox[hidden] { display: none !important; }
+.venue-screen .lightbox.open { position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; background: #080c12; }
+.venue-screen .lightbox-stage { display: grid; place-items: center; width: 100%; height: 100%; min-height: 0; }
+.venue-screen .lightbox-img { max-width: 100vw; max-height: 100dvh; width: auto; height: auto; object-fit: contain; }
+.venue-screen .lightbox-nav, .venue-screen .lightbox-close, .venue-screen .lightbox-bar { display: none !important; }
+.venue-hint { position: fixed; left: 50%; bottom: 9%; z-index: 50; transform: translateX(-50%); padding: 10px 17px; border-radius: 8px; background: #17202acc; color: white; font: 14px system-ui, sans-serif; pointer-events: none; white-space: nowrap; }
+.venue-hint[hidden], .venue-closing[hidden] { display: none !important; }
+.venue-closing { position: absolute; right: 4%; top: 13%; z-index: 4; width: 25%; display: grid; justify-items: center; gap: 12px; padding: 25px; box-sizing: border-box; background: #fffdf2; color: #17202a; text-align: center; font: 700 28px system-ui, sans-serif; }
+.venue-closing svg { display: block; width: 100%; height: auto; background: white; }
+.venue-closing small { font-size: 16px; font-weight: 400; overflow-wrap: anywhere; }
+.venue-talk-qr { position: fixed; inset: 0; z-index: 300; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; background: #17202aee; padding: 5vh 5vw; box-sizing: border-box; }
+.venue-talk-qr[hidden] { display: none !important; }
+.venue-talk-qr .qr-fs-code { width: min(60vh, 70vw); background: #fff; padding: clamp(16px, 2.4vw, 32px); border-radius: 14px; line-height: 0; box-sizing: border-box; }
+.venue-talk-qr .qr-fs-code svg { display: block; width: 100%; height: auto; }
+.venue-talk-qr .qr-fs-url { color: #e8eef5; font: 400 max(34px, 5vw)/1.15 system-ui, sans-serif; word-break: break-all; max-width: 92vw; text-align: center; }
+.venue-talk-qr .qr-fs-url strong { font-weight: 800; color: #ffffff; }
+` : ''}
 </style>
 </head>
-<body>
+<body class="${venue ? 'venue-screen' : ''}">
 <main class="share-shell">
   <div class="phone-bar" id="phoneBar" hidden>
     <button type="button" id="phoneBack" aria-label="All slides">‹ All slides</button>
@@ -256,8 +315,11 @@ mark.note-mark { background: #fde68a; padding: 0 1px; border-radius: 2px; }
   <div class="stage-fit" id="stageFit">
   <div class="stage" id="stage">
 ${slideMarkup}
+  ${venue ? `<div class="venue-closing" id="venueClosing" hidden>${venueQr}<span>Slides and links</span><small>${escapeHtml(venueUrl)}</small></div>` : ''}
   </div>
   </div>
+  ${venue ? '<div class="venue-hint" id="venueHint">Click anywhere for full screen</div>' : ''}
+  ${venue ? venueTalkQrMarkup(venueQr, venueUrl) : ''}
   <section class="phone-script" id="phoneScript" hidden></section>
   ${workerBaseUrl ? '<section class="audience-poll-surface" id="audiencePollSurface" aria-label="Audience poll" aria-live="polite" hidden></section>' : ''}
   <footer class="share-footer">
@@ -339,7 +401,12 @@ ${markmapVendorSource}
 ${hasMermaid ? mermaidVendorSource : ""}
 <script>
 (() => {
+  const VENUE_MODE = ${venue ? 'true' : 'false'};
   const slides = Array.from(document.querySelectorAll(".slide"));
+  // Shared talk: each slide's markup as served, read before anything below touches it, so a
+  // later push can tell exactly which slides changed.
+  const SHARED_TALK_OPTIONS = ${sharedTalkOptions};
+  const sharedTalkPristine = SHARED_TALK_OPTIONS ? slides.map((slide) => slide.outerHTML) : null;
   window.mermaid && window.mermaid.initialize({
     startOnLoad: false,
     theme: "neutral",
@@ -369,7 +436,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
     trash: '<svg class="btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"></path><path d="M10 11v6M14 11v6"></path><path d="M6 7l1 13h10l1-13"></path><path d="M9 7V4h6v3"></path></svg>',
     check: '<svg class="btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 13l4 4L19 7"></path></svg>'
   };
-  let index = Math.max(0, slides.findIndex((slide) => slide.dataset.id && location.hash.slice(1) === slide.dataset.id));
+  let index = VENUE_MODE ? 0 : Math.max(0, slides.findIndex((slide) => slide.dataset.id && location.hash.slice(1) === slide.dataset.id));
   // === Overview (the SHARED createOverview factory — one overview everywhere) ==================
   // Same instance the presenter drawer and standalone deck use (rankSlides search, Enter jumps and
   // closes, expand → scaled-thumbnail grid). The handout is isPresenter:false, so no shown/skipped
@@ -486,13 +553,54 @@ ${hasMermaid ? mermaidVendorSource : ""}
     if (stageFitEl) new ResizeObserver(fitStage).observe(stageFitEl);
   }
 
+  // The app's slide fit pipeline — quote, code and title fit, the list ladder (ADR-0028 width
+  // step, leading, gaps, type) and the whole-slide zoom — inlined verbatim from
+  // compiler/assets/runtime/slide-fit.js, the SAME source the presenter template runs. It measures
+  // in canvas units, so it fits the 1280x720 canvas identically whatever scale fitStage() applies.
+  ${slideFitRuntimeSource}
+  const slideFit = createSlideFit();
+  function fitSlideClone(slide) {
+    const content = slide ? slide.querySelector(":scope > .slide-content") : null;
+    if (content) slideFit.fitContent(content);
+  }
+  // Run on the settled layout, as the app does (scheduleAutofit): two frames after the change, so
+  // the gallery's active card, the reveal state and late images have laid out.
+  function fitActiveSlide() {
+    const slide = slides[index];
+    if (!slide || !slide.classList.contains("active")) return;
+    densifyActiveCards();
+    fitSlideClone(slide);
+    // Connector lines follow the final (possibly zoomed) positions.
+    drawSystemLinks(slide);
+  }
+  let slideFitFrame = 0;
+  function scheduleSlideFit() {
+    cancelAnimationFrame(slideFitFrame);
+    slideFitFrame = requestAnimationFrame(() => { slideFitFrame = requestAnimationFrame(fitActiveSlide); });
+  }
+  window.addEventListener("resize", scheduleSlideFit);
+  document.addEventListener("load", (event) => {
+    const target = event.target;
+    if (target && target.tagName === "IMG" && target.closest && target.closest(".stage > .slide.active")) scheduleSlideFit();
+  }, true);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(scheduleSlideFit);
+
   /* ---- ADR-0018 phone view: LIST of slides -> slide detail -> rotated full screen ----
      The list clones each real slide onto its own fixed canvas (the mechanism the overview
      drawer already uses) and scales it to full width. Clones are built lazily on scroll so a
      200-slide deck does not pay for 200 renders up front. */
   // ADR-0018 script companion: parsed from each slide's OUTLINE at compile time and carried on the
-  // compiled deck, so the handout ships data rather than a markdown parser.
-  var SLIDE_SCRIPT = ${JSON.stringify(slides.map((slide) => slide.script || null)).replace(/</g, "\\u003c")};
+  // compiled deck, so the handout ships data rather than a markdown parser. Its outline text is
+  // rendered to inline HTML here, at build time, by the compiler's renderer (slide-script-render.mjs)
+  // so authoring syntax (**bold**, {icon=…}, [QR: …]) never reaches the phone as raw text.
+  var SLIDE_SCRIPT = ${JSON.stringify(slides.map((slide) => renderScriptBlocks(slide.script))).replace(/</g, "\\u003c")};
+  // Titles keep their formatting but never a link: the slide's own heading links nothing, and an
+  // anchor in a tappable row or the bar would swallow the tap meant for the row. The renderer
+  // builds them without links, so innerHTML only ever receives HTML the renderer made.
+  var PHONE_TITLE_HTML = ${JSON.stringify(slides.map((slide) => renderSlideNavTitle(slide.html, { links: false }))).replace(/</g, "\\u003c")};
+  function setPhoneTitle(el, i) {
+    el.innerHTML = PHONE_TITLE_HTML[i] || "";
+  }
   var PHONE_BP = 699;
   // Must be read BEFORE render(), which does history.replaceState("#"+id) on every paint — read
   // it later and every load looks like a deep link, so the list would never appear.
@@ -529,6 +637,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
         if (note) note.remove();
         row.querySelector(".pslide-inner").appendChild(clone);
         fitPhoneRow(row);
+        fitSlideClone(clone);
         observer.unobserve(row);
       });
     }, { root: phoneList, rootMargin: "400px 0px" }) : null;
@@ -551,7 +660,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
       num.textContent = (i + 1) + " / " + slides.length;
       var title = document.createElement("span");
       title.className = "pslide-title";
-      title.textContent = slide.dataset.navTitle || "";
+      setPhoneTitle(title, i);
       label.appendChild(num);
       label.appendChild(title);
       row.appendChild(label);
@@ -568,6 +677,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
         clone.classList.add("active");
         row.querySelector(".pslide-inner").appendChild(clone);
         fitPhoneRow(row);
+        fitSlideClone(clone);
       });
     }
   }
@@ -590,7 +700,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
     host.replaceChildren();
     var title = document.createElement("h2");
     title.className = "ps-title";
-    title.textContent = slides[i]?.dataset.navTitle || "";
+    setPhoneTitle(title, i);
     host.appendChild(title);
 
     var blocks = SLIDE_SCRIPT[i];
@@ -610,11 +720,11 @@ ${hasMermaid ? mermaidVendorSource : ""}
             stack.push(sub);
           }
           var li = document.createElement("li");
-          li.textContent = item.text;
-          if (item.pair) {
+          li.innerHTML = item.html || "";
+          if (item.pairHtml) {
             var span = document.createElement("span");
             span.className = "ps-pair";
-            span.textContent = item.pair;
+            span.innerHTML = item.pairHtml;
             li.appendChild(span);
           }
           stack[stack.length - 1].appendChild(li);
@@ -622,13 +732,38 @@ ${hasMermaid ? mermaidVendorSource : ""}
         host.appendChild(root);
       } else if (block.type === "quote") {
         var q = document.createElement("blockquote");
-        q.textContent = block.text;
+        q.innerHTML = block.html || "";
         host.appendChild(q);
       } else if (block.type === "attrib") {
         var a = document.createElement("p");
         a.className = "ps-attrib";
-        a.textContent = "— " + block.text;
+        a.innerHTML = "— " + (block.html || "");
         host.appendChild(a);
+      } else if (block.type === "qr") {
+        var qr = document.createElement("div");
+        qr.className = "ps-media";
+        var qrLabel = document.createElement("b");
+        qrLabel.textContent = "QR code";
+        var qrLink = document.createElement("span");
+        qrLink.innerHTML = block.html || "";
+        qr.appendChild(qrLabel);
+        qr.appendChild(qrLink);
+        host.appendChild(qr);
+      } else if (block.type === "code") {
+        var pre = document.createElement("pre");
+        pre.className = "ps-code";
+        var code = document.createElement("code");
+        code.textContent = block.text || "";
+        pre.appendChild(code);
+        host.appendChild(pre);
+      } else if (block.type === "diagram") {
+        // A diagram fence (mermaid, svg) is a picture on the slide: named, never its source.
+        var dg = document.createElement("div");
+        dg.className = "ps-media";
+        var dgLabel = document.createElement("b");
+        dgLabel.textContent = "Diagram";
+        dg.appendChild(dgLabel);
+        host.appendChild(dg);
       } else if (block.type === "media") {
         var m = document.createElement("div");
         m.className = "ps-media";
@@ -645,7 +780,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
           var tr = document.createElement("tr");
           row.forEach(function (cell) {
             var td = document.createElement(rowIndex === 0 ? "th" : "td");
-            td.textContent = cell;
+            td.innerHTML = cell;
             tr.appendChild(td);
           });
           table.appendChild(tr);
@@ -653,7 +788,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
         host.appendChild(table);
       } else {
         var p = document.createElement("p");
-        p.textContent = block.text;
+        p.innerHTML = block.html || "";
         host.appendChild(p);
       }
     });
@@ -663,7 +798,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
      render(), so every navigation path stays in step. */
   function syncPhoneDetail() {
     if (!document.body.classList.contains("phone-detail-mode")) return;
-    if (phoneBarTitle) phoneBarTitle.textContent = slides[index]?.dataset.navTitle || "";
+    if (phoneBarTitle) setPhoneTitle(phoneBarTitle, index);
     renderPhoneScript(index);
   }
 
@@ -723,6 +858,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
     if (note) note.remove();
     fsInner.appendChild(clone);
     layoutFullScreen();
+    fitSlideClone(clone);
   }
 
   function openFullScreen() {
@@ -783,8 +919,11 @@ ${hasMermaid ? mermaidVendorSource : ""}
     drawSystemLinks(slides[index]);
     initMarkmaps(slides[index]);
     initMermaids(slides[index]);
+    scheduleSlideFit();
+    if (sharedTalkController) sharedTalkController.slideChanged();
   }
   let liveNavigationObserver = null;
+  let sharedTalkController = null;
   let audienceRevealIndex = 0;
   function go(nextIndex, options = {}) {
     index = Math.max(0, Math.min(slides.length - 1, nextIndex));
@@ -803,15 +942,53 @@ ${hasMermaid ? mermaidVendorSource : ""}
   // testable module exercised by scripts/live-follow-client.test.mjs.
   ${liveFollowRuntimeSource()}
   const LIVE_CONFIG = ${liveConfig};
+  let venueFollowController = null;
   function initialiseLiveFollow() {
     if (!LIVE_CONFIG) return;
     const controller = createAudienceFollowRuntime({
       document,
       liveConfig: LIVE_CONFIG,
+      venue: VENUE_MODE,
       getViewerPosition: currentViewerPosition,
       applyLiveSlideState,
+      onEnded: VENUE_MODE ? showVenueClosing : undefined,
     });
-    if (controller) liveNavigationObserver = (_viewedSlideId, fromLive) => { if (!fromLive) controller.viewerMoved(); };
+    if (controller) {
+      venueFollowController = VENUE_MODE ? controller : null;
+      liveNavigationObserver = (_viewedSlideId, fromLive) => { if (!fromLive && !VENUE_MODE) controller.viewerMoved(); };
+    }
+  }
+  // Shared talk (ticket 04): the colleague's comments runtime, injected like Follow live from
+  // compiler/assets/runtime/shared-talk-page.js (tested by scripts/shared-talk-runtime.test.mjs).
+  ${sharedTalkOptions !== "null" ? sharedTalkRuntimeSource() : ""}
+  function initialiseSharedTalk() {
+    if (!SHARED_TALK_OPTIONS) return;
+    sharedTalkController = createSharedTalkPage({
+      document,
+      window,
+      features: SHARED_TALK_OPTIONS,
+      host: {
+        slides: () => slides,
+        pristineHtml: (i) => sharedTalkPristine[i] || "",
+        currentIndex: () => index,
+        go: (i) => go(i),
+        render: () => render(),
+        fitStage: () => fitStage(),
+        fitClone: (clone) => fitSlideClone(clone),
+        setCount: (text) => { count.textContent = text || ((index + 1) + " / " + slides.length); },
+      },
+    });
+  }
+  function showVenueClosing() {
+    go(0, { fromLive: true });
+    showVenueTalkQr(false);
+    document.getElementById('venueClosing').hidden = false;
+  }
+  // Ticket 04: the presenter's "Show the talk's QR code" rides slide.state as talkQr; only the
+  // venue screen renders it (phones never build the overlay, so they carry on as they were).
+  function showVenueTalkQr(open) {
+    const overlay = document.getElementById('venueTalkQr');
+    if (overlay) overlay.hidden = !open;
   }
   // LOCAL reveal/focus stepping modes (no presenter sync in share exports). Same selector list,
   // stepping grammar and CSS hooks as the deck runtime; banner auto-dismiss at 2.5s.
@@ -887,6 +1064,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
   function applyModeDimming() {
     const slide = slides[index];
     if (!slide) return;
+    // A reveal step changes what is laid out: fit again, as the app does on every step.
+    scheduleSlideFit();
     slide.classList.toggle("mode-active", Boolean(modeKind));
     slide.classList.toggle("mode-reveal", modeKind === "reveal");
     slide.classList.toggle("mode-focus", modeKind === "focus");
@@ -965,6 +1144,12 @@ ${hasMermaid ? mermaidVendorSource : ""}
     galleryStep = audienceRevealIndex;
     applyGallery();
     setModeState(message.focus?.kind || null, message.focus?.step || 0, false);
+    if (VENUE_MODE) {
+      document.getElementById('venueClosing').hidden = true;
+      if (message.lightbox?.open) openLightbox(message.lightbox.index);
+      else closeLightbox();
+      showVenueTalkQr(message.talkQr === true);
+    }
     return true;
   }
   function activeGallery() {
@@ -1015,6 +1200,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
     cards.forEach((card, i) => card.classList.toggle("active-card", i === visible));
     ensureGalleryNav(gallery, cards.length, visible);
     densifyActiveCards();
+    scheduleSlideFit();
   }
   // Parity with the full deck's D6 in-card browsability: an overflowing visible card first
   // tries a one-notch type shrink (.card-dense, quote cards only), then .is-scrollable for the
@@ -1744,7 +1930,22 @@ ${hasMermaid ? mermaidVendorSource : ""}
   document.getElementById("helpBtn").addEventListener("click", () => toggleHelp());
   document.getElementById("helpClose").addEventListener("click", () => toggleHelp(false));
   helpOverlay.addEventListener("click", (event) => { if (event.target === helpOverlay) toggleHelp(false); });
+  const NEXT_KEYS = ["ArrowRight", "ArrowDown", " ", "Enter", "PageDown"];
+  const PREVIOUS_KEYS = ["ArrowLeft", "ArrowUp", "Backspace", "PageUp"];
+  const VENUE_DECK_KEYS = NEXT_KEYS.concat(PREVIOUS_KEYS, ["Home", "End", "z", "Z", "f", "F", "r", "R"]);
+  const VENUE_READER_KEYS = ["?", "/"];
   window.addEventListener("keydown", (event) => {
+    // ADR-0026 (2026-09-28): with no laptop driving it, the venue screen takes the deck's
+    // presenting keys — navigation, Z gallery, F focus, R reveal, and each mode's own keys —
+    // through the SAME branches below. Reader-only keys (? help, / search, O overview, N notes,
+    // Esc panel-close) stay inert: the venue has no reading chrome. Inside the gallery or a mode
+    // that mode owns the keyboard (N/P step, Esc exits), but ? and / never open reader surfaces.
+    if (VENUE_MODE) {
+      if (!venueFollowController?.venueKeyboardAvailable() || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (VENUE_READER_KEYS.includes(event.key)) return;
+      if (!lbOpen && !modeKind && !VENUE_DECK_KEYS.includes(event.key)) return;
+      document.getElementById('venueClosing').hidden = true;
+    }
     const tag = event.target?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
     // Any deck keystroke retires the note popover (it would float over the wrong slide).
@@ -1756,8 +1957,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
     }
     // G5: while the gallery is open, arrows browse images and Esc / z close it; deck suspended.
     if (lbOpen) {
-      if (["ArrowRight", "ArrowDown", " ", "Enter", "PageDown"].includes(event.key)) { event.preventDefault(); stepLightbox(1); }
-      else if (["ArrowLeft", "ArrowUp", "Backspace", "PageUp"].includes(event.key)) { event.preventDefault(); stepLightbox(-1); }
+      if (NEXT_KEYS.includes(event.key)) { event.preventDefault(); stepLightbox(1); }
+      else if (PREVIOUS_KEYS.includes(event.key)) { event.preventDefault(); stepLightbox(-1); }
       else if (event.key === "Home") { event.preventDefault(); lbIndex = 0; renderLightbox(); }
       else if (event.key === "End") { event.preventDefault(); lbIndex = lbImages.length - 1; renderLightbox(); }
       else if (event.key === "Escape" || event.key === "z" || event.key === "Z") { event.preventDefault(); closeLightbox(); }
@@ -1776,14 +1977,14 @@ ${hasMermaid ? mermaidVendorSource : ""}
       if (event.key === "Escape") { event.preventDefault(); exitMode(); return; }
       if (event.key === "n" || event.key === "N") { event.preventDefault(); stepMode(1); return; }
       if (event.key === "p" || event.key === "P") { event.preventDefault(); stepMode(-1); return; }
-      if (["ArrowRight", "ArrowDown", " ", "Enter", "PageDown"].includes(event.key)) { event.preventDefault(); goNext(); return; }
-      if (["ArrowLeft", "ArrowUp", "Backspace", "PageUp"].includes(event.key)) { event.preventDefault(); goPrev(); return; }
+      if (NEXT_KEYS.includes(event.key)) { event.preventDefault(); goNext(); return; }
+      if (PREVIOUS_KEYS.includes(event.key)) { event.preventDefault(); goPrev(); return; }
       if (event.key === "Home") { event.preventDefault(); go(0); return; }
       if (event.key === "End") { event.preventDefault(); go(slides.length - 1); return; }
       return;
     }
-    if (["ArrowRight", "ArrowDown", " ", "Enter", "PageDown"].includes(event.key)) { event.preventDefault(); goNext(); }
-    else if (["ArrowLeft", "ArrowUp", "Backspace", "PageUp"].includes(event.key)) { event.preventDefault(); goPrev(); }
+    if (NEXT_KEYS.includes(event.key)) { event.preventDefault(); goNext(); }
+    else if (PREVIOUS_KEYS.includes(event.key)) { event.preventDefault(); goPrev(); }
     else if (event.key === "Home") { event.preventDefault(); go(0); }
     else if (event.key === "End") { event.preventDefault(); go(slides.length - 1); }
     else if (event.key === "z" || event.key === "Z") { event.preventDefault(); openLightbox(0); }
@@ -1809,9 +2010,17 @@ ${hasMermaid ? mermaidVendorSource : ""}
   applyModeDimming();
   applyGallery();
   // ADR-0018: on a phone the handout opens on the slide LIST, unless a deep link named a slide.
-  applyPhoneMode();
-  if (isPhone() && hadInitialHash) showPhoneDetail();
+  if (!VENUE_MODE) {
+    applyPhoneMode();
+    if (isPhone() && hadInitialHash) showPhoneDetail();
+  } else {
+    document.addEventListener('click', () => {
+      document.getElementById('venueHint').hidden = true;
+      if (!document.fullscreenElement) void document.documentElement.requestFullscreen?.().catch(() => {});
+    }, { once: true });
+  }
   initialiseLiveFollow();
+  initialiseSharedTalk();
 })();
 </script>
 </body>

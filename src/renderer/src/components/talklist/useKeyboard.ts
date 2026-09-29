@@ -52,6 +52,31 @@ function containingFolder(rows: RowRef[], row: RowRef): Extract<RowRef, { kind: 
   return null
 }
 
+/** What the window-level `/` listener knows about a keydown outside the Talks panel's own handler. */
+export interface SlashFacts {
+  key: string
+  metaKey: boolean
+  ctrlKey: boolean
+  altKey: boolean
+  /** Something (the panel's own handler, a surface's key) already took the key. */
+  defaultPrevented: boolean
+  /** Focus is in a text field or contentEditable (the talk editor is one). */
+  typing: boolean
+  /** Focus is inside the talk editor (CodeMirror), where / is text. */
+  inEditor: boolean
+  /** A modal surface (the slide picker, a palette, a dialog) is open and owns the keyboard. */
+  modalOpen: boolean
+}
+
+/** `/` from anywhere while the file list is open (Dominik, 0.34.0-preview.2 check, 26 Sep): unless
+ *  focus is in the talk editor or another text field, or a modal surface is open, a plain / (⇧ allowed,
+ *  as some layouts need it for /) puts the caret in the file list's search box, as / inside the list
+ *  does (browser.filter). */
+export function slashFocusesFileListSearch(f: SlashFacts): boolean {
+  if (f.key !== '/' || f.metaKey || f.ctrlKey || f.altKey) return false
+  return !f.defaultPrevented && !f.typing && !f.inEditor && !f.modalOpen
+}
+
 export function makePanelKeyHandler(d: Deps) {
   return function handlePanelKey(e: ReactKeyboardEvent<HTMLElement>): void {
     const t = e.target as HTMLElement

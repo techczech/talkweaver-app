@@ -6,19 +6,51 @@ import { buildLayoutSampler } from './build-layout-sampler.mjs'
 // Ticket 18: the default type scale is the former XL and long lists spend leading and air before type.
 const LIST_IDS = ['t18-list-4', 't18-list-12', 't18-list-grouped', 't18-list-keyvalue']
 const LADDER_ID = 'font-body-per-slide-type-override'
+// ADR-0028 §5: a seven-row icon list, an icon row and a numbered list spend spacing before type.
+// (ADR-0028 §6: the four-item numbered fixture renders as numbered icon rows since 2026-09-25.)
+const ICON_LIST_ID = 'the-llm-is-a-universal-translator-icon-list'
+const ICON_ROW_ID = 'two-parts-of-chatgpt-icon-row'
+const NUMBERED_CARDS_ID = 'how-to-work-with-an-agent-numbered'
+const SPACED_GAP_MIN = 0.3
 const VIEWPORTS = [
   { width: 1600, height: 900 },
   { width: 1280, height: 720 },
   // A shorter band at full width: the twelve-item list must step its leading at runtime here.
   { width: 1600, height: 800 }
 ]
+// Image-beside-list slots: two lists that fit at the body size, one nested list the ladder must fit.
+const SLOT_FITS_IDS = ['feature-list-with-media', 'media-slot-list-video-and-image']
+const SLOT_LONG_ID = 't21-list-visual-nested'
+const measureSlot = (page, slideId) => page.evaluate((id) => {
+  const slides = [...document.querySelectorAll('.stage > .slide')]
+  const slide = slides.find((candidate) => candidate.dataset.id === id)
+  if (!slide) return null
+  slides.forEach((candidate) => candidate.classList.toggle('active', candidate === slide))
+  window.__autofitForTest?.()
+  const content = slide.querySelector('.slide-content')
+  const slot = content.querySelector(':scope > .slot')
+  const copy = slot?.querySelector(':scope > .slot-copy')
+  if (!copy) return null
+  const slotRect = slot.getBoundingClientRect()
+  const copyRect = copy.getBoundingClientRect()
+  // ADR-0030: painted px over the stage's scale = canvas px.
+  const k = slide.parentElement.getBoundingClientRect().width / slide.parentElement.offsetWidth
+  return {
+    id,
+    stageWidth: slide.parentElement.clientWidth,
+    listFit: content.dataset.listFit || null,
+    zoom: Number(getComputedStyle(content).zoom || 1),
+    itemFonts: [...copy.querySelectorAll('.feature-list > li')].map((item) => parseFloat(getComputedStyle(item).fontSize)),
+    copyOverflowPx: Math.max(0, slotRect.top - copyRect.top, copyRect.bottom - slotRect.bottom) / k
+  }
+}, slideId)
 const BODY_CQW = 3.2
 const RAIL_CQW = 3.8
 const TITLE_CQW = 5.2
 const FLOOR_PX_AT_1600 = 31
 
 const { html, outPath } = await buildLayoutSampler()
-for (const id of [...LIST_IDS, LADDER_ID]) {
+for (const id of [...LIST_IDS, LADDER_ID, ICON_LIST_ID, ICON_ROW_ID, NUMBERED_CARDS_ID, ...SLOT_FITS_IDS, SLOT_LONG_ID]) {
   assert(html.includes(`data-id="${id}"`), `${id}: sampler fixture compiles`)
 }
 const section = (id) => html.match(new RegExp(`<section class="slide"[^>]*data-id="${id}"[\\s\\S]*?</section>`))?.[0] ?? ''
@@ -40,6 +72,9 @@ try {
       window.__autofitForTest?.()
       const content = slide.querySelector('.slide-content')
       const stage = slide.parentElement
+      // ADR-0030: the stage is the 1280×720 canvas scaled to the window; a painted rect divided by
+      // the stage's scale is canvas px, the unit of every computed length compared with it.
+      const k = stage.getBoundingClientRect().width / stage.offsetWidth
       const token = (name) => {
         const probe = document.createElement('span')
         probe.style.cssText = `position:absolute;visibility:hidden;font-size:var(${name})`
@@ -60,7 +95,7 @@ try {
         unionTop = Math.min(unionTop, rect.top)
         unionBottom = Math.max(unionBottom, rect.bottom)
       }
-      const naturalHeight = unionBottom - unionTop
+      const naturalHeight = (unionBottom - unionTop) / k
       const first = items[0]
       const firstStyle = first ? getComputedStyle(first) : null
       const h1 = slide.querySelector('h1:not(.sr-only)')
@@ -70,6 +105,7 @@ try {
       return {
         id,
         stageWidth: stage.clientWidth,
+        stageHeight: stage.clientHeight,
         titleLayout: slide.dataset.titleLayout,
         bodyToken: token('--fs-body'),
         railToken: token('--fs-rail'),
@@ -79,14 +115,19 @@ try {
         subItemFonts: subItems.map((item) => parseFloat(getComputedStyle(item).fontSize)),
         lineHeightRatio: firstStyle ? parseFloat(firstStyle.lineHeight) / parseFloat(firstStyle.fontSize) : null,
         listFit: content.dataset.listFit || null,
+        listGap: parseFloat(getComputedStyle(content).getPropertyValue('--list-gap')) || 1,
+        itemPadTop: firstStyle ? parseFloat(firstStyle.paddingTop) : null,
+        rowItemFonts: [...content.querySelectorAll('.icon-row .ir-desc > li')].map((item) => parseFloat(getComputedStyle(item).fontSize)),
         zoom: Number(getComputedStyle(content).zoom || 1),
         overflowPx: naturalHeight - availableHeight,
-        topAirPx: listRect ? listRect.top - stageRect.top : null,
-        bottomAirPx: listRect ? stageRect.bottom - listRect.bottom : null
+        topAirPx: listRect ? (listRect.top - stageRect.top) / k : null,
+        bottomAirPx: listRect ? (stageRect.bottom - listRect.bottom) / k : null
       }
     }, [slideId, stripDensity])
 
-    const scale = viewport.width / 1600
+    // ADR-0030: every window shows the 1280×720 canvas; sizes and the band follow the canvas.
+    const canvas = await page.evaluate(() => { const st = document.querySelector('.stage'); return { width: st.offsetWidth, height: st.offsetHeight } })
+    const scale = canvas.width / 1600
     const floor = FLOOR_PX_AT_1600 * scale
     const near = (actual, expected, label) => assert(Math.abs(actual - expected) < 0.6, `${viewport.width}: ${label} ${actual.toFixed(2)}px ≈ ${expected.toFixed(2)}px`)
 
@@ -103,7 +144,9 @@ try {
     // Ticket 21 gives the sidebar column max(6vh, 61px) above and below and a wider rail gap
     // (stage.css @order 1341), so on the short 1600x800 band four two-line rows spend leading —
     // never air or type; at 16:9 they still need no fitting.
-    const shortBand = viewport.height / viewport.width < 0.55
+    // A short band is a canvas shape: a 1600x800 window letterboxes the 16:9 canvas (ADR-0030), so
+    // it no longer yields one and the 16:9 branch applies there too.
+    const shortBand = canvas.height / canvas.width < 0.55
     if (shortBand) assert(['base', 'leading'].includes(four.listFit) && four.lineHeightRatio >= 1.18, `a short list on a short band spends leading only (${four.listFit}, ${four.lineHeightRatio.toFixed(3)})`)
     else {
       near(four.lineHeightRatio, 1.35, 'a short list keeps the default leading')
@@ -148,6 +191,53 @@ try {
       assert.equal(nested.zoom, 1, `${id}: no whole-slide zoom`)
     }
 
+    // ADR-0028 §5 — the seven-row icon list gives up row padding and gaps (to the .3 spaced floor,
+    // which keeps .21em either side of each dotted separator) before it steps type. Ticket 03's
+    // larger icons had sent it from 40.96px to 30.96px at 1280x720; spacing-first holds ~38px.
+    const iconList = await measure(ICON_LIST_ID)
+    console.log(JSON.stringify({ viewport, iconList }))
+    assert.equal(iconList.itemFonts.length, 7, 'seven icon rows render')
+    assert(iconList.overflowPx <= 1, `the icon list fits its band (${iconList.overflowPx.toFixed(1)}px)`)
+    assert.equal(iconList.zoom, 1, 'the icon list is never zoomed')
+    if (iconList.listFit === 'type') assert(Math.abs(iconList.listGap - SPACED_GAP_MIN) < 0.001, `the icon list stepped type only after its spacing reached the floor (--list-gap ${iconList.listGap})`)
+    assert(iconList.itemPadTop >= iconList.itemFonts[0] * 0.2 - 0.01, `row padding keeps the dotted separators clear (${iconList.itemPadTop.toFixed(1)}px ≥ .2em)`)
+    // bodyToken carries the fitter's inline step; the stylesheet body is 3.2cqw of the stage.
+    const iconListBody = iconList.stageWidth * BODY_CQW / 100
+    if (!shortBand) assert(iconList.itemFonts.every((px) => px >= iconListBody - 3.5), `at 16:9 the icon list stays within 3.5px of the body (${iconList.itemFonts[0]}px vs ${iconListBody.toFixed(2)}px)`)
+
+    // ADR-0028 §5 — an icon row reads at the body size and is not zoomed while spacing can give.
+    const iconRow = await measure(ICON_ROW_ID)
+    console.log(JSON.stringify({ viewport, iconRow }))
+    assert(iconRow.rowItemFonts.length >= 6, 'icon-row items render')
+    assert.equal(iconRow.zoom, 1, `an icon row is not zoomed (got ${iconRow.zoom})`)
+    iconRow.rowItemFonts.forEach((px) => near(px, iconRow.stageWidth * BODY_CQW / 100, 'icon-row item at the body size, 3.2cqw'))
+
+    // Numbered cards used to overflow at the dense step and take a 0.92 zoom: width step, spacing,
+    // then type now fit them without zooming.
+    const numberedCards = await measure(NUMBERED_CARDS_ID)
+    console.log(JSON.stringify({ viewport, numberedCards }))
+    assert(numberedCards.overflowPx <= 1, `numbered cards fit their band (${numberedCards.overflowPx.toFixed(1)}px)`)
+    assert.equal(numberedCards.zoom, 1, `numbered cards are not zoomed (got ${numberedCards.zoom})`)
+    if (numberedCards.listFit === 'type') assert(Math.abs(numberedCards.listGap - SPACED_GAP_MIN) < 0.001, `numbered cards stepped type only after spacing reached the floor (--list-gap ${numberedCards.listGap})`)
+    assert(numberedCards.itemFonts.every((px) => px >= floor - 0.01), 'numbered cards never fall below the floor')
+
+    // Parity survey C3 (2026-09-26): the copy-beside-media slot stretches to fill the band, so the
+    // fitter must measure its copy column. Measuring the stretched slot compared ceil(band) with
+    // floor(band) and ran every image-beside-list slide to the type floor (data-list-fit=too-long).
+    for (const id of SLOT_FITS_IDS) {
+      const slot = await measureSlot(page, id)
+      console.log(JSON.stringify({ viewport, slot }))
+      assert(slot, `${id}: slot fixture renders`)
+      assert.equal(slot.listFit, 'base', `${id}: a list that fits beside its image needs no fitting (${slot.listFit})`)
+      slot.itemFonts.forEach((px) => near(px, slot.stageWidth * BODY_CQW / 100, `${id}: slot list item keeps the body size, 3.2cqw`))
+      assert.equal(slot.zoom, 1, `${id}: no whole-slide zoom`)
+    }
+    const slotLong = await measureSlot(page, SLOT_LONG_ID)
+    console.log(JSON.stringify({ viewport, slotLong }))
+    assert(slotLong.listFit !== 'too-long', `${SLOT_LONG_ID}: a list the ladder can fit is not tagged too-long (${slotLong.listFit})`)
+    assert(slotLong.copyOverflowPx <= 1, `${SLOT_LONG_ID}: the fitted copy column stays inside its row (${slotLong.copyOverflowPx.toFixed(1)}px)`)
+    assert(slotLong.itemFonts.every((px) => px > floor + 0.5), `${SLOT_LONG_ID}: the fitted list stays above the type floor (${Math.min(...slotLong.itemFonts).toFixed(1)}px > ${floor.toFixed(1)}px)`)
+
     const ladder = await measure(LADDER_ID)
     // The ladder is a stylesheet fact: read the token with the runtime fitter's inline step removed
     // (on the short band the three long items at L legitimately spend a couple of pixels of type).
@@ -181,13 +271,15 @@ try {
         padTop: px(content, 'paddingTop'), padBottom: px(content, 'paddingBottom'), columnGap: px(content, 'columnGap'),
         listGap: px(list, 'rowGap'),
         rows: items.map((li) => ({ borderTop: px(li, 'borderTopWidth'), borderBottom: px(li, 'borderBottomWidth'), padTop: px(li, 'paddingTop'), font: px(li, 'fontSize') })),
+        // ADR-0030: canvas px (painted px over the stage's scale).
+        k: slide.parentElement.getBoundingClientRect().width / slide.parentElement.offsetWidth,
         listLeft: list.getBoundingClientRect().left, railRight: slide.querySelector('.slide-head').getBoundingClientRect().right
       }
     })
-    near(groupedGeometry.padTop, Math.max(viewport.height * 0.06, 61), 'sidebar content column has 6vh (never less than the footer band) above')
-    near(groupedGeometry.padBottom, Math.max(viewport.height * 0.06, 61), 'sidebar content column has 6vh (never less than the footer band) below')
+    near(groupedGeometry.padTop, Math.max(canvas.height * 0.06, 61), 'sidebar content column has 6cqh (never less than the footer band) above')
+    near(groupedGeometry.padBottom, Math.max(canvas.height * 0.06, 61), 'sidebar content column has 6cqh (never less than the footer band) below')
     near(groupedGeometry.columnGap, Math.min(96, Math.max(40, grouped.stageWidth * 0.05)), 'sidebar content column sits 5cqw from the rail')
-    near(groupedGeometry.listLeft - groupedGeometry.railRight, groupedGeometry.columnGap, 'the list starts one column gap after the rail')
+    near((groupedGeometry.listLeft - groupedGeometry.railRight) / groupedGeometry.k, groupedGeometry.columnGap, 'the list starts one column gap after the rail')
     assert.equal(groupedGeometry.listGap, 0, 'groups have no open row gap between them')
     assert(groupedGeometry.rows.every((row) => row.borderTop >= 1), 'a hairline separates every group')
     assert(groupedGeometry.rows.at(-1).borderBottom >= 1, 'a hairline closes the run')
@@ -228,7 +320,11 @@ try {
     console.log(JSON.stringify({ viewport, table }))
     assert(table.cellFonts.every((px) => Math.abs(px - bodyPx) < 0.6), `table cells read at the body token, 3.2cqw (${Math.min(...table.cellFonts).toFixed(1)}px vs ${bodyPx.toFixed(1)}px)`)
     assert(Math.abs(table.tableWidth - table.contentWidth) <= 1, 'the table fills the content width')
-    assert(Math.abs(table.topAir - table.bottomAir) <= 4, `the table is centred with equal air (${table.topAir.toFixed(1)} vs ${table.bottomAir.toFixed(1)})`)
+    // ADR-0030: the slide reserves the footer band in canvas px, the footer itself is window chrome
+    // in window px. At scale 1 the table is centred against it exactly; on a larger window the
+    // footer covers less of the scaled canvas, so the air below can only grow.
+    if (canvas.width === viewport.width) assert(Math.abs(table.topAir - table.bottomAir) <= 4, `the table is centred with equal air (${table.topAir.toFixed(1)} vs ${table.bottomAir.toFixed(1)})`)
+    else assert(table.bottomAir >= table.topAir - 4, `the table keeps at least its top air below it (${table.topAir.toFixed(1)} vs ${table.bottomAir.toFixed(1)})`)
     assert(table.bottomAir >= -1, 'the table never runs under the footer band')
     assert.equal(table.hasThead, false, '{table-header=off} renders the first row as a plain row')
     assert.equal(table.rows, 3, 'all three authored rows render')

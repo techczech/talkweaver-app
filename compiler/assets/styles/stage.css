@@ -118,12 +118,12 @@
     grid-template-columns: var(--rail-w) 1fr !important;
     /* Ticket 21 (Dominik: "larger left and top/bottom padding"): the content column takes the
        locked mockup's `.t-side .content { padding: 6vh 5vw }` — 5cqw of column gap between the
-       rail and the copy (was 4cqw), 6vh of air above and below the column (was none: a tall list
+       rail and the copy (was 4cqw), 6cqh of air above and below the column (was none: a tall list
        ran to the slide edge), never less than the 61px footer band so the column clears the fixed
        footer at every stage height. The right inset stays the slide safe area (--slide-pad-x). */
     column-gap: clamp(40px, 5cqw, 96px);
-    padding-top: max(6vh, 61px);
-    padding-bottom: max(6vh, 61px);
+    padding-top: max(6cqh, 61px);
+    padding-bottom: max(6cqh, 61px);
     padding-right: var(--slide-pad-x);
     align-content: center;
     align-items: center;
@@ -159,7 +159,12 @@
   /* @order 1349 */
   .slide[data-title-layout="left"] > .slide-content > .slide-head:not(.slide-head-quiet) {
     position: relative;
-    padding: clamp(24px, 4vh, 48px) clamp(28px, 2.6cqw, 72px);
+    padding: clamp(24px, 4cqh, 48px) clamp(28px, 2.6cqw, 72px);
+    /* ADR-0028 §4: a visible rail title sits on the rail's left inset whatever its length —
+       `place-content: center` (1347) centred a short title's column across the rail. Vertical
+       centring (align-content) is unchanged. */
+    justify-content: start;
+    justify-items: start;
   }
   /* @order 1350 */
   .slide:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content > .slide-head > h1 { max-width: 14ch; }
@@ -168,7 +173,7 @@
     display: flex;
     flex-direction: column;
     justify-content: space-evenly;
-    min-height: 62vh;
+    min-height: 62cqh;
   }
   /* @order 1353 */
   /* {sidebar}/{title=side}: the ADR-0005 tint rail above (the pre-rewrite blue panel stays
@@ -191,7 +196,7 @@
   /* @order 1357 */
   .slide:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content > *:not(.slide-head) ~ *:not(.slide-head) {
     grid-row: auto !important;
-    margin-top: clamp(20px, 5vh, 72px);
+    margin-top: clamp(20px, 5cqh, 72px);
   }
   /* @order 1358 */
   /* {notitle} on a left-rail layout: the heading is nav-only (.slide-head-quiet, sr-only h1), so
@@ -338,13 +343,13 @@
     flex-direction: column;
     justify-content: flex-start;
     min-height: 100%;
-    padding-top: 6vh;
+    padding-top: 6cqh;
   }
   /* @order 1680 */
   .slide:not(:is([data-title-layout="left"], [data-title-layout="hidden"])) > .slide-content:not(.layout-title):not(.layout-section-title):not(.layout-statement):not(.layout-closing) > .slide-head:not(.slide-head-quiet) {
     border-bottom: 2px solid var(--hairline);
-    padding-bottom: 2.2vh;
-    margin-bottom: 4.5vh;
+    padding-bottom: 2.2cqh;
+    margin-bottom: 4.5cqh;
     width: 100%;
   }
   /* @order 1681 */

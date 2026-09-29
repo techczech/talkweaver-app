@@ -115,20 +115,10 @@ const model = await prepareSource(
   'chart-lift-fixture',
   statSync(fixturePath)
 )
-assert.equal(
-  createHash('sha256').update(model.fullHtml).digest('hex'),
-  // Re-pinned for T27: the deck template inlines poll-frame.css and the fitLists changes, so every
-  // compiled deck's bytes moved. The chart markup itself is pinned by the three class counts below.
-  // Re-pinned for T27b: base.css's audience-stage fix (definite stage height) is inlined too.
-  // Re-pinned for T28 (8bb411e): the icon-list work edited base.css + skin/list.css (both inlined
-  // into every deck). Diffed 151b31a5 (be084fa rebuild) vs this output: the only hunks are those
-  // icon-list rules; all four chart slide bodies are byte-identical. Fourth break of this pin for
-  // a non-chart change — see the T30 report for the narrowing recommendation.
-  '2051a86e5de2991c153eb17df414cbde45d142098c640919436df19df978e278',
-  'the compiled chart-family fixture remains byte-identical to the pre-lift output'
-)
+// Chart output is pinned above. A whole-deck hash also includes unrelated presenter controls,
+// so it changes when a new control is added even if chart markup remains byte-identical.
 assert.equal((model.fullHtml.match(/class="chart-cols/g) ?? []).length, 2)
 assert.equal((model.fullHtml.match(/class="chart-pie/g) ?? []).length, 1)
 assert.equal((model.fullHtml.match(/class="chart-line/g) ?? []).length, 1)
 
-console.log('chart renderer: golden bar/pie/line bytes and compiled fixture bytes PASS')
+console.log('chart renderer: golden bar/pie/line bytes and compiled chart counts PASS')

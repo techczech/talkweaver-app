@@ -1,5 +1,5 @@
 import type { TalkInfo } from '../../../../preload/index'
-import { topicOf } from '../talkTreeNav'
+import { rebaseTalk, topicOf } from '../talkTreeNav'
 import { notify } from '../../lib/notify'
 import { talkKey } from './model'
 import type { TalkAction, FolderAction } from './menus'
@@ -21,6 +21,10 @@ interface Deps {
   /** Open the per-talk Metadata panel (ADR-0036) for this talk. */
   onOpenMetadata?: (talk: TalkInfo) => void
   flushActive?: () => Promise<void>
+  /** The outline external-change guard's leave check (App → WorkspaceLayout): flushes the active talk
+   *  and, while its file differs from the editor, holds behind the sheet until the person has chosen.
+   *  False when they chose Stay here. Run before any app-side move of the active talk. */
+  leaveActive?: () => Promise<boolean>
   setPrompt: (p: Prompt | null) => void
   setConfirm: (c: Confirm | null) => void
   setMenu: (m: null) => void
@@ -31,8 +35,22 @@ interface Deps {
 export function useTalkActions(deps: Deps) {
   const {
     talks, vaultRoot, activeTalk, onSelectTalk, onDeletedTalk, onRefresh, onNewTalk,
-    onOpenMetadata, flushActive, setPrompt, setConfirm, setMenu, setMoveMenu, setFocusKey
+    onOpenMetadata, flushActive, leaveActive, setPrompt, setConfirm, setMenu, setMoveMenu, setFocusKey
   } = deps
+
+  // Before the app moves, renames or bins the active talk (or a folder holding it): pending typing is
+  // flushed to the old path and any changed-on-disk difference is settled first, so nothing typed is
+  // left behind at a path that is about to go. False: the person chose Stay here (nothing moves).
+  async function settleActive(): Promise<boolean> {
+    if (leaveActive) return leaveActive()
+    await flushActive?.()
+    return true
+  }
+  const activeInside = (topic: string): boolean => {
+    if (!activeTalk) return false
+    const t = topicOf(activeTalk, vaultRoot)
+    return t === topic || t.startsWith(topic + '/')
+  }
 
   function startRename(talk: TalkInfo): void {
     setPrompt({ label: `Rename “${talk.title}” to`, initial: talk.title, cta: 'Rename', onSubmit: (v) => { void doRename(talk, v) } })
@@ -41,7 +59,7 @@ export function useTalkActions(deps: Deps) {
     const wasActive = activeTalk?.outlinePath === talk.outlinePath
     // Flush the editor's pending autosave BEFORE the folder moves — a late write to the old
     // path would recreate it and the two copies would drift (2026-07-05 hazard class).
-    if (wasActive) await flushActive?.()
+    if (wasActive && !(await settleActive())) return
     const res = await window.tw.vault.renameTalk(talk.outlinePath, newTitle)
     if (res && 'error' in res) {
       if (res.error === 'open-elsewhere') notify(`“${talk.title}” is open in another window — close it there first.`, 'error')
@@ -68,6 +86,7 @@ export function useTalkActions(deps: Deps) {
     setConfirm({ label: `Move “${talk.title}” to the Bin? (recoverable from Finder)`, cta: 'Delete', danger: true, onConfirm: () => void doDeleteTalk(talk) })
   }
   async function doDeleteTalk(talk: TalkInfo): Promise<void> {
+    if (activeTalk?.outlinePath === talk.outlinePath && !(await settleActive())) return
     const ok = await window.tw.vault.deleteTalk(talk.outlinePath)
     if (!ok) { notify(`Couldn’t move “${talk.title}” to the Bin.`, 'error'); return }
     onDeletedTalk?.(talk.outlinePath)
@@ -79,6 +98,7 @@ export function useTalkActions(deps: Deps) {
   }
   async function doMove(talk: TalkInfo, destTopic: string): Promise<void> {
     if (topicOf(talk, vaultRoot) === destTopic) return
+    if (activeTalk?.outlinePath === talk.outlinePath && !(await settleActive())) return
     const moved = await window.tw.vault.moveTalk(talk.outlinePath, destTopic)
     onRefresh()
     if (moved) setFocusKey(talkKey(moved.outlinePath))
@@ -91,11 +111,23 @@ export function useTalkActions(deps: Deps) {
     onRefresh()
   }
   async function doRenameFolder(topic: string, newName: string): Promise<void> {
+    const moving = activeInside(topic) ? activeTalk : null
+    if (moving && !(await settleActive())) return
     const renamed = await window.tw.vault.renameFolder(topic, newName)
     if (renamed == null) notify(`Couldn’t rename the folder — a folder called “${newName}” may already exist.`, 'error')
     onRefresh()
+    // The open talk moved with its folder: re-select it at its new path (as doRename does), so the
+    // editor reloads from there, the guard tracks it again and the next save lands in the new folder.
+    const rebased = moving && renamed != null ? rebaseTalk(moving, vaultRoot, topic, renamed) : null
+    if (rebased) {
+      setFocusKey(talkKey(rebased.outlinePath))
+      onSelectTalk(rebased)
+    }
   }
+  // The open talk inside the folder stays open: main reports its file as removed (the bar), so the
+  // person chooses to let it go or save it again — its typing is never dropped or silently recreated.
   async function doDeleteFolder(topic: string): Promise<void> {
+    if (activeInside(topic) && !(await settleActive())) return
     const ok = await window.tw.vault.deleteFolder(topic)
     if (!ok) notify('Couldn’t move the folder to the Bin.', 'error')
     onRefresh()

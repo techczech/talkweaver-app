@@ -133,6 +133,15 @@ export const timerRuntimeSource = readFileSync(join(scriptDir, "..", "assets", "
 // the presenter template AND the handout via the `<!--OVERVIEW_RUNTIME-->` placeholder — SINGLE
 // SOURCE OF TRUTH, also loaded directly by scripts/test-overview.mjs. No `export` so it inlines cleanly.
 export const overviewRuntimeSource = readFileSync(join(scriptDir, "..", "assets", "runtime", "overview.js"), "utf8");
+// Slide fitting (createSlideFit: quote/code/title fit, the list ladder, the whole-slide zoom). Injected
+// verbatim into the presenter template via `<!--SLIDE_FIT_RUNTIME-->` AND into the share page
+// (buildShareHtml: handout + /p venue) — SINGLE SOURCE OF TRUTH, measured in canvas units so it fits
+// the same under the share page's scale transform. Tested at its seam by scripts/slide-fit-dom.test.mjs.
+export const slideFitRuntimeSource = readFileSync(join(scriptDir, "..", "assets", "runtime", "slide-fit.js"), "utf8");
+// Stage fit (createStageFit: the fixed 1280×720 slide canvas scaled uniformly into its box, centred,
+// letterboxed in the slide background; ADR-0030). Injected verbatim into the presenter template via
+// `<!--STAGE_FIT_RUNTIME-->`. Tested at its seam by scripts/stage-fit-dom.test.mjs.
+export const stageFitRuntimeSource = readFileSync(join(scriptDir, "..", "assets", "runtime", "stage-fit.js"), "utf8");
 // Ticket 23: the poll frame renderer (poll-frame.mjs) is injected FIRST — poll-display.js calls
 // renderPollFrame, so the live poll is the compiled frame with its state filled. One composition.
 export const pollDisplayRuntimeSource = [pollFrameRuntimeSource(), ...["poll-display.js", "poll-projection.js"]

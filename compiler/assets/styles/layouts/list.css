@@ -156,7 +156,7 @@
   .slide-content > blockquote + .feature-list > li + li { margin-top: .4em !important; }/* @order 0714 */
   .slide-content > blockquote + .feature-list .fl-icon,
   .slide-content > blockquote + .feature-list .fl-svg { display: none !important; }/* @order 1352 */
-  .slide[data-title-layout="left"] .slide-content > .feature-list { row-gap: clamp(12px, 2.8vh, 44px); }/* @order 1408 */
+  .slide[data-title-layout="left"] .slide-content > .feature-list { row-gap: clamp(12px, 2.8cqh, 44px); }/* @order 1408 */
 
   /* Icon list (LOCKED mockup slide 4 renders the icon list as NUMBERED ICON CARDS in a grid,
      not flat rows): hairline card, accent icon top, label, mono index bottom. *//* @order 1414 */

@@ -96,8 +96,8 @@ equal(contrastOptionRows.map(({ group, selectedToken }) => [group.key, selectedT
   'Command-L derives the highlighted entry option row and current selection from the registry')
 const statementOptionRows = optionGroupsForPickerEntry(statementEntry, optionLine)
 equal(statementOptionRows.map(({ group, selectedToken }) => [group.key, selectedToken]),
-  [['statement-variant', '']],
-  'Command-L derives the statement variant row from the registry')
+  [['statement-sidebar', ''], ['statement-bg', ''], ['statement-align', ''], ['statement-bar', ''], ['statement-colour', '']],
+  'Command-L derives the five statement choice rows from the registry (ticket 02)')
 
 const typeStrip = pickerTypeStripModel(optionLine)
 equal(typeStrip.map(({ group, selectedToken }) => [group.key, selectedToken]), [
@@ -117,8 +117,8 @@ check(chained.group === contrastOptionRows[0].group,
 const statementStep = inlineOptionPickerStep(statementEntry, optionLine, '')
 check(statementStep != null, 'inline { choosing statement creates its registry-driven variant step')
 equal(statementStep.rows.map(({ digit, value }) => [digit, value.token]), [
-  [1, ''], [2, 'statement=tint'], [3, 'statement=poster']
-], 'inline statement step offers default, tint, and poster')
+  [1, ''], [2, 'statement-sidebar=on'], [3, 'statement-sidebar=off']
+], 'inline statement step offers its first choice, Sidebar: Auto, With sidebar, No sidebar (ticket 02)')
 const tableEntry = LAYOUTS.find((entry) => entry.name === 'table')
 const tableStep = inlineOptionPickerStep(tableEntry, '{table}{image=right}', '')
 check(tableStep != null, 'inline { choosing table creates its registry-driven slot step')

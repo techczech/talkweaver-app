@@ -24,8 +24,8 @@ interface Props {
   onClose: () => void
   slideId: string
   adoptVersion: AdoptVersion
-  /** Absolute outline path of the talk open in the editor — if adoption replaced it, the
-   *  host must reload the editor content (wired via onAdopted in WorkspaceLayout). */
+  /** Absolute outline path of the talk open in the editor. Adoption writes it through that editor's
+   *  buffer (main's one writer, talk-writer.ts), so the host has nothing to reload. */
   currentOutlinePath: string | null
   vaultRoot: string
   onAdopted?: (result: { replaced: { talk: string; outline: string }[] }) => void

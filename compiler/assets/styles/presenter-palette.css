@@ -1,0 +1,54 @@
+/* The presenter's command palette, ⌘⇧P (ADR-0031 §6, presenter redesign ticket 07; drawn in
+   docs/design/2026-09-26-presenter-redesign/round-2/, shot palette-open-1440x900.png). A card
+   640px wide, 72px from the top, over a light scrim: the search field with the count of commands
+   on the right; the commands in their groups, each row icon · name · keys as key caps,
+   right-aligned; a footer naming the keys. Rows that do not apply now are dimmed and skipped by
+   ↑ ↓. Chrome type scale: 16px search, 14px names, 13px group heads, key caps, count and footer. */
+.tw-palette-scrim { position: fixed; inset: 0; z-index: 250; background: #0a0f1566; }
+.tw-palette-scrim[hidden], .tw-palette[hidden] { display: none !important; }
+.tw-palette {
+  --pal-text: #f7f3ea;
+  --pal-muted: #a3b3c2;
+  --pal-dim: #71849a;
+  --pal-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  position: fixed; z-index: 260; left: 50%; top: 72px; transform: translateX(-50%);
+  width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 110px);
+  display: flex; flex-direction: column; box-sizing: border-box;
+  background: #16202a; border: 1px solid #ffffff2a; border-radius: 12px; box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+  overflow: hidden; font-family: var(--pal-ui); color: var(--pal-text); text-align: left;
+  -webkit-font-smoothing: antialiased;
+}
+.tw-palette .tw-ico { width: 16px; height: 16px; margin: 0; flex: none; vertical-align: middle; }
+.tw-pal-search { display: flex; align-items: center; gap: 10px; flex: none; height: 48px; padding: 0 16px; border-bottom: 1px solid #ffffff14; }
+.tw-pal-search .tw-ico { width: 18px; height: 18px; color: var(--pal-muted); }
+.tw-palette .tw-pal-input {
+  flex: 1 1 auto; min-width: 0; height: 100%; padding: 0; margin: 0; border: 0; outline: 0; background: none;
+  font: 400 16px/1 var(--pal-ui); color: var(--pal-text); box-shadow: none; -webkit-appearance: none; appearance: none;
+}
+.tw-palette .tw-pal-input::placeholder { color: var(--pal-dim); opacity: 1; }
+.tw-palette .tw-pal-input::-webkit-search-cancel-button { display: none; }
+.tw-pal-count { flex: none; font: 500 13px/1 var(--pal-ui); color: var(--pal-dim); white-space: nowrap; }
+.tw-pal-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 6px; overscroll-behavior: contain; }
+.tw-pal-sec { font: 600 13px/1 var(--pal-ui); color: var(--pal-dim); padding: 10px 10px 6px; }
+.tw-pal-sec:first-child { padding-top: 6px; }
+.tw-palette .tw-pal-row {
+  display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 12px;
+  width: 100%; height: 34px; padding: 0 10px; margin: 0; box-sizing: border-box;
+  border: 0; border-radius: 6px; background: none; color: var(--pal-text);
+  font: 500 14px/1 var(--pal-ui); text-align: left; white-space: nowrap; cursor: pointer;
+}
+.tw-pal-row > .tw-ico { color: var(--pal-muted); }
+.tw-pal-name { overflow: hidden; text-overflow: ellipsis; }
+.tw-palette .tw-pal-row.hi { background: #2a4260; }
+.tw-palette .tw-pal-row.hi > .tw-ico { color: var(--pal-text); }
+.tw-palette .tw-pal-row:disabled { color: var(--pal-dim); cursor: default; }
+.tw-palette .tw-pal-row:disabled > .tw-ico { color: #4f6072; }
+.tw-pal-keys { display: inline-flex; justify-content: flex-end; gap: 4px; min-width: 18px; }
+.tw-pal-keys kbd {
+  display: inline-block; min-width: 18px; padding: 3px 6px; box-sizing: border-box;
+  border: 1px solid #ffffff26; border-radius: 5px; background: #0f171f;
+  font: 500 13px/1 var(--pal-ui); color: #d5e0ea; text-align: center;
+}
+.tw-pal-row:disabled .tw-pal-keys kbd { color: var(--pal-dim); border-color: #ffffff17; }
+.tw-pal-empty { padding: 14px 10px; font: 500 14px/1.3 var(--pal-ui); color: var(--pal-dim); }
+.tw-pal-foot { display: flex; gap: 18px; flex: none; padding: 9px 16px; border-top: 1px solid #ffffff14; font: 500 13px/1 var(--pal-ui); color: var(--pal-dim); }

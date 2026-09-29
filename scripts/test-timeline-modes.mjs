@@ -12,7 +12,9 @@
 //   4. the composition ends above the fixed footer band and sits centred in the band: the air
 //      between title and track equals the air between track and footer (±6px); nothing clips;
 //   5. pills and horizontal timelines over their measured stop caps split into balanced
-//      continuation slides (8 stops → 4 + 4) through the spine's continuation mechanism;
+//      continuation slides (8 stops → 4 + 4) through the spine's continuation mechanism; the
+//      horizontal cap is four since ticket 08 (entries on the dense step), so its five-stop
+//      showcase renders as 3 + 2 and the checks in 2–4 hold for each part;
 //   6. dynamic mode shows all five stops at its LAST reveal step;
 //   7. mutation: with the model collapsed to one stop (TW_REINSTATE_TIMELINE_DEFECT=1) this gate FAILS.
 // =============================================================================
@@ -54,8 +56,10 @@ for (const [mode, cap] of Object.entries(TIMELINE_STOPS_PER_SLIDE)) {
   for (const viewport of TIMELINE_REFERENCE_VIEWPORTS) {
     assert(timelineGeometricCap(mode, viewport) >= cap, `${mode}: the ${viewport.width}px stage admits ${cap} stops (geometry allows ${timelineGeometricCap(mode, viewport)})`)
   }
-  assert(cap >= 5, `${mode}: the five-stop showcase list fits one slide (cap ${cap})`)
+  if (mode !== 'horizontal') assert(cap >= 5, `${mode}: the five-stop showcase list fits one slide (cap ${cap})`)
 }
+// The horizontal cap's own derivation (tokens → measure ≥ 11 characters) is test:timeline-stop-limit.
+assert.deepEqual(timelineStopChunks([1, 2, 3, 4, 5], TIMELINE_STOPS_PER_SLIDE.horizontal).map((c) => c.length), [3, 2], 'the five-stop horizontal showcase cuts 3 + 2 at the horizontal cap')
 assert.deepEqual(timelineStopChunks([1, 2, 3, 4, 5, 6], 5).map((c) => c.length), [3, 3], 'six stops at cap five cut 3 + 3, never 5 + 1')
 assert.equal(timelineStopChunks([1, 2, 3, 4, 5], 5), null, 'five stops at cap five stay one slide')
 
@@ -69,6 +73,10 @@ for (const base of ['t22-pills-split', 't22-horizontal-split']) {
   assert.match(parts[1].title, /\(2\/2\)$/, `${base}: the continuation title carries its marker`)
 }
 for (const mode of MODES) assert(html.includes(`data-id="t22-${mode}"`), `t22-${mode}: fixture compiles`)
+// A showcase fixture and its continuation slides (t22-horizontal, t22-horizontal-2; never the
+// separate t22-horizontal-split fixture).
+const partIdsOf = (id) => model.slides.map((slide) => slide.id).filter((slideId) => slideId === id || new RegExp(`^${id}-\\d+$`).test(slideId))
+assert.deepEqual(partIdsOf('t22-horizontal'), ['t22-horizontal', 't22-horizontal-2'], 't22-horizontal: five stops over the cap of four split into two slides')
 
 // --- 2–4, 6: rendered contract ------------------------------------------------------------------
 const browser = await chromium.launch({ headless: true })
@@ -144,40 +152,54 @@ try {
         trackBottom: trackRect.bottom,
         footerTop: footerRect.top,
         zoom: parseFloat(getComputedStyle(content).zoom || '1'),
+        // ADR-0030: the scale of the 1280×720 canvas in this window.
+        scale: stageRect.width / slide.closest('.stage').offsetWidth,
         clipped
       }
     }, { slideId: id })
 
     const table = []
     for (const mode of MODES) {
-      const id = `t22-${mode}`
-      await activate(id)
-      if (mode === 'dynamic') await walkToLastStep(id)
-      const m = await measure(id)
-      assert(m, `${id}: timeline geometry is available at ${viewport.width}×${viewport.height}`)
-      assert.equal(m.stops, 5, `${id}: renders 5 stops (got ${m.stops}) at ${viewport.width}×${viewport.height}`)
-      assert.equal(m.stopsVisible, 5, `${id}: all 5 stops are visible at the last step`)
-      assert.equal(m.stopsWithDate, 5, `${id}: every stop carries a date node`)
-      assert.equal(m.stopsWithText, 5, `${id}: every stop carries a text node`)
-      assert(m.minFont >= m.floor - 0.1, `${id}: every text is at the floor (${m.minFont.toFixed(1)}px >= ${m.floor.toFixed(1)}px)`)
-      assert(m.zoom >= 0.99, `${id}: the presenter zoom stays at 1 (${m.zoom}) — the composition fits the band`)
-      assert(m.trackBottom <= m.footerTop + 0.5, `${id}: the composition ends above the footer (${m.trackBottom.toFixed(1)}px <= ${m.footerTop.toFixed(1)}px)`)
-      assert(m.trackBottom <= viewport.height - FOOTER_BAND_PX + 0.5, `${id}: composition bottom <= ${viewport.height - FOOTER_BAND_PX}px (${m.trackBottom.toFixed(1)}px)`)
-      assert(Math.abs(m.topAir - m.bottomAir) <= AIR_TOLERANCE_PX, `${id}: air above and below the track is equal (${m.topAir.toFixed(1)}px vs ${m.bottomAir.toFixed(1)}px)`)
-      assert.equal(m.clipped, 0, `${id}: nothing clips at the stage edge`)
-      if (mode === 'dynamic') {
-        const lastStep = await page.evaluate(() => {
-          const slide = document.querySelector('.stage > .slide.active')
-          const details = [...slide.querySelectorAll('.tl-detail')]
-          const shown = details.map((el) => parseFloat(getComputedStyle(el).opacity))
-          const units = [...slide.querySelectorAll('.mode-el')].map((el) => el.dataset.modeState)
-          return { shown, units }
-        })
-        assert(lastStep.units.length === 0 || lastStep.units.every((state) => state === 'full'), `${id}: the walk reached the all-full last step (${lastStep.units.join(',')})`)
-        assert.equal(lastStep.shown.filter((o) => o > 0.5).length, 1, `${id}: exactly one detail card shows at the last step (${lastStep.shown.join('/')})`)
-        assert(lastStep.shown[lastStep.shown.length - 1] > 0.5, `${id}: the LAST stop's detail shows at the last step`)
+      const partIds = partIdsOf(`t22-${mode}`)
+      const parts = []
+      for (const partId of partIds) {
+        await activate(partId)
+        if (mode === 'dynamic') await walkToLastStep(partId)
+        const part = await measure(partId)
+        assert(part, `${partId}: timeline geometry is available at ${viewport.width}×${viewport.height}`)
+        assert.equal(part.stopsVisible, part.stops, `${partId}: all its stops are visible at the last step`)
+        assert.equal(part.stopsWithDate, part.stops, `${partId}: every stop carries a date node`)
+        assert.equal(part.stopsWithText, part.stops, `${partId}: every stop carries a text node`)
+        parts.push({ partId, ...part })
       }
-      table.push(`${id}:${m.mode} stops=${m.stops} min=${m.minFont.toFixed(1)}px air=${m.topAir.toFixed(0)}/${m.bottomAir.toFixed(0)} bottom=${m.trackBottom.toFixed(0)}`)
+      const id = `t22-${mode}`
+      const total = parts.reduce((sum, part) => sum + part.stops, 0)
+      assert.equal(total, 5, `${id}: renders 5 stops (got ${total}) at ${viewport.width}×${viewport.height}`)
+      for (const { partId: id, ...m } of parts) {
+        assert(m.minFont >= m.floor - 0.1, `${id}: every text is at the floor (${m.minFont.toFixed(1)}px >= ${m.floor.toFixed(1)}px)`)
+        assert(m.zoom >= 0.99, `${id}: the presenter zoom stays at 1 (${m.zoom}) — the composition fits the band`)
+        assert(m.trackBottom <= m.footerTop + 0.5, `${id}: the composition ends above the footer (${m.trackBottom.toFixed(1)}px <= ${m.footerTop.toFixed(1)}px)`)
+        assert(m.trackBottom <= viewport.height - FOOTER_BAND_PX + 0.5, `${id}: composition bottom <= ${viewport.height - FOOTER_BAND_PX}px (${m.trackBottom.toFixed(1)}px)`)
+        // ADR-0030: the slide reserves the footer band in canvas px; the footer is window chrome in
+        // window px. At scale 1 the track is centred against it exactly; on a larger window the
+        // footer covers less of the scaled canvas, so the air below can only grow.
+        if (Math.abs(m.scale - 1) < 0.001) assert(Math.abs(m.topAir - m.bottomAir) <= AIR_TOLERANCE_PX, `${id}: air above and below the track is equal (${m.topAir.toFixed(1)}px vs ${m.bottomAir.toFixed(1)}px)`)
+        else assert(m.bottomAir >= m.topAir - AIR_TOLERANCE_PX, `${id}: the track keeps at least its top air below it (${m.topAir.toFixed(1)}px vs ${m.bottomAir.toFixed(1)}px)`)
+        assert.equal(m.clipped, 0, `${id}: nothing clips at the stage edge`)
+        if (mode === 'dynamic') {
+          const lastStep = await page.evaluate(() => {
+            const slide = document.querySelector('.stage > .slide.active')
+            const details = [...slide.querySelectorAll('.tl-detail')]
+            const shown = details.map((el) => parseFloat(getComputedStyle(el).opacity))
+            const units = [...slide.querySelectorAll('.mode-el')].map((el) => el.dataset.modeState)
+            return { shown, units }
+          })
+          assert(lastStep.units.length === 0 || lastStep.units.every((state) => state === 'full'), `${id}: the walk reached the all-full last step (${lastStep.units.join(',')})`)
+          assert.equal(lastStep.shown.filter((o) => o > 0.5).length, 1, `${id}: exactly one detail card shows at the last step (${lastStep.shown.join('/')})`)
+          assert(lastStep.shown[lastStep.shown.length - 1] > 0.5, `${id}: the LAST stop's detail shows at the last step`)
+        }
+        table.push(`${id}:${m.mode} stops=${m.stops} min=${m.minFont.toFixed(1)}px air=${m.topAir.toFixed(0)}/${m.bottomAir.toFixed(0)} bottom=${m.trackBottom.toFixed(0)}`)
+      }
     }
     for (const id of ['t22-pills-split', 't22-pills-split-2', 't22-horizontal-split', 't22-horizontal-split-2']) {
       await activate(id)

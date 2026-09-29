@@ -20,7 +20,7 @@
     justify-content: center;
     align-content: center;
     justify-items: center;
-    min-height: min(820px, calc(86vh - var(--quote-chrome-band)));
+    min-height: min(820px, calc(86cqh - var(--quote-chrome-band)));
   }/* @order 0720 */
   .slide-content.layout-quote > .slide-head-quiet { display: contents; }/* @order 0721 */
   /* Boxed emphasis inside the quote (mockup .box): filled accent chip, clone across line wraps. *//* @order 0727 */
@@ -98,4 +98,26 @@
     line-height: 1;
     color: var(--ink);
     opacity: .62;
+  }
+
+  /* ADR-0028 §2 — a quote BESIDE THE RAIL ([data-title-layout="left"] with a visible head) drops
+     the ADR-0023 panel: no tint, no accent rule, no panel padding; the quotation mark hangs in the
+     gutter between the rail and the text, and the rail/content gap widens to hold it (stage.css
+     @order 1341 gives clamp(40px, 5cqw, 96px)). Type is unchanged (max(31px, 3.4cqw), line-height
+     1.42). Quote-only slides are not matched and keep the panel above byte for byte. An authored
+     {bg=…} still paints the slide: nothing here touches the slide background. */
+  .slide[data-title-layout="left"]:has(> .slide-content.layout-quote > .slide-head:not(.slide-head-quiet)) > .slide-content {
+    column-gap: clamp(56px, 7cqw, 128px);
+  }
+  .slide[data-title-layout="left"] > .slide-content.layout-quote:has(> .slide-head:not(.slide-head-quiet)) > blockquote {
+    background: none;
+    border-left: 0;
+    padding: 0;
+    width: 100%;
+    max-width: 24em;
+    justify-self: start;
+  }
+  .slide[data-title-layout="left"] > .slide-content.layout-quote:has(> .slide-head:not(.slide-head-quiet)) > blockquote::before {
+    left: -.68em;
+    top: -.12em;
   }

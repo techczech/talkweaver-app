@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises'
-import { buildTree } from '../src/renderer/src/components/talkTreeNav.ts'
+import { buildTree, rebaseTalk } from '../src/renderer/src/components/talkTreeNav.ts'
 import { flattenSearch, flattenTree } from '../src/renderer/src/components/talklist/model.ts'
 
 let fail = 0
@@ -24,6 +24,7 @@ try {
 const {
   buildLayout,
   heightOf,
+  mergeRowHeights,
   mountedIndices,
   partitionGroups,
   scrollTargetFor,
@@ -117,9 +118,33 @@ equal(searchLayout.groups, [{ headerIndex: null, start: 0, end: searchRows.lengt
   'search mode is one headerless group')
 equal(buildLayout([], 'ledger', heights).groups, [], 'empty vault has no render groups')
 
+// Measurement folds into the current heights; an unchanged pass returns the SAME object, so
+// the panel writes state only for a real change (ticket 09: an equal-but-new heights object on
+// every render re-ran the scroll effect until React gave up).
+const current = { ledger: 26, shelf: 55, fhead: 24, ledgerTwo: 36, shelfTwo: 69 }
+const none = { ledger: undefined, shelf: undefined, fhead: undefined, ledgerTwo: undefined, shelfTwo: undefined }
+check(mergeRowHeights(current, none) === current, 'no mounted samples keeps the current heights object')
+check(mergeRowHeights(current, { ...none, ledger: 26, fhead: 24 }) === current, 'equal samples keep the current heights object')
+check(mergeRowHeights(current, { ...none, shelf: 0 }) === current, 'a zero-height sample (not laid out) is ignored')
+const measured = mergeRowHeights(current, { ...none, shelf: 57 })
+check(measured !== current, 'a changed sample yields a new heights object')
+equal(measured, { ...current, shelf: 57 }, 'only the measured kind changes')
+check(mergeRowHeights(measured, { ...none, shelf: 57 }) === measured, 'measuring the same geometry again is a no-op')
+
 const treeSource = await readFile(new URL('../src/renderer/src/components/talklist/Tree.tsx', import.meta.url), 'utf8')
 check(/\brows\b/.test(treeSource) && /partitionGroups|layout\.groups/.test(treeSource),
   'Tree renders the shared rows array through the grouped window model')
+
+// Ticket 08: after a folder rename the open talk is re-selected at its new path.
+{
+  const t = { name: 'held', title: 'Held', slug: 'held', path: '/v/topic/sub/held', outlinePath: '/v/topic/sub/held/held-outline.md' }
+  equal(rebaseTalk(t, '/v/', 'topic', 'renamed'), { ...t, path: '/v/renamed/sub/held', outlinePath: '/v/renamed/sub/held/held-outline.md' },
+    'a talk nested inside the renamed folder moves under its new name')
+  equal(rebaseTalk(t, '/v', 'topic/sub', 'topic/other'), { ...t, path: '/v/topic/other/held', outlinePath: '/v/topic/other/held/held-outline.md' },
+    'a renamed subfolder')
+  equal(rebaseTalk(t, '/v', 'top', 'x'), null, 'a folder whose name is only a prefix does not hold the talk')
+  equal(rebaseTalk(t, '/v', 'elsewhere', 'x'), null, 'a talk outside the folder is not moved')
+}
 
 if (fail) process.exit(1)
 console.log('PASS: talk-list grouped window model')

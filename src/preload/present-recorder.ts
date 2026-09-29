@@ -7,8 +7,9 @@
 //   • hands the audio + raw marks + session metadata to main on stop (recording:save).
 //
 // It shares the DOM with the deck runtime but lives in its own isolated JS world
-// (contextIsolation), so it never touches the 6,400-line presenter template — it ADDS a
-// control (Task 3) and reads the hash the runtime already maintains. Nothing here removes
+// (contextIsolation), so it never touches the presenter template's code — it ADDS the REC
+// cluster and its toasts (present-rec-ui.ts, mounted in the status bar's recording slot) and
+// reads the hash the runtime already maintains. Nothing here removes
 // or moves an existing control, and no path can lose a saved recording: audio is buffered
 // and written to local disk before any upload (main, Task 5/6).
 //
@@ -23,14 +24,16 @@
 import { ipcRenderer } from 'electron'
 import { mountEditBridge } from './present-edit-bridge'
 import { mountLiveBridge } from './present-live-bridge'
-import { showPresentationCloseOffer, type PresentationCloseOffer, type LiveCloseAction } from './present-close-flow'
+import type { PresentationCloseOffer, LiveCloseAction } from './present-close-flow'
+import { shouldOfferRecordingStart } from './present-recording-offer'
+import { mountRecUi } from './present-rec-ui'
+import type { RunKind } from './present-rec-view'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
 // idle → recording ⇄ paused → (confirm if short) → saving → saved   (error is terminal-for-this-run).
 // `confirm` = a short recording is waiting on a Keep/Discard choice — nothing is saved until then.
 export type RecState = 'idle' | 'recording' | 'paused' | 'confirm' | 'saving' | 'saved' | 'error'
-type RunKind = 'delivery' | 'rehearsal' | 'recording'
 
 // A raw mark is stamped on the RAW recorder clock (ms since record start, paused time
 // INCLUDED). The pure ledger module (16-presentation-ledger.mjs, in main) re-bases these
@@ -108,6 +111,8 @@ export interface RecorderController {
   currentKind(): RunKind
   runGate(): { gatePassed: boolean; lastSlideReached: boolean; wallMs: number; forwardAdvances: number; saved: boolean; audioArmed: boolean }
   onRunOffer(cb: () => void): void
+  /** Fired at most once per session: the talk left a long-held title slide with no recording running. */
+  onRecordingStartOffer(cb: () => void): void
   onCloseOffer(cb: (offer: PresentationCloseOffer) => void): void
   closeWindow(liveAction?: LiveCloseAction): Promise<void>
 }
@@ -140,10 +145,6 @@ function hashSlideId(): string {
 
 function normaliseKind(value: unknown): RunKind {
   return value === 'rehearsal' || value === 'recording' ? value : 'delivery'
-}
-
-function kindLabel(kind: RunKind): string {
-  return kind === 'delivery' ? 'Delivery' : kind === 'rehearsal' ? 'Rehearsal' : 'Recording'
 }
 
 function pickMimeType(): string | undefined {
@@ -213,16 +214,24 @@ export function createRecorderController(ctx: RecContext): RecorderController {
   let runLastReveal = 0
   let runLastHl = 0
 
+  // The start-recording offer (present-recording-offer.ts): which slide index is showing, and
+  // when the presenter arrived on the title slide (null while elsewhere).
+  let offerSlideIndex = -1
+  let titleArrivedAt: number | null = null
+  let startOffered = false
+
   const changeCbs: Array<(s: RecState) => void> = []
   const pausedMoveCbs: Array<() => void> = []
   const errorCbs: Array<(m: string) => void> = []
   const runOfferCbs: Array<() => void> = []
+  const startOfferCbs: Array<() => void> = []
   const closeOfferCbs: Array<(offer: PresentationCloseOffer) => void> = []
 
   const emitChange = (): void => { for (const cb of changeCbs) cb(state) }
   const emitPausedMove = (): void => { for (const cb of pausedMoveCbs) cb() }
   const emitError = (m: string): void => { for (const cb of errorCbs) cb(m) }
   const emitRunOffer = (): void => { for (const cb of runOfferCbs) cb() }
+  const emitStartOffer = (): void => { for (const cb of startOfferCbs) cb() }
   const emitCloseOffer = (offer: PresentationCloseOffer): void => { for (const cb of closeOfferCbs) cb(offer) }
 
   const rawNow = (): number => (t0 ? performance.now() - t0 : 0)
@@ -624,6 +633,26 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     }
   }
 
+  // Index-based (not hash-based) so the rule sees exactly "title slide → slide 2". A moment with
+  // no active slide is ignored rather than read as leaving the title.
+  function noteSlideIndexForStartOffer(idx: number): void {
+    if (idx < 0 || idx === offerSlideIndex) return
+    const t = performance.now()
+    if (shouldOfferRecordingStart({
+      titleArrivedAtMs: titleArrivedAt,
+      nowMs: t,
+      fromIndex: offerSlideIndex,
+      toIndex: idx,
+      recordingState: state,
+      alreadyOffered: startOffered
+    })) {
+      startOffered = true
+      emitStartOffer()
+    }
+    offerSlideIndex = idx
+    titleArrivedAt = idx === 0 ? t : null
+  }
+
   // Capture — poll the shared DOM (see file header for why not `hashchange`). Beyond slide
   // changes we watch the ACTIVE slide for in-slide animation: reveal build steps show/hide
   // `.hidden-fragment` items, and live highlights wrap text in `<mark.hl-mark>`. Both are real
@@ -634,6 +663,7 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     const idx = activeSlideIndex()
     const slides = allSlides()
     const lastReachedNow = idx >= 0 && idx === slides.length - 1
+    noteSlideIndexForStartOffer(idx)
     if (now !== lastHash) {
       lastHash = now
       // New slide — re-baseline reveal/highlight so entering never emits a spurious build step.
@@ -701,6 +731,7 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     void finaliseRun()
   })
   ipcRenderer.on('recording:show-close-offer', (_event, offer?: PresentationCloseOffer) => emitCloseOffer(offer ?? { live: false, offerRunSave: true, audioArmed: isAudioArmed() }))
+  noteSlideIndexForStartOffer(activeSlideIndex())
   initialiseRunCapture()
 
   return {
@@ -735,6 +766,7 @@ export function createRecorderController(ctx: RecContext): RecorderController {
       audioArmed: isAudioArmed()
     }),
     onRunOffer: (cb) => { runOfferCbs.push(cb) },
+    onRecordingStartOffer: (cb) => { startOfferCbs.push(cb) },
     onCloseOffer: (cb) => { closeOfferCbs.push(cb) },
     closeWindow: async (liveAction) => {
       if (isAudioArmed()) throw new Error('Save the recording before closing the presentation.')
@@ -743,398 +775,6 @@ export function createRecorderController(ctx: RecContext): RecorderController {
       if (!result?.ok) throw new Error(result?.error || 'The presentation could not be closed. Please try again.')
     }
   }
-}
-
-// ── REC control (injected into the real dark presenter, per locked mockup) ─────
-// Built to docs/design/2026-07-05-recording/direction-4-presenter-rec.html. Chrome +
-// colours mirror presenter-popup-single-html.html; the REC module borrows Light Table
-// amber. Nothing existing is removed — the pacing clock-bar is reparented into a cluster
-// so the two clocks sit side-by-side exactly as the mockup shows, but keeps every id,
-// listener and behaviour (it is the same node, moved, not rebuilt).
-
-function fmtClock(ms: number): string {
-  const s = Math.max(0, Math.round(ms / 1000))
-  const m = Math.floor(s / 60)
-  return String(m).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0')
-}
-
-const REC_CSS = `
-  #twrec-module, .twrec-toast { --lt-amber:#a3630e; --lt-amber-bright:#d98a2b; --lt-red-live:#ec5b56;
-    --twrec-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,monospace;
-    --twrec-sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif; }
-  /* The controls set display:inline-flex, which outranks the UA [hidden]{display:none} rule —
-     so state-hidden buttons need this explicit !important, or every control shows at once. */
-  #twrec-module [hidden], .twrec-toast [hidden] { display: none !important; }
-  .tw-center-cluster { display:flex; align-items:center; gap:12px; flex:0 0 auto; }
-  .tw-center-cluster .cluster-divider { width:1px; height:30px; background:#ffffff1f; flex:none; }
-  #twrec-module { display:inline-flex; align-items:center; gap:10px; padding:5px 6px 5px 11px;
-    border-radius:9px; background:#14202b; border:1px solid #ffffff1f;
-    transition:border-color .2s ease, background .2s ease, box-shadow .2s ease; }
-  #twrec-module[data-rec="idle"] { border-color:#4a4234; }
-  #twrec-module[data-rec="recording"] { border-color:#7d3b37; background:#241417;
-    box-shadow:0 0 0 1px #ec5b5622, 0 6px 20px rgba(236,91,86,0.14); }
-  #twrec-module[data-rec="paused"] { border-color:#7a5a22; background:#241f14; }
-  #twrec-module[data-rec="saving"], #twrec-module[data-rec="saved"] { border-color:#2f5a8a; background:#12212f; }
-  #twrec-module[data-rec="error"] { border-color:#7d3b37; background:#241417; }
-  .rec-dot { width:12px; height:12px; border-radius:50%; flex:none; background:#6f6753; }
-  #twrec-module[data-rec="recording"] .rec-dot { background:var(--lt-red-live);
-    box-shadow:0 0 0 0 #ec5b5688; animation:twrec-pulse 1.15s ease-out infinite; }
-  #twrec-module[data-rec="paused"] .rec-dot { background:var(--lt-amber-bright); }
-  #twrec-module[data-rec="saving"] .rec-dot, #twrec-module[data-rec="saved"] .rec-dot { background:#2f6db5; }
-  @keyframes twrec-pulse { 0%{box-shadow:0 0 0 0 rgba(236,91,86,0.55);} 70%{box-shadow:0 0 0 7px rgba(236,91,86,0);} 100%{box-shadow:0 0 0 0 rgba(236,91,86,0);} }
-  .rec-label { font-family:var(--twrec-sans); font-size:0.64rem; font-weight:800; letter-spacing:0.16em;
-    text-transform:uppercase; color:#b0a184; }
-  #twrec-module[data-rec="recording"] .rec-label { color:#f0a9a5; }
-  #twrec-module[data-rec="paused"] .rec-label { color:var(--lt-amber-bright); }
-  .rec-clock { font-family:var(--twrec-mono); font-variant-numeric:tabular-nums; font-weight:600;
-    font-size:1.02rem; letter-spacing:0.01em; color:#dfe7ef; min-width:4.4ch; text-align:right; }
-  #twrec-module[data-rec="idle"] .rec-clock { color:#8b93a0; }
-  #twrec-module[data-rec="paused"] .rec-clock { color:#e6c88a; }
-  .rec-frozen-tag { font-family:var(--twrec-sans); font-size:0.6rem; font-weight:800; letter-spacing:0.1em;
-    text-transform:uppercase; color:#241f14; background:var(--lt-amber-bright); border-radius:4px; padding:2px 5px; }
-  .rec-saved-msg { font-family:var(--twrec-sans); font-size:0.82rem; font-weight:600; color:#bcd6f2;
-    letter-spacing:0.01em; padding-right:2px; }
-  .rec-btn { display:inline-flex; align-items:center; gap:6px; background:#26333f; border:1px solid #ffffff26;
-    color:#eef3f9; border-radius:6px; padding:5px 9px; font-size:0.76rem; font-weight:600; white-space:nowrap; }
-  .rec-btn:hover { border-color:#6ea8e6; background:#2c3b49; }
-  .rec-btn.amber { background:#3a2c12; border-color:#7a5a22; color:#f0d5a0; }
-  .rec-btn.amber:hover { border-color:var(--lt-amber-bright); background:#46340f; }
-  .rec-btn.start { background:#2a1618; border-color:#7d3b37; color:#f4b9b5; }
-  .rec-btn.start:hover { border-color:var(--lt-red-live); background:#331a1c; }
-  .rec-btn.keep { background:#12261a; border-color:#2f6b45; color:#a8e0bf; }
-  .rec-btn.keep:hover { border-color:#3fa066; background:#173224; }
-  .rec-btn.ghost { background:#17212b; border-color:#ffffff20; color:#d9e3ed; }
-  .rec-btn.ghost:hover { border-color:#6ea8e6; background:#1d2b38; }
-  .rec-confirm-msg { font-family:var(--twrec-sans); font-size:0.82rem; font-weight:600; color:#e6c88a;
-    letter-spacing:0.01em; padding-right:2px; }
-  #twrec-module .kbd { font-family:var(--twrec-mono); font-size:0.62rem; line-height:1; font-weight:600;
-    padding:3px 5px; border-radius:4px; background:#0f1620; border:1px solid #ffffff26; border-bottom-width:2px;
-    color:#9fb1c4; white-space:nowrap; margin-left:1px; }
-  .rec-spinner { width:13px; height:13px; border-radius:50%; flex:none; border:2px solid #2f6db555;
-    border-top-color:#6ea8e6; animation:twrec-spin 0.8s linear infinite; }
-  @keyframes twrec-spin { to { transform:rotate(360deg); } }
-  .twrec-toast { position:fixed; top:86px; right:26px; z-index:120; display:flex; align-items:center; gap:12px;
-    background:#241f14ee; border:1px solid #7a5a22; border-left:3px solid var(--lt-amber-bright); border-radius:10px;
-    padding:11px 12px 11px 14px; box-shadow:0 14px 40px rgba(0,0,0,0.5); backdrop-filter:blur(3px); max-width:340px;
-    transform:translateY(-8px); opacity:0; pointer-events:none; transition:opacity .22s ease, transform .22s ease; }
-  .twrec-toast.show { transform:translateY(0); opacity:1; pointer-events:auto; }
-  .twrec-toast .rt-dot { width:10px; height:10px; border-radius:50%; background:var(--lt-amber-bright); flex:none; }
-  .twrec-toast .rt-text { font-family:var(--twrec-sans); font-size:0.86rem; line-height:1.3; color:#f1e6cf; }
-  .twrec-toast .rt-text b { font-weight:700; color:#fff; }
-  .twrec-toast .rt-dismiss { background:none; border:0; color:#b6a789; font-size:1rem; line-height:1; padding:2px 4px; cursor:pointer; }
-  .twrec-toast .rt-dismiss:hover { color:#fff; }
-  .twrec-toast .kbd { font-family:var(--twrec-mono); font-size:0.62rem; font-weight:600; padding:3px 5px; border-radius:4px;
-    background:#0f1620; border:1px solid #ffffff26; border-bottom-width:2px; color:#9fb1c4; margin-left:4px; }
-  .twrec-error { position:fixed; left:50%; bottom:96px; transform:translateX(-50%); background:#2a1618;
-    border:1px solid #7d3b37; color:#f4b9b5; padding:9px 16px; border-radius:9px; font-size:0.86rem; z-index:210;
-    box-shadow:0 12px 34px rgba(0,0,0,.5); font-family:var(--twrec-sans); max-width:60ch; }
-  .twrec-picker, .twrec-close-modal { position:fixed; inset:0; z-index:230; display:flex; align-items:center; justify-content:center;
-    background:rgba(6,10,15,0.54); backdrop-filter:blur(4px); font-family:var(--twrec-sans); }
-  .twrec-picker-panel, .twrec-close-panel { min-width:min(440px, calc(100vw - 44px)); max-width:520px; border-radius:12px;
-    background:#111a24; border:1px solid #ffffff24; box-shadow:0 24px 80px rgba(0,0,0,.58); padding:16px; color:#eef3f9; }
-  .twrec-picker-title, .twrec-close-title { font-size:0.95rem; font-weight:800; letter-spacing:0.01em; margin-bottom:4px; }
-  .twrec-picker-sub, .twrec-close-sub { color:#aab8c6; font-size:0.82rem; line-height:1.35; margin-bottom:13px; }
-  .twrec-kind-row, .twrec-close-row { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
-  .twrec-kind { border:1px solid #ffffff24; background:#1a2632; color:#eef3f9; border-radius:7px; padding:8px 11px;
-    font-size:0.82rem; font-weight:750; }
-  .twrec-kind.active { border-color:#d98a2b; background:#3a2c12; color:#f0d5a0; box-shadow:0 0 0 1px #d98a2b33; }
-  .twrec-planned-list { display:grid; gap:7px; margin:0 0 13px; max-height:230px; overflow:auto; }
-  .twrec-planned { display:flex; align-items:baseline; justify-content:space-between; gap:18px; text-align:left;
-    border:1px solid #ffffff24; background:#1a2632; color:#eef3f9; border-radius:8px; padding:9px 11px; }
-  .twrec-planned:hover, .twrec-planned:focus, .twrec-planned.active { border-color:#d98a2b; background:#3a2c12; outline:none; }
-  .twrec-planned b { font-size:.84rem; }
-  .twrec-planned span { color:#aab8c6; font-size:.75rem; }
-  .twrec-close-panel .danger { color:#ffd6d2; border-color:#7d3b37; background:#2a1618; }
-  .tw-shortcuts-section.twrec-sheet-section { color:#d98a2b; }
-`
-
-function mountRecUi(controller: RecorderController): void {
-  // 1) Styles — once.
-  if (!document.getElementById('twrec-styles')) {
-    const style = document.createElement('style')
-    style.id = 'twrec-styles'
-    style.textContent = REC_CSS
-    document.head.appendChild(style)
-  }
-
-  // 2) The REC module — inserted beside the pacing clock inside a center cluster.
-  const module = document.createElement('div')
-  module.id = 'twrec-module'
-  module.dataset.rec = 'idle'
-  module.setAttribute('role', 'group')
-  module.setAttribute('aria-label', 'Recording')
-  module.innerHTML = `
-    <span class="rec-dot" aria-hidden="true"></span>
-    <span class="rec-label" id="twrec-label">REC</span>
-    <span class="rec-clock" id="twrec-clock">00:00</span>
-    <span class="rec-frozen-tag" id="twrec-frozen" hidden>Paused</span>
-    <span class="rec-saved-msg" id="twrec-saved" hidden>Saved</span>
-    <span class="rec-confirm-msg" id="twrec-confirm-msg" hidden>Short recording &mdash; keep it?</span>
-    <button type="button" class="rec-btn start" id="twrec-primary" aria-label="Start recording (Shift R)" title="Start recording (⇧R)">Record<span class="kbd">⇧R</span></button>
-    <button type="button" class="rec-btn ghost" id="twrec-change-kind" aria-label="Change run kind" title="Change run kind" hidden>change</button>
-    <button type="button" class="rec-btn amber" id="twrec-pause" aria-label="Pause recording (Shift P)" title="Pause recording (⇧P)" hidden>&#10073;&#10073; Pause<span class="kbd">⇧P</span></button>
-    <button type="button" class="rec-btn amber" id="twrec-resume" aria-label="Resume recording (Shift P)" title="Resume recording (⇧P)" hidden>&#9654; Resume<span class="kbd">⇧P</span></button>
-    <button type="button" class="rec-btn" id="twrec-stop" aria-label="Stop and save (Shift R)" title="Stop &amp; save (⇧R)" hidden>&#9209; Stop</button>
-    <button type="button" class="rec-btn keep" id="twrec-keep" aria-label="Keep this recording" title="Keep this recording" hidden>Keep</button>
-    <button type="button" class="rec-btn" id="twrec-discard" aria-label="Discard this recording" title="Discard this recording" hidden>Discard</button>
-    <span class="rec-spinner" id="twrec-spinner" hidden></span>`
-
-  const clockBar = document.querySelector<HTMLElement>('#presenterRoot header .tw-clock-bar')
-  const divider = document.createElement('span')
-  divider.className = 'cluster-divider'
-  divider.setAttribute('aria-hidden', 'true')
-  if (clockBar && clockBar.parentElement) {
-    // Reparent the existing clock-bar into a cluster so the two clocks group tightly,
-    // exactly as the mockup shows. Same node moved — every id/listener stays live.
-    const cluster = document.createElement('div')
-    cluster.className = 'tw-center-cluster'
-    clockBar.parentElement.insertBefore(cluster, clockBar)
-    cluster.appendChild(clockBar)
-    cluster.appendChild(divider)
-    cluster.appendChild(module)
-  } else {
-    // Fallback: no clock-bar found — pin the module top-centre so recording still works.
-    module.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:150;'
-    document.body.appendChild(module)
-  }
-
-  // 3) The non-blocking resume toast — fixed to the viewport corner (never dims the talk).
-  const toast = document.createElement('div')
-  toast.className = 'twrec-toast'
-  toast.setAttribute('role', 'status')
-  toast.setAttribute('aria-live', 'polite')
-  toast.innerHTML = `
-    <span class="rt-dot" aria-hidden="true"></span>
-    <span class="rt-text"><b>Recording is paused</b> — resume?</span>
-    <button type="button" class="rec-btn amber" id="twrec-toast-yes" aria-label="Resume recording">&#9654; Resume<span class="kbd">⇧P</span></button>
-    <button type="button" class="rt-dismiss" id="twrec-toast-no" aria-label="Stay paused" title="Stay paused">&times;</button>`
-  document.body.appendChild(toast)
-
-  const saveToast = document.createElement('div')
-  saveToast.className = 'twrec-toast'
-  saveToast.setAttribute('role', 'status')
-  saveToast.setAttribute('aria-live', 'polite')
-  saveToast.innerHTML = `
-    <span class="rt-dot" aria-hidden="true"></span>
-    <span class="rt-text"><b>Save this run to History?</b></span>
-    <button type="button" class="rec-btn keep" id="twrec-save-delivery" aria-label="Save this run as a delivery">Save<span class="kbd">Enter</span></button>
-    <button type="button" class="rec-btn ghost" id="twrec-save-as" aria-label="Choose run kind">as…</button>
-    <button type="button" class="rt-dismiss" id="twrec-save-dismiss" aria-label="Dismiss save offer" title="Dismiss">&times;</button>`
-  document.body.appendChild(saveToast)
-
-  // Refs
-  const $ = (id: string): HTMLElement | null => document.getElementById(id)
-  const label = $('twrec-label'), clock = $('twrec-clock'), frozen = $('twrec-frozen')
-  const savedMsg = $('twrec-saved'), spinner = $('twrec-spinner'), confirmMsg = $('twrec-confirm-msg')
-  const primary = $('twrec-primary'), btnChangeKind = $('twrec-change-kind'), btnPause = $('twrec-pause'), btnResume = $('twrec-resume'), btnStop = $('twrec-stop')
-  const btnKeep = $('twrec-keep'), btnDiscard = $('twrec-discard')
-
-  const showToast = (): void => toast.classList.add('show')
-  const hideToast = (): void => toast.classList.remove('show')
-  const showSaveToast = (): void => saveToast.classList.add('show')
-  const hideSaveToast = (): void => saveToast.classList.remove('show')
-
-  function chooseKind(initial: RunKind = 'delivery'): Promise<RunKind | null> {
-    return new Promise((resolve) => {
-      let selected = initial
-      const overlay = document.createElement('div')
-      overlay.className = 'twrec-picker'
-      overlay.setAttribute('role', 'dialog')
-      overlay.setAttribute('aria-modal', 'true')
-      overlay.innerHTML = `
-        <div class="twrec-picker-panel">
-          <div class="twrec-picker-title">Save run to History</div>
-          <div class="twrec-picker-sub">Choose how this run should appear in History.</div>
-          <div class="twrec-kind-row">
-            <button type="button" class="twrec-kind" data-kind="delivery">Delivery</button>
-            <button type="button" class="twrec-kind" data-kind="rehearsal">Rehearsal</button>
-            <button type="button" class="twrec-kind" data-kind="recording">Recording</button>
-          </div>
-        </div>`
-      const buttons = Array.from(overlay.querySelectorAll<HTMLButtonElement>('.twrec-kind'))
-      const sync = (): void => {
-        buttons.forEach((button) => button.classList.toggle('active', button.dataset.kind === selected))
-      }
-      const close = (value: RunKind | null): void => {
-        window.removeEventListener('keydown', onKey, true)
-        overlay.remove()
-        resolve(value)
-      }
-      const confirm = (): void => close(selected)
-      const onKey = (event: KeyboardEvent): void => {
-        if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); close(null); return }
-        if (event.key === 'Enter') { event.preventDefault(); event.stopImmediatePropagation(); confirm(); return }
-        const idx = buttons.findIndex((button) => button.dataset.kind === selected)
-        if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
-          event.preventDefault()
-          selected = normaliseKind(buttons[(idx + 1) % buttons.length]?.dataset.kind)
-          sync()
-        } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
-          event.preventDefault()
-          selected = normaliseKind(buttons[(idx + buttons.length - 1) % buttons.length]?.dataset.kind)
-          sync()
-        }
-      }
-      buttons.forEach((button) => {
-        button.addEventListener('click', () => {
-          selected = normaliseKind(button.dataset.kind)
-          sync()
-          confirm()
-        })
-      })
-      sync()
-      document.body.appendChild(overlay)
-      window.addEventListener('keydown', onKey, true)
-      buttons.find((button) => button.dataset.kind === selected)?.focus()
-    })
-  }
-
-  async function saveWithPicker(): Promise<boolean> {
-    hideSaveToast()
-    const picked = await chooseKind(controller.currentKind())
-    if (!picked) return false
-    const result = await controller.saveRun(picked)
-    const ok = !!result?.ok && !result.discarded
-    return ok
-  }
-
-  function render(): void {
-    const st = controller.getState()
-    module.dataset.rec = st
-    const saved = st === 'saving' || st === 'saved'
-    const retryingAudio = st === 'error' && controller.runGate().audioArmed
-    const confirming = st === 'confirm' || retryingAudio
-    // In confirm, the clock shows the short length and the message replaces REC; in saving/saved
-    // the saved message replaces both.
-    if (label) label.textContent = 'REC'
-    if (label) label.hidden = saved || confirming
-    if (clock) { clock.hidden = saved; clock.textContent = fmtClock(controller.displayMs()) }
-    if (frozen) frozen.hidden = st !== 'paused'
-    if (savedMsg) {
-      savedMsg.hidden = !saved // a kept short run still saves; discard goes to idle, no message
-      savedMsg.textContent = `Saved as ${kindLabel(controller.currentKind())}`
-    }
-    if (confirmMsg) {
-      confirmMsg.hidden = !confirming
-      confirmMsg.textContent = retryingAudio ? 'Recording not saved — try again?' : `Short recording (${fmtClock(controller.displayMs())}) — keep it?`
-    }
-    if (spinner) spinner.hidden = !saved
-    if (primary) primary.hidden = retryingAudio || !(st === 'idle' || st === 'saved' || st === 'error')
-    if (btnChangeKind) btnChangeKind.hidden = st !== 'saved'
-    if (btnPause) btnPause.hidden = st !== 'recording'
-    if (btnResume) btnResume.hidden = st !== 'paused'
-    if (btnStop) {
-      btnStop.hidden = !(st === 'recording' || st === 'paused')
-      btnStop.setAttribute('aria-label', 'Stop and save recording (Shift R)')
-      btnStop.setAttribute('title', 'Stop & save recording (⇧R)')
-    }
-    if (btnKeep) {
-      btnKeep.hidden = !confirming
-      btnKeep.textContent = retryingAudio ? 'Retry save' : 'Keep'
-      btnKeep.setAttribute('aria-label', retryingAudio ? 'Retry saving this recording' : 'Keep this recording')
-    }
-    if (btnDiscard) btnDiscard.hidden = !confirming
-    if (st !== 'paused') hideToast()
-    if (controller.runGate().saved || controller.runGate().audioArmed) hideSaveToast()
-  }
-
-  controller.onChange(render)
-  controller.onSlideMovedWhilePaused(showToast)
-  controller.onRunOffer(showSaveToast)
-  controller.onCloseOffer((offer) => { hideSaveToast(); showPresentationCloseOffer(controller, offer) })
-  controller.onError((msg) => {
-    const n = document.createElement('div')
-    n.className = 'twrec-error'
-    n.textContent = msg
-    document.body.appendChild(n)
-    setTimeout(() => n.remove(), 4200)
-  })
-
-  // Clock tick — the visible REC clock advances while recording; render() keeps it correct otherwise.
-  setInterval(() => { if (controller.getState() === 'recording' && clock) clock.textContent = fmtClock(controller.displayMs()) }, 200)
-
-  // 4) Controls
-  primary?.addEventListener('click', () => { void controller.start() })
-  btnChangeKind?.addEventListener('click', () => { void saveWithPicker() })
-  btnPause?.addEventListener('click', () => controller.pause())
-  btnResume?.addEventListener('click', () => controller.resume())
-  btnStop?.addEventListener('click', () => { void controller.stop() })
-  btnKeep?.addEventListener('click', () => { void controller.confirmSave(true) })
-  btnDiscard?.addEventListener('click', () => { void controller.confirmSave(false) })
-  $('twrec-toast-yes')?.addEventListener('click', () => { controller.resume(); hideToast() })
-  $('twrec-toast-no')?.addEventListener('click', hideToast)
-  $('twrec-save-delivery')?.addEventListener('click', () => { hideSaveToast(); void controller.saveRun('delivery') })
-  $('twrec-save-as')?.addEventListener('click', () => { void saveWithPicker() })
-  $('twrec-save-dismiss')?.addEventListener('click', hideSaveToast)
-
-  // 5) Keyboard — ⇧R record/stop, ⇧P pause/resume. Capture phase so we act before the
-  // presenter's own handler; plain P/R stay the presenter's (pacing timer / reveal).
-  function toggleRecord(): void {
-    const st = controller.getState()
-    if (st === 'recording' || st === 'paused') void controller.stop()
-    else if (st === 'idle' || st === 'saved' || st === 'error') void controller.start()
-  }
-  function togglePause(): void {
-    const st = controller.getState()
-    if (st === 'recording') controller.pause()
-    else if (st === 'paused') controller.resume()
-  }
-  window.addEventListener('keydown', (e: KeyboardEvent) => {
-    if (document.querySelector('.twrec-close-modal')) return
-    const t = e.target
-    if (t instanceof HTMLElement && t.matches('input, textarea, select, [contenteditable="true"]')) return
-    // Resolve a short-recording Keep/Discard from the keyboard: Enter keeps, Esc discards.
-    if (controller.getState() === 'confirm') {
-      if (e.key === 'Enter') { e.preventDefault(); e.stopImmediatePropagation(); void controller.confirmSave(true) }
-      else if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); void controller.confirmSave(false) }
-      return
-    }
-    if (!e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && (e.key === 'L' || e.key === 'l')) {
-      e.preventDefault()
-      e.stopImmediatePropagation()
-      void saveWithPicker()
-      return
-    }
-    if (saveToast.classList.contains('show') && e.key === 'Enter') {
-      e.preventDefault()
-      e.stopImmediatePropagation()
-      hideSaveToast()
-      void controller.saveRun('delivery')
-      return
-    }
-    if (!e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return
-    if (e.key === 'R' || e.key === 'r') { e.preventDefault(); e.stopImmediatePropagation(); toggleRecord() }
-    else if (e.key === 'P' || e.key === 'p') { e.preventDefault(); e.stopImmediatePropagation(); togglePause() }
-  }, true)
-
-  // 6) Cheat-sheet parity — the real "?" sheet rebuilds its body on each open, so re-append
-  // a Recording section whenever it opens (MutationObserver on the hidden attribute).
-  const sheet = $('twShortcuts')
-  if (sheet) {
-    const injectSheet = (): void => {
-      const body = $('twShortcutsBody')
-      if (!body || body.querySelector('.twrec-sheet-section')) return
-      const head = document.createElement('div')
-      head.className = 'tw-shortcuts-section twrec-sheet-section'
-      head.textContent = 'Recording'
-      const mk = (keys: string, text: string): HTMLElement => {
-        const row = document.createElement('div'); row.className = 'tw-shortcuts-row'
-        const k = document.createElement('kbd'); k.className = 'tw-shortcuts-keys'; k.textContent = keys
-        const l = document.createElement('span'); l.textContent = text
-        row.append(k, l); return row
-      }
-      body.prepend(
-        head,
-        mk('⇧ R', 'Start / stop recording'),
-        mk('⇧ P', 'Pause / resume recording'),
-        mk('L', 'Save run to History')
-      )
-    }
-    new MutationObserver(() => { if (!sheet.hidden) injectSheet() })
-      .observe(sheet, { attributes: true, attributeFilter: ['hidden'] })
-  }
-
-  render()
 }
 
 // ── Bootstrap ────────────────────────────────────────────────────────────────

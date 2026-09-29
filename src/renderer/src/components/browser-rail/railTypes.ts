@@ -1,6 +1,6 @@
 // Shared prop shapes for the unified rail's sub-components (ADR-0009). The heavy data
-// derivation (counts, vocabularies, tree building) lives in SlideBrowser's memos — the
-// rail components are deliberately dumb renderers over these flat shapes.
+// derivation (counts, vocabularies) lives in SlideBrowser's memos and the Files tree's rows in
+// filesTreeModel.ts; the rail components are dumb renderers over these flat shapes.
 import type { ScopeEntry, RailFacets, ContentKey } from './railModel'
 
 export interface TreeSection {
@@ -8,23 +8,6 @@ export interface TreeSection {
   sec: string
   /** Authored display name (never the slug when the name is known). */
   label: string
-  count: number
-}
-export interface TreeTalk {
-  slug: string
-  title: string
-  count: number
-  sections: TreeSection[]
-}
-export interface TreeFolder {
-  name: string
-  count: number
-  talks: TreeTalk[]
-}
-
-export interface TalkHit {
-  slug: string
-  title: string
   count: number
 }
 

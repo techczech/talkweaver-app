@@ -85,6 +85,7 @@ try {
     tallies: Object.fromEntries(poll.options.map((option, i) => [option.optionId, [8, 4, 6, 2][i]])) };
   await presenter.evaluate((message) => window.__pollStateApply(message), held)
   const audiencePromise = context.waitForEvent('page')
+  await presenter.locator('#presenterMenuLive').click() // in the Live menu since presenter redesign ticket 04
   await presenter.locator('#presenterAudienceApp').click()
   const audience = await audiencePromise
   await audience.waitForLoadState()
@@ -188,6 +189,7 @@ try {
   assert.equal(await late.locator(LIVE).getAttribute('data-poll-view'), 'results')
   await late.close()
 
+  await presenter.locator('#presenterMenuPoll').click() // in the Poll menu since presenter redesign ticket 04
   await presenter.locator('#presenterQuickPollButton').click()
   await presenter.locator('[data-quick-poll-preset="Yes|No"]').click()
   await presenter.locator('#quickPollQuestion').fill('Should we try this together?')
@@ -204,6 +206,7 @@ try {
   await popup.waitFor({ state: 'hidden' })
   await presenter.evaluate((definition) => window.__pollStateApply({ ...definition, type: 'poll.state', pollType: definition.type, open: true, revealed: true, tallies: {} }), quick)
   assert.equal(await popup.isVisible(), false, 'a vote never reopens a dismissed Quick popup')
+  await presenter.locator('#presenterMenuPoll').click() // in the Poll menu since presenter redesign ticket 04
   await presenter.locator('#presenterQuickPollRestore').click()
   await popup.waitFor({ state: 'visible' })
   await presenter.locator('#presenterQuickPollDismiss').click()
@@ -264,6 +267,7 @@ try {
     await canvas.waitFor({ state: 'visible' })
     assert.equal(await canvas.getAttribute('data-poll-view'), 'results')
     // Create a Quick identity through the existing composer before delivering its state.
+    await presenter.locator('#presenterMenuPoll').click() // in the Poll menu since presenter redesign ticket 04
     await presenter.locator('#presenterQuickPollButton').click()
     await presenter.locator(`[data-quick-poll-type="${definition.type}"]`).click()
     await presenter.locator('#quickPollQuestion').fill(state.question)

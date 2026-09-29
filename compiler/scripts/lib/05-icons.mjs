@@ -1306,7 +1306,9 @@ export function classifyFeatureList(items, ordered = false) {
 //             repeatable across and within slides; never touches the vocabulary.
 //   plain   → force plain even for an ordered list.
 // A forced icon/logo list that cannot resolve every slot falls back to plain (never a half-iconed
-// list); numbers always succeed.
+// list) — or, for an ordered (`1.`) source list, to its numbers (ADR-0028 §6: the author typed
+// them, so an icon list whose icons are off or unresolvable never loses them); numbers always
+// succeed.
 //
 // `vocab` (createIconVocabulary or null): the deck-level concept→icon lexicon, mutated in place by
 //   {iconlist}. {logolist} ignores it entirely. (A bare Set is tolerated for back-compat — it is
@@ -1315,6 +1317,9 @@ export function classifyFeatureList(items, ordered = false) {
 //   icon key ({icon=name} per item or a deck `icons:` block) that WINS over the algorithmic pick.
 export function decideFeatureListStyle(items, ordered = false, vocab = null, forceStyle = "", overrides = null) {
   const lex = vocab && vocab.byConcept ? vocab : null; // only a real vocabulary is consulted
+  const iconFallback = () => ordered && Array.isArray(items) && items.length
+    ? { style: "numbers", icons: null }
+    : { style: "plain", icons: null };
   if (forceStyle === "plain") return { style: "plain", icons: null };
   if (forceStyle === "numbers") {
     return Array.isArray(items) && items.length ? { style: "numbers", icons: null } : { style: "plain", icons: null };
@@ -1326,14 +1331,14 @@ export function decideFeatureListStyle(items, ordered = false, vocab = null, for
     // distinct ideas → distinct glyphs. Falls back to plain if any slot cannot be resolved (never
     // a half-iconed list).
     const icons = assignFeatureIconsV3(items, lex, null, overrides);
-    return icons ? { style: "icons", icons } : { style: "plain", icons: null };
+    return icons ? { style: "icons", icons } : iconFallback();
   }
   if (forceStyle === "logos") {
     // {logolist} = brand logos ONLY (svgl/extra). NO uniqueness whatsoever: a brand resolves to
     // its logo every time it appears, repeatable across slides and within one slide. A non-brand
     // slot drops the whole list to plain. Logos never consult or register the vocabulary.
     const icons = resolveBrandLogos(items, overrides);
-    return icons ? { style: "icons", icons } : { style: "plain", icons: null };
+    return icons ? { style: "icons", icons } : iconFallback();
   }
   // DEFAULT: numbers stay auto for an ordered list; everything else is plain (icons opt-in only).
   if (ordered && Array.isArray(items) && items.length) return { style: "numbers", icons: null };
@@ -1921,7 +1926,7 @@ export function collectSemanticIconNeeds(slides) {
 // ALL-FAIL detection for AUTHOR-FORCED icon lists. When a list is explicitly turned
 // into icons ({iconlist} → feature-list with liststyle "icons", or an {iconrow} block)
 // but NOT ONE item resolves to a glyph, the renderer silently drops to plain (or, for
-// iconrow, to numbered discs). The author asked for icons and got none — a real,
+// iconrow, to numbered discs; an ordered list keeps its numbers). The author asked for icons and got none — a real,
 // actionable warning. Emits:
 //   `iconlist-no-icons:<slide-id>`
 // one per affected block (slide-id carried so TalkWeaver can surface it per-slide).

@@ -272,6 +272,10 @@ html, body, #root {
 .tl-fcount { flex: 0 0 auto; font-family: var(--font-mono); font-size: 9.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
 .tl-fhead:hover .tl-ficon { color: var(--oxford); }
 .tl-fhead--kfocus { box-shadow: inset 0 0 0 1.5px var(--oxford); border-radius: 4px; }
+/* The Archive (ADR-0029 §3, frames L1, L2): the old PowerPoint imports, dimmed, last. */
+.tl-fhead.is-archive .tl-fname, .tl-fhead.is-archive .tl-ficon { color: var(--faint); font-weight: 500; }
+.tl-fhead.is-archive:hover .tl-fname { color: var(--muted); }
+.tl-fhead.is-archive .tl-fcount { margin-left: 6px; }
 .tl-drop { outline: 2px solid var(--oxford); outline-offset: -2px; border-radius: 4px; }
 
 /* Ledger rows (26px dense) */
@@ -300,6 +304,64 @@ html, body, #root {
 .tl-row-name--file { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); }
 .tl-row--selected .tl-row-name--file, .tl-row--kfocus .tl-row-name--file { color: var(--ink); }
 .tl-row--folder:hover .tl-row-name { color: var(--ink); }
+/* Two-line rows (36px): talk search results say what matched (ADR-0029 §1, frames L5, L7–L10);
+   at rest every Ledger talk row names its event or folder and last delivery (§3, frame L1). */
+.tl-row--two { height: 36px; }
+.tl-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; padding-right: 8px; }
+.tl-row-text .tl-row-name { flex: none; padding-right: 0; }
+.tl-row-sub {
+  display: block; font-size: 10.5px; line-height: 1.25; color: var(--faint);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.tl-row-match em {
+  font-style: normal; font-family: var(--font-mono); font-size: 9.5px; color: var(--oxford);
+  text-transform: lowercase; margin-right: 1px;
+}
+.tl-row-name mark, .tl-shrow-title mark, .tl-row-sub mark { background: #f3e3b5; color: inherit; border-radius: 2px; padding: 0 1px; }
+.tl-shrow-match { margin-top: 3px; min-width: 0; }
+.tl-res-note {
+  display: flex; gap: 6px; align-items: center; padding: 5px 12px;
+  font-size: 10.5px; line-height: 1.3; color: var(--amber); background: var(--amber-bg);
+}
+.tl-res-note svg { flex: none; }
+.tl-res-head {
+  display: flex; justify-content: space-between; gap: 8px; padding: 4px 12px;
+  font-size: 10px; color: var(--faint); text-transform: uppercase; letter-spacing: .06em;
+  border-bottom: 1px solid var(--hairline);
+}
+.tl-res-head > span:first-child { flex: none; white-space: nowrap; }
+/* The folder name truncates first; "search everywhere (N)" always stays whole and clickable. */
+.tl-res-scope { display: flex; justify-content: flex-end; min-width: 0; text-transform: none; letter-spacing: 0; white-space: nowrap; }
+.tl-res-where { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tl-res-scope .tl-res-wide { flex: none; margin-left: 4px; }
+.tl-res-wide {
+  font: inherit; color: var(--oxford); background: none; border: 0; padding: 0; cursor: pointer; white-space: nowrap;
+}
+.tl-res-wide:hover { text-decoration: underline; }
+.tl-res-wide:focus-visible { outline: 1.5px solid var(--oxford); outline-offset: 1px; border-radius: 2px; }
+.tl-empty--search { font-style: normal; color: var(--muted); }
+.tl-empty--search b { font-weight: 600; color: var(--ink); }
+.tl-empty-sugg { margin-top: 6px; }
+/* talk search: the prefix hint row (L3) and completion (L4) under the box (ADR-0029 §2) */
+.tl-pfx-row { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 4px; padding: 0 8px 8px; }
+.tl-pfx {
+  appearance: none; font: 10.5px var(--font-ui); color: var(--muted); cursor: pointer;
+  border: 1px solid var(--line); border-radius: 10px; padding: 1px 7px; background: var(--paper);
+}
+.tl-pfx:hover { background: var(--hover); color: var(--ink); }
+.tl-pfx b { font-family: var(--font-mono); font-weight: 600; color: var(--oxford); }
+.tl-cpl {
+  flex: 0 0 auto; margin: 0 8px 6px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+  background: #fff; box-shadow: 0 6px 18px rgba(23,32,42,.12); font-size: 12px; color: var(--ink);
+}
+.tl-cpl-h { font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); padding: 6px 9px 3px; }
+.tl-cpl-o { display: flex; justify-content: space-between; gap: 8px; padding: 4px 9px; cursor: pointer; }
+.tl-cpl-o span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-cpl-o i { flex: none; font-style: normal; color: var(--faint); font-family: var(--font-mono); font-size: 10px; }
+.tl-cpl-o.is-on { background: #e3ebf7; }
+.tl-cpl-f { border-top: 1px solid var(--hairline); padding: 5px 9px; font-size: 10px; color: var(--faint); }
+.tl-panel--completing .tl-tree, .tl-panel--completing .tl-recent,
+.tl-panel--completing .tl-res-head, .tl-panel--completing .tl-res-note { opacity: .45; }
 .tl-row-warn { flex: 0 0 auto; font-family: var(--font-mono); font-size: 9.5px; font-weight: 700; color: var(--crimson); margin-right: 6px; }
 .tl-row-pathways {
   flex: 0 0 auto; display: inline-flex; align-items: center; gap: 2px; margin-right: 6px;
@@ -504,6 +566,40 @@ html, body, #root {
 .editor-column { display: flex; flex-direction: column; height: 100%; width: 100%; min-width: 0; min-height: 0; overflow: hidden; }
 .workspace-panes--editor .editor-column { flex: 1; }
 .editor-column .pane--editor { flex: 1; height: auto; }
+/* Outline external-change guard (shared-talk ticket 01): the quiet bar above the outline when the
+   talk's file changed on disk. Amber, like the other "needs a look" chips (tl-badge--warn); same
+   height and rhythm as the action bar above it; text buttons, never a dialog. */
+.disk-change-bar {
+  flex: none; min-height: 30px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 3px 14px; background: var(--amber-bg); color: var(--amber);
+  border-bottom: 1px solid color-mix(in srgb, var(--amber) 30%, transparent);
+  font-size: 12px; font-weight: 500; line-height: 1.3;
+}
+.disk-change-bar__sep { opacity: .6; }
+.disk-change-bar__action {
+  padding: 2px 6px; border: none; border-radius: 5px; background: none; cursor: pointer;
+  font: inherit; font-weight: 600; color: var(--amber);
+}
+.disk-change-bar__action:hover:not(:disabled) { background: color-mix(in srgb, var(--amber) 14%, transparent); }
+.disk-change-bar__action:focus-visible { outline: 1.5px solid var(--amber); outline-offset: 1px; }
+.disk-change-bar__action:disabled { opacity: .5; cursor: default; }
+.disk-change-bar__item { display: inline-flex; align-items: center; gap: 6px; }
+.disk-change-bar__text { overflow-wrap: anywhere; }
+/* The sheet that holds a talk switch or a close: the app's confirm-modal look (talklist/modals.tsx). */
+.disk-change-sheet__scrim { position: fixed; inset: 0; z-index: 1300; background: rgba(23,32,42,0.35); }
+.disk-change-sheet {
+  position: fixed; top: 38%; left: 50%; transform: translate(-50%, -50%); z-index: 1301;
+  width: 420px; max-width: 90vw; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; box-shadow: 0 12px 40px #17202a2e; padding: 16px; font-family: var(--font-ui);
+}
+.disk-change-sheet__title { font-size: 13px; font-weight: 600; color: var(--ink); margin-bottom: 6px; }
+.disk-change-sheet__detail { font-size: 12.5px; color: var(--muted); line-height: 1.5; margin-bottom: 14px; overflow-wrap: anywhere; }
+.disk-change-sheet__actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.disk-change-sheet__btn {
+  font-size: 13px; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--oxford);
+  background: var(--oxford); color: #fff; cursor: pointer;
+}
+.disk-change-sheet__btn--ghost { border-color: var(--line); background: transparent; color: var(--muted); }
 .workspace-panes--strip .pane--strip,
 .workspace-panes--strip .pane--inspector { flex: 1; }
 /* Grid mode replaces the strip with a full-width grid of slide thumbnails. */
@@ -514,9 +610,16 @@ html, body, #root {
 .pane--inspector { background: var(--panel); }
 
 /* ── Inspector (ADR-0011, locked scene A) ─────────────────── */
-.tw-inspector { height: 100%; overflow-y: auto; background: var(--panel); border-left: 1px solid var(--line); padding: 14px 14px 48px; color: var(--ink); }
+/* The preview head and the section chips stay pinned; only the options pane below them scrolls
+   (Dominik's preview.11 check, 29 Sep: "needs to stay visible as options below change"). In a
+   window too short for the head plus a usable pane, the whole Inspector scrolls instead. The
+   preview is at most half the Inspector's height (slides-only view runs it the full window width),
+   so the options always keep room below it. */
+.tw-inspector { height: 100%; display: flex; flex-direction: column; overflow-y: auto; container-type: size; background: var(--panel); border-left: 1px solid var(--line); color: var(--ink); }
 .tw-inspector:focus { outline: none; }
-.tw-inspector-preview-head { padding-bottom: 12px; }
+.tw-inspector-preview-head { flex: none; padding: 14px 14px 12px; }
+.tw-inspector-pane { flex: 1 1 auto; min-height: 160px; overflow-y: auto; overflow-anchor: none; overscroll-behavior: contain; padding: 0 14px 48px; }
+.tw-inspector-pane > .tw-inspector-unresolved { margin-top: 2px; }
 .tw-inspector-nav { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .tw-inspector-nav button,
 .tw-inspector-stepbar button { display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); color: var(--muted); cursor: pointer; }
@@ -528,6 +631,7 @@ html, body, #root {
 .tw-inspector-title { min-width: 0; flex: 1; font-size: 12px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tw-inspector-stage { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: #fdfdfb; box-shadow: 0 2px 8px rgba(23,32,42,.08); transition: opacity .15s; }
 .tw-inspector-stage.is-compiling { opacity: .72; }
+.tw-inspector-preview-head .tw-inspector-stage { max-width: calc(50cqh * 16 / 9); margin-inline: auto; }
 .tw-fixed-deck-preview { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; }
 .tw-fixed-deck-preview__canvas { position: absolute; top: 0; left: 0; transform: scale(var(--tw-fixed-deck-scale)); transform-origin: top left; }
 .tw-fixed-deck-preview iframe { display: block; width: 1280px; height: 720px; border: 0; }
@@ -558,13 +662,13 @@ html, body, #root {
 /* ── Inspector sections (T32, Decision 2A) ───────────────── */
 /* The options column runs in sections: the slide's own layout, Title, Slide, Steps, Poll. Sizes
    are lifted from the locked sheet (docs/design/2026-09-23-inspector-and-action-bar): a pill jump
-   row sticky at the top of the Inspector's scroll area, an 11.5px uppercase section heading under
-   a 2px ink rule, 11.5px sentence-case group labels, and a dependent group nested behind an
-   oxford left rule. */
+   row above the options pane, an 11.5px uppercase section heading under a 2px ink rule, 11.5px
+   sentence-case group labels, and a dependent group nested behind an oxford left rule. The chips
+   work as tabs: a chip puts its section's heading (rule included) at the top of the pane. */
 .tw-inspector-jumplist {
-  position: sticky; top: -14px; z-index: 3;
+  flex: none;
   display: flex; flex-wrap: wrap; gap: 4px;
-  margin: 0 -14px; padding: 10px 14px 12px;
+  padding: 10px 14px 12px;
   border-top: 1px solid var(--line);
   background: var(--panel);
 }
@@ -576,9 +680,9 @@ html, body, #root {
 .tw-inspector-jumplist button:hover { color: var(--ink); }
 .tw-inspector-jumplist button:focus-visible { outline: 2px dashed var(--oxford); outline-offset: 2px; }
 .tw-inspector-jumplist button.is-lit { background: var(--ink); color: var(--panel); }
-.tw-inspector-section { border-top: 2px solid var(--ink); margin-top: 6px; padding-top: 9px; }
+.tw-inspector-section + .tw-inspector-section { margin-top: 6px; }
 .tw-inspector-section-heading {
-  margin: 0 0 4px;
+  margin: 0 0 4px; padding-top: 9px; border-top: 2px solid var(--ink);
   font: 700 11.5px var(--font-ui); letter-spacing: .06em; text-transform: uppercase; color: var(--ink);
 }
 .tw-inspector-section .tw-inspector-group { border-top: 0; padding: 8px 0 10px; }
@@ -1566,3 +1670,165 @@ html, body, #root {
 .poll-authoring-help { max-width: 34rem; margin-top: 8px; font-size: 12px; line-height: 1.5; color: var(--ink); }
 .poll-authoring-help p { margin: 0 0 6px; }
 .poll-authoring-help pre { margin: 0; padding: 8px; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--paper); border: 1px solid var(--line); border-radius: 4px; font: 11px/1.5 var(--font-mono); }
+
+/* ── Share for comments: the share sheet (ticket 03) ─────────────────────────────────────────────
+   docs/design/2026-09-28-shared-talk/LOCKED-share-sheet.html frame 2: a 560px sheet centred over
+   the editor, the outline and slide strip visible through a light scrim. */
+.share-sheet-backdrop { position: fixed; inset: 0; z-index: 210; background: rgba(23, 32, 42, .28); display: flex; justify-content: center; align-items: flex-start; padding-top: 110px; }
+.share-sheet { width: 560px; max-width: calc(100vw - 32px); background: var(--panel); border: 1px solid var(--line); border-radius: 11px; box-shadow: 0 14px 38px #17202a30, 0 3px 10px #17202a1c; font-family: var(--font-ui); color: var(--ink); animation: tw-menu-in 110ms ease-out; }
+.share-sheet .sh-head { padding: 18px 22px 4px; }
+.share-sheet .sh-eyebrow { font: 700 10px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.share-sheet .sh-head h2 { font-size: 17px; font-weight: 650; margin-top: 4px; }
+.share-sheet .sh-head p { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+.share-sheet .sh-link { display: flex; gap: 18px; padding: 14px 22px 16px; border-bottom: 1px solid var(--line); }
+.share-sheet .sh-link-main { flex: 1; min-width: 0; }
+.share-sheet .sh-field { display: flex; align-items: center; height: 34px; border: 1px solid var(--line); border-radius: 6px; background: #fff; padding: 0 10px; font: 13px var(--font-mono); color: var(--ink); gap: 8px; user-select: text; }
+.share-sheet .sh-field svg { width: 14px; height: 14px; color: var(--faint); flex: none; }
+.share-sheet .sh-field-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-sheet .sh-btnrow { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+.share-sheet .sh-btn { border: 1px solid var(--oxford); background: var(--oxford); color: #fff; border-radius: 6px; padding: 7px 14px; font: 600 13px var(--font-ui); cursor: pointer; }
+.share-sheet .sh-btn:disabled { opacity: .5; cursor: default; }
+.share-sheet .sh-btn--plain { background: var(--panel); color: var(--ink); border-color: var(--line); }
+.share-sheet .sh-btn--plain:hover { background: var(--hover); }
+.share-sheet .sh-hint { font-size: 11.5px; color: var(--muted); }
+.share-sheet .sh-promise { margin-top: 12px; }
+.share-sheet .sh-status { margin-top: 8px; font-size: 11.5px; color: var(--muted); }
+.share-sheet .sh-status.is-error { color: var(--crimson); }
+.share-sheet .sh-qr-wrap { flex: none; }
+.share-sheet .sh-qr { display: block; width: 112px; height: 112px; border: 1px solid var(--line); border-radius: 6px; background: #fff; padding: 8px; }
+.share-sheet .sh-qr--empty { background: var(--paper); }
+.share-sheet .sh-switches { padding: 6px 22px 4px; }
+.share-sheet .sh-switch { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--hairline); align-items: flex-start; }
+.share-sheet .sh-switch:last-child { border-bottom: 0; }
+.share-sheet .sh-switch-text { flex: 1; }
+.share-sheet .sh-switch-text b { font-size: 13px; font-weight: 600; display: block; }
+.share-sheet .sh-switch-text span { font-size: 12px; color: var(--muted); line-height: 1.45; display: block; margin-top: 2px; }
+.share-sheet .sh-toggle { flex: none; width: 34px; height: 20px; border-radius: 10px; border: 0; background: var(--line); position: relative; margin-top: 1px; cursor: pointer; transition: background 120ms; }
+.share-sheet .sh-toggle[aria-checked="true"] { background: var(--oxford); }
+.share-sheet .sh-toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px #0003; transition: left 120ms; }
+.share-sheet .sh-toggle[aria-checked="true"]::after { left: 16px; }
+.share-sheet .sh-toggle:disabled { opacity: .55; cursor: default; }
+.share-sheet .sh-where { margin: 4px 22px 0; padding: 10px 12px; background: var(--paper); border: 1px solid var(--line); border-radius: 6px; font-size: 12.5px; display: flex; gap: 9px; align-items: flex-start; line-height: 1.45; }
+.share-sheet .sh-where svg { width: 16px; height: 16px; color: var(--oxford); flex: none; margin-top: 1px; }
+.share-sheet .sh-foot { display: flex; align-items: center; padding: 16px 22px 18px; gap: 10px; }
+.share-sheet .sh-stop { color: var(--crimson); font: 600 12.5px var(--font-ui); border: 1px solid transparent; background: none; padding: 6px 0; cursor: pointer; }
+.share-sheet .sh-stop:disabled { opacity: .5; cursor: default; }
+.share-sheet .sh-foot-right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+/* The talk row's "Shared" badge and the status bar chip. */
+.tl-row-shared { flex: none; margin-right: 6px; padding: 0 5px; border-radius: 4px; font: 600 9.5px/15px var(--font-ui); letter-spacing: .02em; color: var(--oxford); background: color-mix(in srgb, var(--oxford) 10%, transparent); }
+.share-sheet .sh-replace { margin-top: 10px; padding: 9px 11px; border: 1px solid var(--amber); background: var(--amber-bg); color: var(--amber); border-radius: 6px; font-size: 12.5px; }
+.share-sheet .sh-replace .sh-btnrow { margin-top: 8px; }
+.share-sheet .sh-local { color: var(--amber); }
+
+/* ── Feedback rail (ticket 05) ──────────────────────────────────────────────────────────────────
+   docs/design/2026-09-28-shared-talk/LOCKED-feedback-rail-and-markers.html frames 1 and 3: the
+   rail takes the Inspector's slot beside the outline. Text items separated by hairlines. */
+.pane--feedback { background: var(--panel); }
+.workspace-panes--strip .pane--feedback { flex: 1; }
+.feedback-rail { display: flex; flex-direction: column; min-height: 0; height: 100%; background: var(--panel); border-left: 1px solid var(--line); font-family: var(--font-ui); color: var(--ink); }
+.feedback-rail .fr-head { padding: 12px 16px 10px; border-bottom: 1px solid var(--line); flex: none; }
+.feedback-rail .fr-row { display: flex; align-items: center; gap: 8px; }
+.feedback-rail .fr-label { font: 700 10px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.feedback-rail .fr-count { font-size: 12px; font-weight: 600; }
+.feedback-rail .fr-x { margin-left: auto; color: var(--faint); font-size: 15px; background: none; border: 0; cursor: pointer; line-height: 1; padding: 2px 4px; border-radius: 4px; }
+.feedback-rail .fr-x:hover { background: var(--hover); color: var(--ink); }
+.feedback-rail .fr-sub { font-size: 11.5px; color: var(--muted); margin-top: 4px; display: flex; gap: 6px; align-items: center; }
+.feedback-rail .fr-sub--note { margin-top: 8px; line-height: 1.45; display: block; }
+.feedback-rail .fr-scope { margin-top: 8px; display: flex; gap: 2px; background: var(--hover); border-radius: 6px; padding: 2px; width: max-content; }
+.feedback-rail .fr-scope button { font: 11px var(--font-ui); padding: 3px 9px; border-radius: 4px; color: var(--muted); background: none; border: 0; cursor: pointer; }
+.feedback-rail .fr-scope button.is-on { background: var(--panel); color: var(--oxford); font-weight: 600; box-shadow: 0 1px 3px #17202a14; }
+.feedback-rail .fr-scope button:disabled { opacity: .45; cursor: default; }
+.feedback-rail .fr-error { margin-top: 6px; font-size: 11.5px; color: var(--crimson); }
+.feedback-rail .fr-body { flex: 1; overflow-y: auto; padding: 0 16px 16px; min-height: 0; }
+.feedback-rail .fr-empty { padding: 18px 0; font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+.feedback-rail .fr-item { padding: 11px 0 12px; border-bottom: 1px solid var(--hairline); }
+.feedback-rail .fr-who { display: flex; align-items: baseline; gap: 7px; font-size: 11.5px; color: var(--muted); }
+.feedback-rail .fr-new-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--oxford); flex: none; align-self: center; }
+.feedback-rail .fr-kind { font: 700 9.5px var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--oxford); }
+.feedback-rail .fr-kind--note { color: var(--muted); }
+.feedback-rail .fr-kind--del { color: var(--crimson); }
+.feedback-rail .fr-kind--ins { color: #0f4bd8; }
+.feedback-rail .fr-when { margin-left: auto; font: 10.5px var(--font-mono); color: var(--faint); white-space: nowrap; }
+.feedback-rail .fr-slideref { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.feedback-rail .fr-slideref b { font: 700 10.5px var(--font-mono); color: var(--oxford); margin-right: 4px; }
+.feedback-rail .fr-ins-sec { color: #0f4bd8; font-weight: 600; }
+.feedback-rail .fr-text { font-size: 13px; line-height: 1.45; margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.feedback-rail .fr-text i { font-style: normal; color: var(--muted); }
+.feedback-rail .fr-diff { margin-top: 7px; font: 12px/1.55 var(--font-mono); border: 1px solid var(--line); border-radius: 6px; background: #fff; overflow: hidden; }
+.feedback-rail .fr-diff > div { padding: 1px 8px 1px 22px; position: relative; white-space: pre-wrap; overflow-wrap: anywhere; }
+.feedback-rail .fr-diff > div::before { position: absolute; left: 8px; top: 1px; }
+.feedback-rail .fr-d { background: #fbe9ec; color: var(--crimson); }
+.feedback-rail .fr-d::before { content: "−"; }
+.feedback-rail .fr-d span { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--crimson) 55%, transparent); }
+.feedback-rail .fr-a { background: #e6f2e9; color: var(--green); }
+.feedback-rail .fr-a::before { content: "+"; }
+.feedback-rail .fr-more { color: var(--faint); font: italic 11px var(--font-ui); }
+.feedback-rail .fr-preview { margin-top: 8px; width: 74%; }
+.feedback-rail .fr-slide { background: #fdfdfb; color: #101418; font-family: "Trebuchet MS", system-ui, -apple-system, "Segoe UI", sans-serif; aspect-ratio: 16 / 9; container-type: inline-size; position: relative; overflow: hidden; border: 1.5px dashed #0f4bd8; border-radius: 4px; }
+.feedback-rail .fr-slide-in { position: absolute; inset: 0; padding: 6cqw 6.5cqw; display: flex; flex-direction: column; justify-content: center; }
+.feedback-rail .fr-slide-k { font: 500 max(6px, 1.6cqw)/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .18em; text-transform: uppercase; color: #0f4bd8; margin-bottom: 2.2cqw; }
+.feedback-rail .fr-slide h2 { font-size: 5.1cqw; font-weight: 700; letter-spacing: -.02em; line-height: 1.1; margin: 0 0 2.6cqw; }
+.feedback-rail .fr-slide p { font-size: 2.35cqw; line-height: 1.32; margin: 0 0 1.3cqw; }
+.feedback-rail .fr-slide ul { list-style: none; display: grid; gap: 1.3cqw; margin: 0; padding: 0; }
+.feedback-rail .fr-slide li { font-size: 2.35cqw; line-height: 1.32; padding-left: 2.6cqw; position: relative; }
+.feedback-rail .fr-slide li::before { content: ""; position: absolute; left: 0; top: .55em; width: 1cqw; height: 1cqw; background: #0f4bd8; }
+.feedback-rail .fr-hint { font-size: 11px; color: var(--muted); margin-top: 7px; line-height: 1.4; }
+.feedback-rail .fr-acts { display: flex; gap: 6px; margin-top: 9px; align-items: center; }
+.feedback-rail .fr-btn { border: 1px solid var(--line); border-radius: 5px; padding: 4px 10px; background: var(--panel); color: var(--ink); font: 600 11.5px var(--font-ui); white-space: nowrap; cursor: pointer; }
+.feedback-rail .fr-btn:hover { background: var(--hover); }
+.feedback-rail .fr-btn[aria-disabled="true"] { opacity: .5; cursor: default; }
+.feedback-rail .fr-btn[aria-disabled="true"]:hover { background: var(--panel); }
+.feedback-rail .fr-btn--quiet { border-color: transparent; background: none; color: var(--muted); font-weight: 500; }
+.feedback-rail .fr-btn--quiet:hover { background: var(--hover); color: var(--ink); }
+.feedback-rail .fr-item.is-handled { opacity: .55; }
+.feedback-rail .fr-item.is-handled .fr-text,
+.feedback-rail .fr-item.is-handled .fr-diff,
+.feedback-rail .fr-item.is-handled .fr-preview { filter: grayscale(1); }
+.feedback-rail .fr-stamp { font-size: 11px; font-weight: 600; margin-top: 8px; color: var(--muted); }
+.feedback-rail .fr-stamp--accepted, .feedback-rail .fr-stamp--done { color: var(--green); }
+.fr-chip-paused, .status-chip-paused { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; white-space: nowrap; background: var(--amber-bg); color: var(--amber); }
+.fr-chip-ended { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; white-space: nowrap; background: color-mix(in srgb, var(--muted) 14%, transparent); color: var(--muted); }
+.fr-chip-ended .fr-dot,
+.fr-chip-paused .fr-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+/* The toolbar's Feedback button (count pill) and the talk row's count. */
+.toolbar-btn.is-on { background: var(--active); border-color: color-mix(in srgb, var(--oxford) 40%, var(--line)); color: var(--oxford); }
+.toolbar-btn .fb-n { font: 700 10px/1 var(--font-mono); background: var(--oxford); color: #fff; border-radius: 8px; padding: 2px 5px; }
+.tl-row-fb-count { flex: none; font: 700 10px/1 var(--font-mono); color: #fff; background: var(--oxford); border-radius: 8px; padding: 3px 6px; margin: 0 6px; }
+/* Ticket 06 (LOCKED-feedback-rail-and-markers.html frame 2): Accept, Compare, Undo, markers. */
+.feedback-rail .fr-btn--primary { background: var(--oxford); border-color: var(--oxford); color: #fff; }
+.feedback-rail .fr-btn--primary:hover { background: color-mix(in srgb, var(--oxford) 85%, #000); }
+.feedback-rail .fr-btn:disabled { opacity: .5; cursor: default; }
+.feedback-rail .fr-flag { margin-top: 8px; padding: 2px 0 2px 8px; border-left: 2px solid var(--amber); color: var(--amber); font-size: 11.5px; line-height: 1.4; }
+.feedback-rail .fr-group { padding: 12px 0 2px; font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.feedback-rail .fr-group b { font: 700 10.5px var(--font-mono); color: var(--oxford); margin-right: 6px; }
+.feedback-rail .fr-item.is-focused { box-shadow: inset 3px 0 0 #0f4bd8; padding-left: 10px; margin-left: -10px; }
+.feedback-rail .fr-compare { margin-top: 9px; padding-top: 9px; border-top: 1px dashed var(--line); }
+.feedback-rail .fr-cmp-l { font-size: 11px; font-weight: 600; color: var(--muted); margin: 6px 0 4px; }
+.feedback-rail .fr-cmp-box { font: 12px/1.5 var(--font-mono); border: 1px solid var(--line); border-radius: 6px; background: #fff; padding: 6px 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.feedback-rail .fr-cmp-chg { background: var(--amber-bg); box-shadow: -8px 0 0 var(--amber-bg), 8px 0 0 var(--amber-bg); }
+.feedback-rail .fr-cmp-base { margin-top: 6px; font-size: 11px; color: var(--muted); }
+.feedback-rail .fr-cmp-base summary { cursor: pointer; font-weight: 600; }
+.feedback-rail .fr-cmp-base .fr-cmp-box { margin-top: 4px; color: var(--muted); }
+.feedback-rail .fr-cmp-none { margin-top: 4px; font-style: italic; }
+.feedback-rail .fr-cmp-note { margin-top: 8px; font-size: 11.5px; color: var(--amber); }
+.feedback-rail .fr-stamp { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.feedback-rail .fr-undo { background: none; border: 0; padding: 0; font: 600 11px var(--font-ui); color: var(--muted); text-decoration: underline; cursor: pointer; }
+.feedback-rail .fr-undo:hover { color: var(--ink); }
+.feedback-rail .fr-undo:disabled { opacity: .5; cursor: default; }
+/* Opened from a marker: the slide pane and the rail side by side. */
+.pane--strip-rail { flex-direction: row; }
+.pane--strip-rail > .pane--strip { flex: 0 0 42%; min-width: 180px; width: auto; }
+.pane--strip-rail > .pane--feedback { flex: 1 1 auto; min-width: 0; width: auto; }
+.workspace-panes--strip .pane--strip-rail { flex: 1; }
+/* Badges on the slide pane's thumbnails: count of new items; red for a proposed deletion; tick once handled. */
+.tw-fb-badge { position: absolute; top: -6px; right: -6px; z-index: 4; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 9px; border: 0; background: var(--oxford); color: #fff; font: 700 10px/17px var(--font-mono); text-align: center; box-shadow: 0 0 0 2px var(--paper); cursor: pointer; }
+.tw-fb-badge--del { background: var(--crimson); }
+.tw-fb-badge--ins { background: #0f4bd8; position: static; flex: none; align-self: flex-start; cursor: inherit; }
+.tw-fb-badge--done { background: var(--panel); color: var(--faint); border: 1px solid var(--line); line-height: 15px; font-size: 9px; }
+.tw-fb-del-note { padding: 0 6px 4px; font-size: 9.5px; font-weight: 600; color: var(--crimson); }
+.tw-ghost-card { display: flex; gap: 6px; align-items: flex-start; margin: 4px 8px; padding: 6px 8px; border: 1.5px dashed #0f4bd8; border-radius: 4px; background: color-mix(in srgb, #0f4bd8 5%, var(--panel)); cursor: pointer; user-select: none; }
+.tw-ghost-plus { font: 700 13px/1 var(--font-mono); color: #0f4bd8; }
+.tw-ghost-text { flex: 1; min-width: 0; }
+.tw-ghost-title { font-size: 10.5px; font-weight: 600; color: #0f4bd8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-ghost-sub { font-size: 9.5px; font-weight: 600; color: #0f4bd8; margin-top: 2px; }
+.tw-ghost-sec { font-size: 9.5px; color: var(--muted); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

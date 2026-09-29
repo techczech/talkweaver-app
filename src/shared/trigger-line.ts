@@ -2,6 +2,10 @@ import { GLOBAL_OPTION_GROUPS, LAYOUTS, systemTokens } from './layout-registry/e
 import type { LayoutDef, OptionGroup } from './layout-registry/entries.ts'
 import { appliesToHoldsOnTokens, registryOptionGroups } from './layout-registry/options.ts'
 import { LIST_VALUE_KEYS, TRIGGER_LINE_RE, tokenizeTriggerBody as tokenizeBody } from '../../compiler/scripts/lib/trigger-tokenizer.mjs'
+import { parseTriggerLine as parseCompilerTriggerLine } from '../../compiler/scripts/lib/02-triggers-layout.mjs'
+import {
+  STATEMENT_DEFAULTS, STATEMENT_DIMENSION_KEYS, resolveStatementOptions, statementDimensionTokens, type StatementDimension
+} from '../../compiler/scripts/lib/statement-options.mjs'
 
 export { LIST_VALUE_KEYS, TRIGGER_LINE_RE }
 export { GLOBAL_OPTION_GROUPS }
@@ -334,6 +338,83 @@ function sweepOrphanOptionTokens(line: string, committed: OptionGroup, context: 
  */
 export interface OptionCommitContext {
   unwrittenSelections?: (line: string) => Readonly<Record<string, string>>
+  /**
+   * Ticket 02: what a statement slide's options read beyond its own line — the deck's
+   * `claim_style:` (a Bar deck decides an untokened statement) and whether the slide paints no
+   * title (the older {statement=centred} centres only then). deckCommitContext fills both.
+   */
+  statement?: { deckClaimStyle?: string; titleHidden?: boolean }
+}
+
+// ── Ticket 02: the statement options are separate choices ─────────────────────────────────────
+//
+// Invariant: a write from any statement control changes only its own dimension of what the slide
+// renders. The older one-word options ({statement=tint}, {claim=bar}, a deck `claim_style: bar`)
+// are presets over several dimensions at once, so before the click lands they are rewritten as the
+// per-dimension tokens they mean (statement-options.mjs resolves both, for the compiler too); the
+// click then replaces its own group's token exactly as any other option write does.
+
+/** The Inspector groups of a statement slide, by dimension ('colour' = the sidebar colour). */
+export const STATEMENT_OPTION_GROUPS: Readonly<Record<string, StatementDimension | 'colour'>> = {
+  'statement-sidebar': 'sidebar',
+  'statement-bg': 'bg',
+  'statement-align': 'align',
+  'statement-bar': 'bar',
+  'statement-colour': 'colour'
+}
+
+const DIMENSION_KEYS = new Set<string>(Object.values(STATEMENT_DIMENSION_KEYS))
+const keyOf = (raw: string): string => raw.includes('=') ? raw.slice(0, raw.indexOf('=')) : ''
+const isStatementPresetToken = (raw: string): boolean => keyOf(raw) === 'statement' || keyOf(raw) === 'claim'
+const hasLayoutMeaning = (raw: string): boolean => meaningForToken(raw).some((pair) => pair.key === 'layout')
+
+/** Insert `{token}…` after the line's last layout token, or at its end — the option write's place. */
+function insertAfterLayout(line: string, tokens: readonly string[]): string {
+  if (!tokens.length) return line
+  const text = tokens.map((token) => `{${token}}`).join('')
+  const layoutToken = [...parseAllGroups(line)].reverse().find((candidate) => hasLayoutMeaning(candidate.raw))
+  if (layoutToken) return line.slice(0, layoutToken.groupEnd) + text + line.slice(layoutToken.groupEnd)
+  return `${line}${line ? ' ' : ''}${text}`
+}
+
+/**
+ * The line with every older one-word statement option (and a Bar deck's decision, when the slide
+ * follows it) rewritten as the per-dimension tokens it means. Unchanged when there is nothing to
+ * rewrite. A removed {statement=…} that was the line's only statement word leaves {statement}.
+ */
+export function expandStatementPresets(line: string, context: OptionCommitContext = {}): string {
+  const tokens = parseAllGroups(line)
+  const presets = tokens.filter((token) => isStatementPresetToken(token.raw))
+  const deckClaimStyle = context.statement?.deckClaimStyle ?? ''
+  const hasDimension = tokens.some((token) => DIMENSION_KEYS.has(keyOf(token.raw)))
+  const followsBarDeck = !presets.length && !hasDimension && deckClaimStyle === 'bar'
+  if (!presets.length && !followsBarDeck) return line
+  const look = resolveStatementOptions(parseCompilerTriggerLine(line)?.attrs ?? {}, { deckClaimStyle })
+  // The older {statement=centred} centres only a slide that paints no title (as preview.11 did).
+  const align = look.centredNeedsNoTitle && context.statement?.titleHidden === false ? 'left' : look.align
+  // A {statement=…} that is the line's only statement word becomes {statement} in place, so the
+  // slide keeps its layout exactly where the author wrote it.
+  const keepsLayout = tokens.some((token) => !isStatementPresetToken(token.raw) && hasLayoutMeaning(token.raw))
+  const becomesLayout = keepsLayout ? undefined : presets.find((token) => keyOf(token.raw) === 'statement')
+  const members = tokens.filter((token) => token !== becomesLayout && (isStatementPresetToken(token.raw) || DIMENSION_KEYS.has(keyOf(token.raw))))
+  const belongs = (raw: string): boolean => isStatementPresetToken(raw) || DIMENSION_KEYS.has(keyOf(raw))
+  const edits = groupRemovalEdits(line, members, tokens, (raw) => belongs(raw) && raw !== becomesLayout?.raw)
+  if (becomesLayout) edits.push({ start: becomesLayout.start, end: becomesLayout.end, text: 'statement' })
+  const written = statementDimensionTokens({ sidebar: look.sidebar, bg: look.bg, align, bar: look.bar })
+  if (followsBarDeck && !written.length) return line
+  return insertAfterLayout(applySpanEdits(line, edits), written)
+}
+
+function commitStatementOption(line: string, group: OptionGroup, token: string, context: OptionCommitContext): string {
+  const expanded = expandStatementPresets(line, context)
+  const committed = commitGroupToken(expanded, group, token, context)
+  // A Bar deck decides a statement with no statement token of its own: a write that leaves the
+  // line with none keeps its own dimension's default explicitly, so the slide stops following it.
+  const dimension = STATEMENT_OPTION_GROUPS[group.key]
+  if (token || dimension === 'colour' || dimension === 'sidebar' || context.statement?.deckClaimStyle !== 'bar') return committed
+  const left = parseAllGroups(committed)
+  if (left.some((candidate) => isStatementPresetToken(candidate.raw) || DIMENSION_KEYS.has(keyOf(candidate.raw)))) return committed
+  return insertAfterLayout(committed, [`${STATEMENT_DIMENSION_KEYS[dimension]}=${STATEMENT_DEFAULTS[dimension]}`])
 }
 
 /** ADR-0011 keeps every option surface on the same byte-preserving Trigger-line write path. */
@@ -341,7 +422,11 @@ export function commitOptionSelection(line: string, group: OptionGroup, token: s
   if (!group.values.some((value) => value.token === token) && optionValueForToken(token, group) === undefined) {
     throw new Error(`Unknown option token for ${group.key}: ${token}`)
   }
+  if (STATEMENT_OPTION_GROUPS[group.key]) return commitStatementOption(line, group, token, context)
+  return commitGroupToken(line, group, token, context)
+}
 
+function commitGroupToken(line: string, group: OptionGroup, token: string, context: OptionCommitContext): string {
   const tokens = parseAllGroups(line)
   // The compiler applies split=N to the Sidebar tint rail, so choosing a width keeps the Sidebar
   // style token while still removing every other title-placement rival.

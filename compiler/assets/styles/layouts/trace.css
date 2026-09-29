@@ -22,7 +22,7 @@
     max-height: 100%;
   }/* @order 1851 */
   .slide[data-title-layout="top"] > .slide-content.layout-code {
-    height: min(820px, 86vh);
+    height: min(820px, 86cqh);
     min-height: 0;
     padding-bottom: max(0px, calc(59px - var(--slide-pad-y)));
   }/* @order 1852 */

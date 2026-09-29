@@ -86,4 +86,25 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
   assert.equal(a.waiting(), 0, 'the count returns to zero once everything has settled')
 }
 
-console.log('PASS single flight: strict ordering, own values, failure releases the gate')
+// ── 5. Background tasks (the share-for-comments build) never start ahead of a waiting ordinary
+//       task (the editor strip), still run one at a time, and keep their own order ─────────────
+{
+  const gate = createSingleFlight()
+  const order = []
+  let live = 0
+  let peak = 0
+  const job = (name, ms = 3) => async () => { live += 1; peak = Math.max(peak, live); order.push(name); await wait(ms); live -= 1; return name }
+  const first = gate(job('strip-1', 10))
+  const bgA = gate.background(job('share-a'))
+  const bgB = gate.background(job('share-b'))
+  const second = gate(job('strip-2'))
+  const third = gate(job('strip-3'))
+  assert.deepEqual(await Promise.all([first, bgA, bgB, second, third]), ['strip-1', 'share-a', 'share-b', 'strip-2', 'strip-3'])
+  assert.deepEqual(order, ['strip-1', 'strip-2', 'strip-3', 'share-a', 'share-b'], 'ordinary tasks queued later still run before background ones')
+  assert.equal(peak, 1, 'background tasks share the one-deck-in-memory gate')
+  await assert.rejects(gate.background(async () => { throw new Error('share build failed') }), /share build failed/)
+  assert.equal(await gate(async () => 'after'), 'after', 'a failing background task releases the gate')
+  assert.equal(gate.waiting(), 0)
+}
+
+console.log('PASS single flight: strict ordering, own values, failure releases the gate, background lane yields')

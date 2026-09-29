@@ -3,7 +3,7 @@ import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { args, slugify, parseGridDims, escapeHtml } from "./01-cli-utils.mjs";
-import { parseHeadingAttrs, parseTriggerLine, resolveAuthoredMode, parseCountdownDuration, timelineBlockFieldsFromStops, renderInline, accentForSectionName, backgroundTintForName, resolveClaimStyle, applyQuoteTitleAttribution, CLAIM_STYLES, DECK_ACCENT_NAMES } from "./02-triggers-layout.mjs";
+import { parseHeadingAttrs, parseTriggerLine, resolveAuthoredMode, parseCountdownDuration, timelineBlockFieldsFromStops, renderInline, accentForSectionName, accentForDeckColour, backgroundTintForName, resolveClaimStyle, applyQuoteTitleAttribution, CLAIM_STYLES, DECK_ACCENT_NAMES } from "./02-triggers-layout.mjs";
 import { lexMarkdownBlocks } from "./03-markdown-lexer.mjs";
 import { chartObjectTokenAt, parseMarkdownFenceOpeningLine, isMarkdownFenceClosingLine } from "./03-object-token.mjs";
 import { extractTitle, updateDeckTitle } from "./04-html-extraction.mjs";
@@ -17,10 +17,13 @@ import { resolveSlideFrame, FRAME_BUILTINS } from "./11-frame.mjs";
 import { parseSimpleYaml } from "./simple-yaml.mjs";
 import { posterBlockFor, posterAccentFor, applyAuthoredPosters, TITLE_STYLES } from "./title-poster.mjs";
 import { parseOutlineTree } from "./14-outline-tree.mjs";
+import { blankHtmlComments } from "./html-comments.mjs";
+import { audienceSourceLines } from "./slide-script.mjs";
 import { readDeckFlag, deckFlagOn, readDeckChoice, readDeckMinutes, DECK_PALETTES, DECK_FONTS, DECK_LOGO_COLOURS } from "./deck-settings.mjs";
 import { sequence } from "./15-sequencer.mjs";
 import { pollDirectivesFor, pollDefinitionFor, rebasePollDefinition } from "./poll-authoring.mjs";
 import { SECTION_ONLY_TRIGGER_KEYS } from "../triggers.mjs";
+import { isStatementDimensionKey, resolveStatementOptions } from "./statement-options.mjs";
 import { pictureKeyForSlide } from "./10-projections.mjs";
 
 // =============================================================================
@@ -410,8 +413,9 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
   }
   // Strip HTML comment blocks (`<!-- … -->`) so authors can leave notes/provenance/TODOs without
   // them rendering. Blank the content but PRESERVE newlines (so line numbers stay source-accurate).
-  // A commented-out `## …`/`### …` heading is still ignored (its text is blanked).
-  body = body.replace(/<!--[\s\S]*?-->/g, (m) => m.replace(/[^\n]/g, ""));
+  // A commented-out `## …`/`### …` heading is still ignored (its text is blanked). Shared helper:
+  // the slide-script and Links readers of a slide's raw source blank comments the same way.
+  body = blankHtmlComments(body);
   const rawSourceLines = String(markdown ?? "").split(/\r?\n/);
   const tree = parseOutlineTree(body);
   const warnings = [...(tree.warnings || [])];
@@ -566,6 +570,9 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     if (s.attrs.layout) return s.attrs.layout;
     // Value-form statement triggers imply their layout just as {contrast=tint} implies contrast.
     if (s.attrs.statement != null) return "statement";
+    // Ticket 02: so do the per-dimension statement tokens ({statement-bg=full}, …) — read from the
+    // slide's OWN trigger line only, so a deck-wide `triggers:` default never makes every slide one.
+    if ((s.authoredAttrKeys ?? []).some(isStatementDimensionKey)) return "statement";
     // {2col}/{3col} resolve to a bare `cols` attr with no explicit layout — pin the columns
     // layout when a column count is present (a `cols=N` always means "lay these out in columns").
     if (s.attrs.cols != null && s.attrs.cols !== true) return "columns";
@@ -861,7 +868,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     }
     let blocks = mapBlocksToLayout(layout, rawBlocks);
     let iconlistVariant = "";
-    let statementVariant = "";
+    let statementOptions = null;
     let backgroundTint = "";
 
     // Round B value vocabularies. Bare {iconlist} pins NO variant — T28 (Dominik, 2026-09-17)
@@ -882,10 +889,38 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
         slide.attrs.liststyle = "icons";
       }
     }
-    if (slide.attrs.statement != null) {
-      const variant = slide.attrs.statement === true ? "default" : String(slide.attrs.statement).trim().toLowerCase();
-      if (variant === "tint" || variant === "poster") statementVariant = variant;
-      else if (variant !== "default") warnings.push(`statement-unknown:${variant}`);
+    // ADR-0028 §6: {numbered=square|plain|styled} picks how a numbered list draws its number
+    // (square is the default and needs no class). Like {iconlist=…}, the value form is still a
+    // numbered list when no authored token resolved a list style; an authored style wins, and the
+    // recorded style applies wherever the list does render numbers.
+    let numberStyle = "";
+    if (slide.attrs.numbered != null) {
+      const variant = slide.attrs.numbered === true ? "" : String(slide.attrs.numbered).trim().toLowerCase();
+      if (variant === "plain" || variant === "styled") numberStyle = variant;
+      else if (variant && variant !== "square") warnings.push(`numbered-unknown:${variant}`);
+      if (slide.attrs.liststyle == null || slide.attrs.liststyle === true) {
+        slide.attrs.liststyle = "numbers";
+      }
+    }
+    // ADR-0028 §10, ticket 02 (29 Sep): a statement's options are separate choices — sidebar,
+    // background, alignment, bar and sidebar colour — and the older one-word options
+    // ({statement=default|centred|tint|bar|full|poster}, {claim=plain|bar}, the deck's
+    // `claim_style:`) are presets over them. statement-options.mjs is the one resolver; only the
+    // statement layout reads the result (07-assembly), so other layouts are unaffected.
+    if (layout === "statement" || slide.attrs.statement != null) {
+      statementOptions = resolveStatementOptions(slide.attrs, { deckClaimStyle: meta.claim_style ?? meta["claim-style"] ?? "" });
+      warnings.push(...statementOptions.warnings);
+      // The sidebar colour is the section-accent vocabulary pinned on this one slide. A `##`
+      // statement's {accent=…} already colours its whole section (checked there).
+      if (layout === "statement" && statementOptions.accent && slide.nodeLevel !== 2
+        && !accentForDeckColour(statementOptions.accent, deckPalette)) {
+        warnings.push(`accent-unknown:${statementOptions.accent}`);
+      }
+    }
+    // {accent=…} below a `##` means something only on a statement slide (its sidebar colour);
+    // anywhere else it is still the section-only trigger out of place.
+    if (slide.misplacedAccentLevel && layout !== "statement") {
+      warnings.push(`section-only-trigger-level:${slide.id}:accent:${slide.misplacedAccentLevel}`);
     }
     if (slide.attrs.bg != null && slide.attrs.bg !== true) {
       const name = String(slide.attrs.bg).trim().toLowerCase();
@@ -1015,6 +1050,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
         for (const b of blocks) {
           if (b && b.type === "feature-list") b.liststyle = slide.attrs.liststyle;
           if (b && b.type === "feature-list" && iconlistVariant) b.iconlistVariant = iconlistVariant;
+          if (b && b.type === "feature-list" && numberStyle) b.numberStyle = numberStyle;
         }
       } else {
         warnings.push(`unknown-liststyle:${slide.attrs.liststyle}`);
@@ -1216,10 +1252,15 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
       // still adapt (a near-empty untriggered slide is "basically a title" and may enlarge).
       explicitLayout: slide.attrs.layout != null || slide.attrs.statement != null,
       iconlistVariant,
-      statementVariant,
+      statementOptions,
       backgroundTint,
       sourceLine: slide.sourceLine, // 1-based line of this slide's heading (cursor↔strip sync)
       sourceMarkdown: Array.isArray(slide.sourceLines) ? slide.sourceLines.join("\n").trimEnd() : "",
+      // Folded layouts only: the source the phone text view parses (slide-script.mjs), covering
+      // the folded children. Absent elsewhere, so the script reads sourceMarkdown.
+      ...(Array.isArray(slide.scriptSourceLines)
+        ? { scriptSourceMarkdown: slide.scriptSourceLines.join("\n").trimEnd() }
+        : {}),
       kicker: titleOnlySection && slide.nodeLevel > 2 ? slide.sectionTitle : autoKicker(slide),
       navTitle: slide.title,
       title: slide.title,
@@ -1545,6 +1586,16 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     return rawSourceLines.slice(node.sourceLine - 1, endLine);
   }
 
+  // The phone text view's (and the Links slide's) source for a slide that folded its children
+  // (absorbFoldedChildren): the source ranges of what the slide draws, joined in source order --
+  // its own block, then each drawn child's own block. Null for every other slide, whose script
+  // reads sourceMarkdown. Kept apart from sourceLines, which the Library, merge identity, search
+  // and tags read as the slide's own block.
+  function buildFoldedScriptSourceLines(node) {
+    if (!node.sourceLine || !Array.isArray(node._scriptSourceRanges)) return null;
+    return node._scriptSourceRanges.flatMap(([start, end]) => rawSourceLines.slice(start - 1, end));
+  }
+
   function sectionTimerFrom(nodeAttrs) {
     if (nodeAttrs.timer == null || nodeAttrs.timer === true) return null;
     const timerSeconds = parseCountdownDuration(nodeAttrs.timer);
@@ -1567,6 +1618,9 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
 
       if (node.level !== 2) {
         for (const { name, key } of SECTION_ONLY_TRIGGER_KEYS) {
+          // {accent=…} is also a statement slide's sidebar colour (ticket 02): whether it is out of
+          // place is known only once the slide's layout is (flushSlide).
+          if (key === "accent") continue;
           if (Object.prototype.hasOwnProperty.call(node.attrs || {}, key)) {
             warnings.push(`section-only-trigger-level:${node.id}:${name}:${node.level}`);
           }
@@ -1608,9 +1662,11 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
           : Array.isArray(node._compareHalves) ? node._compareHalves : [],
         notes: Array.isArray(node.notesLines) ? [...node.notesLines] : [],
         sourceLines: buildSourceLines(node),
+        scriptSourceLines: buildFoldedScriptSourceLines(node),
         nodeLevel: node.level,
         isSection,
         authoredAttrKeys: [...authoredKeys],
+        misplacedAccentLevel: node.level !== 2 && Object.prototype.hasOwnProperty.call(node.attrs || {}, "accent") ? node.level : 0,
         treeNode: node,
         continuationIds: Array.isArray(node._sequenceContinuationIds) ? node._sequenceContinuationIds : [],
         ...(current.sectionTimer || {})
@@ -1663,12 +1719,62 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     return attrs.layout === "columns" || (attrs.cols != null && attrs.cols !== true);
   };
   const nodeResolvesToCarousel = (node) => resolvedNodeAttrs(node).carousel === true;
+  // A fold keeps each child's visible lines; it must keep the rest of what the child authored
+  // too (notes-in-folded-layouts, 2026-09-28). Before this, a folded child's `:::notes` reached
+  // no output, not even the presenter, and the slide's source slice (the phone text view's input,
+  // slide-script.mjs) stopped at the first child. absorbFoldedChildren runs on every fold path:
+  //   - notes: each consumed child's notes (and any deeper unfolded descendant's) are appended to
+  //     the parent's notesLines in source order, each group led by a bold paragraph naming its
+  //     child (`**Child title**`, plain Markdown the notes renderer already draws). A child with
+  //     no notes adds nothing. The parent's own notes come first, as they do in the source.
+  //   - source ranges: `_scriptSourceRanges` lists the source line ranges of what the slide DRAWS
+  //     -- the parent's own block, then each rendered child's content ranges (`visibleCount`:
+  //     compare renders only its first two groups) -- read by buildFoldedScriptSourceLines so the
+  //     phone text view and the Links slide show exactly the children the slide shows. A child's
+  //     content is its own block only (heading to its first descendant): a fold draws a child's
+  //     contentLines, so a `#####` under it is not drawn, nor are the children of a fold container
+  //     nested in it (cards, compare and the rest keep those apart as `_foldedCards` /
+  //     `_compareHalves`). {columns} is the exception: it merges its children into its own
+  //     contentLines, so a columns node's content ranges include its drawn children's.
+  const hasText = (lines) => (lines || []).some((line) => String(line).trim());
+  const trimBlankEdges = (lines) => {
+    let start = 0;
+    let end = lines.length;
+    while (start < end && !String(lines[start]).trim()) start += 1;
+    while (end > start && !String(lines[end - 1]).trim()) end -= 1;
+    return lines.slice(start, end);
+  };
+  // The source line ranges ([first, last], 1-based, inclusive) that hold a node's contentLines.
+  const contentSourceRanges = (node) => {
+    if (Array.isArray(node._contentSourceRanges)) return node._contentSourceRanges;
+    if (!node.sourceLine) return [];
+    return [[node.sourceLine, nodeSourceEndLines.get(node) || node.sourceLine]];
+  };
+  const absorbFoldedChildren = (node, children, visibleCount = children.length) => {
+    const notes = [...(node.notesLines || [])];
+    const visit = (child) => {
+      if (hasText(child.notesLines)) {
+        if (hasText(notes)) notes.push("");
+        notes.push(`**${child.title}**`, "", ...trimBlankEdges(child.notesLines));
+      }
+      for (const grandchild of child.children || []) visit(grandchild);
+    };
+    for (const child of children) visit(child);
+    node.notesLines = notes;
+    if (node.sourceLine) {
+      node._scriptSourceRanges = [
+        ...contentSourceRanges(node),
+        ...children.slice(0, visibleCount).flatMap(contentSourceRanges)
+      ];
+    }
+  };
   const foldChildrenToCards = (node, children) => {
     node._foldedCards = children.map((child) => {
       const childAttrs = { ...deckTriggerDefaults, ...(child.attrs || {}) };
       const childLines = contentLinesAndAttrs(child, childAttrs, { emitWarnings: false });
       return { title: child.title, lines: childLines };
     });
+    absorbFoldedChildren(node, children);
     node.children = [];
   };
   const foldChildLayoutNodes = (nodes) => {
@@ -1708,6 +1814,10 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
           const childLines = contentLinesAndAttrs(child, childAttrs, { emitWarnings: false });
           node.contentLines = [...(node.contentLines || []), "", `#### ${child.title}`, "", ...childLines];
         }
+        absorbFoldedChildren(node, children);
+        // The children are now part of this node's contentLines: a parent that folds this node
+        // draws them too, so its script source takes them with this node's own block.
+        if (node._scriptSourceRanges) node._contentSourceRanges = node._scriptSourceRanges;
         node.children = [];
         continue;
       }
@@ -1718,6 +1828,9 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
           return { title: child.title, lines: childLines };
         });
         if (children.length > 2) warnings.push(`compare-extra-groups:${node.title}`);
+        // Extra groups are not drawn (warned above), but their notes are the author's and still
+        // reach the presenter; the phone shows only the two drawn halves.
+        absorbFoldedChildren(node, children, 2);
         node.children = [];
       }
     }
@@ -2495,10 +2608,12 @@ export async function prepareSource(sourcePath, sourceText, explicitTitle, sourc
   throw new Error(`Unsupported source type: ${extension || "unknown"}`);
 }
 
-// SD-17: collect all http/https links from raw slide source lines. Takes the slide array
-// (after flushSlide), reads each slide's `sourceLines`, dedupes by URL (first-seen order),
-// returns [{text, url}]. ftp:// and other schemes are NOT collected. When anchor text equals
-// the URL string, the URL itself is used as the display text.
+// SD-17: collect all http/https links from the audience-visible part of each slide's source.
+// Takes the slide array (after flushSlide), dedupes by URL (first-seen order), returns
+// [{text, url}]. ftp:// and other schemes are NOT collected. When anchor text equals the URL
+// string, the URL itself is used as the display text. The result feeds the Links slide (the
+// `links_index: true` auto slide AND an authored `{links}` slide) — an audience surface copied
+// into the handout and the venue page.
 export function collectDeckLinks(slides) {
   const RE = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
   const seen = new Set();
@@ -2507,9 +2622,20 @@ export function collectDeckLinks(slides) {
     // MODEL slides carry their source as `sourceMarkdown` (flushSlide joins the lines); the raw
     // working records carry `sourceLines`. Ticket 10: reading only `sourceLines` meant this always
     // returned [] for a compiled deck, so `links_index: true` emitted no Links slide, ever.
-    const lines = Array.isArray(slide.sourceLines)
-      ? slide.sourceLines
-      : typeof slide.sourceMarkdown === "string" ? slide.sourceMarkdown.split("\n") : [];
+    // A slide that folded its children (columns, compare, cards…) carries the source of what it
+    // draws, children included, as scriptSourceMarkdown (model) / scriptSourceLines (record):
+    // its own slice stops at the first child, so a link in a drawn child was never listed.
+    // The adapter calls this with MODEL slides, so scriptSourceMarkdown is the field that counts.
+    const recordLines = Array.isArray(slide.scriptSourceLines) ? slide.scriptSourceLines
+      : Array.isArray(slide.sourceLines) ? slide.sourceLines : null;
+    const markdown = typeof slide.scriptSourceMarkdown === "string" ? slide.scriptSourceMarkdown
+      : typeof slide.sourceMarkdown === "string" ? slide.sourceMarkdown : "";
+    const source = recordLines ? recordLines.join("\n") : markdown;
+    // That source is the slide's RAW slice: speaker notes and HTML comments included. A link in
+    // either must never reach the Links slide (leak found 2026-09-28), so read it through the same
+    // audience filter as the slide-script payload (slide-script.mjs → the compiler's own outline
+    // parser). Heading lines are kept: a link in a slide title is on the slide.
+    const lines = audienceSourceLines(source, { headings: true });
     for (const line of lines) {
       let m;
       RE.lastIndex = 0;

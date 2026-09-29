@@ -205,6 +205,15 @@ export function installMock() {
     talk: {
       readOutline: async (_path: string) => MOCK_OUTLINE,
       writeOutline: async (_path: string, _content: string) => true,
+      outlineDiskVersion: async (_path: string) => ({ text: MOCK_OUTLINE, hash: 'mock' }),
+      acceptOutlineDiskVersion: async (_path: string, _hash: string) => ({ ok: true as const }),
+      onOutlineChangedOnDisk: (_cb: unknown) => () => {},
+      outlineRecovery: async (_path: string) => null,
+      discardOutlineRecovery: async (_path: string) => true,
+      discardRemovedOutline: async (_path: string) => true,
+      onCloseRequested: (_cb: unknown) => () => {},
+      confirmClose: async (_opts: unknown) => true,
+      ackCloseRequest: async () => true,
       compile: async (outlinePath: string, content: string) => mockCompile(outlinePath, content),
       checkEmbeds: async (_outlinePath: string, _content: string) => [],
       present: async (_outlinePath: string, _content: string) => {

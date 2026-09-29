@@ -7,11 +7,13 @@
   "durable_objects": {
     "bindings": [
       { "name": "LIVE_SESSIONS", "class_name": "LiveSession" },
-      { "name": "SESSION_REGISTRY", "class_name": "SessionRegistry" }
+      { "name": "SESSION_REGISTRY", "class_name": "SessionRegistry" },
+      { "name": "SHARED_TALKS", "class_name": "SharedTalk" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["LiveSession", "SessionRegistry"] }
+    { "tag": "v1", "new_sqlite_classes": ["LiveSession", "SessionRegistry"] },
+    { "tag": "v2", "new_sqlite_classes": ["SharedTalk"] }
   ],
   "observability": { "enabled": true }
 }

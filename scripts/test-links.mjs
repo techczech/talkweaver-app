@@ -2,6 +2,12 @@
 // is duplicated inline here and must NOT import from the compiler source (the replica convention
 // keeps the test runnable without a build step and makes the contract explicit). When the
 // implementation in 08-source-adapters.mjs changes, update this replica to match.
+//
+// Scope of the replica (2026-09-28): the real function first reads each slide's source through
+// audienceSourceLines(source, { headings: true }) (slide-script.mjs) so links in speaker notes and
+// HTML comments are never listed; the replica models only the matching, dedupe and ordering over
+// lines that are already audience lines. The notes/comment exclusion is proven against the real
+// compiler in scripts/test-notes-never-published.mjs (npm run test:notes-never-published).
 
 // ── Replica of collectDeckLinks from compiler/scripts/lib/08-source-adapters.mjs ──────────────
 function collectDeckLinks(slides) {
@@ -9,9 +15,13 @@ function collectDeckLinks(slides) {
   const seen = new Set();
   const result = [];
   for (const slide of slides) {
-    const lines = Array.isArray(slide.sourceLines)
-      ? slide.sourceLines
-      : typeof slide.sourceMarkdown === "string" ? slide.sourceMarkdown.split("\n") : [];
+    // A folded slide's scriptSourceMarkdown (model) / scriptSourceLines (record) — the source of
+    // what it draws, its folded children included — wins over its own slice.
+    const recordLines = Array.isArray(slide.scriptSourceLines) ? slide.scriptSourceLines
+      : Array.isArray(slide.sourceLines) ? slide.sourceLines : null;
+    const markdown = typeof slide.scriptSourceMarkdown === "string" ? slide.scriptSourceMarkdown
+      : typeof slide.sourceMarkdown === "string" ? slide.sourceMarkdown : "";
+    const lines = recordLines || markdown.split("\n");
     for (const line of lines) {
       let m;
       RE.lastIndex = 0;
@@ -93,6 +103,23 @@ ck(r8.length === 0, "missing sourceLines: no crash, empty result");
 const r9 = collectDeckLinks([{ id: "model", sourceMarkdown: "See [the handbook](https://example.org/h).\nAnd [notes](https://example.org/n)." }]);
 ck(r9.length === 2, "model slide: both links collected from sourceMarkdown");
 ck(r9[0].url === "https://example.org/h" && r9[1].text === "notes", "model slide: text and url preserved in order");
+
+// 10. A folded MODEL slide (columns, compare, cards…): its own sourceMarkdown stops at the first
+// child; scriptSourceMarkdown covers the drawn children and is what gets read.
+const r10 = collectDeckLinks([{
+  id: "folded",
+  sourceMarkdown: "### Columns {columns}",
+  scriptSourceMarkdown: "### Columns {columns}\n#### Left\n[Left link](https://example.org/left)",
+}]);
+ck(r10.length === 1 && r10[0].url === "https://example.org/left", "folded model slide: link in a drawn child collected");
+
+// 11. The record shape: scriptSourceLines wins; null (an unfolded slide) falls back to sourceLines.
+const r11 = collectDeckLinks([
+  { sourceLines: ["### Cards"], scriptSourceLines: ["### Cards", "#### One", "[One](https://example.org/one)"] },
+  { sourceLines: ["[Own](https://example.org/own)"], scriptSourceLines: null },
+]);
+ck(r11.length === 2 && r11[0].url === "https://example.org/one" && r11[1].url === "https://example.org/own",
+  "record shape: scriptSourceLines preferred, null falls back to sourceLines");
 
 if (fail) { console.error(`\n${fail} check(s) failed`); process.exit(1); }
 console.log("PASS: collectDeckLinks (SD-17)");

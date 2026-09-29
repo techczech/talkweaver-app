@@ -30,6 +30,10 @@ export interface EditorCommand {
   keys: string
   shortcutId: string
   unbound: boolean
+  /** A command whose key a DOM surface dispatches (the slide picker, the workspace), not the
+   *  editor: listed and rebindable in Settings like the rest, but never a CodeMirror binding —
+   *  a plain-letter default such as O must not stop that letter being typed in the editor. */
+  surface?: true
   run: (view: EditorView) => boolean
 }
 
@@ -283,6 +287,23 @@ function command(id: string, run: (view: EditorView) => boolean, registryId = `e
   }
 }
 
+// A surface command (talk search 08): its owner matches the key with eventMatchesEffectiveShortcut
+// (keymap/store.ts) under this local id, so a Settings rebind takes effect there. Settings groups
+// them under "Slide picker".
+function surfaceCommand(id: string, registryId: string): EditorCommand {
+  const shortcut = shortcutById(registryId)
+  return {
+    id,
+    label: shortcut.label,
+    category: 'Slide picker',
+    keys: shortcut.codes[0] ?? '',
+    shortcutId: registryId,
+    unbound: shortcut.unbound === true,
+    surface: true,
+    run: () => false
+  }
+}
+
 // shortcut-id: app.sidebar-talks app.sidebar-outline app.sidebar-toggle
 // shortcut-id: editor.move-up editor.move-down editor.promote editor.demote
 // shortcut-id: editor.promote-subtree editor.demote-subtree editor.heading-same editor.heading-sub
@@ -322,7 +343,12 @@ export const EDITOR_COMMANDS: EditorCommand[] = [
   command('italic', toggleItalic),
   command('inline-code', toggleInlineCode),
   command('highlight', toggleHighlight),
-  command('link', insertLink)
+  command('link', insertLink),
+  surfaceCommand('find-talk', 'app.find-talk'),
+  surfaceCommand('add-beside', 'slide-picker.add-beside'),
+  surfaceCommand('talk-beside', 'slide-picker.talk-beside'),
+  surfaceCommand('close-beside', 'slide-picker.close-beside'),
+  surfaceCommand('select-whole-section', 'slide-picker.select-whole-section')
 ]
 
 export const NON_CONSUMING = new Set([

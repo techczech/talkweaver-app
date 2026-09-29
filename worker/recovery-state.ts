@@ -1,5 +1,5 @@
 import type { OperationAck, RecoveredVoteRecord, RecoveryClientMessage, VoteAck } from './recovery-protocol'
-import { closePoll, hidePollResponse, openPoll, revealPoll, voteInPoll, type StoredLiveSession } from './session-state'
+import { closePoll, hidePollResponse, openPoll, revealPoll, setInstantSlide, voteInPoll, type StoredLiveSession } from './session-state'
 
 export interface RecoveryState {
   presenterConnectionId?: string
@@ -11,10 +11,25 @@ export function recoveryState(session: StoredLiveSession): RecoveryState {
   return session.recovery ??= { operations: {}, submissions: {}, voteRecords: [] }
 }
 
+function operationFingerprint(action: Extract<RecoveryClientMessage, {type:'operation'}>['action']): string {
+  if (action.type !== 'instant.show' || action.slide.kind !== 'image') return JSON.stringify(action)
+  // A full JSON fingerprint would store every image twice in the single session row.
+  // Keep a compact content fingerprint for retry deduplication instead.
+  let first = 2166136261, second = 0x9e3779b9
+  for (let i = 0; i < action.slide.dataUrl.length; i++) {
+    const code = action.slide.dataUrl.charCodeAt(i)
+    first = Math.imul(first ^ code, 16777619)
+    second = Math.imul(second ^ (code + i), 2246822519)
+  }
+  return JSON.stringify({ type: action.type, kind: 'image', shownAt: action.slide.shownAt,
+    width: action.slide.width, height: action.slide.height, length: action.slide.dataUrl.length,
+    digest: `${first >>> 0}:${second >>> 0}` })
+}
+
 export function applyPollOperation(session: StoredLiveSession, message: Extract<RecoveryClientMessage, {type:'operation'}>): OperationAck {
   const recovery = recoveryState(session)
   const key = 'op:' + message.operationId
-  const fingerprint = JSON.stringify(message.action)
+  const fingerprint = operationFingerprint(message.action)
   const prior = recovery.operations[key]
   if (prior) return prior.fingerprint === fingerprint ? prior.ack
     : { type: 'operation.ack', operationId: message.operationId, status: 'rejected', error: 'operation_id_conflict' }
@@ -24,7 +39,9 @@ export function applyPollOperation(session: StoredLiveSession, message: Extract<
     if (action.type === 'poll.open') openPoll(session, action.poll)
     else if (action.type === 'poll.close') closePoll(session, action.pollId)
     else if (action.type === 'poll.reveal') revealPoll(session, action.pollId)
-    else hidePollResponse(session, action.pollId, action.responseId, action.hidden ?? true)
+    else if (action.type === 'poll.hide') hidePollResponse(session, action.pollId, action.responseId, action.hidden ?? true)
+    else if (action.type === 'instant.show') setInstantSlide(session, action.slide)
+    else setInstantSlide(session, null)
     ack = { type: 'operation.ack', operationId: message.operationId, status: 'confirmed' }
   } catch (error) {
     ack = { type: 'operation.ack', operationId: message.operationId, status: 'rejected',

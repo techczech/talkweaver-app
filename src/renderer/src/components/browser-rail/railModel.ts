@@ -25,14 +25,22 @@ export function scopeKeyOf(e: ScopeEntry): string {
 }
 
 export function scopeDisplayName(e: ScopeEntry): string {
-  if (e.kind === 'folder') return e.folder ?? ''
+  // A folder reads as its path, so two `day-3` folders in different places stay apart.
+  if (e.kind === 'folder') return (e.folder ?? '').split('/').join(' › ')
   const t = e.talkTitle || e.talk || ''
   return e.kind === 'talk' ? t : `${t} § ${e.secLabel || e.sec || '(no section)'}`
 }
 
-// Does one result row fall inside one scope entry? `folderOf` maps talkSlug → parent folder.
+/** True when `path` (a talk's vault-relative folder) is `folder` or lies inside it. A folder
+ *  scope takes in its subfolders, as the Files tree's folder total does (ADR-0029 §4). */
+export function inFolder(path: string, folder: string): boolean {
+  return folder !== '' && (path === folder || path.startsWith(`${folder}/`))
+}
+
+// Does one result row fall inside one scope entry? `folderOf` maps talkSlug → the talk's
+// vault-relative folder path (nested folders at their real depth, never the last name only).
 export function rowInScopeEntry(row: BrowserRow, e: ScopeEntry, folderOf: (slug: string) => string): boolean {
-  if (e.kind === 'folder') return folderOf(row.talkSlug) === e.folder
+  if (e.kind === 'folder') return inFolder(folderOf(row.talkSlug), e.folder ?? '')
   if (e.kind === 'talk') return row.talkSlug === e.talk
   return row.talkSlug === e.talk && (row.section ?? '') === (e.sec ?? '')
 }
@@ -212,19 +220,6 @@ export function outlineChunks(rows: BrowserRow[]): OutlineChunk[] {
     else chunks.push({ section: sec, rows: [r] })
   }
   return chunks
-}
-
-/* ============================================================
-   Search reports both kinds — the talk-hit cluster
-   ============================================================ */
-
-// Talks whose TITLE carries every query term (order-independent, like the slide match).
-export function talkTitleHits<T extends { title: string }>(talks: T[], terms: string[]): T[] {
-  if (terms.length === 0) return []
-  return talks.filter((t) => {
-    const hay = t.title.toLowerCase()
-    return terms.every((w) => hay.includes(w))
-  })
 }
 
 /* ============================================================

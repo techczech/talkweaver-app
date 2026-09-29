@@ -195,9 +195,14 @@ for (const id of parcelIds) {
 }
 
 const compareRecord = parcelResult.slides.find((candidate) => candidate.id === 'type-floor-compare')
-const compareChrome = compareRecord.viewports['1600x900'].smallChrome.filter((finding) => finding.element === 'div.compare-label')
-assert.equal(compareChrome.length, 2, 'the mockup .t-half .lab labels are allowlisted as deliberate small chrome')
-assert(compareChrome.every((finding) => finding.px < 31), 'compare labels stay below the running-text floor at the reference stage')
+// ADR-0030: every window shows the 1280×720 canvas, where the .58em labels (of a clamp(…, 3.4cqw,
+// 3rem) statement) compute to 25.2px against a 24.8px floor. On the old 1600px-wide stage the 3rem
+// cap put them below the floor, where the small-chrome allowlist caught them; now they never reach
+// it. What must hold either way: a compare label is never reported as sub-floor running text.
+for (const viewport of ['1600x900', '1280x720']) {
+  assert(!compareRecord.viewports[viewport].subFloorText.some((finding) => finding.element === 'div.compare-label'),
+    `${viewport}: the mockup .t-half .lab labels are never sub-floor running text`)
+}
 
 for (const viewport of ['1600x900', '1280x720']) {
   const codeRecord = parcelResult.slides.find((candidate) => candidate.id === 'type-floor-code')
@@ -244,6 +249,13 @@ try {
         return target
       }
       const style = (element) => getComputedStyle(element)
+      // Canvas px (ADR-0030): the slide lives on the 1280×720 stage, scaled to the window; a painted
+      // rect is read relative to the stage and divided by the stage's scale.
+      const stageEl = document.querySelector('.stage')
+      const C = (element) => {
+        const sr = stageEl.getBoundingClientRect(), k = sr.width / stageEl.offsetWidth, r = element.getBoundingClientRect()
+        return { x: (r.left - sr.left) / k, y: (r.top - sr.top) / k, left: (r.left - sr.left) / k, top: (r.top - sr.top) / k, right: (r.right - sr.left) / k, bottom: (r.bottom - sr.top) / k, width: r.width / k, height: r.height / k }
+      }
       const luminance = (colour) => {
         const channels = colour.match(/[\d.]+/g).slice(0, 3).map((channel) => Number(channel) / 255)
         const linear = channels.map((channel) => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
@@ -268,9 +280,9 @@ try {
         const head = document.querySelector('.slide.active .slide-head')
         const stage = document.querySelector('.stage')
         const marker = document.querySelector('.slide.active .code-overflow-marker')
-        const panelRect = panel.getBoundingClientRect()
-        const headRect = head.getBoundingClientRect()
-        const stageRect = stage.getBoundingClientRect()
+        const panelRect = C(panel)
+        const headRect = C(head)
+        const stageRect = C(stage)
         const panelStyle = style(panel)
         const codeStyle = style(code)
         const chromeBand = 59
@@ -281,7 +293,7 @@ try {
           px: Number.parseFloat(panelStyle.fontSize),
           fit: panel.dataset.codeFit,
           marker: marker?.textContent?.trim() || '',
-          markerVisible: Boolean(marker && marker.getBoundingClientRect().width > 0),
+          markerVisible: Boolean(marker && C(marker).width > 0),
           panel: { x: panelRect.x, y: panelRect.y, width: panelRect.width, height: panelRect.height },
           topAir: panelRect.top - bandTop,
           bottomAir: bandBottom - panelRect.bottom,
@@ -313,14 +325,15 @@ try {
       const longCode = codeMetric('type-floor-code-too-long')
       activate('type-floor-portrait')
       const portrait = document.querySelector('.slide.active .slide-figure img')
-      const portraitRect = portrait.getBoundingClientRect()
-      const contentRect = portrait.closest('.slide-content').getBoundingClientRect()
+      const portraitRect = C(portrait)
+      const contentRect = C(portrait.closest('.slide-content'))
       activate('type-floor-compare')
       const compareHalves = [...document.querySelectorAll('.slide.active .compare-half')]
       const compareCopy = [...document.querySelectorAll('.slide.active .compare-inner .content-p')]
       const compareLabels = [...document.querySelectorAll('.slide.active .compare-label')]
-      const stageRect = document.querySelector('.stage').getBoundingClientRect()
+      const stageRect = C(document.querySelector('.stage'))
       return {
+        canvasWidth: stageEl.offsetWidth,
         parent,
         nested,
         annotatedLead,
@@ -338,8 +351,8 @@ try {
           objectFit: style(portrait).objectFit
         },
         compare: {
-          widths: compareHalves.map((half) => half.getBoundingClientRect().width),
-          heights: compareHalves.map((half) => half.getBoundingClientRect().height),
+          widths: compareHalves.map((half) => C(half).width),
+          heights: compareHalves.map((half) => C(half).height),
           stageWidth: stageRect.width,
           stageHeight: stageRect.height,
           backgrounds: compareHalves.map((half) => style(half).backgroundColor),
@@ -349,14 +362,15 @@ try {
           copyMaxWidths: compareCopy.map((paragraph) => Number.parseFloat(style(paragraph).maxWidth)),
           labelFonts: compareLabels.map((label) => Number.parseFloat(style(label).fontSize)),
           centreOffsets: compareHalves.map((half) => {
-            const halfRect = half.getBoundingClientRect()
-            const innerRect = half.querySelector('.compare-inner').getBoundingClientRect()
+            const halfRect = C(half)
+            const innerRect = C(half.querySelector('.compare-inner'))
             return Math.abs((halfRect.top + halfRect.bottom - innerRect.top - innerRect.bottom) / 2)
           })
         }
       }
     })
-    const floor = 31 * viewport.width / 1600
+    // ADR-0030: sizes follow the canvas (the stage's layout width), not the window.
+    const floor = 31 * metrics.canvasWidth / 1600
     assert(metrics.nested.every((item) => item.px + 0.01 >= floor), `${viewport.width}x${viewport.height}: every nested level meets the ${floor}px floor`)
     assert(metrics.nested.every((item) => item.colour === metrics.parent.colour), `${viewport.width}x${viewport.height}: nested content uses parent ink`)
     assert(metrics.nested.every((item) => item.family === metrics.parent.family), `${viewport.width}x${viewport.height}: nested content uses the parent family`)
@@ -390,7 +404,7 @@ try {
     assert.equal(metrics.portrait.objectFit, 'contain', `${viewport.width}x${viewport.height}: portrait media uses object-fit contain`)
     assert(Math.abs(metrics.portrait.renderedAspect - metrics.portrait.naturalAspect) <= 0.01, `${viewport.width}x${viewport.height}: portrait aspect ratio is preserved`)
     assert(metrics.portrait.top >= metrics.portrait.contentTop - 1 && metrics.portrait.bottom <= metrics.portrait.contentBottom + 1, `${viewport.width}x${viewport.height}: portrait stays inside its content band`)
-    const expectedCompareCopyPx = Math.min(48, viewport.width * 0.034)
+    const expectedCompareCopyPx = Math.min(48, metrics.canvasWidth * 0.034)
     assert(metrics.compare.copyFonts.every((px) => Math.abs(px - expectedCompareCopyPx) <= 0.1), `${viewport.width}x${viewport.height}: compare copy follows clamp(1.7rem, 3.4vw, 3rem)`)
     assert.deepEqual(metrics.compare.copyWeights, ['500', '500'], `${viewport.width}x${viewport.height}: compare copy uses weight 500`)
     assert(metrics.compare.copyMaxWidths.every((px) => Math.abs(px - expectedCompareCopyPx * 12) <= 0.1), `${viewport.width}x${viewport.height}: compare copy uses the 12em measure`)

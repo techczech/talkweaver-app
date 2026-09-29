@@ -30,7 +30,10 @@ for (let f = 0; f < 3; f++) {
     mk(`topic-${f}/talk-${f}-${String(t).padStart(3, '0')}`, `Talk ${f}-${String(t).padStart(3, '0')}`)
   }
 }
-writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault }, null, 2))
+// The file list starts with every folder closed (0.34.0-preview.2 check); the three topics were
+// opened before, as a remembered choice, so all 900 talks are rows.
+const opened = { 'topic-0': true, 'topic-1': true, 'topic-2': true }
+writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault, talkListFolders: { [vault]: opened } }, null, 2))
 
 await ensureFreshBuild(REPO)
 const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })

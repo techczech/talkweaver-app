@@ -32,20 +32,23 @@ Trigger syntax is compiler-validated: keep the **Timeline:** blocks, the
 
 ### Clear thinking matters {titletop}
 
-### Statement default variant — current treatment
+### Statement default variant — panel in the section colour
 {statement=default}
 
-The default statement remains an oversized claim with a centred block.
+The default statement sits on a panel in the section's sidebar colour.
+
+### A centred statement stands on its own without a title
+{statement=centred}
 
 ### Statement tint variant — panel and accent bar
 {statement=tint}
 
 The tint panel gives a claim **presence** without turning it into a quote.
 
-### Statement poster variant — oversized boxed claim
-{statement=poster}
+### Statement bar variant — accent bar without the tint
+{statement=bar}
 
-One **boxed phrase** can carry the whole poster.
+The bar marks a claim with **one line of colour** and no panel.
 
 ### The knowledge you need today
 {list}

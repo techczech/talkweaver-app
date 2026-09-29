@@ -16,6 +16,19 @@ export function topicOf(talk: TalkInfo, vaultRoot: string): string {
   return parts.join('/')
 }
 
+// The talk as it stands after the folder `fromTopic` (vault-rel) was renamed to `toTopic`: its folder
+// and outline paths re-based under the new name. Null when the talk is not inside `fromTopic`.
+// (shared-talk ticket 08: the editor re-selects the open talk at its new path after a folder rename.)
+export function rebaseTalk(talk: TalkInfo, vaultRoot: string, fromTopic: string, toTopic: string): TalkInfo | null {
+  const base = vaultRoot.replace(/\/+$/, '')
+  const from = `${base}/${fromTopic.replace(/^\/+|\/+$/g, '')}`
+  const to = `${base}/${toTopic.replace(/^\/+|\/+$/g, '')}`
+  const move = (p: string): string | null => (p === from ? to : p.startsWith(from + '/') ? to + p.slice(from.length) : null)
+  const path = move(talk.path)
+  const outlinePath = move(talk.outlinePath)
+  return path && outlinePath ? { ...talk, path, outlinePath } : null
+}
+
 export function buildTree(talks: TalkInfo[], folders: string[], vaultRoot: string): TreeNode {
   const root: TreeNode = { name: '', path: '', children: [], talks: [] }
   const nodeAt = (path: string): TreeNode => {

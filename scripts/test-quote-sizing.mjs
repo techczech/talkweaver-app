@@ -109,6 +109,10 @@ try {
         const panelRect = panel.getBoundingClientRect()
         const stage = slide.parentElement
         const stageRect = stage.getBoundingClientRect()
+        // ADR-0030: the stage is the 1280×720 canvas scaled to the window. Rects are painted px;
+        // a size compared with a computed length (the band, the line height) is divided by the scale.
+        // The air checks stay in painted px: they measure against the window's fixed footer.
+        const k = stageRect.width / stage.offsetWidth
         const footer = document.querySelector('.footer')
         const footerStyle = getComputedStyle(footer)
         const chromeBandPx = parseFloat(footerStyle.minHeight) + parseFloat(footerStyle.bottom)
@@ -116,7 +120,7 @@ try {
         const slideStyle = getComputedStyle(slide)
         const availableHeight = slide.clientHeight - parseFloat(slideStyle.paddingTop) - parseFloat(slideStyle.paddingBottom)
         const paragraphs = [...panel.querySelectorAll(':scope > p')]
-        const textPx = paragraphs.reduce((sum, p) => sum + p.getBoundingClientRect().height, 0)
+        const textPx = paragraphs.reduce((sum, p) => sum + p.getBoundingClientRect().height, 0) / k
         const mark = panel.querySelector('.quote-continuation')
         return {
           id: slideId,
@@ -125,13 +129,13 @@ try {
           fit: panel.dataset.quoteFit || 'base',
           fontPx: parseFloat(style.fontSize),
           renderedLines: Math.round(textPx / parseFloat(style.lineHeight)),
-          panelWidthPx: panelRect.width,
-          panelHeightPx: panelRect.height,
+          panelWidthPx: panelRect.width / k,
+          panelHeightPx: panelRect.height / k,
           stageHeightPx: stageRect.height,
           topAirPx: panelRect.top - stageRect.top,
           bottomAirPx: stageRect.bottom - chromeBandPx - panelRect.bottom,
           contentZoom: Number(getComputedStyle(content).zoom || 1),
-          coverage: panelRect.height / availableHeight,
+          coverage: panelRect.height / k / availableHeight,
           hasCite: Boolean(panel.querySelector('cite')),
           markText: mark ? mark.textContent : '',
           markInsidePanel: mark ? (() => {

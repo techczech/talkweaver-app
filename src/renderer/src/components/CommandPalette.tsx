@@ -1,6 +1,6 @@
 import PollAuthoringHelp from './PollAuthoringHelp'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { LAYOUTS, type LayoutDef, type OptionGroup } from '../data/layouts'
+import { LAYOUTS, type LayoutDef, type OptionGroup, type OptionValue } from '../data/layouts'
 import {
   filterLayoutPickerEntries,
   layoutPickerModel,
@@ -462,15 +462,19 @@ export function OptionControl({
   entry,
   binding,
   onSelect,
-  deckToken
+  deckToken,
+  values: offeredValues
 }: {
   entry?: LayoutDef
   binding: PickerOptionGroup
   onSelect: (group: OptionGroup, token: string) => void
   /** T32 (Decision 1A): the value the DECK makes; that button carries the small “deck” mark. */
   deckToken?: string
+  /** ADR-0028 §10: the values this slide offers, when a caller filtered them; else every value. */
+  values?: OptionValue[]
 }): React.JSX.Element {
   const { group, selectedToken } = binding
+  const values = offeredValues ?? group.values
   if (group.numberKey) {
     const value = selectedToken.startsWith(group.numberKey + '=') ? selectedToken.split('=')[1] : ''
     const commit = (input: HTMLInputElement): void => {
@@ -494,13 +498,13 @@ export function OptionControl({
     if (event.key === ' ' || event.key === 'Enter') {
       event.preventDefault()
       event.stopPropagation()
-      onSelect(group, group.values[index].token)
+      onSelect(group, values[index].token)
       return
     }
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
     event.preventDefault()
     event.stopPropagation()
-    const nextIndex = (index + (event.key === 'ArrowRight' ? 1 : -1) + group.values.length) % group.values.length
+    const nextIndex = (index + (event.key === 'ArrowRight' ? 1 : -1) + values.length) % values.length
     const buttons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('button')
     buttons?.[nextIndex]?.focus()
   }
@@ -509,7 +513,7 @@ export function OptionControl({
     <div className="layout-option-control">
     <div className={isThumbs ? 'layout-option-thumbs' : 'layout-option-segments'} role="group" aria-label={group.label}
       data-deck-mark={deckToken !== undefined ? 'true' : undefined}>
-      {group.values.map((value, index) => {
+      {values.map((value, index) => {
         const selected = value.token === selectedToken
         const deckMarked = deckToken !== undefined && deckToken === value.token
         return (
@@ -519,7 +523,7 @@ export function OptionControl({
             className={selected ? 'is-selected' : undefined}
             aria-pressed={selected}
             title={value.description}
-            tabIndex={selected || (!group.values.some((candidate) => candidate.token === selectedToken) && index === 0) ? 0 : -1}
+            tabIndex={selected || (!values.some((candidate) => candidate.token === selectedToken) && index === 0) ? 0 : -1}
             onClick={() => onSelect(group, value.token)}
             onKeyDown={(event) => moveWithinGroup(event, index)}
           >

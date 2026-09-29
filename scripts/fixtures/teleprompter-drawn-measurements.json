@@ -1,0 +1,1090 @@
+[
+ {
+  "file": "today-long-1440x900.png",
+  "size": "1440x900",
+  "variant": "today",
+  "state": "long",
+  "scale": 0.74,
+  "nextScale": 0.295,
+  "currentBox": [
+   947,
+   533
+  ],
+  "currentTop": 108,
+  "notesFontPx": 17.3,
+  "lineHeightPx": 26.8,
+  "notesBody": [
+   1378,
+   89
+  ],
+  "textColumn": [
+   31,
+   1409
+  ],
+  "textCentreOffset": 0,
+  "visibleLines": 3.3,
+  "charsPerLine": 74,
+  "readingLineTop": 701,
+  "overflow": false,
+  "notesShown": true,
+  "thenShown": true,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "a-long-1440x900.png",
+  "size": "1440x900",
+  "variant": "a",
+  "state": "long",
+  "scale": 0.646,
+  "nextScale": 0.295,
+  "currentBox": [
+   947,
+   465
+  ],
+  "currentTop": 329,
+  "notesFontPx": 28.8,
+  "lineHeightPx": 39.7,
+  "notesBody": [
+   876,
+   175
+  ],
+  "textColumn": [
+   282,
+   1158
+  ],
+  "textCentreOffset": 0,
+  "visibleLines": 4.4,
+  "charsPerLine": 55,
+  "readingLineTop": 115,
+  "overflow": true,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "b-long-1440x900.png",
+  "size": "1440x900",
+  "variant": "b",
+  "state": "long",
+  "scale": 0.323,
+  "nextScale": 0.223,
+  "currentBox": [
+   414,
+   233
+  ],
+  "currentTop": 108,
+  "notesFontPx": 36,
+  "lineHeightPx": 51.1,
+  "notesBody": [
+   755,
+   648
+  ],
+  "textColumn": [
+   51,
+   806
+  ],
+  "textCentreOffset": -291,
+  "visibleLines": 12.7,
+  "charsPerLine": 44,
+  "readingLineTop": 136,
+  "overflow": true,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "c-long-1440x900.png",
+  "size": "1440x900",
+  "variant": "c",
+  "state": "long",
+  "scale": 0.29,
+  "nextScale": 0.171,
+  "currentBox": [
+   371,
+   209
+  ],
+  "currentTop": 108,
+  "notesFontPx": 33.1,
+  "lineHeightPx": 47,
+  "notesBody": [
+   625,
+   654
+  ],
+  "textColumn": [
+   461,
+   1051
+  ],
+  "textCentreOffset": 36,
+  "visibleLines": 13.9,
+  "charsPerLine": 37,
+  "readingLineTop": 132,
+  "overflow": true,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "a-long-j-1440x900.png",
+  "size": "1440x900",
+  "variant": "a",
+  "state": "long-j",
+  "scale": 0.646,
+  "nextScale": 0.295,
+  "currentBox": [
+   947,
+   465
+  ],
+  "currentTop": 329,
+  "notesFontPx": 28.8,
+  "lineHeightPx": 39.7,
+  "notesBody": [
+   876,
+   175
+  ],
+  "textColumn": [
+   282,
+   1158
+  ],
+  "textCentreOffset": 0,
+  "visibleLines": 4.4,
+  "charsPerLine": 55,
+  "readingLineTop": -4,
+  "overflow": true,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "b-long-j-1440x900.png",
+  "size": "1440x900",
+  "variant": "b",
+  "state": "long-j",
+  "scale": 0.323,
+  "nextScale": 0.223,
+  "currentBox": [
+   414,
+   233
+  ],
+  "currentTop": 108,
+  "notesFontPx": 36,
+  "lineHeightPx": 51.1,
+  "notesBody": [
+   755,
+   648
+  ],
+  "textColumn": [
+   51,
+   806
+  ],
+  "textCentreOffset": -291,
+  "visibleLines": 12.7,
+  "charsPerLine": 44,
+  "readingLineTop": -154,
+  "overflow": true,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "c-long-j-1440x900.png",
+  "size": "1440x900",
+  "variant": "c",
+  "state": "long-j",
+  "scale": 0.29,
+  "nextScale": 0.171,
+  "currentBox": [
+   371,
+   209
+  ],
+  "currentTop": 108,
+  "notesFontPx": 33.1,
+  "lineHeightPx": 47,
+  "notesBody": [
+   625,
+   654
+  ],
+  "textColumn": [
+   461,
+   1051
+  ],
+  "textCentreOffset": 36,
+  "visibleLines": 13.9,
+  "charsPerLine": 37,
+  "readingLineTop": 132,
+  "overflow": true,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "a-short-1440x900.png",
+  "size": "1440x900",
+  "variant": "a",
+  "state": "short",
+  "scale": 0.646,
+  "nextScale": 0.295,
+  "currentBox": [
+   947,
+   465
+  ],
+  "currentTop": 329,
+  "notesFontPx": 28.8,
+  "lineHeightPx": 39.7,
+  "notesBody": [
+   876,
+   175
+  ],
+  "textColumn": [
+   282,
+   1158
+  ],
+  "textCentreOffset": 0,
+  "visibleLines": 4.4,
+  "charsPerLine": 53,
+  "readingLineTop": 115,
+  "overflow": false,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "b-short-1440x900.png",
+  "size": "1440x900",
+  "variant": "b",
+  "state": "short",
+  "scale": 0.323,
+  "nextScale": 0.223,
+  "currentBox": [
+   414,
+   233
+  ],
+  "currentTop": 108,
+  "notesFontPx": 36,
+  "lineHeightPx": 51.1,
+  "notesBody": [
+   755,
+   648
+  ],
+  "textColumn": [
+   51,
+   806
+  ],
+  "textCentreOffset": -291,
+  "visibleLines": 12.7,
+  "charsPerLine": 42,
+  "readingLineTop": 136,
+  "overflow": false,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "c-short-1440x900.png",
+  "size": "1440x900",
+  "variant": "c",
+  "state": "short",
+  "scale": 0.29,
+  "nextScale": 0.171,
+  "currentBox": [
+   371,
+   209
+  ],
+  "currentTop": 108,
+  "notesFontPx": 33.1,
+  "lineHeightPx": 47,
+  "notesBody": [
+   625,
+   654
+  ],
+  "textColumn": [
+   461,
+   1051
+  ],
+  "textCentreOffset": 36,
+  "visibleLines": 13.9,
+  "charsPerLine": 35,
+  "readingLineTop": 132,
+  "overflow": true,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "a-none-1440x900.png",
+  "size": "1440x900",
+  "variant": "a",
+  "state": "none",
+  "scale": 0.642,
+  "nextScale": 0.295,
+  "currentBox": [
+   947,
+   462
+  ],
+  "currentTop": 329,
+  "notesFontPx": 28.8,
+  "lineHeightPx": 39.7,
+  "notesBody": [
+   876,
+   175
+  ],
+  "textColumn": [
+   282,
+   1158
+  ],
+  "textCentreOffset": 0,
+  "visibleLines": 4.4,
+  "charsPerLine": null,
+  "readingLineTop": null,
+  "overflow": false,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "b-none-1440x900.png",
+  "size": "1440x900",
+  "variant": "b",
+  "state": "none",
+  "scale": 0.717,
+  "nextScale": 0.317,
+  "currentBox": [
+   918,
+   683
+  ],
+  "currentTop": 108,
+  "notesFontPx": 36,
+  "lineHeightPx": 51.1,
+  "notesBody": [
+   0,
+   0
+  ],
+  "textColumn": [
+   0,
+   0
+  ],
+  "textCentreOffset": -720,
+  "visibleLines": 0,
+  "charsPerLine": null,
+  "readingLineTop": null,
+  "overflow": false,
+  "notesShown": false,
+  "thenShown": false,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "c-none-1440x900.png",
+  "size": "1440x900",
+  "variant": "c",
+  "state": "none",
+  "scale": 0.29,
+  "nextScale": 0.171,
+  "currentBox": [
+   371,
+   209
+  ],
+  "currentTop": 108,
+  "notesFontPx": 33.1,
+  "lineHeightPx": 47,
+  "notesBody": [
+   625,
+   651
+  ],
+  "textColumn": [
+   461,
+   1051
+  ],
+  "textCentreOffset": 36,
+  "visibleLines": 13.8,
+  "charsPerLine": null,
+  "readingLineTop": null,
+  "overflow": false,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "today-poll-1440x900.png",
+  "size": "1440x900",
+  "variant": "today",
+  "state": "poll",
+  "scale": 0.321,
+  "nextScale": 0.295,
+  "currentBox": [
+   947,
+   231
+  ],
+  "currentTop": 108,
+  "notesFontPx": 17.3,
+  "lineHeightPx": 26.8,
+  "notesBody": [
+   1378,
+   90
+  ],
+  "textColumn": [
+   31,
+   1409
+  ],
+  "textCentreOffset": 0,
+  "visibleLines": 3.4,
+  "charsPerLine": 105,
+  "readingLineTop": 700,
+  "overflow": false,
+  "notesShown": true,
+  "thenShown": true,
+  "pollShown": true,
+  "controlsInWindow": true
+ },
+ {
+  "file": "a-poll-1440x900.png",
+  "size": "1440x900",
+  "variant": "a",
+  "state": "poll",
+  "scale": 0.228,
+  "nextScale": 0.295,
+  "currentBox": [
+   947,
+   164
+  ],
+  "currentTop": 329,
+  "notesFontPx": 28.8,
+  "lineHeightPx": 39.7,
+  "notesBody": [
+   876,
+   175
+  ],
+  "textColumn": [
+   282,
+   1158
+  ],
+  "textCentreOffset": 0,
+  "visibleLines": 4.4,
+  "charsPerLine": 53,
+  "readingLineTop": 115,
+  "overflow": false,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": true,
+  "controlsInWindow": true
+ },
+ {
+  "file": "b-poll-1440x900.png",
+  "size": "1440x900",
+  "variant": "b",
+  "state": "poll",
+  "scale": 0.323,
+  "nextScale": null,
+  "currentBox": [
+   414,
+   233
+  ],
+  "currentTop": 108,
+  "notesFontPx": 36,
+  "lineHeightPx": 51.1,
+  "notesBody": [
+   755,
+   648
+  ],
+  "textColumn": [
+   51,
+   806
+  ],
+  "textCentreOffset": -291,
+  "visibleLines": 12.7,
+  "charsPerLine": 42,
+  "readingLineTop": 136,
+  "overflow": false,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": true,
+  "controlsInWindow": true
+ },
+ {
+  "file": "c-poll-1440x900.png",
+  "size": "1440x900",
+  "variant": "c",
+  "state": "poll",
+  "scale": 0.29,
+  "nextScale": 0.171,
+  "currentBox": [
+   371,
+   209
+  ],
+  "currentTop": 108,
+  "notesFontPx": 33.1,
+  "lineHeightPx": 47,
+  "notesBody": [
+   625,
+   654
+  ],
+  "textColumn": [
+   461,
+   1051
+  ],
+  "textCentreOffset": 36,
+  "visibleLines": 13.9,
+  "charsPerLine": 35,
+  "readingLineTop": 132,
+  "overflow": true,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": true,
+  "controlsInWindow": true
+ },
+ {
+  "file": "today-long-1728x1117.png",
+  "size": "1728x1117",
+  "variant": "today",
+  "state": "long",
+  "scale": 0.936,
+  "nextScale": 0.323,
+  "currentBox": [
+   1198,
+   674
+  ],
+  "currentTop": 108,
+  "notesFontPx": 17.3,
+  "lineHeightPx": 26.8,
+  "notesBody": [
+   1666,
+   165
+  ],
+  "textColumn": [
+   31,
+   1697
+  ],
+  "textCentreOffset": 0,
+  "visibleLines": 6.2,
+  "charsPerLine": 74,
+  "readingLineTop": 842,
+  "overflow": false,
+  "notesShown": true,
+  "thenShown": true,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "a-long-1728x1117.png",
+  "size": "1728x1117",
+  "variant": "a",
+  "state": "long",
+  "scale": 0.898,
+  "nextScale": 0.358,
+  "currentBox": [
+   1154,
+   647
+  ],
+  "currentTop": 364,
+  "notesFontPx": 34.6,
+  "lineHeightPx": 47.7,
+  "notesBody": [
+   1051,
+   210
+  ],
+  "textColumn": [
+   338,
+   1390
+  ],
+  "textCentreOffset": 0,
+  "visibleLines": 4.4,
+  "charsPerLine": 55,
+  "readingLineTop": 115,
+  "overflow": true,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "b-long-1728x1117.png",
+  "size": "1728x1117",
+  "variant": "b",
+  "state": "long",
+  "scale": 0.391,
+  "nextScale": 0.271,
+  "currentBox": [
+   500,
+   281
+  ],
+  "currentTop": 108,
+  "notesFontPx": 43.2,
+  "lineHeightPx": 61.3,
+  "notesBody": [
+   906,
+   865
+  ],
+  "textColumn": [
+   51,
+   957
+  ],
+  "textCentreOffset": -360,
+  "visibleLines": 14.1,
+  "charsPerLine": 44,
+  "readingLineTop": 136,
+  "overflow": true,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "c-long-1728x1117.png",
+  "size": "1728x1117",
+  "variant": "c",
+  "state": "long",
+  "scale": 0.35,
+  "nextScale": 0.209,
+  "currentBox": [
+   449,
+   252
+  ],
+  "currentTop": 108,
+  "notesFontPx": 39.7,
+  "lineHeightPx": 56.4,
+  "notesBody": [
+   743,
+   871
+  ],
+  "textColumn": [
+   539,
+   1247
+  ],
+  "textCentreOffset": 29,
+  "visibleLines": 15.4,
+  "charsPerLine": 37,
+  "readingLineTop": 132,
+  "overflow": true,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "a-long-j-1728x1117.png",
+  "size": "1728x1117",
+  "variant": "a",
+  "state": "long-j",
+  "scale": 0.898,
+  "nextScale": 0.358,
+  "currentBox": [
+   1154,
+   647
+  ],
+  "currentTop": 364,
+  "notesFontPx": 34.6,
+  "lineHeightPx": 47.7,
+  "notesBody": [
+   1051,
+   210
+  ],
+  "textColumn": [
+   338,
+   1390
+  ],
+  "textCentreOffset": 0,
+  "visibleLines": 4.4,
+  "charsPerLine": 55,
+  "readingLineTop": -28,
+  "overflow": true,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "b-long-j-1728x1117.png",
+  "size": "1728x1117",
+  "variant": "b",
+  "state": "long-j",
+  "scale": 0.391,
+  "nextScale": 0.271,
+  "currentBox": [
+   500,
+   281
+  ],
+  "currentTop": 108,
+  "notesFontPx": 43.2,
+  "lineHeightPx": 61.3,
+  "notesBody": [
+   906,
+   865
+  ],
+  "textColumn": [
+   51,
+   957
+  ],
+  "textCentreOffset": -360,
+  "visibleLines": 14.1,
+  "charsPerLine": 44,
+  "readingLineTop": -125,
+  "overflow": true,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "c-long-j-1728x1117.png",
+  "size": "1728x1117",
+  "variant": "c",
+  "state": "long-j",
+  "scale": 0.35,
+  "nextScale": 0.209,
+  "currentBox": [
+   449,
+   252
+  ],
+  "currentTop": 108,
+  "notesFontPx": 39.7,
+  "lineHeightPx": 56.4,
+  "notesBody": [
+   743,
+   871
+  ],
+  "textColumn": [
+   539,
+   1247
+  ],
+  "textCentreOffset": 29,
+  "visibleLines": 15.4,
+  "charsPerLine": 37,
+  "readingLineTop": 132,
+  "overflow": true,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "a-short-1728x1117.png",
+  "size": "1728x1117",
+  "variant": "a",
+  "state": "short",
+  "scale": 0.898,
+  "nextScale": 0.358,
+  "currentBox": [
+   1154,
+   647
+  ],
+  "currentTop": 364,
+  "notesFontPx": 34.6,
+  "lineHeightPx": 47.7,
+  "notesBody": [
+   1051,
+   210
+  ],
+  "textColumn": [
+   338,
+   1390
+  ],
+  "textCentreOffset": 0,
+  "visibleLines": 4.4,
+  "charsPerLine": 53,
+  "readingLineTop": 115,
+  "overflow": false,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "b-short-1728x1117.png",
+  "size": "1728x1117",
+  "variant": "b",
+  "state": "short",
+  "scale": 0.391,
+  "nextScale": 0.271,
+  "currentBox": [
+   500,
+   281
+  ],
+  "currentTop": 108,
+  "notesFontPx": 43.2,
+  "lineHeightPx": 61.3,
+  "notesBody": [
+   906,
+   865
+  ],
+  "textColumn": [
+   51,
+   957
+  ],
+  "textCentreOffset": -360,
+  "visibleLines": 14.1,
+  "charsPerLine": 42,
+  "readingLineTop": 136,
+  "overflow": false,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "c-short-1728x1117.png",
+  "size": "1728x1117",
+  "variant": "c",
+  "state": "short",
+  "scale": 0.35,
+  "nextScale": 0.209,
+  "currentBox": [
+   449,
+   252
+  ],
+  "currentTop": 108,
+  "notesFontPx": 39.7,
+  "lineHeightPx": 56.4,
+  "notesBody": [
+   743,
+   871
+  ],
+  "textColumn": [
+   539,
+   1247
+  ],
+  "textCentreOffset": 29,
+  "visibleLines": 15.4,
+  "charsPerLine": 35,
+  "readingLineTop": 132,
+  "overflow": true,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "a-none-1728x1117.png",
+  "size": "1728x1117",
+  "variant": "a",
+  "state": "none",
+  "scale": 0.894,
+  "nextScale": 0.358,
+  "currentBox": [
+   1154,
+   644
+  ],
+  "currentTop": 364,
+  "notesFontPx": 34.6,
+  "lineHeightPx": 47.7,
+  "notesBody": [
+   1051,
+   210
+  ],
+  "textColumn": [
+   338,
+   1390
+  ],
+  "textCentreOffset": 0,
+  "visibleLines": 4.4,
+  "charsPerLine": null,
+  "readingLineTop": null,
+  "overflow": false,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "b-none-1728x1117.png",
+  "size": "1728x1117",
+  "variant": "b",
+  "state": "none",
+  "scale": 0.875,
+  "nextScale": 0.385,
+  "currentBox": [
+   1120,
+   900
+  ],
+  "currentTop": 108,
+  "notesFontPx": 43.2,
+  "lineHeightPx": 61.3,
+  "notesBody": [
+   0,
+   0
+  ],
+  "textColumn": [
+   0,
+   0
+  ],
+  "textCentreOffset": -864,
+  "visibleLines": 0,
+  "charsPerLine": null,
+  "readingLineTop": null,
+  "overflow": false,
+  "notesShown": false,
+  "thenShown": false,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "c-none-1728x1117.png",
+  "size": "1728x1117",
+  "variant": "c",
+  "state": "none",
+  "scale": 0.35,
+  "nextScale": 0.209,
+  "currentBox": [
+   449,
+   252
+  ],
+  "currentTop": 108,
+  "notesFontPx": 39.7,
+  "lineHeightPx": 56.4,
+  "notesBody": [
+   743,
+   868
+  ],
+  "textColumn": [
+   539,
+   1247
+  ],
+  "textCentreOffset": 29,
+  "visibleLines": 15.4,
+  "charsPerLine": null,
+  "readingLineTop": null,
+  "overflow": false,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": false,
+  "controlsInWindow": true
+ },
+ {
+  "file": "today-poll-1728x1117.png",
+  "size": "1728x1117",
+  "variant": "today",
+  "state": "poll",
+  "scale": 0.653,
+  "nextScale": 0.323,
+  "currentBox": [
+   1198,
+   471
+  ],
+  "currentTop": 108,
+  "notesFontPx": 17.3,
+  "lineHeightPx": 26.8,
+  "notesBody": [
+   1666,
+   90
+  ],
+  "textColumn": [
+   31,
+   1697
+  ],
+  "textCentreOffset": 0,
+  "visibleLines": 3.4,
+  "charsPerLine": 105,
+  "readingLineTop": 917,
+  "overflow": false,
+  "notesShown": true,
+  "thenShown": true,
+  "pollShown": true,
+  "controlsInWindow": true
+ },
+ {
+  "file": "a-poll-1728x1117.png",
+  "size": "1728x1117",
+  "variant": "a",
+  "state": "poll",
+  "scale": 0.512,
+  "nextScale": 0.358,
+  "currentBox": [
+   1154,
+   368
+  ],
+  "currentTop": 364,
+  "notesFontPx": 34.6,
+  "lineHeightPx": 47.7,
+  "notesBody": [
+   1051,
+   210
+  ],
+  "textColumn": [
+   338,
+   1390
+  ],
+  "textCentreOffset": 0,
+  "visibleLines": 4.4,
+  "charsPerLine": 53,
+  "readingLineTop": 115,
+  "overflow": false,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": true,
+  "controlsInWindow": true
+ },
+ {
+  "file": "b-poll-1728x1117.png",
+  "size": "1728x1117",
+  "variant": "b",
+  "state": "poll",
+  "scale": 0.391,
+  "nextScale": null,
+  "currentBox": [
+   500,
+   281
+  ],
+  "currentTop": 108,
+  "notesFontPx": 43.2,
+  "lineHeightPx": 61.3,
+  "notesBody": [
+   906,
+   865
+  ],
+  "textColumn": [
+   51,
+   957
+  ],
+  "textCentreOffset": -360,
+  "visibleLines": 14.1,
+  "charsPerLine": 42,
+  "readingLineTop": 136,
+  "overflow": false,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": true,
+  "controlsInWindow": true
+ },
+ {
+  "file": "c-poll-1728x1117.png",
+  "size": "1728x1117",
+  "variant": "c",
+  "state": "poll",
+  "scale": 0.35,
+  "nextScale": 0.209,
+  "currentBox": [
+   449,
+   252
+  ],
+  "currentTop": 108,
+  "notesFontPx": 39.7,
+  "lineHeightPx": 56.4,
+  "notesBody": [
+   743,
+   871
+  ],
+  "textColumn": [
+   539,
+   1247
+  ],
+  "textCentreOffset": 29,
+  "visibleLines": 15.4,
+  "charsPerLine": 35,
+  "readingLineTop": 132,
+  "overflow": true,
+  "notesShown": true,
+  "thenShown": false,
+  "pollShown": true,
+  "controlsInWindow": true
+ }
+]

@@ -6,6 +6,7 @@ import type {
   SessionClosedMessage,
   SlideState,
   SlideStateMessage,
+  InstantSlide, InstantSlideMessage,
 } from './protocol'
 import type { RecoveryState } from './recovery-state'
 
@@ -24,6 +25,7 @@ export interface StoredLiveSession {
   expiresAt: number
   status: 'open' | 'closed'
   slideState: SlideState | null
+  instantSlide?: InstantSlide | null
   revision: number
   polls: Record<string, StoredPoll>
   recovery?: RecoveryState
@@ -54,6 +56,12 @@ export function publishSlideState(session: StoredLiveSession, state: SlideState)
 
 export function currentStateMessage(session: StoredLiveSession): SlideStateMessage | null {
   return session.slideState ? { type: 'slide.state', ...session.slideState, revision: session.revision } : null
+}
+
+export function setInstantSlide(session: StoredLiveSession, slide: InstantSlide | null): InstantSlideMessage {
+  ensureOpenSession(session)
+  session.instantSlide = slide
+  return { type: 'instant.state', slide }
 }
 
 export function openPoll(session: StoredLiveSession, definition: PollDefinition): PollStateMessage {

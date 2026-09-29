@@ -39,7 +39,7 @@
   .slide:has(> .slide-content.layout-title > .tp-poster),
   .slide:has(> .slide-content.layout-title > .tp-split),
   .slide:has(> .slide-content.layout-title > .tp-banner) { padding: 0; }/* @order 1660 */
-  .slide-content.layout-closing { display: flex; flex-direction: column; justify-content: space-between; align-items: stretch; width: 100%; max-width: none; min-height: 100%; padding: 6vh 6cqw; text-align: left; }/* @order 1661 */
+  .slide-content.layout-closing { display: flex; flex-direction: column; justify-content: space-between; align-items: stretch; width: 100%; max-width: none; min-height: 100%; padding: 6cqh 6cqw; text-align: left; }/* @order 1661 */
   .slide-content.layout-closing > * { text-align: left; }/* @order 1662 */
   .slide-content.layout-closing .closing-thanks, .slide-content.layout-closing h1 {
     font-weight: 700;

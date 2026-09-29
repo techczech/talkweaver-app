@@ -59,6 +59,29 @@ function identityKey(md) {
   return out.join("\n");
 }
 
+// Where an outline's text comes from and goes to (one writer for talk files, 2026-09-27). The default
+// is the file itself (tests, headless callers). The app passes its one writer
+// (src/main/talk-writer.ts): an open talk is read from and written through its editor buffer, and a
+// closed one is written in place under the file's lock.
+//   read(abs)                          → Promise<string>
+//   write(abs, transform, { beforeEditorApply? })
+//        → Promise<{ ok: true, changed, text } | { ok: false, error }>
+//     transform(current) returns the new text (its input → nothing written) or throws to refuse;
+//     beforeEditorApply(next) runs just before an editor buffer applies it (editor route only).
+export const fileOutlineIO = {
+  async read(abs) { return readFileSync(abs, "utf8"); },
+  async write(abs, transform) {
+    try {
+      const current = readFileSync(abs, "utf8");
+      const next = transform(current);
+      if (next !== current) writeFileAtomic(abs, next);
+      return { ok: true, changed: next !== current, text: next };
+    } catch (err) {
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  },
+};
+
 // Locate a block by { heading, occurrence } — replicates 12-outline-edit's (unexported) findBlock.
 function findBlockByRef(text, ref) {
   const occurrence = ref.occurrence || 1;
@@ -92,15 +115,18 @@ function blockIdOf(lines, block) {
 // rest proceed.
 // `_setSlideId` is a test seam (defaults to the real stamp) — the F5 read-back test injects a
 // broken stamp through it to prove a stamp that does not read back becomes an honest failure.
-export function mergeDuplicateSlides(vaultRoot, targets, { now = Date.now(), _setSlideId = setSlideId } = {}) {
+// `io` (fileOutlineIO by default) is where outline text is read and written: every outline is read
+// once through it, and each stamped outline is written back only if its current text is still what
+// was read (else that outline lands in `failed`, unchanged).
+export async function mergeDuplicateSlides(vaultRoot, targets, { now = Date.now(), _setSlideId = setSlideId, io = fileOutlineIO } = {}) {
   if (!Array.isArray(targets) || targets.length === 0) {
     return { ok: false, reason: "no-targets", offending: [] };
   }
 
   // Read each outline at most once; the map is also the live buffer Phase 2 writes back into.
   const contentByOutline = new Map();
-  const readOutline = (rel) => {
-    if (!contentByOutline.has(rel)) contentByOutline.set(rel, readFileSync(join(vaultRoot, rel), "utf8"));
+  const readOutline = async (rel) => {
+    if (!contentByOutline.has(rel)) contentByOutline.set(rel, await io.read(join(vaultRoot, rel)));
     return contentByOutline.get(rel);
   };
 
@@ -110,7 +136,7 @@ export function mergeDuplicateSlides(vaultRoot, targets, { now = Date.now(), _se
   for (const target of targets) {
     const outline = target.outline;
     try {
-      const text = readOutline(outline);
+      const text = await readOutline(outline);
       const block = findBlockByRef(text, target);
       const lines = text.split("\n");
       located.push({
@@ -150,7 +176,7 @@ export function mergeDuplicateSlides(vaultRoot, targets, { now = Date.now(), _se
     // in the located target outlines so the new id cannot collide with an unrelated slide.
     const taken = new Set();
     for (const rel of new Set(located.map((l) => l.outline))) {
-      for (const m of readOutline(rel).matchAll(new RegExp(ID_TOKEN_RE.source, "g"))) taken.add(m[1]);
+      for (const m of (await readOutline(rel)).matchAll(new RegExp(ID_TOKEN_RE.source, "g"))) taken.add(m[1]);
     }
     canonicalId = mintId(Math.random, taken);
   }
@@ -170,7 +196,7 @@ export function mergeDuplicateSlides(vaultRoot, targets, { now = Date.now(), _se
   }
   for (const [outline, group] of byOutline) {
     try {
-      const original = readOutline(outline);
+      const original = await readOutline(outline);
       let text = original;
       // Stamp bottom-to-top so an inserted Trigger line / rewritten heading below never disturbs a
       // not-yet-stamped block above. The ref is re-derived from the CURRENT text at each block's
@@ -194,8 +220,22 @@ export function mergeDuplicateSlides(vaultRoot, targets, { now = Date.now(), _se
       const priorForLineage = group.map((l) => l.id).find((id) => id && id !== canonicalId) ?? null;
       const lineageHints = priorForLineage ? new Map([[canonicalId, priorForLineage]]) : null;
       const absOutline = join(vaultRoot, outline);
-      if (text !== original) writeFileAtomic(absOutline, text);
-      recordOutlineSave(vaultRoot, absOutline, text, { now, lineageHints });
+      // The lineage record must be the FIRST ledger record of the stamped text: on the app's editor
+      // route it is made just before the buffer applies it (before the editor's own save ledgers it).
+      let recorded = false;
+      const record = () => {
+        if (recorded) return;
+        recorded = true;
+        recordOutlineSave(vaultRoot, absOutline, text, { now, lineageHints });
+      };
+      if (text !== original) {
+        const written = await io.write(absOutline, (current) => {
+          if (current !== original) throw new Error(`slide-merge: ${outline} changed while merging; nothing was stamped there`);
+          return text;
+        }, { beforeEditorApply: record });
+        if (!written.ok) throw new Error(written.error);
+      }
+      record();
       contentByOutline.set(outline, text);
       for (const l of group) {
         if (verified.get(l)) merged.push({ outline, oldId: l.id });

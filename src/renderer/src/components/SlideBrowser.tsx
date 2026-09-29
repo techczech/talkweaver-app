@@ -7,10 +7,10 @@
 // thumbnails) is unchanged from the pre-rail Browser. v0.15.x: the ACTIVE talk's slides are
 // never on the table (the grid/strip serves them), and ↵ opens the INSERT-DECISION VIEWER —
 // never the editor, never a talk switch.
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Archive, ArrowDown, Check, ChevronLeft, ChevronRight, ChevronsDownUp, ChevronsUpDown,
-  Columns2, FolderOpen, GitBranch, GitMerge, Layers, LayoutGrid, Rows3,
+  Columns2, FolderOpen, GitBranch, GitMerge, Layers, LayoutGrid, ListChecks, PanelRight, Rows3,
   SearchX, Settings2, Star, Tag, X
 } from 'lucide-react'
 import type {
@@ -18,30 +18,45 @@ import type {
 } from '../../../preload/index'
 import { notify } from '../lib/notify'
 import { tagsOfBlock } from '../../../shared/tags'
+import { liveShortcutLabel } from '../keymap/store'
+import { isTypingKey, surfaceKey } from '../keymap/surfaceKeys'
+import SlidePickerHints from './SlidePickerHints'
+import { type FindTalkCommands, NOTHING_BESIDE, type PickerCommandOutcome, type SlidePickerCommands } from './slidePickerCommands'
 import { LAYOUTS } from '../data/layouts'
 import type { AdoptVersion } from './PropagationChecklist'
 import TagPicker from './TagPicker'
 import InsertViewer from './InsertViewer'
+import TalkBeside from './TalkBeside'
 import BrowserRail from './browser-rail/BrowserRail'
 import EchoLine from './browser-rail/EchoLine'
 import { createThumbRegenQueue } from '../lib/thumbnailRegenQueue'
 import {
   type ContentKey, type RailFacets, type ScopeEntry,
   CONTENT_KEYS, CONTENT_LABELS, agoLabel, anyFacetActive, emptyFacets, facetKindBases,
-  facetLayoutOf, gridModeFor, outlineChunks, passesFacets, rowHasContent, rowInScope,
-  rowInScopeEntry, scopedTalkSlugs, talkTitleHits, toggleScope
+  facetLayoutOf, gridModeFor, inFolder, outlineChunks, passesFacets, rowHasContent, rowInScope,
+  rowInScopeEntry, scopedTalkSlugs, toggleScope
 } from './browser-rail/railModel'
+import {
+  type FindScope, addTalkBeside, findBoxOwnsKey, findChips, pickTalk, prunePicked, removeFindChip
+} from './browser-rail/findTalkModel'
+import { hasSearchTerms } from '../../../shared/talk-query'
 import type {
-  CollectionRow, ContentItem, FacetItem, FacetKind, TreeFolder
+  CollectionRow, ContentItem, FacetItem, FacetKind, TreeSection
 } from './browser-rail/railTypes'
+import { type FilesTreeSource, folderPathOf } from './browser-rail/filesTreeModel'
+import { lastDeliveredBySlug, readSortPreference } from './talklist/model'
 import {
   type DisplayCard, type MergeRequest, type SlideCluster,
   buildDisplayModel, canonicalVersion, clusterAlreadyOneSlide, clusterMergeable,
   gridNavigate, inTalksLabel, layoutOf, mergeNudgeLabel,
   mergeTargetsFromCluster, nearCountLabel, parseSearchQuery, rangeKeys, rankBySearch, scopeNoun,
   sectionKey, sectionKeysAt, sectionNamesByKey, selRowKey, stampedIdOf, stripAnchorPercent,
-  tagTargetsFromRows, versionBadgeParts
+  tagTargetsFromRows, versionBadgeParts, sectionInsertSource, sectionSelectionKeys, selectSectionLabel
 } from './slideBrowserModel'
+import {
+  type PickerMain, type ResultsSnapshot, type SplitLayout,
+  RESULTS_ONLY, besideAvailable, besidePlan, closeBeside, openBeside, selectedRowsFor, splitNavigate
+} from './talkBesideModel'
 
 export type SearchResult = ProjectionRow & {
   talkSlug: string
@@ -75,6 +90,9 @@ interface Props {
   /** Registers a "focus + select the search field" fn with the host. The workspace's global
    *  ⌘S calls it when the Browser is ALREADY open (re-focus, don't toggle closed). */
   registerFocusSearch?: (fn: () => void) => void
+  /** Registers the picker's talk-search actions with the host, so the command palette can run
+   *  them (talk search 08). Registered once; each call reaches the picker's live state. */
+  registerCommands?: (commands: SlidePickerCommands) => void
   /** Opens the merge-into-one-slide confirm (host-mounted, like PropagationChecklist) for a
    *  byte-identical cluster. Triggered by the locations panel's 'Merge into one slide' AND by
    *  the insert-time nudge — the latter fires as the Browser closes, so the confirm MUST live
@@ -83,12 +101,6 @@ interface Props {
   /** Bumped by the host after a successful merge — re-runs the current search so the merged
    *  cluster now shows its shared id (the stack reads 'already one slide'). */
   refreshNonce?: number
-  /** Tag write safety (ADR-0037): awaited BEFORE tags:apply so the host can flush the active
-   *  talk's pending autosave when it is among the target outlines (the detach/adopt rule). */
-  flushBeforeTagWrite?: (outlinePaths: string[]) => Promise<void>
-  /** Called AFTER a successful tags:apply with the rewritten outlines' absolute paths — the
-   *  host re-reads + adopts the active talk's text if it was touched (handleAdopted pattern). */
-  onTagsApplied?: (outlinePaths: string[]) => void | Promise<void>
 }
 
 const DEBOUNCE_MS = 200
@@ -108,10 +120,6 @@ function readDensity(): number {
   }
 }
 
-function topicOf(path: string): string {
-  const parts = path.replace(/\/+$/, '').split('/')
-  return parts.length >= 2 ? parts[parts.length - 2] : '(root)'
-}
 function rowMarkdown(row: SearchResult): string {
   return row.source_markdown && row.source_markdown.trim() !== ''
     ? row.source_markdown
@@ -194,7 +202,7 @@ function versionTitle(markdown: string): string {
 
 export default function SlideBrowser({
   isOpen, onClose, onInsert, onInsertMany, currentTalkSlug, vaultRoot, onOpenHelp, suspendKeys,
-  onAdoptVersion, registerFocusSearch, onRequestMerge, refreshNonce, flushBeforeTagWrite, onTagsApplied
+  onAdoptVersion, registerFocusSearch, registerCommands, onRequestMerge, refreshNonce
 }: Props) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResult[]>([])
@@ -205,11 +213,22 @@ export default function SlideBrowser({
   const [unavailable, setUnavailable] = useState(false)
   const [loading, setLoading] = useState(false)
   const [talks, setTalks] = useState<TalkInfo[]>([])
+  // Vault folders, empty ones included: the Files tree has every folder the file list has.
+  const [vaultFolders, setVaultFolders] = useState<string[]>([])
   const [talkMeta, setTalkMeta] = useState<TalkMeta>({})
   const [tagVocab, setTagVocab] = useState<TagCount[]>([])
   const [deliverySessions, setDeliverySessions] = useState<RecordingSession[]>([])
   // The unified rail's compositional state (ADR-0009): pinned scope + property facets.
   const [scope, setScope] = useState<ScopeEntry[]>([])
+  // "Find a talk" (ADR-0029 §4): its own query (never the slide search's) and which scope
+  // entries it picked — those show as chips in its box.
+  const [findQuery, setFindQuery] = useState('')
+  const [findPicked, setFindPicked] = useState<string[]>([])
+  // Find a talk's focus and add-beside, for the palette (talk search 08); and a request to put the
+  // cursor there, honoured after the render that shows the box (the rail may have been collapsed,
+  // or the picker only now opening).
+  const findCmdRef = useRef<FindTalkCommands | null>(null)
+  const [findFocusReq, setFindFocusReq] = useState(0)
   const [facets, setFacets] = useState<RailFacets>(emptyFacets)
   // Side-by-side ⇄ sequential preference for a 2–3-talk scope (persisted).
   const [viewPref, setViewPref] = useState<'side' | 'seq'>(() => {
@@ -249,6 +268,11 @@ export default function SlideBrowser({
   // Browser — never the editor, never a talk switch. Holds the source talk + the deck index
   // to open on; the deck itself derives from the full index snapshot.
   const [viewer, setViewer] = useState<{ slug: string; order: number } | null>(null)
+  // A result's talk beside the results (talk search 06; ADR-0029 §4; frame K5): results only, or
+  // results plus one talk on the right; and what Esc restores (see talkBesideModel).
+  const [main, setMain] = useState<PickerMain>(RESULTS_ONLY)
+  const tableScrollRef = useRef<HTMLDivElement>(null)
+  const restoreRef = useRef<ResultsSnapshot | null>(null)
 
   const rootRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -332,9 +356,11 @@ export default function SlideBrowser({
     prevFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
     setQuery(''); setUnavailable(false); setSelected(new Set()); setActivePos(0)
     setPreview(false); setOpenPop(null); setScope([]); setFacets(emptyFacets()); anchorRef.current = 0
+    setFindQuery(''); setFindPicked([])
     setOpenStrip(null); setFlashFile(null); setNearExpanded(new Set()); setOpenLoc(null)
     setTagPickerOpen(false)
     setViewer(null)
+    setMain(RESULTS_ONLY)
     // A fresh opening looks at every talk again: one rendered by the editor lane since the last
     // opening, or deferred while the heap was high, must get another chance at a real print
     // rather than staying on its schematic until the app is relaunched (2026-09-15).
@@ -346,6 +372,7 @@ export default function SlideBrowser({
     // One-time-per-opening reference fetches for the rail (never in the filter hot path):
     // vault talks, per-talk meta (covers, editedMs), the tag vocabulary, delivery sessions.
     window.tw.vault.listTalks().then((t) => setTalks(t || [])).catch(() => setTalks([]))
+    try { window.tw.vault.listFolders().then((f) => setVaultFolders(f || [])).catch(() => setVaultFolders([])) } catch { setVaultFolders([]) }
     try { window.tw.vault.talkMeta().then((m) => setTalkMeta(m || {})).catch(() => setTalkMeta({})) } catch { setTalkMeta({}) }
     try { window.tw.tags.vocabulary().then((v) => setTagVocab(v || [])).catch(() => setTagVocab([])) } catch { setTagVocab([]) }
     try {
@@ -369,6 +396,12 @@ export default function SlideBrowser({
       input.select()
     })
   }, [registerFocusSearch])
+  // Scheduled after the open-focus frame above, so a picker opened for Find a talk lands there.
+  useEffect(() => {
+    if (findFocusReq === 0) return
+    const frame = requestAnimationFrame(() => { if (isOpenRef.current) findCmdRef.current?.focus() })
+    return () => cancelAnimationFrame(frame)
+  }, [findFocusReq])
 
   // The query parsed into scope/exact/terms — sent to main (scoped matching) and read by the
   // zero-results copy (which field the empty search looked in).
@@ -403,22 +436,17 @@ export default function SlideBrowser({
     setDensityState(Math.min(6, Math.max(2, d)))
   }
 
+  // Each talk's vault-relative folder path, nested folders at their real depth (ADR-0029 §4):
+  // two folders called `day-3` in different places stay apart. '' = the vault root.
   const folderBySlug = useMemo(() => {
     const m = new Map<string, string>()
-    for (const t of talks) m.set(t.slug, topicOf(t.path))
+    for (const t of talks) m.set(t.slug, folderPathOf(t, vaultRoot))
     return m
-  }, [talks])
-  const folderOf = (slug: string): string => folderBySlug.get(slug) || '(root)'
-  const talksByFolder = useMemo(() => {
-    const m = new Map<string, string[]>()
-    for (const t of talks) {
-      const f = topicOf(t.path)
-      const list = m.get(f)
-      if (list) list.push(t.slug)
-      else m.set(f, [t.slug])
-    }
-    return m
-  }, [talks])
+  }, [talks, vaultRoot])
+  const folderOf = (slug: string): string => folderBySlug.get(slug) ?? ''
+  // A folder scope takes in its subfolders, as the Files tree's folder total does.
+  const talksInFolder = (folder: string): string[] =>
+    talks.filter((t) => inFolder(folderBySlug.get(t.slug) ?? '', folder)).map((t) => t.slug)
 
   // The projection's `section` is a slug — show the AUTHORED section names (from the
   // section-title rows), resolved over the FULL snapshot (stable while a query narrows
@@ -429,6 +457,23 @@ export default function SlideBrowser({
     return m
   }, [fullRows, results])
   const secName = (key: string, fallback: string): string => sectionNames.get(key) ?? fallback
+  // Insert section (K4): each heading's source and N come from the WHOLE talk (the unqueried
+  // snapshot), never from the slides a search or filter left showing.
+  const rowsByTalk = useMemo(() => {
+    const m = new Map<string, SearchResult[]>()
+    for (const r of fullRows) {
+      const list = m.get(r.talkSlug)
+      if (list) list.push(r)
+      else m.set(r.talkSlug, [r])
+    }
+    return m
+  }, [fullRows])
+  // No whole-talk rows yet (a query typed straight after opening superseded the unqueried search):
+  // no button until they are fetched (the effect beside the talk-beside snapshot fetch, below).
+  const sectionSourceOf = (slug: string, section: string) => {
+    const whole = rowsByTalk.get(slug)
+    return whole ? sectionInsertSource(whole, slug, section) : null
+  }
   // A row's section as the Sections facet sees it — the display label (observed identity,
   // stage-3-lite: the section STRING across the scoped set, not per-talk identity).
   const secLabelOf = (r: SearchResult): string => secName(sectionKey(r.talkSlug, r.section ?? ''), r.section ?? '')
@@ -478,8 +523,9 @@ export default function SlideBrowser({
   // A saved scope that pins the active talk drops it SILENTLY from the effective scope
   // (folders containing it simply expand without it).
   const scopedSlugs = useMemo(
-    () => scopedTalkSlugs(scope, (f) => talksByFolder.get(f) ?? []).filter((s) => s !== currentTalkSlug),
-    [scope, talksByFolder, currentTalkSlug]
+    () => scopedTalkSlugs(scope, talksInFolder).filter((s) => s !== currentTalkSlug),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [scope, talks, folderBySlug, currentTalkSlug]
   )
   const gridMode = gridModeFor(scopedSlugs.length, viewPref === 'side')
   const sideEligible = scopedSlugs.length >= 2 && scopedSlugs.length <= SIDE_MAX
@@ -507,13 +553,34 @@ export default function SlideBrowser({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gridMode, scopedSlugs, visibleResults, passingSet, talks, sectionNames])
 
-  // The grid's VISUAL order (one entry per rendered card; side-by-side flattens column-
-  // major). Selection, ranges and keyboard nav all run over this order.
-  const vCards = useMemo<DisplayCard[]>(
+  // The talk beside the results (K5): its whole deck from the index snapshot, section by section,
+  // the result's slide highlighted. Only in the grouped and outline views (columns fill the area).
+  const besidePlanNow = useMemo(() => {
+    if (!main.beside || !besideAvailable(gridMode)) return null
+    return besidePlan(
+      main.beside, fullRows, results,
+      (slug, sec) => secName(sectionKey(slug, sec), sec),
+      (slug) => talks.find((t) => t.slug === slug)?.title ?? ''
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [main.beside, gridMode, fullRows, results, talks, sectionNames])
+  const besideOn = besidePlanNow !== null
+
+  // The results' VISUAL order (one entry per rendered card; side-by-side flattens column-major).
+  const leftCards = useMemo<DisplayCard[]>(
     () => (gridMode === 'grouped'
       ? display.cards
       : outlinePlan.flatMap((t) => t.chunks.flatMap((c) => c.cards))),
     [gridMode, display, outlinePlan]
+  )
+  const leftCount = leftCards.length
+  // The grid's visual order: the results, then (when open) the talk beside them. Selection, ranges
+  // and keyboard nav all run over this order; the results keep their positions either way.
+  const vCards = useMemo<DisplayCard[]>(
+    () => (besidePlanNow
+      ? [...leftCards, ...besidePlanNow.deck.map((row) => ({ row, kind: 'single' as const }))]
+      : leftCards),
+    [leftCards, besidePlanNow]
   )
   const vRows = useMemo(() => vCards.map((c) => c.row) as SearchResult[], [vCards])
   // row → its display card, so an insert can spot a mergeable identical stack (the merge nudge).
@@ -550,7 +617,7 @@ export default function SlideBrowser({
   const scopeOn = scope.length > 0
   const filtersOn = facetsOn || scopeOn
   const vaultEmpty = !loading && !unavailable && results.length === 0 && query.trim() === '' && !facetsOn
-  const zeroResults = !loading && !unavailable && !vaultEmpty && vRows.length === 0
+  const zeroResults = !loading && !unavailable && !vaultEmpty && leftCount === 0
 
   useEffect(() => {
     if (activePos > vRows.length - 1) setActivePos(Math.max(0, vRows.length - 1))
@@ -574,6 +641,16 @@ export default function SlideBrowser({
     const keys = sectionKeysAt(vRows, activePos)
     setSelected((prev) => { const n = new Set(prev); for (const k of keys) n.add(k); return n })
     anchorRef.current = activePos
+  }
+  // "Select section · N slides" on a heading, and ⇧⌘↵ on a slide (Dominik, 0.34.0-preview.8 check,
+  // 28 Sep): the WHOLE section — its heading slide and every slide under it, read from the talk's
+  // whole index rows, showing or not — joins the selection. Nothing is inserted: single slides can
+  // still be taken out (X or a click) before ⌘↵ inserts the selection. The heading's count and this
+  // selection come from the same rows, so they always agree.
+  function selectWholeSection(talkSlug: string, section: string): number {
+    const keys = sectionSelectionKeys(rowsByTalk.get(talkSlug) ?? [], talkSlug, section)
+    if (keys.length > 0) setSelected((prev) => { const n = new Set(prev); for (const k of keys) n.add(k); return n })
+    return keys.length
   }
 
   // ---------- duplicate merge (Task 9) ----------
@@ -603,7 +680,9 @@ export default function SlideBrowser({
   }
   // The selected rows in visual order — recomputed per render so the optimistic in-place
   // `tags` mutations (versioned via tagsVersion) are always reflected in the picker states.
-  const selectedRows = vRows.filter((_r, pos) => selected.has(selRowKey(vRows, pos)))
+  // A slide shown both as a result and in its talk beside is one slide; a selected slide no longer
+  // on screen (the talk beside closed) still counts, found in the index snapshot.
+  const selectedRows = selectedRowsFor(vRows, (pos) => selRowKey(vRows, pos), selected, fullRows)
   const selectedTagLists = selectedRows.map(rowTags)
 
   function openTagPicker(): void {
@@ -624,12 +703,11 @@ export default function SlideBrowser({
     const rows = selectedRows
     if (rows.length === 0 || tagBusy) return
     const targets = tagTargetsFromRows(rows)
-    const outlines = [...new Set(targets.map((t) => t.outline))]
     setTagBusy(true)
     try {
-      // The active talk may be among the targets — its pending autosave must land first
-      // (the detach/adopt flush rule), or the write would race a stale buffer.
-      await flushBeforeTagWrite?.(outlines)
+      // Every target talk is written by main's one writer (talk-writer.ts): a talk open in an editor
+      // window gets its tags in that window's buffer (then saved through its queue), any other talk
+      // on disk under its file lock — so no flush before and no reload after (one-writer spec D1).
       const res = await window.tw.tags.apply(
         targets,
         action === 'add' ? [tag] : [],
@@ -650,8 +728,6 @@ export default function SlideBrowser({
         notify(`Tagged, but ${res.failed.length} outline${res.failed.length === 1 ? '' : 's'} failed — see the log.`, 'error')
         console.error('[tags] failed outlines', res.failed)
       }
-      const written = res.applied.map((a) => a.outline)
-      if (written.length > 0) await onTagsApplied?.(written)
     } finally {
       setTagBusy(false)
     }
@@ -681,7 +757,7 @@ export default function SlideBrowser({
     }
   }
   function doInsert(): void {
-    const chosen = vRows.filter((_r, pos) => selected.has(selRowKey(vRows, pos)))
+    const chosen = selectedRowsFor(vRows, (pos) => selRowKey(vRows, pos), selected, fullRows)
     insertRows(chosen.length > 0 ? chosen : (vRows[activePos] ? [vRows[activePos]] : []))
   }
 
@@ -984,6 +1060,29 @@ export default function SlideBrowser({
     if (entry.talk && entry.talk === currentTalkSlug) return
     setScope((s) => toggleScope(s, entry, additive))
   }
+  // "Find a talk": ↵ picks (replaces the scope), ⌘↵ adds beside, a chip's × removes. The slide
+  // search query is never touched. The active talk is never scoped, as in the tree.
+  const findState = (): FindScope => ({ scope, picked: findPicked })
+  function applyFind(next: FindScope): void {
+    setScope(next.scope)
+    setFindPicked(next.picked)
+  }
+  function pickFromFind(entry: ScopeEntry): void {
+    if (entry.talk && entry.talk === currentTalkSlug) return
+    applyFind(pickTalk(findState(), entry))
+  }
+  function addBesideFromFind(entry: ScopeEntry): void {
+    if (entry.talk && entry.talk === currentTalkSlug) return
+    applyFind(addTalkBeside(findState(), entry))
+  }
+  function removeFindChipKey(key: string): void {
+    applyFind(removeFindChip(findState(), key))
+  }
+  // A pick whose talk left the scope some other way (the tree replaced it, a scope row's ×)
+  // stops being a chip.
+  useEffect(() => {
+    setFindPicked((picked) => prunePicked({ scope, picked }))
+  }, [scope])
   function removeScopeAt(i: number): void {
     setScope((s) => s.filter((_e, idx) => idx !== i))
   }
@@ -1014,43 +1113,34 @@ export default function SlideBrowser({
     return m
   }, [fullRows])
 
-  // Files tree: disk truth (vault talk list) for folders/talks; sections observed from the
-  // full index snapshot, in outline order, with authored labels.
-  const fileTree = useMemo<TreeFolder[]>(() => {
-    const secsBySlug = new Map<string, Array<{ sec: string; label: string; count: number }>>()
+  // Files tree (ADR-0029 §4; frame K1): the file list's tree with slide counts. Folders and
+  // talks are disk truth (the vault talk and folder lists, in the file list's sort); sections are
+  // observed from the full index snapshot, in outline order, with authored labels.
+  const sectionsBySlug = useMemo(() => {
+    const m = new Map<string, TreeSection[]>()
     for (const r of fullRows) {
       const sec = r.section ?? ''
       if (sec === '') continue
-      let list = secsBySlug.get(r.talkSlug)
-      if (!list) { list = []; secsBySlug.set(r.talkSlug, list) }
+      let list = m.get(r.talkSlug)
+      if (!list) { list = []; m.set(r.talkSlug, list) }
       const hit = list.find((s) => s.sec === sec)
       if (hit) hit.count++
       else list.push({ sec, label: secName(sectionKey(r.talkSlug, sec), sec), count: 1 })
     }
-    const folders: TreeFolder[] = []
-    for (const t of talks) {
-      const fname = topicOf(t.path)
-      let folder = folders.find((f) => f.name === fname)
-      if (!folder) { folder = { name: fname, count: 0, talks: [] }; folders.push(folder) }
-      const count = countBySlug.get(t.slug) ?? talkMeta[t.slug]?.slideCount ?? 0
-      folder.count += count
-      folder.talks.push({ slug: t.slug, title: t.title || t.slug, count, sections: secsBySlug.get(t.slug) ?? [] })
-    }
-    return folders
+    return m
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [talks, fullRows, countBySlug, talkMeta, sectionNames])
-
-  // Search reports both kinds: talks whose TITLE matches the query cluster above the results.
-  // The active talk never appears — its rows are never on the table, so scoping to it would
-  // only ever produce an empty grid.
-  const talkHits = useMemo(() => {
-    if (query.trim() === '') return []
-    const hits = talkTitleHits(
-      talks.filter((t) => t.slug !== currentTalkSlug).map((t) => ({ slug: t.slug, title: t.title || t.slug })),
-      parsedQuery.terms
-    )
-    return hits.slice(0, 12).map((h) => ({ ...h, count: countBySlug.get(h.slug) ?? talkMeta[h.slug]?.slideCount ?? 0 }))
-  }, [query, talks, parsedQuery, countBySlug, talkMeta, currentTalkSlug])
+  }, [fullRows, sectionNames])
+  const filesSource = useMemo<FilesTreeSource>(() => ({
+    talks,
+    folders: vaultFolders,
+    vaultRoot,
+    sortKey: readSortPreference(),
+    meta: talkMeta,
+    delivered: lastDeliveredBySlug(deliverySessions),
+    slidesOf: (slug) => countBySlug.get(slug) ?? talkMeta[slug]?.slideCount ?? 0,
+    sectionsOf: (slug) => sectionsBySlug.get(slug) ?? [],
+    currentTalkSlug
+  }), [talks, vaultFolders, vaultRoot, talkMeta, deliverySessions, countBySlug, sectionsBySlug, currentTalkSlug])
 
   const scopeCounts = useMemo(
     () => scope.map((e) => fullRows.reduce((n, r) => n + (rowInScopeEntry(r, e, folderOf) ? 1 : 0), 0)),
@@ -1188,6 +1278,123 @@ export default function SlideBrowser({
     )
   }
 
+  // ---------- a result's talk beside the results (O, or the card's "In talk") ----------
+  // Open from a result (never from the talk beside itself). Another result's talk replaces the right
+  // side; the snapshot Esc restores is the one taken at the first open.
+  function openBesideAt(pos: number): void {
+    if (pos >= leftCount || !besideAvailable(gridMode)) return
+    const row = vRows[pos]
+    if (!row) return
+    setOpenPop(null)
+    setPreview(false)
+    setMain((m) => openBeside(m, row, {
+      scrollTop: tableScrollRef.current?.scrollTop ?? 0,
+      activeKey: vRows[activePos] && activePos < leftCount ? selRowKey(vRows, activePos) : null
+    }))
+    setActivePos(pos)
+  }
+  // Esc: the right side closes; the results come back with their scroll position and focus, and the
+  // selection is left exactly as it is.
+  function closeBesideNow(): void {
+    const { main: next, restore } = closeBeside(main)
+    setMain(next)
+    if (!restore) return
+    restoreRef.current = restore
+    // The results keep their positions whether or not the talk is open, so the focus is found in them.
+    const back = restore.activeKey
+      ? vRows.findIndex((_r, i) => i < leftCount && selRowKey(vRows, i) === restore.activeKey)
+      : -1
+    setActivePos(back >= 0 ? back : Math.min(activePos, Math.max(0, leftCount - 1)))
+  }
+  // ⇧⌘↵: the focused slide's whole section joins the selection, as its heading's "Select section"
+  // button does (both call selectWholeSection over the same whole-talk rows).
+  function selectWholeSectionAt(pos: number): PickerCommandOutcome {
+    const row = vRows[pos]
+    if (!row) return 'No slide is focused.'
+    if (!row.section) return 'This slide is not in a section.'
+    if (!rowsByTalk.has(row.talkSlug)) return 'The slide’s whole talk is still loading — try again in a moment.'
+    if (selectWholeSection(row.talkSlug, row.section) === 0) return 'This slide’s section has no heading slide to select it by.'
+    return true
+  }
+  // The palette's picker commands reach the live state through this ref, refreshed every render.
+  const liveCommandsRef = useRef<SlidePickerCommands | null>(null)
+  liveCommandsRef.current = {
+    focusFindTalk: () => { setRailCollapsed(false); setFindFocusReq((n) => n + 1) },
+    addTalkBeside: () => findCmdRef.current?.addActiveBeside() ?? `Find a talk is hidden — show the rail (${liveShortcutLabel('slide-picker.rail')}) first.`,
+    talkBeside: () => {
+      if (!besideAvailable(gridMode)) return 'A talk opens beside the results only while the results are one list, not columns.'
+      if (activePos >= leftCount || !vRows[activePos]) return 'Focus a slide-search result first.'
+      openBesideAt(activePos)
+      return true
+    },
+    closeTalkBeside: () => {
+      if (!besideOn) return NOTHING_BESIDE
+      closeBesideNow()
+      return true
+    },
+    selectWholeSection: () => selectWholeSectionAt(activePos)
+  }
+  useEffect(() => {
+    registerCommands?.({
+      focusFindTalk: () => liveCommandsRef.current?.focusFindTalk(),
+      addTalkBeside: () => liveCommandsRef.current?.addTalkBeside() ?? 'The slide picker is not open.',
+      talkBeside: () => liveCommandsRef.current?.talkBeside() ?? 'The slide picker is not open.',
+      closeTalkBeside: () => liveCommandsRef.current?.closeTalkBeside() ?? 'The slide picker is not open.',
+      selectWholeSection: () => liveCommandsRef.current?.selectWholeSection() ?? 'The slide picker is not open.'
+    })
+  }, [registerCommands])
+  // The results' scroll position goes back before paint, ahead of the keep-focus-in-view effect.
+  useLayoutEffect(() => {
+    const restore = restoreRef.current
+    if (!restore || main.beside) return
+    restoreRef.current = null
+    if (tableScrollRef.current) tableScrollRef.current.scrollTop = restore.scrollTop
+  }, [main])
+  // The whole talk comes from the unqueried index snapshot. A query typed straight after opening
+  // supersedes the opening's empty search, leaving no snapshot; fetch it once when a talk opens.
+  // Once per talk per opening, so a talk the index lacks cannot loop.
+  const snapshotTriedRef = useRef(new Set<string>())
+  useEffect(() => {
+    if (!isOpen) snapshotTriedRef.current.clear()
+  }, [isOpen])
+  useEffect(() => {
+    const slug = main.beside?.slug
+    if (!slug || !isOpen || snapshotTriedRef.current.has(slug) || fullRows.some((r) => r.talkSlug === slug)) return
+    snapshotTriedRef.current.add(slug)
+    window.tw.search.allSlides(parseSearchQuery(''))
+      .then((rows) => { if (rows && isOpenRef.current) setFullRows(rows as SearchResult[]) })
+      .catch(() => { /* the live results stand in */ })
+  }, [main.beside, fullRows, isOpen])
+  // Select section reads each heading's N and slides from the whole talk, so a talk showing in the
+  // results without whole-talk rows gets them the same way: the whole index, once per talk per
+  // opening.
+  useEffect(() => {
+    if (!isOpen) return
+    const missing = [...new Set(results.map((r) => r.talkSlug))]
+      .filter((slug) => !rowsByTalk.has(slug) && !snapshotTriedRef.current.has(slug))
+    if (missing.length === 0) return
+    for (const slug of missing) snapshotTriedRef.current.add(slug)
+    window.tw.search.allSlides(parseSearchQuery(''))
+      .then((rows) => { if (rows && isOpenRef.current) setFullRows(rows as SearchResult[]) })
+      .catch(() => { /* no whole-talk rows: no Select section button */ })
+  }, [results, rowsByTalk, isOpen])
+  // The talk opened beside is closed by anything that turns the results into columns.
+  useEffect(() => {
+    if (main.beside && !besideAvailable(gridMode)) setMain(RESULTS_ONLY)
+  }, [main.beside, gridMode])
+  const splitLayout = useMemo<SplitLayout | null>(() => (besidePlanNow
+    ? {
+        left: leftCount,
+        leftCols: 2,
+        rightChunks: besidePlanNow.chunks.map((c) => c.rows.length),
+        rightCols: 3,
+        rightEntry: leftCount + besidePlanNow.hl,
+        // ← from the talk's left edge goes back to the result it was opened from.
+        leftEntry: Math.max(0, leftCards.findIndex((c) =>
+          c.row.talkSlug === besidePlanNow.slug && ((c.row as SearchResult).order ?? 0) === main.beside?.order))
+      }
+    : null), [besidePlanNow, leftCount, leftCards, main.beside])
+
   // ---------- keyboard (capture; ⌘S + ? are handled by the workspace's global handler) ----------
   useEffect(() => {
     if (!isOpen) return
@@ -1203,6 +1410,11 @@ export default function SlideBrowser({
       if (viewer) return
       const el = document.activeElement
       const inSearch = el === inputRef.current
+      // "Find a talk" keeps its own keys while it lists talks or completes (↑↓ move its list, ↵
+      // shows a talk, ⌘↵ adds it beside, Esc clears its words); the grid keys leave them alone.
+      if (el instanceof HTMLInputElement && el.dataset.findTalk === '1' && findBoxOwnsKey(e.key, {
+        value: el.value, listing: el.dataset.listing === '1', completing: el.dataset.completing === '1'
+      })) return
       const inField = el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement
       // Keyboard parity (Gate-5): a Tab-focused BUTTON (rail chip, scope ×, tree row, tray
       // action) must keep its own ↵/Space activation — the grid never steals those from the
@@ -1233,6 +1445,13 @@ export default function SlideBrowser({
       // taste rule): let the event through untouched so their own handler runs.
       if (e.key === 'Escape' && el instanceof HTMLInputElement && el.dataset.railEsc === '1') return
 
+      // The picker's rebindable talk-search keys (talk search 08). A plain-letter key never fires
+      // from a text field; a chord fires from anywhere in the picker.
+      const keyFree = !inField || !isTypingKey(e)
+      // Close the talk beside, when rebound off Esc (Esc itself closes it as a step of the ladder).
+      if (e.key !== 'Escape' && besideOn && keyFree && surfaceKey(e, 'close-beside')) {
+        e.preventDefault(); e.stopPropagation(); closeBesideNow(); return
+      }
       // Esc ladder: popover → preview → filmstrip → locations → clear search (typing) → selection → close.
       if (e.key === 'Escape') {
         e.preventDefault(); e.stopPropagation()
@@ -1240,19 +1459,34 @@ export default function SlideBrowser({
         if (preview) { setPreview(false); return }
         if (openStrip) { closeStrip(); return }
         if (openLoc) { closeLoc(); return }
+        // The talk beside the results closes before anything else of the results changes (K5).
+        if (besideOn) { closeBesideNow(); return }
         if (inSearch && query) { setQuery(''); return }
         if (selected.size > 0) { setSelected(new Set()); return }
         onClose(); return
       }
-      if (mod && e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); doInsert(); return }
+      // ⇧⌘↵ selects the focused slide's whole section; ⌘↵ inserts the selected slides.
+      if (keyFree && surfaceKey(e, 'select-whole-section')) {
+        e.preventDefault(); e.stopPropagation()
+        const outcome = selectWholeSectionAt(activePos)
+        if (outcome !== true) notify(outcome, 'info', 'select-whole-section')
+        return
+      }
+      if (keyFree && surfaceKey(e, 'talk-beside')) {
+        e.preventDefault(); e.stopPropagation(); openBesideAt(activePos); return
+      }
+      if (mod && !e.shiftKey && e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); doInsert(); return }
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         // ←/→ keep moving the caret while typing; only ↑↓ pull focus into the grid.
         if (inField && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return
         e.preventDefault(); e.stopPropagation()
         if (inField) (el as HTMLElement).blur()
         setActivePos((p) => {
-          // Side-by-side columns are 2 cards across — ↑↓ must step by the REAL row width.
-          const next = gridNavigate(p, e.key, gridMode === 'side' ? 2 : density, vRows.length)
+          // Side-by-side columns are 2 cards across — ↑↓ must step by the REAL row width. With a talk
+          // beside the results, arrows move on their side and ←→ cross at the edges.
+          const next = splitLayout
+            ? splitNavigate(p, e.key, splitLayout)
+            : gridNavigate(p, e.key, gridMode === 'side' ? 2 : density, vRows.length)
           if (e.shiftKey) extendTo(next)
           else anchorRef.current = next
           return next
@@ -1308,7 +1542,7 @@ export default function SlideBrowser({
     window.addEventListener('keydown', handleKey, { capture: true })
     return () => window.removeEventListener('keydown', handleKey, { capture: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, suspendKeys, tagPickerOpen, viewer, vCards, vRows, activePos, density, gridMode, scope, preview, openPop, openStrip, openLoc, query, selected, onClose])
+  }, [isOpen, suspendKeys, tagPickerOpen, viewer, vCards, vRows, activePos, density, gridMode, scope, preview, openPop, openStrip, openLoc, query, selected, onClose, main, splitLayout, leftCount, fullRows])
 
   if (!isOpen) return null
   const activeRow = vRows[activePos]
@@ -1332,6 +1566,9 @@ export default function SlideBrowser({
     const isIdentical = c.kind === 'identical'
     const isNear = c.kind === 'near'
     const isVariant = c.kind === 'near-variant'
+    // The talk beside the results: its result's slide is highlighted (K5); a result offers "In talk".
+    const isHl = besidePlanNow !== null && p === leftCount + besidePlanNow.hl
+    const canOpenBeside = p < leftCount && besideAvailable(gridMode)
     const layout = layoutOf(row)
     const showTag = layout && layout !== DEFAULT_LAYOUT
     const ledgerId = stampedIdOf(row.source_markdown)
@@ -1355,7 +1592,7 @@ export default function SlideBrowser({
         key={`${rowKey}@${p}`}
         data-pos={p}
         data-kind={c.kind}
-        className={`lt-card${isSel ? ' selected' : ''}${isFocused ? ' focused' : ''}${isExpanded ? ' expanded' : ''}${isIdentical ? ' stack' : ''}${isNear ? ' nearstack' : ''}${isVariant ? ' variant' : ''}`}
+        className={`lt-card${isSel ? ' selected' : ''}${isFocused ? ' focused' : ''}${isExpanded ? ' expanded' : ''}${isIdentical ? ' stack' : ''}${isNear ? ' nearstack' : ''}${isVariant ? ' variant' : ''}${isHl ? ' hl' : ''}`}
         style={{ ['--i' as string]: Math.min(p, STAGGER_CAP) }}
         title={cardTitle}
         onClick={(e) => {
@@ -1373,6 +1610,16 @@ export default function SlideBrowser({
             regenerating={regenTalk === row.talkSlug}
             onUnavailable={noteThumbUnavailable}
           />
+          {canOpenBeside && (
+            <button
+              type="button"
+              className="lt-inctx"
+              title={`Show this slide in its talk, beside the results (${liveShortcutLabel('slide-picker.talk-beside')})`}
+              onClick={(e) => { e.stopPropagation(); openBesideAt(p) }}
+            >
+              <PanelRight className="lt-icon" /> In talk
+            </button>
+          )}
         </div>
         <div className="lt-label">
           <div className="lt-l-title">{rowTitle(row)}</div>
@@ -1479,19 +1726,41 @@ export default function SlideBrowser({
   }
 
   // One talk's outline-ordered, section-headed chunks (outline + side-by-side views).
-  function renderTalkChunks(t: { slug: string; title: string; total: number; chunks: Array<{ section: string; label: string; cards: DisplayCard[] }> }, base: number, cols: number): React.ReactNode {
+  // Chunks are keyed by their index too: a talk's unsectioned chunks (title slide, closing slide)
+  // share the section '' and would otherwise share a key, leaving a stale card behind.
+  function renderTalkChunks(t: { slug: string; title: string; total: number; chunks: Array<{ section: string; label: string; cards: DisplayCard[] }> }, base: number, cols: number, countSuffix = ''): React.ReactNode {
     let b = base
     return (
       <>
-        {t.chunks.map((c) => {
+        {t.chunks.map((c, ci) => {
           const chunkBase = b
           b += c.cards.length
           return (
-            <div key={`${t.slug}\n${c.section}`} className="lt-outline-sec">
+            <div key={`${t.slug}\n${ci}\n${c.section}`} className="lt-outline-sec" data-chunk={ci}>
               {c.section !== '' && (
                 <div className="lt-sec-head">
                   <span>§ {c.label}</span>
-                  <span className="lt-sec-n">{c.cards.length}</span>
+                  {(() => {
+                    const src = sectionSourceOf(t.slug, c.section)
+                    if (!src) return null
+                    const secKeys = sectionSelectionKeys(rowsByTalk.get(t.slug) ?? [], t.slug, c.section)
+                    const allIn = secKeys.length > 0 && secKeys.every((k) => selected.has(k))
+                    return (
+                      <button
+                        type="button"
+                        className={`lt-sel-sec${allIn ? ' on' : ''}`}
+                        aria-pressed={allIn}
+                        title={`Select “${c.label}” — its heading slide and every slide under it (${liveShortcutLabel('slide-picker.select-whole-section')} on a slide). Take single slides out with ${liveShortcutLabel('slide-picker.toggle-selection')} or a click; ${liveShortcutLabel('slide-picker.insert')} inserts the selection.`}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          selectWholeSection(t.slug, c.section)
+                        }}
+                      >
+                        <ListChecks className="lt-icon" /> {selectSectionLabel(src.slides)}
+                      </button>
+                    )
+                  })()}
+                  <span className="lt-sec-n">{c.cards.length}{countSuffix}</span>
                 </div>
               )}
               {renderGrid(c.cards, chunkBase, cols, true)}
@@ -1507,14 +1776,14 @@ export default function SlideBrowser({
     )
   }
 
-  const nVisibleTalks = new Set(vRows.map((r) => r.talkSlug)).size
+  const nVisibleTalks = new Set(leftCards.map((c) => c.row.talkSlug)).size
   const countLabel = unavailable
     ? 'search unavailable'
     : loading
       ? 'searching…'
       : gridMode === 'grouped'
         ? `${display.slideCount} slide${display.slideCount === 1 ? '' : 's'} · ${sectionCount} section${sectionCount === 1 ? '' : 's'}`
-        : `${vRows.length} slide${vRows.length === 1 ? '' : 's'} · ${nVisibleTalks} talk${nVisibleTalks === 1 ? '' : 's'}`
+        : `${leftCount} slide${leftCount === 1 ? '' : 's'} · ${nVisibleTalks} talk${nVisibleTalks === 1 ? '' : 's'}`
 
   return (
     <div
@@ -1623,7 +1892,19 @@ export default function SlideBrowser({
               inputRef={inputRef}
               query={query}
               onQueryChange={setQuery}
-              talkHits={talkHits}
+              find={{
+                query: findQuery,
+                onQueryChange: setFindQuery,
+                talks,
+                currentTalkSlug,
+                slidesOf: filesSource.slidesOf,
+                chips: findChips({ scope, picked: findPicked }),
+                onPick: pickFromFind,
+                onAddBeside: addBesideFromFind,
+                commandRef: findCmdRef,
+                onRemoveChip: removeFindChipKey
+              }}
+              findActive={hasSearchTerms(findQuery) || findChips({ scope, picked: findPicked }).length > 0}
               currentTalkSlug={currentTalkSlug}
               scope={scope}
               scopeCounts={scopeCounts}
@@ -1631,7 +1912,7 @@ export default function SlideBrowser({
               onScope={handleScope}
               onRemoveScope={removeScopeAt}
               onClearScope={clearScope}
-              tree={fileTree}
+              filesSource={filesSource}
               recentEdits={recentEdits}
               deliveries={deliveries}
               facets={facets}
@@ -1695,7 +1976,10 @@ export default function SlideBrowser({
                 })()}
               </div>
             ) : (
-            <div className="lt-table-scroll">
+            // The results and, when open, a result's talk beside them (K5). The results' scroll box
+            // stays the same element either way, so closing the talk leaves it where it was.
+            <div className={`lt-split${besidePlanNow ? ' open' : ''}`}>
+            <div className="lt-table-scroll" ref={tableScrollRef}>
             {loading && results.length === 0 && !unavailable && (
               <div className="lt-group">
                 <div className={`lt-grid g${density}`}>
@@ -1712,7 +1996,18 @@ export default function SlideBrowser({
               </div>
             )}
 
-            {gridMode === 'grouped'
+            {besidePlanNow
+              ? (
+                  // With a talk beside them, the results read as one list, two across (K5).
+                  <div className="lt-group lt-beside-results">
+                    <div className="lt-beside-lh">
+                      {leftCount} slide{leftCount === 1 ? '' : 's'}
+                      {query.trim() ? <> match “{query.trim()}”</> : null}
+                    </div>
+                    {renderGrid(leftCards, 0, 2, false)}
+                  </div>
+                )
+              : gridMode === 'grouped'
               ? (() => {
                   // No scope: today's grouped-by-talk·section view, duplicate-collapsed.
                   let base = 0
@@ -1820,6 +2115,29 @@ export default function SlideBrowser({
               <p>The html-presentations compiler wasn’t found, so the vault index can’t be searched. Check the compiler bundle, then reopen the Browser.</p>
             </div>
             </div>
+            {besidePlanNow && (
+              <TalkBeside
+                // One mount per opening; again when the whole deck replaces the live stand-in, so
+                // it scrolls to the section once the full talk is there.
+                key={`${besidePlanNow.slug}#${main.beside?.order ?? 0}#${besidePlanNow.deck.length}`}
+                header={besidePlanNow.header}
+                hlChunk={besidePlanNow.hlChunk}
+                hlPos={leftCount + besidePlanNow.hl}
+                onClose={closeBesideNow}
+              >
+                {renderTalkChunks({
+                  slug: besidePlanNow.slug,
+                  title: besidePlanNow.title,
+                  total: besidePlanNow.deck.length,
+                  chunks: besidePlanNow.chunks.map((c) => ({
+                    section: c.section,
+                    label: c.label,
+                    cards: c.rows.map((row) => ({ row, kind: 'single' as const }))
+                  }))
+                }, leftCount, 3, ' shown')}
+              </TalkBeside>
+            )}
+            </div>
             )}
           </main>
 
@@ -1839,11 +2157,11 @@ export default function SlideBrowser({
               <span className="lt-t-hint">⇧-click for a range · S selects a section</span>
               <button type="button" className="lt-btn" onClick={openTagPicker} title="Tag the selected slides (T)">
                 <Tag className="lt-icon" />
-                Tag <kbd>T</kbd>
+                Tag <kbd>{liveShortcutLabel('slide-picker.tags')}</kbd>
               </button>
               <button type="button" className="lt-btn primary" onClick={doInsert}>
                 <ArrowDown className="lt-icon" />
-                Insert {selected.size} selected at caret <kbd>⌘↵</kbd>
+                Insert {selected.size} selected at caret <kbd>{liveShortcutLabel('slide-picker.insert')}</kbd>
               </button>
             </div>
           )}
@@ -1860,24 +2178,8 @@ export default function SlideBrowser({
           />
         </div>
 
-        {/* ---------- keyboard hint footer (mockup 1532-1542) ---------- */}
-        <footer className="lt-hintbar">
-          <span className="lt-h"><kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> <b>navigate</b></span>
-          <span className="lt-h"><kbd>⇧</kbd>+click <b>range select</b></span>
-          <span className="lt-h"><kbd>X</kbd> <b>select</b></span>
-          <span className="lt-h"><kbd>S</kbd> <b>select section</b></span>
-          <span className="lt-h"><kbd>T</kbd> <b>tag selection</b></span>
-          <span className="lt-h"><kbd>E</kbd> <b>versions / where-used</b></span>
-          <span className="lt-h"><kbd>U</kbd> <b>uncollapse</b></span>
-          <span className="lt-h"><kbd>Space</kbd> <b>preview</b></span>
-          <span className="lt-h"><kbd>↵</kbd> <b>view &amp; insert</b></span>
-          <span className="lt-h"><kbd>2</kbd>–<kbd>6</kbd> <b>density</b></span>
-          <span className="lt-h"><kbd>I</kbd> <b>rail</b></span>
-          <span className="lt-h">click <b>scopes</b> · <kbd>⌘</kbd>+click <b>adds</b></span>
-          <span className="lt-h"><kbd>⌫</kbd> <b>clear scope</b></span>
-          <span className="lt-h lt-push"><kbd>Esc</kbd> <b>close</b></span>
-          <span className="lt-h"><kbd>?</kbd> <b>all shortcuts</b></span>
-        </footer>
+        {/* ---------- keyboard hint footer (mockup 1532-1542), keys from the registry ---------- */}
+        <SlidePickerHints />
       </section>
 
       {/* Insert-decision viewer (↵ on a card): a self-contained layer inside the Browser —

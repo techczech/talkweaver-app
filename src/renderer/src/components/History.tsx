@@ -4,9 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   BarChart3, CalendarDays, Check, Clock, Copy, ExternalLink, FileText, HardDrive, History as HistoryIcon,
   MoreVertical, PanelLeftClose, PanelLeftOpen, Pencil, Play, Radio,
-  Plus, RefreshCw, Search, Settings, Tag, Trash2, UploadCloud, VolumeX, X, FileInput
+  Plus, RefreshCw, Search, Settings, Tag, Trash2, UploadCloud, VolumeX, X, FileInput,
+  Image as ImageIcon, Link2, ListPlus, Timer, Type, Zap
 } from 'lucide-react'
-import type { HistoryLiveCheck, Pathway, RecordingKind, RecordingSession, RunSlideSet, TalkHandouts } from '../../../preload/index'
+import type { ReactNode } from 'react'
+import type { HistoryLiveCheck, Pathway, RecordingKind, RecordingSession, RunInstantSlide, RunSlideSet, TalkHandouts } from '../../../preload/index'
 import { unresolvedTriggerBlock } from '../../../shared/layout-doctor'
 import '../history.css'
 
@@ -192,6 +194,11 @@ export default function History({
   const [editingPlanId, setEditingPlanId] = useState<string | null>(null)
   const [detailId, setDetailId] = useState<string | null>(null)
   const [handoutBusy, setHandoutBusy] = useState(false)
+  // Ticket 07 (L6): where each instant slide's anchor sits in the talk now, per Run; the row being
+  // added; and the last refusal per instant slide (shown under its row).
+  const [instantAnchors, setInstantAnchors] = useState<Record<string, Record<string, InstantAnchor | null>>>({})
+  const [instantBusy, setInstantBusy] = useState<string | null>(null)
+  const [instantErrors, setInstantErrors] = useState<Record<string, string>>({})
 
   const searchRef = useRef<HTMLInputElement>(null)
   const planEventRef = useRef<HTMLInputElement>(null)
@@ -456,6 +463,41 @@ export default function History({
   }, [rows])
 
   const selectedRow = useMemo(() => rows.find((r) => r.session.id === selectedId) ?? null, [rows, selectedId])
+
+  // Resolve the selected Run's instant-slide anchors against the talk as it is now.
+  const selectedInstantKey = selectedRow?.session.instantSlides?.length
+    ? `${selectedRow.session.talkSlug}\0${selectedRow.session.id}\0${selectedRow.session.instantSlides.map((e) => e.id + (e.added ? '+' : '')).join(',')}`
+    : ''
+  useEffect(() => {
+    if (!selectedInstantKey || !selectedRow) return
+    let cancelled = false
+    const { talkSlug, id } = selectedRow.session
+    void window.tw.history.instantAnchors(talkSlug, id).then((anchors) => {
+      if (!cancelled) setInstantAnchors((prev) => ({ ...prev, [id]: anchors ?? {} }))
+    }).catch(() => {})
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedInstantKey])
+
+  const addInstantSlide = useCallback(async (row: Row, entry: RunInstantSlide): Promise<void> => {
+    const key = `${row.session.id}\0${entry.id}`
+    setInstantBusy(key)
+    setInstantErrors((prev) => { const next = { ...prev }; delete next[key]; return next })
+    try {
+      const result = await window.tw.history.addInstantSlide(row.session.talkSlug, row.session.id, entry.id)
+      if (result.ok) {
+        const run = result.run
+        setSessions((prev) => prev.map((session) => session.id === run.id && session.talkSlug === run.talkSlug ? run : session))
+        flash(result.warning ?? `Added to the talk after slide ${result.afterSlideNumber}.`)
+      } else {
+        setInstantErrors((prev) => ({ ...prev, [key]: result.error }))
+      }
+    } catch {
+      setInstantErrors((prev) => ({ ...prev, [key]: 'The slide could not be added. Nothing was changed.' }))
+    } finally {
+      setInstantBusy(null)
+    }
+  }, [flash])
   const kindFilterDefault = kinds.delivery && !kinds.rehearsal && !kinds.recording
   const anyFilter = !!(query || hasRecording || liveOnly || talkScope || !kindFilterDefault)
 
@@ -795,7 +837,19 @@ export default function History({
                         onRecheck={() => void recheckOne(row)}
                         onUpload={() => void uploadRow(row)}
                         onMenu={(x, y) => { setSelectedId(row.session.id); setMenu({ id: row.session.id, x, y }); setKindChoice(null); setConfirmDelete(null) }}
-                      />
+                      >
+                        {selectedId === row.session.id && row.session.instantSlides?.length ? (
+                          <InstantSlidesShown
+                            entries={row.session.instantSlides}
+                            anchors={instantAnchors[row.session.id]}
+                            busyId={instantBusy?.startsWith(`${row.session.id}\0`) ? instantBusy.slice(row.session.id.length + 1) : null}
+                            errors={Object.fromEntries(Object.entries(instantErrors)
+                              .filter(([key]) => key.startsWith(`${row.session.id}\0`))
+                              .map(([key, value]) => [key.slice(row.session.id.length + 1), value]))}
+                            onAdd={(entry) => void addInstantSlide(row, entry)}
+                          />
+                        ) : null}
+                      </HistoryEntry>
                     ))}
                   </div>
                 ))}
@@ -895,6 +949,7 @@ function HistoryEntry(props: {
   onRecheck: () => void
   onUpload: () => void
   onMenu: (x: number, y: number) => void
+  children?: ReactNode
 }): JSX.Element {
   const { row, index, selected, editing, contextDraft, uploadBusy } = props
   const f = fmtDate(row.session.startedAt)
@@ -1000,6 +1055,92 @@ function HistoryEntry(props: {
           </>
         )}
       </div>
+      {props.children}
+    </div>
+  )
+}
+
+type InstantAnchor = { slideNumber: number; title: string }
+
+function clockTime(ms: number): string {
+  const d = new Date(ms)
+  return Number.isFinite(d.getTime()) ? `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : ''
+}
+
+function countdownDigits(ms: number): string {
+  const total = Math.round(ms / 1000)
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
+}
+
+function instantKind(entry: RunInstantSlide): { icon: JSX.Element; label: string; text: string } {
+  if (entry.kind === 'link') return { icon: <Link2 className="lt-icon" />, label: 'Link', text: entry.url ?? '' }
+  if (entry.kind === 'countdown') {
+    const minutes = Math.round((entry.durationMs ?? 0) / 60_000)
+    return { icon: <Timer className="lt-icon" />, label: `Countdown · ${minutes >= 1 ? `${minutes} min` : `${Math.round((entry.durationMs ?? 0) / 1000)} s`}`, text: entry.label || 'Countdown' }
+  }
+  if (entry.kind === 'time') return { icon: <Clock className="lt-icon" />, label: 'Clock', text: 'Current time' }
+  if (entry.kind === 'image') return { icon: <ImageIcon className="lt-icon" />, label: 'Image', text: `Image shown live · ${entry.width ?? '?'} × ${entry.height ?? '?'}` }
+  return { icon: <Type className="lt-icon" />, label: 'Text', text: entry.text ?? '' }
+}
+
+function InstantThumb({ entry }: { entry: RunInstantSlide }): JSX.Element {
+  if (entry.kind === 'image' && entry.dataUrl) return <img className="isl-th-img" src={entry.dataUrl} alt="" />
+  if (entry.kind === 'countdown') return <span className="isl-th-clock"><small>{entry.label || 'Countdown'}</small>{countdownDigits(entry.durationMs ?? 0)}</span>
+  if (entry.kind === 'time') return <span className="isl-th-clock">{clockTime(entry.shownAt)}</span>
+  if (entry.kind === 'link') return <span className="isl-th-link"><Link2 className="lt-icon" />{(entry.url ?? '').replace(/^https?:\/\//, '')}</span>
+  return <span className="isl-th-text">{entry.text}</span>
+}
+
+// Frame L6: the instant slides shown during the Run, inside the selected Run's card.
+function InstantSlidesShown(props: {
+  entries: RunInstantSlide[]
+  anchors: Record<string, InstantAnchor | null> | undefined
+  busyId: string | null
+  errors: Record<string, string>
+  onAdd: (entry: RunInstantSlide) => void
+}): JSX.Element {
+  return (
+    <div className="isl" data-history-instant onClick={(e) => e.stopPropagation()}>
+      <div className="isl-h">
+        <span className="t"><Zap className="lt-icon" /> Instant slides shown · {props.entries.length}</span>
+        <small>“Add to talk” puts the slide into the talk after the slide it followed.</small>
+      </div>
+      {props.entries.map((entry) => {
+        const kind = instantKind(entry)
+        const anchor = props.anchors?.[entry.id]
+        const resolved = props.anchors !== undefined
+        const error = props.errors[entry.id]
+        return (
+          <div className="isl-row" key={entry.id} data-instant-id={entry.id}>
+            <div className="isl-th"><InstantThumb entry={entry} /></div>
+            <div className="isl-what">
+              <div className="isl-kind">{kind.icon} {kind.label}</div>
+              <div className="isl-text" title={kind.text}>{kind.text}</div>
+            </div>
+            <div className="isl-when">
+              <b>{clockTime(entry.shownAt)}</b>
+              {!entry.afterSlideId ? <> · before the first slide</>
+                : anchor ? <> · after slide {anchor.slideNumber}<span>{anchor.title}</span></>
+                  : entry.added ? <> · after slide {entry.added.afterSlideNumber}<span>{entry.added.afterSlideTitle}</span></>
+                    : resolved ? <> · after a slide no longer in the talk<span>{entry.afterSlideId}</span></>
+                      : <> · after <span>{entry.afterSlideId}</span></>}
+            </div>
+            {entry.added ? (
+              <span className="isl-add done"><Check className="lt-icon" /> Added after slide {entry.added.afterSlideNumber}</span>
+            ) : (
+              <button
+                className="isl-add"
+                disabled={props.busyId === entry.id || entry.kind === 'time'}
+                title={entry.kind === 'time' ? 'A live clock has no slide form in the talk' : 'Insert this slide into the talk after the slide it followed'}
+                onClick={(e) => { e.stopPropagation(); props.onAdd(entry) }}
+              >
+                <ListPlus className="lt-icon" /> {props.busyId === entry.id ? 'Adding…' : 'Add to talk'}
+              </button>
+            )}
+            {error ? <div className="isl-err" role="alert">{error}</div> : null}
+          </div>
+        )
+      })}
     </div>
   )
 }

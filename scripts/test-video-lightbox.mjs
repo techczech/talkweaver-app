@@ -47,7 +47,10 @@ assert.equal(entry.keys, 'V', 'Video: Fullscreen is on V')
 assert.equal(entry.label, 'Video: Fullscreen')
 const vOwners = SHORTCUT_REGISTRY.filter((row) => row.scope === 'presenter' && row.codes.some((c) => c.toLowerCase() === "v"))
 assert.deepEqual(vOwners.map((row) => row.id), ['presenter.video-fullscreen'], 'no other presenter shortcut binds V')
-assert.match(html, /presenterVideoFullscreen":"V"/, 'the generated shortcut help carries the V tooltip for the presenter button')
+const { PRESENTER_CONTROLS } = await import(new URL('../src/shared/presenter-controls.ts', import.meta.url))
+const videoControl = PRESENTER_CONTROLS.find((row) => row.id === 'presenterVideoFullscreen')
+assert(videoControl, 'control table declares presenterVideoFullscreen')
+assert.equal(videoControl.shortcut, 'presenter.video-fullscreen', 'the presenter button takes its tooltip key from the control table → the registry entry bound to V above')
 
 const SLIDES = [
   { id: 'media-row-measured-video', host: 'media-only row', videoSelector: '.slide.active .figure-row figure.slide-video video' },

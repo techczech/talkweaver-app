@@ -11,7 +11,7 @@
 //   panel padding    1.4em 1.6em 1.2em 2.4em, accent rule .22em                → inner width = panel − 4.22em
 //   line-height      1.42; paragraph gap .3em (base.css `.slide-content > blockquote p`)
 //   cite             margin-top 1.2em, type max(31px, .58em), same line-height
-//   fit box          stage − 59px footer band − 2 × 5vh slide padding (T13b, quote.css @order 0718)
+//   fit box          stage − 59px footer band − 2 × 5cqh slide padding (T13b, quote.css @order 0718)
 //
 // CHARACTERS PER LINE: measured in headless Chromium (T20b, 2026-09-13) with canvas measureText
 // in the panel's computed font (400 54.4px "Trebuchet MS") over the five sampler quotations: the

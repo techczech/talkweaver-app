@@ -11,19 +11,27 @@
   button, input, select { font: inherit; }/* @order 0006 */
 
   .deck {
-    min-height: 100vh;
-    display: grid;
-    /* ADR-0005 chrome policy: the stage fills the whole deck; the control bar (.footer) is a
-       fixed overlay that auto-hides, so content slides are full-bleed with no persistent chrome
-       except the 3px accent progress tick. */
-    grid-template-rows: 1fr;
+    /* ADR-0030: the deck is the slide's box — the whole window. The stage inside it is scaled to
+       fit it (createStageFit), and what the scaled stage leaves uncovered is the letterbox, painted
+       in the slide's background. ADR-0005 chrome policy: the control bar (.footer) is a fixed
+       overlay that auto-hides, so content slides are full-bleed with no persistent chrome except
+       the 3px accent progress tick. */
+    position: relative;
+    height: 100vh;
+    overflow: hidden;
   }/* @order 0007 */
   .stage {
-    position: relative;
-    min-height: 0;
+    /* ADR-0030: the stage is the FIXED 1280×720 slide canvas. It is laid out at this size at every
+       window size and scaled uniformly by a transform (createStageFit, runtime/stage-fit.js), the
+       way the share page scales it — the slide is a composed artefact, never re-laid out for its
+       window. Type-scale principle: type sizes are STAGE-relative (cqw), so they follow the canvas. */
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: var(--slide-w, 1280px);
+    height: var(--slide-h, 720px);
+    transform-origin: 0 0;
     overflow: hidden;
-    /* Type-scale principle: type sizes are STAGE-relative (cqw), not window-relative (vw) —
-       so embedded/scaled renders (thumbnails, previews, screenshot capture) keep proportion. */
     container-type: size;
   }/* @order 0008 */
   .slide {
@@ -42,8 +50,12 @@
   }/* @order 0009 */
   .slide.active { display: grid; }/* @order 0010 */
   .slide-content {
-    width: min(1180px, 100%);
-    min-height: min(820px, 86vh);
+    /* ADR-0030: widths inside the slide are fractions of the canvas. The 1180px cap is retired as a
+       px length and kept as the same fraction of the 1280px canvas (1180/1280 = 92.1875cqw): it
+       still stops unbreakable content (a pre line, a long URL) from growing the slide's auto grid
+       track past the band. */
+    width: min(92.1875cqw, 100%);
+    min-height: min(820px, 86cqh);
     margin: 0 auto;
     display: grid;
     align-content: center;
@@ -63,25 +75,26 @@
     background: var(--paper);
     border: 1px solid var(--hairline);
     border-radius: 0;
-    padding: clamp(18px, 2.6vh, 28px) clamp(16px, 1.6cqw, 26px);
+    padding: clamp(18px, 2.6cqh, 28px) clamp(16px, 1.6cqw, 26px);
     box-shadow: none;
   }/* @order 0017 */
   .card strong { display: block; margin-bottom: 8px; color: var(--ink); font-weight: 600; }/* @order 0018 */
   /* Statement: the slide's main point as large prose. ONE treatment, shared by the authored
      `.statement` block class and by generated layout-statement paragraphs.
      ADR-0005 (mockup .t-statement): a single large sans phrase, centred both axes, NO left-bar.
-     max-width 12em / line-height 1.3 are the binding readability measures; the line-height also
-     lets boxed strong emphasis (below) sit clear of adjacent lines. *//* @order 0019 */
+     max-width 14em / line-height 1.5 are the binding readability measures (ADR-0028 §1, were 12em
+     and 1.3); the line-height also lets boxed strong emphasis (below) sit clear of adjacent
+     lines. *//* @order 0019 */
   .statement,
   .slide-content.layout-statement > p:not(.kicker) {
     margin: 0;
     font-family: var(--sans);
     font-weight: 500;
     font-size: max(34px, 5.4cqw);
-    line-height: 1.3;
+    line-height: 1.5;
     letter-spacing: -0.02em;
     color: var(--ink);
-    max-width: 12em;
+    max-width: 14em;
   }/* @order 0020 */
   /* Boxed emphasis (mockup .box) for the structural big-type layouts: a filled accent chip with
      clone box-decoration so it never bleeds across a wrapped line. Statement/section hosts carry
@@ -392,7 +405,7 @@
     margin: 0;
     padding: 0;
     display: grid;
-    gap: clamp(5px, 0.7vh, 10px);
+    gap: clamp(5px, 0.7cqh, 10px);
   }/* @order 0197 */
   .cpanel-list > li {
     position: relative;
@@ -600,7 +613,7 @@
     width: auto;
     height: auto;
     max-width: 100%;
-    max-height: min(100%, 56vh);
+    max-height: min(100%, 56cqh);
     object-fit: contain;
     justify-self: center;
     align-self: center;
@@ -665,7 +678,7 @@
   .pyr-tier {
     box-sizing: border-box;
     min-width: fit-content;
-    min-height: clamp(64px, 9vh, 100px);
+    min-height: clamp(64px, 9cqh, 100px);
     padding: 14px 32px; border-radius: 0;
     display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
     background: var(--accent);
@@ -877,7 +890,7 @@
     border-radius: 0;
     box-shadow: none;
     font: 500 clamp(13px, 1.05cqw, 16px)/1.65 ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-    max-height: 70vh;
+    max-height: 70cqh;
     overflow-y: auto;
     overflow-x: hidden;
     scroll-behavior: smooth;
@@ -960,7 +973,7 @@
      "Brooks" format applied everywhere — a bulleted source (e.g. Shannon) no longer renders as a
      filled feature-list card. *//* @order 0711 */
   .slide-content > blockquote + p,
-  .slide-content > blockquote + .feature-list { margin-top: clamp(26px, 5vh, 60px) !important; }/* @order 0715 */
+  .slide-content > blockquote + .feature-list { margin-top: clamp(26px, 5cqh, 60px) !important; }/* @order 0715 */
   .slide-content > blockquote + p,
   .slide-content > blockquote + .feature-list .fl-text {
     display: block; padding-left: .9em; border-left: 3px solid color-mix(in srgb, var(--accent) 45%, transparent);
@@ -991,7 +1004,7 @@
     align-self: center;
     height: fit-content;
     grid-template-rows: auto auto;
-    max-height: 80vh;
+    max-height: 80cqh;
     margin: 0;
   }/* @order 0737 */
   .slide-content.layout-quote:has(> .slide-figure) > blockquote {
@@ -1044,23 +1057,23 @@
   .card-gallery .card:has(> .feature-list + p) > h4 { grid-column: 1 / -1; }/* @order 0828 */
   .card-gallery .card:has(> .feature-list + p) > .feature-list { grid-column: 1; margin: 0; }/* @order 0829 */
   .card-gallery .card:has(> .feature-list + p) > p { grid-column: 2; margin: 0; }/* @order 0842 */
-  .card-gallery .card.card-media-split .card-media-col .slide-figure { max-height: 56vh; }/* @order 0853 */
-  .card-gallery .card:not(.card-media-split):not(.card-title) .slide-figure { margin: 0; max-height: 56vh; }/* @order 0854 */
+  .card-gallery .card.card-media-split .card-media-col .slide-figure { max-height: 56cqh; }/* @order 0853 */
+  .card-gallery .card:not(.card-media-split):not(.card-title) .slide-figure { margin: 0; max-height: 56cqh; }/* @order 0854 */
   .card-gallery .card:not(.card-media-split):not(.card-title) .slide-figure img,
-  .card-gallery .card:not(.card-media-split):not(.card-title) .slide-figure video { max-height: 56vh; }/* @order 0855 */
+  .card-gallery .card:not(.card-media-split):not(.card-title) .slide-figure video { max-height: 56cqh; }/* @order 0855 */
   /* A media-only card with two stacked media (embed + still): give each its own row at a
      reduced cap so both fit the card without clipping one to a sliver. *//* @order 0856 */
   .card-gallery .card:not(.card-media-split):not(.card-title):has(figure.slide-embed):has(.slide-figure) { row-gap: 12px; }/* @order 0857 */
-  .card-gallery .card:not(.card-media-split):not(.card-title):has(figure.slide-embed):has(.slide-figure) figure.slide-embed { max-height: 38vh; }/* @order 0858 */
-  .card-gallery .card:not(.card-media-split):not(.card-title):has(figure.slide-embed):has(.slide-figure) .slide-figure { max-height: 24vh; }/* @order 0859 */
+  .card-gallery .card:not(.card-media-split):not(.card-title):has(figure.slide-embed):has(.slide-figure) figure.slide-embed { max-height: 38cqh; }/* @order 0858 */
+  .card-gallery .card:not(.card-media-split):not(.card-title):has(figure.slide-embed):has(.slide-figure) .slide-figure { max-height: 24cqh; }/* @order 0859 */
   .card-gallery .card:not(.card-media-split):not(.card-title):has(figure.slide-embed):has(.slide-figure) .slide-figure img,
-  .card-gallery .card:not(.card-media-split):not(.card-title):has(figure.slide-embed):has(.slide-figure) .slide-figure video { max-height: 21vh; }/* @order 0860 */
+  .card-gallery .card:not(.card-media-split):not(.card-title):has(figure.slide-embed):has(.slide-figure) .slide-figure video { max-height: 21cqh; }/* @order 0860 */
   /* G3 — IMAGES ALWAYS FIT FULLY, never clipped. Every in-card image is object-fit:contain
-     within a box capped against the card height (card max-height 72vh, minus padding/chrome).
+     within a box capped against the card height (card max-height 72cqh, minus padding/chrome).
      When a card stacks MULTIPLE images they SHARE the vertical budget so all are fully visible
      (≈half each for two), rather than the first eating the box and the rest clipping. The card
      keeps content-sized rows so each figure's row is exactly as tall as the (contained) image.
-     The slide-level figure cap (78vh) already contains; this scopes the card budget. *//* @order 0861 */
+     The slide-level figure cap (78cqh) already contains; this scopes the card budget. *//* @order 0861 */
   .card-gallery .card .slide-figure { min-height: 0; }/* @order 0862 */
   .card-gallery .card .slide-figure img,
   .card-gallery .card .slide-figure video { object-fit: contain; }/* @order 0863 */
@@ -1078,12 +1091,12 @@
     align-items: start;
     min-width: 0;
   }/* @order 0865 */
-  .card-gallery .card .figure-row .slide-figure { margin: 0; min-height: 0; max-height: 60vh; }/* @order 0866 */
+  .card-gallery .card .figure-row .slide-figure { margin: 0; min-height: 0; max-height: 60cqh; }/* @order 0866 */
   .card-gallery .card .figure-row .slide-figure img,
-  .card-gallery .card .figure-row .slide-figure video { max-height: 56vh; object-fit: contain; }/* @order 0867 */
-  .card-gallery .card.card-media-split .card-media-col .figure-row .slide-figure { max-height: 52vh; }/* @order 0868 */
+  .card-gallery .card .figure-row .slide-figure video { max-height: 56cqh; object-fit: contain; }/* @order 0867 */
+  .card-gallery .card.card-media-split .card-media-col .figure-row .slide-figure { max-height: 52cqh; }/* @order 0868 */
   .card-gallery .card.card-media-split .card-media-col .figure-row .slide-figure img,
-  .card-gallery .card.card-media-split .card-media-col .figure-row .slide-figure video { max-height: 48vh; }/* @order 0888 */
+  .card-gallery .card.card-media-split .card-media-col .figure-row .slide-figure video { max-height: 48cqh; }/* @order 0888 */
   .gallery-grid-btn {
     width: 30px; height: 30px; padding: 0;
     display: inline-flex; align-items: center; justify-content: center;
@@ -1333,7 +1346,7 @@
     }
   }/* @order 1020 */
   .slide-embed { margin: 0; }/* @order 1021 */
-  .slide-embed iframe { width: 100%; height: 100%; min-height: 52vh; border: 1px solid var(--line); border-radius: 8px; background: white; }/* @order 1022 */
+  .slide-embed iframe { width: 100%; height: 100%; min-height: 52cqh; border: 1px solid var(--line); border-radius: 8px; background: white; }/* @order 1022 */
   .slide-embed { position: relative; }/* @order 1023 */
   .embed-open-link {
     position: absolute; bottom: 8px; right: 10px; z-index: 2;
@@ -1392,14 +1405,14 @@
        column drops below; action buttons left-align. */
     .cta-layout { grid-template-columns: 1fr; }
     .cta-images { grid-auto-flow: row; }
-    .cta-shot img { max-height: 28vh; }
+    .cta-shot img { max-height: 28cqh; }
     .slide-actions { align-items: start; }
     /* G5: below 950px the side-by-side image row collapses to a stack (G3 behaviour). */
     .card-gallery .card .figure-row,
     .slide-content > .figure-row { grid-template-columns: 1fr; }
-    .card-gallery .card .figure-row .slide-figure { max-height: 30vh; }
+    .card-gallery .card .figure-row .slide-figure { max-height: 30cqh; }
     .card-gallery .card .figure-row .slide-figure img,
-    .card-gallery .card .figure-row .slide-figure video { max-height: 30vh; }
+    .card-gallery .card .figure-row .slide-figure video { max-height: 30cqh; }
   }/* @order 1049 */
   /* === end layout blocks === *//* @order 1050 */
 
@@ -2028,11 +2041,10 @@
   /* Definite height, not min-height (T27b): the stage is a container-type:size box, and an auto
      height resolved only through min-height is INDEFINITE for container-query resolution — every
      cqh inside the stage then collapses to its clamp minimum, the live projection's frame measures
-     shorter than the compiled frame, and fitLists steps the same poll differently on the two sides
-     (the question notch fired live but not compiled). height: 100vh keeps the fill-the-viewport
-     guarantee and gives the container a definite block size, so compiled and live measure the
-     same box; print resets it below. */
-  body.audience-mode .stage {
+     shorter than the compiled frame, and fitLists steps the same poll differently on the two sides.
+     ADR-0030: the stage's fixed 720px canvas height is that definite size in every mode; the deck
+     fills the viewport and the stage is scaled into it. Print resets it below. */
+  body.audience-mode .deck {
     height: 100vh;
   }/* @order 1247 */
   body.audience-mode .progress,
@@ -2104,10 +2116,10 @@
   .ct-grid-host > .slide-content { display: none; }/* @order 1259 */
   .ct-grid {
     background: var(--paper);
-    display: grid; place-content: center; align-content: center; gap: 2.6vh;
+    display: grid; place-content: center; align-content: center; gap: 2.6cqh;
     padding: var(--slide-pad-y) var(--slide-pad-x);
   }/* @order 1260 */
-  .ct-grid-head { display: grid; gap: 1.2vh; }/* @order 1261 */
+  .ct-grid-head { display: grid; gap: 1.2cqh; }/* @order 1261 */
   .ct-kicker {
     margin: 0; font-family: var(--mono); font-size: max(11px, 1.1cqw);
     letter-spacing: .2em; text-transform: uppercase; color: var(--sc); font-weight: 600;
@@ -2122,13 +2134,13 @@
   .ct-card {
     text-align: left; font: inherit; cursor: pointer;
     background: var(--tint); border: 1.5px solid var(--hairline); border-radius: 0;
-    padding: 3.4vh 1.8cqw 3vh; display: grid; gap: 1.4vh; align-content: start;
-    min-height: 32vh; position: relative; transition: border-color .2s ease, box-shadow .2s ease, background .2s ease;
+    padding: 3.4cqh 1.8cqw 3cqh; display: grid; gap: 1.4cqh; align-content: start;
+    min-height: 32cqh; position: relative; transition: border-color .2s ease, box-shadow .2s ease, background .2s ease;
   }/* @order 1265 */
   .ct-card:focus-visible { outline: 2px solid var(--sc); outline-offset: 2px; }/* @order 1266 */
   .ct-card .ct-n { font-family: var(--mono); font-size: max(14px, 1.3cqw); color: var(--muted); letter-spacing: .08em; }/* @order 1267 */
   .ct-card .ct-t { font-size: max(31px, 2.9cqw); font-weight: 600; line-height: 1.16; color: var(--ink); }/* @order 1268 */
-  .ct-card .ct-mini { height: 4.2vh; border-radius: 5px; background: var(--sct); position: relative; overflow: hidden; }/* @order 1269 */
+  .ct-card .ct-mini { height: 4.2cqh; border-radius: 5px; background: var(--sct); position: relative; overflow: hidden; }/* @order 1269 */
   .ct-card .ct-mini::before { content: ""; position: absolute; left: 10%; top: 26%; width: 55%; height: 8%; background: var(--sc); opacity: .55; border-radius: 2px; }/* @order 1270 */
   .ct-card .ct-mini::after { content: ""; position: absolute; left: 10%; top: 48%; width: 75%; height: 6%; background: var(--ink); opacity: .18; border-radius: 2px; }/* @order 1271 */
   .ct-card.next { border-color: var(--sc); border-width: 2.5px; box-shadow: 0 10px 28px color-mix(in srgb, var(--sc) 15%, transparent); }/* @order 1272 */
@@ -2136,14 +2148,14 @@
   .ct-card.done { background: var(--sct); border-color: transparent; }/* @order 1274 */
   .ct-card.done .ct-t { color: var(--muted); font-weight: 500; }/* @order 1275 */
   .ct-card.done .ct-mini { opacity: .35; }/* @order 1276 */
-  .ct-card.done::after { content: "✓"; position: absolute; top: 1.1vh; right: .9cqw; font-size: max(13px, 1.4cqw); color: var(--sc); font-weight: 700; }/* @order 1277 */
+  .ct-card.done::after { content: "✓"; position: absolute; top: 1.1cqh; right: .9cqw; font-size: max(13px, 1.4cqw); color: var(--sc); font-weight: 700; }/* @order 1277 */
 
   /* Contents: THIN agenda rail (max 14vw per the taste rules). *//* @order 1278 */
   .ct-rail-host { --ct-rail-w: max(150px, 13.5cqw); }/* @order 1279 */
   .ct-rail-host > .slide-content { padding-left: var(--ct-rail-w); }/* @order 1280 */
   .ct-rail {
     position: absolute; left: 0; top: 0; bottom: 0; width: var(--ct-rail-w);
-    background: var(--sct); padding: 4vh 1.1cqw; display: grid; align-content: center; gap: 1.9vh; z-index: 3;
+    background: var(--sct); padding: 4cqh 1.1cqw; display: grid; align-content: center; gap: 1.9cqh; z-index: 3;
   }/* @order 1281 */
   .ct-rail .ct-rail-kicker {
     margin: 0; font-family: var(--mono); font-size: max(9px, .8cqw); letter-spacing: .16em;
@@ -2160,10 +2172,10 @@
   .ct-item.now .ct-item-no { color: var(--sc); }/* @order 1288 */
 
   /* Contents: FILMSTRIP variant ({contents=strip}) — contact-sheet footer of miniatures. *//* @order 1289 */
-  .ct-strip-host > .slide-content { padding-bottom: 13vh; }/* @order 1290 */
+  .ct-strip-host > .slide-content { padding-bottom: 13cqh; }/* @order 1290 */
   .ct-strip {
-    /* overrides .ct-overlay's inset:0 top so the strip sits as a 13vh FOOTER, not full-height. */
-    position: absolute; left: 0; right: 0; top: auto; bottom: 0; height: 13vh; border-top: 1px solid var(--line);
+    /* overrides .ct-overlay's inset:0 top so the strip sits as a 13cqh FOOTER, not full-height. */
+    position: absolute; left: 0; right: 0; top: auto; bottom: 0; height: 13cqh; border-top: 1px solid var(--line);
     display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 1.8cqw;
     padding: 0 var(--slide-pad-x); background: var(--paper); z-index: 3;
   }/* @order 1291 */
@@ -2177,9 +2189,9 @@
     position: relative; overflow: hidden; transition: outline-color .2s ease;
   }/* @order 1294 */
   /* Real slide miniature (ADR-0007: the strip shows the slides themselves): a prepared clone of
-     the child slide laid out at full viewport size (vw units inside slides resolve against the
-     real viewport — the slideThumb pattern) and scaled as one rigid unit into the 9.5vw shot
-     (scale = 9.5vw / 100vw = .095, viewport-independent so it also holds inside the fixed
+     the child slide laid out at full stage size (cqw/cqh units inside slides resolve against the
+     stage — the slideThumb pattern) and scaled as one rigid unit into the 9.5cqw shot
+     (scale = 9.5cqw / 100cqw = .095, stage-independent so it also holds inside the fixed
      1280×720 presenter-preview iframe). *//* @order 1295 */
   .ct-shot .ct-shot-mini {
     position: absolute; left: 0; top: 0; width: 100cqw; height: 56.25cqw;
@@ -2212,6 +2224,9 @@
     body { overflow: visible; background: white; }
     .footer, .drawer, .notes-drawer, .progress, .presenter-root { display: none !important; }
     .deck, .stage { display: block; min-height: auto; height: auto; overflow: visible; }
+    /* Paper is not a scaled canvas: slides flow as pages at the page width (ADR-0030 applies on screen). */
+    .deck > .stage { position: static; width: auto; transform: none !important; }
+    .deck { background: none !important; }
     .slide {
       position: relative;
       display: block !important;
@@ -2408,6 +2423,13 @@
   .live-go-panel-qr { width: 120px; height: 120px; margin: 11px auto 9px; }
   .live-go-panel-qr svg { width: 100%; height: 100%; display: block; }
   .live-go-panel-url { color: #0f4bd8; font: 700 15px/1 var(--mono); overflow-wrap: anywhere; }
+  .live-go-panel-venue { margin-top: 12px; padding-top: 10px; border-top: 1px solid #e0e5e9; text-align: left; }
+  .live-go-panel-venue-heading { font: 700 11px/1.4 system-ui, sans-serif; color: #344353; }
+  .live-go-panel-venue-row { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
+  .live-go-panel-venue-url { flex: 1; min-width: 0; color: #0f4bd8; font: 12px/1.3 var(--mono); overflow-wrap: anywhere; }
+  .live-go-panel-copy { border: 1px solid #cbd5dd; border-radius: 5px; background: #fff; padding: 4px 6px; color: #344353; cursor: pointer; }
+  .live-go-panel-count { color: #187044; font: 600 11px/1.4 system-ui, sans-serif; margin-top: 6px; }
+  .live-go-panel-count[hidden] { display: none; }
   .live-go-panel-hint { color: #5c6570; font-size: 11px; line-height: 1.35; margin-top: 6px; }
   .live-go-panel-close {
     position: absolute;
@@ -2441,10 +2463,8 @@
      button; it keeps its float top-right. */
   .quick-poll-compose { position: absolute; right: 16px; top: 16px; z-index: 14; width: min(480px, calc(100% - 32px)); padding: 15px; max-height: calc(100% - 32px); overflow: auto; box-shadow: 0 12px 36px rgba(0,0,0,.42); }
   .presenter-poll-head { display: flex; align-items: center; gap: 8px; padding: 10px 13px; border-bottom: 1px solid #243445; }
-  .presenter-poll-live-chip,
   .presenter-poll-chip,
   .presenter-poll-badge { border-radius: 999px; padding: 4px 8px; font: 700 10px/1 var(--mono); letter-spacing: .04em; }
-  .presenter-poll-live-chip { background: #b3372c; color: #fff; }
   .presenter-poll-chip { background: #0f4bd8; color: #fff; }
   .presenter-poll-dismiss { margin-left: auto; flex: none; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 8px; background: #243445; color: #8aa0b4; font: 400 20px/1 system-ui; cursor: pointer; }
   .presenter-poll-dismiss:hover { background: #2f4459; color: #f7f3ea; }
@@ -2567,3 +2587,12 @@
   /* @order 1903 */
   .slide-content:has(> .feature-list[data-list-density="dense"]),
   .slide-content:has(> .slot > .slot-copy > .feature-list[data-list-density="dense"]) { --list-lh: 1.18; --list-gap: .64; }
+  /* ADR-0028 amendment 2026-09-28 — no lone last word. Slide titles and statement text let the
+     browser rebalance their last lines so a single word never sits alone on the final line
+     ("This is an important statement / slide"). `:where(.slide)` keeps the title selector at
+     element specificity, so `.sr-only` (nowrap) still wins on nav-only titles. The runtime fit
+     passes (slide-fit.js, fitTitles) measure after this layout, as before. */
+  :where(.slide) h1,
+  .statement,
+  .slide-content.layout-statement > p:not(.kicker),
+  .stmt-list .stmt { text-wrap: pretty; }

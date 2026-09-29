@@ -11,7 +11,7 @@
     box-shadow: none;
     background: var(--paper);
     padding: 1em .9em;
-    min-height: 21vh;
+    min-height: 21cqh;
   }/* @order 1419 */
   .card-gallery.cards-numbered .card { counter-increment: twcard; }
   .card-gallery.cards-numbered .card::after {

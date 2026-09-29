@@ -15,6 +15,8 @@ interface Props {
   dates?: TalkDates | null
   /** Version-only bar for the no-talk-open empty state. */
   minimal?: boolean
+  /** Share for comments: "Shared for comments · <link>" while the talk is shared; click reopens the sheet. */
+  shared?: { label: string; title?: string; error?: boolean; paused?: boolean; ended?: boolean; onClick?: () => void } | null
 }
 
 function formatAge(d: Date): string {
@@ -40,6 +42,7 @@ export default function StatusBar({
   buildPath = null,
   dates = null,
   minimal = false,
+  shared = null,
 }: Props) {
   const [, tick] = useState(0)
 
@@ -121,9 +124,22 @@ export default function StatusBar({
         )}
       </div>
 
-      {showBuild && (
+      {(showBuild || (shared && !minimal)) && (
         <div style={styles.right}>
-          {buildIsClickable ? (
+          {shared && !minimal && (
+            <button
+              type="button"
+              onClick={shared.onClick}
+              style={{ ...styles.chip, ...styles.chipBtn, ...(shared.ended ? styles.chipEnded : shared.paused ? styles.chipPaused : shared.error ? styles.chipError : styles.chipShared), marginRight: showBuild ? '6px' : 0 }}
+              title={shared.title}
+              data-testid="status-shared"
+              data-paused={shared.paused ? 'true' : undefined}
+              data-ended={shared.ended ? 'true' : undefined}
+            >
+              {shared.label}
+            </button>
+          )}
+          {!showBuild ? null : buildIsClickable ? (
             <button
               onClick={handleBuildClick}
               style={{ ...styles.chip, ...styles.chipDone, ...styles.chipBtn }}
@@ -195,6 +211,18 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '4px',
     whiteSpace: 'nowrap',
     lineHeight: '1.5',
+  },
+  chipEnded: {
+    color: 'var(--muted)',
+    background: 'color-mix(in srgb, var(--muted) 14%, transparent)',
+  },
+  chipPaused: {
+    color: 'var(--amber)',
+    background: 'var(--amber-bg)',
+  },
+  chipShared: {
+    color: 'var(--oxford)',
+    background: 'color-mix(in srgb, var(--oxford) 8%, transparent)',
   },
   chipBuilding: {
     color: 'var(--muted)',

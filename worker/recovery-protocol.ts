@@ -1,11 +1,16 @@
 import {
   parseAudienceMessage, parsePresenterMessage, parsePresenterServerMessage,
   type PollChoice, type PollStateMessage, type PollVoteRecordMessage,
-  type PresenterPollMessage, type SlideState, type SlideStateMessage,
+  type PresenterMessage, type InstantSlide, type PresenterPollMessage, type SlideState, type SlideStateMessage, parseInstantSlide,
 } from './protocol'
 
 export const LIVE_PROTOCOL_VERSION = 2
-export const LIVE_WORKER_BUILD = '7-integrated-polls'
+export const LIVE_WORKER_BUILD = '13-shared-talk'
+export interface SessionPresence {
+  type: 'session.presence'
+  presenterConnected: boolean
+  venueScreens: number
+}
 export function supportsCurrentLiveWorker(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false
   const capabilities = value as { protocol?: unknown; build?: unknown }
@@ -39,22 +44,24 @@ export interface SessionSnapshot {
   sessionId: string
   expiresAt: number
   slideState: SlideStateMessage | null
+  instantSlide?: InstantSlide | null
   polls: PollStateMessage[]
   voteRecords?: RecoveredVoteRecord[]
   moreRecords?: boolean
   receipts?: VoteAck[]
+  presence?: Omit<SessionPresence, 'type'>
 }
 export type RecoveryClientMessage =
   | { type: 'session.ping'; nonce: string }
   | { type: 'session.sync'; syncId: string; slideState?: SlideState | null; afterSequence?: number }
-  | { type: 'operation'; operationId: string; action: PresenterPollMessage }
+  | { type: 'operation'; operationId: string; action: Exclude<PresenterMessage, { type: 'slide.publish' }> }
   | { type: 'vote.submit'; submissionId: string; pollId: string; choice: PollChoice }
 export type RecoveryServerMessage =
   | { type: 'session.hello'; protocol: 2; expiresAt: number }
   | { type: 'session.pong'; nonce: string }
   | { type: 'session.closed'; reason?: 'ended' | 'expired' }
   | { type: 'session.superseded' }
-  | SessionSnapshot | OperationAck | VoteAck
+  | SessionSnapshot | SessionPresence | OperationAck | VoteAck
 
 export function validRecoveryId(value: unknown): value is string {
   return typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_-]{7,127}$/.test(value)
@@ -66,7 +73,8 @@ function slide(value: unknown): SlideState | null {
   if (!object(value)) return null
   const parsed = parsePresenterMessage(JSON.stringify({ ...value, type: 'slide.publish' }))
   if (parsed?.type !== 'slide.publish') return null
-  return { slideId: parsed.slideId, reveal: parsed.reveal, focus: parsed.focus }
+  return { slideId: parsed.slideId, reveal: parsed.reveal, focus: parsed.focus,
+    ...(parsed.lightbox ? { lightbox: parsed.lightbox } : {}), ...(parsed.talkQr ? { talkQr: true } : {}) }
 }
 export function parseRecoveryClientMessage(value: string): RecoveryClientMessage | null {
   try {
@@ -111,6 +119,10 @@ export function parseRecoveryServerMessage(value: string): RecoveryServerMessage
   try {
     const m = JSON.parse(value)
     if (!object(m)) return null
+    if (m.type === 'session.presence' && typeof m.presenterConnected === 'boolean'
+      && Number.isSafeInteger(m.venueScreens) && m.venueScreens >= 0) {
+      return { type: m.type, presenterConnected: m.presenterConnected, venueScreens: m.venueScreens }
+    }
     if (m.type === 'session.hello' && m.protocol === 2 && Number.isFinite(m.expiresAt)) {
       return { type: m.type, protocol: 2, expiresAt: m.expiresAt }
     }
@@ -133,12 +145,18 @@ export function parseRecoveryServerMessage(value: string): RecoveryServerMessage
     if (m.receipts !== undefined && !Array.isArray(m.receipts)) return null
     const receipts = m.receipts?.map(parseVoteAck)
     if (receipts?.some((r: any) => !r)) return null
+    if (m.presence !== undefined && (!object(m.presence) || typeof m.presence.presenterConnected !== 'boolean'
+      || !Number.isSafeInteger(m.presence.venueScreens) || m.presence.venueScreens < 0)) return null
+    const instantSlide = m.instantSlide == null ? null : parseInstantSlide(m.instantSlide)
+    if (m.instantSlide != null && !instantSlide) return null
     return {
       type: m.type, protocol: 2, syncId: m.syncId, sessionId: m.sessionId, expiresAt: m.expiresAt,
       slideState: state ? { type: 'slide.state', ...state, revision: m.slideState.revision } : null,
       polls: polls as PollStateMessage[],
+      instantSlide,
       ...(records ? { voteRecords: records, moreRecords: m.moreRecords === true } : {}),
       ...(receipts ? { receipts } : {}),
+      ...(m.presence ? { presence: { presenterConnected: m.presence.presenterConnected, venueScreens: m.presence.venueScreens } } : {}),
     }
   } catch { return null }
 }

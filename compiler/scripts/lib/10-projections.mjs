@@ -43,7 +43,7 @@ function sha256Hex(value) {
 // The source adapter records these before full compilation replaces media paths with data URIs.
 export function pictureKeyForSlide(slide, mediaDigests = []) {
   const renderKey = JSON.stringify(slide, (k, v) =>
-    k === "id" || k === "sourceMarkdown" || k === "notes" || k === "tags" ? undefined : v
+    k === "id" || k === "sourceMarkdown" || k === "scriptSourceMarkdown" || k === "notes" || k === "tags" ? undefined : v
   );
   return `sha256-${sha256Hex(mediaDigests.length ? JSON.stringify([renderKey, mediaDigests]) : renderKey)}`;
 }
@@ -209,8 +209,8 @@ export function buildPerSlideProjections(model, deckSlug) {
     // thumbnail cache on this -- keying on content_hash made a layout/trigger edit a cache hit,
     // so the preview kept the stale render. We hash the MODEL (its blocks already carry layout
     // transforms and consumed triggers like liststyle=numbers, which no longer appear in
-    // slide.attrs). id, sourceMarkdown and notes are excluded: they change source/identity, not
-    // the picture.
+    // slide.attrs). id, sourceMarkdown (and a folded slide's scriptSourceMarkdown) and notes are
+    // excluded: they change source/identity, not the picture.
     // `tags` is excluded alongside id/source/notes: a tag is curated METADATA on the Trigger
     // line (ADR-0037), never part of the rendered picture — hashing it would invalidate the
     // thumbnail cache on every tagging gesture.
@@ -259,6 +259,9 @@ export function buildPerSlideProjections(model, deckSlug) {
       content_hash: contentHash,
       render_hash: renderHash,
       ...(model.thumbnailHashes?.[index] ? { thumbnail_hash: model.thumbnailHashes[index] } : {}),
+      // ADR-0028 §10: the compiled title regime ("left" | "top" | "hidden" | ""); absent on rows
+      // compiled before it existed, which callers must read as "not known".
+      ...(Array.isArray(model.titleLayouts) && index < model.titleLayouts.length ? { title_layout: model.titleLayouts[index] } : {}),
       elements: buildSlideElements(slide),
       warnings: warningsBySlide.get(slideId) || []
     };

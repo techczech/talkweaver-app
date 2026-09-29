@@ -1,13 +1,13 @@
-import { parsePresenterServerMessage, type PollStateMessage, type PresenterPollMessage, type SlideFocusState, type SlideState } from '../../worker/protocol'
-import { parseRecoveredVoteRecord, parseRecoveryServerMessage, type RecoveredVoteRecord, type SessionSnapshot } from '../../worker/recovery-protocol'
+import { parsePresenterServerMessage, parseInstantSlide, type InstantSlide, type PollStateMessage, type PresenterInstantMessage, type PresenterPollMessage, type SlideFocusState, type SlideLightboxState, type SlideState } from '../../worker/protocol'
+import { parseRecoveredVoteRecord, parseRecoveryServerMessage, type RecoveredVoteRecord, type SessionSnapshot, type SessionPresence } from '../../worker/recovery-protocol'
 
 export type LiveStatus = 'connecting' | 'live' | 'paused-reconnecting' | 'ending' | 'ended'
   | 'expired' | 'authentication-failed' | 'incompatible' | 'superseded'
-export interface PendingPollOperation { operationId: string; action: PresenterPollMessage }
+export interface PendingPollOperation { operationId: string; action: PresenterPollMessage | PresenterInstantMessage }
 export interface LiveOperationUpdate {
   operationId: string
   status: 'pending' | 'confirmed' | 'rejected'
-  message: PresenterPollMessage
+  message: PresenterPollMessage | PresenterInstantMessage
   error?: string
 }
 interface SocketLike {
@@ -39,8 +39,10 @@ export function createLivePresenterClient(options: {
   random?: () => number
   onStatus?: (status: LiveStatus) => void
   onPollState?: (message: PollStateMessage) => void
+  onInstantSlide?: (slide: InstantSlide | null) => void
   onPollVoteRecord?: (message: RecoveredVoteRecord) => void
   onSnapshot?: (message: SessionSnapshot) => void
+  onPresence?: (presence: Omit<SessionPresence, 'type'>) => void
   onOperation?: (update: LiveOperationUpdate) => void
   onPendingChange?: (pending: PendingPollOperation[]) => void
   onCursorChange?: (sequence: number) => void
@@ -177,14 +179,20 @@ export function createLivePresenterClient(options: {
           if (message?.type === 'session.snapshot') {
             if (message.sessionId !== options.sessionId || message.syncId !== syncId) return
             for (const poll of message.polls) options.onPollState?.(poll)
+            options.onInstantSlide?.(message.instantSlide ?? null)
             for (const record of message.voteRecords ?? []) receiveRecord(record)
             options.onSnapshot?.(message)
+            if (message.presence) options.onPresence?.(message.presence)
             if (message.moreRecords || syncSlide !== JSON.stringify(latest)) { sendSync(); return }
             cancel('handshake')
             syncId = ''; attempt = 0
             setStatus('live')
             diagnostic('synchronised')
             heartbeat(); flush()
+            return
+          }
+          if (message?.type === 'session.presence') {
+            options.onPresence?.({ presenterConnected: message.presenterConnected, venueScreens: message.venueScreens })
             return
           }
           if (message?.type === 'operation.ack') {
@@ -202,18 +210,23 @@ export function createLivePresenterClient(options: {
           if (record) { receiveRecord(record); return }
           const state = parsePresenterServerMessage(event.data)
           if (state?.type === 'poll.state') options.onPollState?.(state)
+          else if (JSON.parse(event.data)?.type === 'instant.state') {
+            const raw = JSON.parse(event.data).slide
+            const slide = raw == null ? null : parseInstantSlide(raw)
+            if (raw == null || slide) options.onInstantSlide?.(slide)
+          }
         } catch { fail('recovery-state-write-failed') }
       }
     } catch { fail('connection-failed') }
   }
   connect()
   return {
-    publish(slideId: string, reveal: number, focus: SlideFocusState | null = null) {
+    publish(slideId: string, reveal: number, focus: SlideFocusState | null = null, lightbox?: SlideLightboxState, talkQr = false) {
       if (stopped || !slideId || !Number.isInteger(reveal) || reveal < 0) return
-      latest = { slideId, reveal, focus }
+      latest = { slideId, reveal, focus, ...(lightbox ? { lightbox } : {}), ...(talkQr ? { talkQr: true } : {}) }
       if (liveStatus === 'live') send({ type: 'slide.publish', ...latest })
     },
-    sendPoll(action: PresenterPollMessage): string | false {
+    sendPoll(action: PresenterPollMessage | PresenterInstantMessage): string | false {
       if (stopped) return false
       const operationId = uuid()
       const next = [...pending, { operationId, action: structuredClone(action) }]

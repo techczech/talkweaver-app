@@ -99,11 +99,12 @@ try {
   const injected = await page.evaluate(() => document.documentElement.innerHTML.includes('function bigTimerState'))
   record('present HTML injected the pure timer core (bigTimerState present)', injected)
 
-  // (a) On load: idle + "Start".
+  // (a) On load: idle, and the clock (itself the pause/resume button since the presenter redesign,
+  // ticket 02) is named "Start timer" (its tooltip, data-tip).
   const status0 = await page.locator('#twClock').getAttribute('data-status')
-  const btn0 = (await page.locator('#twClockBtn').innerText()).trim()
+  const btn0 = await page.locator('#twClockBtn').getAttribute('data-tip')
   record('on load #twClock data-status="idle"', status0 === 'idle', `status=${status0}`)
-  record('on load button reads "▶ Start"', btn0 === '▶ Start', `btn=${JSON.stringify(btn0)}`)
+  record('on load the clock button is named "Start timer"', btn0 === 'Start timer', `tip=${JSON.stringify(btn0)}`)
 
   // (v0.7.5) P starts the timer (was hijacked by the mode step-alias) + Reset returns to idle.
   await page.evaluate(() => document.activeElement && document.activeElement.blur && document.activeElement.blur())
@@ -111,8 +112,12 @@ try {
   await page.waitForTimeout(150)
   const pStatus = await page.locator('#twClock').getAttribute('data-status')
   record('P key starts the timer', pStatus === 'running', `status=${pStatus}`)
+  // Reset timer lives in the clock popover (the chevron beside the clock, T).
+  await page.locator('#twDurationBtn').click()
+  await page.waitForTimeout(150)
   await page.locator('#twResetBtn').click()
   await page.waitForTimeout(150)
+  if (await page.locator('#twDurationSetter').isVisible()) { await page.keyboard.press('Escape'); await page.waitForTimeout(100) }
   const resetStatus = await page.locator('#twClock').getAttribute('data-status')
   record('Reset button returns the timer to idle (zero)', resetStatus === 'idle', `status=${resetStatus}`)
 
@@ -120,18 +125,18 @@ try {
   await page.locator('#twClockBtn').click()
   await page.waitForTimeout(150)
   const status1 = await page.locator('#twClock').getAttribute('data-status')
-  const btn1 = (await page.locator('#twClockBtn').innerText()).trim()
+  const btn1 = await page.locator('#twClockBtn').getAttribute('data-tip')
   record('after click #twClock data-status="running"', status1 === 'running', `status=${status1}`)
-  record('after click button reads "⏸ Pause"', btn1 === '⏸ Pause', `btn=${JSON.stringify(btn1)}`)
+  record('after click the clock button is named "Pause timer"', btn1 === 'Pause timer', `tip=${JSON.stringify(btn1)}`)
   await shot('06-timer-running.png')
 
   // (c) Click again -> paused + "Resume".
   await page.locator('#twClockBtn').click()
   await page.waitForTimeout(150)
   const status2 = await page.locator('#twClock').getAttribute('data-status')
-  const btn2 = (await page.locator('#twClockBtn').innerText()).trim()
+  const btn2 = await page.locator('#twClockBtn').getAttribute('data-tip')
   record('after 2nd click #twClock data-status="paused"', status2 === 'paused', `status=${status2}`)
-  record('after 2nd click button reads "▶ Resume"', btn2 === '▶ Resume', `btn=${JSON.stringify(btn2)}`)
+  record('after 2nd click the clock button is named "Resume timer"', btn2 === 'Resume timer', `tip=${JSON.stringify(btn2)}`)
 
   // (d) The old dual clock is gone.
   const bigTimerCount = await page.locator('#bigTimer').count()
@@ -150,7 +155,7 @@ try {
   await page.locator('#twDurationBtn').click()
   await page.waitForTimeout(150)
   const presetCount = await page.locator('#twDurationSetter .tw-duration-presets button').count()
-  record('duration setter shows the preset pills (10..90)', presetCount === 9, `count=${presetCount}`)
+  record('duration setter shows the preset pills (10, 15, 20, 30, 45, 60, 90)', presetCount === 7, `count=${presetCount}`)
   await shot('01-timer-setter.png')
   const rem5Default = await page.locator('#twDurationSetter .tw-reminder[data-remind="5"]').evaluate((el) => el.classList.contains('on'))
   const rem1Default = await page.locator('#twDurationSetter .tw-reminder[data-remind="1"]').evaluate((el) => el.classList.contains('on'))
@@ -179,11 +184,14 @@ try {
   const nextKey = await page.locator('#presenterNext').getAttribute('data-key')
   const nextTitle = await page.locator('#presenterNext').getAttribute('title')
   const audKey = await page.locator('#presenterAudienceApp').getAttribute('data-key')
-  record('Next button shows just its key (data-key="→", verbose title removed)', nextKey === '→' && !nextTitle, `key=${nextKey} title=${nextTitle}`)
-  record('Audience button data-key is F5', audKey === 'F5', `key=${audKey}`)
+  // The tooltip shows the registry's keys for Next (presenter.next); Open audience window is an
+  // item of the Live menu since ticket 04 and keeps F5.
+  record('Next button shows its keys (data-key="→ Space ↓ PgDn ↵", verbose title removed)', nextKey === '→ Space ↓ PgDn ↵' && !nextTitle, `key=${nextKey} title=${nextTitle}`)
+  record('Open audience window (Live menu) data-key is F5', audKey === 'F5', `key=${audKey}`)
   const nextHasIcon = await page.locator('#presenterNext .tw-btn-ico').count()
+  // Reveal mode is an item of the "…" More menu since ticket 05.
   const revealHasIcon = await page.locator('#presenterReveal .tw-btn-ico').count()
-  record('control buttons carry icons (Next, Reveal)', nextHasIcon === 1 && revealHasIcon === 1, `next=${nextHasIcon} reveal=${revealHasIcon}`)
+  record('control buttons carry icons (Next, More menu: Reveal mode)', nextHasIcon === 1 && revealHasIcon === 1, `next=${nextHasIcon} reveal=${revealHasIcon}`)
   // ? opens the shortcut cheat sheet; Esc closes it.
   await page.evaluate(() => document.activeElement && document.activeElement.blur && document.activeElement.blur())
   await page.keyboard.press('?')

@@ -1,4 +1,4 @@
-import { IcChevronRight, IcDrillIn, IcFolderClosed, IcFolderOpen } from './icons'
+import { IcArchive, IcChevronRight, IcDrillIn, IcFolderClosed, IcFolderOpen } from './icons'
 
 // Folders must read as folders, not page sections (ADR-0008 taste rule): normal-case
 // names, open/closed folder icons, sticky top-level headers for scroll context.
@@ -19,13 +19,16 @@ interface FolderShared {
   onDrop: (e: React.DragEvent) => void
 }
 
-/** Top-level folder header: sticky, full-width, count on the right. */
+/** Top-level folder header: sticky, full-width, count on the right. `archive`: the old
+ *  PowerPoint imports, drawn dimmed with an archive icon (ADR-0029 §3; frames L1, L2) — the
+ *  caller passes its label as `name`. */
 export function FolderHeader({
-  name, path, expanded, focused, talkCount, isDropTarget,
+  name, path, expanded, focused, talkCount, isDropTarget, archive = false,
   rowRef, onToggle, onContextMenu, onDragOver, onDragLeave, onDrop
-}: Omit<FolderShared, 'onDrill'>) {
+}: Omit<FolderShared, 'onDrill'> & { archive?: boolean }) {
   const cls = ['tl-fhead']
   if (expanded) cls.push('tl-fhead--expanded')
+  if (archive) cls.push('is-archive')
   if (focused) cls.push('tl-fhead--kfocus')
   if (isDropTarget) cls.push('tl-drop')
   return (
@@ -43,7 +46,7 @@ export function FolderHeader({
       onDrop={onDrop}
     >
       <span className="tl-twist"><IcChevronRight size={10} /></span>
-      <span className="tl-ficon">{expanded ? <IcFolderOpen size={12.5} /> : <IcFolderClosed size={12.5} />}</span>
+      <span className="tl-ficon">{archive ? <IcArchive size={12.5} /> : expanded ? <IcFolderOpen size={12.5} /> : <IcFolderClosed size={12.5} />}</span>
       <span className="tl-fname">{name}</span>
       <span className="tl-fcount">{talkCount}</span>
     </div>

@@ -42,6 +42,9 @@ import {
 } from '@codemirror/language'
 import type { TalkInfo } from '../../../preload/index'
 import { notify } from '../lib/notify'
+import { queueOutlineWrite } from '../lib/saveQueue'
+import { lookForRecovery, noteOutlineSaveReply, outlineDiskChanges } from '../lib/outlineDiskChange'
+import { applyMinimalChange } from '../lib/minimalChange'
 import { triggerCompleteExtension } from '../extensions/triggerComplete'
 import { tokenProtectExtension } from '../extensions/idProtect'
 import { flashTriggerEchoAt, triggerEchoChange } from '../extensions/triggerEcho'
@@ -198,9 +201,17 @@ interface Props {
   // top-level list-item context ({heading, occurrence, itemIndex}) — or null when the caret is not
   // in a list bullet. The picker calls it when opened to know which bullet a chosen glyph pins to.
   registerIconContext?: (fn: () => CursorListItemContext | null) => void
-  // Replace the WHOLE doc with programmatically-rewritten text (e.g. after an icon is pinned)
-  // WITHOUT remounting — so the caret + scroll stay put instead of snapping to the top of the file.
-  registerReplaceDoc?: (fn: (text: string) => void) => void
+  // Put programmatically-rewritten text into the buffer WITHOUT remounting, as one minimal change
+  // (lib/minimalChange): the caret is mapped through it, the scroll anchor holds and the change is
+  // one undoable step. With `save: true` (the workspace's buffer-first mutations, one-writer spec D1)
+  // the caller saves the whole buffer at once, so the debounced autosave is superseded and the text
+  // to save — position-normalised like every save boundary — is returned; null while no talk is
+  // loaded. Without it the result is the buffer text and the normal autosave follows.
+  registerReplaceDoc?: (fn: (text: string, opts?: { save?: boolean }) => string | null) => void
+  // The buffer's live text, the talk it belongs to and the caret (selection head offset), or null
+  // while that talk's text is not loaded (one-writer spec D1: a mutation of the open talk reads THIS,
+  // never the React mirror of it; the section insert places itself from the caret).
+  registerReadDoc?: (fn: () => { path: string; text: string; caret: number } | null) => void
   // ⌘L layout picker: places a bare layout trigger on the CURRENT slide's Trigger line (no slash to
   // clean up). The parent opens the picker and calls this with the chosen trigger.
   registerLayoutContext?: (fn: () => LayoutPickerContext | null) => void
@@ -283,6 +294,7 @@ export default function Editor({
   registerEditorCommands,
   registerIconContext,
   registerReplaceDoc,
+  registerReadDoc,
   registerLayoutContext,
   registerApplyLayout,
   registerApplyOption,
@@ -292,6 +304,9 @@ export default function Editor({
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Every outline write this editor sends goes through the outline's shared queue (lib/saveQueue):
+  // one write in flight at a time per file, in the order made, shared with the workspace's writes
+  // (ticket 07 — a stale autosave or workspace write can never land after a newer save).
   const provisionalTriggerRef = useRef<{ before: string; from: number; to: number } | null>(null)
   const rollingBackProvisionalRef = useRef(false)
   const applyLayoutRef = useRef<(
@@ -308,7 +323,7 @@ export default function Editor({
   useEffect(() => { onInsertObjectMenuRef.current = onInsertObjectMenu }, [onInsertObjectMenu])
   const currentTalkRef = useRef<string>('')
   // Data-loss guard (2026-07-05): the path whose REAL content is loaded and live in the doc, or null
-  // while a load is in flight. The editor is remounted on every talk switch / reorderNonce bump, so a
+  // while a load is in flight. The editor is remounted on every talk switch (and nothing else), so a
   // fresh instance starts with `doc: ''`; autosave must stay OFF during that transient (and during the
   // load's own content-replacing dispatch) so the empty doc can never be mistaken for a user edit and
   // written to disk. Set null when a load starts; set to the path only AFTER its content is dispatched.
@@ -350,6 +365,43 @@ export default function Editor({
     })
   }, [])
 
+  // Writes `text` to `outlinePath` through the save queue and reports the outcome to the person as
+  // every editor save does. Resolves true only when the main process confirms the bytes were written.
+  const writeQueued = useCallback(async (outlinePath: string, text: string): Promise<boolean> => {
+    // The person discarded this talk (removed on disk): it is never saved again from this editor.
+    if (outlineDiskChanges.isDiscarded(outlinePath)) return false
+    const res = await queueOutlineWrite(outlinePath, () => window.tw.talk.writeOutline(outlinePath, text))
+    // Save-indicator honesty (2026-07-05): only stamp "saved" on a REAL write. If the main-process
+    // backstop refused (structurally-empty over a non-empty file), the disk is unchanged — say so
+    // instead of a false "saved just now". `res === false` is an IO failure (also not a save).
+    if (res && res.ok === true) {
+      onSaved?.()
+      // Stamped-id adoption (see adoptStampedContent). On the talk-switch flush path the view may
+      // already be torn down or repointed — the helper's viewRef/doc-unchanged guards make that a
+      // safe no-op (disk is stamped either way; the reload will read the stamped file).
+      adoptStampedContent(text, res)
+      return true
+    }
+    // External-change guard: the file differs from what this editor holds. The bar at the top of the
+    // talk offers the choice; the typing stays in the editor (and in main's recovery copy). A talk
+    // switch or a close waits for that choice (useOutlineDiskChange), so a save for a talk this editor
+    // no longer shows is rare; it gets words of its own.
+    if (noteOutlineSaveReply(res)) {
+      if (currentTalkRef.current !== outlinePath || !viewRef.current) {
+        notify('Your last edits to the talk you left were not saved: its file differs on disk. They are kept as unsaved text; open the talk again to restore them.', 'warning', 'changed-on-disk')
+      }
+      return false
+    }
+    if (res && res.ok === false) {
+      notify('Save skipped — the app refused to overwrite the outline with empty content. Your file on disk is unchanged.', 'warning', 'save-refused')
+    } else {
+      // IO failure (write threw: permissions, disk, file vanished). Without this the status
+      // bar keeps ageing "Saved Xm ago" while every keystroke is silently lost.
+      notify('Save FAILED — the outline could not be written to disk. Your recent edits are not saved.', 'error', 'save-failed')
+    }
+    return false
+  }, [onSaved, adoptStampedContent])
+
   const scheduleAutosave = useCallback(
     (outlinePath: string, content: string) => {
       // NEVER autosave an empty / whitespace-only doc: an outline never legitimately becomes empty via
@@ -371,25 +423,10 @@ export default function Editor({
             saveTimerRef.current = null
           }
         }
-        const res = await window.tw.talk.writeOutline(outlinePath, normalized)
-        // Save-indicator honesty (2026-07-05): only stamp "saved" on a REAL write. If the main-process
-        // backstop refused (structurally-empty over a non-empty file), the disk is unchanged — say so
-        // instead of a false "saved just now". `res === false` is an IO failure (also not a save).
-        if (res && res.ok === true) {
-          onSaved?.()
-          adoptStampedContent(normalized, res)
-        }
-        else if (res && res.ok === false) {
-          notify('Save skipped — the app refused to overwrite the outline with empty content. Your file on disk is unchanged.', 'warning', 'save-refused')
-        }
-        else {
-          // IO failure (write threw: permissions, disk, file vanished). Without this the status
-          // bar keeps ageing "Saved Xm ago" while every keystroke is silently lost.
-          notify('Save FAILED — the outline could not be written to disk. Your recent edits are not saved.', 'error', 'save-failed')
-        }
+        await writeQueued(outlinePath, normalized)
       }, 1500)
     },
-    [onSaved, adoptStampedContent]
+    [writeQueued]
   )
 
   // Mount editor once
@@ -792,7 +829,8 @@ export default function Editor({
     if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null }
     const pathAtLoad = talk.outlinePath
     async function load() {
-      const content = await window.tw.talk.readOutline(pathAtLoad)
+      // forEditor: the text loaded here is what the external-change guard compares the file against.
+      const content = await window.tw.talk.readOutline(pathAtLoad, { forEditor: true })
       // Guard the whole apply against a remount that happened while readOutline was in flight: only
       // apply if the view is still alive AND still bound to the path we read (currentTalkRef moved on
       // otherwise). The content-replacing dispatch runs while loadedPathRef is null, so its docChanged
@@ -807,6 +845,14 @@ export default function Editor({
         viewRef.current.dispatch({ effects: historyCompartment.reconfigure([]) })
         viewRef.current.dispatch({ effects: historyCompartment.reconfigure(history()) })
         loadedPathRef.current = pathAtLoad
+        // A fresh load: whatever the guard reported for this talk is settled by this text; then offer
+        // any unsaved text a refused save kept (an earlier session ended before the person chose).
+        outlineDiskChanges.loaded(pathAtLoad)
+        void lookForRecovery(pathAtLoad, content, {
+          store: outlineDiskChanges,
+          recovery: (path) => window.tw.talk.outlineRecovery?.(path) ?? Promise.resolve(null),
+          discardRecovery: (path) => window.tw.talk.discardOutlineRecovery?.(path) ?? Promise.resolve(false),
+        })
         onContentChange(content)
       }
     }
@@ -918,7 +964,7 @@ export default function Editor({
 
   // Expose fold/unfold-all so the command palette can collapse/expand the whole outline.
   useEffect(() => {
-    registerEditorCommands?.({
+    const cmds: Parameters<NonNullable<typeof registerEditorCommands>>[0] = {
       foldAll: () => { const v = viewRef.current; if (v) { foldAll(v); v.focus() } },
       unfoldAll: () => { const v = viewRef.current; if (v) { unfoldAll(v); v.focus() } },
       move: (line, dir) => {
@@ -973,20 +1019,7 @@ export default function Editor({
         // Never flush an empty doc (a fresh-mount transient before load) or one whose content isn't the
         // loaded talk's yet — the caller (detach / switch) only needs the just-typed real text.
         if (text.trim() === '' || loadedPathRef.current !== currentTalkRef.current) return
-        const res = await window.tw.talk.writeOutline(currentTalkRef.current, text)
-        if (res && res.ok === true) {
-          onSaved?.()
-          // Stamped-id adoption (see adoptStampedContent). On the talk-switch flush path the view
-          // may already be torn down or repointed — the helper's viewRef/doc-unchanged guards make
-          // that a safe no-op (disk is stamped either way; the reload will read the stamped file).
-          adoptStampedContent(text, res)
-        }
-        else if (res && res.ok === false) {
-          notify('Save skipped — the app refused to overwrite the outline with empty content. Your file on disk is unchanged.', 'warning', 'save-refused')
-        }
-        else {
-          notify('Save FAILED — the outline could not be written to disk. Your recent edits are not saved.', 'error', 'save-failed')
-        }
+        await writeQueued(currentTalkRef.current, text)
       },
       scrollCursorIntoView: () => {
         const v = viewRef.current
@@ -1035,9 +1068,10 @@ export default function Editor({
         if (!canRunInlineFormatting(v.state)) return
         EDITOR_COMMANDS.find((command) => command.id === id)?.run(v)
         v.focus()
-      }
-    })
-  }, [registerEditorCommands, onSaved, adoptStampedContent])
+      },
+    }
+    registerEditorCommands?.(cmds)
+  }, [registerEditorCommands, writeQueued])
 
   // Expose the caret's list-item context to the icon picker. Read from the LIVE view at call
   // time so it reflects wherever the caret is when the picker opens (not registration time).
@@ -1122,6 +1156,9 @@ export default function Editor({
     registerApplyOption?.((entry, group, token, headingLine, slideId) => {
       const v = viewRef.current
       if (!v) return null
+      // Until this talk's text is loaded the doc is a transient the load will replace (and autosave
+      // is off), so a commit now would silently vanish: refuse it instead.
+      if (!loadedPathRef.current || loadedPathRef.current !== currentTalkRef.current) return null
       // Line numbers must NEVER cross text-identity boundaries: the caller computed headingLine
       // against ITS text (saved outline state), but this doc can differ transiently (adoption
       // mid-flight after a save). Re-derive the heading from the SLIDE ID against THIS doc; if
@@ -1157,25 +1194,44 @@ export default function Editor({
     }
   }, [registerApplyLayout, registerApplyOption, registerLayoutContext])
 
-  // Replace the whole doc with rewritten text in place — preserving caret + scroll. The parent
-  // uses this for tiny programmatic rewrites (icon pin) that previously remounted the editor and
-  // snapped it to the top. docChanged from this dispatch drives onContentChange (→ compile/strip).
+  // Put rewritten text into the buffer in place (registerReplaceDoc above): one minimal change, the
+  // selection mapped through it by CodeMirror (a caret outside the changed span stays on its text —
+  // restoring the old absolute offset moved it whenever bytes were inserted before it), no remount,
+  // one undoable step. docChanged from this dispatch drives onContentChange (→ compile/strip).
   useEffect(() => {
     if (!registerReplaceDoc) return
-    registerReplaceDoc((text: string) => {
+    registerReplaceDoc((text, opts) => {
       const view = viewRef.current
-      if (!view) return
-      const sel = view.state.selection.main
-      // Minimal change (not a full from:0,to:end replace) so CodeMirror keeps its scroll anchor —
-      // an icon pin is a tiny `{icon=…}` token, so only that span changes and the viewport holds.
-      const ch = minimalChange(view.state.doc.toString(), text)
-      const head = Math.min(sel.head, text.length)
-      view.dispatch({
-        changes: { from: ch.from, to: ch.to, insert: ch.insert },
-        selection: EditorSelection.cursor(head)
-      })
+      if (!view) return null
+      const loaded = !!loadedPathRef.current && loadedPathRef.current === currentTalkRef.current
+      // A save-bound change needs the talk's real text in the doc: before the load lands the doc is a
+      // transient the load will replace, so the change (and its save) would be lost or wrong.
+      if (opts?.save && !loaded) return null
+      const change = applyMinimalChange(view.state.doc.toString(), text)
+      if (change) view.dispatch({ changes: change })
+      if (!opts?.save) return view.state.doc.toString()
+      // The caller saves the whole buffer now: the debounced autosave this dispatch (or an earlier
+      // keystroke) scheduled is superseded. Same position-only normalisation as flushSave.
+      if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null }
+      const current = view.state.doc.toString()
+      const normalized = normalizePositions(current)
+      if (normalized !== current) {
+        const norm = minimalChange(current, normalized)
+        view.dispatch({ changes: { from: norm.from, to: norm.to, insert: norm.insert } })
+        if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null }
+      }
+      return normalized
     })
   }, [registerReplaceDoc])
+
+  useEffect(() => {
+    if (!registerReadDoc) return
+    registerReadDoc(() => {
+      const view = viewRef.current
+      if (!view || !loadedPathRef.current || loadedPathRef.current !== currentTalkRef.current) return null
+      return { path: currentTalkRef.current, text: view.state.doc.toString(), caret: view.state.selection.main.head }
+    })
+  }, [registerReadDoc])
 
   // Scroll to + place the cursor at focusLine (1-based) whenever it changes.
   useEffect(() => {

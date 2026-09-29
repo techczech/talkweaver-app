@@ -38,6 +38,8 @@ everything else is a view of it.**
 
 The build is signed with an Apple Developer ID and notarised by Apple, so it opens normally.
 
+Try the beta: see [Releases](https://github.com/techczech/talkweaver-app/releases) for the newest pre-release. Beta features are new and not fully tested, so keep a copy of important talks.
+
 ### Windows
 
 Download and run [`TalkWeaver-windows-x64-setup.exe`](https://github.com/techczech/talkweaver-app/releases/latest/download/TalkWeaver-windows-x64-setup.exe)

@@ -9,7 +9,7 @@ import { chromium } from 'playwright'
  * Rendered-layout thresholds live here so the Doctor has one inspectable policy.
  * - Content ink below 35% is underfilled, except for the named sparse slide roles.
  * - Running text must compute to at least 31px at the 1600px reference stage; the floor scales
- *   with the rendered stage so smaller viewports apply the same authored-size policy.
+ *   with the rendered stage's canvas width (ADR-0030: the 1280×720 canvas, whatever the window).
  * - Small presentation chrome remains visible in the report but is separated from running text.
  * - A title, statement, or quote with more than three words may not contain an internal one-word
  *   line. A lone final one-word line is a lower-severity widow.
@@ -251,6 +251,11 @@ async function measureActiveSlide(page, slideId, thresholds) {
     const content = slide.querySelector('.slide-content') || slide
     const stageRect = stage.getBoundingClientRect()
     const contentRect = content.getBoundingClientRect()
+    // ADR-0030: the app's stage is the fixed 1280×720 canvas scaled to the window. Rects are painted
+    // px and are compared with each other; computed lengths (font sizes) are canvas px, so they are
+    // compared with the canvas: its layout width, and a painted rect divided by the stage's scale.
+    const canvasWidth = stage.offsetWidth || stageRect.width
+    const canvasScale = stageRect.width / canvasWidth || 1
     const tolerance = thresholds.geometryTolerancePx
     const round = (number, places = 2) => Number(Number(number).toFixed(places))
     const alpha = (colour) => {
@@ -370,7 +375,7 @@ async function measureActiveSlide(page, slideId, thresholds) {
       }
     }
 
-    const scaledTypeFloorPx = thresholds.typeFloorPx * stageRect.width / thresholds.typeFloorReferenceStageWidthPx
+    const scaledTypeFloorPx = thresholds.typeFloorPx * canvasWidth / thresholds.typeFloorReferenceStageWidthPx
     const smallChrome = []
     const subFloorText = textNodes.flatMap((node) => {
       const px = parseFloat(getComputedStyle(node.parentElement).fontSize)
@@ -453,8 +458,8 @@ async function measureActiveSlide(page, slideId, thresholds) {
         panels.push({
           element: descriptor(panel),
           fontPx: round(parseFloat(getComputedStyle(panel).fontSize)),
-          widthPx: round(rect.width),
-          stageWidthPx: round(stageRect.width),
+          widthPx: round(rect.width / canvasScale),
+          stageWidthPx: round(canvasWidth),
           widthPercent: round(rect.width / stageRect.width * 100)
         })
       }

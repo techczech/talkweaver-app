@@ -64,8 +64,10 @@ for (const shortcut of SHORTCUT_REGISTRY) {
 const expectedPaletteIds = [
   'refresh', 'optimize-images', 'ocr-index', 'check-embeds', 'layout-doctor', 'where-used', 'focus-slide',
   'toggle-inspector', 'studio', 'history', 'importer', 'plan-run', 'pathways', 'new-window', 'new-talk', 'new-folder',
-  'refresh-talks', 'change-vault', 'search-talks', 'present-window', 'present-presenter',
-  'present-from-here', 'present-audience', 'handout', 'build', 'publish-handout', 'layout',
+  'refresh-talks', 'change-vault', 'search-talks',
+  'find-talk', 'add-talk-beside', 'talk-beside', 'close-talk-beside', 'select-whole-section',
+  'present-window', 'present-presenter',
+  'present-from-here', 'present-audience', 'handout', 'build', 'publish-handout', 'share-for-comments', 'copy-venue-screen-link', 'layout',
   'image', 'search', 'icon-picker', 'insert-object-table', 'insert-object-mindmap',
   'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg',
   'format-bold', 'format-italic', 'format-inline-code', 'format-highlight', 'format-link',
@@ -226,6 +228,27 @@ for (const id of ['format-italic', 'format-inline-code', 'format-highlight']) {
   assert.equal(commandShortcutLabel(unbound), 'no default', `${id} palette row says no default`)
 }
 
+// Talk search 08: every talk-search action is a palette command carrying its registry key.
+const TALK_SEARCH_COMMANDS = [
+  ['find-talk', 'app.find-talk', '⇧⌘S'],
+  ['add-talk-beside', 'slide-picker.add-beside', '⌘↵'],
+  ['talk-beside', 'slide-picker.talk-beside', 'O'],
+  ['close-talk-beside', 'slide-picker.close-beside', 'Esc'],
+  ['select-whole-section', 'slide-picker.select-whole-section', '⇧⌘↵'],
+  ['search-talks', 'app.sidebar-talks', '⌘⇧T']
+]
+for (const [id, shortcutId, keys] of TALK_SEARCH_COMMANDS) {
+  const registered = paletteCommands().find((command) => command.id === id)
+  assert(registered, `${id} is a palette command`)
+  assert.equal(registered.palette.visible, true, `${id} is listed in the palette`)
+  assert.equal(registered.shortcutId, shortcutId, `${id} carries ${shortcutId}`)
+  assert.equal(commandShortcutLabel(registered), keys, `${id} shows ${keys} in the palette`)
+}
+// Dominik, 0.34.0-preview.8 check (28 Sep): the section key selects the whole section, it does not
+// insert it; no palette entry still offers to insert a section.
+assert.equal(paletteCommands().find((command) => command.id === 'select-whole-section')?.label, 'Select the focused slide’s whole section', 'the palette entry is Select the focused slide’s whole section')
+assert.equal(paletteCommands().some((command) => /insert[^.]*section/i.test(command.label)), false, 'no palette entry says it inserts a section')
+
 const uiBundleDir = mkdtempSync(join(root, '.test-command-ui-'))
 const uiBundleUrl = pathToFileURL(join(uiBundleDir, 'bundle.mjs'))
 let shortcutUi
@@ -244,10 +267,16 @@ try {
         "import { renderToStaticMarkup } from 'react-dom/server'",
         "import KeyboardHelp from './src/renderer/src/components/KeyboardHelp.tsx'",
         "import SlideContextMenu from './src/renderer/src/components/SlideContextMenu.tsx'",
+        "import SlidePickerHints from './src/renderer/src/components/SlidePickerHints.tsx'",
+        "export * from './src/renderer/src/keymap/surfaceKeys.ts'",
+        "export { EDITOR_COMMANDS } from './src/renderer/src/keymap/registry.ts'",
         "export * from './src/renderer/src/components/SlideContextMenu.tsx'",
         "export * from './src/renderer/src/keymap/store.ts'",
         "export function renderKeyboardHelp() {",
         "  return renderToStaticMarkup(React.createElement(KeyboardHelp, { isOpen: true, onClose() {} }))",
+        "}",
+        "export function renderSlidePickerHints() {",
+        "  return renderToStaticMarkup(React.createElement(SlidePickerHints))",
         "}",
         "export function renderSlideContextMenu() {",
         "  return renderToStaticMarkup(React.createElement(SlideContextMenu, {",
@@ -362,6 +391,86 @@ try {
     'no default',
     'toolbar and palette command labels reject the same malformed override'
   )
+
+  // ── Talk search 08: the talk-search keys in the cheat sheet and the picker's hint bar, and
+  //    rebinding them. ──
+  window.localStorage.setItem('tw-keymap-overrides', '{}')
+  const sheet = shortcutUi.renderKeyboardHelp()
+  const sheetRow = (label) => {
+    const at = sheet.indexOf(`>${label}</div>`)
+    assert(at > 0, `the cheat sheet lists “${label}”`)
+    const rowStart = sheet.lastIndexOf('<div style="display:flex', at)
+    return [...sheet.slice(rowStart, at).matchAll(/<kbd[^>]*>([^<]*)<\/kbd>/g)].map((match) => match[1]).join(' ')
+  }
+  for (const [label, keys] of [
+    ['Find a talk', '⇧⌘S'],
+    ['Add the talk beside', '⌘↵'],
+    ['Show the result’s talk beside', 'O'],
+    ['Close the talk beside', 'Esc'],
+    ['Select whole section', '⇧⌘↵'],
+    ['Open Talks panel search', '⌘⇧T'],
+    ['Focus filter', '/'],
+    ['Select section', 'S'],
+    ['Sort talks', 'S']
+  ]) assert.equal(sheetRow(label), keys, `the cheat sheet row “${label}” shows ${keys}`)
+  assert.match(sheet, /Slide picker · Talks/, 'the cheat sheet has a Slide picker section for the talk-search keys')
+  const hintKeys = (markup, id) => {
+    const span = markup.match(new RegExp(`data-hint="${id.replace('.', '\\.')}">([\\s\\S]*?)<b>`))?.[1] ?? ''
+    return [...span.matchAll(/<kbd>([^<]*)<\/kbd>/g)].map((match) => match[1]).join(' ')
+  }
+  const hints = shortcutUi.renderSlidePickerHints()
+  assert.equal(hintKeys(hints, 'slide-picker.talk-beside'), 'O', 'the hint bar shows O for talk beside')
+  assert.equal(hintKeys(hints, 'slide-picker.select-whole-section'), '⇧⌘↵', 'the hint bar shows ⇧⌘↵ for select whole section')
+  assert.match(hints, /data-hint="slide-picker\.select-whole-section">[\s\S]*?<b>select whole section<\/b>/, 'the hint bar names it select whole section')
+  assert.doesNotMatch(hints, /insert section/i, 'no hint still says insert section')
+  assert.equal(hintKeys(hints, 'slide-picker.select-section'), 'S', 'the hint bar shows S for select section')
+  assert.equal(hintKeys(hints, 'slide-picker.move'), '↑ ↓ ← →', 'the hint bar shows the four arrows as four keys')
+  assert.equal(hintKeys(hints, 'app.find-talk'), '⇧⌘S', 'the hint bar shows ⇧⌘S for Find a talk')
+
+  const surface = shortcutUi.EDITOR_COMMANDS.filter((command) => command.surface)
+  assert.deepEqual(
+    surface.map((command) => [command.id, command.shortcutId, command.category]),
+    [
+      ['find-talk', 'app.find-talk', 'Slide picker'],
+      ['add-beside', 'slide-picker.add-beside', 'Slide picker'],
+      ['talk-beside', 'slide-picker.talk-beside', 'Slide picker'],
+      ['close-beside', 'slide-picker.close-beside', 'Slide picker'],
+      ['select-whole-section', 'slide-picker.select-whole-section', 'Slide picker']
+    ],
+    'the five talk-search keys are Settings rows (rebindable), grouped under Slide picker'
+  )
+  assert.deepEqual(
+    Object.entries(shortcutUi.SURFACE_KEYS),
+    surface.map((command) => [command.id, command.shortcutId]),
+    'every rebindable surface key has its Settings row under the same local id'
+  )
+  const editorKeys = shortcutUi.buildEditorKeyBindings().map((binding) => binding.key)
+  for (const key of ['o', 'Mod-Shift-Enter', 'Mod-Shift-s']) {
+    assert.equal(editorKeys.includes(key), false, `a surface key (${key}) is never an editor binding, so O still types in the editor`)
+  }
+  const press = (key, modifiers = {}) => new window.KeyboardEvent('keydown', { key, ...modifiers })
+  assert.equal(shortcutUi.surfaceKey(press('o'), 'talk-beside'), true, 'O is talk beside by default')
+  assert.equal(shortcutUi.surfaceKey(press('Enter', { metaKey: true, shiftKey: true }), 'select-whole-section'), true, '⇧⌘↵ is select whole section by default')
+  assert.equal(shortcutUi.surfaceKey(press('Enter', { metaKey: true }), 'select-whole-section'), false, '⌘↵ alone is not select whole section (it inserts the selected slides)')
+  assert.equal(shortcutUi.surfaceKey(press('s', { metaKey: true, shiftKey: true }), 'find-talk'), true, '⇧⌘S is Find a talk by default')
+  assert.equal(shortcutUi.surfaceKey(press('Enter', { metaKey: true }), 'add-beside'), true, '⌘↵ is add beside by default')
+  assert.equal(shortcutUi.surfaceKey(press('Escape'), 'close-beside'), true, 'Esc closes the talk beside by default')
+  assert.equal(shortcutUi.isTypingKey(press('o')), true, 'a plain O is typing in a field')
+  assert.equal(shortcutUi.isTypingKey(press('Enter', { metaKey: true })), false, 'a chord is never typing')
+
+  // Rebound in Settings (the override store): the new key acts, the old one no longer does, and the
+  // cheat sheet, the hint bar and the palette hint all show the new key.
+  window.localStorage.setItem('tw-keymap-overrides', JSON.stringify({ 'talk-beside': 'Mod-Alt-o', 'select-whole-section': 'Alt-Enter' }))
+  assert.equal(shortcutUi.surfaceKey(press('o', { metaKey: true, altKey: true }), 'talk-beside'), true, 'a rebound talk beside answers its new key')
+  assert.equal(shortcutUi.surfaceKey(press('o'), 'talk-beside'), false, 'and no longer its old O')
+  assert.equal(shortcutUi.surfaceKey(press('Enter', { altKey: true }), 'select-whole-section'), true, 'a rebound select whole section answers ⌥↵')
+  assert.equal(shortcutUi.surfaceKey(press('Enter', { metaKey: true, shiftKey: true }), 'select-whole-section'), false, 'and no longer ⇧⌘↵')
+  assert.equal(shortcutUi.liveShortcutLabel('slide-picker.talk-beside'), '⌘⌥O', 'the live label follows the rebind')
+  assert.equal(shortcutUi.liveCommandShortcutLabel(paletteCommands().find((command) => command.id === 'talk-beside')), '⌘⌥O', 'the palette row shows the rebind')
+  assert.match(shortcutUi.renderKeyboardHelp(), /<kbd[^>]*>⌘⌥O<\/kbd>/, 'the cheat sheet shows the rebind')
+  assert.equal(hintKeys(shortcutUi.renderSlidePickerHints(), 'slide-picker.talk-beside'), '⌘⌥O', 'the hint bar shows the rebind')
+  assert.equal(hintKeys(shortcutUi.renderSlidePickerHints(), 'slide-picker.select-whole-section'), '⌥↵', 'the hint bar shows the rebound select whole section')
+  assert.equal(shortcutUi.buildEditorKeyBindings().some((binding) => binding.key === 'Mod-Alt-o'), false, 'a rebound surface key is still not an editor binding')
 
   window.localStorage.setItem('tw-keymap-overrides', '{}')
   assert.match(

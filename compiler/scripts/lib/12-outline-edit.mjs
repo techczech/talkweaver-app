@@ -24,6 +24,7 @@ import {
   mintId, ID_TOKEN_RE, idLineIndex, lineHasUnclosedBrace, preContentWindow, triggerLineBlock
 } from "./13-slide-ledger.mjs";
 import { parseOutlineTree } from "./14-outline-tree.mjs";
+import { isMarkdownFenceClosingLine, parseMarkdownFenceOpeningLine } from "./03-object-token.mjs";
 
 // ── Outline scanning ─────────────────────────────────────────────────────────
 //
@@ -38,21 +39,21 @@ function scanLines(text) {
   return text.split("\n");
 }
 
-// Per-line structural state: fences (length-aware, as in the adapter) and HTML comments
-// (the adapter strips comments before scanning; here a heading inside a comment must simply
-// not count as a boundary). Comment tracking is sequential per line: a line is "visible"
-// only when it starts outside an open comment.
+// Per-line structural state: fences and HTML comments (the adapter strips comments before
+// scanning; here a heading inside a comment must simply not count as a boundary). Fences follow
+// the compiler's outline tree exactly (14-outline-tree.mjs, via 03-object-token.mjs): backtick
+// AND tilde openers, and a close must use the opener's character and be at least as long.
+// Comment tracking is sequential per line: a line is "visible" only when it starts outside an
+// open comment.
 function structuralHeadings(lines) {
   const headings = []; // {index, depth, text}
-  let inFence = false;
-  let fenceMark = "";
+  let fenceOpening = null;
   let inComment = false;
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
-    const t = line.trim();
     const visibleAtStart = !inComment;
     // advance comment state through this line (comments may open/close mid-line, span lines)
-    if (!inFence) {
+    if (!fenceOpening) {
       let pos = 0;
       for (;;) {
         if (inComment) {
@@ -69,13 +70,12 @@ function structuralHeadings(lines) {
       }
     }
     if (!visibleAtStart) continue;
-    if (inFence) {
-      const close = t.match(/^(`{3,})\s*$/);
-      if (close && close[1].length >= fenceMark.length) { inFence = false; fenceMark = ""; }
+    if (fenceOpening) {
+      if (isMarkdownFenceClosingLine(line, fenceOpening)) fenceOpening = null;
       continue;
     }
-    const open = t.match(/^(`{3,})/);
-    if (open) { inFence = true; fenceMark = open[1]; continue; }
+    const open = parseMarkdownFenceOpeningLine(line);
+    if (open) { fenceOpening = open; continue; }
     const m = line.match(/^(#{1,6})\s+\S/);
     if (m) headings.push({ index: i, depth: m[1].length, text: line });
   }

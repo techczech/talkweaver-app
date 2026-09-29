@@ -63,11 +63,12 @@ async function runBrowserTest() {
     const panel = page.locator('#presenterPollPanel')
     assert.equal(await panel.isVisible(), true)
     assert.match(await panel.textContent(), /Choose one/)
-    assert.match(await panel.textContent(), /CHOICE · SINGLE/)
-    assert.match(await panel.textContent(), /HELD/)
+    assert.match(await panel.textContent(), /Single choice/) // sentence-case badges since presenter redesign ticket 06
+    assert.match(await panel.textContent(), /Results held/)
     assert.equal(await panel.locator('#presenterPollOpen').isVisible(), true)
 
     const compose = page.locator('#presenterQuickPollCompose')
+    await page.locator('#presenterMenuPoll').click() // in the Poll menu since presenter redesign ticket 04
     await page.locator('#presenterQuickPollButton').click()
     assert.equal(await compose.isVisible(), true)
     const quickOpen = compose.locator('#quickPollOpen')
@@ -196,11 +197,13 @@ async function runBrowserTest() {
     assert.equal(await panel.isVisible(), true, 'panel visible before dismiss')
     await panel.locator('#presenterPollDismiss').click()
     assert.equal(await panel.isVisible(), false, 'presenter dismiss hides the poll panel')
+    await page.locator('#presenterMenuPoll').click() // in the Poll menu since presenter redesign ticket 04
     await page.locator('#presenterQuickPollButton').click()
     await compose.locator('[data-quick-poll-type="open"]').click()
     await compose.locator('#quickPollMaxSubmissions').fill('3')
     await quickOpen.click()
     assert.equal((await page.evaluate(() => window.__pollActions)).at(-1).poll.maxSubmissions, 3)
+    await page.locator('#presenterMenuPoll').click() // in the Poll menu since presenter redesign ticket 04
     await page.locator('#presenterQuickPollButton').click()
     await compose.locator('[data-quick-poll-type="open"]').click()
     await compose.locator('#quickPollUnlimited').check()
@@ -216,9 +219,9 @@ function runGeneratedDocumentFallback() {
   assert.ok(parsed.getElementById('presenterPollPanel'))
   assert.match(model.fullHtml, /data-poll="\{&quot;pollId&quot;:&quot;poll-slide-choice&quot;/)
   assert.match(model.fullHtml, /id="presenterPollOpen"[^>]*>Open poll</)
-  assert.match(model.fullHtml, /id="presenterPollReveal"[^>]*>Reveal to everyone</)
-  assert.match(model.fullHtml, /id="presenterPollClose"[^>]*>Close poll</)
-  assert.match(model.fullHtml, /id="presenterQuickPollButton"[^>]*>Quick poll</)
+  assert.match(model.fullHtml, /id="presenterPollReveal"[^>]*>Reveal results</)
+  assert.match(model.fullHtml, /id="presenterPollClose"[^>]*>Stop accepting responses</)
+  assert.match(model.fullHtml, /id="presenterQuickPollButton"[^>]*>Compose Quick poll…</)
   assert.match(model.fullHtml, /id="presenterQuickPollCompose"/)
   assert.match(model.fullHtml, /data-quick-poll-type="single"/)
   assert.match(model.fullHtml, /id="quickPollQuestion"/)
@@ -250,14 +253,18 @@ function runGeneratedDocumentFallback() {
 
 let usedBrowser = true
 try {
-  await runBrowserTest()
-} catch (error) {
-  const message = String(error?.message || error)
-  if (!/MachPortRendezvousServer|bootstrap_check_in[^\n]*Permission denied/.test(message)) throw error
-  usedBrowser = false
+  try {
+    await runBrowserTest()
+  } catch (error) {
+    const message = String(error?.message || error)
+    if (!/MachPortRendezvousServer|bootstrap_check_in[^\n]*Permission denied/.test(message)) throw error
+    usedBrowser = false
+  }
+  // The generated document's own checks run with the browser test as well, not only in its place:
+  // run only as a fallback, their expectations went stale unseen (presenter redesign ticket 06).
   runGeneratedDocumentFallback()
 } finally {
   await rm(scratch, { recursive: true, force: true })
 }
 
-console.log(`presenter poll DOM: armed/open/results/reveal/closed, choice bars, open board and keyboard parity passed (${usedBrowser ? 'Playwright' : 'generated-document fallback'})`)
+console.log(`presenter poll DOM: armed/open/results/reveal/closed, choice bars, open board and keyboard parity passed (${usedBrowser ? 'Playwright and generated-document checks' : 'generated-document checks only'})`)
