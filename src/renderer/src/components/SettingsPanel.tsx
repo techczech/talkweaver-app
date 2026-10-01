@@ -456,7 +456,7 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
                 })
               }}
             >
-              Change…
+              Add vault…
             </button>
           </div>
 

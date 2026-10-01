@@ -14,6 +14,12 @@
 //     inside the two words (a <br>, an image, a closing block) means "not two words on one line"
 //     and the paragraph is left alone.
 //
+// ADR-0033 §7 (slide design round 2): in TITLES, the short words a, an, the, at, of, in, on, to,
+// and, or, for, by, with, is (case-insensitive) never end a line: tieShortWords() writes a no-break
+// space after each one, binding it to the next word, with the same protections (code, links and
+// brace tokens are left alone). The compiler cannot see the column, so where binding would leave
+// a word alone on a line the runtime gives the tie way (slide-fit.js settleTitle).
+//
 // Text copied or searched from the slide carries U+00A0 where the outline has a space; anything
 // that matches slide text against the outline must treat the two as equal.
 
@@ -30,10 +36,8 @@ const tagName = (tag) => (tag.match(/^<\/?\s*([a-zA-Z][\w-]*)/)?.[1] ?? "").toLo
 const isSpace = (unit) => unit === " " || unit === "\t" || unit === "\n" || unit === "\r";
 const isBreakFree = (unit) => unit === "&nbsp;" || unit === "&#160;" || unit === "&#xa0;" || unit === " ";
 
-/** Join the last two words of ONE paragraph's inner HTML; returns it unchanged when it must not. */
-export function keepLastTwoWordsTogether(innerHtml) {
-  const html = String(innerHtml ?? "");
-  // Units: one per character (an entity counts as one), or one per tag.
+/** Units: one per character (an entity counts as one), or one per tag. */
+function toUnits(html) {
   const units = [];
   let protectedDepth = 0;
   for (const piece of html.split(/(<[^>]*>)/)) {
@@ -50,6 +54,13 @@ export function keepLastTwoWordsTogether(innerHtml) {
       units.push({ tag: false, text: match[0], protected: protectedDepth > 0 });
     }
   }
+  return units;
+}
+
+/** Join the last two words of ONE paragraph's inner HTML; returns it unchanged when it must not. */
+export function keepLastTwoWordsTogether(innerHtml) {
+  const html = String(innerHtml ?? "");
+  const units = toUnits(html);
   let i = units.length - 1;
   const skipTransparentTags = () => { while (i >= 0 && units[i].tag && TRANSPARENT.has(units[i].name)) i--; };
   // Trailing whitespace and closing inline tags.
@@ -128,4 +139,50 @@ export function keepStatementLastWordsTogether(bodyHtml) {
     depth = Math.max(0, depth + (closing ? -1 : 1));
   }
   return out + html.slice(cursor);
+}
+
+export const SHORT_WORDS = new Set(["a", "an", "the", "at", "of", "in", "on", "to", "and", "or", "for", "by", "with", "is"]);
+const OPENING_PUNCTUATION = /^["'\u2018\u201c(\[]+/;
+
+/**
+ * Bind every short word of a title to the word after it with a no-break space (ADR-0033 §7).
+ * Only a single plain space between two plain, unprotected words is replaced; a short word with
+ * trailing punctuation ("a," "and:") is not one, and a word touching code, a link or a brace
+ * token is left alone. Returns the HTML unchanged when there is nothing to bind.
+ */
+export function tieShortWords(innerHtml) {
+  const html = String(innerHtml ?? "");
+  const units = toUnits(html);
+  const plainWord = (from, step) => {
+    const word = [];
+    for (let k = from; k >= 0 && k < units.length; k += step) {
+      const unit = units[k];
+      if (unit.tag) {
+        if (!TRANSPARENT.has(unit.name)) return null;
+        continue;
+      }
+      if (isSpace(unit.text) || isBreakFree(unit.text)) break;
+      word.push(unit);
+    }
+    if (step < 0) word.reverse();
+    return word;
+  };
+  let changed = false;
+  for (let k = 1; k < units.length - 1; k++) {
+    const unit = units[k];
+    if (unit.tag || unit.protected || !isSpace(unit.text)) continue;
+    // A neighbour may be an inline-formatting tag ("a <strong>tool</strong>"): binding works on the
+    // text either side of it, and plainWord() refuses any other tag.
+    const neighbourBlocks = (n) => (n.tag ? !TRANSPARENT.has(n.name) : isSpace(n.text) || isBreakFree(n.text));
+    if (neighbourBlocks(units[k - 1]) || neighbourBlocks(units[k + 1])) continue;
+    const before = plainWord(k - 1, -1);
+    const after = plainWord(k + 1, 1);
+    if (!before || !after || !before.length || !after.length) continue;
+    if ([...before, ...after].some((u) => u.protected || u.text === "{" || u.text === "}")) continue;
+    const text = before.map((u) => u.text).join("").replace(OPENING_PUNCTUATION, "").toLowerCase();
+    if (!SHORT_WORDS.has(text)) continue;
+    unit.text = NBSP;
+    changed = true;
+  }
+  return changed ? units.map((u) => u.text).join("") : html;
 }

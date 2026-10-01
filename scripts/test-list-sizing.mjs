@@ -45,8 +45,10 @@ const measureSlot = (page, slideId) => page.evaluate((id) => {
   }
 }, slideId)
 const BODY_CQW = 3.2
+// ADR-0033 (ticket 03): table cells read at 2.2cqw with tighter padding, not the 3.2cqw body token.
+const TABLE_CQW = 2.2
 const RAIL_CQW = 3.8
-const TITLE_CQW = 5.2
+const TITLE_CQW = 3.9
 const FLOOR_PX_AT_1600 = 31
 
 const { html, outPath } = await buildLayoutSampler()
@@ -138,7 +140,7 @@ try {
     assert(four.itemFonts.length === 4, 'four items render')
     four.itemFonts.forEach((px, index) => near(px, four.stageWidth * BODY_CQW / 100, `item ${index + 1} body font`))
     near(four.railToken, Math.max(38, four.stageWidth * RAIL_CQW / 100), 'default rail token')
-    near(four.titleToken, Math.max(44, four.stageWidth * TITLE_CQW / 100), 'default title token')
+    near(four.titleToken, Math.max(36, four.stageWidth * TITLE_CQW / 100), 'default title token')
     assert.equal(four.titleLayout, 'left', 'a plain list keeps the sidebar title')
     assert(four.h1Font <= four.railToken + 0.6 && four.h1Font >= floor, `sidebar title renders at or under the rail token (${four.h1Font}px)`)
     // Ticket 21 gives the sidebar column max(6vh, 61px) above and below and a wider rail gap
@@ -254,7 +256,7 @@ try {
       return value
     })
     near(ladder.bodyToken, ladder.stageWidth * 3.5 / 100, '{font-body=l} is one step above the default')
-    near(ladder.titleToken, Math.max(38, ladder.stageWidth * 4.4 / 100), '{font-title=s} is one step below the default')
+    near(ladder.titleToken, Math.max(30, ladder.stageWidth * 3.4 / 100), '{font-title=s} is one step below the default')
 
     // Ticket 21 — the sidebar content column takes the mockup's padding (6vh above and below, 5cqw
     // from the rail) and grouped lists sit in a hairline rhythm; tables read at the body token as
@@ -302,6 +304,7 @@ try {
         return {
           stageWidth: slide.parentElement.clientWidth,
           listFit: content.dataset.listFit || null,
+          textFit: content.dataset.textFit || null,
           zoom: Number(getComputedStyle(content).zoom || 1),
           cellFonts: cells.map((cell) => px(cell, 'fontSize')),
           cellPadTop: px(table.querySelector('td'), 'paddingTop'),
@@ -314,11 +317,11 @@ try {
         }
       }, id)
     }
-    const bodyPx = grouped.stageWidth * BODY_CQW / 100
+    const bodyPx = grouped.stageWidth * TABLE_CQW / 100
     const table = await measureTable('t21-table-noheader')
     assert(table, 'table fixture renders by deep link')
     console.log(JSON.stringify({ viewport, table }))
-    assert(table.cellFonts.every((px) => Math.abs(px - bodyPx) < 0.6), `table cells read at the body token, 3.2cqw (${Math.min(...table.cellFonts).toFixed(1)}px vs ${bodyPx.toFixed(1)}px)`)
+    assert(table.cellFonts.every((px) => Math.abs(px - bodyPx) < 0.6), `table cells read at the table token, 2.2cqw (${Math.min(...table.cellFonts).toFixed(1)}px vs ${bodyPx.toFixed(1)}px)`)
     assert(Math.abs(table.tableWidth - table.contentWidth) <= 1, 'the table fills the content width')
     // ADR-0030: the slide reserves the footer band in canvas px, the footer itself is window chrome
     // in window px. At scale 1 the table is centred against it exactly; on a larger window the
@@ -336,8 +339,11 @@ try {
     assert(gridded.hasThead && gridded.columnBorders.every((width) => width === 0), '{table-columns=off} keeps the header and drops the rules')
     const long = await measureTable('t21-table-long')
     assert(long.cellFonts.every((px) => px >= floor - 0.01), `a ten-row table never falls below the floor (${Math.min(...long.cellFonts).toFixed(1)}px)`)
-    assert(long.cellFonts.every((px) => px < bodyPx), 'a ten-row table stepped its type after padding')
-    assert(long.bottomAir >= -1, 'a ten-row table stays above the footer band')
+    // At 2.2cqw with tight padding (ADR-0033) a ten-row table fits by padding alone: type never exceeds the table token.
+    assert(long.cellFonts.every((px) => px <= bodyPx + 0.01), 'a ten-row table never reads larger than the table token')
+    // ADR-0033 §1: the whole-slide zoom may not take text below the floor. A ten-row table that still
+    // overflows at the floor keeps zoom 1 and is marked too-long (the editor warns) instead of shrinking.
+    assert(long.bottomAir >= -1 || (long.textFit === 'too-long' && long.zoom === 1), `a ten-row table stays above the footer band, or is marked too-long at zoom 1 (air ${long.bottomAir.toFixed(1)}, textFit ${long.textFit}, zoom ${long.zoom})`)
     assert(long.cellPadTop < table.cellPadTop, 'a crowded table has tighter row padding than a short one')
 
     await page.close()

@@ -7,9 +7,11 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const {
   WARNING_REGISTRY,
   formatWarning,
+  textTooTallPercent,
   warningBadgesForSurface,
   warningsForSurface
 } = await import(new URL('../compiler/scripts/lib/warning-registry.mjs', import.meta.url))
+const { textLayoutForSlide } = await import(new URL('../compiler/scripts/lib/text-layout.mjs', import.meta.url))
 
 const ids = new Set()
 for (const warning of WARNING_REGISTRY) {
@@ -79,6 +81,36 @@ const quoteTooLong = WARNING_REGISTRY.find((warning) => warning.id === 'quote-to
 assert.equal(quoteTooLong?.severity, 'warning', 'an overlong quote is a visible staged compiler warning')
 const codeTooLong = WARNING_REGISTRY.find((warning) => warning.id === 'code-too-long')
 assert.equal(codeTooLong?.severity, 'warning', 'an overlong code block is a visible staged compiler warning')
+const textTooLong = WARNING_REGISTRY.find((warning) => warning.id === 'text-too-long')
+assert.equal(textTooLong?.severity, 'warning', 'text that cannot fit at the readable minimum is a warning')
+assert.deepEqual(
+  textTooLong?.surfaces,
+  ['strip-badge', 'inspector', 'doctor'],
+  'text-too-long surfaces on the strip badge, Inspector and Layout Doctor'
+)
+assert.equal(
+  formatWarning('text-too-long:slide-7:18'),
+  'Text on this slide cannot fit at the readable minimum. Too tall by 18%. Shorten it, split the slide or move detail to notes.',
+  'text-too-long states the message, how much too tall and the remedy'
+)
+assert.equal(
+  formatWarning('text-too-long:slide-7'),
+  'Text on this slide cannot fit at the readable minimum. Shorten it, split the slide or move detail to notes.',
+  'text-too-long without an estimate omits the percentage'
+)
+assert.equal(textTooTallPercent('text-too-long:slide-7:18'), 18, 'the percentage is read from the payload')
+assert.equal(textTooTallPercent('text-too-long:slide-7'), null, 'no percentage, no reading')
+assert.deepEqual(
+  textLayoutForSlide({ blocks: [{ type: 'paragraph', text: 'Short.' }], regime: 'left' })?.tooLongAtFloor,
+  false,
+  'a short paragraph fits at the floor'
+)
+assert.equal(
+  textLayoutForSlide({ blocks: [{ type: 'list', items: Array.from({ length: 30 }, (_, i) => `Item number ${i} with several words in it`), children: [] }], regime: 'left' })?.tooLongAtFloor,
+  true,
+  'thirty list items do not fit at the floor'
+)
+assert.equal(textLayoutForSlide({ blocks: [{ type: 'image', src: 'x' }], regime: 'left' }), null, 'slides with images are left to the runtime')
 assert.deepEqual(
   quoteTooLong?.surfaces,
   ['strip-badge', 'inspector', 'doctor'],

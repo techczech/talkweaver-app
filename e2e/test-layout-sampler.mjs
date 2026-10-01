@@ -20,7 +20,9 @@ const screenshotsDir = join(samplerArtefactsDir, 'screenshots')
 
 const explicitHosts = {
   section: 'section-divider',
-  '2col': 'columns'
+  '2col': 'columns',
+  // Ticket 08: {noask} is carried by the sampler's first pre-work step.
+  noask: 'welcome-three-things-before-monday'
 }
 
 function normalise(value) {
@@ -141,11 +143,12 @@ for (const mode of ['Auto', 'Rail', 'Columns', 'Compact', 'Horizontal', 'Spine',
   const reported = [...section.matchAll(/data-tl-stops="(\d+)"/g)].reduce((sum, match) => sum + Number(match[1]), 0)
   assert.equal(reported, 5, `${mode}: the timeline reports five stops`)
 }
-for (const base of ['t22-pills-split', 't22-horizontal-split']) {
+// Eight stops: pills cut 4 + 4; horizontal cuts 3 + 3 + 2 (entries at the body size, ADR-0033 §8).
+for (const [base, cut] of [['t22-pills-split', [4, 4]], ['t22-horizontal-split', [3, 3, 2]]]) {
   const parts = model.slides.filter((slide) => slide.id === base || slide.id.startsWith(`${base}-`))
-  assert.equal(parts.length, 2, `${base}: eight stops split into two balanced continuation slides`)
+  assert.equal(parts.length, cut.length, `${base}: eight stops split into ${cut.length} balanced continuation slides`)
   assert.equal(parts[1].id, `${base}-2`, `${base}: the continuation id uses the timeline separator`)
-  assert.deepEqual(parts.map((slide) => slide.blocks[0].stops.length), [4, 4], `${base}: the cut is balanced`)
+  assert.deepEqual(parts.map((slide) => slide.blocks[0].stops.length), cut, `${base}: the cut is balanced`)
 }
 
 const entries = registryEntries()

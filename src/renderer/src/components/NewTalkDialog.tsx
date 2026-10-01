@@ -3,6 +3,8 @@ import type { TalkInfo } from '../../../preload/index'
 
 interface Props {
   vaultRoot: string
+  /** The vault the talk is made in (default: the first open vault). */
+  vaultId?: string
   /** Existing subfolders (vault-rel paths) to choose from. */
   folders?: string[]
   /** Pre-selected subfolder (e.g. when "New talk here" was used on a folder). */
@@ -20,7 +22,7 @@ function slugify(title: string): string {
     .replace(/^-+|-+$/g, '')
 }
 
-export default function NewTalkDialog({ vaultRoot: _vaultRoot, folders = [], defaultTopic = '', onCreated, onClose }: Props) {
+export default function NewTalkDialog({ vaultRoot: _vaultRoot, vaultId, folders = [], defaultTopic = '', onCreated, onClose }: Props) {
   const [title, setTitle] = useState('')
   const [topicFolder, setTopicFolder] = useState(defaultTopic)
   const [creating, setCreating] = useState(false)
@@ -71,7 +73,8 @@ export default function NewTalkDialog({ vaultRoot: _vaultRoot, folders = [], def
       const newTalk: TalkInfo = await (window as any).tw.vault.createTalk({
         title: title.trim(),
         slug,
-        topicFolder: topicFolder.trim() || undefined
+        topicFolder: topicFolder.trim() || undefined,
+        ...(vaultId ? { vaultId } : {})
       })
       onCreated(newTalk)
     } catch (err: any) {

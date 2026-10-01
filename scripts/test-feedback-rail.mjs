@@ -309,7 +309,7 @@ function fakeWorker() {
   assert.equal(worker.items.find((i) => i.itemId === late.itemId).status, 'new', 'Undo reverts it on the Worker')
   // The base revision's push time rides along ("written against your 22:51 save").
   assert.equal(service.list(SHARE).items.find((i) => i.itemId === edit.itemId).baseAt, null, 'a bare slide list has no time')
-  const v2 = worker.post({ kind: 'replace', baseRevision: 2, text: 'hers' })
+  const v2 = worker.post({ kind: 'replace', baseRevision: 2, text: 'theirs' })
   await wait(20); await service.idle()
   const listedV2 = service.list(SHARE).items.find((i) => i.itemId === v2.itemId)
   assert.deepEqual([listedV2.baseText, listedV2.baseAt], ['v2', '2026-09-27T21:51:00.000Z'], 'a kept revision brings its text and push time')

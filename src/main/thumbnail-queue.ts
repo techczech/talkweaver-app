@@ -1,9 +1,15 @@
 type ThumbnailResult = Record<string, string>
 
-/** One renderer, one pending document per editor; replaced callers still settle. */
+/** One renderer, one pending document per editor; replaced callers still settle. A `background`
+ *  job (a layout variant: the picker's and the Inspector's pictures of the slide) starts only when no
+ *  normal job is pending, so the editor strip and the Slide Browser never wait behind a QUEUED variant;
+ *  at most the one render already running (renders are not interrupted) finishes first. The variant's
+ *  compile before it is ordered the same way, on the preparation gate's background lane
+ *  (prepared-talk-cache.ts, createPreparationRoute). */
 export function createThumbnailQueue<T>(render: (options: T, signal: AbortSignal) => Promise<ThumbnailResult>) {
   type Job = {
     key: string | symbol
+    background: boolean
     options: T
     controller: AbortController
     resolve: (result: ThumbnailResult) => void
@@ -13,7 +19,11 @@ export function createThumbnailQueue<T>(render: (options: T, signal: AbortSignal
   let active: Job | null = null
   async function drain(): Promise<void> {
     if (active) return
-    const next = pending.values().next().value as Job | undefined
+    let next: Job | undefined
+    for (const job of pending.values()) {
+      if (!job.background) { next = job; break }
+      next ??= job
+    }
     if (!next) return
     pending.delete(next.key)
     active = next
@@ -28,7 +38,7 @@ export function createThumbnailQueue<T>(render: (options: T, signal: AbortSignal
       void drain()
     }
   }
-  return (options: T, owner?: string): Promise<ThumbnailResult> => {
+  return (options: T, owner?: string, background = false): Promise<ThumbnailResult> => {
     const key = owner ?? Symbol()
     if (active?.key === key) active.controller.abort()
     const replaced = pending.get(key)
@@ -37,7 +47,7 @@ export function createThumbnailQueue<T>(render: (options: T, signal: AbortSignal
       replaced.resolve({})
     }
     return new Promise((resolve, reject) => {
-      pending.set(key, { key, options, controller: new AbortController(), resolve, reject })
+      pending.set(key, { key, background, options, controller: new AbortController(), resolve, reject })
       void drain()
     })
   }

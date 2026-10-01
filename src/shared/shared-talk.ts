@@ -27,7 +27,7 @@ export interface SharedTalkState {
   revision: number
   /** Switch 1: push every save in the background. */
   liveUpdates: boolean
-  /** Switch 2: she may propose slide text, deletions and new slides, not only notes. */
+  /** Switch 2: they may propose slide text, deletions and new slides, not only notes. */
   proposals: boolean
   createdAt: string
   lastPushedAt: string | null
@@ -187,9 +187,9 @@ export function shareSheetView(model: ShareSheetModel): ShareSheetView {
   else if (model.phase === 'stopping') status = 'Stopping…'
   else if (model.error) { status = model.error; statusTone = 'error' }
   else if (share?.ended) { status = SHARE_ENDED_MESSAGE; statusTone = 'error' }
-  else if (share?.lastError) { status = `Her page is not up to date: ${share.lastError}`; statusTone = 'error' }
-  else if (share?.pushing) status = 'Updating her page…'
-  else if (share && share.revision === 0) status = 'Her page is not ready yet.'
+  else if (share?.lastError) { status = `Their page is not up to date: ${share.lastError}`; statusTone = 'error' }
+  else if (share?.pushing) status = 'Updating their page…'
+  else if (share && share.revision === 0) status = 'Their page is not ready yet.'
   const localOnly = Boolean(share?.localOnly)
   return {
     link: share?.url ?? '',

@@ -1,3 +1,4 @@
+import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
 import type { ProjectionRow } from '../../../preload/index.ts'
 import type { LayoutDoctorFinding } from '../../../shared/layout-doctor.ts'
 import { triggerFindingsForSlide } from '../../../shared/layout-doctor.ts'
@@ -7,10 +8,13 @@ import {
   groupApplies, layoutEntryFor, optionGroupsForSlide, sectionedOptionGroups, valuesForGroup,
   type ApplicableOptionGroup, type InspectorOptionSection, type SectionedOptionBinding
 } from '../../../shared/layout-registry/options.ts'
-import { commitOptionSelection, groupHasSelection, logicalTriggerBlockAfterHeading, selectionForGroup } from '../../../shared/trigger-line.ts'
+import { commitOptionSelection, groupHasSelection, logicalTriggerBlockAfterHeading, reportTriggerMergeWarnings, selectionForGroup } from '../../../shared/trigger-line.ts'
 import { DECK_DECIDED_GROUP, deckCommitContext, type DeckListStyle, type DeckStatementToken } from '../../../shared/deck-frame.ts'
 import { isStatementOptionGroup, statementSelections } from '../../../shared/statement-options.ts'
 import { selectionFromTriggerLine } from './layoutPickerModel.ts'
+import { inspectorBoardModel, type InspectorBoardModel } from './inspectorBoardModel.ts'
+import { slideBlockEnd } from '../../../../compiler/scripts/lib/board-slide.mjs'
+import { preworkKindOf, type InspectorPreworkModel } from './inspectorPreworkModel.ts'
 
 export type PaneState = 'both' | 'editor' | 'strip'
 
@@ -78,11 +82,8 @@ export function extractInspectorSlideBlock(content: string, headingLine: number 
   const start = headingLine - 1
   const match = lines[start]?.match(/^(#{1,6})\s/)
   if (!match) return null
-  let end = lines.length
-  for (let index = start + 1; index < lines.length; index += 1) {
-    const next = lines[index].match(/^(#{1,6})\s/)
-    if (next) { end = index; break }
-  }
+  // The slide ends at the next heading outside a code fence (a `# …` line in a fence is code).
+  let end = slideBlockEnd(lines, start)
   while (end > start + 1 && lines[end - 1].trim() === '') end -= 1
   return lines.slice(start, end).join('\n')
 }
@@ -106,7 +107,7 @@ export function applyInspectorOptionToOutline(
 
   if (block) {
     if (committed === block.line && block.end === block.start + 1 && block.warnings.length === 0) return content
-    for (const warning of block.warnings) console.warn(warning)
+    reportTriggerMergeWarnings(block.warnings)
     const carriageReturn = lines[block.start].endsWith('\r') ? '\r' : ''
     lines.splice(block.start, block.end - block.start, committed + carriageReturn)
   } else {
@@ -149,6 +150,10 @@ export interface InspectorModel {
   deckListStyle: DeckListStyle
   selectedTokens: Record<string, string>
   steps: InspectorStepModel
+  /** ADR-0032: a `{poll=board}` slide's Board section (its Poll section, headed "Board"). */
+  board?: InspectorBoardModel
+  /** Ticket 08: the slide's "Before the session" section (a pre-work step, the section, or a `{results=…}` slide). */
+  prework?: InspectorPreworkModel
 }
 
 export function inspectorModel(
@@ -161,7 +166,8 @@ export function inspectorModel(
   hasChildren = false,
   triggerFindings: readonly LayoutDoctorFinding[] = [],
   deckListStyle: DeckListStyle = '',
-  deckStatementToken: DeckStatementToken = ''
+  deckStatementToken: DeckStatementToken = '',
+  prework: InspectorPreworkModel | null = null
 ): InspectorModel {
   const row = rows?.[activeIndex] ?? null
   const layoutName = selectionFromTriggerLine(triggerLine, [...layouts]).find((entry) => entry.kind === 'layout')?.name
@@ -177,7 +183,9 @@ export function inspectorModel(
   // title regime on the row; a row without it (an old cached index row) is "not known".
   const titleLayout = row?.title_layout
   const titlePainted = typeof titleLayout === 'string' ? titleLayout !== 'hidden' && titleLayout !== '' : undefined
-  const candidates = optionGroupsForSlide({ layoutName, headingLevel, hasChildren })
+  // Ticket 08: a pre-work step's rows (prework-*) are offered only when the slide is a step.
+  const preworkKind = preworkKindOf(prework)
+  const candidates = optionGroupsForSlide({ layoutName, headingLevel, hasChildren, preworkKind })
   // T32: applicability reads the DECIDED selection — for List style with no authored token that is
   // the deck's choice, so the treatment is offered exactly when the compiled list is an icon list.
   const deckDecided = (key: string): string | undefined => key === DECK_DECIDED_GROUP ? deckListStyle : undefined
@@ -196,17 +204,24 @@ export function inspectorModel(
   }))
   const groups = unresolved
     ? []
-    : candidates.filter(({ group }) => groupApplies(group, { headingLevel, hasChildren, layoutName, selectedTokens }))
+    : candidates.filter(({ group }) => groupApplies(group, { headingLevel, hasChildren, layoutName, selectedTokens, preworkKind }))
+  // ADR-0032 (round-3 A2–A6): a board's Poll section is its Board section — the columns, hints,
+  // prompt, example and settings, read from the slide's own text.
+  const isBoard = !unresolved && selectedTokens['poll-type'] === 'poll=board'
   return {
-    title: row?.nav_title || row?.title || '(untitled)',
+    title: plainInlineText(row?.nav_title || row?.title) || '(untitled)',
     layoutName,
     unresolved,
     unresolvedFindings,
     groups,
-    sections: sectionedOptionGroups(groups, layoutEntryFor(layoutName)?.label).map((section) => ({
+    ...(isBoard ? { board: inspectorBoardModel(sourceMarkdown ?? row?.source_markdown ?? '', triggerLine) } : {}),
+    ...(prework && !unresolved ? { prework } : {}),
+    sections: withPreworkSection(sectionedOptionGroups(groups, layoutEntryFor(layoutName)?.label), unresolved ? null : prework).map((section) => ({
       ...section,
+      heading: isBoard && section.id === 'poll' ? 'Board' : section.id === 'prework' && prework ? prework.heading : section.heading,
+      ...(section.id === 'prework' && prework ? { chip: prework.chip } : {}),
       bindings: section.bindings.map((binding) => bindingModel(binding, selectedTokens, deckListStyle, {
-        layoutName, headingLevel, hasChildren, selectedTokens, titlePainted
+        layoutName, headingLevel, hasChildren, selectedTokens, titlePainted, preworkKind
       }))
     })),
     deckListStyle,
@@ -227,6 +242,8 @@ export function inspectorModel(
 
 
 export interface InspectorBindingModel extends SectionedOptionBinding {
+  /** ADR-0032 §1/§7: set when this group is drawn as pictures of the author's own slide. */
+  pictures?: OptionPictureSet
   /** The value token whose button is lit. */
   selectedToken: string
   /** The value token the deck decides for this group, when it decides one (the "deck" mark). */
@@ -237,6 +254,15 @@ export interface InspectorBindingModel extends SectionedOptionBinding {
 
 export interface InspectorSectionModel extends Omit<InspectorOptionSection, 'bindings'> {
   bindings: InspectorBindingModel[]
+  /** The jump-row chip when it differs from the heading (ticket 08: "Pre-work" over "Before the session"). */
+  chip?: string
+}
+
+/** Ticket 08: the "Before the session" section stands even when no registry row applies (the
+ *  pre-work section itself, a `{results=…}` slide): its body is the Inspector's own. Last in the run. */
+function withPreworkSection(sections: InspectorOptionSection[], prework: InspectorPreworkModel | null): InspectorOptionSection[] {
+  if (!prework || sections.some((section) => section.id === 'prework')) return sections
+  return [...sections, { id: 'prework', heading: prework.heading, bindings: [] }]
 }
 
 function bindingModel(
@@ -249,10 +275,73 @@ function bindingModel(
   // (the one the slide renders); its Auto value exists for the typed surfaces.
   const values = valuesForGroup(binding.group, context)
     .filter((value) => binding.group.key !== 'statement-sidebar' || value.token !== '')
+  const pictures = optionPictureSet(binding.group.key, context.layoutName, values)
+  const withPictures = pictures ? { pictures } : {}
   if (binding.group.key !== DECK_DECIDED_GROUP) {
-    return { ...binding, selectedToken: selectedTokens[binding.group.key] ?? '', values }
+    return { ...binding, ...withPictures, selectedToken: selectedTokens[binding.group.key] ?? '', values }
   }
-  return { ...binding, selectedToken: selectedTokens[binding.group.key] ?? '', deckToken: deckListStyle, values }
+  return { ...binding, ...withPictures, selectedToken: selectedTokens[binding.group.key] ?? '', deckToken: deckListStyle, values }
+}
+
+// ── ADR-0032 §1/§7 (journey 3, adjust): option pictures ────────────────────────────────────
+//
+// The Inspector draws an option as a picture of the author's own slide with that option only for
+// Cards (form, icons, title placement, body size), the list styles (style, icon treatment) and a
+// section's container mode — the groups the locked mockup pictures (hifi S0, S4, S8, S11).
+// Every other layout keeps its buttons. Scalar title size and sidebar widths stay buttons too:
+// a title placement's Width row is the values a picture set leaves out.
+//
+// `layout` is the registry entry the picture request applies the option to (what the slide is, so
+// the request changes one option and keeps the rest of the Trigger line).
+
+interface PictureRule {
+  layout: string
+  /** Only when the slide's layout is this one (Cards' title placement and body size are the global groups). */
+  onLayout?: string
+  /** The values that get pictures; others are left to buttons. Absent = every offered value. */
+  tokens?: readonly string[]
+}
+
+const PICTURE_RULES: Readonly<Record<string, PictureRule>> = {
+  form: { layout: 'cards', onLayout: 'cards' },
+  'cards-icons': { layout: 'cards', onLayout: 'cards' },
+  'title-placement': { layout: 'cards', onLayout: 'cards', tokens: ['', 'titletop', 'notitle', 'sidebar'] },
+  'font-body': { layout: 'cards', onLayout: 'cards' },
+  'list-style': { layout: 'list' },
+  'iconlist-variant': { layout: 'iconlist' },
+  'container-mode': { layout: 'carousel' }
+}
+
+export interface OptionPictureSet {
+  layout: string
+  /** Values drawn as pictures, in the group's order. */
+  pictured: OptionValue[]
+  /** Values left to buttons (a title placement's split widths). */
+  rest: OptionValue[]
+}
+
+/** How a group is drawn: as pictures (with the entry a request applies them to), or null for buttons. */
+export function optionPictureSet(
+  groupKey: string,
+  layoutName: string | undefined,
+  values: readonly OptionValue[]
+): OptionPictureSet | null {
+  const rule = PICTURE_RULES[groupKey]
+  if (!rule || (rule.onLayout && rule.onLayout !== layoutName)) return null
+  const pictured = values.filter((value) => !rule.tokens || rule.tokens.includes(value.token))
+  if (pictured.length < 2) return null
+  return { layout: rule.layout, pictured: [...pictured], rest: values.filter((value) => !pictured.includes(value)) }
+}
+
+export interface OptionPictureRequest {
+  layout: string
+  options: Array<{ group: string; token: string }>
+}
+
+/** The `layout:variant-thumbnail` request for one picture: the slide with `commitToken` (what a
+ *  click WRITES, see inspectorCommitToken) set on `groupKey`, the rest of its Trigger line kept. */
+export function optionPictureRequest(set: OptionPictureSet, groupKey: string, commitToken: string): OptionPictureRequest {
+  return { layout: set.layout, options: [{ group: groupKey, token: commitToken }] }
 }
 
 /** The token an Inspector click WRITES for a value button: the deck-marked button removes the

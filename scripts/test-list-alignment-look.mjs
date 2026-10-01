@@ -40,7 +40,7 @@ const source = [
   // Seven rows compile to the wide variant (.fl-wide), whose row rule has a higher specificity.
   '### Seven rows', '{iconlist=list} {sidebar} {id=rows-wide}', '', ...WIDE_ROWS, '',
   // Cards whose headings differ in length and whose sub-lists differ in count.
-  '### Current model families', '{logolist} {sidebar} {id=cards}', '',
+  '### Current model families', '{logolist} {sidebar} {narrowcols=off} {id=cards}', '',
   '- OpenAI – GPT 6', '  - Luna', '  - Sol', '  - Astra',
   '- Anthropic – Claude 5', '  - Sonnet', '  - Opus',
   '- Google – Gemini 3', '  - Flash Lite', '  - Flash', '  - Pro', '  - Ultra'

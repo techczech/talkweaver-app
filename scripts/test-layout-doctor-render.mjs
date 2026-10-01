@@ -7,6 +7,8 @@ import { chromium } from 'playwright'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { codeLayoutForBlock } from '../compiler/scripts/lib/code-layout.mjs'
 import { doctorDeck } from './layout-doctor-render.mjs'
+import { textTooTallPercent, warningBadgesForSurface } from '../compiler/scripts/lib/warning-registry.mjs'
+import { textFitNoteLabel, textFitNotesFor } from '../src/shared/text-fit-notes.ts'
 
 const wrappedWidthLayout = codeLayoutForBlock({ text: ['x'.repeat(80), 'y'.repeat(80)].join('\n') })
 assert.equal(wrappedWidthLayout.lines, 2, 'code layout retains the authored line count')
@@ -214,6 +216,60 @@ for (const viewport of ['1600x900', '1280x720']) {
 const longCodeRecord = parcelResult.slides.find((candidate) => candidate.id === 'type-floor-code-too-long')
 for (const viewport of ['1600x900', '1280x720']) {
   assert.equal(longCodeRecord.viewports[viewport].subFloorText.length, 0, `${viewport}: overlong code remains at the scaled type floor`)
+}
+
+// ADR-0033 §1: text that cannot fit at the type floor is never zoomed below it. The compiler estimates
+// it (text-too-long, on the strip badge, Inspector and Layout Doctor), the runtime marks the slide
+// (data-text-fit) and the Doctor reports what the runtime saw, with the percentage it is too tall.
+const overfullRows = Array.from({ length: 3 }, () => [
+  '| Chat | Answers one question at a time in a window | Quick lookups and drafts |',
+  '| Projects | Keeps files and instructions together | Repeated work on one topic |',
+  '| Research | Reads many sources and writes a report | Questions that need sources |',
+  '| Agents | Runs tools in a loop until a task is done | Multi-step work on files |',
+  '| Code | Edits a repository and runs its tests | Software changes |'
+].join('\n')).join('\n')
+const overfullOutline = [
+  '---', 'title: Overfull fixture', 'auto_title_slide: false', 'auto_thanks_slide: false', '---',
+  '### An overfull table {id=text-floor-overfull}', '',
+  '| Tool | What it does | When to use it |', '| --- | --- | --- |', overfullRows, '',
+  '### A short table {id=text-floor-fits}', '',
+  '| Tool | What it does |', '| --- | --- |', '| Chat | Answers one question |', ''
+].join('\n')
+const overfullDir = join(fixtureRoot, 'overfull-talk')
+mkdirSync(overfullDir, { recursive: true })
+const overfullPath = join(overfullDir, 'overfull.md')
+writeFileSync(overfullPath, overfullOutline, 'utf8')
+const overfullModel = await prepareSource(overfullPath, overfullOutline, 'Overfull fixture', statSync(overfullPath))
+const overfullWarning = overfullModel.warnings.find((warning) => warning.startsWith('text-too-long:text-floor-overfull:'))
+assert(overfullWarning, `the overfull stand-in emits text-too-long (${overfullModel.warnings.join(' | ')})`)
+assert(!overfullModel.warnings.some((warning) => warning.startsWith('text-too-long:text-floor-fits')), 'a table that fits emits nothing')
+const overfullPercent = textTooTallPercent(overfullWarning)
+assert(overfullPercent >= 20, `the warning carries how much too tall the slide is (${overfullWarning})`)
+for (const surface of ['strip-badge', 'inspector', 'doctor']) {
+  assert.equal(
+    warningBadgesForSurface([overfullWarning], surface)[0]?.id,
+    'text-too-long',
+    `text-too-long reaches the ${surface} surface`
+  )
+}
+const overfullNotes = textFitNotesFor([{ warnings: [overfullWarning] }, { warnings: [] }], [7, 12])
+assert.deepEqual(overfullNotes.map((note) => note.line), [7], 'the outline editor marks only the flagged slide, on its heading line')
+assert.match(textFitNoteLabel(overfullNotes[0]), new RegExp(`cannot fit at the readable minimum\\. Too tall by ${overfullPercent}%`), 'the note carries the message and the too-tall percentage')
+const overfullHtmlPath = join(overfullDir, 'overfull.html')
+writeFileSync(overfullHtmlPath, overfullModel.fullHtml, 'utf8')
+const overfullResult = await doctorDeck(overfullHtmlPath, {
+  outputDir: join(fixtureRoot, 'overfull-report'),
+  viewports: [{ width: 1600, height: 900 }, { width: 1280, height: 720 }],
+  talkDir: overfullDir
+})
+for (const viewport of ['1600x900', '1280x720']) {
+  const over = overfullResult.slides.find((candidate) => candidate.id === 'text-floor-overfull').viewports[viewport]
+  assert(over.textFit?.tooLong, `${viewport}: the runtime marks the overfull table data-text-fit=too-long`)
+  assert(over.textFit.tooTallPercent >= 20, `${viewport}: the runtime reports how much too tall it is (${over.textFit.tooTallPercent}%)`)
+  assert(over.failures.some((failure) => failure.class === 'text-too-long'), `${viewport}: the Doctor reports text-too-long`)
+  assert.equal(over.subFloorText.length, 0, `${viewport}: the overfull table is not shrunk below the floor`)
+  const fits = overfullResult.slides.find((candidate) => candidate.id === 'text-floor-fits').viewports[viewport]
+  assert.equal(fits.textFit, null, `${viewport}: a table that fits is not marked`)
 }
 
 const mutatedParcelHtmlPath = join(parcelTalkDir, 'ticket-17-fixtures-mutated.html')
@@ -440,7 +496,7 @@ const iconListOutline = [
   '    - you review the diff',
   '',
   '### Three items keep boxes',
-  '{iconlist}{id=t28-three}',
+  '{iconlist}{narrowcols=off}{id=t28-three}',
   '',
   '- Translate {icon=lucide:languages}',
   '- Structure {icon=lucide:boxes}',

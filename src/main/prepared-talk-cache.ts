@@ -76,3 +76,47 @@ export function createPreparedTalkCache<T>(options: {
     stats: () => ({ entries: retained.size, bytes, pending: pending.size })
   }
 }
+
+/** Which preparation a compile is: the live deck (the editor strip, the Inspector, Present, the
+ *  thumbnails of the talk as written) or a layout VARIANT of it (a picture of the slide in another
+ *  layout, ADR-0032 §6), which nothing else will ask for again. */
+export type PreparationLane = 'live' | 'variant'
+
+/** Runs one heavy step (the compiler's `prepareSource`) on the preparation gate. */
+export type GatedRun = <R>(task: () => Promise<R>) => Promise<R>
+
+/**
+ * Where a compile goes, by lane. A live compile goes through the prepared-talk cache and takes the
+ * gate's ordinary lane. A variant compile bypasses the cache (it would evict the live deck's retained
+ * model and stay retained itself) and takes the gate's background lane, so the live deck's compile on
+ * a typing pause never waits behind a variant: it still runs one deck at a time with everything else,
+ * and queues in order with the other background work (the share builder).
+ */
+export function createPreparationRoute<T>(
+  cache: { get(key: string, group: string, load: () => Promise<T>): Promise<T> },
+  gate: GatedRun & { background: GatedRun }
+) {
+  return (lane: PreparationLane, key: string, group: string, load: (gated: GatedRun) => Promise<T>): Promise<T> =>
+    lane === 'variant'
+      ? load((task) => gate.background(task))
+      : cache.get(key, group, () => load((task) => gate(task)))
+}
+
+/**
+ * `load` once, shared by every caller, but only once it has FOUND something: a load that rejects or
+ * comes back empty (`undefined` — the compiler directory not there yet, an import that failed) is
+ * forgotten, and the next call loads again, so one transient failure is never kept for the app's life.
+ * Callers that arrive while a load is running share it.
+ */
+export function memoiseUntilFailure<T>(load: () => Promise<T | undefined>): () => Promise<T | undefined> {
+  let kept: Promise<T | undefined> | null = null
+  return () => {
+    if (kept) return kept
+    const attempt = load().then(
+      (value) => { if (value === undefined && kept === attempt) kept = null; return value },
+      (error: unknown) => { if (kept === attempt) kept = null; throw error }
+    )
+    kept = attempt
+    return attempt
+  }
+}

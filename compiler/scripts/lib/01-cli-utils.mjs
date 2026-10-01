@@ -146,6 +146,10 @@ export const stageFitRuntimeSource = readFileSync(join(scriptDir, "..", "assets"
 // renderPollFrame, so the live poll is the compiled frame with its state filled. One composition.
 export const pollDisplayRuntimeSource = [pollFrameRuntimeSource(), ...["poll-display.js", "poll-projection.js"]
   .map((name) => readFileSync(join(scriptDir, "..", "assets", "runtime", name), "utf8"))].join("\n");
+// ADR-0032 ticket 04: the venue page draws a board with the same frame renderer and the same
+// audience-boundary sanitiser as the audience window, then fits it (board-screen.js).
+export const boardScreenRuntimeSource = [pollFrameRuntimeSource(), ...["poll-display.js", "board-screen.js"]
+  .map((name) => readFileSync(join(scriptDir, "..", "assets", "runtime", name), "utf8"))].join("\n");
 // Vendored markmap runtime for the {mindmap} layout (ADR-0005: "Mindmaps are rendered by markmap …
 // never hand-positioned"). Three minified browser builds, concatenated as VALUES (never re-quoted)
 // into ONE <script> that runs at document top-level so each vendor IIFE sees `this === window`:

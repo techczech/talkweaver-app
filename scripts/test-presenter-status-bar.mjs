@@ -8,7 +8,8 @@
 //     and End live there ends the session; "Not live" is a button there ("Go live  G") that
 //     starts going live, the command of Live menu → Go live and G (Dominik, preview.8, 28 Sep);
 //  3. reactions and questions render only when supplied (a fixture through
-//     twLivePollBridge.onAudience, the call a live feature will make);
+//     twLivePollBridge.onAudience, the call a live feature will make), and the live bridge's own
+//     onAudience feeds them for the slide on screen from the main process's live:audience pushes;
 //  4. the top bar at 1280x800, 1440x900 and 1728x1117 in the idle, L1 and L2 states: no label
 //     wraps, nothing clips, no horizontal overflow, only the chrome sizes 26 / 16 / 14 / 13px, one
 //     UI typeface (monospace for clock, counter and recorded length), and the collapse steps
@@ -104,10 +105,10 @@ export const clipboard = { writeText() {} }
   const audienceFixture = `if (window === window.top && window.twLivePollBridge) window.twLivePollBridge.onAudience = (cb) => { window.__audience = cb }`
 
   browser = await chromium.launch({ headless: true })
-  const open = async ([width, height], slide) => {
+  const open = async ([width, height], slide, { fixture = true } = {}) => {
     const context = await browser.newContext({ viewport: { width, height } })
     await context.addInitScript({ content: `if (window === window.top) {\n${preload}\n}` })
-    await context.addInitScript({ content: audienceFixture })
+    if (fixture) await context.addInitScript({ content: audienceFixture })
     const page = await context.newPage()
     page.errors = []
     page.on('pageerror', (error) => page.errors.push(error.message))
@@ -225,6 +226,10 @@ export const clipboard = { writeText() {} }
     check(n?.tag === 'BUTTON' && n.inSlot && n.text === 'Not live' && n.tip === 'Go live' && n.key === 'G' && n.icon === 'lucide-radio', `live: "Not live" in the status bar is a button named "Go live  G" with the radio icon (${JSON.stringify(n)})`)
     check(n?.cursor === 'pointer' && n.border === 'solid', `live: "Not live" looks like a button (pointer, bordered) (${JSON.stringify(n)})`)
     if (n) {
+      // The section chip (slide "two" is in the fixture's timed section) is revealed by the runtime's
+      // one-second tick, and when it appears it pushes Go live left. Measure only after that, or the
+      // pointer lands on the chip and the tooltip is the chip's, not Go live's.
+      if (FIXTURE_DECK) await page.waitForFunction(() => { const c = document.getElementById('sectionTimer'); return !!c && !c.hidden && c.getClientRects().length > 0 }, null, { timeout: 5000 }).catch(() => failures.push('live: the section timer chip never appeared for the timed section'))
       const box = await page.locator('#presenterGoLive').boundingBox()
       if (box) await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
       await settle(page, 400)
@@ -325,6 +330,46 @@ export const clipboard = { writeText() {} }
       check(c.reactions === null && c.questions === null, 'audience: they go when the counts go')
     }
     check(page.errors.length === 0, `live: no page errors (${page.errors.join('; ')})`)
+    await context.close()
+  }
+
+  // ── 3b. The live bridge itself feeds the chip and counter (no fixture): counts for the slide on screen ──
+  {
+    const { page, context } = await open([1440, 900], 'one', { fixture: false })
+    const counts = () => page.evaluate(() => ({
+      reactions: document.getElementById('presenterReactions')?.hidden === false ? document.getElementById('presenterReactions').innerText.replace(/\s+/g, ' ').trim() : null,
+      questions: document.getElementById('presenterQuestions')?.hidden === false ? document.getElementById('presenterQuestions').innerText.trim() : null,
+      names: [...document.querySelectorAll('#presenterReactions > span')].map((el) => el.getAttribute('aria-label')).join(' | '),
+    }))
+    const push = (payload) => page.evaluate((value) => window.__push('live:audience', value), payload)
+    let c = await counts()
+    check(c.reactions === null && c.questions === null, `audience bridge: nothing before a session is live (${JSON.stringify(c)})`)
+    await page.evaluate(() => window.__push('live:status', 'live')); await settle(page)
+    c = await counts()
+    check(c.reactions === '0 0 0' && c.questions === '0', `audience bridge: live with no reactions yet shows zeros (${JSON.stringify(c)})`)
+    await push({ kind: 'snapshot', reactionCounts: { one: { puzzled: 2, helped: 5, bookmark: 1 }, two: { helped: 1 } }, questions: [{ answered: false }, { answered: true }] }); await settle(page)
+    c = await counts()
+    if (SHOTS) { await mkdir(SHOTS, { recursive: true }); await page.mouse.move(700, 450); await page.screenshot({ path: join(SHOTS, 'presenter-chip-slide-one-1440x900.png') }) }
+    check(c.reactions === '2 5 1' && c.questions === '1', `audience bridge: a snapshot shows the current slide's counts and the unanswered questions (${JSON.stringify(c)})`)
+    check(c.names === 'Puzzled by this: 2 | Helped me understand: 5 | Bookmarked: 1', `audience bridge: each count is named (${c.names})`)
+    await push({ kind: 'reaction', slideId: 'one', counts: { puzzled: 3, helped: 5, bookmark: 1 } }); await settle(page)
+    c = await counts()
+    check(c.reactions === '3 5 1', `audience bridge: a live update changes the chip (${JSON.stringify(c)})`)
+    await push({ kind: 'reaction', slideId: 'two', counts: { helped: 9 } }); await settle(page)
+    c = await counts()
+    check(c.reactions === '3 5 1', `audience bridge: another slide's update leaves this slide's chip alone (${JSON.stringify(c)})`)
+    for (let i = 0; i < 4 && (await page.evaluate(() => location.hash)) !== '#two'; i++) { await page.keyboard.press('ArrowRight'); await settle(page, 250) }
+    await settle(page, 400)
+    c = await counts()
+    check(c.reactions === '0 9 0', `audience bridge: the chip changes with the slide (${JSON.stringify(c)})`)
+    if (SHOTS) await page.screenshot({ path: join(SHOTS, 'presenter-chip-slide-two-1440x900.png') })
+    await page.evaluate(() => window.__push('live:status', 'paused-reconnecting')); await settle(page)
+    c = await counts()
+    check(c.reactions === '0 9 0', `audience bridge: kept while the session reconnects (${JSON.stringify(c)})`)
+    await page.evaluate(() => window.__push('live:status', 'ended')); await settle(page)
+    c = await counts()
+    check(c.reactions === null && c.questions === null, `audience bridge: gone when the session ends (${JSON.stringify(c)})`)
+    check(page.errors.length === 0, `audience bridge: no page errors (${page.errors.join('; ')})`)
     await context.close()
   }
 

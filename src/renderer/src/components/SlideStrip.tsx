@@ -1,3 +1,4 @@
+import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
 import React, { useEffect, useRef, useState } from 'react'
 import type { TalkInfo, ProjectionRow } from '../../../preload/index'
 import type { LayoutDoctorFinding } from '../../../shared/layout-doctor'
@@ -124,7 +125,7 @@ function compiledToPreviews(rows: ProjectionRow[]): SlidePreview[] {
     const preview: SlidePreview = {
       index: i,
       blockIndex: isBlock ? block : null,
-      title: p.nav_title || p.title || '(untitled)',
+      title: plainInlineText(p.nav_title || p.title) || '(untitled)',
       excerpt: p.text_excerpt ?? '',
       layout: layoutBadge,
       role: p.role ?? '',
@@ -193,7 +194,7 @@ function groupBySection(slides: SlidePreview[]): SectionGroup[] {
   // the section better than the raw key.
   for (const g of groups) {
     const titleRow = g.slides.find((s) => s.row?.role === 'section-title')
-    const fromRow = titleRow?.row?.nav_title || titleRow?.row?.title
+    const fromRow = plainInlineText(titleRow?.row?.nav_title || titleRow?.row?.title)
     g.title = (fromRow || g.title || 'Untitled section').trim() || 'Untitled section'
   }
   return groups

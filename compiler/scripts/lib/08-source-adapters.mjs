@@ -3,7 +3,7 @@ import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { args, slugify, parseGridDims, escapeHtml } from "./01-cli-utils.mjs";
-import { parseHeadingAttrs, parseTriggerLine, resolveAuthoredMode, parseCountdownDuration, timelineBlockFieldsFromStops, renderInline, accentForSectionName, accentForDeckColour, backgroundTintForName, resolveClaimStyle, applyQuoteTitleAttribution, CLAIM_STYLES, DECK_ACCENT_NAMES } from "./02-triggers-layout.mjs";
+import { titleRegimeForLayout, parseHeadingAttrs, parseTriggerLine, resolveAuthoredMode, parseCountdownDuration, timelineBlockFieldsFromStops, renderInline, accentForSectionName, accentForDeckColour, backgroundTintForName, resolveClaimStyle, applyQuoteTitleAttribution, CLAIM_STYLES, DECK_ACCENT_NAMES } from "./02-triggers-layout.mjs";
 import { lexMarkdownBlocks } from "./03-markdown-lexer.mjs";
 import { chartObjectTokenAt, parseMarkdownFenceOpeningLine, isMarkdownFenceClosingLine } from "./03-object-token.mjs";
 import { extractTitle, updateDeckTitle } from "./04-html-extraction.mjs";
@@ -13,15 +13,22 @@ import { buildDeckHtmlFromModel, adaptCanonicalPptJson, adaptLearnWeaverExport }
 import { annotateQuoteLayout, quoteSplitCountForBlocks, splitQuoteSlideBlocks } from "./quote-layout.mjs";
 import { timelineContinuationParts } from "./timeline-layout.mjs";
 import { annotateCodeLayout } from "./code-layout.mjs";
+import { annotateTextLayout } from "./text-layout.mjs";
 import { resolveSlideFrame, FRAME_BUILTINS } from "./11-frame.mjs";
 import { parseSimpleYaml } from "./simple-yaml.mjs";
+import { resolveTitleLook, TITLE_LOOKS, TITLE_LOOK_PLACES } from "./title-look.mjs";
+import { resolveScreenshotStyle, SCREENSHOT_STYLES } from "./screenshot-row.mjs";
+import { resolveShotList, SHOT_LIST_ARRANGEMENTS } from "./slot-composition.mjs";
 import { posterBlockFor, posterAccentFor, applyAuthoredPosters, TITLE_STYLES } from "./title-poster.mjs";
 import { parseOutlineTree } from "./14-outline-tree.mjs";
 import { blankHtmlComments } from "./html-comments.mjs";
 import { audienceSourceLines } from "./slide-script.mjs";
 import { readDeckFlag, deckFlagOn, readDeckChoice, readDeckMinutes, DECK_PALETTES, DECK_FONTS, DECK_LOGO_COLOURS } from "./deck-settings.mjs";
 import { sequence } from "./15-sequencer.mjs";
+import { resolveNarrowColumns } from "./narrow-columns.mjs";
 import { pollDirectivesFor, pollDefinitionFor, rebasePollDefinition } from "./poll-authoring.mjs";
+import { preworkFeedsFromTree, preworkFindings, preworkFromTree, takeRightMarkers } from "./prework.mjs";
+import { readReactionsValue, reactionWarnings } from "./reaction-sets.mjs";
 import { SECTION_ONLY_TRIGGER_KEYS } from "../triggers.mjs";
 import { isStatementDimensionKey, resolveStatementOptions } from "./statement-options.mjs";
 import { pictureKeyForSlide } from "./10-projections.mjs";
@@ -428,6 +435,9 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
   // surrounding ()/<> and tidy the whitespace. Frontmatter `hide_email: true` (or `hide-email`).
   const hideEmailFlag = readDeckFlag(meta.hide_email ?? meta["hide-email"]);
   if (hideEmailFlag.state === "unreadable") warnings.push(`deck-flag-unknown:hide_email:${hideEmailFlag.raw}`);
+  // ADR-0033 §5: the deck-wide narrow-columns setting is read once, so an unreadable value says so.
+  const narrowColumnsFlag = readDeckFlag(meta.narrow_columns ?? meta["narrow-columns"]);
+  if (narrowColumnsFlag.state === "unreadable") warnings.push(`deck-flag-unknown:narrow_columns:${narrowColumnsFlag.raw}`);
   const hideEmail = deckFlagOn(hideEmailFlag);
   if (hideEmail && typeof meta.author === "string") {
     meta.author = meta.author
@@ -537,8 +547,16 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
   if (colourChoice.state === "unknown") warnings.push(`colour-unknown:${colourChoice.raw}`);
   const titleStyleChoice = readDeckChoice(meta.title_style, TITLE_STYLES);
   if (titleStyleChoice.state === "unknown") warnings.push(`title-style-unknown:${titleStyleChoice.raw}`);
+  const titleLookChoice = readDeckChoice(meta.title_look ?? meta["title-look"], ["default", ...TITLE_LOOKS]);
+  if (titleLookChoice.state === "unknown") warnings.push(`title-look-unknown:${titleLookChoice.raw}`);
+  const titleLookAtChoice = readDeckChoice(meta.title_look_at ?? meta["title-look-at"], TITLE_LOOK_PLACES);
+  if (titleLookAtChoice.state === "unknown") warnings.push(`title-look-at-unknown:${titleLookAtChoice.raw}`);
   const claimStyleChoice = readDeckChoice(meta.claim_style ?? meta["claim-style"], CLAIM_STYLES);
   if (claimStyleChoice.state === "unknown") warnings.push(`claim-style-unknown:${claimStyleChoice.raw}`);
+  const screenshotListChoice = readDeckChoice(meta.screenshot_list ?? meta["screenshot-list"], SHOT_LIST_ARRANGEMENTS);
+  if (screenshotListChoice.state === "unknown") warnings.push(`screenshot-list-unknown:${screenshotListChoice.raw}`);
+  const screenshotStyleChoice = readDeckChoice(meta.screenshot_style ?? meta["screenshot-style"], SCREENSHOT_STYLES);
+  if (screenshotStyleChoice.state === "unknown") warnings.push(`screenshot-style-unknown:${screenshotStyleChoice.raw}`);
   // Deck license (2026-06-13): frontmatter `license:` (+ credits/note/url) → a footer popup,
   // never a dedicated slide. parseLicense expands common CC codes to a friendly name + URL.
   // `license:` is the one closed vocabulary with no silent fallback: an unlisted name is kept
@@ -594,7 +612,8 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     if (parseGridDims(s.attrs.blocks)) return "grid";
     // {cards=stepped} sets a `cards` VALUE attr (no explicit layout); asking for a cards variant
     // means the cards layout (the cols→columns pattern). Bare {cards} sets layout=cards above.
-    if (s.attrs.cards != null && s.attrs.cards !== true) return "cards";
+    // ADR-0032: a NUMBER is a board's cards-per-phone setting ({cards=3}), never the cards layout.
+    if (s.attrs.cards != null && s.attrs.cards !== true && !/^\d+$/.test(String(s.attrs.cards))) return "cards";
     if (s.cards.length) return "cards";
     const blocks = lexMarkdownBlocks(s.lines);
     const hasMedia = blocks.some((b) => ["image", "embed", "video"].includes(b.type));
@@ -841,9 +860,24 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
   function flushSlide() {
     if (!slide) return;
     const baseId = slide.attrs.id || slide.id;
+    // Ticket 08 (ADR-0032 amendment point 5): a quick check's right option ends with `{right}`.
+    // Only the presenter may know it: the marker leaves the slide's content (the poll's options,
+    // the rendered list) and the text the phone reads, before anything else reads either.
+    let checkScriptSource = null;
+    if (slide.attrs.check === true) {
+      slide.lines = takeRightMarkers(slide.lines).lines;
+      const scriptLines = Array.isArray(slide.scriptSourceLines) ? slide.scriptSourceLines : slide.sourceLines;
+      if (Array.isArray(scriptLines)) checkScriptSource = takeRightMarkers(scriptLines, { throughHeadings: true }).lines.join("\n").trimEnd();
+      // Fix round S2: the slide's own source leaves the compiler without the marker too, so no
+      // output tree (projection rows, search, the Library) carries the right answer.
+      if (Array.isArray(slide.sourceLines)) slide.sourceLines = takeRightMarkers(slide.sourceLines, { throughHeadings: true }).lines;
+    }
     const authored = pollDirectivesFor(slide.lines);
     const authoredPoll = pollDefinitionFor(slide, lexMarkdownBlocks(authored.contentLines), baseId, authored, warnings);
     if (authoredPoll) slide.lines = authored.contentLines;
+    // Ticket 04: the slide's own reactions ({reactions=…}); absent is the standard set.
+    const reactionSet = readReactionsValue(slide.attrs.reactions);
+    warnings.push(...reactionWarnings(baseId, reactionSet.issues));
     // Structure proposes the divider, the author disposes (see sectionDividerDecision).
     const authoredLayout = inferLayout(slide);
     const dividerDecision = sectionDividerDecision(slide, slide.authoredAttrKeys, authoredLayout);
@@ -1148,6 +1182,12 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
         // over for a shared body.
         slide.carousel = carouselSubSlidesFromBlocks(rawBlocks, subKicker);
         blocks = [];
+        if (slide.carousel.length === 0) {
+          // Ticket 10: {carousel} over a heading with no blocks has no sub-slide to show, so with
+          // {notitle} the slide rendered fully blank. Say so, and let the heading show instead.
+          warnings.push(`carousel-empty:${slide.attrs.id || slide.id}`);
+          slide.attrs = { ...slide.attrs, notitle: false };
+        }
       }
     } else if (hashStaticCards || flatStaticCards) {
       // STATIC cards GRID — all cards visible at once (ADR-0021), NOT a carousel. #### cards forced
@@ -1229,6 +1269,14 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     applyQuoteTitleAttribution(blocks, slide.title);
     annotateQuoteLayout(blocks, layout, baseId, (warning) => warnings.push(warning));
     annotateCodeLayout(blocks, layout, baseId, (warning) => warnings.push(warning));
+    // ADR-0033 §1: text that cannot fit at the type floor. The compiler estimates the same condition
+    // the presenter's autofitContent reports at runtime (data-text-fit="too-long").
+    annotateTextLayout({
+      blocks,
+      layout,
+      title: slide.title,
+      regime: slide.titleTop === true ? "top" : slide.split ? "left" : (({ sidebar: "left", top: "top" })[titleRegimeForLayout(layout)] || ""),
+    }, baseId, (warning) => warnings.push(warning));
 
     const timelineHorizontal = slide.attrs.timeline === "horizontal"
       || slide.attrs.timeline === "spine"
@@ -1258,13 +1306,18 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
       sourceMarkdown: Array.isArray(slide.sourceLines) ? slide.sourceLines.join("\n").trimEnd() : "",
       // Folded layouts only: the source the phone text view parses (slide-script.mjs), covering
       // the folded children. Absent elsewhere, so the script reads sourceMarkdown.
-      ...(Array.isArray(slide.scriptSourceLines)
-        ? { scriptSourceMarkdown: slide.scriptSourceLines.join("\n").trimEnd() }
-        : {}),
+      ...(checkScriptSource != null
+        ? { scriptSourceMarkdown: checkScriptSource }
+        : Array.isArray(slide.scriptSourceLines)
+          ? { scriptSourceMarkdown: slide.scriptSourceLines.join("\n").trimEnd() }
+          : {}),
       kicker: titleOnlySection && slide.nodeLevel > 2 ? slide.sectionTitle : autoKicker(slide),
       navTitle: slide.title,
       title: slide.title,
       ...(authoredPoll ? { poll: authoredPoll } : {}),
+      // Ticket 04: what the audience bar and the presenter chip offer on this slide — stored ids
+      // (`agree`, `custom:Too fast`), [] for off. Absent is the standard three.
+      ...(reactionSet.mode !== "standard" ? { reactions: reactionSet.ids } : {}),
       // Authored stepping mode: {mode=reveal|focus} activates that mode on arrival. The legacy
       // {reveal=steps} attr is kept as an alias for {mode=reveal} (documented; migrate lazily).
       mode: resolveAuthoredMode(slide.attrs),
@@ -1283,6 +1336,15 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
       // ADR-0023 §4: which claim treatment a wholly bold paragraph takes on this slide —
       // {claim=plain|bar} on the slide, else the deck's `claim_style:`, else plain (C1).
       claimStyle: resolveClaimStyle(slide.attrs, meta),
+      // ADR-0033 §4: how two or three screenshots in a row are drawn — {screenshots=frames|fanned}
+      // on the slide, else the deck's `screenshot_style:`, else window frames.
+      screenshotStyle: resolveScreenshotStyle(slide.attrs, meta),
+      // ADR-0033 §4: a list whose lines each carry a screenshot — {shotlist=beside|stacked} on the
+      // slide, else the deck's `screenshot_list:`, else beside lines.
+      shotList: resolveShotList(slide.attrs, meta),
+      // ADR-0033 §5: columns too narrow for their words change shape unless {narrowcols=off} on the
+      // slide or `narrow_columns: off` on the deck says otherwise.
+      narrowColumns: resolveNarrowColumns(slide.attrs, meta),
       // {font-body=xs|s|m|l|xl} / {font-title=…}: per-slide type-ramp override (m = ramp default).
       fontBody: ["xs","s","m","l","xl"].includes(String(slide.attrs["font-body"] ?? "")) ? slide.attrs["font-body"] : "",
       fontTitle: ["xs","s","m","l","xl"].includes(String(slide.attrs["font-title"] ?? "")) ? slide.attrs["font-title"] : "",
@@ -1348,6 +1410,12 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
       })(),
       // {sidebar}: the left title rail renders as a solid dark panel (PPT "Sidebar title" look).
       titleStyle: slide.attrs.titlestyle === "sidebar" ? "sidebar" : "",
+      // 0.37 ticket 04: the top title's look (kicker | label | tab) and the kicker's placement —
+      // slide > section > deck (title-look.mjs). Named apart from `title_style` (poster variant).
+      ...(() => {
+        const { look, place } = resolveTitleLook(slide.attrs || {}, sectionDefaultsMap[slide.sectionTitle] || {}, deckDefaults, meta);
+        return { titleLook: look, titleLookPlace: place };
+      })(),
       split: slide.attrs.split != null && slide.attrs.split !== true ? String(slide.attrs.split).trim() : "",
       // Wide timelines (horizontal track + the spine) take the full slide width → top-title.
       timelineHorizontal,
@@ -1840,6 +1908,22 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
   dedupeTreeIdsAndInsertSequenceSplits();
   emitNodeSlides(root.children);
 
+  // Ticket 08 (ADR-0032 amendment point 5): the talk's pre-work form, read from the id-resolved
+  // tree by the same reader the app uses, with every slide the section emitted (presenting leaves
+  // them out). Its right answers stay on the model; no audience output reads it.
+  const prework = preworkFromTree(root);
+  for (const finding of preworkFindings(root, prework)) {
+    warnings.push(`${finding.code}:${finding.slideId}${finding.detail ? `:${finding.detail}` : ""}`);
+  }
+  if (prework) {
+    prework.slideIds = slides.filter((s) => s.section === prework.sectionId).map((s) => s.id);
+    // Board slides fed by a step, with the compiled deck's slide ids and positions (ticket 11).
+    prework.feeds = preworkFeedsFromTree(root).map((feed) => {
+      const index = slides.findIndex((s) => s.id === feed.slideId);
+      return index >= 0 ? { ...feed, number: index + 1 } : feed;
+    });
+  }
+
   const syntheticNode = (id, nodeTitle, attrs = {}) => ({
     level: 2,
     title: nodeTitle,
@@ -2054,6 +2138,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
   return {
     title, sourceType: "markdown-outline", adapter: "markdown-outline-v2",
     contentSchemaVersion: "markdown-outline-v2", warnings, sections, subsections, slides, beats,
+    ...(prework ? { prework } : {}),
     ...(deckLinks.length ? { deckLinks } : {}),
     ...(durationSeconds ? { durationSeconds } : {}),
     ...(deckFont ? { deckFont } : {}),

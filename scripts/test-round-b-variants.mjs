@@ -33,7 +33,9 @@ const iconBody = [
   '- Craft {icon=lucide:wrench}'
 ].join('\n')
 
-const iconBoxes = await compile('Icon boxes', '{iconlist}', iconBody)
+// Three cards beside the title rail are narrower than 22cqw and become rows (ADR-0033 §5); the boxes
+// treatment is checked with the setting off, and the reshape itself in test-narrow-columns.mjs.
+const iconBoxes = await compile('Icon boxes', '{iconlist} {narrowcols=off}', iconBody)
 assert.match(iconBoxes.html, /class="feature-list[^"\n]*"/, 'bare iconlist still renders a feature list')
 const iconBoxesMarkup = iconBoxes.html.match(/<ul class="feature-list[^"\n]*">[\s\S]*?<\/ul>/)?.[0] ?? ''
 assert.doesNotMatch(iconBoxesMarkup, /fl-iconlist-list/, 'bare iconlist keeps the current boxes treatment')
@@ -81,7 +83,7 @@ const fourItems = [
 const fourAutoRows = await compile('Four auto rows', '{iconlist}', fourItems)
 assert.match(fourAutoRows.html, /class="feature-list[^"\n]*fl-iconlist-list/, 'the >3-item auto rule still takes the plain icon rows')
 
-const iconUnknown = await compile('Icon unknown', '{iconlist=tiles}', iconBody)
+const iconUnknown = await compile('Icon unknown', '{iconlist=tiles} {narrowcols=off}', iconBody)
 assert(iconUnknown.model.warnings.includes('iconlist-unknown:tiles'), 'unknown iconlist value warns')
 const iconUnknownMarkup = iconUnknown.html.match(/<ul class="feature-list[^"\n]*">[\s\S]*?<\/ul>/)?.[0] ?? ''
 assert.doesNotMatch(iconUnknownMarkup, /fl-iconlist-list/, 'unknown iconlist value falls back to boxes')

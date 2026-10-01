@@ -1,13 +1,13 @@
-import { parsePresenterServerMessage, parseInstantSlide, type InstantSlide, type PollStateMessage, type PresenterInstantMessage, type PresenterPollMessage, type SlideFocusState, type SlideLightboxState, type SlideState } from '../../worker/protocol'
+import { parsePresenterServerMessage, parseInstantSlide, type AudienceQuestion, type InstantSlide, type PollStateMessage, type PresenterAudienceMessage, type PresenterBoardMessage, type PresenterInstantMessage, type PresenterPollMessage, type ReactionCounts, type ReactionRecord, type SlideFocusState, type SlideLightboxState, type SlideState } from '../../worker/protocol'
 import { parseRecoveredVoteRecord, parseRecoveryServerMessage, type RecoveredVoteRecord, type SessionSnapshot, type SessionPresence } from '../../worker/recovery-protocol'
 
 export type LiveStatus = 'connecting' | 'live' | 'paused-reconnecting' | 'ending' | 'ended'
   | 'expired' | 'authentication-failed' | 'incompatible' | 'superseded'
-export interface PendingPollOperation { operationId: string; action: PresenterPollMessage | PresenterInstantMessage }
+export interface PendingPollOperation { operationId: string; action: PresenterPollMessage | PresenterInstantMessage | PresenterAudienceMessage | PresenterBoardMessage }
 export interface LiveOperationUpdate {
   operationId: string
   status: 'pending' | 'confirmed' | 'rejected'
-  message: PresenterPollMessage | PresenterInstantMessage
+  message: PresenterPollMessage | PresenterInstantMessage | PresenterAudienceMessage | PresenterBoardMessage
   error?: string
 }
 interface SocketLike {
@@ -43,6 +43,15 @@ export function createLivePresenterClient(options: {
   onPollVoteRecord?: (message: RecoveredVoteRecord) => void
   onSnapshot?: (message: SessionSnapshot) => void
   onPresence?: (presence: Omit<SessionPresence, 'type'>) => void
+  /** Reaction counts (ADR-0027): one slide after each accepted reaction, or every slide on a snapshot. */
+  onReactionCounts?: (slideId: string, counts: ReactionCounts) => void
+  onReactionSnapshot?: (counts: Record<string, ReactionCounts>) => void
+  onQuestions?: (questions: AudienceQuestion[]) => void
+  /**
+   * Reaction records for the Run (ticket 06), in sequence order with no gaps, each exactly once:
+   * from each `reaction.counts` and from snapshot pages after `afterReactionSequence`.
+   */
+  onReactionRecords?: (records: ReactionRecord[]) => void
   onOperation?: (update: LiveOperationUpdate) => void
   onPendingChange?: (pending: PendingPollOperation[]) => void
   onCursorChange?: (sequence: number) => void
@@ -50,6 +59,8 @@ export function createLivePresenterClient(options: {
   probe?: () => Promise<LiveStatus | null>
   pending?: PendingPollOperation[]
   afterSequence?: number
+  /** The last reaction record sequence already held; the worker replays everything after it. */
+  afterReactionSequence?: number
   latest?: SlideState | null
   reconnectDelayMs?: number
   handshakeTimeoutMs?: number
@@ -66,6 +77,8 @@ export function createLivePresenterClient(options: {
   let latest: SlideState | null = options.latest ?? null
   let cursor = options.afterSequence ?? 0
   const bufferedRecords = new Map<number, RecoveredVoteRecord>()
+  let reactionCursor = options.afterReactionSequence ?? 0
+  const bufferedReactions = new Map<number, ReactionRecord>()
   let pending = structuredClone(options.pending ?? [])
   let syncId = '', syncSlide = '', nonce = ''
   let inFlight = ''
@@ -122,7 +135,7 @@ export function createLivePresenterClient(options: {
     syncId = uuid()
     syncSlide = JSON.stringify(latest)
     later('handshake', () => fail('synchronisation-timeout'), options.handshakeTimeoutMs ?? 10_000)
-    send({ type: 'session.sync', syncId, slideState: latest, afterSequence: cursor })
+    send({ type: 'session.sync', syncId, slideState: latest, afterSequence: cursor, afterReactionSequence: reactionCursor })
   }
   function heartbeat() {
     later('heartbeat', () => {
@@ -150,6 +163,17 @@ export function createLivePresenterClient(options: {
       cursor = next.sequence
       bufferedRecords.delete(cursor)
     }
+  }
+  // Reaction records: live ones can arrive ahead of a replay page (or after a pause), so hold any
+  // beyond a gap until the gap is filled, and hand them on in sequence.
+  function receiveReactionRecords(records: ReactionRecord[]) {
+    for (const record of records) if (record.sequence > reactionCursor) bufferedReactions.set(record.sequence, record)
+    const ready: ReactionRecord[] = []
+    while (bufferedReactions.has(reactionCursor + 1)) {
+      ready.push(bufferedReactions.get(reactionCursor + 1)!)
+      bufferedReactions.delete(++reactionCursor)
+    }
+    if (ready.length) options.onReactionRecords?.(ready)
   }
   function connect() {
     if (stopped) return
@@ -181,9 +205,13 @@ export function createLivePresenterClient(options: {
             for (const poll of message.polls) options.onPollState?.(poll)
             options.onInstantSlide?.(message.instantSlide ?? null)
             for (const record of message.voteRecords ?? []) receiveRecord(record)
+            receiveReactionRecords(message.reactionRecords ?? [])
+            // A snapshot is the whole feedback state: what it does not list is zero or empty.
+            options.onReactionSnapshot?.(message.reactionCounts ?? {})
+            options.onQuestions?.(message.questions ?? [])
             options.onSnapshot?.(message)
             if (message.presence) options.onPresence?.(message.presence)
-            if (message.moreRecords || syncSlide !== JSON.stringify(latest)) { sendSync(); return }
+            if (message.moreRecords || message.moreReactionRecords || syncSlide !== JSON.stringify(latest)) { sendSync(); return }
             cancel('handshake')
             syncId = ''; attempt = 0
             setStatus('live')
@@ -191,6 +219,12 @@ export function createLivePresenterClient(options: {
             heartbeat(); flush()
             return
           }
+          if (message?.type === 'reaction.counts') {
+            receiveReactionRecords(message.records)
+            options.onReactionCounts?.(message.slideId, message.counts)
+            return
+          }
+          if (message?.type === 'questions.state') { options.onQuestions?.(message.questions); return }
           if (message?.type === 'session.presence') {
             options.onPresence?.({ presenterConnected: message.presenterConnected, venueScreens: message.venueScreens })
             return
@@ -226,7 +260,7 @@ export function createLivePresenterClient(options: {
       latest = { slideId, reveal, focus, ...(lightbox ? { lightbox } : {}), ...(talkQr ? { talkQr: true } : {}) }
       if (liveStatus === 'live') send({ type: 'slide.publish', ...latest })
     },
-    sendPoll(action: PresenterPollMessage | PresenterInstantMessage): string | false {
+    sendPoll(action: PresenterPollMessage | PresenterInstantMessage | PresenterAudienceMessage | PresenterBoardMessage): string | false {
       if (stopped) return false
       const operationId = uuid()
       const next = [...pending, { operationId, action: structuredClone(action) }]

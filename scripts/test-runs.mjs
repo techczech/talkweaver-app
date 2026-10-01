@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import {
   addRunPoll,
   addRunPollResponse,
+  applyRunAudienceFeedback,
   applyRunInstantSlides,
   applyRunPollBuffer,
   attachDeliveryToPlanned,
@@ -18,6 +19,7 @@ import {
   plannedRunCandidates,
   persistRun,
   persistRunForTalk,
+  reactionCountsBySlide,
   readRun,
   readRunForTalk,
   runPathForTalk,
@@ -27,8 +29,20 @@ import {
   runHandoutSlug,
   runInstantSlideFrom,
   setRunHandoutUrl,
+  preworkWindow,
   updatePlannedRun
 } from '../src/main/runs.ts'
+import { parseAudienceQuestion } from '../worker/protocol.ts'
+import { applyRunBoards } from '../src/main/runs.ts'
+import { isHiddenCard, runBoardFromPollState, runBoardMarkdown, runBoardState, runBoardView, setRunBoardCardPutBack } from '../src/shared/run-board.ts'
+import { runSharePayload } from '../src/shared/run-results-share.ts'
+import { createRunResultsShares } from '../src/main/run-results-share.ts'
+import { LINK_NOT_UPDATED, registerRunBoardIpc } from '../src/main/run-board-ipc.ts'
+import { parseRunSharePush } from '../worker/run-share-state.ts'
+import { applyRunPrework } from '../src/main/runs.ts'
+import { mergeRunPrework, preworkWindowMs, publicPreworkForm } from '../src/shared/run-prework.ts'
+import { PREWORK_PURGED_MESSAGE, createRunPrework, registerRunPreworkIpc } from '../src/main/run-prework.ts'
+import { sheetTimeZone, zoneToSend } from '../src/shared/plan-run.ts'
 
 const root = mkdtempSync(join(tmpdir(), 'talkweaver-runs-'))
 const baseInput = {
@@ -244,6 +258,140 @@ assert.equal(survived[0].id, 'survivor')
   assert.deepEqual(imageHeader(Buffer.from(REAL_JPEG, 'base64')), { format: 'jpeg', width: 2, height: 1 })
 }
 
+// Reactions ticket 06: a Run keeps the talk's reactions ({reaction, tMs, slideId}, undos as
+// withdrawn: true) and questions ({text, name?, slideId, tMs, answered}) as optional fields. Old Runs
+// read and re-persist byte for byte; malformed entries are dropped and the rest of the Run is kept.
+{
+  const vault = mkdtempSync(join(tmpdir(), 'talkweaver-feedback-'))
+  const old = { id: 'run-old', talkSlug: 'feedback-talk', talkTitle: 'Feedback talk', kind: 'delivery', status: 'delivered',
+    slideSet: { kind: 'full' }, startedAt: '2026-09-23T13:05:00.000Z', endedAt: '2026-09-23T14:00:00.000Z',
+    recordingMs: 0, wallClockMs: 0, timerTargetMin: 30, context: null, pathwayId: null, audio: null, transcript: null,
+    slideTimeIndex: [], polls: [], pollResponses: [] }
+  const oldPath = join(vault, '_PRESENTATIONS', 'feedback-talk', 'run-old.json')
+  _mkdirSync(join(vault, '_PRESENTATIONS', 'feedback-talk'), { recursive: true })
+  const oldBytes = `${JSON.stringify(old, null, 2)}\n`
+  _writeFileSync(oldPath, oldBytes)
+  const oldRun = readRun(vault, 'feedback-talk', 'run-old')
+  assert.equal('reactions' in oldRun, false, 'an old Run gains no reactions key')
+  assert.equal('questions' in oldRun, false, 'an old Run gains no questions key')
+  persistRun(vault, oldRun)
+  assert.equal(readFileSync(oldPath, 'utf8'), oldBytes, 'an old Run re-persists byte for byte')
+  assert.equal(applyRunAudienceFeedback(oldRun, {}), oldRun, 'nothing to merge changes nothing')
+
+  const reactions = [
+    { id: 's:r1', reaction: 'puzzled', slideId: 'slide-3', tMs: 41000 },
+    { id: 's:r2', reaction: 'puzzled', slideId: 'slide-3', tMs: 42000 },
+    { id: 's:r3', reaction: 'puzzled', slideId: 'slide-3', tMs: 45000, withdrawn: true },
+    { id: 's:r4', reaction: 'helped', slideId: 'slide-3', tMs: 45000 },
+    { id: 's:r5', reaction: 'bookmark', slideId: 'slide-3', tMs: 46000 },
+    { id: 's:r6', reaction: 'custom:Too fast', slideId: 'slide-6', tMs: 50000 },
+    { id: 's:r7', reaction: 'agree', slideId: 'slide-9', tMs: 60000 },
+    { id: 's:r8', reaction: 'agree', slideId: 'slide-9', tMs: 61000, withdrawn: true },
+  ]
+  const questions = [
+    { id: 's:question-2', text: 'Where can I read it?', slideId: 'slide-6', tMs: 52000, answered: false },
+    { id: 's:question-1', text: 'Why?', name: 'Priya', slideId: 'slide-3', tMs: 46000, answered: true },
+  ]
+  let run = applyRunAudienceFeedback(oldRun, { reactions, questions })
+  assert.equal(run.reactions.length, 8, 'every tap and undo is kept, in arrival order')
+  assert.deepEqual(run.reactions[2], { id: 's:r3', reaction: 'puzzled', slideId: 'slide-3', tMs: 45000, withdrawn: true })
+  assert.equal('withdrawn' in run.reactions[0], false, 'a tap carries no withdrawn key')
+  assert.deepEqual(run.questions, [
+    { id: 's:question-1', text: 'Why?', name: 'Priya', slideId: 'slide-3', tMs: 46000, answered: true },
+    { id: 's:question-2', text: 'Where can I read it?', slideId: 'slide-6', tMs: 52000, answered: false },
+  ], 'questions are kept oldest first; no name means no name key')
+  assert.deepEqual(reactionCountsBySlide(run.reactions), [
+    { slideId: 'slide-3', counts: { puzzled: 1, helped: 1, bookmark: 1 } },
+    { slideId: 'slide-6', counts: { 'custom:Too fast': 1 } },
+  ], 'net counts: a withdrawal takes one away; a slide netting to nothing is left out')
+  assert.equal(applyRunAudienceFeedback(run, { reactions, questions }), run, 're-flushing the same feedback changes nothing')
+  run = applyRunAudienceFeedback(run, { reactions: reactions.slice(0, 2), questions: [{ ...questions[0], answered: true }] })
+  assert.equal(run.reactions.length, 8, 'a later flush never removes a reaction')
+  assert.equal(run.questions.length, 2, 'a later flush never removes a question')
+  assert.equal(run.questions[1].answered, true, 'a later "Mark answered" reaches the Run')
+  persistRun(vault, run)
+  assert.deepEqual(readRun(vault, 'feedback-talk', 'run-old'), run, 'reactions and questions survive a round trip')
+
+  // Malformed entries are dropped; the Run and its good entries are kept.
+  _writeFileSync(oldPath, JSON.stringify({ ...old, reactions: [
+    reactions[0],
+    { reaction: 'shrug', slideId: 'slide-1', tMs: 1 },
+    { reaction: 'custom:', slideId: 'slide-1', tMs: 1 },
+    { reaction: 'helped', tMs: 1 },
+    { reaction: 'helped', slideId: 'slide-1', tMs: 'soon' },
+    { reaction: 'helped', slideId: 'slide-1', tMs: 1, withdrawn: 'yes' },
+    { reaction: 'helped', slideId: 'x'.repeat(101), tMs: 1 },
+    { ...reactions[0] },
+    null, 'puzzled', [1],
+    { reaction: 'helped', slideId: 'slide-1', tMs: -5.4 },
+  ], questions: [
+    questions[1],
+    { text: '   ', slideId: 'slide-1', tMs: 1 },
+    { text: 'x'.repeat(501), slideId: 'slide-1', tMs: 1 },
+    { text: 'Who?', name: 'n'.repeat(61), slideId: 'slide-1', tMs: 1 },
+    { text: 'Who?', name: 42, slideId: 'slide-1', tMs: 1 },
+    { text: 'Who?', slideId: 'slide-1', tMs: 1, answered: 'yes' },
+    { text: '<img src=x onerror=alert(1)>', slideId: 'slide-1', tMs: 3 },
+    { text: '  Trimmed  ', name: '  Lena  ', slideId: 'slide-1', tMs: 2 },
+    { text: 'Duplicate', id: 's:question-1', slideId: 'slide-1', tMs: 9 },
+  ] }))
+  const repaired = readRun(vault, 'feedback-talk', 'run-old')
+  assert.equal(repaired.id, 'run-old', 'a Run with malformed feedback still loads')
+  assert.deepEqual(repaired.reactions, [reactions[0], { reaction: 'helped', slideId: 'slide-1', tMs: 0 }],
+    'unknown reactions, missing slides, bad times and flags, duplicate ids and non-objects are dropped; negative times clamp to 0')
+  assert.deepEqual(repaired.questions, [
+    { text: 'Trimmed', name: 'Lena', slideId: 'slide-1', tMs: 2, answered: false },
+    { text: '<img src=x onerror=alert(1)>', slideId: 'slide-1', tMs: 3, answered: false },
+    { id: 's:question-1', text: 'Why?', name: 'Priya', slideId: 'slide-3', tMs: 46000, answered: true },
+  ], 'empty, over-long, badly named, badly flagged and duplicate questions are dropped; text is kept as text')
+  const notArrays = normaliseRun({ ...old, reactions: { puzzled: 3 }, questions: 'Why?' })
+  assert.equal('reactions' in notArrays || 'questions' in notArrays, false, 'non-array fields are dropped')
+  assert.equal(listRuns(vault, 'feedback-talk').length, 1, 'History still lists the Run')
+}
+
+// Ticket 06 fix round: reactions are replaced by id like questions (a time recomputed from the Run's
+// true start replaces one computed from a planned Run's midnight start); `withdrawn` is exactly true
+// or absent; ids are at most 100 characters; attaching a delivery keeps what a live session flushed.
+{
+  const base = normaliseRun({ id: 'run-fix', talkSlug: 'fix-talk', startedAt: '2026-09-29T00:00:00.000Z' })
+  let run = applyRunAudienceFeedback(base, { reactions: [{ id: 's:r1', reaction: 'helped', slideId: 's1', tMs: 50_400_000 }] })
+  run = applyRunAudienceFeedback(run, { reactions: [{ id: 's:r1', reaction: 'helped', slideId: 's1', tMs: 12_000 }, { id: 's:r2', reaction: 'bookmark', slideId: 's1', tMs: 13_000 }] })
+  assert.deepEqual(run.reactions.map((r) => [r.id, r.tMs]), [['s:r1', 12_000], ['s:r2', 13_000]], 'a reaction with a known id is replaced in place')
+  const strict = normaliseRun({ ...base, reactions: [
+    { reaction: 'helped', slideId: 's1', tMs: 1, withdrawn: 'yes' },
+    { reaction: 'helped', slideId: 's1', tMs: 2, withdrawn: false },
+    { reaction: 'helped', slideId: 's1', tMs: 3, withdrawn: 1 },
+    { reaction: 'helped', slideId: 's1', tMs: 4, withdrawn: true },
+    { reaction: 'helped', slideId: 's1', tMs: 5, id: 'r'.repeat(101) },
+    { reaction: 'helped', slideId: 's1', tMs: 6, id: 'r'.repeat(100) },
+    { reaction: 'helped', slideId: 's1', tMs: 7, id: 42 },
+  ], questions: [
+    { text: 'Too long an id', slideId: 's1', tMs: 1, id: 'q'.repeat(101) },
+    { text: 'Just fits', slideId: 's1', tMs: 2, id: 'q'.repeat(100) },
+  ] })
+  assert.deepEqual(strict.reactions.map((r) => r.tMs), [4, 6], 'withdrawn other than true, and ids over 100 characters or not strings, drop the entry')
+  assert.deepEqual(strict.questions.map((q) => q.text), ['Just fits'])
+  const q = { questionId: 'question-1', text: 'Why?', slideId: 's1', tMs: 1, acceptedAt: 2, answered: false }
+  assert.ok(parseAudienceQuestion(q))
+  assert.ok(parseAudienceQuestion({ ...q, questionId: 'x'.repeat(100) }))
+  assert.equal(parseAudienceQuestion({ ...q, questionId: 'x'.repeat(101) }), null, 'a question id over 100 characters is refused')
+
+  // A planned Run that a live session already wrote into, then the delivery saved onto it.
+  const planned = normaliseRun({ id: 'run-planned', talkSlug: 'fix-talk', status: 'planned', plannedDate: '2026-09-30',
+    eventTitle: 'Seminar', slideSet: { kind: 'full' }, startedAt: '2026-09-30T00:00:00.000Z',
+    polls: [{ id: 'p1', type: 'single', question: 'Choose', options: [{ optionId: 'a', label: 'A' }], visibility: 'live' }],
+    pollResponses: [{ responseId: 's:1', pollId: 'p1', choice: 'a', tMs: 5, slideId: 's1' }],
+    instantSlides: [{ id: 'text-1', kind: 'text', shownAt: 1, afterSlideId: 's1', text: 'Hi' }],
+    reactions: [{ id: 's:r1', reaction: 'helped', slideId: 's1', tMs: 50_400_000 }],
+    questions: [{ id: 's:question-1', text: 'Why?', slideId: 's1', tMs: 50_400_000, answered: true }] })
+  const delivery = normaliseRun({ id: 'sess-x', talkSlug: 'fix-talk', startedAt: '2026-09-30T14:00:00.000Z', slideTimeIndex: [{ event: 'enter', slideId: 's1', tMs: 0 }] })
+  const attached = attachDeliveryToPlanned(planned, delivery)
+  assert.equal(attached.status, 'delivered')
+  assert.equal(attached.startedAt, '2026-09-30T14:00:00.000Z')
+  assert.deepEqual([attached.polls.length, attached.pollResponses.length, attached.instantSlides?.length, attached.reactions?.length, attached.questions?.length], [1, 1, 1, 1, 1],
+    'polls, answers, instant slides, reactions and questions already on the planned Run are kept')
+}
+
 // Ticket 07 path boundary: a Run is read only from its talk's folder, only when it names that talk,
 // and written back only to that same path. Hostile ids and slugs are refused and write nothing.
 {
@@ -319,4 +467,513 @@ assert.equal(survived[0].id, 'survivor')
   assert.ok(existsSync(join(realVault, '_PRESENTATIONS', 'talk-z', 'run-z.json')))
 }
 
-console.log('runs: planned CRUD, legacy interpretation, attach, slide sets, cover and URLs, DS_Store tolerance, instant slides, image checks, Run path boundary passed')
+// ADR-0032 point 5 / boards ticket 07: a planned Run carries a start time, an optional head count and
+// an optional pre-work window; old Runs re-persist byte for byte.
+{
+  const planRoot = mkdtempSync(join(tmpdir(), 'talkweaver-plan-'))
+  const legacy = { id: 'old', talkSlug: 'plan-talk', talkTitle: 'Plan talk', kind: 'delivery', status: 'planned', plannedDate: '2026-10-06', eventTitle: 'Old plan', audience: 'X', slideSet: { kind: 'full' } }
+  const legacyRun = normaliseRun(legacy)
+  for (const key of ['startTime', 'expectedPeople', 'preworkOpens', 'preworkCloses']) assert.equal(key in legacyRun, false, `a Run without ${key} carries no ${key} key`)
+  assert.equal(JSON.stringify(normaliseRun(JSON.parse(JSON.stringify(legacyRun)))), JSON.stringify(legacyRun), 'a Run without plan fields re-normalises byte for byte')
+  const withPlan = createPlannedRun(planRoot, {
+    talkSlug: 'plan-talk', talkTitle: 'Plan talk', plannedDate: '2026-10-06', eventTitle: 'ITSS Briefing, October', audience: 'IT Services staff', slideSet: { kind: 'full' },
+    startTime: '10:00', expectedPeople: 22, preworkOpens: '2026-09-22T09:00'
+  }, () => 'plan-1')
+  assert.equal(withPlan.startTime, '10:00')
+  assert.equal(withPlan.expectedPeople, 22)
+  assert.equal(withPlan.preworkOpens, '2026-09-22T09:00')
+  assert.equal('preworkCloses' in withPlan, false, 'closing is left unset so it follows the talk start')
+  assert.deepEqual(preworkWindow(withPlan), { opens: '2026-09-22T09:00', closes: '2026-10-06T10:00' }, 'pre-work closes when the talk starts by default')
+  assert.deepEqual(readRun(planRoot, 'plan-talk', 'plan-1'), withPlan, 'the plan fields survive a read from disk')
+  assert.equal(preworkWindow(legacyRun), null, 'a Run without pre-work has no window')
+
+  // Whitelisting: garbage is dropped by the normaliser, refused by the writers.
+  const junk = normaliseRun({ ...legacy, startTime: '25:99', expectedPeople: -3, preworkOpens: 'tomorrow', preworkCloses: '2026-10-06T09:00' })
+  for (const key of ['startTime', 'expectedPeople', 'preworkOpens', 'preworkCloses']) assert.equal(key in junk, false, `unreadable ${key} is dropped`)
+  assert.throws(() => createPlannedRun(planRoot, { ...baseInput, expectedPeople: '12' }, () => 'bad-s1'), /expected-people-invalid/, 'a string head count is refused, not coerced')
+  assert.throws(() => createPlannedRun(planRoot, { ...baseInput, expectedPeople: '1e1' }, () => 'bad-s2'), /expected-people-invalid/)
+  assert.equal('expectedPeople' in normaliseRun({ ...legacy, expectedPeople: '12' }), false, 'the normaliser drops a string head count')
+  assert.equal('expectedPeople' in normaliseRun({ ...legacy, expectedPeople: '1e1' }), false)
+  assert.equal('preworkOpens' in normaliseRun({ ...legacy, preworkOpens: '2026-02-31T09:00' }), false, 'an impossible date is dropped')
+  assert.throws(() => createPlannedRun(planRoot, { ...baseInput, preworkOpens: '2026-02-31T09:00' }, () => 'bad-d1'), /prework-opens-invalid/, 'an impossible date is refused')
+  assert.throws(() => createPlannedRun(planRoot, { ...baseInput, preworkCloses: '2026-07-21T09:00' }, () => 'bad-c1'), /prework-closes-without-opens/, 'a closing time without an opening is refused')
+  assert.throws(() => createPlannedRun(planRoot, { ...baseInput, startTime: '9am' }, () => 'bad-1'), /start-time-invalid/)
+  assert.throws(() => createPlannedRun(planRoot, { ...baseInput, expectedPeople: 0.5 }, () => 'bad-2'), /expected-people-invalid/)
+  assert.throws(() => createPlannedRun(planRoot, { ...baseInput, preworkOpens: 'soon' }, () => 'bad-3'), /prework-opens-invalid/)
+  assert.throws(() => createPlannedRun(planRoot, { ...baseInput, startTime: '10:00', preworkOpens: '2026-07-22T10:00' }, () => 'bad-4'), /prework-closes-before-opens/, 'pre-work cannot close before it opens')
+
+  // Editing: set a closing time, change the count, then clear pre-work with null.
+  const edited = updatePlannedRun(planRoot, 'plan-talk', 'plan-1', { preworkCloses: '2026-10-05T18:00', expectedPeople: 30 })
+  assert.deepEqual(preworkWindow(edited), { opens: '2026-09-22T09:00', closes: '2026-10-05T18:00' })
+  assert.equal(edited.expectedPeople, 30)
+  const cleared = updatePlannedRun(planRoot, 'plan-talk', 'plan-1', { preworkOpens: null, expectedPeople: null })
+  assert.equal(preworkWindow(cleared), null)
+  assert.equal('preworkOpens' in cleared, false)
+  assert.equal('preworkCloses' in cleared, false, 'a closing time without an opening is dropped')
+  assert.equal('expectedPeople' in cleared, false)
+  assert.equal(cleared.startTime, '10:00', 'fields the patch does not name are kept')
+  assert.throws(() => updatePlannedRun(planRoot, 'plan-talk', 'plan-1', { preworkCloses: '2026-10-05T18:00' }), /prework-closes-without-opens/, 'naming a closing time with no opening is refused')
+
+  // Delivering against a planned Run keeps the plan.
+  const attachedPlan = attachDeliveryToPlanned(withPlan, normaliseRun({ id: 'delivery', talkSlug: 'plan-talk', talkTitle: 'Plan talk', kind: 'delivery', startedAt: '2026-10-06T10:02:00.000Z', endedAt: '2026-10-06T11:00:00.000Z' }))
+  assert.equal(attachedPlan.status, 'delivered')
+  assert.equal(attachedPlan.preworkOpens, '2026-09-22T09:00')
+  assert.equal(attachedPlan.expectedPeople, 22)
+}
+
+// The planned-Run writers take renderer-supplied names: none may reach a path outside _PRESENTATIONS.
+{
+  const boundary = mkdtempSync(join(tmpdir(), 'talkweaver-plan-boundary-'))
+  const vaultB = join(boundary, 'vault')
+  _mkdirSync(join(vaultB, '_PRESENTATIONS', 'real-talk'), { recursive: true })
+  const outsideDir = join(boundary, 'outside')
+  _mkdirSync(outsideDir)
+  const okInput = { talkSlug: 'real-talk', talkTitle: 'Real', plannedDate: '2026-10-06', eventTitle: 'E', audience: '', slideSet: { kind: 'full' } }
+  for (const talkSlug of ['../../escape', '..', '/etc', join(outsideDir, 'abs'), 'a/b', '', ' spaced ']) {
+    assert.throws(() => createPlannedRun(vaultB, { ...okInput, talkSlug }, () => 'r1'), /run-path-unsafe/, `create refuses talkSlug ${JSON.stringify(talkSlug)}`)
+    assert.throws(() => updatePlannedRun(vaultB, talkSlug, 'r1', { eventTitle: 'x' }), /run-path-unsafe/, `update refuses talkSlug ${JSON.stringify(talkSlug)}`)
+    assert.throws(() => deletePlannedRun(vaultB, talkSlug, 'r1'), /run-path-unsafe/, `delete refuses talkSlug ${JSON.stringify(talkSlug)}`)
+  }
+  for (const runId of ['../x', '../../escape', '/tmp/x', 'a/b', '.', '']) {
+    assert.throws(() => createPlannedRun(vaultB, okInput, () => runId), /run-path-unsafe|run-id-collision/, `create refuses runId ${JSON.stringify(runId)}`)
+    assert.throws(() => updatePlannedRun(vaultB, 'real-talk', runId, { eventTitle: 'x' }), /run-path-unsafe/, `update refuses runId ${JSON.stringify(runId)}`)
+    assert.throws(() => deletePlannedRun(vaultB, 'real-talk', runId), /run-path-unsafe/, `delete refuses runId ${JSON.stringify(runId)}`)
+  }
+  assert.deepEqual(readdirSync(outsideDir), [], 'nothing was written outside')
+  assert.deepEqual(readdirSync(boundary).sort(), ['outside', 'vault'])
+  // A symlinked talk folder that leaves the vault is refused too.
+  symlinkSync(outsideDir, join(vaultB, '_PRESENTATIONS', 'linked-talk'))
+  assert.throws(() => createPlannedRun(vaultB, { ...okInput, talkSlug: 'linked-talk' }, () => 'r2'), /run-path-unsafe/, 'a symlinked talk folder is refused')
+  assert.deepEqual(readdirSync(outsideDir), [], 'nothing was written through the symlink')
+  // The safe path still works.
+  assert.equal(createPlannedRun(vaultB, okInput, () => 'r3').id, 'r3')
+}
+
+// Feedback-boards ticket 06: the board on the Run — merged by id, validated on read, old Runs
+// byte-stable; hidden cards kept on the Run and never in Markdown or on the share link.
+{
+  const boardsRoot = mkdtempSync(join(tmpdir(), 'talkweaver-run-boards-'))
+  const ended = Date.UTC(2026, 8, 28, 14, 2)
+  const board = (cards, extra = {}) => ({
+    id: 'poll-board', slideId: 'slide-44', question: 'What should we keep, change, try?',
+    columns: [{ id: 'keep', label: 'Keep' }, { id: 'change', label: 'Change' }, { id: 'try', label: 'Try' }],
+    cards, groups: [{ n: 1, column: 'keep', cardIds: ['card-1', 'card-2', 'card-3'] }], sessionId: 'session-a', liveEndedAt: ended, ...extra,
+  })
+  const liveCards = [
+    { id: 'card-1', column: 'keep', text: 'More time for hands-on', acceptedAt: ended - 50_000, group: 1 },
+    { id: 'card-2', column: 'keep', text: 'More hands-on, less talk', acceptedAt: ended - 40_000, group: 1 },
+    { id: 'card-3', column: 'keep', text: 'Hands-on please', acceptedAt: ended - 30_000, group: 1 },
+    { id: 'card-4', column: 'change', text: 'Shorter breaks', acceptedAt: ended - 20_000 },
+    { id: 'card-5', column: 'change', text: 'Does anyone know the wifi password?', acceptedAt: ended - 10_000, hidden: true },
+    { id: 'card-6', column: 'try', text: 'Pair work', acceptedAt: ended - 5_000, name: 'Sam' },
+  ]
+  const legacy = normaliseRun({ id: 'run-b', talkSlug: 'boards-talk', talkTitle: 'The current state of AI agents', kind: 'delivery', status: 'delivered',
+    eventTitle: 'ITSS Briefing', audience: 'Oxford', startedAt: '2026-09-28T13:00:00.000Z', endedAt: '2026-09-28T14:02:00.000Z' })
+  assert.equal('boards' in legacy, false, 'a Run without a board carries no boards key')
+  assert.equal(JSON.stringify(normaliseRun(JSON.parse(JSON.stringify(legacy)))), JSON.stringify(legacy), 'an old Run re-normalises byte for byte')
+  assert.equal(applyRunBoards(legacy, []), legacy, 'no boards: the same Run, nothing to write')
+
+  const withBoard = applyRunBoards(legacy, [board(liveCards)])
+  persistRun(boardsRoot, withBoard)
+  const read = readRun(boardsRoot, 'boards-talk', 'run-b')
+  assert.deepEqual(read.boards, withBoard.boards, 'the board survives a write and a read')
+  assert.equal(read.boards[0].cards.length, 6, 'every card is kept, hidden ones included')
+  assert.equal(read.boards[0].cards.find((card) => card.id === 'card-5').hidden, true)
+  assert.equal(applyRunBoards(withBoard, [board(liveCards)]), withBoard, 'the same board again changes nothing')
+
+  // Validation on read: a Run file is JSON anyone can edit.
+  const messy = normaliseRun({ ...withBoard, boards: [
+    board([...liveCards, { id: 'card-9', column: 'nowhere', text: 'x', acceptedAt: ended }, { id: 'card-4', column: 'keep', text: 'dup', acceptedAt: ended },
+      { id: 'card-10', column: 'keep', text: '', acceptedAt: ended }, { id: 'card-11', column: 'keep', text: 'x', acceptedAt: 'soon' },
+      { id: 'card-12', column: 'keep', text: 'y', acceptedAt: ended, hidden: 'yes' }]),
+    { id: 'poll-broken', question: 'Q', columns: [], cards: [], groups: [] },
+    board([], { id: 'poll-board' }),
+    { ...board([{ id: 'card-1', column: 'keep', text: 'Lonely', acceptedAt: ended, group: 7 }]), id: 'poll-other', groups: [{ n: 3, column: 'keep', cardIds: ['ghost'] }] },
+  ] })
+  assert.deepEqual(messy.boards.map((b) => b.id), ['poll-board', 'poll-other'], 'unreadable and duplicate boards are dropped')
+  assert.deepEqual(messy.boards[0].cards.map((card) => card.id), liveCards.map((card) => card.id), 'unreadable and duplicate cards are dropped; the rest are kept')
+  assert.equal(messy.boards[1].groups.length, 0, 'a group naming no card on the board is dropped')
+  assert.equal('group' in messy.boards[1].cards[0], false, 'a card whose group is gone is a single')
+
+  // Merge by id: a fresh copy is the whole board (a withdrawn card is gone, a hide lands); Put back and
+  // the times it does not name are kept; other boards are kept.
+  const putBack = { ...withBoard, boards: [setRunBoardCardPutBack(withBoard.boards[0], 'card-5', true)] }
+  assert.equal(isHiddenCard(putBack.boards[0].cards.find((card) => card.id === 'card-5')), false, 'a card put back is shown')
+  assert.throws(() => setRunBoardCardPutBack(withBoard.boards[0], 'card-4', true), /card-not-hidden/, 'only a hidden card can be put back')
+  const late = { id: 'card-7', column: 'change', text: 'Recording of the demo, please', acceptedAt: ended + 3_600_000 }
+  const fresh = board([...liveCards.filter((card) => card.id !== 'card-6'), late], { liveEndedAt: undefined, openUntil: ended + 7 * 86_400_000, refreshedAt: ended + 3_700_000 })
+  const merged = applyRunBoards({ ...putBack, boards: [...putBack.boards, board([], { id: 'poll-second' })] }, [fresh])
+  const mergedBoard = merged.boards.find((b) => b.id === 'poll-board')
+  assert.deepEqual(mergedBoard.cards.map((card) => card.id), ['card-1', 'card-2', 'card-3', 'card-4', 'card-5', 'card-7'], 'the withdrawn card is gone, the late card is in')
+  assert.equal(mergedBoard.cards.find((card) => card.id === 'card-5').putBack, true, 'Put back survives a refresh')
+  assert.equal(mergedBoard.liveEndedAt, ended, 'the end time the fresh copy does not name is kept')
+  assert.equal(mergedBoard.openUntil, ended + 7 * 86_400_000)
+  assert.deepEqual(merged.boards.map((b) => b.id), ['poll-board', 'poll-second'], 'a board the fresh list does not name is kept')
+  assert.equal(runBoardState(mergedBoard, ended + 3_800_000), 'open')
+  assert.equal(runBoardState(mergedBoard, ended + 8 * 86_400_000), 'closed', 'past its time the board reads as closed')
+  assert.equal(runBoardState({ ...mergedBoard, closedAt: ended + 4_000_000 }, ended + 4_100_000), 'closed')
+
+  // The Run card's view: groups first with their counts, singles newest first, hidden cards apart, late cards marked.
+  const view = runBoardView(board([...liveCards, late]))
+  assert.deepEqual(view.columns.map((column) => [column.label, column.count]), [['Keep', 3], ['Change', 2], ['Try', 1]], 'hidden cards are not counted')
+  assert.deepEqual(view.columns[0].entries, [{ kind: 'group', n: 1, text: 'More time for hands-on', count: 3, cardIds: ['card-1', 'card-2', 'card-3'], late: false }])
+  assert.deepEqual(view.columns[1].entries.map((entry) => [entry.text, entry.late]), [['Recording of the demo, please', true], ['Shorter breaks', false]])
+  assert.deepEqual(view.hidden.map((card) => [card.id, card.columnLabel]), [['card-5', 'Change']])
+  assert.equal(view.lateCount, 1)
+
+  // Copy as Markdown (R5): numbers and counts kept, hidden cards and names left out, markup made harmless.
+  const markdown = runBoardMarkdown(board([...liveCards, { id: 'card-8', column: 'try', text: 'Try <b>this</b>\n## now', acceptedAt: ended - 1 }]),
+    { talkTitle: 'The current state of AI agents', event: 'ITSS Briefing', date: '28 Sep 2026' })
+  assert.equal(markdown, [
+    '## What should we keep, change, try?',
+    'The current state of AI agents · ITSS Briefing · 28 Sep 2026 · 6 cards',
+    '', '### Keep (3)', '1. More time for hands-on (×3)',
+    '', '### Change (1)', '- Shorter breaks',
+    '', '### Try (2)', '- Try &lt;b&gt;this&lt;/b&gt; ## now', '- Pair work', '',
+  ].join('\n'))
+  assert.equal(markdown.includes('wifi'), false, 'a hidden card is not copied')
+  assert.equal(markdown.includes('Sam'), false, 'a name is not copied')
+
+  // Feedback-boards ticket 05 (D13): a group's own wording is kept on the Run — from the live poll,
+  // through a write and a read, replaced by a fresh copy (merged by the same key), shown and copied in
+  // place of the first card's text; an unreadable wording is dropped and the group kept.
+  {
+    const worded = board(liveCards, { groups: [{ n: 1, column: 'keep', cardIds: ['card-1', 'card-2', 'card-3'], label: 'Hands-on time' }] })
+    const fromLive = runBoardFromPollState({ type: 'poll.state', pollId: 'poll-board', slideId: 'slide-44', pollType: 'board', question: 'What should we keep, change, try?',
+      options: [{ optionId: 'keep', label: 'Keep' }], visibility: 'live', open: true, revealed: false, board: { limit: 24, cardChars: 140, cardsPerPhone: 5, names: false, closesAfterDays: 7 },
+      boardState: { frozen: false, limit: 24, release: { extra: 0, all: false, groupsOnly: false, columns: {} }, entries: 1, shown: 1, waiting: 0, cardCount: 2,
+        cards: [{ cardId: 'card-1', column: 'keep', text: 'One', acceptedAt: 1, group: 1 }, { cardId: 'card-2', column: 'keep', text: 'Two', acceptedAt: 2, group: 1 }],
+        groups: [{ n: 1, column: 'keep', cardIds: ['card-1', 'card-2'], count: 2, label: 'Both' }], columns: [{ columnId: 'keep', onScreen: [{ group: 1 }], waiting: 0, cards: 2 }] } })
+    assert.equal(fromLive.groups[0].label, 'Both', 'the live group\'s wording comes onto the Run')
+    const wordedRun = applyRunBoards(legacy, [worded])
+    persistRun(boardsRoot, wordedRun)
+    const reread = readRun(boardsRoot, 'boards-talk', 'run-b')
+    assert.equal(reread.boards[0].groups[0].label, 'Hands-on time', 'the wording survives a write and a read')
+    assert.equal(runBoardView(reread.boards[0]).columns[0].entries[0].text, 'Hands-on time', 'the Run card shows the wording')
+    assert.match(runBoardMarkdown(reread.boards[0], { talkTitle: 'T' }), /1\. Hands-on time \(×3\)/, 'Copy as Markdown uses the wording')
+    const cleared = applyRunBoards(reread, [board(liveCards)])
+    assert.equal('label' in cleared.boards[0].groups[0], false, 'a fresh copy without a wording replaces it (merged by the same key)')
+    const junk = normaliseRun({ ...wordedRun, boards: [board(liveCards, { groups: [{ n: 1, column: 'keep', cardIds: ['card-1'], label: 7 }] })] })
+    assert.deepEqual(junk.boards[0].groups, [{ n: 1, column: 'keep', cardIds: ['card-1'] }], 'an unreadable wording is dropped, the group kept')
+    persistRun(boardsRoot, withBoard)
+  }
+
+  // The share link's push: no hidden card, no name; the Worker's own parser accepts it.
+  const run = { ...withBoard, polls: [{ id: 'poll-1', type: 'single', question: 'Which tool?', options: [{ optionId: 'a', label: 'ChatGPT' }, { optionId: 'b', label: 'Claude' }], visibility: 'live' },
+    { id: 'poll-open', type: 'open', question: 'Hopes?', options: [], visibility: 'live' }],
+  pollResponses: [{ pollId: 'poll-1', choice: 'a', tMs: 1, slideId: 's' }, { pollId: 'poll-1', choice: 'b', tMs: 2, slideId: 's' }, { pollId: 'poll-open', text: 'secret hope', tMs: 3, slideId: 's' }] }
+  const now = ended + 86_400_000
+  const payload = runSharePayload(run, { board: true, polls: true, prework: false }, now + 30 * 86_400_000, now)
+  const text = JSON.stringify(payload)
+  for (const absent of ['wifi', 'Sam', 'secret hope', 'hidden', 'name']) assert.equal(text.includes(absent), false, `the push never carries ${absent}`)
+  assert.deepEqual(payload.polls, [{ kind: 'bars', question: 'Which tool?', people: 2, rows: [{ label: 'ChatGPT', count: 1 }, { label: 'Claude', count: 1 }] }], 'open answers are not shared')
+  assert.equal(payload.boards[0].state, 'final')
+  assert.ok('value' in parseRunSharePush(payload, now), 'the Worker accepts the app\'s push')
+  const withPutBack = runSharePayload({ ...run, boards: putBack.boards }, { board: true, polls: false, prework: false }, null, now)
+  assert.ok(JSON.stringify(withPutBack).includes('wifi'), 'a card put back is on the link')
+  assert.deepEqual(runSharePayload(run, { board: false, polls: true, prework: false }, null, now).boards, [], 'the board can be left off')
+
+  // A planned Run that took board flushes keeps them when the delivery is attached.
+  const plannedWithBoard = normaliseRun({ ...legacy, id: 'planned-b', status: 'planned', plannedDate: '2026-09-28', eventTitle: 'ITSS Briefing', boards: [board(liveCards)] })
+  const attachedBoard = attachDeliveryToPlanned(plannedWithBoard, normaliseRun({ id: 'delivery-b', talkSlug: 'boards-talk', talkTitle: 'T', kind: 'delivery', startedAt: '2026-09-28T13:00:00.000Z' }))
+  assert.equal(attachedBoard.boards?.[0].cards.length, 6, 'the planned Run\'s board is kept on the delivered Run')
+}
+
+// Boards fix round, item 1: a board's identity on the Run is its poll AND its live session. A second
+// Go live in the same recording shows the same authored board again; both copies are kept, and a
+// fresh copy from one session replaces only its own.
+{
+  const t0 = Date.UTC(2026, 8, 28, 13, 0)
+  const cols = [{ id: 'keep', label: 'Keep' }, { id: 'try', label: 'Try' }]
+  const sessionBoard = (sessionId, texts, extra = {}) => ({ id: 'poll-board', question: 'Keep, try?', columns: cols, groups: [], sessionId,
+    cards: texts.map((text, i) => ({ id: `card-${i + 1}`, column: 'keep', text, acceptedAt: t0 + i })), ...extra })
+  const base = normaliseRun({ id: 'run-two', talkSlug: 'two-sessions', startedAt: new Date(t0).toISOString() })
+  const first = applyRunBoards(base, [sessionBoard('session-1', ['First A', 'First B'], { liveStartedAt: t0 })])
+  const both = applyRunBoards(first, [sessionBoard('session-2', [], { liveStartedAt: t0 + 3_600_000 })])
+  assert.deepEqual(both.boards.map((b) => [b.sessionId, b.cards.length]), [['session-1', 2], ['session-2', 0]], 'the second session\'s empty board does not replace the first')
+  const refreshedSecond = applyRunBoards(both, [sessionBoard('session-2', ['Second A'])])
+  assert.deepEqual(refreshedSecond.boards.map((b) => [b.sessionId, b.cards.map((c) => c.text)]), [['session-1', ['First A', 'First B']], ['session-2', ['Second A']]])
+  const refreshedFirst = applyRunBoards(refreshedSecond, [sessionBoard('session-1', ['First A', 'First B', 'First late'])])
+  assert.deepEqual(refreshedFirst.boards.map((b) => b.cards.length), [3, 1], 'a refresh from either session replaces only its own board')
+  assert.equal(refreshedFirst.boards[1].liveStartedAt, t0 + 3_600_000, 'times the copy does not name are kept')
+  // A board with no session keeps its own key: a fresh copy of the same poll is appended, never over it.
+  const legacyBoard = normaliseRun({ ...base, boards: [{ ...sessionBoard(undefined, ['Old']), sessionId: undefined, liveEndedAt: t0 }] })
+  assert.equal(legacyBoard.boards[0].sessionId, undefined, 'an old board with no session still loads')
+  const kept = applyRunBoards(legacyBoard, [sessionBoard('session-9', ['New'])])
+  assert.deepEqual(kept.boards.map((b) => [b.sessionId, b.cards.map((c) => c.text)]), [[undefined, ['Old']], ['session-9', ['New']]],
+    'the unnamed board and the fresh copy of the same poll are both kept')
+  const duplicates = normaliseRun({ ...base, boards: [sessionBoard('session-1', ['A']), sessionBoard('session-1', ['B']), sessionBoard('session-2', ['C'])] })
+  assert.deepEqual(duplicates.boards.map((b) => b.cards[0].text), ['A', 'C'], 'the same poll and session twice in a file keeps the first')
+}
+
+// Boards fix round, item 2: a share link that could not be pushed after the Run changed is reported,
+// never swallowed; Put back returns it as a warning.
+{
+  const shareRoot = mkdtempSync(join(tmpdir(), 'talkweaver-share-fail-'))
+  let fail = false
+  const fakeFetch = async (url, init = {}) => {
+    if (String(url).endsWith('/results') && init.method === 'POST') return new Response(JSON.stringify({ shareId: 'abcd2345', ownerToken: 'owner-token-0123456789' }), { status: 201 })
+    if (fail) throw new Error('offline')
+    return new Response(JSON.stringify({ ok: true }), { status: 200 })
+  }
+  const shares = createRunResultsShares({ registryPath: join(shareRoot, 'registry.json'), endpoint: async () => ({ baseUrl: 'https://live.example.test', adminSecret: 'admin' }),
+    linkBase: () => null, fetch: fakeFetch })
+  const ended = Date.UTC(2026, 8, 28, 14)
+  const run = normaliseRun({ id: 'run-share', talkSlug: 'share-talk', talkTitle: 'T', startedAt: new Date(ended - 3_600_000).toISOString(),
+    boards: [{ id: 'poll-board', sessionId: 's-1', question: 'Q', columns: [{ id: 'keep', label: 'Keep' }], groups: [], liveEndedAt: ended,
+      cards: [{ id: 'card-1', column: 'keep', text: 'Shown', acceptedAt: ended - 5 }, { id: 'card-2', column: 'keep', text: 'Hidden', acceptedAt: ended - 4, hidden: true }] }] })
+  const vault = join(shareRoot, 'vault')
+  _mkdirSync(vault, { recursive: true })
+  persistRunForTalk(vault, 'share-talk', 'run-share', run)
+  await shares.share('share-talk', 'run-share', run, { lifetime: '7', include: { board: true, polls: false } })
+  assert.deepEqual((await shares.refresh('share-talk', 'run-share', run)).ok, true)
+  fail = true
+  assert.deepEqual(await shares.refresh('share-talk', 'run-share', run), { ok: false, error: 'offline' }, 'a failed push is returned, not swallowed')
+  const handlers = new Map()
+  registerRunBoardIpc({ ipcMain: { handle: (channel, fn) => handlers.set(channel, fn) }, vaultRoot: () => vault, sessions: () => null, shares })
+  const putBack = await handlers.get('history:board-put-back')(null, { talkSlug: 'share-talk', runId: 'run-share', boardId: 'poll-board', sessionId: 's-1', cardId: 'card-2', putBack: true })
+  assert.equal(putBack.ok, true, 'the card is put back on the Run')
+  assert.equal(putBack.warning, LINK_NOT_UPDATED, 'and History is told the link may still show the old board')
+  assert.equal(putBack.run.boards[0].cards[1].putBack, true)
+  const wrongSession = await handlers.get('history:board-put-back')(null, { talkSlug: 'share-talk', runId: 'run-share', boardId: 'poll-board', sessionId: 's-2', cardId: 'card-2', putBack: true })
+  assert.equal(wrongSession.ok, false, 'Put back names the board by its poll and session')
+  fail = false
+  const ok = await handlers.get('history:board-put-back')(null, { talkSlug: 'share-talk', runId: 'run-share', boardId: 'poll-board', sessionId: 's-1', cardId: 'card-2', putBack: false })
+  assert.equal(ok.ok, true)
+  assert.equal('warning' in ok, false, 'no warning when the link was updated')
+}
+
+// Feedback-boards ticket 09: pre-work answers mirrored onto the Run — merged by id, validated on
+// read (hostile entries dropped, the rest kept), old Runs byte-stable; the public form never carries
+// the right answer; the service pulls through the atomic Run writer and moves its cursor only after.
+{
+  const P1 = 'a1b2c3d4e5f60718', P2 = '0f1e2d3c4b5a6978'
+  const at = Date.UTC(2026, 9, 1, 9)
+  const entry = (participant, kind, stepId, extra = {}, seq = 1) => ({
+    id: kind === 'question' ? `${participant}:q:${extra.sub ?? 's1'}` : `${participant}:${kind}:${stepId}`,
+    seq, participant, stepId, kind, at, ...Object.fromEntries(Object.entries(extra).filter(([key]) => key !== 'sub')),
+  })
+  const planned = normaliseRun({ id: 'run-pw', talkSlug: 'pw-talk', talkTitle: 'T', kind: 'delivery', status: 'planned', plannedDate: '2026-10-06',
+    eventTitle: 'ITSS Briefing', startTime: '10:00', preworkOpens: '2026-09-30T09:00', slideSet: { kind: 'full' }, startedAt: '2026-10-06T00:00:00.000Z' })
+  assert.equal('prework' in planned, false, 'a Run without pre-work carries no prework key')
+  assert.equal(JSON.stringify(normaliseRun(JSON.parse(JSON.stringify(planned)))), JSON.stringify(planned), 'an old Run re-normalises byte for byte')
+  assert.equal(applyRunPrework(planned, []), planned, 'nothing pulled and nothing known: the same Run, nothing to write')
+
+  const first = applyRunPrework(planned, [
+    entry(P1, 'read', 'pwwelcome'),
+    entry(P1, 'answer', 'pwquiz', { choice: 'poll-pwquiz-option-2' }, 2),
+    entry(P2, 'answer', 'pwhope', { text: '<b>save time</b>' }, 3),
+    entry(P1, 'question', 'pwtask1', { text: 'Which email?', sub: 's9' }, 4),
+    entry(P1, 'done', 'pwtask1', { done: true }, 5),
+  ], { people: 2, lastActivityAt: at })
+  assert.equal(first.prework.entries.length, 5)
+  assert.equal(first.prework.people, 2)
+  assert.equal('seq' in first.prework.entries[0], false, 'the Worker\'s sequence is not kept on the Run')
+  assert.equal(first.prework.entries[2].text, '<b>save time</b>', 'text is kept as text (escaped wherever it is shown)')
+
+  // Merge by id: a changed answer replaces, History's "answered" survives, nothing is removed.
+  const marked = { ...first, prework: { ...first.prework, entries: first.prework.entries.map((item) => item.kind === 'question' ? { ...item, answered: true } : item) } }
+  const second = applyRunPrework(normaliseRun(marked), [
+    entry(P1, 'answer', 'pwquiz', { choice: 'poll-pwquiz-option-1' }, 6),
+    entry(P1, 'question', 'pwtask1', { text: 'Which email?', sub: 's9' }, 4),
+    entry(P1, 'done', 'pwtask1', { done: false }, 7),
+  ], { people: 2 })
+  assert.equal(second.prework.entries.length, 5, 'merged by id: no duplicates')
+  assert.equal(second.prework.entries.find((item) => item.kind === 'answer' && item.stepId === 'pwquiz').choice, 'poll-pwquiz-option-1', 'the latest answer wins')
+  assert.equal(second.prework.entries.find((item) => item.kind === 'done').done, false, 'Tap to untick reaches the Run')
+  assert.equal(second.prework.entries.find((item) => item.kind === 'question').answered, true, 'History\'s Mark answered survives a pull')
+  assert.deepEqual(second.prework.entries.map((item) => item.id), first.prework.entries.map((item) => item.id), 'entries keep their place')
+  const again = applyRunPrework(second, [entry(P1, 'done', 'pwtask1', { done: false }, 7)], { people: 2 })
+  assert.equal(again, second, 'an unchanged pull is the same Run: nothing is written')
+
+  // Hostile input: from the Worker or edited into the Run file, bad entries are dropped, the rest kept.
+  const hostile = [
+    entry(P1, 'answer', 'pwhope', { text: 'x'.repeat(1001) }),
+    { ...entry(P1, 'read', 'pwwelcome'), id: `${P2}:read:pwwelcome` },
+    { ...entry(P1, 'read', 'pwwelcome'), participant: 'Sam Smith' },
+    entry(P1, 'answer', 'pwquiz', { choice: 'a', text: 'b' }),
+    { ...entry(P1, 'read', 'pwother'), kind: 'vote' },
+    entry(P1, 'done', 'pwtask2', { done: 'yes' }),
+    { ...entry(P2, 'read', '../../etc'), stepId: '../../etc' },
+    entry(P2, 'question', 'pwquiz', { text: 'Name too long', name: 'n'.repeat(61), sub: 's2' }),
+    null, 'text', [],
+  ]
+  assert.equal(applyRunPrework(second, hostile), second, 'hostile entries from the Worker are dropped')
+  const edited = normaliseRun({ ...JSON.parse(JSON.stringify(second)), prework: { entries: [...hostile, ...second.prework.entries, second.prework.entries[0]], people: -3, closedAt: 'soon' } })
+  assert.deepEqual(edited.prework.entries, second.prework.entries, 'a hand-edited Run keeps its good entries and drops the rest (and duplicates)')
+  assert.equal('people' in edited.prework, false)
+  assert.equal(normaliseRun({ ...planned, prework: { entries: 'no' } }).prework, undefined, 'unreadable pre-work is dropped, the Run is kept')
+
+  // Written and read back through the atomic writer; kept when the delivery is attached to the plan.
+  const root = mkdtempSync(join(tmpdir(), 'talkweaver-run-prework-'))
+  _mkdirSync(join(root, '_PRESENTATIONS', 'pw-talk'), { recursive: true })
+  persistRunForTalk(root, 'pw-talk', 'run-pw', second)
+  assert.deepEqual(readRunForTalk(root, 'pw-talk', 'run-pw').prework, second.prework, 'the pre-work survives a write and a read')
+  const delivered = attachDeliveryToPlanned(second, normaliseRun({ id: 'rec-1', talkSlug: 'pw-talk', talkTitle: 'T', startedAt: '2026-10-06T09:00:00.000Z', endedAt: '2026-10-06T10:00:00.000Z' }))
+  assert.deepEqual(delivered.prework, second.prework, 'the pre-work belongs to the Run once it is delivered, History\'s marks included')
+
+  // The public form: built field by field, never the right answer.
+  const compiledPrework = { sectionId: 'pwform', title: 'Before the session', intro: 'Intro.', slideIds: ['pwform', 'pwwelcome', 'pwquiz', 'pwtools', 'pwtask1', 'pwboard'], steps: [
+    { n: 1, id: 'pwwelcome', title: 'Welcome', kind: 'slide', questions: false, sourceLine: 20 },
+    { n: 2, id: 'pwquiz', title: 'Quick check', kind: 'check', questions: true, pollType: 'single', options: ['A', 'B'], right: { index: 1, label: 'B' }, sourceLine: 24 },
+    { n: 3, id: 'pwtools', title: 'Tools', kind: 'question', questions: true, pollType: 'multiple' },
+    { n: 4, id: 'pwtask1', title: 'Task', kind: 'task', questions: true, done: true, minutes: 20 },
+    { n: 5, id: 'pwboard', title: 'Ideas', kind: 'question', questions: true, pollType: 'board' },
+  ] }
+  const slides = [
+    { id: 'pwquiz', poll: { pollId: 'poll-pwquiz', type: 'single', question: 'Quick check', visibility: 'live', right: 'B',
+      options: [{ optionId: 'poll-pwquiz-option-1', label: 'A' }, { optionId: 'poll-pwquiz-option-2', label: 'B', right: true }] } },
+    { id: 'pwtools', poll: { pollId: 'poll-pwtools', type: 'multiple', question: 'Tools', visibility: 'live', options: [{ optionId: 't1', label: 'ChatGPT' }] } },
+    { id: 'pwboard', poll: { pollId: 'poll-pwboard', type: 'board', question: 'Ideas', visibility: 'live', options: [{ optionId: 'c1', label: 'Keep' }], board: {} } },
+  ]
+  const form = publicPreworkForm(compiledPrework, slides)
+  assert.deepEqual(form.steps.map((step) => [step.id, step.kind]), [['pwwelcome', 'slide'], ['pwquiz', 'check'], ['pwtools', 'question'], ['pwtask1', 'task'], ['pwboard', 'slide']],
+    'every step, in order; a board step is sent as a slide participants read')
+  assert.equal(/right/i.test(JSON.stringify(form)), false, 'the form carries no right answer, wherever the source had one')
+  assert.equal(/sourceLine|pollId|visibility/.test(JSON.stringify(form)), false, 'nothing but what participants need')
+  assert.deepEqual(form.steps[1].poll.options.map((option) => option.label), ['A', 'B'])
+  assert.equal(publicPreworkForm(null, slides), null)
+  assert.equal(publicPreworkForm({ steps: [] }, []), null, 'a form with no steps is not sent')
+
+  // The window: the Run's local times, closing at the talk's start by default.
+  const opens = new Date(2026, 8, 30, 9, 0).getTime(), closes = new Date(2026, 9, 6, 10, 0).getTime()
+  assert.deepEqual(preworkWindowMs(preworkWindow(planned)), { opensAt: opens, closesAt: closes })
+  assert.equal(preworkWindowMs(null), null)
+  assert.equal(preworkWindowMs({ opens: '2026-10-06T10:00', closes: '2026-10-06T09:00' }), null)
+  assert.equal(mergeRunPrework(null, []), null)
+
+  // Time zone (fix round): the zone the times were entered in is kept with them and used.
+  const zoned = { opens: '2026-10-01T09:00', closes: '2026-10-06T10:00' }
+  assert.deepEqual(preworkWindowMs(zoned, 'Europe/London'), { opensAt: Date.UTC(2026, 9, 1, 8), closesAt: Date.UTC(2026, 9, 6, 9) })
+  assert.deepEqual(preworkWindowMs(zoned, 'America/New_York'), { opensAt: Date.UTC(2026, 9, 1, 13), closesAt: Date.UTC(2026, 9, 6, 14) })
+  assert.deepEqual(preworkWindowMs(zoned), { opensAt: new Date(2026, 9, 1, 9).getTime(), closesAt: new Date(2026, 9, 6, 10).getTime() }, 'no zone: the machine\'s own')
+  assert.equal(preworkWindowMs({ opens: '2026-10-25T01:30', closes: '2026-10-25T03:00' }, 'Europe/London').opensAt, Date.UTC(2026, 9, 25, 0, 30), 'a repeated hour reads as the first')
+  const zRoot = mkdtempSync(join(tmpdir(), 'talkweaver-run-zone-'))
+  const zoneRun = createPlannedRun(zRoot, { talkSlug: 'z-talk', talkTitle: 'Z', plannedDate: '2026-10-06', eventTitle: 'E', audience: '', slideSet: { kind: 'full' },
+    startTime: '10:00', preworkOpens: '2026-10-01T09:00', timeZone: 'America/New_York' }, () => 'run-z')
+  assert.equal(zoneRun.timeZone, 'America/New_York', 'the zone sent with the times is kept')
+  const machineRun = createPlannedRun(zRoot, { talkSlug: 'z-talk', talkTitle: 'Z', plannedDate: '2026-10-06', eventTitle: 'E', audience: '', slideSet: { kind: 'full' },
+    startTime: '10:00', preworkOpens: '2026-10-01T09:00' }, () => 'run-m')
+  assert.equal(machineRun.timeZone, Intl.DateTimeFormat().resolvedOptions().timeZone, 'else this machine\'s')
+  assert.throws(() => createPlannedRun(zRoot, { talkSlug: 'z-talk', talkTitle: 'Z', plannedDate: '2026-10-06', eventTitle: 'E', audience: '', slideSet: { kind: 'full' },
+    preworkOpens: '2026-10-01T09:00', timeZone: 'Mars/Olympus' }, () => 'run-x'), /time-zone-invalid/)
+  const noPrework = createPlannedRun(zRoot, { talkSlug: 'z-talk', talkTitle: 'Z', plannedDate: '2026-10-06', eventTitle: 'E', audience: '', slideSet: { kind: 'full' } }, () => 'run-n')
+  assert.equal('timeZone' in noPrework, false, 'no pre-work, no zone')
+  assert.equal(updatePlannedRun(zRoot, 'z-talk', 'run-z', { preworkOpens: '2026-10-02T09:00', timeZone: 'Europe/London' }).timeZone, 'Europe/London', 'new times, the zone they were entered in')
+  assert.equal(updatePlannedRun(zRoot, 'z-talk', 'run-z', { eventTitle: 'F' }).timeZone, 'Europe/London', 'other edits keep it')
+  assert.equal('timeZone' in updatePlannedRun(zRoot, 'z-talk', 'run-z', { preworkOpens: null }), false, 'switching pre-work off drops it')
+  assert.equal(normaliseRun({ ...planned, timeZone: '../../etc' }).timeZone, undefined, 'an unknown zone in the file is dropped')
+  assert.equal(normaliseRun({ ...planned, timeZone: 'Asia/Kolkata' }).timeZone, 'Asia/Kolkata')
+}
+
+// The pre-work service against a fake Worker: publish creates once and pushes the form; pull pages
+// the entries onto the Run through the atomic writer and moves the cursor only after; close stops it.
+{
+  const root = mkdtempSync(join(tmpdir(), 'talkweaver-prework-service-'))
+  const vault = join(root, 'vault')
+  _mkdirSync(join(vault, '_PRESENTATIONS', 'pw-talk'), { recursive: true })
+  const run = normaliseRun({ id: 'run-pw', talkSlug: 'pw-talk', talkTitle: 'T', kind: 'delivery', status: 'planned', plannedDate: '2026-10-06',
+    eventTitle: 'E', preworkOpens: '2026-09-30T09:00', slideSet: { kind: 'full' }, startedAt: '2026-10-06T00:00:00.000Z' })
+  persistRunForTalk(vault, 'pw-talk', 'run-pw', run)
+  const oldBytes = readFileSync(join(vault, '_PRESENTATIONS', 'pw-talk', 'run-pw.json'), 'utf8')
+  const P1 = 'a1b2c3d4e5f60718'
+  const worker = { created: 0, forms: [], entries: [], closed: false, fail: false }
+  const calls = []
+  const reply = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+  const fakeFetch = async (url, init = {}) => {
+    const { pathname, searchParams } = new URL(url)
+    calls.push(`${init.method ?? 'GET'} ${pathname}`)
+    if (worker.fail) throw new Error('offline')
+    if (pathname === '/prework') { worker.created += 1; return reply({ preworkId: 'pw123456', ownerToken: 'owner-token-0123456789' }, 201) }
+    assert.equal(init.headers.authorization, 'Bearer owner-token-0123456789', 'owner routes carry the pre-work object\'s own token')
+    if (pathname.endsWith('/form')) {
+      if (worker.gone) { worker.gone = false; return reply({ error: { code: 'prework_gone' } }, 410) }
+      worker.forms.push(JSON.parse(init.body)); return reply({ ok: true })
+    }
+    if (pathname.endsWith('/close')) { worker.closed = true; return reply({ ok: true, closedAt: 1_700_000_000_000 }) }
+    const after = Number(searchParams.get('after'))
+    const page = worker.entries.filter((item) => item.seq > after).slice(0, 2)
+    return reply({ seq: worker.entries.length, people: 1, lastActivityAt: 1_600_000_000_000, entries: page, more: page.length === 2 && page[1].seq < worker.entries.length })
+  }
+  const service = createRunPrework({ registryPath: join(root, 'registry.json'), endpoint: async () => ({ baseUrl: 'https://live.example.test/', adminSecret: 'admin' }),
+    vaultRoot: () => vault, fetch: fakeFetch, now: () => Date.UTC(2026, 9, 1, 12) })
+  const form = { title: 'Before the session', intro: '', steps: [{ id: 'pwwelcome', n: 1, title: 'W', kind: 'slide', questions: true }] }
+  const window = { opensAt: Date.UTC(2026, 8, 30, 8), closesAt: Date.UTC(2026, 9, 6, 9) }
+  assert.deepEqual(await service.publish('pw-talk', 'run-pw', form, window), { preworkId: 'pw123456', workerBaseUrl: 'https://live.example.test', open: true })
+  await service.publish('pw-talk', 'run-pw', form, { ...window, closesAt: window.closesAt + 60_000 })
+  assert.equal(worker.created, 1, 'the object is created once per Run')
+  assert.equal(worker.forms.length, 2)
+  assert.equal(service.status('pw-talk', 'run-pw').closesAt, window.closesAt + 60_000, 'the window pushed last is kept')
+  assert.equal(JSON.stringify(service.status('pw-talk', 'run-pw')).includes('owner-token'), false, 'no window ever sees the owner token')
+  assert.equal((await import('node:fs')).statSync(join(root, 'registry.json')).mode & 0o777, 0o600, 'the registry is private')
+
+  assert.equal((await service.pull('pw-talk', 'run-pw')).ok, true)
+  assert.equal(readFileSync(join(vault, '_PRESENTATIONS', 'pw-talk', 'run-pw.json'), 'utf8').includes('"entries": []'), true, 'a first pull with nothing answered records the count only')
+  worker.entries = [1, 2, 3, 4, 5].map((seq) => ({ id: `${P1}:q:s${seq}`, seq, participant: P1, stepId: 'pwwelcome', kind: 'question', text: `Q${seq}`, at: 1_600_000_000_000 }))
+  const pulled = await service.pull('pw-talk', 'run-pw')
+  assert.equal(pulled.ok && pulled.added, 5, 'every page is pulled')
+  assert.equal(readRunForTalk(vault, 'pw-talk', 'run-pw').prework.entries.length, 5, 'the answers are on the Run in the vault')
+  const before = calls.length
+  const unchanged = await service.pull('pw-talk', 'run-pw')
+  assert.equal(unchanged.ok && unchanged.changed, false, 'nothing new: nothing written')
+  assert.deepEqual(calls.slice(before), ['GET /prework/pw123456/results'], 'the next pull starts after the cursor')
+
+  worker.fail = true
+  const offline = await service.pull('pw-talk', 'run-pw')
+  assert.equal(offline.ok, false, 'a failed pull is reported, not swallowed')
+  worker.fail = false
+  assert.deepEqual(service.due(), [{ talkSlug: 'pw-talk', runId: 'run-pw' }], 'open pre-work is due for the timer')
+  const handlers = new Map()
+  registerRunPreworkIpc({ handle: (channel, fn) => handlers.set(channel, fn) }, service)
+  const closed = await handlers.get('history:prework-close')(null, { talkSlug: 'pw-talk', runId: 'run-pw' })
+  assert.equal(closed.ok && worker.closed, true, 'Close pre-work now reaches the Worker')
+  assert.equal(readRunForTalk(vault, 'pw-talk', 'run-pw').prework.closedAt, 1_700_000_000_000)
+  assert.deepEqual(service.due(), [], 'closed long ago: no longer pulled')
+  assert.equal((await handlers.get('history:prework-refresh')(null, { talkSlug: '../escape', runId: 'run-pw' })).ok, false, 'an unsafe Run name is refused')
+  assert.equal((await handlers.get('history:prework-refresh')(null, { talkSlug: 'pw-talk', runId: 'nope' })).ok, false)
+  assert.notEqual(oldBytes, readFileSync(join(vault, '_PRESENTATIONS', 'pw-talk', 'run-pw.json'), 'utf8'))
+
+  // Purged on the Worker: recorded on the registry row, never asked again, never pulled by the timer.
+  const later = createRunPrework({ registryPath: join(root, 'registry.json'), endpoint: async () => ({ baseUrl: 'https://live.example.test', adminSecret: 'admin' }),
+    vaultRoot: () => vault, fetch: fakeFetch, now: () => Date.UTC(2026, 9, 3, 12) })
+  worker.gone = true
+  const gone = await later.publish('pw-talk', 'run-pw', form, { ...window, closesAt: Date.UTC(2026, 9, 6, 9) })
+  assert.equal(gone.open, false, 'an object purged on the Worker is not silently replaced: the handout goes out without the form')
+  assert.equal(gone.warning, PREWORK_PURGED_MESSAGE)
+  assert.equal(worker.created, 1)
+  assert.ok(later.status('pw-talk', 'run-pw').purgedAt, 'the registry row records the purge')
+  const callsBefore = calls.length
+  const asked = await later.pull('pw-talk', 'run-pw')
+  assert.deepEqual([asked.ok, asked.error], [false, PREWORK_PURGED_MESSAGE], 'History is told without a Worker call')
+  assert.equal((await later.publish('pw-talk', 'run-pw', form, window)).warning, PREWORK_PURGED_MESSAGE)
+  assert.equal(calls.length, callsBefore, 'no Worker call once the purge is known')
+  assert.deepEqual(later.due(), [], 'and the timer skips it')
+  assert.equal(readRunForTalk(vault, 'pw-talk', 'run-pw').prework.entries.length, 5, 'the answers already pulled stay on the Run')
+}
+
+// Time zone kept on edit (fix round 2): a Run planned for Prague, edited from a London machine.
+{
+  const zRoot = mkdtempSync(join(tmpdir(), 'talkweaver-run-zone-edit-'))
+  const prague = createPlannedRun(zRoot, { talkSlug: 'z-talk', talkTitle: 'Z', plannedDate: '2026-10-06', eventTitle: 'E', audience: '', slideSet: { kind: 'full' },
+    startTime: '10:00', preworkOpens: '2026-10-01T09:00', timeZone: 'Europe/Prague' }, () => 'run-prague')
+  const before = preworkWindowMs(preworkWindow(prague), prague.timeZone)
+  assert.deepEqual(before, { opensAt: Date.UTC(2026, 9, 1, 7), closesAt: Date.UTC(2026, 9, 6, 8) }, '09:00 and 10:00 in Prague')
+  // The sheet on a London machine: it shows the Run's zone and sends none when the zone is unchanged.
+  assert.equal(sheetTimeZone(prague, 'Europe/London'), 'Europe/Prague')
+  assert.equal(zoneToSend(prague, sheetTimeZone(prague, 'Europe/London'), true), undefined)
+  const edited = updatePlannedRun(zRoot, 'z-talk', 'run-prague', { eventTitle: 'Renamed', preworkOpens: '2026-10-01T09:00', preworkCloses: null,
+    ...(zoneToSend(prague, 'Europe/Prague', true) ? { timeZone: 'Europe/Prague' } : {}) })
+  assert.equal(edited.timeZone, 'Europe/Prague', 'the zone is unchanged')
+  assert.deepEqual(preworkWindowMs(preworkWindow(edited), edited.timeZone), before, 'and so are the times')
+  // Choosing another zone on purpose re-reads the same wall-clock times there.
+  assert.equal(zoneToSend(prague, 'Europe/London', true), 'Europe/London')
+  const moved = updatePlannedRun(zRoot, 'z-talk', 'run-prague', { preworkOpens: '2026-10-01T09:00', timeZone: 'Europe/London' })
+  assert.equal(moved.timeZone, 'Europe/London')
+  assert.deepEqual(preworkWindowMs(preworkWindow(moved), moved.timeZone), { opensAt: Date.UTC(2026, 9, 1, 8), closesAt: Date.UTC(2026, 9, 6, 9) }, 'an hour later in UTC')
+  // A new plan sends the zone it shows; an old Run without one takes it only with its times.
+  assert.equal(zoneToSend(null, 'Europe/Prague', true), 'Europe/Prague')
+  assert.equal(zoneToSend(prague, 'Europe/London', false), undefined, 'no pre-work, no zone')
+  assert.equal(zoneToSend({ preworkOpens: '2026-10-01T09:00' }, 'Europe/London', true), 'Europe/London')
+}
+
+console.log('runs: planned CRUD, legacy interpretation, attach, slide sets, cover and URLs, DS_Store tolerance, instant slides, image checks, reactions and questions, Run path boundary, plan fields, boards, pre-work passed')

@@ -1,14 +1,14 @@
 // Feedback rail (ticket 05), end to end: the real app, the real Worker under wrangler dev
 // (scripts/lib/live-worker-harness.mjs), with a TCP proxy between them so the test can cut the
 // owner socket. Shares a talk the way ticket 03's e2e does, posts one item of each kind to the
-// Worker as her page would, and checks: each appears in the rail with the right kind, newest first;
+// Worker as their page would, and checks: each appears in the rail with the right kind, newest first;
 // the talk row, the toolbar button and the rail header count unread items; Done and Dismiss grey
 // the item with a time, drop the counts and reach the Worker (a synced line in the feedback file);
 // cutting the connection shows "Sharing paused · reconnecting" in the status bar and the rail while
 // editing and saving carry on; an item posted meanwhile arrives once on reconnect and the chip clears.
 // Ticket 06: Accept of a proposed edit changes the file exactly as the diff showed (his notes and
 // comment kept); Undo restores it byte for byte; an edit to a slide he has changed since leads with
-// Compare (Keep mine leaves the file alone; Use hers writes her lines, notes kept); an outside change
+// Compare (Keep mine leaves the file alone; Use theirs writes their lines, notes kept); an outside change
 // to the file holds Accept; markers on the slide pane count, tick and ghost a proposed new slide; a
 // marker opens the rail on its slide beside the pane; the ghost's Accept inserts the section and slide
 // right after the named slide.
@@ -120,7 +120,7 @@ try {
   assert.equal(await page.locator('.cm-content').isVisible(), true, 'the outline stays beside it')
   log('shared; the Feedback button opens the rail beside the outline, empty')
 
-  // ── Her items arrive: one of each kind ─────────────────────────────────────────────────────────
+  // ── Their items arrive: one of each kind ─────────────────────────────────────────────────────────
   const post = async (body) => {
     const response = await fetch(`${worker.baseUrl}/shares/${shareId}/items`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
     assert.equal(response.status, 201, await response.text())
@@ -251,7 +251,7 @@ try {
   assert.equal(await edit.getByTestId('feedback-undo').count(), 1, 'accepted keeps Undo')
   await until(() => fileLines().some((l) => l.type === 'status' && l.itemId === 'e2e-edit' && l.status === 'accepted' && typeof l.edit?.inserted === 'string' && Number.isInteger(l.edit.from)), 'an accepted line with the splice for Undo')
   await until(() => fileLines().some((l) => l.type === 'synced' && l.itemId === 'e2e-edit' && l.status === 'accepted'), 'the Worker confirmed "accepted"')
-  log('Accept of a proposed edit: exactly the one line her diff showed changes in the file; his comment and notes stay; stamped with the line and Undo; the Worker has it')
+  log('Accept of a proposed edit: exactly the one line their diff showed changes in the file; his comment and notes stay; stamped with the line and Undo; the Worker has it')
 
   // ── Undo: the file back byte for byte, the item new again ─────────────────────────────────────────
   await edit.getByTestId('feedback-undo').click()
@@ -271,7 +271,7 @@ try {
   await edit.getByTestId('feedback-compare').click()
   await edit.getByTestId('feedback-compare-yours').waitFor()
   assert.match(await edit.locator('.fr-cmp-chg').first().textContent(), /Markers read structure first — and last/, 'his change since is highlighted in "Yours now"')
-  assert.match(await edit.getByTestId('feedback-compare-hers').textContent(), /Rubrics reward what a model writes most fluently/)
+  assert.match(await edit.getByTestId('feedback-compare-theirs').textContent(), /Rubrics reward what a model writes most fluently/)
   await shot(page, 'feedback-compare-frame2')
   const beforeKeep = readOutline()
   await edit.getByTestId('feedback-keep-mine').click()
@@ -279,21 +279,21 @@ try {
   assert.match(await edit.getByTestId('feedback-stamp-text').textContent(), /^Dismissed /)
   await wait(1200)
   assert.equal(readOutline(), beforeKeep, 'Keep mine does not touch the file')
-  log('his change flags the edit; Compare shows yours (his change highlighted) and hers; Keep mine dismisses it and leaves the file alone')
+  log('his change flags the edit; Compare shows yours (his change highlighted) and theirs; Keep mine dismisses it and leaves the file alone')
 
-  // ── Use hers: her lines in, his notes and comment kept ─────────────────────────────────────────────
+  // ── Use theirs: their lines in, his notes and comment kept ─────────────────────────────────────────────
   await post({ itemId: 'e2e-edit2', kind: 'replace', slideId: 'rubric', baseRevision: 1, text: '### The rubric problem\n{id=rubric}\n\n- Rubrics reward what a model writes\n- Markers read structure first' })
   const edit2 = page.locator('[data-item-id="e2e-edit2"]')
   await edit2.waitFor()
   await until(async () => (await edit2.getAttribute('data-flagged')) === 'true', 'the second edit is flagged too')
   await edit2.getByTestId('feedback-compare').click()
-  const beforeHers = readOutline()
-  await edit2.getByTestId('feedback-use-hers').click()
+  const beforeTheirs = readOutline()
+  await edit2.getByTestId('feedback-use-theirs').click()
   await page.waitForSelector('[data-item-id="e2e-edit2"][data-handled="true"]')
-  const expectedHers = beforeHers.replace(RUBRIC_OLD, '- Rubrics reward what a model writes').replace('- Markers read structure first — and last', '- Markers read structure first')
-  await until(() => readOutline() === expectedHers, 'Use hers wrote exactly her lines', 20_000, () => readOutline())
-  assert.ok(expectedHers.includes('- Rubrics reward what a model writes\n<!-- from the Trinity panel -->\n- Markers read structure first\n\n:::notes'), 'comment in place, notes kept')
-  log('Use hers replaces his changed lines with hers; the comment keeps its place and the notes stay')
+  const expectedTheirs = beforeTheirs.replace(RUBRIC_OLD, '- Rubrics reward what a model writes').replace('- Markers read structure first — and last', '- Markers read structure first')
+  await until(() => readOutline() === expectedTheirs, 'Use theirs wrote exactly their lines', 20_000, () => readOutline())
+  assert.ok(expectedTheirs.includes('- Rubrics reward what a model writes\n<!-- from the Trinity panel -->\n- Markers read structure first\n\n:::notes'), 'comment in place, notes kept')
+  log('Use theirs replaces his changed lines with theirs; the comment keeps its place and the notes stay')
 
   // ── The external-change guard holds Accept ─────────────────────────────────────────────────────────
   const outside = readOutline() + '\n<!-- changed outside TalkWeaver -->\n'

@@ -37,7 +37,7 @@ import { CHANGED_ON_DISK_MESSAGE, PARTIAL_WRITE_MESSAGE, REMOVED_ON_DISK_MESSAGE
 export type TalkWriteOrigin =
   | 'editor' | 'migration' | 'create-talk' | 'tags' | 'frontmatter' | 'ledger-detach' | 'ledger-adopt'
   | 'ledger-merge' | 'publish-handout' | 'publish-flush' | 'optimize-images' | 'retitle' | 'strip-published'
-  | 'share-for-comments'
+  | 'share-for-comments' | 'conflict-merge'
 
 /** The whole new text, or a transformation of the talk's current text (the open buffer when an editor
  *  has the talk, else the file). A transformation that returns its input writes nothing. A thrown

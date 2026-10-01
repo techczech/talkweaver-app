@@ -74,6 +74,7 @@ function createOverview(host) {
   const statusGlyph = { shown: "●", skipped: "⊘", unseen: "○" };
 
   function build(filter, preferQueryTarget = false, followCurrent = false) {
+    if (host.beforeBuild) host.beforeBuild();
     const list = host.listEl;
     list.replaceChildren();
     list.classList.toggle("tw-overview-grid", expanded);
@@ -152,6 +153,9 @@ function createOverview(host) {
       const titleEl = document.createElement("span");
       titleEl.textContent = title;
       label.appendChild(titleEl);
+      // The handout draws one small mark per kind a person kept on this slide (host.slideMarks(index) → a node or null).
+      const marks = host.slideMarks ? host.slideMarks(index) : null;
+      if (marks) label.appendChild(marks);
       btn.appendChild(label);
       btn.addEventListener("click", () => jump(index));
       list.appendChild(btn);

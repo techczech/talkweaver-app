@@ -1,11 +1,12 @@
 /// <reference lib="dom" />
+import { askEndLiveWithBoards, type OpenBoard } from './present-end-live-boards'
 import { clipboard, contextBridge, ipcRenderer } from 'electron'
 import type { LiveStatus } from '../main/live-presenter-client'
 import { venueScreenLinkFromUrl } from '../shared/venue-screen-link'
 import { dressPresenterButton, presenterControl, presenterIconSvg } from '../shared/presenter-controls.ts'
 import { SHORTCUT_REGISTRY } from '../shared/shortcut-registry.ts'
 import { LIVE_BRIDGE_ATTRIBUTE } from '../shared/presenter-palette.ts'
-import type { InstantSlide, PollStateMessage, PresenterInstantMessage, PresenterPollMessage } from '../../worker/protocol'
+import type { InstantSlide, PollStateMessage, PresenterAudienceMessage, PresenterBoardMessage, PresenterInstantMessage, PresenterPollMessage } from '../../worker/protocol'
 import {
   linkLabel,
   liveControlPresentation,
@@ -13,6 +14,14 @@ import {
   liveSessionFinished,
   liveSlideStateKey,
   liveToggleIntent,
+  AUDIENCE_FEEDBACK_START,
+  audienceCountsView,
+  nextAudienceFeedback,
+  trayPreworkQuestions,
+  withPreworkQuestions,
+  type AudienceFeedbackPush,
+  type AudienceFeedbackState,
+  type TrayQuestion,
   liveStatusView,
   nextVenueWatch,
   presenterLiveSlideState,
@@ -40,7 +49,7 @@ type LiveGoResult = {
 let pollStateHandler: ((message: PollStateMessage) => void) | null = null
 let liveStatusHandler: ((status: LiveStatus) => void) | null = null
 type PollActionResult = { success: boolean; operationId?: string; status?: 'pending' | 'confirmed' | 'rejected'; error?: string }
-type PollOperation = { operationId: string; status: 'pending' | 'confirmed' | 'rejected'; message: PresenterPollMessage | PresenterInstantMessage; error?: string }
+type PollOperation = { operationId: string; status: 'pending' | 'confirmed' | 'rejected'; message: PresenterPollMessage | PresenterInstantMessage | PresenterAudienceMessage | PresenterBoardMessage; error?: string }
 type PollJoin = { shortUrl: string; qrSvg: string }
 let joinHandler: ((value: PollJoin) => void) | null = null
 let operationHandler: ((value: PollOperation) => void) | null = null
@@ -54,6 +63,19 @@ let cachedStatus: LiveStatus | null = null
 let statusRevision = 0
 let sessionEpoch = 0
 let joinRevision = 0
+let audienceHandler: ((counts: ReturnType<typeof audienceCountsView>) => void) | null = null
+let audienceFeedback: AudienceFeedbackState = AUDIENCE_FEEDBACK_START
+let audienceSlideId: string | null = null
+let audienceRevision = 0
+// The questions tray's own hook: every question the worker holds, and whether a session is up.
+let questionsHandler: ((view: { questions: TrayQuestion[]; live: boolean }) => void) | null = null
+// The Run's pre-work questions put in the talk's questions (ticket 11): main's own list, beside the phones'.
+let preworkQuestions: TrayQuestion[] = []
+const showAudienceCounts = (): void => {
+  const shown = withPreworkQuestions(audienceFeedback, preworkQuestions)
+  try { audienceHandler?.(audienceCountsView(shown, audienceSlideId, cachedStatus || 'ended')) } catch { /* inert */ }
+  try { questionsHandler?.({ questions: shown.questions, live: cachedStatus === 'live' || cachedStatus === 'paused-reconnecting' }) } catch { /* inert */ }
+}
 let statusRenderer: ((status: LiveStatus) => void) | null = null
 let venueCountRenderer: ((count: number) => void) | null = null
 let venueLinkRenderer: ((url: string) => void) | null = null
@@ -68,8 +90,10 @@ function updateStatus(status: LiveStatus): void {
     cachedVenueScreens = 0; venueCountRenderer?.(0)
     cachedInstant = null
   }
+  if (sessionFinished(status)) audienceFeedback = AUDIENCE_FEEDBACK_START
   try { statusRenderer?.(status) } catch { /* inert */ }
   try { liveStatusHandler?.(status) } catch { /* inert */ }
+  showAudienceCounts()
 }
 ipcRenderer.on('live:status', (_event, status: LiveStatus) => {
   statusRevision++
@@ -127,6 +151,41 @@ try {
       liveStatusHandler = callback
       queueMicrotask(() => { if (cachedStatus) { try { callback(cachedStatus) } catch { /* inert */ } } })
     },
+    // The status bar's reactions chip and questions counter (ADR-0027 §4): callback({ reactions:
+    // { puzzled, helped, bookmark } | null, questions: number | null }) for the slide on screen, again
+    // whenever a count, the slide or the session status changes.
+    onAudience: (callback: (counts: ReturnType<typeof audienceCountsView>) => void) => {
+      audienceHandler = callback
+      queueMicrotask(showAudienceCounts)
+    },
+    // The questions tray (ADR-0027, ticket 03): callback({ questions, live }) with every question the
+    // worker holds (answered or not; text and name are untrusted), again whenever they change.
+    onQuestions: (callback: (view: { questions: TrayQuestion[]; live: boolean }) => void) => {
+      questionsHandler = callback
+      queueMicrotask(showAudienceCounts)
+    },
+    // Mark one question answered (or not); the worker's next questions.state is what the tray then shows.
+    answerQuestion: (questionId: string, answered = true): Promise<PollActionResult> =>
+      typeof questionId === 'string' && questionId
+        ? Promise.resolve(ipcRenderer.invoke('live:question-answer', questionId, answered !== false)).then((value) => value as PollActionResult)
+          .catch(() => ({ success: false, status: 'rejected' as const, error: 'Could not mark the question answered. Try again.' }))
+        : Promise.resolve({ success: false, status: 'rejected' as const, error: 'Invalid question.' }),
+    // The Live menu's "From phones · this talk" switches (ADR-0027 amendment): `{ questionsAllowed?,
+    // reactionsAllowed? }` goes to the worker as `switches.set` through the presenter's operation queue.
+    setSwitches: (patch: { questionsAllowed?: boolean; reactionsAllowed?: boolean }): Promise<PollActionResult> => {
+      const clean: { questionsAllowed?: boolean; reactionsAllowed?: boolean } = {}
+      if (typeof patch?.questionsAllowed === 'boolean') clean.questionsAllowed = patch.questionsAllowed
+      if (typeof patch?.reactionsAllowed === 'boolean') clean.reactionsAllowed = patch.reactionsAllowed
+      if (clean.questionsAllowed === undefined && clean.reactionsAllowed === undefined) return Promise.resolve({ success: false, status: 'rejected' as const, error: 'Invalid switch.' })
+      return Promise.resolve(ipcRenderer.invoke('live:switches', clean)).then((value) => value as PollActionResult)
+        .catch(() => ({ success: false, status: 'rejected' as const, error: 'Could not update the phones. Try again.' }))
+    },
+    // The board panel (feedback-boards ticket 05): one board operation (board.move, board.merge,
+    // board.split, board.hide, board.freeze, board.release, board.limit) through the presenter's
+    // acknowledged operation queue; main checks it with the worker's own parser.
+    boardAction: (message: PresenterBoardMessage): Promise<PollActionResult> =>
+      Promise.resolve(ipcRenderer.invoke('live:board-action', message)).then((value) => value as PollActionResult)
+        .catch(() => ({ success: false, status: 'rejected' as const, error: 'storage_failed' })),
     onJoin: (callback: (value: PollJoin) => void) => {
       joinHandler = callback
       queueMicrotask(() => { if (cachedJoin) { try { callback(cachedJoin) } catch { /* inert */ } } })
@@ -143,6 +202,16 @@ ipcRenderer.on('live:poll-state', (_event, message: PollStateMessage) => {
   cachedPolls.set(message.pollId, message)
   try { pollStateHandler?.(message) } catch { /* inert */ }
 })
+ipcRenderer.on('live:audience', (_event, push: AudienceFeedbackPush) => {
+  if (!push || (push.kind !== 'snapshot' && push.kind !== 'reaction' && push.kind !== 'questions')) return
+  audienceRevision++
+  audienceFeedback = nextAudienceFeedback(audienceFeedback, push)
+  showAudienceCounts()
+})
+ipcRenderer.on('live:prework-questions', (_event, list: unknown) => {
+  preworkQuestions = trayPreworkQuestions(list)
+  showAudienceCounts()
+})
 ipcRenderer.on('live:instant-state', (_event, slide: InstantSlide | null) => {
   instantRevision++
   cachedInstant = slide
@@ -157,7 +226,8 @@ const snapshotStatusRevision = statusRevision
 const snapshotJoinRevision = joinRevision
 const snapshotPresenceRevision = presenceRevision
 const snapshotInstantRevision = instantRevision
-void ipcRenderer.invoke('live:snapshot').then((value: { status?: LiveStatus; shortUrl?: string; qrSvg?: string; venueScreens?: number; polls?: PollStateMessage[]; instantSlide?: InstantSlide | null; pending?: Array<{ operationId: string; action: PresenterPollMessage | PresenterInstantMessage }> }) => {
+const snapshotAudienceRevision = audienceRevision
+void ipcRenderer.invoke('live:snapshot').then((value: { status?: LiveStatus; shortUrl?: string; qrSvg?: string; venueScreens?: number; polls?: PollStateMessage[]; instantSlide?: InstantSlide | null; reactionCounts?: AudienceFeedbackState['reactionCounts']; questions?: Array<{ answered: boolean }>; pending?: Array<{ operationId: string; action: PresenterPollMessage | PresenterInstantMessage }> }) => {
   if (!value || sessionEpoch !== snapshotSessionEpoch) return
   if (statusRevision !== snapshotStatusRevision && cachedStatus && sessionFinished(cachedStatus)) return
   if (value.status && statusRevision === snapshotStatusRevision) cachedStatus = value.status
@@ -169,6 +239,15 @@ void ipcRenderer.invoke('live:snapshot').then((value: { status?: LiveStatus; sho
   if (instantRevision === snapshotInstantRevision) {
     cachedInstant = value.instantSlide ?? null
     try { instantHandler?.(cachedInstant) } catch { /* inert */ }
+  }
+  // Pushes received while the request was in flight are newer than its snapshot.
+  if (!preworkQuestions.length) {
+    preworkQuestions = trayPreworkQuestions((value as { preworkQuestions?: unknown }).preworkQuestions)
+    if (preworkQuestions.length) showAudienceCounts()
+  }
+  if (audienceRevision === snapshotAudienceRevision && (value.reactionCounts || value.questions)) {
+    audienceFeedback = nextAudienceFeedback(audienceFeedback, { kind: 'snapshot', reactionCounts: value.reactionCounts ?? {}, questions: value.questions ?? [] })
+    showAudienceCounts()
   }
   for (const message of value.polls || []) {
     // Push events received while the request was in flight are newer than its snapshot.
@@ -346,14 +425,22 @@ export function mountLiveBridge(): void {
     setGoButton(intent.action === 'start' ? 'Going live…' : 'Ending live…', liveControlPresentation(status).title)
     try {
       // The one question seam: End live asks before ending; Go live over a session another window
-      // took over asks before starting here. Cancel leaves the state as it is.
-      if (intent.confirm && !window.confirm(intent.confirm)) return
+      // took over asks before starting here. Cancel leaves the state as it is. With a board still
+      // open, End live asks instead whether to close it or keep it open for late cards (D20).
       if (intent.action === 'end') {
-        const result = await ipcRenderer.invoke('live:end') as LiveGoResult
+        const boards = await ipcRenderer.invoke('live:open-boards').catch(() => []) as OpenBoard[]
+        let keepBoardsOpen = false
+        if (Array.isArray(boards) && boards.length) {
+          const choice = await askEndLiveWithBoards(document, boards)
+          if (!choice) return
+          keepBoardsOpen = choice === 'keep'
+        } else if (intent.confirm && !window.confirm(intent.confirm)) return
+        const result = await ipcRenderer.invoke('live:end', { keepBoardsOpen }) as LiveGoResult
         if (!result.success) showError(result.error || 'Could not end the live session')
         else updateStatus(result.status ?? 'ended')
         return
       }
+      if (intent.confirm && !window.confirm(intent.confirm)) return
       const result = await ipcRenderer.invoke('live:go') as LiveGoResult
       if (!result.success || !result.shortUrl) {
         showError(result.error || 'Could not start the live session')
@@ -410,6 +497,7 @@ export function mountLiveBridge(): void {
     const key = liveSlideStateKey(state)
     if (key === last) return
     last = key
+    if (state.slideId !== audienceSlideId) { audienceSlideId = state.slideId; showAudienceCounts() }
     ipcRenderer.send('live:publish-slide', state)
   }
   const poll = window.setInterval(report, 150)

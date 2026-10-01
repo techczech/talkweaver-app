@@ -123,7 +123,8 @@ export function registerTalkTextIpc(deps: TalkTextIpcDeps): TalkTextIpcControlle
       segments = []
     }
 
-    const adapterRows = projectionRows as AdapterRow[]
+    // The compiler's projection rows are untyped records; AdapterRow names the fields this adapter reads.
+    const adapterRows = projectionRows as unknown as AdapterRow[]
     const imageIds = new Set<string>()
     for (const row of adapterRows) {
       for (const image of slideImageRefs(row.source_markdown ?? '')) imageIds.add(image.id)

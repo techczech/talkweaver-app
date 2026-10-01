@@ -3,6 +3,9 @@ import type { LayoutDef, OptionGroup } from './layout-registry/entries.ts'
 import { appliesToHoldsOnTokens, registryOptionGroups } from './layout-registry/options.ts'
 import { LIST_VALUE_KEYS, TRIGGER_LINE_RE, tokenizeTriggerBody as tokenizeBody } from '../../compiler/scripts/lib/trigger-tokenizer.mjs'
 import { parseTriggerLine as parseCompilerTriggerLine } from '../../compiler/scripts/lib/02-triggers-layout.mjs'
+import { duplicateIdWarning, idTokensToKeep, resolveSlideId } from '../../compiler/scripts/lib/slide-id.mjs'
+import { chartObjectTokenAt } from '../../compiler/scripts/lib/03-object-token.mjs'
+import { formatWarning } from '../../compiler/scripts/lib/warning-registry.mjs'
 import {
   STATEMENT_DEFAULTS, STATEMENT_DIMENSION_KEYS, resolveStatementOptions, statementDimensionTokens, type StatementDimension
 } from '../../compiler/scripts/lib/statement-options.mjs'
@@ -104,7 +107,25 @@ function sameMeaning(left: TokenMeaning, right: TokenMeaning): boolean {
   ))
 }
 
+/** Bytes no option token may carry: they close or open a `{…}` group, or end the Trigger line. */
+const UNSAFE_TOKEN_BYTES = /[{}\r\n]/
+
+/** Whether `token` is a value of `group` a commit may write: a registry value ('' = the group's
+ *  default), or a raw-valued token the group owns (a number, a reactions list) that stays inside one
+ *  `{…}` group on one line. */
+export function isOptionTokenForGroup(token: string, group: OptionGroup): boolean {
+  if (typeof token !== 'string' || UNSAFE_TOKEN_BYTES.test(token)) return false
+  return group.values.some((value) => value.token === token) || optionValueForToken(token, group) !== undefined
+}
+
 function optionValueForToken(raw: string, group: OptionGroup): string | undefined {
+  // Ticket 04: every `reactions=` token the compiler reads is the Reactions group's value (the
+  // authored bytes are the value; the Audience section reads its meaning with readReactionsValue).
+  // A token is one `{…}` group on one line: bytes that would close the group, open another or end
+  // the line are never a value (they would let a "value" write new tokens or new outline lines).
+  if (group.reactionsKey && raw.startsWith(group.reactionsKey + '=') && raw.length > group.reactionsKey.length + 1) {
+    return UNSAFE_TOKEN_BYTES.test(raw) ? undefined : raw
+  }
   if (group.numberKey && raw.startsWith(group.numberKey + '=')) {
     const value = raw.slice(group.numberKey.length + 1)
     if (group.allowUnlimited && value === 'unlimited') return raw
@@ -136,15 +157,19 @@ export interface LogicalTriggerBlock {
   start: number
   /** Zero-based exclusive end of the consecutive Trigger-only block. */
   end: number
-  /** Canonical one-line rendering, with duplicate ids collapsed to the final authored id. */
+  /** Canonical one-line rendering, with duplicate ids collapsed to the slide's resolved id. */
   line: string
   warnings: string[]
 }
 
 /**
  * Read the one logical Trigger block below a heading. Blank lines before the block are tolerated;
- * once it starts, every consecutive Trigger-only line belongs to it. Token order is preserved,
- * except that duplicate slide ids collapse to the final id in reading order.
+ * once it starts, every consecutive Trigger-only line belongs to it — except that a chart token owning
+ * the list below it (chartObjectTokenAt) is a content object and ends the block, exactly where the
+ * compiler tree's block ends (14-outline-tree.mjs furtherTriggerLines). Token order is preserved,
+ * except that several slide ids collapse to the one the shared resolver (slide-id.mjs) reads for
+ * the slide — the heading's own id, else the LAST in the block — so the merge never changes the
+ * slide's id. The ids set aside are reported: `duplicate-slide-id-merged:kept a2, dropped a1 (Title)`.
  */
 export function logicalTriggerBlockAfterHeading(lines: readonly string[], headingIndex: number): LogicalTriggerBlock | null {
   let start = headingIndex + 1
@@ -156,23 +181,33 @@ export function logicalTriggerBlockAfterHeading(lines: readonly string[], headin
   while (end < lines.length) {
     const line = lines[end].replace(/\r$/, '')
     if (!TRIGGER_LINE_RE.test(line.trim())) break
+    if (end > start && chartObjectTokenAt(lines, end)) break
     tokens.push(...parseAllGroups(line))
     end += 1
   }
 
-  const ids = tokens.filter((token) => /^id=/.test(token.raw))
-  const keptId = ids.at(-1)?.raw
+  const { keep, kept, dropped } = idTokensToKeep(tokens.map((token) => token.raw), resolveSlideId(lines, headingIndex), headingIndex)
+  // Each token keeps its authored bytes (`source`): a quoted value ({kicker="A, B"},
+  // {reactions="Too fast","Just right"}) must stay quoted, or it would re-read as several tokens.
   const rendered = tokens
-    .filter((token) => !/^id=/.test(token.raw) || token.raw === keptId && token === ids.at(-1))
-    .map((token) => `{${token.raw}}`)
+    .filter((token, index) => !/^id=[A-Za-z0-9_-]+$/.test(token.raw) || keep.has(index))
+    .map((token) => `{${token.source}}`)
     .join('')
-  const kept = keptId?.slice(3)
   return {
     start,
     end,
     line: rendered,
-    warnings: ids.length > 1 && kept ? [`duplicate-slide-id-merged:${kept}`] : []
+    warnings: dropped.length && kept ? [duplicateIdWarning(kept, dropped, lines[headingIndex] ?? '')] : []
   }
+}
+
+/**
+ * The one surface for what a Trigger-block merge set aside (`duplicate-slide-id-merged:…`): the warning
+ * register's words in the log, never a modal. The editor's ↵, the Inspector, the ⌘L option commits and
+ * the layout picker's verbs all report here.
+ */
+export function reportTriggerMergeWarnings(warnings: readonly string[], log: (message: string) => void = console.warn): void {
+  for (const warning of warnings) log(`[trigger-merge] ${formatWarning(warning)}`)
 }
 
 /**
@@ -419,7 +454,7 @@ function commitStatementOption(line: string, group: OptionGroup, token: string, 
 
 /** ADR-0011 keeps every option surface on the same byte-preserving Trigger-line write path. */
 export function commitOptionSelection(line: string, group: OptionGroup, token: string, context: OptionCommitContext = {}): string {
-  if (!group.values.some((value) => value.token === token) && optionValueForToken(token, group) === undefined) {
+  if (!isOptionTokenForGroup(token, group)) {
     throw new Error(`Unknown option token for ${group.key}: ${token}`)
   }
   if (STATEMENT_OPTION_GROUPS[group.key]) return commitStatementOption(line, group, token, context)
@@ -446,15 +481,27 @@ function commitGroupToken(line: string, group: OptionGroup, token: string, conte
 
   const edits = groupRemovalEdits(line, groupTokens, tokens, belongsToGroup)
 
-  if (token) {
-    const layoutToken = [...tokens].reverse().find((candidate) =>
-      meaningForToken(candidate.raw).some((pair) => pair.key === 'layout')
-    )
-    if (layoutToken) edits.push({ start: layoutToken.groupEnd, end: layoutToken.groupEnd, text: `{${token}}` })
+  // A new token goes after its group's anchor (ADR-0032: a board's settings follow {poll=board},
+  // skipping the tokens this commit removes), else after the layout token, else at the end.
+  // A rewritten value keeps its place: the anchor before the group's current token wins.
+  const anchorKeys = group.anchorKeys ?? []
+  const isAnchor = (candidate: TriggerToken): boolean => !groupTokens.includes(candidate)
+    && meaningForToken(candidate.raw).some((pair) => anchorKeys.includes(pair.key))
+  const firstMember = groupTokens[0]
+  const anchorToken = anchorKeys.length
+    ? (firstMember ? [...tokens].reverse().find((candidate) => candidate.start < firstMember.start && isAnchor(candidate)) : undefined)
+      ?? [...tokens].reverse().find(isAnchor)
+    : undefined
+  const layoutToken = [...tokens].reverse().find((candidate) =>
+    meaningForToken(candidate.raw).some((pair) => pair.key === 'layout')
+  )
+  const placeAfter = anchorToken ?? layoutToken
+  if (token && placeAfter) {
+    edits.push({ start: placeAfter.groupEnd, end: placeAfter.groupEnd, text: `{${token}}` })
   }
 
   let result = applySpanEdits(line, edits)
-  if (token && !tokens.some((candidate) => meaningForToken(candidate.raw).some((pair) => pair.key === 'layout'))) {
+  if (token && !placeAfter) {
     result += `${result ? ' ' : ''}{${token}}`
   }
   return sweepOrphanOptionTokens(result, group, context)

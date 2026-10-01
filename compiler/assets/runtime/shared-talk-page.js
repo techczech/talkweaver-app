@@ -88,7 +88,7 @@ export function createSharedTalkPage(options) {
   const titleOf = (i) => {
     const slide = slidesNow()[i]
     const talkSlide = talk.slides.find((entry) => entry.slideId === slide?.dataset.id)
-    return slide?.dataset.navTitle || talkSlide?.title || slide?.querySelector('h1,h2')?.textContent || 'Untitled'
+    return slide?.dataset.navLabel || slide?.dataset.navTitle || talkSlide?.title || slide?.querySelector('h1,h2')?.textContent || 'Untitled'
   }
   const currentId = () => slideIdAt(host.currentIndex())
   const proposable = (id) => features.proposals && textById.has(id)
@@ -180,7 +180,7 @@ export function createSharedTalkPage(options) {
       if (structural) {
         // Slides were added, removed or moved: the handout's own list, overview and phone view
         // are built once, so load the new page. Drafts and items live on the device, the hash
-        // keeps her slide, and the page opens with the fresh "Updated" line.
+        // keeps their slide, and the page opens with the fresh "Updated" line.
         try { session?.setItem('tw-st-view:' + config.shareId, view) } catch {}
         ;(options.reload || (() => win.location.reload()))()
         return
@@ -338,7 +338,7 @@ export function createSharedTalkPage(options) {
     })
   }
 
-  // ---- thumbnails grid (the handout's Overview thumbnails, with her marks) ----------------
+  // ---- thumbnails grid (the handout's Overview thumbnails, with their marks) ----------------
   function thumbCanvas(content) {
     const inner = el('div', { class: 'tw-st-tinner' }, [content])
     return el('div', { class: 'tw-st-canvas' }, [inner])

@@ -1,4 +1,5 @@
-import { logicalTriggerBlockAfterHeading } from '../../../shared/trigger-line.ts'
+import { logicalTriggerBlockAfterHeading, reportTriggerMergeWarnings } from '../../../shared/trigger-line.ts'
+import { resolveSlideId } from '../../../../compiler/scripts/lib/slide-id.mjs'
 
 export interface InlineTriggerChange {
   from: number
@@ -102,7 +103,7 @@ export function commitInlineTriggerSelection(
           { from: first.from, to: last.to, insert: committed },
           { from: tokenFrom, to: tokenTo, insert: '' }
         ]
-    for (const warning of block.warnings) console.warn(warning)
+    reportTriggerMergeWarnings(block.warnings)
     return {
       changes,
       selection: tokenIsOnTrigger ? first.from + committed.length : tokenFrom,
@@ -206,6 +207,10 @@ export function prepareObjectInsertDocument(
   while (headingLine > 0 && !HEADING_RE.test(lines[headingLine - 1].text)) headingLine -= 1
   if (headingLine === 0) return { doc: cleanDoc, at: removeFrom }
 
+  // Stamped already — on the heading, in the Trigger block or on an id-only line past a blank — the
+  // slide keeps that id: the shared resolver (slide-id.mjs) is the one answer to "does it have one?".
+  // Nothing to write then (no empty Trigger line either).
+  if (resolveSlideId(cleanDoc.split('\n'), headingLine - 1) !== null) return { doc: cleanDoc, at: removeFrom }
   const id = mintEditorSlideId(rng, slideIdsInOutline(cleanDoc))
   const plan = planEditorTriggerCommit(cleanDoc, headingLine, (triggerLine) => {
     if (/\{id=[A-Za-z0-9_-]+\}/.test(triggerLine)) return triggerLine

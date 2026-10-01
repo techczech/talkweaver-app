@@ -4,6 +4,7 @@ import {
   type ShortcutScope
 } from './shortcut-registry.ts'
 import {
+  componentInsertEntries,
   objectInsertEntries,
   type LayoutDef
 } from './layout-registry/entries.ts'
@@ -20,11 +21,12 @@ export interface CommandMenuPlacement {
 
 export type ToolbarMenuName = 'insert' | 'deck' | 'tools' | 'present'
 export type ToolbarIconToken =
-  | 'layout' | 'image' | 'slides' | 'sparkles'
+  | 'layout' | 'image' | 'slides' | 'sparkles' | 'board'
   | 'design' | 'pane-strip' | 'handout' | 'abstract' | 'refresh' | 'tools' | 'trash'
   | 'present' | 'settings' | 'keyboard' | 'window' | 'presenter' | 'audience'
   | 'table' | 'mindmap' | 'chart' | 'mermaid' | 'diagram' | 'svg'
-  | 'strip' | 'publish' | 'command' | 'undo' | 'redo' | 'newslide' | 'promote' | 'demote' | 'bullets' | 'numbered' | 'more'
+  | 'code' | 'qr' | 'action' | 'embed' | 'countdown'
+  | 'strip' | 'publish' | 'calendar' | 'command' | 'undo' | 'redo' | 'newslide' | 'promote' | 'demote' | 'bullets' | 'numbered' | 'more'
 
 export interface CommandToolbarPlacement {
   menu: ToolbarMenuName
@@ -65,6 +67,7 @@ type ObjectPaletteCommandId = (typeof OBJECT_PALETTE_COMMAND_IDS)[number]
 
 interface ObjectPaletteCommand {
   id: ObjectPaletteCommandId
+  shortcutId?: string
   label: string
   scope: 'app'
   menu: null
@@ -82,7 +85,9 @@ interface ObjectPaletteCommand {
   handlerId: ObjectPaletteCommandId
 }
 
-const command = <const T extends CommandDefinition>(definition: T): T => definition
+// The optional fields stay readable on every entry of the derived unions (an entry that omits `toolbar` or
+// `shortcutId` still has the property, typed optional).
+const command = <const T extends CommandDefinition>(definition: T): T & Partial<Pick<CommandDefinition, 'shortcutId' | 'toolbar'>> => definition
 const objectPaletteCommandIds: ReadonlySet<string> = new Set(OBJECT_PALETTE_COMMAND_IDS)
 
 function objectPaletteCommandId(id: string): ObjectPaletteCommandId | null {
@@ -138,6 +143,61 @@ export function objectPaletteCommands(
 
 const OBJECT_PALETTE_COMMANDS = objectPaletteCommands()
 
+// ADR-0032 §4: component-kind entries with no object declaration leave the layout picker and are
+// inserted at the cursor from the Insert menu (own group, after the objects) and the action bar.
+// Command ids are the finite list below because handlers are declared, not generated; a component
+// added to the registry without a row here is logged and skipped, like an object without a handler.
+const COMPONENT_INSERT_COMMAND_IDS = [
+  'insert-component-code',
+  'insert-component-qr',
+  'insert-component-action',
+  'insert-component-embed',
+  'insert-component-auto-embed',
+  'insert-component-countdown'
+] as const
+
+type ComponentInsertCommandId = (typeof COMPONENT_INSERT_COMMAND_IDS)[number]
+
+const COMPONENT_TOOLBAR_ICON: Record<string, ToolbarIconToken> = {
+  code: 'code',
+  qr: 'qr',
+  action: 'action',
+  embed: 'embed',
+  'auto-embed': 'embed',
+  countdown: 'countdown'
+}
+
+const componentInsertCommandIds: ReadonlySet<string> = new Set(COMPONENT_INSERT_COMMAND_IDS)
+
+export function componentInsertCommands(layouts?: readonly LayoutDef[]) {
+  const entries = layouts ? componentInsertEntries(layouts) : componentInsertEntries()
+  return entries.flatMap((entry, index) => {
+    if (!componentInsertCommandIds.has(entry.commandId)) {
+      console.error(
+        `Registry-derived component command has no finite handler id: ${entry.commandId}. Skipping the command.`
+      )
+      return []
+    }
+    return [command({
+      id: entry.commandId as ComponentInsertCommandId,
+      label: entry.commandLabel,
+      scope: 'app' as const,
+      menu: null,
+      toolbar: {
+        menu: 'insert' as const,
+        order: 200 + index * 10,
+        icon: COMPONENT_TOOLBAR_ICON[entry.name] ?? 'tools',
+        group: 'component',
+        menuLabel: entry.menuLabel
+      },
+      palette: { visible: true as const, keywords: entry.keywords },
+      handlerId: entry.commandId as ComponentInsertCommandId
+    })]
+  })
+}
+
+const COMPONENT_INSERT_COMMANDS = componentInsertCommands()
+
 // Application commands are declared once here. The palette and native custom menus retain their
 // existing order, but now render this data instead of maintaining parallel title/shortcut lists.
 const PALETTE_COMMANDS = [
@@ -152,13 +212,15 @@ const PALETTE_COMMANDS = [
   command({ id: 'studio', label: 'TalkWeaver Studio…', scope: 'tools', menu: null, toolbar: { menu: 'tools', order: 10, icon: 'present' }, palette: { visible: true, keywords: ['studio', 'recordings', 'play'] }, handlerId: 'studio' }),
   command({ id: 'history', label: 'TalkWeaver History…', scope: 'tools', menu: null, toolbar: { menu: 'tools', order: 20, icon: 'slides' }, palette: { visible: true, keywords: ['history', 'ledger', 'delivered'] }, handlerId: 'history' }),
   command({ id: 'importer', label: 'TalkWeaver Importer…', scope: 'tools', menu: null, toolbar: { menu: 'tools', order: 30, icon: 'slides' }, palette: { visible: true, keywords: ['import', 'powerpoint', 'pptx', 'slides'] }, handlerId: 'importer' }),
-  command({ id: 'plan-run', label: 'Plan a Run', scope: 'tools', menu: null, palette: { visible: true, keywords: ['plan', 'run', 'event', 'audience', 'delivery'] }, handlerId: 'plan-run' }),
+  command({ id: 'plan-run', label: 'Plan a run…', scope: 'deck', menu: null, toolbar: { menu: 'present', order: 50, icon: 'calendar', group: 'plan' }, palette: { visible: true, keywords: ['plan', 'run', 'event', 'audience', 'delivery'] }, handlerId: 'plan-run' }),
   command({ id: 'pathways', label: 'Pathways…', scope: 'deck', shortcutId: 'app.pathways', menu: { path: ['Deck'], order: 20 }, toolbar: { menu: 'deck', order: 25, icon: 'slides' }, palette: { visible: true, keywords: ['pathway', 'variant', 'custom show', 'slides'] }, handlerId: 'pathways' }),
   command({ id: 'new-window', label: 'New window (work on another presentation)', scope: 'app', shortcutId: 'app.new-window', menu: null, palette: { visible: true, keywords: ['new', 'window', 'presentation'] }, handlerId: 'new-window' }),
   command({ id: 'new-talk', label: 'New presentation…', scope: 'app', menu: null, palette: { visible: true, keywords: ['new', 'talk', 'presentation'] }, handlerId: 'new-talk' }),
   command({ id: 'new-folder', label: 'New folder…', scope: 'app', menu: null, palette: { visible: true, keywords: ['new', 'folder'] }, handlerId: 'new-folder' }),
   command({ id: 'refresh-talks', label: 'Refresh talk list (re-scan vault)', scope: 'app', menu: null, palette: { visible: true, keywords: ['refresh', 'talks', 'vault', 'scan'] }, handlerId: 'refresh-talks' }),
-  command({ id: 'change-vault', label: 'Change vault folder…', scope: 'app', menu: null, palette: { visible: true, keywords: ['change', 'vault', 'folder'] }, handlerId: 'change-vault' }),
+  // The id stays (old palette history, keymaps); the command is Add vault (ticket 07): it never
+  // replaces the vault list's first vault.
+  command({ id: 'change-vault', label: 'Add vault…', scope: 'app', menu: null, palette: { visible: true, keywords: ['add', 'vault', 'folder', 'change'] }, handlerId: 'change-vault' }),
   command({ id: 'search-talks', label: 'Search presentations…', scope: 'app', shortcutId: 'app.sidebar-talks', menu: null, palette: { visible: true, keywords: ['search', 'talks', 'presentations', 'file list', 'find'] }, handlerId: 'search-talks' }),
   // Talk search 08: the slide picker's talk-search actions. Each runs against the open picker (the
   // palette opens above it); with the picker closed, Find a talk opens it and the others say why
@@ -180,8 +242,11 @@ const PALETTE_COMMANDS = [
   command({ id: 'layout', label: 'Layout…', scope: 'app', shortcutId: 'app.layout-picker', menu: null, toolbar: { menu: 'insert', order: 10, icon: 'layout' }, palette: { visible: true, keywords: ['insert', 'layout'] }, handlerId: 'layout' }),
   command({ id: 'image', label: 'Image…', scope: 'app', shortcutId: 'app.image-search', menu: null, toolbar: { menu: 'insert', order: 20, icon: 'image' }, palette: { visible: true, keywords: ['insert', 'image', 'powerpoint', 'archive'] }, handlerId: 'image' }),
   command({ id: 'search', label: 'Slides from other talks…', scope: 'app', shortcutId: 'app.slide-search', menu: null, toolbar: { menu: 'insert', order: 30, icon: 'slides' }, palette: { visible: true, keywords: ['insert', 'slides', 'search', 'talks'] }, handlerId: 'search' }),
+  // ADR-0032 (round-3 A1): Insert › Board slide writes the starter board after the current slide.
+  command({ id: 'insert-board-slide', label: 'Board slide', scope: 'editor', menu: null, toolbar: { menu: 'insert', order: 35, icon: 'board' }, palette: { visible: true, keywords: ['insert', 'board', 'feedback', 'cards', 'columns', 'poll', 'keep', 'change', 'try'] }, handlerId: 'insert-board-slide' }),
   command({ id: 'icon-picker', label: 'Icon…', scope: 'app', shortcutId: 'app.icon-picker', menu: null, toolbar: { menu: 'insert', order: 40, icon: 'sparkles' }, palette: { visible: true, keywords: ['insert', 'icon', 'bullet'] }, handlerId: 'icon-picker' }),
   ...OBJECT_PALETTE_COMMANDS,
+  ...COMPONENT_INSERT_COMMANDS,
   command({ id: 'format-bold', label: 'Bold', scope: 'editor', shortcutId: 'editor.bold', menu: null, palette: { visible: true, keywords: ['format', 'bold', 'strong', 'markdown'] }, handlerId: 'format-bold' }),
   command({ id: 'format-italic', label: 'Italic', scope: 'editor', shortcutId: 'editor.italic', menu: null, palette: { visible: true, keywords: ['format', 'italic', 'emphasis', 'markdown'] }, handlerId: 'format-italic' }),
   command({ id: 'format-inline-code', label: 'Inline code', scope: 'editor', shortcutId: 'editor.inline-code', menu: null, palette: { visible: true, keywords: ['format', 'inline', 'code', 'backtick', 'markdown'] }, handlerId: 'format-inline-code' }),

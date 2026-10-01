@@ -723,5 +723,161 @@ try {
   await t21Browser.close()
 }
 
+// -----------------------------------------------------------------------------
+// 9. ADR-0033 §4 — screenshots beside a list: Beside lines and Stacked; a lone screenshot's rail
+// -----------------------------------------------------------------------------
+const SHOT_A = join(repo, 'scripts/fixtures/layout/slide_0010.webp')
+const SHOT_B = join(repo, 'scripts/fixtures/layout/sample-image.png')
+const SHOT_C = join(repo, 'scripts/fixtures/layout/07-minister-portrait.png')
+const shotLines = (title, images, labels, tokens = '', frontmatter = []) => [
+  '---', 'title: Screenshot lines', ...frontmatter, '---', '', '# Deck', '', '## Section', '',
+  `### ${title} {sidebar}${tokens ? ` ${tokens}` : ''}`, '',
+  ...images.flatMap((src, i) => [`![shot ${i + 1}](${src})`, `- ${labels[i]}`, ''])
+].join('\n')
+async function compileSource(name, source) {
+  const path = join(dir, `${name}.md`)
+  writeFileSync(path, source, 'utf8')
+  const model = await prepareSource(path, source, `slot-${name}`, statSync(path))
+  return { model, slide: model.slides.find((entry) => entry.nodeLevel === 3), html: model.fullHtml }
+}
+const labels3 = ['Released web resource', 'Session with an open model', 'Explainer built']
+const shot = {
+  beside3: await compileSource('shot-beside3', shotLines('Building explainers', [SHOT_A, SHOT_C, SHOT_B], labels3)),
+  beside2: await compileSource('shot-beside2', shotLines('Two apps', [SHOT_A, SHOT_B], labels3.slice(0, 2))),
+  stacked3: await compileSource('shot-stacked3', shotLines('Building explainers', [SHOT_A, SHOT_C, SHOT_B], labels3, '{shotlist=stacked}')),
+  stacked2: await compileSource('shot-stacked2', shotLines('Two apps', [SHOT_A, SHOT_B], labels3.slice(0, 2), '{shotlist=stacked}')),
+  deckStacked: await compileSource('shot-deck-stacked', shotLines('Building explainers', [SHOT_A, SHOT_C, SHOT_B], labels3, '', ['screenshot_list: stacked'])),
+  slideBeatsDeck: await compileSource('shot-slide-beats-deck', shotLines('Building explainers', [SHOT_A, SHOT_C, SHOT_B], labels3, '{shotlist=beside}', ['screenshot_list: stacked'])),
+  fanned: await compileSource('shot-fanned', shotLines('Building explainers', [SHOT_A, SHOT_C, SHOT_B], labels3, '{screenshots=fanned}')),
+  badDeck: await compileSource('shot-bad-deck', shotLines('Building explainers', [SHOT_A, SHOT_C, SHOT_B], labels3, '', ['screenshot_list: diagonal'])),
+  wrapped: await compileSource('shot-wrapped', shotLines('Building explainers', [SHOT_A, SHOT_B], ['A label far too long to sit under a thumbnail without wrapping onto a second line', 'Short'])),
+  four: await compileSource('shot-four', shotLines('Four screens', [SHOT_A, SHOT_B, SHOT_A, SHOT_B], ['a', 'b', 'c', 'd']))
+}
+const slotOf = (name) => sectionsOf(shot[name].html).join('\n').match(/<div class="slot"[^>]*>/)?.[0] ?? ''
+assert(/data-slot-arrange="beside"/.test(slotOf('beside3')) && /data-slot-media-count="3"/.test(slotOf('beside3')), 'a list line per screenshot (3): the slot is stamped Beside lines by default')
+assert(/data-slot-arrange="beside"/.test(slotOf('beside2')) && /data-slot-media-count="2"/.test(slotOf('beside2')), 'a list line per screenshot (2): Beside lines by default')
+assert(/data-slot-arrange="stacked"/.test(slotOf('stacked3')) && /data-slot-arrange="stacked"/.test(slotOf('stacked2')), '{shotlist=stacked} stamps Stacked on both counts')
+assert(/data-slot-arrange="stacked"/.test(slotOf('deckStacked')), 'the talk default (screenshot_list: stacked) applies when the slide sets none')
+assert(/data-slot-arrange="beside"/.test(slotOf('slideBeatsDeck')), 'the slide token beats the talk default')
+assert(/data-slot-frame="frames"/.test(slotOf('beside3')), 'Beside lines takes the window frames by default')
+assert(/data-slot-frame="fanned"/.test(slotOf('fanned')), 'Beside lines follows the slide\'s screenshot treatment ({screenshots=fanned} → neutral frame)')
+assert(/data-slot-arrange="beside"/.test(slotOf('badDeck')) && shot.badDeck.model.warnings.some((w) => String(w).startsWith('screenshot-list-unknown:diagonal')), 'an unknown talk arrangement falls back to Beside lines and warns')
+assert(!/data-slot-arrange/.test(slotOf('wrapped')), 'a line too long for a caption keeps the plain media column (no arrangement stamped)')
+assert(!/data-slot-arrange/.test(slotOf('four')), 'four screenshots are not offered the arrangements')
+assert(!/data-slot-arrange/.test(slotOf('deckStacked').replace(/data-slot-arrange="stacked"/, '')), 'exactly one arrangement stamp per slot')
+assert(!/data-slot-arrange/.test(compiled['list+3images'].body) && !/data-slot-arrange/.test(compiled['list+1image'].body), 'one list of three items beside three images is not line-per-image: unstamped, unchanged')
+
+assert(
+  slotCompositionFor({}, [image, image, para, para], 'list-visual').arrange === '',
+  'slotCompositionFor: lines that are not one-item lists do not pair with the screenshots'
+)
+const oneLine = (text) => ({ type: 'feature-list', items: [text] })
+assert(
+  slotCompositionFor({ shotList: 'stacked' }, [image, oneLine('a'), image, oneLine('b')], 'list-visual').arrange === 'stacked',
+  'slotCompositionFor: two one-line items beside two images take the slide\'s arrangement'
+)
+assert(
+  slotCompositionFor({ shotList: 'stacked' }, [{ ...image, caption: 'own caption' }, oneLine('a'), image, oneLine('b')], 'list-visual').arrange === '',
+  'slotCompositionFor: an image with its own caption keeps the plain column'
+)
+
+// Geometry at 1920x1080 on the 1280x720 canvas: computed layout of the compiled deck.
+const shotGeometry = async (name, hash) => {
+  const path = join(dir, `${name}-geometry.html`)
+  writeFileSync(path, shot[name].html, 'utf8')
+  const page = await shotBrowser.newPage({ viewport: { width: 1920, height: 1080 } })
+  await page.goto(`file://${path}#${shot[name].slide.id}`, { waitUntil: 'load' })
+  await page.evaluate(() => document.fonts?.ready)
+  await page.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(resolveFrame))))
+  const geometry = await page.evaluate(() => {
+    const slide = document.querySelector('.slide.active')
+    const slot = slide.querySelector('.slot')
+    const box = (el) => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height } }
+    const figs = [...slot.querySelectorAll('.slot-media > figure')]
+    const lines = [...slot.querySelectorAll('.slot-copy .fl-text')]
+    const cs = getComputedStyle(figs[0])
+    const bar = getComputedStyle(figs[0], '::before')
+    return {
+      figs: figs.map(box), lines: lines.map(box), slot: box(slot), stage: box(slide.parentElement),
+      fit: figs.map((f) => { const i = f.querySelector('img'); const r = getComputedStyle(i); return { objectFit: r.objectFit, objectPosition: r.objectPosition, position: r.position } }),
+      figBorder: cs.borderTopWidth, figRadius: cs.borderTopLeftRadius, bar: bar.content, barHeight: bar.height,
+      contentZoom: slide.querySelector('.slide-content').style.zoom || '1',
+      slideHasSplit: slide.hasAttribute('data-split')
+    }
+  })
+  await page.close()
+  return geometry
+}
+const shotBrowser = await chromium.launch({ headless: true })
+try {
+  const near = (a, b, tol = 1.5) => Math.abs(a - b) <= tol
+  // Beside lines, three: equal 3:2 thumbnails, one column, one per line, each centred on its line, top-left crop
+  const b3 = await shotGeometry('beside3')
+  assert(b3.figs.length === 3 && b3.lines.length === 3, 'Beside lines (3): three thumbnails, three lines')
+  assert(b3.figs.every((f) => near(f.width / f.height, 1.5, 0.02)), `Beside lines (3): every thumbnail is 3:2 (${b3.figs.map((f) => (f.width / f.height).toFixed(2)).join(' ')})`)
+  assert(b3.figs.every((f) => near(f.width, b3.figs[0].width) && near(f.left, b3.figs[0].left)), 'Beside lines (3): all thumbnails the same size, one aligned column')
+  assert(b3.figs.every((f, i) => f.right < b3.lines[i].left && Math.abs((f.top + f.bottom) / 2 - (b3.lines[i].top + b3.lines[i].bottom) / 2) < f.height / 2), 'Beside lines (3): each thumbnail sits beside its own line')
+  assert(b3.figs.every((f, i) => i === 0 || f.top >= b3.figs[i - 1].bottom - 1), 'Beside lines (3): thumbnails do not overlap')
+  assert(b3.fit.every((f) => f.objectFit === 'cover' && /^0(px|%)\s+0(px|%)$/.test(f.objectPosition)), `Beside lines (3): cropped from the top-left (${b3.fit[0].objectFit} ${b3.fit[0].objectPosition})`)
+  assert(b3.bar === '""' && parseFloat(b3.barHeight) > 0 && parseFloat(b3.figRadius) > 0, 'Beside lines (3): framed with the screenshot row\'s window-frame bar, radius and hairline')
+  assert(b3.contentZoom === '1', 'Beside lines (3): fits without the deck shrinking the slide')
+  const b2 = await shotGeometry('beside2')
+  assert(b2.figs.length === 2 && b2.figs.every((f) => near(f.width / f.height, 1.5, 0.02)), 'Beside lines (2): two 3:2 thumbnails')
+  assert(b2.figs[0].width > b3.figs[0].width + 20, `Beside lines: two thumbnails are wider than three (${b2.figs[0].width.toFixed(0)} > ${b3.figs[0].width.toFixed(0)})`)
+  const fanned = await shotGeometry('fanned')
+  assert(fanned.bar === 'none' && parseFloat(fanned.figBorder) > 0 && fanned.fit.every((f) => f.objectFit === 'cover'), 'Beside lines, fanned treatment: the neutral frame (no window bar), same crop')
+  // Stacked: three images are ONE row, image above caption, bottoms aligned
+  const s3 = await shotGeometry('stacked3')
+  assert(s3.figs.length === 3 && s3.figs.every((f) => near(f.top, s3.figs[0].top)) && s3.figs.every((f, i) => i === 0 || f.left >= s3.figs[i - 1].right), 'Stacked (3): three images in ONE row (not 2 + 1)')
+  assert(s3.figs.every((f, i) => f.bottom <= s3.lines[i].top + 1 && near(f.left, s3.lines[i].left)), 'Stacked (3): each caption sits under its image')
+  assert(s3.lines.every((l) => near(l.top, s3.lines[0].top)), 'Stacked (3): captions share a baseline row')
+  const s2 = await shotGeometry('stacked2')
+  assert(s2.figs.length === 2 && near(s2.figs[0].top, s2.figs[1].top) && s2.figs[1].left >= s2.figs[0].right, 'Stacked (2): two images side by side')
+  assert(s2.figs.every((f) => near(f.width, s2.figs[0].width)) && s2.figs.every((f, i) => f.bottom <= s2.lines[i].top + 1), 'Stacked (2): equal columns, image above caption')
+  assert(s2.figs.every((f) => f.right <= s2.slot.right + 1 && f.bottom <= s2.slot.bottom + 1), 'Stacked (2): nothing spills out of the slot')
+  assert(s3.contentZoom === '1' && s2.contentZoom === '1', 'Stacked: fits without the deck shrinking the slide')
+} finally {
+  await shotBrowser.close()
+}
+
+// A lone screenshot beside a title rail takes the base rail (26cqw), not the stamped 35%, unless a split is authored.
+const loneSource = (tokens) => [
+  '---', 'title: Lone', '---', '', '# Deck', '', '## Section', '', `### What people are spending ${tokens}`, '', `![shot](${SHOT_A})`, ''
+].join('\n')
+const lone = {
+  plain: await compileSource('lone-plain', loneSource('{sidebar}')),
+  authored: await compileSource('lone-authored', loneSource('{sidebar} {split=35}')),
+  list: await compileSource('lone-list', ['---', 'title: L', '---', '', '# Deck', '', '## Section', '', '### A list {sidebar}', '', '- one', '- two', ''].join('\n'))
+}
+const sectionOf = (c) => sectionsOf(c.html).find((sec) => sec.includes('What people') || sec.includes('A list')) ?? ''
+assert(/data-title-layout="left"/.test(sectionOf(lone.plain)) && !/data-split=/.test(sectionOf(lone.plain)), 'lone screenshot beside a rail: no stamped 35% split (base rail)')
+assert(/data-split="35"/.test(sectionOf(lone.authored)), 'lone screenshot with an authored {split=35}: the authored split still wins')
+assert(/data-split="35"/.test(sectionOf(lone.list)), 'a list beside the rail keeps the stamped 35%')
+const loneBrowser = await chromium.launch({ headless: true })
+try {
+  const railOf = async (c, name) => {
+    const path = join(dir, `${name}.html`)
+    writeFileSync(path, c.html, 'utf8')
+    const page = await loneBrowser.newPage({ viewport: { width: 1920, height: 1080 } })
+    await page.goto(`file://${path}#${c.slide.id}`, { waitUntil: 'load' })
+    await page.evaluate(() => document.fonts?.ready)
+    await page.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(resolveFrame))))
+    const geometry = await page.evaluate(() => {
+      const slide = document.querySelector('.slide.active')
+      const stage = slide.parentElement.getBoundingClientRect()
+      const fig = slide.querySelector('.slide-content > figure.slide-figure').getBoundingClientRect()
+      return { stageWidth: stage.width, figLeft: fig.left - stage.left, figWidth: fig.width }
+    })
+    await page.close()
+    return geometry
+  }
+  const plain = await railOf(lone.plain, 'lone-plain-geometry')
+  const authored = await railOf(lone.authored, 'lone-authored-geometry')
+  assert(plain.figWidth > authored.figWidth + 100, `lone screenshot: wider at the base rail than at an authored 35% (${plain.figWidth.toFixed(0)} vs ${authored.figWidth.toFixed(0)})`)
+  assert(authored.figLeft - plain.figLeft > 0.07 * plain.stageWidth, `lone screenshot: the picture starts further left at the base rail (${plain.figLeft.toFixed(0)} vs ${authored.figLeft.toFixed(0)})`)
+} finally {
+  await loneBrowser.close()
+}
+
 console.log(failures ? `slot composition: ${failures} failure(s)` : 'slot composition: all checks passed')
 process.exit(failures ? 1 : 0)

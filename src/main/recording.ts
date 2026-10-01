@@ -10,9 +10,9 @@
 // anything. None of this touches the data-loss backstops for outlines (unrelated paths).
 
 import { BrowserWindow, ipcMain, shell } from 'electron'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync } from 'fs'
-import { readFile as readFileAsync, readdir as readdirAsync, stat as statAsync } from 'fs/promises'
+import { readFile as readFileAsync } from 'fs/promises'
 import { execFileSync } from 'child_process'
 import { pathToFileURL } from 'url'
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
@@ -21,13 +21,25 @@ import {
   attachDeliveryToPlanned,
   listRuns,
   normaliseRun,
-  persistRun,
+  persistRunForTalk,
   plannedRunCandidates,
   readRun,
+  readRunForTalk,
+  runPathForTalk,
+  talkRunFolderForTalk,
+  writeRunFile,
   type RunPoll,
   type RunPollResponse,
   type RunRecord,
 } from './runs'
+import {
+  deleteTargets,
+  localRecordingPath,
+  saveTargets,
+  sessionJsonPath,
+  listSessionJsonFiles,
+  vaultSessionPath,
+} from './recording-paths'
 
 // ── Task 4: mic permission for the present window ────────────────────────────
 // Grant ONLY the microphone, and ONLY to this present window's webContents, so the bridge's
@@ -65,7 +77,7 @@ export interface R2Config {
 export interface RecordingDeps {
   compilerDir: () => string | null // where lib/16-presentation-ledger.mjs lives (dev or packaged)
   userDataDir: () => string // app.getPath('userData')
-  vaultRoot: () => string | null // getConfig('vaultRoot')
+  vaultRoot: () => string | null // the current vault's root (vault registry)
   discardThresholdMs: () => number // getConfig('recordingDiscardMs', 20000)
   r2Config: () => R2Config // Settings → Recording storage (endpoint/bucket/creds source)
   readSafeKeys: () => { accessKeyId: string; secretAccessKey: string } | null // safeStorage-decrypted keys
@@ -73,7 +85,8 @@ export interface RecordingDeps {
   beforeCloseWindow?: (webContentsId: number, liveAction?: 'end' | 'keep') => Promise<{ ok: boolean; error?: string }>
   /** Called after a session is persisted (any kind) — the main window refreshes its talk facts
    *  (last-delivered dates in the panel/status bar) without a reload (T29). */
-  onSessionSaved?: (saved: { talkSlug: string; kind: RunKind }) => void
+  /** After a Run is saved; `runId` lets a live session bound to it flush its history at once. */
+  onSessionSaved?: (saved: { talkSlug: string; kind: RunKind; runId: string }) => void
 }
 
 // The slide-time index is data, so it round-trips as-is; the session shape is the spec's data model.
@@ -151,9 +164,11 @@ function persistLivePollBuffer(webContentsId: number, vaultRoot: string | null):
   const state = runStates.get(webContentsId)
   const buffer = livePollBuffers.get(webContentsId)
   if (!vaultRoot || !state?.sessionId || !buffer || (!buffer.polls.length && !buffer.responses.length)) return false
-  const run = readRun(vaultRoot, state.talkSlug, state.sessionId)
+  // talkSlug/sessionId come from the renderer (recording:run-state): read and write only the
+  // guarded Run path for that talk.
+  const run = readRunForTalk(vaultRoot, state.talkSlug, state.sessionId)
   if (!run) return false
-  persistRun(vaultRoot, applyRunPollBuffer(run, buffer))
+  persistRunForTalk(vaultRoot, state.talkSlug, state.sessionId, applyRunPollBuffer(run, buffer))
   livePollBuffers.delete(webContentsId)
   return true
 }
@@ -286,12 +301,10 @@ function normaliseTrims(value: unknown): TrimRange[] {
   return merged
 }
 
-function sessionJsonPath(deps: RecordingDeps, talkSlug: string, sessionId: string): string {
-  const vault = deps.vaultRoot()
-  const recDir = join(deps.userDataDir(), 'recordings')
-  return vault
-    ? join(vault, '_PRESENTATIONS', talkSlug, `${sessionId}.json`)
-    : join(recDir, `${sessionId}.json`)
+// Every renderer-supplied talk slug / session id reaches the disk through recording-paths.ts,
+// which refuses unsafe names (the handler then returns that error and touches nothing).
+function sessionPath(deps: RecordingDeps, talkSlug: unknown, sessionId: unknown) {
+  return sessionJsonPath(deps.vaultRoot(), deps.userDataDir(), talkSlug, sessionId)
 }
 
 function withDefaultKind(session: unknown): unknown {
@@ -340,20 +353,23 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       const talkSlug = String(payload?.talkSlug ?? 'talk')
       const requestedPlannedId = typeof payload?.plannedRunId === 'string' ? payload.plannedRunId : ''
       const vault = deps.vaultRoot()
-      const planned = requestedPlannedId && vault ? readRun(vault, talkSlug, requestedPlannedId) : null
+      const plannedPath = requestedPlannedId && vault ? runPathForTalk(vault, talkSlug, requestedPlannedId) : null
+      const planned = plannedPath && vault ? readRun(vault, talkSlug, requestedPlannedId) : null
       if (requestedPlannedId && (!planned || planned.status !== 'planned')) {
         return { ok: false, error: 'planned-run-not-found' }
       }
       const sessionId = planned?.id ?? L.newSessionId(Date.now(), Math.random)
       const audioBuf = mode === 'recording' ? Buffer.from(payload.audio as ArrayBuffer) : null
+      // Both paths are settled (and refused if unsafe) before anything is written.
+      const targets = saveTargets(vault, deps.userDataDir(), talkSlug, sessionId, !!audioBuf)
+      if (!targets.ok) return { ok: false, error: targets.error }
 
       // 1) LOCAL FIRST — audio to disk before any network call, so a dropped connection
       //    (or an unconfigured R2) can never lose the recording.
       const recDir = join(deps.userDataDir(), 'recordings')
       if (!existsSync(recDir)) mkdirSync(recDir, { recursive: true })
-      if (audioBuf) {
-        const audioPath = join(recDir, `${sessionId}.webm`)
-        writeFileSync(audioPath, audioBuf)
+      if (audioBuf && targets.audio) {
+        writeFileSync(targets.audio, audioBuf)
       }
 
       // 2) session.json (metadata + slide-time index) → the Vault Presentation Ledger.
@@ -390,12 +406,15 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
         : baseSession
       // Vault is the home; if none is configured, keep the session.json beside the audio so a
       // record still survives (it just isn't in the synced Ledger).
-      const sessionDir = vault ? join(vault, '_PRESENTATIONS', talkSlug) : recDir
+      const sessionDir = dirname(targets.sessionJson)
       if (!existsSync(sessionDir)) mkdirSync(sessionDir, { recursive: true })
-      const sessionJsonPath = join(sessionDir, `${sessionId}.json`)
-      writeFileSync(sessionJsonPath, L.serialiseSession(finalSession), 'utf8')
+      // Re-check once the folder exists: it must still resolve inside the vault.
+      if (vault && !vaultSessionPath(vault, talkSlug, sessionId).ok) return { ok: false, error: 'unsafe-path' }
+      // The same atomic writer as every other Run write (temporary file, then rename): a live
+      // session's history flush may write this Run too, and a reader never sees half a file.
+      writeRunFile(targets.sessionJson, finalSession)
       if (pendingPolls) livePollBuffers.delete(event.sender.id)
-      deps.onSessionSaved?.({ talkSlug, kind })
+      deps.onSessionSaved?.({ talkSlug, kind, runId: sessionId })
 
       // 3) Local-first is the whole story on save (Dominik's call): the recording lives on this
       //    machine, uploaded:false. R2 upload is ON REQUEST — the Studio "Upload to R2" action
@@ -415,12 +434,10 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
     try {
       const vault = deps.vaultRoot()
       if (!vault) return []
-      const dir = join(vault, '_PRESENTATIONS', String(talkSlug))
       const out: unknown[] = []
-      for (const f of await readdirAsync(dir)) {
-        if (!f.endsWith('.json') || f === 'manifest.json') continue
+      for (const file of await listSessionJsonFiles(vault, talkSlug)) {
         try {
-          out.push(withDefaultKind(JSON.parse(await readFileAsync(join(dir, f), 'utf8'))))
+          out.push(withDefaultKind(JSON.parse(await readFileAsync(file, 'utf8'))))
         } catch {
           /* skip an unreadable session file rather than failing the whole list */
         }
@@ -441,24 +458,13 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
     try {
       const vault = deps.vaultRoot()
       if (!vault) return []
-      const root = join(vault, '_PRESENTATIONS')
       const out: unknown[] = []
-      let slugDirs: string[]
-      try { slugDirs = await readdirAsync(root) } catch { return [] }
-      for (const slugDir of slugDirs) {
-        const dir = join(root, slugDir)
+      // Every talk folder and session file is checked to resolve inside the vault first.
+      for (const file of await listSessionJsonFiles(vault)) {
         try {
-          if (!(await statAsync(dir)).isDirectory()) continue
+          out.push(withDefaultKind(JSON.parse(await readFileAsync(file, 'utf8'))))
         } catch {
-          continue
-        }
-        for (const f of await readdirAsync(dir)) {
-          if (!f.endsWith('.json') || f === 'manifest.json') continue
-          try {
-            out.push(withDefaultKind(JSON.parse(await readFileAsync(join(dir, f), 'utf8'))))
-          } catch {
-            /* skip an unreadable session file */
-          }
+          /* skip an unreadable session file */
         }
       }
       out.sort((a, b) =>
@@ -475,6 +481,7 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
   ipcMain.handle('recording:planned-runs', (event, talkSlug: string, pathwayId: string | null) => {
     const vault = deps.vaultRoot()
     if (!vault) return []
+    if (!talkRunFolderForTalk(vault, talkSlug)) return []
     const preferredId = contexts.get(event.sender.id)?.preferredPlannedRunId
     return plannedRunCandidates(listRuns(vault, String(talkSlug)), pathwayId ? String(pathwayId) : null).map((run) => ({
       ...run,
@@ -491,14 +498,18 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       if (!vault) return { ok: false, error: 'no-vault' }
       const cfg = deps.r2Config()
       if (!cfg.endpoint || !cfg.bucket) return { ok: false, error: 'r2-not-configured' }
-      const sessionJsonPath = join(vault, '_PRESENTATIONS', String(talkSlug), `${sessionId}.json`)
+      const target = vaultSessionPath(vault, talkSlug, sessionId)
+      if (!target.ok) return { ok: false, error: target.error }
+      const audioTarget = localRecordingPath(deps.userDataDir(), sessionId, 'webm')
+      if (!audioTarget.ok) return { ok: false, error: audioTarget.error }
+      const sessionJsonPath = target.path
       if (!existsSync(sessionJsonPath)) return { ok: false, error: 'session-not-found' }
       const session = JSON.parse(readFileSync(sessionJsonPath, 'utf8')) as {
         audio?: { uploaded?: boolean; r2Key?: string; bytes?: number } | null
       }
       if (!session?.audio) return { ok: false, error: 'not-recorded' }
       if (session?.audio?.uploaded) return { ok: true, uploaded: true }
-      const audioPath = join(deps.userDataDir(), 'recordings', `${sessionId}.webm`)
+      const audioPath = audioTarget.path
       if (!existsSync(audioPath)) return { ok: false, error: 'audio-missing' }
       const r2Key = session.audio?.r2Key ?? `presentations/${talkSlug}/${sessionId}/audio.webm`
 
@@ -526,7 +537,9 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
     try {
       const vault = deps.vaultRoot()
       if (!vault) return { ok: false, error: 'no-vault' }
-      const p = join(vault, '_PRESENTATIONS', String(talkSlug), `${sessionId}.json`)
+      const target = vaultSessionPath(vault, talkSlug, sessionId)
+      if (!target.ok) return { ok: false, error: target.error }
+      const p = target.path
       if (!existsSync(p)) return { ok: false, error: 'session-not-found' }
       const s = JSON.parse(readFileSync(p, 'utf8')) as { context?: string | null }
       s.context = context && String(context).trim() ? String(context).trim() : null
@@ -539,7 +552,9 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
 
   ipcMain.handle('recording:set-kind', (_event, { talkSlug, sessionId, kind }: { talkSlug: string; sessionId: string; kind: RunKind }) => {
     try {
-      const p = sessionJsonPath(deps, String(talkSlug), String(sessionId))
+      const target = sessionPath(deps, talkSlug, sessionId)
+      if (!target.ok) return { ok: false, error: target.error }
+      const p = target.path
       if (!existsSync(p)) return { ok: false, error: 'session-not-found' }
       const s = JSON.parse(readFileSync(p, 'utf8')) as { kind?: RunKind }
       s.kind = normaliseKind(kind)
@@ -552,7 +567,9 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
 
   ipcMain.handle('recording:set-trims', (_event, { talkSlug, sessionId, trims }: { talkSlug: string; sessionId: string; trims: TrimRange[] }) => {
     try {
-      const p = sessionJsonPath(deps, String(talkSlug), String(sessionId))
+      const target = sessionPath(deps, talkSlug, sessionId)
+      if (!target.ok) return { ok: false, error: target.error }
+      const p = target.path
       if (!existsSync(p)) return { ok: false, error: 'session-not-found' }
       const s = JSON.parse(readFileSync(p, 'utf8')) as { trims?: TrimRange[] }
       const next = normaliseTrims(trims)
@@ -573,7 +590,9 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       const talkSlug = String(payload?.talkSlug ?? 'talk')
       const sessionId = String(payload?.sessionId ?? '')
       if (!sessionId) return { ok: false, error: 'session-id-required' }
-      const p = sessionJsonPath(deps, talkSlug, sessionId)
+      const target = sessionPath(deps, talkSlug, sessionId)
+      if (!target.ok) return { ok: false, error: target.error }
+      const p = target.path
       if (!existsSync(p)) return { ok: false, error: 'session-not-found' }
       const s = JSON.parse(readFileSync(p, 'utf8')) as SessionJson
       if (s.audio !== null) return { ok: false, error: 'audio-run' }
@@ -587,7 +606,8 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
         ? Math.max(0, explicitWallMs)
         : Number.isFinite(started) ? Math.max(0, Date.parse(endedAt) - started) : s.wallClockMs
       s.slideTimeIndex = L.buildSlideTimeIndex(rawMarks) as SlideTimeMark[]
-      writeFileSync(p, L.serialiseSession(s), 'utf8')
+      // Atomic, like every other Run write: a crash mid-write never truncates the Run.
+      writeRunFile(p, s as unknown as RunRecord)
       return { ok: true }
     } catch (e) {
       return { ok: false, error: String(e) }
@@ -632,9 +652,10 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
   // Delete a session — session.json + local audio go to the OS Trash (recoverable).
   ipcMain.handle('recording:delete-session', async (_event, { talkSlug, sessionId }: { talkSlug: string; sessionId: string }) => {
     try {
-      const vault = deps.vaultRoot()
-      const p = vault ? join(vault, '_PRESENTATIONS', String(talkSlug), `${sessionId}.json`) : null
-      const audioPath = join(deps.userDataDir(), 'recordings', `${sessionId}.webm`)
+      const targets = deleteTargets(deps.vaultRoot(), deps.userDataDir(), talkSlug, sessionId)
+      if (!targets.ok) return { ok: false, error: targets.error }
+      const p = targets.sessionJson
+      const audioPath = targets.audio
       if (p && existsSync(p)) await shell.trashItem(p)
       if (existsSync(audioPath)) await shell.trashItem(audioPath)
       return { ok: true }
@@ -645,6 +666,8 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
 }
 
 // The local audio file for a session — served to the renderer's <audio> via the twrec:// protocol.
-export function recordingAudioPath(userDataDir: string, sessionId: string): string {
-  return join(userDataDir, 'recordings', `${sessionId}.webm`)
+// null when the session id is not a safe single name.
+export function recordingAudioPath(userDataDir: string, sessionId: string): string | null {
+  const target = localRecordingPath(userDataDir, sessionId, 'webm')
+  return target.ok ? target.path : null
 }

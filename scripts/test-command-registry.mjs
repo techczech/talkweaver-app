@@ -11,12 +11,13 @@ const {
   commandShortcutLabel,
   menuCommands,
   objectPaletteCommands,
+  componentInsertCommands,
   paletteCommands,
   toolbarCommands,
 } = await import(
   new URL('../src/shared/command-registry.ts', import.meta.url)
 )
-const { LAYOUTS } = await import(
+const { LAYOUTS, componentInsertEntries, isPickerEligible } = await import(
   new URL('../src/shared/layout-registry/entries.ts', import.meta.url)
 )
 const { SHORTCUT_REGISTRY } = await import(
@@ -68,8 +69,9 @@ const expectedPaletteIds = [
   'find-talk', 'add-talk-beside', 'talk-beside', 'close-talk-beside', 'select-whole-section',
   'present-window', 'present-presenter',
   'present-from-here', 'present-audience', 'handout', 'build', 'publish-handout', 'share-for-comments', 'copy-venue-screen-link', 'layout',
-  'image', 'search', 'icon-picker', 'insert-object-table', 'insert-object-mindmap',
+  'image', 'search', 'insert-board-slide', 'icon-picker', 'insert-object-table', 'insert-object-mindmap',
   'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg',
+  'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-component-auto-embed', 'insert-component-countdown',
   'format-bold', 'format-italic', 'format-inline-code', 'format-highlight', 'format-link',
   'deck-design', 'metadata', 'tag-slide', 'abstract',
   'view-editor', 'view-both', 'view-strip', 'view-grid', 'fold-all', 'unfold-all',
@@ -109,9 +111,34 @@ assert.deepEqual(
 const insertToolbar = toolbarCommands('insert').map((command) => command.id)
 assert.deepEqual(
   insertToolbar,
-  ['layout', 'image', 'search', 'icon-picker', 'insert-object-table', 'insert-object-mindmap', 'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg'],
-  'the Insert toolbar menu is exactly the four built-ins then the six objects, in order'
+  ['layout', 'image', 'search', 'insert-board-slide', 'icon-picker', 'insert-object-table', 'insert-object-mindmap', 'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg', 'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-component-auto-embed', 'insert-component-countdown'],
+  'the Insert toolbar menu is the five built-ins, then the six objects, then the six components, in order'
 )
+
+// ADR-0032 §4: every component-kind entry without an object door is inserted at the cursor from the
+// Insert menu (own group) and reachable by the action bar; none of them is a picker choice.
+const componentEntries = componentInsertEntries(LAYOUTS)
+assert.deepEqual(
+  componentEntries.map((entry) => entry.name),
+  ['code', 'qr', 'action', 'embed', 'auto-embed', 'countdown'],
+  'the component inserts are the registry component entries that have no object door'
+)
+const componentCommands = componentInsertCommands(LAYOUTS)
+assert.deepEqual(componentCommands.map((command) => command.id), componentEntries.map((entry) => entry.commandId), 'one command per component entry')
+for (const componentCommand of componentCommands) {
+  assert.equal(componentCommand.toolbar?.menu, 'insert', `${componentCommand.id}: in the Insert menu`)
+  assert.equal(componentCommand.toolbar?.group, 'component', `${componentCommand.id}: own group under its own separator`)
+  assert.ok(componentCommand.toolbar.order > Math.max(...objectCommands.map((c) => c.toolbar.order)), `${componentCommand.id}: after the objects`)
+  assert.equal(componentCommand.palette.visible, true, `${componentCommand.id}: palette entry`)
+}
+for (const entry of LAYOUTS.filter((candidate) => candidate.kind === 'component')) {
+  assert.equal(isPickerEligible(entry), false, `${entry.name}: a component is not offered by the layout picker`)
+  const hasDoor = entry.object !== undefined
+    ? objectPaletteCommands(LAYOUTS).some((command) => command.id === `insert-object-${entry.name}`)
+    : componentCommands.some((command) => command.id === `insert-component-${entry.name}`)
+  assert.equal(hasDoor, true, `${entry.name}: every component entry is reachable from Insert`)
+}
+assert.equal(componentEntries.find((entry) => entry.name === 'qr').snippet, '[QR: https://example.com | Label]', 'a component inserts its registry trigger unless it declares its own snippet')
 
 // T27: ⌘⇧P is promoted to an explicit command — the Tools menu's "All commands…" opens the palette,
 // the palette does not list itself, and the shortcut stays owned by the command.
@@ -175,10 +202,10 @@ assert.deepEqual(
 )
 
 const expectedToolbarIds = {
-  insert: ['layout', 'image', 'search', 'icon-picker', 'insert-object-table', 'insert-object-mindmap', 'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg'],
+  insert: ['layout', 'image', 'search', 'insert-board-slide', 'icon-picker', 'insert-object-table', 'insert-object-mindmap', 'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg', 'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-component-auto-embed', 'insert-component-countdown'],
   deck: ['deck-design', 'toggle-inspector', 'pathways', 'metadata', 'abstract', 'refresh', 'normalize-triggers', 'delete-slide'],
   tools: ['studio', 'history', 'importer', 'settings', 'app.command-palette', 'help'],
-  present: ['present-window', 'present-presenter', 'present-from-here', 'present-audience']
+  present: ['present-window', 'present-presenter', 'present-from-here', 'present-audience', 'plan-run']
 }
 for (const [menu, expectedIds] of Object.entries(expectedToolbarIds)) {
   assert.deepEqual(toolbarCommands(menu).map((command) => command.id), expectedIds, `${menu} toolbar menu resolves from the command register`)

@@ -42,8 +42,9 @@ talk('agents-presentations', 'agent-architecture', { frontmatter: 'title: Agent 
 talk('external-workshops/York-July-2026/day-3', 'york-closing', { frontmatter: 'title: York Closing Panel\ndate: 2026-07-22', edited: 20 })
 talk('external-workshops/York-July-2026/day-2', 'york-workshop', { frontmatter: 'title: York Workshop\nevent: Festival of AI Competency', edited: 10 })
 
-const index = createVaultIndex({ cachePath: join(cacheDir, 'vault-index.json') })
-const listedTalks = await index.refresh(vault)
+const indexVault = { id: 'test-vault', root: vault }
+const index = createVaultIndex({ dir: join(cacheDir, 'vault-index') })
+const listedTalks = await index.refresh(indexVault)
 const { prepareSource } = await import(pathToFileURL(join(root, 'compiler/scripts/lib/08-source-adapters.mjs')).href)
 const { buildPerSlideProjections } = await import(pathToFileURL(join(root, 'compiler/scripts/lib/10-projections.mjs')).href)
 const compiled = new Map()
@@ -53,7 +54,7 @@ for (const t of listedTalks) {
 }
 const search = createTalkSearch({
   vaultRoot: () => vault,
-  talks: () => index.cached(vault),
+  talks: () => index.cached(indexVault),
   slideRows: (p) => compiled.get(p) ?? [],
   onSlideTextMissing: () => {}
 }, { revalidateMs: 0 })

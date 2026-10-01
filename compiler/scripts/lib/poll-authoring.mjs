@@ -1,6 +1,7 @@
 import { TRIGGER_LINE_RE, tokenizeTriggerBody } from "./trigger-tokenizer.mjs";
+import { BOARD_COLUMN_RANGE, boardFindings, boardSource, readBoardSettings } from "./board-slide.mjs";
 
-const POLL_TYPES = new Set(['single', 'multiple', 'open', 'ranking', 'rating', 'categorisation']);
+const POLL_TYPES = new Set(['single', 'multiple', 'open', 'ranking', 'rating', 'categorisation', 'board']);
 
 // Directives only have meaning as a whole content line, outside Markdown code fences.
 export function pollDirectivesFor(lines = []) {
@@ -101,6 +102,7 @@ export function pollDefinitionFor(slide, rawBlocks, slideId, authored, warnings)
   if (hasTop && type !== 'ranking') return invalid('polltop applies only to ranking polls.');
   if (hasSkip && !matrix) return invalid('pollskip applies only to rating and categorisation polls.');
   const pollId = `poll-${slideId}`;
+  if (type === 'board') return boardDefinitionFor(slide, pollId, slideId, authored, warnings);
   // Existing choice polls use their first list; expanding that set would change saved choices.
   const legacyChoices = type === 'single' || type === 'multiple';
   const labels = type === 'open' ? [] : legacyChoices
@@ -144,8 +146,47 @@ export function pollDefinitionFor(slide, rawBlocks, slideId, authored, warnings)
   };
 }
 
+// ADR-0032 §2 (ticket 01): a board is read from the slide text — the heading is the question, the
+// first paragraph the instructions, a `>` line the example card, the list the columns (2–4, a
+// nested bullet a column's hint) — and its settings from the trigger line (board-slide.mjs). The
+// definition rides on the slide like every poll's, in the shape the live worker parses
+// (worker/board-protocol.ts BoardSettings): the columns are the poll's `options` (id + label, in
+// slide order; a board takes cards, not votes), and `board` carries the instructions, the example,
+// the hints keyed by column option id, and every setting with its default filled in. Text parts
+// that are empty are left out. Result visibility does not apply: cards show as they arrive.
+function boardDefinitionFor(slide, pollId, slideId, authored, warnings) {
+  const source = boardSource(authored.contentLines);
+  for (const finding of boardFindings(source)) warnings.push(`${finding.code}:${slideId}:${finding.detail}`);
+  const { settings, issues } = readBoardSettings(slide.attrs);
+  for (const issue of issues) warnings.push(`board-setting-invalid:${slideId}:${issue}`);
+  const columns = source.columns.filter((column) => column.label.trim()).slice(0, BOARD_COLUMN_RANGE.max);
+  const options = columns.map((column, index) => ({ optionId: `${pollId}-option-${index + 1}`, label: column.label }));
+  const hints = Object.fromEntries(columns
+    .map((column, index) => [options[index].optionId, column.hint.trim()])
+    .filter(([, hint]) => hint));
+  return {
+    pollId, type: 'board', question: slide.title, options, visibility: 'live',
+    board: {
+      ...(source.instructions.trim() ? { instructions: source.instructions.trim() } : {}),
+      ...(source.example?.trim() ? { example: source.example.trim() } : {}),
+      ...(Object.keys(hints).length ? { hints } : {}),
+      ...settings
+    }
+  };
+}
+
 export function rebasePollDefinition(poll, slideId) {
   const pollId = `poll-${slideId}`;
+  if (poll.type === 'board' && poll.board?.hints) {
+    // A board's hints are keyed by its column (option) ids, which move with the slide id.
+    const moved = new Map(poll.options.map((option, index) => [option.optionId, `${pollId}-option-${index + 1}`]));
+    const hints = Object.fromEntries(Object.entries(poll.board.hints).map(([optionId, hint]) => [moved.get(optionId) ?? optionId, hint]));
+    return {
+      ...poll, pollId,
+      options: poll.options.map((option, index) => ({ ...option, optionId: `${pollId}-option-${index + 1}` })),
+      board: { ...poll.board, hints }
+    };
+  }
   return {
     ...poll, pollId,
     options: poll.options.map((option, index) => ({ ...option, optionId: `${pollId}-option-${index + 1}` })),

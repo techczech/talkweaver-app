@@ -178,7 +178,7 @@ try {
         "export const ledger = (talk, line, extra) => renderToStaticMarkup(React.createElement(LedgerRow, { ...rowProps(talk, extra), slideCount: 52, line }))",
         "const heights = { ledger: 26, shelf: 55, fhead: 24, ledgerTwo: 36, shelfTwo: 69 }",
         "const cb = new Proxy({}, { get: () => () => noop })",
-        "export const tree = (view, rows, collapsed, viewMode = 'ledger') => { const layout = buildLayout(rows, viewMode, heights); return renderToStaticMarkup(React.createElement(Tree, { searching: false, query: '', rows, view, isEmptyVault: false, viewMode, naming: 'title', collapsed, focusKey: null, activeTalkPath: null, menuTalkPath: null, dragTopic: null, talkMeta: {}, lastDelivered: {}, pubFor: () => 'none', layout, mounted: mountedIndices(layout, { start: 0, end: rows.length }, new Set()), containerRef: { current: null }, onScroll: noop, cb })) }"
+        "export const tree = (view, rows, collapsed, viewMode = 'ledger') => { const layout = buildLayout(rows, viewMode, heights); return renderToStaticMarkup(React.createElement(Tree, { searching: false, query: '', rows, trees: new Map([['', view]]), vaults: [], sectionCollapsed: new Set(), isEmptyVault: false, viewMode, naming: 'title', collapsed, focusKey: null, activeTalkPath: null, menuTalkPath: null, dragTopic: null, talkMeta: {}, lastDelivered: {}, pubFor: () => 'none', layout, mounted: mountedIndices(layout, { start: 0, end: rows.length }, new Set()), containerRef: { current: null }, onScroll: noop, cb })) }"
       ].join('\n'),
       resolveDir: root,
       sourcefile: 'test-talklist-archive-entry.tsx'

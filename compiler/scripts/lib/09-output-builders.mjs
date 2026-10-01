@@ -1,10 +1,17 @@
-import { escapeHtml, qrGeneratorSource, overviewRuntimeSource, slideFitRuntimeSource, pollExtendedStyles, markmapVendorSource, mermaidVendorSource } from "./01-cli-utils.mjs";
+import { escapeHtml, qrGeneratorSource, overviewRuntimeSource, slideFitRuntimeSource, pollExtendedStyles, markmapVendorSource, mermaidVendorSource, boardScreenRuntimeSource } from "./01-cli-utils.mjs";
 import { withoutScripts } from "./04-html-extraction.mjs";
+import { plainInlineText } from "./00-inline-render.mjs";
 import { renderLicenseBody } from "./08-source-adapters.mjs";
 import { liveFollowRuntimeSource } from "../../assets/runtime/live-follow.js";
 import { instantSlideStyles } from "../../assets/runtime/instant-slide.js";
+import { audienceReactionsStyles } from "../../assets/runtime/audience-reactions.js";
+import { audienceAskStyles } from "../../assets/runtime/audience-ask.js";
+import { audienceBoardStyles } from "../../assets/runtime/audience-board.js";
+import { audienceMyNotesStyles } from "../../assets/runtime/audience-my-notes.js";
 import { sharedTalkRuntimeSource } from "../../assets/runtime/shared-talk-page.js";
 import { sharedTalkStyles } from "../../assets/runtime/shared-talk-styles.js";
+import { preworkStatusRuntimeSource } from "../../assets/runtime/prework-status.js";
+import { preworkFormStyles, preworkFormRuntimeSource } from "../../assets/runtime/prework-form.js";
 import { renderScriptBlocks, renderSlideNavTitle } from "./slide-script-render.mjs";
 
 // =============================================================================
@@ -28,11 +35,18 @@ function venueTalkQrMarkup(svg, url) {
 // shared-talk Worker serves — the handout with the colleague's comments runtime (LOCKED Margin
 // design). The runtime stays inert unless the Worker's #tw-shared-talk-config block is present.
 // `proposals: false` limits her to notes; `ownerName` is the name the page's copy uses.
-export function buildShareHtml({ title, slides, styles, includeNotes, slug, license, workerBaseUrl = "", liveTalkSlug = slug, venue = false, venueQr = "", venueUrl = "", sharedTalk = false }) {
+// `prework` (feedback-boards ticket 09): a planned Run's handout published before the day carries
+// `{ preworkId, workerBaseUrl, form, steps: [{ id, html }] }` — the public form (never a right answer)
+// and the step slides, kept in an inert <template> so they are never ordinary slides. The page asks
+// the Worker whether pre-work is open and marks body[data-prework]; while it is open the form (ticket 10,
+// prework-form.js) takes the place of the slide list, and once it has closed a banner sits over the list.
+export function buildShareHtml({ title, slides, styles, includeNotes, slug, license, workerBaseUrl = "", liveTalkSlug = slug, venue = false, venueQr = "", venueUrl = "", sharedTalk = false, prework = null }) {
   const sharedTalkOptions = sharedTalk && !venue
     ? JSON.stringify({ proposals: sharedTalk === true || sharedTalk.proposals !== false, ownerName: String((sharedTalk && sharedTalk.ownerName) || "").slice(0, 60) }).replace(/</g, "\\u003c")
     : "null";
-  const hasMermaid = slides.some((slide) => /\bclass=["'][^"']*\bmermaid-mm\b/.test(slide.html));
+  // The pre-work steps are slides too: one that carries a diagram needs the vendor as much as a talk slide.
+  const hasMermaid = [...slides, ...(prework && !venue && Array.isArray(prework.steps) ? prework.steps : [])]
+    .some((slide) => /\bclass=["'][^"']*\bmermaid-mm\b/.test(String(slide && slide.html || "")));
   const notesButton = includeNotes ? '<button class="btn" id="notesBtn" type="button"><span class="btn-label">Notes</span></button>' : "";
   // Public CC attribution travels into the share export as a no-JS <details> popover.
   const licenseDisclosure = license
@@ -41,6 +55,13 @@ export function buildShareHtml({ title, slides, styles, includeNotes, slug, lice
   const liveConfig = workerBaseUrl
     ? JSON.stringify({ workerBaseUrl: String(workerBaseUrl).replace(/\/+$/, ""), talkSlug: String(liveTalkSlug) }).replace(/</g, "\\u003c")
     : "null";
+  const preworkOn = Boolean(prework && !venue && prework.preworkId && prework.workerBaseUrl && prework.form);
+  const preworkConfig = preworkOn
+    ? JSON.stringify({ preworkId: String(prework.preworkId), workerBaseUrl: String(prework.workerBaseUrl).replace(/\/+$/, ""), form: prework.form }).replace(/</g, "\\u003c")
+    : "null";
+  const preworkTemplate = preworkOn
+    ? `<template id="preworkSteps">${(prework.steps || []).map((step) => withoutScripts(String(step.html || ""))).join("\n")}</template>`
+    : "";
   const liveControls = workerBaseUrl
     ? '<button class="btn follow-live-btn" id="followLiveBtn" type="button" hidden><span class="live-dot" aria-hidden="true"></span><span class="btn-label">Stop following</span></button><button class="btn return-live-btn" id="returnToPresenterBtn" type="button" hidden>Return to presenter</button><label class="live-name" id="liveNameWrap" hidden>Your name <input id="liveName" type="text" placeholder="optional" autocomplete="name"></label><span class="live-follow-status" id="liveFollowStatus" role="status" aria-live="polite" hidden></span>'
     : "";
@@ -64,13 +85,14 @@ export function buildShareHtml({ title, slides, styles, includeNotes, slug, lice
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="deck-title" content="${escapeHtml(title)}">
+<meta name="deck-title" content="${escapeHtml(plainInlineText(title))}">
 <link rel="icon" href="data:,">
-<title>${escapeHtml(title)}</title>
+<title>${escapeHtml(plainInlineText(title))}</title>
 <style>
 ${pollExtendedStyles}
 ${styles}
 ${sharedTalk && !venue ? sharedTalkStyles : ""}
+${preworkOn ? preworkFormStyles : ""}
 body { margin: 0; }
 .presenter-root, #presenterBtn { display: none !important; }
 .share-shell { min-height: 100vh; display: grid; grid-template-rows: 1fr auto; }
@@ -156,6 +178,7 @@ body { margin: 0; }
 .live-name input { width: 105px; border: 1px solid #17202a22; border-radius: 6px; background: #fff; color: #17202a; padding: 5px 7px; font: inherit; }
 .live-follow-status { align-self: center; color: #5b6572; font-size: 12px; }
 ${instantSlideStyles}
+${workerBaseUrl && !venue ? audienceReactionsStyles + audienceAskStyles + audienceBoardStyles : ""}
 /* Responsive foundation per IMPLEMENTATION-PLAN: reusable phone touch, gutter, viewport and safe-area primitives. */
 :root {
   --tw-touch-target: 44px;
@@ -236,35 +259,37 @@ ${instantSlideStyles}
 .help-close { float: right; border: 1px solid #17202a24; background: #fff; border-radius: 7px; padding: 6px 10px; cursor: pointer; font: 700 13px/1 system-ui, sans-serif; }
 .mynotes-panel { position: fixed; inset: 0 0 0 auto; width: min(460px, 92vw); transform: translateX(105%); transition: transform 160ms ease; background: #fffdf2; color: #17202a; box-shadow: -18px 0 40px #0002; z-index: 50; overflow: auto; padding: 18px; }
 .mynotes-panel.open { transform: translateX(0); }
-.mynotes-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 6px; }
-.mynotes-head h2 { margin: 0; font-size: 18px; }
-.note-pop { position: fixed; z-index: 65; width: min(280px, 80vw); background: #fffdf2; color: #17202a; border: 1px solid #17202a22; border-radius: 10px; box-shadow: 0 14px 38px #0004; padding: 10px; display: grid; gap: 8px; }
+.note-pop { position: fixed; z-index: 65; width: min(352px, 92vw); background: #fffdf2; color: #17202a; border: 1px solid #17202a22; border-radius: 10px; box-shadow: 0 14px 38px #0004; padding: 10px; display: grid; gap: 8px; }
 .note-pop[hidden] { display: none; }
 .note-pop textarea { width: 100%; min-height: 44px; border: 1px solid #17202a22; border-radius: 7px; padding: 7px 8px; font: 13px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; box-sizing: border-box; resize: vertical; }
 .note-pop-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.note-pop-quote { margin: 0; padding-left: 8px; border-left: 3px solid #f59e0b; font: 13px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; overflow-wrap: anywhere; max-height: 4.2em; overflow: hidden; }
+.note-pop-quote:empty { display: none; }
+.note-pop-words { margin: 0; font: 14px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; white-space: pre-wrap; overflow-wrap: anywhere; }
+.note-pop-words[hidden], .note-pop-sent[hidden], .np-btn[hidden], .note-pop-line[hidden], .note-pop textarea[hidden] { display: none; }
+.note-pop-sent { display: flex; align-items: center; gap: 8px; font: 700 15px/1.2 system-ui, -apple-system, sans-serif; }
+.note-pop-sent svg { width: 22px; height: 22px; color: #15803d; flex: none; }
+.np-btn { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 40px; padding: 0 12px; border-radius: 8px; font: 700 13px/1.2 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; cursor: pointer; box-sizing: border-box; }
+.np-btn .np-ico { width: 16px; height: 16px; flex: none; }
+.np-save { border: 1px solid #17202a33; background: #fff; color: #17202a; }
+.note-pop.is-sent .note-pop-line { order: 1; }
+.note-pop.is-sent .np-save { order: 2; }
+.np-save.primary { border: 0; background: #0f4bd8; color: #fff; }
+.np-send { border: 0; background: #0f4bd8; color: #fff; }
+.np-send[disabled] { background: #c9d3e8; color: #33415c; cursor: default; }
+.np-btn:focus-visible, .note-pop-remove:focus-visible { outline: 3px solid #0f4bd8; outline-offset: 2px; }
+.note-pop-line { margin: 0; font: 12px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #5b6572; overflow-wrap: anywhere; }
 .note-pop-remove { border: 0; background: none; color: #9f1239; font: 600 12px/1 system-ui, sans-serif; cursor: pointer; padding: 6px 4px; }
 .note-pop-remove:hover { text-decoration: underline; }
 mark.note-mark { cursor: pointer; }
-.mynotes-privacy { font-size: 12px; color: #5b6572; margin: 6px 0 10px; }
-.mynotes-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
-.mynotes-hint { font-size: 12px; color: #5b6572; }
-.mynotes-group h3 { margin: 14px 0 6px; font-size: 13px; }
-.mynote { border: 1px solid #17202a22; border-radius: 8px; padding: 8px; margin-bottom: 8px; display: grid; gap: 6px; }
-.mynote-quote { font-size: 12px; color: #384452; border-left: 3px solid #f59e0b; padding-left: 8px; }
-.mynote textarea { width: 100%; min-height: 52px; border: 1px solid #17202a22; border-radius: 6px; padding: 6px; font: 13px/1.4 system-ui, sans-serif; box-sizing: border-box; }
-.mynote-tools { display: flex; gap: 6px; }
 mark.note-mark { background: #fde68a; padding: 0 1px; border-radius: 2px; }
 /* Compact, icon-led chrome buttons so the reader's notes — not the controls — read as primary. */
-.share-actions .btn, .mynotes-actions .btn, .mynotes-head .btn, .nav-panel > .btn, .notes-panel > .btn, .note-pop .btn, .mynote-tools .btn { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; line-height: 1.25; padding: 5px 9px; border-radius: 6px; }
-.mynotes-actions .btn, .mynote-tools .btn { font-size: 12px; padding: 4px 8px; color: #384452; }
+.share-actions .btn, .mn-foot .btn, .mn-head .btn, .nav-panel > .btn, .notes-panel > .btn, .note-pop .btn { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; line-height: 1.25; padding: 5px 9px; border-radius: 6px; }
+.mn-foot .btn { color: #384452; }
 .share-license > summary.btn { font-size: 12.5px; padding: 5px 9px; }
 .btn-ico { width: 14px; height: 14px; flex: 0 0 auto; }
-.mynotes-actions .btn .btn-ico, .mynote-tools .btn .btn-ico { width: 13px; height: 13px; }
-/* My Notes is the focus: roomier rows, readable comment fields, secondary controls. */
-.mynote { padding: 9px 10px; }
-.mynote-quote { font-size: 12.5px; }
-.mynote textarea { font-size: 13.5px; min-height: 56px; }
-.mynotes-head h2 { font-size: 17px; }
+.mn-foot .btn .btn-ico, .mn-head .btn .btn-ico { width: 15px; height: 15px; }
+${audienceMyNotesStyles}
 .share-actions .btn.is-on { background: #fde68a; border-color: #f59e0b; color: #17202a; }
 /* Overview search box (the overview had none) + the hide hooks the filter toggles. */
 .nav-search-wrap { position: relative; margin: 4px 0 12px; }
@@ -273,7 +298,7 @@ mark.note-mark { background: #fde68a; padding: 0 1px; border-radius: 2px; }
 .nav-search:focus-visible { outline: 2px solid #2563eb55; outline-offset: 1px; }
 .section-head[hidden], .subsection-head[hidden], .slide-link[hidden] { display: none !important; }
 @media print {
-  .share-footer, .nav-panel, .notes-panel, .mynotes-panel, .help-fab, .help-overlay, .note-pop, .audience-poll-surface { display: none !important; }
+  .share-footer, .nav-panel, .notes-panel, .mynotes-panel, .help-fab, .help-overlay, .note-pop, .audience-poll-surface, .rx-dock { display: none !important; }
   .slide { display: grid !important; break-after: page; min-height: 100vh; }
   .slide .notes { display: block; margin-top: 24px; border-top: 1px solid #0002; padding-top: 12px; }
 }
@@ -305,19 +330,22 @@ html, body, .share-shell { width: 100%; height: 100%; overflow: hidden; }
 </style>
 </head>
 <body class="${venue ? 'venue-screen' : ''}">
+${preworkOn ? '<div class="pw-closed-host pw-closed-top" id="preworkClosedTop" hidden></div>' : ''}
 <main class="share-shell">
   <div class="phone-bar" id="phoneBar" hidden>
     <button type="button" id="phoneBack" aria-label="All slides">‹ All slides</button>
     <span class="phone-bar-title" id="phoneBarTitle"></span>
     <button type="button" id="phoneFull" style="margin-left:auto" aria-label="Full screen">⤢ Full screen</button>
   </div>
-  <div class="phone-list" id="phoneList" hidden></div>
+  <div class="phone-list" id="phoneList" hidden>${preworkOn ? '<div class="pw-closed-host pw-closed-list" id="preworkClosedList" hidden></div>' : ''}</div>
   <div class="stage-fit" id="stageFit">
   <div class="stage" id="stage">
 ${slideMarkup}
   ${venue ? `<div class="venue-closing" id="venueClosing" hidden>${venueQr}<span>Slides and links</span><small>${escapeHtml(venueUrl)}</small></div>` : ''}
   </div>
   </div>
+  ${workerBaseUrl && !venue ? '<div class="rx-dock" id="rxDock" hidden></div>' : ''}
+  ${workerBaseUrl && !venue ? '<section class="bd-panel" id="bdPanel" aria-label="Board" hidden></section>' : ''}
   ${venue ? '<div class="venue-hint" id="venueHint">Click anywhere for full screen</div>' : ''}
   ${venue ? venueTalkQrMarkup(venueQr, venueUrl) : ''}
   <section class="phone-script" id="phoneScript" hidden></section>
@@ -347,6 +375,7 @@ ${slideMarkup}
     <svg class="nav-search-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.5-4.5"></path></svg>
     <input class="nav-search" id="navSearch" type="search" placeholder="Search slides&#8230;" autocomplete="off" aria-label="Search slides">
   </div>
+  <div id="navLegendHost"></div>
   <div class="nav-list" id="navList"></div>
 </aside>
 ${includeNotes ? '<aside class="notes-panel" id="notesPanel" aria-label="Speaker notes"><button class="btn" id="closeNotes" type="button"><span class="btn-label">Close</span></button><h2>Notes</h2><div id="notesBody"></div></aside>' : ""}
@@ -358,26 +387,32 @@ ${includeNotes ? '<aside class="notes-panel" id="notesPanel" aria-label="Speaker
     <div class="help-rows" id="helpRows"></div>
   </div>
 </div>
-<div class="note-pop" id="notePop" hidden>
-  <textarea id="notePopText" rows="2" placeholder="Add a note (optional)&#8230;"></textarea>
+<div class="note-pop" id="notePop" role="dialog" aria-label="Highlight" hidden>
+  <div class="note-pop-sent" id="notePopSentMark" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="m9 12 2 2 4-4"></path></svg><span>Sent to the speaker</span></div>
+  <p class="note-pop-quote" id="notePopQuote"></p>
+  <textarea id="notePopText" rows="2" maxlength="340" placeholder="Add a note (optional)&#8230;"></textarea>
+  <p class="note-pop-words" id="notePopWords" hidden></p>
+  <button class="np-btn np-save" id="notePopDone" type="button"><svg class="np-ico" id="notePopDoneIco" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 13l4 4L19 7"></path></svg><span class="btn-label" id="notePopDoneLabel">Save to notes</span></button>
+  <button class="np-btn np-send" id="notePopSend" type="button" hidden><svg class="np-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"></path><path d="m21.854 2.147-10.94 10.939"></path></svg><span class="btn-label" id="notePopSendLabel">Send to the speaker as a question</span></button>
+  <p class="note-pop-line" id="notePopLine" role="status" hidden></p>
   <div class="note-pop-row">
-    <button class="btn" id="notePopDone" type="button"><span class="btn-label">Done</span></button>
     <button class="note-pop-remove" id="notePopRemove" type="button">Remove highlight</button>
   </div>
 </div>
 <aside class="mynotes-panel" id="myNotesPanel" aria-label="My notes">
-  <div class="mynotes-head">
+  <div class="mn-head">
     <h2>My Notes</h2>
     <button class="btn" id="closeMyNotes" type="button"><span class="btn-label">Close</span></button>
   </div>
-  <p class="mynotes-privacy">Notes stay in this browser until you copy or download them. They are not sent anywhere automatically.</p>
-  <div class="mynotes-actions">
-    <button class="btn" id="notesCopyMd" type="button"><span class="btn-label">Copy as Markdown</span></button>
-    <button class="btn" id="notesDownloadMd" type="button"><span class="btn-label">Download .md</span></button>
-    <button class="btn" id="notesDownloadJson" type="button"><span class="btn-label">Download JSON</span></button>
+  <div class="mn-body" id="myNotesBody"></div>
+  <div class="mn-foot">
+    <p class="mn-foot-h">Take it away</p>
+    <button class="btn mn-primary" id="notesPrint" type="button"><span class="btn-label">Print or save as PDF</span></button>
+    <div class="mn-foot-actions">
+      <button class="btn" id="notesCopyMd" type="button"><span class="btn-label">Copy as Markdown</span></button>
+      <button class="btn" id="notesDownloadMd" type="button"><span class="btn-label">Download .md</span></button>
+    </div>
   </div>
-  <p class="mynotes-hint" id="myNotesHint">Select any text on a slide to highlight it &#8212; a popup lets you add an optional note (click a highlight to edit it later). With this drawer open, clicking an image notes it too.</p>
-  <div class="mynotes-list" id="myNotesList"></div>
 </aside>
 <div class="focus-banner" id="modeBanner" role="status" aria-live="polite"></div>
 <div class="fs-overlay" id="fsOverlay" role="dialog" aria-modal="true" aria-label="Slide full screen">
@@ -397,7 +432,7 @@ ${includeNotes ? '<aside class="notes-panel" id="notesPanel" aria-label="Speaker
     <span class="lightbox-counter" id="lightboxCounter"></span>
   </div>
 </div>
-${markmapVendorSource}
+${preworkTemplate}${preworkOn ? '<div class="pw-app" id="preworkApp" hidden></div>' : ''}${markmapVendorSource}
 ${hasMermaid ? mermaidVendorSource : ""}
 <script>
 (() => {
@@ -431,7 +466,6 @@ ${hasMermaid ? mermaidVendorSource : ""}
     close: '<svg class="btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>',
     copy: '<svg class="btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h8"></path></svg>',
     download: '<svg class="btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"></path><path d="M7 12l5 5 5-5"></path><path d="M5 21h14"></path></svg>',
-    braces: '<svg class="btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 4a3 3 0 0 0-3 3v2a2 2 0 0 1-2 2 2 2 0 0 1 2 2v2a3 3 0 0 0 3 3"></path><path d="M16 4a3 3 0 0 1 3 3v2a2 2 0 0 0 2 2 2 2 0 0 0-2 2v2a3 3 0 0 1-3 3"></path></svg>',
     jump: '<svg class="btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17L17 7"></path><path d="M8 7h9v9"></path></svg>',
     trash: '<svg class="btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"></path><path d="M10 11v6M14 11v6"></path><path d="M6 7l1 13h10l1-13"></path><path d="M9 7V4h6v3"></path></svg>',
     check: '<svg class="btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 13l4 4L19 7"></path></svg>'
@@ -447,9 +481,9 @@ ${hasMermaid ? mermaidVendorSource : ""}
   slides.forEach((slide) => {
     const role = slide.dataset.role;
     if (role === "section-title" && slide.dataset.section) {
-      sectionTitleById.set(slide.dataset.section, slide.dataset.navTitle || slide.dataset.section);
+      sectionTitleById.set(slide.dataset.section, slide.dataset.navLabel || slide.dataset.navTitle || slide.dataset.section);
     } else if (role === "subsection-title" && slide.dataset.subsection) {
-      subsectionTitleById.set(slide.dataset.subsection, slide.dataset.navTitle || slide.dataset.subsection);
+      subsectionTitleById.set(slide.dataset.subsection, slide.dataset.navLabel || slide.dataset.navTitle || slide.dataset.subsection);
     }
   });
   const navSearch = document.getElementById("navSearch");
@@ -459,7 +493,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
   ${overviewRuntimeSource}
   const overviewSlideData = slides.map((el, slideIndex) => ({
     index: slideIndex,
-    title: el.dataset.navTitle || el.querySelector("h1,h2")?.textContent || "",
+    title: el.dataset.navLabel || el.dataset.navTitle || el.querySelector("h1,h2")?.textContent || "",
     section: el.dataset.section || "",
     subsection: el.dataset.subsection || "",
     body: el.textContent || "",
@@ -467,6 +501,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
     subs: Array.from(el.querySelectorAll(".carousel-subslide")).map((c) => ({ title: c.dataset.subTitle || "", subIndex: Number(c.dataset.subIndex) || 0, body: c.textContent || "" })),
     el,
   }));
+  var slideMarks = null;
   const overview = createOverview({
     slideData: overviewSlideData,
     listEl: navList,
@@ -486,6 +521,9 @@ ${hasMermaid ? mermaidVendorSource : ""}
       applyGallery();
     },
     sectionTitleById, subsectionTitleById,
+    // Marks on each row: read from this device each time the list is built (createSlideMarks is below).
+    beforeBuild: () => { if (slideMarks) slideMarks.refresh(); },
+    slideMarks: (i) => (slideMarks ? slideMarks.marksFor(i) : null),
   });
   navExpand?.addEventListener("click", () => overview.toggleExpand());
   // === Embeds (parity with the full deck) =====================================================
@@ -689,6 +727,39 @@ ${hasMermaid ? mermaidVendorSource : ""}
     if (phoneBar) phoneBar.hidden = true;
     if (phoneList) phoneList.hidden = false;
     buildPhoneList();
+    refreshPhoneListMarks();
+  }
+  // The phone slide list carries, at its top, a strip that opens My Notes and the legend of the marks, and one
+  // small mark per kind on each row. Rebuilt whenever what the device holds may have changed.
+  function refreshPhoneListMarks() {
+    if (!phoneList || !phoneListBuilt || !slideMarks) return;
+    slideMarks.refresh();
+    phoneList.querySelectorAll(".mn-marks").forEach(function (node) { node.remove(); });
+    phoneList.querySelectorAll(".pslide-row").forEach(function (row) {
+      var marks = slideMarks.marksFor(Number(row.dataset.index));
+      var label = row.querySelector(".pslide-label");
+      if (marks && label) label.appendChild(marks);
+    });
+    var count = slideMarks.slides();
+    var head = phoneList.querySelector(".mn-listhead");
+    if (!head) {
+      head = document.createElement("div");
+      head.className = "mn-listhead";
+      var open = document.createElement("button");
+      open.type = "button";
+      open.className = "mn-open-notes";
+      var name = document.createElement("span");
+      name.className = "mn-open-notes-name";
+      name.textContent = "My Notes";
+      var small = document.createElement("small");
+      open.appendChild(name);
+      open.appendChild(small);
+      open.addEventListener("click", function () { setMyNotesOpen(true); });
+      head.appendChild(open);
+      head.appendChild(slideMarks.legend());
+      phoneList.insertBefore(head, phoneList.firstChild);
+    }
+    head.querySelector(".mn-open-notes small").textContent = count === 0 ? "Nothing yet" : count === 1 ? "1 slide" : count + " slides";
   }
 
   /* The script companion. Authored structure is rebuilt verbatim: depth becomes real nesting,
@@ -920,6 +991,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
     initMarkmaps(slides[index]);
     initMermaids(slides[index]);
     scheduleSlideFit();
+    ${venue ? "venueBoards.slideChanged();" : ""}
     if (sharedTalkController) sharedTalkController.slideChanged();
   }
   let liveNavigationObserver = null;
@@ -942,7 +1014,13 @@ ${hasMermaid ? mermaidVendorSource : ""}
   // testable module exercised by scripts/live-follow-client.test.mjs.
   ${liveFollowRuntimeSource()}
   const LIVE_CONFIG = ${liveConfig};
+  ${venue ? `// Feedback boards (ADR-0032, ticket 04): the venue screen draws each board into its slide with the
+  // frame the big screen uses. The join is the talk's own link, the one phones open.
+  ${boardScreenRuntimeSource}
+  const VENUE_JOIN = ${JSON.stringify({ shortUrl: String(venueUrl || ""), qrSvg: String(venueQr || "") }).replace(/</g, "\\u003c")};
+  const venueBoards = createBoardScreen({ slides: () => slides, join: () => VENUE_JOIN });` : ""}
   let venueFollowController = null;
+  let audienceFollowController = null;
   function initialiseLiveFollow() {
     if (!LIVE_CONFIG) return;
     const controller = createAudienceFollowRuntime({
@@ -951,11 +1029,69 @@ ${hasMermaid ? mermaidVendorSource : ""}
       venue: VENUE_MODE,
       getViewerPosition: currentViewerPosition,
       applyLiveSlideState,
+      // A phone that joins a board left open after End live has no slide to follow: take it to the board's slide.
+      showSlide: (slideId) => {
+        const at = slides.findIndex((slide) => slide.dataset.id === slideId);
+        if (at < 0) return;
+        go(at);
+        if (isPhone()) showPhoneDetail(at);
+      },
+      // The reaction bar (ADR-0027): never on the venue screen; its marks are kept beside My Notes' key.
+      reactions: VENUE_MODE ? null : {
+        storageKey: REACTIONS_KEY,
+        questionsKey: QUESTIONS_KEY,
+        // My Notes lists what the bar and Ask keep on this device, so they tell it when that changes.
+        onMarksChanged: () => renderMyNotes(),
+        onQuestionKept: () => renderMyNotes(),
+        // A question sent from a highlight's note is answered to that note (the popup and My Notes show it).
+        onNoteQuestion: (receipt) => {
+          liveNoteSends.delete(receipt.submissionId);
+          const note = readerNotes.find((entry) => entry.sendId && entry.sendId === receipt.submissionId);
+          if (!note) return false;
+          if (receipt.status === "confirmed") { note.sentAt = new Date().toISOString(); noteSendErrors.delete(note.id); }
+          else {
+            noteSendErrors.set(note.id, receipt.error || "");
+            // A stored id is only worth reusing when the worker may have stored the question.
+            if (receipt.error !== "no_answer" && receipt.error !== "protocol_error") delete note.sendId;
+          }
+          saveNotes();
+          if (notePopNoteId === note.id && !notePop.hidden) renderNotePop();
+          renderMyNotes();
+          // A phone note has no popup: the bar's line says how its send ended.
+          const bar = audienceFollowController && audienceFollowController.reactions;
+          if (note.type === "slide" && bar) {
+            bar.notify(receipt.status === "confirmed"
+              ? { tone: "ok", icon: "circle-check", text: "Saved on this phone. Sent to the speaker." }
+              : { tone: "failed", icon: "circle-x", text: "Saved on this phone. Not sent to the speaker. Open My Notes to try again." }, receipt.status === "confirmed" ? 5000 : 8000);
+          }
+          return true;
+        },
+        // Note on the phone bar: a note kept on this device for a slide, sent as a question only when ticked.
+        onSlideNote: (input) => addSlideNote(input),
+        getNoteCount: (slideId) => readerNotes.filter((entry) => entry.slideId === slideId).length,
+        // The speaker paused or resumed questions, or the live session started or stopped: the popup follows.
+        onSwitchesChanged: () => { if (!notePop.hidden) renderNotePop(); },
+        isPhone,
+        // Ask the speaker heads its box with the slide it is about, and gives way to the overlays that own the keyboard.
+        getSlideInfo: (slideId) => { const at = slides.findIndex((slide) => slide.dataset.id === slideId); return { number: at + 1, title: slideTitleFor(at) }; },
+        // The slide's own reactions, stamped by the compiler from its {reactions=…} (ticket 04): a list of
+        // registered ids and custom:<label> ids, [] for off; no attribute is the standard set (null).
+        getSlideReactions: (slideId) => {
+          const slide = slides.find((candidate) => candidate.dataset.id === slideId);
+          if (!slide || slide.dataset.reactions == null) return null;
+          try { const list = JSON.parse(slide.dataset.reactions); return Array.isArray(list) ? list : null; } catch { return null; }
+        },
+        isBlocked: () => helpOverlay.classList.contains("open") || lbOpen,
+      },
+      onPollAnswered: () => renderMyNotes(),
+      // A board that cannot be drawn must not drop the live connection the client guards with fail().
+      onBoardState: ${venue ? "(message) => { try { venueBoards.receive(message); } catch (error) { console.error(error); } }" : "undefined"},
       onEnded: VENUE_MODE ? showVenueClosing : undefined,
     });
     if (controller) {
+      audienceFollowController = VENUE_MODE ? null : controller;
       venueFollowController = VENUE_MODE ? controller : null;
-      liveNavigationObserver = (_viewedSlideId, fromLive) => { if (!fromLive && !VENUE_MODE) controller.viewerMoved(); };
+      liveNavigationObserver = (_viewedSlideId, fromLive) => { if (!fromLive && !VENUE_MODE) controller.viewerMoved(); controller.slideChanged(); };
     }
   }
   // Shared talk (ticket 04): the colleague's comments runtime, injected like Follow live from
@@ -1480,12 +1616,24 @@ ${hasMermaid ? mermaidVendorSource : ""}
   // meaning the slide itself is the offset container (the "any text" fallback). Offsets count
   // characters across the container's text nodes. Re-apply after reload is best-effort.
   const myNotesPanel = document.getElementById("myNotesPanel");
-  const myNotesList = document.getElementById("myNotesList");
-  const myNotesHint = document.getElementById("myNotesHint");
+  const myNotesBody = document.getElementById("myNotesBody");
   const notePop = document.getElementById("notePop");
   const notePopText = document.getElementById("notePopText");
+  const notePopQuote = document.getElementById("notePopQuote");
+  const notePopWords = document.getElementById("notePopWords");
+  const notePopSentMark = document.getElementById("notePopSentMark");
+  const notePopDone = document.getElementById("notePopDone");
+  const notePopSend = document.getElementById("notePopSend");
+  const notePopLine = document.getElementById("notePopLine");
   const deckTitleText = document.querySelector('meta[name="deck-title"]')?.content || document.title;
   const NOTES_KEY = "html-presentations:notes:${slug}";
+  // The other things this device keeps for the talk, which My Notes lists beside the notes: the reaction
+  // marks and bookmarks (audience-reactions.js), the questions Ask sent (audience-my-notes.js) and the
+  // poll answers (keyed by live run; audience-my-notes.js).
+  const REACTIONS_KEY = "html-presentations:reactions:${slug}";
+  const QUESTIONS_KEY = "html-presentations:questions:${slug}";
+  let myNotesStorage = null;
+  try { myNotesStorage = window.localStorage; } catch {}
   let readerNotes = [];
   let noteCounter = 0;
 
@@ -1501,6 +1649,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
   }
   function saveNotes() {
     try { localStorage.setItem(NOTES_KEY, JSON.stringify(readerNotes)); } catch {}
+    // The phone bar shows the slide's note count.
+    try { if (audienceFollowController && audienceFollowController.reactions) audienceFollowController.reactions.refresh(); } catch {}
   }
 
   const NOTE_BLOCK_SELECTOR = "h1,h2,h3,h4,h5,p,li,blockquote,figcaption,dt,dd,th,td,.statement,.fl-text,.card-comment,.tl-text,.smartart-node > .smartart-label";
@@ -1601,7 +1751,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
     const slide = slides[slideIndex];
     if (!slide) return "";
     const heading = slide.querySelector("h1,h2");
-    return slide.dataset.navTitle || (heading && heading.textContent.trim()) || slide.dataset.id || "";
+    return slide.dataset.navLabel || slide.dataset.navTitle || (heading && heading.textContent.trim()) || slide.dataset.id || "";
   }
 
   // Highlight-first flow (single-html annotatable pattern): selecting slide text highlights it
@@ -1621,17 +1771,122 @@ ${hasMermaid ? mermaidVendorSource : ""}
     return range;
   }
   let notePopNoteId = null;
-  function closeNotePop() { notePop.hidden = true; notePopNoteId = null; }
+  let notePopRect = null;
+  // What went wrong with a note's send, by note id (this page only; the note itself is always kept).
+  const noteSendErrors = new Map();
+  function closeNotePop() { notePop.hidden = true; notePopNoteId = null; notePopRect = null; }
+  // Send is offered under the same conditions as Ask: live, following, questions on.
+  function noteSendState() {
+    const rx = audienceFollowController && audienceFollowController.reactions;
+    if (!rx || !audienceFollowController.ask || !rx.isVisible()) return "none";
+    return rx.questionsAllowed() ? "open" : "paused";
+  }
+  // Sends made on this page and not yet answered. A send recorded on a note that is not in here was made on an
+  // earlier page: its answer arrives if the device's queue still holds it, and if the queue was lost the note
+  // is "Not sent" (with Try again), never "Sending…" for good.
+  const liveNoteSends = new Set();
+  function noteSendPhase(note) {
+    if (note.sentAt) return "sent";
+    if (noteSendErrors.has(note.id)) return "failed";
+    if (!note.sendId) return "compose";
+    return liveNoteSends.has(note.sendId) ? "sending" : "failed";
+  }
+  // What My Notes shows of each note's send that has not landed: { [note id]: { state, retry, reason } }.
+  function noteSendStates() {
+    const out = {};
+    readerNotes.forEach((note) => {
+      const phase = noteSendPhase(note);
+      if (phase === "sending") out[note.id] = { state: "sending" };
+      else if (phase === "failed") {
+        const refusal = askRefusal(noteSendErrors.has(note.id) ? noteSendErrors.get(note.id) : "no_answer");
+        out[note.id] = { state: "failed", retry: refusal.retry, reason: refusal.text };
+      }
+    });
+    return out;
+  }
+  // One question for a note through the Ask queue (the popup's Send, the phone sheet's tick and My Notes' Try again).
+  // Returns the submission id, false when it could not be kept, or null when questions are not open right now.
+  function sendNoteQuestion(note) {
+    const words = (note.note || "").trim();
+    const phase = noteSendPhase(note);
+    if (phase === "sent" || phase === "sending" || !words) return false;
+    const ask = audienceFollowController && audienceFollowController.ask;
+    if (!ask || noteSendState() !== "open") return null;
+    noteSendErrors.delete(note.id);
+    const id = note.slideId ? ask.sendNote({ text: noteQuestionText(note.quote, words), slideId: note.slideId, submissionId: note.sendId || "" }) : false;
+    if (id === false) noteSendErrors.set(note.id, note.slideId ? ask.refusalReason() : "ended");
+    else { note.sendId = id; liveNoteSends.add(id); saveNotes(); }
+    return id;
+  }
+  // The phone's note sheet saved a note (input: { slideId, words, send }).
+  function addSlideNote(input) {
+    const at = slides.findIndex((slide) => slide.dataset.id === input.slideId);
+    if (at < 0) return { sent: false };
+    noteCounter += 1;
+    const note = { id: "note-" + noteCounter, slideIndex: at, slideId: input.slideId, slideTitle: slideTitleFor(at), type: "slide", note: input.words, createdAt: new Date().toISOString() };
+    readerNotes.push(note);
+    saveNotes();
+    if (!input.send) { renderMyNotes(); return { sent: false }; }
+    const id = sendNoteQuestion(note);
+    renderMyNotes();
+    return { sent: id ? "queued" : "failed" };
+  }
+  // The popup opens below the highlight when it fits above the page's footer and the reaction bar,
+  // otherwise above it: never on the highlight.
+  function placeNotePop() {
+    const rect = notePopRect || { left: 0, top: 0, bottom: 0, width: 0 };
+    const w = notePop.offsetWidth || 352;
+    const h = notePop.offsetHeight || 0;
+    const x = Math.min(Math.max(8, rect.left + (rect.width || 0) / 2 - w / 2), window.innerWidth - w - 8);
+    let limit = window.innerHeight - 8;
+    [document.querySelector(".share-footer"), document.getElementById("rxDock")].forEach((bar) => {
+      if (!bar || bar.hidden) return;
+      const r = bar.getBoundingClientRect();
+      if (r.height && r.top < limit && r.right > x && r.left < x + w) limit = r.top - 8;
+    });
+    const below = (rect.bottom || rect.top || 0) + 10;
+    const top = below + h <= limit ? below : (rect.top || 0) - h - 10;
+    notePop.style.left = x + "px";
+    notePop.style.top = Math.max(8, Math.min(top, limit - h)) + "px";
+  }
+  function renderNotePop() {
+    const note = readerNotes.find((entry) => entry.id === notePopNoteId);
+    if (!note) return;
+    const phase = noteSendPhase(note);
+    const avail = noteSendState();
+    const sent = phase === "sent";
+    const words = (note.note || "").trim();
+    notePopSentMark.hidden = !sent;
+    notePop.classList.toggle("is-sent", sent);
+    notePopQuote.textContent = note.quote || "";
+    notePopText.hidden = sent;
+    notePopWords.hidden = !sent || !words;
+    notePopWords.textContent = sent ? words : "";
+    notePopDone.classList.toggle("primary", sent);
+    document.getElementById("notePopDoneIco").style.display = sent ? "none" : "";
+    document.getElementById("notePopDoneLabel").textContent = sent ? "Done" : "Save to notes";
+    document.getElementById("notePopRemove").hidden = sent;
+    const refusal = phase === "failed" ? askRefusal(noteSendErrors.get(note.id)) : null;
+    notePopSend.hidden = sent || avail !== "open" || Boolean(refusal && !refusal.retry);
+    notePopSend.disabled = phase === "sending" || !words;
+    document.getElementById("notePopSendLabel").textContent = phase === "sending" ? "Sending\u2026" : "Send to the speaker as a question";
+    let line = "";
+    if (sent) line = "About slide " + (note.slideIndex + 1) + (note.slideTitle ? " \u00b7 " + note.slideTitle.replace(/[.?!]+$/, "") : "") + ". Only the speaker sees it. Also in My Notes, marked \u201cSent as a question\u201d.";
+    else if (refusal) line = "Not sent. Your note is saved on this device. " + refusal.text;
+    else if (phase === "sending") line = "Sending to the speaker\u2026 Your note is saved on this device.";
+    else if (avail === "open") line = "Save to notes stays on this device. Sending shows the quote, your words and slide " + (note.slideIndex + 1) + " to the speaker only.";
+    else if (avail === "paused") line = "The speaker is not taking questions right now. Your note stays on this device.";
+    notePopLine.textContent = line;
+    notePopLine.hidden = !line;
+    placeNotePop();
+  }
   function openNotePop(note, rect) {
     notePopNoteId = note.id;
+    notePopRect = { left: rect.left || 0, top: rect.top || 0, bottom: rect.bottom || rect.top || 0, width: rect.width || 0 };
     notePopText.value = note.note || "";
     notePop.hidden = false;
-    const w = notePop.offsetWidth || 280;
-    const x = Math.min(Math.max(8, rect.left + (rect.width || 0) / 2 - w / 2), window.innerWidth - w - 8);
-    const below = (rect.bottom || rect.top || 0) + 10;
-    notePop.style.left = x + "px";
-    notePop.style.top = Math.min(below, window.innerHeight - 130) + "px";
-    notePopText.focus();
+    renderNotePop();
+    if (note.sentAt) notePopDone.focus(); else notePopText.focus();
   }
   // Rect for an element or range; getBoundingClientRect is missing on Range in some headless
   // DOMs (jsdom) — fall back to 0,0 rather than dying; clamps keep the popover on-screen.
@@ -1641,6 +1896,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
       : { left: 0, top: 0, bottom: 0, width: 0 };
   }
   function handleSelectionMouseup() {
+    // The phone has no highlight popup: its notes are written from the bar's Note button.
+    if (isPhone()) return;
     const range = validSelectionRange();
     if (!range) return;
     const rect = rectFor(range);
@@ -1696,68 +1953,76 @@ ${hasMermaid ? mermaidVendorSource : ""}
     renderMyNotes(note.id);
   }
 
-  function renderNoteRow(note) {
-    const row = document.createElement("div");
-    row.className = "mynote";
-    row.setAttribute("data-note-row", note.id);
-    const quote = document.createElement("div");
-    quote.className = "mynote-quote";
-    quote.textContent = note.type === "image" ? "[Image: " + (note.alt || "image") + "]" : note.quote;
-    row.appendChild(quote);
-    const input = document.createElement("textarea");
-    input.placeholder = "Add your comment";
-    input.value = note.note || "";
-    input.addEventListener("input", () => { note.note = input.value; saveNotes(); });
-    row.appendChild(input);
-    const tools = document.createElement("div");
-    tools.className = "mynote-tools";
-    const jump = document.createElement("button");
-    jump.className = "btn";
-    jump.type = "button";
-    jump.innerHTML = ICON.jump + '<span class="btn-label">Jump</span>';
-    jump.addEventListener("click", () => {
-      go(note.slideIndex);
-      const mark = document.querySelector('mark.note-mark[data-note-id="' + note.id + '"]');
-      if (mark && mark.scrollIntoView) mark.scrollIntoView({ block: "center" });
+  // My Notes: one drawer over one read model (audience-my-notes.js). The drawer never asks anything
+  // outside this device. The chip it is set to stays until the drawer is closed; on a phone "Open slide"
+  // only steps the drawer aside so the slide can be seen.
+  function gatherEverything() {
+    return gatherMyNotes({
+      storage: myNotesStorage,
+      keys: { notes: NOTES_KEY, reactions: REACTIONS_KEY, questions: QUESTIONS_KEY },
+      slides: slides.map((slide, i) => ({ id: slide.dataset.id || "", title: slideTitleFor(i) })),
+      notes: readerNotes,
+      sendStates: noteSendStates()
     });
-    const del = document.createElement("button");
-    del.className = "btn";
-    del.type = "button";
-    del.innerHTML = ICON.trash + '<span class="btn-label">Delete</span>';
-    del.addEventListener("click", () => {
-      removeNoteMarks(note.id);
-      readerNotes = readerNotes.filter((entry) => entry.id !== note.id);
+  }
+  const myNotesDrawer = createMyNotesDrawer({
+    document,
+    panel: myNotesPanel,
+    isPhone,
+    gather: gatherEverything,
+    // Try again for a note whose send did not land (refused, or lost with the device's queue).
+    onRetryNote: (noteId) => {
+      const note = readerNotes.find((entry) => entry.id === noteId);
+      if (!note) return;
+      if (sendNoteQuestion(note) === null) noteSendErrors.set(note.id, noteSendState() === "paused" ? "questions_paused" : "ended");
+      renderMyNotes();
+    },
+    onOpenSlide: (slideIndex) => openSlideFromMyNotes(slideIndex),
+    onJump: (noteId, slideIndex) => {
+      openSlideFromMyNotes(slideIndex);
+      const mark = document.querySelector('mark.note-mark[data-note-id="' + noteId + '"]');
+      if (mark && mark.scrollIntoView) mark.scrollIntoView({ block: "center" });
+    },
+    onDeleteNote: (noteId) => {
+      removeNoteMarks(noteId);
+      readerNotes = readerNotes.filter((entry) => entry.id !== noteId);
       saveNotes();
       renderMyNotes();
-    });
-    tools.appendChild(jump);
-    tools.appendChild(del);
-    row.appendChild(tools);
-    return row;
-  }
-  function renderMyNotes(focusId) {
-    myNotesList.replaceChildren();
-    const groups = new Map();
-    readerNotes.forEach((note) => {
-      if (!groups.has(note.slideIndex)) groups.set(note.slideIndex, []);
-      groups.get(note.slideIndex).push(note);
-    });
-    Array.from(groups.keys()).sort((a, b) => a - b).forEach((slideIndex) => {
-      const group = document.createElement("div");
-      group.className = "mynotes-group";
-      const heading = document.createElement("h3");
-      heading.textContent = "Slide " + (slideIndex + 1) + " — " + (groups.get(slideIndex)[0].slideTitle || "");
-      group.appendChild(heading);
-      groups.get(slideIndex).slice().reverse().forEach((note) => {
-        group.appendChild(renderNoteRow(note));
-      });
-      myNotesList.appendChild(group);
-    });
-    myNotesHint.hidden = readerNotes.length > 0;
-    if (focusId) {
-      const focusRow = myNotesList.querySelector('[data-note-row="' + focusId + '"] textarea');
-      if (focusRow) focusRow.focus();
+    },
+    onEditNote: (noteId, text) => {
+      const note = readerNotes.find((entry) => entry.id === noteId);
+      if (note && !note.sentAt) { note.note = text; saveNotes(); }
+    },
+    // Removing a bookmark or reaction changes this device only: the speaker's counts stay as they were.
+    onRemoveMark: (slideId, kind) => {
+      removeMyNotesMark({ storage: myNotesStorage, key: REACTIONS_KEY }, slideId, kind);
+      if (audienceFollowController && audienceFollowController.reactions) audienceFollowController.reactions.refresh();
+      renderMyNotes();
     }
+  });
+  // The marks in the slide lists (Overview, phone list) and their legend: icons only, from the same read model.
+  slideMarks = createSlideMarks({ document, gather: gatherEverything });
+  const navLegendHost = document.getElementById("navLegendHost");
+  if (navLegendHost) navLegendHost.appendChild(slideMarks.legend());
+  function refreshSlideMarks() {
+    slideMarks.refresh();
+    if (overview.isOpen()) overview.render();
+    refreshPhoneListMarks();
+  }
+  function openSlideFromMyNotes(slideIndex) {
+    if (isPhone()) { showPhoneDetail(slideIndex); setMyNotesOpen(false, true); }
+    else go(slideIndex);
+  }
+  function setMyNotesOpen(open, keepChip) {
+    myNotesPanel.classList.toggle("open", open);
+    if (open) renderMyNotes();
+    else if (!keepChip) myNotesDrawer.resetChip();
+  }
+  function renderMyNotes(focusNoteId) {
+    refreshSlideMarks();
+    if (!myNotesPanel.classList.contains("open")) return;
+    if (focusNoteId) myNotesDrawer.edit(focusNoteId);
+    else myNotesDrawer.render();
   }
   // Re-apply order matters: notes are stored and replayed in capture order, so each note sees
   // the same text-node splits that existed when its offsets were computed. Deleting a note
@@ -1772,20 +2037,30 @@ ${hasMermaid ? mermaidVendorSource : ""}
     });
   }
 
-  document.getElementById("myNotesBtn").addEventListener("click", () => myNotesPanel.classList.toggle("open"));
-  document.getElementById("closeMyNotes").addEventListener("click", () => myNotesPanel.classList.remove("open"));
+  document.getElementById("myNotesBtn").addEventListener("click", () => setMyNotesOpen(!myNotesPanel.classList.contains("open")));
+  document.getElementById("closeMyNotes").addEventListener("click", () => setMyNotesOpen(false));
   document.querySelector(".stage").addEventListener("mouseup", () => setTimeout(handleSelectionMouseup, 0));
   notePopText.addEventListener("input", () => {
     const note = readerNotes.find((entry) => entry.id === notePopNoteId);
-    if (!note) return;
+    if (!note || note.sentAt) return;
     note.note = notePopText.value;
     saveNotes();
+    renderMyNotes();
+    renderNotePop();
+  });
+  // Send to the speaker as a question: one question through the Ask queue, carrying the quote, the words and
+  // the slide. The note is kept whatever happens; a second press while one is in flight or after it landed does nothing.
+  notePopSend.addEventListener("click", () => {
+    const note = readerNotes.find((entry) => entry.id === notePopNoteId);
+    if (!note) return;
+    sendNoteQuestion(note);
+    renderNotePop();
     renderMyNotes();
   });
   notePopText.addEventListener("keydown", (event) => {
     if (event.key === "Escape") { event.preventDefault(); closeNotePop(); }
   });
-  document.getElementById("notePopDone").addEventListener("click", () => closeNotePop());
+  notePopDone.addEventListener("click", () => closeNotePop());
   document.getElementById("notePopRemove").addEventListener("click", () => {
     if (notePopNoteId) {
       removeNoteMarks(notePopNoteId);
@@ -1800,7 +2075,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
   document.addEventListener("click", (event) => {
     if (event.target.closest(".note-pop")) return;
     const mark = event.target.closest("mark.note-mark");
-    if (mark) {
+    if (mark && !isPhone()) {
       const note = readerNotes.find((entry) => entry.id === mark.getAttribute("data-note-id"));
       if (note) { openNotePop(note, rectFor(mark)); return; }
     }
@@ -1812,33 +2087,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
   });
 
   // === My Notes exports =======================================================================
-  // The export is the durable artifact (notes are otherwise this-browser-only). Markdown is the
-  // paste-into-chat path; JSON is the machine-readable one. PURE cores are named declarations —
-  // extracted by name in scripts/test-share-notes.mjs.
-  function notesToMarkdown(deckTitle, notes, exportedAt) {
-    const groups = new Map();
-    notes.forEach((note) => {
-      if (!groups.has(note.slideIndex)) groups.set(note.slideIndex, []);
-      groups.get(note.slideIndex).push(note);
-    });
-    const lines = ["# Notes — " + deckTitle, "", exportedAt, ""];
-    Array.from(groups.keys()).sort((a, b) => a - b).forEach((slideIndex) => {
-      const group = groups.get(slideIndex);
-      lines.push("## Slide " + (slideIndex + 1) + " — " + (group[0].slideTitle || group[0].slideId || ""));
-      group.forEach((note) => {
-        if (note.type === "image") lines.push("[Image: " + (note.alt || "image") + "]");
-        // Quotes flatten to one line: a selection can span line breaks, and a raw newline
-        // inside "> ..." would split the blockquote in strict Markdown.
-        else if (note.quote) lines.push("> \"" + String(note.quote).replace(/\s+/g, " ") + "\"");
-        if (note.note) lines.push(note.note);
-        lines.push("");
-      });
-    });
-    return lines.join("\n").trim() + "\n";
-  }
-  function notesExportPayload(deckTitle, notes, exportedAt) {
-    return { schemaVersion: 1, deck: deckTitle, exportedAt: exportedAt, notes: notes };
-  }
+  // Taking it away: the notes page to print or save as PDF (the main action), and Markdown to copy or
+  // download. Both are pure functions of the read model (audience-my-notes.js), so every kind is in both.
   function downloadFile(name, text, type) {
     const blob = new Blob([text], { type: type });
     const url = URL.createObjectURL(blob);
@@ -1857,7 +2107,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
     setTimeout(() => { label.textContent = original; }, 1400);
   }
   async function copyNotesMarkdown(button) {
-    const text = notesToMarkdown(deckTitleText, readerNotes, new Date().toISOString().slice(0, 10));
+    const text = myNotesMarkdown(gatherEverything(), { title: deckTitleText, date: new Date().toISOString().slice(0, 10) });
     let copied = false;
     try {
       await navigator.clipboard.writeText(text);
@@ -1878,10 +2128,18 @@ ${hasMermaid ? mermaidVendorSource : ""}
   }
   document.getElementById("notesCopyMd").addEventListener("click", (event) => { copyNotesMarkdown(event.currentTarget); });
   document.getElementById("notesDownloadMd").addEventListener("click", () => {
-    downloadFile("${slug}-notes.md", notesToMarkdown(deckTitleText, readerNotes, new Date().toISOString().slice(0, 10)), "text/markdown");
+    downloadFile("${slug}-notes.md", myNotesMarkdown(gatherEverything(), { title: deckTitleText, date: new Date().toISOString().slice(0, 10) }), "text/markdown");
   });
-  document.getElementById("notesDownloadJson").addEventListener("click", () => {
-    downloadFile("${slug}-notes.json", JSON.stringify(notesExportPayload(deckTitleText, readerNotes, new Date().toISOString()), null, 2), "application/json");
+  // The notes page opens in its own tab (text only, the notes with their slide titles, not the slides); the
+  // screen bar's button prints it, and "Save as PDF" in the print window keeps a copy.
+  document.getElementById("notesPrint").addEventListener("click", (event) => {
+    const page = window.open("", "_blank");
+    if (!page) { flashButton(event.currentTarget, "Allow pop-ups to print"); return; }
+    page.document.open();
+    page.document.write(myNotesPrintHtml(gatherEverything(), { title: deckTitleText }));
+    page.document.close();
+    const go = page.document.getElementById("printNow");
+    if (go) go.addEventListener("click", () => page.print());
   });
 
   // === Keyboard help overlay ==================================================================
@@ -1897,6 +2155,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
     { keys: ["O"], label: "Overview panel" },
     { keys: ["/"], label: "Search slides (opens overview)" },
     { keys: ["N"], label: "My Notes drawer (exit Reveal/Focus first)" },
+    ${workerBaseUrl && !venue ? '{ keys: ["A"], label: "Ask the speaker a question (live)" },' : ""}
     { keys: ["?"], label: "This help" },
     { keys: ["Esc"], label: "Close panel / exit mode" }
   ];
@@ -1948,6 +2207,14 @@ ${hasMermaid ? mermaidVendorSource : ""}
     }
     const tag = event.target?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    // Modifier chords belong to the reader's browser (Cmd+R reload, Cmd+F find), not the deck.
+    // Plain Shift stays allowed: "?" needs it.
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    // Enter and Space belong to the focused control — a button, link, disclosure or editable box
+    // must activate, not advance the deck (Enter on the focused Overview button used to jump a
+    // slide AND switch the follow state). Space on a plain target still pages forward.
+    if ((event.key === "Enter" || event.key === " ") &&
+        (event.target?.closest?.("button, a[href], summary, [role='button']") || event.target?.isContentEditable)) return;
     // Any deck keystroke retires the note popover (it would float over the wrong slide).
     closeNotePop();
     // Help modal is modal: while open it owns the keyboard (Esc / ? close it).
@@ -1989,8 +2256,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
     else if (event.key === "End") { event.preventDefault(); go(slides.length - 1); }
     else if (event.key === "z" || event.key === "Z") { event.preventDefault(); openLightbox(0); }
     else if (event.key === "o" || event.key === "O") { event.preventDefault(); overview.toggle(); }
-    else if (event.key === "n" || event.key === "N") { event.preventDefault(); myNotesPanel.classList.toggle("open"); }
-    else if (event.key === "Escape") { navPanel.classList.remove("open"); notesPanel?.classList.remove("open"); myNotesPanel.classList.remove("open"); }
+    else if (event.key === "n" || event.key === "N") { event.preventDefault(); setMyNotesOpen(!myNotesPanel.classList.contains("open")); }
+    else if (event.key === "Escape") { navPanel.classList.remove("open"); notesPanel?.classList.remove("open"); setMyNotesOpen(false); }
   });
   window.addEventListener("hashchange", () => {
     const nextIndex = slides.findIndex((slide) => slide.dataset.id === location.hash.slice(1));
@@ -1998,10 +2265,9 @@ ${hasMermaid ? mermaidVendorSource : ""}
   });
   loadNotes();
   reapplyNoteMarks();
-  renderMyNotes();
   // Handouts open in complete mode — no authored {data-mode} auto-entry; Reveal is opt-in.
   // Give the chrome buttons their leading icon (skips the speaker-notes button if absent).
-  const BTN_ICONS = { prevBtn: ICON.prev, nextBtn: ICON.next, overviewBtn: ICON.overview, revealBtn: ICON.reveal, myNotesBtn: ICON.note, notesBtn: ICON.speaker, printBtn: ICON.print, closeOverview: ICON.close, closeNotes: ICON.close, closeMyNotes: ICON.close, notesCopyMd: ICON.copy, notesDownloadMd: ICON.download, notesDownloadJson: ICON.braces, notePopDone: ICON.check };
+  const BTN_ICONS = { prevBtn: ICON.prev, nextBtn: ICON.next, overviewBtn: ICON.overview, revealBtn: ICON.reveal, myNotesBtn: ICON.note, notesBtn: ICON.speaker, printBtn: ICON.print, closeOverview: ICON.close, closeNotes: ICON.close, closeMyNotes: ICON.close, notesCopyMd: ICON.copy, notesDownloadMd: ICON.download, notesPrint: ICON.print };
   Object.keys(BTN_ICONS).forEach((id) => {
     const el = document.getElementById(id);
     if (el && el.querySelector(".btn-label") && !el.querySelector(".btn-ico")) el.insertAdjacentHTML("afterbegin", BTN_ICONS[id]);
@@ -2020,7 +2286,31 @@ ${hasMermaid ? mermaidVendorSource : ""}
     }, { once: true });
   }
   initialiseLiveFollow();
-  initialiseSharedTalk();
+  initialiseSharedTalk();${preworkOn ? `
+  // Pre-work (ticket 09): ask the Worker whether this Run's pre-work is open and mark the page.
+  const PREWORK_CONFIG = ${preworkConfig};
+  ${preworkStatusRuntimeSource()}
+  ${preworkFormRuntimeSource()}
+  const preworkStatus = createPreworkStatus({ document, config: PREWORK_CONFIG });
+  const preworkForm = createPreworkForm({
+    document, mount: document.getElementById("preworkApp"), config: PREWORK_CONFIG,
+    client: createPreworkClient({ fetch: window.fetch.bind(window), workerBaseUrl: PREWORK_CONFIG.workerBaseUrl, preworkId: PREWORK_CONFIG.preworkId }),
+    storage: { get: (key) => window.localStorage.getItem(key), set: (key, value) => window.localStorage.setItem(key, value) },
+    random: (n) => { const bytes = new Uint8Array(n); if (window.crypto && window.crypto.getRandomValues) window.crypto.getRandomValues(bytes); else for (let i = 0; i < n; i += 1) bytes[i] = Math.floor(Math.random() * 256); return bytes; },
+    fitSlide: fitSlideClone, isPhone,
+    deckTitle: (document.querySelector('meta[name="deck-title"]') || {}).content || document.title,
+    recheck: () => { void preworkStatus.check(); },
+  });
+  document.addEventListener("tw:prework-status", (event) => {
+    const detail = event.detail || {};
+    const status = detail.status;
+    preworkForm.setStatus(status, detail.steps);
+    if (status && status.state === "closed") {
+      showPreworkClosed(document, [document.getElementById("preworkClosedTop"), document.getElementById("preworkClosedList")], status);
+      document.body.classList.add("pw-closed-page");
+    }
+  });
+  void preworkStatus.check();` : ""}
 })();
 </script>
 </body>
@@ -3090,9 +3380,9 @@ a.local-launch-handout-link:hover { background: #e1eaf6; }
     const subsectionTitles = new Map();
     slides.forEach((slide) => {
       if (slide.dataset.role === "section-title" && slide.dataset.section) {
-        sectionTitles.set(slide.dataset.section, slide.dataset.navTitle || slide.dataset.section);
+        sectionTitles.set(slide.dataset.section, slide.dataset.navLabel || slide.dataset.navTitle || slide.dataset.section);
       } else if (slide.dataset.role === "subsection-title" && slide.dataset.subsection) {
-        subsectionTitles.set(slide.dataset.subsection, slide.dataset.navTitle || slide.dataset.subsection);
+        subsectionTitles.set(slide.dataset.subsection, slide.dataset.navLabel || slide.dataset.navTitle || slide.dataset.subsection);
       }
     });
     gridCopyableIds = slides
@@ -3104,7 +3394,7 @@ a.local-launch-handout-link:hover { background: #e1eaf6; }
       const record = byId ? byId.get(id) : null;
       const copyable = Boolean(record && record.source_markdown);
       const heading = slide.querySelector("h1,h2");
-      const title = slide.dataset.navTitle || (heading && heading.textContent.trim()) || id || "Slide";
+      const title = slide.dataset.navLabel || slide.dataset.navTitle || (heading && heading.textContent.trim()) || id || "Slide";
       const card = createElement("div", {
         className: "slide-grid-card",
         tabindex: "0",

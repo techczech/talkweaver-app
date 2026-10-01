@@ -29,6 +29,24 @@ export interface SessionRecoveryRecord {
   /** The presenter's slide id at the moment each instant slide was shown, keyed `<kind>-<shownAt>`. */
   instantAnchors?: Record<string, string | null>
   runId?: string
+  /**
+   * Set when the session ends: its reactions and questions (kept in memory only, never here) may not
+   * be on the Run yet. Cleared after a successful write that follows the final recovery; on restart
+   * a session still pending fetches its final history from the worker again. Holds no content.
+   */
+  historyPending?: boolean
+  /** End live's answer when a board was open: keep it open for late cards (sent on every retry). */
+  keepBoardsOpen?: boolean
+  /** Boards the worker kept open at End live, with when each closes by itself (ms). Never shrinks. */
+  boardsLeftOpen?: Record<string, number>
+  /** When the app learned that a board left open had closed (Close it now, or by itself), by pollId. */
+  boardsClosedAt?: Record<string, number>
+  /** Why each board left open closed, when the worker said: its time came, Close it now, or a new live session took the join link. */
+  boardsClosedReason?: Record<string, 'expired' | 'closed' | 'superseded'>
+  /** When End live happened (ms): the Run marks cards after it as late. */
+  endedAtMs?: number
+  /** The last pull from boards left open (ms). */
+  boardsRefreshedAt?: number
 }
 interface Cipher {
   isEncryptionAvailable(): boolean

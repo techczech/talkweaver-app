@@ -52,6 +52,7 @@ export function filesTreeRows(src: FilesTreeSource, folderOpen: FolderOpenState,
       })
       continue
     }
+    if (row.kind !== 'talk') continue
     const { talk, depth } = row
     const slug = talk.slug
     const title = talk.title || slug

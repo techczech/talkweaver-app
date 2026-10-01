@@ -32,6 +32,25 @@ const failures = createThumbnailQueue(async value => { if (value==='fail') throw
 await assert.rejects(failures('fail'), /test/)
 assert.deepEqual(await failures('ok'), {value:'ok'}, 'failure does not poison queue')
 console.log('PASS thumbnail queue: cancellation, bounded pending edits, independent owners, recovery')
+{
+  // A background job (the picker's own-slide pictures) never goes ahead of a normal one.
+  const order = [], gates = []
+  const q = createThumbnailQueue(async (value) => { order.push(value); await new Promise(resolve => gates.push(resolve)); return { [value]: value } })
+  const busy = q('busy', 'editor')
+  await Promise.resolve()
+  const variant = q('variant', 'picker', true)
+  const strip = q('strip', 'editor')
+  const browser = q('browser', 'browser')
+  gates.shift()(); await busy
+  await new Promise(resolve => setImmediate(resolve))
+  gates.shift()(); await strip
+  await new Promise(resolve => setImmediate(resolve))
+  gates.shift()(); await browser
+  await new Promise(resolve => setImmediate(resolve))
+  gates.shift()(); await variant
+  assert.deepEqual(order, ['busy', 'strip', 'browser', 'variant'], 'normal lanes are served before a queued background job')
+  console.log('PASS thumbnail queue: background jobs wait behind normal lanes')
+}
 const {createLatestThumbnailRequestHandler}=await import('../src/main/thumbnail-queue.ts')
 assert.equal(typeof createLatestThumbnailRequestHandler,'function','request ordering begins before preparation')
 let releaseOld

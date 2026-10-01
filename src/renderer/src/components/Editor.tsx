@@ -1,4 +1,5 @@
 import { runActionBarEditing } from './actionBar/editing-command'
+import { boardStarterInsertion, mintBoardSlideId } from '../../../../compiler/scripts/lib/board-slide.mjs'
 import { useEffect, useRef, useCallback } from 'react'
 import { imageWidgetExtension } from '../extensions/imageWidget'
 import {
@@ -47,6 +48,8 @@ import { lookForRecovery, noteOutlineSaveReply, outlineDiskChanges } from '../li
 import { applyMinimalChange } from '../lib/minimalChange'
 import { triggerCompleteExtension } from '../extensions/triggerComplete'
 import { tokenProtectExtension } from '../extensions/idProtect'
+import { setTextFitNotes, textFitWarningExtension } from '../extensions/textFitWarning'
+import type { TextFitNote } from '../../../shared/text-fit-notes.ts'
 import { flashTriggerEchoAt, triggerEchoChange } from '../extensions/triggerEcho'
 import {
   commitLayoutSelection,
@@ -57,7 +60,7 @@ import {
   type LayoutPickerContext
 } from './layoutPickerModel'
 import { LAYOUTS, type LayoutDef, type OptionGroup } from '../data/layouts'
-import { headingHasChildSlides, logicalTriggerBlockAfterHeading } from '../../../shared/trigger-line'
+import { headingHasChildSlides, logicalTriggerBlockAfterHeading, reportTriggerMergeWarnings } from '../../../shared/trigger-line'
 import { deckCommitContext } from '../../../shared/deck-frame'
 import { normalizePositions } from '../../../shared/outline-normalize'
 import {
@@ -139,6 +142,8 @@ interface Props {
   // onto the SAME outline doc, never a copy. null / undefined = normal full-outline editing (today's
   // behaviour, fully inert). Task 9 drives this from the Slide Focus surface.
   focusRange?: FocusRange | null
+  /** ADR-0033 §1: heading lines of slides whose text cannot fit at the readable minimum. */
+  textFitNotes?: readonly TextFitNote[]
   onCursorLine?: (line: number) => void
   onImageWidgetClick?: (id: string) => void
   /** Opens the app-wide generated shortcut sheet from a focused object editor. */
@@ -169,6 +174,7 @@ interface Props {
     undo: () => void
     redo: () => void
     newSlide: () => void
+    insertBoardSlide: () => number | null
     promoteHeading: () => void
     demoteHeading: () => void
     bulletedList: () => void
@@ -284,6 +290,7 @@ export default function Editor({
   vaultRoot,
   focusLine,
   focusRange,
+  textFitNotes,
   onCursorLine,
   onImageWidgetClick,
   onOpenHelp,
@@ -392,7 +399,10 @@ export default function Editor({
       }
       return false
     }
-    if (res && res.ok === false) {
+    if (res && res.ok === false && res.refused === 'outside-vault') {
+      // The talk is not in the current vault (the vault root changed while this window held it).
+      notify(res.error || 'This talk is not in your current vault; it was not saved. Switch back to that vault to keep editing it.', 'error', 'save-failed')
+    } else if (res && res.ok === false) {
       notify('Save skipped — the app refused to overwrite the outline with empty content. Your file on disk is unchanged.', 'warning', 'save-refused')
     } else {
       // IO failure (write threw: permissions, disk, file vanished). Without this the status
@@ -484,7 +494,7 @@ export default function Editor({
                   if (!blob) return true
                   const ext = item.type.replace('image/', '').replace('jpeg', 'jpg')
                   blob.arrayBuffer().then(async (arrayBuffer) => {
-                    const result = await window.tw.asset.pasteImage(arrayBuffer, ext)
+                    const result = await window.tw.asset.pasteImage(arrayBuffer, ext, currentTalkRef.current ?? undefined)
                     if (result && viewRef.current) {
                       const pos = viewRef.current.state.selection.main.head
                       const line = viewRef.current.state.doc.lineAt(pos)
@@ -605,7 +615,7 @@ export default function Editor({
                 event.preventDefault()
                 const ext = imageFile.type.replace('image/', '').replace('jpeg', 'jpg')
                 imageFile.arrayBuffer().then(async (buf) => {
-                  const result = await window.tw.asset.pasteImage(buf, ext)
+                  const result = await window.tw.asset.pasteImage(buf, ext, currentTalkRef.current ?? undefined)
                   if (result && viewRef.current) {
                     const view = viewRef.current
                     const line = view.state.doc.lineAt(dropPos)
@@ -665,6 +675,8 @@ export default function Editor({
           // block, guards edits from touching outside it, and keeps the caret inside — composing
           // with tokenProtectExtension above (all id/trigger/heading guards stay active in-band).
           focusScopeExtension(),
+          // Amber mark + inline note on the heading of a slide whose text is too long (ADR-0033 §1).
+          textFitWarningExtension,
           // YAML frontmatter rendered as a typed table (raw ↔ table toggle).
           frontmatterTableExtension(),
           // ==mark== stays visible while authoring without changing the outline's Markdown source.
@@ -804,6 +816,12 @@ export default function Editor({
     if (v) setFocusRange(v, focusRange ?? null)
   }, [focusRange])
 
+  // ADR-0033 §1: the too-long-text notes ride an effect, so a recompile marks the heading without a remount.
+  useEffect(() => {
+    const v = viewRef.current
+    if (v) setTextFitNotes(v, textFitNotes ?? [])
+  }, [textFitNotes, talk.outlinePath])
+
   // e2e seam (mirrors KEYMAP_CHANGED_EVENT): the diagnose harness drives focus by dispatching a
   // `tw-focus-scope` window event carrying {from,to} | null, so the scoped view can be exercised in
   // real Electron before Task 9's Slide Focus surface exists. Harmless in production (nobody else
@@ -831,6 +849,9 @@ export default function Editor({
     async function load() {
       // forEditor: the text loaded here is what the external-change guard compares the file against.
       const content = await window.tw.talk.readOutline(pathAtLoad, { forEditor: true })
+      if (content === null && currentTalkRef.current === pathAtLoad) {
+        notify('This talk could not be opened: it is not in your current vault, or its file could not be read.', 'warning', 'talk-not-read')
+      }
       // Guard the whole apply against a remount that happened while readOutline was in flight: only
       // apply if the view is still alive AND still bound to the path we read (currentTalkRef moved on
       // otherwise). The content-replacing dispatch runs while loadedPathRef is null, so its docChanged
@@ -985,6 +1006,21 @@ export default function Editor({
       undo: () => { const v = viewRef.current; if (v) undo(v) },
       redo: () => { const v = viewRef.current; if (v) redo(v) },
       newSlide: () => { const v = viewRef.current; if (v) runActionBarEditing(v, 'new-slide') },
+      // ADR-0032 (round-3 A1): the starter board after the current slide, its question selected.
+      insertBoardSlide: () => {
+        const v = viewRef.current; if (!v) return null
+        // The starter carries its id from the start, so the Board section can edit it before the
+        // first save stamps anything (a slide is found by its id).
+        const text = v.state.doc.toString()
+        const plan = boardStarterInsertion(text, v.state.selection.main.head, mintBoardSlideId(text))
+        v.dispatch({
+          changes: { from: plan.at, insert: plan.insert },
+          selection: EditorSelection.range(plan.questionFrom, plan.questionTo),
+          effects: EditorView.scrollIntoView(plan.questionFrom, { y: 'center' })
+        })
+        v.focus()
+        return v.state.doc.lineAt(plan.questionFrom).number
+      },
       promoteHeading: () => { const v = viewRef.current; if (v) reLevel(v, -1, false) },
       demoteHeading: () => { const v = viewRef.current; if (v) reLevel(v, 1, false) },
       bulletedList: () => { const v = viewRef.current; if (v) runActionBarEditing(v, 'bulleted-list') },
@@ -1137,7 +1173,7 @@ export default function Editor({
       )
       if (!next || (next === current.trigger?.text && !current.needsMerge)) return
       const plan = planEditorTriggerCommit(v.state.doc.toString(), current.headingLine, () => next)
-      for (const warning of plan.warnings) console.warn(warning)
+      reportTriggerMergeWarnings(plan.warnings)
       const echo = triggerEchoChange(current.trigger?.text ?? '', next)
       const written = echo
         ? plan.changes.find((change) => change.insert.includes(next))
@@ -1175,7 +1211,7 @@ export default function Editor({
       const next = commitSlideOption(v.state.doc.toString(), current.headingLine, original, entry, group, token)
       if (!next || (next === original && !current.needsMerge)) return original
       const plan = planEditorTriggerCommit(v.state.doc.toString(), current.headingLine, () => next)
-      for (const warning of plan.warnings) console.warn(warning)
+      reportTriggerMergeWarnings(plan.warnings)
       const echo = triggerEchoChange(original, next)
       const written = echo
         ? plan.changes.find((change) => change.insert.includes(next))

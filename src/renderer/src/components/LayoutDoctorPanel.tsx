@@ -1,5 +1,6 @@
 // Layout Doctor — the home of 'doctor'-surfaced warnings (ADR-0020 Consequences;
 // ADR-0011 chrome: application panel, hairlines, paper/oxford palette).
+import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
 import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, X } from 'lucide-react'
 import type { LayoutDoctorTalk, ProjectionRow, TalkInfo } from '../../../preload/index'
@@ -67,7 +68,7 @@ function groupedFindings(findings: LayoutDoctorFinding[]): Array<{
 function compilerNotesFor(rows: ProjectionRow[] | null): CompilerNote[] {
   const notes = new Map<string, CompilerNote>()
   for (const [index, row] of (rows ?? []).entries()) {
-    const slideTitle = row.nav_title || row.title || `Slide ${index + 1}`
+    const slideTitle = plainInlineText(row.nav_title || row.title) || `Slide ${index + 1}`
     for (const message of warningsForSurface(row.warnings, 'doctor')) {
       const key = `${row.slide_id || index}:${message}`
       if (!notes.has(key)) {

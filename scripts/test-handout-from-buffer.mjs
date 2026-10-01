@@ -20,6 +20,8 @@ import { createOutlineMutator } from '../src/renderer/src/lib/outlineMutation.ts
 import { outlineWritesSettled, queueOutlineWrite, setOutlinePathResolver } from '../src/renderer/src/lib/saveQueue.ts'
 import { checkPreconditions, publishUrl, resolveBase } from '../src/main/publishing-logic.ts'
 import { stampHandoutUrl } from '../src/shared/handout-stamp.ts'
+import { outlineRefusal } from '../src/main/vault-paths.ts'
+import { withoutPreworkSlides } from '../src/shared/run-prework.ts'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
 const sourceText = readFileSync(join(REPO, 'src/main/index.ts'), 'utf8')
@@ -139,8 +141,14 @@ function publishDeps(siteDir, trace) {
   const config = { cfAccountId: 'acct', cfPagesProject: 'talks', publishBaseUrl: 'https://talks.test', publishUseShortIds: false, publishProdBranch: 'main' }
   return {
     unresolvedOutboundFailure,
+    // The real outline guard, with the temp root as the vault (every talk here lives inside it).
+    outlineRefused: (p) => outlineRefusal(root, p),
     getCompilerPath: () => join(REPO, 'compiler/scripts'),
     getConfig: (key, fallback) => (key in config ? config[key] : fallback),
+    // Vault lookups go through the vault registry (several vaults, ticket 01); no vault here.
+    currentVaultRoot: () => config.vaultRoot,
+    writableVaultRoot: () => config.vaultRoot,
+    vaultRootFor: () => config.vaultRoot,
     readToken: () => 'token',
     augmentedPath: (p) => p,
     wranglerFoundOn: () => true,
@@ -154,6 +162,8 @@ function publishDeps(siteDir, trace) {
     readHandoutUrl: () => null, recoverIdFromUrl: () => undefined, readHandoutRegistry: () => ({}), writeHandoutRegistry: () => {},
     pickShortId: () => { throw new Error('short ids are off') }, generateShortId: () => 'x', randomBytes: () => Buffer.alloc(8), buildRedirects: () => '',
     slimHandoutHtml: (html) => html,
+    withoutPreworkSlides,
+    preworkEnabled: () => false, // pre-work is hidden for 0.37; the pre-work publish test forces it on
     viewerPageHtml: () => '<!doctype html><title>viewer</title>',
     app: { getPath: () => root },
     execFile: (_cmd, _args, _opts, cb) => { trace.deploys += 1; cb(null, '', '') },
@@ -261,7 +271,11 @@ function runDeps(path, built, extra = {}) {
   const talk = { slug: basename(path).replace('-outline.md', ''), outlinePath: path }
   return {
     unresolvedOutboundFailure,
+    preworkEnabled: () => false,
     getConfig: (key, fallback) => ({ vaultRoot: root, cfPagesProject: 'talks', liveWorkerBaseUrl: 'http://127.0.0.1:8787' }[key] ?? fallback),
+    currentVaultRoot: () => root,
+    writableVaultRoot: () => root, // a write resolves the vault only while its folder is there (vaults 07)
+    vaultRootFor: () => root,
     readRun: () => ({ id: 'run-1', status: 'delivered', eventTitle: 'Event', plannedDate: '2026-09-28', startedAt: '2026-09-28T10:00:00Z' }),
     talkBySlug: () => talk,
     flushTalkForPublish,

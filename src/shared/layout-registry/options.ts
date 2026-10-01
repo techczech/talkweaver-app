@@ -16,7 +16,7 @@
 //     on a plain `###`.
 // =============================================================================
 import { GLOBAL_OPTION_GROUPS, LAYOUTS } from './entries.ts'
-import type { InspectorSectionId, LayoutDef, OptionApplicability, OptionGroup, OptionValue, TitleRegime } from './entries.ts'
+import type { InspectorSectionId, LayoutDef, OptionApplicability, OptionGroup, OptionValue, PreworkStepKind, TitleRegime } from './entries.ts'
 
 export interface OptionContext {
   /** The layout's registry name, or a compiled slug/alias the registry can resolve back. */
@@ -29,6 +29,11 @@ export interface OptionContext {
   titleRegime?: TitleRegime
   /** Whether the compiled slide paints its title (ADR-0028 §10). Absent = not known. */
   titlePainted?: boolean
+  /**
+   * Ticket 08: the slide's kind as a step of the talk's pre-work section, or null when it is not a
+   * step. Absent = not known, which (unlike every other fact) offers no pre-work group.
+   */
+  preworkKind?: PreworkStepKind | null
 }
 
 export interface ApplicableOptionGroup {
@@ -72,6 +77,9 @@ function clauseHolds(clause: OptionApplicability, context: OptionContext, entry?
     }
   }
   if (clause.anyOf && !clause.anyOf.some((alternative) => clauseHolds(alternative, context, entry))) return false
+  // Ticket 08: the one facet an unknown fact DOES exclude on. Only a surface that read the talk's
+  // pre-work section (the Inspector) offers a step's rows; elsewhere the tokens are typed as written.
+  if (clause.preworkKinds && !(context.preworkKind && clause.preworkKinds.includes(context.preworkKind))) return false
   return true
 }
 
@@ -141,7 +149,7 @@ export function appliesToHoldsOnTokens(group: OptionGroup, selectedTokens: Reado
 }
 
 export function optionGroupsForSlide(
-  context: Pick<OptionContext, 'layoutName' | 'headingLevel' | 'hasChildren' | 'titleRegime'>
+  context: Pick<OptionContext, 'layoutName' | 'headingLevel' | 'hasChildren' | 'titleRegime' | 'preworkKind'>
 ): ApplicableOptionGroup[] {
   const entry = layoutEntryFor(context.layoutName)
   const entryGroups = (entry?.options ?? [])
@@ -166,7 +174,8 @@ export function optionGroupsForSlide(
 // group is named here:
 //   1. The slide's own layout comes first: every group its entry owns, and every global group a
 //      MODIFIER entry adopts (iconlist → iconlist-variant). Then Title, Slide (the catch-all for an
-//      undeclared global group), Steps and Poll, by `OptionGroup.section`. Empty sections drop out.
+//      undeclared global group), Steps, Poll and Audience, by `OptionGroup.section`. Empty sections
+//      drop out.
 //   2. A group that only applies because of another group's value sits directly under that group,
 //      nested, in that group's section. "Because of" is the group's `appliesTo.requiresTokens`:
 //      the parent is the FIRST group those clauses name (in declaration order, `anyOf` included)
@@ -189,7 +198,11 @@ const SECTION_RUN: ReadonlyArray<{ id: InspectorSectionId; heading: string }> = 
   { id: 'title', heading: 'Title' },
   { id: 'slide', heading: 'Slide' },
   { id: 'steps', heading: 'Steps' },
-  { id: 'poll', heading: 'Poll' }
+  { id: 'poll', heading: 'Poll' },
+  // Ticket 04 (round-2 I1–I4): the slide's reactions stand alone after Poll.
+  { id: 'audience', heading: 'Audience' },
+  // Ticket 08 (round-2 E1–E4, round-3 P5): a pre-work step's "Before the session" section, last.
+  { id: 'prework', heading: 'Pre-work' }
 ]
 
 /** The group keys an `appliesTo` declaration's token clauses read, in declaration order. */
@@ -211,12 +224,12 @@ function ownSection(binding: ApplicableOptionGroup): InspectorSectionId {
 
 /**
  * The groups a slide already resolved (`optionGroupsForSlide`, re-filtered by `groupApplies`),
- * sectioned and ordered for the Inspector's options column. The layout section is headed by the
- * layout's own label.
+ * sectioned and ordered for the Inspector's options column. The layout section is always headed
+ * "Layout" (0.37 preview.4: it was the layout's own label, e.g. "Cards").
  */
 export function sectionedOptionGroups(
   bindings: readonly ApplicableOptionGroup[],
-  layoutLabel?: string
+  _layoutLabel?: string
 ): InspectorOptionSection[] {
   const offered = new Map(bindings.map((binding) => [binding.group.key, binding]))
   const parentOf = new Map<ApplicableOptionGroup, ApplicableOptionGroup>()
@@ -243,7 +256,7 @@ export function sectionedOptionGroups(
   return SECTION_RUN
     .map(({ id, heading }) => ({
       id,
-      heading: id === 'layout' ? (layoutLabel ?? heading) : heading,
+      heading,
       bindings: buckets.get(id) ?? []
     }))
     .filter((section) => section.bindings.length > 0)

@@ -17,6 +17,8 @@ interface DurableObjectStorage {
   sql: SqlStorage
   setAlarm(scheduledTime: number): Promise<void>
   deleteAlarm(): Promise<void>
+  /** SQLite-backed objects: run `callback` as one transaction (rolled back if it throws). */
+  transactionSync?<T>(callback: () => T): T
 }
 
 interface HibernatingWebSocket extends WebSocket {

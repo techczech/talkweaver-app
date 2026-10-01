@@ -1,18 +1,16 @@
 import type { LayoutDef, OptionGroup, OptionValue } from '../data/layouts'
-import {
-  layoutEntryAcceptsTriggerToken,
-  winningAuthoredLayout
-} from '../../../shared/layout-registry/vocabulary.ts'
 import { isContainerContext, optionGroupsForSlide } from '../../../shared/layout-registry/options.ts'
 import { deckCommitContext } from '../../../shared/deck-frame.ts'
 import { isStatementOptionGroup, statementSelections } from '../../../shared/statement-options.ts'
 import { LAYOUTS as REGISTRY_LAYOUTS } from '../../../shared/layout-registry/entries.ts'
+import { commitLayoutSelection, selectionFromTriggerLine, toggleLayoutSelection } from '../../../shared/layout-selection.ts'
+// The selection read/toggle/write lives in src/shared so the headless layout verbs use the same code.
+export { commitLayoutSelection, selectionFromTriggerLine, toggleLayoutSelection }
+import { readOutlineSlides } from '../../../shared/feedback-accept.ts'
+import type { SlideRef } from '../../../shared/layout-verbs.ts'
 import {
-  applyLayoutSelection,
   commitOptionSelection,
-  GLOBAL_OPTION_GROUPS,
   headingHasChildSlides,
-  parseTriggerLine,
   selectionForGroup,
   type OptionCommitContext
 } from '../../../shared/trigger-line.ts'
@@ -72,12 +70,12 @@ export function layoutPickerModel(
     .filter((section) => section.entries.length > 0)
 }
 
-// CodeMirror's inline `{` picker and the Command-L picker deliberately consume the same section
-// model. Keep this named entry point so parity tests exercise both UI data paths explicitly.
+// CodeMirror's inline `{` picker consumes the section model; this named entry point keeps its parity
+// tests explicit. (The docked ⌘L picker has its own model, layoutPickerColumnModel.ts, ADR-0032.)
 export const inlineLayoutPickerModel = layoutPickerModel
 
 /**
- * A ⌘L / `{` row expands to the option rows of the entry under the cursor, so the picker asks the
+ * An inline `{` row expands to the option rows of the entry under the cursor, so the picker asks the
  * ONE resolver (`optionGroupsForSlide`, ADR-0020 §5) and keeps the rows that entry owns. The
  * picker does not judge relevance itself: a container's options disappear on a leaf `###` because
  * the resolver drops them, not because this module re-states the rule.
@@ -102,22 +100,6 @@ export function optionGroupsForPickerEntry(
       // ({statement=tint} → Halo + Left bar) included.
       selectedToken: isStatementOptionGroup(group.key) ? statementSelections(triggerLine)[group.key] ?? '' : selectionForGroup(triggerLine, group)
     }))
-}
-
-/**
- * The ⌘L footer's two type-size controls. WHICH groups the strip is made of is a surface
- * composition (ADR-0011 §3 gives the palette a permanent type band); WHETHER they are relevant to
- * this slide is still the resolver's call, so the strip filters the resolved set rather than the
- * raw registry.
- */
-export function pickerTypeStripModel(
-  triggerLine: string,
-  context: Pick<LayoutPickerContext, 'headingLevel' | 'hasChildren'> = NEUTRAL_SLIDE
-): PickerOptionGroup[] {
-  const applicable = new Set(optionGroupsForSlide(context).map(({ group }) => group))
-  return GLOBAL_OPTION_GROUPS
-    .filter((group) => applicable.has(group) && (group.key === 'font-body' || group.key === 'font-title'))
-    .map((group) => ({ group, selectedToken: selectionForGroup(triggerLine, group) }))
 }
 
 export function inlineOptionPickerStep(
@@ -189,73 +171,6 @@ export function layoutSubmenuEntries(items: LayoutDef[]): LayoutDef[] {
   return items.filter((item) => item.kind === 'layout')
 }
 
-export function selectionFromTriggerLine(line: string, items: LayoutDef[]): LayoutDef[] {
-  const authored = parseTriggerLine(line).map((token) => token.raw)
-  const authoredSet = new Set(authored)
-  const authoredLayout = winningAuthoredLayout(line)
-  return items.filter((item) =>
-    (item.kind === 'layout' || item.kind === 'modifier' || item.kind === 'container') &&
-    parseTriggerLine(item.trigger).some((token) =>
-      authoredSet.has(token.raw)
-      || (
-        item.kind === 'layout'
-        && authoredLayout?.layout === item.name
-        && authored.some((raw) =>
-          raw.includes('=') && layoutEntryAcceptsTriggerToken(item, raw)
-        )
-      )
-    )
-  )
-}
-
-export function commitLayoutSelection(
-  line: string,
-  initial: LayoutDef[],
-  selected: LayoutDef[],
-  layoutTokenOverride: string | undefined,
-  context: OptionCommitContext
-): string {
-  if (
-    layoutTokenOverride == null
-    && initial.length === selected.length
-    && initial.every((item, index) => item === selected[index])
-  ) return line
-
-  const layout = selected.find((item) => item.kind === 'layout')
-  const initialModifiers = initial.filter((item) => item.kind === 'modifier')
-  const initialContainers = initial.filter((item) => item.kind === 'container')
-  const selectedModifiers = selected.filter((item) => item.kind === 'modifier')
-  const selectedContainers = selected.filter((item) => item.kind === 'container')
-  const containerMode = GLOBAL_OPTION_GROUPS.find((group) => group.key === 'container-mode')
-  const modeTokens = new Set(containerMode?.values.map((value) => value.token).filter(Boolean) ?? [])
-  const containerToken = (item: LayoutDef): string => parseTriggerLine(item.trigger)[0]?.raw ?? ''
-  const initialModeContainers = initialContainers.filter((item) => modeTokens.has(containerToken(item)))
-  const selectedModeContainer = selectedContainers.find((item) => modeTokens.has(containerToken(item)))
-  const otherInitialContainers = initialContainers.filter((item) => !modeTokens.has(containerToken(item)))
-  const otherSelectedContainers = selectedContainers.filter((item) => !modeTokens.has(containerToken(item)))
-  const overrideGroup = layoutTokenOverride
-    ? layout?.options?.find((group) =>
-      group.values.some((value) => value.token === layoutTokenOverride)
-      && group.values.some((value) => value.token === '')
-    )
-    : undefined
-  const sourceLine = overrideGroup
-    ? commitOptionSelection(line, overrideGroup, '', context)
-    : line
-  const result = applyLayoutSelection(sourceLine, {
-    layout: layout ? layoutTokenOverride ?? parseTriggerLine(layout.trigger)[0]?.raw : undefined,
-    modifiers: [...selectedModifiers, ...otherSelectedContainers]
-      .flatMap((item) => parseTriggerLine(item.trigger).map((token) => token.raw)),
-    removeModifiers: [...initialModifiers, ...otherInitialContainers]
-      .filter((item) => ![...selectedModifiers, ...otherSelectedContainers]
-        .some((selectedItem) => selectedItem.name === item.name))
-      .flatMap((item) => parseTriggerLine(item.trigger).map((token) => token.raw))
-  })
-  return containerMode && (initialModeContainers.length > 0 || selectedModeContainer)
-    ? commitOptionSelection(result, containerMode, selectedModeContainer ? containerToken(selectedModeContainer) : '', context)
-    : result
-}
-
 export function provisionalTriggerAtCursor(
   content: string,
   cursor: number
@@ -266,17 +181,6 @@ export function provisionalTriggerAtCursor(
   if (!match) return null
   const from = cursor - match[1].length
   return { from, to: cursor }
-}
-
-export function toggleLayoutSelection(selected: LayoutDef[], item: LayoutDef): LayoutDef[] {
-  const alreadySelected = selected.some((candidate) => candidate.name === item.name)
-  if (item.kind !== 'layout' && alreadySelected) {
-    return selected.filter((candidate) => candidate.name !== item.name)
-  }
-  if (item.kind === 'layout' || item.kind === 'container') {
-    return [item, ...selected.filter((candidate) => candidate.kind !== item.kind)]
-  }
-  return alreadySelected ? selected : [...selected, item]
 }
 
 export function accumulatedTriggers(selected: LayoutDef[]): string {
@@ -293,4 +197,29 @@ export function filterLayoutPickerEntries(items: LayoutDef[], query: string): La
     item.trigger,
     ...item.aliases
   ].some((term) => term.toLowerCase().includes(q)))
+}
+
+/**
+ * The picker's slide, found again after the outline text changed under it. A slide with no `{id=…}`
+ * yet is named by its heading LINE, and the save that stamps ids inserts lines above it (a section's
+ * `{id=…}` line), which moves every heading down: the old line number then names another slide, or none,
+ * and the docked picker closed itself a moment after it opened. This follows the slide by its place
+ * among the slides and its heading text, so the reference survives the stamp. An id is already stable
+ * and is returned as it was. Null when the slide is gone.
+ */
+export function reanchorPickerSlide(before: string, after: string, slide: SlideRef): SlideRef | null {
+  if (typeof slide === 'string' || before === after) return slide
+  const was = readOutlineSlides(before)
+  const ordinal = was.slides.findIndex((candidate) => candidate.line === slide.headingLine)
+  if (ordinal < 0) return null
+  const headingText = (read: ReturnType<typeof readOutlineSlides>, index: number): string => (read.lines[read.slides[index].start] ?? '').replace(/\r$/, '').trim()
+  const wanted = headingText(was, ordinal)
+  const now = readOutlineSlides(after)
+  const same = now.slides.map((_, index) => index).filter((index) => headingText(now, index) === wanted)
+  if (!same.length) return null
+  const nearest = same.includes(ordinal)
+    ? ordinal
+    : same.reduce((best, index) => (Math.abs(index - ordinal) < Math.abs(best - ordinal) ? index : best))
+  const found = now.slides[nearest]
+  return found.line === slide.headingLine ? slide : { headingLine: found.line }
 }

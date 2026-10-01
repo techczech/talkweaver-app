@@ -115,7 +115,7 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
   a.setBaseline([['slide-2', 'f2'], ['slide-3', 'f3']])
   assert.equal(a.seen('slide-3'), 'f3')
   a.setBaseline([['slide-3', 'changed']])
-  assert.equal(a.seen('slide-3'), 'f3', 'a later baseline never overwrites what she saw')
+  assert.equal(a.seen('slide-3'), 'f3', 'a later baseline never overwrites what they saw')
   assert.equal(createSharedTalkStore(storage, 'other').items().length, 0, 'each share keeps its own record')
 }
 
@@ -213,7 +213,7 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
   assert.equal(h.store.items()[1].state, 'sent')
 }
 
-// ── socket events: statuses on her items, talk.updated, share.closed ────────────────────────
+// ── socket events: statuses on their items, talk.updated, share.closed ────────────────────────
 {
   const h = harness()
   h.client.start()
@@ -227,7 +227,7 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
   socket.handlers.onMessage(JSON.stringify({ type: 'item.status', itemId: note.itemId, status: 'new', at: 4, seq: 3 }))
   assert.equal(h.store.item(note.itemId).status, 'accepted', 'an older status in a replay does not undo a newer one')
   socket.handlers.onMessage(JSON.stringify({ type: 'item.status', itemId: 'someone-else', status: 'dismissed', at: 6, seq: 5 }))
-  assert.equal(h.store.items().length, 1, 'statuses on items that are not hers are ignored')
+  assert.equal(h.store.items().length, 1, 'statuses on items that are not theirs are ignored')
   socket.handlers.onMessage(JSON.stringify({ type: 'talk.updated', revision: 2, seq: 6 }))
   assert.deepEqual(h.updates, [2])
   assert.equal(h.client.status().lastSeq, 6)

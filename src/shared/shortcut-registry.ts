@@ -1,7 +1,7 @@
 // 'slide-picker' is the ⌘S slide picker (SlideBrowser + its Find a talk box): its own surface with its own
 // keys, so its S (select section) and the Talks panel's S (sort, 'browser' scope) are two surfaces'
 // keys, never one keystroke claimed twice (talk search 08).
-export const SHORTCUT_SCOPES = ['app', 'editor', 'browser', 'slide-picker', 'presenter', 'picker', 'pathway', 'studio', 'talktext', 'importer'] as const
+export const SHORTCUT_SCOPES = ['app', 'editor', 'browser', 'slide-picker', 'layout-picker', 'inspector', 'presenter', 'picker', 'pathway', 'studio', 'talktext', 'importer'] as const
 export type ShortcutScope = (typeof SHORTCUT_SCOPES)[number]
 
 export interface ShortcutEntry {
@@ -38,7 +38,7 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['app.slide-search', '⌘S', ['Mod-s'], 'Search slides across all talks', 'Opens the cross-talk slide browser for finding and inserting slides.', 'Find & insert'],
     ['app.find-talk', '⇧⌘S', ['Mod-Shift-s'], 'Find a talk', 'Opens the slide picker with the cursor in Find a talk, or moves it there when the picker is already open.', 'Find & insert'],
     ['app.context-menu', '⌘K', ['Mod-k'], 'Context menu', 'Opens the context menu for the focused talk, slide, or editor slide.', 'App'],
-    ['app.layout-picker', '⌘L', ['Mod-l'], 'Layout picker', 'Opens the layout picker for the current slide.', 'Find & insert'],
+    ['app.layout-picker', '⌘L', ['Mod-l'], 'Layout picker: Open', 'Opens the layout picker in the Inspector column for the current slide; pressed again, it closes and puts the slide back.', 'Find & insert'],
     ['app.icon-picker', '⌘I', ['Mod-i'], 'Icon picker', 'Opens the icon picker for the current bullet.', 'Find & insert'],
     ['app.image-search', '⌘⇧I', ['Mod-Shift-i'], 'Insert an archived image', 'Searches images recovered from earlier PowerPoint files.', 'Find & insert'],
     ['app.find', '⌘F', ['Mod-f'], 'Find in outline', 'Opens text search in the current outline editor.', 'Find & insert'],
@@ -143,6 +143,20 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['picker.digit', '1–9', ['Digit1-Digit9'], 'Choose numbered option', 'Immediately chooses the numbered value in a chained options step.', 'Pickers'],
     ['picker.toggle', 'Space', ['Space'], 'Toggle choice', 'Toggles selection of the active item in a multi-select picker.', 'Pickers']
   ]),
+  // The docked layout picker (LayoutPickerColumn.tsx, ADR-0032): the keyboard map of the locked mockup.
+  ...entries('layout-picker', [
+    ['layout-picker.try', '↑ ↓', ['ArrowUp', 'ArrowDown'], 'Layout picker: Try next / Try previous', 'Moves between rows; the highlighted layout is tried on the slide preview and nothing is written.', 'Layout picker'],
+    ['layout-picker.along', '← →', ['ArrowLeft', 'ArrowRight'], 'Layout picker: Move along row', 'Moves along a row of pictures or chips; on a purpose, → opens it and ← closes it.', 'Layout picker'],
+    ['layout-picker.next-group', 'Tab', ['Tab'], 'Layout picker: Next group', 'Jumps to the next group: Recent, then Suggested, then All layouts.', 'Layout picker'],
+    ['layout-picker.keep', '↵', ['Enter'], 'Layout picker: Keep layout', 'Keeps the highlighted layout: the trigger line changes and the column becomes the Inspector at that layout’s options. On a purpose, opens or closes it.', 'Layout picker'],
+    ['layout-picker.keep-starter', '⌘↵', ['Mod-Enter'], 'Layout picker: Keep with starter text', 'Keeps the highlighted layout and, on a slide with only a heading, adds the layout’s starter text.', 'Layout picker'],
+    ['layout-picker.put-back', 'Esc', ['Escape'], 'Layout picker: Put back', 'Puts the slide back exactly as it was and returns the column to the Inspector.', 'Layout picker']
+  ]),
+  // The Inspector's option pictures (InspectorOptionPictures.tsx, ADR-0032 §1/§7): their own keys, not the pickers'.
+  ...entries('inspector', [
+    ['inspector.option-pictures-move', '← →', ['ArrowLeft', 'ArrowRight'], 'Inspector: Move between option pictures', 'Moves between the pictures of one option group; focus stays inside the group.', 'Inspector'],
+    ['inspector.option-pictures-choose', '↵ / Space', ['Enter', 'Space'], 'Inspector: Choose option picture', 'Writes the focused picture’s option to the slide’s trigger line; focus stays on the picture.', 'Inspector']
+  ]),
   ...entries('presenter', [
     ['presenter.next', '→ Space ↓ PgDn ↵', ['ArrowRight', 'Space', 'ArrowDown', 'PageDown', 'Enter', 'MediaTrackNext'], 'Next', 'Advances through the current mode and then to the next presentation beat.', 'Navigation'],
     ['presenter.previous', '← ↑ PgUp Backspace', ['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace', 'MediaTrackPrevious'], 'Previous', 'Retreats through the current mode and then to the previous presentation beat.', 'Navigation'],
@@ -174,11 +188,16 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['presenter.live', 'G', ['g'], 'Go or end live', 'Starts or ends the live audience-follow session.', 'Audience'],
     ['presenter.poll-primary', 'Q', ['q'], 'Open or close current poll', 'Opens an armed poll or closes the poll currently collecting responses.', 'Audience'],
     ['presenter.poll-reveal', '⇧ Q', ['Shift-q'], 'Reveal held poll results', 'Reveals a held poll’s current results to the audience.', 'Audience'],
+    ['presenter.questions', 'A', ['a'], 'Open the questions tray', 'Opens the drawer of questions from the audience over the Next and Then previews; A or Esc closes it.', 'Audience'],
     ['presenter.poll-compose', 'K', ['k'], 'Compose a Quick poll', 'Opens the live Quick-poll composer.', 'Audience'],
     ['presenter.instant-compose', '⌥⌘I', ['Mod-Alt-i'], 'Compose an instant slide', 'Opens the instant-slide composer.', 'Audience'],
     ['presenter.instant-paste', '⌘V', ['Mod-v'], 'Preview clipboard as an instant slide', 'Shows a preview of the clipboard content.', 'Audience'],
     ['presenter.instant-return', '→', ['ArrowRight'], 'Back to slide while instant slide is shown', 'Clears the instant slide and returns to the slide left.', 'Audience'],
     ['presenter.talk-qr', 'U', ['u'], "Show the talk's QR code", 'Shows the live audience link, or the published handout link, as a full-screen QR code from any slide; U or Esc returns to the slide.', 'Audience'],
+    // The board panel (feedback-boards ticket 05): its keys act only while focus is in the panel, except
+    // ⌘Z, which undoes the board's last change while the panel shows (compiler/assets/runtime/board-panel.js).
+    ['presenter.board-pick', '⌥↵', ['Alt-Enter'], 'Pick up or drop a board card', 'In the board panel: picks up the focused card or group; on another card or group it merges them, on a column name it moves it there. Esc puts it down.', 'Board'],
+    ['presenter.board-undo', '⌘Z', ['Mod-z'], 'Undo the last board change', 'While the board panel shows: undoes the last merge, move, hide, freeze or big-screen change where one step can.', 'Board'],
     // Editor (src/preload/present-edit-bridge.ts for ⌘E; src/main/deck-window-keys.ts for ⌘R and ⇧F5).
     ['presenter.edit', '⌘E', ['Mod-e'], 'Edit this slide in TalkWeaver', 'Returns from a deck window to this slide in the TalkWeaver editor.', 'Editor'],
     ['presenter.refresh', '⌘R / ⇧F5', ['Mod-r', 'Shift-F5'], 'Refresh with latest edits', 'Refreshes a deck window with the latest edits while retaining position.', 'Editor'],

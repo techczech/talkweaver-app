@@ -4,6 +4,8 @@
 // outline order (full context — ←/→ walks it), and a metadata rail to decide with. The only
 // actions are Insert-at-caret and Esc-back-to-the-Browser; there is deliberately NO edit
 // affordance and NO "open in its talk" (the Talks panel is where talks are opened).
+import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
+import { thumbUrl } from '../lib/thumbUrl'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, Check, GitBranch, X } from 'lucide-react'
 import type { SearchResult } from './SlideBrowser'
@@ -34,7 +36,7 @@ interface Props {
 }
 
 function rowTitle(r: SearchResult): string {
-  return r.nav_title || r.title || '(untitled)'
+  return plainInlineText(r.nav_title || r.title) || '(untitled)'
 }
 
 // A twthumb print with shimmer → schematic-title fallback (Browser Thumb pattern, resized
@@ -51,7 +53,7 @@ function Print({ row, big, regenerating, onUnavailable }: {
     <div className={`lt-iv-print${big ? ' big' : ''}`}>
       {hasHash && state !== 'failed' && (
         <img
-          src={`twthumb://${row.talkSlug}/${row.render_hash || row.content_hash}`}
+          src={thumbUrl(row.talkSlug, row.render_hash || row.content_hash, row.vaultId)}
           alt={rowTitle(row)}
           loading={big ? 'eager' : 'lazy'}
           decoding="async"

@@ -496,6 +496,12 @@ async function measureActiveSlide(page, slideId, thresholds) {
     if (oneWordLines.length) failures.push({ class: 'one-word-line', lines: oneWordLines })
     if (widows.length) failures.push({ class: 'widow', lines: widows, severity: 'lower' })
     if (clips.length) failures.push({ class: 'clip', elements: clips })
+    // ADR-0033 §1: the presenter's autofitContent refuses to zoom below the type floor and marks the
+    // slide instead; the Doctor reports what the runtime saw, with the percentage it is too tall.
+    const textFit = content?.dataset?.textFit === 'too-long'
+      ? { tooLong: true, tooTallPercent: Number(content.dataset.textTooTall) || null }
+      : null
+    if (textFit) failures.push({ class: 'text-too-long', tooTallPercent: textFit.tooTallPercent })
 
     return {
       stage: { widthPx: round(stageRect.width), heightPx: round(stageRect.height) },
@@ -509,6 +515,7 @@ async function measureActiveSlide(page, slideId, thresholds) {
       widows,
       assetMissing,
       clips,
+      textFit,
       panels,
       figures,
       failures

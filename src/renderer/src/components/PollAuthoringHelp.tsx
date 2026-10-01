@@ -6,6 +6,7 @@ const help: Record<string, { text: string; example?: string }> = {
   'poll=open': { text: 'Use the slide title for your question. No options are needed in the slide text; people type their own answers.' },
   'poll=ranking': { text: 'In the slide text, add each option as a bullet. People rank all options by default; set Number to rank for an exact top N.', example: '- First option\n- Second option\n- Third option' },
   'poll=rating': { text: 'In the slide text, add the scale on its own line, then each item to rate as a bullet. Separate scale labels with commas; each person chooses one label per item.', example: '[scale: 1, 2, 3]\n\n- First item\n- Second item' },
+  'poll=board': { text: 'The slide title is the question and the paragraph under it the instructions. Add two to four columns as bullets, each with its hint as a nested bullet; a “>” line is the example card. The Board section edits all of it.', example: '- Keep\n  - What worked for you?\n- Change\n- Try' },
   'poll=categorisation': { text: 'In the slide text, add the categories on their own line, then each item as a bullet. Separate category labels with commas; each person chooses one category per item.', example: '[categories: Individual, Shared]\n\n- First item\n- Second item' },
 }
 

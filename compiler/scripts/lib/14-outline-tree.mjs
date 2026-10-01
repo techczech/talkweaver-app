@@ -1,5 +1,6 @@
-import { parseMarkdownFenceOpeningLine, isMarkdownFenceClosingLine } from "./03-object-token.mjs";
+import { chartObjectTokenAt, parseMarkdownFenceOpeningLine, isMarkdownFenceClosingLine } from "./03-object-token.mjs";
 import { parseHeadingAttrs, parseTriggerLine } from "./02-triggers-layout.mjs";
+import { TRIGGER_ONLY_RE, duplicateIdWarning, resolveSlideId, slideIdsInPrelude } from "./slide-id.mjs";
 
 // =============================================================================
 // 14. Outline → tree parser — every heading is a node (heading-slide-model, Task 1)
@@ -54,6 +55,29 @@ function triggerLineAfter(lines, headingIdx) {
   const parsed = parseTriggerLine(lines[j]);
   return parsed ? { ...parsed, index: j } : null;
 }
+
+// The rest of the heading's Trigger block: the Trigger-only lines CONSECUTIVE with the Trigger line,
+// stopping at the first blank or content line — the block the editor reads
+// (logicalTriggerBlockAfterHeading, src/shared/trigger-line.ts). A commit path that inserted a fresh
+// Trigger line under the heading leaves the original one right below it; both belong to the heading.
+// A `{…}` line after a blank is content (a block-scoped `{chart=bar}`, a `{prework}` marker), never
+// folded into the slide's attrs. One exception inside the run: a chart token that owns the list below
+// it (chartObjectTokenAt) is a content object, as the lexer reads it — the Doctor reports the Trigger
+// line's chart form as shadowed by it — so the block ends there.
+function furtherTriggerLines(lines, firstIndex) {
+  const out = [];
+  for (let j = firstIndex + 1; j < lines.length; j += 1) {
+    if (chartObjectTokenAt(lines, j)) break;
+    const parsed = TRIGGER_ONLY_RE.test(lines[j].trim()) ? parseTriggerLine(lines[j]) : null;
+    if (!parsed) break;
+    out.push({ ...parsed, index: j });
+  }
+  return out;
+}
+
+// A line whose every `{…}` group is an `{id=…}` token — the one kind of line past the Trigger block
+// the tree still treats as the heading's (the resolver may find the slide's id there).
+const ID_ONLY_LINE_RE = /^\s*(\{id=[A-Za-z0-9_-]+\}\s*)+$/;
 
 // parseOutlineTree(text) → { meta: {rawFrontmatter, title}, root, warnings, notesLineIndexes }
 //
@@ -152,14 +176,31 @@ export function parseOutlineTree(text) {
 
       const tl = triggerLineAfter(lines, li);
       if (tl) {
-        consumedTriggerLines.add(tl.index);
-        for (const w of tl.warnings || []) warnings.push(w);
-        Object.assign(node.attrs, tl.attrs);
+        for (const part of [tl, ...furtherTriggerLines(lines, tl.index)]) {
+          consumedTriggerLines.add(part.index);
+          for (const w of part.warnings || []) warnings.push(w);
+          Object.assign(node.attrs, part.attrs);
+        }
         node.triggerLine = lines[tl.index];
-        // {id=…} may ride the Trigger line instead of the heading — Node.id is the token's
-        // value wherever it sits (string values only; a bare {id} boolean never counts),
-        // matching extractIdSlides in 13-slide-ledger.mjs.
-        node.id = (typeof node.attrs.id === "string" ? node.attrs.id : "") || node.id || "";
+      }
+      // One id per slide, resolved as every reader and writer resolves it (slide-id.mjs): the
+      // heading's own id, else the LAST id-bearing line of its pre-content window — which may lie
+      // past a blank line, beyond the Trigger block. Such a line is the heading's only when it is
+      // id-only: it is then set aside like a Trigger line; any other `{…}` line past the block stays
+      // content, its tokens never folded into the slide's attrs. Several ids: the others are
+      // reported through the warning register, never silently kept or silently lost. No
+      // ledger-visible id (a bare `{id}`, an `id=` inside a many-token group): the folded attrs'
+      // string id, as before the resolver.
+      const resolved = resolveSlideId(lines, li);
+      if (resolved) {
+        node.id = resolved.id;
+        node.attrs.id = resolved.id;
+        if (resolved.line !== li && ID_ONLY_LINE_RE.test(lines[resolved.line])) consumedTriggerLines.add(resolved.line);
+        const dropped = [...new Set(slideIdsInPrelude(lines, li).map((entry) => entry.id))]
+          .filter((id) => id !== resolved.id);
+        if (dropped.length) warnings.push(duplicateIdWarning(resolved.id, dropped, line));
+      } else {
+        node.id = typeof node.attrs.id === "string" ? node.attrs.id : "";
       }
       continue;
     }

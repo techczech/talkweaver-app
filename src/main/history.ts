@@ -24,7 +24,7 @@ type LiveCache = Record<string, LiveCheckResult>
 
 export interface HistoryDeps {
   userDataDir: () => string // app.getPath('userData')
-  vaultRoot: () => string | null // getConfig('vaultRoot')
+  vaultRoot: () => string | null // the current vault's root (vault registry)
   listTalks: (vaultRoot: string) => Promise<TalkInfo[]> // persisted vault index; never a sync walk
   testMode?: () => boolean // TW_REC_TEST=1: deterministic live/offline checks, no network
 }

@@ -55,7 +55,7 @@ export interface FeedbackItem extends WorkerFeedbackItem {
   syncFailed: FeedbackStatus | null
   /** Accepted here: the splice Accept made to the outline (Undo reverses it). */
   acceptedEdit: AcceptedEdit | null
-  /** Accepted here with nothing changed: the slide already said what she wrote (no Undo). */
+  /** Accepted here with nothing changed: the slide already said what they wrote (no Undo). */
   acceptedAlready?: boolean
 }
 
@@ -287,19 +287,19 @@ export interface FeedbackRailInput {
 
 export interface RailAction { id: 'accept' | 'done' | 'dismiss' | 'compare' | 'undo'; label: string; disabled: boolean; title?: string; tone: 'plain' | 'quiet' }
 
-/** Compare (frame 2): his slide now, her text, and the text she wrote against. */
+/** Compare (frame 2): his slide now, their text, and the text they wrote against. */
 export interface RailCompare {
   yoursLabel: string
-  /** His lines now; `changed`: not in the base (he changed it since she wrote). */
+  /** His lines now; `changed`: not in the base (he changed it since they wrote). */
   yours: Array<{ text: string; changed: boolean }>
-  hersLabel: string
-  /** Her lines (null for a deletion). */
-  hers: string[] | null
+  theirsLabel: string
+  /** Their lines (null for a deletion). */
+  theirs: string[] | null
   baseLabel: string
-  /** The slide as she saw it (null when that revision is not kept on this Mac). */
+  /** The slide as they saw it (null when that revision is not kept on this Mac). */
   base: string[] | null
-  /** "Using hers replaces all four of your current lines." */
-  useHersNote: string
+  /** "Using theirs replaces all four of your current lines." */
+  useTheirsNote: string
 }
 
 export interface RailRow {
@@ -350,11 +350,11 @@ export interface FeedbackRailView {
 
 export const ALREADY_NOTE = 'Already what the slide says'
 export const CHANGED_SINCE = 'Slide changed since this was written.'
-export const BASE_NOT_KEPT = 'The slide as she saw it is not kept on this Mac, so a change since cannot be ruled out.'
+export const BASE_NOT_KEPT = 'The slide as they saw it is not kept on this Mac, so a change since cannot be ruled out.'
 export const SLIDE_GONE = 'This slide is no longer in the talk.'
 export const NOT_LOADED = 'The talk is still loading.'
 export const PAUSED_LABEL = 'Sharing paused · reconnecting'
-export const PAUSED_NOTE = 'Editing and saving carry on as normal. Her page keeps what she writes on her device and sends it when the link is back. Nothing is lost, only delayed.'
+export const PAUSED_NOTE = 'Editing and saving carry on as normal. Their page keeps what they write on their device and sends it when the link is back. Nothing is lost, only delayed.'
 export const ENDED_LABEL = 'Sharing ended'
 export const ENDED_NOTE = 'This link no longer takes comments. What arrived is kept here; share again for a new link.'
 
@@ -434,7 +434,7 @@ export function twoLineDiff(before: string, after: string): { lines: Array<{ op:
 
 const stripMarkup = (text: string): string => text.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1').replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1$2')
 
-/** Her proposed new slide as the rail previews it (the colleague page's approximation: the first
+/** Their proposed new slide as the rail previews it (the colleague page's approximation: the first
  *  heading is the title, list lines bullets, other lines paragraphs). The compiler decides on Accept. */
 export function proposedSlidePreview(text: string, section: string | null, slideNumber: number | null): RailRow['preview'] {
   let title = ''
@@ -484,18 +484,18 @@ const inWords = (n: number): string => NUMBER_WORDS[n] ?? String(n)
 
 const splitLines = (text: string): string[] => String(text ?? '').replace(/\r\n?/g, '\n').split('\n').map((l) => l.replace(/[ \t]+$/, ''))
 
-/** Compare's three texts. The heading (and a Trigger line) are left out when hers and yours share
+/** Compare's three texts. The heading (and a Trigger line) are left out when theirs and yours share
  *  them, so the boxes hold what differs, as drawn. */
 function compareOf(item: FeedbackListItem, yoursText: string, now: number): RailCompare {
   let yours = splitLines(yoursText)
-  let hers = item.kind === 'replace' ? splitLines(item.text ?? '') : null
+  let theirs = item.kind === 'replace' ? splitLines(item.text ?? '') : null
   let base = item.baseText != null ? splitLines(item.baseText) : null
   const drop = (n: number): void => {
     yours = yours.slice(n)
-    if (hers) hers = hers.slice(n)
+    if (theirs) theirs = theirs.slice(n)
     if (base) base = base.slice(n)
   }
-  const same = (i: number): boolean => (hers ? hers[i] === yours[i] : true) && (base ? base[i] === yours[i] : true)
+  const same = (i: number): boolean => (theirs ? theirs[i] === yours[i] : true) && (base ? base[i] === yours[i] : true)
   if (yours.length && same(0) && /^#{2,6}\s/.test(yours[0])) {
     drop(1)
     if (yours.length && same(0) && /^\s*\{[^}]*\}(\s*\{[^}]*\})*\s*$/.test(yours[0])) drop(1)
@@ -504,26 +504,26 @@ function compareOf(item: FeedbackListItem, yoursText: string, now: number): Rail
   const marks = base ? linesChangedSince(base.join('\n'), yours.join('\n')) : yours.map(() => false)
   const at = item.baseAt ? Date.parse(item.baseAt) : NaN
   const save = Number.isFinite(at) ? `your ${railWhen(at, now)} save` : 'an earlier save'
-  let useHersNote: string
-  if (!hers) {
-    useHersNote = 'Using hers deletes this slide, with what you changed since.'
+  let useTheirsNote: string
+  if (!theirs) {
+    useTheirsNote = 'Using theirs deletes this slide, with what you changed since.'
   } else {
     const mine = yours.filter((l) => l.trim() !== '')
-    const kept = new Set(hers.filter((l) => l.trim() !== ''))
+    const kept = new Set(theirs.filter((l) => l.trim() !== ''))
     const replaced = mine.filter((l) => !kept.has(l)).length
-    useHersNote = replaced === 0 ? 'Using hers keeps all your current lines and adds hers.'
-      : replaced === mine.length ? (mine.length === 1 ? 'Using hers replaces your one current line.' : `Using hers replaces all ${inWords(mine.length)} of your current lines.`)
-        : `Using hers replaces ${inWords(replaced)} of your ${inWords(mine.length)} current lines.`
-    useHersNote += ' Your notes and comments stay.'
+    useTheirsNote = replaced === 0 ? 'Using theirs keeps all your current lines and adds theirs.'
+      : replaced === mine.length ? (mine.length === 1 ? 'Using theirs replaces your one current line.' : `Using theirs replaces all ${inWords(mine.length)} of your current lines.`)
+        : `Using theirs replaces ${inWords(replaced)} of your ${inWords(mine.length)} current lines.`
+    useTheirsNote += ' Your notes and comments stay.'
   }
   return {
     yoursLabel: 'Yours now',
     yours: yours.map((text, i) => ({ text, changed: marks[i] })),
-    hersLabel: `Hers · written against ${save}`,
-    hers,
-    baseLabel: `As she saw it · ${save}`,
+    theirsLabel: `Theirs · written against ${save}`,
+    theirs,
+    baseLabel: `As they saw it · ${save}`,
     base,
-    useHersNote,
+    useTheirsNote,
   }
 }
 
@@ -703,7 +703,7 @@ export function feedbackRailView(input: FeedbackRailInput): FeedbackRailView {
     group: onSlide && rows.length ? { number: String(activeNumber), title: input.slides[activeIndex!].title } : null,
     rows,
     empty: rows.length ? '' : !items.length
-      ? 'Nothing yet. What she sends from the shared page arrives here.'
+      ? 'Nothing yet. What they send from the shared page arrives here.'
       : filter === 'new' ? 'Nothing new.' : 'Nothing on this slide.',
   }
 }

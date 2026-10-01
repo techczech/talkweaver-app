@@ -8,6 +8,7 @@ import { DOMParser } from '@xmldom/xmldom'
 import type {
   ImportPictureShape,
   ImportRendererRecord,
+  ImportShape,
   ImportShapeGeometry,
   ImportSmartArtNode,
   ImportSmartArtShape,
@@ -407,7 +408,7 @@ function parseSlide(
   const relPath = posix.join(posix.dirname(slidePart), '_rels', `${posix.basename(slidePart)}.rels`)
   const relationships = relationshipMap(packagePath(packageDir, relPath))
   const spTree = firstElement(doc, 'spTree')
-  const shapes = spTree ? directElementChildren(spTree).flatMap((element, zIndex) => {
+  const shapes = spTree ? directElementChildren(spTree).flatMap((element, zIndex): ImportShape[] => {
     const name = localName(element)
     if (name === 'sp') {
       const parsed = textShape(element, zIndex, relationships)

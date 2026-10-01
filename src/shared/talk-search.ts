@@ -62,6 +62,10 @@ export interface TalkFolderCount {
 export interface TalkSearchOptions {
   /** Limit results to this folder (vault-relative, `/`-separated) and its subfolders. */
   within?: string
+  /** Search this open vault's talks instead of the first open vault's. */
+  vaultId?: string
+  /** Search these open vaults, merged in this order; an empty list searches nothing. */
+  vaultIds?: string[]
 }
 
 export interface TalkSearchResult {
@@ -74,6 +78,26 @@ export interface TalkSearchResult {
   everywhereCount: number
   /** Slide text read so far: talks whose slides are searchable, out of all talks. */
   slideText: { read: number; total: number }
+}
+
+/** The answer to a search over no vaults (an empty vault list searches nothing; ticket 07). */
+export function emptyTalkSearchResult(query: string, within: string | null): TalkSearchResult {
+  return { query, terms: [], within: within || null, hits: [], everywhereCount: 0, slideText: { read: 0, total: 0 } }
+}
+
+/** One result from several vaults' results: hits in vault order, counts added. */
+export function mergeTalkSearchResults(results: TalkSearchResult[]): TalkSearchResult {
+  if (results.length === 1) return results[0]
+  const [first] = results
+  return {
+    ...first,
+    hits: results.flatMap((r) => r.hits),
+    everywhereCount: results.reduce((n, r) => n + r.everywhereCount, 0),
+    slideText: {
+      read: results.reduce((n, r) => n + r.slideText.read, 0),
+      total: results.reduce((n, r) => n + r.slideText.total, 0)
+    }
+  }
 }
 
 // App-infrastructure folders the Talks browser hides; search hides the same talks.

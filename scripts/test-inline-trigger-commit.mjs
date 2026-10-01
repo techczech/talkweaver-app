@@ -51,7 +51,7 @@ assert.equal(
   '### Not all Agents are Agents\n{sidebar}{layout=media}{id=3plcu}{reveal}\n\nBody ',
   'inline commit collapses the whole Trigger block and keeps the lower original id'
 )
-assert.deepEqual(duplicatePlan.warnings, ['duplicate-slide-id-merged:3plcu'])
+assert.deepEqual(duplicatePlan.warnings, ['duplicate-slide-id-merged:kept 3plcu, dropped hnwcx (Not all Agents are Agents)'])
 
 for (const midTyping of [
   '### Trying and making skills\n{id=7ely8}\n{\n\nBody',

@@ -1,6 +1,6 @@
 // Share for comments (ticket 03): the handout build hook. Compiles a talk into what one push sends
 // the shared-talk Worker — the share-no-notes handout with the colleague's comments runtime, and
-// per-slide outline source for her proposal editor. Nothing here touches the network or the disk
+// per-slide outline source for their proposal editor. Nothing here touches the network or the disk
 // beyond the compiler's own read of the outline's folder.
 //
 // Speaker notes and HTML comments never leave, and what counts as either is decided by the
@@ -18,6 +18,7 @@ import { pathToFileURL } from 'url'
 import { parseFrontmatterPairs } from '../shared/frontmatter-editor.ts'
 import type { SharedTalkSlide } from '../shared/shared-talk.ts'
 import { outlineCompilerBody, slideVisibleText } from '../shared/slide-source-text.ts'
+import { withoutPreworkSlides, type CompiledPrework } from '../shared/run-prework.ts'
 
 export interface SharedTalkPayload {
   title: string
@@ -104,7 +105,7 @@ function frontmatterValue(content: string, key: string): string {
   return parseFrontmatterPairs(content).find((pair) => pair.key === key && !pair.value.startsWith('\n'))?.value ?? ''
 }
 
-/** The name her page's copy uses: the outline's author line, e-mail addresses dropped. */
+/** The name their page's copy uses: the outline's author line, e-mail addresses dropped. */
 export function ownerNameFrom(content: string, fallback = ''): string {
   const raw = frontmatterValue(content, 'author') || fallback
   return raw.replace(/[(<]?[^\s<>()@]+@[^\s<>()@]+[)>]?/g, '').replace(/[·,;|]\s*$/, '').replace(/\s{2,}/g, ' ').trim().slice(0, 60)
@@ -119,7 +120,8 @@ export async function buildSharedTalkPayload(input: BuildSharedTalkInput): Promi
   const model = await prepareSource(outlinePath, shareSafeOutline(tree, input.compileContent ?? content), slug, statSync(outlinePath))
   const title = frontmatterValue(content, 'title') || String(model.title || '') || slug
   const fullHtml = String(model.fullHtml)
-  const compiled = extractSlides(fullHtml) as Array<{ html: string }>
+  // A {prework} section's slides are not part of a shared talk (they are not presented or published).
+  const compiled = withoutPreworkSlides(extractSlides(fullHtml) as Array<{ id?: unknown; html: string }>, model.prework as CompiledPrework | undefined)
   const html = String(buildShareHtml({
     title,
     slides: compiled,

@@ -28,7 +28,7 @@ test('recovery preserves the talk QR overlay in presenter sync and venue snapsho
     slideState: { type: 'slide.state', ...slideState, revision: 5 }, polls: [] })))
     .toMatchObject({ slideState: { ...slideState, revision: 5 } })
 })
-import { parseAudienceMessage, parsePresenterMessage, parsePresenterServerMessage } from './protocol'
+import { parseAudienceMessage, parsePresenterMessage, parsePresenterServerMessage, parseQuestionInput, parseReactionInput, type Parsed } from './protocol'
 
 describe('presenter message protocol', () => {
   test('validates instant slides and clear without accepting an unbounded payload', () => {
@@ -125,9 +125,21 @@ describe('presenter message protocol', () => {
     expect(parsePresenterServerMessage(JSON.stringify(openState))).toEqual(openState)
   })
 
-  test('keeps later interaction messages inert', () => {
-    expect(parsePresenterMessage(JSON.stringify({ type: 'question.answer', questionId: 'question-1' }))).toBeNull()
+  test('parses answered marks and pause switches, and keeps the old emoji messages inert', () => {
+    expect(parsePresenterMessage(JSON.stringify({ type: 'question.answer', questionId: 'question-1' })))
+      .toEqual({ type: 'question.answer', questionId: 'question-1', answered: true })
+    expect(parsePresenterMessage(JSON.stringify({ type: 'question.answer', questionId: 'question-1', answered: false })))
+      .toEqual({ type: 'question.answer', questionId: 'question-1', answered: false })
+    expect(parsePresenterMessage(JSON.stringify({ type: 'question.answer', questionId: '' }))).toBeNull()
+    expect(parsePresenterMessage(JSON.stringify({ type: 'question.answer', questionId: 'q', answered: 'yes' }))).toBeNull()
+    expect(parsePresenterMessage(JSON.stringify({ type: 'switches.set', reactionsAllowed: false })))
+      .toEqual({ type: 'switches.set', reactionsAllowed: false })
+    expect(parsePresenterMessage(JSON.stringify({ type: 'switches.set', questionsAllowed: true, reactionsAllowed: false })))
+      .toEqual({ type: 'switches.set', questionsAllowed: true, reactionsAllowed: false })
+    expect(parsePresenterMessage(JSON.stringify({ type: 'switches.set' }))).toBeNull()
+    expect(parsePresenterMessage(JSON.stringify({ type: 'switches.set', reactionsAllowed: 'off' }))).toBeNull()
     expect(parsePresenterMessage(JSON.stringify({ type: 'reaction.echo', emoji: '👍' }))).toBeNull()
+    expect(parseAudienceMessage(JSON.stringify({ type: 'reaction.send', emoji: '👍' }))).toBeNull()
   })
 
   test('rejects malformed slide events', () => {
@@ -136,5 +148,91 @@ describe('presenter message protocol', () => {
       type: 'slide.publish', slideId: 'slide-4', reveal: 0, focus: { kind: 'blur', step: 1 },
     }))).toBeNull()
     expect(parsePresenterMessage('not json')).toBeNull()
+  })
+})
+
+describe('reactions and questions', () => {
+  const reaction = { reaction: 'puzzled', slideId: 'slide-3', tMs: 41_000 }
+  const code = (parsed: Parsed<unknown>) => 'error' in parsed ? parsed.error.code : 'ok'
+
+  test('accepts registered identifiers, custom labels, bookmarks and withdrawals', () => {
+    for (const id of ['puzzled', 'helped', 'bookmark', 'agree', 'disagree', 'yes', 'no', 'more', 'slower']) {
+      expect(parseReactionInput({ ...reaction, reaction: id })).toEqual({ value: { ...reaction, reaction: id } })
+    }
+    expect(parseReactionInput({ ...reaction, reaction: 'custom:  Too fast ' })).toEqual({ value: { ...reaction, reaction: 'custom:Too fast' } })
+    expect(parseReactionInput({ ...reaction, reaction: 'custom:' + 'x'.repeat(40) })).toMatchObject({ value: {} })
+    expect(parseReactionInput({ ...reaction, withdrawn: true })).toEqual({ value: { ...reaction, withdrawn: true } })
+    expect(parseReactionInput({ ...reaction, withdrawn: false })).toEqual({ value: reaction })
+    expect(parseAudienceMessage(JSON.stringify({ type: 'reaction.send', ...reaction, reaction: 'bookmark' })))
+      .toEqual({ type: 'reaction.send', ...reaction, reaction: 'bookmark' })
+  })
+
+  test('rejects bad reactions with a reason', () => {
+    expect(code(parseReactionInput({ ...reaction, reaction: 'thumbs-up' }))).toBe('unknown_reaction')
+    expect(code(parseReactionInput({ ...reaction, reaction: '👍' }))).toBe('unknown_reaction')
+    expect(code(parseReactionInput({ ...reaction, reaction: 'Puzzled' }))).toBe('unknown_reaction')
+    expect(code(parseReactionInput({ ...reaction, reaction: 'custom:' + 'x'.repeat(41) }))).toBe('invalid_custom_label')
+    expect(code(parseReactionInput({ ...reaction, reaction: 'custom:   ' }))).toBe('invalid_custom_label')
+    expect(code(parseReactionInput({ reaction: 'puzzled', tMs: 1 }))).toBe('missing_slide_id')
+    expect(code(parseReactionInput({ ...reaction, slideId: '' }))).toBe('missing_slide_id')
+    expect(code(parseReactionInput({ ...reaction, slideId: 's'.repeat(101) }))).toBe('invalid_slide_id')
+    expect(code(parseReactionInput({ ...reaction, tMs: -1 }))).toBe('invalid_time')
+    expect(code(parseReactionInput({ ...reaction, tMs: 1.5 }))).toBe('invalid_time')
+    expect(code(parseReactionInput({ ...reaction, withdrawn: 'yes' }))).toBe('invalid_withdrawn')
+    expect(parseAudienceMessage(JSON.stringify({ type: 'reaction.send', ...reaction, reaction: 'nope' }))).toBeNull()
+  })
+
+  test('questions are trimmed untrusted text with bounded name, HTML kept as text', () => {
+    const question = { text: '  <b>Why</b> <script>alert(1)</script>?  ', name: ' Priya ', slideId: 'slide-9', tMs: 5 }
+    expect(parseQuestionInput(question)).toEqual({ value: {
+      text: '<b>Why</b> <script>alert(1)</script>?', name: 'Priya', slideId: 'slide-9', tMs: 5 } })
+    expect(parseQuestionInput({ ...question, name: '   ' })).toEqual({ value: {
+      text: '<b>Why</b> <script>alert(1)</script>?', slideId: 'slide-9', tMs: 5 } })
+    expect(parseQuestionInput({ ...question, text: 'q'.repeat(500) })).toMatchObject({ value: { text: 'q'.repeat(500) } })
+    expect(code(parseQuestionInput({ ...question, text: 'q'.repeat(501) }))).toBe('question_too_long')
+    expect(code(parseQuestionInput({ ...question, text: '   ' }))).toBe('empty_question')
+    expect(code(parseQuestionInput({ ...question, text: 42 }))).toBe('empty_question')
+    expect(code(parseQuestionInput({ ...question, name: 'n'.repeat(61) }))).toBe('name_too_long')
+    expect(code(parseQuestionInput({ ...question, name: 7 }))).toBe('invalid_name')
+    expect(code(parseQuestionInput({ ...question, slideId: undefined }))).toBe('missing_slide_id')
+    expect(code(parseQuestionInput({ ...question, tMs: 'now' }))).toBe('invalid_time')
+  })
+
+  test('recovery client messages carry a submissionId; a bad body becomes a rejectable invalid submission', () => {
+    expect(parseRecoveryClientMessage(JSON.stringify({ type: 'reaction.send', submissionId: 'reaction-0001', ...reaction })))
+      .toEqual({ type: 'reaction.send', submissionId: 'reaction-0001', ...reaction })
+    expect(parseRecoveryClientMessage(JSON.stringify({ type: 'question.submit', submissionId: 'question-0001',
+      text: ' Hi ', slideId: 'slide-1', tMs: 0 })))
+      .toEqual({ type: 'question.submit', submissionId: 'question-0001', text: 'Hi', slideId: 'slide-1', tMs: 0 })
+    expect(parseRecoveryClientMessage(JSON.stringify({ type: 'reaction.send', submissionId: 'reaction-0002', ...reaction, reaction: 'wow' })))
+      .toEqual({ type: 'submission.invalid', kind: 'reaction.send', submissionId: 'reaction-0002', error: 'unknown_reaction' })
+    expect(parseRecoveryClientMessage(JSON.stringify({ type: 'question.submit', submissionId: 'question-0002', text: 'x'.repeat(501), slideId: 's', tMs: 0 })))
+      .toEqual({ type: 'submission.invalid', kind: 'question.submit', submissionId: 'question-0002', error: 'question_too_long' })
+    expect(parseRecoveryClientMessage(JSON.stringify({ type: 'reaction.send', submissionId: 'short', ...reaction }))).toBeNull()
+    expect(parseRecoveryClientMessage(JSON.stringify({ type: 'session.sync', syncId: 'sync-reactions', afterReactionSequence: 3 })))
+      .toMatchObject({ afterReactionSequence: 3 })
+    expect(parseRecoveryClientMessage(JSON.stringify({ type: 'session.sync', syncId: 'sync-reactions', afterReactionSequence: -1 }))).toBeNull()
+  })
+
+  test('recovery server messages: acks, presenter counts and questions, switches, snapshot fields', () => {
+    const ack = { type: 'reaction.ack', submissionId: 'reaction-0001', status: 'rejected', error: 'reactions_paused' }
+    expect(parseRecoveryServerMessage(JSON.stringify(ack))).toEqual(ack)
+    expect(parseRecoveryServerMessage(JSON.stringify({ type: 'question.ack', submissionId: 'question-0001', status: 'confirmed' })))
+      .toEqual({ type: 'question.ack', submissionId: 'question-0001', status: 'confirmed' })
+    const record = { ...reaction, sequence: 1, acceptedAt: 99 }
+    const counts = { type: 'reaction.counts', slideId: 'slide-3', counts: { puzzled: 2, bookmark: 1 }, records: [record] }
+    expect(parseRecoveryServerMessage(JSON.stringify(counts))).toEqual(counts)
+    expect(parseRecoveryServerMessage(JSON.stringify({ ...counts, counts: { puzzled: 0 } }))).toBeNull()
+    expect(parseRecoveryServerMessage(JSON.stringify({ ...counts, counts: { '👍': 1 } }))).toBeNull()
+    const question = { questionId: 'question-1', text: 'Why?', slideId: 'slide-3', tMs: 4, acceptedAt: 5, answered: false }
+    expect(parseRecoveryServerMessage(JSON.stringify({ type: 'questions.state', questions: [question] })))
+      .toEqual({ type: 'questions.state', questions: [question] })
+    expect(parseRecoveryServerMessage(JSON.stringify({ type: 'switches.state', questionsAllowed: false, reactionsAllowed: true })))
+      .toEqual({ type: 'switches.state', questionsAllowed: false, reactionsAllowed: true })
+    const snapshot = { type: 'session.snapshot', protocol: 2, syncId: 'sync-feedback', sessionId: 'session-one',
+      expiresAt: 1, slideState: null, polls: [], switches: { questionsAllowed: true, reactionsAllowed: false },
+      reactionCounts: { 'slide-3': { puzzled: 1 } }, questions: [question], reactionRecords: [record], moreReactionRecords: false }
+    expect(parseRecoveryServerMessage(JSON.stringify(snapshot))).toMatchObject(snapshot)
+    expect(parseRecoveryServerMessage(JSON.stringify({ ...snapshot, questions: [{ ...question, answered: 'no' }] }))).toBeNull()
   })
 })

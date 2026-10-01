@@ -109,7 +109,7 @@
     margin: 0;
     color: var(--ink);
     font-weight: 700;
-    font-size: max(22px, 2cqw);
+    font-size: var(--sa-head, max(var(--type-floor), 2cqw)); /* ADR-0033 §1: never below the type floor */
     line-height: 1.1;
     letter-spacing: -0.01em;
   }/* @order 0386 */
@@ -124,7 +124,7 @@
     border-top: 1px solid var(--hairline);
     padding: 10px 0 0;
     color: var(--ink);
-    font-size: max(16px, 1.4cqw);
+    font-size: var(--sa-text, max(var(--type-floor), 1.4cqw)); /* ADR-0033 §1: never below the type floor */
     line-height: 1.35;
   }/* @order 0388 */
   /* A nested node sitting inside a step is just text — it must not draw a second card. *//* @order 0389 */
@@ -138,13 +138,22 @@
   .smartart-node .smartart-text {
     margin: 0;
     color: var(--ink);
-    font-size: max(16px, 1.4cqw);
+    font-size: var(--sa-text, max(var(--type-floor), 1.4cqw)); /* ADR-0033 §1: never below the type floor */
     line-height: 1.35;
     font-weight: 560;
   }/* @order 0391 */
   /* One or two nodes should not stretch edge-to-edge — keep them readable and centred. *//* @order 0392 */
   .smartart-grid.count-1 { grid-template-columns: minmax(0, 560px); justify-content: center; }/* @order 0393 */
-  .smartart-grid.count-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 1000px; margin-left: auto; margin-right: auto; }/* @order 0394 */
+  .smartart-grid.count-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; gap: 2cqw; margin-top: 0; --sa-text: max(var(--type-floor), calc(var(--fs-body) * .85)); }/* @order 0375 */
+  /* Slide round 2 (0.37): four cards are always 2x2, never auto-fit into 3+1. Card text follows the deck
+     card type (ADR-0028 5: body-size text, heading 1.15x) and never drops under the type floor; the pair
+     and the quartet size it from --fs-body by how much width a card gets. */
+  .smartart-grid.count-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.6cqw; margin-top: 0; --sa-text: max(var(--type-floor), calc(var(--fs-body) * .75)); }/* @order 0376 */
+  .smartart-grid:is(.count-2, .count-4) { --sa-head: calc(var(--sa-text) * 1.15); }/* @order 0377 */
+  .smartart-grid:is(.count-2, .count-4) .smartart-node { padding: 1.6cqw 1.8cqw; }/* @order 0378 */
+  .smartart-grid:is(.count-2, .count-4) .smartart-node ol { margin-top: .9cqw; }/* @order 0379 */
+  .smartart-grid:is(.count-2, .count-4) .smartart-node h2 { line-height: 1.12; }/* @order 0380 */
+  .smartart-grid:is(.count-2, .count-4) .smartart-node li, .smartart-grid:is(.count-2, .count-4) .smartart-node .smartart-text { line-height: 1.25; }/* @order 0381 */
   .smartart-node h2:not(:last-child) { margin-bottom: 0; }/* @order 0395 */
 
   /* PYRAMID ({pyramid}). Stacked tiers, narrow APEX on top, widest BASE at the bottom (first list

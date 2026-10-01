@@ -1,4 +1,4 @@
-import type { TalkInfo } from '../../../../preload/index'
+import type { TalkInfo, VaultView } from '../../../../preload/index'
 import { rebaseTalk, topicOf } from '../talkTreeNav'
 import { notify } from '../../lib/notify'
 import { talkKey } from './model'
@@ -12,12 +12,13 @@ export type Confirm = { label: string; cta: string; danger?: boolean; onConfirm:
 
 interface Deps {
   talks: TalkInfo[]
-  vaultRoot: string
+  /** Every vault: a talk or folder is acted on within its own vault. */
+  vaults: VaultView[]
   activeTalk: TalkInfo | null
   onSelectTalk: (talk: TalkInfo) => void
   onDeletedTalk?: (outlinePath: string) => void
   onRefresh: () => void
-  onNewTalk?: (topic?: string) => void
+  onNewTalk?: (topic?: string, vaultId?: string) => void
   /** Open the per-talk Metadata panel (ADR-0036) for this talk. */
   onOpenMetadata?: (talk: TalkInfo) => void
   flushActive?: () => Promise<void>
@@ -34,7 +35,7 @@ interface Deps {
 
 export function useTalkActions(deps: Deps) {
   const {
-    talks, vaultRoot, activeTalk, onSelectTalk, onDeletedTalk, onRefresh, onNewTalk,
+    talks, vaults, activeTalk, onSelectTalk, onDeletedTalk, onRefresh, onNewTalk,
     onOpenMetadata, flushActive, leaveActive, setPrompt, setConfirm, setMenu, setMoveMenu, setFocusKey
   } = deps
 
@@ -46,9 +47,15 @@ export function useTalkActions(deps: Deps) {
     await flushActive?.()
     return true
   }
-  const activeInside = (topic: string): boolean => {
+  const firstOpen = vaults.find((v) => v.open)
+  const vaultIdOf = (talk: TalkInfo): string | undefined => talk.vaultId ?? firstOpen?.id
+  const rootOf = (talk: TalkInfo): string => vaults.find((v) => v.id === vaultIdOf(talk))?.root ?? firstOpen?.root ?? ''
+  /** The talk as main returned it, with the vault it stays in. */
+  const inVaultOf = (from: TalkInfo, moved: TalkInfo): TalkInfo => (from.vaultId ? { ...moved, vaultId: from.vaultId } : moved)
+  const activeInside = (topic: string, vaultId?: string): boolean => {
     if (!activeTalk) return false
-    const t = topicOf(activeTalk, vaultRoot)
+    if ((vaultId ?? firstOpen?.id) !== vaultIdOf(activeTalk)) return false
+    const t = topicOf(activeTalk, rootOf(activeTalk))
     return t === topic || t.startsWith(topic + '/')
   }
 
@@ -60,7 +67,8 @@ export function useTalkActions(deps: Deps) {
     // Flush the editor's pending autosave BEFORE the folder moves — a late write to the old
     // path would recreate it and the two copies would drift (2026-07-05 hazard class).
     if (wasActive && !(await settleActive())) return
-    const res = await window.tw.vault.renameTalk(talk.outlinePath, newTitle)
+    const renamed = await window.tw.vault.renameTalk(talk.outlinePath, newTitle)
+    const res = renamed && !('error' in renamed) ? inVaultOf(talk, renamed) : renamed
     if (res && 'error' in res) {
       if (res.error === 'open-elsewhere') notify(`“${talk.title}” is open in another window — close it there first.`, 'error')
       else if (res.error === 'target-exists') notify(`Couldn’t rename — a talk folder for “${newTitle}” already exists.`, 'error')
@@ -79,7 +87,7 @@ export function useTalkActions(deps: Deps) {
   async function doClone(talk: TalkInfo, newTitle: string): Promise<void> {
     const cloned = await window.tw.vault.cloneTalk(talk.outlinePath, newTitle)
     onRefresh()
-    if (cloned) onSelectTalk(cloned)
+    if (cloned) onSelectTalk(inVaultOf(talk, cloned))
     else notify(`Couldn’t duplicate “${talk.title}”.`, 'error')
   }
   function startDelete(talk: TalkInfo): void {
@@ -97,28 +105,29 @@ export function useTalkActions(deps: Deps) {
     setMoveMenu({ talk, x: at.x, y: at.y })
   }
   async function doMove(talk: TalkInfo, destTopic: string): Promise<void> {
-    if (topicOf(talk, vaultRoot) === destTopic) return
+    if (topicOf(talk, rootOf(talk)) === destTopic) return
     if (activeTalk?.outlinePath === talk.outlinePath && !(await settleActive())) return
-    const moved = await window.tw.vault.moveTalk(talk.outlinePath, destTopic)
+    const movedRaw = await window.tw.vault.moveTalk(talk.outlinePath, destTopic)
+    const moved = movedRaw ? inVaultOf(talk, movedRaw) : null
     onRefresh()
     if (moved) setFocusKey(talkKey(moved.outlinePath))
     if (moved && activeTalk?.outlinePath === talk.outlinePath) onSelectTalk(moved)
     if (!moved) notify(`Couldn’t move “${talk.title}” — a talk of that name may already live there.`, 'error')
   }
-  async function doNewFolder(name: string, parentRel: string): Promise<void> {
-    const created = await window.tw.vault.createFolder(name, parentRel)
+  async function doNewFolder(name: string, parentRel: string, vaultId?: string): Promise<void> {
+    const created = await window.tw.vault.createFolder(name, parentRel, vaultId)
     if (created == null) notify(`Couldn’t create the folder “${name}”.`, 'error')
     onRefresh()
   }
-  async function doRenameFolder(topic: string, newName: string): Promise<void> {
-    const moving = activeInside(topic) ? activeTalk : null
+  async function doRenameFolder(topic: string, newName: string, vaultId?: string): Promise<void> {
+    const moving = activeInside(topic, vaultId) ? activeTalk : null
     if (moving && !(await settleActive())) return
-    const renamed = await window.tw.vault.renameFolder(topic, newName)
+    const renamed = await window.tw.vault.renameFolder(topic, newName, vaultId)
     if (renamed == null) notify(`Couldn’t rename the folder — a folder called “${newName}” may already exist.`, 'error')
     onRefresh()
     // The open talk moved with its folder: re-select it at its new path (as doRename does), so the
     // editor reloads from there, the guard tracks it again and the next save lands in the new folder.
-    const rebased = moving && renamed != null ? rebaseTalk(moving, vaultRoot, topic, renamed) : null
+    const rebased = moving && renamed != null ? rebaseTalk(moving, rootOf(moving), topic, renamed) : null
     if (rebased) {
       setFocusKey(talkKey(rebased.outlinePath))
       onSelectTalk(rebased)
@@ -126,9 +135,9 @@ export function useTalkActions(deps: Deps) {
   }
   // The open talk inside the folder stays open: main reports its file as removed (the bar), so the
   // person chooses to let it go or save it again — its typing is never dropped or silently recreated.
-  async function doDeleteFolder(topic: string): Promise<void> {
-    if (activeInside(topic) && !(await settleActive())) return
-    const ok = await window.tw.vault.deleteFolder(topic)
+  async function doDeleteFolder(topic: string, vaultId?: string): Promise<void> {
+    if (activeInside(topic, vaultId) && !(await settleActive())) return
+    const ok = await window.tw.vault.deleteFolder(topic, vaultId)
     if (!ok) notify('Couldn’t move the folder to the Bin.', 'error')
     onRefresh()
   }
@@ -148,19 +157,20 @@ export function useTalkActions(deps: Deps) {
     }
     else if (action === 'delete') startDelete(talk)
   }
-  function onFolderAction(topic: string, action: FolderAction): void {
+  function onFolderAction(topic: string, action: FolderAction, vaultId?: string): void {
     setMenu(null)
     const leaf = topic.split('/').pop() || topic
-    if (action === 'new-talk') onNewTalk?.(topic)
-    else if (action === 'new-subfolder') setPrompt({ label: `New subfolder inside “${leaf}”`, initial: '', cta: 'Create', onSubmit: (v) => void doNewFolder(v, topic) })
-    else if (action === 'rename') setPrompt({ label: `Rename folder “${leaf}” to`, initial: leaf, cta: 'Rename', onSubmit: (v) => void doRenameFolder(topic, v) })
+    if (action === 'new-talk') onNewTalk?.(topic, vaultId)
+    else if (action === 'new-subfolder') setPrompt({ label: `New subfolder inside “${leaf}”`, initial: '', cta: 'Create', onSubmit: (v) => void doNewFolder(v, topic, vaultId) })
+    else if (action === 'rename') setPrompt({ label: `Rename folder “${leaf}” to`, initial: leaf, cta: 'Rename', onSubmit: (v) => void doRenameFolder(topic, v, vaultId) })
     else if (action === 'delete') {
-      const count = talks.filter((t) => topicOf(t, vaultRoot) === topic || topicOf(t, vaultRoot).startsWith(topic + '/')).length
+      const here = talks.filter((t) => vaultIdOf(t) === (vaultId ?? firstOpen?.id))
+      const count = here.filter((t) => topicOf(t, rootOf(t)) === topic || topicOf(t, rootOf(t)).startsWith(topic + '/')).length
       setConfirm({
         label: count > 0
           ? `Move folder “${leaf}” and its ${count} talk${count === 1 ? '' : 's'} to the Bin? (recoverable from Finder)`
           : `Move folder “${leaf}” to the Bin? (recoverable from Finder)`,
-        cta: 'Delete', danger: true, onConfirm: () => void doDeleteFolder(topic)
+        cta: 'Delete', danger: true, onConfirm: () => void doDeleteFolder(topic, vaultId)
       })
     }
   }

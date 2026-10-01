@@ -22,7 +22,10 @@ import { slideFitRuntimeSource } from '../compiler/scripts/lib/01-cli-utils.mjs'
 //   3. canvasScale reads 1 untransformed and the transform's factor under one.
 // Mutation: TW_SLIDE_FIT_NO_SCALE=1 compiles the share page with canvasScale pinned to 1 (the scale
 // correction removed). The gate must then fail on its own contract.
-const isMutant = process.env.TW_SLIDE_FIT_NO_SCALE === '1'
+const isMutant = process.env.TW_SLIDE_FIT_NO_SCALE === '1' || process.env.TW_SLIDE_FIT_NO_FLOOR === '1'
+const isNoFloorMutant = process.env.TW_SLIDE_FIT_NO_FLOOR === '1'
+const FLOOR_CHECK = 'if (smallest && smallest * factor < floorPx - 0.01) {'
+assert.ok(slideFitRuntimeSource.includes(FLOOR_CHECK), 'the module carries the type-floor check the floor mutation removes')
 const SCALE_RETURN = 'return paintedWidth / layoutWidth;'
 assert.ok(slideFitRuntimeSource.includes(SCALE_RETURN), 'the module carries the scale correction the mutation removes')
 
@@ -33,7 +36,7 @@ auto_thanks_slide: false
 defaults: { icons: on }
 ---
 
-### Cards with a long word {id=cards title=side list}
+### Cards with a long word {id=cards title=side list narrowcols=off}
 
 - Every TalkWeaver layout in one deck
 - The new Wave-1 frame features are called out per slide
@@ -59,6 +62,9 @@ defaults: { icons: on }
 | Research | Reads many sources and writes a report | Questions that need sources |
 | Agents | Runs tools in a loop until a task is done | Multi-step work on files |
 | Code | Edits a repository and runs its tests | Software changes |
+| Search | Finds pages on the web and cites them | Current facts |
+| Voice | Talks with you out loud in real time | Hands-free questions |
+| Images | Makes and edits pictures from a prompt | Slides and mockups |
 
 ### Stepwise cards {id=carousel cards carousel}
 
@@ -73,9 +79,21 @@ defaults: { icons: on }
 #### Second
 
 Each card is its own beat in presenter view.
+
+### An overfull table {id=over}
+
+| Tool | What it does | When to use it |
+| --- | --- | --- |
+${Array.from({ length: 3 }, () => [
+  '| Chat | Answers one question at a time in a window | Quick lookups and drafts |',
+  '| Projects | Keeps files and instructions together | Repeated work on one topic |',
+  '| Research | Reads many sources and writes a report | Questions that need sources |',
+  '| Agents | Runs tools in a loop until a task is done | Multi-step work on files |',
+  '| Code | Edits a repository and runs its tests | Software changes |'
+].join('\n')).join('\n')}
 `
 
-const IDS = ['cards', 'long', 'table', 'carousel']
+const IDS = ['cards', 'long', 'table', 'carousel', 'over']
 const scratch = await mkdtemp(join(tmpdir(), 'talkweaver-slide-fit-'))
 const sourcePath = join(scratch, 'slide-fit.md')
 await writeFile(sourcePath, source)
@@ -83,9 +101,12 @@ const model = await prepareSource(sourcePath, source, 'slide-fit', statSync(sour
 const full = String(model.fullHtml)
 const styles = extractStyles(full)
 const slides = extractSlides(full)
-const pin = (html) => isMutant ? html.replace(SCALE_RETURN, 'return 1;') : html
+const pin = (html) => {
+  if (isNoFloorMutant) return html.replace(FLOOR_CHECK, 'if (false) {')
+  return isMutant ? html.replace(SCALE_RETURN, 'return 1;') : html
+}
 const files = {
-  app: full,
+  app: pin(full),
   handout: pin(buildShareHtml({ title: 'Slide fit probe', slides, styles, includeNotes: false, slug: 'slide-fit', license: null })),
   venue: pin(buildVenuePageHtml({ title: 'Slide fit probe', slides, styles, slug: 'slide-fit', license: null, workerBaseUrl: 'https://live.invalid', liveTalkSlug: 'slide-fit', qr: '', handoutUrl: 'https://handouts.invalid/slide-fit' })),
 }
@@ -108,12 +129,20 @@ function readFit({ id, src }) {
     top = Math.min(top, r.top); bottom = Math.max(bottom, r.bottom)
   }
   const zoom = Number(content.style.zoom || 1)
+  // Smallest running text on the slide (canvas px), the floor the whole-slide zoom may not cross.
+  let smallest = Infinity
+  for (const el of content.querySelectorAll('td, th, li, p, h1, span')) {
+    if (el.closest('.footer, .sr-only, .gallery-nav, .kicker, .code-lang') || !el.textContent.trim() || el.children.length && ![...el.childNodes].some((n) => n.nodeType === 3 && n.data.trim())) continue
+    { const px = parseFloat(getComputedStyle(el).fontSize); if (px < smallest) { smallest = px; window.__who = el.className + '|' + el.tagName } }
+  }
   const words = [...content.querySelectorAll('.feature-list > li, .icon-row > .ir-item')].filter((c) => c.scrollWidth - c.clientWidth > 1).length
   return {
     active: true, scale: Math.round(scale * 1000) / 1000,
     listFit: content.dataset.listFit || '', widthFit: content.dataset.listWidthFit || '',
     vars: ['--fs-body', '--list-lh', '--list-gap'].map((p) => content.style.getPropertyValue(p)).join('|'),
     zoom: Math.round(zoom * 100) / 100,
+    textFit: content.dataset.textFit || '', tooTall: Number(content.dataset.textTooTall) || 0,
+    smallest: Math.round(smallest * zoom * 100) / 100, who: window.__who, floor: Math.round(slide.clientWidth * 1.9375) / 100,
     overflow: bottom > top ? Math.round(Math.max(0, bottom - bandBottom, bandTop - top) / scale) : 0,
     words,
     // The module's own reading of the canvas scale (a fresh instance of the same source).
@@ -149,7 +178,17 @@ try {
   assert.match(app.cards.widthFit, /cqw$/, `app: the card width step engages on the long word (${JSON.stringify(app.cards)})`)
   assert.ok(['leading', 'gap', 'type'].includes(app.long.listFit), `app: the long list spends the ladder (${JSON.stringify(app.long)})`)
   assert.ok(['leading', 'gap', 'type'].includes(app.table.listFit), `app: the long table spends the ladder (${JSON.stringify(app.table)})`)
-  assert.ok(app.carousel.zoom < 1, `app: the tall carousel card zooms (${JSON.stringify(app.carousel)})`)
+  // ADR-0033 §1: the whole-slide zoom never takes text below the floor; a slide that still overflows
+  // there keeps zoom 1 and is marked too-long with how much too tall it is.
+  for (const id of IDS) {
+    const got = app[id]
+    assert.ok(got.zoom === 1 || got.smallest >= got.floor - 0.05, `app #${id}: zoom ${got.zoom} keeps text at or above the floor (${got.smallest} vs ${got.floor}, ${got.who})`)
+  }
+  assert.equal(app.over.zoom, 1, `app: an overfull table keeps zoom 1 (${JSON.stringify(app.over)})`)
+  assert.equal(app.over.textFit, 'too-long', 'app: an overfull table is marked data-text-fit=too-long')
+  assert.ok(app.over.tooTall >= 20, `app: the overfull table reports how much too tall it is (${app.over.tooTall}%)`)
+  assert.ok(app.over.smallest >= app.over.floor - 0.05, `app: the overfull table stays at the floor (${app.over.smallest} vs ${app.over.floor})`)
+  assert.equal(app.long.textFit, '', 'app: a slide that fits is not marked')
   assert.equal(app.cards.words, 0, 'app: after the width step every word sits inside its card')
   assert.equal(app.long.moduleScale, 1, 'app: canvasScale is exactly 1 on an untransformed stage')
 
@@ -167,7 +206,8 @@ try {
       assert.equal(h.widthFit, a.widthFit, `${at} #${id}: width step matches the app`)
       assert.equal(h.vars, a.vars, `${at} #${id}: fitted tokens match the app`)
       assert.ok(Math.abs(h.zoom - a.zoom) <= 0.01, `${at} #${id}: zoom matches the app (${h.zoom} vs ${a.zoom})`)
-      if (id !== 'carousel') assert.ok(h.overflow <= 1, `${at} #${id}: nothing past its band (${h.overflow} canvas px)`)
+      assert.equal(h.textFit, a.textFit, `${at} #${id}: too-long mark matches the app`)
+      if (id !== 'carousel' && id !== 'over') assert.ok(h.overflow <= 1, `${at} #${id}: nothing past its band (${h.overflow} canvas px)`)
       assert.equal(h.words, a.words, `${at} #${id}: no word past its card (${h.words} vs app ${a.words})`)
     }
   }
@@ -178,6 +218,12 @@ try {
 }
 
 if (!isMutant) {
+  const floorChild = spawnSync(process.execPath, ['--disable-warning=MODULE_TYPELESS_PACKAGE_JSON', fileURLToPath(import.meta.url)], {
+    env: { ...process.env, TW_SLIDE_FIT_NO_FLOOR: '1' }, encoding: 'utf8',
+  })
+  assert.notEqual(floorChild.status, 0, 'with the type-floor check removed the gate fails')
+  assert.match(floorChild.stdout + floorChild.stderr, /keeps zoom 1|too-long|floor/, `floor mutant fails on the floor contract:\n${(floorChild.stdout + floorChild.stderr).slice(-1500)}`)
+  console.log('slide fit mutation (type-floor check removed): FAILS as required')
   const child = spawnSync(process.execPath, ['--disable-warning=MODULE_TYPELESS_PACKAGE_JSON', fileURLToPath(import.meta.url)], {
     env: { ...process.env, TW_SLIDE_FIT_NO_SCALE: '1' }, encoding: 'utf8',
   })

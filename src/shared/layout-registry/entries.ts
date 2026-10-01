@@ -10,6 +10,8 @@
 // use status: "unverified" until coverage catches up.
 
 export type LayoutCategory = 'everyday' | 'structural' | 'specialised' | 'diagrams' | 'modes'
+/** ADR-0032 §4: the picker's groups, derived from the category (structural -> Structure). */
+export type LayoutPurpose = 'Everyday' | 'Structure' | 'Diagrams' | 'Modes' | 'Specialised'
 export type LayoutKind = 'layout' | 'component' | 'modifier' | 'container'
 /**
  * ADR-0023 §2 (A3): where a slide's title goes when the author set no override.
@@ -97,7 +99,16 @@ export interface OptionApplicability {
   requiresTokens?: Readonly<Record<string, readonly string[]>>
   /** At least one of these clauses must hold, in addition to the facets declared beside it. */
   anyOf?: readonly OptionApplicability[]
+  /**
+   * ADR-0032 amendment point 5 (ticket 08): the slide must be a step of the talk's pre-work
+   * section, of one of these kinds (compiler/scripts/lib/prework.mjs). The exception to the rule
+   * above: a caller that did not read the section is not offered the group.
+   */
+  preworkKinds?: readonly PreworkStepKind[]
 }
+
+/** The kinds of a pre-work step (compiler/scripts/lib/prework.mjs PREWORK_KINDS). */
+export type PreworkStepKind = 'slide' | 'check' | 'question' | 'task'
 
 export interface OptionGroup {
   key: string
@@ -106,9 +117,21 @@ export interface OptionGroup {
   preview?: 'thumbs' | 'segmented'
   /** Positive integer input, sharing the canonical trigger-line commit path. */
   numberKey?: string
+  /**
+   * Ticket 04: the slide's reactions ({reactions=…}, ADR-0027 amendment §6). A list-valued open key:
+   * the group's control is Standard · Choose · Custom · Off, and any `reactions=` token that
+   * compiler/scripts/lib/reaction-sets.mjs reads is this group's value, on the same commit path.
+   */
+  reactionsKey?: 'reactions'
   allowUnlimited?: boolean
   /** Accepted value-form triggers that intentionally do not create duplicate UI choices. */
   dictionaryTokens?: string[]
+  /**
+   * Where a newly written token of this group goes on the Trigger line: straight after the last
+   * token whose key is one of these (ADR-0032: a board's settings follow `{poll=board}`, before the
+   * id). Undeclared, or no such token on the line: after the layout token, else at the end.
+   */
+  anchorKeys?: readonly string[]
   /**
    * ADR-0020 §5. Required on every GLOBAL_OPTION_GROUPS entry (scripts/test-option-applicability
    * enforces it). A group declared inside a layout's own `options` needs none: it applies to that
@@ -132,7 +155,7 @@ export interface OptionGroup {
 }
 
 /** The Inspector sections a global group can declare (T32, Decision 2A). */
-export type GlobalOptionSection = 'title' | 'slide' | 'steps' | 'poll'
+export type GlobalOptionSection = 'title' | 'slide' | 'steps' | 'poll' | 'audience' | 'prework'
 /** Every Inspector section, in its fixed order: the slide's own layout first. */
 export type InspectorSectionId = 'layout' | GlobalOptionSection
 
@@ -163,6 +186,12 @@ export interface LayoutDef {
   sample: string
   description: string
   category: LayoutCategory
+  /** ADR-0032 §4: the picker group this entry is browsed under. */
+  purpose: LayoutPurpose
+  /** ADR-0032 §5: one plain-words line on when the layout suits the content. Required when picker-eligible. */
+  whenItFits?: string
+  /** ADR-0032 §4: false keeps the entry out of the picker (component-kind entries; board-only `names`). */
+  pickerEligible?: false
   cssModule?: string
   sectionOnly?: true
   resolvesTo?: { key: string; value: string | boolean }
@@ -175,6 +204,11 @@ export interface LayoutDef {
 export interface DynamicPattern {
   source: string
   resolution: Array<{ key: string; value: string }>
+}
+
+/** True when the picker offers this entry: not a component (inserted at the cursor) and not opted out. */
+export function isPickerEligible(entry: Pick<LayoutDef, 'kind' | 'pickerEligible'>): boolean {
+  return entry.kind !== 'component' && entry.pickerEligible !== false
 }
 
 export const systemTokens = ['id', 'tags', 'from', 'clonedFrom'] as const
@@ -204,11 +238,15 @@ export interface OpenPatternToken {
   justification: string
 }
 
+/** A slide id as `{id=…}` accepts it; `{results=…}` names a slide by the same class (fix round S3). */
+const SLIDE_ID_PATTERN = '[A-Za-z0-9-]+'
+
 export const OPEN_PATTERN_TOKENS: OpenPatternToken[] = [
   { key: 'pollselections', form: 'equals', pattern: '[1-9][0-9]*', description: 'Maximum options per multiple-choice answer.', justification: 'Positive integer configured in poll controls.' },
   { key: 'pollsubmissions', form: 'equals', pattern: '[1-9][0-9]*|unlimited', description: 'Free-text submissions per participant.', justification: 'Positive integer or unlimited configured in poll controls.' },
-  { key: 'id', form: 'equals', pattern: '[A-Za-z0-9-]+', description: 'Stable slide identity.', justification: 'System-managed stable slide identity.' },
+  { key: 'id', form: 'equals', pattern: SLIDE_ID_PATTERN, description: 'Stable slide identity.', justification: 'System-managed stable slide identity.' },
   { key: 'tags', form: 'equals', pattern: '[^\\s]+', description: 'Comma-separated author tags.', justification: 'Author metadata managed by the tag picker.' },
+  { key: 'reactions', form: 'equals', pattern: '[^,]+(?:,[^,]+)*', description: 'The slide’s reactions: off, registered names, or quoted custom labels, at most four.', justification: 'A list of registered reaction names or free custom labels, written by the Inspector’s Audience section (compiler/scripts/lib/reaction-sets.mjs).' },
   { key: 'from', form: 'equals', pattern: '.+', description: 'Provenance of an adopted slide.', justification: 'System provenance for adopted slides.' },
   { key: 'clonedFrom', form: 'equals', pattern: '.+', description: 'Provenance of a cloned slide.', justification: 'System provenance for cloned slides.' },
   { key: 'icon', form: 'equals', pattern: '.+', description: 'Icon payload chosen by the icon picker.', justification: 'Free icon payload chosen by the icon picker.' },
@@ -226,7 +264,8 @@ export const OPEN_PATTERN_TOKENS: OpenPatternToken[] = [
   { key: 'centre', form: 'equals', pattern: '.+', description: 'Diagram centre label.', justification: 'Free diagram centre label text.' },
   { key: 'center', form: 'equals', pattern: '.+', description: 'US-spelling alias for centre.', justification: 'US-spelling alias for the free diagram centre label.' },
   { key: 'curve', form: 'equals', pattern: 'sigmoid', description: 'Conceptual S-curve layout.', justification: 'Legacy chart-shape alias retained for source compatibility.' },
-  { key: 'titlestyle', form: 'equals', pattern: '.+', description: 'Compiler-internal title-rail style.', justification: 'Emitted by the registered sidebar trigger.' }
+  { key: 'titlestyle', form: 'equals', pattern: '.+', description: 'Compiler-internal title-rail style.', justification: 'Emitted by the registered sidebar trigger.' },
+  { key: 'results', form: 'equals', pattern: SLIDE_ID_PATTERN, description: 'A talk slide that shows the answers of the named pre-work step (its slide id).', justification: 'Names a step of the talk’s own pre-work section by its slide id; the Inspector’s Results section picks it from the steps (compiler/scripts/lib/prework.mjs).' }
 ]
 
 /**
@@ -265,8 +304,24 @@ const TITLED_REGIMES = ['sidebar', 'top', 'hidden'] as const
 
 /** Every poll type: the selection that makes the poll-behaviour groups mean anything. */
 const POLL_TYPE_TOKENS = [
-  'poll=single', 'poll=multiple', 'poll=open', 'poll=ranking', 'poll=rating', 'poll=categorisation'
+  'poll=single', 'poll=multiple', 'poll=open', 'poll=ranking', 'poll=rating', 'poll=categorisation', 'poll=board'
 ] as const
+/**
+ * The poll types that collect answers whose results can be held back. A board (ADR-0032) shows
+ * cards as they arrive, so result visibility is not one of its settings.
+ */
+const ANSWER_POLL_TYPE_TOKENS = POLL_TYPE_TOKENS.filter((token) => token !== 'poll=board')
+/** A board's settings (ADR-0032 §2): written after `{poll=board}` in this order, never after the id. */
+const BOARD_SETTING_KEYS = ['poll', 'limit', 'length', 'cards', 'names', 'closes'] as const
+/**
+ * A title look applies where the title is drawn at the top: the layouts whose regime is `top`. (A
+ * sidebar-regime layout forced up with {titletop} still takes a typed {titlelook=…} and the talk
+ * default; the Inspector does not offer it there, so the look does not nest under Placement.)
+ */
+const TOP_TITLE_LOOK: OptionApplicability = { titleRegimes: ['top'] }
+const BOARD_ONLY: OptionApplicability = { titleRegimes: TITLED_REGIMES, requiresTokens: { 'poll-type': ['poll=board'] } }
+/** A pre-work step's tokens (ticket 08): written after the step's kind ({poll=…}/{check}/{task}), before the id. */
+const PREWORK_STEP_KEYS = ['poll', 'check', 'task', 'readonly', 'minutes', 'noask'] as const
 
 // ADR-0011: every choosing surface consumes these values and writes their exact tokens.
 // ADR-0020 §5: each group declares WHERE it is relevant; options.ts interprets, never decides.
@@ -341,6 +396,41 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     ]
   },
   {
+    // 0.37 ticket 04: the look of a TOP title. Named `titlelook`, never `title_style` (the opening
+    // poster variant) or `titlestyle` (the retired sidebar stamp). The Kicker is sentence case, mono,
+    // led by a short accent rule; Label is a tinted tab with an accent left edge; Tab is a solid
+    // accent tab flush with the slide edge. A talk-wide default is the deck's `title_look:` setting,
+    // a section's is `sections:` → `titlelook:`; a slide's own token wins over both.
+    key: 'title-look',
+    label: 'Title look',
+    sectionLabel: 'Look',
+    preview: 'segmented',
+    section: 'title',
+    appliesTo: TOP_TITLE_LOOK,
+    // `titlelook=default` pins a slide to the plain title against a section or talk default.
+    dictionaryTokens: ['titlelook=default'],
+    values: [
+      { token: '', label: 'Default', description: 'The plain centred top title' },
+      { token: 'titlelook=kicker', label: 'Kicker', description: 'A small mono line in the section colour, led by a short rule' },
+      { token: 'titlelook=label', label: 'Label', description: 'A tinted tab with a coloured left edge' },
+      { token: 'titlelook=tab', label: 'Tab', description: 'A solid accent tab flush with the slide edge' }
+    ]
+  },
+  {
+    key: 'title-look-at',
+    label: 'Kicker placement',
+    sectionLabel: 'Kicker at',
+    preview: 'segmented',
+    section: 'title',
+    // Only a Kicker has a placement; nests under Look.
+    appliesTo: { ...TOP_TITLE_LOOK, requiresTokens: { 'title-look': ['titlelook=kicker'] } },
+    dictionaryTokens: ['titlelook-at=normal'],
+    values: [
+      { token: '', label: 'Normal', description: 'Keep the usual top margin' },
+      { token: 'titlelook-at=edge', label: 'Near top edge', description: 'Sit the kicker near the top edge and give the body the height' }
+    ]
+  },
+  {
     key: 'font-body',
     label: 'Body size',
     preview: 'segmented',
@@ -406,6 +496,49 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     ]
   },
   {
+    key: 'screenshot-row',
+    label: 'Screenshot row',
+    sectionLabel: 'Screenshots',
+    preview: 'segmented',
+    section: 'slide',
+    // ADR-0033 §4: two or three images in a row stay ONE row. The choice exists where such a row
+    // does: an image grid, or a media-only slide (its consecutive images form the row).
+    appliesTo: { layouts: ['image-grid', 'media'] },
+    values: [
+      { token: '', label: 'Deck default', description: 'Use the deck’s screenshot treatment (window frames unless the frontmatter sets one)' },
+      { token: 'screenshots=frames', label: 'Window frames', description: 'Each image in a light app window, cropped from its top-left so it stays crisp' },
+      { token: 'screenshots=fanned', label: 'Fanned', description: 'Prints with a white border, turned a few degrees and overlapping' }
+    ]
+  },
+  {
+    key: 'screenshot-list',
+    label: 'Screenshots beside a list',
+    sectionLabel: 'Screenshots',
+    preview: 'segmented',
+    section: 'slide',
+    // ADR-0033 §4: a list whose lines each carry a screenshot (two or three, one short line each).
+    appliesTo: { layouts: ['list-visual'] },
+    values: [
+      { token: '', label: 'Deck default', description: 'Use the deck’s arrangement (beside lines unless the frontmatter sets one)' },
+      { token: 'shotlist=beside', label: 'Beside lines', description: 'Each screenshot as an equal thumbnail beside its line, cropped from its top-left and framed' },
+      { token: 'shotlist=stacked', label: 'Stacked', description: 'Each screenshot above its caption, side by side in one row' }
+    ]
+  },
+  {
+    key: 'narrow-columns',
+    label: 'Narrow columns',
+    preview: 'segmented',
+    section: 'slide',
+    // ADR-0033 §5: only a list (cards beside a rail) and an icon row have columns that can fall under
+    // 22cqw and change shape. Every other layout draws its columns as authored.
+    appliesTo: { layouts: ['list', 'iconrow'] },
+    values: [
+      { token: '', label: 'Deck default', description: 'Use the deck’s setting (on unless the frontmatter says narrow_columns: off)' },
+      { token: 'narrowcols=on', label: 'Reshape', description: 'Columns under 22cqw change shape: icon rows wrap to rows of three, cards become icon rows' },
+      { token: 'narrowcols=off', label: 'Keep', description: 'Keep the columns as they are, however narrow' }
+    ]
+  },
+  {
     key: 'arrival-mode',
     label: 'Arrival mode',
     sectionLabel: 'Arrival',
@@ -466,7 +599,8 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
       { token: 'poll=open', label: 'Open response', description: 'Collect free-text responses instead of list choices' },
       { token: 'poll=ranking', label: 'Ranking', description: 'Rank all list items, or exactly polltop choices' },
       { token: 'poll=rating', label: 'Rating', description: 'Rate each list item with labels from [scale: …]' },
-      { token: 'poll=categorisation', label: 'Categorisation', description: 'Assign each list item a label from [categories: …]' }
+      { token: 'poll=categorisation', label: 'Categorisation', description: 'Assign each list item a label from [categories: …]' },
+      { token: 'poll=board', label: 'Board', description: 'Collect short cards in the columns the slide list names' }
     ]
   },
   {
@@ -493,12 +627,92 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     // There is nothing to reveal until the slide is a poll of some type.
     appliesTo: {
       titleRegimes: TITLED_REGIMES,
-      requiresTokens: { 'poll-type': POLL_TYPE_TOKENS }
+      requiresTokens: { 'poll-type': ANSWER_POLL_TYPE_TOKENS }
     },
     values: [
       { token: '', label: 'Live', description: 'Show results to the audience as votes arrive (default)' },
       { token: 'pollresults=live', label: 'Live', description: 'Show results to the audience as votes arrive' },
       { token: 'pollresults=held', label: 'Held', description: 'Record votes privately until the presenter reveals results' }
+    ]
+  },
+  // ── Board settings (ADR-0032 §2–3, §7; round-3 A4): the default is the empty token, never written;
+  // the default's own spelling stays legal (dictionaryTokens). The Inspector's Board section renders
+  // these rows under its Settings heading; every other surface reads them like any poll group.
+  {
+    key: 'board-limit', label: 'Big screen shows', preview: 'segmented', section: 'poll',
+    appliesTo: BOARD_ONLY, anchorKeys: BOARD_SETTING_KEYS, dictionaryTokens: ['limit=24'],
+    values: [
+      { token: 'limit=12', label: '12', description: 'Up to 12 cards on the big screen' },
+      { token: '', label: '24', description: 'Up to 24 cards on the big screen (default)' },
+      { token: 'limit=36', label: '36', description: 'Up to 36 cards on the big screen' },
+      { token: 'limit=all', label: 'All', description: 'Every card on the big screen' }
+    ]
+  },
+  {
+    key: 'board-length', label: 'Card length', preview: 'segmented', section: 'poll',
+    appliesTo: BOARD_ONLY, anchorKeys: BOARD_SETTING_KEYS, dictionaryTokens: ['length=140'],
+    values: [
+      { token: 'length=60', label: '60', description: 'Cards of up to 60 characters' },
+      { token: 'length=100', label: '100', description: 'Cards of up to 100 characters' },
+      { token: '', label: '140', description: 'Cards of up to 140 characters (default)' },
+      { token: 'length=200', label: '200', description: 'Cards of up to 200 characters' }
+    ]
+  },
+  {
+    key: 'board-cards', label: 'Cards per phone', preview: 'segmented', section: 'poll',
+    appliesTo: BOARD_ONLY, anchorKeys: BOARD_SETTING_KEYS, dictionaryTokens: ['cards=5'],
+    values: [
+      { token: 'cards=1', label: '1', description: 'One card per phone' },
+      { token: 'cards=3', label: '3', description: 'Up to 3 cards per phone' },
+      { token: '', label: '5', description: 'Up to 5 cards per phone (default)' },
+      { token: 'cards=10', label: '10', description: 'Up to 10 cards per phone' }
+    ]
+  },
+  {
+    key: 'board-names', label: 'Names', preview: 'segmented', section: 'poll',
+    appliesTo: BOARD_ONLY, anchorKeys: BOARD_SETTING_KEYS, dictionaryTokens: ['names=off', 'names=optional'],
+    values: [
+      { token: '', label: 'Off', description: 'Cards carry no names (default)' },
+      { token: 'names', label: 'Optional', description: 'A participant may add a name; only you see it', altTokens: ['names=optional'] }
+    ]
+  },
+  {
+    key: 'board-closes', label: 'Left open, closes', preview: 'segmented', section: 'poll',
+    appliesTo: BOARD_ONLY, anchorKeys: BOARD_SETTING_KEYS, dictionaryTokens: ['closes=7d'],
+    values: [
+      { token: 'closes=1d', label: '1 day', description: 'A board left open closes after 1 day' },
+      { token: '', label: '7 days', description: 'A board left open closes after 7 days (default)' },
+      { token: 'closes=30d', label: '30 days', description: 'A board left open closes after 30 days' }
+    ]
+  },
+  // ── Pre-work steps (ADR-0032 amendment point 5, round-2 E1–E3; ticket 08): a step of the talk's
+  // `{prework}` section. The Inspector's "Before the session" section renders these rows; the
+  // default is the empty token, never written.
+  {
+    // Fix round: a bare {task} asks for Mark as done (the locked drawing E3); {readonly} opts out.
+    key: 'prework-participants', label: 'Participants', preview: 'segmented', section: 'prework',
+    appliesTo: { preworkKinds: ['task'] }, anchorKeys: PREWORK_STEP_KEYS,
+    values: [
+      { token: '', label: 'Mark as done', description: 'Participants tick the task off when they have done it (default)' },
+      { token: 'readonly', label: 'Read only', description: 'Participants read the task; nothing to tick' }
+    ]
+  },
+  {
+    key: 'prework-minutes', label: 'Time it takes', preview: 'segmented', section: 'prework',
+    appliesTo: { preworkKinds: ['task'] }, anchorKeys: PREWORK_STEP_KEYS, dictionaryTokens: ['minutes=10'],
+    values: [
+      { token: 'minutes=5', label: '5 min', description: 'About 5 minutes' },
+      { token: '', label: '10 min', description: 'About 10 minutes (default)' },
+      { token: 'minutes=20', label: '20 min', description: 'About 20 minutes' },
+      { token: 'minutes=30', label: '30 min', description: 'About 30 minutes' }
+    ]
+  },
+  {
+    key: 'prework-ask', label: 'Questions about it', preview: 'segmented', section: 'prework',
+    appliesTo: { preworkKinds: ['slide', 'check', 'question', 'task'] }, anchorKeys: PREWORK_STEP_KEYS,
+    values: [
+      { token: '', label: 'On', description: 'Participants can ask about this step (default)' },
+      { token: 'noask', label: 'Off', description: 'Participants cannot ask about this step' }
     ]
   },
   {
@@ -513,6 +727,17 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     appliesTo: { titleRegimes: TITLED_REGIMES, requiresTokens: { 'poll-type': ['poll=open'] } },
     values: [
       { token: '', label: 'One (default)', description: 'One final submission per participant' }
+    ]
+  },
+  {
+    // Ticket 04 (ADR-0027 amendment §6; round-2 I1–I4): which reactions the phone bar offers on this
+    // slide. Every slide has them (title, section and closing slides carry the standard set), so the
+    // group applies everywhere. Standard is no token; Choose, Custom and Off write one
+    // {reactions=…} token each (reaction-sets.mjs reactionsToken), through the ordinary commit path.
+    key: 'reactions', label: 'Reactions', reactionsKey: 'reactions', section: 'audience',
+    appliesTo: {},
+    values: [
+      { token: '', label: 'Standard', description: 'Puzzled by this, Helped me understand and Bookmark (the default)' }
     ]
   },
   {
@@ -575,6 +800,8 @@ export const LAYOUTS: LayoutDef[] = [
 The registry is the product contract.`,
     description: 'Single bold claim beside the title',
     category: 'everyday',
+    purpose: 'Everyday',
+    whenItFits: 'One sentence you want the room to remember.',
     cssModule: 'statement',
     // ADR-0028 §10, ticket 02 (Dominik, 29 Sep): the statement's options are separate choices,
     // each a small segmented control, each its own trigger key — compiler/scripts/lib/
@@ -671,6 +898,8 @@ The registry is the product contract.`,
 - Third point`,
     description: 'Plain bullet list; the default content layout',
     category: 'everyday',
+    purpose: 'Everyday',
+    whenItFits: 'Any set of points; the default when nothing else fits better.',
     cssModule: 'list',
     options: [{
       key: 'list-style',
@@ -727,6 +956,8 @@ The registry is the product contract.`,
 - Craft {icon=lucide:wrench}`,
     description: 'List styling flag: semantic icon bullets',
     category: 'everyday',
+    purpose: 'Everyday',
+    whenItFits: 'Three to seven short points, each with an icon for what it is.',
     cssModule: 'list',
     // iconlist-variant is declared ONCE in GLOBAL_OPTION_GROUPS (the Inspector must offer it
     // on any list slide whose icons come via {iconlist} or {icons=top}/{icons=all}) and is
@@ -751,6 +982,8 @@ The registry is the product contract.`,
 - Verify`,
     description: 'List styling flag: the icon-list layout with numbers in place of icons',
     category: 'everyday',
+    purpose: 'Everyday',
+    whenItFits: 'Points whose order matters, or that you will refer to by number.',
     cssModule: 'list',
     // number-style is declared once in GLOBAL_OPTION_GROUPS and adopted here, the same pattern
     // as iconlist → iconlist-variant.
@@ -773,6 +1006,8 @@ The registry is the product contract.`,
 - Source`,
     description: 'Full-bleed pull quote; no title by default',
     category: 'everyday',
+    purpose: 'Everyday',
+    whenItFits: 'Someone else\'s words, quoted exactly, with who said them.',
     cssModule: 'quote'
   },
   {
@@ -793,6 +1028,8 @@ The registry is the product contract.`,
   - the contract`,
     description: 'List modifier: nested children become right-hand annotations',
     category: 'everyday',
+    purpose: 'Everyday',
+    whenItFits: 'Points that each carry a short note, written as a sub-point.',
     cssModule: 'list'
   },
   {
@@ -811,6 +1048,8 @@ The registry is the product contract.`,
 - Content flows beside it`,
     description: 'Title placement modifier: title in a plain left rail',
     category: 'everyday',
+    purpose: 'Everyday',
+    whenItFits: 'Any text slide whose title should sit in a band on the left.',
     cssModule: 'statement'
   },
   {
@@ -828,6 +1067,8 @@ The registry is the product contract.`,
 ![](assets/sample-image.png)`,
     description: 'Full-bleed image, video or embed with title on top',
     category: 'everyday',
+    purpose: 'Everyday',
+    whenItFits: 'One image, video or embed that carries the slide on its own.',
     cssModule: 'media'
   },
   {
@@ -852,6 +1093,8 @@ The registry is the product contract.`,
 - Slow / Fast`,
     description: 'Two-column comparison; opt-in variants: ledger, rows, tint and flip',
     category: 'everyday',
+    purpose: 'Everyday',
+    whenItFits: 'Two sides set against each other, such as before and after.',
     cssModule: 'contrast',
     options: [{
       key: 'variant',
@@ -888,6 +1131,8 @@ Be a **ramp** to higher learning.
 The learning.`,
     description: '50/50 comparison — two halves (tint vs paper), title hidden, second half reveals',
     category: 'everyday',
+    purpose: 'Everyday',
+    whenItFits: 'Two options of equal weight side by side, with no title.',
     cssModule: 'contrast'
   },
   {
@@ -907,6 +1152,8 @@ The learning.`,
 Text sits beside a single visual.`,
     description: 'Text and a single visual side by side',
     category: 'everyday',
+    purpose: 'Everyday',
+    whenItFits: 'A short text beside one picture that illustrates it.',
     cssModule: 'media'
   },
   {
@@ -938,6 +1185,8 @@ Text sits beside a single visual.`,
 - Tools: Cursor, Lovable, Google AI Studio`,
     description: 'Static grid of equal-weight cards; {cards=grid} pins #### groups to the grid, {cards=rows} lays them as full-width label rows (Label: value lines become label groups)',
     category: 'everyday',
+    purpose: 'Everyday',
+    whenItFits: 'Three to six short points of equal weight.',
     cssModule: 'cards',
     options: [{
       key: 'form',
@@ -981,6 +1230,8 @@ First thought.
 Second thought.`,
     description: 'Step through full sub-slides one at a time',
     category: 'everyday',
+    purpose: 'Everyday',
+    whenItFits: 'Several full slides stepped through one at a time on one slide.',
     cssModule: 'carousel'
   },
 
@@ -1000,6 +1251,8 @@ Second thought.`,
 AICC Workshop 2026`,
     description: 'Opening title slide',
     category: 'structural',
+    purpose: 'Structure',
+    whenItFits: 'The opening slide: talk title, event and author.',
     cssModule: 'title'
   },
   {
@@ -1018,6 +1271,8 @@ AICC Workshop 2026`,
 - Content makes the parent a section.`,
     description: 'Divider between major parts of the talk',
     category: 'structural',
+    purpose: 'Structure',
+    whenItFits: 'The start of a major part of the talk.',
     cssModule: 'title'
   },
   {
@@ -1040,6 +1295,8 @@ AICC Workshop 2026`,
 - Content makes the parent a subsection.`,
     description: 'Divider under the current section',
     category: 'structural',
+    purpose: 'Structure',
+    whenItFits: 'The start of a smaller part inside a section.',
     cssModule: 'title'
   },
   {
@@ -1059,6 +1316,8 @@ AICC Workshop 2026`,
 yoursite.example`,
     description: 'Closing or thanks slide',
     category: 'structural',
+    purpose: 'Structure',
+    whenItFits: 'The last slide: thanks, and where to find you and the handout.',
     cssModule: 'title'
   },
   {
@@ -1087,6 +1346,8 @@ yoursite.example`,
   - Agents`,
     description: 'Dated chronology rail',
     category: 'structural',
+    purpose: 'Structure',
+    whenItFits: 'Events in order, each starting with a year or a date.',
     cssModule: 'timeline',
     options: [{
       key: 'timeline-mode',
@@ -1123,6 +1384,8 @@ yoursite.example`,
 - Four`,
     description: 'Tiled grid of blocks',
     category: 'structural',
+    purpose: 'Structure',
+    whenItFits: 'Four to nine short items with no order, laid out as tiles.',
     cssModule: 'cards'
   },
   {
@@ -1143,6 +1406,8 @@ yoursite.example`,
   - Runtime`,
     description: 'Central node with satellites and connector rails',
     category: 'structural',
+    purpose: 'Structure',
+    whenItFits: 'One central thing with the parts that feed into it.',
     cssModule: 'diagrams',
     options: [{
       key: 'palette',
@@ -1174,6 +1439,8 @@ yoursite.example`,
   - Retrieval`,
     description: 'SmartArt-style node diagram from a nested list',
     category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'Groups with sub-points, drawn as boxes joined by lines.',
     cssModule: 'diagrams'
   },
   {
@@ -1195,6 +1462,8 @@ yoursite.example`,
 A timeline with a comment lays the two side by side.`,
     description: 'Timeline in one column, comment beside it. Auto-chosen for a timeline paired with a standalone paragraph or quote.',
     category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'A short timeline with a comment beside it.',
     cssModule: 'timeline'
   },
   {
@@ -1216,6 +1485,8 @@ A timeline with a comment lays the two side by side.`,
 ![](sample.png)`,
     description: 'Feature list in one column, media in the other. Auto-chosen for media plus a list with no prose.',
     category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'A list of features beside one image or video.',
     cssModule: 'list'
   },
   {
@@ -1235,6 +1506,8 @@ A timeline with a comment lays the two side by side.`,
 - Present`,
     description: 'Left-to-right flow diagram from a list',
     category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'Steps that lead from one to the next, left to right with arrows.',
     cssModule: 'diagrams',
     options: [{
       key: 'direction',
@@ -1267,6 +1540,8 @@ A timeline with a comment lays the two side by side.`,
 - Claims annotate it`,
     description: 'Image with a callout list of claims beside it',
     category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'An image with two or three claims about it beside it.',
     cssModule: 'media'
   },
   {
@@ -1287,6 +1562,8 @@ A timeline with a comment lays the two side by side.`,
 - [Action: Get started -> https://example.com]`,
     description: 'Screenshot strip beside callouts and action items',
     category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'Screenshots beside what to do next and the link to do it.',
     cssModule: 'media'
   },
   {
@@ -1305,6 +1582,8 @@ A timeline with a comment lays the two side by side.`,
 - Agent: A named slide geometry.`,
     description: 'Role-tagged transcript of a turn-taking exchange',
     category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'A conversation with an AI, turn by turn, as a transcript.',
     cssModule: 'trace'
   },
   {
@@ -1324,6 +1603,8 @@ Speaker: Plain dialogue works too.
 Listener: It is still a trace.`,
     description: 'Any speaker-labelled dialogue rendered as a trace',
     category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'Any conversation between named speakers, line by line.',
     cssModule: 'trace'
   },
   {
@@ -1345,6 +1626,8 @@ def greet():
 \`\`\``,
     description: 'Build-time syntax-highlighted code panel',
     category: 'specialised',
+    purpose: 'Specialised',
+    pickerEligible: false,
     cssModule: 'trace'
   },
   {
@@ -1376,6 +1659,8 @@ def greet():
   - Codex`,
     description: 'Nested list rendered as a table',
     category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'Items that share the same attributes, compared in rows and columns.',
     cssModule: 'table',
     options: [
       ...GLOBAL_OPTION_GROUPS.filter((group) => group.key === 'media-placement'),
@@ -1417,6 +1702,8 @@ def greet():
 [QR: https://example.com | Label]`,
     description: 'Build-time QR code element',
     category: 'specialised',
+    purpose: 'Specialised',
+    pickerEligible: false,
     cssModule: 'media'
   },
   {
@@ -1431,7 +1718,9 @@ def greet():
 
 [Action: Label -> https://example.com]`,
     description: 'Accent action button element',
-    category: 'specialised'
+    category: 'specialised',
+    purpose: 'Specialised',
+    pickerEligible: false
   },
   {
     name: 'embed',
@@ -1445,7 +1734,9 @@ def greet():
 
 [Embed: https://example.com]`,
     description: 'Embedded iframe or live simulation element',
-    category: 'specialised'
+    category: 'specialised',
+    purpose: 'Specialised',
+    pickerEligible: false
   },
   {
     name: 'auto-embed',
@@ -1459,7 +1750,9 @@ def greet():
 
 https://example.com`,
     description: 'A bare URL on its own line auto-embeds',
-    category: 'specialised'
+    category: 'specialised',
+    purpose: 'Specialised',
+    pickerEligible: false
   },
   {
     name: 'logolist',
@@ -1477,7 +1770,9 @@ https://example.com`,
 - Anthropic
 - Google`,
     description: 'List styling flag: brand logos only',
-    category: 'specialised'
+    category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'Products or companies, shown by their logos.'
   },
   {
     name: 'image-quote',
@@ -1498,6 +1793,8 @@ https://example.com`,
 - Source`,
     description: 'Quote beside an image with an accent attribution bar',
     category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'A quotation beside a picture of the person or the source.',
     cssModule: 'media'
   },
   {
@@ -1517,6 +1814,8 @@ https://example.com`,
 ![Second](assets/sample-image.png)`,
     description: 'Figure cells with a caption under each',
     category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'Several images, each with a caption beneath it.',
     cssModule: 'media'
   },
   {
@@ -1543,6 +1842,8 @@ https://example.com`,
 - Gamma: 35`,
     description: 'Generic chart container; bar chart by default',
     category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'Values to compare; a bar chart unless you choose another kind.',
     cssModule: 'charts',
     options: [{
       key: 'values',
@@ -1589,6 +1890,8 @@ https://example.com`,
 - Gamma: 35`,
     description: 'Bar chart from a value list',
     category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'A few values compared by size, written as label: number.',
     cssModule: 'charts'
   },
   {
@@ -1616,6 +1919,8 @@ https://example.com`,
 - Gamma: 35`,
     description: 'Pie chart from a value list',
     category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'Shares of a whole that add up to a hundred.',
     cssModule: 'charts'
   },
   {
@@ -1643,6 +1948,8 @@ https://example.com`,
 - 2026: 100`,
     description: 'Line chart from a value list',
     category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'Values that change over time.',
     cssModule: 'charts'
   },
   {
@@ -1662,6 +1969,8 @@ https://example.com`,
 - Mature: 90`,
     description: 'Conceptual S-curve from staged items',
     category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'Growth that starts slowly, speeds up and then levels off.',
     cssModule: 'charts'
   },
   {
@@ -1681,6 +1990,8 @@ https://example.com`,
 - 11:00 - Workshop`,
     description: 'Day schedule rows with distinct break styling',
     category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'A day\'s schedule, with times and breaks.',
     cssModule: 'table'
   },
   {
@@ -1704,6 +2015,8 @@ https://example.com`,
   - Four`,
     description: 'Depth-0 list items become column headers',
     category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'A table where each top-level point becomes a column.',
     cssModule: 'table'
   },
   {
@@ -1722,6 +2035,8 @@ https://example.com`,
 - Another plain item`,
     description: 'List styling flag: force a plain list',
     category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'A list that should stay plain when the deck adds icons elsewhere.',
     cssModule: 'media'
   },
   {
@@ -1742,6 +2057,8 @@ The claim sits beside the list.
 - Second point`,
     description: 'Statement column beside a list column',
     category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'One claim beside the points that support it.',
     cssModule: 'statement'
   },
   {
@@ -1759,6 +2076,8 @@ The claim sits beside the list.
 [Example](https://example.com)`,
     description: 'Manual links index slide',
     category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'A slide of links for people to follow up afterwards.',
     cssModule: 'list'
   },
 
@@ -1786,6 +2105,8 @@ The claim sits beside the list.
 - Four`,
     description: 'Top-level nodes in equal columns',
     category: 'diagrams',
+    purpose: 'Diagrams',
+    whenItFits: 'Two to four groups, each a #### heading with its own points.',
     cssModule: 'columns'
   },
   {
@@ -1809,6 +2130,8 @@ The claim sits beside the list.
 - Two`,
     description: 'Column arity flag: two equal columns',
     category: 'diagrams',
+    purpose: 'Diagrams',
+    whenItFits: 'A long list split into two equal columns.',
     cssModule: 'statement'
   },
   {
@@ -1835,7 +2158,9 @@ The claim sits beside the list.
 
 - C`,
     description: 'Column arity flag: three equal columns',
-    category: 'diagrams'
+    category: 'diagrams',
+    purpose: 'Diagrams',
+    whenItFits: 'A long list of short items split into three columns.'
   },
   {
     name: 'pyramid',
@@ -1854,6 +2179,8 @@ The claim sits beside the list.
 - Base`,
     description: 'Stacked tiers: narrow apex, widest base',
     category: 'diagrams',
+    purpose: 'Diagrams',
+    whenItFits: 'Levels that build on each other, with the foundation last.',
     cssModule: 'diagrams'
   },
   {
@@ -1873,6 +2200,8 @@ The claim sits beside the list.
   - Team B`,
     description: 'Top node with a child tree from a nested list',
     category: 'diagrams',
+    purpose: 'Diagrams',
+    whenItFits: 'A hierarchy: one item at the top with sub-points beneath it.',
     cssModule: 'diagrams'
   },
   {
@@ -1900,6 +2229,8 @@ The claim sits beside the list.
   - Chatbots`,
     description: 'Central node with children radiating as branches',
     category: 'diagrams',
+    purpose: 'Diagrams',
+    whenItFits: 'One idea with branches and sub-branches around it.',
     cssModule: 'diagrams'
   },
   {
@@ -1926,6 +2257,8 @@ flowchart LR
 \`\`\``,
     description: 'Fenced mermaid diagram, rendered client-side (vendored, strict security)',
     category: 'diagrams',
+    purpose: 'Diagrams',
+    pickerEligible: false,
     cssModule: 'diagrams'
   },
   {
@@ -1954,6 +2287,8 @@ flowchart LR
 \`\`\``,
     description: 'Fenced inline SVG, sanitised fail-closed at build time',
     category: 'diagrams',
+    purpose: 'Diagrams',
+    pickerEligible: false,
     cssModule: 'diagrams'
   },
   {
@@ -1972,6 +2307,8 @@ flowchart LR
 - Agent -uses- Tools`,
     description: 'Node-edge graph from relation lines',
     category: 'diagrams',
+    purpose: 'Diagrams',
+    whenItFits: 'Things joined by named links, written as A -> B: label.',
     cssModule: 'diagrams'
   },
   {
@@ -1990,6 +2327,8 @@ flowchart LR
 - 5 days: to one million users`,
     description: 'Big-number row',
     category: 'diagrams',
+    purpose: 'Diagrams',
+    whenItFits: 'Two to four big numbers, each written as number: what it counts.',
     cssModule: 'stats'
   },
   {
@@ -2009,6 +2348,8 @@ flowchart LR
 - Build`,
     description: 'Numbered-circle agenda strip on a connector line',
     category: 'diagrams',
+    purpose: 'Diagrams',
+    whenItFits: 'Three to six steps in order, shown as a strip of numbered stops.',
     cssModule: 'diagrams'
   },
   {
@@ -2028,6 +2369,8 @@ flowchart LR
 - Run`,
     description: 'Ascending staircase',
     category: 'diagrams',
+    purpose: 'Diagrams',
+    whenItFits: 'Stages that rise, each one a step up from the last.',
     cssModule: 'diagrams'
   },
   {
@@ -2048,6 +2391,8 @@ flowchart LR
   - runs them`,
     description: 'Horizontal icon, label and description row',
     category: 'diagrams',
+    purpose: 'Diagrams',
+    whenItFits: 'Three to five items in a row, each with an icon and a short note.',
     cssModule: 'icon-row'
   },
   {
@@ -2066,6 +2411,8 @@ flowchart LR
 - Reflection`,
     description: 'Circular arrow flow',
     category: 'diagrams',
+    purpose: 'Diagrams',
+    whenItFits: 'Stages that repeat, the last leading back to the first.',
     cssModule: 'cycle'
   },
   {
@@ -2085,6 +2432,8 @@ flowchart LR
 - Learning`,
     description: 'Converging relationship: items combine into a result',
     category: 'diagrams',
+    purpose: 'Diagrams',
+    whenItFits: 'Parts that combine into a result, with the result last.',
     cssModule: 'equation',
     options: [{
       key: 'shape',
@@ -2118,6 +2467,8 @@ flowchart LR
 - Beat three`,
     description: 'Step mode: reveal content one beat at a time',
     category: 'modes',
+    purpose: 'Modes',
+    whenItFits: 'Points you want to show one at a time as you speak.',
     cssModule: 'diagrams'
   },
   {
@@ -2135,7 +2486,9 @@ flowchart LR
 - These arrive
 - as one beat`,
     description: 'Reveal a list as one beat instead of one bullet',
-    category: 'modes'
+    category: 'modes',
+    purpose: 'Modes',
+    whenItFits: 'A list that should appear all at once on a revealed slide.'
   },
   {
     name: 'focus',
@@ -2153,7 +2506,9 @@ flowchart LR
 - Then this
 - Then this`,
     description: 'Step mode: focus each beat, dimming the rest',
-    category: 'modes'
+    category: 'modes',
+    purpose: 'Modes',
+    whenItFits: 'Points you talk through in turn, the others dimmed but visible.'
   },
   {
     name: 'trigger-line',
@@ -2170,7 +2525,9 @@ flowchart LR
 - Heading stays clean
 - Trigger sits on its own line`,
     description: 'Put a trigger on the line under a heading',
-    category: 'modes'
+    category: 'modes',
+    purpose: 'Modes',
+    whenItFits: 'Two sides set against each other; gives the same slide as Contrast.'
   },
   {
     name: 'countdown',
@@ -2193,6 +2550,8 @@ flowchart LR
 Discuss with your neighbour.`,
     description: 'Per-slide countdown element',
     category: 'modes',
+    purpose: 'Modes',
+    pickerEligible: false,
     cssModule: 'stats'
   },
   {
@@ -2209,6 +2568,8 @@ Discuss with your neighbour.`,
 The visible heading is suppressed.`,
     description: 'Hide the on-slide title while keeping navigation text',
     category: 'modes',
+    purpose: 'Modes',
+    whenItFits: 'A slide that speaks for itself; the title stays for navigation only.',
     cssModule: 'stats'
   },
   {
@@ -2225,7 +2586,9 @@ The visible heading is suppressed.`,
 - Force the title rail to the top
 - Keep the layout otherwise intact`,
     description: 'Force the top-title treatment',
-    category: 'modes'
+    category: 'modes',
+    purpose: 'Modes',
+    whenItFits: 'A slide whose title should run across the top, not in a side band.'
   },
   {
     name: 'accent',
@@ -2244,6 +2607,8 @@ The visible heading is suppressed.`,
 - Named colour, never a hex value`,
     description: 'Pin this section to a named colour from the deck palette',
     category: 'modes',
+    purpose: 'Modes',
+    whenItFits: 'A section that should keep one colour from the deck palette.',
     options: [{
       key: 'accent',
       label: 'Section accent',
@@ -2271,7 +2636,165 @@ The visible heading is suppressed.`,
 - Everything stays visible
 - Even when reveal mode is active`,
     description: 'Disable stepping on this slide',
-    category: 'modes'
+    category: 'modes',
+    purpose: 'Modes',
+    whenItFits: 'A slide that should show everything at once in a stepped section.'
+  },
+  {
+    // ADR-0032 amendment point 5 (ticket 08): the talk's "Before the session" section. Its slides
+    // are the pre-work form's steps, answered on the handout link before the day; presenting leaves
+    // them out. Only on a `##` section.
+    name: 'prework',
+    label: 'Pre-work section',
+    trigger: '{prework}',
+    aliases: [],
+    triggerWords: ['prework'],
+    kind: 'modifier',
+    sectionOnly: true,
+    status: 'stable',
+    sample: `## Before the session
+{prework}
+
+Three short steps before Monday.
+
+### Read this first
+
+- One idea per slide`,
+    description: 'Section: the pre-work form participants answer before the session; its slides are the steps and are not presented',
+    category: 'modes',
+    purpose: 'Modes',
+    pickerEligible: false
+  },
+  {
+    // Ticket 08: a pre-task step — its list is the instructions; participants mark it done ({readonly} opts out).
+    name: 'task',
+    label: 'Pre-task',
+    trigger: '{task}',
+    aliases: [],
+    triggerWords: ['task'],
+    kind: 'modifier',
+    status: 'stable',
+    sample: `## Before the session
+{prework}
+
+### Task 1: draft one real email
+{task}
+
+- Pick an email you need to send this week
+- Ask Copilot to draft it`,
+    description: 'Pre-work step: a task participants do before the session and mark as done (its list is the instructions)',
+    category: 'modes',
+    purpose: 'Modes',
+    pickerEligible: false
+  },
+  {
+    // Ticket 08 fix round: with {task}, participants only read the task — no Mark as done.
+    name: 'readonly',
+    label: 'Read-only task',
+    trigger: '{readonly}',
+    aliases: [],
+    triggerWords: ['readonly'],
+    kind: 'modifier',
+    status: 'stable',
+    sample: `## Before the session
+{prework}
+
+### Task 2: bring one file
+{task}{readonly}
+
+- Choose a document with no personal data in it`,
+    description: 'Pre-task: participants read it; there is nothing to mark as done',
+    category: 'modes',
+    purpose: 'Modes',
+    pickerEligible: false
+  },
+  {
+    // Ticket 08: a quick knowledge check — a single-choice poll whose right option carries {right}.
+    name: 'check',
+    label: 'Quick check',
+    trigger: '{check}',
+    aliases: [],
+    triggerWords: ['check'],
+    kind: 'modifier',
+    status: 'stable',
+    sample: `## Before the session
+{prework}
+
+### Quick check: what makes something an agent?
+{poll=single}{check}
+
+- It answers in full sentences
+- It uses tools to carry out steps for you {right}
+- Not sure yet`,
+    description: 'Pre-work step: a single-choice quick check; the right option ends with {right}; participants get no marks',
+    category: 'modes',
+    purpose: 'Modes',
+    pickerEligible: false
+  },
+  {
+    // Ticket 08: written at the END OF A LIST ITEM of a quick check (not on the trigger line): the
+    // right option. Only the presenter sees it; the compiler strips it from every audience surface.
+    name: 'right',
+    label: 'Right answer',
+    trigger: '{right}',
+    aliases: [],
+    triggerWords: ['right'],
+    kind: 'modifier',
+    status: 'stable',
+    sample: `## Before the session
+{prework}
+
+### Quick check: which one acts?
+{poll=single}{check}
+
+- A chat
+- An agent {right}`,
+    description: 'Quick check list item: marks the right option (only you see it)',
+    category: 'modes',
+    purpose: 'Modes',
+    pickerEligible: false
+  },
+  {
+    // Ticket 08: any pre-work step — participants cannot ask about it ("Questions about it: Off").
+    name: 'noask',
+    label: 'No questions about this step',
+    trigger: '{noask}',
+    aliases: [],
+    triggerWords: ['noask'],
+    kind: 'modifier',
+    status: 'stable',
+    sample: `## Before the session
+{prework}
+
+### Welcome
+{noask}
+
+- Read two short slides`,
+    description: 'Pre-work step: participants cannot ask about this step',
+    category: 'modes',
+    purpose: 'Modes',
+    pickerEligible: false
+  },
+  {
+    // ADR-0032 §2 (ticket 01): {names} on a board slide lets participants add an optional name to
+    // their cards. The Inspector's Board section writes it (board-names group); bare on purpose.
+    name: 'names',
+    label: 'Names on board cards',
+    trigger: '{names}',
+    aliases: [],
+    triggerWords: ['names'],
+    kind: 'modifier',
+    status: 'stable',
+    sample: `### What should we keep, change, try?
+{poll=board}{names}
+
+- Keep
+- Change
+- Try`,
+    description: 'Board slides: participants may add an optional name to a card (only the presenter sees it)',
+    category: 'modes',
+    purpose: 'Modes',
+    pickerEligible: false
   },
   {
     name: 'novalues',
@@ -2288,7 +2811,9 @@ The visible heading is suppressed.`,
 - Finding resources: 20
 - Learning subject: 40`,
     description: 'Hide chart value labels — bars keep only their relative shape',
-    category: 'modes'
+    category: 'modes',
+    purpose: 'Modes',
+    whenItFits: 'A chart where the shape matters and the exact numbers do not.'
   },
   {
     name: 'sidebar-40',
@@ -2311,7 +2836,9 @@ The visible heading is suppressed.`,
 - Wide rail shortens the text measure
 - 30 and 35 and 50 are the other stops`,
     description: 'Pin the title-sidebar rail width (30/35/40/50%)',
-    category: 'modes'
+    category: 'modes',
+    purpose: 'Modes',
+    whenItFits: 'A title band wider or narrower than the layout gives by default.'
   },
   {
     name: 'font-body',
@@ -2327,7 +2854,9 @@ The visible heading is suppressed.`,
 - Body steps up one size
 - The title steps down one`,
     description: 'Per-slide body/title size: xs s m l xl',
-    category: 'modes'
+    category: 'modes',
+    purpose: 'Modes',
+    whenItFits: 'A slide whose text should be a size larger or smaller than the rest.'
   },
   {
     name: 'grid-linear',
@@ -2349,7 +2878,9 @@ The visible heading is suppressed.`,
 
 - Two`,
     description: 'Section container mode: grid, stepped in order',
-    category: 'modes'
+    category: 'modes',
+    purpose: 'Modes',
+    whenItFits: 'A section shown as a grid of its slides, then each in order.'
   },
   {
     name: 'grid-zoom',
@@ -2371,7 +2902,9 @@ The visible heading is suppressed.`,
 
 - Two`,
     description: 'Section container mode: grid, zoom into each child',
-    category: 'modes'
+    category: 'modes',
+    purpose: 'Modes',
+    whenItFits: 'A section shown as a grid of its slides, zooming into each one.'
   },
   {
     name: 'contents',
@@ -2404,6 +2937,8 @@ The visible heading is suppressed.`,
 - Four`,
     description: 'Section container mode: agenda rail; {contents=strip} = filmstrip footer variant (ADR-0007)',
     category: 'modes',
+    purpose: 'Modes',
+    whenItFits: 'A section that opens with a list of what is in it.',
     options: [{
       key: 'variant',
       label: 'Variant',
@@ -2431,7 +2966,9 @@ The visible heading is suppressed.`,
 
 - The section timer is visible to the room.`,
     description: 'Show a section timer to the audience',
-    category: 'modes'
+    category: 'modes',
+    purpose: 'Modes',
+    whenItFits: 'A timed section where the audience sees the clock too.'
   },
   {
     name: 'multicolour',
@@ -2449,7 +2986,9 @@ The visible heading is suppressed.`,
 - Runtime
 - Presenter`,
     description: 'Opt-in varied palette for supported diagram nodes',
-    category: 'modes'
+    category: 'modes',
+    purpose: 'Modes',
+    whenItFits: 'A diagram whose boxes should each have their own colour.'
   }
 ]
 
@@ -2556,6 +3095,54 @@ function insertAfter(
 ): void {
   const anchorIndex = entries.findIndex((entry) => entry.name === anchor)
   entries.splice(anchorIndex >= 0 ? anchorIndex + 1 : fallbackIndex, 0, inserted)
+}
+
+/**
+ * A component-kind entry with no `object` declaration (code, QR, action button, embed, auto-embed,
+ * countdown): it is inserted at the cursor from the Insert menu and the action bar, never chosen in
+ * the layout picker (ADR-0032 §4). Object components (mermaid, svg) keep their own doors above.
+ */
+export interface ComponentInsertEntry {
+  name: string
+  menuLabel: string
+  commandLabel: string
+  commandId: `insert-component-${string}`
+  /** The source written at the cursor, as its own blank-line-separated block. */
+  snippet: string
+  keywords: string[]
+}
+
+const COMPONENT_INSERT_PRESENTATION: Record<string, {
+  menuLabel: string
+  commandLabel?: string
+  snippet?: string
+  keywords?: string[]
+}> = {
+  code: { menuLabel: 'Code', snippet: '```python\n\n```', keywords: ['insert', 'code', 'snippet', 'syntax', 'fence'] },
+  qr: { menuLabel: 'QR code', keywords: ['insert', 'qr', 'code', 'link', 'audience'] },
+  action: { menuLabel: 'Action button', keywords: ['insert', 'action', 'button', 'link', 'call to action'] },
+  embed: { menuLabel: 'Embed', commandLabel: 'Insert embed / simulation', keywords: ['insert', 'embed', 'simulation', 'iframe', 'website', 'video'] },
+  'auto-embed': { menuLabel: 'Auto-embed', commandLabel: 'Insert auto-embed (bare URL)', keywords: ['insert', 'embed', 'url', 'video', 'website', 'bare'] },
+  countdown: { menuLabel: 'Countdown', commandLabel: 'Insert countdown', keywords: ['insert', 'countdown', 'timer', 'clock', 'activity'] }
+}
+
+export function componentInsertEntries(
+  layouts: readonly LayoutDef[] = LAYOUTS
+): ComponentInsertEntry[] {
+  return layouts
+    .filter((entry) => entry.kind === 'component' && entry.object === undefined)
+    .map((entry): ComponentInsertEntry => {
+      const presentation = COMPONENT_INSERT_PRESENTATION[entry.name]
+      const menuLabel = presentation?.menuLabel ?? entry.label
+      return {
+        name: entry.name,
+        menuLabel,
+        commandLabel: presentation?.commandLabel ?? `Insert ${menuLabel}`,
+        commandId: `insert-component-${entry.name}`,
+        snippet: presentation?.snippet ?? entry.trigger,
+        keywords: presentation?.keywords ?? ['insert', entry.name, 'component']
+      }
+    })
 }
 
 export function objectInsertEntries(

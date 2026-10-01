@@ -1,0 +1,171 @@
+/* The board panel (ADR-0032 decision 4; feedback-boards ticket 05; drawn in
+   docs/design/2026-09-28-feedback-boards/round-2/shots D1-D24). Beside the slide it lies over the
+   Next and Then previews (placed by the template, like the questions tray); full screen it takes the
+   presenter window below the top bar, with the slide as a monitor in its left rail; in its own window
+   it fills that window. The presenter's calm-stage chrome (ADR-0031): the menu card's colours, the
+   chrome type scale (13px meta, 14px labels and cards) and lucide icons. Card text, names and column
+   labels are written with textContent only (compiler/assets/runtime/board-panel.js). */
+.bp { position: fixed; z-index: 25; box-sizing: border-box; display: flex; gap: 12px; min-width: 0; min-height: 0;
+  background: #0f1720; border: 1px solid #ffffff26; border-radius: 10px; color: #f7f3ea;
+  --bp-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; font: 400 14px/1.3 var(--bp-ui);
+  -webkit-font-smoothing: antialiased; --bp-accent: #c2410c; --bp-blue: #5b9bd5; --bp-yellow: #e9c46a; overflow: hidden; }
+.bp[hidden] { display: none !important; }
+.bp *, .bp *::before, .bp *::after { box-sizing: border-box; }
+.bp svg { width: 16px; height: 16px; flex: none; }
+.bp button { font: inherit; color: inherit; }
+.bp button:focus-visible, .bp .bp-card:focus-visible, .bp .bp-col-name:focus-visible { outline: 2px solid var(--bp-blue); outline-offset: 1px; }
+.bp-main { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; }
+.bp-layer { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
+.bp-layer > * { pointer-events: auto; }
+
+/* Header: Board, counts, state; the primary action and the ways out. */
+.bp-head { display: flex; align-items: center; gap: 8px; padding: 10px 10px 10px 14px; border-bottom: 1px solid #ffffff14; flex: none; min-width: 0; }
+.bp-title { display: inline-flex; align-items: center; gap: 8px; min-width: 0; white-space: nowrap; }
+.bp-title > svg { color: var(--bp-yellow); }
+.bp-title b { font-weight: 600; font-size: 14px; }
+.bp-counts { font-size: 13px; color: #a3b3c2; overflow: hidden; text-overflow: ellipsis; }
+.bp-new { color: var(--bp-yellow); }
+.bp-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 6px; font-size: 13px; font-weight: 600; }
+.bp-chip svg { width: 13px; height: 13px; }
+.bp-chip.is-open { background: #16392a; color: #6fd39b; }
+.bp-chip.is-closed { background: #2a3440; color: #c9d6e2; }
+.bp-chip.is-frozen { background: #1d3552; color: #8ec3ff; }
+.bp-chip.is-ready { background: #2a3440; color: #a3b3c2; }
+.bp-spacer { flex: 1; }
+.bp-btn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border: 1px solid #ffffff1c; border-radius: 7px; background: #1f2c39; cursor: pointer; white-space: nowrap; font-size: 14px; }
+.bp-btn:hover, .bp-icon-btn:hover, .bp-mi:hover, .bp-chip-btn:hover { background: #283a4c; }
+.bp-kbd { display: inline-block; min-width: 18px; padding: 1px 5px; border: 1px solid #ffffff2e; border-radius: 4px; color: #c9d6e2; font-size: 13px; line-height: 1.2; text-align: center; }
+.bp-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 1px solid #ffffff1c; border-radius: 7px; background: #1f2c39; cursor: pointer; }
+.bp-icon-btn.is-small { width: 26px; height: 24px; }
+.bp-link { border: 0; background: none; padding: 0; color: #8ec3ff; cursor: pointer; font-size: 13px; white-space: nowrap; flex: none; }
+
+/* The big-screen strip (D1, D6-D12): what the room sees, and releasing what waits. */
+.bp-strip { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; border-bottom: 1px solid #ffffff14; flex: none; min-width: 0; }
+.bp-strip-words { display: inline-flex; align-items: center; gap: 4px; min-width: 0; flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; color: #c9d6e2; }
+.bp-strip-words > svg { color: #a3b3c2; margin-right: 4px; }
+.bp-strip-text { color: #f7f3ea; }
+.bp-strip-waiting { color: var(--bp-yellow); font-weight: 600; }
+.bp-strip-detail { color: #c9d6e2; }
+.bp-strip-controls { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.bp-strip.is-stacked { flex-direction: column; align-items: flex-start; border: 0; padding: 0; gap: 10px; }
+.bp-strip.is-stacked .bp-strip-words { white-space: normal; }
+
+/* The inbox (D1): new cards, not sorted yet, already on the big screen. */
+.bp-inbox { margin: 8px; padding: 8px; border: 1px solid #ffffff26; border-radius: 8px; background: #121c26; flex: none; max-height: 34%; display: flex; flex-direction: column; min-height: 0; }
+.bp-inbox-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 2px 6px; font-size: 13px; color: #a3b3c2; }
+.bp-inbox-title { display: inline-flex; align-items: center; gap: 6px; }
+.bp-inbox-title svg { color: var(--bp-yellow); }
+.bp-inbox-title b { color: #f7f3ea; font-weight: 600; font-size: 14px; }
+.bp-num-muted { color: #a3b3c2; font-size: 13px; margin-left: 4px; font-variant-numeric: tabular-nums; }
+.bp-inbox-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; overflow-y: auto; min-height: 0; scrollbar-width: thin; scrollbar-color: #3a4b5d transparent; }
+.bp-inbox-list.is-one { grid-template-columns: minmax(0, 1fr); }
+.bp-empty { margin: 4px 2px 6px; color: #a3b3c2; font-size: 14px; }
+
+/* Columns (D1): a head with its count and waiting, its own menu, then groups, singles, waiting, hidden. */
+.bp-cols { display: grid; grid-template-columns: repeat(var(--bp-columns, 3), minmax(0, 1fr)); gap: 8px; padding: 0 8px 8px; flex: 1 1 auto; min-height: 0; }
+.bp-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: #121c26; border-radius: 8px; border-top: 3px solid var(--bp-accent); }
+.bp-col.is-drop-column { background: #1a2d40; box-shadow: inset 0 0 0 2px var(--bp-blue); }
+.bp-col-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 8px 8px 6px 10px; flex: none; }
+.bp-col-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; border-radius: 4px; }
+.bp-col-name b { font-weight: 600; }
+.bp-col-waiting { color: var(--bp-yellow); font-size: 13px; }
+.bp-col-mode { color: #8ec3ff; font-size: 13px; }
+.bp-col-list { display: flex; flex-direction: column; gap: 6px; padding: 2px 6px 8px; overflow-y: auto; min-height: 0; flex: 1 1 auto; scrollbar-width: thin; scrollbar-color: #3a4b5d transparent; }
+
+/* A card, a group, and their states. */
+.bp-card { position: relative; display: flex; align-items: flex-start; gap: 6px; padding: 8px 8px 8px 6px; border: 1px solid #ffffff14; border-radius: 6px; background: #1b2733; cursor: grab; user-select: none; min-width: 0; touch-action: none; }
+.bp-card:hover { border-color: #ffffff33; }
+.bp.is-frozen .bp-card { cursor: default; }
+.bp-grip { color: #52606e; padding-top: 1px; }
+.bp-grip svg { width: 14px; height: 14px; }
+.bp-card-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 auto; }
+.bp-card-line { display: flex; gap: 6px; min-width: 0; }
+.bp-text { font-size: 14px; line-height: 1.3; overflow-wrap: anywhere; min-width: 0; }
+.bp-n { color: color-mix(in srgb, var(--bp-accent) 55%, #ffffff); font-weight: 700; font-variant-numeric: tabular-nums; }
+.bp-x { flex: none; align-self: flex-start; padding: 1px 6px; border-radius: 9px; background: var(--bp-accent); color: #fff; font-size: 13px; font-weight: 700; line-height: 1.3; }
+.bp-card.is-group { background: color-mix(in srgb, var(--bp-accent) 22%, #1b2733); border-color: color-mix(in srgb, var(--bp-accent) 45%, transparent); }
+.bp-meta { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: #a3b3c2; }
+.bp-meta svg { width: 13px; height: 13px; }
+.bp-meta b { color: #c9d6e2; font-weight: 600; }
+.bp-card.is-waiting { border: 1px dashed #e9c46a80; background: #161f29; }
+.bp-meta.is-waiting-note { color: var(--bp-yellow); }
+.bp-card.is-from-group { box-shadow: inset 3px 0 0 var(--bp-blue); }
+.bp-meta.is-from { color: #8ec3ff; }
+.bp-card.is-hidden { opacity: .55; background: transparent; border-style: dashed; cursor: default; }
+.bp-card.is-hidden .bp-text { text-decoration: line-through; text-decoration-color: #a3b3c299; }
+.bp-meta.is-name { color: #c9d6e2; }
+.bp-card.is-drop-card { box-shadow: 0 0 0 2px var(--bp-blue); }
+.bp-card.is-dragging { opacity: .35; }
+.bp-card.is-picked { box-shadow: 0 0 0 2px var(--bp-yellow); }
+.bp.is-picking .bp-card:not(.is-picked):not(.is-hidden):focus-visible, .bp.is-picking .bp-col-name:focus-visible { outline-color: var(--bp-yellow); }
+.bp-ghost { position: absolute; z-index: 5; pointer-events: none; opacity: .95; transform: rotate(-2deg); box-shadow: 0 14px 34px rgba(0, 0, 0, .55); border-color: var(--bp-blue); }
+.bp-drop-pill { position: absolute; z-index: 6; pointer-events: none; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 7px; background: #2f6fe0; color: #fff; font-weight: 600; font-size: 14px; box-shadow: 0 6px 18px rgba(0, 0, 0, .45); }
+.bp.is-dragging, .bp.is-dragging * { cursor: grabbing !important; }
+
+/* Menus (D4, D8, D10, D13). */
+.bp-menu { position: absolute; z-index: 4; display: flex; flex-direction: column; padding: 6px; background: #16202a; border: 1px solid #ffffff26; border-radius: 10px; box-shadow: 0 18px 50px rgba(0, 0, 0, .55); }
+.bp-mi { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 34px; padding: 6px 10px; border: 0; border-radius: 7px; background: none; text-align: left; cursor: pointer; font-size: 14px; }
+.bp-mi .bp-label { flex: 1 1 auto; min-width: 0; }
+.bp-mi:disabled { opacity: .45; cursor: default; }
+.bp-mi.is-checked { background: #1f3346; }
+.bp-mi-sub { color: #71849a; font-size: 13px; white-space: nowrap; }
+.bp-mi-sec { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px 4px; color: #a3b3c2; font-size: 13px; }
+.bp-mi-row { display: flex; flex-direction: column; gap: 2px; padding-bottom: 6px; border-top: 1px solid #ffffff14; margin-top: 4px; }
+.bp-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 10px 0 34px; }
+.bp-chip-btn { height: 28px; padding: 0 10px; border: 1px solid #ffffff26; border-radius: 6px; background: #1f2c39; cursor: pointer; font-size: 14px; }
+.bp-chip-btn.is-current { border-color: var(--bp-blue); background: #1f3346; }
+
+/* The toast after a change (D4, D5, D12, D14), and the keyboard's held card. */
+.bp-toast { position: absolute; left: 12px; top: 58px; z-index: 40; display: inline-flex; align-items: center; gap: 10px; max-width: min(640px, calc(100vw - 32px)); padding: 8px 8px 8px 12px; border: 1px solid #ffffff26; border-radius: 9px; background: #16202a; box-shadow: 0 14px 40px rgba(0, 0, 0, .55); font-size: 14px; }
+.bp-toast > svg { color: #6fd39b; }
+.bp-toast.is-error > svg { color: #ff8a7a; }
+.bp-toast-words { min-width: 0; }
+.bp-toast-words b { font-weight: 600; }
+.bp-toast-detail { color: #a3b3c2; }
+.bp-btn.is-undo { background: #1d3552; border-color: #5b86b5; }
+.bp-pickbar { flex: none; display: flex; align-items: center; gap: 6px; margin: 0 8px 8px; padding: 8px 10px; border-radius: 8px; background: #2a2412; border: 1px solid #e9c46a66; font-size: 14px; min-width: 0; }
+.bp-pickbar svg { color: var(--bp-yellow); }
+.bp-pick-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bp-pick-help { color: #a3b3c2; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Full screen in the presenter window (D22) and the board's own window (D23): the rail holds the
+   monitor of what the room sees, the big-screen controls and the inbox. */
+.bp[data-mode="full"], .bp[data-mode="window"] { padding: 12px; background: #111820; border: 0; border-radius: 0; }
+.bp[data-mode="full"] .bp-toast, .bp[data-mode="window"] .bp-toast { left: 426px; top: auto; bottom: 20px; }
+.bp[data-mode="full"] .bp-main, .bp[data-mode="window"] .bp-main { background: #0f1720; border: 1px solid #ffffff26; border-radius: 10px; }
+.bp-rail { flex: 0 0 402px; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.bp-rail-body { display: flex; flex-direction: column; gap: 0; flex: 1 1 auto; min-height: 0; background: #0f1720; border: 1px solid #ffffff26; border-radius: 10px; overflow: hidden; }
+.bp-monitor-wrap { flex: none; padding: 8px; background: #0f1720; border: 1px solid #ffffff26; border-radius: 10px; }
+.bp-monitor { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #fdfdfb; overflow: hidden; border-radius: 4px; }
+.bp-screen { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid #ffffff14; flex: none; }
+.bp-screen-head { display: flex; align-items: center; gap: 8px; color: #c9d6e2; font-size: 14px; }
+.bp-screen-head svg { color: var(--bp-blue); }
+.bp-note { display: flex; gap: 8px; margin: 0; color: #a3b3c2; font-size: 13px; }
+.bp-note svg { color: var(--bp-yellow); margin-top: 1px; }
+.bp[data-mode="full"] .bp-inbox, .bp[data-mode="window"] .bp-inbox { max-height: none; flex: 1 1 auto; }
+.bp-window-body { margin: 0; min-height: 100vh; background: #0b1118; overflow: hidden; }
+.bp-window-body .bp { inset: 0; }
+
+/* The board counter in the status bar (D1, D23): cards on the board, new ones, and where it is. */
+#presenterTopBar .tw-st-board { display: inline-flex; align-items: center; gap: 6px; color: var(--tb-text, #f7f3ea); cursor: pointer; border-radius: 6px; padding: 0 6px; }
+#presenterTopBar .tw-st-board .tw-ico { color: #e9c46a; }
+#presenterTopBar .tw-st-board[hidden] { display: none; }
+#presenterTopBar .tw-st-board-new { padding: 0 6px; border-radius: 5px; background: #3a3316; color: #e9c46a; font-size: 13px; }
+#presenterTopBar .tw-st-board-new:empty { display: none; }
+#presenterTopBar .tw-st-board-where { display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border-radius: 5px; background: #1d3552; color: #8ec3ff; font-size: 13px; }
+#presenterTopBar .tw-st-board-where:empty { display: none; }
+#presenterTopBar .tw-st-board.is-open { background: #2a3f55; box-shadow: 0 0 0 1px #5b86b5; }
+
+/* Beside the slide (D1): the right column widens to the panel's width (600px at 1440, 520px at
+   1280) and the slide takes the rest; Next and Then give way under the panel, and the notes stay
+   under the slide. The id outranks each notes placement's own column widths. */
+#presenterRoot[data-board="beside"]:not([data-notes-placement="camera-column"]) { grid-template-columns: minmax(0, 1fr) 8px clamp(520px, calc(520px + (100vw - 1280px) / 2), 600px); }
+#presenterRoot[data-board="beside"] > .presenter-side > .presenter-panel:not(.presenter-notes) { display: none; }
+#presenterRoot[data-board="beside"][data-notes-placement="bottom"] > .presenter-side > .presenter-notes { grid-column: 1; }
+
+/* Edit the group's wording (D13). */
+.bp-relabel { display: flex; flex-direction: column; gap: 8px; padding: 4px 10px 8px; }
+.bp-relabel-input { width: 100%; height: 34px; padding: 0 10px; border: 1px solid #ffffff33; border-radius: 7px; background: #0f1720; color: #f7f3ea; font: 400 14px/1.3 var(--bp-ui); }
+.bp-relabel-input:focus { outline: 2px solid var(--bp-blue); outline-offset: 0; }
+.bp-relabel-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.bp-relabel .bp-note { font-size: 13px; }

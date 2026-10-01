@@ -22,7 +22,7 @@ import {
 
 const vocab = buildTriggerVocabulary()
 
-assert.equal(OPEN_PATTERN_TOKENS.length, 22, 'open patterns live in the registry (ADR-0020 R1)')
+assert.equal(OPEN_PATTERN_TOKENS.length, 24, 'open patterns live in the registry (ADR-0020 R1; ticket 08 adds results)')
 assert(
   OPEN_PATTERN_TOKENS.every((token) =>
     token.key && token.justification && (token.form === 'bare' || Boolean(token.pattern))

@@ -94,6 +94,7 @@ const openPatternSamples = new Map([
   ['pollsubmissions', 'unlimited'],
   ['id', 'abc-123'],
   ['tags', 'intro,team'],
+  ['reactions', 'agree,disagree'],
   ['from', 'source-talk'],
   ['clonedFrom', 'source-talk'],
   ['icon', 'sparkles'],
@@ -111,7 +112,8 @@ const openPatternSamples = new Map([
   ['centre', 'Core'],
   ['center', 'Core'],
   ['curve', 'sigmoid'],
-  ['titlestyle', 'rail']
+  ['titlestyle', 'rail'],
+  ['results', 'pwtools']
 ])
 assert.deepEqual(
   [...openPatternSamples.keys()].sort(),
@@ -163,6 +165,36 @@ for (const [token, expectedFlagged] of [
 // Open patterns stay silent, including quoted list-values.
 assert.deepEqual(warningsOf('T {blocks:3x3}{cols=4}{id=abc123}'), [])
 assert.deepEqual(warningsOf('T {kicker="A, B"}{tags=intro,team}'), [])
+
+// Ticket 04: every {reactions=…} form is registered in both validators — off, named sets (list
+// commas bind to the value), quoted custom labels with spaces, and a mix; an empty value is not.
+for (const token of [
+  'reactions=off', 'reactions=agree,disagree', 'reactions=agree,disagree,bookmark',
+  'reactions="Too fast","Just right","Too slow"', 'reactions=agree,"Too fast"'
+]) assertAgreement(token, false)
+assertAgreement('reactions=', true)
+assert.deepEqual(warningsOf('T {reactions="Too fast","Just right","Too slow"}{id=abc123}'), [])
+
+// Ticket 01 (ADR-0032): {poll=board} and every board setting value — the defaults spelled out
+// included — are registered in both validators; values off the drawn choices are not.
+for (const token of [
+  'poll=board', 'limit=12', 'limit=24', 'limit=36', 'limit=all', 'length=60', 'length=100', 'length=140', 'length=200',
+  'cards=1', 'cards=3', 'cards=5', 'cards=10', 'names', 'names=optional', 'names=off', 'closes=1d', 'closes=7d', 'closes=30d'
+]) assertAgreement(token, false)
+for (const token of ['poll=boards', 'limit=13', 'length=150', 'cards=4', 'names=on', 'closes=7', 'closes=2d']) assertAgreement(token, true)
+assert.deepEqual(warningsOf('T {poll=board}{limit=36}{length=100}{cards=3}{names}{closes=30d}{id=abc123}'), [])
+
+// Ticket 08 (ADR-0032 amendment point 5): the pre-work tokens are registered in both validators;
+// a time off the drawn choices and a results value that is no id are not.
+for (const token of ['prework', 'task', 'readonly', 'check', 'right', 'noask', 'minutes=5', 'minutes=10', 'minutes=20', 'minutes=30', 'results=pwtools', 'results=step-2']) assertAgreement(token, false)
+for (const token of ['minutes=15', 'minutes=10m', 'results=a b', 'results:pwtools']) assertAgreement(token, true)
+assert.deepEqual(warningsOf('T {poll=single}{check}{id=pwquiz}'), [])
+assert.deepEqual(warningsOf('T {task}{readonly}{minutes=20}{noask}{id=pwtask1}'), [])
+// Fix round S3: {results=…} takes exactly the ids {id=…} takes.
+for (const value of ['pwtools', 'step-2', 'A1', 'a_b', 'a.b', 'a b']) assert.deepEqual(warningsOf(`T {results=${value}}`).length === 0, warningsOf(`T {id=${value}}`).length === 0, `results=${value} and id=${value} agree`)
+// The {task} flip: {done} is no longer a token.
+assertAgreement('done', true)
+assert.deepEqual(warningsOf('T {results=pwtools}{id=r1tools}'), [])
 
 // Dictionary-resolved bare words are never re-validated; unknown bare words keep their id.
 assert.deepEqual(warningsOf('T {timelinespine}'), [])

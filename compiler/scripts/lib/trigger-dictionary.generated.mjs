@@ -296,6 +296,34 @@ export const TRIGGER_DICTIONARY = {
     "key": "nostep",
     "value": true
   },
+  "prework": {
+    "key": "prework",
+    "value": true
+  },
+  "task": {
+    "key": "task",
+    "value": true
+  },
+  "readonly": {
+    "key": "readonly",
+    "value": true
+  },
+  "check": {
+    "key": "check",
+    "value": true
+  },
+  "right": {
+    "key": "right",
+    "value": true
+  },
+  "noask": {
+    "key": "noask",
+    "value": true
+  },
+  "names": {
+    "key": "names",
+    "value": true
+  },
   "novalues": {
     "key": "novalues",
     "value": true
@@ -439,7 +467,11 @@ export const VALUE_TRIGGER_DICTIONARY = {
   "cards": [
     "grid",
     "rows",
-    "stepped"
+    "stepped",
+    "5",
+    "1",
+    "3",
+    "10"
   ],
   "role": [
     "section-title",
@@ -529,6 +561,16 @@ export const VALUE_TRIGGER_DICTIONARY = {
     "40",
     "50"
   ],
+  "titlelook": [
+    "default",
+    "kicker",
+    "label",
+    "tab"
+  ],
+  "titlelook-at": [
+    "normal",
+    "edge"
+  ],
   "section": [
     "on",
     "show",
@@ -541,6 +583,18 @@ export const VALUE_TRIGGER_DICTIONARY = {
     "plain",
     "bar"
   ],
+  "screenshots": [
+    "frames",
+    "fanned"
+  ],
+  "shotlist": [
+    "beside",
+    "stacked"
+  ],
+  "narrowcols": [
+    "on",
+    "off"
+  ],
   "reveal": [
     "steps"
   ],
@@ -550,7 +604,8 @@ export const VALUE_TRIGGER_DICTIONARY = {
     "open",
     "ranking",
     "rating",
-    "categorisation"
+    "categorisation",
+    "board"
   ],
   "pollskip": [
     "false",
@@ -559,6 +614,33 @@ export const VALUE_TRIGGER_DICTIONARY = {
   "pollresults": [
     "live",
     "held"
+  ],
+  "limit": [
+    "24",
+    "12",
+    "36",
+    "all"
+  ],
+  "length": [
+    "140",
+    "60",
+    "100",
+    "200"
+  ],
+  "names": [
+    "off",
+    "optional"
+  ],
+  "closes": [
+    "7d",
+    "1d",
+    "30d"
+  ],
+  "minutes": [
+    "10",
+    "5",
+    "20",
+    "30"
   ],
   "layout": [
     "statement",
@@ -639,6 +721,13 @@ export const OPEN_PATTERN_TOKENS = [
     "pattern": "[^\\s]+",
     "description": "Comma-separated author tags.",
     "justification": "Author metadata managed by the tag picker."
+  },
+  {
+    "key": "reactions",
+    "form": "equals",
+    "pattern": "[^,]+(?:,[^,]+)*",
+    "description": "The slide’s reactions: off, registered names, or quoted custom labels, at most four.",
+    "justification": "A list of registered reaction names or free custom labels, written by the Inspector’s Audience section (compiler/scripts/lib/reaction-sets.mjs)."
   },
   {
     "key": "from",
@@ -765,6 +854,13 @@ export const OPEN_PATTERN_TOKENS = [
     "pattern": ".+",
     "description": "Compiler-internal title-rail style.",
     "justification": "Emitted by the registered sidebar trigger."
+  },
+  {
+    "key": "results",
+    "form": "equals",
+    "pattern": "[A-Za-z0-9-]+",
+    "description": "A talk slide that shows the answers of the named pre-work step (its slide id).",
+    "justification": "Names a step of the talk’s own pre-work section by its slide id; the Inspector’s Results section picks it from the steps (compiler/scripts/lib/prework.mjs)."
   }
 ]
 
@@ -772,6 +868,10 @@ export const SECTION_ONLY_TRIGGER_KEYS = [
   {
     "name": "accent",
     "key": "accent"
+  },
+  {
+    "name": "prework",
+    "key": "prework"
   },
   {
     "name": "grid-linear",

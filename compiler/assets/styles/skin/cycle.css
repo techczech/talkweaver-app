@@ -2,7 +2,7 @@
   .slide-content:has(> .cycle-diagram) { max-width: none; width: calc(100% - 2 * var(--slide-pad-x, 48px)); }/* @order 1649 */
   .cycle-diagram {
     position: relative;
-    width: min(72cqw, 118cqh);
+    width: min(72cqw, 118cqh, 100%); /* 100%: beside a rail the ring is the column, never wider (the right node was cut at the slide edge) */
     aspect-ratio: 1000 / 620;
     margin: 0 auto;
   }/* @order 1650 */
@@ -18,6 +18,7 @@
     box-shadow: none;
     text-align: center;
     white-space: normal;
+    width: max-content; /* an absolutely placed node shrinks to the room right of its left edge: the right node stacked one word per line */
     max-width: 16ch;
     text-align: center;
   }/* @order 1651 */

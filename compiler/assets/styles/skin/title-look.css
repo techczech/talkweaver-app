@@ -1,0 +1,51 @@
+/* 0.37 ticket 04 - Title looks: Kicker, Label and Tab on the TOP title regime.
+   The compiler stamps data-title-look="kicker|label|tab" beside data-title-layout="top" (07-assembly,
+   from title-look.mjs: slide > section > deck), plus data-title-look-at="edge" for a Kicker sitting
+   near the top edge. Not data-title-style: that is the retired sidebar stamp, and `title_style` is
+   the opening poster variant. Lifted from the round-2 drawings (overrides/7-title-*.css,
+   round-b/overrides/b4-kicker-*.css); the Kicker is the round-b revision (sentence case).
+   Unmarked block: sorts after every migrated rule, so it wins the shared top-title rules. */
+
+/* shared: the corner title leaves the centred band; no hairline, the tab or line is the device */
+.slide[data-title-layout="top"][data-title-look="kicker"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) { margin: 0 0 1.6cqw !important; border: 0 !important; padding: 0 !important; box-shadow: none !important; align-self: flex-start !important; width: auto !important; }
+.slide[data-title-layout="top"][data-title-look="kicker"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet)::after,
+.slide[data-title-layout="top"][data-title-look="kicker"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet)::before { display: none !important; }
+.slide[data-title-layout="top"][data-title-look="kicker"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1 { max-width: none !important; border: 0 !important; padding-bottom: 0; line-height: 1.1; letter-spacing: -.01em; }
+
+/* shared: the corner title leaves the centred band; no hairline, the tab or line is the device */
+.slide[data-title-layout="top"][data-title-look="label"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) { margin: 0 0 1.6cqw !important; border: 0 !important; padding: 0 !important; box-shadow: none !important; align-self: flex-start !important; width: auto !important; }
+.slide[data-title-layout="top"][data-title-look="label"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet)::after,
+.slide[data-title-layout="top"][data-title-look="label"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet)::before { display: none !important; }
+.slide[data-title-layout="top"][data-title-look="label"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1 { max-width: none !important; border: 0 !important; padding-bottom: 0; line-height: 1.1; letter-spacing: -.01em; }
+
+/* shared: the corner title leaves the centred band; no hairline, the tab or line is the device */
+.slide[data-title-layout="top"][data-title-look="tab"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) { margin: 0 0 1.6cqw !important; border: 0 !important; padding: 0 !important; box-shadow: none !important; align-self: flex-start !important; width: auto !important; }
+.slide[data-title-layout="top"][data-title-look="tab"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet)::after,
+.slide[data-title-layout="top"][data-title-look="tab"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet)::before { display: none !important; }
+.slide[data-title-layout="top"][data-title-look="tab"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1 { max-width: none !important; border: 0 !important; padding-bottom: 0; line-height: 1.1; letter-spacing: -.01em; }
+
+/* Kicker: sentence case (never capitals), mono 600, 2.1cqw, section colour, led by a short accent rule */
+.slide[data-title-layout="top"][data-title-look="kicker"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1 {
+  display: flex; align-items: center; gap: .9em; color: var(--accent);
+  font-family: var(--mono); font-size: 2.1cqw !important; font-weight: 600; text-transform: none !important;
+  letter-spacing: .01em !important; line-height: 1.25 !important; padding-bottom: 0 !important;
+}
+.slide[data-title-layout="top"][data-title-look="kicker"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1::before { content: ""; flex: 0 0 auto; width: 2.6em; height: .14em; background: var(--accent); }
+/* Kicker near the top edge: no top padding, the head pulled up 1.4cqh (text about 46px from the edge at 1920) */
+.slide[data-title-layout="top"][data-title-look="kicker"][data-title-look-at="edge"] > .slide-content:not(.layout-title):not(.layout-section-title) { padding-top: 0 !important; }
+.slide[data-title-layout="top"][data-title-look="kicker"][data-title-look-at="edge"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) { margin-top: -1.4cqh !important; }
+
+/* Label: a tinted tab with a heavy accent bar on its left edge; ink title at the content margin */
+.slide[data-title-layout="top"][data-title-look="label"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1 {
+  display: inline-block; background: var(--tint); color: var(--ink);
+  font-size: 2.35cqw !important; font-weight: 700; padding: .38em .9em .38em .8em !important;
+  border-left: .3em solid var(--accent) !important; border-radius: 0 .35em .35em 0;
+}
+
+/* Tab: a solid accent tab flush with the slide's left edge, white title, darker under-edge */
+.slide[data-title-layout="top"][data-title-look="tab"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) { margin-left: calc(-1 * var(--slide-pad-x)) !important; }
+.slide[data-title-layout="top"][data-title-look="tab"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1 {
+  display: inline-block; background: var(--accent); color: #fff;
+  font-size: 2.35cqw !important; font-weight: 700; padding: .42em 1.1em .42em var(--slide-pad-x) !important;
+  border-radius: 0 .5em .5em 0; box-shadow: 0 .12em 0 color-mix(in srgb, var(--accent) 70%, #000);
+}

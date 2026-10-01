@@ -67,9 +67,15 @@ const unresolvedTriggerBlock = (content) =>
   content === brokenOutline ? { message: expected.error } : null
 const dependencies = {
   unresolvedOutboundFailure,
+  // '/vault' is a fake root that does not exist on disk: the outline counts as inside it here (the
+  // vault guard has its own tests in test-vault-paths.mjs and e2e/diagnose-vault-switch-save.mjs).
+  outlineRefused: () => null,
   unresolvedTriggerBlock,
   unresolvedTriggerFindings: () => [{ token: 'nonsense' }],
   getConfig: (key) => key === 'vaultRoot' ? '/vault' : undefined,
+  currentVaultRoot: () => '/vault',
+  writableVaultRoot: () => '/vault', // writes resolve the vault only while its folder is there (vaults 07)
+  vaultRootFor: () => '/vault',
   readRun: () => ({ status: 'delivered' }),
   talkBySlug: () => ({ slug: 'talk', outlinePath: '/vault/talk-outline.md' }),
   readFileSync: () => brokenOutline,
@@ -131,7 +137,7 @@ assert.match(
 )
 assert.match(
   workspaceSource,
-  /onRefresh\?\.\(async[\s\S]*?if \(content == null\) return[\s\S]*?blockedByUnresolved\(content\)[\s\S]*?window\.tw\.present\.rebuild/,
+  /onRefresh\?\.\(async[\s\S]*?if \(content == null\) \{[^}]*return\s*\}[\s\S]*?blockedByUnresolved\(content\)[\s\S]*?window\.tw\.present\.rebuild/,
   'Workspace gates deck-window refresh against the current content before rebuilding'
 )
 assert.ok(

@@ -75,6 +75,7 @@ export function thumbnailDocumentCacheKey(documentId: string, slideKey: string):
 
 export interface ThumbnailProjectionRow {
   slide_id?: string
+  source_line?: number | null
   render_hash?: string
   thumbnail_hash?: string
   content_hash?: string
@@ -113,6 +114,16 @@ export function selectedThumbnailSlide(
   documentId: string
 ): IndexedThumbnailSlide | null {
   const index = rows.findIndex((row) => row.slide_id === slideId)
+  return index < 0 ? null : thumbnailSlideAt(rows[index], index, documentId)
+}
+
+/** The same, for a slide named by its 1-based heading line (one with no `{id=…}` yet). */
+export function selectedThumbnailSlideAtLine(
+  rows: ThumbnailProjectionRow[],
+  headingLine: number,
+  documentId: string
+): IndexedThumbnailSlide | null {
+  const index = rows.findIndex((row) => row.source_line === headingLine)
   return index < 0 ? null : thumbnailSlideAt(rows[index], index, documentId)
 }
 

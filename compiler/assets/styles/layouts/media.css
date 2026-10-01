@@ -601,3 +601,154 @@
   figure.slide-figure.slide-video > .video-enlarge:focus-visible { opacity: 1; background: rgba(8, 12, 18, 0.85); }
   /* @order 2066 */
   @media print { figure.slide-figure.slide-video > .video-enlarge { display: none !important; } }
+
+/* SCREENSHOT ROW (ADR-0033 §4). Two or three images in an {image-grid}, or a run of two or three
+   images on a media-only slide, are always ONE row. The compiler (screenshot-row.mjs) sizes the
+   row from the band it sits in and the images' aspect ratios and stamps the numbers as custom
+   properties on the row; this block only draws them:
+     data-shot-row="frames"  --sr-fh frame height (bar included), --sr-z zoom of the picture
+     data-shot-row="fanned"  --sr-ph print height, --sr-ov overlap (a negative margin)
+   Frames: a light app window (26px bar, three dots, hairline, radius, soft shadow); the picture is
+   CROPPED from its top-left at the zoom, not shrunk; captions sit under the frame.
+   Fanned: prints with a white border and shadow, turned about -4.5 / +1.2 / +4.2 degrees,
+   overlapping, the middle one on top; only the print turns, captions stay upright. */
+.slide-content.layout-image-grid:has(> .image-grid[data-shot-row]) { min-height: 100%; }
+.slide-content.layout-image-grid > .image-grid[data-shot-row],
+.slide-content.layout-media > .figure-row[data-shot-row] {
+  flex: 0 0 auto !important; width: 100% !important; max-width: none !important; max-height: none !important;
+  margin: auto 0 !important; align-self: center !important; contain: none !important;
+}
+.slide-content.layout-image-grid > .image-grid[data-shot-row] { padding: 0; }
+.image-grid[data-shot-row] .ig-cell { background: none; border: 0; border-radius: 0; overflow: visible; min-width: 0; }
+.image-grid[data-shot-row] .ig-note { padding: 12px 2px 0; }
+.image-grid[data-shot-row] .ig-note h4 { font-size: 1.55cqw; color: var(--ink); font-weight: 650; }
+
+/* frames */
+.slide-content.layout-image-grid > .image-grid[data-shot-row="frames"],
+.slide-content.layout-media > .figure-row[data-shot-row="frames"] {
+  display: grid !important; grid-template-columns: repeat(var(--ig-cols, 3), minmax(0, 1fr)); gap: 26px; align-items: start;
+}
+.slide-content.layout-media > .figure-row.count-2[data-shot-row="frames"] { --ig-cols: 2; }
+.image-grid[data-shot-row="frames"] .ig-cell { flex: none; }
+.image-grid[data-shot-row="frames"] .ig-media,
+.slide-content.layout-media > .figure-row[data-shot-row="frames"] > figure,
+.slot[data-slot-arrange="beside"][data-slot-frame="frames"] > .slot-media > figure.slide-figure {
+  position: relative; display: block !important; height: var(--sr-fh) !important; max-height: none !important; width: auto !important;
+  margin: 0; background: #fff; border: 1px solid rgba(15,23,42,.16); border-radius: 10px; overflow: hidden;
+  box-shadow: 0 1px 2px rgba(15,23,42,.10), 0 10px 26px rgba(15,23,42,.13);
+}
+.image-grid[data-shot-row="frames"] .ig-media::before,
+.slide-content.layout-media > .figure-row[data-shot-row="frames"] > figure::before,
+.slot[data-slot-arrange="beside"][data-slot-frame="frames"] > .slot-media > figure.slide-figure::before {
+  content: ""; position: absolute; z-index: 2; left: 0; right: 0; top: 0; height: 26px; border-bottom: 1px solid rgba(15,23,42,.12);
+  background:
+    radial-gradient(circle 4.5px at 16px 50%, #ef9a94 96%, transparent) no-repeat,
+    radial-gradient(circle 4.5px at 32px 50%, #f1cb7c 96%, transparent) no-repeat,
+    radial-gradient(circle 4.5px at 48px 50%, #86d095 96%, transparent) no-repeat,
+    #eef0f4;
+}
+.image-grid[data-shot-row="frames"] .ig-media img,
+.slide-content.layout-media > .figure-row[data-shot-row="frames"] > figure > img,
+.slot[data-slot-arrange="beside"][data-slot-frame="frames"] > .slot-media > figure.slide-figure > img {
+  position: absolute !important; inset: 26px auto auto 0 !important;
+  width: calc(var(--sr-z) * 100%) !important; height: calc(100% - 26px) !important; max-width: none !important; max-height: none !important;
+  aspect-ratio: auto !important; object-fit: cover; object-position: left top;
+}
+.slide-content.layout-media > .figure-row[data-shot-row="frames"] > figure > figcaption { position: absolute; top: 100%; left: 0; right: 0; padding-top: 12px; text-align: left; }
+
+/* fanned */
+.slide-content.layout-image-grid > .image-grid[data-shot-row="fanned"],
+.slide-content.layout-media > .figure-row[data-shot-row="fanned"] {
+  display: flex !important; flex-wrap: nowrap !important; justify-content: center; align-items: flex-start; gap: 0;
+}
+.image-grid[data-shot-row="fanned"] .ig-cell { flex: 0 0 auto; margin-left: var(--sr-ov); }
+.image-grid[data-shot-row="fanned"] .ig-cell:first-child,
+.figure-row[data-shot-row="fanned"] > figure:first-child { margin-left: 0; }
+.image-grid[data-shot-row="fanned"] .ig-media {
+  position: relative; height: auto; width: fit-content; padding: 9px; background: #fff; border-radius: 3px;
+  box-shadow: 0 1px 2px rgba(15,23,42,.2), 0 10px 26px rgba(15,23,42,.22), 0 20px 40px -12px rgba(15,23,42,.2);
+}
+.image-grid[data-shot-row="fanned"] .ig-media img {
+  position: static; inset: auto; display: block; width: auto; height: var(--sr-ph); max-width: none;
+}
+.slide-content.layout-media > .figure-row[data-shot-row="fanned"] > figure {
+  flex: 0 0 auto !important; display: block !important; width: fit-content !important; max-height: none !important; margin: 0 0 0 var(--sr-ov);
+  padding: 8px; background: #fff; border-radius: 3px;
+  box-shadow: 0 1px 2px rgba(15,23,42,.2), 0 10px 26px rgba(15,23,42,.22), 0 20px 40px -12px rgba(15,23,42,.2);
+}
+.slide-content.layout-media > .figure-row[data-shot-row="fanned"] > figure:first-child { margin-left: 0; }
+.slide-content.layout-media > .figure-row[data-shot-row="fanned"] > figure > img {
+  display: block; width: auto !important; height: var(--sr-ph) !important; aspect-ratio: auto !important; max-height: none !important; max-width: none !important;
+}
+.image-grid[data-shot-row="fanned"] .ig-cell:nth-child(1) .ig-media,
+.figure-row[data-shot-row="fanned"] > figure:nth-child(1) { transform: rotate(-4.5deg) translateY(6px); }
+.image-grid[data-shot-row="fanned"] .ig-cell:nth-child(2) .ig-media,
+.figure-row[data-shot-row="fanned"] > figure:nth-child(2) { transform: rotate(1.2deg) translateY(-6px); }
+.image-grid[data-shot-row="fanned"] .ig-cell:nth-child(3) .ig-media,
+.figure-row[data-shot-row="fanned"] > figure:nth-child(3) { transform: rotate(4.2deg) translateY(8px); }
+.image-grid[data-shot-row="fanned"] .ig-cell:nth-child(2),
+.figure-row[data-shot-row="fanned"] > figure:nth-child(2) { position: relative; z-index: 2; }
+.image-grid[data-shot-row="fanned"] .ig-note { padding: 26px 0 0; text-align: center; }
+
+/* SCREENSHOTS BESIDE A LIST (ADR-0033 §4). A .slot whose lines each carry one screenshot (two or three,
+   one short line per image; compiler: slot-composition.mjs) is stamped data-slot-arrange="beside|stacked"
+   and data-slot-frame="frames|fanned" (the slide's screenshot treatment). The copy and media columns
+   dissolve (display: contents) so each thumbnail and its line share a grid row (Beside) or a grid column
+   (Stacked); the 38% media column and its absolute-inset rules above no longer apply.
+   Beside lines: equal 3:2 thumbnails cropped from the top-left, all the same size; the frame is the
+   window frame of the screenshot row above (its bar, hairline, radius and shadow rules list this
+   selector) or, for the fanned treatment, the neutral print frame.
+   Stacked: one column per image (three stay ONE row), the image above its caption, bottoms aligned. */
+.slot[data-slot-arrange][data-slot-side] { --m-col: 1; --c-col: 2; --sr-z: 1.25; --sr-fh: auto; }
+.slot[data-slot-arrange][data-slot-side="right"] { --m-col: 2; --c-col: 1; }
+.slot[data-slot-arrange] > .slot-copy,
+.slot[data-slot-arrange] > .slot-media { display: contents; }
+.slot[data-slot-arrange] > .slot-copy > .feature-list { margin: 0; min-width: 0; }
+
+/* Beside lines */
+.slot[data-slot-arrange="beside"][data-slot-side] {
+  --thumb-w: 19.5cqw;
+  grid-template-columns: min(var(--thumb-w), 45%) minmax(0, 1fr);
+  grid-template-rows: none; grid-auto-rows: minmax(0, 1fr);
+  column-gap: 2.2cqw; row-gap: 0; align-items: center;
+  /* Beside lines take the height the locked drawing gave them: the rows share it equally. */
+  height: 80cqh; max-height: 100%; align-self: center;
+}
+.slot[data-slot-arrange="beside"][data-slot-media-count="2"] { --thumb-w: 23.4cqw; }
+.slot[data-slot-arrange="beside"][data-slot-side="right"] { grid-template-columns: minmax(0, 1fr) min(var(--thumb-w), 45%); }
+.slot[data-slot-arrange="beside"] > .slot-media > figure.slide-figure {
+  position: relative; display: block; grid-column: var(--m-col); width: 100%; height: auto; max-height: 100%;
+  aspect-ratio: 3 / 2; margin: 0; align-self: center; overflow: hidden; background: #fff;
+}
+.slot[data-slot-arrange="beside"] > .slot-copy > .feature-list { grid-column: var(--c-col); align-self: center; }
+.slot[data-slot-arrange="beside"] > .slot-media > figure:nth-child(1), .slot[data-slot-arrange="beside"] > .slot-copy > .feature-list:nth-child(1) { grid-row: 1; }
+.slot[data-slot-arrange="beside"] > .slot-media > figure:nth-child(2), .slot[data-slot-arrange="beside"] > .slot-copy > .feature-list:nth-child(2) { grid-row: 2; }
+.slot[data-slot-arrange="beside"] > .slot-media > figure:nth-child(3), .slot[data-slot-arrange="beside"] > .slot-copy > .feature-list:nth-child(3) { grid-row: 3; }
+/* neutral print frame (fanned treatment): hairline, radius, soft shadow; the picture is the same top-left crop */
+.slot[data-slot-arrange="beside"][data-slot-frame="fanned"] > .slot-media > figure.slide-figure {
+  border: 1px solid rgba(15,23,42,.10); border-radius: 6px; box-shadow: 0 1px 2px rgba(15,23,42,.14), 0 8px 20px rgba(15,23,42,.13);
+}
+.slot[data-slot-arrange="beside"][data-slot-frame="fanned"] > .slot-media > figure.slide-figure > img {
+  position: absolute; inset: 0; margin: 0; width: 100%; height: 100%; max-width: none; max-height: none; object-fit: cover; object-position: left top;
+}
+
+/* Stacked */
+.slot[data-slot-arrange="stacked"][data-slot-side] {
+  --n: 2;
+  grid-template-columns: repeat(var(--n), minmax(0, 1fr)); grid-template-rows: minmax(0, 1fr) auto;
+  column-gap: 2.2cqw; row-gap: 12px; align-items: end;
+}
+.slot[data-slot-arrange="stacked"][data-slot-media-count="3"] { --n: 3; }
+.slot[data-slot-arrange="stacked"] > .slot-media > figure.slide-figure {
+  position: relative; display: flex; align-items: flex-end; justify-content: center; grid-row: 1; width: 100%; height: 100%; min-height: 0; margin: 0;
+}
+.slot[data-slot-arrange="stacked"] > .slot-media > figure.slide-figure > img {
+  position: static; inset: auto; margin: 0; width: 100%; height: auto; max-width: 100%; max-height: 100%; min-height: 0; align-self: flex-end; object-fit: contain; object-position: center bottom;
+}
+.slot[data-slot-arrange="stacked"] > .slot-copy { --copy-size: max(var(--type-floor), calc(var(--fs-body) * .8)); }
+.slot[data-slot-arrange="stacked"] > .slot-copy > .feature-list { grid-row: 2; align-self: start; }
+.slot[data-slot-arrange="stacked"] > .slot-copy > .feature-list:not(:has(.fl-icon)) > li,
+.slot[data-slot-arrange="stacked"] > .slot-copy > .feature-list:not(:has(.fl-icon)) > li:last-child { border: 0; padding: 0; }
+.slot[data-slot-arrange="stacked"] > .slot-media > figure:nth-child(1), .slot[data-slot-arrange="stacked"] > .slot-copy > .feature-list:nth-child(1) { grid-column: 1; }
+.slot[data-slot-arrange="stacked"] > .slot-media > figure:nth-child(2), .slot[data-slot-arrange="stacked"] > .slot-copy > .feature-list:nth-child(2) { grid-column: 2; }
+.slot[data-slot-arrange="stacked"] > .slot-media > figure:nth-child(3), .slot[data-slot-arrange="stacked"] > .slot-copy > .feature-list:nth-child(3) { grid-column: 3; }

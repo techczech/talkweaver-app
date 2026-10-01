@@ -1,7 +1,6 @@
 {
   "include": ["src/renderer/src/**/*", "src/preload/index.ts", "src/shared/**/*", "worker/share-id.ts"],
   "compilerOptions": {
-    "composite": true,
     "module": "ESNext",
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,

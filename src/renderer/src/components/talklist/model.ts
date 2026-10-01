@@ -61,6 +61,8 @@ export function lastDeliveredBySlug(sessions: RecordingSession[]): Record<string
   const out: Record<string, number> = {}
   for (const session of sessions) {
     if (session.kind !== 'delivery') continue
+    // A planned Run has not been given yet: its startedAt is only its planned date.
+    if (session.status === 'planned') continue
     const started = Date.parse(session.startedAt)
     if (!Number.isFinite(started)) continue
     if (started > (out[session.talkSlug] ?? 0)) out[session.talkSlug] = started
@@ -137,12 +139,23 @@ export function folderTotals(view: TreeNode, mode: TreeCountMode, slidesOf?: (ta
 // The flattened render order both modes share: keyboard focus walks exactly this list.
 
 export type RowRef =
-  | { kind: 'folder'; key: string; path: string; depth: number }
+  // vaultId: which vault's folder tree the row belongs to (absent for the single tree of the slide
+  // picker). Paths are vault-relative, so two vaults can each have a "Workshops".
+  | { kind: 'folder'; key: string; path: string; depth: number; vaultId?: string }
+  // A vault's section header, and (under an open vault with no talks yet) its empty-state block.
+  // `compact`: another vault is shown, so this vault is one line. `unavailable`: the empty block is the
+  // "folder not there" note (ticket 07), which is taller.
+  | { kind: 'vault'; key: string; vaultId: string; compact?: boolean }
+  | { kind: 'empty'; key: string; vaultId: string; unavailable?: boolean }
   // `hit`: a talk-search result row (two lines: title, then what matched).
   // `line`: the at-rest second line of a tree row (ADR-0029 §3) — drawn by Ledger only.
   | { kind: 'talk'; key: string; talk: TalkInfo; depth: number; hit?: TalkSearchHit; line?: string }
 
-export const folderKey = (path: string): string => `f:${path}`
+export const folderKey = (path: string, vaultId?: string): string => (vaultId ? `f:${vaultId}:${path}` : `f:${path}`)
+/** The id a folder has in the collapsed set: its path, made unique per vault when there is one. */
+export const collapseId = (vaultId: string | undefined, path: string): string => (vaultId ? `${vaultId}\u001f${path}` : path)
+export const vaultKey = (vaultId: string): string => `v:${vaultId}`
+export const emptyKey = (vaultId: string): string => `e:${vaultId}`
 export const talkKey = (outlinePath: string): string => `t:${outlinePath}`
 
 // ── Archive (ADR-0029 §3; CONTEXT.md: Archive) ─────────────────────────────────
@@ -165,7 +178,7 @@ export function orderedChildren(node: TreeNode): TreeNode[] {
 /** Render-order rows for the tree view: each folder row, then (when expanded) its subfolders
  *  and the talks directly inside it — mirroring the JSX exactly, so ↑↓ never skips or invents.
  *  `lines` (outlinePath → text) gives each talk row its at-rest second line. */
-export function flattenTree(view: TreeNode, collapsed: Set<string>, lines?: Map<string, string>): RowRef[] {
+export function flattenTree(view: TreeNode, collapsed: Set<string>, lines?: Map<string, string>, vaultId?: string): RowRef[] {
   const out: RowRef[] = []
   const talkRow = (t: TalkInfo, depth: number): RowRef => {
     const line = lines?.get(t.outlinePath)
@@ -175,8 +188,10 @@ export function flattenTree(view: TreeNode, collapsed: Set<string>, lines?: Map<
   }
   const walk = (node: TreeNode, depth: number): void => {
     for (const child of orderedChildren(node)) {
-      out.push({ kind: 'folder', key: folderKey(child.path), path: child.path, depth })
-      if (collapsed.has(child.path)) continue
+      out.push(vaultId
+        ? { kind: 'folder', key: folderKey(child.path, vaultId), path: child.path, depth, vaultId }
+        : { kind: 'folder', key: folderKey(child.path), path: child.path, depth })
+      if (collapsed.has(collapseId(vaultId, child.path))) continue
       walk(child, depth + 1)
       for (const t of child.talks) out.push(talkRow(t, depth + 1))
     }

@@ -1,0 +1,135 @@
+/* Add a vault / Edit this vault / This folder is already a vault (several-vaults ticket 04;
+   docs/design/2026-09-29-multi-vault/LOCKED-edit-vault.html). One sheet, two groups: "Shared with
+   everyone in this vault" (tinted, people mark) above "Just for me" (plain, padlock). */
+
+.vs-backdrop { position: fixed; inset: 0; z-index: 1300; background: rgba(23, 32, 42, 0.35); }
+.vs-sheet {
+  position: fixed; top: 60px; left: 50%; transform: translateX(-50%); z-index: 1301;
+  width: 880px; max-width: calc(100vw - 40px); max-height: calc(100vh - 80px); overflow: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 14px 38px #17202a30, 0 3px 10px #17202a1c; font-family: var(--font-ui); color: var(--ink);
+}
+.vs-sheet--narrow { width: 440px; top: 120px; padding: 20px 22px; }
+.vs-sheet--join { width: 820px; top: 80px; }
+
+.vs-head { display: flex; align-items: center; gap: 16px; padding: 20px 26px 16px; border-bottom: 1px solid var(--line); }
+.vs-head-text { flex: 1; min-width: 0; }
+.vs-eyebrow { font: 700 10px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.vs-title { font-size: 20px; font-weight: 650; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vs-sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+
+.vs-body { padding: 18px 26px 6px; display: grid; gap: 16px; }
+
+/* badges: the vault's colour and initial */
+.vs-vb {
+  --c: #c2410c;
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 18px; height: 18px; border-radius: 5px; background: var(--c); color: #fff;
+  font: 800 10px/1 system-ui, sans-serif;
+}
+.vs-vb.sm { width: 14px; height: 14px; border-radius: 4px; font-size: 8px; vertical-align: -2px; }
+.vs-vb.lg { width: 30px; height: 30px; border-radius: 8px; font-size: 15px; }
+.vs-vb.xl { width: 48px; height: 48px; border-radius: 12px; font-size: 24px; }
+
+/* groups */
+.vs-grp { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.vs-grp-h { display: flex; align-items: center; gap: 10px; padding: 11px 16px; border-bottom: 1px solid var(--line); border-radius: 10px 10px 0 0; }
+.vs-grp-h svg { width: 15px; height: 15px; flex: none; color: var(--muted); }
+.vs-grp-h b { font-size: 13.5px; }
+.vs-grp-h .vs-d { font-size: 12px; color: var(--muted); margin-left: auto; text-align: right; }
+.vs-grp-b { padding: 14px 16px 16px; display: grid; gap: 16px 24px; grid-template-columns: 1fr 1fr; }
+.vs-grp--mine .vs-grp-b { grid-template-columns: 1fr 1.25fr; }
+.vs-grp--three .vs-grp-b { grid-template-columns: 1fr 1fr 1fr; gap: 12px 18px; }
+.vs-grp--shared .vs-grp-h { background: color-mix(in srgb, var(--oxford) 8%, var(--panel)); }
+.vs-grp--shared .vs-grp-h svg { color: var(--oxford); }
+.vs-grp--mine .vs-grp-h { background: var(--hover); }
+.vs-span2 { grid-column: 1 / span 2; }
+
+.vs-lbl { font-size: 12px; font-weight: 600; margin-bottom: 5px; display: block; }
+.vs-help { font-size: 11.5px; color: var(--muted); margin-top: 5px; line-height: 1.4; }
+.vs-field {
+  display: flex; align-items: center; width: 100%; box-sizing: border-box; height: 34px;
+  border: 1px solid var(--line); border-radius: 6px; background: #fff; padding: 0 10px;
+  font: 13px var(--font-ui); color: var(--ink); gap: 8px;
+}
+.vs-field:focus { outline: none; border-color: var(--oxford); box-shadow: 0 0 0 3px color-mix(in srgb, var(--oxford) 14%, transparent); }
+.vs-field::placeholder { color: var(--faint); }
+.vs-field.is-err { border-color: var(--crimson); box-shadow: 0 0 0 3px color-mix(in srgb, var(--crimson) 14%, transparent); }
+.vs-field.is-ro { background: var(--paper); color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.vs-field.is-initial { width: 46px; justify-content: center; text-align: center; font-weight: 700; padding: 0 4px; }
+select.vs-field { appearance: none; background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238a9099'/%3E%3C/svg%3E") no-repeat right 10px center; padding-right: 26px; }
+.vs-errtext { font-size: 11.5px; color: var(--crimson); margin-top: 5px; font-weight: 600; }
+
+/* shared yes/no */
+.vs-switch { display: flex; align-items: center; gap: 8px; height: 34px; border: 0; background: none; padding: 0; font: 13px var(--font-ui); color: var(--ink); cursor: pointer; }
+.vs-switch.is-off { color: var(--muted); }
+.vs-toggle { flex: none; width: 34px; height: 20px; border-radius: 10px; background: var(--oxford); position: relative; }
+.vs-toggle::after { content: ""; position: absolute; top: 2px; right: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px #0003; }
+.vs-switch.is-off .vs-toggle { background: #cfc7b8; }
+.vs-switch.is-off .vs-toggle::after { right: auto; left: 2px; }
+
+/* logo */
+.vs-logo-row { display: flex; align-items: center; gap: 14px; }
+.vs-logo-box { width: 96px; height: 54px; flex: none; border: 1px solid var(--line); border-radius: 6px; background: #fff; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.vs-logo-box img { max-width: 88px; max-height: 46px; object-fit: contain; }
+.vs-logo-box .vs-none { font-size: 11px; color: var(--faint); text-align: center; padding: 0 4px; overflow-wrap: anywhere; }
+.vs-logo-inline { max-height: 18px; max-width: 48px; object-fit: contain; }
+.vs-link { border: 0; background: none; padding: 0; font: 12px var(--font-ui); color: var(--muted); text-decoration: underline; cursor: pointer; }
+
+/* badge colour and initial */
+.vs-badge-row { display: flex; align-items: center; gap: 14px; }
+.vs-swatches { display: flex; gap: 8px; align-items: center; }
+.vs-sw { width: 26px; height: 26px; border-radius: 7px; background: var(--c); border: 0; padding: 0; cursor: pointer; }
+.vs-sw.is-on { box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--c); }
+.vs-sw:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+
+/* foot */
+.vs-foot { display: flex; align-items: center; gap: 10px; padding: 14px 26px 20px; }
+.vs-foot-note { font-size: 12px; color: var(--muted); }
+.vs-foot-btns { margin-left: auto; display: flex; gap: 8px; flex: none; }
+.vs-btn { border: 1px solid var(--oxford); background: var(--oxford); color: #fff; border-radius: 6px; padding: 7px 14px; font: 600 13px var(--font-ui); cursor: pointer; }
+.vs-btn.plain { background: var(--panel); color: var(--ink); border-color: var(--line); }
+.vs-btn:disabled { background: var(--hover); color: var(--faint); border-color: var(--line); cursor: default; }
+
+/* alerts */
+.vs-alert { border-radius: 9px; padding: 11px 14px; font-size: 12.5px; line-height: 1.45; display: flex; gap: 10px; align-items: flex-start; }
+.vs-alert b.vs-alert-h { display: block; margin-bottom: 2px; }
+.vs-alert svg { width: 16px; height: 16px; flex: none; margin-top: 1px; }
+.vs-alert.err { background: #fbe9ec; color: #6b1026; border: 1px solid color-mix(in srgb, var(--crimson) 35%, var(--line)); }
+.vs-alert.warn { background: var(--amber-bg); color: #5b4108; border: 1px solid color-mix(in srgb, var(--amber) 35%, var(--line)); }
+.vs-alert-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.vs-body > .vs-alert { margin: 0; }
+
+/* Inspector: where a new talk's values came from (LOCKED-edit-vault frame 7) */
+.tw-vault-origin { border-top: 1px solid var(--line); padding: 10px 12px 12px; font-family: var(--font-ui); }
+.tw-vault-origin h3 { font: 700 10px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+.tw-vault-origin-row { display: grid; grid-template-columns: 78px 1fr auto; align-items: center; gap: 8px; font-size: 12px; padding: 3px 0; }
+.tw-vault-origin-row > span:first-child { color: var(--muted); }
+.tw-vault-origin-row > span:nth-child(2) { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tw-vault-origin-row svg { width: 12px; height: 12px; color: var(--muted); }
+.tw-vault-origin p { font-size: 11.5px; color: var(--muted); margin: 6px 0 0; line-height: 1.4; }
+
+/* "Where it came from" — a slide inserted from another vault (ticket 06; LOCKED-add-slide frames 5–6) */
+.tw-slide-prov { border-top: 1px solid var(--line); padding: 10px 12px 12px; font-family: var(--font-ui); }
+.tw-slide-prov h3 { font: 700 10px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+.tw-slide-prov-card { border-radius: 9px; padding: 11px 12px; border: 1.5px solid var(--line); }
+.tw-slide-prov.mine .tw-slide-prov-card { border-color: color-mix(in srgb, var(--c, #888) 45%, var(--line)); background: color-mix(in srgb, var(--c, #888) 8%, transparent); }
+.tw-slide-prov-head { display: flex; align-items: center; gap: 9px; }
+.tw-slide-prov-from { font-size: 11px; color: var(--muted); }
+.tw-slide-prov-vault { font-size: 14px; font-weight: 700; }
+.tw-slide-prov-rows { margin-top: 10px; }
+.tw-slide-prov-row { display: flex; gap: 10px; font-size: 12.5px; padding: 3px 0; }
+.tw-slide-prov-row > span:first-child { color: var(--muted); width: 78px; flex: none; }
+.tw-slide-prov-history { margin-top: 10px; font-size: 12.5px; color: var(--muted); display: flex; gap: 7px; align-items: center; }
+.tw-slide-prov p { font-size: 11.5px; color: var(--muted); margin: 8px 0 0; line-height: 1.4; }
+.vs-vb.ghost { background: transparent; color: var(--muted); border: 1.5px dashed var(--muted); }
+/* The talk's Activity list in the Inspector (several-vaults ticket 09; LOCKED-conflict frame 5). */
+.tw-talk-activity { border-top: 1px solid var(--line); padding: 10px 12px 12px; font-family: var(--font-ui); }
+.tw-talk-activity h3 { font: 700 10px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 4px; }
+.tw-talk-activity-row { display: flex; gap: 11px; padding: 11px 0; border-bottom: 1px solid var(--hairline); }
+.tw-talk-activity-row:last-child { border-bottom: 0; }
+.tw-talk-activity-mark { width: 14px; flex: none; color: var(--green); margin-top: 1px; }
+.tw-talk-activity-text { flex: 1; min-width: 0; }
+.tw-talk-activity-title { font-size: 13px; font-weight: 600; }
+.tw-talk-activity-detail { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.tw-talk-activity-time { font: 11px var(--font-mono); color: var(--faint); white-space: nowrap; }

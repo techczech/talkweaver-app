@@ -63,14 +63,24 @@ export function parseHeadingAttrs(rawTitle) {
   }
   const attrs = {};
   const warnings = [];
+  // Whether the id set so far came from a group that is ONLY `{id=…}` — the form the shared slide-id
+  // resolver (slide-id.mjs) reads.
+  let idFromIdGroup = false;
+  let groupIsIdOnly = false;
   const setKey = (key, value) => {
-    // last-wins on conflicting layout/mode/etc.; warn only on a real value change.
-    if (Object.prototype.hasOwnProperty.call(attrs, key) && attrs[key] !== value) {
+    // last-wins on conflicting layout/mode/etc.; warn only on a real value change. Not for two
+    // `{id=…}` groups: which of them a slide keeps is the resolver's call, and the author hears it
+    // once, as its `duplicate-slide-id-merged` warning — never also as a conflict naming the other.
+    // An id inside a many-token group is invisible to the resolver, so that conflict is still told.
+    const resolverSeesBoth = key === "id" && idFromIdGroup && groupIsIdOnly;
+    if (!resolverSeesBoth && Object.prototype.hasOwnProperty.call(attrs, key) && attrs[key] !== value) {
       warnings.push(`trigger-conflict:${key}:${attrs[key]}→${value}`);
     }
     attrs[key] = value;
+    if (key === "id") idFromIdGroup = groupIsIdOnly;
   };
   for (const group of groups) {
+    groupIsIdOnly = /^\s*id=[A-Za-z0-9_-]+\s*$/.test(group);
     for (const { raw: tok } of tokenizeTriggerBody(group)) {
       if (!tok) continue;
       const eq = tok.indexOf("=");

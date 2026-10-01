@@ -1028,6 +1028,16 @@ Discuss with your neighbour: what was the last thing you used a chatbot for?
 - A chat assistant
 - A search engine
 
+### Board with names: what should we keep, change, try?
+{poll=board}{names}
+
+Add what you would keep, change or try. One idea per card.
+
+- Keep
+  - What worked for you?
+- Change
+- Try
+
 ### trigger-line
 {contrast}
 
@@ -1197,6 +1207,43 @@ thin agenda rail. For sections where seeing the slides matters more than their n
 
 - The author chooses a name
 - The compiler owns the accent and tint pair
+
+## Before the session
+{prework}
+
+Three short steps before the session: a slide, a quick check and a task. Not presented in the talk.
+
+### Welcome: three things before Monday
+{noask}
+
+- Read one short slide
+- Answer one quick check
+- Try one small task and mark it done
+
+### Quick check: what makes something an agent?
+{poll=single}{check}
+
+- It answers in full sentences
+- It uses tools to carry out steps for you {right}
+- Not sure yet
+
+### Task: draft one real email with Copilot
+{task}{minutes=20}
+
+- Pick an email you need to send this week
+- Ask Copilot to draft it from your notes
+
+### Task: read one short article (read only)
+{task}{readonly}
+
+- Read the article linked in the email
+
+## Pre-work in the talk
+
+### What did the quick check show?
+{results=quick-check-what-makes-something-an-agent}
+
+- The room's answers from before the session
 
 ## Rendered geometry doctor
 

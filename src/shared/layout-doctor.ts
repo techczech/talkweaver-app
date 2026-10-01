@@ -11,6 +11,7 @@ import {
 import type { TriggerVocabulary } from './layout-registry/vocabulary.ts'
 import { LAYOUTS } from './layout-registry/entries.ts'
 import {
+  LIST_VALUE_KEYS,
   logicalTriggerBlockAfterHeading,
   meaningForToken,
   parseTriggerLine,
@@ -35,6 +36,11 @@ export interface LayoutDoctorFinding {
   headingLine: number
   slideTitle: string
   detail?: string
+  /**
+   * A targeted reason shown with the finding's message (ticket 04 review): a list-valued token that
+   * ends in a comma, because a space after the comma ended the token ({reactions=agree, disagree}).
+   */
+  hint?: string
   /** Visible projection row used only when the finding belongs to a folded child heading. */
   attributedHeadingLine?: number
   foldedChild?: true
@@ -42,6 +48,19 @@ export interface LayoutDoctorFinding {
 
 const HEADING_RE = /^(#{2,6})\s+(.*)$/
 export const LAYOUT_DOCTOR_VOCABULARY = buildTriggerVocabulary()
+
+/**
+ * The hint for a list-valued token cut short by a space after a comma: `{reactions=agree, disagree}`
+ * tokenises as `reactions=agree,` and a separate `disagree` (the tokenizer is unchanged; commas bind
+ * only while no space intervenes). Empty when the token is not that shape.
+ */
+export function listValueSpaceHint(raw: string): string {
+  const equals = raw.indexOf('=')
+  if (equals <= 0) return ''
+  const key = raw.slice(0, equals)
+  if (!LIST_VALUE_KEYS.has(key) || !/,\s*$/.test(raw.slice(equals + 1))) return ''
+  return `No space after the comma in {${key}=…}: write the list without spaces${key === 'reactions' ? ', as {reactions=agree,disagree}, and quote a label with spaces, as "Too fast"' : ''}`
+}
 export const LAYOUT_DOCTOR_FENCE_AUTHORITY = scanFencedLines
 const VALUE_FORM_LAYOUTS = new Map<string, string>()
 for (const entry of LAYOUTS) {
@@ -185,6 +204,13 @@ export function scanOutlineTriggers(
     if (eq > 0) {
       key = raw.slice(0, eq); value = raw.slice(eq + 1)
       if (!isRegisteredTriggerToken(raw, vocab)) {
+        const hint = listValueSpaceHint(raw)
+        if (hint) {
+          pushFinding(raw, lineNo, 'unregistered-value')
+          const last = findings.at(-1)
+          if (last && last.token === raw && last.kind === 'unregistered-value') last.hint = hint
+          return
+        }
         return pushFinding(
           raw,
           lineNo,
@@ -484,7 +510,7 @@ export function triggerWarningPayloadsForSlide(
       : ''
     if (finding.kind === 'unknown-word') return [`unknown-trigger:${finding.token}${foldedChildNote}`]
     if (finding.kind === 'unregistered-key' || finding.kind === 'unregistered-value') {
-      return [`unresolved-trigger:${finding.token}${foldedChildNote}`]
+      return [`unresolved-trigger:${finding.token}${foldedChildNote}${finding.hint ? ` — ${finding.hint}` : ''}`]
     }
     if (finding.kind === 'trigger-conflict' || finding.kind === 'duplicate-layout') {
       return [`trigger-conflict:${finding.detail ?? finding.token}${foldedChildNote}`]

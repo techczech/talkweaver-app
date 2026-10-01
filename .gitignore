@@ -16,3 +16,5 @@ native/media
 # agent scratch probes (never commit)
 .tw-*
 docs/layout-doctor/
+# Local Worker state left by `wrangler dev` (integration tests)
+worker/.wrangler/

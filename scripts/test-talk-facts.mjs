@@ -30,7 +30,10 @@ let currentMeta = {
 let currentSessions = [
   { talkSlug: 'talk-alpha', kind: 'delivery', startedAt: new Date(now - 3 * DAY).toISOString() },
   { talkSlug: 'talk-beta', kind: 'rehearsal', startedAt: new Date(now - 1 * DAY).toISOString() },
-  { talkSlug: 'talk-beta', kind: 'recording', startedAt: new Date(now - 2 * DAY).toISOString() }
+  { talkSlug: 'talk-beta', kind: 'recording', startedAt: new Date(now - 2 * DAY).toISOString() },
+  // A planned Run is not a delivery yet, even though its startedAt is its planned date.
+  { talkSlug: 'talk-alpha', kind: 'delivery', status: 'planned', startedAt: new Date(now + 5 * DAY).toISOString() },
+  { talkSlug: 'talk-gamma', kind: 'delivery', status: 'planned', startedAt: new Date(now + 9 * DAY).toISOString() }
 ]
 window.tw = {
   vault: {
@@ -61,7 +64,7 @@ equal(seenA.length, 1, 'subscriber A was notified')
 equal(seenB.length, 1, 'subscriber B was notified')
 check(seenA[0] === seenB[0], 'both subscribers received the identical facts object')
 equal(seenA[0].lastDelivered, { 'talk-alpha': Date.parse(currentSessions[0].startedAt) },
-  'lastDelivered counts only delivery sessions (rehearsal/recording ignored)')
+  'lastDelivered counts only delivery sessions (rehearsal, recording and planned Runs ignored)')
 
 // ── onTalkMetaUpdated → both subscribers see the new meta, one extra fetch ──
 currentMeta = {

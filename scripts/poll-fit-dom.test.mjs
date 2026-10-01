@@ -256,7 +256,12 @@ try {
       }
       for (const [label, m] of [['compiled', compiled], ['compiled+join', compiledJoin], ['live', livePreJoin], ['live+join', liveJoin]]) {
         const ladderOk = ['base', 'leading', 'gap', 'type', 'too-long'].includes(m.listFit)
-        assert.ok(ladderOk && !(m.listFit === 'too-long' && m.zoom === '1'), `${tag} ${label}: the ladder resolved the frame (listFit=${m.listFit})`)
+        // ADR-0033 §1: the whole-slide zoom never takes text below the type floor, so a frame that
+        // still overflows after the ladder (only with the join slot spending room) keeps zoom 1 and is
+        // marked too-long for the editor warning, instead of zooming a few percent.
+        const markedAtFloor = m.listFit === 'too-long' && m.zoom === '1' && label.endsWith('+join')
+        if (markedAtFloor) console.log(`poll fit report: ${tag} ${label} stays at the floor, marked too-long`)
+        assert.ok(ladderOk && (markedAtFloor || !(m.listFit === 'too-long' && m.zoom === '1')), `${tag} ${label}: the ladder resolved the frame (listFit=${m.listFit})`)
       }
       // 3. type floors: options and matrix items at >= --type-floor, chips >= their 20px floor and
       //    at least one full line of label

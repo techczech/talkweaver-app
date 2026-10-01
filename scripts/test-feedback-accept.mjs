@@ -3,7 +3,7 @@
 //   - applyProposal (src/shared/feedback-accept.ts) on real outline fixtures — the layout sampler
 //     (docs/layout-sampler-outline.md: stamped ids, comments, nested sections) and the drawn talk
 //     (LOCKED-feedback-rail-and-markers.html): replace keeps notes and comments and changes only the
-//     lines her diff changed; delete removes the block; insert lands right after the named slide, with
+//     lines their diff changed; delete removes the block; insert lands right after the named slide, with
 //     a section heading one depth shallower than the new slide; nothing else in the file moves; Undo's
 //     splice restores the text byte for byte. The slide text it reads is exactly the share push's
 //     (main/shared-talk-build slideTextsByLine), so the changed-since check compares like with like;
@@ -30,7 +30,7 @@ async function compiled(text) {
   const model = await prepareSource('/tmp/feedback-accept-probe-outline.md', text, null, FILE)
   return model.slides.filter((s) => typeof s.sourceLine === 'number').map((s) => ({ id: s.id, level: s.nodeLevel, title: s.title, line: s.sourceLine }))
 }
-/** The pushed text of the slide with this id (what her base revision holds). */
+/** The pushed text of the slide with this id (what their base revision holds). */
 function pushed(text, id) {
   const byLine = slideTextsByLine(lib, text)
   const slide = readOutlineSlides(text).slides.find((s) => s.id === id)
@@ -67,13 +67,13 @@ assert.equal(readOutlineSlides(sampler).slides.filter((s) => s.id).length, 69, '
 assert.equal(pushed(drawn, 'rubric').includes('Pause here'), false, 'notes are not in the pushed text')
 console.log('PASS slide text: read exactly as the share push reads it, on the layout sampler (226 headings) and the drawn talk')
 
-// ── 2. Replace: only her changed lines move; his notes, comments and id stay ──────────────────────
+// ── 2. Replace: only their changed lines move; his notes, comments and id stay ──────────────────────
 {
   const base = pushed(drawn, 'rubric')
-  const hers = base
+  const theirs = base
     .replace('- Rubrics reward the features a model produces most fluently', '- Rubrics reward what a model writes most fluently')
     .replace('- Markers read for structure first, and structure is cheapest to generate', '- Markers read structure first, and structure is cheapest to generate')
-  const r = applyProposal(drawn, { kind: 'replace', slideId: 'rubric', text: hers }, { text: base })
+  const r = applyProposal(drawn, { kind: 'replace', slideId: 'rubric', text: theirs }, { text: base })
   assert.equal(r.ok, true, r.error)
   assert.equal(r.changedSince, false)
   assert.equal(r.line, 16)
@@ -82,53 +82,53 @@ console.log('PASS slide text: read exactly as the share push reads it, on the la
   assert.deepEqual(d1.added, ['- Rubrics reward what a model writes most fluently', '<!-- the example from the Trinity panel -->', '- "Critical engagement" is described in words a chatbot can imitate', '- Markers read structure first, and structure is cheapest to generate'])
   assert.ok(r.text.includes(':::notes\nPause here. Ask who marks with a rubric.\n:::'), 'his notes kept')
   assert.ok(r.text.includes('<!-- the example from the Trinity panel -->'), 'his comment kept')
-  assert.equal(pushed(r.text, 'rubric'), hers.replace(/\n{3,}/g, '\n\n'), 'the slide now reads exactly as hers')
+  assert.equal(pushed(r.text, 'rubric'), theirs.replace(/\n{3,}/g, '\n\n'), 'the slide now reads exactly as theirs')
   // Exactly the lines the diff showed changed: the two lines, nothing else in the file.
   const changed = r.text.split('\n').filter((line, i) => line !== drawn.split('\n')[i])
   assert.deepEqual(changed, ['- Rubrics reward what a model writes most fluently', '- Markers read structure first, and structure is cheapest to generate'])
   // Undo: the splice back, byte for byte.
   const u = undoEdit(r.text, r.edit)
   assert.equal(u.ok && u.text, drawn)
-  // Her text without the Trigger line (she deleted it): the id comes back on its own line.
-  const noId = applyProposal(drawn, { kind: 'replace', slideId: 'rubric', text: hers.replace('{id=rubric}\n', '') }, { text: base })
+  // Their text without the Trigger line (they deleted it): the id comes back on its own line.
+  const noId = applyProposal(drawn, { kind: 'replace', slideId: 'rubric', text: theirs.replace('{id=rubric}\n', '') }, { text: base })
   assert.equal(readOutlineSlides(noId.text).slides.find((s) => s.line === 16).id, 'rubric', 'the slide keeps its id')
-  // Her text carrying another slide's id: dropped.
-  const stolen = applyProposal(drawn, { kind: 'replace', slideId: 'rubric', text: hers.replace('{id=rubric}', '{id=close}') }, { text: base })
+  // Their text carrying another slide's id: dropped.
+  const stolen = applyProposal(drawn, { kind: 'replace', slideId: 'rubric', text: theirs.replace('{id=rubric}', '{id=close}') }, { text: base })
   assert.equal(readOutlineSlides(stolen.text).slides.filter((s) => s.id === 'close').length, 1)
   assert.equal(readOutlineSlides(stolen.text).slides.find((s) => s.line === 16).id, 'rubric')
 
-  // She rewrote the lines either side of his comment (her page shows it as a blank line, which she
-  // dropped): hers take his lines' places one for one, so the comment stays between them.
+  // They rewrote the lines either side of his comment (their page shows it as a blank line, which they
+  // dropped): theirs take his lines' places one for one, so the comment stays between them.
   const around = applyProposal(drawn, { kind: 'replace', slideId: 'rubric', text: base
     .replace('- Rubrics reward the features a model produces most fluently\n\n- "Critical engagement" is described in words a chatbot can imitate', '- Rubrics reward what a model writes\n- Critical engagement is imitable') }, { text: base })
   assert.deepEqual(lineDiff(drawn, around.text).added, ['- Rubrics reward what a model writes', '<!-- the example from the Trinity panel -->', '- Critical engagement is imitable'])
-  // On the sampler: a real stamped slide; add his notes and a comment first; only her line changes.
+  // On the sampler: a real stamped slide; add his notes and a comment first; only their line changes.
   const id = 't28-iconlist-4'
   const own = sampler.replace('- Ship {icon=lucide:rocket}\n\n### Icon list boxes', '- Ship {icon=lucide:rocket}\n<!-- rocket reads as hype; try a box -->\n\n:::notes\nFour items: rows, not boxes.\n:::\n\n### Icon list boxes')
   assert.notEqual(own, sampler)
   const sBase = pushed(own, id)
-  const sHers = sBase.replace('- Build {icon=lucide:hammer}', '- Build it {icon=lucide:hammer}')
-  const s = applyProposal(own, { kind: 'replace', slideId: id, text: sHers }, { text: sBase })
+  const sTheirs = sBase.replace('- Build {icon=lucide:hammer}', '- Build it {icon=lucide:hammer}')
+  const s = applyProposal(own, { kind: 'replace', slideId: id, text: sTheirs }, { text: sBase })
   assert.equal(s.ok, true)
   assert.deepEqual(lineDiff(own, s.text), { at: lineDiff(own, s.text).at, removed: ['- Build {icon=lucide:hammer}'], added: ['- Build it {icon=lucide:hammer}'] })
   assert.deepEqual((await compiled(s.text)).map((x) => x.id), (await compiled(own)).map((x) => x.id), 'every slide still compiles, in the same order, same ids')
   assert.equal(undoEdit(s.text, s.edit).text, own)
-  // CRLF talk: her lines take the talk's line ending.
+  // CRLF talk: their lines take the talk's line ending.
   const crlf = drawn.replace(/\n/g, '\r\n')
-  const c = applyProposal(crlf, { kind: 'replace', slideId: 'rubric', text: hers }, { text: base })
+  const c = applyProposal(crlf, { kind: 'replace', slideId: 'rubric', text: theirs }, { text: base })
   assert.equal(c.ok, true)
   assert.equal(c.text.replace(/\r\n/g, '').includes('\n'), false, 'no bare LF introduced')
   assert.equal(c.text.replace(/\r\n/g, '\n'), r.text)
 }
-console.log('PASS replace: only the lines her diff changed; notes, comments and id kept; Undo restores; sampler compiles the same; CRLF kept')
+console.log('PASS replace: only the lines their diff changed; notes, comments and id kept; Undo restores; sampler compiles the same; CRLF kept')
 
-// ── 3. Changed-since: flags a change to what she saw, not to his notes ─────────────────────────────
+// ── 3. Changed-since: flags a change to what they saw, not to his notes ─────────────────────────────
 {
   const base = pushed(drawn, 'rubric')
   const item = { kind: 'replace', slideId: 'rubric', text: base }
   assert.equal(changedSince(readOutlineSlides(drawn), item, { text: base }), false)
   const notesOnly = drawn.replace('Pause here.', 'Pause here, longer.')
-  assert.equal(changedSince(readOutlineSlides(notesOnly), item, { text: base }), false, 'his notes are not what she saw')
+  assert.equal(changedSince(readOutlineSlides(notesOnly), item, { text: base }), false, 'his notes are not what they saw')
   const commentOnly = drawn.replace('the example from the Trinity panel', 'the Trinity example')
   assert.equal(changedSince(readOutlineSlides(commentOnly), item, { text: base }), false, 'nor his comments')
   const edited = drawn.replace('made the pattern easier to match', 'made the pattern easier to generate')
@@ -136,7 +136,7 @@ console.log('PASS replace: only the lines her diff changed; notes, comments and 
   assert.equal(changedSince(readOutlineSlides(edited), item, { text: null }), null, 'no base kept: cannot tell')
   const r = applyProposal(edited, { kind: 'replace', slideId: 'rubric', text: base.replace('- Rubrics reward the features', '- Rubrics reward mostly the features') }, { text: base })
   assert.equal(r.changedSince, true)
-  // Use hers over his change: her text wins the visible lines (his notes still kept).
+  // Use theirs over his change: their text wins the visible lines (his notes still kept).
   assert.equal(pushed(r.text, 'rubric').includes('easier to generate'), false)
   assert.ok(r.text.includes('Pause here.'))
   // A slide no longer in the talk.
@@ -164,22 +164,22 @@ console.log('PASS delete: the block and its spacing go; every other slide compil
 
 // ── 5. Insert: right after the named slide; a section one depth shallower than the slide ─────────
 {
-  const hers = '## Students asked for the rules in writing\n{id=stolen}\n- Most used a chatbot to start a draft\n- A one-page course policy settled most questions'
+  const theirs = '## Students asked for the rules in writing\n{id=stolen}\n- Most used a chatbot to start a draft\n- A one-page course policy settled most questions'
   // Frame 1's case: every slide a `##`. With a section: `## section`, `### slide`, after slide 3.
-  const r = applyProposal(drawn, { kind: 'insert', afterSlideId: 'rubric', section: 'What students told us', text: hers }, { text: null })
+  const r = applyProposal(drawn, { kind: 'insert', afterSlideId: 'rubric', section: 'What students told us', text: theirs }, { text: null })
   assert.equal(r.ok, true, r.error)
   assert.equal(r.afterLine, 26, 'after the last line of slide 3\'s block')
   const d = lineDiff(drawn, r.text)
   assert.deepEqual(d.removed, [])
   assert.deepEqual(d.added, ['## What students told us', '', '### Students asked for the rules in writing', '- Most used a chatbot to start a draft', '- A one-page course policy settled most questions', ''])
-  assert.equal(r.text.includes('{id=stolen}'), false, 'her id tokens dropped: the save mints fresh ones')
+  assert.equal(r.text.includes('{id=stolen}'), false, 'their id tokens dropped: the save mints fresh ones')
   const c = await compiled(r.text)
   assert.deepEqual(c.map((s) => `${s.level} ${s.title}`).slice(2, 6), ['2 The rubric problem', '2 What students told us', '3 Students asked for the rules in writing', '2 What we tried in Trinity term'])
   assert.equal(r.text.split('\n')[r.line - 1], '### Students asked for the rules in writing', 'line = the new slide')
   assert.equal(undoEdit(r.text, r.edit).text, drawn)
   // No section: a sibling of the named slide at its depth.
-  const plain = applyProposal(drawn, { kind: 'insert', afterSlideId: 'modes', text: '### Deep heading she typed\n- point' }, { text: null })
-  assert.deepEqual(lineDiff(drawn, plain.text).added, ['## Deep heading she typed', '- point', ''])
+  const plain = applyProposal(drawn, { kind: 'insert', afterSlideId: 'modes', text: '### Deep heading they typed\n- point' }, { text: null })
+  assert.deepEqual(lineDiff(drawn, plain.text).added, ['## Deep heading they typed', '- point', ''])
   assert.equal(plain.afterLine, 14)
   // No heading at all: a titled slide.
   const bare = applyProposal(drawn, { kind: 'insert', afterSlideId: 'close', text: '- just a point' }, { text: null })
@@ -187,7 +187,7 @@ console.log('PASS delete: the block and its spacing go; every other slide compil
   // At the start.
   const start = applyProposal(drawn, { kind: 'insert', afterSlideId: 'start', text: '## Opening\n- hello' }, { text: null })
   assert.deepEqual((await compiled(start.text)).map((s) => s.title).slice(0, 2), ['Opening', 'Why assessment breaks first'])
-  // Her unclosed fence would swallow the rest of the talk: refused, nothing changed.
+  // Their unclosed fence would swallow the rest of the talk: refused, nothing changed.
   const fence = applyProposal(drawn, { kind: 'insert', afterSlideId: 'rubric', text: '## Code\n```js\nlet x = 1' }, { text: null })
   assert.deepEqual([fence.ok, fence.code], [false, 'refused'])
 
@@ -195,7 +195,7 @@ console.log('PASS delete: the block and its spacing go; every other slide compil
   // every other slide keeps its level and parent order.
   const before = await compiled(sampler)
   const at = before.findIndex((s) => s.id === 't28-iconlist-3')
-  const s = applyProposal(sampler, { kind: 'insert', afterSlideId: 't28-iconlist-3', section: 'From the colleague', text: hers }, { text: null })
+  const s = applyProposal(sampler, { kind: 'insert', afterSlideId: 't28-iconlist-3', section: 'From the colleague', text: theirs }, { text: null })
   assert.equal(s.ok, true, s.error)
   const after = await compiled(s.text)
   assert.deepEqual(after.slice(at, at + 4).map((x) => `${x.level} ${x.title}`), [
@@ -205,9 +205,9 @@ console.log('PASS delete: the block and its spacing go; every other slide compil
   // A slide with children: the new slide comes first among them, at their depth (no child re-parented).
   const parentId = 'where'
   const nested = '---\ntitle: N\n---\n\n## Where it breaks\n{id=where}\n\n### Child one\n{id=c1}\n- a\n\n### Child two\n{id=c2}\n- b\n'
-  const n = applyProposal(nested, { kind: 'insert', afterSlideId: parentId, text: '## Hers\n- x' }, { text: null })
-  assert.deepEqual((await compiled(n.text)).map((x) => `${x.level} ${x.title}`), ['2 Where it breaks', '3 Hers', '3 Child one', '3 Child two'])
-  const named = applyProposal(nested, { kind: 'insert', afterSlideId: 'gone', text: '## Hers' }, { text: null })
+  const n = applyProposal(nested, { kind: 'insert', afterSlideId: parentId, text: '## Theirs\n- x' }, { text: null })
+  assert.deepEqual((await compiled(n.text)).map((x) => `${x.level} ${x.title}`), ['2 Where it breaks', '3 Theirs', '3 Child one', '3 Child two'])
+  const named = applyProposal(nested, { kind: 'insert', afterSlideId: 'gone', text: '## Theirs' }, { text: null })
   assert.deepEqual([named.ok, named.code], [false, 'not-found'])
 }
 console.log('PASS insert: right after the named slide; section heading one depth shallower, slide as its first child; ids dropped; structure kept; fence refused; Undo restores')
@@ -278,7 +278,7 @@ console.log('PASS feedback file: accepted line carries the splice; back to new d
   t.state.buffer = t.state.buffer.replace('## Close', '## Close, typed after') // he types elsewhere afterwards
   out = await undoAccepted('e1', edit, t.deps)
   assert.equal(out.ok, true)
-  assert.equal(t.state.buffer, drawn.replace('## Close', '## Close, typed after'), 'Undo takes out only her change')
+  assert.equal(t.state.buffer, drawn.replace('## Close', '## Close, typed after'), 'Undo takes out only their change')
   assert.deepEqual(t.state.statuses.map((s) => s.status), ['accepted', 'new'])
 
   // Insert with a stamping save: the recorded splice is what the file holds, so Undo restores exactly.
@@ -290,7 +290,7 @@ console.log('PASS feedback file: accepted line carries the splice; back to new d
   out = await undoAccepted('i1', t.state.statuses[0].edit, t.deps)
   assert.equal(t.state.buffer, drawn)
 
-  // Undo after her text itself was edited: refused, nothing changed.
+  // Undo after their text itself was edited: refused, nothing changed.
   t = make()
   await acceptProposal('e1', replace, { text: base }, t.deps)
   t.state.buffer = t.state.buffer.replace('what a model writes', 'what models write')
@@ -307,9 +307,9 @@ console.log('PASS accept module: guard refusal, failed save keeps the item new, 
   const his = drawn.replace('made the pattern easier to match', 'made the pattern easier to game')
   const slides = readOutlineSlides(his).slides.map((s) => ({ slideId: s.id, title: s.text.split('\n')[0].replace(/^#+\s*/, ''), line: s.line }))
   const common = { statusAt: null, syncedStatus: 'new', syncFailed: null, acceptedEdit: null, baseTitle: null, status: 'new', baseAt: new Date(2026, 8, 27, 22, 51).toISOString() }
-  const hersText = '## The rubric problem\n{id=rubric}\n- Rubrics reward what a model writes most fluently\n- Markers read structure first\n- Tightening criteria made the pattern easier to match'
+  const theirsText = '## The rubric problem\n{id=rubric}\n- Rubrics reward what a model writes most fluently\n- Markers read structure first\n- Tightening criteria made the pattern easier to match'
   const items = [
-    { ...common, itemId: 'e1', kind: 'replace', slideId: 'rubric', baseRevision: 3, baseText: base, text: hersText, createdAt: new Date(2026, 8, 27, 23, 41).getTime(), seq: 3 },
+    { ...common, itemId: 'e1', kind: 'replace', slideId: 'rubric', baseRevision: 3, baseText: base, text: theirsText, createdAt: new Date(2026, 8, 27, 23, 41).getTime(), seq: 3 },
     { ...common, itemId: 'n1', kind: 'note', slideId: 'rubric', text: 'Too dense.', createdAt: new Date(2026, 8, 27, 23, 28).getTime(), seq: 1 },
     { ...common, itemId: 'n2', kind: 'note', slideId: 'redesign', text: 'Who?', createdAt: new Date(2026, 8, 27, 23, 35).getTime(), seq: 2 },
     { ...common, itemId: 'h1', kind: 'replace', slideId: 'modes', baseText: 'x', text: 'y', status: 'accepted', statusAt: new Date(2026, 8, 28, 8, 14).getTime(), acceptedEdit: spliceEdit('a', 'b', 13), createdAt: 1, seq: 0 },
@@ -329,9 +329,9 @@ console.log('PASS accept module: guard refusal, failed save keeps the item new, 
     ['- Markers read for structure first, and structure is cheapest to generate', false],
     ['- Every criterion we tightened made the pattern easier to game', true],
   ], 'heading and id left out; his line changed since highlighted')
-  assert.deepEqual(e1.compare.hers, ['- Rubrics reward what a model writes most fluently', '- Markers read structure first', '- Tightening criteria made the pattern easier to match'])
-  assert.equal(e1.compare.hersLabel, 'Hers · written against your Sun 22:51 save')
-  assert.equal(e1.compare.useHersNote, 'Using hers replaces all four of your current lines. Your notes and comments stay.')
+  assert.deepEqual(e1.compare.theirs, ['- Rubrics reward what a model writes most fluently', '- Markers read structure first', '- Tightening criteria made the pattern easier to match'])
+  assert.equal(e1.compare.theirsLabel, 'Theirs · written against your Sun 22:51 save')
+  assert.equal(e1.compare.useTheirsNote, 'Using theirs replaces all four of your current lines. Your notes and comments stay.')
   view = feedbackRailView({ list, slides, outline: his, filter: 'all', activeSlideId: 'rubric', now })
   const h1 = view.rows.find((r) => r.itemId === 'h1')
   assert.deepEqual(h1.stamp, { text: 'Accepted 08:14 today · in the outline, line 13', tone: 'accepted' })
@@ -343,7 +343,7 @@ console.log('PASS accept module: guard refusal, failed save keeps the item new, 
   view = feedbackRailView({ list: { ...list, items: [{ ...items[0], slideId: 'gone' }] }, slides, outline: drawn, filter: 'all', activeSlideId: null, now })
   assert.deepEqual(view.rows[0].actions.map((a) => [a.label, a.disabled]), [['Accept', true], ['Dismiss', false]])
 }
-console.log('PASS view: flagged edit leads with Compare (yours highlighted, hers, base time), marker-opened header, Accepted stamp with line and Undo, gone slide disables Accept')
+console.log('PASS view: flagged edit leads with Compare (yours highlighted, theirs, base time), marker-opened header, Accepted stamp with line and Undo, gone slide disables Accept')
 
 // ── 9. Markers on the slide pane ──────────────────────────────────────────────────────────────────
 {
@@ -408,15 +408,15 @@ console.log('PASS markers: counts per slide, red for a deletion, tick once handl
     assert.equal(undoEdit(r.text, r.edit).text, sampler)
   }
   // Replace on a container: only its own lines; the cards stay.
-  const cBase = slideTextsByLine(lib, sampler).get(carousel.line) // what her page holds for it
+  const cBase = slideTextsByLine(lib, sampler).get(carousel.line) // what their page holds for it
   const cr = applyProposal(sampler, { kind: 'replace', slideId: 'unstamped', text: cBase.replace('### A month with agents (carousel)', '### A month with my agents (carousel)') }, { text: cBase, line: carousel.line })
   assert.equal(cr.ok, true, cr.error)
   assert.deepEqual(lineDiff(sampler, cr.text), { at: carousel.line, removed: ['### A month with agents (carousel)'], added: ['### A month with my agents (carousel)'] })
   // Insert after a container: after its folded children, never among them.
-  const ins = applyProposal(sampler, { kind: 'insert', afterSlideId: 'unstamped', text: '### Hers after the carousel\n- x' }, { text: null, line: carousel.line })
+  const ins = applyProposal(sampler, { kind: 'insert', afterSlideId: 'unstamped', text: '### Theirs after the carousel\n- x' }, { text: null, line: carousel.line })
   const ci = await compiled(ins.text)
   const k = ci.findIndex((s) => s.title === 'A month with agents (carousel)')
-  assert.equal(ci[k + 1].title, 'Hers after the carousel', 'the next slide, not a card')
+  assert.equal(ci[k + 1].title, 'Theirs after the carousel', 'the next slide, not a card')
   assert.equal(ci.length, before.length + 1)
 
   // 4. A section's heading (here a section divider) is not deleted: its slides would fall under the title.
@@ -435,15 +435,15 @@ console.log('PASS markers: counts per slide, red for a deletion, tick once handl
 {
   const base = pushed(drawn, 'rubric')
   const replace = (text) => applyProposal(drawn, { kind: 'replace', slideId: 'rubric', text }, { text: base })
-  // 1. Her unclosed comment would pair with his `-->` and hide his lines: refused. So is an open fence.
+  // 1. Their unclosed comment would pair with his `-->` and hide his lines: refused. So is an open fence.
   let r = replace(base.replace('- Rubrics reward the features', '<!-- todo\n- Rubrics reward the features'))
   assert.equal(r.ok, false); assert.match(r.error, /comment \(<!--\) or a code fence open/)
   r = replace(base + '\n```js\nlet x = 1')
   assert.equal(r.ok, false); assert.match(r.error, /code fence open/)
-  r = applyProposal(drawn, { kind: 'insert', afterSlideId: 'modes', text: '## Hers\n<!-- open' }, { text: null })
+  r = applyProposal(drawn, { kind: 'insert', afterSlideId: 'modes', text: '## Theirs\n<!-- open' }, { text: null })
   assert.equal(r.ok, false); assert.match(r.error, /comment/)
-  // A closed comment of hers is fine (it stays hers, hidden like his).
-  assert.equal(replace(base + '\n<!-- her aside -->').ok, true)
+  // A closed comment of theirs is fine (it stays theirs, hidden like his).
+  assert.equal(replace(base + '\n<!-- their aside -->').ok, true)
   // 3. No restructuring: the heading's depth, an added heading, a title line.
   for (const bad of [base.replace('## The rubric problem', '### The rubric problem'), base + '\n\n## A second slide', base + '\n### A child', base + '\n# Retitled']) {
     r = replace(bad)
@@ -463,24 +463,24 @@ console.log('PASS markers: counts per slide, red for a deletion, tick once handl
   const unlinked = applyProposal(stamped, item, { text: null })
   assert.equal(unlinked.already, undefined, 'equal text alone is not "already": inserted as a normal insert')
   assert.equal(unlinked.text.split('### Students asked').length, 3)
-  // The reviewer's probe: a talk a, b, Grid; her insert after b is Grid's own text. It is his slide,
-  // not hers: a normal insert, and Undo of it never deletes his Grid.
+  // The reviewer's probe: a talk a, b, Grid; their insert after b is Grid's own text. It is his slide,
+  // not theirs: a normal insert, and Undo of it never deletes his Grid.
   const probe = ['---', 'title: P', '---', '', '## A', '{id=a}', '- one', '', '## B', '{id=b}', '- two', '', '## Grid', '{id=grid}', '{cards=grid}', '', '#### Left', '- l', '', '#### Right', '- r', ''].join('\n')
   const gridText = '## Grid\n{cards=grid}\n\n#### Left\n- l\n\n#### Right\n- r'
   const dup = applyProposal(probe, { kind: 'insert', afterSlideId: 'b', text: gridText }, { text: null })
   assert.equal(dup.ok, true); assert.equal(dup.already, undefined)
-  assert.equal((await compiled(dup.text)).filter((s) => s.title === 'Grid').length, 2, 'a second Grid, hers')
-  assert.equal(undoEdit(dup.text, dup.edit).text, probe, 'Undo takes out hers; his Grid stays')
+  assert.equal((await compiled(dup.text)).filter((s) => s.title === 'Grid').length, 2, 'a second Grid, theirs')
+  assert.equal(undoEdit(dup.text, dup.edit).text, probe, 'Undo takes out theirs; his Grid stays')
   // A remembered splice that is not this block (another item's) links nothing.
   const other = applyProposal(probe, { kind: 'insert', afterSlideId: 'b', text: gridText }, { text: null, remembered: spliceEdit('x', 'x\n## Else\n', 1) })
   assert.equal(other.already, undefined)
   // The replace case: the same text again is "already" with an empty splice (no Undo), unless the
   // splice an earlier Accept made is remembered and still there.
   const rep = replace(base.replace('the features a model produces', 'what a model writes'))
-  const hersText = base.replace('the features a model produces', 'what a model writes')
-  const again = applyProposal(rep.text, { kind: 'replace', slideId: 'rubric', text: hersText }, { text: base })
+  const theirsText = base.replace('the features a model produces', 'what a model writes')
+  const again = applyProposal(rep.text, { kind: 'replace', slideId: 'rubric', text: theirsText }, { text: base })
   assert.equal(again.already, true); assert.equal(again.text, rep.text); assert.equal(isEmptyEdit(again.edit), true)
-  const linked = applyProposal(rep.text, { kind: 'replace', slideId: 'rubric', text: hersText }, { text: base, remembered: rep.edit })
+  const linked = applyProposal(rep.text, { kind: 'replace', slideId: 'rubric', text: theirsText }, { text: base, remembered: rep.edit })
   assert.deepEqual(linked.edit, rep.edit)
 
   // Through the accept module: save refused, he keeps it (saved), Accept again marks it accepted with
@@ -493,12 +493,12 @@ console.log('PASS markers: counts per slide, red for a deletion, tick once handl
     write: async () => (state.saveOk ? { ok: true } : false),
   })
   const deps = { targetPath: () => PATH, diskChanged: () => false, apply: (p, m) => mutator.apply(p, m), setStatus: async (itemId, status, edit) => { state.statuses.push({ itemId, status, edit }); return { success: true } } }
-  const hers = { kind: 'replace', slideId: 'rubric', text: hersText }
-  let out = await acceptProposal('p1', hers, { text: base }, deps)
+  const theirs = { kind: 'replace', slideId: 'rubric', text: theirsText }
+  let out = await acceptProposal('p1', theirs, { text: base }, deps)
   assert.equal(out.applied, true); assert.deepEqual(state.statuses, [])
-  state.saveOk = true // Keep mine: the buffer (with her text) is saved
+  state.saveOk = true // Keep mine: the buffer (with their text) is saved
   const kept = state.buffer
-  out = await acceptProposal('p1', hers, { text: base }, deps)
+  out = await acceptProposal('p1', theirs, { text: base }, deps)
   assert.equal(out.ok, true)
   assert.equal(state.buffer, kept, 'not applied a second time')
   assert.equal(state.statuses[0].status, 'accepted')
@@ -518,11 +518,11 @@ console.log('PASS markers: counts per slide, red for a deletion, tick once handl
   // No memory (another item, or after a restart) and text only: a replace that is already what the
   // slide says is accepted with no Undo; nothing is written.
   state.buffer = rep.text
-  out = await acceptProposal('p2', hers, { text: base }, deps)
+  out = await acceptProposal('p2', theirs, { text: base }, deps)
   assert.equal(out.ok, true); assert.equal(state.buffer, rep.text)
   assert.deepEqual(state.statuses.at(-1), { itemId: 'p2', status: 'accepted', edit: ALREADY })
   // The rail: "Already what the slide says", and no Undo.
-  const fold = foldFeedback([itemLine({ itemId: 'p2', kind: 'replace', slideId: 'rubric', text: hersText, createdAt: 1, seq: 1, status: 'new' }, 1), statusLine('p2', 'accepted', 2, ALREADY)].join('\n'))
+  const fold = foldFeedback([itemLine({ itemId: 'p2', kind: 'replace', slideId: 'rubric', text: theirsText, createdAt: 1, seq: 1, status: 'new' }, 1), statusLine('p2', 'accepted', 2, ALREADY)].join('\n'))
   assert.deepEqual([fold.items[0].acceptedAlready, fold.items[0].acceptedEdit], [true, null])
   const view = feedbackRailView({ list: { key: 'k', shareId: 'k7m2abcd', link: 'x', connection: 'connected', items: fold.items.map((i) => ({ ...i, baseText: base, baseTitle: null })) }, slides: [{ slideId: 'rubric', title: 'The rubric problem', line: 16 }], outline: rep.text, filter: 'all', activeSlideId: null, now: 3 })
   assert.match(view.rows[0].stamp.text, / · Already what the slide says$/)

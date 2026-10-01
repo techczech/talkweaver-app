@@ -1,17 +1,22 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { boardPanelModelSource } from "../../assets/runtime/board-panel-model.js";
+import { boardPanelRuntimeSource } from "../../assets/runtime/board-panel.js";
 import { scriptDir, slugify, escapeHtml, makeQrSvg, timerRuntimeSource, overviewRuntimeSource, slideFitRuntimeSource, stageFitRuntimeSource, pollDisplayRuntimeSource, pollExtendedSource, markmapVendorSource, mermaidVendorSource } from "./01-cli-utils.mjs";
 import { accentForSectionIndex, accentForSectionName, accentForDeckColour, titlePlacementFor, titleRegimeForLayout, renderInline, withRenderedClaims, quoteCiteEqualsTitle } from "./02-triggers-layout.mjs";
 import { findSlideSections, updateDeckTitle, withoutScripts } from "./04-html-extraction.mjs";
 import { createIconVocabulary, buildDeckIconMap, applySlideMonochrome } from "./05-icons.mjs";
+import { withScreenshotStyle, sizeScreenshotRows, screenshotBand, isLoneScreenshot } from "./screenshot-row.mjs";
 import { groupImageRows, groupQrRows, groupActionBlocks, loadCompilerSvgSanitiser, renderBlock, renderBlocks, renderMediaBlocks } from "./06-block-renderers.mjs";
 import { renderLicenseBody } from "./08-source-adapters.mjs";
+import { withColumnWidth } from "./narrow-columns.mjs";
 import { pollFrameEligible, renderPollFrame } from "./poll-frame.mjs";
 import { buildSlideScriptPayload, renderSlideScriptTag } from './slide-script.mjs';
 import { instantSlideRuntimeSource, instantSlideStyles } from '../../assets/runtime/instant-slide.js';
-import { keepLastTwoWordsTogether, keepStatementLastWordsTogether } from "./no-lone-word.mjs";
+import { keepLastTwoWordsTogether, keepStatementLastWordsTogether, tieShortWords } from "./no-lone-word.mjs";
 import { slotCompositionFor, renderSlotComposition } from "./slot-composition.mjs";
+import { plainInlineText } from "./00-inline-render.mjs";
 
 // =============================================================================
 // 7. Slide & presentation assembly — renderModelSlides, template splice (buildDeckHtmlFromModel)
@@ -45,16 +50,20 @@ function modelHasCodeBlock(value, language, seen = new Set()) {
 // There is no third form. The compact kicker-title header is abolished (ADR-0023 §2: "the title is
 // never demoted to a kicker"; ADR-0005: no duplicated information) — the mono .kicker carries the
 // SECTION name and nothing else, so a kicker can never repeat the slide title.
+//
+// A title (and the kicker) carries the same inline formatting as body text — **bold**, *italic*,
+// `code`, ==mark==, links — through renderInline, which escapes first and emits only its own tags.
 function renderSlideHead({ title, kicker, showTitle, hidden }) {
-  const safeTitle = escapeHtml(String(title ?? ""));
+  const safeTitle = renderInline(String(title ?? ""));
   if (hidden) {
     return `<header class="slide-head slide-head-quiet"><h1 class="sr-only">${safeTitle}</h1></header>\n`;
   }
-  const kickerHtml = kicker ? `<p class="kicker">${escapeHtml(kicker)}</p>` : "";
+  const kickerHtml = kicker ? `<p class="kicker">${renderInline(String(kicker))}</p>` : "";
   // ADR-0028 §10 (and its 2026-09-28 amendment): a painted title never ends on one word alone —
   // the compiler joins its last two words with a no-break space (no-lone-word.mjs); CSS
-  // `text-wrap: pretty` is the other half. The nav-only (sr-only) title above is left verbatim.
-  const titleHtml = showTitle ? `<h1>${keepLastTwoWordsTogether(safeTitle)}</h1>` : "";
+  // `text-wrap: pretty` is the other half. ADR-0033 §7: short words (a, the, of ...) are bound to the
+  // next word as well (tieShortWords). The nav-only (sr-only) title above is left verbatim.
+  const titleHtml = showTitle ? `<h1>${tieShortWords(keepLastTwoWordsTogether(safeTitle))}</h1>` : "";
   return (kickerHtml || titleHtml) ? `<header class="slide-head">${kickerHtml}${titleHtml}</header>\n` : "";
 }
 
@@ -85,6 +94,9 @@ function renderSlideContent(slide, deckUsed, brandLogoColour = "unified") {
         sourceHtml = `\n<p class="slide-source">${sourceBlocks.map((b) => renderInline(b.text ?? "")).join("<br>")}</p>`;
       }
     }
+    // ADR-0033 §4: mark the blocks a two-or-three screenshot row applies to with the slide's
+    // treatment (window frames by default, or fanned); the row is sized after the title is placed.
+    if (!usesHtmlBody) bodyBlocks = withScreenshotStyle(bodyBlocks, slide.screenshotStyle || "frames");
     // ADR-0023 §3 (Dominik's pick B2) — THE MEDIA SLOT. Five branches used to live here
     // (cardsMediaSplit, listVisual, copyVisual, timelineVisual, mediaSplit), each re-deciding
     // "media beside copy" with its own trigger, wrapper and stylesheet. They are now ONE
@@ -119,6 +131,48 @@ function renderSlideContent(slide, deckUsed, brandLogoColour = "unified") {
       const hasListBlock = bodyBlocks.some((b) => b && (b.type === "feature-list" || b.type === "list"));
       stmtListLayout = hasPara && hasListBlock;
     }
+    // The title flags below decide the left rail, and the rail decides how wide a column row can be
+    // (ADR-0033 §5, narrow columns), so they are read BEFORE the body renders. They depend on the
+    // slide, never on the rendered body.
+    const blocksHaveHeading = Array.isArray(slide.blocks)
+      && slide.blocks.some((b) => b && typeof b === "object" && (b.type === "heading" || b.type === "title"));
+    const slideTitle = String(slide.title ?? "");
+    const showTitle = !usesHtmlBody && !blocksHaveHeading && slideTitle.trim() !== "";
+    const layout = layoutSlug;
+    // ADR-0023 §2: THE TITLE IS NEVER DEMOTED TO A KICKER. The compact eyebrow (SECTION · Title)
+    // that cards, copy-visual and the carousel parent used to emit duplicated the slide title on
+    // the kicker line — ADR-0005 "no duplicated information", and the mono kicker is reserved for
+    // the SECTION name. Those layouts now take the `top` regime declared in the registry.
+    // `{title=compact}` survives as an accepted token (old decks must not start warning) but is
+    // no longer a distinct treatment: it renders as the layout's own regime.
+    //
+    // QUOTE/COMPARE DEFAULT = NO TITLE DRAWN (ADR-0005; the registry's `hidden` regime). The slide
+    // is the quote + attribution, full-bleed; the heading is NAV-ONLY (an sr-only h1 so
+    // overview/nav fallbacks that read h1 still work). `{title=show}` opts the heading back in.
+    // Hide the on-slide heading (nav-only sr-only h1) when:
+    //   • the layout's registry regime is `hidden` (quote, image-quote, compare), unless {title=show}, OR
+    //   • {notitle} / {title=off} is set on the slide — the headline case is the title-less
+    //     STATEMENT (full-bleed statement, heading nav-only). {title=show} still wins.
+    const hideByQuoteDefault = titleRegimeForLayout(layout) === "hidden" && slide.titleMode !== "show";
+    const hideByNotitle = slide.noTitle === true && slide.titleMode !== "show";
+    // Task 3 (Wave 1): frame.title drives placement/visibility as an ADDITIONAL override on top of
+    // the layout defaults. `frame.title === "off"` hides the title (same as hideByNotitle). `"side"`
+    // forces the sidebar rail regardless of layout (wins over quote/notitle defaults — author
+    // explicitly asked for it). `"top"` falls through to the existing logic.
+    const frameTitle = slide.frame?.title ?? "top";
+    const authorForcesRail = frameTitle === "side";
+    // 2026-07-08: an explicit {title=top} shows the title too — same override as side.
+    const authorForcesTop = slide.frameTitleExplicit === true && frameTitle === "top";
+    const hideTitleByFrame = frameTitle === "off" && slide.titleMode !== "show";
+    // Narrow columns: the title's placement without the statement-promotion case (a list or icon-row
+    // slide never promotes its title), so the body renderer knows how wide its columns are.
+    const columnTitlePlacement = titlePlacementFor({
+      layout,
+      attrs: { titletop: slide.titleTop === true, split: slide.split || "" },
+      frameTitle,
+      frameTitleExplicit: slide.frameTitleExplicit === true,
+      titleHidden: !authorForcesRail && !authorForcesTop && (hideByQuoteDefault || hideByNotitle || hideTitleByFrame) && showTitle,
+    });
     let bodyHtml;
     if (stmtListLayout) {
       const paraBlocks = bodyBlocks.filter((b) => b && b.type === "paragraph");
@@ -173,7 +227,12 @@ function renderSlideContent(slide, deckUsed, brandLogoColour = "unified") {
         ? withoutScripts(slide.html)
         : layoutSlug === "media"
           ? renderMediaBlocks(bodyBlocks, slide.body || "", deckUsed, frameIcons)
-          : renderBlocks(bodyBlocks, slide.body || "", deckUsed, frameIcons);
+          : renderBlocks(
+            // ADR-0033 §5: hand the column blocks their available width so they can change shape.
+            (layoutSlug === "list" || layoutSlug === "iconrow")
+              ? withColumnWidth(bodyBlocks, { enabled: slide.narrowColumns !== false, titlePlacement: columnTitlePlacement })
+              : bodyBlocks,
+            slide.body || "", deckUsed, frameIcons);
     }
     bodyHtml += sourceHtml;
     // Task 7 — slide-level monochrome coherence. Every icon this slide renders is now in bodyHtml
@@ -193,36 +252,6 @@ function renderSlideContent(slide, deckUsed, brandLogoColour = "unified") {
     // as the live projection replaces it: the options are IN the frame, so keeping the list too
     // would print them twice. The runtime mounts its live display over this same frame.
     if (pollFrameEligible(slide)) bodyHtml = renderPollFrame(slide.poll, { title: slide.title });
-    const blocksHaveHeading = Array.isArray(slide.blocks)
-      && slide.blocks.some((b) => b && typeof b === "object" && (b.type === "heading" || b.type === "title"));
-    const slideTitle = String(slide.title ?? "");
-    const showTitle = !usesHtmlBody && !blocksHaveHeading && slideTitle.trim() !== "";
-    const layout = layoutSlug;
-    // ADR-0023 §2: THE TITLE IS NEVER DEMOTED TO A KICKER. The compact eyebrow (SECTION · Title)
-    // that cards, copy-visual and the carousel parent used to emit duplicated the slide title on
-    // the kicker line — ADR-0005 "no duplicated information", and the mono kicker is reserved for
-    // the SECTION name. Those layouts now take the `top` regime declared in the registry.
-    // `{title=compact}` survives as an accepted token (old decks must not start warning) but is
-    // no longer a distinct treatment: it renders as the layout's own regime.
-    //
-    // QUOTE/COMPARE DEFAULT = NO TITLE DRAWN (ADR-0005; the registry's `hidden` regime). The slide
-    // is the quote + attribution, full-bleed; the heading is NAV-ONLY (an sr-only h1 so
-    // overview/nav fallbacks that read h1 still work). `{title=show}` opts the heading back in.
-    // Hide the on-slide heading (nav-only sr-only h1) when:
-    //   • the layout's registry regime is `hidden` (quote, image-quote, compare), unless {title=show}, OR
-    //   • {notitle} / {title=off} is set on the slide — the headline case is the title-less
-    //     STATEMENT (full-bleed statement, heading nav-only). {title=show} still wins.
-    const hideByQuoteDefault = titleRegimeForLayout(layout) === "hidden" && slide.titleMode !== "show";
-    const hideByNotitle = slide.noTitle === true && slide.titleMode !== "show";
-    // Task 3 (Wave 1): frame.title drives placement/visibility as an ADDITIONAL override on top of
-    // the layout defaults. `frame.title === "off"` hides the title (same as hideByNotitle). `"side"`
-    // forces the sidebar rail regardless of layout (wins over quote/notitle defaults — author
-    // explicitly asked for it). `"top"` falls through to the existing logic.
-    const frameTitle = slide.frame?.title ?? "top";
-    const authorForcesRail = frameTitle === "side";
-    // 2026-07-08: an explicit {title=top} shows the title too — same override as side.
-    const authorForcesTop = slide.frameTitleExplicit === true && frameTitle === "top";
-    const hideTitleByFrame = frameTitle === "off" && slide.titleMode !== "show";
     // 2026-07-08: a BODYLESS {statement} slide — the heading IS the statement. Promote the
     // title text into the body as the statement paragraph (full-width, big serif via
     // .layout-statement > p) and demote the heading to nav-only (sr-only h1), so it renders
@@ -232,7 +261,7 @@ function renderSlideContent(slide, deckUsed, brandLogoColour = "unified") {
     const statementFromTitle = layout === "statement" && showTitle
       && (bodyHtml.trim() === "" || bodyHtml === "<p></p>")
       && !authorForcesRail && !authorForcesTop && slide.titleMode !== "show";
-    if (statementFromTitle) bodyHtml = `<p>${escapeHtml(slideTitle)}</p>`;
+    if (statementFromTitle) bodyHtml = `<p>${renderInline(slideTitle)}</p>`;
     // `{titletop}` is a placement override, not authored body content: keep the promoted statement
     // paragraph, but draw its title at the requested top position instead of making it nav-only.
     const hidePromotedStatementTitle = statementFromTitle && slide.titleTop !== true;
@@ -252,11 +281,17 @@ function renderSlideContent(slide, deckUsed, brandLogoColour = "unified") {
     // empty (still in the slide's colour) when it does not. No sidebar: a painted title goes to the
     // top and the statement runs the full width; a slide without a painted title is unchanged.
     const statementLook = layout === "statement" ? slide.statementOptions ?? null : null;
-    const titlePlacement = statementLook?.sidebar === "on"
+    let titlePlacement = statementLook?.sidebar === "on"
       ? { mode: "left", split: placedTitle.mode === "left" && placedTitle.split ? placedTitle.split : (slide.split || "35") }
       : statementLook?.sidebar === "off"
         ? { mode: hideTitleByLayout ? "hidden" : "top", split: "" }
         : placedTitle;
+    // ADR-0033 §4: a slide whose only body is ONE screenshot (a corner QR aside) beside a left rail
+    // takes the base rail (26cqw, no data-split) instead of the stamped 35%, so the picture gets the
+    // width. An authored {split=…} still wins: it is the only thing that leaves `slide.split` set.
+    if (titlePlacement.mode === "left" && !slide.split && !usesHtmlBody && isLoneScreenshot(bodyBlocks)) {
+      titlePlacement = { ...titlePlacement, split: "" };
+    }
     // 2026-07-08: the blue "sidebar" panel is retired — frame.title === "side" now renders the
     // PLAIN left rail (data-title-layout="left" only). Legacy {titlestyle=sidebar} still stamps
     // the attr, but no CSS paints it.
@@ -269,6 +304,11 @@ function renderSlideContent(slide, deckUsed, brandLogoColour = "unified") {
     });
     if (showTitle && !hideTitleByLayout && bodyHtml === "<p></p>") bodyHtml = "";
     if (hideTitleByLayout && bodyHtml === "<p></p>") bodyHtml = "";
+    // ADR-0033 §4: size any marked screenshot row from the band this slide leaves it.
+    bodyHtml = sizeScreenshotRows(bodyHtml, screenshotBand({
+      titleMode: titlePlacement.mode, split: titlePlacement.split, title: slideTitle,
+      titleShown: showTitle && !hideTitleByLayout
+    }));
     // QR overhaul (refinement 6, 2026-06-09): a corner QR is pinned to the BOTTOM-LEFT of the
     // SLIDE, not placed in the content flow. Pull any `.slide-qr-corner` figures OUT of the body and
     // emit them as direct children of the <section> (siblings of .slide-content), so they are not
@@ -381,6 +421,11 @@ function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = n
     }
     const accentStyle = styleDeclarations.length ? ` style="${styleDeclarations.join("; ")}"` : "";
     const title = slide.navTitle || slide.title || id;
+    // data-nav-title keeps the outline heading as written (the phone text view renders its inline
+    // formatting). Where that heading carries inline markers, data-nav-label carries it as plain
+    // text for the places that show a title as text (presenter outline and Next label, overview).
+    const navLabel = plainInlineText(title);
+    const navLabelAttr = navLabel !== String(title).replace(/\s+/g, " ").trim() ? ` data-nav-label="${escapeHtml(navLabel)}"` : "";
     const section = slide.section || "";
     const subsection = slide.subsection || "";
     const role = slide.role || "content";
@@ -392,6 +437,11 @@ function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = n
     // model channel. HTML escaping preserves the JSON bytes while dataset.poll decodes entities.
     const pollAttr = slide.poll && typeof slide.poll === "object"
       ? ` data-poll="${escapeHtml(JSON.stringify(slide.poll))}"`
+      : "";
+    // Ticket 04: the slide's own reactions for the audience bar and the presenter chip (a JSON list
+    // of stored ids, [] for off); a slide with the standard set carries no attribute.
+    const reactionsAttr = Array.isArray(slide.reactions)
+      ? ` data-reactions="${escapeHtml(JSON.stringify(slide.reactions))}"`
       : "";
 
     // Container-mode renderings (ADR-0007, Task 6): a section carrying a grid/contents container
@@ -443,7 +493,7 @@ function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = n
       const contentHtml = `<div class="slide-content layout-carousel">
 ${headHtml}<div class="card-gallery carousel" data-exclusive>${subHtml}</div>${sourceHtml}
   </div>`;
-      return `<section class="slide" data-id="${escapeHtml(id)}" data-section="${escapeHtml(section)}" data-subsection="${escapeHtml(subsection)}" data-role="${escapeHtml(role)}" data-layout="${escapeHtml(layout)}" data-carousel data-nav-title="${escapeHtml(title)}"${titlePlacement.mode ? ` data-title-layout="${titlePlacement.mode}"` : ""}${titlePlacement.split ? ` data-split="${titlePlacement.split}"` : ""}${pollAttr}${authoredMode ? ` data-mode="${escapeHtml(authoredMode)}"` : ""}${preparesFor ? ` data-prepares-for="${escapeHtml(preparesFor)}"` : ""}${slide.noStep ? " data-nostep" : ""}${slide.noValues ? " data-novalues" : ""}${slide.fontBody ? ` data-font-body="${slide.fontBody}"` : ""}${slide.fontTitle ? ` data-font-title="${slide.fontTitle}"` : ""}${accentStyle}>
+      return `<section class="slide" data-id="${escapeHtml(id)}" data-section="${escapeHtml(section)}" data-subsection="${escapeHtml(subsection)}" data-role="${escapeHtml(role)}" data-layout="${escapeHtml(layout)}" data-carousel data-nav-title="${escapeHtml(title)}"${navLabelAttr}${titlePlacement.mode ? ` data-title-layout="${titlePlacement.mode}"` : ""}${titlePlacement.split ? ` data-split="${titlePlacement.split}"` : ""}${pollAttr}${reactionsAttr}${authoredMode ? ` data-mode="${escapeHtml(authoredMode)}"` : ""}${preparesFor ? ` data-prepares-for="${escapeHtml(preparesFor)}"` : ""}${slide.noStep ? " data-nostep" : ""}${slide.noValues ? " data-novalues" : ""}${slide.fontBody ? ` data-font-body="${slide.fontBody}"` : ""}${slide.fontTitle ? ` data-font-title="${slide.fontTitle}"` : ""}${accentStyle}>
   ${contentHtml}
   ${notes ? `<aside class="notes">${notes}</aside>` : ""}
 </section>`;
@@ -476,7 +526,7 @@ ${headHtml}<div class="card-gallery carousel" data-exclusive>${subHtml}</div>${s
       const linksHtml = renderLinksBlock(deckLinks);
       contentHtml = contentHtml.replace(/(\s*<\/div>\s*)$/, `\n${linksHtml}$1`);
     }
-    return `<section class="slide" data-id="${escapeHtml(id)}" data-section="${escapeHtml(section)}" data-subsection="${escapeHtml(subsection)}" data-role="${escapeHtml(role)}" data-layout="${escapeHtml(layout)}" data-nav-title="${escapeHtml(title)}"${pollAttr}${authoredMode ? ` data-mode="${escapeHtml(authoredMode)}"` : ""}${preparesFor ? ` data-prepares-for="${escapeHtml(preparesFor)}"` : ""}${slide.noStep ? " data-nostep" : ""}${slide.noValues ? " data-novalues" : ""}${slide.fontBody ? ` data-font-body="${slide.fontBody}"` : ""}${slide.fontTitle ? ` data-font-title="${slide.fontTitle}"` : ""}${slide.countdownSeconds ? ` data-countdown="${slide.countdownSeconds}" data-countdown-style="${slide.countdownStyle || "digits"}"` : ""}${slide.sectionTimerSeconds ? ` data-section-timer="${slide.sectionTimerSeconds}" data-section-timer-show="${slide.sectionTimerShow || "presenter"}"` : ""}${slide.remindText ? ` data-remind="${escapeHtml(slide.remindText)}"${slide.remindAtMinutes != null ? ` data-remind-at="${slide.remindAtMinutes}"` : ""}${slide.remindInSeconds != null ? ` data-remind-in="${slide.remindInSeconds}"` : ""}` : ""}${titlePlacement.mode ? ` data-title-layout="${titlePlacement.mode}"` : ""}${effectiveTitleStyle ? ` data-title-style="${escapeHtml(effectiveTitleStyle)}"` : ""}${titlePlacement.split ? ` data-split="${titlePlacement.split}"` : ""}${containerAttrs}${slideStyle}>
+    return `<section class="slide" data-id="${escapeHtml(id)}" data-section="${escapeHtml(section)}" data-subsection="${escapeHtml(subsection)}" data-role="${escapeHtml(role)}" data-layout="${escapeHtml(layout)}" data-nav-title="${escapeHtml(title)}"${navLabelAttr}${pollAttr}${reactionsAttr}${authoredMode ? ` data-mode="${escapeHtml(authoredMode)}"` : ""}${preparesFor ? ` data-prepares-for="${escapeHtml(preparesFor)}"` : ""}${slide.noStep ? " data-nostep" : ""}${slide.noValues ? " data-novalues" : ""}${slide.fontBody ? ` data-font-body="${slide.fontBody}"` : ""}${slide.fontTitle ? ` data-font-title="${slide.fontTitle}"` : ""}${slide.countdownSeconds ? ` data-countdown="${slide.countdownSeconds}" data-countdown-style="${slide.countdownStyle || "digits"}"` : ""}${slide.sectionTimerSeconds ? ` data-section-timer="${slide.sectionTimerSeconds}" data-section-timer-show="${slide.sectionTimerShow || "presenter"}"` : ""}${slide.remindText ? ` data-remind="${escapeHtml(slide.remindText)}"${slide.remindAtMinutes != null ? ` data-remind-at="${slide.remindAtMinutes}"` : ""}${slide.remindInSeconds != null ? ` data-remind-in="${slide.remindInSeconds}"` : ""}` : ""}${titlePlacement.mode ? ` data-title-layout="${titlePlacement.mode}"` : ""}${effectiveTitleStyle ? ` data-title-style="${escapeHtml(effectiveTitleStyle)}"` : ""}${titlePlacement.mode === "top" && slide.titleLook ? ` data-title-look="${slide.titleLook}"${slide.titleLookPlace ? ` data-title-look-at="${slide.titleLookPlace}"` : ""}` : ""}${titlePlacement.split ? ` data-split="${titlePlacement.split}"` : ""}${containerAttrs}${slideStyle}>
   ${contentHtml}
 ${cornerQrHtml ? `  ${cornerQrHtml}\n` : ""}${cornerSectionHtml ? `  ${cornerSectionHtml}\n` : ""}  ${notes ? `<aside class="notes">${notes}</aside>` : ""}
 </section>`;
@@ -517,6 +567,8 @@ export async function buildDeckHtmlFromModel(model) {
   html = html.replace("<!--STAGE_FIT_RUNTIME-->", () => stageFitRuntimeSource);
   html = html.replace("<!--POLL_EXTENDED_RUNTIME-->", () => pollExtendedSource);
   html = html.replace("<!--POLL_DISPLAY_RUNTIME-->", () => pollDisplayRuntimeSource);
+  // ADR-0032 ticket 05: the presenter's board panel (its pure model, the controller and the panel).
+  html = html.replace("<!--BOARD_PANEL_RUNTIME-->", () => boardPanelRuntimeSource(boardPanelModelSource()));
   // Inline the vendored markmap runtime (d3 + markmap-view + markmap-lib) for the {mindmap} layout
   // (ADR-0005). One top-level <script> so each vendor IIFE binds to window; runs before the main
   // runtime. No CDN — the deck stays a self-contained single HTML file. A REPLACER FUNCTION is used

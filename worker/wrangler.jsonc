@@ -8,12 +8,16 @@
     "bindings": [
       { "name": "LIVE_SESSIONS", "class_name": "LiveSession" },
       { "name": "SESSION_REGISTRY", "class_name": "SessionRegistry" },
-      { "name": "SHARED_TALKS", "class_name": "SharedTalk" }
+      { "name": "SHARED_TALKS", "class_name": "SharedTalk" },
+      { "name": "RUN_SHARES", "class_name": "RunShare" },
+      { "name": "RUN_PREWORK", "class_name": "RunPrework" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["LiveSession", "SessionRegistry"] },
-    { "tag": "v2", "new_sqlite_classes": ["SharedTalk"] }
+    { "tag": "v2", "new_sqlite_classes": ["SharedTalk"] },
+    { "tag": "v3", "new_sqlite_classes": ["RunShare"] },
+    { "tag": "v4", "new_sqlite_classes": ["RunPrework"] }
   ],
   "observability": { "enabled": true }
 }

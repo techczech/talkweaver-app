@@ -333,7 +333,7 @@ function harness({ baseUrl = 'http://worker.test/', worker = fakeWorker(), root 
   assert.equal(pushes.length, 2)
   assert.equal(pushes[1].revision, 2)
   assert.deepEqual(pushes[1].slides, readRevisionSlides(path, shareId, 1), 'the slide text of the confirmed revision, from disk')
-  assert.match(pushes[1].html, /shared text r1\|proposals=false/, 'her page rebuilt from the confirmed revision with proposals off')
+  assert.match(pushes[1].html, /shared text r1\|proposals=false/, 'their page rebuilt from the confirmed revision with proposals off')
   assert.equal(pushes[1].html.includes('NEWER'), false, 'never the current outline')
   // With the revision file gone the toggle refuses rather than falling back to the outline.
   rmSync(join(path, '..', 'feedback'), { recursive: true, force: true })

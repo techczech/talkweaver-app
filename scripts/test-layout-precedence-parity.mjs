@@ -19,7 +19,8 @@ function compilerAuthoredLayout(line) {
   if (attrs.contrast != null && attrs.contrast !== true) return 'contrast'
   if (attrs.equation != null && attrs.equation !== true) return 'equation'
   if (parseGridDims(attrs.blocks)) return 'grid'
-  if (attrs.cards != null && attrs.cards !== true) return 'cards'
+  // ADR-0032: {cards=<number>} is a board's cards-per-phone setting, not the cards layout.
+  if (attrs.cards != null && attrs.cards !== true && !/^\d+$/.test(String(attrs.cards))) return 'cards'
   return null
 }
 

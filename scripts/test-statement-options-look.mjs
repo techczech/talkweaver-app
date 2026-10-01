@@ -363,7 +363,7 @@ try {
     '| Expected outputs | Tells Codex what to create |', '| Things to avoid | Reduces accidental changes |', '| Privacy or sharing notes | Makes handling expectations explicit |', '',
     '### It is widely recognized that agents as productivity tools are the main source of innovation and productivity growth.', '{layout=media}{id=mglz1}', '',
     '![Agents as productivity tools drive innovation and productivity growth](picture.png)', '',
-    // The runtime's check on the join (slide-fit.js settleJoin): in the ~14ch rail, keeping
+    // The runtime's check on the join (slide-fit.js settleTitle): in the ~14ch rail, keeping
     // "agent (numbered)" together would push "an" onto a line of its own, so the join is released.
     '### How to work with an agent (numbered)', '{id=released}{numbered}', '',
     '- Describe the outcome, not the steps', '- Give it the context a new colleague would need', '- Let it work, then verify the result end to end', '',
@@ -374,14 +374,17 @@ try {
   const talkModel = await prepareSource(talkPath, talkSource, 'lone-word', statSync(talkPath))
   const talkHtml = join(talkDir, 'lone-word.html')
   writeFileSync(talkHtml, talkModel.fullHtml, 'utf8')
-  const FIXED = ['3b2vn', 'k0a03', 'zci4w', 'examples-before-codex', 'jrs5j', '2h226', '379cn', 'cvuj6', 'mglz1']
+  const FIXED = ['3b2vn', 'k0a03', 'examples-before-codex', 'jrs5j', '2h226', '379cn', 'cvuj6', 'mglz1']
   const AS_AUTHORED = ['ww85o', 'hn6ti']
   const RELEASED = ['released']
+  // ADR-0033 §6: a title wider than its column drops the last-two-words join and wraps at normal size
+  // ("Agent expectation": the 17-character pair is wider than the ~14ch rail) instead of shrinking.
+  const WRAPPED = ['zci4w']
   for (const viewport of [{ width: 1280, height: 720 }, { width: 1920, height: 1080 }]) {
     const talkPage = await browser.newPage({ viewport })
     await talkPage.goto(`file://${talkHtml}?audience=1`, { waitUntil: 'load' })
     await talkPage.evaluate(() => document.fonts?.ready)
-    for (const id of [...FIXED, ...AS_AUTHORED, ...RELEASED]) {
+    for (const id of [...FIXED, ...AS_AUTHORED, ...RELEASED, ...WRAPPED]) {
       await talkPage.evaluate(() => { location.hash = 'after' })
       await talkPage.waitForFunction(() => document.querySelector('.stage > .slide.active')?.dataset.id === 'after')
       await talkPage.evaluate((target) => { location.hash = target }, id)
@@ -410,13 +413,16 @@ try {
           if (row) row.text += ch.c
           else rows.push({ mid: ch.mid, text: ch.c })
         }
-        return { lines: rows.sort((a, b) => a.mid - b.mid).map((row) => row.text.replace(/\u00a0/g, ' ').trim()).filter(Boolean), html: el.innerHTML, join: el.dataset.nbJoin || '' }
+        return { lines: rows.sort((a, b) => a.mid - b.mid).map((row) => row.text.replace(/\u00a0/g, ' ').trim()).filter(Boolean), html: el.innerHTML, join: el.dataset.nbJoin || '', fontSize: el.style.fontSize }
       })
       const key = `${viewport.width}x${viewport.height} ${id}`
       const oneWord = text.lines.map((line) => text.lines.length > 1 && !/\s/.test(line))
       if (FIXED.includes(id)) {
         check(!oneWord[oneWord.length - 1], `${key}: ends on at least two words (${JSON.stringify(text.lines)})`)
         check(!oneWord.some(Boolean), `${key}: no line holds a single word (${JSON.stringify(text.lines)})`)
+      } else if (WRAPPED.includes(id)) {
+        check(text.join === 'released', `${key}: the join is dropped for a title wider than its column (${JSON.stringify(text.lines)})`)
+        check(text.lines.length === 2 && text.fontSize === '', `${key}: wraps in two lines at normal size (${JSON.stringify(text.lines)}, inline size "${text.fontSize}")`)
       } else if (RELEASED.includes(id)) {
         check(text.join === 'released', `${key}: the runtime releases a join that would strand a word (${JSON.stringify(text.lines)})`)
         check(!oneWord.slice(0, -1).some(Boolean), `${key}: no line inside the title holds a single word (${JSON.stringify(text.lines)})`)

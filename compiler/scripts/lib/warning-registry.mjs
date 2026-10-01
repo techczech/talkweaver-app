@@ -10,14 +10,27 @@ const warning = (id, severity, message, remedy, surfaces = ['doctor']) => ({
 export const WARNING_REGISTRY = [
   warning('accent-unknown', 'warning', 'Unknown accent colour: {payload}.', 'Choose a named accent from Deck design.'),
   warning('beats-records-mismatch', 'error', 'Presentation sequence and slide records disagree at {payload}.', 'Rebuild the deck and inspect the affected slide structure.'),
+  warning('board-columns-few', 'warning', 'Board slide {1} has {2} column(s); a board needs at least two.', 'Add columns as list items under the board’s heading, two to four.', ['strip-badge', 'inspector', 'doctor']),
+  warning('board-columns-many', 'warning', 'Board slide {1} has {2} columns; a board shows only the first four.', 'Keep at most four columns, one list item each.', ['strip-badge', 'inspector', 'doctor']),
+  warning('board-column-name-long', 'warning', 'A column name on board slide {1} is longer than 16 characters: {2}.', 'Shorten the column name: it is a tab on the phone.', ['strip-badge', 'inspector', 'doctor']),
+  warning('board-column-hint-long', 'warning', 'The hint for column {2} on board slide {1} is longer than 60 characters.', 'Shorten the hint to one line of 60 characters or fewer.', ['strip-badge', 'inspector', 'doctor']),
+  warning('board-instructions-long', 'warning', 'The instructions on board slide {1} are {2} characters; the most is 160.', 'Shorten the paragraph under the board’s heading.', ['strip-badge', 'inspector', 'doctor']),
+  warning('board-example-long', 'warning', 'The example card on board slide {1} is {2} characters; the most is 140.', 'Shorten the “>” example line.', ['strip-badge', 'inspector', 'doctor']),
+  warning('board-live-limit', 'error', 'Board slide {1}: the {2} is {3} characters; a live session refuses the whole board above {4}.', 'Shorten it below the limit before going live (the Inspector’s counters show the recommended lengths).', ['strip-badge', 'inspector', 'doctor']),
+  warning('board-setting-invalid', 'warning', 'Board slide {1} has a setting that could not be read: {2}; the default applies.', 'Choose the setting in the Inspector’s Board section.', ['strip-badge', 'inspector', 'doctor']),
   warning('bg-unknown', 'warning', 'Unknown background treatment: {payload}.', 'Choose a registered background treatment.'),
   warning('blocks-unparsed', 'warning', 'The block grid value could not be read: {payload}.', 'Use a rows-by-columns value such as 2x3.'),
   warning('cards-iconlist-alias', 'hint', 'Slide {payload} writes {iconlist} on a cards slide; it is read as the cards Icons option.', 'Write {icons} on the cards slide, or leave the alias — both render the same icons.', ['inspector', 'doctor']),
+  warning('carousel-empty', 'warning', 'Carousel slide {payload} has no content to step through; its title is shown instead.', 'Put one block per step under the heading, or use #### headings for each step.', ['strip-badge', 'inspector', 'doctor']),
   warning('carousel-on-sections', 'warning', 'Carousel mode cannot sequence section node {payload}.', 'Apply carousel to child slides rather than the section heading.'),
   warning('chart-unparsed', 'warning', 'A chart line could not be parsed: {payload}.', 'Rewrite the line using the documented chart syntax.'),
   warning('colour-unknown', 'warning', 'Unknown deck title colour: {payload}.', 'Choose a title colour offered by Deck settings.'),
   warning('code-too-long', 'warning', 'Code on slide {payload} cannot fit at the 31px type floor.', 'Shorten the code, split it across slides or move detail into notes.', ['strip-badge', 'inspector', 'doctor']),
+  warning('title-look-unknown', 'warning', 'Unknown deck title look: {payload}.', 'Choose a title look offered by Deck settings: default, kicker, label or tab.'),
+  warning('title-look-at-unknown', 'warning', 'Unknown kicker placement: {payload}.', 'Choose normal or edge.'),
   warning('claim-style-unknown', 'warning', 'Unknown deck claim treatment: {payload}.', 'Choose a claim treatment offered by Deck settings.'),
+  warning('screenshot-list-unknown', 'warning', 'Unknown deck arrangement for screenshots beside a list: {payload}.', 'Choose beside or stacked.'),
+  warning('screenshot-style-unknown', 'warning', 'Unknown deck screenshot treatment: {payload}.', 'Choose a screenshot treatment offered by Deck settings.'),
   warning('compare-extra-groups', 'warning', 'Compare slide “{payload}” has more than two groups.', 'Keep two comparison groups or choose a multi-group layout.'),
   warning('conceptmap-unparsed', 'warning', 'A concept-map line could not be parsed: {payload}.', 'Rewrite the line using the documented concept-map syntax.'),
   warning('contrast-groups-count', 'warning', 'Contrast slide {payload} does not have the expected group count.', 'Use two or three groups, or choose a different layout.'),
@@ -25,7 +38,7 @@ export const WARNING_REGISTRY = [
   warning('countdown-unparsed', 'warning', 'Countdown duration could not be read: {payload}.', 'Use a duration such as 5m or 30s.'),
   warning('deck-flag-unknown', 'warning', 'Deck setting “{1}” could not be read as on or off: {2}.', 'Write true or false, or clear the setting to take the default.'),
   warning('divider-default-suppressed-by-tokens', 'hint', 'Slide {1} kept its own triggers ({2}) instead of becoming a section divider.', 'Remove those triggers if this heading should divide the talk.'),
-  warning('duplicate-slide-id-merged', 'warning', 'Duplicate slide identity was merged into {payload}.', 'Give each slide a unique stamped id before reusing it.'),
+  warning('duplicate-slide-id-merged', 'warning', 'A slide carried several ids: {payload}.', 'The kept id is the one the slide’s history and recordings use; delete the other {id=…} if it is still there.'),
   warning('duplicate-slide-id', 'error', 'Duplicate slide id: {payload}.', 'Give each slide a unique stamped id.'),
   warning('duration-unparsed', 'warning', 'Talk duration could not be read: {payload}.', 'Use a duration in minutes or a supported time format.'),
   warning('font-unknown', 'warning', 'Unknown deck font: {payload}.', 'Choose a font offered by Deck design.'),
@@ -49,9 +62,26 @@ export const WARNING_REGISTRY = [
   warning('numbered-unknown', 'warning', 'Unknown number style: {payload}.', 'Choose a registered number style: square, plain or styled.'),
   warning('palette-unknown', 'warning', 'Unknown deck palette: {payload}.', 'Choose a palette offered by Deck settings.'),
   warning('poll-authoring-invalid', 'warning', 'Invalid poll on slide {1}: {2}', 'Correct the poll type, labels or options before collecting responses.'),
-  warning('poll-type-unknown', 'warning', 'Unknown poll type: {payload}.', 'Choose single, multiple, open, ranking, rating or categorisation for the poll.'),
+  warning('poll-type-unknown', 'warning', 'Unknown poll type: {payload}.', 'Choose single, multiple, open, ranking, rating, categorisation or board for the poll.'),
   warning('poll-limit-invalid', 'error', 'Poll limit is invalid: {payload}.', 'Set a positive whole number; selections must not exceed the number of options. Free text also accepts unlimited.', ['strip-badge', 'inspector', 'doctor']),
   warning('pollresults-unknown', 'warning', 'Unknown poll result visibility: {payload}.', 'Choose live or held for the poll results.'),
+  warning('prework-check-not-single', 'warning', 'Quick check {1} is not a single-choice poll ({2}).', 'Write {poll=single} on the quick check’s trigger line.', ['strip-badge', 'inspector', 'doctor']),
+  warning('prework-check-right-many', 'warning', 'Quick check {1} marks {2} options as right.', 'Mark exactly one option with {right}; the Inspector’s Right answer does it for you.', ['strip-badge', 'inspector', 'doctor']),
+  warning('prework-check-right-missing', 'warning', 'Quick check {1} has no right answer.', 'Choose the right answer in the Inspector, or end the right option with {right}.', ['strip-badge', 'inspector', 'doctor']),
+  warning('prework-minutes-invalid', 'warning', 'Pre-task {1} has a time that could not be read: {2}; 10 minutes applies.', 'Choose the time in the Inspector’s Pre-task section: 5, 10, 20 or 30 minutes.', ['strip-badge', 'inspector', 'doctor']),
+  warning('prework-readonly-without-task', 'warning', 'Slide {1} sets {{2}}, which applies only to a pre-task.', 'Add {task} to the slide, or remove the token.', ['strip-badge', 'inspector', 'doctor']),
+  warning('prework-right-misplaced', 'warning', 'Quick check {1} has {2} {right} marker(s) where the Inspector would not write one; they are removed from what participants see.', 'Choose the right answer in the Inspector, which writes {right} at the end of the right option.', ['strip-badge', 'inspector', 'doctor']),
+  warning('prework-kind-conflict', 'warning', 'Slide {1} is both a pre-task and a {2}; it is read as a pre-task.', 'Keep one: {task}, or the poll with its {check}.', ['strip-badge', 'inspector', 'doctor']),
+  warning('prework-results-unknown', 'warning', 'Slide {1} shows the answers of “{2}”, which is not a step of the Before the session section.', 'Choose a step in the Inspector’s Results section, or remove {results=…}.', ['strip-badge', 'inspector', 'doctor']),
+  warning('prework-section-duplicate', 'warning', 'The talk has a second pre-work section ({1}); only the first is the pre-work form.', 'Keep one {prework} section and move its steps into it.', ['strip-badge', 'inspector', 'doctor']),
+  warning('prework-section-empty', 'hint', 'The pre-work section {1} has no steps.', 'Add the steps as slides under the {prework} section.', ['inspector', 'doctor']),
+  warning('prework-token-outside', 'warning', 'Slide {1} uses {{2}}, which only means something on a step of the Before the session section.', 'Move the slide into the {prework} section, or remove the token.', ['strip-badge', 'inspector', 'doctor']),
+  warning('reactions-duplicate', 'hint', 'Slide {1} names the same reaction twice; the bar offers it once.', 'Name each reaction once.', ['strip-badge', 'inspector', 'doctor']),
+  warning('reactions-label-like-named', 'hint', 'Slide {1} has a custom reaction label spelled like the named reaction {2}; it shows as a label in words, without the icon.', 'Write the name in lower case for the named reaction with its icon, or keep the label.', ['strip-badge', 'inspector', 'doctor']),
+  warning('reactions-label-too-long', 'warning', 'A reaction label on slide {1} is longer than 40 characters; it is cut to 40.', 'Shorten the label to 40 characters or fewer.', ['strip-badge', 'inspector', 'doctor']),
+  warning('reactions-list-space', 'warning', 'No space after the comma in {reactions=…} on slide {1}: the list stopped at the space, and what follows was read as separate triggers.', 'Write the list without spaces, as {reactions=agree,disagree}; quote a label with spaces, as "Too fast".', ['strip-badge', 'inspector', 'doctor']),
+  warning('reactions-off-with-others', 'warning', 'Slide {1} turns reactions off and also names reactions; reactions stay off.', 'Write {reactions=off} on its own, or remove off.', ['strip-badge', 'inspector', 'doctor']),
+  warning('reactions-too-many', 'warning', 'Slide {1} names {2} reactions; the bar offers only the first four.', 'Keep at most four reactions on a slide.', ['strip-badge', 'inspector', 'doctor']),
   warning('quote-too-long', 'warning', 'Quote on slide {payload} cannot fit at the 31px type floor.', 'Shorten the quotation or split it across slides.', ['strip-badge', 'inspector', 'doctor']),
   warning('remind-missing-time', 'warning', 'Reminder has no usable time: {payload}.', 'Add remind-at or remind-in to the reminder.'),
   warning('remind-unparsed', 'warning', 'Reminder time could not be read: {payload}.', 'Use a supported clock time or relative duration.'),
@@ -62,6 +92,7 @@ export const WARNING_REGISTRY = [
   warning('section-only-trigger-level', 'warning', 'Trigger “{2}” only applies to ## sections, but it appears on heading level {3}.', 'Move the trigger to a ## section heading.', ['strip-badge', 'inspector', 'doctor']),
   warning('section-timer-unparsed', 'warning', 'Section timer could not be read: {payload}.', 'Use a supported duration such as 10m.'),
   warning('statement-unknown', 'warning', 'Unknown statement variant: {payload}.', 'Choose a registered statement variant.'),
+  warning('text-too-long', 'warning', 'Text on this slide cannot fit at the readable minimum.', 'Shorten it, split the slide or move detail to notes.', ['strip-badge', 'inspector', 'doctor']),
   warning('timer-threshold-clamped', 'warning', 'The deck sets “{1}” to {2} minutes, later than warn-at ({3}); it was brought back to {3}.', 'Set urgent-at below warn-at so the two thresholds do not invert.'),
   warning('timer-threshold-unreadable', 'warning', 'Presenter clock threshold “{1}” could not be read: {2}.', 'Use a whole number of minutes before the deadline.'),
   warning('title-style-unknown', 'warning', 'Unknown title slide style: {payload}.', 'Choose a title style offered by Deck settings.'),
@@ -89,7 +120,17 @@ export function formatWarning(rawWarning) {
   const message = definition.message
     .replaceAll('{payload}', payload)
     .replace(/\{(\d+)\}/g, (_match, index) => parts[Number(index) - 1] ?? '')
-  return `${message} ${definition.remedy}`.trim()
+  // text-too-long carries how much too tall the slide is at the type floor: `text-too-long:<slide>:<percent>`.
+  const tooTall = id === 'text-too-long' ? textTooTallPercent(raw) : null
+  return `${message}${tooTall ? ` Too tall by ${tooTall}%.` : ''} ${definition.remedy}`.trim()
+}
+
+/** The estimated percentage by which a `text-too-long:<slide>:<percent>` warning's text is too tall, or null. */
+export function textTooTallPercent(rawWarning) {
+  const parts = String(rawWarning).split(':')
+  if (parts[0] !== 'text-too-long') return null
+  const percent = Number(parts[parts.length - 1])
+  return parts.length > 2 && Number.isFinite(percent) && percent > 0 ? Math.round(percent) : null
 }
 
 export function warningsForSurface(rawWarnings, surface) {

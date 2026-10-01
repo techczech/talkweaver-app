@@ -5,13 +5,12 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSyn
 import { basename, join, relative, sep } from "node:path";
 import { scanFencedLines } from "./03-object-token.mjs";
 import { parseOutlineTree } from "./14-outline-tree.mjs";
+import { ID_TOKEN_RE, TRIGGER_ONLY_RE, idLineIndex, preContentWindow, resolveSlideId } from "./slide-id.mjs";
 
-export const ID_TOKEN_RE = /\{id=([A-Za-z0-9_-]+)\}/;
+// The id read rule lives in slide-id.mjs (one resolver for every reader and writer); re-exported here
+// for the ledger's existing importers.
+export { ID_TOKEN_RE, TRIGGER_ONLY_RE, idLineIndex, preContentWindow };
 export const COALESCE_WINDOW_MS = 3_600_000;
-
-// A line that is ONLY `{…}` groups — the ADR-0015 Trigger line shape. Same shape as the editor's
-// TRIGGER_LINE_RE (outliner.ts) and 12-outline-edit.mjs's TRIGGER_LINE_RE.
-export const TRIGGER_ONLY_RE = /^\s*(\{[^}]*\}\s*)+$/;
 
 // THE shared Trigger-line READ rule (id-churn hotfix, 2026-07-10). From a heading at `headingIdx`,
 // the FIRST non-blank line within [headingIdx+1, endIdx) is the heading's Trigger line iff it is a
@@ -40,19 +39,6 @@ export function triggerLineBlock(lines, headingIdx, endIdx = lines.length) {
   return { start, end };
 }
 
-// Edit-tolerant pre-content window. While a Trigger is being typed, a brace-leading line may be
-// incomplete and therefore fail TRIGGER_ONLY_RE. It still belongs to the heading prelude until the
-// first real content line (non-blank, non-Trigger-only, non-brace-leading).
-export function preContentWindow(lines, headingIdx, endIdx = lines.length) {
-  let end = headingIdx + 1;
-  while (end < endIdx) {
-    const trimmed = lines[end].trim();
-    if (trimmed !== "" && !TRIGGER_ONLY_RE.test(trimmed) && !trimmed.startsWith("{")) break;
-    end += 1;
-  }
-  return { start: headingIdx, end };
-}
-
 export function lineHasUnclosedBrace(line) {
   let depth = 0;
   for (const char of String(line)) {
@@ -60,18 +46,6 @@ export function lineHasUnclosedBrace(line) {
     else if (char === "}" && depth > 0) depth -= 1;
   }
   return depth > 0;
-}
-
-// Index of the line carrying this block's `{id=…}` — the heading itself, else its (possibly
-// blank-separated) Trigger line — or -1 when the block is unstamped. The single source of truth every
-// reader/writer shares so "is this slide stamped, and where does its id live?" always has one answer.
-export function idLineIndex(lines, headingIdx, endIdx = lines.length) {
-  if (ID_TOKEN_RE.test(lines[headingIdx])) return headingIdx;
-  const window = preContentWindow(lines, headingIdx, endIdx);
-  for (let line = window.end - 1; line > headingIdx; line -= 1) {
-    if (ID_TOKEN_RE.test(lines[line])) return line;
-  }
-  return -1;
 }
 
 // 5-char base36 id, identical recipe to the editor's {-autocomplete
@@ -132,12 +106,11 @@ export function extractIdSlides(text) {
     // NEXT block's heading, not this block's Trigger line; and a `{id=…}` may sit on the heading or on
     // a blank-separated `{…}`-only Trigger line below it (shared read rule — matches the tree parser
     // and the write path, so a blank-separated id is never missed and re-minted).
-    const idIdx = idLineIndex(lines, i, end);
-    const idMatch = idIdx >= 0 ? lines[idIdx].match(ID_TOKEN_RE) : null;
-    if (idMatch) {
+    const resolved = resolveSlideId(lines, i, end);
+    if (resolved) {
       const markdown = lines.slice(i, end).join("\n").replace(/\n+$/, "");
-      const nodeMeta = meta.get(idMatch[1]) ?? { function: "leaf", hasContent: false };
-      out.push({ id: idMatch[1], markdown, headingLine: i, function: nodeMeta.function, hasContent: nodeMeta.hasContent });
+      const nodeMeta = meta.get(resolved.id) ?? { function: "leaf", hasContent: false };
+      out.push({ id: resolved.id, markdown, headingLine: i, function: nodeMeta.function, hasContent: nodeMeta.hasContent });
     }
     i = end - 1;
   }
@@ -191,10 +164,31 @@ export function versionFileName(savedAt, talk) {
   return `${utcStamp(savedAt)}--${talk}.md`;
 }
 
+// Cross-vault provenance (several-vaults ticket 06; architecture.md invariant 1): a slide inserted
+// from another vault records the source vault's id and display name and the source slide id — and
+// who inserted it (`inserted_by`, when known) — and nothing else: no talk, no path. Written as one
+// JSON line in the version front matter.
+export function cleanOrigin(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  // Control characters and newlines collapse to one space (one front-matter line, always); each
+  // field is capped at 200 characters.
+  const str = (v) => (typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ").slice(0, 200) : "");
+  const origin = { vault_id: str(raw.vault_id), vault_name: str(raw.vault_name), slide_id: str(raw.slide_id) };
+  // Who inserted it (their display name for this vault), when they have one.
+  if (str(raw.inserted_by).trim()) origin.inserted_by = str(raw.inserted_by).trim();
+  return origin.vault_id ? origin : null;
+}
+
+function parseOrigin(value) {
+  if (!value) return null;
+  try { return cleanOrigin(JSON.parse(value)); } catch { return null; }
+}
+
 export function formatVersion({
   id, talk, outline, savedAt, sealedBy = null, lineage = null,
-  function: fn = null, hasContent = null, markdown,
+  function: fn = null, hasContent = null, origin = null, markdown,
 }) {
+  const cleanedOrigin = cleanOrigin(origin);
   const fm = [
     "---",
     `id: ${id}`,
@@ -205,6 +199,7 @@ export function formatVersion({
     ...(hasContent !== null ? [`has_content: ${hasContent}`] : []),
     ...(sealedBy ? [`sealed_by: ${sealedBy}`] : []),
     ...(lineage ? [`lineage: ${lineage}`] : []),
+    ...(cleanedOrigin ? [`origin: ${JSON.stringify(cleanedOrigin)}`] : []),
     "---",
     "",
   ];
@@ -229,6 +224,7 @@ export function parseVersion(fileText) {
     sealed: Boolean(fields.sealed_by),
     sealedBy: fields.sealed_by ?? null,
     lineage: fields.lineage ?? null,
+    origin: parseOrigin(fields.origin),
     markdown,
   };
 }
@@ -282,7 +278,9 @@ export function headVersion(vaultRoot, id) {
 
 const canon = (md) => normalizeDepth(md).replace(/\n+$/, "");
 
-export function recordOutlineSave(vaultRoot, outlinePath, content, { now = Date.now(), lineageHints = null } = {}) {
+// `originHints` (id → origin, ticket 06): the cross-vault provenance for an id's FIRST record in
+// this vault. Like lineage, it rides along when coalescing replaces the head file.
+export function recordOutlineSave(vaultRoot, outlinePath, content, { now = Date.now(), lineageHints = null, originHints = null } = {}) {
   const result = { versioned: [], coalesced: [], unchanged: [], collisions: [] };
   const slides = extractIdSlides(content);
   const counts = new Map();
@@ -305,6 +303,7 @@ export function recordOutlineSave(vaultRoot, outlinePath, content, { now = Date.
       const coalesce = Boolean(head && !head.sealed && head.talk === talk && now - head.savedAt < COALESCE_WINDOW_MS);
       // Coalescing replaces the head file, so its lineage must ride along or it is lost.
       const lineage = versions.length === 0 ? (lineageHints?.get(slide.id) ?? null) : (coalesce ? head.lineage : null);
+      const origin = versions.length === 0 ? (originHints?.get(slide.id) ?? null) : (coalesce ? head.origin : null);
       let savedAt = now;
       let file = versionFileName(savedAt, talk);
       // Appends must never overwrite an existing (possibly sealed) same-second file;
@@ -319,7 +318,7 @@ export function recordOutlineSave(vaultRoot, outlinePath, content, { now = Date.
       writeFileAtomic(
         join(dir, file),
         formatVersion({
-          id: slide.id, talk, outline: outlineRel, savedAt, lineage,
+          id: slide.id, talk, outline: outlineRel, savedAt, lineage, origin,
           function: slide.function, hasContent: slide.hasContent, markdown: slide.markdown,
         })
       );
@@ -368,6 +367,45 @@ export function sealSlideHead(vaultRoot, id, reason) {
 }
 
 const SKIP_DIRS = new Set([STORE_DIR, "_ledger", "_assets", "node_modules"]);
+
+// Where a slide id came from when it was inserted from another vault (ticket 06): the origin on the
+// OLDEST version that carries one, and when that version was saved. null for a slide made here.
+export function slideOrigin(vaultRoot, id) {
+  const versions = listVersions(vaultRoot, id);
+  for (let i = versions.length - 1; i >= 0; i -= 1) {
+    if (versions[i].origin) return { origin: versions[i].origin, savedAt: versions[i].savedAt };
+  }
+  return null;
+}
+
+// Every slide id this vault already knows: its version store's folders plus every {id=…} in its
+// talk outlines (a talk saved outside the app has no store folder yet). A cross-vault insert
+// re-stamps an incoming id found here (ticket 06).
+export function idsInVault(vaultRoot) {
+  const ids = new Set();
+  try {
+    const store = join(vaultRoot, STORE_DIR);
+    if (existsSync(store)) {
+      for (const entry of readdirSync(store, { withFileTypes: true })) if (entry.isDirectory()) ids.add(entry.name);
+    }
+  } catch { /* an unreadable store: the outline scan below still runs */ }
+  const walk = (dir) => {
+    let entries = [];
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (SKIP_DIRS.has(entry.name) || entry.name.startsWith(".")) continue;
+        walk(join(dir, entry.name));
+      } else if (entry.name.endsWith("-outline.md")) {
+        try {
+          for (const m of readFileSync(join(dir, entry.name), "utf8").matchAll(new RegExp(ID_TOKEN_RE.source, "g"))) ids.add(m[1]);
+        } catch { /* unreadable outline: skip */ }
+      }
+    }
+  };
+  walk(vaultRoot);
+  return ids;
+}
 
 export function whereUsed(vaultRoot, id) {
   const hits = [];

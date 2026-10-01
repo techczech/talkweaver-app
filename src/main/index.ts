@@ -64,7 +64,7 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'twpresent', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
 ])
 import { pathToFileURL } from 'url'
-import { homedir, tmpdir } from 'os'
+import { homedir, hostname, tmpdir } from 'os'
 import { canonicalOutlinePath, editorEntryForOutline, outlineIdentity, type EditorWindowEntry } from './outline-identity'
 import {
   configureTalkWriter, emptyOverNonemptyMessage, flushTalkForPublish, isStructurallyEmptyOutline, readTalkOutline, withTalkFileLock, writeTalkOutline,
@@ -74,16 +74,34 @@ import { createOutlineDiskGuard } from './outline-disk-guard'
 import { createOutlineRecovery } from './outline-recovery'
 import { createDirectoryWatcherRegistry } from './talkTextWatchers'
 import type { OutlineDiskChange } from '../shared/outline-disk-change'
-import { existsSync, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, realpathSync, cpSync, rmSync, renameSync, createReadStream, mkdtempSync, openSync, readSync, closeSync, appendFileSync, watch } from 'fs'
+import { type Dirent, existsSync, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, realpathSync, cpSync, rmSync, renameSync, createReadStream, mkdtempSync, openSync, readSync, closeSync, appendFileSync, watch } from 'fs'
 import { createHash, randomBytes } from 'crypto'
-import { execFile, execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'child_process'
+import { execFile, execFileSync, spawn, type ChildProcessByStdio } from 'child_process'
+import type { Readable } from 'stream'
 import { resolve as resolvePath, sep as pathSep, relative as relativePath } from 'path'
 import { renderThumbnails } from './thumbnails'
+import { createVariantThumbnailHandler, createVariantThumbnailRenderer, mediaFingerprint } from './layout-variant-thumbnail'
 import { resolveThumbFile } from './thumb-key-resolution'
+import {
+  abstractPath,
+  assetSidecarPath,
+  createFolderTarget,
+  deleteFolderTarget,
+  moveTalkTargets,
+  newTalkFolder,
+  outlineRefusal,
+  outlineSaveRefusal,
+  renameFolderTargets,
+  setRootRefusal,
+  siblingTalkFolder,
+  talkFolderOfOutline,
+  thumbCacheDir
+} from './vault-paths'
+import { pathStaysInside } from './path-containment'
 import { resolveImageRefs } from './image-refs'
 import { isSearchIndexEntryFresh } from './search-index-freshness'
 import { sweepOrphanedThumbCaches } from './thumbnail-cache-gc'
-import { createPreparedTalkCache, preparedTalkGroup } from './prepared-talk-cache'
+import { createPreparationRoute, createPreparedTalkCache, memoiseUntilFailure, preparedTalkGroup, type PreparationLane } from './prepared-talk-cache'
 import { createSingleFlight } from './single-flight'
 import {
   BROWSER_THUMBNAIL_LANE,
@@ -107,9 +125,23 @@ import {
   appEditedTalks, expireStale, enrolmentDecision, applyEnrolmentChoice, talksNeedingLaunchBackup,
   AUTO_ENROL_LIMIT, SAVE_DEBOUNCE_MS, type BackupScopeState
 } from './backup-scope.mjs'
-import { scanTalkFoldersSync } from './talk-scan.mjs'
+import { pickOutlineName, scanTalkFoldersSync } from './talk-scan.mjs'
+import { createConflictScanner, resolveByRealRoot } from './conflict-copies.mjs'
+import { createVaultMachines } from './vault-machines'
+import { createTalkActivity } from './talk-activity'
+import { createConflictCompare } from './conflict-compare'
 import { createTalkSearch, handleTalkSearchRequest } from './talk-search'
+import { emptyTalkSearchResult, mergeTalkSearchResults } from '../shared/talk-search'
 import { createTalkFolderStateStore, type StoredFolderStates } from './talk-folder-state'
+import { createVaultRegistry, resolveInVaults, type Vault, type VaultPersonal } from './vault-registry'
+import { viewVaults, refusalMessage, serviceFor, type AddVaultOutcome, type VaultService } from './vault-view'
+import { createVaultAvailability, nodeAvailabilityProbe, SERVICE_APPS, mkdirBelowRoot, writableRoot, type LastGood } from './vault-availability'
+import { createVaultFileStore, fileText } from './vault-file'
+import { registerVaultSettingsIpc, refusalOutcome, talkFolderRelOf } from './vault-settings-ipc'
+import { resolveNewTalkDefaults } from '../shared/vault-defaults'
+import { pathsInVault, pathsOutsideOpenVaults, searchVaults } from './vault-scope'
+import { VAULTS_DIR, adoptLegacyThumbDirs, isPlainSegment, parseThumbUrl, talkThumbDir, thumbLookupDirs, thumbUrl, touchNamespace } from './thumb-cache-dirs'
+import { createConfigFile, type ConfigFile } from './config-file'
 import {
   createSlidePreviewStore,
   markSlidePreviewHtml,
@@ -167,6 +199,9 @@ import {
   renamePathwayInManifest,
   resolvePathways,
   setPathwaySlideIdsInManifest,
+  injectPresenterNotice,
+  presentStartOutsidePrework,
+  withoutPresenterSlides,
   writePathwayManifest,
   type PathwaySlideRow
 } from './pathways'
@@ -174,6 +209,7 @@ import {
   clearRunHandoutUrl,
   injectRunCoverMetadata,
   persistRun,
+  preworkWindow,
   readRun,
   readRunForTalk,
   runHandoutSlug,
@@ -195,10 +231,20 @@ import {
 import { isTerminalLiveStatus, type LiveStatus } from './live-presenter-client'
 import { createLiveSessionManager } from './live-session-manager'
 import { createLiveSessionStore, type SessionRecoveryRecord } from './live-session-store'
-import { flushLiveSessionHistory } from './live-session-history'
-import { LIVE_WORKER_BUILD, parseRecoveredVoteRecord, supportsCurrentLiveWorker } from '../../worker/recovery-protocol'
+import { closeLiveBoardsLeftOpen, flushLiveSessionHistory, recoverFinalLiveHistory } from './live-session-history'
+import { registerRunBoardIpc } from './run-board-ipc'
+import { createRunResultsShares } from './run-results-share'
+import { seedPollForRun, withoutSeed } from './run-prework-seed'
+import { answerPreworkTrayQuestion, isPreworkQuestionId, preworkTrayForSession } from './prework-tray'
+import type { PollDefinition } from '../../worker/protocol'
+import type { PreworkFeed } from '../../compiler/scripts/lib/prework.mjs'
+import { createRunPrework, registerRunPreworkIpc, startRunPreworkTimer, type RunPreworkService } from './run-prework'
+import { preworkWindowMs, publicPreworkForm, withoutPreworkSlides, type CompiledPrework, type HandoutPreworkConfig } from '../shared/run-prework'
+import { LIVE_WORKER_BUILD, supportsCurrentLiveWorker } from '../../worker/recovery-protocol'
 import { fitInstantImage } from './instant-image'
 import { decodeToWebp, storePastedImage } from './pasted-image-asset'
+import { prepareCrossVaultInsert, type CrossVaultTools, type SlideOrigin } from './cross-vault-insert'
+import { createProvenanceStore, originHintsFor } from './provenance-store'
 import {
   addRunInstantSlide, fileOutlineDocument, loadOutlineTools, OutlineRefusal, resolveInstantAnchors,
   type OutlineDocument, type OutlineTools
@@ -216,13 +262,27 @@ import { buildSharedTalkPayload, ownerNameFrom } from './shared-talk-build'
 import { stampShareUrl } from '../shared/handout-stamp'
 import { isValidShareDomain } from '../shared/shared-talk'
 import { deckWindowKeyAction, deckWindowMode, OPEN_AUDIENCE_SCRIPT } from './deck-window-keys'
-import { parsePresenterMessage, parsePresenterServerMessage, parseSlideLightbox, type PollStateMessage } from '../../worker/protocol'
+import { isPresenterBoardMessage, parsePresenterMessage, parseSlideLightbox } from '../../worker/protocol'
+import { viewerPageHtml } from './handout-viewer-page'
+import { preworkEnabled } from '../shared/prework-flag'
 
 const slidePreviewStore = createSlidePreviewStore(8)
 
 // Simple JSON config — avoids ESM/CJS issues with electron-store
 type Config = {
+  // Vault list (several vaults, ticket 01). Owned by the VaultRegistry (src/main/vault-registry.ts):
+  // nothing else reads `vaultRoot` or `vaults`. `vaultRoot` stays as a mirror of the first open vault
+  // so older builds on the same user-data dir still find it; `vaultRootMirrored` lets the registry
+  // tell its own mirror from a root an older build (or a test harness) wrote.
   vaultRoot?: string
+  vaults?: Vault[]
+  vaultRootMirrored?: string
+  // Personal per-vault settings (several-vaults ticket 04): vault id → author, badge colour, badge
+  // initial. "Just for me" in Edit this vault; never written into a vault.
+  vaultPersonal?: Record<string, VaultPersonal>
+  // The name and service each vault had when it was last reachable (ticket 07), so a vault that is
+  // unavailable at launch keeps its name. Local to this Mac, never written into a vault.
+  vaultLastSeen?: Record<string, LastGood>
   windowBounds?: { x?: number; y?: number; width: number; height: number }
   toolsWindowBounds?: { x?: number; y?: number; width: number; height: number }
   pathwayWindowBounds?: { x?: number; y?: number; width: number; height: number }
@@ -244,6 +304,8 @@ type Config = {
   // Presentation backup (a "present from anywhere" safety net): periodically write each Talk's
   // full self-contained presenter HTML to a folder the user puts inside OneDrive/Dropbox, so a
   // forgotten laptop never blocks presenting. TalkWeaver only writes files; the sync client syncs.
+  // Opt-in (default off) background OCR of vault images for image-text search (SCALE policy, 2026-07-20).
+  ocrEnabled?: boolean
   backupEnabled?: boolean
   backupFolder?: string
   backupIntervalMin?: number
@@ -286,24 +348,149 @@ type Config = {
 function configPath() {
   return join(app.getPath('userData'), 'config.json')
 }
+// Atomic (temp file + rename, config-file.ts): a crash mid-write leaves the old config.json, never a
+// truncated one that reads back as {} and loses the vault list.
+function configFile(): ConfigFile<Config> {
+  return createConfigFile<Config>(configPath())
+}
 function readConfig(): Config {
-  try { return JSON.parse(readFileSync(configPath(), 'utf8')) } catch { return {} }
+  return configFile().read()
 }
 function writeConfig(patch: Partial<Config>) {
-  const dir = app.getPath('userData')
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  writeFileSync(configPath(), JSON.stringify({ ...readConfig(), ...patch }, null, 2), 'utf8')
+  configFile().write(patch)
 }
 function getConfig<K extends keyof Config>(key: K, fallback: Config[K]): Config[K] {
   return readConfig()[key] ?? fallback
 }
+
+// ── Vaults ────────────────────────────────────────────────────────────────────
+// Every main-process vault lookup goes through the registry. Until vault-scoped handlers take a
+// vaultId (later several-vaults tickets), vault-wide work uses the first open vault, and talk-scoped
+// work resolves the vault from the talk's path. With one vault both are that vault.
+// The vault file (<root>/.talkweaver/vault.json) is read for names, ids and defaults, and written
+// only by Create vault and Edit this vault › Save (ticket 04).
+const vaultFiles = createVaultFileStore()
+const vaultRegistry = createVaultRegistry({ read: () => readConfig(), write: (patch) => writeConfig(patch), realpath: (p) => realpathSync(p), files: vaultFiles })
+// Availability (ticket 07): whether each open vault's folder answers, checked asynchronously with a
+// timeout and throttled (vault-availability.ts). An unavailable vault is skipped by every vault-wide
+// lookup below and refused by every write (invariant 5); the answer is a cache, so a write also looks
+// at the folder right before it (writableRoot / mkdirBelowRoot): a moved vault folder is never
+// re-created.
+const vaultServiceProbe = { home: homedir(), exists: (p: string) => existsSync(p), realpath: (p: string) => realpathSync(p) }
+const vaultAvailability = createVaultAvailability({
+  probe: nodeAvailabilityProbe(homedir()),
+  serviceOf: (root) => serviceFor(root, vaultServiceProbe),
+  serviceFromPath: (root) => serviceFor(root, { home: homedir(), exists: () => false }),
+  readLastGood: () => readConfig().vaultLastSeen,
+  writeLastGood: (all) => writeConfig({ vaultLastSeen: all })
+})
+const rootFs = {
+  isDirectory: (p: string): boolean => { try { return statSync(p).isDirectory() } catch { return false } },
+  mkdir: (p: string): void => { mkdirSync(p, { recursive: true }) }
+}
+/** An open vault whose folder answered the last check (or has not been checked yet). */
+function vaultAvailable(v: Vault | null | undefined): v is Vault {
+  return !!v && v.open && !vaultAvailability.isUnavailable(v.id)
+}
+/** The open vaults whose folders are there: what is scanned, indexed and searched. */
+function availableVaults(): Vault[] {
+  return vaultRegistry.list().filter(vaultAvailable)
+}
+/** The first open vault whose folder is there (the single-vault shims' vault), or null. */
+function primaryVault(): Vault | null {
+  return availableVaults()[0] ?? null
+}
+/** Root of the first open, available vault (what vault:get-root answers), or undefined when none.
+ *  Goes when vault-wide handlers take a vaultId. */
+function currentVaultRoot(): string | undefined {
+  return primaryVault()?.root
+}
+/** Root of the open vault holding absPath; undefined when that vault is unavailable; a path in no
+ *  open vault falls back to the current vault. */
+function vaultRootFor(absPath: string | null | undefined): string | undefined {
+  const hit = typeof absPath === 'string' && absPath ? vaultRegistry.resolve(absPath) : null
+  if (hit && hit.vault.open) return vaultAvailable(hit.vault) ? hit.vault.root : undefined
+  return currentVaultRoot()
+}
+/** vaultRootFor for a write: a path in no open vault falls back to writableVaultRoot(), never to the
+ *  next available vault. */
+function writableTalkRoot(absPath: string | null | undefined): string | undefined {
+  const hit = typeof absPath === 'string' && absPath ? vaultRegistry.resolve(absPath) : null
+  if (hit && hit.vault.open) return vaultAvailable(hit.vault) ? writableRoot(hit.vault.root, rootFs) ?? undefined : undefined
+  return writableVaultRoot()
+}
+/** The current vault's root for a write: the FIRST OPEN vault, and only while its folder is there.
+ *  When that vault is unavailable the write is refused, never re-targeted to the next vault (reads
+ *  and lists skip to the next available vault through currentVaultRoot()). */
+function writableVaultRoot(): string | undefined {
+  const first = vaultRegistry.primary()
+  if (!first || vaultAvailability.isUnavailable(first.id)) return undefined
+  return writableRoot(first.root, rootFs) ?? undefined
+}
+/** The root of the vault holding absPath for a write (see vaultRootFor): only when it is there now. */
+function writableRootFor(absPath: string | null | undefined): string | undefined {
+  return writableTalkRoot(absPath)
+}
+/** Create dir below root (never root itself or above it, and only while root is there). */
+function mkdirInVault(root: string, dir: string): void {
+  if (!existsSync(dir)) mkdirBelowRoot(root, dir, rootFs)
+}
+/** This person's author name for the vault holding absPath ('' when none is set). */
+function vaultPersonalAuthor(absPath: string | null | undefined): string {
+  const id = vaultIdOf(absPath)
+  return id ? vaultRegistry.personal(id).author ?? '' : ''
+}
+/** The vault whose root is exactly root (open or closed), or null. */
+function vaultOfRoot(root: string | null | undefined): Vault | null {
+  const hit = typeof root === 'string' && root ? vaultRegistry.resolve(root) : null
+  return hit && hit.rel === '' ? hit.vault : null
+}
+/** Id of the vault holding absPath (open or closed), or null for a path in no vault. */
+function vaultIdOf(absPath: string | null | undefined): string | null {
+  return typeof absPath === 'string' && absPath ? vaultRegistry.resolve(absPath)?.vault.id ?? null : null
+}
+
+/** Root of the open vault named by vaultId; the current vault when no id is given; undefined for an
+ *  unknown, closed or unavailable vault. The vault-wide folder handlers take an optional vault id this way. */
+function rootOfVault(vaultId: unknown): string | undefined {
+  if (typeof vaultId !== 'string' || !vaultId) return currentVaultRoot()
+  const vault = vaultRegistry.get(vaultId)
+  return vaultAvailable(vault) ? vault.root : undefined
+}
+/** rootOfVault for a write: only when the folder is there right now; with no id, the current vault
+ *  as writableVaultRoot() binds it (refused while the first open vault is unavailable). */
+function writableRootOfVault(vaultId: unknown): string | undefined {
+  if (typeof vaultId !== 'string' || !vaultId) return writableVaultRoot()
+  return writableRoot(rootOfVault(vaultId), rootFs) ?? undefined
+}
+
+// Vault list changes (Add vault, open/close, a set-root, and a root an older build chose that the
+// registry adopts on read) reach the caches here. A new first open vault is today's "change vault":
+// the whole slide-text cache and the talk caches go and the warm pass restarts, as vault:set-root
+// has always done. Any other change drops only slide text of talks in no open vault.
+let lastPrimaryRoot: string | null | undefined
+let vaultWarmTimer: ReturnType<typeof setTimeout> | null = null
+function onVaultsChanged(vaults: Vault[]): void {
+  const primaryRoot = vaults.find((v) => vaultAvailable(v))?.root ?? null
+  if (primaryRoot !== lastPrimaryRoot) searchCache.clear()
+  else for (const key of pathsOutsideOpenVaults(searchCache.keys(), vaults)) searchCache.delete(key)
+  lastPrimaryRoot = primaryRoot
+  invalidateTalkCache()
+  scheduleVaultWarm()
+}
+/** One warm pass 200 ms after the last vault change (a set-root also emits a registry change). */
+function scheduleVaultWarm(): void {
+  if (vaultWarmTimer) clearTimeout(vaultWarmTimer)
+  vaultWarmTimer = setTimeout(() => { vaultWarmTimer = null; warmSearchIndex().catch(() => {}) }, 200)
+}
+vaultRegistry.onChange(onVaultsChanged)
 
 registerImporterIpc({
   ipcMain,
   dialog,
   shell,
   platform: process.platform,
-  getVaultRoot: () => getConfig('vaultRoot', undefined) ?? null,
+  getVaultRoot: () => writableVaultRoot() ?? null, // imports write talks: only into a vault folder that is there
   getSettings: () => getConfig('importerSettings', DEFAULT_IMPORTER_SETTINGS) ?? DEFAULT_IMPORTER_SETTINGS,
   setSettings: (settings) => writeConfig({ importerSettings: settings }),
   resourcesDir: app.isPackaged ? join(process.resourcesPath, 'agent-import') : join(process.cwd(), 'resources', 'agent-import'),
@@ -398,7 +585,7 @@ ipcMain.handle(
 
 function attachLiveWindow(wcId: number) {
   const context = livePresenterContexts.get(wcId)
-  if (context) liveSessions?.attach(wcId, context.talkSlug, getConfig('vaultRoot', null))
+  if (context) liveSessions?.attach(wcId, context.talkSlug, (currentVaultRoot() ?? null))
   liveSessions?.bindRun(wcId, recordingRunReference(wcId))
   return liveSessions?.record(wcId) ?? null
 }
@@ -412,12 +599,12 @@ ipcMain.handle('live:go', async (event) => {
     liveRecoveryStore.check()
     const existing = attachLiveWindow(wcId)
     if (existing && !isTerminalLiveStatus(existing.status)) return { success: true, ...liveSessions.snapshot(wcId) }
-    if (liveSessions.inUse(context.talkSlug, getConfig('vaultRoot', null), wcId)) throw new Error('This talk is already live in another presenter window. Close that presentation and keep it live before reopening it here.')
+    if (liveSessions.inUse(context.talkSlug, (currentVaultRoot() ?? null), wcId)) throw new Error('This talk is already live in another presenter window. Close that presentation and keep it live before reopening it here.')
     if (!context.shortUrl) throw new Error('Publish or export this handout before going live.')
     const endpoint = await ensureLiveWorker()
     const capabilityResponse = await fetch(`${endpoint.baseUrl}/capabilities`, { signal: AbortSignal.timeout(10_000) })
     const capabilities = capabilityResponse.ok ? await capabilityResponse.json() as { protocol?: number; build?: string } : null
-    if (!supportsCurrentLiveWorker(capabilities)) throw new Error('The live service needs the current poll response limits update before you can go live.')
+    if (!supportsCurrentLiveWorker(capabilities)) throw new Error('The live service needs updating before you can go live.')
     const joinUrl = await ensureLiveJoinUrl(context)
     const compilerDir = getCompilerPath()
     if (!compilerDir) throw new Error('Compiler not found.')
@@ -434,7 +621,7 @@ ipcMain.handle('live:go', async (event) => {
     if (!created.sessionId || !created.presenterToken || !created.shortId || !Number.isFinite(created.expiresAt)) throw new Error('The live service returned an incomplete session.')
     const record: SessionRecoveryRecord = {
       ...created, baseUrl: endpoint.baseUrl, shortUrl: joinUrl, qrSvg,
-      talkSlug: context.talkSlug, vaultRoot: getConfig('vaultRoot', null),
+      talkSlug: context.talkSlug, vaultRoot: (currentVaultRoot() ?? null),
       status: 'connecting', startedAtMs: Date.now(), endRequested: false,
       latest: null, pending: [], polls: [], voteRecords: [], cursor: 0,
     }
@@ -447,15 +634,27 @@ ipcMain.handle('live:go', async (event) => {
   }
 })
 
-ipcMain.handle('live:end', async (event) => {
+// Feedback-boards ticket 06 (D20): the boards still open in this window's session, so End live can
+// ask whether to close them or keep them open for late cards.
+ipcMain.handle('live:open-boards', (event) => {
+  attachLiveWindow(event.sender.id)
+  return liveSessions?.openBoards(event.sender.id) ?? []
+})
+ipcMain.handle('live:end', async (event, options: unknown) => {
   try {
     attachLiveWindow(event.sender.id)
-    return await liveSessions?.end(event.sender.id) ?? { success: true, status: 'ended' }
+    const keepBoardsOpen = !!options && typeof options === 'object' && (options as { keepBoardsOpen?: unknown }).keepBoardsOpen === true
+    return await liveSessions?.end(event.sender.id, { keepBoardsOpen }) ?? { success: true, status: 'ended' }
   } catch (cause) {
     return { success: false, error: cause instanceof Error ? cause.message : String(cause) }
   }
 })
-ipcMain.handle('live:snapshot', (event) => { attachLiveWindow(event.sender.id); return liveSessions?.snapshot(event.sender.id) ?? null })
+ipcMain.handle('live:snapshot', (event) => {
+  const record = attachLiveWindow(event.sender.id)
+  const snapshot = liveSessions?.snapshot(event.sender.id) ?? null
+  // The Run's pre-work questions put in the talk's questions ride beside the phones' (never sent to the Worker).
+  return snapshot ? { ...snapshot, preworkQuestions: preworkEnabled() ? preworkTrayForSession(currentVaultRoot() ?? null, record) : [] } : null
+})
 ipcMain.handle('live:status', (event): LiveStatus => attachLiveWindow(event.sender.id)?.status ?? 'ended')
 ipcMain.on('live:publish-slide', (event, state: { slideId?: string; reveal?: number; focus?: unknown; lightbox?: unknown; talkQr?: unknown }) => {
   if (!state || typeof state.slideId !== 'string' || !Number.isInteger(state.reveal) || Number(state.reveal) < 0) return
@@ -470,19 +669,87 @@ ipcMain.on('live:publish-slide', (event, state: { slideId?: string; reveal?: num
       ...(lightbox ? { lightbox } : {}), ...(state.talkQr ? { talkQr: true } : {}) })
   } catch { event.sender.send('live:status', 'paused-reconnecting') }
 })
+// A board slide fed by a pre-work step opens with the Run's picked answers (feedback-boards ticket 11);
+// the glue is seedPollForRun. Only main adds a seed: a window's own is dropped in the live:poll-open handler.
+function seedFromRunPrework(wcId: number, poll: PollDefinition): Promise<PollDefinition> {
+  const outlinePath = presentWindows.get(wcId)?.outlinePath ?? null
+  return seedPollForRun(poll, liveSessions?.record(wcId) ?? null, {
+    vaultRoot: () => writableVaultRoot() ?? null, // writes: only a vault folder that is there (ticket 07)
+    readOutline: () => (outlinePath ? readFileSync(outlinePath, 'utf8') : null),
+    feeds: async (outline) => (outlinePath ? ((await prepareTalk(outlinePath, outline))?.model?.prework as { feeds?: PreworkFeed[] } | undefined)?.feeds ?? null : null),
+  })
+}
+type LivePollMessage = NonNullable<ReturnType<typeof parsePresenterMessage>>
+function parseLivePoll(wcId: number, value: unknown): { message: LivePollMessage } | { error: string } {
+  attachLiveWindow(wcId)
+  const message = parsePresenterMessage(JSON.stringify(value))
+  // Board operations (message.type 'board.*') reach the worker through the presenter's board panel, not this route.
+  if (!message || message.type === 'slide.publish' || message.type === 'question.answer' || message.type === 'switches.set'
+    || isPresenterBoardMessage(message)) {
+    return { error: 'Invalid poll control.' }
+  }
+  if (message.type === 'poll.open' && !message.poll.slideId) message.poll.slideId = liveSessions?.record(wcId)?.latest?.slideId
+  return { message }
+}
 function queueLivePoll(wcId: number, value: unknown) {
   try {
-    attachLiveWindow(wcId)
-    const message = parsePresenterMessage(JSON.stringify(value))
-    if (!message || message.type === 'slide.publish') return { success: false, error: 'Invalid poll control.' }
-    if (message.type === 'poll.open' && !message.poll.slideId) message.poll.slideId = liveSessions?.record(wcId)?.latest?.slideId
-    return liveSessions?.poll(wcId, message) ?? { success: false, error: 'No live session.' }
+    const parsed = parseLivePoll(wcId, value)
+    if ('error' in parsed) return { success: false, error: parsed.error }
+    return liveSessions?.poll(wcId, parsed.message as never) ?? { success: false, error: 'No live session.' }
   } catch (cause) { return { success: false, error: cause instanceof Error ? cause.message : String(cause) } }
 }
-ipcMain.handle('live:poll-open', (event, poll: unknown) => queueLivePoll(event.sender.id, { type: 'poll.open', poll }))
+// Opening a poll: a board slide fed by a pre-work step opens with the Run's answers. A window may not put
+// cards on a board, so any `seed` it sends is dropped first; only main adds one.
+ipcMain.handle('live:poll-open', async (event, poll: unknown) => {
+  try {
+    const parsed = parseLivePoll(event.sender.id, { type: 'poll.open', poll })
+    if ('error' in parsed) return { success: false, error: parsed.error }
+    const message = parsed.message
+    if (message.type === 'poll.open') message.poll = await seedFromRunPrework(event.sender.id, withoutSeed(message.poll))
+    return liveSessions?.poll(event.sender.id, message as never) ?? { success: false, error: 'No live session.' }
+  } catch (cause) { return { success: false, error: cause instanceof Error ? cause.message : String(cause) } }
+})
 ipcMain.handle('live:poll-close', (event, pollId: unknown) => queueLivePoll(event.sender.id, { type: 'poll.close', pollId }))
 ipcMain.handle('live:poll-reveal', (event, pollId: unknown) => queueLivePoll(event.sender.id, { type: 'poll.reveal', pollId }))
 ipcMain.handle('live:poll-hide', (event, pollId: unknown, responseId: unknown, hidden: unknown) => queueLivePoll(event.sender.id, { type: 'poll.hide', pollId, responseId, hidden }))
+// The presenter's board panel (feedback-boards ticket 05): one board operation, checked with the
+// worker's own parser, through the same acknowledged operation queue as the poll controls. Only a
+// presenter window may send one.
+ipcMain.handle('live:board-action', (event, value: unknown) => {
+  try {
+    attachLiveWindow(event.sender.id)
+    if (!livePresenterContexts.has(event.sender.id)) return { success: false, error: 'The board is sorted in the presenter window only.' }
+    const message = parsePresenterMessage(JSON.stringify(value))
+    if (!message || !isPresenterBoardMessage(message)) return { success: false, error: 'Invalid board operation.' }
+    return liveSessions?.poll(event.sender.id, message) ?? { success: false, error: 'No live session.' }
+  } catch (cause) { return { success: false, error: cause instanceof Error ? cause.message : String(cause) } }
+})
+ipcMain.handle('live:question-answer', (event, questionId: unknown, answered: unknown) => {
+  try {
+    attachLiveWindow(event.sender.id)
+    if (!livePresenterContexts.has(event.sender.id)) return { success: false, error: 'Questions are answered in the presenter window only.' }
+    // A pre-work question in the tray belongs to the Run: the mark is written there and never reaches the Worker.
+    if (isPreworkQuestionId(questionId)) {
+      const result = answerPreworkTrayQuestion(writableVaultRoot() ?? null, liveSessions?.record(event.sender.id) ?? null, questionId, answered !== false)
+      if (result.success) event.sender.send('live:prework-questions', result.questions)
+      return result.success ? { success: true, status: 'confirmed' as const } : { success: false, status: 'rejected' as const, error: result.error }
+    }
+    const message = parsePresenterMessage(JSON.stringify({ type: 'question.answer', questionId, answered }))
+    if (!message || message.type !== 'question.answer') return { success: false, error: 'Invalid question.' }
+    return liveSessions?.poll(event.sender.id, message) ?? { success: false, error: 'No live session.' }
+  } catch (cause) { return { success: false, error: cause instanceof Error ? cause.message : String(cause) } }
+})
+ipcMain.handle('live:switches', (event, patch: unknown) => {
+  try {
+    attachLiveWindow(event.sender.id)
+    if (!livePresenterContexts.has(event.sender.id)) return { success: false, error: 'The phone switches belong to the presenter window.' }
+    const { questionsAllowed, reactionsAllowed } = (patch && typeof patch === 'object' ? patch : {}) as { questionsAllowed?: unknown; reactionsAllowed?: unknown }
+    const message = parsePresenterMessage(JSON.stringify({ type: 'switches.set',
+      ...(typeof questionsAllowed === 'boolean' ? { questionsAllowed } : {}), ...(typeof reactionsAllowed === 'boolean' ? { reactionsAllowed } : {}) }))
+    if (!message || message.type !== 'switches.set') return { success: false, error: 'Invalid switch.' }
+    return liveSessions?.poll(event.sender.id, message) ?? { success: false, error: 'No live session.' }
+  } catch (cause) { return { success: false, error: cause instanceof Error ? cause.message : String(cause) } }
+})
 ipcMain.handle('live:instant-action', async (event, action: unknown) => {
   const wcId = event.sender.id
   if (!livePresenterContexts.has(wcId)) return { success: false, error: 'Instant slides are available in the presenter window only.' }
@@ -814,8 +1081,10 @@ async function probeLiveSession(record: SessionRecoveryRecord): Promise<LiveStat
 }
 async function closeLiveWorkerSession(record: SessionRecoveryRecord): Promise<'ended' | 'expired'> {
   if (record.expiresAt <= Date.now()) return 'expired'
+  // End live's answer about boards still open travels with every retry (ticket 06).
   const response = await fetch(`${record.baseUrl}/sessions/${encodeURIComponent(record.sessionId)}/close`, {
-    method: 'POST', headers: { authorization: `Bearer ${record.presenterToken}` }, signal: AbortSignal.timeout(10_000),
+    method: 'POST', headers: { authorization: `Bearer ${record.presenterToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ keepBoardsOpen: record.keepBoardsOpen === true }), signal: AbortSignal.timeout(10_000),
   })
   if (!response.ok && response.status !== 404) throw new Error('Could not confirm that the live session has ended.')
   return 'ended'
@@ -826,28 +1095,8 @@ function initialiseLiveSessions() {
     liveSessions = createLiveSessionManager({
       load: () => liveRecoveryStore!.load(), save: (records) => liveRecoveryStore!.save(records),
       endRemote: closeLiveWorkerSession, probe: probeLiveSession,
-      recoverFinal: async (record) => {
-        let cursor = record.cursor
-        const voteRecords = [...record.voteRecords]
-        while (true) {
-          const response = await fetch(`${record.baseUrl}/sessions/${encodeURIComponent(record.sessionId)}/recovery?afterSequence=${cursor}`, {
-            headers: { authorization: `Bearer ${record.presenterToken}` }, signal: AbortSignal.timeout(10_000),
-          })
-          if (!response.ok) throw new Error('Final answers could not be recovered yet.')
-          const page = await response.json() as { polls: unknown[]; voteRecords: unknown[]; moreRecords: boolean }
-          if (!Array.isArray(page.polls) || !Array.isArray(page.voteRecords)) throw new Error('Invalid final history.')
-          const polls = page.polls.map((poll) => parsePresenterServerMessage(JSON.stringify(poll)))
-          if (polls.some((poll) => poll?.type !== 'poll.state')) throw new Error('Invalid final polls.')
-          for (const value of page.voteRecords) {
-            const vote = parseRecoveredVoteRecord(value)
-            if (!vote || vote.sequence !== cursor + 1) throw new Error('Incomplete final answer history.')
-            if (!voteRecords.some((item) => item.sequence === vote.sequence)) voteRecords.push(vote)
-            cursor = vote.sequence
-          }
-          if (!page.moreRecords) return { polls: polls as PollStateMessage[], voteRecords, cursor }
-          if (!page.voteRecords.length) throw new Error('Final history cursor did not advance.')
-        }
-      },
+      recoverFinal: (record, afterReactionSequence) => recoverFinalLiveHistory(record, afterReactionSequence),
+      closeBoards: (record) => closeLiveBoardsLeftOpen(record),
       notify: (id, channel, value) => {
         const win = BrowserWindow.getAllWindows().find((item) => item.webContents.id === id)
         if (win && !win.isDestroyed()) win.webContents.send(channel, value)
@@ -1039,13 +1288,26 @@ ipcMain.handle('tools:open-pathways', (_event, context: PathwayWindowContext) =>
 
 // ── Vault IPC ──────────────────────────────────────────────────────────────
 
-ipcMain.handle('vault:get-root', () => getConfig('vaultRoot', undefined) ?? null)
+// vault:get-root / set-root / choose-root are single-vault shims over the registry (several vaults,
+// ticket 01): get answers the first open vault; set and choose make the folder the first open vault
+// (reusing its id when it is already a vault) and close the previous one — today's "change vault".
+ipcMain.handle('vault:get-root', () => currentVaultRoot() ?? null)
 
+// Test-only (TW_E2E=1): the vault root bounds every containment guard, so a renderer-supplied
+// root is refused in the app itself (no config write); Settings and first-run setup use
+// vault:choose-root, a dialog in the main process. In test mode the folder must be an existing
+// absolute directory, and it is adopted through the vault registry.
 ipcMain.handle('vault:set-root', (_event, path: string) => {
-  writeConfig({ vaultRoot: path })
+  const refusal = setRootRefusal(E2E, path)
+  if (refusal) {
+    console.warn('[vault:set-root] refused:', refusal)
+    return { success: false, error: refusal }
+  }
+  vaultRegistry.adoptRoot(path)
   searchCache.clear()
   invalidateTalkCache()
-  setTimeout(() => { warmSearchIndex().catch(() => {}) }, 200)
+  scheduleVaultWarm()
+  return { success: true }
 })
 
 ipcMain.handle('vault:choose-root', async () => {
@@ -1056,11 +1318,159 @@ ipcMain.handle('vault:choose-root', async () => {
   })
   if (result.canceled || !result.filePaths.length) return null
   const chosen = result.filePaths[0]
-  writeConfig({ vaultRoot: chosen })
+  vaultRegistry.adoptRoot(chosen)
   searchCache.clear()
   invalidateTalkCache()
-  setTimeout(() => { warmSearchIndex().catch(() => {}) }, 200)
+  scheduleVaultWarm()
   return chosen
+})
+
+// The Talks panel's vault list (ticket 03): every vault, open or closed, with a name, badge and
+// service label derived locally. Adding checks the folder here; the registry refuses nesting and
+// duplicates. A path argument skips the folder picker only under TW_E2E; otherwise the picker is
+// always used.
+const vaultProbe = vaultServiceProbe
+// The vault file of each vault, as last read while its folder answered (ticket 07): views built for a
+// single field (a name for a provenance line, a service for Open settings) never touch the disk.
+// vault:list re-reads the files of available vaults; a registry change drops the cache.
+const vaultFileCache = new Map<string, ReturnType<typeof vaultFiles.read>>()
+vaultRegistry.onChange((vaults) => {
+  vaultFileCache.clear()
+  const known = readConfig().vaultLastSeen ?? {}
+  for (const id of Object.keys(known)) if (!vaults.some((v) => v.id === id)) vaultAvailability.forget(id)
+})
+/** Every vault as the panel shows it. fresh: re-read the vault files of available vaults (vault:list);
+ *  otherwise the cached reads (no disk for a vault already read). An unavailable vault is never read:
+ *  it keeps the name and service it had when it was last reachable. */
+const vaultViews = (opts: { fresh?: boolean } = {}) => {
+  const vaults = vaultRegistry.list()
+  const fileOf = (v: Vault): ReturnType<typeof vaultFiles.read> | null => {
+    if (!v.open || vaultAvailability.isUnavailable(v.id)) return vaultFileCache.get(v.id) ?? null
+    if (!opts.fresh && vaultFileCache.has(v.id)) return vaultFileCache.get(v.id)!
+    const read = vaultFiles.read(v.root)
+    vaultFileCache.set(v.id, read)
+    return read
+  }
+  const views = viewVaults(vaults, vaultProbe, (v) => {
+    const first = vaultRegistry.duplicateOf(v.id)
+    const duplicateOf = first ? { id: first.id, name: basename(first.root) } : null // withDisplayNames names it as the panel does
+    const personal = vaultRegistry.personal(v.id)
+    const unavailable = v.open ? vaultAvailability.status(v.id) : null
+    const service = vaultAvailability.service(v)
+    if (unavailable) {
+      const kept = vaultAvailability.lastGood(v.id)
+      return { file: vaultFileCache.get(v.id) ?? null, name: kept?.name ?? undefined, personal, duplicateOf, unavailable, service: kept?.service ?? service }
+    }
+    return { file: fileOf(v), personal, duplicateOf, unavailable: null, service }
+  })
+  for (const view of views) {
+    if (view.open && !view.unavailable) vaultAvailability.remember(view.id, { name: view.baseName, service: view.service })
+  }
+  return views
+}
+/** Check the open vaults' folders (throttled unless forced). A change reaches the caches, the warm
+ *  pass and every window's vault list. */
+async function checkVaultAvailability(force = false): Promise<boolean> {
+  const changed = await vaultAvailability.check(vaultRegistry.list(), { force })
+  if (changed) {
+    invalidateTalkCache()
+    scheduleVaultWarm()
+    // Every window re-reads its vault list (a vault went away or came back), whoever asked.
+    for (const win of BrowserWindow.getAllWindows()) {
+      try {
+        if (win.isDestroyed()) continue
+        win.webContents.send('vault:vaults-changed')
+        win.webContents.send('vault:talk-meta-updated')
+      } catch { /* window closing */ }
+    }
+  }
+  return changed
+}
+// vault:list waits for the (asynchronous, time-limited) folder check; it never stats a folder itself.
+ipcMain.handle('vault:list', async () => {
+  await checkVaultAvailability().catch(() => false)
+  return vaultViews({ fresh: true })
+})
+// The unavailable section's "Check again": look at every open vault's folder now.
+ipcMain.handle('vault:recheck', () => checkVaultAvailability(true).catch(() => false))
+// ⋯ › Reveal in Finder (ticket 07): the folder comes from the registry by vault id, never from the
+// renderer. An unknown id, or a folder that is not there, is refused.
+ipcMain.handle('vault:reveal', (_event, vaultId: unknown): { ok: boolean; reason?: 'unknown-vault' | 'unavailable' } => {
+  const vault = typeof vaultId === 'string' ? vaultRegistry.get(vaultId) : null
+  if (!vault) return { ok: false, reason: 'unknown-vault' }
+  if (vaultAvailability.isUnavailable(vault.id)) return { ok: false, reason: 'unavailable' }
+  shell.showItemInFolder(vault.root)
+  return { ok: true }
+})
+// The unavailable section's one action when the cloud service is not signed in: open that service's
+// app (a fixed list of apps, never a renderer-supplied path).
+ipcMain.handle('vault:open-service', async (_event, vaultId: unknown): Promise<boolean> => {
+  const vault = typeof vaultId === 'string' ? vaultRegistry.get(vaultId) : null
+  if (!vault) return false
+  const service = vaultAvailability.lastGood(vault.id)?.service ?? vaultAvailability.service(vault)
+  const app = SERVICE_APPS[service]
+  if (!app || !existsSync(app)) return false
+  return (await shell.openPath(app)) === ''
+})
+registerVaultSettingsIpc({
+  ipcMain,
+  dialog,
+  windowOf: (sender) => BrowserWindow.fromWebContents(sender),
+  registry: vaultRegistry,
+  views: vaultViews,
+  probe: vaultProbe,
+  appAuthor: () => String(metadataDefaults().author ?? ''),
+  appDefaults: () => metadataDefaults(),
+  e2e: E2E
+})
+
+ipcMain.handle('vault:add', async (event, path?: unknown): Promise<AddVaultOutcome | null> => {
+  let chosen: string
+  if (E2E && typeof path === 'string' && path) chosen = path
+  else {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const options: Electron.OpenDialogOptions = {
+      title: 'Add a vault',
+      message: 'Choose the folder that holds the talks',
+      properties: ['openDirectory', 'createDirectory']
+    }
+    const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+    if (result.canceled || !result.filePaths.length) return null
+    chosen = result.filePaths[0]
+  }
+  try {
+    if (!statSync(chosen).isDirectory()) return { ok: false, reason: 'not-a-folder', message: refusalMessage('not-a-folder', null) }
+  } catch {
+    return { ok: false, reason: 'not-a-folder', message: refusalMessage('not-a-folder', null) }
+  }
+  try {
+    const added = vaultRegistry.add(chosen)
+    const view = vaultViews().find((v) => v.id === added.id)
+    return view ? { ok: true, vault: view } : null
+  } catch (error) {
+    return refusalOutcome(error, vaultViews)
+  }
+})
+
+// Open or close one vault. Closing hides its talks everywhere; nothing in the folder changes. The
+// last open vault stays open (the app needs a vault to work in).
+ipcMain.handle('vault:set-open', (_event, vaultId: unknown, open: unknown): AddVaultOutcome => {
+  if (typeof vaultId !== 'string') return { ok: false, reason: 'unknown-vault', message: refusalMessage('unknown-vault', null) }
+  try {
+    if (open !== true && vaultRegistry.list().filter((v) => v.open && v.id !== vaultId).length === 0 && vaultRegistry.get(vaultId)?.open) {
+      return { ok: false, reason: 'last-open', message: refusalMessage('last-open', null) }
+    }
+    vaultRegistry.setOpen(vaultId, open === true)
+    const view = vaultViews().find((v) => v.id === vaultId)
+    return view ? { ok: true, vault: view } : { ok: false, reason: 'unknown-vault', message: refusalMessage('unknown-vault', null) }
+  } catch (error) {
+    return refusalOutcome(error, vaultViews)
+  }
+})
+vaultRegistry.onChange(() => {
+  for (const win of BrowserWindow.getAllWindows()) {
+    try { if (!win.isDestroyed()) win.webContents.send('vault:vaults-changed') } catch { /* window closing */ }
+  }
 })
 
 // ── Settings IPC (folders the app reads from) ────────────────────────────────
@@ -1071,7 +1481,7 @@ ipcMain.handle('vault:choose-root', async () => {
 ipcMain.handle('settings:get-paths', () => {
   const c = readConfig()
   return {
-    vaultRoot: c.vaultRoot ?? null,
+    vaultRoot: currentVaultRoot() ?? null,
     archiveRoot: c.archiveRoot ?? null,
     archiveDefault: null,
     archiveAvailable: detectArchiveRoot() != null
@@ -1095,7 +1505,7 @@ ipcMain.handle('settings:choose-archive', async () => {
 ipcMain.handle('settings:clear-archive', () => {
   const c = readConfig()
   delete c.archiveRoot
-  writeFileSync(configPath(), JSON.stringify(c, null, 2), 'utf8')
+  configFile().replace(c)
   searchCache.clear()
   invalidateTalkCache()
   return null
@@ -1155,7 +1565,7 @@ async function buildTalkFullHtml(
   const stat = statSync(outlinePath)
   const slug = backupSlugFor(outlinePath)
   const content = readFileSync(outlinePath, 'utf8')
-  const vaultRoot = getConfig('vaultRoot', undefined)
+  const vaultRoot = vaultRootFor(outlinePath)
   const resolved = vaultRoot ? resolveImageRefs(content, vaultRoot) : content
   const model = await prepareSource(outlinePath, resolved, slug, stat, timerSettings(), mediaOptions)
   return String(model.fullHtml ?? '')
@@ -1342,7 +1752,7 @@ ipcMain.handle('settings:choose-backup-folder', async () => {
 ipcMain.handle('settings:clear-backup-folder', () => {
   const c = readConfig()
   delete c.backupFolder
-  writeFileSync(configPath(), JSON.stringify(c, null, 2), 'utf8')
+  configFile().replace(c)
   return backupSettings()
 })
 
@@ -1434,32 +1844,219 @@ interface TalkInfo {
 // handler — per Studio replay asset request. Cache the walk briefly; every vault-mutating IPC
 // (create/clone/move/rename/delete, set-root) calls invalidateTalkCache() so the sidebar never
 // sees a stale list after its own operation.
-let talkCache: { root: string; at: number; talks: TalkInfo[] } | null = null
+// Per vault (several-vaults ticket 02): vault root → that vault's walk.
+const talkCache = new Map<string, { at: number; talks: TalkInfo[] }>()
 // productName is TalkWeaver, so this resolves to ~/Library/Application Support/TalkWeaver/.
-const vaultIndex = createVaultListHandler({
-  cachePath: join(app.getPath('userData'), 'vault-index.json'),
+// One persisted snapshot per vault: vault-index/<vault id>.json. The single-vault
+// vault-index.json of older builds seeds the vault it names and is left for them.
+// Conflict copies (several-vaults ticket 09; conflict-copies.mjs): the vault walk hands each talk
+// folder with a sync-conflict candidate (or Git markers) to the scanner. A byte-identical copy goes to
+// the OS Trash (never unlink) with an Activity line in app data; a differing one is only counted.
+// A closed or unavailable vault is never touched (invariant 5): canTouch asks at scan time, and the
+// trash re-checks that the vault's folder is there (writableRootFor) right before the move.
+const talkActivity = createTalkActivity({ dir: join(app.getPath('userData'), 'talk-activity') })
+talkActivity.onAppend((vaultId, slug) => {
+  for (const win of BrowserWindow.getAllWindows()) {
+    try { if (!win.isDestroyed()) win.webContents.send('talk:activity-changed', { vaultId, slug }) } catch { /* window closing */ }
+  }
+})
+/** The OS Trash. Test mode only (TW_E2E=1 with TW_E2E_TRASH_DIR): the file is moved into that folder
+ *  instead, so the gate e2e can see what went to the Trash (the real Trash is not inspectable). */
+async function trashConflictCopy(path: string): Promise<void> {
+  const root = writableRootFor(path)
+  if (!root || !pathStaysInside(root, path)) throw new Error('the vault is not available')
+  const testTrash = E2E ? process.env.TW_E2E_TRASH_DIR : undefined
+  if (testTrash) {
+    mkdirSync(testTrash, { recursive: true })
+    renameSync(path, join(testTrash, `${Date.now()}-${basename(path)}`))
+    return
+  }
+  await shell.trashItem(path)
+}
+// This Mac's names as OneDrive writes them into a copy's name (review S3 rule (a)): the host name and,
+// on macOS, the Computer Name ("Dominik’s MacBook Air" → "Dominiks-MacBook-Air").
+function thisMacNames(): string[] {
+  const names = [hostname()]
+  if (process.platform === 'darwin') {
+    try { names.push(execFileSync('/usr/sbin/scutil', ['--get', 'ComputerName'], { encoding: 'utf8', timeout: 2000 }).trim()) } catch { /* not available */ }
+  }
+  return names.filter(Boolean)
+}
+const vaultMachines = createVaultMachines({ file: join(app.getPath('userData'), 'vault-machines.json'), thisMac: thisMacNames })
+const conflictScanner = createConflictScanner({
+  trashItem: trashConflictCopy,
+  // The last byte check and the move run under the outline's write lock (review T1).
+  withLock: (outlinePath, work) => withTalkFileLock(outlinePath, () => work()),
+  knownMachines: (vaultId: string) => vaultMachines.known(vaultId),
+  rememberMachines: (vaultId: string, names: string[]) => vaultMachines.remember(vaultId, names),
+  staysInside: (root: string, candidate: string) => pathStaysInside(root, candidate),
+  activity: talkActivity,
+  canTouch: (vaultId: string) => vaultAvailable(vaultRegistry.get(vaultId)),
   log: (message: string) => console.log(message)
 })
+const vaultIndex = createVaultListHandler({
+  dir: join(app.getPath('userData'), 'vault-index'),
+  legacyCachePath: join(app.getPath('userData'), 'vault-index.json'),
+  log: (message: string) => console.log(message),
+  scanConflicts: async ({ vault, folder, outlineName, slug, names }) => {
+    const found = await conflictScanner.scanFolder({ vaultId: vault.id, folder, outlineName, slug, names })
+    return found ? found.conflicts : null
+  }
+})
+// The talk's Activity lines (Inspector), newest first. The talk is named by its outline path; its
+// vault and slug key the local file. A path in no vault has no Activity.
+ipcMain.handle('talk:activity', async (_event, outlinePath: unknown) => {
+  if (typeof outlinePath !== 'string' || !outlinePath.endsWith('-outline.md')) return []
+  const hit = vaultRegistry.resolve(outlinePath)
+  if (!hit) return []
+  return talkActivity.list(hit.vault.id, basename(outlinePath).replace(/-outline\.md$/, ''))
+})
+// The open talk's folder changed (the external-change guard's watcher, or the talk was just opened):
+// scan that one folder, debounced, and tell every window the talk's new count.
+const conflictScanTimers = new Map<string, ReturnType<typeof setTimeout>>()
+function scheduleConflictScan(outlineRealPath: string): void {
+  const folder = dirname(outlineRealPath)
+  const prior = conflictScanTimers.get(folder)
+  if (prior) clearTimeout(prior)
+  conflictScanTimers.set(folder, setTimeout(() => {
+    conflictScanTimers.delete(folder)
+    void scanOpenTalkFolder(folder).catch((error) => console.error('[conflict-copies]', error))
+  }, 250))
+}
+async function scanOpenTalkFolder(realFolder: string): Promise<void> {
+  // The guard hands a real path; a vault registered through a symlink is found by its real root
+  // (review S1), and the scan then works on the vault's own spelling of the folder, as the walk does.
+  const hit = vaultRegistry.resolve(realFolder) ?? resolveByRealRoot(vaultRegistry.list().filter((v) => v.open), realFolder, (p) => realpathSync(p))
+  if (!hit || !vaultAvailable(hit.vault)) return // closed, unavailable or no vault: never scanned
+  const folder = hit.rel ? join(hit.vault.root, hit.rel) : hit.vault.root
+  let names: string[]
+  try {
+    names = (await readdirAsync(folder, { withFileTypes: true })).filter((e) => e.isFile()).map((e) => e.name) // files only, as the walk
+  } catch { return }
+  const outlineName = pickOutlineName(names, basename(folder))
+  if (!outlineName) return
+  const slug = outlineName.replace(/-outline\.md$/, '')
+  const found = await conflictScanner.scanFolder({ vaultId: hit.vault.id, folder, outlineName, slug, names })
+  if (!found) return
+  const outlinePath = join(folder, outlineName)
+  const talk = vaultIndex.setConflicts(hit.vault.id, outlinePath, found.conflicts)
+  for (const win of BrowserWindow.getAllWindows()) {
+    try {
+      if (!win.isDestroyed()) win.webContents.send('vault:talk-conflicts', { vaultId: hit.vault.id, outlinePath: talk?.outlinePath ?? outlinePath, conflicts: found.conflicts })
+    } catch { /* window closing */ }
+  }
+}
+// Compare and merge a conflict copy (several-vaults ticket 10; conflict-compare.ts header). The one
+// write goes through the normal save path (writeTalkOutline, origin 'conflict-merge'), then a ledger
+// save; the version not kept goes to the OS Trash (trashConflictCopy: test trash under TW_E2E).
+const conflictCompare = createConflictCompare({
+  outlineLib: async () => {
+    const dir = getCompilerPath()
+    const [edit, ledger, propagation] = await Promise.all([
+      import(pathToFileURL(join(dir, 'lib/12-outline-edit.mjs')).href),
+      import(pathToFileURL(join(dir, 'lib/13-slide-ledger.mjs')).href),
+      import(pathToFileURL(join(dir, 'lib/14-slide-propagation.mjs')).href)
+    ])
+    return { listSlideBlocks: edit.listSlideBlocks, mintId: ledger.mintId, lineDiff: propagation.lineDiff }
+  },
+  readTalk: (outlinePath) => readTalkOutline(outlinePath),
+  writeTalk: (outlinePath, next, opts) => writeTalkOutline(outlinePath, next, 'conflict-merge', opts),
+  withLock: (outlinePath, work) => withTalkFileLock(outlinePath, () => work()),
+  trashItem: trashConflictCopy,
+  writableRoot: (outlinePath) => writableRootFor(outlinePath),
+  staysInside: (root, candidate) => pathStaysInside(root, candidate),
+  vaultIdOf: (outlinePath) => vaultIdOf(outlinePath),
+  knownMachines: (vaultId) => vaultMachines.known(vaultId),
+  activity: talkActivity,
+  ledgerSave: async (outlinePath, text, lineage) => {
+    await ledgerRecord(outlinePath, text, lineage)
+    frontmatterCache.delete(outlinePath)
+    invalidateTalkCache(outlinePath)
+  },
+  rescan: async (folder) => { await scanOpenTalkFolder(realpathSync(folder)) },
+  log: (message) => console.log(message)
+})
+ipcMain.handle('conflict:load', (_event, outlinePath: unknown) => conflictCompare.load(typeof outlinePath === 'string' ? outlinePath : ''))
+ipcMain.handle('conflict:check', (_event, token: unknown) => conflictCompare.check(String(token ?? '')))
+ipcMain.handle('conflict:merge', (_event, token: unknown, pick: unknown) => {
+  const p = (pick ?? {}) as { keep?: unknown; pull?: unknown }
+  const keep = p.keep === 'theirs' ? 'theirs' : p.keep === 'mine' ? 'mine' : null
+  if (!keep) return { ok: false as const, error: 'Choose the version to keep.' }
+  const pull = Array.isArray(p.pull) ? p.pull.filter((n): n is number => typeof n === 'number') : []
+  return conflictCompare.merge(String(token ?? ''), { keep, pull })
+})
+ipcMain.handle('conflict:cancel', (_event, token: unknown) => { conflictCompare.cancel(String(token ?? '')); return true })
+/** Persisted talks of the vault whose root is root; [] for a folder that is no vault. */
+function listIndexedTalks(root: string): Promise<TalkInfo[]> {
+  const vault = vaultOfRoot(root)
+  return vault ? vaultIndex.cached(vault) : Promise.resolve([])
+}
 // Talk search (ADR-0029 §1, talk-search.ts): the one search for talks. It searches the Talks
 // browser's own list (the persisted vault index) and reads slide text from the slide-search cache
 // below; talks not read yet start the warm pass. The closures run at call time only, so the later
 // `searchCache` / `warmSearchIndex` bindings are initialised by then.
 const talkSearch = createTalkSearch({
-  vaultRoot: () => getConfig('vaultRoot', undefined) ?? null,
+  vaultRoot: () => currentVaultRoot() ?? null,
   talks: async () => {
-    const root = getConfig('vaultRoot', undefined) ?? null
-    if (!root) return []
-    const listed = await vaultIndex.cached(root)
-    return listed.length > 0 ? listed : findTalks(root)
+    const vault = primaryVault()
+    if (!vault) return []
+    const listed = await vaultIndex.cached(vault)
+    return listed.length > 0 ? listed : findTalks(vault.root)
   },
   slideRows: (outlinePath) => searchCache.get(outlinePath)?.rows ?? (slideTextUnreadable.has(outlinePath) ? [] : null),
   onSlideTextMissing: () => { void warmSearchIndex() }
 })
+// A search over one named vault (the Talks panel searches each open vault's section); the first open
+// vault uses talkSearch above. Made on first use for a vault the registry knows; the entry goes when
+// its vault is closed or removed (see the registry listener below).
+const vaultTalkSearches = new Map<string, ReturnType<typeof createTalkSearch>>()
+vaultRegistry.onChange((vaults) => {
+  for (const id of [...vaultTalkSearches.keys()]) {
+    if (!vaults.some((v) => v.id === id && v.open)) vaultTalkSearches.delete(id)
+  }
+})
+function talkSearchFor(vaultId: unknown) {
+  const primary = primaryVault()
+  if (typeof vaultId !== 'string' || !vaultId) return primary ? talkSearch : null
+  if (vaultId === primary?.id) return talkSearch
+  if (!vaultRegistry.get(vaultId)) return null // an id the registry does not know gets no search (and no entry)
+  if (vaultAvailability.isUnavailable(vaultId)) return null // an unavailable vault is not searched (invariant 5)
+  let search = vaultTalkSearches.get(vaultId)
+  if (!search) {
+    const vaultOpen = (): Vault | null => {
+      const v = vaultRegistry.get(vaultId)
+      return vaultAvailable(v) ? v : null
+    }
+    search = createTalkSearch({
+      vaultRoot: () => vaultOpen()?.root ?? null,
+      talks: async () => {
+        const vault = vaultOpen()
+        if (!vault) return []
+        const listed = await vaultIndex.cached(vault)
+        return listed.length > 0 ? listed : findTalks(vault.root)
+      },
+      slideRows: (outlinePath) => searchCache.get(outlinePath)?.rows ?? (slideTextUnreadable.has(outlinePath) ? [] : null),
+      onSlideTextMissing: () => { void warmSearchIndex() }
+    })
+    vaultTalkSearches.set(vaultId, search)
+  }
+  return search
+}
 const TALK_CACHE_TTL_MS = 5_000
-function invalidateTalkCache(): void {
-  talkCache = null
-  vaultIndex.invalidate()
+/** Drop the talk list caches of the vault holding scopePath (a vault root or any path in it); of
+ *  every vault when scopePath is omitted or in no vault. Other vaults' caches stay as they are. */
+function invalidateTalkCache(scopePath?: string | null): void {
+  const vault = typeof scopePath === 'string' && scopePath ? vaultRegistry.resolve(scopePath)?.vault ?? null : null
+  if (vault) {
+    talkCache.delete(vault.root)
+    vaultIndex.invalidate(vault.id)
+  } else {
+    talkCache.clear()
+    vaultIndex.invalidate()
+  }
+  // Talk search, the metadata scans and the layout doctor read the first open vault only.
   talkSearch.invalidate()
+  for (const search of vaultTalkSearches.values()) search.invalidate()
   // The metadata doctor/vocabulary scans walk the same outlines — a vault mutation staleness
   // window there would show phantom unregistered keys. Declared below (ADR-0036 section);
   // only ever called at runtime, so the later `let` cache binding is initialised by then.
@@ -1467,12 +2064,24 @@ function invalidateTalkCache(): void {
   invalidateLayoutDoctorCache()
 }
 
-function findTalks(root: string): TalkInfo[] {
-  if (talkCache && talkCache.root === root && Date.now() - talkCache.at < TALK_CACHE_TTL_MS) {
-    return talkCache.talks
+/** Slide text of the vault holding scopePath goes, with its talk list caches (a vault mutation).
+ *  Other vaults' slide text is kept. With no vault for scopePath, everything goes. */
+function invalidateVaultCaches(scopePath: string | null | undefined): void {
+  const vaultId = vaultIdOf(scopePath)
+  if (vaultId) {
+    const vaults = vaultRegistry.list()
+    for (const key of pathsInVault(searchCache.keys(), vaults, vaultId)) searchCache.delete(key)
+  } else {
+    searchCache.clear()
   }
+  invalidateTalkCache(scopePath)
+}
+
+function findTalks(root: string): TalkInfo[] {
+  const held = talkCache.get(root)
+  if (held && Date.now() - held.at < TALK_CACHE_TTL_MS) return held.talks
   const talks = scanTalks(root)
-  talkCache = { root, at: Date.now(), talks }
+  talkCache.set(root, { at: Date.now(), talks })
   return talks
 }
 
@@ -1532,14 +2141,17 @@ function scanTalks(root: string): TalkInfo[] {
   return talks.sort((a, b) => a.title.localeCompare(b.title))
 }
 
-ipcMain.handle('vault:list-talks', async (event) => {
-  const root = getConfig('vaultRoot', undefined) ?? null
-  if (!root) return []
-  const cached = await vaultIndex.handle(root, (batch, reset, done) => {
-    if (!event.sender.isDestroyed()) event.sender.send('vault:talks-batch', { batch, reset, done })
+// The talks of one vault: vaultId names it; without one, the first open vault (today's single list).
+// A closed or unknown vault lists nothing and is not scanned. Batches carry the vault id.
+ipcMain.handle('vault:list-talks', async (event, vaultId?: unknown) => {
+  const vault = typeof vaultId === 'string' ? vaultRegistry.get(vaultId) : primaryVault()
+  if (!vault || !vault.open) return []
+  if (vaultAvailability.isUnavailable(vault.id)) return [] // unmounted: not listed, not scanned (ticket 07)
+  const cached = await vaultIndex.handle(vault, (batch, reset, done) => {
+    if (!event.sender.isDestroyed()) event.sender.send('vault:talks-batch', { vaultId: vault.id, batch, reset, done })
   })
-  void vaultIndex.refreshDone().then((talks) => {
-    talkCache = { root, at: Date.now(), talks }
+  void vaultIndex.refreshDone(vault.id).then((talks) => {
+    talkCache.set(vault.root, { at: Date.now(), talks })
   }).catch((error) => console.error('[vault-index]', error))
   return cached
 })
@@ -1556,12 +2168,11 @@ function surfacedWarningCount(rows: ProjectionRowMain[]): number {
   return n
 }
 
+// Facts about every talk of every open vault, keyed by slug (the first open vault wins a slug that
+// two vaults share; a per-vault key is a later ticket).
 ipcMain.handle('vault:talk-meta', async () => {
   try {
-    const root = getConfig('vaultRoot', undefined) ?? null
-    if (!root) return {}
-    const persisted = await vaultIndex.metadata(root)
-    const out: Record<string, {
+    type Meta = {
       slideCount: number | null
       createdMs: number
       editedMs: number
@@ -1574,22 +2185,28 @@ ipcMain.handle('vault:talk-meta', async () => {
       event: string | null
       pathwayCount: number
       pathwayNames: string[]
-    }> = {}
-    for (const talk of await vaultIndex.cached(root)) {
-      const cached = searchCache.get(talk.outlinePath)
-      const first = cached?.rows?.[0] as (ProjectionRowMain & { render_hash?: string }) | undefined
-      const meta = persisted[talk.slug]
-      const pathwaySummary = readPathwaySummary(root, talk.slug)
-      out[talk.slug] = {
-        slideCount: cached ? cached.rows.length : null,
-        createdMs: meta?.createdMs ?? 0,
-        editedMs: meta?.editedMs ?? 0,
-        coverKey: first ? (first.render_hash || first.content_hash || first.slide_id || null) : null,
-        warningCount: cached ? surfacedWarningCount(cached.rows) : 0,
-        subtitle: meta?.subtitle ?? null,
-        event: meta?.event ?? null,
-        pathwayCount: pathwaySummary.count,
-        pathwayNames: pathwaySummary.names
+    }
+    const out: Record<string, Meta> = {}
+    for (const vault of availableVaults()) {
+      const root = vault.root
+      const persisted = await vaultIndex.metadata(vault)
+      for (const talk of await vaultIndex.cached(vault)) {
+        if (out[talk.slug]) continue
+        const cached = searchCache.get(talk.outlinePath)
+        const first = cached?.rows?.[0] as (ProjectionRowMain & { render_hash?: string }) | undefined
+        const meta = persisted[talk.slug]
+        const pathwaySummary = readPathwaySummary(root, talk.slug)
+        out[talk.slug] = {
+          slideCount: cached ? cached.rows.length : null,
+          createdMs: meta?.createdMs ?? 0,
+          editedMs: meta?.editedMs ?? 0,
+          coverKey: first ? (first.render_hash || first.content_hash || first.slide_id || null) : null,
+          warningCount: cached ? surfacedWarningCount(cached.rows) : 0,
+          subtitle: meta?.subtitle ?? null,
+          event: meta?.event ?? null,
+          pathwayCount: pathwaySummary.count,
+          pathwayNames: pathwaySummary.names
+        }
       }
     }
     return out
@@ -1628,18 +2245,36 @@ async function ledgerLib(): Promise<any | null> {
   return import(pathToFileURL(join(compilerDir, 'lib/13-slide-ledger.mjs')).href)
 }
 
-async function ledgerRecord(outlinePath: string, content: string): Promise<string[]> {
+// Cross-vault inserts (ticket 06) promise an origin for a slide id's first record in the target
+// vault; the save that first ledgers the id writes it, then the promise is dropped. Keyed by root.
+const pendingOrigins = new Map<string, Map<string, SlideOrigin>>()
+// The owner's private provenance (userData/provenance.json, keyed <targetVaultId>/<slideId>).
+let provenanceStoreInstance: ReturnType<typeof createProvenanceStore> | null = null
+function provenanceStore(): ReturnType<typeof createProvenanceStore> {
+  return (provenanceStoreInstance ??= createProvenanceStore(join(app.getPath('userData'), 'provenance.json')))
+}
+
+async function ledgerRecord(outlinePath: string, content: string, lineageHints: Map<string, string> | null = null): Promise<string[]> {
   try {
-    const vaultRoot = getConfig('vaultRoot', undefined)
+    const vaultRoot = vaultRootFor(outlinePath)
     const lib = await ledgerLib()
     if (!vaultRoot || !lib) return []
-    return lib.recordOutlineSave(vaultRoot, outlinePath, content, { now: Date.now() }).collisions
+    const pending = pendingOrigins.get(vaultRoot) ?? null
+    // An id's first record takes the origin an insert promised, or — after a refused save or a
+    // restart — the one rebuilt from this Mac's private record (ticket 06).
+    const originHints = originHintsFor(vaultIdOf(outlinePath), pending, provenanceStore())
+    const result = lib.recordOutlineSave(vaultRoot, outlinePath, content, { now: Date.now(), originHints, lineageHints })
+    if (pending) {
+      for (const id of [...result.versioned, ...result.coalesced, ...result.unchanged]) pending.delete(id)
+      if (pending.size === 0) pendingOrigins.delete(vaultRoot)
+    }
+    return result.collisions
   } catch { return [] }
 }
 
 async function ledgerSeal(outlinePath: string, content: string, reason: string): Promise<void> {
   try {
-    const vaultRoot = getConfig('vaultRoot', undefined)
+    const vaultRoot = vaultRootFor(outlinePath)
     const lib = await ledgerLib()
     if (vaultRoot && lib) lib.sealOutline(vaultRoot, outlinePath, content, reason, { now: Date.now() })
   } catch { /* sealing must never break present/export/publish */ }
@@ -1675,6 +2310,40 @@ function thumbCacheRoot(): string {
   // v9: picture keys now include referenced media bytes and are shared by both compile modes.
   thumbCacheTag = 'thumb-cache-v9-' + tag
   return thumbCacheTag
+}
+
+// Per-vault thumbnail folders (thumb-cache-dirs.ts): a talk's pictures live under its vault's id,
+// so two vaults with the same talk slug never share a folder. The per-slug folders an older build
+// left in the live namespace move under the first open vault once per session, before any lookup.
+function thumbNamespaceDir(): string {
+  return join(app.getPath('userData'), thumbCacheRoot())
+}
+let legacyThumbsAdopted = false
+function adoptLegacyThumbsOnce(): void {
+  if (legacyThumbsAdopted) return
+  const primary = vaultRegistry.primary()
+  if (!primary) return
+  legacyThumbsAdopted = true
+  const moved = adoptLegacyThumbDirs(thumbNamespaceDir(), primary.id)
+  if (moved) console.log(`[thumbnails] moved ${moved} talk cache folder(s) under vault ${primary.id}`)
+}
+// Older builds (0.35 beta) sweep a namespace whose folder and immediate children look idle for 7
+// days; renders now land under @vaults/<id>/<slug>, so the namespace folder's own mtime is bumped
+// when a talk's cache folder is first handed out, and again at most hourly.
+const NAMESPACE_TOUCH_EVERY_MS = 60 * 60 * 1000
+let namespaceTouchedAt = 0
+/** The cache folder for a talk's thumbnails: its vault's folder, or the namespace level for a talk
+ *  in no vault. */
+function touchNamespaceHourly(): void {
+  if (Date.now() - namespaceTouchedAt >= NAMESPACE_TOUCH_EVERY_MS) {
+    namespaceTouchedAt = Date.now()
+    touchNamespace(thumbNamespaceDir())
+  }
+}
+function talkThumbCacheDir(outlinePath: string, slug: string): string {
+  adoptLegacyThumbsOnce()
+  touchNamespaceHourly()
+  return talkThumbDir(thumbNamespaceDir(), vaultIdOf(outlinePath), slug)
 }
 
 // A changed compiler starts a new cache namespace. Do not migrate prior namespaces here:
@@ -1870,22 +2539,28 @@ const preparedTalkCache = createPreparedTalkCache<PreparedTalk>({
 // background sweep) put two of them in the heap together. The render QUEUE serialises renders, not
 // preparation — this gate is what makes T11's "one deck in memory" law hold here (2026-09-15 OOM).
 const preparePass = createSingleFlight()
+// A live compile: cached, on the gate's ordinary lane. A layout variant: uncached, on its background lane.
+const routePreparation = createPreparationRoute(preparedTalkCache, preparePass)
 
 async function prepareTalk(
   outlinePath: string,
   content: string,
   defaults?: Record<string, unknown>,
-  options?: Record<string, unknown>
+  options?: Record<string, unknown>,
+  /** 'variant' for a compile that is not the live deck (a layout variant): uncached, so it neither
+   *  displaces the live deck's retained model nor stays retained itself, and on the preparation gate's
+   *  background lane, so the live deck's compile never waits behind it (createPreparationRoute). */
+  lane: PreparationLane = 'live'
 ): Promise<PreparedTalk | null> {
   const compilerDir = getCompilerPath()
   if (!compilerDir) return null
   const stat = statSync(outlinePath)
   const slug = basename(outlinePath).replace('-outline.md', '')
-  const vaultRoot = getConfig('vaultRoot', undefined)
+  const vaultRoot = vaultRootFor(outlinePath)
   const resolved = vaultRoot ? resolveImageRefs(content, vaultRoot) : content
   const group = preparedTalkGroup(outlinePath, defaults, options)
   const key = group + '\0' + createHash('sha256').update(resolved).digest('hex')
-  return preparedTalkCache.get(key, group, async () => {
+  const load = async (gated: <R>(task: () => Promise<R>) => Promise<R>): Promise<PreparedTalk> => {
     if (process.env.TW_REC_TEST === '1') {
       const testGlobal = globalThis as typeof globalThis & { __twPrepareCount?: number }
       testGlobal.__twPrepareCount = (testGlobal.__twPrepareCount ?? 0) + 1
@@ -1896,10 +2571,11 @@ async function prepareTalk(
     const { buildPerSlideProjections } = await import(
       pathToFileURL(join(compilerDir, 'lib/10-projections.mjs')).href
     )
-    const model = await preparePass(() => prepareSource(outlinePath, resolved, slug, stat, defaults, options ?? {}))
+    const model = await gated(() => prepareSource(outlinePath, resolved, slug, stat, defaults, options ?? {})) as PreparedTalk['model']
     const rows = buildPerSlideProjections(model, slug) ?? null
     return { slug, model, rows }
-  })
+  }
+  return routePreparation(lane, key, group, load)
 }
 
 // The background thumbnail lane decides things on its own — defer, skip, evict — and the packaged
@@ -1932,7 +2608,7 @@ async function browserThumbnailMediaOptions(): Promise<Record<string, unknown> |
 }
 
 async function pathwaySnapshot(outlinePath: string, content: string) {
-  const vaultRoot = getConfig('vaultRoot', undefined)
+  const vaultRoot = vaultRootFor(outlinePath)
   if (!vaultRoot) throw new Error('Choose a Vault before managing pathways.')
   const prepared = await prepareTalk(outlinePath, content)
   if (!prepared?.rows) throw new Error('The outline could not be compiled.')
@@ -1958,7 +2634,7 @@ async function mutatePathways(
   const before = await pathwaySnapshot(outlinePath, content)
   const text = mutation(before.manifest.text)
   writePathwayManifest(before.manifest.path, text)
-  const vaultRoot = getConfig('vaultRoot', undefined) as string
+  const vaultRoot = vaultRootFor(outlinePath) as string
   const talkSlug = basename(dirname(before.manifest.path))
   invalidatePathwaySummary(vaultRoot, talkSlug)
   notifyPathwaysChanged(outlinePath)
@@ -2032,6 +2708,8 @@ ipcMain.handle('talk:compile', async (_event, outlinePath: string, content: stri
 })
 
 ipcMain.handle('talk:selected-thumbnail', async (_event, outlinePath: string, content: string, slideId: string) => {
+  const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
+  if (refusal) return null
   try {
     const prepared = await prepareTalk(outlinePath, content)
     if (!prepared) return null
@@ -2040,15 +2718,62 @@ ipcMain.handle('talk:selected-thumbnail', async (_event, outlinePath: string, co
     const documentId = thumbnailDocumentId(fullHtml)
     const selected = selectedThumbnailSlide(prepared.rows, String(slideId), documentId)
     if (!selected) return null
-    const cacheDir = join(app.getPath('userData'), thumbCacheRoot(), prepared.slug)
+    const cacheDir = talkThumbCacheDir(outlinePath, prepared.slug)
     const rendered = await renderThumbnails({ fullHtml, slides: [selected], cacheDir })
     const renderedPath = rendered[selected.key]
     return renderedPath
-      ? { slideId: String(slideId), url: `twthumb://${prepared.slug}/${basename(renderedPath, '.png')}` }
+      ? { slideId: String(slideId), url: thumbUrl(prepared.slug, basename(renderedPath, '.png'), vaultIdOf(outlinePath)) }
       : null
   } catch (e) {
     console.error('[selected-thumbnail]', e)
     return null
+  }
+})
+
+// ADR-0032 §6 (own slide over sample): the author's CURRENT slide, rendered from outline text with
+// another layout (and options) on it, for the picker's pictures and the Inspector's option pictures.
+// The outline on disk and in the editor is never touched (preview-layout writes nothing). A variant is
+// compiled on the 'variant' lane: UNCACHED (the prepared-talk cache is the live deck's: a variant there
+// would evict the live model and stay retained itself) and on the single-flight prepare gate's
+// BACKGROUND lane (one deck at a time still, but the live deck's compile never waits behind a variant),
+// under the video-free thumbnail media contract when it loads (the 2026-09-15 browser-lane precedent;
+// a failed load is asked again next time, not kept). The model is garbage once the render returns.
+const variantMedia = memoiseUntilFailure(browserThumbnailMediaOptions)
+const renderVariantThumbnail = createVariantThumbnailRenderer({
+  prepareTalk: async (outlinePath, content) => prepareTalk(outlinePath, content, undefined, await variantMedia(), 'variant'),
+  render: (opts) => renderThumbnails(opts),
+  cacheDirFor: (outlinePath, slug) => talkThumbCacheDir(outlinePath, slug),
+  urlFor: (slug, name, outlinePath) => thumbUrl(slug, name, vaultIdOf(outlinePath)),
+  documentId: (html) => thumbnailDocumentId(html),
+  inputsFingerprint: (outlinePath, content) => {
+    const vaultRoot = vaultRootFor(outlinePath)
+    return mediaFingerprint(outlinePath, vaultRoot ? resolveImageRefs(content, vaultRoot) : content)
+  }
+})
+ipcMain.handle('layout:variant-thumbnail', createVariantThumbnailHandler(outlineRefused, renderVariantThumbnail))
+// Ticket 10: pictures of one compared version of a conflict (Mine or the other). Compiled like a layout
+// variant: on the 'variant' lane (uncached, background), so the live deck's model is neither
+// displaced nor made to wait, under the variant media contract. Keyed by slide id for the screen.
+ipcMain.handle('conflict:pictures', async (_event, token: unknown, side: unknown) => {
+  const version = conflictCompare.versionText(String(token ?? ''), side === 'theirs' ? 'theirs' : 'mine')
+  if (!version || outlineRefused(version.outlinePath)) return {}
+  try {
+    const prepared = await prepareTalk(version.outlinePath, version.text, undefined, await variantMedia(), 'variant')
+    if (!prepared) return {}
+    const rows = (prepared.rows ?? []) as Array<{ slide_id?: string; render_hash?: string; content_hash?: string; thumbnail_hash?: string; layout?: string; triggers?: Record<string, string> }>
+    const fullHtml = prepared.model.fullHtml as string
+    const slides = thumbnailSlides(rows, thumbnailDocumentId(fullHtml))
+    const rendered = await renderThumbnails({ fullHtml, slides, cacheDir: talkThumbCacheDir(version.outlinePath, prepared.slug), requestKey: `conflict:${_event.sender.id}:${side === 'theirs' ? 'theirs' : 'mine'}` })
+    const vaultId = vaultIdOf(version.outlinePath)
+    const out: Record<string, string> = {}
+    for (const row of rows) {
+      const key = row.render_hash || row.content_hash || row.slide_id || ''
+      if (row.slide_id && key && rendered[key]) out[row.slide_id] = thumbUrl(prepared.slug, basename(rendered[key], '.png'), vaultId)
+    }
+    return out
+  } catch (e) {
+    console.error('[conflict:pictures]', e)
+    return {}
   }
 })
 
@@ -2178,7 +2903,7 @@ ipcMain.handle('talk:check-embeds', async (_event, outlinePath: string, content:
     const slug = basename(outlinePath).replace('-outline.md', '')
     const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
     const { parseVideoEmbed } = await import(pathToFileURL(join(compilerDir, 'lib/02-triggers-layout.mjs')).href)
-    const vaultRoot = getConfig('vaultRoot', undefined)
+    const vaultRoot = vaultRootFor(outlinePath)
     const resolved = vaultRoot ? resolveImageRefs(content, vaultRoot) : content
     const model = await prepareSource(outlinePath, resolved, slug, stat)
     const embeds = extractDeckEmbeds(model.fullHtml || '')
@@ -2210,7 +2935,7 @@ ipcMain.handle('talk:explain-slide', async (_event, outlinePath: string, content
   try {
     const stat = statSync(outlinePath)
     const slug = basename(outlinePath).replace('-outline.md', '')
-    const vaultRoot = getConfig('vaultRoot', undefined)
+    const vaultRoot = vaultRootFor(outlinePath)
     const resolved = vaultRoot ? resolveImageRefs(content, vaultRoot) : content
     const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
     const { buildPerSlideProjections } = await import(pathToFileURL(join(compilerDir, 'lib/10-projections.mjs')).href)
@@ -2294,6 +3019,9 @@ function searchIndexFile(): string {
   return join(app.getPath('userData'), 'search-index.json')
 }
 function loadSearchIndexFromDisk(): void {
+  // Read the vault list first: a migration it runs (and the change it emits) happens before the
+  // entries load, never after, so it cannot clear them.
+  const primaryRoot = currentVaultRoot() ?? null
   try {
     const raw = readFileSync(searchIndexFile(), 'utf8')
     const obj = JSON.parse(raw) as Record<string, SearchCacheEntry & { slug: string }>
@@ -2302,6 +3030,8 @@ function loadSearchIndexFromDisk(): void {
     }
     console.log('[search] loaded ' + searchCache.size + ' talks from disk index')
   } catch { /* no index yet */ }
+  // The vault the loaded entries were warmed for; a later change of first open vault clears them.
+  lastPrimaryRoot = primaryRoot
 }
 let persistTimer: ReturnType<typeof setTimeout> | null = null
 let persisting = false
@@ -2369,19 +3099,23 @@ async function ensureTalkRows(
 let warming = false
 async function warmSearchIndex(): Promise<void> {
   if (warming) return
-  const vaultRoot = getConfig('vaultRoot', undefined)
+  // An unavailable vault is not indexed (invariant 5): know which folders answer before scanning.
+  await checkVaultAvailability().catch(() => false)
+  if (warming) return
+  const vaultRoot = currentVaultRoot()
   const compilerDir = getCompilerPath()
   if (!vaultRoot || !compilerDir) return
   warming = true
   try {
     const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
     const { buildPerSlideProjections } = await import(pathToFileURL(join(compilerDir, 'lib/10-projections.mjs')).href)
-    const talks = findTalks(vaultRoot)
-    for (const talk of talks) {
+    // Every open vault's talks (the Talks panel shows slide counts and Recent across all of them).
+    const roots = [vaultRoot, ...availableVaults().filter((v) => v.root !== vaultRoot).map((v) => v.root)]
+    for (const root of roots) for (const talk of findTalks(root)) {
       // A talk the compiler cannot read counts as read (no slide text) for talk search, so its
       // "Reading slide text" line ends and searches stop restarting this pass for it.
       try {
-        const rows = await ensureTalkRows(talk, vaultRoot, prepareSource, buildPerSlideProjections)
+        const rows = await ensureTalkRows(talk, root, prepareSource, buildPerSlideProjections)
         if (rows) slideTextUnreadable.delete(talk.outlinePath)
         else slideTextUnreadable.add(talk.outlinePath)
       } catch { slideTextUnreadable.add(talk.outlinePath) }
@@ -2401,7 +3135,7 @@ async function warmSearchIndex(): Promise<void> {
 let prerendering = false
 async function prerenderAllThumbnails(): Promise<void> {
   if (prerendering) return
-  const vaultRoot = getConfig('vaultRoot', undefined)
+  const vaultRoot = currentVaultRoot()
   const compilerDir = getCompilerPath()
   if (!vaultRoot || !compilerDir) return
   prerendering = true
@@ -2418,7 +3152,7 @@ async function prerenderAllThumbnails(): Promise<void> {
         if (!existsSync(talk.outlinePath)) continue
         const content = readFileSync(talk.outlinePath, 'utf8')
         const contentHash = contentHashForPrerender(content)
-        const cacheDir = join(app.getPath('userData'), thumbCacheRoot(), talk.slug)
+        const cacheDir = talkThumbCacheDir(talk.outlinePath, talk.slug)
         if (!shouldPrerenderTalk(ledger, talk.outlinePath, contentHash, cacheDir)) continue
         if (compiled > 0) await new Promise<void>((resolve) => setTimeout(resolve, 250))
         await new Promise<void>((resolve) => setImmediate(resolve))
@@ -2570,7 +3304,7 @@ async function ocrAllVaultImages(): Promise<void> {
   // image-text search. On a large imported vault it saturates the machine, so it never runs unless
   // Dominik turns it on (SCALE policy, 2026-07-20).
   if (!getConfig('ocrEnabled', false)) return
-  const vaultRoot = getConfig('vaultRoot', undefined)
+  const vaultRoot = currentVaultRoot()
   if (!vaultRoot || !resolveOcrBin()) return
   ocring = true
   try {
@@ -2605,7 +3339,8 @@ function resolveImageAbs(ref: string, talkDir: string, vaultRoot: string): strin
 }
 // The cached OCR text for one slide's images (lowercased), memoized by a stable slide key.
 function slideOcrText(row: ProjectionRowMain, talkDir: string, vaultRoot: string): string {
-  const key = String(row.content_hash || row.slide_id || '')
+  // Keyed per vault: the same slide text in two vaults can point at different image files.
+  const key = vaultRoot + '\u0000' + String(row.content_hash || row.slide_id || '')
   const memo = slideOcrMemo.get(key)
   if (memo !== undefined) return memo
   const md = String(row.source_markdown || '')
@@ -2621,7 +3356,7 @@ function slideOcrText(row: ProjectionRowMain, talkDir: string, vaultRoot: string
 
 // Manual trigger for the OCR index (command palette) — runs the same cached pass and reports counts.
 ipcMain.handle('talk:ocr-index', async () => {
-  const vaultRoot = getConfig('vaultRoot', undefined)
+  const vaultRoot = currentVaultRoot()
   if (!vaultRoot) return { success: false, error: 'No vault root' }
   if (!resolveOcrBin()) return { success: false, error: 'OCR helper not found (rebuild the app)' }
   loadOcrCache()
@@ -2653,14 +3388,26 @@ function matchHay(hayLower: string, q: SearchQuery): boolean {
 }
 
 // Talk search over IPC (ADR-0029 §1): the Talks browser today, the picker's "Find a talk" next.
-ipcMain.handle('talks:search', (_event, query: unknown, options: unknown) => handleTalkSearchRequest(talkSearch, query, options))
+// options.vaultIds (a list) searches those vaults, merged in that order; an empty list searches
+// nothing. An unavailable, closed or unknown vault is not searched (invariant 5).
+ipcMain.handle('talks:search', async (_event, query: unknown, options: unknown) => {
+  const opts = options && typeof options === 'object' ? options as { vaultId?: unknown; vaultIds?: unknown; within?: unknown } : {}
+  const empty = emptyTalkSearchResult(typeof query === 'string' ? query : '', typeof opts.within === 'string' ? opts.within : null)
+  if (Array.isArray(opts.vaultIds)) {
+    const searches = opts.vaultIds.map((id) => (typeof id === 'string' && id ? talkSearchFor(id) : null)).filter((x): x is NonNullable<typeof x> => !!x)
+    if (!searches.length) return empty
+    return mergeTalkSearchResults(await Promise.all(searches.map((search) => handleTalkSearchRequest(search, query, options))))
+  }
+  const search = talkSearchFor(opts.vaultId)
+  return search ? handleTalkSearchRequest(search, query, options) : empty
+})
 // The fo: completion source (ADR-0029 §2): folders at every depth with their talk counts, from
 // the same talk scan the search uses (vault:list-folders stops at depth 3).
 ipcMain.handle('talks:folders', () => talkSearch.folders())
 
 // Talks browser folders stay open or closed as left, across restarts (ADR-0029 §3).
 const talkFolderState = createTalkFolderStateStore({
-  vaultRoot: () => getConfig('vaultRoot', undefined) ?? null,
+  vaultRoot: () => currentVaultRoot() ?? null,
   readValue: () => readConfig().talkListFolders,
   writeValue: (value) => writeConfig({ talkListFolders: value })
 })
@@ -2671,15 +3418,16 @@ ipcMain.handle('talks:set-folder-state', (_event, changes: unknown) => {
   try { return talkFolderState.write(changes) } catch { return {} }
 })
 
-ipcMain.handle('search:all-slides', async (_event, query: string | SearchQuery) => {
-  const vaultRoot = getConfig('vaultRoot', undefined)
-  if (!vaultRoot) return null
+// options.vaultIds limits the search to those open vaults (vault-scope.ts searchVaults); without it,
+// the first open vault as before. Rows carry the vaultId of their talk.
+ipcMain.handle('search:all-slides', async (_event, query: string | SearchQuery, options?: unknown) => {
+  const vaults = searchVaults(vaultRegistry.list().filter((v) => !vaultAvailability.isUnavailable(v.id)), options)
+  if (!vaults.length) return options ? [] : null
   const compilerDir = getCompilerPath()
   if (!compilerDir) return null
   loadOcrCache()
   try {
-    const talks = findTalks(vaultRoot)
-    const results: Array<ProjectionRowMain & { talkSlug: string; talkTitle: string; outlinePath: string; talkMtimeMs: number; talkMeta: string; titleHit: boolean }> = []
+    const results: Array<ProjectionRowMain & { vaultId: string; talkSlug: string; talkTitle: string; outlinePath: string; talkMtimeMs: number; talkMeta: string; titleHit: boolean }> = []
     // Scoped, all-words (or exact-phrase) match. The four searchable fields are the slide TITLE
     // (nav_title + title), the slide BODY (full source_markdown), and the IMAGE text (cached OCR of
     // the slide's images) — Section/subsection are deliberately NOT searched (they are a UI filter;
@@ -2691,7 +3439,7 @@ ipcMain.handle('search:all-slides', async (_event, query: string | SearchQuery) 
     const { prepareSource } = await import(adaptersUrl)
     const { buildPerSlideProjections } = await import(projectionsUrl)
 
-    for (const talk of talks) {
+    for (const { id: vaultId, root: vaultRoot } of vaults) for (const talk of findTalks(vaultRoot)) {
       try {
         const rows = await ensureTalkRows(talk, vaultRoot, prepareSource, buildPerSlideProjections)
         if (!rows) continue
@@ -2714,6 +3462,7 @@ ipcMain.handle('search:all-slides', async (_event, query: string | SearchQuery) 
             const titleHit = q.scope === 'title' ? true : matchHay(titleHay, q)
             results.push({
               ...row,
+              vaultId,
               talkSlug: talk.slug,
               talkTitle: talk.title,
               outlinePath: talk.outlinePath,
@@ -2833,6 +3582,8 @@ async function maybeOfferOutlineMigration(outlinePath: string, text: string): Pr
 // `forEditor`: the editor window is loading this talk (Editor.tsx) — the text it gets is the external-
 // change guard's baseline for the file (outline-disk-guard.ts). Every other reader leaves it alone.
 ipcMain.handle('talk:read-outline', async (event, outlinePath: string, opts?: { forEditor?: boolean }) => {
+  const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
+  if (refusal) return null
   try {
     const text = await readFileAsync(outlinePath, 'utf8')
     const loaded = await maybeOfferOutlineMigration(outlinePath, text)
@@ -2920,6 +3671,10 @@ ipcMain.handle('talk:extract-section', async (_event, sourceOutlinePath: string,
 // Data-loss backstop (2026-07-05): isStructurallyEmptyOutline and its refusal message live in
 // talk-writer.ts, which applies the same backstop to every other origin's writes.
 ipcMain.handle('talk:write-outline', async (_event, outlinePath: string, content: string) => {
+  // An outline outside the current vault (a window still holding a talk from a previous vault):
+  // nothing is written, and the editor is told in the same shape as the empty-write backstop.
+  const saveRefusal = outlineSaveRefusal(vaultRootFor(outlinePath), outlinePath)
+  if (saveRefusal) return saveRefusal
   // HARD BACKSTOP: refuse to write a structurally-empty payload OVER a file that still holds real
   // content. This is the last line of defence against the data-loss bug (a full 58-slide outline was
   // emptied to 0 bytes during Slide Focus testing, then auto-committed by reposync). Absent/empty
@@ -3021,11 +3776,19 @@ function frontmatterPairs(text: string): Array<{ key: string; value: string }> {
   return pairs
 }
 
+// Handlers that write the outline or files beside it (dist/, handouts, assets, present files,
+// thumbnails) take the outline path from the renderer: before anything is written, any path that is
+// not an `*-outline.md` whose real path is inside the current vault is refused. Each handler returns
+// the refusal in its OWN reply shape — never a throw, which would reach the renderer as a rejected
+// invoke (a second window still holding a talk from a previous vault would lose its typing silently).
+function outlineRefused(outlinePath: unknown): string | null {
+  return outlineRefusal(vaultRootFor(typeof outlinePath === 'string' ? outlinePath : null), outlinePath)
+}
+
 function insideVault(outlinePath: string): boolean {
-  const vaultRoot = getConfig('vaultRoot', undefined)
-  if (!vaultRoot) return false
-  const rel = relativePath(resolvePath(vaultRoot), resolvePath(outlinePath))
-  return rel !== '' && !rel.startsWith('..') && !rel.includes(`..${pathSep}`)
+  if (typeof outlinePath !== 'string' || !outlinePath) return false
+  const hit = vaultRegistry.resolve(resolvePath(outlinePath))
+  return !!hit && hit.vault.open && hit.rel !== ''
 }
 
 // Per-outline "Keep (ignore)" list — keys the user chose to leave undeclared. Registering a key
@@ -3112,7 +3875,7 @@ function layoutScan(root: string): LayoutDoctorTalk[] {
 // Doctor: every outline's unresolved trigger findings. The panel filters to one talk; the
 // vault view shows the whole report. Main only reports — fixes go through the editor.
 ipcMain.handle('layout:doctor', () => {
-  const root = getConfig('vaultRoot', undefined)
+  const root = currentVaultRoot()
   return root ? layoutScan(root) : []
 })
 
@@ -3120,19 +3883,19 @@ ipcMain.handle('layout:doctor', () => {
 // filters to one talk; a future vault-health surface can show the whole report. NO auto-fixing
 // here — main only reports; removal goes through metadata:edit-frontmatter on explicit request.
 ipcMain.handle('metadata:doctor', () => {
-  const root = getConfig('vaultRoot', undefined)
+  const root = currentVaultRoot()
   return root ? metadataScan(root).doctor : []
 })
 
 // Open-vocabulary values observed across the vault: { event: [{ value, count }, …], … }.
 ipcMain.handle('metadata:vocabulary', () => {
-  const root = getConfig('vaultRoot', undefined)
+  const root = currentVaultRoot()
   return root ? metadataScan(root).vocabulary : {}
 })
 
 // "Keep (ignore)": record an unregistered key for this outline so the doctor stops flagging it.
 ipcMain.handle('metadata:ignore-key', (_event, outlinePath: string, key: string) => {
-  const root = getConfig('vaultRoot', undefined)
+  const root = vaultRootFor(outlinePath)
   if (!root || !insideVault(outlinePath) || typeof key !== 'string' || !/^[A-Za-z0-9_-]+$/.test(key)) {
     return { ok: false as const }
   }
@@ -3176,7 +3939,7 @@ ipcMain.handle(
     if (!written.changed) return { ok: true as const, content: written.text, changed: false as const }
     const next = written.text
     frontmatterCache.delete(outlinePath) // sidebar meta must not serve the pre-edit head
-    invalidateTalkCache()
+    invalidateTalkCache(outlinePath)
     invalidateMetadataCaches()
     invalidateLayoutDoctorCache()
     return { ok: true as const, content: next, changed: true as const }
@@ -3200,7 +3963,7 @@ ipcMain.handle(
     if (!Array.isArray(targets) || targets.length === 0) return null
     if (!Array.isArray(add) || !Array.isArray(remove)) return null
     if (add.some((t) => typeof t !== 'string') || remove.some((t) => typeof t !== 'string')) return null
-    const vaultRoot = getConfig('vaultRoot', undefined)
+    const vaultRoot = writableVaultRoot()
     const compilerDir = getCompilerPath()
     if (!vaultRoot || !compilerDir) return null
     try {
@@ -3293,7 +4056,7 @@ ipcMain.handle('ledger:where-used', async (_event, id: string) => {
   // that is not a plain id token (e.g. "../../..") before it can escape.
   if (typeof id !== 'string' || !/^[A-Za-z0-9_-]+$/.test(id)) return []
   try {
-    const vaultRoot = getConfig('vaultRoot', undefined)
+    const vaultRoot = currentVaultRoot()
     const lib = await ledgerLib()
     return vaultRoot && lib ? lib.whereUsed(vaultRoot, id) : []
   } catch { return [] }
@@ -3303,18 +4066,20 @@ ipcMain.handle('ledger:versions', async (_event, id: string) => {
   // Same path-traversal guard as ledger:where-used.
   if (typeof id !== 'string' || !/^[A-Za-z0-9_-]+$/.test(id)) return []
   try {
-    const vaultRoot = getConfig('vaultRoot', undefined)
+    const vaultRoot = currentVaultRoot()
     const lib = await ledgerLib()
     return vaultRoot && lib ? lib.listVersions(vaultRoot, id) : []
   } catch { return [] }
 })
 
 ipcMain.handle('ledger:detach', async (_event, outlinePath: string, content: string, ref: { heading: string; occurrence: number }) => {
+  const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
+  if (refusal) return null
   const compilerDir = getCompilerPath()
   if (!compilerDir) return null
   try {
     const mod = await import(pathToFileURL(join(compilerDir, 'lib/12-outline-edit.mjs')).href)
-    const vaultRoot = getConfig('vaultRoot', undefined)
+    const vaultRoot = vaultRootFor(outlinePath)
     const lib = await ledgerLib()
     // Detached against the talk's current text — the open editor's buffer when a window has it
     // (talk-writer.ts). The lineage hint must be the FIRST ledger record of the new id: on the editor
@@ -3354,7 +4119,7 @@ async function propagationLib(): Promise<any | null> {
 ipcMain.handle('ledger:status', async (_event, id: string, adoptMarkdown: string) => {
   if (typeof id !== 'string' || !/^[A-Za-z0-9_-]+$/.test(id)) return null
   try {
-    const vaultRoot = getConfig('vaultRoot', undefined)
+    const vaultRoot = currentVaultRoot()
     const lib = await propagationLib()
     if (!vaultRoot || !lib) return null
     return lib.slideStatus(vaultRoot, id, String(adoptMarkdown ?? ''))
@@ -3381,7 +4146,7 @@ ipcMain.handle('ledger:adopt', async (_event, id: string, versionMarkdown: strin
   if (typeof id !== 'string' || !/^[A-Za-z0-9_-]+$/.test(id)) return null
   if (!Array.isArray(targetOutlines) || targetOutlines.some((t) => typeof t !== 'string')) return null
   try {
-    const vaultRoot = getConfig('vaultRoot', undefined)
+    const vaultRoot = writableVaultRoot()
     const lib = await propagationLib()
     if (!vaultRoot || !lib) return null
     // Path-traversal guard: targets are vault-relative outline paths (as whereUsed/slideStatus
@@ -3422,7 +4187,7 @@ ipcMain.handle(
     if (!Array.isArray(targets) || targets.length === 0) return null
     if (targets.some((t) => !t || typeof t.outline !== 'string' || typeof t.heading !== 'string')) return null
     try {
-      const vaultRoot = getConfig('vaultRoot', undefined)
+      const vaultRoot = writableVaultRoot()
       const lib = await mergeLib()
       if (!vaultRoot || !lib) return null
       const rootAbs = resolvePath(vaultRoot)
@@ -3464,7 +4229,7 @@ ipcMain.handle('ledger:version-thumbnails', async (_event, id: string) => {
   const compilerDir = getCompilerPath()
   if (!compilerDir) return null
   try {
-    const vaultRoot = getConfig('vaultRoot', undefined)
+    const vaultRoot = currentVaultRoot()
     const lib = await ledgerLib()
     if (!vaultRoot || !lib) return null
     const versions = (lib.listVersions(vaultRoot, id) ?? []) as Array<{ file: string; markdown: string }>
@@ -3528,17 +4293,24 @@ ipcMain.handle('ledger:version-thumbnails', async (_event, id: string) => {
 
 // ── Present ────────────────────────────────────────────────────────────────
 
-type PresentBuild = { slug: string; title: string; html: string; presentPath: string }
+type PresentBuild = { slug: string; title: string; html: string; presentPath: string; preworkSlideIds?: string[]; slideOrder?: Array<{ id: string; title: string }>; startSlideId?: string }
 
 async function compileTalkForPresent(outlinePath: string, content: string): Promise<Omit<PresentBuild, 'presentPath'>> {
   // Goes through the shared prepared-model memo: F5 right after an edit pause (same content the
   // strip just compiled with different defaults) still recompiles, but repeated F5s don't.
   const prepared = await prepareTalk(outlinePath, content, timerSettings())
   if (!prepared) throw new Error('Compiler not found')
+  // Ticket 08: the talk's pre-work section (compiler model.prework) — its slides are answered
+  // before the session and never presented.
+  const prework = prepared.model.prework as { slideIds?: unknown } | undefined
+  const preworkSlideIds = Array.isArray(prework?.slideIds) ? prework.slideIds.filter((id): id is string => typeof id === 'string') : []
   return {
     slug: prepared.slug,
     title: String((prepared.model.title as string) ?? prepared.slug),
-    html: String(prepared.model.fullHtml ?? '')
+    html: String(prepared.model.fullHtml ?? ''),
+    preworkSlideIds,
+    slideOrder: (Array.isArray(prepared.model.slides) ? prepared.model.slides as Array<{ id?: unknown; title?: unknown }> : [])
+      .map((slide) => ({ id: String(slide.id ?? ''), title: String(slide.title ?? '') }))
   }
 }
 
@@ -3557,36 +4329,48 @@ function writeTalkPresentHtml(outlinePath: string, slug: string, html: string, a
   return presentPath
 }
 
-async function buildTalkPresentFile(outlinePath: string, content: string, allowTmpFallback: boolean, pathwayId?: string): Promise<PresentBuild> {
+async function buildTalkPresentFile(outlinePath: string, content: string, allowTmpFallback: boolean, pathwayId?: string, startSlideId?: string): Promise<PresentBuild> {
   let compiled = await compileTalkForPresent(outlinePath, content)
+  // Fix round S4: present-from-here on a pre-work step starts at the first talk slide after the
+  // section, and the presenter's status line says so.
+  const start = presentStartOutsidePrework(compiled.slideOrder ?? [], compiled.preworkSlideIds ?? [], startSlideId)
+  if (start.notice) compiled = { ...compiled, html: injectPresenterNotice(compiled.html, start.notice) }
   if (pathwayId) {
-    const vaultRoot = getConfig('vaultRoot', undefined)
+    const vaultRoot = vaultRootFor(outlinePath)
     if (!vaultRoot) throw new Error('Choose a Vault before presenting a pathway.')
     const prepared = await prepareTalk(outlinePath, content, timerSettings())
     const manifest = readPathwayManifest(vaultRoot, compiled.slug)
     const resolved = resolvePathways(manifest.pathways, (prepared?.rows ?? []) as PathwaySlideRow[])
       .find((pathway) => pathway.id === pathwayId)
     if (!resolved) throw new Error('That pathway no longer exists.')
+    const preworkIds = new Set(compiled.preworkSlideIds ?? [])
     compiled = {
       ...compiled,
-      html: injectPathwayRuntime(compiled.html, resolved.present.map((row) => row.slide_id), pathwayId)
+      html: injectPathwayRuntime(compiled.html, resolved.present.map((row) => row.slide_id).filter((id) => !preworkIds.has(id)), pathwayId)
     }
+  } else if (compiled.preworkSlideIds?.length) {
+    // Ticket 08: presenting skips the pre-work steps (the talk's own slide sequence never has them).
+    compiled = { ...compiled, html: withoutPresenterSlides(compiled.html, compiled.preworkSlideIds) }
   }
   const presentPath = writeTalkPresentHtml(outlinePath, compiled.slug, compiled.html, allowTmpFallback, pathwayId)
-  return { ...compiled, presentPath }
+  return { ...compiled, presentPath, startSlideId: start.slideId }
 }
 
 function talkBySlug(slug: string): TalkInfo | null {
-  const vaultRoot = getConfig('vaultRoot', undefined)
+  const vaultRoot = currentVaultRoot()
   if (!vaultRoot) return null
   return findTalks(vaultRoot).find((talk) => talk.slug === slug) ?? null
 }
 
 ipcMain.handle('talk:present', async (_event, outlinePath: string, content: string, mode?: string, startSlideId?: string, pathwayId?: string, plannedRunId?: string) => {
+  const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
+  if (refusal) return { success: false, error: refusal }
   const blocked = unresolvedOutboundFailure(content)
   if (blocked) return blocked
   try {
-    const { slug, title, presentPath } = await buildTalkPresentFile(outlinePath, content, true, pathwayId)
+    const build = await buildTalkPresentFile(outlinePath, content, true, pathwayId, startSlideId)
+    const { slug, title, presentPath } = build
+    startSlideId = build.startSlideId
     const localHandoutPath = join(dirname(outlinePath), 'dist', `${slug}-handout.html`)
     const publishedUrl = readHandoutUrl(content)
       ?? (existsSync(localHandoutPath) ? pathToFileURL(localHandoutPath).href : null)
@@ -3681,7 +4465,7 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
     }
     // mode: 'presenter' → presenter view (notes + controls); 'audience' → chromeless audience view;
     // anything else → the plain presentation window. The deck runtime reads ?presenter=1 / ?audience=1.
-    const query = mode === 'presenter' ? { presenter: '1' } : mode === 'audience' ? { audience: '1' } : undefined
+    const query: Record<string, string> | undefined = mode === 'presenter' ? { presenter: '1' } : mode === 'audience' ? { audience: '1' } : undefined
     // ⇧F5 present-from-here: the runtime reads location.hash on init and starts on the slide whose
     // dataset.id matches the id (09-output-builders.mjs). An unknown/empty id falls back to slide 0.
     const loadOpts: { query?: Record<string, string>; hash?: string } = {}
@@ -3722,7 +4506,9 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
     })
     // F5 in the presenter opens the audience view via window.open(?audience=1). Send it FULL-SCREEN
     // to a second display if one exists; otherwise leave it as a normal window on this screen.
-    win.webContents.setWindowOpenHandler(() => ({
+    // The board's own window is a blank page the presenter window draws into (feedback-boards ticket
+    // 05); under its name nothing else opens.
+    win.webContents.setWindowOpenHandler((details) => details.frameName === 'tw-board-window' && details.url !== 'about:blank' ? { action: 'deny' } : ({
       action: 'allow',
       ...(E2E ? {
         overrideBrowserWindowOptions: {
@@ -3732,6 +4518,26 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
       } : {})
     }))
     win.webContents.on('did-create-window', (child, details) => {
+      // The board's own window (feedback-boards ticket 05, D23): the presenter window draws it. It
+      // goes to another display when there is one (not full screen: it is managed there), and it
+      // closes with the presenter window it belongs to.
+      if (details?.frameName === 'tw-board-window') {
+        // Only the blank page this presenter window opened for its board; anything else is closed.
+        if (details.url !== 'about:blank' || mode !== 'presenter' || !livePresenterContexts.has(deckWcId)) { if (!child.isDestroyed()) child.destroy(); return }
+        child.setMinimumSize(900, 560)
+        try {
+          const here = screen.getDisplayNearestPoint({ x: win.getBounds().x, y: win.getBounds().y })
+          const external = screen.getAllDisplays().find((d) => d.id !== here.id)
+          if (external) {
+            const { x, y, width, height } = external.workArea
+            child.setBounds({ x: x + Math.max(0, Math.round((width - 1440) / 2)), y: y + Math.max(0, Math.round((height - 900) / 2)), width: Math.min(1440, width), height: Math.min(900, height) })
+          }
+        } catch (e) { console.warn('[present] board window placement failed:', e) }
+        const closeChild = () => { if (!child.isDestroyed()) child.close() }
+        win.once('closed', closeChild)
+        child.once('closed', () => { if (!win.isDestroyed()) win.removeListener('closed', closeChild) })
+        return
+      }
       if (!details?.url || !details.url.includes('audience=1')) return
       // The presenter-spawned audience window gets its own role title too.
       child.on('page-title-updated', (e) => e.preventDefault())
@@ -3812,6 +4618,8 @@ ipcMain.handle('window:claim-talk', (event, outlinePath: string | null) => {
 // the deck window at the slide it was on. Reuses the present-from-here hash so the reload lands in
 // place. The preload persists across loadFile, so the ⌘E/⌘R bridges re-mount automatically.
 ipcMain.handle('present:rebuild', async (_event, deckWcId: number, outlinePath: string, content: string, slideId?: string) => {
+  const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
+  if (refusal) return { ok: false, error: refusal }
   const block = unresolvedTriggerBlock(content)
   if (block) return { ok: false, error: block.message }
   try {
@@ -3862,7 +4670,7 @@ ipcMain.handle('replay:build', async (_event, talkSlug: string): Promise<{ succe
 registerRecordingIpc({
   compilerDir: () => getCompilerPath(),
   userDataDir: () => app.getPath('userData'),
-  vaultRoot: () => getConfig('vaultRoot', undefined) ?? null,
+  vaultRoot: () => writableVaultRoot() ?? null, // writes: only a vault folder that is there (ticket 07)
   discardThresholdMs: () => Math.max(0, Number(getConfig('recordingDiscardMs', 20000)) || 20000),
   r2Config: () => ({
     endpoint: getConfig('recordingR2Endpoint', undefined) ?? '',
@@ -3884,21 +4692,26 @@ registerRecordingIpc({
   // A saved run changes the vault's presentation facts (last delivered); ping every window so
   // the panel and the status-bar dates refresh WITHOUT a reload (T29). Reuses the existing
   // 'talk meta changed' channel — pathways already ride it.
-  onSessionSaved: () => notifyTalkMetaUpdated(),
+  onSessionSaved: (saved) => {
+    notifyTalkMetaUpdated()
+    // Reactions ticket 06: the Run file may exist only now; a live session bound to it writes its
+    // history at once instead of waiting for its 30 s retry.
+    liveSessions?.runSaved(saved.talkSlug, saved.runId)
+  },
 })
 
 // TalkWeaver History IPC (handout URLs + cached live checks). Registered once; deps are lazy.
 registerHistoryIpc({
   userDataDir: () => app.getPath('userData'),
-  vaultRoot: () => getConfig('vaultRoot', undefined) ?? null,
-  listTalks: (root) => vaultIndex.cached(root),
+  vaultRoot: () => writableVaultRoot() ?? null, // writes: only a vault folder that is there (ticket 07)
+  listTalks: (root) => listIndexedTalks(root),
   testMode: () => process.env.TW_REC_TEST === '1'
 })
 
 // Transcription IPC (Parakeet bridge + transcript store). Registered once; deps are lazy.
 registerTranscriptionIpc({
   userDataDir: () => app.getPath('userData'),
-  vaultRoot: () => getConfig('vaultRoot', undefined) ?? null,
+  vaultRoot: () => writableVaultRoot() ?? null, // writes: only a vault folder that is there (ticket 07)
   config: () => {
     const cfg = transcriptionSettings()
     return {
@@ -3910,8 +4723,8 @@ registerTranscriptionIpc({
 })
 
 talkTextIpcController = registerTalkTextIpc({
-  vaultRoot: () => getConfig('vaultRoot', undefined) ?? null,
-  listTalks: (root) => vaultIndex.cached(root),
+  vaultRoot: () => writableVaultRoot() ?? null, // writes: only a vault folder that is there (ticket 07)
+  listTalks: (root) => listIndexedTalks(root),
   compile: async (outlinePath, content) => (await prepareTalk(outlinePath, content))?.rows ?? null,
   readSidecar: (id) => readAssetSidecar(id),
   resources: () => app.isPackaged
@@ -3924,6 +4737,8 @@ talkTextIpcController = registerTalkTextIpc({
 // ── Build ──────────────────────────────────────────────────────────────────
 
 ipcMain.handle('talk:build', async (_event, outlinePath: string, content: string) => {
+  const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
+  if (refusal) return { success: false, error: refusal }
   const blocked = unresolvedOutboundFailure(content)
   if (blocked) return blocked
   const compilerDir = getCompilerPath()
@@ -3933,12 +4748,12 @@ ipcMain.handle('talk:build', async (_event, outlinePath: string, content: string
     const slug = basename(outlinePath).replace('-outline.md', '')
     const talkDir = dirname(outlinePath)
     const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
-    const vaultRoot = getConfig('vaultRoot', undefined)
+    const vaultRoot = vaultRootFor(outlinePath)
     const resolved = vaultRoot ? resolveImageRefs(content, vaultRoot) : content
     const model = await prepareSource(outlinePath, resolved, slug, stat, timerSettings())
     const html = model.fullHtml as string
     const distDir = join(talkDir, 'dist')
-    if (!existsSync(distDir)) mkdirSync(distDir, { recursive: true })
+    if (!existsSync(distDir)) mkdirSync(distDir) // only inside a talk folder that is there (a vanished vault is never re-created)
     const outPath = join(distDir, slug + '.html')
     writeFileSync(outPath, html, 'utf8')
     return { success: true, outPath }
@@ -3950,6 +4765,8 @@ ipcMain.handle('talk:build', async (_event, outlinePath: string, content: string
 
 // ── Build variants (ADR-0012): full + share-notes + share-no-notes + projections JSONL ──
 ipcMain.handle('talk:build-variants', async (_event, outlinePath: string, content: string) => {
+  const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
+  if (refusal) return { success: false, error: refusal }
   const blocked = unresolvedOutboundFailure(content)
   if (blocked) return blocked
   const compilerDir = getCompilerPath()
@@ -3958,14 +4775,14 @@ ipcMain.handle('talk:build-variants', async (_event, outlinePath: string, conten
     const stat = statSync(outlinePath)
     const slug = basename(outlinePath).replace('-outline.md', '')
     const talkDir = dirname(outlinePath)
-    const vaultRoot = getConfig('vaultRoot', undefined)
+    const vaultRoot = vaultRootFor(outlinePath)
     const resolved = vaultRoot ? resolveImageRefs(content, vaultRoot) : content
 
     const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
     const model = await prepareSource(outlinePath, resolved, slug, stat, timerSettings())
 
     const distDir = join(talkDir, 'dist')
-    if (!existsSync(distDir)) mkdirSync(distDir, { recursive: true })
+    if (!existsSync(distDir)) mkdirSync(distDir) // only inside a talk folder that is there (a vanished vault is never re-created)
 
     const title = (model.title as string) ?? slug
     const fullHtml = model.fullHtml as string
@@ -3984,7 +4801,8 @@ ipcMain.handle('talk:build-variants', async (_event, outlinePath: string, conten
         pathToFileURL(join(compilerDir, 'lib/09-output-builders.mjs')).href
       )
       const styles = extractStyles(fullHtml)
-      const slides = extractSlides(fullHtml)
+      // The share variants are handouts: a {prework} section's slides are never in them.
+      const slides = withoutPreworkSlides(extractSlides(fullHtml) as Array<{ id: string; html: string; notes: string }>, model.prework as CompiledPrework | undefined)
       const license = (model as { license?: unknown }).license
       const shareNotes = buildShareHtml({ title, slides, styles, includeNotes: true, slug, license })
       const shareNoNotes = buildShareHtml({ title, slides, styles, includeNotes: false, slug, license })
@@ -4045,7 +4863,8 @@ async function buildRunHandoutArtifact(
   run: RunRecord,
   content: string,
   outputSlug?: string,
-  workerBaseUrl?: string
+  workerBaseUrl?: string,
+  prework?: HandoutPreworkConfig
 ): Promise<RunHandoutArtifact> {
   const compilerDir = getCompilerPath()
   if (!compilerDir) throw new Error('Compiler not found')
@@ -4054,7 +4873,7 @@ async function buildRunHandoutArtifact(
   let missing: string[] = []
   if (run.slideSet.kind === 'pathway') {
     const pathwayId = run.slideSet.pathwayId
-    const vaultRoot = getConfig('vaultRoot', undefined)
+    const vaultRoot = vaultRootFor(talk.outlinePath)
     if (!vaultRoot) throw new Error('Choose a Vault before building a Run handout.')
     const prepared = await prepareTalk(talk.outlinePath, content, timerSettings())
     const manifest = readPathwayManifest(vaultRoot, talk.slug)
@@ -4073,14 +4892,21 @@ async function buildRunHandoutArtifact(
   const { extractStyles, extractSlides } = await import(pathToFileURL(join(compilerDir, 'lib/04-html-extraction.mjs')).href)
   const { buildShareHtml } = await import(pathToFileURL(join(compilerDir, 'lib/09-output-builders.mjs')).href)
   const styles = extractStyles(datedHtml)
-  const slides = extractSlides(datedHtml)
+  // Feedback-boards ticket 09: a Run handout never lists the pre-work steps as ordinary slides. They
+  // travel only as the form's steps (an inert template the form shows while pre-work is open); once it
+  // closes, or on a handout with no pre-work, they are not shown at all.
+  const preworkIds = new Set(compiled.preworkSlideIds ?? [])
+  const allSlides = extractSlides(datedHtml) as Array<{ id: string; html: string; notes: string }>
+  const slides = allSlides.filter((slide) => !preworkIds.has(slide.id))
+  const preworkSlides = allSlides.filter((slide) => preworkIds.has(slide.id))
   const slug = outputSlug ?? runHandoutSlug(talk.slug, run.eventTitle ?? 'run', run.plannedDate ?? run.startedAt.slice(0, 10), [])
   const html = buildShareHtml({
     title: compiled.title, slides, styles, includeNotes: false, slug,
     workerBaseUrl: workerBaseUrl ?? '', liveTalkSlug: talk.slug,
+    ...(prework ? { prework: { ...prework, steps: preworkSlides.map((slide) => ({ id: slide.id, html: slide.html })) } } : {}),
   }) as string
   const distDir = join(dirname(talk.outlinePath), 'dist')
-  if (!existsSync(distDir)) mkdirSync(distDir, { recursive: true })
+  if (!existsSync(distDir)) mkdirSync(distDir) // only inside a talk folder that is there (a vanished vault is never re-created)
   const path = join(distDir, `${slug}-handout.html`)
   writeFileSync(path, html, 'utf8')
   return { path, html, title: compiled.title, slug, slideIds, missing,
@@ -4092,6 +4918,8 @@ async function buildRunHandoutArtifact(
 // exactly via the real buildShareHtml(includeNotes:false) — the same content the compiler's launcher
 // treats as the handout. Phase 2 (Cloudflare Pages publish) builds on this.
 ipcMain.handle('talk:export-handout', async (_event, outlinePath: string, content: string) => {
+  const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
+  if (refusal) return { success: false, error: refusal }
   const blocked = unresolvedOutboundFailure(content)
   if (blocked) return blocked
   const compilerDir = getCompilerPath()
@@ -4100,7 +4928,7 @@ ipcMain.handle('talk:export-handout', async (_event, outlinePath: string, conten
     const stat = statSync(outlinePath)
     const slug = basename(outlinePath).replace('-outline.md', '')
     const talkDir = dirname(outlinePath)
-    const vaultRoot = getConfig('vaultRoot', undefined)
+    const vaultRoot = vaultRootFor(outlinePath)
     const resolved = vaultRoot ? resolveImageRefs(content, vaultRoot) : content
 
     const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
@@ -4113,7 +4941,8 @@ ipcMain.handle('talk:export-handout', async (_event, outlinePath: string, conten
     )
     const { buildShareHtml } = await import(pathToFileURL(join(compilerDir, 'lib/09-output-builders.mjs')).href)
     const styles = extractStyles(fullHtml)
-    const slides = extractSlides(fullHtml)
+    // Ticket 09: pre-work steps are never slides of a handout (the evergreen one included).
+    const slides = withoutPreworkSlides(extractSlides(fullHtml) as Array<{ id: string; html: string; notes: string }>, model.prework as CompiledPrework | undefined)
     const license = (model as { license?: unknown }).license
     const handoutHtml = buildShareHtml({
       title, slides, styles, includeNotes: false, slug, license,
@@ -4121,7 +4950,7 @@ ipcMain.handle('talk:export-handout', async (_event, outlinePath: string, conten
     })
 
     const distDir = join(talkDir, 'dist')
-    if (!existsSync(distDir)) mkdirSync(distDir, { recursive: true })
+    if (!existsSync(distDir)) mkdirSync(distDir) // only inside a talk folder that is there (a vanished vault is never re-created)
     const handoutPath = join(distDir, slug + '-handout.html')
     writeFileSync(handoutPath, handoutHtml, 'utf8')
     void ledgerSeal(outlinePath, content, 'export')
@@ -4268,44 +5097,9 @@ function slimHandoutHtml(html: string): string {
   return last // best effort — still over 25 MiB only if a single clip ≤1 MB + text already exceeds it
 }
 
-// The handout's landing/viewer page (Open + Download + QR + short link) — the same page the old
-// the handout builder produced. The Open/Download buttons point at the sibling handout file.
-function viewerPageHtml(opts: { title: string; handoutFile: string; url: string; qr: string }): string {
-  const display = opts.url.replace(/^https?:\/\//, '')
-  return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtmlAttr(opts.title)} — handout</title>
-<style>
-  :root { color-scheme: light; }
-  body { font-family: -apple-system, system-ui, sans-serif; background: #f7f3ea; color: #17202a; margin: 0; display: grid; place-items: center; min-height: 96vh; }
-  main { text-align: center; padding: 28px; max-width: 640px; }
-  h1 { font-family: Georgia, serif; font-weight: 500; font-size: clamp(26px, 5vw, 40px); margin: 0 0 6px; }
-  p.sub { color: #5b6470; margin: 0 0 26px; }
-  .actions { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-bottom: 30px; }
-  a.btn { display: inline-block; padding: 13px 26px; border-radius: 10px; text-decoration: none; font-weight: 600; font-size: 17px; }
-  a.open { background: #0b3a6b; color: #fff; }
-  a.dl { border: 2px solid #0b3a6b; color: #0b3a6b; }
-  .qr { width: 150px; margin: 0 auto; opacity: 0.9; }
-  .qr svg { width: 100%; height: auto; }
-  p.tiny { color: #8a93a0; font-size: 13px; }
-</style></head>
-<body><main>
-  <h1>${escapeHtmlAttr(opts.title)}</h1>
-  <p class="sub">Slides handout — browse online or keep a copy. It is one self-contained file; everything works offline.</p>
-  <div class="actions">
-    <a class="btn open" href="${opts.handoutFile}">Open the slides</a>
-    <a class="btn dl" href="${opts.handoutFile}" download="${opts.handoutFile}">Download</a>
-  </div>
-  <div class="qr">${opts.qr}</div>
-  <p class="tiny">${escapeHtmlAttr(display)}</p>
-</main></body></html>
-`
-}
-function escapeHtmlAttr(s: string): string {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
-
 ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, content: string) => {
+  const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
+  if (refusal) return { success: false, error: refusal }
   // `content` is the renderer's copy of the buffer, which can trail the last keystrokes: it gates the
   // request early, but the handout, the ledger seal and the stamp use the flushed text below.
   const blocked = unresolvedOutboundFailure(content)
@@ -4346,7 +5140,7 @@ ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, conte
 
     const stat = statSync(outlinePath)
     const slug = basename(outlinePath).replace('-outline.md', '')
-    const vaultRoot = getConfig('vaultRoot', undefined)
+    const vaultRoot = vaultRootFor(outlinePath)
     const resolved = vaultRoot ? resolveImageRefs(published, vaultRoot) : published
 
     // Build the handout HTML exactly like talk:export-handout (share-no-notes).
@@ -4363,7 +5157,8 @@ ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, conte
     )
     const { buildShareHtml } = await import(pathToFileURL(join(compilerDir, 'lib/09-output-builders.mjs')).href)
     const styles = extractStyles(fullHtml)
-    const slides = extractSlides(fullHtml)
+    // Ticket 09: pre-work steps are never slides of a handout (the evergreen one included).
+    const slides = withoutPreworkSlides(extractSlides(fullHtml) as Array<{ id: string; html: string; notes: string }>, model.prework as CompiledPrework | undefined)
     const license = (model as { license?: unknown }).license
     const handoutHtml = buildShareHtml({
       title, slides, styles, includeNotes: false, slug, license,
@@ -4396,7 +5191,7 @@ ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, conte
     writeFileSync(join(talkOutDir, handoutFile), slimHandoutHtml(handoutHtml), 'utf8')
     const { makeQrSvg } = await import(pathToFileURL(join(compilerDir, 'lib/01-cli-utils.mjs')).href)
     const qr = (makeQrSvg(url) as string) || ''
-    writeFileSync(join(talkOutDir, 'index.html'), viewerPageHtml({ title, handoutFile, url, qr }), 'utf8')
+    writeFileSync(join(talkOutDir, 'index.html'), await viewerPageHtml({ title, handoutFile, url, qr }, compilerDir), 'utf8')
     const { buildVenuePageHtml, buildUnavailableVenuePageHtml } = await import(pathToFileURL(join(compilerDir, 'lib/venue-page.mjs')).href)
     const venueDir = join(talkOutDir, 'p')
     mkdirSync(venueDir, { recursive: true })
@@ -4482,7 +5277,7 @@ async function deployPublishedSite(siteDir: string): Promise<{ ok: boolean; erro
 }
 
 type LiveWorkerCredentials = { adminSecret: string; signingSecret: string }
-let localLiveWorker: { process: ChildProcessWithoutNullStreams; baseUrl: string; adminSecret: string } | null = null
+let localLiveWorker: { process: ChildProcessByStdio<null, Readable, Readable>; baseUrl: string; adminSecret: string } | null = null
 
 function liveWorkerDir(): string {
   return app.isPackaged ? join(process.resourcesPath, 'worker') : join(process.cwd(), 'worker')
@@ -4647,6 +5442,8 @@ async function startLocalLiveWorker(requestedBaseUrl = 'http://127.0.0.1:8787'):
   const child = spawn('wrangler', [
     'dev', '--config', config, '--ip', '127.0.0.1', '--port', port,
     '--var', `ADMIN_SECRET:${adminSecret}`, '--var', `SESSION_SIGNING_SECRET:${signingSecret}`,
+    // A local Worker only: pre-work submissions without cf-connecting-ip share one source (ticket 09).
+    '--var', 'PREWORK_LOCAL_SOURCE:1',
     '--persist-to', wranglerState, '--show-interactive-dev-session=false',
   ], {
     cwd: app.getPath('userData'),
@@ -4712,6 +5509,19 @@ async function ensureLiveWorker(): Promise<{ baseUrl: string; adminSecret: strin
   return deployed
 }
 
+// ── Pre-work for a planned Run (feedback-boards ticket 09) ─────────────────────────────────────
+// Built lazily (app.getPath needs a ready app); the timer starts once the app is ready.
+let runPreworkService: RunPreworkService | null = null
+function runPrework(): RunPreworkService {
+  runPreworkService ??= createRunPrework({
+    registryPath: join(app.getPath('userData'), 'run-prework-registry.json'),
+    endpoint: () => ensureLiveWorker(),
+    vaultRoot: () => writableVaultRoot() ?? null, // writes: only a vault folder that is there (ticket 07)
+    fetch,
+  })
+  return runPreworkService
+}
+
 // ── Share for comments (ticket 03) ──────────────────────────────────────────────────────────────
 // The shared-talk module (shared-talk.ts) owns the share registry, the Worker calls and the push
 // queue; this is its wiring: the live Worker endpoint, the share build, the share_url stamp and the
@@ -4742,11 +5552,12 @@ function sharedTalks(): SharedTalks {
       if (blocked) throw new Error(blocked.error)
       const compilerDir = getCompilerPath()
       if (!compilerDir) throw new Error('Compiler not found.')
-      const vaultRoot = getConfig('vaultRoot', undefined)
+      const vaultRoot = vaultRootFor(outlinePath)
       const payload = await buildSharedTalkPayload({
         compilerDir, outlinePath, content, slug, proposals,
         compileContent: vaultRoot ? resolveImageRefs(content, vaultRoot) : content,
-        ownerName: ownerNameFrom(content, String(metadataDefaults().author ?? '')),
+        // The talk's vault's personal author first (ticket 04), then Settings.
+        ownerName: ownerNameFrom(content, vaultPersonalAuthor(outlinePath) || String(metadataDefaults().author ?? '')),
       })
       // The Worker takes up to 32 MiB per push; slim media only when a deck comes near it.
       return payload.html.length > 24 * 1024 * 1024 ? { ...payload, html: slimHandoutHtml(payload.html) } : payload
@@ -4848,6 +5659,8 @@ ipcMain.handle('shared-talk:list', () => {
   try { return sharedTalks().list() } catch { return [] }
 })
 ipcMain.handle('shared-talk:share', async (_event, outlinePath: unknown, title: unknown) => {
+  const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
+  if (refusal) return { success: false, error: refusal }
   if (typeof outlinePath !== 'string' || !outlinePath) return { success: false, error: 'No talk is open.' }
   try {
     const blocked = unresolvedOutboundFailure(readFileSync(outlinePath, 'utf8'))
@@ -4857,6 +5670,8 @@ ipcMain.handle('shared-talk:share', async (_event, outlinePath: unknown, title: 
   } catch (error) { return sharedTalkError(error) }
 })
 ipcMain.handle('shared-talk:set-options', async (_event, outlinePath: unknown, options: unknown) => {
+  const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
+  if (refusal) return { success: false, error: refusal }
   if (typeof outlinePath !== 'string' || !outlinePath || !options || typeof options !== 'object') return { success: false, error: 'Bad request.' }
   const { liveUpdates, proposals } = options as { liveUpdates?: unknown; proposals?: unknown }
   try {
@@ -4868,6 +5683,8 @@ ipcMain.handle('shared-talk:set-options', async (_event, outlinePath: unknown, o
   } catch (error) { return sharedTalkError(error) }
 })
 ipcMain.handle('shared-talk:update', async (_event, outlinePath: unknown) => {
+  const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
+  if (refusal) return { success: false, error: refusal }
   if (typeof outlinePath !== 'string' || !outlinePath) return { success: false, error: 'No talk is open.' }
   try { return { success: true, share: await sharedTalks().update(outlinePath) } } catch (error) { return sharedTalkError(error) }
 })
@@ -4923,7 +5740,7 @@ async function ensureLiveJoinUrl(context: { talkSlug: string; shortUrl: string |
 
 ipcMain.handle('run:build-handout', async (_event, payload: { talkSlug: string; runId: string }) => {
   try {
-    const vault = getConfig('vaultRoot', undefined)
+    const vault = writableVaultRoot()
     if (!vault) return { success: false, error: 'no-vault' }
     const run = readRun(vault, String(payload.talkSlug), String(payload.runId))
     const talk = talkBySlug(String(payload.talkSlug))
@@ -4944,11 +5761,13 @@ ipcMain.handle('run:build-handout', async (_event, payload: { talkSlug: string; 
 
 ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string; runId: string }) => {
   try {
-    const vault = getConfig('vaultRoot', undefined)
+    const vault = writableVaultRoot()
     if (!vault) return { success: false, error: 'no-vault' }
     const run = readRun(vault, String(payload.talkSlug), String(payload.runId))
     const talk = talkBySlug(String(payload.talkSlug))
-    if (!run || !talk || run.status !== 'delivered') return { success: false, error: 'delivered-run-not-found' }
+    // Feedback-boards ticket 09 (ADR-0032 amendment point 3): a planned Run publishes its handout
+    // before the day too, so the link participants get for pre-work is the one the talk will use.
+    if (!run || !talk) return { success: false, error: 'run-not-found' }
     // As run:build-handout: the open editor's buffer, flushed through the one writer, is what is published.
     const flushed = await flushTalkForPublish(talk.outlinePath)
     if (!flushed.ok) return { success: false, error: flushed.error }
@@ -4972,7 +5791,28 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
       } catch { /* derive a fresh collision-safe slug below */ }
     }
     const slug = stableSlug ?? runHandoutSlug(talk.slug, run.eventTitle ?? 'run', run.plannedDate ?? run.startedAt.slice(0, 10), existing)
-    const artifact = await buildRunHandoutArtifact(talk, run, content, slug, liveWorkerBaseUrl)
+    // A planned Run with a pre-work window carries its form: pushed to the Worker first, then the
+    // handout is built with the pre-work object's id so it can ask whether pre-work is open.
+    let prework: HandoutPreworkConfig | undefined
+    let preworkWarning: string | undefined
+    // Pre-work is hidden for 0.37: no form is pushed to the Worker and none goes into the handout, whatever
+    // pre-work times the Run still holds (they stay on disk).
+    const preworkMs = preworkEnabled() && run.status === 'planned' ? preworkWindowMs(preworkWindow(run), run.timeZone) : null
+    // A window that closes before it opens would publish a handout with no form, silently.
+    if (preworkEnabled() && run.status === 'planned' && run.preworkOpens && !preworkMs) {
+      return { success: false, error: 'Pre-work closes before it opens; fix the dates in the plan.' }
+    }
+    if (preworkMs) {
+      const prepared = await prepareTalk(talk.outlinePath, content, timerSettings())
+      const form = publicPreworkForm(prepared?.model.prework as Parameters<typeof publicPreworkForm>[0],
+        (Array.isArray(prepared?.model.slides) ? prepared!.model.slides : []) as Parameters<typeof publicPreworkForm>[1])
+      if (form) {
+        const published = await runPrework().publish(talk.slug, run.id, form, preworkMs)
+        preworkWarning = published.warning
+        if (published.open) prework = { preworkId: published.preworkId, workerBaseUrl: published.workerBaseUrl, form }
+      }
+    }
+    const artifact = await buildRunHandoutArtifact(talk, run, content, slug, liveWorkerBaseUrl, prework)
     const talkOutDir = join(siteDir, slug)
     if (!existsSync(talkOutDir)) mkdirSync(talkOutDir, { recursive: true })
     const handoutFile = `${slug}.html`
@@ -4997,7 +5837,7 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
     if (!compilerDir) return { success: false, error: 'Compiler not found' }
     const { makeQrSvg } = await import(pathToFileURL(join(compilerDir, 'lib/01-cli-utils.mjs')).href)
     const qr = (makeQrSvg(url) as string) || ''
-    writeFileSync(join(talkOutDir, 'index.html'), viewerPageHtml({ title: `${artifact.title} — ${run.eventTitle ?? 'Run'}`, handoutFile, url, qr }), 'utf8')
+    writeFileSync(join(talkOutDir, 'index.html'), await viewerPageHtml({ title: `${artifact.title} — ${run.eventTitle ?? 'Run'}`, handoutFile, url, qr }, compilerDir), 'utf8')
     const { buildVenuePageHtml, buildUnavailableVenuePageHtml } = await import(pathToFileURL(join(compilerDir, 'lib/venue-page.mjs')).href)
     const venueDir = join(talkOutDir, 'p')
     mkdirSync(venueDir, { recursive: true })
@@ -5013,8 +5853,8 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
     }
     const deployed = await deployPublishedSite(siteDir)
     if (!deployed.ok) return { success: false, error: deployed.error }
-    persistRun(vault, setRunHandoutUrl(run, url))
-    return { success: true, url, path: artifact.path, slideIds: artifact.slideIds, missing: artifact.missing }
+    persistRun(vault, setRunHandoutUrl(readRun(vault, run.talkSlug, run.id) ?? run, url))
+    return { success: true, url, path: artifact.path, slideIds: artifact.slideIds, missing: artifact.missing, ...(preworkWarning ? { warning: preworkWarning } : {}) }
   } catch (cause) {
     return { success: false, error: cause instanceof Error ? cause.message : String(cause) }
   }
@@ -5022,7 +5862,7 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
 
 ipcMain.handle('run:unpublish-handout', async (_event, payload: { talkSlug: string; runId: string }) => {
   try {
-    const vault = getConfig('vaultRoot', undefined)
+    const vault = writableVaultRoot()
     if (!vault) return { success: false, error: 'no-vault' }
     const run = readRun(vault, String(payload.talkSlug), String(payload.runId))
     if (!run) return { success: false, error: 'run-not-found' }
@@ -5041,7 +5881,10 @@ ipcMain.handle('run:unpublish-handout', async (_event, payload: { talkSlug: stri
       const deployed = await deployPublishedSite(siteDir)
       if (!deployed.ok) return { success: false, error: deployed.error }
     }
-    persistRun(vault, clearRunHandoutUrl(run))
+    // The pre-work object is NOT closed here: the missing handout is the closure for participants, and
+    // publishing again brings back the same open form with its answers. Only "Close pre-work now" or
+    // the Run's close date closes it (ticket 09 fix round).
+    persistRun(vault, clearRunHandoutUrl(readRun(vault, run.talkSlug, run.id) ?? run))
     return { success: true }
   } catch (cause) {
     return { success: false, error: cause instanceof Error ? cause.message : String(cause) }
@@ -5056,6 +5899,8 @@ ipcMain.handle('run:unpublish-handout', async (_event, payload: { talkSlug: stri
 // (`img-XXXXXXX`, already WebP from paste), http/data URLs, and non-image refs are left alone.
 // Returns the rewritten outline so the renderer can adopt it in place (avoiding an autosave clobber).
 ipcMain.handle('talk:optimize-images', async (_event, outlinePath: string, content: string) => {
+  const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
+  if (refusal) return { success: false, error: refusal }
   try {
     const sharp = require('sharp')
     const talkDir = dirname(outlinePath)
@@ -5107,8 +5952,7 @@ ipcMain.handle('talk:optimize-images', async (_event, outlinePath: string, conte
       const written = await writeTalkOutline(outlinePath, (current) => rewrites.reduce((text, [from, to]) => text.split(from).join(to), current), 'optimize-images')
       if (!written.ok) throw new Error(written.error)
       newContent = written.text
-      searchCache.clear()
-      invalidateTalkCache()
+      invalidateVaultCaches(outlinePath)
     }
     return { success: true, converted, savedBytes, failed: failed.length, newContent }
   } catch (e) {
@@ -5124,12 +5968,14 @@ ipcMain.handle('talk:optimize-images', async (_event, outlinePath: string, conte
 // videos retain their bytes. Rewrite refs to the pool id; leave pool / http / data refs alone. Returns the
 // rewritten markdown (the renderer inserts THAT). `sourceOutlinePath` locates the source assets.
 ipcMain.handle('talk:materialize-slide-assets', async (_event, sourceOutlinePath: string, markdown: string) => {
-  const vaultRoot = getConfig('vaultRoot', undefined)
+  const refusal = outlineRefused(sourceOutlinePath) // writes beside the outline: refuse one outside the vault
+  if (refusal) return { success: false, error: refusal, markdown }
+  const vaultRoot = writableRootFor(sourceOutlinePath)
   if (!vaultRoot) return { success: false, error: 'No vault root', markdown }
   try {
     const srcDir = dirname(sourceOutlinePath)
     const assetsDir = join(vaultRoot, '_assets')
-    if (!existsSync(assetsDir)) mkdirSync(assetsDir, { recursive: true })
+    mkdirInVault(vaultRoot, assetsDir)
     const refs = new Set<string>()
     const re = /!\[[^\]]*\]\(([^)]+)\)/g
     let m: RegExpExecArray | null
@@ -5141,10 +5987,24 @@ ipcMain.handle('talk:materialize-slide-assets', async (_event, sourceOutlinePath
     }
     let out = markdown
     let materialized = 0
+    let skipped = 0
     for (const ref of refs) {
       let rel = ref
       try { rel = decodeURIComponent(ref) } catch { rel = ref }
-      const abs = rel.startsWith('/') ? rel : join(srcDir, rel)
+      if (rel.toLowerCase().startsWith('file:')) { // a file URL points anywhere on the Mac: never followed
+        skipped += 1
+        console.warn('[materialize-slide-assets] skipped a file URL reference:', ref)
+        continue
+      }
+      const requested = rel.startsWith('/') ? rel : join(srcDir, rel)
+      // Reuse is vault-internal: a source outside the vault (absolute, `..`, or a symlink out) is
+      // never copied into _assets, where it would reach slides and published handouts.
+      const abs = pathStaysInside(vaultRoot, requested)
+      if (!abs) {
+        skipped += 1
+        console.warn('[materialize-slide-assets] skipped a reference outside the vault:', ref)
+        continue
+      }
       if (!existsSync(abs)) continue
       try {
         const origBuf = readFileSync(abs)
@@ -5174,10 +6034,15 @@ ipcMain.handle('talk:materialize-slide-assets', async (_event, sourceOutlinePath
         }
         // Posters belong to the source clip, never a same-named file elsewhere in the vault.
         if (isVideo) {
-          const stem = abs.slice(0, -extname(abs).length)
+          const stem = requested.slice(0, -extname(requested).length)
           for (const extension of ['png', 'jpg', 'jpeg', 'webp']) {
-            const poster = `${stem}.${extension}`
-            if (!existsSync(poster)) continue
+            const candidate = `${stem}.${extension}`
+            if (!existsSync(candidate)) continue
+            const poster = pathStaysInside(vaultRoot, candidate)
+            if (!poster) {
+              console.warn('[materialize-slide-assets] skipped a poster outside the vault for:', ref)
+              break
+            }
             const destination = join(assetsDir, `${id}.${extension}`)
             if (!existsSync(destination)) writeFileSync(destination, readFileSync(poster))
             break
@@ -5187,11 +6052,116 @@ ipcMain.handle('talk:materialize-slide-assets', async (_event, sourceOutlinePath
         materialized += 1
       } catch (e) { console.warn('[materialize-slide-assets] failed for', ref, e) }
     }
-    return { success: true, markdown: out, materialized }
+    return { success: true, markdown: out, materialized, skipped }
   } catch (e) {
     console.error('[materialize-slide-assets]', e)
     return { success: false, error: String(e), markdown }
   }
+})
+
+// Slides across vaults (ticket 06): a slide picked from ANOTHER open vault is copied into the open
+// talk's vault — its media read from the source vault and written into the target's pool, a colliding
+// id re-stamped, and provenance split: the target's ledger gets `origin` {vault_id, vault_name,
+// slide_id} on the first save; the source talk's title and path stay in this Mac's app data. Same vault
+// → { crossVault: false } and the renderer takes the ordinary materialize path.
+
+async function crossVaultTools(): Promise<CrossVaultTools> {
+  const compilerDir = getCompilerPath()
+  const edit = await import(pathToFileURL(join(compilerDir, 'lib/12-outline-edit.mjs')).href)
+  const ledger = await import(pathToFileURL(join(compilerDir, 'lib/13-slide-ledger.mjs')).href)
+  return {
+    listSlideBlocks: (text) => edit.listSlideBlocks(text),
+    stampMissingIds: (text, rng, opts) => edit.stampMissingIds(text, rng, opts),
+    idLineIndex: (lines, at, end) => ledger.idLineIndex(lines, at, end),
+    mintId: (rng, taken) => ledger.mintId(rng, taken),
+    idsInVault: (root) => ledger.idsInVault(root)
+  }
+}
+
+/** A vault's own name (no service suffix), from its cached vault file or the name it had when last
+ *  reachable, else its folder's name; never a fresh disk read of every vault. */
+function vaultNameOf(id: string): string {
+  const vault = vaultRegistry.get(id)
+  if (!vault) return ''
+  const cached = vaultFileCache.get(id) ?? (vaultAvailability.isUnavailable(id) ? null : vaultFiles.read(vault.root))
+  if (cached && !vaultFileCache.has(id) && !vaultAvailability.isUnavailable(id)) vaultFileCache.set(id, cached)
+  return (cached?.state === 'ok' ? fileText(cached.file, 'name') : '') || vaultAvailability.lastGood(id)?.name || basename(vault.root)
+}
+
+ipcMain.handle('talk:insert-from-vault', async (_event, sourceOutlinePath: unknown, targetOutlinePath: unknown, markdown: unknown, liveIds?: unknown) => {
+  if (typeof sourceOutlinePath !== 'string' || typeof targetOutlinePath !== 'string' || typeof markdown !== 'string') {
+    return { ok: false as const, error: 'Nothing to insert.' }
+  }
+  const from = vaultRegistry.resolve(resolvePath(sourceOutlinePath))
+  const to = vaultRegistry.resolve(resolvePath(targetOutlinePath))
+  if (!from || !to || !from.vault.open || !to.vault.open) return { ok: false as const, error: 'The slide’s vault or this talk’s vault is not open.' }
+  if (from.vault.id === to.vault.id) return { ok: true as const, crossVault: false as const }
+  // Ticket 07: an unavailable vault is neither read nor written (its folder is never re-created).
+  if (!vaultAvailable(from.vault) || !writableRoot(to.vault.root, rootFs) || !rootFs.isDirectory(from.vault.root)) {
+    return { ok: false as const, error: 'The slide’s vault or this talk’s vault is not available on this Mac.' }
+  }
+  const refusal = outlineRefused(targetOutlinePath) // the target talk must be an outline inside its vault
+  if (refusal) return { ok: false as const, error: refusal }
+  try {
+    const sourceTalk = findTalks(from.vault.root).find((t) => resolvePath(t.outlinePath) === resolvePath(sourceOutlinePath))
+    const pending = pendingOrigins.get(to.vault.root)
+    const extraTaken = [
+      ...(Array.isArray(liveIds) ? liveIds.filter((id): id is string => typeof id === 'string') : []),
+      ...(pending ? pending.keys() : [])
+    ]
+    const result = await prepareCrossVaultInsert({
+      source: { id: from.vault.id, name: vaultNameOf(from.vault.id), root: from.vault.root },
+      target: { id: to.vault.id, name: vaultNameOf(to.vault.id), root: to.vault.root },
+      sourceOutlinePath,
+      sourceTalkTitle: sourceTalk?.title || basename(sourceOutlinePath).replace(/-outline\.md$/, ''),
+      markdown,
+      extraTaken,
+      // Who inserts it: their "Just for me" author for the target vault, else the Settings author.
+      insertedBy: vaultRegistry.personal(to.vault.id).author?.trim() || String(metadataDefaults().author ?? '').trim()
+    }, await crossVaultTools(), { toWebp: normaliseToWebp })
+    if (!result.ok) return result
+    const hints = pendingOrigins.get(to.vault.root) ?? new Map<string, SlideOrigin>()
+    for (const slide of result.slides) {
+      hints.set(slide.id, slide.origin)
+      try { provenanceStore().record(to.vault.id, slide.id, slide.privateRecord) } catch (e) { console.warn('[insert-from-vault] private provenance not saved', e) }
+    }
+    pendingOrigins.set(to.vault.root, hints)
+    return {
+      ok: true as const, crossVault: true as const, markdown: result.markdown,
+      slides: result.slides.map((s) => ({ id: s.id, restamped: s.restamped })),
+      materialized: result.materialized, skipped: result.skipped
+    }
+  } catch (e) {
+    console.error('[insert-from-vault]', e)
+    return { ok: false as const, error: String(e) }
+  }
+})
+
+// Where a slide in this talk came from, when it came from another vault (Inspector, ticket 06). The
+// owner's Mac has the private record (source talk title); anyone else sees the vault name and who
+// inserted the slide (as the vault's ledger records it) — never a path.
+ipcMain.handle('ledger:origin', async (_event, outlinePath: unknown, slideId: unknown) => {
+  if (typeof outlinePath !== 'string' || typeof slideId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(slideId)) return null
+  try {
+    const hit = vaultRegistry.resolve(resolvePath(outlinePath))
+    const lib = await ledgerLib()
+    if (!hit || !hit.vault.open || !lib) return null
+    const found = lib.slideOrigin(hit.vault.root, slideId) as { origin: SlideOrigin; savedAt: number } | null
+    if (!found) return null
+    const views = vaultViews()
+    const sourceView = views.find((v) => v.id === found.origin.vault_id) ?? null
+    const mine = provenanceStore().get(hit.vault.id, slideId)
+    const privateRecord = mine && mine.source_vault_id === found.origin.vault_id ? mine : null
+    return {
+      vaultId: found.origin.vault_id,
+      vaultName: sourceView?.name ?? found.origin.vault_name,
+      sourceSlideId: found.origin.slide_id,
+      insertedAt: privateRecord?.inserted_at ?? (found.savedAt ? new Date(found.savedAt).toISOString() : null),
+      talkTitle: privateRecord?.source_talk_title ?? null,
+      badge: sourceView ? { initial: sourceView.initial, color: sourceView.color } : null,
+      insertedBy: found.origin.inserted_by ?? null
+    }
+  } catch { return null }
 })
 
 // Vault-wide asset index (basename → absolute path), built lazily and cached. Used to heal relative
@@ -5202,7 +6172,7 @@ function buildVaultAssetIndex(vaultRoot: string): Map<string, string> {
   const idx = new Map<string, string>()
   const walk = (dir: string, depth: number): void => {
     if (depth > 6) return
-    let entries: ReturnType<typeof readdirSync>
+    let entries: Dirent[]
     try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
     for (const e of entries) {
       const p = join(dir, e.name)
@@ -5223,11 +6193,11 @@ function buildVaultAssetIndex(vaultRoot: string): Map<string, string> {
 // rewrite the ref — so a pasted sequence's images resolve from any talk. Pool/http/data refs and
 // names not found anywhere are left untouched. Returns the rewritten markdown.
 ipcMain.handle('talk:materialize-pasted-assets', async (_event, markdown: string) => {
-  const vaultRoot = getConfig('vaultRoot', undefined)
+  const vaultRoot = writableVaultRoot()
   if (!vaultRoot) return { success: false, error: 'No vault root', markdown }
   try {
     const assetsDir = join(vaultRoot, '_assets')
-    if (!existsSync(assetsDir)) mkdirSync(assetsDir, { recursive: true })
+    mkdirInVault(vaultRoot, assetsDir)
     const refs = new Set<string>()
     const re = /!\[[^\]]*\]\(([^)]+)\)/g
     let m: RegExpExecArray | null
@@ -5237,21 +6207,35 @@ ipcMain.handle('talk:materialize-pasted-assets', async (_event, markdown: string
       if (!/\.(png|jpe?g|gif|webp|mp4|mov|m4v|webm)$/i.test(raw)) continue // images AND videos (2026-07-20: videos were silently dropped)
       refs.add(raw)
     }
-    if (refs.size === 0) return { success: true, markdown, materialized: 0 }
+    if (refs.size === 0) return { success: true, markdown, materialized: 0, skipped: 0 }
     if (!vaultAssetIndex) vaultAssetIndex = buildVaultAssetIndex(vaultRoot)
     let out = markdown
     let materialized = 0
+    let skipped = 0
     for (const ref of refs) {
       let rel = ref
       try { rel = decodeURIComponent(ref) } catch { rel = ref }
+      if (rel.toLowerCase().startsWith('file:')) { // a file URL points anywhere on the Mac: never followed
+        skipped += 1
+        console.warn('[materialize-pasted-assets] skipped a file URL reference:', ref)
+        continue
+      }
       const base = rel.split('/').pop() || rel
-      let abs = vaultAssetIndex.get(base)
-      if (!abs || !existsSync(abs)) {
+      let found = vaultAssetIndex.get(base)
+      if (!found || !existsSync(found)) {
         // Rebuild once in case the asset was added since the index was cached.
         vaultAssetIndex = buildVaultAssetIndex(vaultRoot)
-        abs = vaultAssetIndex.get(base)
+        found = vaultAssetIndex.get(base)
       }
-      if (!abs || !existsSync(abs)) continue
+      if (!found || !existsSync(found)) continue
+      // The index lists linked files too: one that resolves outside the vault is never copied into
+      // _assets, where it would reach slides and published handouts.
+      const abs = pathStaysInside(vaultRoot, found)
+      if (!abs) {
+        skipped += 1
+        console.warn('[materialize-pasted-assets] skipped a reference outside the vault:', ref)
+        continue
+      }
       try {
         const origBuf = readFileSync(abs)
         const originalFormat = extname(abs).slice(1).toLowerCase() || 'png'
@@ -5285,8 +6269,13 @@ ipcMain.handle('talk:materialize-pasted-assets', async (_event, markdown: string
         if (isVideo) {
           const stem = base.replace(/\.[^.]+$/, '')
           for (const pext of ['png', 'jpg', 'jpeg', 'webp']) {
-            const posterSrc = vaultAssetIndex.get(stem + '.' + pext)
-            if (posterSrc && existsSync(posterSrc)) {
+            const posterFound = vaultAssetIndex.get(stem + '.' + pext)
+            if (posterFound && existsSync(posterFound)) {
+              const posterSrc = pathStaysInside(vaultRoot, posterFound)
+              if (!posterSrc) {
+                console.warn('[materialize-pasted-assets] skipped a poster outside the vault for:', ref)
+                break
+              }
               const posterDst = join(assetsDir, id + '.' + pext)
               if (!existsSync(posterDst)) writeFileSync(posterDst, readFileSync(posterSrc))
               break
@@ -5297,7 +6286,7 @@ ipcMain.handle('talk:materialize-pasted-assets', async (_event, markdown: string
         materialized += 1
       } catch (e) { console.warn('[materialize-pasted-assets] failed for', ref, e) }
     }
-    return { success: true, markdown: out, materialized }
+    return { success: true, markdown: out, materialized, skipped }
   } catch (e) {
     console.error('[materialize-pasted-assets]', e)
     return { success: false, error: String(e), markdown }
@@ -5309,10 +6298,25 @@ ipcMain.handle('app:version', () => process.env.npm_package_version ?? app.getVe
 
 // Manual rebuild escape hatch: wipe a talk's thumbnail cache so the next thumbnails() call
 // re-renders every slide from scratch. The renderer follows this with a fresh compile + thumbnails.
-ipcMain.handle('talk:clear-thumb-cache', (_event, slug: string) => {
+// The renderer names the talk by slug only, so every vault's folder for that slug goes (a cache:
+// the other vault's talk re-renders on its next open).
+ipcMain.handle('talk:clear-thumb-cache', (_event, slug: string, outlinePath?: string) => {
   try {
-    const dir = join(app.getPath('userData'), thumbCacheRoot(), slug)
-    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
+    // Never a path, the vaults folder or an app-level cache (`__ledger__`, `__layout-preview__-…`).
+    if (typeof slug !== 'string' || !isPlainSegment(slug) || slug === VAULTS_DIR || slug.startsWith('__')) return false
+    // The slug comes from the renderer: only a talk's own folders inside the thumbnail cache.
+    const namespaceDir = thumbNamespaceDir()
+    const target = thumbCacheDir(namespaceDir, slug)
+    if (!target.ok) { console.error('[clear-thumb-cache] refused', target.error); return false }
+    // With the talk's path only its own vault's folder goes; without one (or for a path in no vault)
+    // every vault's folder for the slug does.
+    const ownerId = typeof outlinePath === 'string' && outlinePath ? vaultIdOf(outlinePath) : null
+    const ids = ownerId ? [ownerId] : vaultRegistry.list().map((v) => v.id)
+    const dirs = ownerId ? [talkThumbDir(namespaceDir, ownerId, slug)] : thumbLookupDirs(namespaceDir, { slug, key: '', vaultId: null }, ids)
+    for (const dir of dirs) {
+      if (!pathStaysInside(namespaceDir, dir)) { console.error('[clear-thumb-cache] refused', 'outside-vault'); continue }
+      if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
+    }
     return true
   } catch (e) {
     console.error('[clear-thumb-cache]', e)
@@ -5347,7 +6351,8 @@ const latestThumbnailRequest = createLatestThumbnailRequestHandler(
     const fullHtml = model.fullHtml as string
     const documentId = thumbnailDocumentId(fullHtml)
     const slides = thumbnailSlides(rows, documentId)
-    const cacheDir = join(app.getPath('userData'), thumbCacheRoot(), slug)
+    const cacheDir = talkThumbCacheDir(input.outlinePath, slug)
+    const vaultId = vaultIdOf(input.outlinePath)
     let rendered: Record<string, string> = {}
     try {
       rendered = await renderThumbnails({ fullHtml, slides, cacheDir, requestKey: `editor:${owner}` })
@@ -5364,11 +6369,11 @@ const latestThumbnailRequest = createLatestThumbnailRequestHandler(
         )
       }
     }
-    // renderThumbnails returns key -> absolute png path; expose as twthumb:// URLs the
-    // protocol handler resolves back to {userData}/thumb-cache/{slug}/{key}.png.
+    // renderThumbnails returns key -> absolute png path; expose as twthumb:// URLs (naming the
+    // talk's vault) the protocol handler resolves back to that vault's folder for the slug.
     const map: Record<string, string> = {}
     for (const key of Object.keys(rendered)) {
-      map[key] = 'twthumb://' + slug + '/' + basename(rendered[key], '.png')
+      map[key] = thumbUrl(slug, basename(rendered[key], '.png'), vaultId)
     }
     return map
   },
@@ -5381,6 +6386,8 @@ const latestThumbnailRequest = createLatestThumbnailRequestHandler(
 // the browser's render mid-talk: a partial cache, `{}` back, and the browser marked the talk done —
 // half its cards blank for the rest of the session (2026-09-15).
 ipcMain.handle('talk:thumbnails', async (_event, outlinePath: string, content: string, opts?: { lane?: string }) => {
+  const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
+  if (refusal) return null
   try {
     const lane = typeof opts?.lane === 'string' && /^[a-z-]{1,32}$/.test(opts.lane) ? opts.lane : ''
     const owner = String(_event.sender.id) + (lane ? ':' + lane : '')
@@ -5492,9 +6499,9 @@ function serializeSidecar(prev: { id: string; created?: string }, meta: { alt: s
 }
 
 function readAssetSidecar(id: string): AssetSidecar | null {
-  const vaultRoot = getConfig('vaultRoot', undefined)
-  if (!vaultRoot) return null
-  const path = join(vaultRoot, '_assets', id + '.yml')
+  const target = assetSidecarPath(currentVaultRoot(), id)
+  if (!target.ok) return null
+  const path = target.path
   if (!existsSync(path)) return null
   try {
     const parsed = parseSidecar(readFileSync(path, 'utf8'), id)
@@ -5510,12 +6517,15 @@ ipcMain.handle('asset:read-sidecar', (_event, id: string): AssetSidecar | null =
 ipcMain.handle(
   'asset:write-sidecar',
   (_event, id: string, meta: { alt: string; caption: string; source: string; tags: string[] }): boolean => {
-    const vaultRoot = getConfig('vaultRoot', undefined)
+    const vaultRoot = writableVaultRoot()
     if (!vaultRoot) return false
+    // The id comes from the renderer: only `<vault>/_assets/<id>.yml`, a single safe name.
+    const target = assetSidecarPath(vaultRoot, id)
+    if (!target.ok) { console.error('[asset:write-sidecar] refused', target.error); return false }
     try {
-      const assetsDir = join(vaultRoot, '_assets')
-      if (!existsSync(assetsDir)) mkdirSync(assetsDir, { recursive: true })
-      const path = join(assetsDir, id + '.yml')
+      const assetsDir = dirname(target.path)
+      mkdirInVault(vaultRoot, assetsDir)
+      const path = target.path
       let prev: { id: string; created?: string } = { id }
       if (existsSync(path)) {
         const existing = parseSidecar(readFileSync(path, 'utf8'), id)
@@ -5532,7 +6542,10 @@ ipcMain.handle(
 
 // ── Abstract read/write (ADR-0009) ───────────────────────────────────────────
 ipcMain.handle('abstract:read', (_event, talkPath: string) => {
-  const path = join(talkPath, 'abstract.md')
+  // talkPath comes from the renderer: only `<talk folder>/abstract.md` inside the vault.
+  const target = abstractPath(vaultRootFor(talkPath), talkPath)
+  if (!target.ok) return null
+  const path = target.path
   if (!existsSync(path)) return null
   try {
     const raw = readFileSync(path, 'utf8')
@@ -5554,9 +6567,15 @@ ipcMain.handle('abstract:read', (_event, talkPath: string) => {
 })
 
 ipcMain.handle('abstract:write', (_event, talkPath: string, raw: string): boolean => {
+  // talkPath comes from the renderer: only a talk folder inside the vault (never the vault root).
+  const vaultRoot = writableRootFor(talkPath)
+  if (!vaultRoot) return false // the talk's vault is unavailable: nothing is written into it
+  const target = abstractPath(vaultRoot, talkPath)
+  if (!target.ok) { console.error('[abstract:write] refused', target.error); return false }
   try {
-    if (!existsSync(talkPath)) mkdirSync(talkPath, { recursive: true })
-    writeFileSync(join(talkPath, 'abstract.md'), raw, 'utf8')
+    const folder = dirname(target.path)
+    mkdirInVault(vaultRoot, folder)
+    writeFileSync(target.path, raw, 'utf8')
     return true
   } catch (e) {
     console.error('[abstract:write]', e)
@@ -5685,8 +6704,9 @@ async function normaliseToWebp(buf: Buffer): Promise<Buffer> {
   return sharp(buf).webp({ quality: 82 }).toBuffer()
 }
 
-ipcMain.handle('asset:paste-image', async (_event, bytes: ArrayBuffer | Uint8Array, ext: string = 'png') => {
-  const vaultRoot = getConfig('vaultRoot', undefined)
+// outlinePath (the open talk) names the vault whose asset pool receives the image; without it, the current vault.
+ipcMain.handle('asset:paste-image', async (_event, bytes: ArrayBuffer | Uint8Array, ext: string = 'png', outlinePath?: string) => {
+  const vaultRoot = typeof outlinePath === 'string' && outlinePath ? writableRootFor(outlinePath) : writableVaultRoot()
   if (!vaultRoot) return null
   try {
     // The renderer sends an ArrayBuffer over IPC; crypto/fs need a Buffer/TypedArray.
@@ -5785,7 +6805,16 @@ const outlineDiskGuard = createOutlineDiskGuard({
   },
   async mtime(realPath) { try { return statSync(realPath).mtimeMs } catch { return null } },
   withLock: (outlinePath, work) => withTalkFileLock(outlinePath, () => work()),
-  watch: (realPath, onChange, onError) => outlineDiskWatchers.acquire(dirname(realPath), realPath, onChange, onError),
+  // The same folder watch feeds the conflict-copy scan (ticket 09): once when the talk opens, then on
+  // every change in its folder.
+  watch: (realPath, onChange, onError) => {
+    // The talk-open scan runs even when the folder cannot be watched (review T3).
+    try {
+      outlineDiskWatchers.acquire(dirname(realPath), realPath, () => { onChange(); scheduleConflictScan(realPath) }, onError)
+    } finally {
+      scheduleConflictScan(realPath)
+    }
+  },
   unwatch: (realPath) => outlineDiskWatchers.releaseOwner(realPath),
   notify(owner, outlinePath, change: OutlineDiskChange | null) {
     const win = editorWindows.get(Number(owner))?.win
@@ -5819,7 +6848,7 @@ function outlineTools(): Promise<OutlineTools> {
 }
 
 ipcMain.handle('history:instant-anchors', async (_event, payload: { talkSlug?: unknown; runId?: unknown }) => {
-  const vaultRoot = getConfig('vaultRoot', undefined)
+  const vaultRoot = currentVaultRoot()
   const talkSlug = String(payload?.talkSlug ?? ''), runId = String(payload?.runId ?? '')
   // Only this talk's own Run, from this talk's folder (the names are validated as path segments).
   const run = vaultRoot ? readRunForTalk(vaultRoot, talkSlug, runId) : null
@@ -5838,8 +6867,31 @@ ipcMain.handle('history:instant-anchors', async (_event, payload: { talkSlug?: u
   }
 })
 
+// Reactions ticket 06: where each slide a Run's questions and reactions name sits in the talk NOW
+// (number and title for the Run card), keyed by slide id; null when the slide is no longer there.
+ipcMain.handle('history:feedback-slides', async (_event, payload: { talkSlug?: unknown; runId?: unknown }) => {
+  const vaultRoot = currentVaultRoot()
+  const talkSlug = String(payload?.talkSlug ?? ''), runId = String(payload?.runId ?? '')
+  const run = vaultRoot ? readRunForTalk(vaultRoot, talkSlug, runId) : null
+  const talk = run ? talkBySlug(talkSlug) : null
+  // Feedback-boards ticket 06: the board and poll blocks name their slides too ("slide 44").
+  const slideIds = [...(run?.questions ?? []), ...(run?.reactions ?? [])].map((entry) => entry.slideId)
+    .concat((run?.boards ?? []).flatMap((board) => board.slideId ? [board.slideId] : []))
+    .concat((run?.polls ?? []).flatMap((poll) => poll.slideId ? [poll.slideId] : []))
+  if (!slideIds.length || !talk) return {}
+  try {
+    const editor = editorWindowForOutline(talk.outlinePath)
+    const text = editor ? await editorOutlineDocument(editor.win, editor.outlinePath).read().catch(() => readFileSync(talk.outlinePath, 'utf8'))
+      : readFileSync(talk.outlinePath, 'utf8')
+    return await resolveInstantAnchors(talk.outlinePath, text, slideIds, await outlineTools())
+  } catch (error) {
+    console.error('[history:feedback-slides]', error)
+    return {}
+  }
+})
+
 ipcMain.handle('history:add-instant-slide', async (_event, payload: { talkSlug?: unknown; runId?: unknown; entryId?: unknown }) => {
-  const vaultRoot = getConfig('vaultRoot', undefined)
+  const vaultRoot = writableVaultRoot()
   if (!vaultRoot) return { ok: false, error: 'No vault is open.' }
   const talkSlug = String(payload?.talkSlug ?? ''), runId = String(payload?.runId ?? ''), entryId = String(payload?.entryId ?? '')
   const talk = talkBySlug(talkSlug)
@@ -5917,7 +6969,7 @@ async function ensureVideoSidecars(assetsDir: string, id: string, videoPath: str
 // The id hashes the SOURCE bytes, not the converted output — the GIF→MP4 encode is not byte-
 // deterministic, so hashing the MP4 would mint a fresh id on every re-import (defeating ADR-0020).
 ipcMain.handle('asset:add-video', async (_event, input: { path?: string; bytes?: ArrayBuffer | Uint8Array; ext?: string }) => {
-  const vaultRoot = getConfig('vaultRoot', undefined)
+  const vaultRoot = writableVaultRoot()
   if (!vaultRoot) return { success: false, error: 'No vault root' }
   if (!resolveMediaBin()) return { success: false, error: 'Media helper not found (rebuild the app)' }
   const tmp: string[] = []
@@ -5937,7 +6989,7 @@ ipcMain.handle('asset:add-video', async (_event, input: { path?: string; bytes?:
     }
 
     const assetsDir = join(vaultRoot, '_assets')
-    if (!existsSync(assetsDir)) mkdirSync(assetsDir, { recursive: true })
+    mkdirInVault(vaultRoot, assetsDir)
 
     // Content identity from the SOURCE bytes — stable across the non-deterministic GIF→MP4 encode.
     const srcHash = await hashFileSoon(srcPath)
@@ -5983,14 +7035,18 @@ ipcMain.handle('asset:add-video', async (_event, input: { path?: string; bytes?:
 
 // ── Create talk ────────────────────────────────────────────────────────────
 
-ipcMain.handle('vault:create-talk', async (_event, opts: { title: string; slug: string; topicFolder?: string }) => {
-  const vaultRoot = getConfig('vaultRoot', undefined)
+ipcMain.handle('vault:create-talk', async (_event, opts: { title: string; slug: string; topicFolder?: string; vaultId?: string }) => {
+  // An unavailable vault (or one whose folder has just gone) gets no new talk: its folder is never
+  // re-created (ticket 07).
+  const vaultRoot = writableRootOfVault(opts?.vaultId)
   if (!vaultRoot) return null
   try {
     const { title, slug, topicFolder } = opts
-    const parentDir = topicFolder ? join(vaultRoot, topicFolder) : vaultRoot
-    const talkDir = join(parentDir, slug)
-    if (!existsSync(talkDir)) mkdirSync(talkDir, { recursive: true })
+    // slug / topicFolder come from the renderer: the new talk folder must land inside the vault.
+    const target = newTalkFolder(vaultRoot, slug, topicFolder)
+    if (!target.ok) { console.error('[vault:create-talk] refused', target.error); return null }
+    const talkDir = target.path
+    mkdirInVault(vaultRoot, talkDir)
     const outlinePath = join(talkDir, slug + '-outline.md')
     if (!existsSync(outlinePath)) {
       const initialContent = [
@@ -6009,15 +7065,24 @@ ipcMain.handle('vault:create-talk', async (_event, opts: { title: string; slug: 
         'Your content here.',
         '',
       ].join('\n')
-      // Pre-fill the presenter's identity and house style (Settings → Presenter identity and deck
-      // defaults). fill-missing only: nothing already in the template is touched, and a blank
-      // default writes nothing at all.
-      const { edits } = applyMetadataDefaults(parseFrontmatterPairs(initialContent), metadataDefaults(), { mode: 'fill-missing' })
+      // Pre-fill the presenter's identity and house style: the vault file's affiliation, style and
+      // logo, then this person's author for the vault, then Settings → Presenter identity and deck
+      // defaults (several-vaults ticket 04). fill-missing only: nothing already in the template is
+      // touched, and a blank default writes nothing at all.
+      const vault = vaultOfRoot(vaultRoot)
+      const vaultFile = vault ? vaultRegistry.readFile(vault.id) : null
+      const { defaults } = resolveNewTalkDefaults({
+        vaultFile: vaultFile?.state === 'ok' ? vaultFile.file : null,
+        personal: vault ? vaultRegistry.personal(vault.id) : null,
+        app: metadataDefaults(),
+        talkFolderRel: talkFolderRelOf(vaultRoot, talkDir)
+      })
+      const { edits } = applyMetadataDefaults(parseFrontmatterPairs(initialContent), normaliseMetadataDefaults(METADATA_REGISTRY, defaults), { mode: 'fill-missing' })
       const seeded = edits.length > 0 ? editFrontmatterText(initialContent, edits) : initialContent
       const created = await writeTalkOutline(outlinePath, seeded, 'create-talk')
       if (!created.ok) throw new Error(created.error)
     }
-    invalidateTalkCache()
+    invalidateTalkCache(vaultRoot)
     return { name: slug, path: talkDir, outlinePath, title, slug } satisfies TalkInfo
   } catch (e) {
     console.error('[vault:create-talk]', e)
@@ -6074,7 +7139,7 @@ async function stripPublishedFields(outlinePath: string): Promise<void> {
 }
 function findOutlineIn(dir: string): string | null {
   try {
-    const hit = readdirSync(dir).find((f) => f.endsWith('-outline.md'))
+    const hit = pickOutlineName(readdirSync(dir), basename(dir))
     return hit ? join(dir, hit) : null
   } catch { return null }
 }
@@ -6093,14 +7158,25 @@ function talkInfoFor(talkDir: string): TalkInfo | null {
 // Clone a talk: copy its whole folder (skip bundle/ + logs), rename slug files, retitle, strip the
 // published handout_url. Lands as a sibling (same parent folder), exactly like Raycast's Duplicate.
 ipcMain.handle('vault:clone-talk', async (_event, outlinePath: string, newTitle: string) => {
+  // outlinePath comes from the renderer: clone only a talk folder inside the vault, to a sibling
+  // folder that is still inside it.
+  const vaultRoot = writableRootFor(outlinePath)
+  if (!vaultRoot) return null // the talk's vault is unavailable: nothing is copied into it
+  const src = talkFolderOfOutline(vaultRoot, outlinePath)
+  if (!src.ok) { console.error('[vault:clone-talk] refused', src.error); return null }
   try {
-    const srcDir = dirname(outlinePath)
+    const srcDir = src.path
     const oldSlug = basename(outlinePath).replace('-outline.md', '')
+    const siblingFor = (slug: string): string => {
+      const sibling = siblingTalkFolder(vaultRoot, srcDir, slug)
+      if (!sibling.ok) throw new Error(sibling.error)
+      return sibling.path
+    }
     let newSlug = slugifyTalk(newTitle) || `${oldSlug}-copy`
-    let target = join(dirname(srcDir), newSlug)
+    let target = siblingFor(newSlug)
     // Never clobber: suffix -2, -3, … until the folder name is free.
     let n = 2
-    while (existsSync(target)) { newSlug = `${slugifyTalk(newTitle) || oldSlug}-${n}`; target = join(dirname(srcDir), newSlug); n += 1 }
+    while (existsSync(target)) { newSlug = `${slugifyTalk(newTitle) || oldSlug}-${n}`; target = siblingFor(newSlug); n += 1 }
     const skip = new Set([join(srcDir, 'bundle'), join(srcDir, 'dist'), join(srcDir, '.deck-server.log')])
     cpSync(srcDir, target, {
       recursive: true,
@@ -6109,8 +7185,7 @@ ipcMain.handle('vault:clone-talk', async (_event, outlinePath: string, newTitle:
     renameSlugFiles(target, oldSlug, newSlug)
     const newOutline = findOutlineIn(target)
     if (newOutline) { await retitleOutline(newOutline, newTitle); await stripPublishedFields(newOutline) }
-    searchCache.clear()
-    invalidateTalkCache()
+    invalidateVaultCaches(outlinePath)
     return talkInfoFor(target)
   } catch (e) {
     console.error('[vault:clone-talk]', e)
@@ -6131,12 +7206,19 @@ ipcMain.handle('vault:rename-talk', async (event, outlinePath: string, newTitle:
     // path after the move and the two files would drift apart (same hazard class as the
     // 2026-07-05 empty-write incident). The requesting window is expected to flush + re-select.
     if (otherEditorHolding(outlinePath, editorWindows.get(event.sender.id)?.win)) return { error: 'open-elsewhere' }
-    const srcDir = dirname(outlinePath)
+    // outlinePath comes from the renderer: rename only a talk folder inside the vault, to a sibling
+    // folder that is still inside it.
+    const vaultRoot = vaultRootFor(outlinePath)
+    const src = talkFolderOfOutline(vaultRoot, outlinePath)
+    if (!src.ok) { console.error('[vault:rename-talk] refused', src.error); return null }
+    const srcDir = src.path
     const oldSlug = basename(outlinePath).replace('-outline.md', '')
     const newSlug = slugifyTalk(title) || oldSlug
     let dir = srcDir
     if (newSlug !== oldSlug) {
-      const target = join(dirname(srcDir), newSlug)
+      const sibling = siblingTalkFolder(vaultRoot, srcDir, newSlug)
+      if (!sibling.ok) { console.error('[vault:rename-talk] refused', sibling.error); return null }
+      const target = sibling.path
       if (existsSync(target)) return { error: 'target-exists' }
       const oldReal = canonicalOutlinePath(outlinePath)
       outlineDiskGuard.forget(srcDir) // the app's own move or delete: never reported as a removal on disk
@@ -6149,8 +7231,7 @@ ipcMain.handle('vault:rename-talk', async (event, outlinePath: string, newTitle:
     }
     const newOutline = findOutlineIn(dir)
     if (newOutline) await retitleOutline(newOutline, title)
-    searchCache.clear()
-    invalidateTalkCache()
+    invalidateVaultCaches(outlinePath)
     return talkInfoFor(dir)
   } catch (e) {
     console.error('[vault:rename-talk]', e)
@@ -6159,24 +7240,29 @@ ipcMain.handle('vault:rename-talk', async (event, outlinePath: string, newTitle:
 })
 
 // Vault-relative path of an absolute path (forward-slashed), or '' when it is the root itself.
-function vaultRel(abs: string): string {
-  const root = getConfig('vaultRoot', undefined)
+// The registry's resolve() does the stripping, so a root stored with a trailing slash (or any
+// unnormalised form) still yields a clean relative path. A path in no vault keeps the old answer.
+function vaultRel(abs: string, vaults: Vault[] = vaultRegistry.list()): string {
+  const hit = resolveInVaults(vaults, abs)
+  if (hit) return hit.rel
+  const root = vaultRootFor(abs)
   if (!root) return ''
-  let rel = abs.startsWith(root) ? abs.slice(root.length) : abs
+  const rel = abs.startsWith(root) ? abs.slice(root.length) : abs
   return rel.replace(/^[/\\]+/, '').split(pathSep).join('/')
 }
 
 // Create a folder under the vault (optionally nested under parentRel). Returns its vault-rel path.
-ipcMain.handle('vault:create-folder', (_event, name: string, parentRel?: string) => {
-  const vaultRoot = getConfig('vaultRoot', undefined)
+ipcMain.handle('vault:create-folder', (_event, name: string, parentRel?: string, vaultId?: string) => {
+  const vaultRoot = writableRootOfVault(vaultId)
   if (!vaultRoot) return null
   try {
-    const clean = String(name || '').trim().replace(/[/\\]/g, '-')
-    if (!clean) return null
-    const dir = join(vaultRoot, parentRel || '', clean)
+    // name / parentRel come from the renderer: the new folder must land inside the vault.
+    const target = createFolderTarget(vaultRoot, name, parentRel)
+    if (!target.ok) { console.error('[vault:create-folder] refused', target.error); return null }
+    const dir = target.path
     if (existsSync(dir)) return vaultRel(dir) // already there — idempotent
-    mkdirSync(dir, { recursive: true })
-    invalidateTalkCache()
+    mkdirInVault(vaultRoot, dir)
+    invalidateTalkCache(vaultRoot)
     return vaultRel(dir)
   } catch (e) {
     console.error('[vault:create-folder]', e)
@@ -6185,21 +7271,21 @@ ipcMain.handle('vault:create-folder', (_event, name: string, parentRel?: string)
 })
 
 // Rename a folder (by its vault-rel path). Returns the new vault-rel path.
-ipcMain.handle('vault:rename-folder', (_event, folderRel: string, newName: string) => {
-  const vaultRoot = getConfig('vaultRoot', undefined)
+ipcMain.handle('vault:rename-folder', (_event, folderRel: string, newName: string, vaultId?: string) => {
+  const vaultRoot = writableRootOfVault(vaultId)
   if (!vaultRoot || !folderRel) return null
   try {
-    const clean = String(newName || '').trim().replace(/[/\\]/g, '-')
-    if (!clean) return null
-    const src = join(vaultRoot, folderRel)
-    const dest = join(dirname(src), clean)
+    // folderRel / newName come from the renderer: a folder inside the vault (never the vault root)
+    // renamed to a sibling that is still inside the vault.
+    const target = renameFolderTargets(vaultRoot, folderRel, newName)
+    if (!target.ok) { console.error('[vault:rename-folder] refused', target.error); return null }
+    const { src, dest } = target
     if (!existsSync(src) || existsSync(dest)) return null
     const oldReal = canonicalOutlinePath(src)
     outlineDiskGuard.forget(src) // the app's own move or delete: never reported as a removal on disk
     renameSync(src, dest)
     void outlineRecovery.rekey(oldReal, canonicalOutlinePath(dest), { under: true }).catch((e) => console.error('[outline-recovery] rekey', e))
-    searchCache.clear()
-    invalidateTalkCache()
+    invalidateVaultCaches(vaultRoot)
     return vaultRel(dest)
   } catch (e) {
     console.error('[vault:rename-folder]', e)
@@ -6209,21 +7295,22 @@ ipcMain.handle('vault:rename-folder', (_event, folderRel: string, newName: strin
 
 // Move a talk's whole folder into destFolderRel ('' = vault root). Returns the moved TalkInfo.
 ipcMain.handle('vault:move-talk', (_event, outlinePath: string, destFolderRel: string) => {
-  const vaultRoot = getConfig('vaultRoot', undefined)
+  const vaultRoot = writableRootFor(outlinePath)
   if (!vaultRoot) return null
   try {
-    const srcDir = dirname(outlinePath)
-    const destParent = join(vaultRoot, destFolderRel || '')
-    if (!existsSync(destParent)) mkdirSync(destParent, { recursive: true })
-    const dest = join(destParent, basename(srcDir))
+    // outlinePath / destFolderRel come from the renderer: move a talk folder inside the vault to a
+    // folder inside the vault ('' = the vault root).
+    const target = moveTalkTargets(vaultRoot, outlinePath, destFolderRel)
+    if (!target.ok) { console.error('[vault:move-talk] refused', target.error); return null }
+    const { srcDir, destParent, dest } = target
+    mkdirInVault(vaultRoot, destParent)
     if (resolvePath(dest) === resolvePath(srcDir)) return talkInfoFor(srcDir) // no-op (same folder)
     if (existsSync(dest)) return null // a talk of that name already lives there
     const oldReal = canonicalOutlinePath(srcDir)
     outlineDiskGuard.forget(srcDir) // the app's own move or delete: never reported as a removal on disk
     renameSync(srcDir, dest)
     void outlineRecovery.rekey(oldReal, canonicalOutlinePath(dest), { under: true }).catch((e) => console.error('[outline-recovery] rekey', e))
-    searchCache.clear()
-    invalidateTalkCache()
+    invalidateVaultCaches(vaultRoot)
     return talkInfoFor(dest)
   } catch (e) {
     console.error('[vault:move-talk]', e)
@@ -6234,14 +7321,15 @@ ipcMain.handle('vault:move-talk', (_event, outlinePath: string, destFolderRel: s
 // List CATEGORY folders under the vault (vault-rel paths), INCLUDING empty ones — so a folder you
 // just created is visible in the sidebar even before any talk lives in it. A "category folder" is a
 // directory that is NOT itself a talk folder (a talk folder directly contains a *-outline.md).
-ipcMain.handle('vault:list-folders', async () => {
-  const vaultRoot = getConfig('vaultRoot', undefined)
+ipcMain.handle('vault:list-folders', async (_event, vaultId?: string) => {
+  const vaultRoot = rootOfVault(vaultId)
   if (!vaultRoot) return []
   const SKIP = new Set(['bundle', 'dist', 'node_modules', '.git'])
   const isTalkDir = async (dir: string): Promise<boolean> => {
     try { return (await readdirAsync(dir)).some((f) => f.endsWith('-outline.md')) } catch { return false }
   }
   const out: string[] = []
+  const vaults = vaultRegistry.list() // one config read for every folder's relative path
   const scan = async (dir: string, depth: number): Promise<void> => {
     if (depth > 3) return
     let entries
@@ -6253,7 +7341,7 @@ ipcMain.handle('vault:list-folders', async () => {
       if (!entry.isDirectory()) continue
       const full = join(dir, name)
       if (await isTalkDir(full)) continue // a talk, not a category folder
-      out.push(vaultRel(full))
+      out.push(vaultRel(full, vaults))
       await scan(full, depth + 1)
     }
   }
@@ -6264,11 +7352,14 @@ ipcMain.handle('vault:list-folders', async () => {
 // Delete a talk — moved to the OS Trash (recoverable), not hard-deleted, so an accidental
 // create/clone can be undone from Finder.
 ipcMain.handle('vault:delete-talk', async (_event, outlinePath: string) => {
+  // outlinePath comes from the renderer: trash only a talk folder inside the vault, never the vault
+  // root or anything outside it.
+  const target = talkFolderOfOutline(vaultRootFor(outlinePath), outlinePath)
+  if (!target.ok) { console.error('[vault:delete-talk] refused', target.error); return false }
   try {
-    outlineDiskGuard.forget(dirname(outlinePath)) // the app's own move or delete: never reported as a removal on disk
-    await shell.trashItem(dirname(outlinePath))
-    searchCache.clear()
-    invalidateTalkCache()
+    outlineDiskGuard.forget(target.path) // the app's own move or delete: never reported as a removal on disk
+    await shell.trashItem(target.path)
+    invalidateVaultCaches(outlinePath)
     return true
   } catch (e) {
     console.error('[vault:delete-talk]', e)
@@ -6277,18 +7368,20 @@ ipcMain.handle('vault:delete-talk', async (_event, outlinePath: string) => {
 })
 
 // Delete a category folder (and anything inside it) — also to the OS Trash (recoverable).
-ipcMain.handle('vault:delete-folder', async (_event, folderRel: string) => {
-  const vaultRoot = getConfig('vaultRoot', undefined)
+ipcMain.handle('vault:delete-folder', async (_event, folderRel: string, vaultId?: string) => {
+  const vaultRoot = writableRootOfVault(vaultId)
   if (!vaultRoot || !folderRel) return false
+  // folderRel comes from the renderer: a folder inside the vault, never the vault root.
+  const target = deleteFolderTarget(vaultRoot, folderRel)
+  if (!target.ok) { console.error('[vault:delete-folder] refused', target.error); return false }
   try {
     // A talk open in a window inside the folder is NOT forgotten: once the folder is in the Bin its
     // window shows the removed-file bar (shared-talk ticket 08), its saves are refused (a recovery copy
     // keeps the typing) and nothing is recreated unless the person chooses Save it again.
-    const open = outlineDiskGuard.openUnder(join(vaultRoot, folderRel))
-    await shell.trashItem(join(vaultRoot, folderRel))
+    const open = outlineDiskGuard.openUnder(target.path)
+    await shell.trashItem(target.path)
     for (const realPath of open) await outlineDiskGuard.check(realPath).catch((e) => console.error('[vault:delete-folder] check', e))
-    searchCache.clear()
-    invalidateTalkCache()
+    invalidateVaultCaches(vaultRoot)
     return true
   } catch (e) {
     console.error('[vault:delete-folder]', e)
@@ -6589,7 +7682,7 @@ ipcMain.handle('archive:search-images', async (_event, query: string): Promise<A
 ipcMain.handle(
   'archive:import-image',
   async (_event, thumbUrlOrPath: string): Promise<{ id: string; ext: string; path: string } | null> => {
-    const vaultRoot = getConfig('vaultRoot', undefined)
+    const vaultRoot = writableVaultRoot()
     const archiveRoot = detectArchiveRoot()
     if (!vaultRoot || !archiveRoot) return null
     try {
@@ -6617,7 +7710,7 @@ ipcMain.handle(
       const hash = createHash('sha256').update(origBuf).digest('hex').slice(0, 7)
       const id = 'img-' + hash
       const assetsDir = join(vaultRoot, '_assets')
-      if (!existsSync(assetsDir)) mkdirSync(assetsDir, { recursive: true })
+      mkdirInVault(vaultRoot, assetsDir)
       const assetPath = join(assetsDir, id + '.' + ext)
       if (!existsSync(assetPath)) {
         writeFileSync(assetPath, origBuf)
@@ -6653,6 +7746,41 @@ ipcMain.handle(
 
 app.whenReady().then(async () => {
   initialiseLiveSessions()
+  // Feedback-boards ticket 06: History's board actions and the Run's read-only share link.
+  registerRunBoardIpc({
+    ipcMain: ipcMain as unknown as Parameters<typeof registerRunBoardIpc>[0]['ipcMain'],
+    vaultRoot: () => writableVaultRoot() ?? null, // writes: only a vault folder that is there (ticket 07)
+    sessions: () => liveSessions,
+    shares: createRunResultsShares({
+      registryPath: join(app.getPath('userData'), 'run-results-share-registry.json'),
+      endpoint: () => ensureLiveWorker(),
+      linkBase: () => getConfig('sharedTalkLinkBase', undefined),
+      fetch,
+    }),
+  })
+  // Feedback-boards ticket 09: History's pre-work actions, and a pull every few minutes while any
+  // Run's pre-work is open (answers reach the Run through the atomic Run writer).
+  registerRunPreworkIpc(ipcMain as unknown as Parameters<typeof registerRunPreworkIpc>[0], runPrework(), {
+    onQuestionMarked: (talkSlug, runId) => {
+      for (const wcId of livePresenterContexts.keys()) {
+        const record = liveSessions?.record(wcId)
+        if (!record || record.talkSlug !== talkSlug || record.runId !== runId) continue
+        const win = BrowserWindow.getAllWindows().find((item) => item.webContents.id === wcId)
+        if (win && !win.isDestroyed()) win.webContents.send('live:prework-questions', preworkTrayForSession(currentVaultRoot() ?? null, record))
+      }
+    },
+  })
+  // The Run page's board slides: which board slide each pre-work step feeds, with the compiler's own slide ids.
+  ipcMain.handle('history:prework-feeds', async (_event, payload: unknown) => {
+    try {
+      const talk = talkBySlug(String((payload as { talkSlug?: unknown } | null)?.talkSlug ?? ''))
+      if (!talk) return { ok: false as const }
+      const prepared = await prepareTalk(talk.outlinePath, readFileSync(talk.outlinePath, 'utf8'))
+      const prework = prepared?.model?.prework as { feeds?: PreworkFeed[] } | undefined
+      return prepared ? { ok: true as const, feeds: prework?.feeds ?? [] } : { ok: false as const }
+    } catch { return { ok: false as const } }
+  })
+  startRunPreworkTimer(runPrework(), () => notifyTalkMetaUpdated())
   // Feedback rail: open the owner socket of every shared talk (never blocks launch).
   try { sharedTalkFeedback().sync() } catch (error) { console.warn('[shared-talk] feedback start failed', error) }
   installApplicationMenu()
@@ -6695,7 +7823,7 @@ app.whenReady().then(async () => {
 
   // Register twasset:// to serve vault asset files safely
   protocol.registerFileProtocol('twasset', (request, callback) => {
-    const vaultRoot = getConfig('vaultRoot', undefined)
+    const vaultRoot = currentVaultRoot()
     if (!vaultRoot) { callback({ error: -2 }); return }
     // twasset://img-a3f9b2 ; tolerate the legacy double prefix (img-img-…) from the old import bug.
     const id = new URL(request.url).hostname.replace(/^img-img-/, 'img-')
@@ -6714,13 +7842,19 @@ app.whenReady().then(async () => {
     callback({ error: -2 })
   })
   // Serve rendered slide thumbnails: twthumb://<slug>/<key> -> {userData}/thumb-cache/<slug>/<key>.png
+  // `?vault=<id>` reads that vault's folder only; a bare URL tries the open vaults in order, then the
+  // namespace level (thumb-cache-dirs.ts).
   protocol.registerFileProtocol('twthumb', (request, callback) => {
     try {
-      const url = new URL(request.url)
-      const slug = url.hostname
-      const key = decodeURIComponent(url.pathname.replace(/^\//, ''))
-      if (!slug || !key) { callback({ error: -2 }); return }
-      const dir = join(app.getPath('userData'), thumbCacheRoot(), slug)
+      const req = parseThumbUrl(request.url)
+      if (!req) { callback({ error: -2 }); return }
+      // Slug and key come from the URL: only a PNG inside this talk's thumbnail folders.
+      const namespaceDir = thumbNamespaceDir()
+      if (!thumbCacheDir(namespaceDir, req.slug).ok) { callback({ error: -2 }); return }
+      adoptLegacyThumbsOnce()
+      touchNamespaceHourly() // a read-only session keeps older builds' cache sweep away too
+      const openIds = vaultRegistry.list().filter((v) => v.open).map((v) => v.id)
+      const dirs = thumbLookupDirs(namespaceDir, req, openIds).filter((d) => pathStaysInside(namespaceDir, d) !== null)
       // Fallback: the pre-render writes DOCUMENT-SCOPED filenames `<documentId>-<render_hash>.png`
       // (thumbnailDocumentCacheKey), but the Slide Browser can only address a slide by its bare
       // `render_hash` — it never compiles the talk, so it cannot know the documentId. Resolve the
@@ -6728,8 +7862,10 @@ app.whenReady().then(async () => {
       // (it already folds in layout + section accent), so any file with that suffix is the same
       // picture. Without this, tens of thousands of correctly-built thumbnails were unreachable and
       // every browser card rendered blank (2026-07-19).
-      const hit = resolveThumbFile(dir, key)
-      if (hit) { callback({ path: hit }); return }
+      for (const dir of dirs) {
+        const hit = resolveThumbFile(dir, req.key)
+        if (hit) { callback({ path: hit }); return }
+      }
     } catch { /* fall through */ }
     callback({ error: -2 })
   })
@@ -6741,7 +7877,7 @@ app.whenReady().then(async () => {
       const sessionId = new URL(request.url).hostname
       if (!sessionId) { callback({ error: -2 }); return }
       const p = recordingAudioPath(app.getPath('userData'), sessionId)
-      if (existsSync(p)) { callback({ path: p }); return }
+      if (p && existsSync(p)) { callback({ path: p }); return }
     } catch { /* fall through */ }
     callback({ error: -2 })
   })
@@ -6788,7 +7924,7 @@ app.whenReady().then(async () => {
   // vault root (path-traversal guard) — the editor uses this to preview path-based images.
   protocol.registerFileProtocol('twfile', (request, callback) => {
     try {
-      const vaultRoot = getConfig('vaultRoot', undefined)
+      const vaultRoot = currentVaultRoot()
       if (!vaultRoot) { callback({ error: -2 }); return }
       const rest = request.url.slice('twfile://'.length)
       const slash = rest.indexOf('/')
@@ -6811,6 +7947,8 @@ app.whenReady().then(async () => {
   // for unchanged talks while keeping cross-Talk search backed by rendered slides (ADR-0019).
   loadSearchIndexFromDisk()
   loadOcrCache()
+  // Temp files an interrupted config write left behind (config-file.ts), older than a minute.
+  configFile().sweepStaleTemps(60_000)
   // SCALE (2026-07-20, Dominik): a vault can now hold thousands of imported slides. The old startup
   // ran an EAGER whole-vault sweep — render every changed slide's thumbnail in a hidden window, then
   // OCR every image — which, dumped 1400+ slides at once, beachballed and natively crashed the app.

@@ -1,4 +1,12 @@
+import type { VariantThumbnail } from '../shared/variant-thumbnail-result'
 import type { EditorDocumentReply, EditorDocumentRequest } from '../shared/editor-document'
+import type { RunQuestion, RunReaction } from '../shared/run-feedback'
+import type { RunBoard } from '../shared/run-board'
+import type { RunPrework } from '../shared/run-prework'
+import type { PickChange } from '../shared/run-prework-results'
+import type { PreworkFeed } from '../../compiler/scripts/lib/prework.mjs'
+import type { RunPollLike, RunPollResponseLike } from '../shared/run-poll-results'
+import type { RunShareInclude, RunShareLifetime } from '../shared/run-results-share'
 import type { OutlineChangedOnDiskRefusal, OutlineDiskAccept, OutlineDiskChange, OutlineRecoveryCopy } from '../shared/outline-disk-change'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { PaletteCommandHandlerId } from '../shared/command-registry'
@@ -50,7 +58,92 @@ export type TalkInfo = {
   outlinePath: string
   title: string
   slug: string
+  /** The vault the talk lives in. Main's scans do not set it; the renderer stamps it from the
+   *  vault whose list the talk arrived in. */
+  vaultId?: string
+  /** Sync-conflict copies of the outline left to compare (several-vaults ticket 09); 0 or absent
+   *  when none. Byte-identical copies are moved to the Trash and not counted. */
+  conflicts?: number
 }
+
+/** One line of a talk's Activity list (Inspector; stored in app data, never in the vault). */
+export type TalkActivityEntry = { at: string; kind: string; title: string; detail?: string }
+
+/** A vault as the Talks panel shows it (src/main/vault-view.ts). */
+export type VaultView = {
+  id: string
+  /** The folder. Used to place talks in folders; never displayed. */
+  root: string
+  open: boolean
+  order: number
+  /** What every surface calls the vault: `Name · Service` when another vault has the same name. */
+  name: string
+  /** The vault's own name, without the service suffix. */
+  baseName: string
+  initial: string
+  color: string
+  service: 'OneDrive' | 'Dropbox' | 'Google Drive' | 'Git' | 'Local'
+  /** From the vault file: others can open it (people mark) or only me (padlock). */
+  shared: boolean
+  /** The vault file exists; else a plain folder (the file is written on first Save). */
+  hasFile: boolean
+  createdBy: string | null
+  /** Closed as a copy of this vault (the duplicate state). */
+  duplicateOf: { id: string; name: string } | null
+  /** Its folder is missing or unreadable right now: greyed section, no talks, one action (ticket 07). */
+  unavailable: VaultUnavailableInfo | null
+}
+export type VaultUnavailableInfo = {
+  reason: 'not-signed-in' | 'folder-moved' | 'no-permission' | 'folder-not-found' | 'not-responding'
+  message: string
+  action: 'open-service' | 'retry'
+  actionLabel: string
+}
+/** The vault a refusal is about, by name and badge (never a path). */
+export type VaultRef = { id: string; name: string; initial: string; color: string; service: VaultView['service'] }
+export type VaultActionResult =
+  | { ok: true; vault: VaultView }
+  | { ok: false; reason: string; message: string; other?: VaultRef | null }
+/** The shared group of Edit this vault (written to the vault file). */
+export type VaultSharedFields = { name: string; shared: boolean; affiliation: string; style: string; logo: string }
+/** "Just for me" (app config, by vault id). */
+export type VaultPersonalFields = { author?: string; badgeColour?: string; badgeInitial?: string }
+export type VaultStyleOption = { value: string; label: string }
+export type ChosenVaultFolder =
+  | {
+    ok: true
+    token: string
+    kind: 'new' | 'join'
+    folderName: string
+    service: VaultView['service']
+    vault: (VaultSharedFields & { styleLabel: string; logoPreview: string | null; createdBy: string | null }) | null
+    suggested: { name: string; author: string; badgeColour: string; badgeInitial: string }
+    swatches: string[]
+    styles: VaultStyleOption[]
+  }
+  | { ok: false; reason: string; message: string; other?: VaultRef | null }
+export type VaultSettingsResult =
+  | {
+    ok: true
+    vault: VaultView
+    fields: VaultSharedFields
+    logoPreview: string | null
+    personal: VaultPersonalFields
+    appAuthor: string
+    swatches: string[]
+    styles: VaultStyleOption[]
+    fileProblem: string | null
+  }
+  | { ok: false; reason: string; message: string; other?: VaultRef | null }
+/** A logo inside the vault comes back as `logo` (vault-relative); one outside it as `upload` (a token
+ *  main holds; the file is copied into <vault>/_assets/logos on Save / Create) with its file name. */
+export type ChosenVaultLogo = { ok: true; logo: string; preview: string | null; upload?: string; fileName?: string } | { ok: false; reason: string; message: string }
+/** What Create / Save send: the shared fields, plus a pending outside logo's token. */
+export type VaultSharedPatch = VaultSharedFields & { logoUpload?: string }
+export type TalkVaultDefaults = {
+  vault: { id: string; name: string; initial: string; color: string }
+  values: Array<{ key: string; label: string; value: string; source: 'vault' | 'personal' | 'app' }>
+} | null
 
 export type TalkMeta = Record<string, {
   slideCount: number | null
@@ -163,8 +256,29 @@ export type LedgerVersion = {
   sealed: boolean
   sealedBy: string | null
   lineage: string | null
+  /** A slide inserted from another vault (ticket 06): the source vault and slide id only. */
+  origin?: { vault_id: string; vault_name: string; slide_id: string; inserted_by?: string } | null
   markdown: string
 }
+
+/** Where a slide from another vault came from, as the Inspector shows it (ticket 06). `talkTitle` is
+ *  set only on the Mac that inserted it (app data); `badge` only when this Mac knows the source vault. */
+export type SlideOriginInfo = {
+  vaultId: string
+  vaultName: string
+  sourceSlideId: string
+  insertedAt: string | null
+  talkTitle: string | null
+  badge: { initial: string; color: string } | null
+  /** Who inserted it, as the vault's ledger records it; null when not recorded. */
+  insertedBy: string | null
+} | null
+
+/** talk.insertFromVault's reply: same vault → crossVault false (use materializeSlideAssets). */
+export type InsertFromVaultResult =
+  | { ok: true; crossVault: false }
+  | { ok: true; crossVault: true; markdown: string; slides: Array<{ id: string; restamped: boolean }>; materialized: number; skipped: number }
+  | { ok: false; error: string }
 
 // One where-used row judged against the version being adopted (ADR-0032):
 // 'identical' | 'behind' (matches an older recorded version) | 'diverged' (matches none).
@@ -250,6 +364,13 @@ export type RecordingSession = {
   plannedDate?: string
   eventTitle?: string
   audience?: string
+  /** Planned Run (ADR-0032 point 5): local start time HH:MM, optional head count, pre-work window. */
+  startTime?: string
+  expectedPeople?: number
+  preworkOpens?: string
+  preworkCloses?: string
+  /** The IANA zone the pre-work times were entered in (ticket 09); absent on older Runs. */
+  timeZone?: string
   slideSet?: RunSlideSet
   handoutUrl?: string
   startedAt: string
@@ -268,7 +389,31 @@ export type RecordingSession = {
   slideTimeIndex: Array<{ event: string; slideId?: string; tMs: number; hidden?: number; marks?: number; ranges?: HighlightRange[] }>
   /** Instant slides shown during a live session (ticket 07), oldest first. */
   instantSlides?: RunInstantSlide[]
+  /** Reactions from phones (reactions ticket 06): taps and undos, times from the Run's start. */
+  reactions?: RunReaction[]
+  /** Questions asked on phones (reactions ticket 06), oldest first. */
+  questions?: RunQuestion[]
+  /** Feedback boards (feedback-boards ticket 06): cards, groups, hidden flags, left open or closed. */
+  boards?: RunBoard[]
+  /** Pre-work answers mirrored from the handout (feedback-boards ticket 09): reads, answers, done marks, questions. */
+  prework?: RunPrework
+  /** Live polls and their answers, as the Run keeps them (H1). */
+  polls?: RunPollLike[]
+  pollResponses?: RunPollResponseLike[]
 }
+export type { RunBoard, RunQuestion, RunReaction }
+
+/** A Run's read-only share link as a window sees it (never its owner token). */
+export type RunResultsShareState = { url: string; include: RunShareInclude; lifetime: RunShareLifetime; expiresAt: number | null; pushedAt: number }
+/** A Run's pre-work on its handout as a window sees it (never its owner token); times in ms. */
+export type RunPreworkState = { preworkId: string; opensAt: number; closesAt: number; closedAt?: number; purgedAt?: number }
+export type RunPreworkPullResult =
+  | { ok: true; run: RecordingSession; added: number; changed: boolean }
+  | { ok: false; error: string; run?: RecordingSession }
+export type { RunPrework }
+export type RunBoardPullResult =
+  | { ok: true; run: RecordingSession; added: number; late: number; warning?: string }
+  | { ok: false; error: string; run?: RecordingSession }
 
 export type RunInstantSlide = {
   id: string
@@ -313,6 +458,17 @@ export type TagApplyResult =
   | { ok: false; reason: string }
 export type TagCount = { name: string; count: number }
 
+// Compare and merge a conflict copy (several-vaults ticket 10; src/main/conflict-compare.ts).
+export type ConflictSlide = { index: number; id: string | null; title: string; text: string; match: number; differs: boolean; diff?: LedgerDiffLine[] }
+export type ConflictSide = { label: string; where: string; savedAt: string | null; text: string; slides: ConflictSlide[] }
+export type ConflictCompareLoad =
+  | { ok: true; token: string; kind: 'copy' | 'git'; title: string; copyName: string | null; service: 'onedrive' | 'dropbox' | 'gdrive' | 'git'; mine: ConflictSide; theirs: ConflictSide; headDiffers: boolean; remaining: number }
+  | { ok: false; error: string }
+export type ConflictCompareCheck = { stale: false } | { stale: true; which: 'mine' | 'theirs'; label: string; at: string | null }
+export type ConflictMergeResult =
+  | { ok: true; added: number; summary: string; text: string; trashed: string[]; copyLeft: boolean; setAsideLeft: string | null }
+  | { ok: false; error: string; stale?: boolean; setAsideLeft?: string }
+
 const api = {
   app: {
     version: (): Promise<string> => ipcRenderer.invoke('app:version'),
@@ -321,6 +477,16 @@ const api = {
       ipcRenderer.on('app:command', listener)
       return () => ipcRenderer.removeListener('app:command', listener)
     }
+  },
+  // Ticket 10: the compare screen. load reads both versions (writes nothing); check tells whether
+  // either file changed since; merge writes once through the normal save path; cancel writes nothing.
+  conflict: {
+    load: (outlinePath: string): Promise<ConflictCompareLoad> => ipcRenderer.invoke('conflict:load', outlinePath),
+    check: (token: string): Promise<ConflictCompareCheck> => ipcRenderer.invoke('conflict:check', token),
+    merge: (token: string, pick: { keep: 'mine' | 'theirs'; pull: number[] }): Promise<ConflictMergeResult> => ipcRenderer.invoke('conflict:merge', token, pick),
+    cancel: (token: string): Promise<boolean> => ipcRenderer.invoke('conflict:cancel', token),
+    /** Pictures of one compared version, keyed by slide id (compiled on the uncached 'variant' lane). */
+    pictures: (token: string, side: 'mine' | 'theirs'): Promise<Record<string, string>> => ipcRenderer.invoke('conflict:pictures', token, side)
   },
   tags: {
     // Merge-only tag write across outlines (engine applySlideTags): `add` joins each slide's
@@ -353,13 +519,67 @@ const api = {
   },
   vault: {
     getRoot: (): Promise<string | null> => ipcRenderer.invoke('vault:get-root'),
-    setRoot: (path: string): Promise<void> => ipcRenderer.invoke('vault:set-root', path),
+    // Test-only (TW_E2E=1); the app changes the root with chooseRoot.
+    setRoot: (path: string): Promise<{ success: boolean; error?: string }> => ipcRenderer.invoke('vault:set-root', path),
     chooseRoot: (): Promise<string | null> => ipcRenderer.invoke('vault:choose-root'),
-    listTalks: (): Promise<TalkInfo[]> => ipcRenderer.invoke('vault:list-talks'),
-    onTalksBatch: (cb: (payload: { batch: TalkInfo[]; reset: boolean; done: boolean }) => void): (() => void) => {
-      const listener = (_event: unknown, payload: { batch: TalkInfo[]; reset: boolean; done: boolean }): void => cb(payload)
+    // Every vault, open or closed, with its name, badge colour and initial, and service label.
+    list: (): Promise<VaultView[]> => ipcRenderer.invoke('vault:list'),
+    // ⋯ › Reveal in Finder: main resolves the folder from the vault id (an unknown id is refused).
+    // "Check again": look at every open vault's folder now (true when a vault came back or went away).
+    recheck: (): Promise<boolean> => ipcRenderer.invoke('vault:recheck'),
+    reveal: (vaultId: string): Promise<{ ok: boolean; reason?: 'unknown-vault' | 'unavailable' }> => ipcRenderer.invoke('vault:reveal', vaultId),
+    // The unavailable section's action when its cloud service is not signed in: open that service's app.
+    openService: (vaultId: string): Promise<boolean> => ipcRenderer.invoke('vault:open-service', vaultId),
+    // Add a vault. Without a path the folder picker opens (null = cancelled); a refusal (a folder inside
+    // another vault, or already added) comes back as { ok: false, message }.
+    add: (path?: string): Promise<VaultActionResult | null> =>
+      path === undefined ? ipcRenderer.invoke('vault:add') : ipcRenderer.invoke('vault:add', path),
+    // Add vault… (ticket 04): pick a folder (path only under TW_E2E). Answers what it is — a new vault
+    // or one set up elsewhere (join) — or a refusal naming the vault it clashes with. Writes nothing.
+    chooseFolder: (path?: string): Promise<ChosenVaultFolder | null> =>
+      path === undefined ? ipcRenderer.invoke('vault:choose-folder') : ipcRenderer.invoke('vault:choose-folder', path),
+    // Create vault: writes the vault file once, adds the vault, stores the personal settings.
+    create: (token: string, shared: VaultSharedPatch, personal: VaultPersonalFields): Promise<VaultActionResult> =>
+      ipcRenderer.invoke('vault:create', token, shared, personal),
+    // Open vault (a folder already a vault): adds it with the file's id; stores only personal settings.
+    join: (token: string, personal: VaultPersonalFields): Promise<VaultActionResult> => ipcRenderer.invoke('vault:join', token, personal),
+    // Edit this vault.
+    getSettings: (vaultId: string): Promise<VaultSettingsResult> => ipcRenderer.invoke('vault:get-settings', vaultId),
+    // shared null leaves the vault file alone (read-only shared group).
+    saveSettings: (vaultId: string, shared: VaultSharedPatch | null, personal: VaultPersonalFields): Promise<VaultActionResult> =>
+      ipcRenderer.invoke('vault:save-settings', vaultId, shared, personal),
+    // A logo inside the vault (by vault id, or the token of a folder being added); path only under TW_E2E.
+    chooseLogo: (target: { vaultId: string } | { token: string }, path?: string): Promise<ChosenVaultLogo | null> =>
+      path === undefined ? ipcRenderer.invoke('vault:choose-logo', target) : ipcRenderer.invoke('vault:choose-logo', target, path),
+    // What the talk's vault gives new talks, and where each value comes from (Inspector).
+    talkDefaults: (outlinePath: string): Promise<TalkVaultDefaults> => ipcRenderer.invoke('vault:talk-defaults', outlinePath),
+    // Open or close a vault in this app's list. Nothing in the folder changes. The last open vault stays open.
+    setOpen: (vaultId: string, open: boolean): Promise<VaultActionResult> => ipcRenderer.invoke('vault:set-open', vaultId, open),
+    onVaultsChanged: (cb: () => void): (() => void) => {
+      const listener = (): void => cb()
+      ipcRenderer.on('vault:vaults-changed', listener)
+      return () => ipcRenderer.removeListener('vault:vaults-changed', listener)
+    },
+    // One vault's talks (vaultId); without it, the first open vault. Batches name their vault.
+    listTalks: (vaultId?: string): Promise<TalkInfo[]> =>
+      vaultId === undefined ? ipcRenderer.invoke('vault:list-talks') : ipcRenderer.invoke('vault:list-talks', vaultId),
+    onTalksBatch: (cb: (payload: { vaultId: string; batch: TalkInfo[]; reset: boolean; done: boolean }) => void): (() => void) => {
+      const listener = (_event: unknown, payload: { vaultId: string; batch: TalkInfo[]; reset: boolean; done: boolean }): void => cb(payload)
       ipcRenderer.on('vault:talks-batch', listener)
       return () => ipcRenderer.removeListener('vault:talks-batch', listener)
+    },
+    // Ticket 09: a scan of the open talk's folder recounted its conflict copies.
+    onTalkConflicts: (cb: (payload: { vaultId: string; outlinePath: string; conflicts: number }) => void): (() => void) => {
+      const listener = (_event: unknown, payload: { vaultId: string; outlinePath: string; conflicts: number }): void => cb(payload)
+      ipcRenderer.on('vault:talk-conflicts', listener)
+      return () => ipcRenderer.removeListener('vault:talk-conflicts', listener)
+    },
+    // Ticket 09: the talk's Activity lines, newest first (identical conflict copies removed, …).
+    talkActivity: (outlinePath: string): Promise<TalkActivityEntry[]> => ipcRenderer.invoke('talk:activity', outlinePath),
+    onTalkActivityChanged: (cb: (payload: { vaultId: string; slug: string }) => void): (() => void) => {
+      const listener = (_event: unknown, payload: { vaultId: string; slug: string }): void => cb(payload)
+      ipcRenderer.on('talk:activity-changed', listener)
+      return () => ipcRenderer.removeListener('talk:activity-changed', listener)
     },
     talkMeta: (): Promise<TalkMeta> => ipcRenderer.invoke('vault:talk-meta'),
     // Fires when talk facts changed and windows should re-read them: search-index counts landed
@@ -370,7 +590,7 @@ const api = {
       ipcRenderer.on('vault:talk-meta-updated', listener)
       return () => ipcRenderer.removeListener('vault:talk-meta-updated', listener)
     },
-    createTalk: (opts: { title: string; slug: string; topicFolder?: string }): Promise<TalkInfo | null> =>
+    createTalk: (opts: { title: string; slug: string; topicFolder?: string; vaultId?: string }): Promise<TalkInfo | null> =>
       ipcRenderer.invoke('vault:create-talk', opts),
     // Clone a talk (copy its folder, retitle, strip the published handout link). Lands as a sibling.
     cloneTalk: (outlinePath: string, newTitle: string): Promise<TalkInfo | null> =>
@@ -380,17 +600,18 @@ const api = {
     renameTalk: (outlinePath: string, newTitle: string): Promise<TalkInfo | { error: string } | null> =>
       ipcRenderer.invoke('vault:rename-talk', outlinePath, newTitle),
     // Folder management — folders are real vault subfolders (paths are vault-relative, '' = root).
-    createFolder: (name: string, parentRel?: string): Promise<string | null> =>
-      ipcRenderer.invoke('vault:create-folder', name, parentRel),
-    renameFolder: (folderRel: string, newName: string): Promise<string | null> =>
-      ipcRenderer.invoke('vault:rename-folder', folderRel, newName),
+    // The folder calls take an optional vault id (default: the first open vault).
+    createFolder: (name: string, parentRel?: string, vaultId?: string): Promise<string | null> =>
+      ipcRenderer.invoke('vault:create-folder', name, parentRel, vaultId),
+    renameFolder: (folderRel: string, newName: string, vaultId?: string): Promise<string | null> =>
+      ipcRenderer.invoke('vault:rename-folder', folderRel, newName, vaultId),
     moveTalk: (outlinePath: string, destFolderRel: string): Promise<TalkInfo | null> =>
       ipcRenderer.invoke('vault:move-talk', outlinePath, destFolderRel),
     // Category folders (vault-rel paths), INCLUDING empty ones, so a just-created folder is visible.
-    listFolders: (): Promise<string[]> => ipcRenderer.invoke('vault:list-folders'),
+    listFolders: (vaultId?: string): Promise<string[]> => ipcRenderer.invoke('vault:list-folders', vaultId),
     // Delete → OS Trash (recoverable), for talks/folders created by accident.
     deleteTalk: (outlinePath: string): Promise<boolean> => ipcRenderer.invoke('vault:delete-talk', outlinePath),
-    deleteFolder: (folderRel: string): Promise<boolean> => ipcRenderer.invoke('vault:delete-folder', folderRel)
+    deleteFolder: (folderRel: string, vaultId?: string): Promise<boolean> => ipcRenderer.invoke('vault:delete-folder', folderRel, vaultId)
   },
   settings: {
     // Configured folders the app reads from. A null override = the auto-detected default is in use.
@@ -507,12 +728,14 @@ const api = {
     // bytes on disk: it is the STAMPED text the main process actually wrote. The caller should
     // adopt it into its buffer (Editor.tsx does, via minimalChange) so the next save sends
     // already-stamped text — otherwise the main process falls back to id reuse by heading.
+    // `{ ok: false, refused: 'outside-vault', error }`: the outline is not in the current vault (a window
+    // still holding a talk after the vault root changed) — nothing was written; `error` says so.
     // `{ ok: false, refused: 'changed-on-disk', change }`: the file changed on disk since the editor read
     // it (external-change guard) — nothing was written until the person picks Reload or Keep mine.
     writeOutline: (
       outlinePath: string,
       content: string
-    ): Promise<{ ok: true; collisions: string[]; content?: string } | { ok: false; refused: 'empty-over-nonempty' } | OutlineChangedOnDiskRefusal | false> =>
+    ): Promise<{ ok: true; collisions: string[]; content?: string } | { ok: false; refused: 'empty-over-nonempty' } | { ok: false; refused: 'outside-vault'; error: string } | OutlineChangedOnDiskRefusal | false> =>
       ipcRenderer.invoke('talk:write-outline', outlinePath, content),
     compile: (outlinePath: string, content: string): Promise<ProjectionRow[] | null> =>
       ipcRenderer.invoke('talk:compile', outlinePath, content),
@@ -522,6 +745,19 @@ const api = {
       slideId: string
     ): Promise<{ slideId: string; url: string } | null> =>
       ipcRenderer.invoke('talk:selected-thumbnail', outlinePath, content, slideId),
+    // ADR-0032 §6: the CURRENT slide (by {id}) rendered from `outline` with `layout` (and option
+    // choices) applied — a picture for the picker / Inspector. Writes nothing; cached by content.
+    // The answer says what happened: a picture, the layout cannot take the slide (grey), a bad
+    // request, a failed render (retry), or superseded by a newer request with the same `requestKey`.
+    layoutVariantThumbnail: (
+      outlinePath: string,
+      outline: string,
+      slide: string | { headingLine: number },
+      layout: string,
+      options?: Array<{ group: string; token: string }>,
+      requestKey?: string
+    ): Promise<VariantThumbnail> =>
+      ipcRenderer.invoke('layout:variant-thumbnail', outlinePath, outline, slide, layout, options, requestKey),
     // Embed preflight: per embed, whether it will actually display when presenting (catches
     // embedding-disabled YouTube videos, private/deleted videos, and sites that refuse framing).
     checkEmbeds: (
@@ -595,7 +831,8 @@ const api = {
     thumbnails: (outlinePath: string, content: string, opts?: { lane?: string }): Promise<Record<string, string> | null> =>
       ipcRenderer.invoke('talk:thumbnails', outlinePath, content, opts),
     // Manual rebuild: wipe this talk's thumbnail cache so the next compile re-renders from scratch.
-    clearThumbCache: (slug: string): Promise<boolean> => ipcRenderer.invoke('talk:clear-thumb-cache', slug),
+    // outlinePath names the talk's vault, so only that vault's pictures go (without it, every vault's folder for the slug).
+    clearThumbCache: (slug: string, outlinePath?: string): Promise<boolean> => ipcRenderer.invoke('talk:clear-thumb-cache', slug, outlinePath),
     // Convert a talk's relative PNG/JPG images to WebP (smaller → faster previews + handouts).
     // Returns the rewritten outline; originals go to the OS Trash (recoverable).
     optimizeImages: (
@@ -608,13 +845,17 @@ const api = {
     materializeSlideAssets: (
       sourceOutlinePath: string,
       markdown: string
-    ): Promise<{ success: boolean; markdown: string; materialized?: number; error?: string }> =>
+    ): Promise<{ success: boolean; markdown: string; materialized?: number; skipped?: number; error?: string }> =>
       ipcRenderer.invoke('talk:materialize-slide-assets', sourceOutlinePath, markdown),
+    // Slides across vaults (ticket 06): a slide from ANOTHER vault is copied into the target talk's
+    // vault (media, a re-stamped id on collision, provenance). `liveIds`: ids in the talk's live text.
+    insertFromVault: (sourceOutlinePath: string, targetOutlinePath: string, markdown: string, liveIds: string[]): Promise<InsertFromVaultResult> =>
+      ipcRenderer.invoke('talk:insert-from-vault', sourceOutlinePath, targetOutlinePath, markdown, liveIds),
     // Cross-talk reuse for TEXT-PASTED slides (no source path): resolve relative assets/<name> refs
     // by filename across the vault, copy into the pool (img-<hash>), rewrite. Returns rewritten markdown.
     materializePastedAssets: (
       markdown: string
-    ): Promise<{ success: boolean; markdown: string; materialized?: number; error?: string }> =>
+    ): Promise<{ success: boolean; markdown: string; materialized?: number; skipped?: number; error?: string }> =>
       ipcRenderer.invoke('talk:materialize-pasted-assets', markdown),
     // OCR-index the vault's images (native macOS Vision) so search matches text INSIDE images.
     ocrIndex: (): Promise<{ success: boolean; total?: number; cached?: number; added?: number; error?: string }> =>
@@ -627,6 +868,8 @@ const api = {
       ipcRenderer.invoke('ledger:where-used', id),
     // Version history for a slide id (head first).
     versions: (id: string): Promise<LedgerVersion[]> => ipcRenderer.invoke('ledger:versions', id),
+    // Where a slide in this talk came from when it was inserted from another vault; null otherwise.
+    origin: (outlinePath: string, slideId: string): Promise<SlideOriginInfo> => ipcRenderer.invoke('ledger:origin', outlinePath, slideId),
     // Fork a shared slide in place: mint a fresh id for THIS occurrence, write the outline,
     // and record the lineage (new id ← old id). Null if the slide could not be found.
     detach: (outlinePath: string, content: string, ref: { heading: string; occurrence: number }): Promise<{ text: string; oldId: string; newId: string } | null> =>
@@ -689,8 +932,9 @@ const api = {
     clearToken: (): Promise<{ success: boolean }> => ipcRenderer.invoke('publish:clear-token')
   },
   asset: {
-    pasteImage: (bytes: ArrayBuffer, ext?: string): Promise<{ id: string; ext: string; path: string } | null> =>
-      ipcRenderer.invoke('asset:paste-image', bytes, ext ?? 'png'),
+    // outlinePath: the talk being edited; the image goes to that talk's vault (default: the current vault).
+    pasteImage: (bytes: ArrayBuffer, ext?: string, outlinePath?: string): Promise<{ id: string; ext: string; path: string } | null> =>
+      ipcRenderer.invoke('asset:paste-image', bytes, ext ?? 'png', outlinePath),
     // Ingest a video / animated GIF (ADR-0028). Pass a file `path` (drag-drop) or `bytes` (paste).
     // GIFs convert to MP4; the result is content-addressed as `vid-<id>` with a generated poster.
     // `origin`: 'gif' (autoplay/loop), 'video' (manual), or 'image' (static GIF / conversion fallback → img-).
@@ -776,13 +1020,15 @@ const api = {
     // Accepts either a bare string (legacy all-fields all-words) or the renderer's structured,
     // scoped query (t:/s:/i:/e: parsed via parseSearchQuery). Rows carry `titleHit` so the
     // Browser can float title matches to the front.
+    // options.vaultIds limits the search to those open vaults; without it, the first open vault.
     allSlides: (
       query:
         | string
-        | { scope: 'all' | 'title' | 'body' | 'image'; exact: boolean; text: string; terms: string[] }
+        | { scope: 'all' | 'title' | 'body' | 'image'; exact: boolean; text: string; terms: string[] },
+      options?: { vaultIds?: string[] }
     ): Promise<
-      Array<ProjectionRow & { talkSlug: string; talkTitle: string; outlinePath: string; titleHit?: boolean }> | null
-    > => ipcRenderer.invoke('search:all-slides', query)
+      Array<ProjectionRow & { vaultId?: string; talkSlug: string; talkTitle: string; outlinePath: string; titleHit?: boolean }> | null
+    > => options === undefined ? ipcRenderer.invoke('search:all-slides', query) : ipcRenderer.invoke('search:all-slides', query, options)
   },
   archive: {
     available: (): Promise<boolean> => ipcRenderer.invoke('archive:available'),
@@ -832,9 +1078,11 @@ const api = {
     listRuns: (talkSlug?: string): Promise<RecordingSession[]> => ipcRenderer.invoke('history:list-runs', talkSlug),
     createPlannedRun: (input: {
       talkSlug: string; talkTitle: string; plannedDate: string; eventTitle: string; audience: string; slideSet: RunSlideSet
+      startTime?: string; expectedPeople?: number; preworkOpens?: string; preworkCloses?: string; timeZone?: string
     }): Promise<{ ok: boolean; run?: RecordingSession; error?: string }> => ipcRenderer.invoke('history:create-planned-run', input),
     updatePlannedRun: (talkSlug: string, runId: string, patch: Partial<{
       plannedDate: string; eventTitle: string; audience: string; slideSet: RunSlideSet
+      startTime: string | null; expectedPeople: number | null; preworkOpens: string | null; preworkCloses: string | null; timeZone: string | null
     }>): Promise<{ ok: boolean; run?: RecordingSession; error?: string }> =>
       ipcRenderer.invoke('history:update-planned-run', { talkSlug, runId, patch }),
     deletePlannedRun: (talkSlug: string, runId: string): Promise<{ ok: boolean; error?: string }> =>
@@ -843,7 +1091,7 @@ const api = {
       success: boolean; path?: string; slideIds?: string[]; missing?: string[]; error?: string
     }> => ipcRenderer.invoke('run:build-handout', { talkSlug, runId }),
     publishRunHandout: (talkSlug: string, runId: string): Promise<{
-      success: boolean; url?: string; path?: string; slideIds?: string[]; missing?: string[]; error?: string
+      success: boolean; url?: string; path?: string; slideIds?: string[]; missing?: string[]; error?: string; warning?: string
     }> => ipcRenderer.invoke('run:publish-handout', { talkSlug, runId }),
     unpublishRunHandout: (talkSlug: string, runId: string): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke('run:unpublish-handout', { talkSlug, runId }),
@@ -851,9 +1099,47 @@ const api = {
     // (null = that slide is no longer in the talk), and "Add to talk" for one of them.
     instantAnchors: (talkSlug: string, runId: string): Promise<Record<string, { slideNumber: number; title: string } | null>> =>
       ipcRenderer.invoke('history:instant-anchors', { talkSlug, runId }),
+    // Reactions ticket 06: slide number and title NOW for each slide the Run's questions and
+    // reactions name (null = no longer in the talk).
+    feedbackSlides: (talkSlug: string, runId: string): Promise<Record<string, { slideNumber: number; title: string } | null>> =>
+      ipcRenderer.invoke('history:feedback-slides', { talkSlug, runId }),
     addInstantSlide: (talkSlug: string, runId: string, entryId: string): Promise<
       { ok: true; afterSlideNumber: number; afterSlideTitle: string; run: RecordingSession; warning?: string } | { ok: false; error: string }
-    > => ipcRenderer.invoke('history:add-instant-slide', { talkSlug, runId, entryId })
+    > => ipcRenderer.invoke('history:add-instant-slide', { talkSlug, runId, entryId }),
+    // Feedback-boards ticket 06: a board left open (Refresh from the board, Close it now, and every
+    // such board on Re-check live), Put back on a hidden card, and the Run's read-only share link.
+    boardRefresh: (talkSlug: string, runId: string): Promise<RunBoardPullResult> =>
+      ipcRenderer.invoke('history:board-refresh', { talkSlug, runId }),
+    boardClose: (talkSlug: string, runId: string): Promise<RunBoardPullResult> =>
+      ipcRenderer.invoke('history:board-close', { talkSlug, runId }),
+    recheckBoards: (): Promise<{ runs: RecordingSession[]; late: number; warning?: string }> => ipcRenderer.invoke('history:recheck-boards'),
+    // A board is named by its poll and its live session (the same board in two sessions is two boards).
+    boardPutBack: (talkSlug: string, runId: string, boardId: string, sessionId: string | undefined, cardId: string, putBack: boolean): Promise<
+      { ok: true; run: RecordingSession; warning?: string } | { ok: false; error: string }
+    > => ipcRenderer.invoke('history:board-put-back', { talkSlug, runId, boardId, sessionId, cardId, putBack }),
+    resultsShareStatus: (talkSlug: string, runId: string): Promise<RunResultsShareState | null> =>
+      ipcRenderer.invoke('history:results-share-status', { talkSlug, runId }),
+    resultsShare: (talkSlug: string, runId: string, include: { board: boolean; polls: boolean }, lifetime: RunShareLifetime, title?: string): Promise<
+      { ok: true; share: RunResultsShareState } | { ok: false; error: string }
+    > => ipcRenderer.invoke('history:results-share', { talkSlug, runId, include, lifetime, title }),
+    resultsShareStop: (talkSlug: string, runId: string): Promise<{ ok: true } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('history:results-share-stop', { talkSlug, runId }),
+    // Feedback-boards ticket 09: a planned Run's pre-work on its handout — whether it has one, pull
+    // the answers onto the Run now, and Close pre-work now (then one last pull).
+    preworkStatus: (talkSlug: string, runId: string): Promise<RunPreworkState | null> =>
+      ipcRenderer.invoke('history:prework-status', { talkSlug, runId }),
+    preworkRefresh: (talkSlug: string, runId: string): Promise<RunPreworkPullResult> =>
+      ipcRenderer.invoke('history:prework-refresh', { talkSlug, runId }),
+    preworkClose: (talkSlug: string, runId: string): Promise<RunPreworkPullResult> =>
+      ipcRenderer.invoke('history:prework-close', { talkSlug, runId }),
+    /** One change to a step's picks, applied by main to the Run as it is then. */
+    preworkPick: (talkSlug: string, runId: string, stepId: string, change: PickChange): Promise<{ ok: true; run: RecordingSession } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('history:prework-pick', { talkSlug, runId, stepId, change }),
+    /** The board slides each pre-work step feeds, with the compiler's slide ids; `ok: false` when the talk cannot be compiled. */
+    preworkFeeds: (talkSlug: string): Promise<{ ok: true; feeds: PreworkFeed[] } | { ok: false }> =>
+      ipcRenderer.invoke('history:prework-feeds', { talkSlug }),
+    preworkQuestion: (talkSlug: string, runId: string, entryId: string, patch: { answered?: boolean; inTalk?: { slideId: string | null } | null }): Promise<{ ok: true; run: RecordingSession } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('history:prework-question', { talkSlug, runId, entryId, patch })
   },
   replay: {
     // Build a fresh present HTML for this Talk and return a twpresent:// replay iframe URL.

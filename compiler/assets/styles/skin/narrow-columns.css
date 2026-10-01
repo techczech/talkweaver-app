@@ -1,0 +1,40 @@
+/* ADR-0033 §5 (slide design round 2, ticket 07): columns too narrow for their words change shape.
+   compiler/scripts/lib/narrow-columns.mjs decides and stamps the classes read here; nothing below
+   applies to a slide the setting left alone ({narrowcols=off}, `narrow_columns: off`, or an authored
+   {iconlist=boxes|list}), so those keep today's columns. Unmarked, so it sorts after the legacy blocks.
+   Lifted from drawings/overrides/3-*.css of the round-2 design pack. It replaces the fixed
+   `@container (max-width: 950px)` two-column icon-row rule (skin/icon-row.css) for a stamped row;
+   the container rule stays for an icon row the compiler did not reshape. */
+
+/* Five or more icon-row columns on a slide too narrow for them: rows of three (3 + 2), or two beside
+   a rail. The row uses the full slide width (the doubled inset of skin/base.css @order 1536 goes), reads
+   at 2.1cqw, and a label never breaks mid-word. Each item keeps its two-row subgrid span. */
+.slide-content:has(> .icon-row.ir-rows) { width: 100% !important; }
+.slide-content.layout-iconrow:has(> .icon-row.ir-rows) { --fs-body: 2.1cqw !important; --list-lh: 1.2 !important; --list-gap: .8 !important; }
+.slide-content > .icon-row.ir-rows {
+  grid-auto-flow: row !important; grid-template-rows: none !important; grid-auto-rows: auto;
+  gap: 1.6cqw 2.2cqw !important; margin-top: 1.4cqw !important;
+}
+.slide-content > .icon-row.ir-rows-3 { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+.slide-content > .icon-row.ir-rows-1 { grid-template-columns: minmax(0, 1fr) !important; }
+.slide-content > .icon-row.ir-rows-2 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+.slide-content > .icon-row.ir-rows .ir-item { grid-row: span 2; }
+.slide-content > .icon-row.ir-rows .ir-label { flex-wrap: nowrap; white-space: nowrap; }
+
+/* Cards beside a rail that became icon-list rows ({iconlist=list} shape, skin/list.css): the row text
+   takes a tighter line height, and a row with a sub-list (a family and its members) reads on one line:
+   the family name never breaks (so "Anthropic - Claude" never breaks after the dash) and the members run
+   inline, separated by a middle dot. */
+.slide-content > .feature-list.fl-narrow-cols > li > .fl-text { line-height: 1.22; }
+.slide-content > .feature-list.fl-narrow-cols > li:has(> .fl-sublist) { grid-template-columns: auto minmax(0, 1fr) !important; row-gap: .15em !important; }
+.slide-content > .feature-list.fl-narrow-cols > li:has(> .fl-sublist) > .fl-text { white-space: nowrap; font-weight: 700; font-size: 1.15em; }
+.slide-content > .feature-list.fl-narrow-cols > li > .fl-sublist {
+  grid-column: 2 !important; display: flex !important; flex-wrap: wrap; gap: 0; margin: 0; padding: 0; list-style: none; font-size: .72em;
+}
+.slide-content > .feature-list.fl-narrow-cols > li > .fl-sublist > li {
+  font-size: 2.3cqw !important; display: inline-block !important; border: 0 !important; padding: 0 !important; margin: 0 !important;
+  grid-template-columns: none !important; white-space: nowrap;
+}
+.slide-content > .feature-list.fl-narrow-cols > li > .fl-sublist > li::before { display: none !important; content: none !important; }
+.slide-content > .feature-list.fl-narrow-cols > li > .fl-sublist > li:not(:last-child)::after { content: "·"; margin: 0 .55em; color: var(--muted); display: inline; }
+.slide-content > .feature-list.fl-narrow-cols > li > .fl-sublist > li > .fl-subtext { grid-column: auto; display: inline; }

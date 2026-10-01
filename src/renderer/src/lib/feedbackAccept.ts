@@ -1,5 +1,5 @@
-// Accept and Undo for the Feedback rail (shared-talk ticket 06). Accept (and Compare's Use hers) puts
-// her proposal into the open talk's editor buffer through the one-writer seam (lib/outlineMutation
+// Accept and Undo for the Feedback rail (shared-talk ticket 06). Accept (and Compare's Use theirs) puts
+// their proposal into the open talk's editor buffer through the one-writer seam (lib/outlineMutation
 // apply, WorkspaceLayout applyOutlineMutation): one minimal change, one undo step in the editor, saved
 // from the buffer through the file's save queue. The file is never written here, and never wholesale.
 //
@@ -10,7 +10,7 @@
 //      wrote (ids it stamped included), which Undo reverses.
 // A save that failed (the guard refusing a file changed on disk, or a write error) leaves the change in
 // the editor, where ⌘Z takes it out; the item stays new. If he keeps it (the guard's Keep mine), the
-// next Accept of that item finds her proposal already in the outline (applyProposal's `already`, read
+// next Accept of that item finds their proposal already in the outline (applyProposal's `already`, read
 // from the text itself, so it holds across a restart) and marks the item accepted with the splice that
 // is there, instead of applying it a second time.
 //
@@ -38,9 +38,9 @@ export type FeedbackAcceptOutcome =
 
 export const DISK_CHANGED = 'This talk’s file changed on disk. Choose in the bar at the top of the talk first; nothing was changed.'
 const NOT_OPEN = 'The talk is not open in the editor. Nothing was changed.'
-const DISK_CHANGED_APPLIED = 'This talk’s file changed on disk, so the talk was not saved and the item stays new. Her text is in the editor (⌘Z takes it out); choose in the bar at the top of the talk.'
-const NOT_SAVED = 'Her text is in the editor, but the talk could not be saved to disk, so the item stays new. Undo it in the editor (⌘Z) if you do not want it.'
-const UNDO_NOT_SAVED = 'Undo is in the editor, but the talk could not be saved to disk, so the item stays accepted. ⌘Z in the editor puts her text back.'
+const DISK_CHANGED_APPLIED = 'This talk’s file changed on disk, so the talk was not saved and the item stays new. Their text is in the editor (⌘Z takes it out); choose in the bar at the top of the talk.'
+const NOT_SAVED = 'Their text is in the editor, but the talk could not be saved to disk, so the item stays new. Undo it in the editor (⌘Z) if you do not want it.'
+const UNDO_NOT_SAVED = 'Undo is in the editor, but the talk could not be saved to disk, so the item stays accepted. ⌘Z in the editor puts their text back.'
 
 /** Accepts applied to the editor whose save did not land, by talk and item: the splice they made, so a
  *  later Accept that finds the proposal already there records a real Undo (a replace cannot be undone
@@ -81,19 +81,19 @@ export async function acceptProposal<R>(itemId: string, item: ProposalItem, base
   }
   if (!result.changed) {
     // Already in the outline: nothing to write. Marked accepted with the splice an earlier Accept of
-    // this item made (Undo takes it out), or, when the slide simply says what she wrote, with no
+    // this item made (Undo takes it out), or, when the slide simply says what they wrote, with no
     // Undo at all ("Already what the slide says").
     const already = found.already
-    if (!already) return { ok: false, error: 'Her proposal is already what the slide says. Nothing was changed.', applied: false }
+    if (!already) return { ok: false, error: 'Their proposal is already what the slide says. Nothing was changed.', applied: false }
     const marked = await deps.setStatus(itemId, 'accepted', isEmptyEdit(already) ? ALREADY : already)
-    if (!marked.success) return { ok: false, error: `Her text is already in the talk, but the item could not be marked accepted (${marked.error || 'unknown error'}).`, applied: false }
+    if (!marked.success) return { ok: false, error: `Their text is already in the talk, but the item could not be marked accepted (${marked.error || 'unknown error'}).`, applied: false }
     pendingEdits.delete(pendingKey(target, itemId))
     return { ok: true, line }
   }
   pendingEdits.delete(pendingKey(target, itemId))
   const edit = spliceEdit(result.base, savedText(result), line)
   const marked = await deps.setStatus(itemId, 'accepted', edit)
-  if (!marked.success) return { ok: false, error: `Her text is in the talk, but the item could not be marked accepted (${marked.error || 'unknown error'}).`, applied: true }
+  if (!marked.success) return { ok: false, error: `Their text is in the talk, but the item could not be marked accepted (${marked.error || 'unknown error'}).`, applied: true }
   return { ok: true, line }
 }
 

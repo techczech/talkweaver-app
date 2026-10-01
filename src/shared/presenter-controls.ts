@@ -61,18 +61,28 @@ export const PRESENTER_CONTROLS: PresenterControl[] = [
   { id: 'presenterAudienceApp', name: 'Open audience window', icon: 'monitor-up', shortcut: 'presenter.audience' },
   { id: 'liveShowJoin', name: 'Show join link and venue screen', icon: 'scan-qr-code', preload: 'live' },
   { id: 'liveCopyVenueLink', name: 'Copy venue-screen link', icon: 'link', preload: 'live' },
+  // From phones · this talk (ADR-0027 amendment, 2026-09-29): two switches, on by default and kept
+  // per talk. Each names what phones show while it is on; the template writes the sub-line.
+  { id: 'liveAllowQuestions', name: 'Allow slide questions', icon: 'message-circle-question-mark' },
+  { id: 'liveAllowReactions', name: 'Allow slide reactions', icon: 'smile-plus' },
   { id: 'liveTalkQr', name: 'Show talk QR code', icon: 'qr-code', shortcut: 'presenter.talk-qr' },
   { id: 'presenterInstantButton', name: 'Compose instant slide', icon: 'zap', shortcut: 'presenter.instant-compose' },
   { id: 'liveInstantPaste', name: 'Instant slide from clipboard', icon: 'clipboard', shortcut: 'presenter.instant-paste' },
   { id: 'liveInstantBack', name: 'Back to slide', icon: 'undo-2', shortcut: 'presenter.instant-return' },
   // Poll menu. Quick poll: compose, show on screens. Current poll: open or close, reveal, show the
-  // panel. Questions: open questions (no questions tray exists yet, so the item stays disabled).
+  // panel. Questions: open the questions tray (key A; the item is enabled while a session is live).
   { id: 'presenterQuickPollButton', name: 'Compose Quick poll', icon: 'vote', shortcut: 'presenter.poll-compose' },
   { id: 'presenterQuickPollRestore', name: 'Show Quick poll on screens', icon: 'monitor-play' },
   { id: 'pollMenuPrimary', name: 'Open or close current poll', icon: 'lock-open', shortcut: 'presenter.poll-primary' },
   { id: 'pollMenuReveal', name: 'Reveal results', icon: 'eye', shortcut: 'presenter.poll-reveal' },
   { id: 'presenterPollPanelToggle', name: 'Show poll panel', icon: 'chart-bar' },
-  { id: 'pollMenuQuestions', name: 'Open questions', icon: 'message-circle-question-mark' },
+  // Poll menu, Board group (feedback-boards ticket 05, D19): shown while the current poll is a board.
+  { id: 'pollMenuBoardClose', name: 'Close board to new cards', icon: 'lock', shortcut: 'presenter.poll-primary' },
+  { id: 'pollMenuBoardFreeze', name: 'Freeze board', icon: 'snowflake' },
+  { id: 'pollMenuBoardPanel', name: 'Show board panel', icon: 'layout-grid' },
+  { id: 'pollMenuBoardFull', name: 'Board full screen', icon: 'maximize-2' },
+  { id: 'pollMenuBoardPopout', name: 'Pop out the board', icon: 'picture-in-picture-2' },
+  { id: 'pollMenuQuestions', name: 'Open questions', icon: 'message-circle-question-mark', shortcut: 'presenter.questions' },
   // View menu. Layout: previews (a Large / Medium / Small / Off row, keys [ / ]), notes placement
   // and scrolling (opens the Notes menu), outline. Slide on every screen: slide text, reveal, focus,
   // highlight, clear highlights. Then keyboard shortcuts and all commands.
@@ -185,7 +195,7 @@ export const PRESENTER_STATE_ICONS = ['timer', 'pause', 'play', 'circle-check', 
  * (list-tree) and its slide marks and legend: circle shown, circle-slash skipped, circle-dashed
  * not yet shown, OUTLINE_STATUS_ICONS).
  */
-export const PRESENTER_STATUS_ICONS = ['layers', 'focus', 'highlighter', 'flag', 'frown', 'lightbulb', 'bookmark', 'message-circle-question-mark', 'radio', 'wifi-off', 'check', 'loader-circle', 'circle-check', 'monitor-x', 'monitor-check', 'type', 'image', 'clock', 'vote', 'zap', 'lock-open', 'monitor-up', 'plus', 'list-tree', 'circle', 'circle-slash', 'circle-dashed'] as const
+export const PRESENTER_STATUS_ICONS = ['layers', 'focus', 'highlighter', 'flag', 'frown', 'lightbulb', 'bookmark', 'thumbs-up', 'thumbs-down', 'x', 'message-circle-more', 'snail', 'message-circle-question-mark', 'radio', 'wifi-off', 'check', 'loader-circle', 'circle-check', 'monitor-x', 'monitor-check', 'type', 'image', 'clock', 'vote', 'zap', 'lock-open', 'monitor-up', 'plus', 'list-tree', 'circle', 'circle-slash', 'circle-dashed', 'inbox', 'user-round', 'chevron-right', 'pause'] as const
 /**
  * The outline's slide marks (presenter redesign ticket 08; round-2 shot outline-open-1440x900.png):
  * the lucide icon for each status the shared overview runtime reports. The handout shows no marks.
@@ -196,6 +206,11 @@ export const OUTLINE_STATUS_ICONS = { shown: 'circle', skipped: 'circle-slash', 
  * Previews and Slide text row marks, the Notes menu's placement options, their tick, and the
  * Scroll segment (presenter redesign ticket 04). The Go live item turns to radio-off while live.
  */
+/**
+ * The board panel's icons (feedback-boards ticket 05; compiler/assets/runtime/board-panel.js draws
+ * them through the template's twIconEl): header, big-screen strip, inbox, cards, menus, toast, pick.
+ */
+export const PRESENTER_BOARD_ICONS = ['layout-grid', 'lock', 'lock-open', 'snowflake', 'maximize-2', 'minimize-2', 'picture-in-picture-2', 'x', 'monitor', 'list-end', 'monitor-up', 'monitor-off', 'chevron-down', 'inbox', 'grip-vertical', 'arrow-right', 'eye-off', 'eye', 'ungroup', 'ellipsis', 'group', 'circle-alert', 'circle-check', 'undo-2', 'hand', 'presentation', 'pencil', 'check'] as const
 export const PRESENTER_MENU_ICONS = ['chevron-down', 'gallery-vertical-end', 'a-arrow-up', 'eye-off', 'panel-bottom', 'panel-right', 'panel-top', 'webcam', 'check', 'hand', 'play', 'radio-off'] as const
 
 /**
@@ -218,7 +233,7 @@ interface RegistryEntry { id: string; keys: string }
 
 /** Every lucide icon the presenter chrome uses, sorted, unique. */
 export function presenterIconNames(controls: PresenterControl[] = PRESENTER_CONTROLS): string[] {
-  const names = new Set<string>([...PRESENTER_STATE_ICONS, ...PRESENTER_STATUS_ICONS, ...PRESENTER_MENU_ICONS, ...PRESENTER_PALETTE_ICONS])
+  const names = new Set<string>([...PRESENTER_STATE_ICONS, ...PRESENTER_STATUS_ICONS, ...PRESENTER_MENU_ICONS, ...PRESENTER_BOARD_ICONS, ...PRESENTER_PALETTE_ICONS])
   for (const control of controls) if (control.icon) names.add(control.icon)
   // The command palette's rows (src/shared/presenter-palette.ts).
   for (const entry of presenterPaletteEntries()) names.add(entry.icon)
@@ -282,7 +297,7 @@ export function dressPresenterButton(
     if (!labelEl) {
       labelEl = doc.createElement('span')
       labelEl.className = 'tw-btn-label'
-      for (const node of [...button.childNodes]) if (node !== iconEl && !(node.nodeType === 1 && (node as Element).classList.contains('kbd'))) node.remove()
+      for (const node of Array.from(button.childNodes)) if (node !== iconEl && !(node.nodeType === 1 && (node as Element).classList.contains('kbd'))) node.remove()
       if (iconEl && control.iconAfter) iconEl.before(labelEl)
       else if (iconEl) iconEl.after(labelEl)
       else button.prepend(labelEl)

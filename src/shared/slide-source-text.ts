@@ -1,4 +1,4 @@
-// A slide's source text as her page shows it (share for comments): the outline as the compiler's
+// A slide's source text as their page shows it (share for comments): the outline as the compiler's
 // tree parse reads it, and each slide's visible text read off that tree. One module for both readers:
 // the share push (main/shared-talk-build.ts, which keeps it per revision) and Accept's changed-since
 // check (shared/feedback-accept.ts), so the two always compare like with like.

@@ -10,8 +10,10 @@
 //      no bar on the rail itself (the doubled line); the line runs as segments from each stop's dot
 //      to the next one's, all on one x, and each dot's horizontal centre sits on it. No second
 //      marker (head or entry dots) is drawn.
-//   3. Entries sit on the dense step (--fs-dense): one size for every entry, the same size in both
-//      layouts.
+//   3. Entries sit on the body size (--fs-body; ADR-0033 §8 amends ADR-0028 §3, the timeline left the
+//      dense step): one size for every entry, the same size in both layouts.
+//   5. The track keeps at least the top regime's own gap under the title bar (2.4cqw, stage.css @order
+//      1368) — the auto margins give more when the band has room — so the stop line does not sit on the title rule.
 //   4. More space between stops: the horizontal column inset is >= 1.4em; on the rail each stop's
 //      date sits BESIDE its text on one row, the texts share one left edge, and consecutive stops
 //      are >= .6em apart.
@@ -102,7 +104,9 @@ const probeTimeline = (page, id) => page.evaluate((slideId) => {
   const entries = [...tl.querySelectorAll('.tl-entries > li')]
   return {
     mode: tl.dataset.timelineMode,
-    denseSize: px(resolve('font-size', 'var(--fs-dense)')),
+    bodySize: px(resolve('font-size', 'var(--fs-body)')),
+    headGap: (() => { const h = slide.querySelector('.slide-head'); return h ? tlRect.top - rect(h).bottom : null })(),
+    stageWidth: stageEl.offsetWidth,
     sansFamily: resolve('font-family', 'var(--sans)'),
     tl: {
       rect: tlRect,
@@ -150,9 +154,9 @@ async function checkStage(page, key, log = console.log) {
 
   for (const tl of [horizontal, rail]) {
     const name = `${key} ${tl.mode}`
-    // 3. Entries on the dense step, one size throughout.
+    // 3. Entries on the body size, one size throughout.
     assert(tl.entrySizes.length > 0, `${name}: entries render`)
-    for (const size of tl.entrySizes) assert(close(size, tl.denseSize, 0.05), `${name}: every entry sits on the dense step (${size}px vs --fs-dense ${tl.denseSize}px)`)
+    for (const size of tl.entrySizes) assert(close(size, tl.bodySize, 0.05), `${name}: every entry sits on the body size (${size}px vs --fs-body ${tl.bodySize}px)`)
     // 1. Labels: sans, bold, as typed, >= 1.2x the entries.
     for (const g of tl.groups) {
       const label = `${name} "${g.head.text}"`
@@ -160,8 +164,10 @@ async function checkStage(page, key, log = console.log) {
       assert(g.head.weight >= 700, `${label}: label weight >= 700 (got ${g.head.weight})`)
       assert.equal(g.head.transform, 'none', `${label}: no text-transform on the label (got ${g.head.transform})`)
       assert.equal(g.head.rendered, g.head.text, `${label}: the label renders in the case the author typed (got "${g.head.rendered}")`)
-      assert(g.head.size >= 1.2 * tl.denseSize - 0.05, `${label}: label ${g.head.size}px is >= 1.2x the entry ${tl.denseSize}px`)
+      assert(g.head.size >= 1.2 * tl.bodySize - 0.05, `${label}: label ${g.head.size}px is >= 1.2x the entry ${tl.bodySize}px`)
     }
+    // 5. Air between the title rule and the track (horizontal and rail alike).
+    assert(tl.headGap >= 0.024 * tl.stageWidth - 0.5, `${name}: ${tl.headGap}px between the title bar and the track is >= 2.4cqw`)
     // 2. No second marker beside the stop's dot.
     assert.equal(tl.extraMarkers, 0, `${name}: no head or entry dots beside the stop dots`)
     assert(tl.entryListBorders.every((w) => w === 0), `${name}: the entry lists draw no line of their own`)
@@ -180,7 +186,7 @@ async function checkStage(page, key, log = console.log) {
   }
   // 4. Horizontal: wider inset between stop columns.
   for (const g of horizontal.groups) assert(g.paddingRight >= 1.4 * horizontal.tl.fontSize - 0.05, `${key} horizontal "${g.head.text}": column inset ${g.paddingRight}px >= 1.4em`)
-  log(`PASS ${key} horizontal: bold sans labels as typed at ${(horizontal.groups[0].head.size / horizontal.denseSize).toFixed(2)}x, entries on the dense step (${horizontal.denseSize}px), one line with every dot centred on it`)
+  log(`PASS ${key} horizontal: bold sans labels as typed at ${(horizontal.groups[0].head.size / horizontal.bodySize).toFixed(2)}x, entries on the body size (${horizontal.bodySize}px), one line with every dot centred on it`)
 
   // 2. Rail: no border or bar on the rail; one line of dot-to-dot segments; every dot on it.
   assert.equal(rail.tl.borderLeft, 0, `${key} rail: no border on the rail (the doubled line)`)
@@ -212,14 +218,15 @@ async function checkStage(page, key, log = console.log) {
       assert(gap >= 0.6 * rail.tl.fontSize - 0.5, `${key} rail "${g.head.text}": >= .6em between stops (got ${gap.toFixed(1)}px)`)
     }
   }
-  log(`PASS ${key} rail: bold sans dates beside their text at ${(rail.groups[0].head.size / rail.denseSize).toFixed(2)}x, entries on the dense step, one line with every dot centred on it`)
+  log(`PASS ${key} rail: bold sans dates beside their text at ${(rail.groups[0].head.size / rail.bodySize).toFixed(2)}x, entries on the body size, one line with every dot centred on it`)
 }
 
 // A mutant is today's look (before ADR-0028 §3) put back one property at a time; each must fail its
 // own check. Injected on top of the compiled deck at the 1280×720 stage.
 const MUTANTS = [
   { name: 'mono uppercase labels', css: '.timeline .tl-group-head { font-family: var(--mono) !important; text-transform: uppercase !important; font-weight: 500 !important; font-size: .62em !important; }', expect: /deck sans|weight >= 700|text-transform|case the author typed|>= 1\.2x/ },
-  { name: 'entries off the dense step', css: '.timeline .tl-entries > li { font-size: .95em !important; }', expect: /dense step/ },
+  { name: 'entries back on the dense step', css: '.timeline .tl-entries > li { font-size: .8em !important; }', expect: /body size/ },
+  { name: 'title rule pressed on the track', css: '.slide[data-title-layout="top"] > .slide-content.layout-timeline > .slide-head { margin-bottom: 0 !important; } .slide[data-title-layout="top"] > .slide-content.layout-timeline > .timeline { margin-top: 0 !important; }', expect: /between the title bar and the track/ },
   { name: 'doubled rail line', css: '.timeline.timeline-rail { border-left: 2px solid var(--hairline) !important; }', expect: /doubled line/ },
   { name: 'rail dot off the line', css: '.timeline.timeline-rail .tl-group::before { left: -8px !important; }', expect: /is on the line/ },
   { name: 'horizontal dot off the line', css: '.timeline.timeline-horizontal .tl-group::before { top: calc(-1.5em - 9px) !important; }', expect: /is on the line/ },

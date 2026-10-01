@@ -34,7 +34,7 @@ function group<T>(items: T[], cat: (t: T) => string, row: (t: T) => ShortcutRow)
   return order.map((h) => ({ heading: h, rows: map.get(h)! }))
 }
 
-const SCOPE_HEADINGS: Partial<Record<string, string>> = { app: 'App', 'slide-picker': 'Slide picker' }
+const SCOPE_HEADINGS: Partial<Record<string, string>> = { app: 'App', 'slide-picker': 'Slide picker', 'layout-picker': 'Layout picker' }
 
 function sections(): Section[] {
   return group(

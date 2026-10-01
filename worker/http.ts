@@ -4,8 +4,18 @@ export interface Env {
   LIVE_SESSIONS: DurableObjectNamespace
   SESSION_REGISTRY: DurableObjectNamespace
   SHARED_TALKS: DurableObjectNamespace
+  RUN_SHARES: DurableObjectNamespace
+  RUN_PREWORK: DurableObjectNamespace
   ADMIN_SECRET: string
   SESSION_SIGNING_SECRET: string
+  /** Local test Workers only: a shorter idle purge for pre-work (ms). Unset in every deployment. */
+  PREWORK_IDLE_PURGE_MS?: string
+  /**
+   * Local Workers only (`wrangler dev`, set by the app's local Worker and the test harness): requests
+   * without `cf-connecting-ip` share one pre-work source. Unset in every deployment, where such a
+   * submission is refused (503) rather than put in one shared bucket.
+   */
+  PREWORK_LOCAL_SOURCE?: string
 }
 
 export const REGISTRY_NAME = 'talkweaver-session-registry'

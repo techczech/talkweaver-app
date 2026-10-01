@@ -1,4 +1,4 @@
-export const LIST_VALUE_KEYS = new Set(['tags'])
+export const LIST_VALUE_KEYS = new Set(['tags', 'reactions'])
 export const TRIGGER_LINE_RE = /^\{[^}]*\}(\s*\{[^}]*\})*$/
 
 function isSeparator(character) {

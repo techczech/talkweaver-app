@@ -32,13 +32,19 @@ export interface ThumbCacheSweepReport { removed: RemovedNamespace[]; kept: Kept
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
-/** Newest mtime of the namespace dir itself or any of its immediate children (talk dirs). */
-async function newestActivityMs(dir: string): Promise<number> {
+/** Newest mtime of the namespace dir itself or any of its talk dirs: its immediate children, and
+ *  the per-vault talk dirs under `@vaults/<vaultId>/` (thumb-cache-dirs.ts). */
+async function newestActivityMs(dir: string, depth = 0): Promise<number> {
   let newest = 0
   try {
     newest = (await fsp.stat(dir)).mtimeMs
     for (const name of await fsp.readdir(dir)) {
-      try { newest = Math.max(newest, (await fsp.stat(join(dir, name))).mtimeMs) } catch { /* vanished */ }
+      const child = join(dir, name)
+      try { newest = Math.max(newest, (await fsp.stat(child)).mtimeMs) } catch { /* vanished */ }
+      // depth 0: `@vaults` → its vault dirs (depth 1) → their talk dirs.
+      if ((depth === 0 && name === '@vaults') || depth === 1) {
+        newest = Math.max(newest, await newestActivityMs(child, depth + 1))
+      }
     }
   } catch { /* vanished */ }
   return newest

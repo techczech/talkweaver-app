@@ -4,8 +4,10 @@ import type {
   ImportSlideDecision,
   ImportSlideRecord,
   ImportSlideSource,
+  ImportPictureShape,
   ImportSmartArtNode,
-  ImportTextShape
+  ImportTextShape,
+  ImportVideoShape
 } from '../../shared/importer.ts'
 import { importLayoutTrigger } from '../../shared/importer-layouts.ts'
 
@@ -85,7 +87,9 @@ function unsupportedWarnings(source: ImportSlideSource): string[] {
 export function classifySlide(source: ImportSlideSource, context: ImportDecisionContext): ImportSlideDecision {
   const sourceId = `pptx-${context.sourceHash.slice(0, 12)}-${String(source.slideNumber).padStart(3, '0')}`
   const body = bodyParagraphs(source)
-  const media = source.shapes.filter((shape) => (shape.kind === 'picture' || shape.kind === 'video') && shape.mediaPath)
+  const media = source.shapes.filter(
+    (shape): shape is ImportPictureShape | ImportVideoShape => (shape.kind === 'picture' || shape.kind === 'video') && Boolean(shape.mediaPath)
+  )
   const smartArt = source.shapes.find((shape) => shape.kind === 'smartart')
   const modifiers = /side\s*bar/i.test(source.layoutName ?? '') ? ['sidebar'] : []
   const warnings = unsupportedWarnings(source)

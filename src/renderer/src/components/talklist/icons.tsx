@@ -49,8 +49,16 @@ export const IcWarn = make('m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21
 export const IcOpen = make('M5 12h14|m12 5 7 7-7 7')
 export const IcRename = make('M12 20h9|M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.854z')
 export const IcDuplicate = make('M8 8h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2z|M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2')
+export const IcEye = make('M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z|c:12,12,3')
+export const IcChevronDown = make('m6 9 6 6 6-6', 2.5)
 export const IcReveal = make('M15 3h6v6|M10 14 21 3|M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6')
 export const IcTrash = make('M3 6h18|M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6|M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2')
 export const IcMoveFolder = make('M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z')
 // Metadata panel (ADR-0036) — file-text: a document with field lines.
 export const IcMeta = make('M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z|M14 2v6h6|M8 13h8|M8 17h5')
+
+// Vault sections
+export const IcLock = make('M5 11h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z|M8 11V7a4 4 0 0 1 8 0v4')
+export const IcPeople = make('M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2|c:9,7,4|M22 21v-2a4 4 0 0 0-3-3.87|M16 3.13a4 4 0 0 1 0 7.75')
+export const IcEllipsis = make('c:12,12,1|c:19,12,1|c:5,12,1')
+export const IcPlus = make('M12 5v14|M5 12h14')

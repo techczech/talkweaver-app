@@ -4,6 +4,7 @@ import { IcFile } from './icons'
 import PathwayBadge from './PathwayBadge'
 import type { TalkSearchHit } from '../../../../shared/talk-search'
 import { Marked, SearchLine } from './SearchLine'
+import ConflictLine from './ConflictLine'
 
 export interface TalkRowShared {
   talk: TalkInfo
@@ -48,7 +49,7 @@ export default function LedgerRow({
   rowRef, onOpen, onContextMenu, onDragStart, onDragEnd, onHoverEnter, onHoverLeave, hit, focusPath = '', line
 }: TalkRowShared & { slideCount: number | null; line?: string }) {
   const cls = ['tl-row']
-  if (hit || line != null) cls.push('tl-row--two')
+  if (hit || line != null || (talk.conflicts ?? 0) > 0) cls.push('tl-row--two')
   if (selected) cls.push('tl-row--selected')
   if (focused) cls.push('tl-row--kfocus')
   if (menuAnchor) cls.push('tl-row--menu')
@@ -80,6 +81,12 @@ export default function LedgerRow({
             {fileMode ? label : <Marked text={label} ranges={hit.titleHighlights} />}
           </span>
           <SearchLine hit={hit} focusPath={focusPath} />
+        </span>
+      ) : (talk.conflicts ?? 0) > 0 ? (
+        // Ticket 09: a talk with conflict copies says so on line two, in place of its rest line.
+        <span className="tl-row-text">
+          <span className={`tl-row-name ${fileMode ? 'tl-row-name--file' : ''}`}>{label}</span>
+          <ConflictLine talk={talk} />
         </span>
       ) : line != null ? (
         <span className="tl-row-text">
