@@ -120,7 +120,7 @@ try {
   const note = ownerItems.find((item) => item.kind === 'note')
   assert.deepEqual({ kind: note.kind, slideId: note.slideId, text: note.text, name: note.name }, { kind: 'note', slideId: idRubric, text: 'Too dense for a room of markers.', name: 'Ana' })
   await waitFor(async () => /✓ Sent \d\d:\d\d · slide 3 · kept if you close this tab/.test(await rail.innerText()), 'note receipt shows time and slide')
-  log('a note is sent with her name; the receipt shows time and slide')
+  log('a note is sent with their name; the receipt shows time and slide')
 
   // Replace: diff before send
   const editor = rail.locator(`textarea[data-focus-key="replace:${idRubric}"]`)
@@ -205,7 +205,7 @@ try {
   assert.equal(await page.locator('#stageFit').isHidden(), false)
   log('thumbnails: grid with sent, draft and deletion marks; a slot proposes a new slide')
 
-  // talk.updated: he rewrites slides 3 and 4 while she types on slide 3
+  // talk.updated: he rewrites slides 3 and 4 while they type on slide 3
   await page.locator(`.tw-st-row[data-slide-id="${idRubric}"]`).click()
   const noteBox = rail.locator(`textarea[data-focus-key="note:${idRubric}"]`)
   await noteBox.fill('Better. Now slide 4 needs the same')
@@ -220,11 +220,11 @@ try {
   assert.ok(!/Markers read for structure first/.test(await page.evaluate((id) => document.querySelector(`#stage > [data-id="${id}"]`).innerText, idRubric)), renderedRubricBefore)
   assert.equal(await page.evaluate((id) => document.querySelector(`#stage > [data-id="${id}"]`).outerHTML, idWhy), untouchedBefore, 'an unchanged slide is left alone')
   assert.match(await page.locator('.tw-st-top').innerText(), /Updated just now · following Dominik's saves/)
-  assert.equal(await noteBox.inputValue(), 'Better. Now slide 4 needs the same', 'her unsent note is untouched')
+  assert.equal(await noteBox.inputValue(), 'Better. Now slide 4 needs the same', 'their unsent note is untouched')
   assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('data-focus-key')), `note:${idRubric}`, 'and keeps the caret')
-  assert.match(await page.locator(`.tw-st-row[data-slide-id="${idTried}"]`).innerText(), /updated/, 'the list marks the slide he changed since she looked')
-  assert.doesNotMatch(await page.locator(`.tw-st-row[data-slide-id="${idRubric}"]`).innerText(), /updated/, 'the slide in front of her counts as seen')
-  assert.equal(await rail.locator(`textarea[data-focus-key="replace:${idRubric}"]`).count(), 0, 'her sent rewording stays a receipt')
+  assert.match(await page.locator(`.tw-st-row[data-slide-id="${idTried}"]`).innerText(), /updated/, 'the list marks the slide he changed since they looked')
+  assert.doesNotMatch(await page.locator(`.tw-st-row[data-slide-id="${idRubric}"]`).innerText(), /updated/, 'the slide in front of their counts as seen')
+  assert.equal(await rail.locator(`textarea[data-focus-key="replace:${idRubric}"]`).count(), 0, 'their sent rewording stays a receipt')
   await page.locator(`.tw-st-row[data-slide-id="${idTried}"]`).click()
   assert.doesNotMatch(await page.locator(`.tw-st-row[data-slide-id="${idTried}"]`).innerText(), /updated/, 'looking at it clears the mark')
   log('talk.updated re-renders only the changed slides, marks the list, leaves drafts and focus alone')
@@ -240,7 +240,7 @@ try {
   // A fresh page load gets the statuses by replay (since=0 once).
   await page.reload()
   await waitFor(async () => /accepted by Dominik/.test(await page.locator('.tw-st-rail').innerText()), 'statuses replay after a reload')
-  log('accepted and dismissed statuses reach her items, live and after a reload')
+  log('accepted and dismissed statuses reach their items, live and after a reload')
 
   // Offline: the post fails; the item is kept, the notice shows, the retry sends it once
   let block = true
@@ -337,7 +337,7 @@ try {
   // Stop sharing
   assert.equal((await call(`${share}/close`, { method: 'POST', token: ownerToken })).status, 200)
   await waitFor(async () => /Sharing has stopped/.test(await page.locator('.tw-st-top').innerText()), 'the page says sharing stopped')
-  log('Stop sharing: the page says so and keeps what she wrote')
+  log('Stop sharing: the page says so and keeps what they wrote')
 
   console.log('shared-talk page browser test passed')
 } finally {

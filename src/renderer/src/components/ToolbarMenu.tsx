@@ -4,14 +4,14 @@ import { Fragment, useEffect, useState } from 'react'
 export type IconName =
   | 'chevron-down' | 'share' | 'present' | 'insert' | 'tools'
   | 'handout' | 'html' | 'publish'
-  | 'layout' | 'image' | 'slides' | 'sparkles'
+  | 'layout' | 'image' | 'slides' | 'sparkles' | 'board'
   | 'abstract' | 'settings' | 'keyboard' | 'refresh'
   | 'window' | 'presenter' | 'audience'
   | 'file' | 'folder' | 'folder-open' | 'enter'
   | 'file-plus' | 'folder-plus' | 'collapse' | 'swap'
   | 'pane-editor' | 'pane-both' | 'pane-strip' | 'pane-grid'
   | 'design' | 'trash' | 'sort' | 'strip' | 'command' | 'undo' | 'redo' | 'newslide' | 'promote' | 'demote' | 'bullets' | 'numbered' | 'more'
-  | 'table' | 'mindmap' | 'chart' | 'mermaid' | 'diagram' | 'svg' | 'comment' | 'inbox'
+  | 'table' | 'mindmap' | 'chart' | 'mermaid' | 'diagram' | 'svg' | 'code' | 'qr' | 'action' | 'embed' | 'countdown' | 'comment' | 'inbox' | 'calendar'
 
 const PATHS: Record<IconName, string> = {
   'chevron-down': 'M6 9l6 6 6-6',
@@ -26,6 +26,8 @@ const PATHS: Record<IconName, string> = {
   image: 'M3 3h18v18H3z M8.5 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z M21 15l-5-5L5 21',
   slides: 'M8 4h12a2 2 0 0 1 2 2v12 M4 8h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2z',
   sparkles: 'M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z',
+  // A board: columns of cards (Lucide layout-dashboard).
+  board: 'M3 3h7v9H3z M14 3h7v5h-7z M14 12h7v9h-7z M3 16h7v5H3z',
   abstract: 'M4 6h16 M4 12h12 M4 18h16',
   settings: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M19.4 13.5a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0-1.2-2.9H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.3 6.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 2.9-1.2V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-1.2 2.9V11a1.7 1.7 0 0 0 1.5 2.5z',
   keyboard: 'M3 5h18a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z M6 9h0 M10 9h0 M14 9h0 M18 9h0 M6 13h0 M18 13h0 M8 16h8',
@@ -70,6 +72,15 @@ const PATHS: Record<IconName, string> = {
   chart: 'M3 3v18h18 M8 17v-6 M13 17V7 M18 17v-3',
   mermaid: 'M3 3h8v8H3z M13 13h8v8h-8z M7 11v4h6',
   diagram: 'M12 3l5 8H7z M4 21h7v-6H4z M17.5 20a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7',
+  // The component inserts (ADR-0032 §4): code = angle brackets; qr = three finder squares; action =
+  // a button with an arrow; embed = a framed window; countdown = a clock face.
+  code: 'M16 18l6-6-6-6 M8 6l-6 6 6 6 M14 4l-4 16',
+  qr: 'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h3v3h-3z M20 14v.01 M14 20h3 M20 17v4',
+  action: 'M3 8h18v8H3z M8 12h6 M12 10l2 2-2 2',
+  embed: 'M3 4h18v16H3z M3 9h18 M6 6.5h.01 M9 6.5h.01',
+  countdown: 'M12 21a8 8 0 1 0 0-16 8 8 0 0 0 0 16z M12 9v4l2.5 2 M9 2h6',
+  // Plan a run: a calendar page.
+  calendar: 'M3 5h18v16H3z M3 10h18 M8 3v4 M16 3v4',
   // Share for comments: a speech bubble (LOCKED-share-sheet.html frame 1).
   comment: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
   // Feedback rail: an inbox tray (LOCKED-feedback-rail-and-markers.html toolbar).

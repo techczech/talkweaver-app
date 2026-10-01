@@ -76,6 +76,64 @@ export async function verifyOwnerToken(token: string | null, secret: string, sha
   }
 }
 
+/**
+ * Owner token for a Run's read-only share link (ticket 06). A role of its own, so a shared talk's
+ * owner token can never stand in for it (or the other way round), even for a share id that exists in
+ * both namespaces. No expiry: the link's own lifetime and Stop sharing end it.
+ */
+export interface ResultsOwnerTokenPayload {
+  role: 'results-owner'
+  shareId: string
+  iat: number
+}
+
+export async function createResultsOwnerToken(payload: ResultsOwnerTokenPayload, secret: string): Promise<string> {
+  const body = base64UrlEncode(JSON.stringify(payload))
+  return `${body}.${await hmac(body, secret)}`
+}
+
+export async function verifyResultsOwnerToken(token: string | null, secret: string, shareId: string): Promise<ResultsOwnerTokenPayload | null> {
+  if (!token) return null
+  const [body, signature, extra] = token.split('.')
+  if (!body || !signature || extra || !constantTimeEqual(signature, await hmac(body, secret))) return null
+  try {
+    const payload = JSON.parse(base64UrlDecode(body)) as ResultsOwnerTokenPayload
+    if (payload.role !== 'results-owner' || payload.shareId !== shareId || typeof payload.iat !== 'number') return null
+    return payload
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Owner token for a planned Run's pre-work (feedback-boards ticket 09). A role of its own, so neither a
+ * shared talk's nor a results link's owner token can stand in for it, even for an id that exists in
+ * several namespaces. No expiry: the object's own idle purge ends it.
+ */
+export interface PreworkOwnerTokenPayload {
+  role: 'prework-owner'
+  preworkId: string
+  iat: number
+}
+
+export async function createPreworkOwnerToken(payload: PreworkOwnerTokenPayload, secret: string): Promise<string> {
+  const body = base64UrlEncode(JSON.stringify(payload))
+  return `${body}.${await hmac(body, secret)}`
+}
+
+export async function verifyPreworkOwnerToken(token: string | null, secret: string, preworkId: string): Promise<PreworkOwnerTokenPayload | null> {
+  if (!token) return null
+  const [body, signature, extra] = token.split('.')
+  if (!body || !signature || extra || !constantTimeEqual(signature, await hmac(body, secret))) return null
+  try {
+    const payload = JSON.parse(base64UrlDecode(body)) as PreworkOwnerTokenPayload
+    if (payload.role !== 'prework-owner' || payload.preworkId !== preworkId || typeof payload.iat !== 'number') return null
+    return payload
+  } catch {
+    return null
+  }
+}
+
 export function constantTimeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false
   let difference = 0

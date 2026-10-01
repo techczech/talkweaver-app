@@ -259,6 +259,7 @@ async function compiledOrder(path, text) {
 //     Anchors resolve to the talk as it is now (null when the slide is gone).
 {
   const vault = join(root, 'vault-run')
+  mkdirSync(vault, { recursive: true }) // the app's vault root always exists; Run paths are judged against it
   const path = talkFile(OUTLINE, 'run-talk')
   persistRun(vault, normaliseRun({
     id: 'run-1', talkSlug: 'run-talk', startedAt: new Date(1000).toISOString(),

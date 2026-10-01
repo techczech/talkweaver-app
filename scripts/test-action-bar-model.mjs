@@ -165,4 +165,18 @@ assert.deepEqual(
   'the string form falls through to the real list'
 )
 
+// ADR-0032 §4: the component inserts (code, QR, action button, embeds, countdown) are runnable
+// commands the bar can hold, each drawn with its own icon, and the picker no longer offers them.
+const componentIds = ['code', 'qr', 'action', 'embed', 'auto-embed', 'countdown'].map((name) => `insert-component-${name}`)
+const componentSections = resolveActionBarItems(componentIds, runnable)
+assert.deepEqual(
+  componentSections.flatMap((section) => section.items.map((item) => item.commandId)),
+  componentIds,
+  'every component insert resolves in the action bar'
+)
+assert.ok(
+  componentSections.every((section) => section.items.every((item) => item.icon !== ACTION_BAR_FALLBACK_ICON)),
+  'a component insert wears its own icon, not the neutral mark'
+)
+
 console.log('action bar model: all assertions passed')

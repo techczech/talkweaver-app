@@ -1,3 +1,4 @@
+import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Check, GripVertical, Image as ImageIcon, ImageOff, Pencil, Plus, Presentation, Trash2, X } from 'lucide-react'
 import type {
@@ -38,7 +39,7 @@ function sectionName(row: ProjectionRow): string {
 }
 
 function slideTitle(row: ProjectionRow): string {
-  return row.title || row.nav_title || row.slide_id
+  return plainInlineText(row.title || row.nav_title) || row.slide_id
 }
 
 function SlidePreview({ row, image }: { row: ProjectionRow; image?: string }): JSX.Element {

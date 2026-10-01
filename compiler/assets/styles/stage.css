@@ -252,7 +252,7 @@
     flex: 0 0 auto !important;
     align-self: flex-start !important;
     text-align: left !important;
-    margin: 0 0 clamp(16px, 2.4cqw, 32px) !important;
+    margin: 0 0 2.2cqh !important;
   }
   /* @order 1369 */
   /* The content below the top bar centres in the remaining space (leading/trailing auto margins
@@ -311,9 +311,22 @@
     font-weight: 400;
   }
   /* @order 1425 */
-  .slide[data-title-layout="left"]:has(> .slide-content > .slide-head:not(.slide-head-quiet)):not(:has(.slide-figure)):not(:has(.slide-table)):not(:has(.card-gallery)):not(:has(.timeline)):not(:has(svg)):not(:has(.chart-cols)):not(:has(.icon-row)) {
+  .slide[data-title-layout="left"]:has(> .slide-content > .slide-head:not(.slide-head-quiet)):not(:has(.slide-figure)):not(:has(.slide-table)):not(:has(.card-gallery)):not(:has(.timeline)):not(:has(svg)):not(:has(.chart-cols)):not(:has(.icon-row)):not(:has(.fl-annotated)) {
     --rail-w: max(320px, 35cqw);
   }
+  /* @order 1412 */
+  /* Slide round 2 (0.37): an annotated list beside the rail keeps the base rail width (the title needs no
+     more; the 35cqw above is for sparse slides), halves the column's top and bottom air (6cqh -> 3cqh,
+     never under 40px) and narrows the column gap, so the annotations get the width instead of wrapping. */
+  .slide[data-title-layout="left"]:has(> .slide-content > .slide-head:not(.slide-head-quiet)):has(> .slide-content > .fl-annotated) > .slide-content {
+    padding-top: max(3cqh, 40px);
+    padding-bottom: max(3cqh, 40px);
+    column-gap: clamp(30px, 3.4cqw, 64px);
+  }
+  /* The sidebar regime stamps data-split="35" by default; on an annotated list that default gives way to the base rail. */
+  .slide[data-title-layout="left"][data-split="35"]:has(> .slide-content > .fl-annotated) { --rail-w: max(260px, 26cqw) !important; }
+  .slide[data-title-layout="left"]:not([data-font-body]) > .slide-content:has(> .fl-annotated) { --fs-body: max(var(--type-floor), 2.15cqw); --list-lh: 1.2; --list-gap: .55; }
+  .slide[data-title-layout="left"] > .slide-content > .feature-list.fl-annotated { grid-template-columns: max-content minmax(0, 1fr); column-gap: 2.4cqw; }
   /* @order 1431 */
   .slide:not(:is([data-title-layout="left"], [data-title-layout="hidden"])) > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) h1 {
     font-weight: 700;
@@ -343,13 +356,13 @@
     flex-direction: column;
     justify-content: flex-start;
     min-height: 100%;
-    padding-top: 6cqh;
+    padding-top: 4cqh;
   }
   /* @order 1680 */
   .slide:not(:is([data-title-layout="left"], [data-title-layout="hidden"])) > .slide-content:not(.layout-title):not(.layout-section-title):not(.layout-statement):not(.layout-closing) > .slide-head:not(.slide-head-quiet) {
     border-bottom: 2px solid var(--hairline);
-    padding-bottom: 2.2cqh;
-    margin-bottom: 4.5cqh;
+    padding-bottom: 1.1cqh;
+    margin-bottom: 2.2cqh;
     width: 100%;
   }
   /* @order 1681 */
@@ -366,6 +379,6 @@
     margin-bottom: auto;
   }
   /* @order 1694 */
-  .slide:not(:is([data-title-layout="left"], [data-title-layout="hidden"])) > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) h1 { font-size: var(--fs-title); }
+  .slide:not(:is([data-title-layout="left"], [data-title-layout="hidden"])) > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) h1 { font-size: var(--fs-title); line-height: 1.12; max-width: none; }
   /* @order 1695 */
   .slide[data-title-layout="left"] > .slide-content > .slide-head:not(.slide-head-quiet) > h1 { font-size: var(--fs-rail); }

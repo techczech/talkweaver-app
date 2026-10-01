@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { imageAspect, takesScreenshotRow } from "./screenshot-row.mjs";
 import { highlightCode } from "../highlight.mjs";
 import { slugify, chooseBalancedColumns, escapeHtml, makeQrSvg, cleanQrUrl } from "./01-cli-utils.mjs";
 import { parseConceptRelations, spineFontScale, timelineDateOf, timelineBlockFields, timelineStopsFromGroups, timelineGroupsForRender, timelineEntriesFromStops, autoTimelineMode, renderInline, TRACE_ROLES, autoSpeakerClass } from "./02-triggers-layout.mjs";
@@ -7,6 +8,7 @@ import { resolveIconOverrides, decideFeatureListStyle, iconSvg } from "./05-icon
 import { parseChartItems, renderChartBlock } from "./06-chart-renderer.mjs";
 import { plainListForcedIcons } from "./11-frame.mjs";
 import { stripWrappingQuoteMarks } from "./quote-layout.mjs";
+import { iconRowPerRow, cardsTooNarrow } from "./narrow-columns.mjs";
 import { VALUE_TRIGGER_DICTIONARY } from "../triggers.mjs";
 
 export { parseChartItems } from "./06-chart-renderer.mjs";
@@ -110,7 +112,7 @@ export function groupMediaRows(blocks) {
         const aspect = mediaAspectOf(block);
         return { ...block, mediaRowAspect: aspect.value, mediaAspectSource: aspect.source };
       });
-      out.push({ type: "media-row", media, aspect: media.reduce((sum, block) => sum + block.mediaRowAspect, 0) });
+      out.push({ type: "media-row", media, aspect: media.reduce((sum, block) => sum + block.mediaRowAspect, 0), shotStyle: media[0].shotStyle });
     } else if (run.length === 1) out.push(run[0]);
     run = [];
   };
@@ -257,7 +259,12 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     if (media.length === 1) return renderBlock(media[0], deckUsed, frameIcons);
     const gallery = media.length >= 4 ? " figure-row-gallery" : "";
     const aspect = Number(block.aspect).toFixed(4);
-    return `<div class="figure-row${gallery} count-${media.length}" style="--media-row-aspect:${aspect}">${media.map((entry) => renderBlock(entry, deckUsed, frameIcons)).join("")}</div>`;
+    // ADR-0033 §4: a row of two or three IMAGES takes the screenshot treatment (frames / fanned).
+    const shotStyle = block.shotStyle && takesScreenshotRow(media.length) && media.every((m) => m && m.type === "image") ? block.shotStyle : "";
+    const shotAttrs = shotStyle
+      ? ` data-shot-row="${shotStyle}" data-shot-aspects="${media.map((m) => imageAspect(m).toFixed(4)).join(",")}" data-shot-captions="${media.some((m) => m.caption) ? 1 : 0}"`
+      : "";
+    return `<div class="figure-row${gallery} count-${media.length}"${shotAttrs} style="--media-row-aspect:${aspect}">${media.map((entry) => renderBlock(entry, deckUsed, frameIcons)).join("")}</div>`;
   }
   if (block.type === "video") {
     // Playback attributes from the media-line tokens (ADR-0028). Default (no tokens) = a manual,
@@ -1006,7 +1013,11 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
         : `<span class="ir-icon ir-num">${i + 1}</span>`;
       return `<div class="ir-item">${anchor}<span class="ir-label">${renderInline(n.text)}</span>${desc}</div>`;
     }).join("");
-    return `<div class="icon-row count-${nodes.length}">${itemHtml}</div>`;
+    // ADR-0033 §5: five or more columns that would each fall under 22cqw reflow into rows (3 + 2);
+    // `ir-rows-N` says how many per row (narrow-columns.mjs decides, skin/narrow-columns.css draws).
+    const perRow = block.columnsUsableCqw != null ? iconRowPerRow(nodes.length, block.columnsUsableCqw) : 0;
+    const rowsClass = perRow ? ` ir-rows ir-rows-${perRow}` : "";
+    return `<div class="icon-row count-${nodes.length}${rowsClass}">${itemHtml}</div>`;
   }
   if (block.type === "image-quote") {
     // Quote beside image with the attribution as a full-width accent bar below — the classic
@@ -1044,6 +1055,15 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
       const note = (head || textHtml) ? `<div class="ig-note">${head}${textHtml}</div>` : "";
       return `<figure class="ig-cell">${mediaHtml ? `<div class="ig-media">${mediaHtml}</div>` : ""}${note}</figure>`;
     }).join("");
+    // ADR-0033 §4: two or three images stay ONE row, in window frames or fanned. The compiler
+    // sizes the row once the slide's title placement is known (screenshot-row.mjs).
+    const shot = block.shotStyle && takesScreenshotRow(cells.length)
+      && cells.every((c) => c.blocks.some((b) => b && b.type === "image"));
+    if (shot) {
+      const aspects = cells.map((c) => imageAspect(c.blocks.find((b) => b && b.type === "image")).toFixed(4)).join(",");
+      const captioned = cells.some((c) => c.title || c.blocks.some((b) => b && b.type !== "image"));
+      return `<div class="image-grid ig-shot-row" data-shot-row="${block.shotStyle}" data-shot-aspects="${aspects}" data-shot-captions="${captioned ? 1 : 0}" style="--ig-cols:${cells.length}">${cellHtml}</div>`;
+    }
     return `<div class="image-grid" style="--ig-cols:${cols}">${cellHtml}</div>`;
   }
   // A run of one or more action buttons → a .slide-actions row of accent buttons. A lone
@@ -1244,7 +1264,22 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     // rides only on a list the compiler decided IS an icon list or a numbered list. A plain list
     // never takes the row class, however stale an {iconlist=…} variant token in an existing file
     // is; {icons=top}/{icons=all} forcing icons on still lands here with style "icons".
-    const iconlistVariantClass = takesTreatment && (block.iconlistVariant === "list" || autoIconlistList) ? " fl-iconlist-list" : "";
+    // ADR-0033 §5: cards whose columns would each fall under 22cqw (three beside a rail) take the same
+    // row shape. An authored {iconlist=boxes|list} always wins, so only an unauthored card grid is asked.
+    const narrowCards = takesTreatment && !annotated && !block.iconlistVariant && !autoIconlistList
+      && block.columnsUsableCqw != null && cardsTooNarrow(block.items.length, block.columnsUsableCqw);
+    const iconlistVariantClass = takesTreatment && (block.iconlistVariant === "list" || autoIconlistList || narrowCards)
+      ? ` fl-iconlist-list${narrowCards ? " fl-narrow-cols" : ""}`
+      : "";
+    // Slide round 2 (0.37): an icon-list of five items or fewer whose every line is short flows into two
+    // columns under a top title (skin/list.css), so it reads at 2.3cqw without a whole-slide zoom. Line
+    // length is a layout fact (characters), not a meaning judgement; the CSS applies it to top-title slides only.
+    const SHORT_LINE_CHARS = 48;
+    const lineTexts = (nodes) => (Array.isArray(nodes) ? nodes : []).flatMap((n) => [String(n && n.text || ""), ...lineTexts(n && n.children)]);
+    const shortLines = iconlistVariantClass && !annotated && block.items.length <= 5
+      && [...block.items.map((it) => String(it && it.text !== undefined ? it.text : it)), ...children.flatMap((c) => lineTexts(c))]
+        .every((t) => t.replace(/\s+/g, " ").trim().length <= SHORT_LINE_CHARS)
+      ? " fl-short-lines" : "";
     // The number style ({numbered=plain|styled}; the square is the default and carries no class).
     const numberStyle = block.numberStyle === "plain" || block.numberStyle === "styled" ? block.numberStyle : "";
     const numberedClass = numbered && !annotated ? ` fl-numbered${numberStyle ? ` fl-numbered-${numberStyle}` : ""}` : "";
@@ -1320,7 +1355,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
         return `<li><span class="fl-lead">${iconHtml}<span class="fl-text">${renderInline(item)}</span></span>${annHtml}</li>`;
       }).join("")}</ul>`;
     }
-    return `<ul class="feature-list${wide}${plainClass}${hasKids}${annotatedClass}${iconlistVariantClass}${numberedClass}"${groupAttr}${densityAttr}>${block.items.map((item, itemIndex) => {
+    return `<ul class="feature-list${wide}${plainClass}${hasKids}${annotatedClass}${iconlistVariantClass}${shortLines}${numberedClass}"${groupAttr}${densityAttr}>${block.items.map((item, itemIndex) => {
       let icon = "";
       if (style === "icons") {
         // Icon-or-number: a slot whose icon doesn't resolve (e.g. one invalid {icon=name} among

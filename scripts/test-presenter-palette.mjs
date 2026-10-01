@@ -5,7 +5,7 @@
 // it. Seams:
 //  1. the palette lists commands: ⌘⇧P opens it with every entry of src/shared/presenter-palette.ts
 //     in its eight groups, each row with its lucide icon, its name and its current key (the
-//     shortcut registry's text); "56 commands"; typing filters by words; ↑ ↓ skip rows that do not
+//     shortcut registry's text); "63 commands"; typing filters by words; ↑ ↓ skip rows that do not
 //     apply, ↵ runs, Esc closes; keys typed in the search field stay there;
 //  2. coverage: every control in the top bar (status bar, menus, the Notes menu, the REC cluster)
 //     and the bottom bar (with the More menu and the edit pencil) that runs a command is an entry's
@@ -40,13 +40,16 @@ const check = (ok, message) => { if (!ok) failures.push(message) }
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
 const ENTRIES = presenterPaletteEntries()
 
-// The drawing: 56 commands in eight groups.
+// The drawing: 56 commands in eight groups, and the two Live-menu switches the reactions design added (Allow slide questions, Allow slide reactions): 58;
+// and the Poll menu's Board group (feedback-boards ticket 05, round-2 D19): close or reopen, freeze, panel, full screen, pop out: 63.
 const GROUPS = ['Slides', 'Timer', 'Recording', 'Live', 'Poll and questions', 'View', 'Slide on every screen', 'Editor and help']
 // Presenter keys that are not palette commands.
 const KEYS_NOT_IN_PALETTE = {
   'presenter.close': 'Esc closes whatever is open; it is not a command of its own',
   'presenter.command-palette': 'opens the palette itself',
-  'presenter.save-run': '↵ acts only while the save offer shows, on that toast; Save run as… is the command'
+  'presenter.save-run': '↵ acts only while the save offer shows, on that toast; Save run as… is the command',
+  'presenter.board-pick': '⌥↵ acts on the board card that has focus in the board panel; it is the keyboard\'s drag, not a command of its own',
+  'presenter.board-undo': '⌘Z undoes the board panel\'s last change while the panel shows (its toast\'s Undo button); there is nothing to run without one'
 }
 // Controls in the bars that are not palette commands.
 const CONTROLS_NOT_IN_PALETTE = {
@@ -106,7 +109,7 @@ let browser
 try {
   // ── Static: the table against the registry ──────────────────────────────────────────────────
   check(same(PRESENTER_PALETTE.map(([g]) => g), GROUPS), `palette groups are the drawn eight (${PRESENTER_PALETTE.map(([g]) => g).join(', ')})`)
-  check(ENTRIES.length === 56, `the palette has the drawn 56 commands (${ENTRIES.length})`)
+  check(ENTRIES.length === 63, `the palette has the drawn 56 commands, the two phone switches and the five board commands, 63 (${ENTRIES.length})`)
   check(new Set(ENTRIES.map((e) => e.id)).size === ENTRIES.length, 'palette ids are unique')
   const presenterKeys = SHORTCUT_REGISTRY.filter((e) => e.scope === 'presenter')
   for (const entry of presenterKeys) {
@@ -181,7 +184,7 @@ export const clipboard = { writeText() {}, readText() { return '' }, readImage()
     check(await page.evaluate(() => document.activeElement?.id === 'presenterCommandSearch'), 'the search field has focus')
     check(await page.evaluate(() => document.getElementById('presenterCommandSearch').placeholder) === 'Search presenter commands', 'the search field reads "Search presenter commands"')
     const count = await page.textContent('#presenterCommandCount')
-    check(count === '56 commands', `the count reads "56 commands" (${count})`)
+    check(count === '63 commands', `the count reads "63 commands" (${count})`)
     const list = await rows(page)
     check(list.length === ENTRIES.length, `every entry has a row (${list.length} of ${ENTRIES.length})`)
     for (const [group, entries] of PRESENTER_PALETTE) {

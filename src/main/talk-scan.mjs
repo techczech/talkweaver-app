@@ -1,5 +1,6 @@
 import { readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
+import { conflictServiceOf } from './conflict-copies.mjs'
 
 // The ONE rule for "which folders hold talks", shared by every vault walk.
 //
@@ -21,9 +22,31 @@ export function isSkippedScanDir(name) {
   return name.startsWith('.') || name.startsWith('_') || name === 'node_modules'
 }
 
-/** The outline a talk folder is known by: the first `-outline.md` file in directory order. */
-export function pickOutlineEntry(dirents) {
-  return dirents.find((entry) => entry.isFile() && entry.name.endsWith('-outline.md')) ?? null
+/**
+ * The outline a talk folder is known by, from the names of its `-outline.md` files (several-vaults
+ * ticket 09). With one, it is that one (unchanged from every earlier build). With several:
+ *   1. the one named for the folder (`<folder>/<folder>-outline.md`);
+ *   2. else the first, in listing order, that is not a sync-conflict copy of another one
+ *      (`foo-MacBook-outline.md` never shadows `foo-outline.md`);
+ *   3. else the first.
+ * The rest are left to the conflict scanner (conflict-copies.mjs), which counts only real copies.
+ */
+export function pickOutlineName(names, folderName) {
+  const outlines = (names ?? []).filter((n) => typeof n === 'string' && n.endsWith('-outline.md'))
+  if (outlines.length <= 1) return outlines[0] ?? null
+  if (typeof folderName === 'string' && folderName) {
+    const own = outlines.find((n) => n === `${folderName}-outline.md`)
+    if (own) return own
+  }
+  const original = outlines.find((n) => !outlines.some((other) => other !== n && conflictServiceOf(n, other, { loose: true })))
+  return original ?? outlines[0]
+}
+
+/** pickOutlineName over a folder's dirents (files only); `folderName` is the folder's own name. */
+export function pickOutlineEntry(dirents, folderName) {
+  const files = dirents.filter((entry) => entry.isFile() && entry.name.endsWith('-outline.md'))
+  const name = pickOutlineName(files.map((entry) => entry.name), folderName)
+  return name === null ? null : files.find((entry) => entry.name === name) ?? null
 }
 
 /** Synchronous walk: every talk folder under `root` as { dir, outlineName }, in walk order. */
@@ -33,7 +56,7 @@ export function scanTalkFoldersSync(root) {
     if (depth > TALK_SCAN_MAX_DEPTH) return
     let dirents
     try { dirents = readdirSync(dir, { withFileTypes: true }) } catch { return }
-    const outline = pickOutlineEntry(dirents)
+    const outline = pickOutlineEntry(dirents, basename(dir))
     if (outline) {
       found.push({ dir, outlineName: outline.name })
       return // a talk folder is a leaf

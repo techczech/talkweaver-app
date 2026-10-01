@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import type { PathwayWindowContext, TalkInfo } from '../../preload/index'
+import type { PathwayWindowContext, TalkInfo, VaultView } from '../../preload/index'
 import VaultSetup from './components/VaultSetup'
 import TalkList, { PromptModal } from './components/TalkList'
 import WorkspaceLayout, { type OutlineOps } from './components/WorkspaceLayout'
@@ -13,6 +13,9 @@ import Pathways from './components/Pathways'
 import TalkText from './components/TalkText'
 import Importer from './components/Importer'
 import Toasts from './components/Toasts'
+import ConflictCompare from './components/ConflictCompare'
+import { CONFLICT_COMPARE_EVENT } from './components/talklist/ConflictLine'
+import { VaultSheet, type VaultSheetState } from './components/talklist/VaultSheet'
 import { notify } from './lib/notify'
 import { armOutlineSwitch, consumeEditorEngagement } from './lib/outlineSwitch'
 import { effectiveKeys, eventToCMKey, KEYMAP_CHANGED_EVENT } from './keymap/store'
@@ -44,7 +47,7 @@ function readSidebarWidth(): number {
 type AppState =
   | { phase: 'loading' }
   | { phase: 'setup' }
-  | { phase: 'ready'; vaultRoot: string; talks: TalkInfo[]; folders: string[] }
+  | { phase: 'ready'; vaultRoot: string; vaults: VaultView[]; talks: TalkInfo[]; folders: string[]; foldersByVault: Record<string, string[]> }
 
 // A vault scan streams talks in fixed-size batches; several UI surfaces can each kick off a scan,
 // and overlapping scans' non-reset (tail) batches would otherwise stack in the accumulator and
@@ -54,6 +57,27 @@ function mergeTalkBatch(existing: TalkInfo[], batch: TalkInfo[], reset: boolean)
   const byPath = new Map<string, TalkInfo>((reset ? [] : existing).map((talk) => [talk.outlinePath, talk]))
   for (const talk of batch) byPath.set(talk.outlinePath, talk)
   return [...byPath.values()]
+}
+
+/** The talks of every open vault, each stamped with its vault. A batch replaces or extends only its
+ *  own vault's talks (a reset starts that vault fresh); other vaults are untouched. */
+function mergeVaultBatch(existing: TalkInfo[], vaultId: string, batch: TalkInfo[], reset: boolean): TalkInfo[] {
+  const stamped = batch.map((talk) => ({ ...talk, vaultId }))
+  const others = existing.filter((talk) => talk.vaultId !== vaultId)
+  const mine = existing.filter((talk) => talk.vaultId === vaultId)
+  return [...others, ...mergeTalkBatch(mine, stamped, reset)]
+}
+
+/** The vault holding a talk: its stamped id, else the longest vault root that contains its path. */
+function vaultOfTalk(talk: TalkInfo | null, vaults: VaultView[]): VaultView | null {
+  if (!talk) return null
+  const byId = talk.vaultId ? vaults.find((v) => v.id === talk.vaultId) : undefined
+  if (byId) return byId
+  let best: VaultView | null = null
+  for (const v of vaults) {
+    if ((talk.outlinePath === v.root || talk.outlinePath.startsWith(v.root.replace(/\/+$/, '') + '/')) && (!best || v.root.length > best.root.length)) best = v
+  }
+  return best
 }
 
 export default function App() {
@@ -71,6 +95,10 @@ function ToolsShell({ initialView }: { initialView: ToolsView }): JSX.Element {
   const [studioInitialSessionId, setStudioInitialSessionId] = useState<string | null>(null)
   const [talkTextSessionId, setTalkTextSessionId] = useState<string | null>(null)
   const [pathwayContext, setPathwayContext] = useState<PathwayWindowContext | null>(null)
+  // Bumped each time the window is asked to open History's plan sheet (Plan a run… with no talk open).
+  const [planRequest, setPlanRequest] = useState(0)
+  // Asked to open a planned Run's pre-work page ('prework:<talk slug>/<run id>' in the show payload's sessionId).
+  const [preworkRequest, setPreworkRequest] = useState<{ talkSlug: string; runId: string; nonce: number } | null>(null)
 
   const showStudio = useCallback((sessionId?: string): void => {
     setStudioInitialSessionId(sessionId ?? null)
@@ -105,7 +133,11 @@ function ToolsShell({ initialView }: { initialView: ToolsView }): JSX.Element {
   useEffect(() => {
     return window.tw.tools.onShow(({ view: nextView, sessionId, pathway }) => {
       if (nextView === 'studio') showStudio(sessionId)
-      else if (nextView === 'history') setView('history')
+      else if (nextView === 'history') { setView('history'); if (sessionId === 'plan-run') setPlanRequest((n) => n + 1)
+        else if (sessionId?.startsWith('prework:')) {
+          const slash = sessionId.indexOf('/')
+          if (slash > 8) setPreworkRequest((current) => ({ talkSlug: sessionId.slice(8, slash), runId: sessionId.slice(slash + 1), nonce: (current?.nonce ?? 0) + 1 }))
+        } }
       else if (nextView === 'importer') setView('importer')
       else if (nextView === 'talktext') {
         if (sessionId) showTalkText(sessionId)
@@ -148,22 +180,30 @@ function ToolsShell({ initialView }: { initialView: ToolsView }): JSX.Element {
       onClose={() => window.close()}
       onShowStudio={showStudio}
       onShowImporter={showImporter}
+      planRequest={planRequest}
+      preworkRequest={preworkRequest}
     />
   )
 }
 
 function MainApp() {
   const [state, setState] = useState<AppState>({ phase: 'loading' })
-  const pendingTalkBatchesRef = useRef<Array<{ batch: TalkInfo[]; reset: boolean }>>([])
+  const pendingTalkBatchesRef = useRef<Array<{ vaultId: string; batch: TalkInfo[]; reset: boolean }>>([])
+  // Vault ids whose talks the state holds; a vault that is open but not in here is loaded next.
+  const loadedVaultsRef = useRef<Set<string>>(new Set())
   const talkBatchRevisionRef = useRef(0)
   // The Talks panel unmounts when the sidebar switches to Slide outline (deliberate, for perf),
   // so hold its drill-in folder here to restore on return instead of dumping back to the root.
   const talkFocusPathRef = useRef('')
   const rememberTalkFocusPath = useCallback((path: string) => { talkFocusPathRef.current = path }, [])
   const [activeTalk, setActiveTalk] = useState<TalkInfo | null>(null)
-  // null = closed; a string (possibly '') = open with that subfolder pre-selected.
+  // null = closed; a string (possibly '') = open with that subfolder pre-selected, in newTalkVaultId's vault
+  // (null = the first open vault).
   const [newTalkTopic, setNewTalkTopic] = useState<string | null>(null)
+  const [newTalkVaultId, setNewTalkVaultId] = useState<string | null>(null)
   const [newFolderOpen, setNewFolderOpen] = useState(false)
+  // Add vault / Edit this vault / join / refusal sheet (several-vaults ticket 04).
+  const [vaultSheet, setVaultSheet] = useState<VaultSheetState | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState<number>(readSidebarWidth)
   const draggingRef = useRef(false)
@@ -219,20 +259,38 @@ function MainApp() {
   // to main's metadata:edit-frontmatter, which edits an open talk's editor BUFFER (talk-writer.ts →
   // the window's D1 seam, saved through its queue) and any other talk on disk — nothing to adopt.
   const [metadataTalk, setMetadataTalk] = useState<TalkInfo | null>(null)
+  // Ticket 10: the compare screen for a talk's conflict copy (raised by the talk row's or the status
+  // bar's "Compare…"). The open talk's pending save is flushed first, so both versions are read as
+  // they stand.
+  const [compare, setCompare] = useState<{ outlinePath: string; vaultId: string | null } | null>(null)
+  useEffect(() => {
+    const onCompare = (event: Event): void => {
+      const detail = (event as CustomEvent<{ outlinePath?: string; vaultId?: string }>).detail
+      if (!detail?.outlinePath) return
+      const path = detail.outlinePath
+      void (async () => {
+        if (activeTalkRef.current?.outlinePath === path) { try { await flushSaveRef.current?.() } catch { /* compare reads the buffer anyway */ } }
+        setCompare({ outlinePath: path, vaultId: detail.vaultId ?? null })
+      })()
+    }
+    window.addEventListener(CONFLICT_COMPARE_EVENT, onCompare)
+    return () => window.removeEventListener(CONFLICT_COMPARE_EVENT, onCompare)
+  }, [])
   // Name the editor window by the talk it's editing (e.g. "TalkWeaver Edit — AI 2026 Agents") so
   // ⌘` / Mission Control / the Window menu make it easy to pick the right window (esp. with ⌘N open).
   // Electron uses the page <title> for the window title, so setting document.title is enough here.
   useEffect(() => {
     document.title = activeTalk ? `TalkWeaver Edit — ${activeTalk.title}` : 'TalkWeaver'
   }, [activeTalk])
-  const selectTalk = useCallback(async (talk: TalkInfo | null) => {
+  /** True when the window switched to `talk`; false when the switch was held (Stay here, or another window has it). */
+  const selectTalk = useCallback(async (talk: TalkInfo | null): Promise<boolean> => {
     const prev = activeTalkRef.current
     // Leaving the talk: its pending typing is flushed to ITS file first (awaited, before the claim moves
     // the window on), and the switch waits for the person while that file differs from the editor.
     if (prev && talk?.outlinePath !== prev.outlinePath) {
       const guard = leaveGuardRef.current
       const mayLeave = guard ? await guard() : (await flushSaveRef.current?.(), true)
-      if (!mayLeave) return
+      if (!mayLeave) return false
     }
     // Same-talk guard (multi-window, ⌘N): claim this talk for this window. If another window already
     // has it active, main focuses that window and refuses — we keep our current talk rather than
@@ -240,9 +298,10 @@ function MainApp() {
     const claim = await window.tw.windows?.claimTalk?.(talk?.outlinePath ?? null)
     if (talk && claim && claim.ok === false) {
       notify(`“${talk.title}” is already open in another window — brought it to the front.`, 'info')
-      return
+      return false
     }
     setActiveTalk(talk)
+    return true
   }, [])
 
   // T29b (2026-09-19): opening a talk from the Talks panel leaves the sidebar on Talks — the user
@@ -350,10 +409,12 @@ function MainApp() {
       void window.tw.tools.open('history')
     }
     const openImporter = (): void => { void window.tw.tools.open('importer') }
-    const newTalk = (): void => setNewTalkTopic('')
+    const newTalk = (): void => { setNewTalkVaultId(null); setNewTalkTopic('') }
     const newFolder = (): void => setNewFolderOpen(true)
     const refresh = (): void => { void refreshTalks() }
-    const changeVaultEv = (): void => { void changeVault() }
+    // "Add vault…" (palette command id change-vault): the Add vault flow, never a replacement of the
+    // first vault (ticket 07). First-run setup still chooses a root through VaultSetup.
+    const changeVaultEv = (): void => { void addVault() }
     const searchTalks = (): void => { setSidebarMode('talks'); setSidebarCollapsed(false) }
     const searchSlides = (): void => { setSidebarMode('slides'); setSidebarCollapsed(false) }
     const openMetadata = (): void => { if (activeTalkRef.current) setMetadataTalk(activeTalkRef.current) }
@@ -383,11 +444,6 @@ function MainApp() {
     }
   }, [])
 
-  async function changeVault(): Promise<void> {
-    const root = await window.tw.vault.chooseRoot()
-    if (root) await handleVaultChosen(root)
-  }
-
   useEffect(() => {
     try {
       window.localStorage.setItem(SIDEBAR_STORAGE_KEY, String(sidebarWidth))
@@ -414,55 +470,146 @@ function MainApp() {
   }, [])
 
   useEffect(() => {
-    const unsubscribe = window.tw.vault.onTalksBatch(({ batch, reset }) => {
+    const unsubscribe = window.tw.vault.onTalksBatch(({ vaultId, batch, reset }) => {
       talkBatchRevisionRef.current += 1
       setState((current) => {
         if (current.phase !== 'ready') {
-          pendingTalkBatchesRef.current.push({ batch, reset })
+          pendingTalkBatchesRef.current.push({ vaultId, batch, reset })
           return current
         }
-        const talks = mergeTalkBatch(current.talks, batch, reset)
-        return { ...current, talks }
+        // A batch from a vault this window does not show (closed, or not loaded yet) is dropped;
+        // loading the vault lists it afresh.
+        if (!current.vaults.some((v) => v.id === vaultId && v.open)) return current
+        return { ...current, talks: mergeVaultBatch(current.talks, vaultId, batch, reset) }
       })
     })
-    async function init() {
-      const root = await window.tw.vault.getRoot()
-      if (!root) {
+    // Ticket 09: a scan of the open talk's folder recounted its conflict copies.
+    const unsubscribeConflicts = window.tw.vault.onTalkConflicts(({ vaultId, outlinePath, conflicts }) => {
+      setState((current) => {
+        if (current.phase !== 'ready') return current
+        let changed = false
+        const talks = current.talks.map((talk) => {
+          if (talk.vaultId !== vaultId || talk.outlinePath !== outlinePath || (talk.conflicts ?? 0) === conflicts) return talk
+          changed = true
+          return { ...talk, conflicts }
+        })
+        return changed ? { ...current, talks } : current
+      })
+    })
+    void loadVaults({ force: true, init: true })
+    const unsubscribeVaults = window.tw.vault.onVaultsChanged(() => { void loadVaults({ force: false }) })
+    // Ticket 07: a vault folder that was unmounted comes back (or goes away) while the app runs; the
+    // list is re-read each time the window gets focus (one stat per vault in main), no watcher.
+    const onFocus = (): void => { void loadVaults({ force: false }) }
+    window.addEventListener('focus', onFocus)
+    return () => { unsubscribe(); unsubscribeConflicts(); unsubscribeVaults(); window.removeEventListener('focus', onFocus) }
+  }, [])
+
+  // Bring the window's vault list, talks and folders up to date with main's registry. force reloads
+  // every open vault; otherwise only vaults not shown yet are listed, and closed vaults drop out.
+  const loadingRef = useRef<Promise<void> | null>(null)
+  async function loadVaults(opts: { force: boolean; init?: boolean }): Promise<void> {
+    // Loads run one after another: a change event that lands mid-load is served by the next pass.
+    while (loadingRef.current) await loadingRef.current.catch(() => {})
+    const run = (async () => {
+      const vaults = await window.tw.vault.list()
+      // An unavailable vault (folder missing or unreadable) stays in the list with no talks; it is
+      // listed again once it is back (a window focus re-reads the list).
+      const open = vaults.filter((v) => v.open && !v.unavailable)
+      if (!open.length && !vaults.some((v) => v.open)) {
+        loadedVaultsRef.current = new Set()
         setState({ phase: 'setup' })
         return
       }
-      const talks = await window.tw.vault.listTalks()
-      const queued = pendingTalkBatchesRef.current.splice(0)
-      const indexedTalks = queued.reduce((all, item) => mergeTalkBatch(all, item.batch, item.reset), talks)
-      setState({ phase: 'ready', vaultRoot: root, talks: indexedTalks, folders: [] })
-      void window.tw.vault.listFolders().then((folders) => {
-        setState((current) => current.phase === 'ready' && current.vaultRoot === root
-          ? { ...current, folders: folders || [] }
-          : current)
+      const batchRevision = talkBatchRevisionRef.current
+      const targets = opts.force ? open : open.filter((v) => !loadedVaultsRef.current.has(v.id))
+      const loaded = await Promise.all(targets.map(async (v) => {
+        const [talks, folders] = await Promise.all([window.tw.vault.listTalks(v.id), window.tw.vault.listFolders(v.id)])
+        return { vault: v, talks: (talks || []).map((t) => ({ ...t, vaultId: v.id })), folders: folders || [] }
+      }))
+      loadedVaultsRef.current = new Set([...open.filter((v) => opts.force ? false : loadedVaultsRef.current.has(v.id)).map((v) => v.id), ...targets.map((v) => v.id)])
+      const queued = opts.init ? pendingTalkBatchesRef.current.splice(0) : []
+      setState((current) => {
+        const openIds = new Set(open.map((v) => v.id))
+        const base = current.phase === 'ready' ? current : null
+        let talks = (base?.talks ?? []).filter((t) => t.vaultId && openIds.has(t.vaultId))
+        const foldersByVault: Record<string, string[]> = {}
+        for (const v of open) foldersByVault[v.id] = base?.foldersByVault[v.id] ?? []
+        for (const { vault, talks: listed, folders } of loaded) {
+          // listTalks returns a cached snapshot while the fresh scan streams separately. A slow folder
+          // walk can let that stream finish first; never replace it with the older cache.
+          const streamedSince = !opts.init && batchRevision !== talkBatchRevisionRef.current && talks.some((t) => t.vaultId === vault.id)
+          if (!streamedSince) talks = [...talks.filter((t) => t.vaultId !== vault.id), ...listed]
+          foldersByVault[vault.id] = folders
+        }
+        for (const item of queued) if (openIds.has(item.vaultId)) talks = mergeVaultBatch(talks, item.vaultId, item.batch, item.reset)
+        const firstShown = open[0] ?? vaults.find((v) => v.open)!
+        return { phase: 'ready', vaultRoot: firstShown.root, vaults, talks, folders: foldersByVault[firstShown.id] ?? [], foldersByVault }
       })
-    }
-    void init()
-    return unsubscribe
-  }, [])
+    })()
+    loadingRef.current = run
+    try { await run } finally { loadingRef.current = null }
+  }
 
-  async function handleVaultChosen(root: string) {
-    const [talks, folders] = await Promise.all([window.tw.vault.listTalks(), window.tw.vault.listFolders()])
-    setState({ phase: 'ready', vaultRoot: root, talks, folders: folders || [] })
+  async function handleVaultChosen(_root: string) {
+    await loadVaults({ force: true })
   }
 
   async function refreshTalks() {
-    // The command listener retains this function from mount, so read the current vault
-    // through IPC instead of capturing the initial loading state forever.
-    const root = await window.tw.vault.getRoot()
-    if (!root) return
-    const batchRevision = talkBatchRevisionRef.current
-    const [talks, folders] = await Promise.all([window.tw.vault.listTalks(), window.tw.vault.listFolders()])
-    // listTalks returns a cached snapshot while the fresh scan streams separately. A slow
-    // folder walk can let that stream finish first; never replace it with the older cache.
-    setState((current) => current.phase === 'ready' && current.vaultRoot === root
-      ? { ...current, talks: batchRevision === talkBatchRevisionRef.current ? talks : current.talks, folders: folders || [] }
-      : current)
+    await loadVaults({ force: true })
   }
+
+  // "+ Add vault…" (ticket 04): pick a folder. A folder with no vault file opens the New vault sheet,
+  // one with a vault file the join sheet; a folder already open as a vault, or inside one, is refused
+  // in a small sheet that names that vault.
+  async function addVault(): Promise<void> {
+    const chosen = await window.tw.vault.chooseFolder()
+    if (!chosen) return
+    if (!chosen.ok) { setVaultSheet({ mode: 'refused', reason: chosen.reason, message: chosen.message, other: chosen.other }); return }
+    setVaultSheet({ mode: chosen.kind, chosen })
+  }
+  async function vaultSheetDone(): Promise<void> {
+    setVaultSheet(null)
+    await loadVaults({ force: false })
+  }
+  function showVault(vaultId: string): void {
+    setVaultSheet(null)
+    requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLElement>(`[data-vault-header="${CSS.escape(vaultId)}"]`)
+      el?.scrollIntoView({ block: 'nearest' })
+      el?.classList.add('tl-vhead--flash')
+      window.setTimeout(() => el?.classList.remove('tl-vhead--flash'), 1200)
+    })
+  }
+
+  // Close or reopen a vault in this window. A talk open from a vault being closed is put away first
+  // (its typing is saved), since a closed vault's files are no longer written by this app.
+  async function setVaultOpen(vaultId: string, open: boolean): Promise<void> {
+    const closingActive = !open && state.phase === 'ready' && vaultOfTalk(activeTalkRef.current, state.vaults)?.id === vaultId
+    // The editor's pending typing is saved (and any changed-on-disk choice settled) BEFORE the vault
+    // closes, since a closed vault's files are no longer written by this app.
+    if (closingActive) {
+      const guard = leaveGuardRef.current
+      const mayLeave = guard ? await guard() : (await flushSaveRef.current?.(), true)
+      if (!mayLeave) return
+    }
+    // Main decides (it refuses the last open vault); only an accepted close puts the talk away.
+    const result = await window.tw.vault.setOpen(vaultId, open)
+    if (!result.ok) { notify(result.message, 'info'); return }
+    if (closingActive) {
+      setActiveTalk(null)
+      void window.tw.windows?.claimTalk?.(null)
+    }
+    await loadVaults({ force: false })
+  }
+
+  // New talk with no vault whose folder is there (ticket 07): nothing opens and nothing is created.
+  useEffect(() => {
+    if (newTalkTopic === null || state.phase !== 'ready') return
+    if (state.vaults.some((v) => v.open && !v.unavailable)) return
+    setNewTalkTopic(null)
+    notify('No vault is available on this Mac right now, so no talk was made.', 'warning')
+  }, [newTalkTopic, state])
 
   if (state.phase === 'loading') {
     return (
@@ -475,6 +622,15 @@ function MainApp() {
   if (state.phase === 'setup') {
     return <VaultSetup onVaultChosen={handleVaultChosen} />
   }
+
+  // The vault a talk is in decides which root the editor and panels work against; with no talk open, the
+  // first open vault. A vault to create in (a New talk started from one section) is picked the same way.
+  // A vault whose folder is not there (ticket 07) is skipped: nothing is created in it.
+  const usableVault = (v: VaultView): boolean => v.open && !v.unavailable
+  const firstUsableVault = state.vaults.find(usableVault) ?? null
+  const firstOpenVault = firstUsableVault ?? state.vaults.find((v) => v.open) ?? state.vaults[0]
+  const activeVault = vaultOfTalk(activeTalk, state.vaults) ?? firstOpenVault
+  const newTalkVault = state.vaults.find((v) => v.id === newTalkVaultId && usableVault(v)) ?? firstUsableVault
 
   const modes: Array<{ id: SidebarMode; label: string }> = [
     { id: 'talks', label: 'Talks' },
@@ -534,17 +690,17 @@ function MainApp() {
           {sidebarMode === 'talks' && (
             <TalkList
               talks={state.talks}
-              folders={state.folders}
+              foldersByVault={state.foldersByVault}
+              vaults={state.vaults}
+              onAddVault={() => { void addVault() }}
+              onSetVaultOpen={(id, open) => { void setVaultOpen(id, open) }}
+              onEditVault={(id) => setVaultSheet({ mode: 'edit', vaultId: id })}
               activeTalk={activeTalk}
               onSelectTalk={selectTalkFromPanel}
               onDeletedTalk={(outlinePath) => { if (activeTalk?.outlinePath === outlinePath) { setActiveTalk(null); void window.tw.windows?.claimTalk?.(null) } }}
               onRefresh={refreshTalks}
-              vaultRoot={state.vaultRoot}
-              onChangeVault={async () => {
-                const root = await window.tw.vault.chooseRoot()
-                if (root) handleVaultChosen(root)
-              }}
-              onNewTalk={(topic) => setNewTalkTopic(topic ?? '')}
+              onChangeVault={() => { void addVault() }}
+              onNewTalk={(topic, vaultId) => { setNewTalkVaultId(vaultId ?? null); setNewTalkTopic(topic ?? '') }}
               onOpenMetadata={(talk) => setMetadataTalk(talk)}
               // Rename safety (ADR-0008): the panel awaits the editor's pending-autosave flush
               // BEFORE renaming the active talk's folder, so no late write recreates the old path.
@@ -570,17 +726,27 @@ function MainApp() {
           />
         </div>
       )}
-      {newTalkTopic !== null && (
+      {newTalkTopic !== null && newTalkVault && (
         <NewTalkDialog
-          vaultRoot={state.vaultRoot}
-          folders={state.folders}
+          vaultRoot={newTalkVault.root}
+          vaultId={newTalkVault.id}
+          folders={state.foldersByVault[newTalkVault.id] ?? []}
           defaultTopic={newTalkTopic}
           onCreated={async (talk) => {
             setNewTalkTopic(null)
             await refreshTalks()
-            selectTalk(talk)
+            selectTalk({ ...talk, vaultId: newTalkVault.id })
           }}
           onClose={() => setNewTalkTopic(null)}
+        />
+      )}
+      {vaultSheet && (
+        <VaultSheet
+          state={vaultSheet}
+          onClose={() => setVaultSheet(null)}
+          onDone={() => { void vaultSheetDone() }}
+          onChooseAnother={() => { setVaultSheet(null); void addVault() }}
+          onShowVault={showVault}
         />
       )}
       {newFolderOpen && (
@@ -592,13 +758,13 @@ function MainApp() {
           onSubmit={async (v) => {
             setNewFolderOpen(false)
             const name = v.trim()
-            if (name) { await window.tw.vault.createFolder(name, ''); await refreshTalks() }
+            if (name) { await window.tw.vault.createFolder(name, '', activeVault.id); await refreshTalks() }
           }}
         />
       )}
       <WorkspaceLayout
         activeTalk={activeTalk}
-        vaultRoot={state.vaultRoot}
+        vaultRoot={activeVault.root}
         onOutlineChange={slidesOutlineVisible ? setOutlineContent : undefined}
         registerJump={(fn) => { jumpRef.current = fn }}
         registerOutlineOps={registerOutlineOps}
@@ -612,7 +778,7 @@ function MainApp() {
       />
       <MetadataPanel
         talk={metadataTalk}
-        vaultRoot={state.vaultRoot}
+        vaultRoot={activeVault.root}
         isOpen={metadataTalk !== null}
         onClose={() => setMetadataTalk(null)}
         // Flush the live editor buffer to disk before the panel READS the active talk, so it shows
@@ -630,12 +796,23 @@ function MainApp() {
       <SettingsPanel
         isOpen={settingsOpen}
         onClose={() => setSettingsOpen(false)}
-        vaultRoot={state.vaultRoot}
-        onChangeVault={async () => {
-          const root = await window.tw.vault.chooseRoot()
-          if (root) await handleVaultChosen(root)
-        }}
+        vaultRoot={firstOpenVault.root}
+        onChangeVault={async () => { setSettingsOpen(false); await addVault() }}
       />
+      {compare && (
+        <ConflictCompare
+          key={compare.outlinePath}
+          outlinePath={compare.outlinePath}
+          vault={state.vaults.find((v) => v.id === compare.vaultId) ?? null}
+          onClose={() => setCompare(null)}
+          onMerged={(outlinePath) => {
+            // The merged talk opens (frame 4); an open talk already has the text in its editor.
+            if (activeTalkRef.current?.outlinePath === outlinePath) return
+            const talk = state.talks.find((t) => t.outlinePath === outlinePath)
+            if (talk) void selectTalk(talk)
+          }}
+        />
+      )}
       <Toasts />
     </div>
   )

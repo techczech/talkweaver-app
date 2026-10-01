@@ -2,6 +2,9 @@ import { expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
+  AUDIENCE_FEEDBACK_START,
+  audienceCountsView,
+  nextAudienceFeedback,
   liveControlPresentation,
   liveSessionCanStart,
   liveSessionFinished,
@@ -169,4 +172,35 @@ test('the venue notice reads as drawn, with the part c7 drops kept apart', () =>
   const back = venueNoticeView('back')
   expect({ tone: back.tone, icon: back.icon, text: back.lead + back.long + back.tail }).toEqual({ tone: 'back', icon: 'monitor-check', text: 'Venue screen following again' })
   expect(linkLabel('https://handouts.fyi/737u/p')).toBe('handouts.fyi/737u/p')
+})
+
+test('the status bar counts follow the slide on screen and the session status', () => {
+  let state = nextAudienceFeedback(AUDIENCE_FEEDBACK_START, { kind: 'snapshot', reactionCounts: { a: { puzzled: 2, bookmark: 1 }, b: { helped: 5, 'custom:Too fast': 9 } }, questions: [{ answered: false }, { answered: true }] })
+  expect(audienceCountsView(state, 'a', 'live')).toEqual({ slideId: 'a', reactions: { puzzled: 2, helped: 0, bookmark: 1 }, questions: 1 })
+  // Ticket 04: a slide's own set reaches the template too (a custom label's count by its stored id).
+  expect(audienceCountsView(state, 'b', 'live')).toEqual({ slideId: 'b', reactions: { puzzled: 0, helped: 5, bookmark: 0, 'custom:Too fast': 9 }, questions: 1 })
+  expect(audienceCountsView(state, 'c', 'live').reactions).toEqual({ puzzled: 0, helped: 0, bookmark: 0 })
+  state = nextAudienceFeedback(state, { kind: 'reaction', slideId: 'a', counts: { puzzled: 3 } })
+  expect(audienceCountsView(state, 'a', 'paused-reconnecting').reactions).toEqual({ puzzled: 3, helped: 0, bookmark: 0 })
+  state = nextAudienceFeedback(state, { kind: 'questions', questions: [] })
+  expect(audienceCountsView(state, 'a', 'live').questions).toBe(0)
+  state = nextAudienceFeedback(state, { kind: 'snapshot', reactionCounts: {}, questions: [] })
+  expect(audienceCountsView(state, 'a', 'live').reactions).toEqual({ puzzled: 0, helped: 0, bookmark: 0 })
+  for (const status of ['connecting', 'ending', 'ended', 'expired', 'superseded'] as const) expect(audienceCountsView(state, 'a', status)).toEqual({ reactions: null, questions: null })
+  expect(audienceCountsView(state, null, 'live')).toEqual({ reactions: null, questions: null })
+})
+
+test('the questions tray keeps every well-formed question, as sent, and drops the malformed', () => {
+  const question = (id: string, extra: Record<string, unknown> = {}) => ({ questionId: id, text: `Text ${id}`, slideId: 'slide-1', tMs: 10, acceptedAt: 20, answered: false, ...extra })
+  let state = nextAudienceFeedback(AUDIENCE_FEEDBACK_START, { kind: 'snapshot', reactionCounts: {}, questions: [question('a', { name: 'Priya' }), question('b', { answered: true }), { answered: false }, { questionId: 'x', answered: false }] })
+  expect(state.questions.map((q) => q.questionId)).toEqual(['a', 'b'])
+  expect(state.questions[0]).toEqual({ questionId: 'a', text: 'Text a', name: 'Priya', slideId: 'slide-1', tMs: 10, acceptedAt: 20, answered: false })
+  expect('name' in state.questions[1]).toBe(false)
+  expect(state.questionsWaiting).toBe(3) // bare { answered: false } entries still count toward the waiting number
+  state = nextAudienceFeedback(state, { kind: 'questions', questions: [question('a', { answered: true }), question('c')] })
+  expect(state.questions.map((q) => [q.questionId, q.answered])).toEqual([['a', true], ['c', false]])
+  expect(state.questionsWaiting).toBe(1)
+  state = nextAudienceFeedback(state, { kind: 'reaction', slideId: 'slide-1', counts: { puzzled: 1 } })
+  expect(state.questions).toHaveLength(2)
+  expect(nextAudienceFeedback(state, { kind: 'snapshot', reactionCounts: {}, questions: [] }).questions).toEqual([])
 })

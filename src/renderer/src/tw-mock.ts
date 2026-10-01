@@ -190,8 +190,13 @@ export function installMock() {
   ;(window as any).tw = {
     vault: {
       getRoot: async () => MOCK_VAULT_ROOT,
-      setRoot: async (_path: string) => {},
+      setRoot: async (_path: string) => ({ success: true }),
       chooseRoot: async () => MOCK_VAULT_ROOT,
+      list: async () => [{ id: 'mock-vault', root: MOCK_VAULT_ROOT, open: true, order: 0, name: 'Talks', baseName: 'Talks', initial: 'T', color: '#c2410c', service: 'Local', unavailable: null }],
+      add: async () => null,
+      setOpen: async () => ({ ok: false, reason: 'last-open', message: 'Keep at least one vault open.' }),
+      recheck: async () => false,
+      onVaultsChanged: (_cb: unknown) => () => {},
       listTalks: async () => MOCK_TALKS,
       createTalk: async (opts: { title: string; slug: string; topicFolder?: string }) => {
         const slug = opts.slug
@@ -283,6 +288,7 @@ export function installMock() {
     ledger: {
       whereUsed: async (_id: string) => MOCK_LEDGER_TALKS.map(({ talk, outline }) => ({ talk, outline })),
       versions: async (_id: string) => MOCK_VERSIONS,
+      origin: async (_outlinePath: string, _slideId: string) => null,
       // One 'behind' row (matches the middle recorded version) + one 'diverged' row
       // (local edit matching no version) — both propagation badges exercisable.
       status: async (_id: string, _adoptMarkdown: string) => [

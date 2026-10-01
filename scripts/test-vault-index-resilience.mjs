@@ -24,17 +24,18 @@ try {
   // ENOTDIR — standing in for the EMFILE/EIO a real FD-exhausted write would hit.
   const blocker = join(root, 'blocker')
   await writeFile(blocker, 'not a directory', 'utf8')
-  const cachePath = join(blocker, 'nested', 'cache.json')
+  const dir = join(blocker, 'nested', 'vault-index')
+  const vault = { id: 'vault-1', root, open: true }
 
-  const handler = createVaultListHandler({ cachePath, log: () => {} })
+  const handler = createVaultListHandler({ dir, log: () => {} })
 
   // Two overlapping handle() calls (the race that stripped the rejection's handler).
-  const cachedA = await handler.handle(root, () => {})
-  const cachedB = await handler.handle(root, () => {})
+  const cachedA = await handler.handle(vault, () => {})
+  const cachedB = await handler.handle(vault, () => {})
   assert.ok(Array.isArray(cachedA) && Array.isArray(cachedB), 'handle returns the cached talk list synchronously')
 
   // refreshDone must RESOLVE (to the talk list) despite the cache write failing — never reject.
-  const talks = await handler.refreshDone()
+  const talks = await handler.refreshDone(vault.id)
   assert.ok(Array.isArray(talks), 'refreshDone resolves to a talk array even when the cache write fails')
   assert.equal(talks.length, 1, 'the sample talk is still discovered when the cache write fails')
 

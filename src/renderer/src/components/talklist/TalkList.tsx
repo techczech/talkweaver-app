@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
-import type { TalkInfo } from '../../../../preload/index'
+import type { TalkInfo, VaultView } from '../../../../preload/index'
 import { type TreeNode, topicOf, focusNode } from '../talkTreeNav'
 import {
   type ViewMode, type TalkSortKey, type NamingMode, type PubState, type RowRef,
+  type FolderOpenState, collapseId,
   VIEW_STORAGE_KEY, SORT_STORAGE_KEY, NAMING_STORAGE_KEY,
   readViewPreference, readSortPreference, readNamingPreference,
   sortTalks, isIgnoredPath, flattenTree, flattenSearchHits,
@@ -25,25 +26,41 @@ import { SearchHead } from './SearchLine'
 import { CompletionPop, PrefixHints, useSearchAssist } from './SearchAssist'
 import { noResultSuggestions } from './prefixAssist'
 import { useTalkSearch } from './useTalkSearch'
-import { IcFile } from './icons'
+import { IcFile, IcPlus } from './icons'
 import Tree, { type TreeCallbacks } from './Tree'
 import Flyout from './Flyout'
-import { SortPopover, TalkContextMenu, FolderContextMenu, MoveMenu } from './menus'
+import { SortPopover, TalkContextMenu, FolderContextMenu, MoveMenu, VaultContextMenu, type VaultAction } from './menus'
+import { VaultBadge } from './VaultRows'
+import ShowFilter from './ShowFilter'
+import { SHOW_STORE_KEY, effectiveShow, showFilterVisible, talksInShow } from './vaultFilter'
+import {
+  type VaultFocus, decodeFocus, drilledRows, encodeFocus, rowVaultId, sectionRows, talksByVault, vaultIdOfTalk
+} from './vaultSections'
+import { notify } from '../../lib/notify'
 import { PromptModal, ConfirmModal } from './modals'
 
 export { PromptModal, ConfirmModal }
 
 interface Props {
+  /** The talks of every open vault, each stamped with its vaultId. */
   talks: TalkInfo[]
-  folders?: string[]
+  /** Category folders (vault-relative) of each open vault, by vault id. */
+  foldersByVault?: Record<string, string[]>
+  /** Every vault, open or closed, in order. */
+  vaults: VaultView[]
   activeTalk: TalkInfo | null
-  vaultRoot: string
   onSelectTalk: (talk: TalkInfo) => void
   onDeletedTalk?: (outlinePath: string) => void
   onRefresh: () => void
   onChangeVault: () => void
-  /** Open the New Talk dialog, optionally pre-selecting a subfolder (vault-rel path). */
-  onNewTalk?: (topic?: string) => void
+  /** Open the New Talk dialog, optionally pre-selecting a vault and a subfolder in it (vault-rel path). */
+  onNewTalk?: (topic?: string, vaultId?: string) => void
+  /** Pick a folder and add it as a vault. */
+  onAddVault?: () => void
+  /** Open or close a vault. */
+  onSetVaultOpen?: (vaultId: string, open: boolean) => void
+  /** ⋯ › Edit this vault… */
+  onEditVault?: (vaultId: string) => void
   /** Open the per-talk Metadata panel (ADR-0036) for this talk. */
   onOpenMetadata?: (talk: TalkInfo) => void
   /** Await the App-level editor flush before renaming the ACTIVE talk (rename moves its folder). */
@@ -59,7 +76,8 @@ interface Props {
 // viaKeyboard: opened by ⌘K — the menu starts with its first item highlighted (right-click starts blank).
 type Menu =
   | { kind: 'talk'; talk: TalkInfo; x: number; y: number; viaKeyboard?: boolean }
-  | { kind: 'folder'; topic: string; x: number; y: number; viaKeyboard?: boolean }
+  | { kind: 'folder'; topic: string; vaultId?: string; x: number; y: number; viaKeyboard?: boolean }
+  | { kind: 'vault'; vaultId: string; x: number; y: number; viaKeyboard?: boolean }
 
 // Handout liveness, cached per app session — checked lazily and NEVER blocking a render.
 const liveCache = new Map<string, 'live' | 'offline'>()
@@ -70,11 +88,26 @@ const FALLBACK_ROW_HEIGHTS: RowHeights = { ledger: 26, shelf: 55, fhead: 24, led
 // the keyboard preview (a click must never leave a card behind — T29).
 const CLICK_FOCUS_GRACE_MS = 200
 
+const NO_FOLDERS: string[] = []
+
 export default function TalkList({
-  talks, folders = [], activeTalk, vaultRoot,
-  onSelectTalk, onDeletedTalk, onRefresh, onChangeVault, onNewTalk, onOpenMetadata, flushActive, leaveActive,
+  talks, foldersByVault, vaults, activeTalk,
+  onSelectTalk, onDeletedTalk, onRefresh, onChangeVault, onNewTalk, onAddVault, onSetVaultOpen, onEditVault, onOpenMetadata, flushActive, leaveActive,
   initialFocusPath, onFocusPathChange
 }: Props) {
+  // Vaults whose talks the panel lists: open, and their folder is there (ticket 07).
+  const openVaults = useMemo(() => vaults.filter((v) => v.open && !v.unavailable), [vaults])
+  // "Show: All vaults ▾" (ticket 07): remembered until changed. It scopes the sections, Recent and search.
+  const [showStored, setShowStored] = useState<string | null>(() => { try { return localStorage.getItem(SHOW_STORE_KEY) } catch { return null } })
+  const showVaultId = effectiveShow(showStored, vaults)
+  function setShow(vaultId: string | null): void {
+    setShowStored(vaultId)
+    try { if (vaultId) localStorage.setItem(SHOW_STORE_KEY, vaultId); else localStorage.removeItem(SHOW_STORE_KEY) } catch { /* not remembered */ }
+    setFocus(null)
+  }
+  const primary = openVaults[0]
+  const vaultById = useMemo(() => new Map(vaults.map((v) => [v.id, v])), [vaults])
+  const rootOfTalk = (talk: TalkInfo): string => vaultById.get(vaultIdOfTalk(talk, vaults) ?? '')?.root ?? primary?.root ?? ''
   const [viewMode, setViewMode] = useState<ViewMode>(readViewPreference)
   const [naming, setNaming] = useState<NamingMode>(readNamingPreference)
   const [sortKey, setSortKey] = useState<TalkSortKey>(readSortPreference)
@@ -82,8 +115,22 @@ export default function TalkList({
   // Only the user's choices (path → open); `collapsed` below derives the rest from defaults
   // (every folder starts closed), so a folder that appears later still gets its default.
   // Shared with the slide picker's Files tree (ADR-0029 §4) and persisted across restarts.
-  const [folderOpen, chooseFolders] = useFolderMemory(vaultRoot)
-  const [focusPath, setFocusPath] = useState(initialFocusPath ?? '') // drill-in ('' = whole vault)
+  // The first open vault's choices persist (the same store the slide picker's Files tab reads); other
+  // vaults' choices last for the session.
+  const [primaryFolderOpen, choosePrimaryFolders] = useFolderMemory(primary?.root ?? '')
+  const [otherFolderOpen, setOtherFolderOpen] = useState<Record<string, FolderOpenState>>({})
+  const folderOpenOf = (vaultId: string): FolderOpenState => (vaultId === primary?.id ? primaryFolderOpen : otherFolderOpen[vaultId] ?? {})
+  function chooseFoldersIn(vaultId: string, changes: FolderOpenState): void {
+    if (vaultId === primary?.id) choosePrimaryFolders(changes)
+    else setOtherFolderOpen((all) => ({ ...all, [vaultId]: { ...all[vaultId], ...changes } }))
+  }
+  const [focus, setFocus] = useState<VaultFocus | null>(() => decodeFocus(initialFocusPath)) // drill-in (null = every vault)
+  const focusPath = focus?.path ?? ''
+  const setFocusPath = (path: string, vaultId?: string): void => {
+    const id = vaultId ?? focus?.vaultId ?? primary?.id
+    setFocus(path && id ? { vaultId: id, path } : null)
+  }
+  const [sectionCollapsed, setSectionCollapsed] = useState<Set<string>>(() => new Set())
   const [selectedFolder, setSelectedFolder] = useState('')
   const [focusKey, setFocusKey] = useState<string | null>(null) // keyboard focus row
   const { meta: talkMeta, lastDelivered, handouts, reload } = useTalkFacts()
@@ -121,19 +168,25 @@ export default function TalkList({
   const [recentOpen, setRecentOpen] = useState<boolean>(() => localStorage.getItem('tw-recent-open') !== '0')
   useEffect(() => { localStorage.setItem('tw-recent-open', recentOpen ? '1' : '0') }, [recentOpen])
   const recentTalks = useMemo(() => {
-    return talks
-      .filter((t) => !isIgnoredPath(topicOf(t, vaultRoot)) && (talkMeta[t.slug]?.editedMs ?? 0) > 0)
+    return talksInShow(talks, showVaultId, primary?.id ?? null)
+      .filter((t) => !isIgnoredPath(topicOf(t, rootOfTalk(t))) && (talkMeta[t.slug]?.editedMs ?? 0) > 0)
       .slice()
       .sort((a, b) => (talkMeta[b.slug]?.editedMs ?? 0) - (talkMeta[a.slug]?.editedMs ?? 0))
       .slice(0, 5)
-  }, [talks, talkMeta, vaultRoot])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [talks, talkMeta, vaults, showVaultId])
 
   const assist = useSearchAssist({ query, setQuery, searchRef, talksVersion: talks })
-  const sortedTalks = useMemo(() => sortTalks(talks, sortKey, talkMeta, lastDelivered), [talks, sortKey, talkMeta, lastDelivered])
+  const talksInVault = useMemo(() => talksByVault(talks, vaults), [talks, vaults])
   // Talk search (ADR-0029 §1): the one renderer call shared with the picker's "Find a talk",
   // scoped to the drilled-in folder. A lone prefix (`fo:` while typing) is not yet a search: the
   // tree stays under the completion.
-  const { searching, result: searchResult, settled: searchSettled } = useTalkSearch({ query, within: focusPath, talksVersion: talks })
+  // Only vaults whose folders are there are searched; none left means nothing is searched (ticket 07).
+  const searchVaultIds = useMemo(() => {
+    const wanted = focus ? focus.vaultId : showVaultId
+    return wanted ? openVaults.filter((v) => v.id === wanted).map((v) => v.id) : openVaults.map((v) => v.id)
+  }, [focus, openVaults, showVaultId])
+  const { searching, result: searchResult, settled: searchSettled } = useTalkSearch({ query, within: focusPath, vaultIds: searchVaultIds, talksVersion: talks })
   // No results (L8): the nearest folder to a mistyped fo: term, "Drop <term>", slide text.
   const suggestions = useMemo(
     () => (searchSettled && searchResult && searchResult.hits.length === 0 ? noResultSuggestions(query, assist.folders) : []),
@@ -144,25 +197,41 @@ export default function TalkList({
     () => (searchResult ? flattenSearchHits(searchResult.hits, talksByPath) : []),
     [searchResult, talksByPath]
   )
-  const tree = useMemo(
-    () => talkTree(sortedTalks, folders, vaultRoot),
-    [sortedTalks, folders, vaultRoot]
-  )
-  const view = useMemo(() => focusNode(tree, focusPath), [tree, focusPath])
-  // Folders start closed; a remembered choice wins (defaultFolderOpen).
-  const collapsed = useMemo(() => collapsedFrom(tree, folderOpen), [tree, folderOpen])
+  // One folder tree per open vault (a vault's paths are relative to its own root).
+  const trees = useMemo(() => {
+    const out = new Map<string, TreeNode>()
+    for (const v of openVaults) out.set(v.id, talkTree(sortTalks(talksInVault.get(v.id) ?? [], sortKey, talkMeta, lastDelivered), foldersByVault?.[v.id] ?? NO_FOLDERS, v.root))
+    return out
+  }, [openVaults, talksInVault, sortKey, talkMeta, lastDelivered, foldersByVault])
+  // Folders start closed; a remembered choice wins (defaultFolderOpen). Ids are per vault.
+  const collapsed = useMemo(() => {
+    const out = new Set<string>()
+    for (const v of openVaults) {
+      const tree = trees.get(v.id)
+      if (!tree) continue
+      const closed = collapsedFrom(tree, folderOpenOf(v.id))
+      for (const path of closed) out.add(collapseId(v.id, path))
+    }
+    return out
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openVaults, trees, primaryFolderOpen, otherFolderOpen])
   // Line two of every talk row at rest (ADR-0029 §3): event or folder, last delivery; the
   // file name where two same-titled talks would otherwise read alike. Ledger draws it.
-  const lines = useMemo(
-    () => secondLines(
-      talks.filter((t) => !isIgnoredPath(topicOf(t, vaultRoot))),
-      { vaultRoot, meta: talkMeta, lastDelivered, currentYear: new Date().getFullYear() }
-    ),
-    [talks, vaultRoot, talkMeta, lastDelivered]
-  )
+  const lines = useMemo(() => {
+    const out = new Map<string, string>()
+    for (const v of openVaults) {
+      const mine = (talksInVault.get(v.id) ?? []).filter((t) => !isIgnoredPath(topicOf(t, v.root)))
+      for (const [path, line] of secondLines(mine, { vaultRoot: v.root, meta: talkMeta, lastDelivered, currentYear: new Date().getFullYear() })) out.set(path, line)
+    }
+    return out
+  }, [openVaults, talksInVault, talkMeta, lastDelivered])
   const rows: RowRef[] = useMemo(
-    () => (searching ? searchRows : flattenTree(view, collapsed, lines)),
-    [searching, searchRows, view, collapsed, lines]
+    () => (searching
+      ? searchRows
+      : focus
+        ? drilledRows({ focus, trees, collapsed, lines })
+        : sectionRows({ vaults, trees, collapsed, sectionCollapsed, lines, showVaultId })),
+    [searching, searchRows, focus, trees, collapsed, vaults, sectionCollapsed, lines, showVaultId]
   )
   const rowIndexByKey = useMemo(() => new Map(rows.map((row, index) => [row.key, index])), [rows])
   const layout = useMemo(() => buildLayout(rows, viewMode, rowHeights), [rows, viewMode, rowHeights])
@@ -182,7 +251,10 @@ export default function TalkList({
     return indices
   }, [focusKey, dragKey, rowIndexByKey])
   const mounted = useMemo(() => mountedIndices(layout, range, pinned), [layout, range, pinned])
-  const allTopics = useMemo(() => allMoveTopics(talks, folders, vaultRoot), [talks, folders, vaultRoot])
+  const topicsForMove = (talk: TalkInfo): string[] => {
+    const id = vaultIdOfTalk(talk, vaults) ?? ''
+    return allMoveTopics(talksInVault.get(id) ?? [], foldersByVault?.[id] ?? NO_FOLDERS, vaultById.get(id)?.root ?? '')
+  }
   const focusedRow = useMemo(() => rows.find((r) => r.key === focusKey) ?? null, [rows, focusKey])
   const focusedTalk = focusedRow?.kind === 'talk' ? focusedRow.talk : null
 
@@ -201,7 +273,7 @@ export default function TalkList({
   }
 
   const actions = useTalkActions({
-    talks, vaultRoot, activeTalk, onSelectTalk, onDeletedTalk, onRefresh, onNewTalk,
+    talks, vaults, activeTalk, onSelectTalk, onDeletedTalk, onRefresh, onNewTalk,
     onOpenMetadata, flushActive, leaveActive, setPrompt, setConfirm, setMenu, setMoveMenu, setFocusKey
   })
 
@@ -242,21 +314,30 @@ export default function TalkList({
   useEffect(() => { try { window.localStorage.setItem(NAMING_STORAGE_KEY, naming) } catch { /* ignore */ } }, [naming])
 
   // Report the drill-in outward so App can restore it after this panel unmounts on a tab switch.
-  useEffect(() => { onFocusPathChange?.(focusPath) }, [focusPath, onFocusPathChange])
+  useEffect(() => { onFocusPathChange?.(encodeFocus(focus)) }, [focus, onFocusPathChange])
 
-  // If the drilled-into / selected folder disappears (deleted or renamed), pop back to the root.
+  // If the drilled-into / selected folder disappears (deleted or renamed, or its vault closed), pop back out.
   useEffect(() => {
-    if (focusPath && focusNode(tree, focusPath) === tree) setFocusPath('')
-    if (selectedFolder && focusNode(tree, selectedFolder) === tree) setSelectedFolder('')
-  }, [tree, focusPath, selectedFolder])
+    if (focus) {
+      const tree = trees.get(focus.vaultId)
+      if (!tree || focusNode(tree, focus.path) === tree) setFocus(null)
+    }
+    if (selectedFolder) {
+      const tree = trees.get(selectedFolder.split('\u001f')[0])
+      const path = selectedFolder.split('\u001f')[1] ?? ''
+      if (!tree || (path && focusNode(tree, path) === tree)) setSelectedFolder('')
+    }
+  }, [trees, focus, selectedFolder])
 
   // Keyboard focus starts on the first talk; while searching it snaps to a visible match.
   // A dangling focus (row briefly gone mid-refresh, e.g. after rename/move) is left alone so
   // the focus can land on the row's NEW key when the refreshed list arrives.
   useEffect(() => {
-    if (!focusKey) { setFocusKey(rows.find((r) => r.kind === 'talk')?.key ?? rows[0]?.key ?? null); return }
+    // The first talk, else the first folder (a vault header is where you go by choice, not by default).
+    const first = (): string | null => (rows.find((r) => r.kind === 'talk') ?? rows.find((r) => r.kind === 'folder') ?? rows[0])?.key ?? null
+    if (!focusKey) { setFocusKey(first()); return }
     if (searching && !rows.some((r) => r.key === focusKey)) {
-      setFocusKey(rows.find((r) => r.kind === 'talk')?.key ?? rows[0]?.key ?? null)
+      setFocusKey(first())
     }
   }, [rows, focusKey, searching])
 
@@ -366,50 +447,103 @@ export default function TalkList({
       if (document.activeElement !== panel && !panel.contains(document.activeElement)) return
       const at = focusedRowRect()
       if (focusedRow.kind === 'talk') setMenu({ kind: 'talk', talk: focusedRow.talk, x: at.x, y: at.y, viaKeyboard: true })
-      else setMenu({ kind: 'folder', topic: focusedRow.path, x: at.x, y: at.y, viaKeyboard: true })
+      else if (focusedRow.kind === 'folder') setMenu({ kind: 'folder', topic: focusedRow.path, vaultId: focusedRow.vaultId, x: at.x, y: at.y, viaKeyboard: true })
+      else if (focusedRow.kind === 'vault') setMenu({ kind: 'vault', vaultId: focusedRow.vaultId, x: at.x, y: at.y, viaKeyboard: true })
     }
     window.addEventListener('tw-context-menu', onContextKey)
     return () => window.removeEventListener('tw-context-menu', onContextKey)
   })
 
   // ── folders / drag-drop ──
-  // Every open/close goes through chooseFolders (the shared folder memory): it updates the tree
-  // at once, in the picker too, and persists the choice.
-  function toggleFolder(path: string): void {
-    chooseFolders({ [path]: collapsed.has(path) })
+  // Every open/close goes through chooseFoldersIn (the vault's folder memory): it updates the tree
+  // at once and, for the first open vault, persists the choice (the picker shares it).
+  function toggleFolder(path: string, vaultId?: string): void {
+    const id = vaultId ?? primary?.id
+    if (id) chooseFoldersIn(id, { [path]: collapsed.has(collapseId(id, path)) })
+  }
+  function subfoldersOf(tree: TreeNode): string[] {
+    const out: string[] = []
+    const walk = (n: TreeNode): void => { for (const c of n.children) { out.push(c.path); walk(c) } }
+    walk(tree)
+    return out
   }
   function collapseAll(): void {
-    const all: string[] = []
-    const walk = (n: TreeNode): void => { for (const c of n.children) { all.push(c.path); walk(c) } }
-    walk(tree)
-    chooseFolders(folderChoices(all, false))
+    for (const v of openVaults) {
+      const tree = trees.get(v.id)
+      if (tree) chooseFoldersIn(v.id, folderChoices(subfoldersOf(tree), false))
+    }
   }
-  function onDropTo(topic: string): void {
+  function onDropTo(topic: string, vaultId?: string): void {
     const talk = draggingRef.current
     draggingRef.current = null
     setDragKey(null)
     setDragTopic(null)
-    if (talk) void actions.doMove(talk, topic)
+    if (!talk) return
+    // A folder is a place inside one vault: dropping into another vault's folder does nothing.
+    if ((vaultId ?? primary?.id) !== vaultIdOfTalk(talk, vaults)) { notify('A talk can only move within its own vault.', 'info'); return }
+    void actions.doMove(talk, topic)
   }
   // ⌘↑ — one breadcrumb level up, refocusing the folder we just left so the position reads.
   function upOneLevel(): void {
-    if (!focusPath) return
-    const from = focusPath
-    setFocusPath(focusPath.split('/').slice(0, -1).join('/'))
-    setFocusKey(folderKey(from))
+    if (!focus) return
+    const from = focus.path
+    setFocusPath(focus.path.split('/').slice(0, -1).join('/'))
+    setFocusKey(folderKey(from, focus.vaultId))
   }
-  // ⌘← / ⌘→ — every subfolder of the current drilled-in view (the whole vault at top level).
-  function subfolderPathsInView(): string[] {
-    const out: string[] = []
-    const walk = (n: TreeNode): void => { for (const c of n.children) { out.push(c.path); walk(c) } }
-    walk(view)
-    return out
+  // ⌘← / ⌘→ — every subfolder of the current drilled-in view (every vault's folders at top level).
+  function foldersInView(): Array<{ vaultId: string; paths: string[] }> {
+    if (focus) {
+      const tree = trees.get(focus.vaultId)
+      return tree ? [{ vaultId: focus.vaultId, paths: subfoldersOf(focusNode(tree, focus.path)) }] : []
+    }
+    return openVaults.map((v) => ({ vaultId: v.id, paths: subfoldersOf(trees.get(v.id) ?? { name: '', path: '', children: [], talks: [] }) }))
   }
   function collapseAllInView(): void {
-    chooseFolders(folderChoices(subfolderPathsInView(), false))
+    for (const { vaultId, paths } of foldersInView()) chooseFoldersIn(vaultId, folderChoices(paths, false))
   }
   function expandAllInView(): void {
-    chooseFolders(folderChoices(subfolderPathsInView(), true))
+    for (const { vaultId, paths } of foldersInView()) chooseFoldersIn(vaultId, folderChoices(paths, true))
+  }
+  // A vault header: an open vault folds or unfolds its section; a closed one opens (its ⋯ menu does the same).
+  function toggleVault(vaultId: string): void {
+    const vault = vaultById.get(vaultId)
+    if (!vault) return
+    if (!vault.open) { onSetVaultOpen?.(vaultId, true); return }
+    if (showVaultId && vaultId !== showVaultId) { setShow(vaultId); return } // a one-line row: show that vault
+    setSectionCollapsed((all) => {
+      const next = new Set(all)
+      if (!next.delete(vaultId)) next.add(vaultId)
+      return next
+    })
+  }
+  function setSection(vaultId: string, expanded: boolean): void {
+    setSectionCollapsed((all) => {
+      const next = new Set(all)
+      if (expanded) next.delete(vaultId)
+      else next.add(vaultId)
+      return next
+    })
+  }
+  // The vault a toolbar "New talk" / "New folder" acts in: the drilled-in vault, else the vault of
+  // the row under keyboard focus, else the first open vault.
+  // New talk / New folder go to the focused vault, or the first vault whose folder is there: never
+  // into an unavailable (or closed) vault (ticket 07).
+  const targetVaultId = [focus?.vaultId, focusedRow ? rowVaultId(focusedRow, vaults) : null]
+    .find((id) => !!id && openVaults.some((v) => v.id === id)) ?? primary?.id
+  function onVaultAction(vaultId: string, action: VaultAction): void {
+    setMenu(null)
+    if (action === 'edit') { onEditVault?.(vaultId); return }
+    if (action === 'only') { setShow(vaultId); return }
+    if (action === 'reveal') { void window.tw.vault.reveal(vaultId); return }
+    onSetVaultOpen?.(vaultId, action === 'open')
+  }
+
+  /** The unavailable section's one action: open the cloud service's settings, or look at the folder
+   *  again now; either way the list is re-read. */
+  function runUnavailableAction(vaultId: string): void {
+    const vault = vaultById.get(vaultId)
+    const act = vault?.unavailable?.action === 'open-service' ? window.tw.vault.openService(vaultId) : window.tw.vault.recheck()
+    void Promise.resolve(act).catch(() => {}).finally(() => { void onRefresh() })
   }
 
   // ── keyboard (panel-scoped; identical in both modes) ──
@@ -417,6 +551,20 @@ export default function TalkList({
     rows, focusKey, setFocusKey, focusedRow, focusedTalk,
     collapsed, toggleFolder,
     drillInto: setFocusPath,
+    activateVaultRow: (row, key) => {
+      const vault = vaultById.get(row.vaultId)
+      if (!vault) return
+      if (row.kind === 'empty') {
+        if (key !== 'enter') return
+        // The unavailable note: Enter presses its one button (Check again / Open settings), never New talk.
+        if (vault.unavailable) { runUnavailableAction(vault.id); return }
+        if (vault.open) onNewTalk?.('', vault.id)
+        return
+      }
+      if (!vault.open) { if (key !== 'collapse') onSetVaultOpen?.(vault.id, true); return }
+      if (key === 'enter') toggleVault(vault.id)
+      else setSection(vault.id, key === 'expand')
+    },
     upOneLevel,
     collapseAllInView,
     expandAllInView,
@@ -434,7 +582,7 @@ export default function TalkList({
     // talk away — never stays behind).
     onSelectTalk: (talk) => { dispatchCard({ type: 'open', at: Date.now() }); onSelectTalk(talk) },
     startRename: actions.startRename,
-    startRenameFolder: (path) => actions.onFolderAction(path, 'rename'),
+    startRenameFolder: (path, vaultId) => actions.onFolderAction(path, 'rename', vaultId),
     startDuplicate: actions.startDuplicate,
     startDelete: actions.startDelete,
     startMove: actions.startMove,
@@ -501,26 +649,32 @@ export default function TalkList({
     onRowEnter: (_talk, key) => dispatchCard({ type: 'enter', rowKey: key, at: Date.now() }),
     onRowLeave: (key) => dispatchCard({ type: 'leave', rowKey: key, at: Date.now() }),
     onTalkContext: (talk, key, e) => { e.preventDefault(); e.stopPropagation(); setFocusKey(key); setMenu({ kind: 'talk', talk, x: e.clientX, y: e.clientY }) },
-    onToggleFolder: (path, key) => { setFocusKey(key); setSelectedFolder(path); toggleFolder(path); panelRef.current?.focus({ preventScroll: true }) },
-    onFolderContext: (path, key, e) => { e.preventDefault(); e.stopPropagation(); setFocusKey(key); setMenu({ kind: 'folder', topic: path, x: e.clientX, y: e.clientY }) },
+    onToggleFolder: (path, key, vaultId) => { setFocusKey(key); setSelectedFolder(`${vaultId ?? ''}\u001f${path}`); toggleFolder(path, vaultId); panelRef.current?.focus({ preventScroll: true }) },
+    onFolderContext: (path, key, e, vaultId) => { e.preventDefault(); e.stopPropagation(); setFocusKey(key); setMenu({ kind: 'folder', topic: path, vaultId, x: e.clientX, y: e.clientY }) },
     onDrill: setFocusPath,
+    onToggleVault: (vaultId, key) => { setFocusKey(key); toggleVault(vaultId); panelRef.current?.focus({ preventScroll: true }) },
+    onVaultMenu: (vaultId, key, e) => { e.preventDefault(); e.stopPropagation(); setFocusKey(key); setMenu({ kind: 'vault', vaultId, x: e.clientX, y: e.clientY }) },
+    onNewTalkIn: (vaultId) => onNewTalk?.('', vaultId),
+    onUnavailableAction: (vaultId) => runUnavailableAction(vaultId),
+    onShowVault: (vaultId) => setShow(vaultId),
+    hiddenCount: (vaultId) => (talksInVault.get(vaultId) ?? []).length,
     onDragStartTalk: (talk, key) => { draggingRef.current = talk; setDragKey(key) },
     onDragEndTalk: () => { draggingRef.current = null; setDragKey(null); setDragTopic(null) },
     // stopPropagation: without it the SAME dragover bubbles on to the tree container, whose
     // handler overwrites dragTopic to '' — so the folder's .tl-drop highlight never showed
     // (live finding, 0.14.0). The folder row owns the event; the tree only sees open-space drags.
-    onFolderDragOver: (path, e) => {
-      if (draggingRef.current) { autoScrollDuringDrag(e); e.preventDefault(); e.stopPropagation(); setDragTopic(path) }
+    onFolderDragOver: (path, e, vaultId) => {
+      if (draggingRef.current) { autoScrollDuringDrag(e); e.preventDefault(); e.stopPropagation(); setDragTopic(collapseId(vaultId, path)) }
     },
     // relatedTarget check: dragleave also fires when moving onto the row's own children
     // (name/count spans); only clear when the pointer truly leaves the row's subtree.
-    onFolderDragLeave: (path, e) => {
-      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragTopic((t) => (t === path ? null : t))
+    onFolderDragLeave: (path, e, vaultId) => {
+      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragTopic((t) => (t === collapseId(vaultId, path) ? null : t))
     },
-    onFolderDrop: (path, e) => { e.preventDefault(); e.stopPropagation(); onDropTo(path) },
-    // Dropping on empty space (not a folder) moves the talk to the vault root.
+    onFolderDrop: (path, e, vaultId) => { e.preventDefault(); e.stopPropagation(); onDropTo(path, vaultId) },
+    // Dropping on empty space (not a folder) moves the talk to the root of its own vault.
     onTreeDragOver: (e) => { if (draggingRef.current) { autoScrollDuringDrag(e); e.preventDefault(); setDragTopic('') } },
-    onTreeDrop: (e) => { e.preventDefault(); onDropTo('') }
+    onTreeDrop: (e) => { e.preventDefault(); const t = draggingRef.current; onDropTo('', t ? vaultIdOfTalk(t, vaults) ?? undefined : undefined) }
   }
 
   const targetFolder = focusPath // header ＋ / New-folder create in the drilled-in folder, else root
@@ -569,8 +723,8 @@ export default function TalkList({
       <PanelHeader
         viewMode={viewMode}
         onSetViewMode={setViewMode}
-        onNewTalk={() => onNewTalk?.(targetFolder)}
-        onNewFolder={() => setPrompt({ label: targetFolder ? `New folder inside "${targetFolder.split('/').pop()}"` : 'New folder name', initial: '', cta: 'Create', onSubmit: (v) => void actions.doNewFolder(v, targetFolder) })}
+        onNewTalk={() => onNewTalk?.(targetFolder, targetVaultId)}
+        onNewFolder={() => setPrompt({ label: targetFolder ? `New folder inside "${targetFolder.split('/').pop()}"` : 'New folder name', initial: '', cta: 'Create', onSubmit: (v) => void actions.doNewFolder(v, targetFolder, targetVaultId) })}
         onToggleSort={(e) => { e.stopPropagation(); toggleSortPop() }}
         sortOpen={!!sortPop}
         sortBtnRef={sortBtnRef}
@@ -593,6 +747,8 @@ export default function TalkList({
         }}
         focusPath={focusPath}
         onFocusPath={setFocusPath}
+        showSlot={showFilterVisible(vaults) ? <ShowFilter vaults={vaults} showId={showVaultId} onChange={setShow} /> : null}
+        rootLabel={focus && openVaults.length > 1 ? vaultById.get(focus.vaultId)?.name ?? 'Vault' : 'Vault'}
       />
 
       {!searching && recentTalks.length > 0 && (
@@ -615,10 +771,12 @@ export default function TalkList({
                   key={t.slug}
                   role="listitem"
                   className={`tl-recent-row ${activeTalk?.outlinePath === t.outlinePath ? 'is-active' : ''}`}
-                  title={topicOf(t, vaultRoot) || 'vault root'}
+                  title={topicOf(t, rootOfTalk(t)) || 'vault root'}
                   onClick={() => { onSelectTalk(t); panelRef.current?.focus({ preventScroll: true }) }}
                 >
-                  <span className="tl-recent-ficon"><IcFile size={11.5} /></span>
+                  {vaultById.get(vaultIdOfTalk(t, vaults) ?? '')
+                    ? <span className="tl-recent-ficon"><VaultBadge vault={vaultById.get(vaultIdOfTalk(t, vaults) ?? '')!} size={14} /></span>
+                    : <span className="tl-recent-ficon"><IcFile size={11.5} /></span>}
                   <span className="tl-recent-name">{t.title}</span>
                   <span className="tl-recent-count">{talkMeta[t.slug]?.slideCount ?? '—'}</span>
                 </button>
@@ -646,8 +804,10 @@ export default function TalkList({
         suggestions={suggestions}
         onSuggest={assist.replaceQuery}
         rows={rows}
-        view={view}
-        isEmptyVault={talks.length === 0 && folders.length === 0}
+        trees={trees}
+        vaults={vaults}
+        sectionCollapsed={sectionCollapsed}
+        isEmptyVault={vaults.length === 0}
         viewMode={viewMode}
         naming={naming}
         collapsed={collapsed}
@@ -666,6 +826,10 @@ export default function TalkList({
         onScroll={handleTreeScroll}
         cb={treeCallbacks}
       />
+
+      <button type="button" className="tl-addvault" onClick={() => onAddVault?.()} data-add-vault>
+        <IcPlus size={11} />Add vault…
+      </button>
 
       <div className="tl-keybar" aria-hidden>
         <span><b>↑↓</b>navigate</span>
@@ -704,13 +868,17 @@ export default function TalkList({
       )}
       {menu?.kind === 'folder' && (
         <FolderContextMenu x={menu.x} y={menu.y} startAtFirst={!!menu.viaKeyboard} onClose={() => setMenu(null)}
-          onAction={(a) => actions.onFolderAction(menu.topic, a)} />
+          onAction={(a) => actions.onFolderAction(menu.topic, a, menu.vaultId)} />
+      )}
+      {menu?.kind === 'vault' && (
+        <VaultContextMenu x={menu.x} y={menu.y} open={vaultById.get(menu.vaultId)?.open ?? false} unavailable={!!vaultById.get(menu.vaultId)?.unavailable} startAtFirst={!!menu.viaKeyboard}
+          onClose={() => setMenu(null)} onAction={(a) => onVaultAction(menu.vaultId, a)} />
       )}
       {moveMenu && (
         <MoveMenu
           x={moveMenu.x} y={moveMenu.y}
-          topics={allTopics}
-          currentTopic={topicOf(moveMenu.talk, vaultRoot)}
+          topics={topicsForMove(moveMenu.talk)}
+          currentTopic={topicOf(moveMenu.talk, rootOfTalk(moveMenu.talk))}
           onClose={() => setMoveMenu(null)}
           onPick={(topic) => { const t = moveMenu.talk; setMoveMenu(null); void actions.doMove(t, topic) }}
         />

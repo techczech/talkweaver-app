@@ -107,7 +107,8 @@ export function createInstantSlideSurface(mount, options = {}) {
         image.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(slide.qrSvg);
       }
     } else {
-      add('div', 'instant-slide-kicker', slide.kind === 'time' ? 'Current time' : (slide.label || 'Countdown'), content);
+      const label = slide.kind === 'countdown' ? String(slide.label || '').trim() : '';
+      if (label) add('div', 'instant-slide-kicker', label, content);
       if (slide.kind === 'countdown') add('div', 'instant-slide-timeup', "Time’s up", content);
       add('div', 'instant-slide-digits', '', content);
       if (slide.kind === 'countdown') {

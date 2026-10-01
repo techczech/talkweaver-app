@@ -340,13 +340,18 @@ const BINDING_MAP = new Map([
   ['src/renderer/src/App.tsx', ['app.sidebar-talks', 'app.sidebar-outline', 'app.sidebar-toggle', 'app.settings']],
   ['src/renderer/src/components/ArchiveImageSearch.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
   ['src/renderer/src/components/CommandMenu.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
+  // The option controls the Inspector draws (the file no longer holds the ⌘L palette): ← → Space Enter within a group.
   ['src/renderer/src/components/CommandPalette.tsx', ['picker.navigate', 'picker.choose', 'picker.close', 'picker.toggle']],
   ['src/renderer/src/components/Editor.tsx', ['app.help', 'editor.rollback-trigger', 'editor.list-continue']],
   ['src/renderer/src/components/GridView.tsx', ['browser.move', 'browser.open']],
+  // The docked layout picker (ADR-0032): its own scope, the keyboard map of the locked mockup.
+  ['src/renderer/src/components/LayoutPickerColumn.tsx', ['layout-picker.try', 'layout-picker.along', 'layout-picker.next-group', 'layout-picker.keep', 'layout-picker.keep-starter', 'layout-picker.put-back']],
   ['src/renderer/src/components/History.tsx', ['browser.move', 'browser.open', 'browser.close']],
   ['src/renderer/src/components/Importer.tsx', ['importer.move', 'importer.flagged', 'importer.search', 'importer.apply', 'importer.reset', 'importer.views', 'importer.help', 'importer.close']],
   ['src/renderer/src/components/IconPicker.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
   ['src/renderer/src/components/Inspector.tsx', ['app.inspector-slides', 'app.inspector-steps']],
+  // The Inspector's option pictures (ADR-0032 §7): ← → within a group, ↵/Space choose — the same keys as its other option controls.
+  ['src/renderer/src/components/InspectorOptionPictures.tsx', ['picker.navigate', 'picker.choose', 'picker.toggle']],
   ['src/renderer/src/components/InsertViewer.tsx', ['browser.move', 'browser.open', 'browser.close', 'browser.insert', 'browser.toggle-selection']],
   ['src/renderer/src/components/MergeConfirm.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
   ['src/renderer/src/components/MetadataPanel.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
@@ -355,7 +360,7 @@ const BINDING_MAP = new Map([
   ['src/renderer/src/components/SearchPalette.tsx', ['browser.move', 'browser.insert', 'browser.preview', 'browser.toggle-selection', 'browser.close']],
   ['src/renderer/src/components/SettingsPanel.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
   // The ⌘S slide picker: its own scope; the key-truth check below holds it to exactly these keys.
-  ['src/renderer/src/components/SlideBrowser.tsx', ['slide-picker.move', 'slide-picker.extend', 'slide-picker.view', 'slide-picker.tab', 'slide-picker.close', 'slide-picker.clear-scope', 'slide-picker.toggle-selection', 'slide-picker.select-section', 'slide-picker.insert', 'slide-picker.select-whole-section', 'slide-picker.tags', 'slide-picker.preview', 'slide-picker.versions', 'slide-picker.near', 'slide-picker.density', 'slide-picker.rail', 'slide-picker.talk-beside', 'slide-picker.close-beside']],
+  ['src/renderer/src/components/slide-browser/useSlideBrowserKeys.ts', ['slide-picker.move', 'slide-picker.extend', 'slide-picker.view', 'slide-picker.tab', 'slide-picker.close', 'slide-picker.clear-scope', 'slide-picker.toggle-selection', 'slide-picker.select-section', 'slide-picker.insert', 'slide-picker.select-whole-section', 'slide-picker.tags', 'slide-picker.preview', 'slide-picker.versions', 'slide-picker.near', 'slide-picker.density', 'slide-picker.rail', 'slide-picker.talk-beside', 'slide-picker.close-beside']],
   ['src/renderer/src/components/SlideFocus.tsx', ['browser.move', 'browser.open', 'browser.close']],
   ['src/renderer/src/components/SlidesOrganizer.tsx', ['browser.move', 'browser.open', 'browser.close']],
   ['src/renderer/src/components/Studio.tsx', ['app.help', 'browser.move', 'browser.open', 'browser.close']],
@@ -384,6 +389,8 @@ const SCAN_IGNORE = new Map([
   ['src/renderer/src/components/actionBar/ActionBar.tsx', 'Escape only dismisses the visible tooltip or overflow menu; no shortcut is bound'],
   ['src/renderer/src/components/AbstractPanel.tsx', 'Escape-only modal dismissal and Enter on a native form control'],
   ['src/renderer/src/components/DeckDesignPanel.tsx', 'Escape-only modal dismissal'],
+  ['src/renderer/src/components/InspectorBoard.tsx', 'The Board section’s fields keep their own typing (Enter stays in the one-line instructions; ↑ ↓ on a column’s handle moves that column, ADR-0032 round-3 A2); ⌥↑/⌥↓ still reach the Inspector’s slide navigation; no shortcut is bound'],
+  ['src/renderer/src/components/ReactionsControl.tsx', 'Enter on the native custom-labels field commits it (ticket 04); no shortcut is bound'],
   ['src/renderer/src/components/EmbedCheckPanel.tsx', 'Escape-only panel dismissal'],
   ['src/renderer/src/components/ExplainPanel.tsx', 'Escape-only panel dismissal'],
   ['src/renderer/src/components/ImageMetaPanel.tsx', 'Escape-only panel dismissal'],
@@ -393,6 +400,14 @@ const SCAN_IGNORE = new Map([
   ['src/renderer/src/components/OutlineDiskChangeBar.tsx', 'Escape-only dismissal of the changed-on-disk sheet (answers Stay here); no shortcut is bound'],
   ['src/preload/present-close-flow.ts', 'Escape-only dismissal and a Tab focus trap inside the close-presentation dialog; no app shortcut is bound'],
   ['src/renderer/src/components/ToolbarMenu.tsx', 'Escape-only generic toolbar-menu dismissal'],
+  ['src/renderer/src/components/slide-browser/TopBar.tsx', 'Enter on the settings-glimpse gear (a role=button div) toggles its popover; no shortcut is bound'],
+  ['src/renderer/src/components/talklist/VaultSheet.tsx', 'Escape dismissal and Cmd+Enter to submit the Add vault / Edit this vault sheet (several-vaults ticket 04, modal, local); no shortcut is bound'],
+  ['src/renderer/src/components/ConflictCompare.tsx', 'Escape-only dismissal of the conflict compare screen (several-vaults ticket 10; same as Cancel, writes nothing); no shortcut is bound'],
+  ['src/renderer/src/components/talklist/ShowFilter.tsx', 'Escape-only dismissal of the Show menu popover (several-vaults ticket 07); no shortcut is bound'],
+  ['src/renderer/src/components/PlanRunSheet.tsx', 'Escape dismissal, Enter in the event field and Cmd+Enter to save in the plan sheet (modal, local)'],
+  ['src/renderer/src/components/RunStatusChips.tsx', 'Escape-only dismissal of the Run chip popover'],
+  ['src/renderer/src/components/HistoryRunBoard.tsx', 'Escape-only dismissal of the Copy as Markdown popover and the share-link dialog (feedback-boards ticket 06); no shortcut is bound'],
+  ['src/preload/present-end-live-boards.ts', 'Escape cancels and Enter confirms the End live board question (D20, modal, local); no app shortcut is bound'],
   ['src/renderer/src/components/ShareSheet.tsx', 'Escape-only share-sheet dismissal (share for comments)'],
   ['src/renderer/src/extensions/frontmatterTable.ts', 'Escape-only dismissal of the metadata row\'s "?" help block (T27); no shortcut is bound'],
   ['src/renderer/src/components/WhereUsedPanel.tsx', 'Escape-only panel dismissal'],
@@ -521,7 +536,10 @@ const PRESENTER_KEY_REGIONS = [
   ['present-rec-ui', readFileSync(join(root, 'src/preload/present-rec-ui.ts'), 'utf8'), "window.addEventListener('keydown', (e: KeyboardEvent) => {", '}, true)'],
   ['present-live-bridge', readFileSync(join(root, 'src/preload/present-live-bridge.ts'), 'utf8'), "window.addEventListener('keydown', (event) => {", '}, true)'],
   ['present-edit-bridge', readFileSync(join(root, 'src/preload/present-edit-bridge.ts'), 'utf8'), "'keydown',", 'true\n  )'],
-  ['deck-window-keys', readFileSync(join(root, 'src/main/deck-window-keys.ts'), 'utf8'), 'export function', '\n}']
+  ['deck-window-keys', readFileSync(join(root, 'src/main/deck-window-keys.ts'), 'utf8'), 'export function', '\n}'],
+  // The board panel (feedback-boards ticket 05): inlined into the presenter template, so its keys are
+  // the template's own (no preload needed).
+  ['template board panel', readFileSync(join(root, 'compiler/assets/runtime/board-panel.js'), 'utf8'), 'function boardUndoKey(event) {', '\n  return {']
 ]
 const KEY_COMPARISON = /\b(?:key|code|e\.key|event\.key|event\.code|input\.key)(?:\.toLowerCase\(\))?\s*[!=]==\s*['"]|\.test\((?:key|e\.key|event\.key)\)|new Set\(\[\s*["']|(?<!function )isTalkQrKey\(event\)|addEventListener\('paste'/
 // [region, line pattern, registry ids]. An empty id list needs `!isPresenter` in the line.
@@ -535,6 +553,7 @@ const PRESENTER_KEY_CLAIMS = [
   ['template handleKey', /event\.key === "F5"/, ['presenter.audience']],
   ['template handleKey', /event\.key === "\?"/, ['presenter.help']],
   ['template handleKey', /key === "k" \|\| key === "K"/, ['presenter.poll-compose']],
+  ['template handleKey', /key === "a" \|\| key === "A"/, ['presenter.questions']],
   ['template handleKey', /key === "q" \|\| key === "Q"/, ['presenter.poll-primary', 'presenter.poll-reveal']],
   ['template handleKey', /const nextKeys = |const nextCodes = /, ['presenter.next']],
   ['template handleKey', /const previousKeys = |const previousCodes = /, ['presenter.previous']],
@@ -591,6 +610,14 @@ const PRESENTER_KEY_CLAIMS = [
   ['present-live-bridge', /event\.key === 'g' \|\| event\.key === 'G'/, ['presenter.live']],
   ['present-edit-bridge', /e\.key !== 'e' && e\.key !== 'E'/, ['presenter.edit']],
   // F5 opens the audience view; ⇧F5 refreshes (the routes themselves: deckWindowKeyTruth below).
+  // The board panel: ⌘Z undoes the last board change while it shows; ⌥↵ picks up and drops; Esc
+  // closes its menu, puts a held card down or leaves full screen; ↵ / Space on a card open its menu
+  // (on a button they press it); in the board's own window Q opens or closes the board, as beside the slide.
+  ['template board panel', /event\.key\.toLowerCase\(\) === 'z'/, ['presenter.board-undo']],
+  ['template board panel', /event\.key === 'Enter'\) \{/, ['presenter.board-pick']],
+  ['template board panel', /event\.key === 'Enter' \|\| event\.key === ' '/, ['picker.choose']],
+  ['template board panel', /event\.key === 'q' \|\| event\.key === 'Q'/, ['presenter.poll-primary']],
+  ['template board panel', /event\.key === 'Escape'/, ['presenter.close']],
   ['deck-window-keys', /input\.key === 'F5'/, ['presenter.audience', 'presenter.refresh']],
   ['deck-window-keys', /input\.key\.toLowerCase\(\) === 'r'/, ['presenter.refresh']]
 ]
@@ -720,7 +747,7 @@ if (deckTruth.problems.length === 0) ok(`${deckTruth.routed} presenter-window ke
 // A rebindable key is compared through surfaceKey(event, '<local id>'); its claim must name the
 // registry id that local id stands for (src/renderer/src/keymap/surfaceKeys.ts).
 console.log('Slide picker and file list key truth:')
-const slideBrowserSource = readFileSync(join(root, 'src/renderer/src/components/SlideBrowser.tsx'), 'utf8')
+const slideBrowserSource = readFileSync(join(root, 'src/renderer/src/components/slide-browser/useSlideBrowserKeys.ts'), 'utf8')
 const findTalkSource = readFileSync(join(root, 'src/renderer/src/components/browser-rail/FindTalk.tsx'), 'utf8')
 const talkPanelSource = readFileSync(join(root, 'src/renderer/src/components/talklist/useKeyboard.ts'), 'utf8')
 const surfaceKeysSource = readFileSync(join(root, 'src/renderer/src/keymap/surfaceKeys.ts'), 'utf8')
@@ -905,6 +932,17 @@ for (const [id, keys] of [['presenter.record', '⇧R'], ['presenter.record-pause
 assert.equal(presenterScope.some((entry) => entry.keys === 'N' || entry.keys === 'C'), false, 'the presenter scope does not list N or C (they do nothing in the presenter)')
 const { PRESENTER_CONTROLS: presenterControls } = await import(new URL('../src/shared/presenter-controls.ts', import.meta.url))
 assert.equal(presenterControls.some((control) => 'unregisteredKeys' in control), false, 'every presenter control takes its keys from the registry (no unregisteredKeys)')
+
+// Fix round 4: the Inspector's option pictures declare their own shortcut ids, not the pickers'.
+{
+  const pictures = readFileSync(join(root, 'src/renderer/src/components/InspectorOptionPictures.tsx'), 'utf8')
+  const declared = [...pictures.matchAll(/shortcut-id:\s*([^\n—]+)/g)].flatMap((match) => match[1].trim().split(/\s+/))
+  assert.deepEqual(declared.sort(), ['inspector.option-pictures-choose', 'inspector.option-pictures-move'], 'option pictures declare only their own ids')
+  for (const id of declared) {
+    const entry = SHORTCUT_REGISTRY.find((candidate) => candidate.id === id)
+    assert.equal(entry?.scope, 'inspector', `${id} is registered in the inspector scope`)
+  }
+}
 
 const { renderTemplateWithShortcutHelp, renderIconsModule, iconsModulePath } = await import('./build-shortcut-help.mjs')
 const templatePath = join(root, 'compiler/assets/templates/presenter-popup-single-html.html')

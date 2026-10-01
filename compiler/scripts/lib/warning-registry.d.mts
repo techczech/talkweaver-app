@@ -12,6 +12,7 @@ export const WARNING_SURFACES: WarningSurface[]
 export const WARNING_REGISTRY: WarningDefinition[]
 export function warningDefinition(rawWarning: string): WarningDefinition | null
 export function formatWarning(rawWarning: string): string
+export function textTooTallPercent(rawWarning: string): number | null
 export function warningsForSurface(rawWarnings: string[] | null | undefined, surface: WarningSurface): string[]
 export function warningBadgesForSurface(
   rawWarnings: string[] | null | undefined,

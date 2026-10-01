@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { TalkSearchResult } from '../../../../shared/talk-search'
+import { emptyTalkSearchResult, mergeTalkSearchResults, type TalkSearchResult } from '../../../../shared/talk-search'
 import { hasSearchTerms } from '../../../../shared/talk-query'
 
 // The one talk-search call of the renderer (ADR-0029 §1): the Talks browser's search box and the
@@ -22,28 +22,38 @@ export interface TalkSearchState {
   settled: boolean
 }
 
-export function useTalkSearch({ query, within = '', talksVersion }: {
+/** One result from several vaults' results: hits in vault order, counts added. */
+export const mergeSearchResults = mergeTalkSearchResults
+
+export function useTalkSearch({ query, within = '', vaultIds, talksVersion }: {
   query: string
   /** Limit to this folder (vault-relative) and its subfolders; '' = everywhere. */
   within?: string
+  /** Search these open vaults (results are merged, in this order); omitted = the first open vault;
+   *  an empty list searches nothing (every shown vault is unavailable, ticket 07). */
+  vaultIds?: string[]
   /** Changes when the vault's talk list does: the search is re-run. */
   talksVersion: unknown
 }): TalkSearchState {
   const searching = hasSearchTerms(query)
+  const vaultKey = vaultIds ? vaultIds.join('\u001f') : ''
+  const noVaults = !!vaultIds && vaultIds.length === 0
   const [result, setResult] = useState<TalkSearchResult | null>(null)
   const [tick, setTick] = useState(0)
   useEffect(() => {
     if (!searching) { setResult(null); return }
+    if (noVaults) { setResult(emptyTalkSearchResult(query, within)); return }
     let cancelled = false
     const id = window.setTimeout(() => {
-      window.tw.talks.search(query, within ? { within } : {})
-        .then((next) => { if (!cancelled) setResult(next) })
+      const ids = vaultKey ? vaultKey.split('\u001f') : [undefined]
+      Promise.all(ids.map((vaultId) => window.tw.talks.search(query, { ...(within ? { within } : {}), ...(vaultId ? { vaultId } : {}) })))
+        .then((all) => { if (!cancelled && all.length) setResult(mergeSearchResults(all)) })
         .catch(() => { /* a failed search leaves the last result up */ })
     }, result ? SEARCH_DEBOUNCE_MS : 0)
     return () => { cancelled = true; window.clearTimeout(id) }
     // result is read only to pick the delay; a new result must not re-run the search.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, searching, within, talksVersion, tick])
+  }, [query, searching, within, vaultKey, noVaults, talksVersion, tick])
   const stillReading = !!result && result.slideText.read < result.slideText.total
   useEffect(() => {
     if (!searching || !stillReading) return

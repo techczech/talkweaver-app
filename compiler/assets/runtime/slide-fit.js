@@ -42,12 +42,120 @@ function createSlideFit() {
   // single token cannot fit. Runs before autofitContent so the slide-level fit measures the
   // already-fitted title.
   const TITLE_FIT_FLOOR = 0.6; // never shrink a title below 60% of its authored size
+  const TITLE_MAX_LINES = 5; // ADR-0033 §6: a title may wrap to five lines at normal size
+  const TITLE_SHORT_WORDS = new Set(["a", "an", "the", "at", "of", "in", "on", "to", "and", "or", "for", "by", "with", "is"]);
+  const NBSP = "\u00a0";
+  // Every no-break space the compiler wrote in a title (ADR-0028 §10 last-two-words join, ADR-0033 §7
+  // short-word ties), in reading order. A tie is a no-break space right after a short word; the
+  // last-two-words join is any other one. (When the last pair starts with a short word the two
+  // coincide, and releasing it is the same either way.)
+  const titleSites = new WeakMap();
+  function findTitleSites(h1) {
+    const sites = [];
+    const walker = document.createTreeWalker(h1, NodeFilter.SHOW_TEXT);
+    for (let node; (node = walker.nextNode());) {
+      for (let i = 0; i < node.data.length; i++) {
+        if (node.data[i] !== NBSP) continue;
+        let start = i;
+        while (start > 0 && !/[\s\u00a0]/.test(node.data[start - 1])) start--;
+        const word = node.data.slice(start, i).replace(/^["'\u2018\u201c(\[]+/, "").toLowerCase();
+        sites.push({ node, index: i, tie: TITLE_SHORT_WORDS.has(word) });
+      }
+    }
+    return sites;
+  }
+  function setSite(site, joined) {
+    const c = joined ? NBSP : " ";
+    if (site.node.data[site.index] !== c) site.node.data = site.node.data.slice(0, site.index) + c + site.node.data.slice(site.index + 1);
+  }
+  function sitesOf(h1) {
+    let sites = titleSites.get(h1);
+    if (!sites || sites.some((site) => !h1.contains(site.node))) {
+      sites = findTitleSites(h1);
+      titleSites.set(h1, sites);
+    }
+    return sites;
+  }
+  // A Range's line boxes. Every browser has getClientRects; a DOM without layout (jsdom, where the
+  // handout page is tested) does not, and there nothing is measured: no line boxes, so no fit change.
+  function rangeRects(range) {
+    return typeof range.getClientRects === "function" ? range.getClientRects() : [];
+  }
+  function titleLineCount(h1) {
+    const range = document.createRange();
+    range.selectNodeContents(h1);
+    const scale = canvasScale(h1);
+    const tops = new Set([...rangeRects(range)].filter((r) => r.width > 0.5 && r.height > 0.5).map((r) => Math.round(r.top / scale / 4)));
+    return tops.size;
+  }
+  // ADR-0033 §7 / §6, judged against the real line breaks. The compiler binds each short word to the
+  // next and joins the last two words, without knowing the column. Here every bond is kept unless
+  // keeping it makes the title wider than its column (an unbreakable run, ADR-0033 §6: the last-two
+  // join is dropped first) or leaves a word alone on a line (§7): then the bond whose release helps
+  // most gives way, one at a time and only while that lowers the score (a title wider than its column
+  // scores far above any count of one-word lines; on equal scores the last-two join goes before a
+  // short-word tie, so no short word is left ending a line, then reading order). Released ties are counted in data-short-word-give-way.
+  // A rail title keeps the rail's inner padding (stage.css @order 1349): its box may not reach into
+  // the head's right padding. An unbreakable run (bound short words) wider than the padded rail
+  // stretches the h1's grid item past it, where scrollWidth - clientWidth reads 0 and the last line
+  // touched the rail edge. Returns how many canvas px the title box reaches into that padding.
+  function railPaddingExcess(h1) {
+    const slide = h1.closest(".slide");
+    const head = h1.closest(".slide-head");
+    if (!slide || !head || slide.dataset.titleLayout !== "left") return 0;
+    const scale = canvasScale(h1);
+    const limit = head.getBoundingClientRect().right - (parseFloat(getComputedStyle(head).paddingRight) || 0) * scale;
+    return (h1.getBoundingClientRect().right - limit) / scale;
+  }
+  function titleExcess(h1) {
+    return Math.max(h1.scrollWidth - h1.clientWidth, railPaddingExcess(h1));
+  }
+  function titleScore(h1) {
+    const excess = titleExcess(h1);
+    // A one-word line counts unless the word takes half the column or more: nothing else could share
+    // that line, so binding a short word to it has not stranded anything (the rail is ~14 characters).
+    return oneWordScore(h1, 0.5 * h1.clientWidth * canvasScale(h1)) + (excess > 1 ? 1000 + excess : 0);
+  }
+  function settleTitle(h1) {
+    if (!h1) return;
+    const sites = sitesOf(h1);
+    sites.forEach((site) => setSite(site, true));
+    delete h1.dataset.nbJoin;
+    delete h1.dataset.shortWordGiveWay;
+    let score = titleScore(h1);
+    const order = [...sites.filter((site) => !site.tie), ...sites.filter((site) => site.tie)];
+    const released = new Set();
+    while (score > 0) {
+      let best = null;
+      for (const site of order) {
+        if (released.has(site)) continue;
+        setSite(site, false);
+        const trial = titleScore(h1);
+        setSite(site, true);
+        if (trial < score && (!best || trial < best.score)) best = { site, score: trial };
+      }
+      if (!best) break;
+      setSite(best.site, false);
+      released.add(best.site);
+      score = best.score;
+    }
+    const ties = [...released].filter((site) => site.tie).length;
+    if (ties) h1.dataset.shortWordGiveWay = String(ties);
+    if ([...released].some((site) => !site.tie)) h1.dataset.nbJoin = "released";
+  }
+  // Title-fit (ADR-0033 §6): a title keeps its normal size and WRAPS (settleTitle has already let the
+  // bonds give way where a title was wider than its column). Only when it still overflows, or
+  // needs more than TITLE_MAX_LINES lines, does it shrink, in ~3% steps, never below TITLE_FIT_FLOOR
+  // of its authored size. The shrink is an inline px font-size, cleared and recomputed each pass so it
+  // re-runs correctly on resize, slide change and presenter-preview clone.
   function fitTitle(h1) {
     if (!h1) return;
     h1.style.fontSize = ""; // reset to the stylesheet (clamp) size, then measure
-    // A title overflows when its content is wider than its content box. clientWidth excludes
-    // any (zero here) scrollbar; scrollWidth is the laid-out content width including overflow.
-    if (h1.scrollWidth - h1.clientWidth <= 1) return; // wraps/fits at authored size — leave it
+    // A title overflows a column when its content is wider than its content box. clientWidth
+    // excludes any (zero here) scrollbar; scrollWidth is the laid-out content width.
+    const tooWide = () => titleExcess(h1) > 1;
+    const over = () => tooWide() || titleLineCount(h1) > TITLE_MAX_LINES;
+    if (!over()) return; // wraps/fits at authored size — leave it
     const base = parseFloat(getComputedStyle(h1).fontSize);
     if (!base) return;
     const minSize = base * TITLE_FIT_FLOOR;
@@ -56,11 +164,11 @@ function createSlideFit() {
     for (let i = 0; i < 40 && size > minSize; i++) {
       size = Math.max(minSize, size * 0.97);
       h1.style.fontSize = size + "px";
-      if (h1.scrollWidth - h1.clientWidth <= 1) break;
+      if (!over()) break;
     }
   }
   function fitTitles(root = document) {
-    root.querySelectorAll(".slide.active .slide-content h1:not(.sr-only)").forEach(fitTitle);
+    root.querySelectorAll(".slide.active .slide-content h1:not(.sr-only)").forEach((h1) => { settleTitle(h1); fitTitle(h1); });
   }
 
   // ADR-0023 §9: every quote panel has ONE width and ONE type size; the compiler splits a long
@@ -147,12 +255,39 @@ function createSlideFit() {
   // PowerPoint-style autofit: shrink the active slide's content so nothing is ever
   // clipped by the stage. Applied as an inline `zoom` on .slide-content (Chrome/Safari
   // re-lay-out cleanly under zoom, and getBoundingClientRect reflects the scaled box).
-  // Floor at 0.45 — below that text is unusable, so we accept a small clip rather than
-  // shrinking to nothing. Print never autofits (see beforeprint handler).
+  // ADR-0033 §1: the zoom may never take rendered text below the type floor (1.9375cqw, 37.2px at
+  // 1920). When the content still overflows at the floor, zoom stays 1 and the slide is marked
+  // data-text-fit="too-long" (with data-text-too-tall = how many percent too tall); the compiler and
+  // the editor raise the `text-too-long` warning. AUTOFIT_FLOOR is the outer bound on the factor.
+  // Print never autofits (see beforeprint handler).
   const AUTOFIT_FLOOR = 0.45;
+  const TYPE_FLOOR_CQW = 1.9375;
+  // Deliberate presentation chrome that is allowed below the floor (mirrors the Layout Doctor's
+  // smallChromeSelectors in scripts/layout-doctor-render.mjs).
+  const SMALL_CHROME = ".sr-only, .kicker, .compare-label, .quote-continuation, .code-lang, .poll-frame-eyebrow, .poll-frame-kind, .poll-frame-sep, .poll-frame-chip, .poll-frame-join-note, .qr-caption, .footer, .gallery-nav, .lightbox-nav";
+  // The smallest rendered running-text size (canvas px) inside `content`, or 0 when it has no text.
+  function smallestTextPx(content) {
+    let smallest = 0;
+    const seen = new Set();
+    const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+    for (let node; (node = walker.nextNode());) {
+      if (!node.data.trim()) continue;
+      const el = node.parentElement;
+      if (!el || seen.has(el)) continue;
+      seen.add(el);
+      if (el.closest(SMALL_CHROME) || el.closest("[hidden], script, style")) continue;
+      const cs = getComputedStyle(el);
+      if (cs.display === "none" || cs.visibility === "hidden") continue;
+      const px = parseFloat(cs.fontSize);
+      if (px > 0 && (!smallest || px < smallest)) smallest = px;
+    }
+    return smallest;
+  }
   function autofitContent(content) {
     if (!content) return;
     content.style.zoom = "";
+    delete content.dataset.textFit;
+    delete content.dataset.textTooTall;
     // A quote that still overflows at 31px is reported by the compiler. Whole-slide zoom would
     // silently violate that floor, so leave the exception visible at its accessible type size.
     if (content.querySelector('blockquote[data-quote-fit="too-long"], .slide-code[data-code-fit="too-long"]')) return;
@@ -178,6 +313,15 @@ function createSlideFit() {
     // overflow (≥ 1px past the box) triggers the zoom.
     if (contentH <= Math.ceil(availH) && contentW <= Math.ceil(availW)) return; // fits: leave at zoom 1
     const factor = Math.max(AUTOFIT_FLOOR, Math.min(availH / contentH, availW / contentW, 1));
+    // The zoom applies only while the smallest text stays at or above the type floor.
+    const floorPx = slide.clientWidth * TYPE_FLOOR_CQW / 100;
+    const smallest = smallestTextPx(content);
+    if (smallest && smallest * factor < floorPx - 0.01) {
+      content.dataset.textFit = "too-long";
+      const ratio = Math.max(contentH / availH, contentW / availW);
+      content.dataset.textTooTall = String(Math.max(1, Math.round((ratio - 1) * 100)));
+      return;
+    }
     content.style.zoom = String(factor);
   }
 
@@ -203,7 +347,7 @@ function createSlideFit() {
     }
     return site;
   }
-  function oneWordScore(el) {
+  function oneWordScore(el, excuseWidth = 0) {
     const rows = [];
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     const range = document.createRange();
@@ -211,19 +355,25 @@ function createSlideFit() {
       for (let i = 0; i < node.data.length; i++) {
         range.setStart(node, i);
         range.setEnd(node, i + 1);
-        const rect = range.getClientRects()[0];
+        const rect = rangeRects(range)[0];
         if (!rect || !rect.height) continue;
         const mid = rect.top + rect.height / 2;
         const row = rows.find((candidate) => Math.abs(candidate.mid - mid) < rect.height / 3);
-        if (row) row.text += node.data[i];
-        else rows.push({ mid, text: node.data[i] });
+        if (row) {
+          row.text += node.data[i];
+          row.left = Math.min(row.left, rect.left);
+          row.right = Math.max(row.right, rect.right);
+        } else rows.push({ mid, text: node.data[i], left: rect.left, right: rect.right });
       }
     }
-    const lines = rows.sort((a, b) => a.mid - b.mid).map((row) => row.text.trim()).filter(Boolean);
+    const sorted = rows.sort((a, b) => a.mid - b.mid).filter((row) => row.text.trim());
+    const lines = sorted.map((row) => row.text.trim());
     if (lines.length < 2) return 0;
     let score = 0;
     lines.forEach((line, index) => {
       if (/[\s\u00a0]/.test(line)) return;
+      // A word that fills excuseWidth or more of the column could not share its line anyway: not a stranded word.
+      if (excuseWidth && sorted[index].right - sorted[index].left >= excuseWidth) return;
       score += index === lines.length - 1 ? 1 : 2;
     });
     return score;
@@ -268,7 +418,7 @@ function createSlideFit() {
   function statementLines(p, scale) {
     const range = document.createRange();
     range.selectNodeContents(p);
-    const rects = [...range.getClientRects()].filter((rect) => rect.width > 0.5 && rect.height > 0.5);
+    const rects = [...rangeRects(range)].filter((rect) => rect.width > 0.5 && rect.height > 0.5);
     if (!rects.length) return { count: 0, width: 0 };
     const tops = new Set(rects.map((rect) => Math.round(rect.top / scale)));
     const width = (Math.max(...rects.map((rect) => rect.right)) - Math.min(...rects.map((rect) => rect.left))) / scale;
@@ -389,7 +539,7 @@ function createSlideFit() {
         text.style.setProperty("overflow-wrap", "normal", "important");
         range.selectNodeContents(text);
         let right = -Infinity;
-        for (const rect of range.getClientRects()) if (rect.width > 0) right = Math.max(right, rect.right / scale);
+        for (const rect of rangeRects(range)) if (rect.width > 0) right = Math.max(right, rect.right / scale);
         if (wrap) text.style.setProperty("overflow-wrap", wrap, wrapPriority);
         else text.style.removeProperty("overflow-wrap");
         return right > limit;
@@ -434,8 +584,12 @@ function createSlideFit() {
     // ADR-0028 §5: an icon row joins the seam too — its item padding, heading-to-items gap and item
     // lines ride --list-gap / --list-lh and its type --fs-body (skin/icon-row.css), so it spends
     // spacing, then type, before autofitContent may zoom the whole slide.
-    const hasList = content.querySelector(":scope > .feature-list, :scope > .slot > .slot-copy .feature-list, :scope > ul:not(.timeline), :scope > ol:not(.timeline), :scope > .slide-table, :scope > .slot > .slot-copy .slide-table, :scope > .poll-frame ol.poll-frame-options, :scope > .poll-frame ol.poll-frame-matrix, :scope > .icon-row");
-    if (!hasList || content.querySelector(".card-gallery, .timeline")) return;
+    const hasList = content.querySelector(":scope > .feature-list, :scope > .slot > .slot-copy .feature-list, :scope > ul:not(.timeline), :scope > ol:not(.timeline), :scope > .slide-table, :scope > .slot > .slot-copy .slide-table, :scope > .poll-frame ol.poll-frame-options, :scope > .poll-frame ol.poll-frame-matrix, :scope > .icon-row, :scope > .timeline-rail");
+    if (!hasList || content.querySelector(".card-gallery, .timeline:not(.timeline-rail)")) return;
+    // A rail timeline (ADR-0033 §8: entries at body size) is a stack of stops that can outgrow the
+    // band. Its size is --fs-body only (skin/timeline.css @order 1446), so it skips the leading and
+    // gap steps, which it does not read, and steps its type down toward the floor before any zoom.
+    const railTimeline = !!content.querySelector(":scope > .timeline-rail");
     const slide = content.closest(".slide");
     if (!slide) return;
     // Measure unzoomed: a whole-slide zoom carried from the previous pass would rescale every rect
@@ -499,18 +653,18 @@ function createSlideFit() {
     if (!overflows()) { content.dataset.listFit = "base"; return; }
     const startLh = parseFloat(getComputedStyle(content).getPropertyValue("--list-lh")) || 1.35;
     const startGap = parseFloat(getComputedStyle(content).getPropertyValue("--list-gap")) || 1;
-    let lh = startLh;
+    let lh = railTimeline ? LIST_LH_MIN : startLh;
     while (lh > LIST_LH_MIN + 1e-6 && overflows()) {
       lh = Math.max(LIST_LH_MIN, Math.round((lh - 0.02) * 100) / 100);
       content.style.setProperty("--list-lh", String(lh));
     }
-    if (!overflows()) { content.dataset.listFit = "leading"; return; }
-    let gap = startGap;
+    if (!railTimeline && !overflows()) { content.dataset.listFit = "leading"; return; }
+    let gap = railTimeline ? gapMin : startGap;
     while (gap > gapMin + 1e-6 && overflows()) {
       gap = Math.max(gapMin, Math.round((gap - 0.06) * 100) / 100);
       content.style.setProperty("--list-gap", String(gap));
     }
-    if (!overflows()) { content.dataset.listFit = "gap"; return; }
+    if (!railTimeline && !overflows()) { content.dataset.listFit = "gap"; return; }
     const probe = document.createElement("span");
     probe.style.cssText = "position:absolute;visibility:hidden;font-size:var(--fs-body)";
     content.appendChild(probe);
@@ -540,7 +694,7 @@ function createSlideFit() {
     fitCodes(content);
     // Fit the title to its column BEFORE the slide-level autofit, so the zoom factor is
     // computed from the already-fitted layout (a fitted title may remove the need to zoom).
-    content.querySelectorAll("h1:not(.sr-only)").forEach((h1) => { h1.style.fontSize = ""; settleJoin(h1); fitTitle(h1); });
+    content.querySelectorAll("h1:not(.sr-only)").forEach((h1) => { h1.style.fontSize = ""; settleTitle(h1); fitTitle(h1); });
     // A long list spends its own slack (leading, gaps, then type to the floor) before the
     // whole-slide zoom is allowed to touch it.
     fitLists(content);

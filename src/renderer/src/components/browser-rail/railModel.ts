@@ -2,7 +2,7 @@
 // Composition law: Search finds · Scope pins places · Browse walks them · Filters narrow
 // by property. No React/DOM imports — keep this ERASABLE TypeScript (types only, no enums)
 // so a node test can strip-run it like slideBrowserModel.ts.
-import { type BrowserRow, isIconSlide } from '../slideBrowserModel'
+import { type BrowserRow, isIconSlide } from '../slideBrowserModel.ts'
 
 /* ============================================================
    Scope — full-width rows, never chips (taste rule)

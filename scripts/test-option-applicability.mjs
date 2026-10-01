@@ -43,7 +43,7 @@ assert.deepEqual(undeclared, [], `every global option group declares appliesTo: 
 
 const KNOWN_FACETS = new Set([
   'kinds', 'layouts', 'excludeLayouts', 'titleRegimes', 'headingLevels',
-  'requiresChildren', 'requiresTokens', 'anyOf'
+  'requiresChildren', 'requiresTokens', 'anyOf', 'preworkKinds'
 ])
 const knownLayoutNames = new Set(LAYOUTS.map((entry) => entry.name))
 for (const group of GLOBAL_OPTION_GROUPS) {
@@ -102,6 +102,8 @@ const MEANINGLESS = [
   ['title-placement', 'section', 'a structural poster composes its whole stage'],
   ['title-placement', 'title', 'a structural poster composes its whole stage'],
   ['title-placement', 'quote', 'a hidden-regime layout has no placement to choose'],
+  ['title-look', 'quote', 'a hidden-regime layout draws no top title'],
+  ['title-look', 'section', 'a structural poster composes its whole stage'],
   ['title-display', 'closing', 'a structural poster has no heading to quieten'],
   ['section-label', 'section', 'the divider IS the section marker'],
   ['poll-type', 'title', 'a title poster carries nothing to answer']
@@ -323,21 +325,22 @@ function sectionsFor(layoutName, triggerLine, extra = {}) {
   ])
 }
 assert.deepEqual(sectionsFor('list', '{list}{iconlist}'), [
-  ['List', ['list-style', 'list-style>iconlist-variant', 'icon-level']],
+  ['Layout', ['list-style', 'list-style>iconlist-variant', 'icon-level']],
   ['Title', ['title-placement', 'title-display', 'font-title']],
-  ['Slide', ['background', 'font-body', 'media-placement', 'section-label', 'claim-style']],
+  ['Slide', ['background', 'font-body', 'media-placement', 'section-label', 'claim-style', 'narrow-columns']],
   ['Steps', ['arrival-mode', 'stepping']],
-  ['Poll', ['poll-type']]
+  ['Poll', ['poll-type']],
+  ['Audience', ['reactions']]
 ], 'an icon list: layout section first (an undeclared global, Claim style, falls into Slide) with the treatment under List style, then the fixed run in the drawn order')
-assert.deepEqual(sectionsFor('list', '{list}')[0], ['List', ['list-style', 'icon-level']],
+assert.deepEqual(sectionsFor('list', '{list}')[0], ['Layout', ['list-style', 'icon-level']],
   'the treatment is not offered while the decided style is not Icons')
 assert.deepEqual(sectionsFor('list', '{list}{icons=top}')[0],
-  ['List', ['list-style', 'list-style>iconlist-variant', 'icon-level']],
+  ['Layout', ['list-style', 'list-style>iconlist-variant', 'icon-level']],
   '{icons=top} switches the treatment on and it still nests under List style — the first group its rule reads')
-assert.deepEqual(sectionsFor('list', '{list}{poll=multiple}').at(-1),
+assert.deepEqual(sectionsFor('list', '{list}{poll=multiple}').find(([heading]) => heading === 'Poll'),
   ['Poll', ['poll-type', 'poll-type>poll-results', 'poll-type>pollselections']],
   'Poll results and the multiple-choice limit appear only on a poll, nested under Poll type')
-assert.deepEqual(sectionsFor('list', '{list}{poll=rating}').at(-1),
+assert.deepEqual(sectionsFor('list', '{list}{poll=rating}').find(([heading]) => heading === 'Poll'),
   ['Poll', ['poll-type', 'poll-type>poll-skip', 'poll-type>poll-results']],
   'rating adds the skip rule under Poll type')
 assert.deepEqual(sectionsFor(undefined, '', { headingLevel: 2 }).map(([heading]) => heading).includes('Slide'), true,
@@ -351,28 +354,33 @@ assert.deepEqual(
     section.heading, section.bindings.map(({ group }) => group.sectionLabel ?? group.label)
   ]),
   [
-    ['List', ['Style', 'Icon treatment', 'Icons on']],
+    ['Layout', ['Style', 'Icon treatment', 'Icons on']],
     ['Title', ['Placement', 'Display', 'Size']],
-    ['Slide', ['Background', 'Body size', 'Media', 'Section label', 'Claim style']],
+    ['Slide', ['Background', 'Body size', 'Media', 'Section label', 'Claim style', 'Narrow columns']],
     ['Steps', ['Arrival', 'Stepping']],
-    ['Poll', ['Type']]
+    ['Poll', ['Type']],
+    ['Audience', ['Reactions']]
   ],
   'inside a section each group carries the label the sheet draws — no “List —” prefix, no repeated section name'
 )
 assert.deepEqual(
   sectionedOptionGroups([{ group: treatmentGroup, source: 'global' }], 'Cards').map((section) => [section.id, section.heading]),
-  [['layout', 'Cards']],
+  [['layout', 'Layout']],
   'a global group a modifier entry adopts (iconlist → treatment) belongs to the layout section even without its parent'
 )
 for (const entry of layoutEntries) {
   const sections = sectionModelFor(entry.name, entry.trigger)
-  const order = ['layout', 'title', 'slide', 'steps', 'poll']
+  const order = ['layout', 'title', 'slide', 'steps', 'poll', 'audience', 'prework']
   const ids = sections.map((section) => section.id)
   assert.deepEqual(ids, order.filter((id) => ids.includes(id)), `${entry.name}: sections run in the fixed order`)
   if (entry.options?.length) {
-    assert.deepEqual([sections[0].id, sections[0].heading], ['layout', entry.label], `${entry.name}: its own groups come first, under its label`)
+    assert.deepEqual([sections[0].id, sections[0].heading], ['layout', 'Layout'], `${entry.name}: its own groups come first, under the Layout heading`)
   }
+  // Ticket 04: every slide can choose its reactions, so every layout ends with Audience › Reactions.
+  assert.deepEqual(sections.at(-1).bindings.map(({ group }) => group.key), ['reactions'], `${entry.name}: the Audience section closes the run`)
 }
+assert.deepEqual(sectionsFor(undefined, '', { headingLevel: 2 }).at(-1), ['Audience', ['reactions']],
+  'a ## section divider carries reactions too (title, section and closing slides have the standard set)')
 
 // -----------------------------------------------------------------------------
 // Report the resolved set for every layout, so a relevance regression is readable in CI output.

@@ -1,17 +1,17 @@
 // =============================================================================
 // test:timeline-stop-limit — slide design ticket 08 (ADR-0028 §3 follow-through)
 //
-// Since ADR-0028 §3 the horizontal timeline's entries sit on the dense step with a 1.4em column
+// Since ADR-0028 §3 the horizontal timeline's entries sit on the body size with a 1.4em column
 // inset. The compile-time rule that caps the stops per slide (timeline-layout.mjs) must follow
 // those tokens, so every stop's line still holds the rule's minimum measure (11 characters).
 //
 // What must hold:
 //   1. The stop-limit function (compile time): the tokens the module assumes are the ones the
-//      stylesheets set (--fs-dense, the type floor, the column inset, no track gap); the horizontal
+//      stylesheets set (--fs-body, the type floor, the column inset, no track gap); the horizontal
 //      cap recomputed from them independently equals the module's cap at 1600×900 and 1280×720;
 //      the per-slide limit is the tighter of the two; at that limit the measure is >= 11
 //      characters on both stages and one stop more drops it under 11 on the tighter one; five
-//      stops cut 3 + 2 and eight 4 + 4; the pre-ticket derivation (floor-size text, 1em inset)
+//      stops cut 3 + 2 and eight 3 + 3 + 2; the pre-ticket derivation (floor-size text, 1em inset)
 //      would allow six, and the limit is not that.
 //   2. Rendered (headless Chromium, the compiled sampler, 1600×900 and 1280×720): on every
 //      horizontal timeline slide the track width, entry size, inset and gap are what the module
@@ -41,21 +41,21 @@ const css = (file) => readFileSync(join(styles, file), 'utf8')
 const { minCharsPerLine: MIN, glyphWidthEm: GLYPH } = TIMELINE_TEXT_METRICS
 
 // --- 1. the stop-limit function -------------------------------------------------------------------
-const denseCqw = Number(css('skin/base.css').match(/--fs-dense:\s*max\(var\(--type-floor\),\s*([\d.]+)cqw\)/)?.[1])
+const bodyCqw = Number(css('skin/base.css').match(/--fs-body:\s*max\(var\(--type-floor\),\s*([\d.]+)cqw\)/)?.[1])
 const floorCqw = Number(css('stage.css').match(/--type-floor:\s*([\d.]+)cqw/)?.[1])
 const skin = css('skin/timeline.css')
 const trackRule = skin.match(/\.timeline\.timeline-horizontal \{([^}]*)\}/)?.[1] ?? ''
 const groupRule = skin.match(/\.timeline\.timeline-horizontal \.tl-group \{([^}]*)\}/)?.[1] ?? ''
 const insetEm = Number(groupRule.match(/padding:\s*0 ([\d.]+)em 0 0/)?.[1])
-assert.equal(HORIZONTAL_TRACK_TOKENS.entryDenseCqw, denseCqw, `entry size: the module assumes --fs-dense ${HORIZONTAL_TRACK_TOKENS.entryDenseCqw}cqw, skin/base.css sets ${denseCqw}cqw`)
-assert.match(trackRule, /font-size:\s*var\(--fs-dense\)/, 'the horizontal track sets its type on the dense step')
+assert.equal(HORIZONTAL_TRACK_TOKENS.entryBodyCqw, bodyCqw, `entry size: the module assumes --fs-body ${HORIZONTAL_TRACK_TOKENS.entryBodyCqw}cqw, skin/base.css sets ${bodyCqw}cqw`)
+assert.match(trackRule, /font-size:\s*var\(--fs-body\)/, 'the horizontal track sets its type on the body size')
 assert.match(skin, /\.timeline\.timeline-horizontal \.tl-entries li \{[^}]*font-size:\s*max\(var\(--type-floor\), 1em\)/, 'each entry takes the track size (at or above the floor)')
 assert.equal(HORIZONTAL_TRACK_TOKENS.textInsetEm, insetEm, `column inset: the module assumes ${HORIZONTAL_TRACK_TOKENS.textInsetEm}em, skin/timeline.css sets ${insetEm}em`)
 assert.equal(HORIZONTAL_TRACK_TOKENS.columnGapPx, 0, 'the module assumes no column gap on the track')
 assert.doesNotMatch(trackRule, /(^|[\s;])(column-)?gap\s*:/, 'the horizontal track sets no column gap')
 
 const independentCap = ({ width }) => {
-  const entry = Math.max((floorCqw / 100) * width, (denseCqw / 100) * width)
+  const entry = Math.max((floorCqw / 100) * width, (bodyCqw / 100) * width)
   const column = Math.min(1180, width - 2 * 0.056 * width)
   return Math.floor(column / (MIN * GLYPH * entry + insetEm * entry))
 }
@@ -85,7 +85,7 @@ const stopsOf = (n) => Array.from({ length: n }, (_, i) => ({ date: String(2019 
 const partsOf = (n) => timelineContinuationParts([{ type: 'timeline', mode: 'horizontal', stops: stopsOf(n) }], (stops) => ({ stops }))
 assert.equal(partsOf(limit), null, `${limit} horizontal stops stay on one slide`)
 assert.deepEqual(partsOf(5).map((part) => part.stops.length), [3, 2], 'five horizontal stops cut 3 + 2')
-assert.deepEqual(partsOf(8).map((part) => part.stops.length), [4, 4], 'eight horizontal stops cut 4 + 4')
+assert.deepEqual(partsOf(8).map((part) => part.stops.length), [3, 3, 2], 'eight horizontal stops cut 3 + 3 + 2')
 console.log(`PASS stop limit: horizontal cap ${caps[1600]} at 1600×900, ${caps[1280]} at 1280×720 → ${limit} per slide (was ${staleCap})`)
 
 // --- 2–4. rendered ------------------------------------------------------------------------------

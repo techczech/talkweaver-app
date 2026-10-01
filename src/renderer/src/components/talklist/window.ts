@@ -5,7 +5,13 @@ import type { RowRef, ViewMode } from './model.ts'
 
 // ledgerTwo / shelfTwo: two-line rows — talk-search results (what matched) and, in Ledger, every
 // tree talk row at rest (its folder or event and last delivery).
-export type RowHeights = { ledger: number; shelf: number; fhead: number; ledgerTwo?: number; shelfTwo?: number }
+export type RowHeights = { ledger: number; shelf: number; fhead: number; ledgerTwo?: number; shelfTwo?: number; vhead?: number }
+/** A vault section header (two lines: name, then service) and the empty-vault block. */
+export const VAULT_HEAD_PX = 46
+export const VAULT_EMPTY_PX = 78
+/** The one-line row of a vault while another vault is shown, and the unavailable note. */
+export const VAULT_COMPACT_PX = 30
+export const VAULT_UNAVAILABLE_PX = 196
 export const TWO_LINE_EXTRA_PX = 10
 export type WindowGroup = { headerIndex: number | null; start: number; end: number }
 export type WindowRange = { start: number; end: number }
@@ -19,18 +25,23 @@ export interface WindowLayout {
 }
 
 export function heightOf(row: RowRef, viewMode: ViewMode, heights: RowHeights): number {
+  if (row.kind === 'vault') return row.compact ? VAULT_COMPACT_PX : heights.vhead ?? VAULT_HEAD_PX
+  if (row.kind === 'empty') return row.unavailable ? VAULT_UNAVAILABLE_PX : VAULT_EMPTY_PX
   if (row.kind === 'folder') return row.depth === 0 ? heights.fhead : heights.ledger
   // Ledger: search results and at-rest tree rows with a second line (ADR-0029 §3) are 36 px.
   // Shelf keeps its own rows at rest (they already show the event and recency); only search
   // results grow there.
+  // A talk with conflict copies (ticket 09) grows its amber line in both views.
+  const conflicted = (row.talk.conflicts ?? 0) > 0
   if (viewMode === 'ledger') {
-    return row.hit || row.line != null ? heights.ledgerTwo ?? heights.ledger + TWO_LINE_EXTRA_PX : heights.ledger
+    return row.hit || row.line != null || conflicted ? heights.ledgerTwo ?? heights.ledger + TWO_LINE_EXTRA_PX : heights.ledger
   }
-  return row.hit ? heights.shelfTwo ?? heights.shelf + TWO_LINE_EXTRA_PX + 4 : heights.shelf
+  return row.hit || conflicted ? heights.shelfTwo ?? heights.shelf + TWO_LINE_EXTRA_PX + 4 : heights.shelf
 }
 
 // A group owns one sticky depth-0 header and its descendants. Root talks (and search rows)
 // form a headerless group, keeping sticky containment correct without rebuilding tree order.
+// A vault header starts a headerless group of its own: it scrolls away with its section.
 export function partitionGroups(rows: RowRef[]): WindowGroup[] {
   if (rows.length === 0) return []
 
@@ -40,6 +51,12 @@ export function partitionGroups(rows: RowRef[]): WindowGroup[] {
 
   for (let index = 1; index < rows.length; index += 1) {
     const row = rows[index]
+    if (row.kind === 'vault') {
+      groups.push({ headerIndex, start, end: index })
+      start = index
+      headerIndex = null
+      continue
+    }
     if (row.kind !== 'folder' || row.depth !== 0) continue
     groups.push({ headerIndex, start, end: index })
     start = index
@@ -144,6 +161,7 @@ export type MeasuredRowHeights = {
   fhead: number | undefined
   ledgerTwo: number | undefined
   shelfTwo: number | undefined
+  vhead?: number | undefined
 }
 
 /** Fold one DOM measurement pass into the current row heights. A kind with no mounted sample
@@ -156,10 +174,11 @@ export function mergeRowHeights(current: RowHeights, measured: MeasuredRowHeight
     shelf: measured.shelf || current.shelf,
     fhead: measured.fhead || current.fhead,
     ledgerTwo: measured.ledgerTwo || current.ledgerTwo,
-    shelfTwo: measured.shelfTwo || current.shelfTwo
+    shelfTwo: measured.shelfTwo || current.shelfTwo,
+    vhead: measured.vhead || current.vhead
   }
   return next.ledger === current.ledger && next.shelf === current.shelf && next.fhead === current.fhead &&
-    next.ledgerTwo === current.ledgerTwo && next.shelfTwo === current.shelfTwo
+    next.ledgerTwo === current.ledgerTwo && next.shelfTwo === current.shelfTwo && next.vhead === current.vhead
     ? current
     : next
 }

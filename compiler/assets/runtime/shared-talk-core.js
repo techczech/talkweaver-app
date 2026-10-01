@@ -1,5 +1,5 @@
 // Shared talk (share for comments), ticket 04: the colleague page's logic without the DOM.
-// A device store (name, drafts, her items, what she has seen), a line diff for the proposal
+// A device store (name, drafts, their items, what they have seen), a line diff for the proposal
 // preview, and the client that posts items with idempotency keys through an outbox and follows
 // the audience socket. Every function here is injected into the handout by toString() (see
 // shared-talk-page.js sharedTalkRuntimeSource), so each one may only reference the others in
@@ -55,7 +55,7 @@ export function sharedTalkSameText(a, b) {
   return norm(a) === norm(b)
 }
 
-/** FNV-1a over the string: a short fingerprint for "what she last saw of this slide". */
+/** FNV-1a over the string: a short fingerprint for "what they last saw of this slide". */
 export function sharedTalkFingerprint(value) {
   const text = String(value ?? '')
   let hash = 0x811c9dc5
@@ -103,9 +103,9 @@ export function sharedTalkClock(at) {
 }
 
 /**
- * The device store: everything she has typed or sent on this share, in localStorage under one
+ * The device store: everything they have typed or sent on this share, in localStorage under one
  * key per share. Each write re-reads first, so two tabs on one share do not erase each other's
- * items. The name key is the live sessions' own, so a name she gave once is remembered for both.
+ * items. The name key is the live sessions' own, so a name they gave once is remembered for both.
  */
 export function createSharedTalkStore(storage, shareId) {
   const key = 'talkweaver:shared-talk:' + shareId
@@ -168,7 +168,7 @@ export function createSharedTalkStore(storage, shareId) {
         return item
       })
     },
-    /** Applies a status from the socket; false when the item is not hers or the status is stale. */
+    /** Applies a status from the socket; false when the item is not theirs or the status is stale. */
     setStatus(itemId, status, at, seq) {
       return mutate((state) => {
         const item = state.items.find((entry) => entry.itemId === itemId)
@@ -224,7 +224,7 @@ export function sharedTalkRetryDelay(attempt) {
  *   openSocket(since, {onOpen, onMessage, onClose}) -> {close()}
  * Items go through the store's queue in order, one request at a time, so a retry can never race
  * the first attempt; the worker's idempotency on itemId makes a resend after a lost answer safe.
- * The first socket of a page load asks for since=0, so statuses on her earlier items arrive;
+ * The first socket of a page load asks for since=0, so statuses on their earlier items arrive;
  * reconnects ask from the last seq seen.
  */
 export function createSharedTalkClient(options) {
@@ -436,7 +436,7 @@ export function sharedTalkInline(text) {
 }
 
 /**
- * Her proposed new slide as the page previews it: the first heading is the title, list lines are
+ * Their proposed new slide as the page previews it: the first heading is the title, list lines are
  * bullets, other lines paragraphs, in the deck's own list-slide markup so the deck styles apply.
  * An approximation of what the compiler will make; the app decides the real markup on Accept.
  */

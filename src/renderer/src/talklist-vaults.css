@@ -1,0 +1,111 @@
+/* Vault sections of the Talks panel (several-vaults ticket 03; docs/design/2026-09-29-multi-vault/LOCKED-sidebar.html).
+   --vc is the vault's colour, set inline on each header, badge and section group. */
+
+/* badge: the vault's colour and initial */
+.tl-vb {
+  --vc: #c2410c;
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  border-radius: 5px; background: var(--vc); color: #fff;
+  font-family: system-ui, sans-serif; font-weight: 800; line-height: 1;
+}
+.tl-vb.is-closed { background: #b9b4a8; }
+
+/* section header */
+.tl-vhead {
+  --vc: #c2410c;
+  position: relative; display: flex; align-items: center; gap: 6px;
+  height: 46px; padding: 0 8px 0 12px; box-sizing: border-box;
+  background: color-mix(in srgb, var(--vc) 9%, var(--panel));
+  border-top: 1px solid color-mix(in srgb, var(--vc) 30%, var(--line));
+  border-bottom: 1px solid color-mix(in srgb, var(--vc) 18%, var(--line));
+  box-shadow: inset 4px 0 0 var(--vc);
+  cursor: default; user-select: none;
+}
+.tl-vhead:hover { background: color-mix(in srgb, var(--vc) 14%, var(--panel)); }
+.tl-vhead--flash { box-shadow: inset 4px 0 0 var(--vc), inset 0 0 0 2px var(--vc); }
+.tl-vhead--kfocus { box-shadow: inset 4px 0 0 var(--vc), inset 0 0 0 1.5px var(--oxford); }
+.tl-vhead.is-closed { --vc: #b9b4a8; background: var(--paper); box-shadow: inset 4px 0 0 #cfcabd; }
+.tl-vhead.is-closed .tl-vname { color: var(--muted); }
+.tl-vchev { display: inline-flex; width: 10px; flex: none; color: var(--muted); transition: transform 120ms ease; }
+.tl-vtext { display: flex; flex-direction: column; min-width: 0; gap: 1px; flex: 1 1 auto; }
+.tl-vname { font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tl-vsub { display: flex; align-items: center; gap: 4px; font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; }
+.tl-vlock { display: inline-flex; color: var(--muted); }
+.tl-vsvc { overflow: hidden; text-overflow: ellipsis; }
+.tl-vmore {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer;
+}
+.tl-vmore:hover, .tl-vmore:focus-visible { background: color-mix(in srgb, var(--vc) 16%, transparent); color: var(--ink, #17202a); }
+
+/* colour rail down the left edge of every row in a vault's section */
+.tl-window-group--vault { position: relative; }
+.tl-window-group--vault::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; z-index: 6;
+  background: color-mix(in srgb, var(--vc) 55%, transparent); pointer-events: none;
+}
+
+/* an open vault with no talks yet */
+.tl-vempty {
+  --vc: #c2410c;
+  box-sizing: border-box; height: 78px; padding: 10px 14px 0 16px;
+  font-size: 11.5px; color: var(--muted);
+}
+.tl-vempty p { margin: 0 0 6px; line-height: 1.35; }
+.tl-vempty--kfocus { box-shadow: inset 0 0 0 1.5px var(--oxford); border-radius: 4px; }
+.tl-vnew {
+  display: inline-flex; align-items: center; gap: 5px; padding: 3px 0; border: 0; background: none;
+  font-size: 11.5px; font-weight: 700; color: var(--oxford); cursor: pointer;
+}
+.tl-vnew:hover { text-decoration: underline; }
+
+/* "+ Add vault…" at the foot of the panel */
+.tl-addvault {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 6px; width: 100%; box-sizing: border-box;
+  padding: 7px 12px; border: 0; border-top: 1px solid var(--line); background: var(--paper);
+  font-size: 11.5px; font-weight: 600; color: var(--muted); text-align: left; cursor: pointer;
+}
+.tl-addvault:hover { color: var(--oxford); background: var(--panel); }
+
+/* the vault badge in Recent */
+.tl-recent-ficon .tl-vb { border-radius: 4px; }
+
+/* ── ticket 07: Show filter, one-line vaults, the unavailable state (LOCKED-sidebar 2A–2C) ── */
+.tl-showrow { position: relative; flex: 0 0 auto; padding: 0 8px 6px; }
+.tl-show {
+  display: flex; align-items: center; gap: 6px; width: 100%; box-sizing: border-box; height: 24px; padding: 0 8px;
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); color: var(--ink);
+  font: 11.5px var(--font-ui); cursor: pointer; text-align: left;
+}
+.tl-show:hover { border-color: var(--oxford); }
+.tl-show-k { color: var(--muted); }
+.tl-show-v { flex: 1 1 auto; min-width: 0; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-show--set { border-color: var(--oxford); background: color-mix(in srgb, var(--oxford) 8%, var(--paper)); }
+.tl-show-x { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 4px; color: var(--muted); }
+.tl-show-x:hover { background: var(--hover); color: var(--ink); }
+.tl-show-menu { position: absolute; left: 8px; right: 8px; top: 26px; z-index: 30; padding: 4px; }
+.tl-show-item { display: flex; align-items: center; gap: 7px; width: 100%; }
+.tl-show-tick { width: 10px; flex: none; font-size: 11px; color: var(--oxford); }
+.tl-show-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-show-hint { flex: none; font-size: 10px; color: var(--faint); }
+.tl-show-item.is-disabled { opacity: 0.55; cursor: default; }
+
+.tl-vcompact {
+  display: flex; align-items: center; gap: 7px; height: 30px; box-sizing: border-box; padding: 0 10px 0 14px;
+  font-size: 11.5px; color: var(--muted); cursor: pointer; user-select: none;
+}
+.tl-vcompact:hover { background: color-mix(in srgb, var(--vc) 8%, var(--panel)); }
+.tl-vcompact.is-closed .tl-vcname { color: var(--faint); }
+.tl-vcname { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-vchidden { flex: none; font-size: 10.5px; color: var(--faint); }
+
+.tl-vhead.is-unavailable { --vc: #b9b4a8; background: var(--paper); box-shadow: inset 4px 0 0 #b9964a; }
+.tl-vhead.is-unavailable .tl-vname { color: var(--muted); }
+.tl-vwarn { color: #a16207; }
+.tl-vunavail { box-sizing: border-box; height: 196px; padding: 8px 10px 0 14px; overflow: hidden; }
+.tl-vunote { padding: 8px 10px 10px; border-radius: 6px; background: #f6ecd2; border: 1px solid #e4d19a; font-size: 11px; line-height: 1.35; color: #4a3a12; }
+.tl-vunote b { display: block; margin-bottom: 3px; font-size: 11.5px; }
+.tl-vunote p { margin: 0 0 7px; }
+.tl-vuact { padding: 4px 10px; border: 1px solid #c9b16a; border-radius: 5px; background: var(--paper); font-size: 11px; font-weight: 700; color: var(--ink); cursor: pointer; }
+.tl-vuact:hover { border-color: var(--oxford); color: var(--oxford); }
+.tl-vunlisted { display: block; margin-top: 6px; font-size: 10.5px; color: var(--faint); }

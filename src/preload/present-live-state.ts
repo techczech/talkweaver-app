@@ -209,3 +209,82 @@ export function venueNoticeView(notice: VenueWatch['notice']): {
   }
   return { hidden: true, tone: '', icon: '', lead: '', long: '', tail: '', tip: '' }
 }
+
+// ── Reactions and questions from phones, for the presenter's status bar (ADR-0027 §4) ──────────
+export interface AudienceFeedbackState {
+  /** Current holders per reaction, per slide (the worker leaves out reactions nobody holds). */
+  reactionCounts: Record<string, Record<string, number>>
+  /** Questions not yet marked answered. */
+  questionsWaiting: number
+  /** Every question the worker holds, answered or not, as it sent them (untrusted text). */
+  questions: TrayQuestion[]
+}
+/** One question as the questions tray shows it. `text` and `name` are untrusted: render them as text. */
+export interface TrayQuestion { questionId: string; text: string; name?: string; slideId: string; tMs: number; acceptedAt: number; answered: boolean
+  /** A pre-work question put in the talk's questions (feedback-boards ticket 11): from the Run, never from the Worker. `slideId` '' = the slide on screen. */
+  fromPrework?: true }
+export const AUDIENCE_FEEDBACK_START: AudienceFeedbackState = { reactionCounts: {}, questionsWaiting: 0, questions: [] }
+export type AudienceFeedbackPush =
+  | { kind: 'snapshot'; reactionCounts: Record<string, Record<string, number>>; questions: Array<{ answered: boolean } & Partial<TrayQuestion>> }
+  | { kind: 'reaction'; slideId: string; counts: Record<string, number> }
+  | { kind: 'questions'; questions: Array<{ answered: boolean } & Partial<TrayQuestion>> }
+
+const waiting = (questions: Array<{ answered: boolean }>): number => questions.filter((question) => !question.answered).length
+/** Keep only well-formed questions for the tray (a bare `{ answered }` still counts toward the waiting number). */
+const trayQuestions = (questions: Array<{ answered: boolean } & Partial<TrayQuestion>>): TrayQuestion[] => questions.flatMap((question) =>
+  typeof question.questionId === 'string' && typeof question.text === 'string' && typeof question.slideId === 'string'
+    && Number.isFinite(question.acceptedAt) && Number.isFinite(question.tMs)
+    ? [{ questionId: question.questionId, text: question.text, ...(typeof question.name === 'string' && question.name ? { name: question.name } : {}),
+      slideId: question.slideId, tMs: Number(question.tMs), acceptedAt: Number(question.acceptedAt), answered: question.answered === true }]
+    : [])
+
+/**
+ * The Run's pre-work questions as main sends them, kept only when well-formed: an id of the `pw:` kind,
+ * text (never markup: the tray uses textContent), an optional typed name, a slide id or '' for "the slide
+ * on screen". Their text is the participants' and is not parsed here.
+ */
+export function trayPreworkQuestions(value: unknown): TrayQuestion[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((candidate): TrayQuestion[] => {
+    if (!candidate || typeof candidate !== 'object') return []
+    const q = candidate as Record<string, unknown>
+    if (typeof q.questionId !== 'string' || !q.questionId.startsWith('pw:') || typeof q.text !== 'string' || !q.text || typeof q.slideId !== 'string'
+      || !Number.isFinite(q.acceptedAt) || typeof q.answered !== 'boolean') return []
+    return [{ questionId: q.questionId, text: q.text, ...(typeof q.name === 'string' && q.name ? { name: q.name } : {}), slideId: q.slideId, tMs: 0,
+      acceptedAt: Number(q.acceptedAt), answered: q.answered, fromPrework: true }]
+  })
+}
+
+/** What the tray and the counter show: the phones' questions and, beside them, the Run's pre-work questions. */
+export function withPreworkQuestions(state: AudienceFeedbackState, preworkQuestions: TrayQuestion[]): AudienceFeedbackState {
+  if (!preworkQuestions.length) return state
+  return { ...state, questionsWaiting: state.questionsWaiting + waiting(preworkQuestions), questions: [...state.questions, ...preworkQuestions] }
+}
+
+/** Fold one push from the main process into what the window holds. A snapshot replaces all of it. */
+export function nextAudienceFeedback(state: AudienceFeedbackState, push: AudienceFeedbackPush): AudienceFeedbackState {
+  if (push.kind === 'snapshot') return { reactionCounts: { ...push.reactionCounts }, questionsWaiting: waiting(push.questions), questions: trayQuestions(push.questions) }
+  if (push.kind === 'reaction') return { ...state, reactionCounts: { ...state.reactionCounts, [push.slideId]: push.counts } }
+  return { ...state, questionsWaiting: waiting(push.questions), questions: trayQuestions(push.questions) }
+}
+
+/**
+ * What the status bar's chip and counter show, in the shape the presenter template's
+ * `twLivePollBridge.onAudience` callback takes: the counts for the slide on screen and the questions
+ * waiting. `reactions` always has the standard three (zero when nobody holds one) and every other
+ * reaction the worker counted on that slide (a replacement set's `agree`, a custom label's
+ * `custom:Too fast`); the template picks the slide's own set out of it (ticket 04). Neither shows
+ * unless a session is up (live, or paused while it reconnects) and a slide is known.
+ */
+export function audienceCountsView(
+  state: AudienceFeedbackState,
+  slideId: string | null,
+  status: LiveStatus,
+): { slideId?: string; reactions: Record<string, number> | null; questions: number | null } {
+  if (!slideId || (status !== 'live' && status !== 'paused-reconnecting')) return { reactions: null, questions: null }
+  const counts = state.reactionCounts[slideId] ?? {}
+  const count = (id: string): number => Math.max(0, Math.floor(Number(counts[id]) || 0))
+  const reactions: Record<string, number> = { puzzled: count('puzzled'), helped: count('helped'), bookmark: count('bookmark') }
+  for (const id of Object.keys(counts)) if (!(id in reactions)) reactions[id] = count(id)
+  return { slideId, reactions, questions: state.questionsWaiting }
+}

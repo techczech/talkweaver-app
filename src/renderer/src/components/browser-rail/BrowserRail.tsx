@@ -49,7 +49,7 @@ function readRailState(): RailUiState {
 }
 
 export interface BrowserRailProps {
-  inputRef: React.RefObject<HTMLInputElement | null>
+  inputRef: React.RefObject<HTMLInputElement>
   query: string
   onQueryChange: (q: string) => void
   /** "Find a talk" (ADR-0029 §4): its query, results and the chips it keeps in the scope. */
@@ -77,6 +77,8 @@ export interface BrowserRailProps {
   onToggleFacet: ToggleFacetFn
   onClearFacets: () => void
   anyFacetOn: boolean
+  /** Vault chips under the slide search (ticket 06); null with one open vault. */
+  vaultChips?: React.ReactNode
 }
 
 export default function BrowserRail(props: BrowserRailProps) {
@@ -124,6 +126,7 @@ export default function BrowserRail(props: BrowserRailProps) {
             <kbd>⌘S</kbd>
           </div>
         </div>
+        {props.vaultChips}
       </div>
 
       {/* 2 · SCOPE — full-width rows (cover + title + kind + count + ×); hidden when empty */}

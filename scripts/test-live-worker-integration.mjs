@@ -251,7 +251,7 @@ try {
 
 
   assert.deepEqual(await fetch(`${baseUrl}/capabilities`).then(response => response.json()), {
-    protocol: 2, build: '13-shared-talk',
+    protocol: 2, build: '19-board-seed',
   })
   const recoveryResponse = await fetch(`${baseUrl}/sessions`, {
     method: 'POST',
@@ -545,6 +545,282 @@ try {
   tabReload.send({type:'vote.submit',pollId:choices.pollId,submissionId:'submission-up-to-two',choice:['a','b']})
   assert.equal((await tabReload.wait('vote.ack')).status, 'confirmed')
   console.log('live Worker response limits: per-participant allowances, simultaneous tabs, selections and reopening passed')
+
+  // Reactions and questions (ADR-0027): presenter-only relay over real WebSockets and storage.
+  const feedbackCreated = await fetch(`${baseUrl}/sessions`, {
+    method: 'POST', headers: { authorization: `Bearer ${adminSecret}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ talkSlug: 'feedback-talk' }),
+  }).then(response => response.json())
+  const feedbackWs = `${baseUrl.replace('http:', 'ws:')}/sessions/${feedbackCreated.sessionId}`
+  const feedbackPresenterUrl = `${feedbackWs}/presenter?protocol=2&token=${encodeURIComponent(feedbackCreated.presenterToken)}`
+  const feedbackPresenter = await connectRecovery(feedbackPresenterUrl)
+  const phoneOne = await connectRecovery(`${feedbackWs}/audience?protocol=2&participantId=participant-phone-one`)
+  const phoneTwo = await connectRecovery(`${feedbackWs}/audience?protocol=2&participantId=participant-phone-two`)
+  const venue = await connectRecovery(`${feedbackWs}/audience?protocol=2&participantId=participant-venue&kind=screen`)
+  const legacyPhone = await openSocket(`${feedbackWs}/audience`)
+  sockets.push(legacyPhone)
+  const legacyMessages = []
+  legacyPhone.addEventListener('message', event => legacyMessages.push(JSON.parse(String(event.data))))
+  // Everything any audience socket receives from here on is recorded, to prove nothing leaks.
+  const audienceSeen = new Map()
+  for (const [name, client] of [['phoneOne', phoneOne], ['phoneTwo', phoneTwo], ['venue', venue]]) {
+    audienceSeen.set(name, [])
+    client.socket.addEventListener('message', event => audienceSeen.get(name).push(JSON.parse(String(event.data))))
+  }
+  const react = (client, submissionId, body) => {
+    client.send({ type: 'reaction.send', submissionId, slideId: 'slide-7', tMs: 70_000, ...body })
+    return client.wait('reaction.ack', m => m.submissionId === submissionId)
+  }
+  const nextCounts = () => feedbackPresenter.wait('reaction.counts')
+
+  let counts = nextCounts()
+  assert.deepEqual(await react(phoneOne, 'reaction-int-1', { reaction: 'puzzled' }),
+    { type: 'reaction.ack', submissionId: 'reaction-int-1', status: 'confirmed' })
+  assert.deepEqual((await counts).counts, { puzzled: 1 })
+  counts = nextCounts()
+  await react(phoneOne, 'reaction-int-2', { reaction: 'bookmark' })
+  assert.deepEqual((await counts).counts, { puzzled: 1, bookmark: 1 })
+  counts = nextCounts()
+  await react(phoneOne, 'reaction-int-3', { reaction: 'helped' })
+  const replaced = await counts
+  assert.deepEqual(replaced.counts, { helped: 1, bookmark: 1 }, 'a new meaning reaction replaces the previous one; the bookmark stays')
+  assert.deepEqual(replaced.records.map(r => [r.reaction, r.withdrawn === true]), [['puzzled', true], ['helped', false]])
+  counts = nextCounts()
+  await react(phoneTwo, 'reaction-int-1', { reaction: 'custom:Too fast' })
+  assert.deepEqual((await counts).counts, { helped: 1, bookmark: 1, 'custom:Too fast': 1 })
+  counts = nextCounts()
+  await react(phoneOne, 'reaction-int-4', { reaction: 'helped', withdrawn: true })
+  assert.deepEqual((await counts).counts, { bookmark: 1, 'custom:Too fast': 1 }, 'withdrawal nets out')
+  assert.deepEqual(await react(phoneTwo, 'reaction-int-bad', { reaction: 'wow' }),
+    { type: 'reaction.ack', submissionId: 'reaction-int-bad', status: 'rejected', error: 'unknown_reaction' })
+
+  phoneTwo.send({ type: 'question.submit', submissionId: 'question-int-1', text: '  <img src=x onerror=alert(1)> Why? ', name: ' Priya ', slideId: 'slide-7', tMs: 71_000 })
+  assert.deepEqual(await phoneTwo.wait('question.ack'), { type: 'question.ack', submissionId: 'question-int-1', status: 'confirmed' })
+  const questionsState = await feedbackPresenter.wait('questions.state')
+  assert.equal(questionsState.questions.length, 1)
+  assert.equal(questionsState.questions[0].text, '<img src=x onerror=alert(1)> Why?', 'question text is kept as text, trimmed')
+  assert.equal(questionsState.questions[0].name, 'Priya')
+
+  // Pause: meaning reactions and questions refused, bookmarks accepted, every following device told.
+  await operation(feedbackPresenter, 'operation-int-pause', { type: 'switches.set', questionsAllowed: false, reactionsAllowed: false })
+  assert.deepEqual(await phoneOne.wait('switches.state'), { type: 'switches.state', questionsAllowed: false, reactionsAllowed: false })
+  assert.equal((await react(phoneOne, 'reaction-int-paused', { reaction: 'puzzled' })).error, 'reactions_paused')
+  // A bookmark during the pause is stored, but its count reaches the presenter only when reactions resume.
+  const presenterCountsSeen = []
+  feedbackPresenter.socket.addEventListener('message', event => {
+    const m = JSON.parse(String(event.data))
+    if (m.type === 'reaction.counts') presenterCountsSeen.push(m)
+  })
+  assert.equal((await react(phoneTwo, 'reaction-int-bookmark-paused', { reaction: 'bookmark' })).status, 'confirmed')
+  phoneOne.send({ type: 'question.submit', submissionId: 'question-int-paused', text: 'Paused?', slideId: 'slide-7', tMs: 72_000 })
+  assert.equal((await phoneOne.wait('question.ack')).error, 'questions_paused')
+  assert.deepEqual(presenterCountsSeen, [], 'no counts reach the presenter while reactions are paused')
+  counts = nextCounts()
+  await operation(feedbackPresenter, 'operation-int-resume', { type: 'switches.set', questionsAllowed: true, reactionsAllowed: true })
+  const caughtUp = await counts
+  assert.deepEqual(caughtUp.counts, { bookmark: 2, 'custom:Too fast': 1 }, 'resuming pushes the current counts')
+  assert.deepEqual(caughtUp.records.map(r => r.reaction), ['bookmark'], 'with the bookmark stored during the pause')
+  await phoneOne.wait('switches.state', m => m.reactionsAllowed)
+  await operation(feedbackPresenter, 'operation-int-answer', { type: 'question.answer', questionId: 'question-1' })
+  assert.equal((await feedbackPresenter.wait('questions.state')).questions[0].answered, true)
+
+  // An audience device reconnects and resends its queued messages: acknowledged once, counted once.
+  await phoneOne.disconnect()
+  const phoneOneBack = await connectRecovery(`${feedbackWs}/audience?protocol=2&participantId=participant-phone-one`)
+  assert.deepEqual(await react(phoneOneBack, 'reaction-int-3', { reaction: 'helped' }),
+    { type: 'reaction.ack', submissionId: 'reaction-int-3', status: 'confirmed' })
+  // The presenter reconnects and recovers counts, questions and reaction records.
+  await feedbackPresenter.disconnect()
+  const feedbackPresenterBack = await connectRecovery(feedbackPresenterUrl)
+  const feedbackRecovered = await sync(feedbackPresenterBack, 'sync-feedback-recovered')
+  assert.deepEqual(feedbackRecovered.reactionCounts, { 'slide-7': { bookmark: 2, 'custom:Too fast': 1 } }, 'retry never counts twice')
+  assert.equal(feedbackRecovered.questions.length, 1)
+  assert.equal(feedbackRecovered.questions[0].answered, true)
+  assert.deepEqual(feedbackRecovered.switches, { questionsAllowed: true, reactionsAllowed: true })
+  assert.equal(feedbackRecovered.reactionRecords.length, 7)
+  const phoneSnapshot = await sync(phoneOneBack, 'sync-feedback-phone')
+  assert.deepEqual(phoneSnapshot.switches, { questionsAllowed: true, reactionsAllowed: true })
+  assert.equal(phoneSnapshot.reactionCounts, undefined)
+  assert.equal(phoneSnapshot.questions, undefined)
+
+  const leaked = [...audienceSeen.values(), legacyMessages].flat()
+    .filter(m => ['reaction.counts', 'questions.state'].includes(m.type) || JSON.stringify(m).includes('Priya'))
+  assert.deepEqual(leaked, [], 'no audience socket receives counts or questions')
+  assert.deepEqual(audienceSeen.get('venue').map(m => m.type).filter(t => t !== 'session.presence'),
+    ['switches.state', 'switches.state'], 'the venue screen hears only the pause switches')
+  assert.equal(legacyMessages.some(m => m.type === 'switches.state'), false)
+  legacyPhone.send(JSON.stringify({ type: 'reaction.send', reaction: 'puzzled', slideId: 'slide-7', tMs: 1 }))
+  const legacyError = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Timed out waiting for legacy error')), 5000)
+    legacyPhone.addEventListener('message', event => {
+      const m = JSON.parse(String(event.data))
+      if (m.type === 'protocol.error') { clearTimeout(timer); resolve(m) }
+    })
+  })
+  assert.deepEqual(legacyError, { type: 'protocol.error', code: 'invalid_or_inert_message' })
+  console.log('live-worker reactions and questions: presenter-only counts and questions, replace/withdraw/bookmark, bad input reasons, pause switches with bookmarks, answered marks, idempotent retry and presenter recovery passed')
+
+  // Feedback boards (ADR-0032 amendment point 1): cards from three phones, presenter operations,
+  // the big-screen view derived in the worker, and nothing private on any audience socket.
+  const boardCreated = await fetch(`${baseUrl}/sessions`, {
+    method: 'POST', headers: { authorization: `Bearer ${adminSecret}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ talkSlug: 'board-talk' }),
+  }).then(response => response.json())
+  const boardWs = `${baseUrl.replace('http:', 'ws:')}/sessions/${boardCreated.sessionId}`
+  const boardPresenterUrl = `${boardWs}/presenter?protocol=2&token=${encodeURIComponent(boardCreated.presenterToken)}`
+  const boardPhoneUrl = name => `${boardWs}/audience?protocol=2&participantId=participant-board-${name}`
+  let boardPresenter = await connectRecovery(boardPresenterUrl)
+  const phones = { ann: await connectRecovery(boardPhoneUrl('ann')), ben: await connectRecovery(boardPhoneUrl('ben')), cat: await connectRecovery(boardPhoneUrl('cat')) }
+  const boardVenue = await connectRecovery(`${boardWs}/audience?protocol=2&participantId=participant-board-venue&kind=screen`)
+  const boardSeen = new Map()
+  const record = (name, client) => {
+    boardSeen.set(name, boardSeen.get(name) ?? [])
+    client.socket.addEventListener('message', event => boardSeen.get(name).push(JSON.parse(String(event.data))))
+  }
+  for (const [name, client] of Object.entries(phones)) record(name, client)
+  record('venue', boardVenue)
+  const boardPollId = 'poll-slide-board'
+  const boardDefinition = { pollId: boardPollId, slideId: 'slide-board', type: 'board', question: 'What should we keep, change, try?', visibility: 'live',
+    options: [{ optionId: 'keep', label: 'Keep' }, { optionId: 'change', label: 'Change' }, { optionId: 'try', label: 'Try' }],
+    board: { limit: 12, cardsPerPhone: 5, cardChars: 140, names: true, instructions: 'One idea per card.' } }
+  await operation(boardPresenter, 'operation-board-open', { type: 'poll.open', poll: boardDefinition })
+  const boardOpened = await phones.ann.wait('poll.state', m => m.pollId === boardPollId)
+  assert.deepEqual(boardOpened.board, { limit: 12, cardChars: 140, cardsPerPhone: 5, names: true, closesAfterDays: 7, instructions: 'One idea per card.' })
+  assert.equal(boardOpened.boardState.cardCount, 0)
+  const boardState = (client, predicate) => client.wait('poll.state', m => m.pollId === boardPollId && predicate(m.boardState)).then(m => m.boardState)
+  let cardSequence = 0
+  async function sendCard(name, column, text, extra = {}) {
+    const submissionId = extra.submissionId ?? `submission-board-${++cardSequence}`
+    phones[name].send({ type: 'card.add', submissionId, pollId: boardPollId, column, text, ...extra })
+    return phones[name].wait('card.ack', m => m.submissionId === submissionId)
+  }
+  // Each phone sends cards; the first reaches the presenter and the room at once.
+  const annFirst = await sendCard('ann', 'keep', ' More time for hands-on ', { name: 'Ann Private' })
+  assert.deepEqual(annFirst, { type: 'card.ack', submissionId: 'submission-board-1', pollId: boardPollId, status: 'confirmed', cardId: 'card-1', cardsUsed: 1 })
+  const presenterFirst = await boardState(boardPresenter, b => b.cardCount === 1)
+  assert.equal(presenterFirst.cards[0].name, 'Ann Private', 'the presenter sees a typed name')
+  await boardState(boardVenue, b => b.cardCount === 1)
+  const texts = { ann: ['Live demo', 'Small tables', 'Real examples', 'The handout'], ben: ['Shorter breaks', 'Less theory', 'Bigger room', 'Links first', 'Less jargon'], cat: ['Pair work', 'Follow-up session', 'Agent clinic', 'Reading list', 'Show and tell'] }
+  const columnFor = { ann: 'keep', ben: 'change', cat: 'try' }
+  for (let i = 0; i < 5; i++) for (const name of ['ann', 'ben', 'cat']) {
+    const text = texts[name][i]
+    if (!text) continue
+    assert.equal((await sendCard(name, columnFor[name], text)).status, 'confirmed')
+  }
+  // One phone cannot use up the board: Ann's sixth card is refused, Ben's and Cat's still count.
+  assert.equal((await sendCard('ann', 'keep', 'One too many')).error, 'card_limit_reached')
+  assert.equal((await sendCard('ben', 'change', 'x'.repeat(141))).error, 'card_too_long')
+  const full = await boardState(boardPresenter, b => b.cardCount === 15)
+  assert.deepEqual([full.entries, full.shown, full.waiting], [15, 12, 3], 'limit 12: the three newest wait')
+  assert.deepEqual(full.columns.map(c => c.waiting), [0, 1, 2])
+  // A retry after a reconnect repeats the receipt and adds nothing.
+  await phones.ann.disconnect()
+  phones.ann = await connectRecovery(boardPhoneUrl('ann'))
+  record('ann', phones.ann)
+  phones.ann.send({ type: 'card.add', submissionId: 'submission-board-1', pollId: boardPollId, column: 'keep', text: ' More time for hands-on ', name: 'Ann Private' })
+  assert.deepEqual(await phones.ann.wait('card.ack'), annFirst)
+  const annSnapshot = await sync(phones.ann, 'sync-board-ann')
+  // Arrival order: Ann's first card, then Ann, Ben, Cat in turn (Ann had four more, Ben and Cat five).
+  const own = { ann: ['card-1', 'card-2', 'card-5', 'card-8', 'card-11'], ben: ['card-3', 'card-6', 'card-9', 'card-12', 'card-14'], cat: ['card-4', 'card-7', 'card-10', 'card-13', 'card-15'] }
+  assert.deepEqual(annSnapshot.myCards.map(c => c.cardId), own.ann)
+  assert.equal(annSnapshot.polls.find(p => p.pollId === boardPollId).boardState.cardCount, 15)
+
+  // Merge, split, hide, freeze, limit and release: each acknowledged once, even when resent.
+  const ack = (operationId, action) => operation(boardPresenter, operationId, { pollId: boardPollId, ...action })
+  await ack('operation-board-merge-1', { type: 'board.merge', source: { cardId: 'card-2' }, target: { cardId: 'card-1' } })
+  await ack('operation-board-merge-2', { type: 'board.merge', source: { cardId: 'card-5' }, target: { cardId: 'card-1' } })
+  await ack('operation-board-merge-1', { type: 'board.merge', source: { cardId: 'card-2' }, target: { cardId: 'card-1' } })
+  let presenterBoard = await boardState(boardPresenter, b => b.groups.length === 1 && b.groups[0].count === 3)
+  assert.deepEqual(presenterBoard.groups, [{ n: 1, column: 'keep', cardIds: ['card-1', 'card-2', 'card-5'], count: 3 }])
+  // Ann can no longer edit a card that is in a group; she can still edit or withdraw one that is not.
+  phones.ann.send({ type: 'card.edit', submissionId: 'submission-board-edit-1', pollId: boardPollId, cardId: 'card-1', text: 'Changed' })
+  assert.equal((await phones.ann.wait('card.ack', m => m.submissionId === 'submission-board-edit-1')).error, 'card_sorted')
+  phones.ann.send({ type: 'card.edit', submissionId: 'submission-board-edit-2', pollId: boardPollId, cardId: 'card-8', text: 'Real examples from our work' })
+  assert.equal((await phones.ann.wait('card.ack', m => m.submissionId === 'submission-board-edit-2')).status, 'confirmed')
+  phones.ben.send({ type: 'card.withdraw', submissionId: 'submission-board-steal-1', pollId: boardPollId, cardId: 'card-11' })
+  assert.equal((await phones.ben.wait('card.ack', m => m.submissionId === 'submission-board-steal-1')).error, 'card_not_found', 'another phone’s card is not yours')
+  phones.ann.send({ type: 'card.withdraw', submissionId: 'submission-board-withdraw-1', pollId: boardPollId, cardId: 'card-11' })
+  assert.equal((await phones.ann.wait('card.ack', m => m.submissionId === 'submission-board-withdraw-1')).status, 'confirmed')
+  await ack('operation-board-split-1', { type: 'board.split', group: 1 })
+  await ack('operation-board-merge-3', { type: 'board.merge', source: { cardId: 'card-6' }, target: { cardId: 'card-3' } })
+  presenterBoard = await boardState(boardPresenter, b => b.groups.length === 1 && b.groups[0].n === 2)
+  assert.equal(presenterBoard.cards.find(c => c.cardId === 'card-2').fromGroup, 1, 'split cards say where they came from')
+  // Ticket 05 (D13): the group's own wording reaches the room; nothing presenter-only comes with it.
+  await ack('operation-board-relabel-1', { type: 'board.relabel', group: 2, text: '  Shorter, lighter sessions  ' })
+  await ack('operation-board-relabel-1', { type: 'board.relabel', group: 2, text: '  Shorter, lighter sessions  ' })
+  const wordedPublic = await boardState(boardVenue, b => b.groups.some(g => g.n === 2 && g.label === 'Shorter, lighter sessions'))
+  assert.equal(JSON.stringify(wordedPublic).match(/"(hidden|name|fromGroup|touched|participant)"/), null, 'the room gets the wording and nothing presenter-only')
+  const phoneWorded = (await sync(phones.ben, 'sync-board-ben-worded')).polls.find(p => p.pollId === boardPollId).boardState
+  assert.equal(phoneWorded.groups.find(g => g.n === 2).label, 'Shorter, lighter sessions', 'a phone sees the group\'s wording')
+  assert.equal((await boardState(boardPresenter, b => b.groups.some(g => g.label))).groups.find(g => g.n === 2).label, 'Shorter, lighter sessions')
+  boardPresenter.send({ type: 'operation', operationId: 'operation-board-relabel-long', action: { type: 'board.relabel', pollId: boardPollId, group: 2, text: 'x'.repeat(141) } })
+  assert.equal((await boardPresenter.wait('operation.ack', m => m.operationId === 'operation-board-relabel-long')).error, 'card_too_long')
+  await ack('operation-board-hide-1', { type: 'board.hide', target: { cardId: 'card-4' }, hidden: true })
+  await ack('operation-board-move-1', { type: 'board.move', target: { cardId: 'card-7' }, column: 'change' })
+  await ack('operation-board-limit-1', { type: 'board.limit', limit: 6 })
+  let publicBoard = await boardState(boardVenue, b => b.limit === 6)
+  assert.equal(publicBoard.cards.some(c => c.cardId === 'card-4'), false, 'a hidden card is off every public board')
+  assert.equal(publicBoard.shown, 6)
+  await ack('operation-board-release-1', { type: 'board.release', mode: 'next', count: 3 })
+  publicBoard = await boardState(boardVenue, b => b.release.extra === 3)
+  assert.equal(publicBoard.shown, 9, '“Show next” adds exactly what it released')
+  await ack('operation-board-release-2', { type: 'board.release', mode: 'all' })
+  publicBoard = await boardState(boardVenue, b => b.release.all)
+  assert.equal(publicBoard.waiting, 0)
+  await ack('operation-board-freeze-1', { type: 'board.freeze', frozen: true })
+  await boardState(boardVenue, b => b.frozen)
+  phones.cat.send({ type: 'card.withdraw', submissionId: 'submission-board-frozen-1', pollId: boardPollId, cardId: 'card-15' })
+  assert.equal((await phones.cat.wait('card.ack', m => m.submissionId === 'submission-board-frozen-1')).error, 'board_frozen')
+  boardPresenter.send({ type: 'operation', operationId: 'operation-board-merge-frozen', action: { type: 'board.merge', pollId: boardPollId, source: { cardId: 'card-10' }, target: { cardId: 'card-3' } } })
+  assert.deepEqual(await boardPresenter.wait('operation.ack', m => m.operationId === 'operation-board-merge-frozen'),
+    { type: 'operation.ack', operationId: 'operation-board-merge-frozen', status: 'rejected', error: 'board_frozen' })
+  boardPresenter.send({ type: 'operation', operationId: 'operation-board-relabel-frozen', action: { type: 'board.relabel', pollId: boardPollId, group: 2, text: 'Frozen words' } })
+  assert.equal((await boardPresenter.wait('operation.ack', m => m.operationId === 'operation-board-relabel-frozen')).error, 'board_frozen')
+  // Hiding is moderation and still works on a frozen board; putting the card back too.
+  await ack('operation-board-hide-frozen', { type: 'board.hide', target: { cardId: 'card-15' }, hidden: true })
+  await boardState(boardVenue, b => b.frozen && !b.cards.some(c => c.cardId === 'card-15'))
+  await ack('operation-board-show-frozen', { type: 'board.hide', target: { cardId: 'card-15' }, hidden: false })
+  await boardState(boardVenue, b => b.cards.some(c => c.cardId === 'card-15'))
+
+  // The presenter reconnects: the full board comes back, and a resent operation changes nothing.
+  await boardPresenter.disconnect()
+  boardPresenter = await connectRecovery(boardPresenterUrl)
+  const boardRecovered = (await sync(boardPresenter, 'sync-board-presenter')).polls.find(p => p.pollId === boardPollId).boardState
+  assert.equal(boardRecovered.frozen, true)
+  assert.equal(boardRecovered.cards.find(c => c.cardId === 'card-4').hidden, true, 'the presenter keeps the hidden card')
+  assert.deepEqual(boardRecovered.groups.map(g => g.n), [2])
+  await ack('operation-board-merge-3', { type: 'board.merge', source: { cardId: 'card-6' }, target: { cardId: 'card-3' } })
+  await ack('operation-board-freeze-2', { type: 'board.freeze', frozen: false })
+  await ack('operation-board-merge-4', { type: 'board.merge', source: { cardId: 'card-9' }, target: { cardId: 'card-12' } })
+  const renumbered = await boardState(boardPresenter, b => b.groups.length === 2)
+  assert.deepEqual(renumbered.groups.map(g => g.n).sort(), [2, 3], 'number 1 retired with the split; the new group is 3')
+  const boardFinalRecovery = await fetch(`${baseUrl}/sessions/${boardCreated.sessionId}/recovery`, {
+    headers: { authorization: `Bearer ${boardCreated.presenterToken}` },
+  }).then(response => response.json())
+  const recoveredBoard = boardFinalRecovery.polls.find(p => p.pollId === boardPollId).boardState
+  assert.deepEqual([recoveredBoard.cards.length, recoveredBoard.cardCount], [14, 13], 'the Run can read every card, the hidden one included')
+
+  // Nothing private reached any audience socket: no hidden card, no name, no other phone's identity.
+  const audienceBoards = [...boardSeen.values()].flat().filter(m => m.type === 'poll.state' && m.boardState)
+  assert.ok(audienceBoards.length > 10)
+  const everything = JSON.stringify([...boardSeen.values()].flat())
+  for (const secret of ['Ann Private', 'participant-board', '"hidden"', '"name"', 'fromGroup', 'touched']) {
+    assert.equal(everything.includes(secret), false, `audience sockets never see ${secret}`)
+  }
+  // The venue screen saw card 4 before it was hidden and never after (the limit changed after the hide).
+  const venueBoards = boardSeen.get('venue').filter(m => m.type === 'poll.state' && m.boardState)
+  assert.ok(venueBoards.some(m => m.boardState.cards.some(c => c.cardId === 'card-4')))
+  const afterHide = venueBoards.slice(venueBoards.findIndex(m => m.boardState.limit === 6))
+  assert.equal(afterHide.some(m => m.boardState.cards.some(c => c.cardId === 'card-4')), false, 'once hidden, a card never reappears to the room')
+  // Receipts and snapshots name only the phone's own cards.
+  const benAcks = boardSeen.get('ben').filter(m => m.type === 'card.ack' && m.cardId)
+  assert.equal(benAcks.every(m => own.ben.includes(m.cardId)), true)
+  const benSnapshot = await sync(phones.ben, 'sync-board-ben')
+  assert.deepEqual(benSnapshot.myCards.map(c => c.cardId), own.ben)
+  const catSnapshot = await sync(phones.cat, 'sync-board-cat')
+  assert.deepEqual(catSnapshot.myCards.map(c => c.cardId), own.cat.filter(id => id !== 'card-4'), 'a hidden own card leaves the phone silently')
+  assert.deepEqual(catSnapshot.myBoards, [{ pollId: boardPollId, cardsUsed: 5, cardsPerPhone: 5 }], 'the hidden card still counts, so Cat’s box stays closed')
+  console.log('live-worker boards: cards from three phones, per-phone limit, idempotent retry after reconnect, own-card edit and withdraw, merge/split with retired numbers, hide, move, limit, release, freeze, presenter recovery, and no hidden card, name or identity on any audience socket passed')
 
   console.log('live-worker integration: v1 slide/poll/moderation compatibility; explicit close; v2 same-session reconnect, voting during absence, private snapshots, vote/operation acknowledgement replay, cursor deduplication, closed-poll reveal; immutable legacy answers; raw bypass rejection; authenticated final-answer recovery and explicit end passed')
 

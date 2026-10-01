@@ -1704,3 +1704,28 @@ button.lt-rghead:hover{background:var(--lt-paper-deep); color:var(--lt-ink-soft)
 .lt .lt-card.focused .lt-inctx, .lt .lt-card:hover .lt-inctx{display:flex}
 .lt .lt-inctx:hover{border-color:var(--lt-oxford-mid); color:var(--lt-oxford)}
 .lt .lt-inctx .lt-icon{width:11px; height:11px}
+
+/* ---------- vault chips + result vault labels (several-vaults ticket 06; LOCKED-add-slide) ---------- */
+.lt .lt-vchips{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:2px 2px 8px}
+.lt .lt-vchips-label{font-size:11.5px;color:var(--lt-ink-soft);margin-right:2px}
+.lt .lt-vchip{--c:var(--lt-oxford);display:inline-flex;align-items:center;gap:6px;max-width:100%;
+  padding:4px 9px 4px 6px;border-radius:16px;font:600 12px/1.2 var(--lt-sans);color:var(--lt-ink);
+  border:1.5px solid var(--c);background:color-mix(in srgb,var(--c) 10%,var(--lt-print));cursor:pointer;white-space:nowrap}
+.lt .lt-vchip:hover{box-shadow:0 0 0 3px color-mix(in srgb,var(--c) 18%,transparent)}
+.lt .lt-vchip:focus-visible{outline:2px solid var(--lt-oxford);outline-offset:2px}
+.lt .lt-vchip-name{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.lt .lt-vchip .n{font:400 10.5px var(--lt-mono);color:var(--lt-ink-soft)}
+.lt .lt-vchip-this{font:600 9.5px var(--lt-sans);color:var(--lt-ink-soft);border:1px solid var(--lt-hair);
+  border-radius:8px;padding:1px 5px;background:var(--lt-print)}
+.lt .lt-vchip .lt-vchip-on{width:12px;height:12px;color:var(--c)}
+.lt .lt-vchip.unavailable{border:1.5px dashed var(--lt-hair);background:var(--lt-paper);color:var(--lt-ink-faint);cursor:not-allowed;opacity:.85}
+.lt .lt-vchip.unavailable:hover{box-shadow:none}
+.lt .lt-vchip.unavailable .vs-vb{filter:grayscale(1);opacity:.6}
+.lt .lt-vchip.off{border:1.5px dashed var(--lt-hair);background:var(--lt-paper);color:var(--lt-ink-faint)}
+.lt .lt-vchip.off .vs-vb{background:#b9b3a6}
+.lt .lt-vchip .st{font-size:9.5px;font-weight:700;letter-spacing:.04em}
+.lt .lt-vlabel{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--lt-ink-soft);white-space:nowrap;min-width:0}
+.lt .g5 .lt-label .lt-l-meta .lt-vlabel, .lt .g6 .lt-label .lt-l-meta .lt-vlabel{display:none}
+.lt .lt-e-offvault{margin-top:6px}
+.lt .lt-e-offvault .vs-vb{margin:0 3px}
+.lt .lt-linkbtn{background:none;border:0;padding:0;color:var(--lt-oxford);font:inherit;font-weight:600;text-decoration:underline;cursor:pointer}

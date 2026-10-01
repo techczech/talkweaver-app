@@ -20,6 +20,22 @@ export function renderEmphasisEscaped(source) {
   return out;
 }
 
+// A title as plain text, for the places HTML cannot go (the <title> element, meta tags, file names):
+// the same inline markers renderInline understands are dropped and their text kept; links keep their
+// label. Nothing is escaped here, so the caller escapes for its own context.
+export function plainInlineText(text) {
+  let out = String(text == null ? "" : text);
+  out = out.replace(/!\[[^\]]*\]\([^)]*\)/g, "");
+  out = out.replace(/\[([^\]]+)\]\(\s*[^)\s]+(?:\s+"[^"]*")?\s*\)/g, "$1");
+  out = out.replace(/`([^`]+)`/g, "$1");
+  out = out.replace(/\*\*([^*]+)\*\*/g, "$1");
+  out = out.replace(/\*([^*]+)\*/g, "$1");
+  out = out.replace(/(^|[^\w`])__(?=\S)([^_]*?\S)__(?!\w)/g, "$1$2");
+  out = out.replace(/(^|[^\w`])_(?=\S)([^_]*?\S)_(?!\w)/g, "$1$2");
+  out = out.replace(/==([^=]+)==/g, "$1");
+  return out.replace(/\s+/g, " ").trim();
+}
+
 // Browser-safe extraction of the compiler's inline renderer. Keep compiler and RIVER object
 // renderers on this import instead of copying the markdown/escaping grammar into the app.
 export function renderInline(text) {

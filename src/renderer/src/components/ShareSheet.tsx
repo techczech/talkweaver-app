@@ -124,7 +124,7 @@ export default function ShareSheet({ talk, title, onClose }: { talk: TalkInfo; t
               </div>
             )}
             {view.localNote && <div className="sh-status sh-local" data-testid="share-local-note">{view.localNote}</div>}
-            <div className="sh-hint sh-promise">She sees the slides as they are in your outline now, one slide at a time, with space beside each to reply.</div>
+            <div className="sh-hint sh-promise">They see the slides as they are in your outline now, one slide at a time, with space beside each to reply.</div>
             {view.status && (
               <div className={`sh-status ${view.statusTone === 'error' ? 'is-error' : ''}`} role="status" data-testid="share-status">{view.status}</div>
             )}
@@ -139,7 +139,7 @@ export default function ShareSheet({ talk, title, onClose }: { talk: TalkInfo; t
           <div className="sh-switch">
             <div className="sh-switch-text">
               <b id="sh-live-label">Show my latest saves as I work</b>
-              <span>Her page updates a few seconds after you save. Off: she sees the talk as it is now.</span>
+              <span>Their page updates a few seconds after you save. Off: they see the talk as it is now.</span>
             </div>
             <button
               type="button" role="switch" className="sh-toggle" aria-labelledby="sh-live-label" data-testid="share-switch-live"
@@ -150,7 +150,7 @@ export default function ShareSheet({ talk, title, onClose }: { talk: TalkInfo; t
           <div className="sh-switch">
             <div className="sh-switch-text">
               <b id="sh-proposals-label">Let them propose slide text, not only notes</b>
-              <span>She can reword a slide, propose deleting one, or propose a new slide or section. You get each as a proposal with the changes marked; nothing in the outline changes until you accept it.</span>
+              <span>They can reword a slide, propose deleting one, or propose a new slide or section. You get each as a proposal with the changes marked; nothing in the outline changes until you accept it.</span>
             </div>
             <button
               type="button" role="switch" className="sh-toggle" aria-labelledby="sh-proposals-label" data-testid="share-switch-proposals"

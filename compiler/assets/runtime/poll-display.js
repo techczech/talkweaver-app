@@ -12,7 +12,7 @@ function createPollDisplay() {
 
   function safeState(message) {
     if (!message || typeof message.pollId !== 'string' || !message.pollId
-      || !['single', 'multiple', 'open', 'ranking', 'rating', 'categorisation'].includes(message.pollType)
+      || !['single', 'multiple', 'open', 'ranking', 'rating', 'categorisation', 'board'].includes(message.pollType)
       || !['held', 'live'].includes(message.visibility)) return null;
     const options = (Array.isArray(message.options) ? message.options : [])
       .filter((option) => option && typeof option.optionId === 'string' && typeof option.label === 'string')
@@ -25,6 +25,13 @@ function createPollDisplay() {
       ...(message.pollType === 'open' && (message.maxSubmissions === null || (Number.isSafeInteger(message.maxSubmissions) && message.maxSubmissions > 0)) ? { maxSubmissions: message.maxSubmissions } : {}),
       ...(typeof message.slideId === 'string' && message.slideId ? { slideId: message.slideId } : {}),
     };
+    if (safe.pollType === 'board') {
+      // A board is public by nature: its cards are on the screen whatever the visibility says.
+      safe.board = safeBoardSettings(message.board);
+      const view = message.boardView ? checkedBoardView(message.boardView) : safeBoardView(message.boardState);
+      if (view) safe.boardView = view;
+      return safe;
+    }
     if (safe.pollType === 'ranking') {
       if (message.rankCount !== undefined) {
         if (!Number.isSafeInteger(message.rankCount) || message.rankCount < 1 || message.rankCount > options.length) return null;
@@ -56,6 +63,71 @@ function createPollDisplay() {
       safe.tallies = Object.fromEntries(options.map((option) => [option.optionId, count(message.tallies?.[option.optionId])]));
     }
     return safe;
+  }
+
+  // ADR-0032 (ticket 04). The board's settings the frame reads (instructions, example, hints).
+  function safeBoardSettings(board) {
+    const text = (value, max) => (typeof value === 'string' && value.trim() ? value.slice(0, max) : undefined);
+    const hints = {};
+    if (board && typeof board.hints === 'object' && board.hints) {
+      for (const [columnId, hint] of Object.entries(board.hints)) if (text(hint, 300)) hints[columnId] = hint.slice(0, 300);
+    }
+    return {
+      ...(text(board?.instructions, 1000) ? { instructions: board.instructions.slice(0, 1000) } : {}),
+      ...(text(board?.example, 500) ? { example: board.example.slice(0, 500) } : {}),
+      ...(Object.keys(hints).length ? { hints } : {}),
+    };
+  }
+
+  // The big-screen view of a board, resolved to what the frame draws and nothing more: the worker's
+  // `columns[].onScreen` (already limit-, release- and hide-aware; a screen renders it, never
+  // recomputes it) with each entry's text looked up. Names, hidden cards, ids and timestamps never
+  // pass. A group shows its wording when the presenter gave it one, otherwise the text of its first
+  // VISIBLE card (the presenter's board still lists a hidden card in a group's cardIds), and the count
+  // of visible cards.
+  function safeBoardView(state) {
+    if (!state || typeof state !== 'object' || !Array.isArray(state.columns) || !Array.isArray(state.cards)) return null;
+    const cards = new Map();
+    for (const card of state.cards) {
+      if (card && typeof card.cardId === 'string' && typeof card.text === 'string' && card.hidden !== true) cards.set(card.cardId, card.text.slice(0, 1000));
+    }
+    const groups = new Map();
+    for (const group of Array.isArray(state.groups) ? state.groups : []) {
+      if (!group || !Number.isSafeInteger(group.n) || !Array.isArray(group.cardIds)) continue;
+      const visible = group.cardIds.filter((id) => cards.has(id));
+      // The presenter's wording for the group (board.relabel), when set, in place of its first card's text.
+      const label = typeof group.label === 'string' && group.label.trim() ? group.label.slice(0, 1000) : null;
+      if (visible.length) groups.set(group.n, { text: label || cards.get(visible[0]), count: visible.length });
+    }
+    const columns = [];
+    for (const column of state.columns) {
+      if (!column || typeof column.columnId !== 'string' || !Array.isArray(column.onScreen)) return null;
+      const entries = [];
+      for (const entry of column.onScreen.slice(0, 1000)) {
+        if (entry && Number.isSafeInteger(entry.group) && groups.has(entry.group)) entries.push({ group: entry.group, ...groups.get(entry.group) });
+        else if (entry && typeof entry.cardId === 'string' && cards.has(entry.cardId)) entries.push({ text: cards.get(entry.cardId) });
+      }
+      columns.push({ columnId: column.columnId, count: count(column.cards), waiting: count(column.waiting), entries });
+    }
+    return { frozen: state.frozen === true, cardCount: count(state.cardCount), columns };
+  }
+
+  // A view this function already resolved (it travels to the audience window and back through
+  // storage): re-checked field by field, never trusted.
+  function checkedBoardView(view) {
+    if (!view || typeof view !== 'object' || !Array.isArray(view.columns)) return null;
+    const columns = [];
+    for (const column of view.columns) {
+      if (!column || typeof column.columnId !== 'string' || !Array.isArray(column.entries)) return null;
+      const entries = column.entries.slice(0, 1000)
+        .filter((entry) => entry && typeof entry.text === 'string')
+        .map((entry) => ({
+          text: entry.text.slice(0, 1000),
+          ...(Number.isSafeInteger(entry.group) && entry.group > 0 ? { group: entry.group, count: count(entry.count) } : {}),
+        }));
+      columns.push({ columnId: column.columnId, count: count(column.count), waiting: count(column.waiting), entries });
+    }
+    return { frozen: view.frozen === true, cardCount: count(view.cardCount), columns };
   }
 
   // QR SVGs are generated in main from the established encoder. Accept only its inert drawing
@@ -102,7 +174,7 @@ function createPollDisplay() {
   }
 
   function viewFor(poll, requested) {
-    return requested === 'results' && (poll?.visibility === 'live' || poll?.revealed === true) ? 'results' : 'question';
+    return requested === 'results' && poll?.pollType !== 'board' && (poll?.visibility === 'live' || poll?.revealed === true) ? 'results' : 'question';
   }
 
   function splitText(text, limit) {
@@ -130,6 +202,7 @@ function createPollDisplay() {
       ...(poll.allowSkip !== undefined ? { allowSkip: poll.allowSkip } : {}),
       ...(poll.maxSelections !== undefined ? { maxSelections: poll.maxSelections } : {}),
       ...(poll.maxSubmissions !== undefined ? { maxSubmissions: poll.maxSubmissions } : {}),
+      ...(poll.pollType === 'board' ? { board: poll.board || {} } : {}),
     };
   }
 
@@ -241,7 +314,10 @@ function createPollDisplay() {
       ...(poll.pollType === 'single' || poll.pollType === 'multiple' ? { options: choiceRows(poll) } : {}),
       ...(isMatrix(poll) ? { matrix: matrixResults(poll) } : {}),
     };
-    return renderPollFrame(definitionOf(poll), { live: true, state, view, page, pages, join: join.shortUrl ? join : undefined, results });
+    // A board's frame takes the worker's view (the open flag and the frozen flag pick its foot); before
+    // any board state has arrived it stays the at-rest columns.
+    const board = poll.pollType === 'board' && poll.boardView && settings.started ? { open: poll.open, ...poll.boardView } : undefined;
+    return renderPollFrame(definitionOf(poll), { live: true, state, view, page, pages, join: join.shortUrl ? join : undefined, results, board });
   }
 
   return { safeState, safeJoin, viewFor, pageInfo, markup };

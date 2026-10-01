@@ -10,6 +10,7 @@ import { readFile as readFileAsync } from 'fs/promises'
 import { tmpdir } from 'os'
 import { basename, dirname, join } from 'path'
 import { spawn, type ChildProcess } from 'child_process'
+import { localRecordingPath, transcriptPath as transcriptPathFor, type RecordingPath } from './recording-paths'
 
 // Empty by default — the user sets these in Settings -> Transcription. Until then
 // humanEngineError() surfaces a friendly "configure the engine" prompt instead of running.
@@ -31,7 +32,7 @@ export interface TranscriptionConfig {
 
 export interface TranscriptionDeps {
   userDataDir: () => string // app.getPath('userData')
-  vaultRoot: () => string | null // getConfig('vaultRoot')
+  vaultRoot: () => string | null // the current vault's root (vault registry)
   config: () => TranscriptionConfig // Settings -> Transcription, with defaults expanded
   testMode?: () => boolean // TW_REC_TEST=1: deterministic fixture, no Python
 }
@@ -45,16 +46,14 @@ type ActiveJob = {
 
 let activeJob: ActiveJob | null = null
 
-function transcriptPath(deps: TranscriptionDeps, talkSlug: string, sessionId: string): string {
-  const vault = deps.vaultRoot()
-  const recDir = join(deps.userDataDir(), 'recordings')
-  return vault
-    ? join(vault, '_PRESENTATIONS', talkSlug, `${sessionId}.transcript.json`)
-    : join(recDir, `${sessionId}.transcript.json`)
+// talkSlug / sessionId come from the renderer: both paths go through recording-paths.ts, which
+// refuses unsafe names (the handler then reads or writes nothing).
+function transcriptPath(deps: TranscriptionDeps, talkSlug: string, sessionId: string): RecordingPath {
+  return transcriptPathFor(deps.vaultRoot(), deps.userDataDir(), talkSlug, sessionId)
 }
 
-function audioPath(deps: TranscriptionDeps, sessionId: string): string {
-  return join(deps.userDataDir(), 'recordings', `${sessionId}.webm`)
+function audioPath(deps: TranscriptionDeps, sessionId: string): RecordingPath {
+  return localRecordingPath(deps.userDataDir(), sessionId, 'webm')
 }
 
 function emitProgress(win: BrowserWindow | null, sessionId: string, note: string): void {
@@ -114,7 +113,9 @@ function fixtureTranscript(): TranscriptJson {
 }
 
 function writeTranscript(deps: TranscriptionDeps, talkSlug: string, sessionId: string, transcript: TranscriptJson): void {
-  const p = transcriptPath(deps, talkSlug, sessionId)
+  const target = transcriptPath(deps, talkSlug, sessionId)
+  if (!target.ok) throw new Error(target.error)
+  const p = target.path
   const dir = dirname(p)
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   writeFileSync(p, JSON.stringify(transcript, null, 2), 'utf8')
@@ -202,7 +203,9 @@ function humanFfmpegError(result: { error: string; stderr: string }): string {
 export function registerTranscriptionIpc(deps: TranscriptionDeps): void {
   ipcMain.handle('transcript:get', async (_event, talkSlug: string, sessionId: string) => {
     try {
-      const p = transcriptPath(deps, String(talkSlug), String(sessionId))
+      const target = transcriptPath(deps, String(talkSlug), String(sessionId))
+      if (!target.ok) return null
+      const p = target.path
       return JSON.parse(await readFileAsync(p, 'utf8')) as TranscriptJson
     } catch {
       return null
@@ -228,6 +231,9 @@ export function registerTranscriptionIpc(deps: TranscriptionDeps): void {
     const sid = String(sessionId || '').trim()
     const win = BrowserWindow.fromWebContents(event.sender)
     if (!slug || !sid) return { ok: false, error: 'Missing Talk or Run id.' }
+    // Refuse unsafe names before any work (the raw values: a padded name is refused, not trimmed).
+    const target = transcriptPath(deps, String(talkSlug), String(sessionId))
+    if (!target.ok) return { ok: false, error: target.error }
 
     activeJob = { sessionId: sid, child: null, cancelled: false, tempPaths: [] }
     try {
@@ -242,7 +248,9 @@ export function registerTranscriptionIpc(deps: TranscriptionDeps): void {
       const engineError = humanEngineError(cfg)
       if (engineError) return { ok: false, error: engineError }
 
-      const sourceAudio = audioPath(deps, sid)
+      const audio = audioPath(deps, sid)
+      if (!audio.ok) return { ok: false, error: audio.error }
+      const sourceAudio = audio.path
       if (!existsSync(sourceAudio)) return { ok: false, error: 'The local audio file for this Run is missing.' }
 
       const base = `${basename(sid)}-${Date.now()}`

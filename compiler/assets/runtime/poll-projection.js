@@ -154,6 +154,11 @@ function createPollProjection(options) {
   // The frame's content changed under the deck's fit pass: run it again so a long option list
   // spends its slack exactly as the compiled frame did (autofitActiveSlides is the template's).
   function refit(slide) {
+    // A live board picks its card size first (pollFrameFitBoard, poll-frame.mjs), so the deck's own
+    // autofit sees a frame that already fits its slide.
+    if (slide.classList.contains('active') && typeof pollFrameFitBoard === 'function') {
+      slide.querySelectorAll('.poll-frame[data-poll-type="board"]:not([hidden])').forEach(pollFrameFitBoard);
+    }
     if (slide.classList.contains('active') && typeof autofitActiveSlides === 'function') autofitActiveSlides();
   }
 

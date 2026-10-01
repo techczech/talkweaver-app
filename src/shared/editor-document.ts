@@ -29,6 +29,7 @@ export function changeNoun(origin: string | undefined): string {
     case 'retitle': return 'the new title'
     case 'strip-published': return 'the publishing details removal'
     case 'share-for-comments': return 'the share link'
+    case 'conflict-merge': return 'the merged conflict copy'
     case 'create-talk': return 'the new talk'
     case INSTANT_SLIDE_ORIGIN: return 'the slide'
     default: return 'the change'

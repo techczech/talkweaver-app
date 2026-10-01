@@ -90,8 +90,9 @@ writeFileSync(join(vault, '_PRESENTATIONS', '.DS_Store'), 'x')
 
 // ── scanner parity: the file list's walk and the slide-text walk see the same talks ──
 const cacheDir = mkdtempSync(join(tmpdir(), 'tw-talk-search-cache-'))
-const index = createVaultIndex({ cachePath: join(cacheDir, 'vault-index.json') })
-const listed = await index.refresh(vault)
+const indexVault = { id: 'test-vault', root: vault }
+const index = createVaultIndex({ dir: join(cacheDir, 'vault-index') })
+const listed = await index.refresh(indexVault)
 const walked = scanTalkFoldersSync(vault).map(({ dir, outlineName }) => join(dir, outlineName)).sort()
 assert.deepEqual(listed.map((t) => t.outlinePath).sort(), walked, 'the vault index and the synchronous walk list the same talks')
 assert(walked.includes(yorkDeep), 'a talk four folder levels deep is walked')
@@ -115,7 +116,7 @@ const unread = new Set()
 let missingCalls = 0
 const search = createTalkSearch({
   vaultRoot: () => vault,
-  talks: () => index.cached(vault),
+  talks: () => index.cached(indexVault),
   // As the app: a talk the compiler returns nothing for counts as read, with no slide text.
   slideRows: (p) => (unread.has(p) ? null : (compiled.get(p) ?? [])),
   onSlideTextMissing: () => { missingCalls += 1 }

@@ -153,6 +153,26 @@ assert.equal(document.getElementById('instantShow').disabled, false)
 assert.ok(document.querySelector('#instantComposeThumb .instant-slide-image'))
 document.getElementById('instantShow').click()
 assert.equal(actions.at(-1).slide.kind, 'image', 'the Image tab accepts a dropped image')
+// Label presets in the composer (0.37): chips fill the label, the active one clears it, no label by default.
+{
+  document.getElementById('presenterInstantButton').click()
+  document.querySelector('[data-instant-tab="clock"]').click()
+  document.querySelector('[data-instant-clock="countdown"]').click()
+  const chips = [...document.querySelectorAll('#instantLabelPresets [data-instant-label]')]
+  assert.deepEqual(chips.map((c) => c.textContent), ['Break', 'Discussion', 'Group work'])
+  chips[1].click(); assert.equal(document.getElementById('instantLabel').value, ''); assert.ok(!chips[1].classList.contains('on'), 'clicking the active preset clears it')
+  document.getElementById('instantShow').click()
+  assert.equal(actions.at(-1).slide.label, '')
+  chips[2].click()
+  assert.equal(document.getElementById('instantLabel').value, 'Group work')
+  assert.ok(chips[2].classList.contains('on'))
+  document.getElementById('instantShow').click()
+  assert.equal(actions.at(-1).slide.label, 'Group work')
+  chips[2].click()
+  assert.equal(document.getElementById('instantLabel').value, '')
+  assert.ok(!chips[2].classList.contains('on'))
+}
 phone.end()
 dom.window.close()
 console.log('instant-slide DOM: composer, paste preview, return, countdown and follow message passed')
+

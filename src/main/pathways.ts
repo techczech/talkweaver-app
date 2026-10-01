@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
+import { talkRunFolderForTalk } from './runs.ts'
 
 export type Pathway = {
   id: string
@@ -136,8 +137,16 @@ export function resolvePathways<Row extends PathwaySlideRow>(pathways: Pathway[]
   })
 }
 
+// The talk slug is the basename of a renderer-supplied outline path, so it goes through the same
+// guarded talk folder as Run files; an unsafe slug throws `run-path-unsafe`.
 export function pathwayManifestPath(vaultRoot: string, talkSlug: string): string {
-  return join(vaultRoot, '_PRESENTATIONS', talkSlug, 'manifest.json')
+  const folder = talkRunFolderForTalk(vaultRoot, talkSlug)
+  if (!folder) throw new Error('run-path-unsafe')
+  return join(folder, 'manifest.json')
+}
+
+function pathwayManifestPathOrNull(vaultRoot: string, talkSlug: string): string | null {
+  try { return pathwayManifestPath(vaultRoot, talkSlug) } catch { return null }
 }
 
 export function readPathwayManifest(vaultRoot: string, talkSlug: string): { path: string; text: string; pathways: Pathway[] } {
@@ -160,7 +169,9 @@ export function createPathwaySummaryReader(
   const cache = new Map<string, PathwaySummaryCacheEntry>()
   return {
     read(vaultRoot, talkSlug) {
-      const path = pathwayManifestPath(vaultRoot, talkSlug)
+      // The talk list must not fail on one talk whose slug is unsafe: it just shows no pathways.
+      const path = pathwayManifestPathOrNull(vaultRoot, talkSlug)
+      if (!path) return { count: 0, names: [] }
       if (!existsSync(path)) {
         cache.delete(path)
         return { count: 0, names: [] }
@@ -174,7 +185,8 @@ export function createPathwaySummaryReader(
       return { count: summary.count, names: [...summary.names] }
     },
     invalidate(vaultRoot, talkSlug) {
-      cache.delete(pathwayManifestPath(vaultRoot, talkSlug))
+      const path = pathwayManifestPathOrNull(vaultRoot, talkSlug)
+      if (path) cache.delete(path)
     }
   }
 }
@@ -264,6 +276,74 @@ function selectPathwayBeats(beats: RuntimeBeat[], slideIds: string[]): { beats: 
     if (matches.length && !runtimeIds.includes(runtimeId)) runtimeIds.push(runtimeId)
   }
   return { beats: selected, runtimeIds }
+}
+
+/**
+ * Ticket 08 (ADR-0032 amendment point 5): the presenter deck without the given slides — the talk's
+ * pre-work steps, which participants answer before the session and the talk never presents. Their
+ * slides and beats leave the outer stage; everything else is byte-identical, so the embedded
+ * preview template and the runtime are untouched. No slide to drop returns the input unchanged.
+ */
+export function withoutPresenterSlides(fullHtml: string, slideIds: readonly string[]): string {
+  const drop = new Set(slideIds)
+  if (!drop.size) return fullHtml
+  const stageMarker = fullHtml.indexOf('id="stage"')
+  const beatsMarker = '<script>window.__deckBeats='
+  const beatsStart = fullHtml.indexOf(beatsMarker, stageMarker)
+  if (stageMarker < 0 || beatsStart < 0) throw new Error('Outer presenter stage or beat payload was not found.')
+  const beatsJsonStart = beatsStart + beatsMarker.length
+  const beatsEnd = fullHtml.indexOf(';</script>', beatsJsonStart)
+  if (beatsEnd < 0) throw new Error('Outer presenter beat payload was not terminated.')
+  const parsedBeats = JSON.parse(fullHtml.slice(beatsJsonStart, beatsEnd)) as unknown
+  if (!Array.isArray(parsedBeats)) throw new Error('Outer presenter beat payload must be an array.')
+  const beatDropped = (beat: RuntimeBeat): boolean => drop.has(String(beat?.slideId ?? ''))
+    || (beat?.context?.container === 'carousel' && typeof beat.context.sectionId === 'string' && drop.has(beat.context.sectionId))
+  const beats = (parsedBeats as RuntimeBeat[]).filter((beat) => !beatDropped(beat))
+  const chunks = outerSlideChunks(fullHtml, stageMarker, beatsStart)
+  const kept = chunks.filter((chunk) => !drop.has(chunk.id))
+  if (kept.length === chunks.length && beats.length === parsedBeats.length) return fullHtml
+  if (!kept.length) throw new Error('Every slide of the talk is pre-work; there is nothing to present.')
+  const firstSlide = chunks[0]
+  const lastSlide = chunks[chunks.length - 1]
+  return fullHtml.slice(0, firstSlide.start)
+    + kept.map((chunk) => chunk.html).join('\n\n')
+    + fullHtml.slice(lastSlide.end, beatsJsonStart)
+    + JSON.stringify(beats).replace(/</g, '\\u003c')
+    + fullHtml.slice(beatsEnd)
+}
+
+/**
+ * Fix round S4: where "present from here" starts when "here" is a pre-work step (never presented):
+ * the first talk slide after the pre-work section, else the first talk slide. `order` is the
+ * compiled slide order. A start outside the pre-work is returned unchanged, with no notice.
+ */
+export function presentStartOutsidePrework(
+  order: ReadonlyArray<{ id: string; title: string }>,
+  preworkIds: readonly string[],
+  startSlideId?: string
+): { slideId?: string; notice?: string } {
+  const prework = new Set(preworkIds)
+  if (!startSlideId || !prework.has(startSlideId)) return { slideId: startSlideId }
+  const lastPrework = order.reduce((last, slide, index) => (prework.has(slide.id) ? index : last), -1)
+  const target = order.slice(lastPrework + 1).find((slide) => !prework.has(slide.id))
+    ?? order.find((slide) => !prework.has(slide.id))
+  if (!target) return { slideId: undefined }
+  return {
+    slideId: target.id,
+    notice: `Pre-work is answered before the session and is not presented; starting at “${target.title}”.`
+  }
+}
+
+/**
+ * Fix round S4: a line in the presenter's status bar (#presenterStatus), shown for 12 seconds. The
+ * text is set with textContent from JSON, so author text never becomes markup.
+ */
+export function injectPresenterNotice(fullHtml: string, text: string): string {
+  const bodyEnd = fullHtml.lastIndexOf('</body>')
+  if (bodyEnd < 0) return fullHtml
+  const payload = JSON.stringify(text).replace(/</g, '\\u003c')
+  const script = `<script>(function(){var t=${payload};function show(){var bar=document.getElementById('presenterStatus');if(!bar)return;var s=document.createElement('span');s.className='tw-st';s.setAttribute('role','status');s.setAttribute('data-prework-notice','');s.textContent=t;bar.appendChild(s);setTimeout(function(){s.remove()},12000)}if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',show);else show()})();</script>\n`
+  return fullHtml.slice(0, bodyEnd) + script + fullHtml.slice(bodyEnd)
 }
 
 export function injectPathwayRuntime(fullHtml: string, slideIds: string[], pathwayId: string): string {

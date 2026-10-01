@@ -50,7 +50,9 @@ try {
   })
   assert.equal(copied.length, 0, 'opening a deck must not copy unrelated prior-cache files')
   assert.equal(readdirSync(prior).length, count, 'old cache remains untouched')
-  const files = newRoots.flatMap(name => { const dir = join(ud,name,'selected'); return existsSync(dir) ? readdirSync(dir).filter(f=>f.endsWith('.png')).map(f=>join(dir,f)) : [] })
+  // Talk thumbnails live per vault: <namespace>/@vaults/<vault id>/<slug> (thumb-cache-dirs.ts).
+  const talkDirs = newRoots.flatMap(name => { const v = join(ud,name,'@vaults'); return existsSync(v) ? readdirSync(v).map(id => join(v,id,'selected')) : [] })
+  const files = talkDirs.flatMap(dir => existsSync(dir) ? readdirSync(dir).filter(f=>f.endsWith('.png')).map(f=>join(dir,f)) : [])
   const before = files.map(f=>statSync(f,{bigint:true}).mtimeNs)
   const second = await page.evaluate(async ({outlinePath,source}) => window.tw.talk.thumbnails(outlinePath, source), {outlinePath,source})
   assert.deepEqual(second, first.thumbs, 'same-version thumbnails remain reusable')

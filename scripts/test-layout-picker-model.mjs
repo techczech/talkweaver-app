@@ -9,9 +9,9 @@ import {
   layoutPickerModel,
   layoutSubmenuEntries,
   optionGroupsForPickerEntry,
-  pickerTypeStripModel,
   selectionFromTriggerLine,
   provisionalTriggerAtCursor,
+  reanchorPickerSlide,
   toggleLayoutSelection
 } from '../src/renderer/src/components/layoutPickerModel.ts'
 import { LAYOUTS } from '../src/shared/layout-registry/entries.ts'
@@ -98,12 +98,6 @@ const statementOptionRows = optionGroupsForPickerEntry(statementEntry, optionLin
 equal(statementOptionRows.map(({ group, selectedToken }) => [group.key, selectedToken]),
   [['statement-sidebar', ''], ['statement-bg', ''], ['statement-align', ''], ['statement-bar', ''], ['statement-colour', '']],
   'Command-L derives the five statement choice rows from the registry (ticket 02)')
-
-const typeStrip = pickerTypeStripModel(optionLine)
-equal(typeStrip.map(({ group, selectedToken }) => [group.key, selectedToken]), [
-  ['font-body', 'font-body=l'],
-  ['font-title', '']
-], 'Command-L type strip binds the two global font groups to the current trigger line')
 
 const chained = inlineOptionPickerStep(contrast, optionLine, '')
 check(chained != null, 'inline { choosing an entry with options creates a chained step')
@@ -226,6 +220,27 @@ equal(submenuLayouts.map((entry) => entry.name), registryLayouts.map((entry) => 
   'Command-K submenu is the registry layouts subset')
 check(submenuLayouts.every((entry, index) => entry === registryLayouts[index]),
   'Command-K submenu preserves registry object identity')
+
+// The picker names an unstamped slide by heading line; the save that stamps ids inserts lines above it.
+// Without a re-anchor the old line named nothing (the picker closed itself ~400 ms after opening) or another slide.
+const unstamped = '---\ntitle: T\n---\n\n## Section\n\n### A slide\n\n- one\n\n### Second\n\n- two\n'
+let seed = 0.1
+const nextRandom = () => { seed = (seed * 9301 + 0.49297) % 1; return seed }
+const stamped = stampMissingIds(unstamped, nextRandom).text
+check(stamped.split('\n').length > unstamped.split('\n').length, 'stamping inserts lines (fixture sanity)')
+const oldRef = { headingLine: unstamped.split('\n').indexOf('### A slide') + 1 }
+check(stamped.split('\n')[oldRef.headingLine - 1] !== '### A slide', 'the stale line number no longer names the slide once ids are stamped')
+const moved = reanchorPickerSlide(unstamped, stamped, oldRef)
+check(moved && typeof moved === 'object' && stamped.split('\n')[moved.headingLine - 1] === '### A slide',
+  're-anchor follows the slide to its new heading line after stamping')
+equal(reanchorPickerSlide(unstamped, unstamped, oldRef), oldRef, 're-anchor returns the same ref when nothing changed')
+equal(reanchorPickerSlide(unstamped, stamped, 'abc123'), 'abc123', 'a slide id is already stable')
+check(reanchorPickerSlide(unstamped, unstamped.replace('### A slide', '### Renamed'), oldRef) === null, 're-anchor says so when the slide is gone')
+const twins = '## S\n\n### Same\n\n- a\n\n### Same\n\n- b\n'
+const twinsStamped = stampMissingIds(twins, nextRandom).text
+const secondTwin = reanchorPickerSlide(twins, twinsStamped, { headingLine: 7 })
+check(secondTwin && twinsStamped.split('\n').slice(0, secondTwin.headingLine).filter((l) => l === '### Same').length === 2,
+  're-anchor keeps the second of two slides with the same heading')
 
 if (fail) process.exit(1)
 console.log('PASS: layout picker model')

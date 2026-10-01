@@ -24,6 +24,8 @@ import {
   mintId, ID_TOKEN_RE, idLineIndex, lineHasUnclosedBrace, preContentWindow, triggerLineBlock
 } from "./13-slide-ledger.mjs";
 import { parseOutlineTree } from "./14-outline-tree.mjs";
+import { duplicateIdWarning, idTokensToKeep, resolveSlideId } from "./slide-id.mjs";
+import { formatWarning } from "./warning-registry.mjs";
 import { isMarkdownFenceClosingLine, parseMarkdownFenceOpeningLine } from "./03-object-token.mjs";
 
 // ── Outline scanning ─────────────────────────────────────────────────────────
@@ -520,7 +522,12 @@ export function setSlideTrigger(text, ref, key, value) {
 // caret), any depth — the picker's own slide addressing. Returns rewritten
 // text, or null when the line sits under no heading (caller must no-op, never
 // fall back to line replacement).
-export function mergeTriggerAtLine(text, lineNumber, triggerString, eol = "") {
+//
+// Several ids in the block collapse to the one the shared resolver (slide-id.mjs) reads for the slide
+// before the merge, so the merge never changes the slide's id. The ids set aside go through the
+// warning register as `duplicate-slide-id-merged:kept a2, dropped a1 (Title)`: pushed onto
+// `opts.warnings` when the caller collects them, else logged in the register's words.
+export function mergeTriggerAtLine(text, lineNumber, triggerString, eol = "", opts = {}) {
   const lines = scanLines(text);
   const idx0 = Math.min(Math.max(1, lineNumber), lines.length) - 1;
   let headingIdx = -1;
@@ -551,12 +558,18 @@ export function mergeTriggerAtLine(text, lineNumber, triggerString, eol = "") {
   const existing = block
     ? lines.slice(block.start, block.end).flatMap(rawTriggerTokens)
     : [];
-  const ids = existing.filter((tok) => tokenKey(tok) === "id");
-  const keptId = ids.at(-1);
-  if (ids.length > 1 && keptId) console.warn(`duplicate-slide-id-merged:${keptId.slice(3)}`);
+  // An incoming id (setSlideId) replaces every id the block had: that is the caller's decision.
+  const idChoice = incomingKeys.has("id")
+    ? { keep: new Set(), kept: "", dropped: [] }
+    : idTokensToKeep(existing, resolveSlideId(lines, headingIdx), headingIdx);
+  if (idChoice.dropped.length && idChoice.kept) {
+    const warning = duplicateIdWarning(idChoice.kept, idChoice.dropped, lines[headingIdx]);
+    if (Array.isArray(opts.warnings)) opts.warnings.push(warning);
+    else console.warn(`[outline-edit] ${formatWarning(warning)}`);
+  }
   const kept = lineIdx >= 0
-    ? existing.filter((tok) => !incomingKeys.has(tokenKey(tok)))
-      .filter((tok) => tokenKey(tok) !== "id" || tok === keptId)
+    ? existing.filter((tok, index) => !incomingKeys.has(tokenKey(tok))
+      && (!/^id=[A-Za-z0-9_-]+$/.test(tok) || idChoice.keep.has(index)))
     : [];
   const rendered = [...kept, ...incoming].map((t) => `{${t}}`).join(" ");
   if (lineIdx >= 0) {

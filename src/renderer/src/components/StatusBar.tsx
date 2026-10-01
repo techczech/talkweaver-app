@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import { APP_VERSION, BUILD_SHA, BUILD_TIME } from '../buildInfo'
 import { formatTalkDates, type TalkDates } from '../lib/talkFacts'
 
@@ -15,6 +15,8 @@ interface Props {
   dates?: TalkDates | null
   /** Version-only bar for the no-talk-open empty state. */
   minimal?: boolean
+  /** The talk's next planned Run and pre-work chips (round-3 P3, P5). */
+  runChips?: ReactNode
   /** Share for comments: "Shared for comments · <link>" while the talk is shared; click reopens the sheet. */
   shared?: { label: string; title?: string; error?: boolean; paused?: boolean; ended?: boolean; onClick?: () => void } | null
 }
@@ -43,6 +45,7 @@ export default function StatusBar({
   dates = null,
   minimal = false,
   shared = null,
+  runChips = null,
 }: Props) {
   const [, tick] = useState(0)
 
@@ -116,6 +119,7 @@ export default function StatusBar({
                 </span>
               </>
             )}
+            {runChips}
             <span style={styles.sep}>|</span>
             <span style={styles.item}>{wordLabel}</span>
             <span style={styles.sep}>|</span>

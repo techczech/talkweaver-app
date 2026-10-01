@@ -28,6 +28,8 @@ import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 
 const BODY_CQW = 3.2
 const DENSE_CQW = 2.6
+// Slide round 2 (0.37, ADR-0033 1): a table's text is 2.2cqw (42px at 1920), tighter than the 3.2cqw list body.
+const TABLE_CQW = 2.2
 const SPACED_GAP_MIN = 0.3
 const dir = mkdtempSync(join(tmpdir(), 'tw-readable-cards-'))
 const source = [
@@ -41,7 +43,7 @@ const source = [
   '- AI as oracle  {icon=lucide:brain-circuit}', '  - Ask a question; get an answer, translation or summary.',
   '- AI as tool maker  {icon=tabler:tools}', '  - Ask it to write code, visualise data or make a small app.',
   '- AI as tool user  {icon=lucide:monitor-cloud}', '  - It can work with files and software to complete a task.', '',
-  '### Current models families', '{logolist} {id=model-families}', '',
+  '### Current models families', '{logolist} {narrowcols=off} {id=model-families}', '',
   '- OpenAI – GPT 6', '  - Luna', '  - Sol', '  - Astra',
   '- Anthropic – Claude 5', '  - Sonnet', '  - Opus', '  - Fable',
   '- Google – Gemini 3', '  - Flash Lite', '  - Flash', '  - Pro', '',
@@ -50,15 +52,15 @@ const source = [
   '- Web {icon=lucide:globe}', '  - Runs in a browser tab', '  - Nothing to install',
   '- A desktop app with a much longer heading {icon=lucide:monitor}', '  - Runs on your machine', '  - Reads local files', '',
   // Cards whose words all fit at the body size.
-  '### Short card words', '{logolist} {id=cards-short}', '',
+  '### Short card words', '{logolist} {narrowcols=off} {id=cards-short}', '',
   '- OpenAI', '  - Luna', '  - Sol',
   '- Anthropic', '  - Opus', '  - Fable', '',
   // Crowded: more than the band holds at the drawn spacing.
   '### Crowded icon row', '{iconrow} {id=row-crowded}', '',
-  '- Read {icon=lucide:book-open}', '  - Opens the file', '  - Finds the section', '  - Quotes the passage', '  - Checks the source', '  - Notes the page',
-  '- Plan {icon=lucide:list-checks}', '  - Lists the steps', '  - Orders the work', '  - Names the risks', '  - Sets the checks', '  - Asks for approval',
-  '- Act {icon=lucide:hammer}', '  - Edits the file', '  - Runs the tests', '  - Reads the output', '  - Fixes the failure', '  - Reports the result', '',
-  '### Crowded cards', '{logolist} {id=cards-crowded}', '',
+  '- Read {icon=lucide:book-open}', '  - Opens the file', '  - Finds the section', '  - Quotes the passage', '  - Checks the source', '  - Notes the page', '  - Cross-checks the date', '  - Files the reference',
+  '- Plan {icon=lucide:list-checks}', '  - Lists the steps', '  - Orders the work', '  - Names the risks', '  - Sets the checks', '  - Asks for approval', '  - Splits the task', '  - Estimates the cost',
+  '- Act {icon=lucide:hammer}', '  - Edits the file', '  - Runs the tests', '  - Reads the output', '  - Fixes the failure', '  - Reports the result', '  - Logs the change', '  - Cleans the workspace', '',
+  '### Crowded cards', '{logolist} {narrowcols=off} {id=cards-crowded}', '',
   '- OpenAI', '  - Luna', '  - Sol', '  - Astra', '  - Nova', '  - Terra', '  - Vega', '  - Lyra', '  - Orion', '  - Rhea',
   '- Meta', '  - Haiku', '  - Sonnet', '  - Opus', '  - Fable', '  - Verse', '  - Prose', '  - Ode', '  - Epic', '  - Saga',
   '- Google', '  - Flash', '  - Pro', '  - Ultra', '  - Nano', '  - Gemma', '  - Lite', '  - Mini', '  - Max', '  - Edge', '',
@@ -218,14 +220,14 @@ try {
       console.log(`PASS ${key} ${id}: fitted by ${slide.listFit}, --list-gap ${slide.listGap}, no zoom`)
     }
 
-    // 5. Tables and timeline entries keep their own sizes; the width step never touches them.
+    // 5. Tables keep their own size, timeline entries read at the body size (ADR-0033 §8); the width step never touches them.
     const table = await probe('table')
     assert.equal(table.widthFit, null, `${key}: no width step on a table`)
-    table.tableCellPx.forEach((px) => assert(close(px, table.stageWidth * BODY_CQW / 100), `${key}: table cells at the body token (${px}px)`))
+    table.tableCellPx.forEach((px) => assert(close(px, table.stageWidth * TABLE_CQW / 100), `${key}: table cells at the table token (${px}px)`))
     const timeline = await probe('timeline')
     assert(timeline.timelineEntryPx.length >= 3, `${key}: timeline entries render`)
     assert.equal(timeline.widthFit, null, `${key}: no width step on a timeline`)
-    timeline.timelineEntryPx.forEach((px) => assert(px < timeline.stageWidth * BODY_CQW / 100 - 1, `${key}: timeline entries stay below the body size (${px}px)`))
+    timeline.timelineEntryPx.forEach((px) => assert(close(px, timeline.stageWidth * BODY_CQW / 100) || px <= timeline.stageWidth * BODY_CQW / 100, `${key}: timeline entries at the body size, never above it (${px}px; ADR-0033 §8)`))
     console.log(`PASS ${key}: tables (${table.tableCellPx[0]}px) and timeline entries (${timeline.timelineEntryPx[0]}px) untouched`)
     await page.close()
   }

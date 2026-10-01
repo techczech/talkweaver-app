@@ -13,7 +13,7 @@ export default function PanelHeader({
   onCollapseAll, onRefresh, onChangeVault,
   query, onQueryChange, searchRef, onSearchKeyDown,
   onSearchFocus, onSearchBlur, onSearchSelect, assist,
-  focusPath, onFocusPath
+  focusPath, onFocusPath, rootLabel = 'Vault', showSlot
 }: {
   viewMode: ViewMode
   onSetViewMode: (mode: ViewMode) => void
@@ -37,6 +37,10 @@ export default function PanelHeader({
   assist?: ReactNode
   focusPath: string
   onFocusPath: (path: string) => void
+  /** The crumb that leaves the drill-in: the drilled vault's name ("Vault" for a single tree). */
+  rootLabel?: string
+  /** "Show: All vaults" (ticket 07), under the search and its assist. */
+  showSlot?: ReactNode
 }) {
   return (
     <>
@@ -52,7 +56,7 @@ export default function PanelHeader({
         <button ref={sortBtnRef} className={`tl-tbtn ${sortOpen ? 'tl-tbtn--open' : ''}`} title="Sort (s)" aria-label="Sort" aria-expanded={sortOpen} data-talklist-sort onClick={onToggleSort}><IcSort /></button>
         <button className="tl-tbtn" title="Collapse all folders" aria-label="Collapse all folders" onClick={onCollapseAll}><IcCollapse /></button>
         <button className="tl-tbtn" title="Refresh" aria-label="Refresh" onClick={onRefresh}><IcRefresh /></button>
-        <button className="tl-tbtn" title="Change vault" aria-label="Change vault" onClick={onChangeVault}><IcSwap /></button>
+        <button className="tl-tbtn" title="Add vault…" aria-label="Add vault" onClick={onChangeVault}><IcSwap /></button>
       </div>
 
       <div className="tl-searchrow">
@@ -78,10 +82,11 @@ export default function PanelHeader({
         </div>
       </div>
       {assist}
+      {showSlot}
 
       {focusPath && (
         <nav className="tl-crumbs" aria-label="Location">
-          <button onClick={() => onFocusPath('')}>Vault</button>
+          <button onClick={() => onFocusPath('')}>{rootLabel}</button>
           {breadcrumbCrumbs(focusPath).map((c, i, arr) => (
             <span key={c.path}>
               <span className="tl-crumbs-sep">›</span>

@@ -3,6 +3,7 @@
 // surface: a grouped session sidebar, a slide-time-marker timeline over a real waveform, and the current
 // slide (rendered by ledger id from the talk's CURRENT outline). Playback is a real <audio>
 // element served the local file over twrec://. Upload to R2 is on request, per session.
+import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle, BarChart3, Check, ChevronDown, ChevronRight, FileText, HardDrive, Loader2, PanelLeftClose,
@@ -13,6 +14,9 @@ import type { RecordingSession, Transcript, TranscriptSegment, TrimRange } from 
 import { shortcutById } from '../../../shared/shortcut-registry'
 import { eventToCMKey } from '../keymap/store'
 import '../studio.css'
+
+// Refusal codes from main when a talk or session name is not a safe file name (recording-paths.ts).
+const UNSAFE_NAME_ERRORS = new Set(['unsafe-talk-slug', 'unsafe-session-id', 'unsafe-path', 'run-path-unsafe'])
 
 type Session = RecordingSession & { audio: NonNullable<RecordingSession['audio']> }
 type SlideInfo = { title: string; section: string; thumbUrl: string | null; n: number; tag: string }
@@ -341,7 +345,10 @@ export default function Studio({
         const info = talks.find((t) => t.slug === active.talkSlug)
         if (!info) return
         const content = await window.tw.talk.readOutline(info.outlinePath)
-        if (content == null) return
+        if (content == null) {
+          flash('This talk could not be opened: it is not in your current vault, or its file could not be read.')
+          return
+        }
         const [rows, thumbs] = await Promise.all([
           window.tw.talk.compile(info.outlinePath, content),
           window.tw.talk.thumbnails(info.outlinePath, content)
@@ -351,7 +358,7 @@ export default function Studio({
         rows.forEach((r, i) => {
           const key = r.render_hash || r.content_hash || r.slide_id
           map[r.slide_id] = {
-            title: r.nav_title || r.title || '(untitled)',
+            title: plainInlineText(r.nav_title || r.title) || '(untitled)',
             section: r.section || '',
             thumbUrl: thumbs && key ? thumbs[key] ?? null : null,
             n: i + 1,
@@ -406,7 +413,7 @@ export default function Studio({
     return () => {
       cancelled = true
     }
-  }, [active, speedIdx])
+  }, [active, speedIdx, flash])
 
   useEffect(() => {
     if (!isOpen || !active) {
@@ -596,7 +603,9 @@ export default function Studio({
       if (!res.ok) {
         const msg = res.error === 'busy'
           ? 'Another transcription is already running.'
-          : res.error || 'Transcription failed. The recording is still safe.'
+          : UNSAFE_NAME_ERRORS.has(res.error ?? '')
+            ? "That name can't be used for a file in your vault."
+            : res.error || 'Transcription failed. The recording is still safe.'
         setTranscriptError(msg)
         setTranscriptNote(null)
         return

@@ -1,26 +1,36 @@
+import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
 import { runActionBarEditorCommand } from './actionBar/command-runner'
 import { venueScreenLinkFromOutline } from '../../../shared/venue-screen-link'
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import type { TalkInfo, ProjectionRow } from '../../../preload/index'
+import type { TalkInfo, ProjectionRow, RecordingSession } from '../../../preload/index'
+import { textFitNotesFor } from '../../../shared/text-fit-notes.ts'
 import { dismissToast, notify } from '../lib/notify'
 import Editor, { type ObjectInsertHandler } from './Editor'
 import SlideFocus from './SlideFocus'
 import type { FocusRange } from '../extensions/focusScope'
 import { focusRangeForSlideLine, firstFocusableFrom, nextFocusableSlide, readableSectionLabel } from './slideFocusModel'
 import Inspector from './Inspector'
+import { applyBoardEditToOutline, type BoardEdit } from '../../../../compiler/scripts/lib/board-slide.mjs'
+import { applyRightAnswerToOutline } from '../../../../compiler/scripts/lib/prework.mjs'
 import SlideStrip from './SlideStrip'
 import GridView from './GridView'
 import StatusBar from './StatusBar'
 import { useTalkFacts } from '../lib/talkFacts'
-import CommandPalette from './CommandPalette'
-import { selectionFromTriggerLine, toggleLayoutSelection, type LayoutPickerContext } from './layoutPickerModel'
+import LayoutPickerColumn from './LayoutPickerColumn'
+import { reanchorPickerSlide, selectionFromTriggerLine, toggleLayoutSelection, type LayoutPickerContext } from './layoutPickerModel'
+import { LayoutVerbError, previewLayout, setLayout, type SlideRef } from '../../../shared/layout-verbs'
+import { reportTriggerMergeWarnings } from '../../../shared/trigger-line'
+import { readOutlineSlides } from '../../../shared/feedback-accept'
 import { LAYOUTS, type LayoutDef, type OptionGroup } from '../data/layouts'
 import SearchPalette from './SearchPalette'
 import SlideBrowser from './SlideBrowser'
 import PropagationChecklist, { type AdoptVersion } from './PropagationChecklist'
 import MergeConfirm from './MergeConfirm'
 import ShareSheet from './ShareSheet'
+import PlanRunSheet from './PlanRunSheet'
+import RunStatusChips from './RunStatusChips'
+import ConflictLine from './talklist/ConflictLine'
 import { shareForTalk, useSharedTalks } from '../lib/sharedTalks'
 import FeedbackRail, { type FeedbackFocus } from './FeedbackRail'
 import { useFeedbackList, useFeedbackSummaries } from '../lib/feedback'
@@ -50,6 +60,7 @@ import {
   type PaletteCommandHandlerId,
   type ToolbarMenuName
 } from '../../../shared/command-registry'
+import { componentInsertEntries } from '../../../shared/layout-registry/entries'
 import { liveCommandShortcutLabel, liveShortcutLabel, onKeymapChanged } from '../keymap/store'
 import { surfaceKey } from '../keymap/surfaceKeys'
 import type { PickerCommandOutcome, SlidePickerCommands } from './slidePickerCommands'
@@ -268,6 +279,8 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   const [publishing, setPublishing] = useState<boolean>(false)
   // Share for comments (ticket 03): the sheet, and every shared talk (status bar chip).
   const [shareSheetOpen, setShareSheetOpen] = useState<boolean>(false)
+  // The plan sheet (ADR-0032 point 5): a new Run (run null) or editing a planned one.
+  const [planSheet, setPlanSheet] = useState<{ run: RecordingSession | null } | null>(null)
   const sharedTalks = useSharedTalks()
   const [publishElapsed, setPublishElapsed] = useState<number>(0)
   const [wordCount, setWordCount] = useState<number>(0)
@@ -279,9 +292,13 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // a refused or failed write leaves it standing, so save health is visible at a glance.
   const [dirty, setDirty] = useState(false)
   const [compiling, setCompiling] = useState<boolean>(false)
-  const [paletteOpen, setPaletteOpen] = useState<boolean>(false)
-  const [paletteQuery, setPaletteQuery] = useState<string>('')
-  const [paletteContext, setPaletteContext] = useState<LayoutPickerContext | null>(null)
+  // ADR-0032: ⌘L turns the Inspector column into the layout picker for one slide. `slide` is the outline's
+  // own address of it ({id=…}, or its heading line before the save stamps one); `query` seeds the search box.
+  const [layoutPicker, setLayoutPicker] = useState<{ slide: SlideRef; slideId: string | null; query: string; anchor: string } | null>(null)
+  const layoutPickerRef = useRef(layoutPicker)
+  layoutPickerRef.current = layoutPicker
+  // The layout being tried: the Inspector preview shows it, nothing is written.
+  const [pickerTry, setPickerTry] = useState<string | null>(null)
   // Dead-but-compiling until Task 12 deletes SearchPalette: ⌘S now opens the Slide Browser,
   // so nothing sets searchOpen any more, but the palette stays mounted (and unreachable).
   const [searchOpen, setSearchOpen] = useState(false)
@@ -400,6 +417,8 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     undo: () => void
     redo: () => void
     newSlide: () => void
+    /** Returns the new board's heading line (1-based), or null when nothing was inserted. */
+    insertBoardSlide: () => number | null
     promoteHeading: () => void
     demoteHeading: () => void
     bulletedList: () => void
@@ -425,6 +444,14 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // Mirror activeTalk into a ref so the (deps-[]) global key handler can present the CURRENT talk.
   const activeTalkRef = useRef<TalkInfo | null>(activeTalk)
   useEffect(() => { activeTalkRef.current = activeTalk }, [activeTalk])
+  // Ticket 09 (LOCKED-conflict frame 1): the status bar says when the open talk has conflict copies.
+  const [activeConflicts, setActiveConflicts] = useState(activeTalk?.conflicts ?? 0)
+  useEffect(() => {
+    setActiveConflicts(activeTalk?.conflicts ?? 0)
+    const path = activeTalk?.outlinePath
+    if (!path) return
+    return window.tw.vault.onTalkConflicts(({ outlinePath, conflicts }) => { if (outlinePath === path) setActiveConflicts(conflicts) })
+  }, [activeTalk?.outlinePath, activeTalk?.conflicts])
   // Mirror browserOpen so the (deps-[]) global key handler can tell whether the Browser is
   // already open — ⌘S then re-focuses the search field rather than toggling the overlay closed.
   const browserOpenRef = useRef(browserOpen)
@@ -466,12 +493,18 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   const inspectedSlideIdRef = useRef<string | null>(inspectedSlideId)
   useEffect(() => { inspectedSlideIdRef.current = inspectedSlideId }, [inspectedSlideId])
   const inspectorCommitInProgressRef = useRef(false)
+  const cursorLineRef = useRef<number | null>(null)
+  const cursorAwaitsCompileRef = useRef(false)
+  // The heading line of a board slide just inserted, until the Inspector has opened on it.
+  const insertedBoardLineRef = useRef<number | null>(null)
   const inspectedSlideIndexRef = useRef(0)
   const inspectedSlideIndex = resolveInspectedSlide(
     compiledSlides,
     inspectedSlideId,
     inspectedSlideIndexRef.current
   ).index
+  // ADR-0033 §1: heading lines the outline editor marks for text that cannot fit at the readable minimum.
+  const textFitNotes = useMemo(() => textFitNotesFor(compiledSlides, slideLines), [compiledSlides, slideLines])
   const slideLinesRef = useRef<(number | null)[]>(slideLines)
   useEffect(() => { slideLinesRef.current = slideLines }, [slideLines])
 
@@ -480,6 +513,18 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // to the previous (clamped) position.
   useEffect(() => {
     if (!inspectorMode) return
+    // Insert › Board slide (ADR-0032 A1): the Inspector opens on the new board once a compile
+    // carries it. Until then the caret's slide index points into the rows compiled before it.
+    const inserted = insertedBoardLineRef.current
+    const insertedIndex = inserted == null ? -1 : slideLines.findIndex((line) => line === inserted)
+    if (insertedIndex >= 0 && compiledSlides?.[insertedIndex]) {
+      insertedBoardLineRef.current = null
+      const id = compiledSlides[insertedIndex].slide_id ?? null
+      inspectedSlideIdRef.current = id
+      inspectedSlideIndexRef.current = insertedIndex
+      setInspectedSlideId(id)
+      return
+    }
     const previousIndex = inspectedSlideId == null ? activeSlideRef.current : inspectedSlideIndexRef.current
     const seedId = inspectedSlideId
       ?? compiledSlides?.[Math.max(0, Math.min((compiledSlides?.length ?? 1) - 1, activeSlideRef.current))]?.slide_id
@@ -593,6 +638,13 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // focusSlide pointing at a now-stale compiled index, so exit Focus back to the origin first. Wired
   // to the ⌘⇧P command + the toolbar item; the in-editor ⌘⇧⌫ path is handled by the re-sync effect
   // above (a removed slide's index stops resolving → it exits, or re-bands onto the adjacent slide).
+  // ADR-0032 §4: component-kind entries (code, QR, action button, embeds, countdown) are written at
+  // the caret from the Insert menu and the action bar; the picker no longer offers them.
+  const insertComponent = useCallback((name: string) => {
+    const entry = componentInsertEntries().find((candidate) => candidate.name === name)
+    if (entry) editorInsertRef.current?.(entry.snippet)
+  }, [])
+
   const handleDeleteSlide = useCallback(() => {
     editorCmdsRef.current?.deleteSlide()
     if (focusSlideRef.current != null) exitFocus()
@@ -630,12 +682,12 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // context menu (and lets ⌘K fall through untouched, per the no-swallow rule).
   useEffect(() => {
     overlayOpenRef.current =
-      browserOpen || paletteOpen || searchOpen || archiveOpen || iconPickerOpen || helpOpen ||
+      browserOpen || searchOpen || archiveOpen || iconPickerOpen || helpOpen ||
       cmdMenuOpen || abstractOpen || deckDesignOpen || embedCheckOpen || layoutDoctorOpen ||
       explainIndex != null || whereUsedId != null || imageMetaId != null ||
       adoptTarget != null || mergeRequest != null || tagSlide != null || slideMenu != null
   }, [
-    browserOpen, paletteOpen, searchOpen, archiveOpen, iconPickerOpen, helpOpen, cmdMenuOpen,
+    browserOpen, searchOpen, archiveOpen, iconPickerOpen, helpOpen, cmdMenuOpen,
     abstractOpen, deckDesignOpen, embedCheckOpen, layoutDoctorOpen, explainIndex, whereUsedId, imageMetaId,
     adoptTarget, mergeRequest, tagSlide, slideMenu
   ])
@@ -791,7 +843,8 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
           notify('Not saved: this talk’s file differs from what TalkWeaver has open. Choose in the bar at the top of the talk.', 'warning', 'changed-on-disk')
           return
         }
-        if (reply && reply.ok === false) notify('Save skipped — the app refused to overwrite the outline with empty content. Your file on disk is unchanged.', 'warning', 'save-refused')
+        if (reply && reply.ok === false && reply.refused === 'outside-vault') notify(reply.error, 'error', 'save-failed')
+        else if (reply && reply.ok === false) notify('Save skipped — the app refused to overwrite the outline with empty content. Your file on disk is unchanged.', 'warning', 'save-refused')
         else notify('Save FAILED — the outline could not be written to disk. Your recent edits are not saved.', 'error', 'save-failed')
       },
     })
@@ -856,7 +909,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // Read while the talk is shared, rail open or not: the slide pane's markers come from it too.
   const feedback = useFeedbackList(activeTalk?.outlinePath ?? null, activeFeedback, Boolean(activeShare))
   const railSlides = useMemo<RailSlide[]>(
-    () => (compiledSlides ?? []).map((row) => ({ slideId: row.slide_id, title: row.nav_title || row.title, line: row.source_line ?? null })),
+    () => (compiledSlides ?? []).map((row) => ({ slideId: row.slide_id, title: plainInlineText(row.nav_title || row.title), line: row.source_line ?? null })),
     [compiledSlides]
   )
   // Stopping the share (here or in another window) closes the rail with it.
@@ -1298,7 +1351,10 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       } else {
         content = await window.tw.talk.readOutline(outlinePath)
       }
-      if (content == null) return
+      if (content == null) {
+        notify('This talk could not be opened: it is not in your current vault, or its file could not be read.', 'warning', 'talk-not-read')
+        return
+      }
       if (blockedByUnresolved(content)) return
       await window.tw.present.rebuild(deckWcId, outlinePath, content, slideId)
     })
@@ -1410,11 +1466,92 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
 
   // The ⌘L layout picker, also reachable from the toolbar Insert → Layout. A bare trigger lands on
   // the slide's Trigger line; a multi-line template is spliced as a new block at the caret.
+  //
+  // ADR-0032: the picker is the Inspector column, so opening it brings that column up (slides beside the
+  // outline, not the grid, not Focus) and aims it at the Inspector's slide, or at the caret's slide when the
+  // Inspector is not showing. Pressed again, it closes and the slide is as it was.
+  const closeLayoutPicker = useCallback((): void => {
+    setLayoutPicker(null)
+    setPickerTry(null)
+    focusEditor()
+  }, [])
   function openLayoutPicker(query = ''): void {
-    setPaletteQuery(query)
-    setPaletteContext(editorLayoutContextRef.current?.() ?? null)
-    setPaletteOpen(true)
+    if (layoutPickerRef.current && !query) { closeLayoutPicker(); return }
+    const doc = editorReadRef.current?.()
+    if (!doc) return
+    const read = readOutlineSlides(doc.text)
+    const inspectorShowing = inspectorMode && paneState !== 'editor' && !gridMode && !railOpen
+    const caretLine = doc.text.slice(0, doc.caret).split('\n').length - 1
+    const byCaret = [...read.slides].reverse().find((candidate) => candidate.start <= caretLine)
+    const byInspector = inspectorShowing && inspectedSlideIdRef.current
+      ? read.slides.find((candidate) => candidate.id === inspectedSlideIdRef.current)
+      : undefined
+    const target = byInspector ?? byCaret
+    if (!target) { notify('Put the cursor on a slide first: the layout picker changes the slide you are on.', 'info', 'layout-picker'); return }
+    if (focusSlideRef.current != null) exitFocus()
+    if (gridModeRef.current) setGridMode(false)
+    if (paneStateRef.current === 'editor') setPaneState('both')
+    if (feedbackOpen) setFeedbackOpen(false)
+    setInspectorMode(true)
+    // The Inspector previews the slide the picker acts on, stamped or not (an unstamped one is found by its heading line).
+    const index = target.id
+      ? compiledSlides?.findIndex((row) => row.slide_id === target.id) ?? -1
+      : slideLinesRef.current.findIndex((line) => line === target.line)
+    const inspectId = target.id || (index >= 0 ? compiledSlides?.[index]?.slide_id ?? null : null)
+    if (inspectId) {
+      inspectedSlideIdRef.current = inspectId
+      if (index >= 0) inspectedSlideIndexRef.current = index
+      setInspectedSlideId(inspectId)
+    }
+    setPickerTry(null)
+    setLayoutPicker({ slide: target.id ? target.id : { headingLine: target.line }, slideId: target.id || null, query, anchor: doc.text })
   }
+
+  // ↵ in the picker: the slide's Trigger line is rewritten by the set-layout verb, in one undoable change in
+  // the editor's own buffer (the one-writer seam), and the column becomes the Inspector at that layout.
+  function keepPickedLayout(layout: string, withStarterText: boolean): void {
+    const picker = layoutPickerRef.current
+    const doc = editorReadRef.current?.()
+    if (!picker || !doc) return
+    let written: string
+    try {
+      const write = setLayout(doc.text, reanchorPickerSlide(picker.anchor, doc.text, picker.slide) ?? picker.slide, layout, [], withStarterText)
+      written = write.outline
+      // What the merge set aside (a second id in the Trigger block) goes where the editor's ↵ reports it.
+      reportTriggerMergeWarnings(write.warnings)
+    } catch (error) {
+      notify(error instanceof LayoutVerbError ? error.detail : 'That layout could not be applied.', 'warning', 'layout-picker')
+      return
+    }
+    inspectorCommitInProgressRef.current = true
+    try {
+      if (written !== doc.text) editorReplaceRef.current?.(written)
+    } finally {
+      queueMicrotask(() => { inspectorCommitInProgressRef.current = false })
+    }
+    closeLayoutPicker()
+  }
+
+  // An unstamped slide is named by its heading line, and the save that stamps ids inserts lines above it:
+  // follow the slide through the change so the open picker keeps pointing at it (it used to close itself).
+  const pickerSlide = useMemo(
+    (): SlideRef | null => (layoutPicker ? reanchorPickerSlide(layoutPicker.anchor, outlineContent, layoutPicker.slide) ?? layoutPicker.slide : null),
+    [layoutPicker, outlineContent]
+  )
+  const pickerTryOutline = useMemo((): string | null => {
+    if (!layoutPicker || !pickerSlide || !pickerTry) return null
+    try { return previewLayout(outlineContent, pickerSlide, pickerTry) } catch { return null }
+  }, [layoutPicker, pickerSlide, pickerTry, outlineContent])
+
+  // The picker belongs to one slide: moving the Inspector to another (⌥↑ ⌥↓, a click in the strip) closes it.
+  useEffect(() => {
+    if (layoutPicker?.slideId && inspectedSlideId && inspectedSlideId !== layoutPicker.slideId) {
+      setLayoutPicker(null)
+      setPickerTry(null)
+    }
+  }, [inspectedSlideId, layoutPicker])
+  // ...and so does the talk it was opened on.
+  useEffect(() => { setLayoutPicker(null); setPickerTry(null) }, [activeTalk?.outlinePath])
 
   async function handleBuild() {
     if (!activeTalk || !outlineContent) return
@@ -1520,7 +1657,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // recompile + re-render thumbnails from scratch. For when a preview ever looks stale/wrong.
   async function handleRefresh() {
     if (!activeTalk) return
-    await window.tw.talk.clearThumbCache(activeTalk.slug)
+    await window.tw.talk.clearThumbCache(activeTalk.slug, activeTalk.outlinePath)
     setThumbnails(null)
     setCompiledSlides(null)
     const slides = await window.tw.talk.compile(activeTalk.outlinePath, outlineContentRef.current)
@@ -1564,6 +1701,11 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // Map the editor cursor line back to a slide index (editor → strip highlight): the slide
   // whose source line is the greatest one at/before the cursor.
   function handleCursorLine(line: number) {
+    // Remember where the caret is, and whether the rows it was mapped against were the compiler's yet: a click made
+    // before the first compile maps against the heading-only fallback, so it is mapped again when the rows arrive.
+    cursorLineRef.current = line
+    cursorAwaitsCompileRef.current = compiledSlidesRef.current == null
+    closePickerIfCaretLeft()
     let idx = -1
     let best = -1
     for (let i = 0; i < slideLines.length; i++) {
@@ -1592,6 +1734,27 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         }
       }
     }
+  }
+
+  // The caret's slide is re-resolved once, when the compile that the caret was placed ahead of arrives.
+  useEffect(() => {
+    const line = cursorLineRef.current
+    if (line == null || !compiledSlides || !cursorAwaitsCompileRef.current) return
+    handleCursorLine(line)
+  }, [compiledSlides]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A picker opened on a slide with no `{id=…}` yet belongs to the slide it was opened on: a caret that moves to
+  // another slide closes it (as moving the Inspector does for a stamped slide), so a try never rings another slide.
+  function closePickerIfCaretLeft(): void {
+    const picker = layoutPickerRef.current
+    if (!picker || picker.slideId) return
+    const doc = editorReadRef.current?.()
+    const line = cursorLineRef.current
+    if (!doc || line == null) return
+    const slide = reanchorPickerSlide(picker.anchor, doc.text, picker.slide) ?? picker.slide
+    if (typeof slide === 'string') return
+    const caret = [...readOutlineSlides(doc.text).slides].reverse().find((candidate) => candidate.start <= line - 1)
+    if (caret && caret.line !== slide.headingLine) closeLayoutPicker()
   }
 
   // Drag-reorder (one-writer spec D1): the compiler lib reorders the editor's BUFFER (not the file,
@@ -1634,31 +1797,45 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // (ADR-0032). Saved at once rather than after the debounced autosave, so a read-back sees it.
   async function handleSearchInsert(markdown: string, _fromSlug: string, sourceOutlinePath?: string) {
     if (!activeTalkRef.current) return
-    // Cross-talk reuse: materialize the slide's relative images into the vault pool first, so they
-    // resolve in THIS talk (a relative assets/ ref points at the SOURCE talk and would go grey).
-    let md = markdown
-    if (sourceOutlinePath) {
-      try {
-        const mat = await window.tw.talk.materializeSlideAssets(sourceOutlinePath, markdown)
-        if (mat?.success) md = mat.markdown
-      } catch { /* fall back to the raw markdown */ }
-    }
+    const md = await prepareInsertedSlide(markdown, sourceOutlinePath)
+    if (md === null) return
     await insertAtCaretAndSave(md.replace(/\s*$/, ''))
+  }
+
+  // One picked slide made ready for THIS talk. From another vault (ticket 06): main copies it into
+  // this talk's vault — media, a re-stamped id if the id is taken here, provenance — and returns the
+  // markdown to insert; null when that copy failed (nothing inserted, the person is told). From this
+  // vault: cross-talk reuse, the slide's relative images materialized into the vault pool so they
+  // resolve in THIS talk (a relative assets/ ref points at the SOURCE talk and would go grey).
+  async function prepareInsertedSlide(markdown: string, sourceOutlinePath?: string): Promise<string | null> {
+    const talk = activeTalkRef.current
+    if (!sourceOutlinePath || !talk) return markdown
+    try {
+      const liveIds = [...outlineContentRef.current.matchAll(/\{id=([A-Za-z0-9_-]+)\}/g)].map((m) => m[1])
+      const cross = await window.tw.talk.insertFromVault(sourceOutlinePath, talk.outlinePath, markdown, liveIds)
+      if (cross.ok && cross.crossVault) return cross.markdown
+      if (!cross.ok) {
+        notify(`Couldn’t copy the slide into this vault — ${cross.error} Nothing was inserted.`, 'warning', 'insert-from-vault')
+        return null
+      }
+    } catch { /* an older main without the handler: the same-vault path below */ }
+    try {
+      const mat = await window.tw.talk.materializeSlideAssets(sourceOutlinePath, markdown)
+      if (mat?.success) return mat.markdown
+    } catch { /* fall back to the raw markdown */ }
+    return markdown
   }
 
   // Insert SEVERAL searched slides at once (multi-select), each its own block, at the caret in
   // result order: one insertion, one save.
   async function handleSearchInsertMany(items: { markdown: string; fromSlug: string; sourceOutlinePath?: string }[]) {
     if (!activeTalkRef.current || items.length === 0) return
-    // Materialize each slide's relative images into the vault pool (cross-talk reuse) before insert.
-    const mdById = await Promise.all(items.map(async (it) => {
-      if (!it.sourceOutlinePath) return it.markdown
-      try {
-        const mat = await window.tw.talk.materializeSlideAssets(it.sourceOutlinePath, it.markdown)
-        return mat?.success ? mat.markdown : it.markdown
-      } catch { return it.markdown }
-    }))
-    const blocks = items.map((_it, i) => mdById[i].replace(/\s*$/, ''))
+    // Each slide made ready for this talk (cross-talk reuse, or a copy from another vault), one after
+    // another so ids promised to an earlier slide are never handed out again.
+    const mdById: Array<string | null> = []
+    for (const it of items) mdById.push(await prepareInsertedSlide(it.markdown, it.sourceOutlinePath))
+    if (mdById.some((md) => md === null)) return
+    const blocks = mdById.map((md) => (md as string).replace(/\s*$/, ''))
     if (await insertAtCaretAndSave(blocks.join('\n\n'))) {
       notify(`Inserted ${items.length} slide${items.length === 1 ? '' : 's'}.`, 'success')
     }
@@ -1751,9 +1928,10 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     studio: () => window.dispatchEvent(new Event('tw-open-studio')),
     history: () => window.dispatchEvent(new Event('tw-open-history')),
     importer: () => window.dispatchEvent(new Event('tw-open-importer')),
+    // With no talk open the sheet cannot name a talk: open History, whose sheet has the talk picker.
     'plan-run': () => {
-      window.dispatchEvent(new Event('tw-open-history'))
-      window.setTimeout(() => window.dispatchEvent(new Event('tw-plan-run')), 0)
+      if (activeTalkRef.current) setPlanSheet({ run: null })
+      else void window.tw.tools.open('history', 'plan-run')
     },
     pathways: () => {
       const talk = activeTalkRef.current
@@ -1800,6 +1978,12 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     'insert-object-mermaid': () => editorInsertObjectRef.current?.('mermaid'),
     'insert-object-diagram': () => editorInsertObjectRef.current?.('diagram'),
     'insert-object-svg': () => editorInsertObjectRef.current?.('svg'),
+    'insert-component-code': () => insertComponent('code'),
+    'insert-component-qr': () => insertComponent('qr'),
+    'insert-component-action': () => insertComponent('action'),
+    'insert-component-embed': () => insertComponent('embed'),
+    'insert-component-auto-embed': () => insertComponent('auto-embed'),
+    'insert-component-countdown': () => insertComponent('countdown'),
     'format-bold': () => editorCmdsRef.current?.runFormat('bold'),
     'format-italic': () => editorCmdsRef.current?.runFormat('italic'),
     'format-inline-code': () => editorCmdsRef.current?.runFormat('inline-code'),
@@ -1819,6 +2003,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     undo: () => runActionBarEditorCommand(editorCmdsRef.current, 'undo'),
     redo: () => runActionBarEditorCommand(editorCmdsRef.current, 'redo'),
     'new-slide': () => runActionBarEditorCommand(editorCmdsRef.current, 'new-slide'),
+    'insert-board-slide': () => { insertedBoardLineRef.current = editorCmdsRef.current?.insertBoardSlide() ?? null },
     'promote-heading': () => runActionBarEditorCommand(editorCmdsRef.current, 'promote-heading'),
     'demote-heading': () => runActionBarEditorCommand(editorCmdsRef.current, 'demote-heading'),
     'bulleted-list': () => runActionBarEditorCommand(editorCmdsRef.current, 'bulleted-list'),
@@ -1880,6 +2065,41 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     } finally {
       // CodeMirror reports mapped selections synchronously with the commit dispatch. Release after
       // that dispatch settles so the next real pointer/keyboard cursor move follows immediately.
+      queueMicrotask(() => { inspectorCommitInProgressRef.current = false })
+    }
+  }
+  // ADR-0032 (ticket 01): the Board section edits the slide BODY, not only its Trigger line. The
+  // edit is computed against the editor's own buffer (never the outlineContent mirror), for the
+  // slide found by its id in that buffer — a slide without an id yet (a fresh insert before its
+  // first save) is refused, like an option commit — and goes in as one undoable change.
+  function applyInspectorBoardEdit(edit: BoardEdit): boolean {
+    const doc = editorReadRef.current?.()
+    if (!doc) return false
+    const headingLine = headingLineForSlideId(doc.text, inspectedSlideIdRef.current)
+    if (headingLine == null) return false
+    const next = applyBoardEditToOutline(doc.text, headingLine, edit)
+    if (next === doc.text) return true
+    inspectorCommitInProgressRef.current = true
+    try {
+      return editorReplaceRef.current?.(next) != null
+    } finally {
+      queueMicrotask(() => { inspectorCommitInProgressRef.current = false })
+    }
+  }
+  // Ticket 08: the Quick check's right answer is a `{right}` marker on one option's list item — a
+  // body edit, made like a Board edit (the editor's own buffer, the slide found by its id, one
+  // undoable change).
+  function applyInspectorRightAnswer(optionIndex: number): boolean {
+    const doc = editorReadRef.current?.()
+    if (!doc) return false
+    const headingLine = headingLineForSlideId(doc.text, inspectedSlideIdRef.current)
+    if (headingLine == null) return false
+    const next = applyRightAnswerToOutline(doc.text, headingLine, optionIndex)
+    if (next === doc.text) return true
+    inspectorCommitInProgressRef.current = true
+    try {
+      return editorReplaceRef.current?.(next) != null
+    } finally {
       queueMicrotask(() => { inspectorCommitInProgressRef.current = false })
     }
   }
@@ -1946,6 +2166,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       onDirty={setDirty}
       vaultRoot={vaultRoot}
       focusRange={focusRange}
+      textFitNotes={textFitNotes}
       registerLayoutContext={(fn) => { editorLayoutContextRef.current = fn }}
       registerApplyLayout={(fn) => { editorApplyLayoutRef.current = fn }}
       registerApplyOption={(fn) => { editorApplyOptionRef.current = fn }}
@@ -2074,6 +2295,29 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         onExplain={() => setExplainIndex(inspectedSlideIndex)}
         onOpenLayoutDoctor={() => runRegisteredCommand('layout-doctor')}
         onCommitOption={applyInspectorOption}
+        onBoardEdit={applyInspectorBoardEdit}
+        onChangeLayout={() => openLayoutPicker()}
+        picker={layoutPicker ? {
+          tryOutline: pickerTryOutline,
+          tryLabel: pickerTryOutline && pickerTry ? LAYOUTS.find((entry) => entry.name === pickerTry)?.label ?? null : null,
+          column: (
+            <LayoutPickerColumn
+              outlinePath={activeTalk.outlinePath}
+              outline={outlineContent}
+              slide={pickerSlide ?? layoutPicker.slide}
+              initialQuery={layoutPicker.query}
+              onTry={setPickerTry}
+              onKeep={keepPickedLayout}
+              onClose={closeLayoutPicker}
+            />
+          )
+        } : null}
+        onRightAnswer={applyInspectorRightAnswer}
+        onPlanRun={(run) => setPlanSheet({ run })}
+        onInspectSlideId={(slideId) => {
+          const index = compiledSlides?.findIndex((row) => row.slide_id === slideId) ?? -1
+          if (index >= 0) handleSelectInspectorSlide(index)
+        }}
       />
     </div>
   )
@@ -2117,7 +2361,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     </div>
   )
 
-  // Accept / Use hers and Undo (ticket 06): through the one-writer seam, never a file write
+  // Accept / Use theirs and Undo (ticket 06): through the one-writer seam, never a file write
   // (lib/feedbackAccept). The external-change guard's bar holds them while it is up.
   function feedbackAcceptDeps(): FeedbackAcceptDeps<unknown> {
     return {
@@ -2149,7 +2393,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       if (!outcome.ok) feedback.setError(outcome.error)
     } finally { setFeedbackBusy(null) }
   }
-  // Open slide to merge: the caret into the slide's block; the rail stays open beside it with her text.
+  // Open slide to merge: the caret into the slide's block; the rail stays open beside it with their text.
   function handleFeedbackOpenSlide(slideId: string): void {
     const index = (compiledSlides ?? []).findIndex((row) => row.slide_id === slideId)
     if (index >= 0) handleEditSlide(index)
@@ -2369,6 +2613,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
               <ResizablePanes
                 left={editorColumn}
                 right={stripSurface}
+                minRightPx={layoutPicker ? 400 : undefined}
                 storageKey="tw-split"
                 initialLeftPct={55}
               />
@@ -2385,13 +2630,19 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         buildStatus={buildStatus}
         buildPath={buildPath}
         dates={talkDates}
+        runChips={activeTalk ? (
+          <>
+            {activeConflicts > 0 && <ConflictLine talk={{ ...activeTalk, conflicts: activeConflicts }} className="tw-status-conflict" />}
+            <RunStatusChips talk={activeTalk} outlineContent={outlineContent} onPlan={(run) => setPlanSheet({ run })} />
+          </>
+        ) : null}
         shared={activeShare ? {
           label: shareEnded ? ENDED_LABEL : feedbackPaused ? PAUSED_LABEL : sharedStatusLabel(activeShare),
           title: shareEnded
             ? 'This link no longer takes comments. Open to stop sharing or share again.'
             : feedbackPaused
-              ? 'Editing and saving carry on as normal. What she sends arrives when the link is back.'
-              : activeShare.lastError ? `Her page is not up to date: ${activeShare.lastError}` : activeShare.url,
+              ? 'Editing and saving carry on as normal. What they send arrives when the link is back.'
+              : activeShare.lastError ? `Their page is not up to date: ${activeShare.lastError}` : activeShare.url,
           error: !feedbackPaused && !shareEnded && Boolean(activeShare.lastError),
           paused: feedbackPaused && !shareEnded,
           ended: shareEnded,
@@ -2406,7 +2657,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
           slideIndex={focusSlide}
           slideCount={compiledSlides?.length ?? 0}
           section={readableSectionLabel(compiledSlides, focusSlide)}
-          slideTitle={focusRow?.nav_title || focusRow?.title || ''}
+          slideTitle={plainInlineText(focusRow?.nav_title || focusRow?.title)}
           compiledSlideId={focusRow?.slide_id || ''}
           headingLine={slideLines[focusSlide] ?? null}
           outlineContent={outlineContent}
@@ -2422,21 +2673,6 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         />
       )}
       {diskGuard.sheet && <OutlineDiskChangeSheet change={diskGuard.sheet} onAnswer={diskGuard.answerSheet} />}
-      <CommandPalette
-        isOpen={paletteOpen}
-        query={paletteQuery}
-        context={paletteContext}
-        onClose={() => { setPaletteOpen(false); setPaletteContext(null); focusEditor() }}
-        onCommit={(initial, selected) => {
-          editorApplyLayoutRef.current?.(initial, selected)
-          setPaletteOpen(false)
-          setPaletteContext(null)
-          setPaletteQuery('')
-          focusEditor()
-        }}
-        onCommitOption={(entry, group, token) => editorApplyOptionRef.current?.(entry, group, token) ?? null}
-        onInsertComponent={(text) => editorInsertRef.current?.(text)}
-      />
       <SearchPalette
         isOpen={searchOpen}
         onClose={() => { setSearchOpen(false); focusEditor() }}
@@ -2450,6 +2686,8 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         onInsert={handleSearchInsert}
         onInsertMany={handleSearchInsertMany}
         currentTalkSlug={activeTalk?.slug ?? ''}
+        currentOutlinePath={activeTalk?.outlinePath}
+        currentTalkVaultId={activeTalk?.vaultId}
         vaultRoot={vaultRoot}
         onOpenHelp={() => setHelpOpen(true)}
         // The command palette opens above the Browser: its keys are the palette's alone.
@@ -2557,6 +2795,15 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
           talk={activeTalk}
           title={activeTalk.title || activeTalk.slug}
           onClose={closeShareSheet}
+        />
+      )}
+      {planSheet && (
+        <PlanRunSheet
+          key={`${activeTalk.outlinePath}:${planSheet.run?.id ?? 'new'}`}
+          talk={{ slug: activeTalk.slug, title: activeTalk.title || activeTalk.slug, outlinePath: activeTalk.outlinePath }}
+          run={planSheet.run}
+          onClose={() => setPlanSheet(null)}
+          onSaved={() => setPlanSheet(null)}
         />
       )}
       {whereUsedId && (

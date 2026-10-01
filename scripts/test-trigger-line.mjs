@@ -24,7 +24,7 @@ assert.deepEqual(
     start: 1,
     end: 3,
     line: '{sidebar}{layout=media}{id=3plcu}',
-    warnings: ['duplicate-slide-id-merged:3plcu']
+    warnings: ['duplicate-slide-id-merged:kept 3plcu, dropped hnwcx (Not all Agents are Agents)']
   },
   'consecutive Trigger-only lines form one ordered block and keep the final id'
 )
@@ -217,4 +217,78 @@ assert.equal(
   'the context is asked about the line being produced'
 )
 
+// Ticket 04: `reactions` is list-valued — its commas bind to the value — and quoted custom labels
+// with spaces stay one token, both in the parser and in the one logical block the Inspector rewrites.
+assert.deepEqual(
+  parseTriggerGroups('{id=p1} {reactions=agree,disagree} {numbered}').map((token) => token.raw),
+  ['id=p1', 'reactions=agree,disagree', 'numbered'],
+  'reactions=agree,disagree is one token'
+)
+assert.deepEqual(
+  parseTriggerGroups('{reactions="Too fast","Just right","Too slow"}').map((token) => [token.raw, token.source]),
+  [['reactions=Too fast,Just right,Too slow', 'reactions="Too fast","Just right","Too slow"']],
+  'quoted labels are one token; the source keeps the quotes'
+)
+assert.equal(
+  logicalTriggerBlockAfterHeading(['### Pace', '{id=p1} {reactions="Too fast","Just right"}', '{kicker="A, B"}', ''], 0).line,
+  '{id=p1}{reactions="Too fast","Just right"}{kicker="A, B"}',
+  'the logical block keeps quoted values quoted, so a rewrite never splits a label'
+)
+const reactionsGroup = GLOBAL_OPTION_GROUPS.find((group) => group.key === 'reactions')
+assert.ok(reactionsGroup, 'the Reactions group is registered')
+assert.equal(selectionForGroup('{id=p1} {reactions="Too fast","Just right"}', reactionsGroup), 'reactions=Too fast,Just right',
+  'any reactions token is the group’s selection')
+assert.equal(selectionForGroup('{id=p1}', reactionsGroup), '', 'no token is Standard')
+assert.equal(commitOptionSelection('{id=p1} {reactions=off}', reactionsGroup, 'reactions="Too fast","Just right"'),
+  '{id=p1} {reactions="Too fast","Just right"}', 'a custom token replaces off, quotes written')
+assert.equal(commitOptionSelection('{id=p1} {reactions="Too fast","Just right"}', reactionsGroup, ''), '{id=p1}',
+  'Standard removes the quoted token whole')
+assert.throws(() => commitOptionSelection('{id=p1}', reactionsGroup, 'reactions='), /Unknown option token/,
+  'an empty reactions token is not a value of the group')
+
+// ADR-0032 (ticket 01; round-3 A4, A6): a board's settings are written only when they differ from
+// the default, straight after {poll=board} in the order poll, limit, length, cards, names, closes —
+// never after the id — and the default's own spelling still reads as the default.
+{
+  const board = (key) => GLOBAL_OPTION_GROUPS.find((group) => group.key === key)
+  const [limit, length, cards, names, closes] = ['board-limit', 'board-length', 'board-cards', 'board-names', 'board-closes'].map(board)
+  for (const group of [limit, length, cards, names, closes]) assert.ok(group, 'every board setting is a registered group')
+  // The Trigger line is written in its logical form (adjacent groups), as every option commit is.
+  const start = '{poll=board}{id=b4x9q}'
+  const afterLimit = commitOptionSelection(start, limit, 'limit=36')
+  assert.equal(afterLimit, '{poll=board}{limit=36}{id=b4x9q}', 'a setting follows {poll=board}, before the id')
+  const afterLength = commitOptionSelection(afterLimit, length, 'length=100')
+  assert.equal(afterLength, '{poll=board}{limit=36}{length=100}{id=b4x9q}', 'A6: the drawn order poll, limit, length, id')
+  assert.equal(commitOptionSelection(afterLength, limit, 'limit=12'), '{poll=board}{limit=12}{length=100}{id=b4x9q}', 'changing a setting rewrites it in place')
+  assert.equal(commitOptionSelection(afterLength, limit, ''), '{poll=board}{length=100}{id=b4x9q}', 'the default (24) writes no token')
+  assert.equal(commitOptionSelection(start, names, 'names'), '{poll=board}{names}{id=b4x9q}', 'Names Optional writes bare {names}')
+  assert.equal(commitOptionSelection('{poll=board}{names}{id=b4x9q}', names, ''), start, 'Names Off removes it')
+  assert.equal(commitOptionSelection('{poll=board} {id=b4x9q}', limit, 'limit=12'), '{poll=board}{limit=12} {id=b4x9q}', 'an authored spacing is kept around the new token')
+  assert.equal(selectionForGroup('{poll=board} {names=optional}', names), 'names', 'names=optional reads as Optional')
+  assert.equal(commitOptionSelection(start, cards, 'cards=3'), '{poll=board}{cards=3}{id=b4x9q}')
+  assert.equal(commitOptionSelection(start, closes, 'closes=30d'), '{poll=board}{closes=30d}{id=b4x9q}')
+  for (const [group, token] of [[limit, 'limit=24'], [length, 'length=140'], [cards, 'cards=5'], [closes, 'closes=7d']]) {
+    assert.equal(selectionForGroup(`{poll=board} {${token}}`, group), '', `{${token}} is the default spelled out: the default button is lit`)
+  }
+  assert.equal(commitOptionSelection('{list}{poll=board}', limit, 'limit=all'), '{list}{poll=board}{limit=all}', 'the board anchor wins over the layout token')
+  assert.equal(commitOptionSelection('{id=x}', limit, 'limit=12'), '{id=x} {limit=12}', 'no board token on the line: the ordinary end-of-line write')
+}
+
 console.log('trigger-line: parsing and byte-preserving selection checks passed')
+
+// Probe R5-A: the block stops where the compiler tree's stops — at a chart token that owns the list
+// below it (chartObjectTokenAt) — so no merge folds the chart block into the Trigger line.
+assert.deepEqual(
+  logicalTriggerBlockAfterHeading(['### T', '{id=x}{chart=bar}', '{piechart}', '- A: 1', '- B: 2'], 0),
+  { start: 1, end: 2, line: '{id=x}{chart=bar}', warnings: [] },
+  'a chart token that owns its list is content, not Trigger block'
+)
+assert.equal(logicalTriggerBlockAfterHeading(['### T', '{id=x}', '{barchart}', '', '- A: 1'], 0).end, 2,
+  'one blank between the chart token and its list still owns it')
+assert.equal(logicalTriggerBlockAfterHeading(['### T', '{id=x}', '{piechart}', '', 'Body'], 0).end, 3,
+  'a chart token with no list below stays in the Trigger block')
+{
+  const caret = caretLineAfterTriggerBlock(['### T', '{id=x}', '{piechart}', '- A: 1'], 0)
+  assert.deepEqual(caret, { targetLine: 2, insertBlankAt: null }, '↵ from the heading lands on the chart token, not past it')
+}
+console.log('trigger-line: chart object token ends the Trigger block')

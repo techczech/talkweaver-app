@@ -3,7 +3,7 @@
 // must carry no speaker notes and no HTML comments — neither in the handout HTML (its SLIDE_SCRIPT
 // companion included) nor in the per-slide source text the Worker serves publicly — and what counts
 // as notes or a comment is the compiler's own parse. Each slide's text is its authored outline
-// source, keyed by the same slide id her page reads from the compiled section.
+// source, keyed by the same slide id their page reads from the compiled section.
 import { strict as assert } from 'node:assert'
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -105,7 +105,7 @@ try {
   assertClean(payload, 'awkward outline')
   assert.equal(payload.title, 'AI and assessment workshop')
   assert.equal(/id="notesPanel"/.test(payload.html), false, 'no notes panel in the share build')
-  assert.match(payload.html, /SHARED_TALK_OPTIONS = \{"proposals":true,"ownerName":"Dominik"\}/, 'her page gets the comments runtime')
+  assert.match(payload.html, /SHARED_TALK_OPTIONS = \{"proposals":true,"ownerName":"Dominik"\}/, 'their page gets the comments runtime')
   for (const id of ['afterheading', 'inlist', 'unclosed', 'afterunclosed', 'commentfence', 'todo', 'code']) {
     assert.ok(payload.slides.some((slide) => slide.slideId === id), `${id} is pushed`)
     assert.match(payload.html, new RegExp(`data-id="${id}"`), `${id} has the same id in the page`)
@@ -128,7 +128,7 @@ try {
   console.log('PASS CRLF outline: notes removed, slide text intact')
 
   const narrow = await build('narrow', awkward, false)
-  assert.match(narrow.html, /SHARED_TALK_OPTIONS = \{"proposals":false/, 'switch 2 off reaches her page')
+  assert.match(narrow.html, /SHARED_TALK_OPTIONS = \{"proposals":false/, 'switch 2 off reaches their page')
   console.log('PASS build: the proposals switch reaches the page options')
 
   // The helpers keep line count and endings (the compiler's source lines must not drift).
@@ -147,6 +147,31 @@ try {
   assert.equal(ownerNameFrom(awkward), 'Dominik Lukeš')
   assert.equal(ownerNameFrom('---\ntitle: x\n---\n', 'Fallback Name'), 'Fallback Name')
   console.log('PASS helpers: line count and endings kept, authored text, owner name without e-mail')
+  // Pre-work is hidden for 0.37: a {prework} section's slides are not part of a shared talk, in the page or in the slide texts.
+  const withPrework = `${fm}
+## Main part
+
+### Visible slide
+{id=visible}
+
+- Shown
+
+## Before the session
+{id=pwsec}{prework}
+
+Do these first.
+
+### Hidden task
+{id=pwtask}{task}
+
+- PREWORK-ONLY-TEXT
+`
+  const pw = await build('prework-hidden', withPrework)
+  assert.ok(pw.html.includes('data-id="visible"'), 'the ordinary slide is shared')
+  assert.equal(pw.html.includes('PREWORK-ONLY-TEXT'), false, 'a pre-work step is not in the shared page')
+  assert.equal(JSON.stringify(pw.slides).includes('PREWORK-ONLY-TEXT'), false, 'a pre-work step is not in the shared slide texts')
+  assert.ok(!pw.slides.some((slide) => slide.slideId === 'pwtask' || slide.slideId === 'pwsec'), 'no pre-work slide id is listed')
+  console.log('PASS pre-work: a {prework} section is left out of the shared talk')
 } finally {
   rmSync(root, { recursive: true, force: true })
 }

@@ -1,5 +1,9 @@
 import { isExtendedPoll, normaliseExtendedPollFields, normaliseExtendedPollAggregates, normaliseBallotChoice, samePollChoice, renderExtendedPollResults, createExtendedBallot, extendedPollRuntimeSource } from './poll-extended.js'
 import { createInstantSlideSurface, instantSlideRuntimeSource } from './instant-slide.js'
+import { createAudienceReactions, audienceReactionsSupported, audienceReactionsRuntimeSource, audienceReactionIcons } from './audience-reactions.js'
+import { createAudienceAsk, audienceAskRuntimeSource } from './audience-ask.js'
+import { createQuestionLog, pollAnswerRecord, myNotesPollAnswerKey, audienceMyNotesRuntimeSource } from './audience-my-notes.js'
+import { createAudienceBoard, audienceBoardRuntimeSource, audienceBoardIcons, normaliseBoardPoll, normaliseOwnBoards, normaliseCardAck } from './audience-board.js'
 
 /** @typedef {import('../../../worker/protocol').SlideStateMessage | import('../../../worker/protocol').InstantSlideMessage | import('../../../worker/protocol').SessionClosedMessage | import('../../../worker/protocol').PollStateMessage | import('../../../worker/recovery-protocol').SessionPresence} FollowServerMessage */
 
@@ -24,8 +28,32 @@ export function audienceSocketUrl(baseUrl, sessionId) {
   return url.toString()
 }
 
+// A board's poll.state (ADR-0032). The worker sends an audience socket the audience view: visible
+// cards and groups only. The board itself is checked field by field where it is drawn (poll-display.js
+// safeState, the same boundary the audience window uses); here it is only kept as plain data.
+function normaliseBoardPollState(message) {
+  const plainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+  if (typeof message.pollId !== 'string' || !message.pollId || typeof message.question !== 'string'
+    || !Array.isArray(message.options) || (message.visibility !== 'live' && message.visibility !== 'held')
+    || typeof message.open !== 'boolean' || typeof message.revealed !== 'boolean' || !plainObject(message.board)
+    || (message.boardState !== undefined && !plainObject(message.boardState))) return null
+  const options = message.options.map((option) => (
+    option && typeof option.optionId === 'string' && option.optionId && typeof option.label === 'string' && option.label
+      ? { optionId: option.optionId, label: option.label } : null))
+  if (options.some((option) => !option)) return null
+  return {
+    type: 'poll.state', pollId: message.pollId, pollType: 'board', question: message.question, options,
+    visibility: message.visibility, open: message.open, revealed: message.revealed,
+    ...(typeof message.slideId === 'string' && message.slideId ? { slideId: message.slideId } : {}),
+    board: message.board, ...(message.boardState !== undefined ? { boardState: message.boardState } : {}),
+  }
+}
+
 /** @returns {import('../../../worker/protocol').PollStateMessage|null} */
 export function normalisePollState(message) {
+  if (message && typeof message === 'object' && message.type === 'poll.state' && message.pollType === 'board') {
+    return /** @type {any} */ (normaliseBoardPollState(message))
+  }
   if (
     !message || typeof message !== 'object' || message.type !== 'poll.state'
     || typeof message.pollId !== 'string' || !message.pollId
@@ -279,6 +307,19 @@ export function createAudiencePollRuntime(options) {
   function saveChoice(pollId, choice) {
     localChoices.set(pollId, choice)
     try { storage?.setItem(storageKey(pollId), JSON.stringify(choice)) } catch {}
+    keepAnswerForMyNotes(pollId, choice)
+  }
+  // My Notes lists the answer by slide a week later with no live talk, so the slide, the question and the
+  // answer as words are kept beside the vote. Kept once: a receipt replayed on reconnect changes nothing.
+  function keepAnswerForMyNotes(pollId, choice) {
+    try {
+      const key = myNotesPollAnswerKey(sessionId, pollId)
+      if (!storage || storage.getItem(key) !== null) return
+      const record = pollAnswerRecord(pollStates.get(pollId), choice, Date.now())
+      if (!record) return
+      storage.setItem(key, JSON.stringify(record))
+      options.onAnswered?.()
+    } catch {}
   }
   function draftFor(poll) {
     if (!drafts.has(poll.pollId)) {
@@ -593,9 +634,76 @@ export function createAudienceFollowRuntime(options) {
   const pollRuntime = pollMount ? createAudiencePollRuntime({
     mount: pollMount,
     storage,
+    onAnswered: () => options.onPollAnswered?.(),
     sendVote: (pollId, choice) => client?.sendVote(pollId, choice) || false,
   }) : null
   const instantSurface = document.body ? createInstantSlideSurface(document.body) : { show() {} }
+  // The reaction bar (ADR-0027): drawn only where the page carries its dock (never the venue screen).
+  const reactionDock = options.reactions ? document.getElementById('rxDock') : null
+  let ask = null
+  let board = null
+  let lateBoardShown = ''
+  // The questions this device sent, kept for My Notes when the worker confirms them.
+  const questionLog = options.reactions?.questionsKey ? createQuestionLog({ storage, key: options.reactions.questionsKey }) : null
+  const reactions = reactionDock ? createAudienceReactions({
+    document, dock: reactionDock, storage, storageKey: options.reactions.storageKey,
+    getSlideId: () => (options.getViewerPosition() || {}).slideId || '',
+    // The slide's own set from its {reactions=…} (ticket 04); null is the standard three.
+    getSlideReactions: options.reactions.getSlideReactions,
+    isPhone: options.reactions.isPhone,
+    isConnected: () => Boolean(client && client.status() === 'live'),
+    sendReaction: (item) => (client ? client.sendReaction(item) : false),
+    onAsk: () => ask?.open(),
+    // Note (phone): the note sheet is the question box's sheet; the count is the page's notes for the slide.
+    onNote: options.reactions.onSlideNote ? () => ask?.openNote() : undefined,
+    getNoteCount: options.reactions.getNoteCount,
+    onMarksChanged: options.reactions.onMarksChanged,
+  }) : null
+  // Ask the speaker (ADR-0027): the question box opens from the bar's Ask button and from the A key,
+  // and only where the bar is showing. Questions go through the same queue as reactions.
+  ask = reactions ? createAudienceAsk({
+    document, storage, nameKey, nameField: nameInput, icons: audienceReactionIcons(),
+    isPhone: options.reactions.isPhone,
+    isConnected: () => Boolean(client && client.status() === 'live'),
+    getSlideId: () => (options.getViewerPosition() || {}).slideId || '',
+    getSlideInfo: options.reactions.getSlideInfo,
+    isAvailable: () => reactions.isVisible() && reactions.questionsAllowed(),
+    isBlocked: options.reactions.isBlocked,
+    sendQuestion: (item) => (client ? client.sendQuestion(item) : false),
+    refusalReason: () => (client ? client.questionRefusal() : 'ended'),
+    notify: (note, ms) => reactions.notify(note, ms),
+    onQuestionKept: (record) => { if (questionLog && questionLog.add(record)) options.reactions.onQuestionKept?.() },
+    onNoteQuestion: options.reactions.onNoteQuestion,
+    onSlideNote: options.reactions.onSlideNote,
+  }) : null
+  // The board (ADR-0032): the column tabs, the card box and this device's own cards, shown while a board
+  // slide is live and the person follows it. Cards go through the same queue as reactions and questions.
+  const boardMount = options.reactions ? document.getElementById('bdPanel') : null
+  board = boardMount && reactions ? createAudienceBoard({
+    document, mount: boardMount, icons: { ...audienceReactionIcons(), ...audienceBoardIcons() },
+    isPhone: options.reactions.isPhone,
+    isConnected: () => Boolean(client && client.status() === 'live'),
+    getSlideId: () => (options.getViewerPosition() || {}).slideId || '',
+    getSlideInfo: options.reactions.getSlideInfo,
+    getName: () => nameInput.value,
+    isAskAvailable: () => Boolean(reactions.isVisible() && reactions.questionsAllowed()),
+    onAsk: () => ask?.open(),
+    sendCard: (item) => (client ? client.sendCard(item) : false),
+    pendingCards: () => (client ? client.pendingCards() : []),
+    onActiveChange: (active) => reactions.setBoardSlide(active),
+  }) : null
+  // The bar only shows against a worker whose /capabilities build takes reactions; until that is known
+  // (or when it cannot be read) it stays away, and the next discovery poll asks again.
+  let reactionsKnown = false, reactionsChecking = false
+  function checkReactionSupport() {
+    if (!reactions || reactionsKnown || reactionsChecking) return
+    reactionsChecking = true
+    const request = options.fetchCapabilities
+      ? Promise.resolve(options.fetchCapabilities())
+      : fetch(options.liveConfig.workerBaseUrl + '/capabilities').then((response) => { if (!response.ok) throw new Error('Capabilities unavailable'); return response.json() })
+    request.then((capabilities) => { reactionsKnown = true; reactions.setSupported(audienceReactionsSupported(capabilities)) })
+      .catch(() => {}).then(() => { reactionsChecking = false })
+  }
   let currentInstant = null
   function receiveInstant(slide) {
     currentInstant = slide
@@ -606,12 +714,16 @@ export function createAudienceFollowRuntime(options) {
     button.hidden = !sessionLive || diverged
     returnButton.hidden = !sessionLive || !diverged
     button.classList.toggle('is-on', following)
+    reactions?.setVisible(sessionLive && following)
+    board?.setVisible(sessionLive && following)
     label.textContent = following ? 'Stop following' : 'Follow live'
     nameWrap.hidden = !sessionLive
     nowLiveBadges.forEach((badge) => { badge.hidden = !sessionLive })
     if (!sessionLive) nameWrap.hidden = true
+    options.reactions?.onSwitchesChanged?.()
   }
   function markEnded(reason = 'ended') {
+    lateBoardShown = ''
     client?.end()
     client = null
     sessionId = ''
@@ -623,6 +735,10 @@ export function createAudienceFollowRuntime(options) {
     currentInstant = null
     instantSurface.show(null)
     pollRuntime?.end()
+    reactions?.end()
+    board?.end()
+    ask?.end()
+    reactionsKnown = false
     renderControls()
     options.onEnded?.(reason)
     statusEl.textContent = reason === 'expired' ? 'The live session has expired.' : 'The live session has ended.'
@@ -659,6 +775,8 @@ export function createAudienceFollowRuntime(options) {
       probe: () => probeAudienceSession(options.liveConfig.workerBaseUrl, sessionId),
       onStatus: (status) => {
         if (status !== 'live') presenterConnected = true
+        ask?.connectionChanged()
+        board?.connectionChanged()
         statusEl.textContent = status === 'live' ? 'live'
           : status === 'ended' ? 'the live session has ended'
           : status === 'expired' ? 'the live session has expired'
@@ -672,8 +790,26 @@ export function createAudienceFollowRuntime(options) {
         if (options.venue && sessionLive && reconnected && latestState) options.applyLiveSlideState(latestState)
       },
       onInstantSlide: receiveInstant,
-      onPollState: (message) => pollRuntime?.receive(message),
+      // A board is drawn into its slide by the venue screen (onBoardState); phones and laptops draw it in
+      // their own board panel, from the same message checked field by field (normaliseBoardPoll).
+      onPollState: (message) => {
+        if (message?.pollType !== 'board') { pollRuntime?.receive(message); return }
+        options.onBoardState?.(message)
+        const own = board ? normaliseBoardPoll(message) : null
+        if (!own) return
+        board.receive({ ...message, ...own })
+        // A phone that joins after End live (boards kept open) gets no slide state: take it to the open board once.
+        if (!latestState && message.open && message.slideId && lateBoardShown !== message.pollId && options.showSlide) {
+          lateBoardShown = message.pollId
+          options.showSlide(message.slideId)
+        }
+      },
+      onBoardSnapshot: (own) => board?.setOwn(own),
+      onCardStatus: (receipt) => board?.onCardStatus(receipt),
       onVoteStatus: (receipt) => pollRuntime?.onVoteStatus?.(receipt),
+      onSwitches: (switches) => { reactions?.setSwitches(switches); ask?.refresh(); board?.refresh(); options.reactions?.onSwitchesChanged?.() },
+      onReactionStatus: (receipt) => reactions?.onReactionStatus(receipt),
+      onQuestionStatus: (receipt) => ask?.onQuestionStatus(receipt),
       onEnded: markEnded,
     })
   }
@@ -723,6 +859,9 @@ export function createAudienceFollowRuntime(options) {
       sessionLive = true
       sessionId = discovery.sessionId
       pollRuntime?.startSession(sessionId)
+      reactions?.startSession(sessionId)
+      board?.startSession(sessionId)
+      checkReactionSupport()
       if (isNewSession) {
         client?.end()
         client = null
@@ -736,7 +875,7 @@ export function createAudienceFollowRuntime(options) {
   }
   void discoverSession()
   ;(options.scheduleDiscovery || ((callback) => window.setInterval(callback, 5000)))(discoverSession)
-  return { discoverSession, viewerMoved, markEnded, venueKeyboardAvailable: () => Boolean(options.venue && !(sessionLive && presenterConnected)) }
+  return { discoverSession, viewerMoved, markEnded, slideChanged: () => { reactions?.slideChanged(); board?.slideChanged() }, reactions, ask, board, venueKeyboardAvailable: () => Boolean(options.venue && !(sessionLive && presenterConnected)) }
 }
 
 /** @param {any} message */
@@ -749,6 +888,23 @@ export function normaliseVoteReceipt(message) {
   if (message.status === 'confirmed' && choice === null) return null
   return { submissionId: message.submissionId, pollId: message.pollId, status: message.status,
     ...(choice !== null ? { choice } : {}), ...(typeof message.error === 'string' ? { error: message.error } : {}) }
+}
+
+/** The sender's receipt for a reaction (`reaction.ack`) or a question (`question.ack`), or null when
+ *  it is malformed.
+ *  @param {any} message */
+export function normaliseReactionAck(message) {
+  if (!message || (message.type !== 'reaction.ack' && message.type !== 'question.ack') || typeof message.submissionId !== 'string'
+    || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{7,127}$/.test(message.submissionId)
+    || (message.status !== 'confirmed' && message.status !== 'rejected')) return null
+  return { submissionId: message.submissionId, status: message.status, ...(typeof message.error === 'string' ? { error: message.error } : {}) }
+}
+
+/** The speaker's pause switches as the worker sends them (`switches.state`, and `switches` in a snapshot), or null when malformed.
+ *  @param {any} value */
+export function normaliseSwitches(value) {
+  if (!value || typeof value.questionsAllowed !== 'boolean' || typeof value.reactionsAllowed !== 'boolean') return null
+  return { questionsAllowed: value.questionsAllowed, reactionsAllowed: value.reactionsAllowed }
 }
 
 /** @param {string} baseUrl @param {string} sessionId */
@@ -773,6 +929,13 @@ export function createAudienceFollowClient(options) {
   const random = options.random || Math.random
   const identityKey = 'talkweaver:live-participant:' + options.sessionId
   const pendingPrefix = 'talkweaver:live-pending:' + options.sessionId + ':'
+  // Reactions queue first-in first-out on this device (durable, one key per session) and go one at
+  // a time over the one socket, each waiting for its ack: the worker applies them in arrival order.
+  const reactionKey = 'talkweaver:live-reactions:' + options.sessionId
+  /** @type {any[]} */
+  let reactionQueue = []
+  let reactionInFlight = ''
+  let questionRefusal = 'ended'
   const pending = new Map()
   const timers = new Map()
   let participantId = options.participantId || ''
@@ -798,7 +961,7 @@ export function createAudienceFollowClient(options) {
     socket = null
     for (const name of [...timers.keys()]) cancel(name)
     try { previous?.close() } catch {}
-    syncId = ''; nonce = ''
+    syncId = ''; nonce = ''; reactionInFlight = ''
   }
   function terminal(status) {
     if (stopped) return
@@ -848,6 +1011,115 @@ export function createAudienceFollowClient(options) {
     }
     later('votes', fail, 10_000)
   }
+  const now = options.now || (() => Date.now())
+  const reactionKeyPrefix = 'talkweaver:live-reactions:'
+  // A queued item is a reaction (`reaction`) or a question (`kind: 'question'` with `text`); both go
+  // through the one first-in first-out queue over the one socket.
+  const validReaction = (item) => Boolean(item && typeof item.submissionId === 'string'
+    && (item.kind === 'card' ? typeof item.pollId === 'string' && item.pollId.length > 0 && (item.op === 'add' || item.op === 'edit' || item.op === 'withdraw')
+      : item.kind === 'question' ? typeof item.text === 'string' && item.text.length > 0 : typeof item.reaction === 'string')
+    && typeof item.slideId === 'string' && Number.isSafeInteger(item.tMs))
+  // The stored queue is `{ at, items }` (`at` stamps the last write). Every change re-reads storage and
+  // changes only its own item, so a second tab of the same talk never loses an item to stale memory.
+  function readStoredQueue() {
+    try {
+      const saved = JSON.parse(storage?.getItem(reactionKey) || 'null')
+      return saved && Array.isArray(saved.items) ? saved.items.filter(validReaction) : []
+    } catch { return [] }
+  }
+  function changeStoredQueue(change) {
+    try {
+      if (!storage) return false
+      const items = change(readStoredQueue())
+      if (items.length) storage.setItem(reactionKey, JSON.stringify({ at: now(), items }))
+      else storage.removeItem(reactionKey)
+      return true
+    } catch { return false }
+  }
+  // Queues left by other sessions and not written for 7 days are of no use to anyone: remove them.
+  function sweepReactionQueues() {
+    try {
+      const cutoff = now() - 7 * 24 * 60 * 60 * 1000
+      const stale = []
+      for (let i = 0; i < (storage?.length || 0); i++) {
+        const key = storage.key(i)
+        if (!key?.startsWith(reactionKeyPrefix) || key === reactionKey) continue
+        let at = 0
+        try { at = JSON.parse(storage.getItem(key)).at } catch {}
+        if (!(Number(at) >= cutoff)) stale.push(key)
+      }
+      for (const key of stale) storage.removeItem(key)
+    } catch {}
+  }
+  function readReactionQueue() {
+    const known = new Set(reactionQueue.map((item) => item.submissionId))
+    for (const item of readStoredQueue()) if (!known.has(item.submissionId)) reactionQueue.push(item)
+  }
+  // Another tab of the same session shares the stored queue: an item it has already settled is gone
+  // from storage, and this tab must not send it again. Storage that cannot be read changes nothing.
+  function dropSettledElsewhere() {
+    try {
+      if (!storage) return
+      const saved = JSON.parse(storage.getItem(reactionKey) || 'null')
+      const ids = new Set(saved && Array.isArray(saved.items) ? saved.items.map((item) => item && item.submissionId) : [])
+      reactionQueue = reactionQueue.filter((item) => ids.has(item.submissionId))
+    } catch {}
+  }
+  function flushReactions() {
+    if (liveStatus !== 'live' || stopped || reactionInFlight) return
+    dropSettledElsewhere()
+    if (!reactionQueue.length) return
+    const head = reactionQueue[0]
+    const { submissionId, reaction, slideId, tMs, withdrawn } = head
+    reactionInFlight = submissionId
+    const message = head.kind === 'card'
+      ? (head.op === 'add' ? { type: 'card.add', submissionId, pollId: head.pollId, column: head.column, text: head.text, ...(head.name ? { name: head.name } : {}) }
+        : head.op === 'edit' ? { type: 'card.edit', submissionId, pollId: head.pollId, cardId: head.cardId, text: head.text }
+        : { type: 'card.withdraw', submissionId, pollId: head.pollId, cardId: head.cardId })
+      : head.kind === 'question'
+      ? { type: 'question.submit', submissionId, text: head.text, ...(head.name ? { name: head.name } : {}), slideId, tMs }
+      : { type: 'reaction.send', submissionId, reaction, slideId, tMs, ...(withdrawn ? { withdrawn: true } : {}) }
+    if (send(message)) later('reaction', reactionTimedOut, 10_000)
+    else reactionInFlight = ''
+  }
+  // Every answer settles the head: a refusal stored nothing (a pause refusal included, so the item is
+  // dropped here rather than resent after the resume), and a refusal is shown, never retried.
+  function settleReaction(head, result) {
+    reactionQueue = reactionQueue.filter((item) => item.submissionId !== head.submissionId)
+    reactionInFlight = ''
+    changeStoredQueue((items) => items.filter((item) => item.submissionId !== head.submissionId))
+    cancel('reaction')
+    const receipt = { submissionId: head.submissionId, ...result, item: head }
+    if (head.kind === 'card') options.onCardStatus?.(receipt)
+    else if (head.kind === 'question') options.onQuestionStatus?.(receipt)
+    else options.onReactionStatus?.(receipt)
+    flushReactions()
+  }
+  function reactionReceipt(message) {
+    /** @type {any} */
+    const normalised = message?.type === 'card.ack' ? normaliseCardAck(message) : normaliseReactionAck(message)
+    const head = reactionQueue[0]
+    // Another tab of this device sent the card: this tab only learns how many cards the device has used.
+    if (normalised && message.type === 'card.ack' && normalised.status === 'confirmed' && normalised.cardsUsed !== undefined
+      && !reactionQueue.some((item) => item.submissionId === normalised.submissionId)) {
+      options.onCardStatus?.({ submissionId: normalised.submissionId, status: 'confirmed', pollId: normalised.pollId, cardsUsed: normalised.cardsUsed, item: null })
+      return
+    }
+    if (!normalised || !head || head.submissionId !== normalised.submissionId) return
+    settleReaction(head, { status: normalised.status, ...(normalised.error ? { error: normalised.error } : {}),
+      ...(head.kind === 'card' ? { ...(normalised.cardId ? { cardId: normalised.cardId } : {}), ...(normalised.cardsUsed !== undefined ? { cardsUsed: normalised.cardsUsed } : {}) } : {}) })
+  }
+  // A worker that does not take reactions answers with a protocol error and never an ack. Ten seconds
+  // without an answer reconnects and resends; a third silent try drops the item so it cannot block the
+  // queue or loop the connection for ever (the count is stored with the item, across reloads).
+  function reactionTimedOut() {
+    const head = reactionQueue[0]
+    if (!head || head.submissionId !== reactionInFlight) return
+    head.tries = (head.tries || 0) + 1
+    changeStoredQueue((items) => items.map((item) => item.submissionId === head.submissionId ? { ...item, tries: head.tries } : item))
+    if (head.tries >= 3) settleReaction(head, { status: 'rejected', error: 'no_answer' })
+    else fail()
+  }
   function heartbeat() {
     later('heartbeat', () => {
       nonce = uuid()
@@ -869,6 +1141,8 @@ export function createAudienceFollowClient(options) {
     generation++
     try {
       readPending()
+      sweepReactionQueues()
+      readReactionQueue()
       const url = new URL(audienceSocketUrl(options.baseUrl, options.sessionId))
       url.searchParams.set('protocol', '2')
       url.searchParams.set('participantId', participantId)
@@ -909,13 +1183,26 @@ export function createAudienceFollowClient(options) {
               if (presence) options.onPresence?.(presence)
             }
             applyInstant({ type: 'instant.state', slide: message.instantSlide ?? null })
+            const switches = normaliseSwitches(message.switches)
+            if (switches) options.onSwitches?.(switches)
             for (const poll of polls) options.onPollState?.(poll)
+            options.onBoardSnapshot?.(normaliseOwnBoards(message))
             for (const ack of message.receipts) receipt(ack)
             syncId = ''; attempt = 0
-            cancel('handshake'); setStatus('live'); heartbeat(); flushVotes()
+            cancel('handshake'); setStatus('live'); heartbeat(); flushVotes(); flushReactions()
             return
           }
           if (message?.type === 'vote.ack') { receipt(message); return }
+          if (message?.type === 'reaction.ack' || message?.type === 'question.ack' || message?.type === 'card.ack') { reactionReceipt(message); return }
+          if (message?.type === 'switches.state') {
+            const switches = normaliseSwitches(message)
+            if (switches) options.onSwitches?.(switches)
+            return
+          }
+          if (message?.type === 'protocol.error' && reactionInFlight && reactionQueue[0]?.submissionId === reactionInFlight) {
+            settleReaction(reactionQueue[0], { status: 'rejected', error: 'protocol_error' })
+            return
+          }
           if (liveStatus !== 'live') return
           const parsed = parseServerMessage(event.data)
           if (parsed?.type === 'poll.state') options.onPollState?.(parsed)
@@ -961,13 +1248,68 @@ export function createAudienceFollowClient(options) {
       flushVotes()
       return submissionId
     },
+    /** Queue one reaction (`{ reaction, slideId, tMs, withdrawn?, local? }`): durable, sent in order.
+     *  Returns its submission id, or false when it cannot be kept. */
+    sendReaction(input) {
+      if (stopped || !input || typeof input.reaction !== 'string' || typeof input.slideId !== 'string' || !Number.isSafeInteger(input.tMs)) return false
+      if (reactionQueue.length >= 200) return false
+      const submissionId = uuid()
+      const item = { ...input, submissionId }
+      if (!changeStoredQueue((items) => [...items, item])) return false
+      reactionQueue = [...reactionQueue, item]
+      flushReactions()
+      return submissionId
+    },
+    /** Queue one question (`{ text, name?, slideId, tMs, submissionId? }`): the same durable queue as
+     *  reactions, first in first out. A retry passes the submission id it had, so a question the worker
+     *  already stored is answered from its receipt and never counted twice. Returns the submission id,
+     *  or false when the question cannot be kept (a stopped client, no text, a full or blocked queue). */
+    sendQuestion(input) {
+      questionRefusal = 'ended'
+      if (stopped || !input || typeof input.text !== 'string' || !input.text.trim() || typeof input.slideId !== 'string' || !Number.isSafeInteger(input.tMs)) return false
+      // From here the session is up but the question cannot be kept on this device.
+      questionRefusal = 'not_kept'
+      if (reactionQueue.length >= 200) return false
+      const submissionId = typeof input.submissionId === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_-]{7,127}$/.test(input.submissionId) ? input.submissionId : uuid()
+      if (reactionQueue.some((queued) => queued.submissionId === submissionId)) return submissionId
+      const name = typeof input.name === 'string' ? input.name.trim() : ''
+      const item = { kind: 'question', submissionId, text: input.text.trim(), ...(name ? { name } : {}), slideId: input.slideId, tMs: input.tMs }
+      if (!changeStoredQueue((items) => [...items, item])) return false
+      reactionQueue = [...reactionQueue, item]
+      flushReactions()
+      return submissionId
+    },
+    /** Queue one card change (`{ op: 'add' | 'edit' | 'withdraw', pollId, column?, text?, cardId?, name?, slideId, tMs }`):
+     *  the same durable first-in first-out queue as reactions and questions, so a card typed offline is sent once
+     *  the device reconnects. Returns its submission id, or false when it cannot be kept. A refusal stores nothing
+     *  on the worker and drops the item here; the box keeps the person's text. */
+    sendCard(input) {
+      if (stopped || !input || (input.op !== 'add' && input.op !== 'edit' && input.op !== 'withdraw') || typeof input.pollId !== 'string' || !input.pollId
+        || typeof input.slideId !== 'string' || !Number.isSafeInteger(input.tMs)) return false
+      if (input.op === 'add' ? typeof input.column !== 'string' || !input.column || typeof input.text !== 'string' || !input.text.trim()
+        : typeof input.cardId !== 'string' || !input.cardId || (input.op === 'edit' && (typeof input.text !== 'string' || !input.text.trim()))) return false
+      if (reactionQueue.length >= 200) return false
+      const submissionId = uuid()
+      const name = typeof input.name === 'string' ? input.name.trim() : ''
+      const item = { kind: 'card', submissionId, op: input.op, pollId: input.pollId,
+        ...(input.column ? { column: input.column } : {}), ...(typeof input.text === 'string' ? { text: input.text.trim() } : {}),
+        ...(input.cardId ? { cardId: input.cardId } : {}), ...(name && input.op === 'add' ? { name } : {}), slideId: input.slideId, tMs: input.tMs }
+      if (!changeStoredQueue((items) => [...items, item])) return false
+      reactionQueue = [...reactionQueue, item]
+      flushReactions()
+      return submissionId
+    },
+    /** The card changes still in the queue (waiting to send, or sent and not yet answered), oldest first. */
+    pendingCards() { return reactionQueue.filter((item) => item.kind === 'card') },
+    /** Why the last sendQuestion returned false: 'ended' (stopped or invalid) or 'not_kept' (queue or storage full). */
+    questionRefusal: () => questionRefusal,
     status: () => liveStatus,
   }
 }
 
 export function liveFollowRuntimeSource() {
-  return extendedPollRuntimeSource() + '\n' + instantSlideRuntimeSource() + '\n' + [normaliseFocus, normaliseLightbox, audienceSocketUrl, normalisePollState, normaliseInstantSlide, parseServerMessage, escapePollHtml,
+  return extendedPollRuntimeSource() + '\n' + instantSlideRuntimeSource() + '\n' + audienceReactionsRuntimeSource() + '\n' + audienceAskRuntimeSource() + '\n' + audienceBoardRuntimeSource() + '\n' + audienceMyNotesRuntimeSource() + '\n' + [normaliseFocus, normaliseLightbox, audienceSocketUrl, normaliseBoardPollState, normalisePollState, normaliseInstantSlide, parseServerMessage, escapePollHtml,
     pollTypeLabel, submissionLimit, renderAudiencePollMarkup, shouldRenderAudiencePollUpdate, createAudiencePollRuntime, reconnectDelay,
-    audiencePositionsMatch, createAudienceFollowRuntime, normaliseVoteReceipt, probeAudienceSession, createAudienceFollowClient]
+    audiencePositionsMatch, createAudienceFollowRuntime, normaliseVoteReceipt, normaliseReactionAck, normaliseSwitches, probeAudienceSession, createAudienceFollowClient]
     .map((fn) => fn.toString()).join('\n')
 }

@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { SORT_OPTIONS, type TalkSortKey, type NamingMode } from './model'
-import { IcOpen, IcRename, IcDuplicate, IcMoveFolder, IcReveal, IcTrash, IcFile, IcMeta } from './icons'
+import { IcOpen, IcRename, IcDuplicate, IcMoveFolder, IcReveal, IcTrash, IcFile, IcMeta, IcClear, IcEye } from './icons'
 
 // Popovers + context menus for the Talks browser. Every action carries its keyboard
 // shortcut in the menu (ADR-0008: every affordance keyboard-reachable and advertised).
@@ -239,6 +239,46 @@ export function FolderContextMenu({
       items={FOLDER_MENU_ITEMS}
       breaks={FOLDER_MENU_BREAKS}
       ariaLabel="Folder actions"
+      startAtFirst={startAtFirst}
+      onAction={onAction}
+      onClose={onClose}
+    />
+  )
+}
+
+// ── vault menu (the ⋯ on a vault header) ─────────────────────────────────────
+
+export type VaultAction = 'close' | 'open' | 'edit' | 'only' | 'reveal'
+
+export function VaultContextMenu({
+  x, y, open, unavailable = false, startAtFirst = false, onAction, onClose
+}: {
+  x: number
+  y: number
+  open: boolean
+  /** Its folder is not there: only Close vault is offered (nothing to edit, show or reveal). */
+  unavailable?: boolean
+  startAtFirst?: boolean
+  onAction: (action: VaultAction) => void
+  onClose: () => void
+}) {
+  // LOCKED-sidebar frame 1: Edit this vault…, Show only this vault, Reveal in Finder, then Close vault.
+  const items: MenuItemDef<VaultAction>[] = !open
+    ? [{ action: 'open', icon: <IcOpen size={12} />, label: 'Open vault' }]
+    : unavailable
+      ? [{ action: 'close', icon: <IcClear size={12} />, label: 'Close vault', danger: true }]
+      : [
+        { action: 'edit', icon: <IcRename size={12} />, label: 'Edit this vault…' },
+        { action: 'only', icon: <IcEye size={12} />, label: 'Show only this vault' },
+        { action: 'reveal', icon: <IcReveal size={12} />, label: 'Reveal in Finder' },
+        { action: 'close', icon: <IcClear size={12} />, label: 'Close vault', danger: true }
+      ]
+  return (
+    <ActionMenu
+      x={x} y={y}
+      items={items}
+      breaks={new Set<VaultAction>(open && !unavailable ? ['close'] : [])}
+      ariaLabel="Vault actions"
       startAtFirst={startAtFirst}
       onAction={onAction}
       onClose={onClose}

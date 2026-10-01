@@ -49,7 +49,46 @@ function isSlotMedia(block, layoutSlug) {
   return block.type === "timeline" && layoutSlug === "timeline-visual";
 }
 
-const NO_SLOT = Object.freeze({ kind: "none", side: "left", align: "center", media: [], copy: [] });
+// ADR-0033 §4: a list whose lines each carry a screenshot offers two arrangements.
+//   beside   — each thumbnail beside its line (equal 3:2 crops from the top-left, framed)
+//   stacked  — image above caption, one column per image (three images stay ONE row)
+// The choice is per slide ({shotlist=beside|stacked}), else the talk's `screenshot_list:`, else beside.
+export const SHOT_LIST_ARRANGEMENTS = ["beside", "stacked"];
+export const DEFAULT_SHOT_LIST = "beside";
+
+/** Slide token `{shotlist=beside|stacked}` → deck `screenshot_list:` → beside. */
+export function resolveShotList(attrs, meta) {
+  const token = String(attrs?.shotlist ?? "").trim().toLowerCase();
+  if (SHOT_LIST_ARRANGEMENTS.includes(token)) return token;
+  const deck = String(meta?.screenshot_list ?? meta?.["screenshot-list"] ?? "").trim().toLowerCase();
+  if (SHOT_LIST_ARRANGEMENTS.includes(deck)) return deck;
+  return DEFAULT_SHOT_LIST;
+}
+
+// The longest line that still reads as a label under a thumbnail or a stacked picture. A longer line
+// wraps and stops pairing with its picture, so such a slide keeps the plain media column.
+const SHOT_LABEL_MAX_CHARS = 48;
+
+const itemText = (item) => (typeof item === "string" ? item : String(item?.text ?? ""));
+
+/**
+ * Does this slide's copy pair line-for-line with its screenshots? Two or three images (no captions of
+ * their own), and copy that is nothing but lists, one single-line item per image, in order.
+ */
+export function pairsLinesWithScreenshots(media, copy) {
+  if (media.length < 2 || media.length > 3) return false;
+  if (!media.every((block) => block.type === "image" && !block.caption)) return false;
+  const lists = copy.filter((block) => !SLOT_CHROME_BLOCK_TYPES.has(block.type));
+  if (lists.length !== media.length) return false;
+  return lists.every((block) => {
+    if ((block.type !== "feature-list" && block.type !== "list") || !Array.isArray(block.items) || block.items.length !== 1) return false;
+    if (Array.isArray(block.children) && block.children.some((c) => Array.isArray(c) && c.length)) return false;
+    const text = itemText(block.items[0]).trim();
+    return text.length > 0 && text.length <= SHOT_LABEL_MAX_CHARS && !/\n/.test(text);
+  });
+}
+
+const NO_SLOT = Object.freeze({ kind: "none", side: "left", align: "center", media: [], copy: [], arrange: "" });
 
 /**
  * The ONE composition decision for a slide body.
@@ -58,7 +97,7 @@ const NO_SLOT = Object.freeze({ kind: "none", side: "left", align: "center", med
  * @param {Array}  bodyBlocks   the blocks about to be rendered as the slide body
  * @param {string} layoutSlug   the resolved layout slug
  * @returns {{ kind: 'none'|'beside', side: 'left'|'right', align: 'center'|'top',
- *            media: object[], copy: object[] }}
+ *            media: object[], copy: object[], arrange: ''|'beside'|'stacked' }}
  *
  * `kind: 'none'` means "render the body exactly as it renders today" — copy-only and media-only
  * slides are untouched, and so is every slide outside the alias set.
@@ -100,7 +139,8 @@ export function slotCompositionFor(slide, bodyBlocks, layoutSlug) {
   // Both columns centre in the content band (ADR-0005 both-axis balance). {align=top} is the one
   // authored escape hatch and survives from the old .split.align-top.
   const align = slide.frame?.align === "top" ? "top" : "center";
-  return { kind: "beside", side, align, media, copy };
+  const arrange = pairsLinesWithScreenshots(media, copy) ? (slide.shotList || DEFAULT_SHOT_LIST) : "";
+  return { kind: "beside", side, align, media, copy, arrange };
 }
 
 // 5+ media blocks stacked as 5+ rows leaves each one a letterbox strip, so the media column
@@ -137,5 +177,11 @@ export function renderSlotComposition(comp, renderBlock, ctx = {}) {
   ];
   if (comp.media.length >= MEDIA_GRID_THRESHOLD) attrs.push(`data-slot-media-grid="2col"`);
   if (comp.align === "top") attrs.push(`data-slot-align="top"`);
+  if (comp.arrange) {
+    // ADR-0033 §4: lines that each carry a screenshot. The frame follows the slide's screenshot
+    // treatment (window frames by default), the same one ticket 05's row uses.
+    attrs.push(`data-slot-arrange="${comp.arrange}"`);
+    attrs.push(`data-slot-frame="${comp.media[0]?.shotStyle === "fanned" ? "fanned" : "frames"}"`);
+  }
   return `<div ${attrs.join(" ")}><div class="slot-copy">${copyInner}</div><div class="slot-media">${mediaInner}</div></div>`;
 }

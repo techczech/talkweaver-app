@@ -46,6 +46,15 @@
   .slide-content:has(> .orgchart) {
     max-width: none;
     width: calc(100% - 2 * var(--slide-pad-x, 48px));
+  }/* @order 1809 */
+  /* Slide round 2 (0.37): the slide already pads by --slide-pad-x; the second inset above made a table,
+     icon-row, chart-column or card-gallery slide 212px narrower than a card slide at 1920. Dropped for
+     those four; the other structures keep theirs until they are drawn. */
+  .slide-content:has(> .icon-row),
+  .slide-content:has(> .slide-table),
+  .slide-content:has(> .chart-cols),
+  .slide-content:has(> .card-gallery) {
+    width: 100%;
   }/* @order 1588 */
   .tp { position: absolute; inset: 0; display: flex; text-align: left; }/* @order 1589 */
   .tp .tp-mono, .tp .tp-series {
@@ -139,10 +148,10 @@
     /* Ticket 18 (Dominik, 2026-09-13): the DEFAULT step (M) is the former XL. The per-slide
        ladder in overrides.css re-steps around it and stays monotone:
          body  xs 2.0 · s 2.6 · M 3.2 · l 3.5 · xl 3.9 cqw   (dense 1.65 · 2.1 · 2.6 · 2.85 · 3.2)
-         title xs 3.3 · s 4.4 · M 5.2 · l 5.7 · xl 6.2 cqw   (px floors 30 · 38 · 44 · 48 · 52)
+         title xs 3.0 · s 3.4 · M 3.9 · l 4.6 · xl 5.2 cqw   (px floors 26 · 30 · 36 · 40 · 44)
          rail  xs 2.5 · s 3.2 · M 3.8 · l 4.1 · xl 4.5 cqw   (px floors 28 · 34 · 38 · 42 · 44)
        At the 1600 reference stage the M body is 51.2px; every step still sits on --type-floor. */
-    --fs-title:   max(44px, 5.2cqw);   /* content-slide titles */
+    --fs-title:   max(36px, 3.9cqw);   /* content-slide titles */
     --fs-rail:    max(38px, 3.8cqw);   /* sidebar rail titles */
     --fs-body:    max(var(--type-floor), 3.2cqw);   /* lists, paragraphs — Ticket 18 default (was RAMP 3, 2.3cqw) */
     --fs-dense:   max(var(--type-floor), 2.6cqw);   /* tables, grids, boxes */

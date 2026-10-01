@@ -1,4 +1,6 @@
+import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { thumbUrl } from '../lib/thumbUrl'
 import type { ProjectionRow, TalkInfo } from '../../../preload/index'
 import { selRowKey, rangeKeys, sectionKeysAt, isSingleTalk, groupBySection } from './searchPaletteSelection'
 
@@ -8,6 +10,7 @@ type SearchResult = ProjectionRow & {
   outlinePath: string
   talkMtimeMs?: number
   talkMeta?: string
+  vaultId?: string
 }
 
 interface Props {
@@ -321,13 +324,13 @@ export default function SearchPalette({ isOpen, onClose, onInsert, onInsertMany,
                   <div className="search-result-thumb">
                     <input type="checkbox" className="search-result-check" checked={isSel} onClick={(e) => e.stopPropagation()} onChange={() => toggleAt(idx)} aria-label="Select slide" />
                     {row.content_hash && (
-                      <img src={`twthumb://${row.talkSlug}/${row.render_hash || row.content_hash}`} alt="" onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden' }} />
+                      <img src={thumbUrl(row.talkSlug, row.render_hash || row.content_hash, row.vaultId)} alt="" onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden' }} />
                     )}
                     {isNonDefaultLayout && <span className="search-result-layout">{layout}</span>}
                   </div>
                   <div className="search-result-foot">
                     <span className="search-result-num">{slideNum}</span>
-                    <span className="search-result-title">{row.nav_title || row.title || '(untitled)'}</span>
+                    <span className="search-result-title">{plainInlineText(row.nav_title || row.title) || '(untitled)'}</span>
                     <span className="search-result-meta" title={meta}>{meta}</span>
                   </div>
                 </li>
@@ -374,8 +377,8 @@ export default function SearchPalette({ isOpen, onClose, onInsert, onInsertMany,
 
       {preview && activeRow && activeRow.content_hash && (
         <div className="preview-lightbox" onClick={() => setPreview(false)} role="dialog" aria-label="Slide preview">
-          <img src={`twthumb://${activeRow.talkSlug}/${activeRow.render_hash || activeRow.content_hash}`} alt={activeRow.nav_title || activeRow.title || ''} />
-          <div className="preview-lightbox-cap">{activeRow.nav_title || activeRow.title} — {activeRow.talkTitle}</div>
+          <img src={thumbUrl(activeRow.talkSlug, activeRow.render_hash || activeRow.content_hash, activeRow.vaultId)} alt={plainInlineText(activeRow.nav_title || activeRow.title)} />
+          <div className="preview-lightbox-cap">{plainInlineText(activeRow.nav_title || activeRow.title)} — {activeRow.talkTitle}</div>
         </div>
       )}
     </>

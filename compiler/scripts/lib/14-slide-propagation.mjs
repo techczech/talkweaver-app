@@ -9,8 +9,9 @@ import { basename, join } from "node:path";
 import { scanFencedLines } from "./03-object-token.mjs";
 import {
   extractIdSlides, normalizeDepth, listVersions,
-  recordOutlineSave, sealSlideHead, whereUsed, ID_TOKEN_RE, idLineIndex,
+  recordOutlineSave, sealSlideHead, whereUsed,
 } from "./13-slide-ledger.mjs";
+import { resolveSlideId } from "./slide-id.mjs";
 
 const HEADING_RE = /^(#{1,6})\s/;
 
@@ -102,13 +103,11 @@ function locateBlock(lines, id) {
       const h = fenced[j] ? null : lines[j].match(HEADING_RE);
       if (h && h[1].length <= depth) { end = j; break; }
     }
-    // Shared blank-tolerant read (idLineIndex, id-churn hotfix 2026-07-10): the id sits on the
-    // heading or its (possibly blank-separated) Trigger line, bounded to [i, end). A heading line
-    // is never `{…}`-only, so an adjacent stamped heading can never be misread as this block's
-    // Trigger line — the rule subsumes the old nextIsHeading guard.
-    const idIdx = idLineIndex(lines, i, end);
-    const idMatch = idIdx >= 0 ? lines[idIdx].match(ID_TOKEN_RE) : null;
-    if (idMatch && idMatch[1] === id) {
+    // The shared slide-id resolver (slide-id.mjs), bounded to [i, end): the heading's own id, else
+    // the last id of its (possibly blank-separated) prelude. A heading line is never `{…}`-only, so
+    // an adjacent stamped heading can never be misread as this block's Trigger line — the rule
+    // subsumes the old nextIsHeading guard.
+    if (resolveSlideId(lines, i, end)?.id === id) {
       let bodyEnd = end;
       while (bodyEnd > i + 1 && lines[bodyEnd - 1] === "") bodyEnd -= 1;
       return { start: i, bodyEnd, depth };

@@ -6,6 +6,7 @@
 // searchPaletteSelection.ts, which now re-exports them so SearchPalette keeps compiling
 // until Task 12 deletes it.
 
+import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
 import { fencedLineFlags } from '../../../shared/outline-normalize.ts'
 
 export interface SelRow {
@@ -287,7 +288,7 @@ export function sectionNamesByKey(rows: BrowserRow[]): Map<string, string> {
   const m = new Map<string, string>()
   for (const r of rows) {
     if (r.role !== 'section-title') continue
-    const name = r.nav_title || r.title
+    const name = plainInlineText(r.nav_title || r.title)
     if (name) m.set(sectionKey(r.talkSlug, r.section ?? ''), name)
   }
   return m

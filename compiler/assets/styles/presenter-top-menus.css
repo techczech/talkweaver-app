@@ -111,3 +111,15 @@
 #presenterTopBar .notes-menu-wpm { min-width: 40px; text-align: center; font: 600 16px/1 var(--tb-mono); font-variant-numeric: tabular-nums; color: var(--tb-text); }
 #presenterTopBar .notes-menu-unit { font: 500 13px/1 var(--tb-ui); color: var(--tb-muted); white-space: nowrap; }
 #presenterTopBar .notes-menu-hint { margin: 0; padding: 8px 4px 0; font: 500 13px/1.35 var(--tb-ui); color: var(--tb-dim); white-space: normal; }
+
+/* From phones · this talk: a checked item with its switch on the right (ADR-0027 amendment, ticket 05) */
+#presenterTopBar .tw-mi-switch { min-height: 48px; }
+#presenterTopBar .tw-sw { position: relative; flex: none; width: 34px; height: 20px; border-radius: 10px; background: #3b4a59; }
+#presenterTopBar .tw-sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #c4d0dc; transition: transform 0.12s; }
+#presenterTopBar .tw-mi-switch[aria-checked="true"] .tw-sw { background: #2f6fd6; }
+#presenterTopBar .tw-mi-switch[aria-checked="true"] .tw-sw::after { transform: translateX(14px); background: #fff; }
+#presenterTopBar .tw-mi-switch .tw-mi-sub.is-error { color: #ffb4ae; }
+/* A switch that is off: the chip or counter keeps what it holds, dimmed, with a small amber pause mark, no word */
+#presenterTopBar .tw-st[data-paused="true"] > :not(.tw-pause-mark) { opacity: 0.5; }
+#presenterTopBar .tw-pause-mark { display: inline-flex; align-items: center; color: var(--tb-amber); }
+#presenterTopBar .tw-pause-mark .tw-ico { width: 13px; height: 13px; }

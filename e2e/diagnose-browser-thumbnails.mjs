@@ -88,10 +88,13 @@ async function waitForAllPictures(limitMs) {
 // namespace of that shape and that the six-talk PNGs live in exactly that namespace.
 const CACHE_NS = /^thumb-cache-v\d+-[0-9a-z]+$/
 let persistedTag = null
+// Talk thumbnails live per vault: <namespace>/@vaults/<vault id>/<slug> (thumb-cache-dirs.ts).
 const sixCacheDir = () => {
   if (!persistedTag) return null
-  const d = join(ud, persistedTag, 'six-talk')
-  return existsSync(d) ? d : null
+  const vaultsDir = join(ud, persistedTag, '@vaults')
+  const ids = existsSync(vaultsDir) ? readdirSync(vaultsDir) : []
+  const d = ids.map((id) => join(vaultsDir, id, 'six-talk')).find((p) => existsSync(p))
+  return d ?? null
 }
 const pngStamps = (dir) => (dir ? readdirSync(dir).filter((f) => f.endsWith('.png')).sort().map((f) => `${f}:${statSync(join(dir, f)).mtimeMs}`) : [])
 
@@ -109,9 +112,12 @@ try {
   record('no card is on the schematic title fallback', first.cards.every((c) => !c.fallback))
   const srcs = new Set(first.cards.map((c) => c.src).filter(Boolean))
   record('thumbnails are distinct per slide', srcs.size === expected, `distinct=${srcs.size}`)
+  // A card's address is twthumb://<slug>/<key>?vault=<id>: the key is the last path segment.
+  const keyOf = (src) => { try { return new URL(src).pathname.replace(/^\//, '') } catch { return '' } }
   record('card keys are the fresh render_hash values, not the seeded stale ones',
-    first.cards.every((c) => c.src && freshRows.some((r) => c.src.endsWith('/' + r.render_hash))) &&
-    first.cards.every((c) => !staleRows.some((r) => c.src?.endsWith('/' + r.render_hash))))
+    first.cards.every((c) => c.src && freshRows.some((r) => keyOf(c.src) === r.render_hash)) &&
+    first.cards.every((c) => !staleRows.some((r) => keyOf(c.src) === r.render_hash)))
+  record('card addresses name their vault (?vault=)', first.cards.every((c) => /[?]vault=[\w-]+$/.test(c.src ?? '')))
   if (SHOTS) { mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: join(SHOTS, 'gate-first-open.png') }) }
 
   // ── persisted index carries the compiler tag ──

@@ -5,17 +5,18 @@ import { createSession } from './session-state'
 
 // Exercise the actual Durable Object handlers. Only the platform storage/socket boundary is fake.
 function harness() {
-  let saved = JSON.stringify(createSession({
+  // Rows by key, like the Durable Object's kv table: 'session' and, once used, 'feedback'.
+  const rows = new Map<string, string>([['session', JSON.stringify(createSession({
     sessionId: 'session-test', shortId: 'abcd', talkSlug: 'recovery-talk',
     createdAt: Date.now(), expiresAt: Date.now() + 60_000,
-  }))
+  }))]])
   let unregisters = 0
   const sockets: any[] = []
   const ctx: any = {
     storage: {
       sql: { exec(query: string, ...args: any[]) {
-        if (query.startsWith('SELECT')) return [{ value: saved }]
-        if (query.startsWith('INSERT')) saved = args[1]
+        if (query.startsWith('SELECT')) return rows.has(args[0]) ? [{ value: rows.get(args[0]) }] : []
+        if (query.startsWith('INSERT')) rows.set(args[0], args[1])
         return []
       } },
       setAlarm: async () => {}, deleteAlarm: async () => {},
@@ -40,7 +41,8 @@ function harness() {
     return ws
   }
   return {
-    worker, ctx, env, socket, state: () => JSON.parse(saved), unregisters: () => unregisters,
+    worker, ctx, env, socket, state: () => JSON.parse(rows.get('session')!),
+    feedback: () => rows.has('feedback') ? JSON.parse(rows.get('feedback')!) : undefined, unregisters: () => unregisters,
     reload: () => new LiveSession(ctx, env),
   }
 }
@@ -414,4 +416,304 @@ test('two tabs share a free-text allowance and simultaneous final submissions co
   expect(Object.keys(h.state().polls[poll.pollId].votes)).toHaveLength(2)
   await deliver(h.worker, other, vote('submission-other'))
   expect(Object.keys(h.state().polls[poll.pollId].votes)).toHaveLength(3)
+})
+
+describe('reactions and questions through actual Worker handlers', () => {
+  const reaction = (submissionId: string, body: Record<string, unknown>) =>
+    ({ type: 'reaction.send', submissionId, slideId: 'slide-5', tMs: 12_000, ...body })
+  const question = (submissionId: string, body: Record<string, unknown> = {}) =>
+    ({ type: 'question.submit', submissionId, text: 'What about <b>cost</b>?', slideId: 'slide-5', tMs: 13_000, ...body })
+  const types = (socket: any) => socket.sent.map((m: any) => m.type)
+
+  test('presenters receive counts and questions; audiences hear only their own receipt', async () => {
+    const h = harness()
+    const presenter = h.socket('presenter', 'presenter-feedback')
+    const sender = h.socket('audience', 'phone-one', 2, 'participant-one')
+    const bystander = h.socket('audience', 'phone-two', 2, 'participant-two')
+    const screen = h.socket('audience', 'screen-one', 2, 'participant-screen', 'screen')
+    for (const s of [presenter, sender, bystander, screen]) s.sent.length = 0
+    await deliver(h.worker, sender, reaction('reaction-sub-1', { reaction: 'puzzled' }))
+    await deliver(h.worker, sender, reaction('reaction-sub-2', { reaction: 'bookmark' }))
+    await deliver(h.worker, bystander, reaction('reaction-sub-1', { reaction: 'helped' }))
+    await deliver(h.worker, sender, question('question-sub-1', { name: ' Priya ' }))
+    expect(sender.sent).toEqual([
+      { type: 'reaction.ack', submissionId: 'reaction-sub-1', status: 'confirmed' },
+      { type: 'reaction.ack', submissionId: 'reaction-sub-2', status: 'confirmed' },
+      { type: 'question.ack', submissionId: 'question-sub-1', status: 'confirmed' },
+    ])
+    expect(types(bystander)).toEqual(['reaction.ack'])
+    expect(screen.sent).toEqual([])
+    const counts = presenter.sent.filter((m: any) => m.type === 'reaction.counts')
+    expect(counts.map((m: any) => m.counts)).toEqual([{ puzzled: 1 }, { puzzled: 1, bookmark: 1 }, { puzzled: 1, bookmark: 1, helped: 1 }])
+    expect(counts[0].records).toEqual([{ reaction: 'puzzled', slideId: 'slide-5', tMs: 12_000, sequence: 1, acceptedAt: expect.any(Number) }])
+    const questions = presenter.sent.findLast((m: any) => m.type === 'questions.state').questions
+    expect(questions).toEqual([{ questionId: 'question-1', text: 'What about <b>cost</b>?', name: 'Priya',
+      slideId: 'slide-5', tMs: 13_000, acceptedAt: expect.any(Number), answered: false }])
+    expect(JSON.stringify(presenter.sent)).not.toContain('participant-')
+    // State survives hibernation: a reloaded object has the same counts and questions.
+    const reloaded = h.reload()
+    await deliver(reloaded, presenter, { type: 'session.sync', syncId: 'sync-feedback-reload' })
+    const snapshot = presenter.sent.at(-1)
+    expect(snapshot.reactionCounts).toEqual({ 'slide-5': { puzzled: 1, bookmark: 1, helped: 1 } })
+    expect(snapshot.questions).toEqual(questions)
+    expect(snapshot.switches).toEqual({ questionsAllowed: true, reactionsAllowed: true })
+    expect(snapshot.reactionRecords.map((r: any) => r.sequence)).toEqual([1, 2, 3])
+    await deliver(reloaded, presenter, { type: 'session.sync', syncId: 'sync-feedback-cursor', afterReactionSequence: 2 })
+    expect(presenter.sent.at(-1).reactionRecords.map((r: any) => r.sequence)).toEqual([3])
+    await deliver(reloaded, sender, { type: 'session.sync', syncId: 'sync-feedback-audience' })
+    const audienceSnapshot = sender.sent.at(-1)
+    expect(audienceSnapshot.switches).toEqual({ questionsAllowed: true, reactionsAllowed: true })
+    for (const key of ['reactionCounts', 'questions', 'reactionRecords']) expect(audienceSnapshot[key]).toBeUndefined()
+    expect(h.state().feedback).toBeUndefined()
+    expect(h.feedback().questions).toHaveLength(1)
+  })
+
+  test('queued retries are acknowledged once and never counted twice', async () => {
+    const h = harness()
+    const presenter = h.socket('presenter', 'presenter-retry')
+    const phone = h.socket('audience', 'phone-retry', 2, 'participant-retry')
+    const message = reaction('reaction-offline-1', { reaction: 'helped', slideId: 'slide-2', tMs: 500 })
+    await deliver(h.worker, phone, message)
+    const countsBefore = presenter.sent.filter((m: any) => m.type === 'reaction.counts').length
+    const reconnected = h.socket('audience', 'phone-retry-2', 2, 'participant-retry')
+    await deliver(h.reload(), reconnected, message)
+    expect(reconnected.sent.at(-1)).toEqual({ type: 'reaction.ack', submissionId: 'reaction-offline-1', status: 'confirmed' })
+    expect(presenter.sent.filter((m: any) => m.type === 'reaction.counts').length).toBe(countsBefore)
+    expect(h.feedback().reactions).toHaveLength(1)
+    await deliver(h.worker, reconnected, question('question-offline-1'))
+    await deliver(h.reload(), reconnected, question('question-offline-1'))
+    expect(reconnected.sent.filter((m: any) => m.type === 'question.ack')).toHaveLength(2)
+    expect(h.feedback().questions).toHaveLength(1)
+  })
+
+  test('bad input is rejected with a reason and changes nothing', async () => {
+    const h = harness()
+    const presenter = h.socket('presenter', 'presenter-bad')
+    const phone = h.socket('audience', 'phone-bad', 2, 'participant-bad')
+    presenter.sent.length = 0
+    await deliver(h.worker, phone, reaction('reaction-bad-1', { reaction: '👍' }))
+    await deliver(h.worker, phone, reaction('reaction-bad-2', { reaction: 'puzzled', slideId: '' }))
+    await deliver(h.worker, phone, question('question-bad-1', { text: 'x'.repeat(501) }))
+    expect(phone.sent.slice(-3)).toEqual([
+      { type: 'reaction.ack', submissionId: 'reaction-bad-1', status: 'rejected', error: 'unknown_reaction' },
+      { type: 'reaction.ack', submissionId: 'reaction-bad-2', status: 'rejected', error: 'missing_slide_id' },
+      { type: 'question.ack', submissionId: 'question-bad-1', status: 'rejected', error: 'question_too_long' },
+    ])
+    expect(presenter.sent).toEqual([])
+    expect(h.feedback()).toBeUndefined()
+    // A flood of invalid submissions from one id is refused with its reason and stores nothing.
+    for (let i = 0; i < 2_000; i++) await deliver(h.worker, phone, reaction(`reaction-flood-${i}`, { reaction: 'nope' }))
+    expect(phone.sent.at(-1)).toMatchObject({ status: 'rejected', error: 'unknown_reaction' })
+    expect(h.feedback()).toBeUndefined()
+    const other = h.socket('audience', 'phone-other', 2, 'participant-other')
+    await deliver(h.worker, other, reaction('reaction-other-1', { reaction: 'helped' }))
+    await deliver(h.worker, other, question('question-other-1'))
+    expect(other.sent.map((m: any) => m.status)).toEqual(['confirmed', 'confirmed'])
+    // A presenter cannot react, and protocol-1 audiences keep reactions inert.
+    await deliver(h.worker, presenter, reaction('reaction-presenter', { reaction: 'puzzled' }))
+    expect(presenter.sent.at(-1)).toEqual({ type: 'protocol.error', code: 'wrong_role' })
+    // An audience socket cannot send presenter operations (answer a question, set the switches).
+    await deliver(h.worker, phone, { type: 'operation', operationId: 'operation-from-phone',
+      action: { type: 'switches.set', questionsAllowed: false } })
+    expect(phone.sent.at(-1)).toEqual({ type: 'protocol.error', code: 'wrong_role' })
+    expect(h.feedback().questionsAllowed).toBe(true)
+    const legacy = h.socket('audience', 'legacy-phone', 1)
+    await deliver(h.worker, legacy, { type: 'reaction.send', reaction: 'puzzled', slideId: 'slide-1', tMs: 1 })
+    expect(legacy.sent.at(-1)).toEqual({ type: 'protocol.error', code: 'invalid_or_inert_message' })
+  })
+
+  test('pause switches refuse the right messages, keep bookmarks, and reach every following device', async () => {
+    const h = harness()
+    const presenter = h.socket('presenter', 'presenter-pause')
+    const phone = h.socket('audience', 'phone-pause', 2, 'participant-pause')
+    const legacy = h.socket('audience', 'legacy-pause', 1)
+    await deliver(h.worker, phone, reaction('reaction-before-pause', { reaction: 'puzzled' }))
+    await deliver(h.worker, presenter, { type: 'operation', operationId: 'operation-pause-both',
+      action: { type: 'switches.set', questionsAllowed: false, reactionsAllowed: false } })
+    expect(presenter.sent.at(-1)).toEqual({ type: 'operation.ack', operationId: 'operation-pause-both', status: 'confirmed' })
+    const paused = { type: 'switches.state', questionsAllowed: false, reactionsAllowed: false }
+    expect(phone.sent.at(-1)).toEqual(paused)
+    expect(presenter.sent.at(-2)).toEqual(paused)
+    expect(legacy.sent.some((m: any) => m.type === 'switches.state')).toBe(false)
+    await deliver(h.worker, phone, reaction('reaction-paused', { reaction: 'helped' }))
+    expect(phone.sent.at(-1)).toMatchObject({ status: 'rejected', error: 'reactions_paused' })
+    const countsBeforeBookmark = presenter.sent.filter((m: any) => m.type === 'reaction.counts').length
+    await deliver(h.worker, phone, reaction('bookmark-paused', { reaction: 'bookmark' }))
+    expect(phone.sent.at(-1)).toMatchObject({ status: 'confirmed' })
+    expect(presenter.sent.filter((m: any) => m.type === 'reaction.counts').length).toBe(countsBeforeBookmark,
+      'a bookmark during a pause is stored, but its count waits for the resume')
+    await deliver(h.worker, phone, question('question-paused'))
+    expect(phone.sent.at(-1)).toMatchObject({ type: 'question.ack', status: 'rejected', error: 'questions_paused' })
+    expect(presenter.sent.findLast((m: any) => m.type === 'reaction.counts').counts).toEqual({ puzzled: 1 })
+    // Raw presenter commands still need the acknowledged path.
+    await deliver(h.worker, presenter, { type: 'switches.set', reactionsAllowed: true })
+    expect(presenter.sent.at(-1)).toEqual({ type: 'protocol.error', code: 'acknowledged_message_required' })
+    await deliver(h.reload(), phone, { type: 'session.sync', syncId: 'sync-paused-phone' })
+    expect(phone.sent.at(-1).switches).toEqual({ questionsAllowed: false, reactionsAllowed: false })
+    // Resuming pushes each slide's current counts, with the records made during the pause.
+    const resumed = h.reload()
+    presenter.sent.length = 0
+    await deliver(resumed, presenter, { type: 'operation', operationId: 'operation-resume',
+      action: { type: 'switches.set', reactionsAllowed: true } })
+    const catchUp = presenter.sent.filter((m: any) => m.type === 'reaction.counts')
+    expect(catchUp.map((m: any) => [m.slideId, m.counts, m.records.map((r: any) => r.reaction)]))
+      .toEqual([['slide-5', { puzzled: 1, bookmark: 1 }, ['bookmark']]])
+    expect(presenter.sent.at(-1)).toMatchObject({ type: 'operation.ack', status: 'confirmed' })
+    // A retried resume replays its receipt without a second catch-up.
+    await deliver(resumed, presenter, { type: 'operation', operationId: 'operation-resume',
+      action: { type: 'switches.set', reactionsAllowed: true } })
+    expect(presenter.sent.filter((m: any) => m.type === 'reaction.counts')).toHaveLength(1)
+  })
+
+  test('the presenter marks a question answered; the asker is not told', async () => {
+    const h = harness()
+    const presenter = h.socket('presenter', 'presenter-answer')
+    const phone = h.socket('audience', 'phone-answer', 2, 'participant-answer')
+    await deliver(h.worker, phone, question('question-answer-1'))
+    phone.sent.length = 0
+    await deliver(h.worker, presenter, { type: 'operation', operationId: 'operation-answer-1',
+      action: { type: 'question.answer', questionId: 'question-1' } })
+    expect(presenter.sent.at(-1)).toEqual({ type: 'operation.ack', operationId: 'operation-answer-1', status: 'confirmed' })
+    expect(presenter.sent.at(-2).questions[0].answered).toBe(true)
+    expect(phone.sent).toEqual([])
+    await deliver(h.worker, presenter, { type: 'operation', operationId: 'operation-answer-2',
+      action: { type: 'question.answer', questionId: 'question-7' } })
+    expect(presenter.sent.at(-1)).toEqual({ type: 'operation.ack', operationId: 'operation-answer-2', status: 'rejected', error: 'question_not_found' })
+    expect(h.reload() && h.feedback().questions[0].answered).toBe(true)
+  })
+
+  test('authenticated recovery returns questions, counts and reaction records after the session ends', async () => {
+    const h = harness()
+    const phone = h.socket('audience', 'phone-final', 2, 'participant-final')
+    await deliver(h.worker, phone, reaction('reaction-final-1', { reaction: 'puzzled' }))
+    await deliver(h.worker, phone, reaction('reaction-final-2', { reaction: 'helped' }))
+    await deliver(h.worker, phone, question('question-final-1'))
+    const state = h.state()
+    const token = await createSignedToken({ role: 'presenter', sessionId: state.sessionId, exp: state.expiresAt }, h.env.SESSION_SIGNING_SECRET)
+    const url = `https://worker.test/sessions/${state.sessionId}`
+    expect((await h.worker.fetch(new Request(url + '/close', { method: 'POST', headers: { authorization: `Bearer ${token}` } }))).status).toBe(200)
+    await deliver(h.worker, phone, reaction('reaction-after-end', { reaction: 'bookmark' }))
+    const recovered = await (await h.reload().fetch(new Request(url + '/recovery?afterReactionSequence=1', {
+      headers: { authorization: `Bearer ${token}` } }))).json() as any
+    expect(recovered.reactionCounts).toEqual({ 'slide-5': { helped: 1 } })
+    expect(recovered.reactionRecords.map((r: any) => [r.sequence, r.reaction, r.withdrawn === true])).toEqual([[2, 'puzzled', true], [3, 'helped', false]])
+    expect(recovered.moreReactionRecords).toBe(false)
+    expect(recovered.questions).toHaveLength(1)
+  })
+})
+
+test('a feedback row the storage refuses leaves memory as storage holds it and refuses the sender', async () => {
+  const h = harness()
+  const presenter = h.socket('presenter', 'presenter-storage')
+  const phone = h.socket('audience', 'phone-storage', 2, 'participant-storage')
+  const send = (id: string, reaction: string) => deliver(h.worker, phone,
+    { type: 'reaction.send', submissionId: id, reaction, slideId: 'slide-1', tMs: 1 })
+  await send('reaction-storage-1', 'puzzled')
+  const exec = h.ctx.storage.sql.exec
+  h.ctx.storage.sql.exec = (query: string, ...args: any[]) => {
+    if (query.startsWith('INSERT') && args[0] === 'feedback') throw new Error('SQLITE_TOOBIG')
+    return exec(query, ...args)
+  }
+  presenter.sent.length = 0
+  await send('reaction-storage-2', 'helped')
+  expect(phone.sent.at(-1)).toEqual({ type: 'reaction.ack', submissionId: 'reaction-storage-2', status: 'rejected', error: 'storage_failed' })
+  expect(presenter.sent).toEqual([])
+  h.ctx.storage.sql.exec = exec
+  // Memory went back to storage: the refused change is gone and the same message can be sent again.
+  await send('reaction-storage-2', 'helped')
+  expect(phone.sent.at(-1)).toMatchObject({ status: 'confirmed' })
+  expect(presenter.sent.at(-1).counts).toEqual({ helped: 1 })
+  expect(h.feedback().reactions).toHaveLength(3)
+})
+
+describe('feedback boards through actual Worker handlers', () => {
+  const board = { pollId: 'poll-board', type: 'board', question: 'Keep, change, try?', visibility: 'live',
+    options: [{ optionId: 'keep', label: 'Keep' }, { optionId: 'try', label: 'Try' }], board: { cardsPerPhone: 2 } }
+  test('each board lives in its own row, survives hibernation, and a failed write refuses the card', async () => {
+    const h = harness()
+    const presenter = h.socket('presenter', 'presenter-board')
+    const phone = h.socket('audience', 'phone-board', 2, 'participant-phone-board')
+    await deliver(h.worker, presenter, { type: 'operation', operationId: 'operation-board-open', action: { type: 'poll.open', poll: board } })
+    const card = { type: 'card.add', submissionId: 'submission-board-one', pollId: 'poll-board', column: 'keep', text: 'Hands-on' }
+    await deliver(h.worker, phone, card)
+    expect(phone.sent.findLast((m: any) => m.type === 'card.ack')).toMatchObject({ status: 'confirmed', cardId: 'card-1' })
+    expect(presenter.sent.findLast((m: any) => m.type === 'poll.state')?.boardState.cardCount).toBe(1)
+    expect(h.state().boards).toBeUndefined()
+    const row = JSON.parse(h.ctx.storage.sql.exec('SELECT value FROM kv WHERE key = ?', 'board:poll-board')[0].value)
+    expect(row.cards.map((c: any) => c.text)).toEqual(['Hands-on'])
+    expect(JSON.stringify(row)).not.toContain('participant-phone-board')
+
+    // After hibernation the board is read back from its row: the retry repeats its receipt.
+    const woken = h.reload()
+    await deliver(woken, phone, card)
+    expect(phone.sent.findLast((m: any) => m.type === 'card.ack')).toMatchObject({ status: 'confirmed', cardId: 'card-1' })
+    await deliver(woken, phone, { type: 'session.sync', syncId: 'sync-board-phone' })
+    expect(phone.sent.findLast((m: any) => m.type === 'session.snapshot')?.myCards)
+      .toEqual([{ pollId: 'poll-board', cardId: 'card-1', column: 'keep', text: 'Hands-on', sorted: false, waiting: false }])
+
+    // Storage refuses the board row: the card is refused and memory goes back to what storage holds.
+    const exec = h.ctx.storage.sql.exec
+    h.ctx.storage.sql.exec = (query: string, ...args: any[]) => {
+      if (query.startsWith('INSERT') && args[0] === 'board:poll-board') throw new Error('disk full')
+      return exec(query, ...args)
+    }
+    await deliver(woken, phone, { ...card, submissionId: 'submission-board-two', text: 'Pairs' })
+    expect(phone.sent.findLast((m: any) => m.type === 'card.ack')).toMatchObject({ status: 'rejected', error: 'storage_failed' })
+    await deliver(woken, presenter, { type: 'operation', operationId: 'operation-board-hide', action: { type: 'board.hide', pollId: 'poll-board', target: { cardId: 'card-1' } } })
+    expect(presenter.sent.findLast((m: any) => m.type === 'operation.ack')).toMatchObject({ status: 'rejected', error: 'storage_failed' })
+    h.ctx.storage.sql.exec = exec
+    // Neither the refused card nor the refused hide happened; the same ids can be sent again.
+    await deliver(woken, phone, { ...card, submissionId: 'submission-board-two', text: 'Pairs' })
+    expect(phone.sent.findLast((m: any) => m.type === 'card.ack')).toMatchObject({ status: 'confirmed', cardId: 'card-2' })
+    await deliver(woken, presenter, { type: 'operation', operationId: 'operation-board-hide', action: { type: 'board.hide', pollId: 'poll-board', target: { cardId: 'card-1' } } })
+    expect(presenter.sent.findLast((m: any) => m.type === 'operation.ack')).toMatchObject({ status: 'confirmed' })
+    expect(phone.sent.findLast((m: any) => m.type === 'poll.state')?.boardState.cards.map((c: any) => c.cardId)).toEqual(['card-2'])
+  })
+
+  test('a board opened but never written takes its definition’s limit on load, and the phone learns its allowance', async () => {
+    for (const limit of [12, null]) {
+      const h = harness()
+      const presenter = h.socket('presenter', `presenter-limit-${limit}`)
+      const phone = h.socket('audience', `phone-limit-${limit}`, 2, 'participant-limit')
+      await deliver(h.worker, presenter, { type: 'operation', operationId: `operation-open-${limit}`,
+        action: { type: 'poll.open', poll: { ...board, board: { limit, cardsPerPhone: 2 } } } })
+      // The board's row is lost (it was never written, or storage dropped it): the load rebuilds it.
+      const exec = h.ctx.storage.sql.exec
+      h.ctx.storage.sql.exec = (query: string, ...args: any[]) =>
+        query.startsWith('SELECT') && args[0] === 'board:poll-board' ? [] : exec(query, ...args)
+      const woken = h.reload()
+      h.ctx.storage.sql.exec = exec
+      await deliver(woken, phone, { type: 'session.sync', syncId: `sync-limit-${limit}` })
+      const snapshot = phone.sent.findLast((m: any) => m.type === 'session.snapshot')
+      expect(snapshot.polls[0].boardState.limit).toBe(limit)
+      expect(snapshot.myBoards).toEqual([{ pollId: 'poll-board', cardsUsed: 0, cardsPerPhone: 2 }])
+    }
+  })
+
+  test('a protocol-1 board open whose row cannot be written is refused, not sent to the room', async () => {
+    const h = harness()
+    const presenter = h.socket('presenter', 'presenter-v1-fail', 1)
+    const phone = h.socket('audience', 'phone-v1-fail', 1)
+    const exec = h.ctx.storage.sql.exec
+    h.ctx.storage.sql.exec = (query: string, ...args: any[]) => {
+      if (query.startsWith('INSERT') && args[0] === 'board:poll-board') throw new Error('disk full')
+      return exec(query, ...args)
+    }
+    await deliver(h.worker, presenter, { type: 'poll.open', poll: board })
+    h.ctx.storage.sql.exec = exec
+    expect(presenter.sent.at(-1)).toEqual({ type: 'protocol.error', code: 'storage_failed' })
+    expect(phone.sent.some((m: any) => m.type === 'poll.state')).toBe(false)
+  })
+
+  test('protocol-1 sockets cannot send board operations or cards', async () => {
+    const h = harness()
+    const presenter = h.socket('presenter', 'presenter-v1', 1)
+    const phone = h.socket('audience', 'phone-v1', 1)
+    await deliver(h.worker, presenter, { type: 'poll.open', poll: board })
+    await deliver(h.worker, presenter, { type: 'board.freeze', pollId: 'poll-board', frozen: true })
+    expect(presenter.sent.at(-1)).toEqual({ type: 'protocol.error', code: 'invalid_or_inert_message' })
+    await deliver(h.worker, phone, { type: 'card.add', submissionId: 'submission-v1-card', pollId: 'poll-board', column: 'keep', text: 'x' })
+    expect(phone.sent.at(-1)).toEqual({ type: 'protocol.error', code: 'invalid_or_inert_message' })
+    expect(h.ctx.storage.sql.exec('SELECT value FROM kv WHERE key = ?', 'board:poll-board')).toHaveLength(1)
+  })
 })

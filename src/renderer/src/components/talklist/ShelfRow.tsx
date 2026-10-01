@@ -1,19 +1,21 @@
 import { useState } from 'react'
+import { thumbUrl } from '../../lib/thumbUrl'
 import { relDays, type PubState } from './model'
 import type { TalkRowShared } from './LedgerRow'
 import { IcCheck, IcWarn } from './icons'
 import PathwayBadge from './PathwayBadge'
 import { Marked, SearchLine } from './SearchLine'
+import ConflictLine from './ConflictLine'
 
 // Real 16:9 cover from the thumb cache, with the schematic serif fallback while the
 // thumbnail is missing (cold cache) or the coverKey hasn't been indexed yet.
-export function Cover({ slug, coverKey, title }: { slug: string; coverKey: string | null; title: string }): JSX.Element {
+export function Cover({ slug, coverKey, title, vaultId }: { slug: string; coverKey: string | null; title: string; vaultId?: string }): JSX.Element {
   const [failed, setFailed] = useState(false)
   const showImg = coverKey && !failed
   return (
     <div className="tl-cover" aria-hidden>
       {showImg ? (
-        <img src={`twthumb://${slug}/${coverKey}`} alt="" onError={() => setFailed(true)} />
+        <img src={thumbUrl(slug, coverKey, vaultId)} alt="" onError={() => setFailed(true)} />
       ) : (
         <div className="tl-cover-schematic">
           <div className="tl-cover-rule" />
@@ -76,7 +78,7 @@ export default function ShelfRow({
   if (selected) cls.push('tl-shrow--selected')
   if (focused) cls.push('tl-shrow--kfocus')
   if (menuAnchor) cls.push('tl-shrow--menu')
-  if (hit) cls.push('tl-shrow--two')
+  if (hit || (talk.conflicts ?? 0) > 0) cls.push('tl-shrow--two')
   const edited = relDays(editedMs)
   return (
     <div
@@ -98,7 +100,7 @@ export default function ShelfRow({
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
     >
-      <Cover slug={talk.slug} coverKey={coverKey} title={talk.title} />
+      <Cover slug={talk.slug} coverKey={coverKey} title={talk.title} vaultId={talk.vaultId} />
       <div className="tl-shrow-main">
         <div className={`tl-shrow-title ${fileMode ? 'tl-shrow-title--file' : ''}`}>
           {hit && !fileMode ? <Marked text={label} ranges={hit.titleHighlights} /> : label}
@@ -111,6 +113,8 @@ export default function ShelfRow({
           {event && <span className="tl-shrow-event" title={event}>{event}</span>}
           {edited && <span className="tl-shrow-quiet">ed. {edited}</span>}
         </div>
+        {/* Ticket 09: conflict copies of the outline, amber, under the meta line. */}
+        {!hit && <ConflictLine talk={talk} className="tl-shrow-conflict tl-row-conflict" />}
         {/* Search results: what matched, under the event line, beside the cover (frame L10). */}
         {hit && <div className="tl-shrow-match"><SearchLine hit={hit} focusPath={focusPath} /></div>}
       </div>

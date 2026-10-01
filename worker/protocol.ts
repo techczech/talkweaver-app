@@ -1,4 +1,8 @@
 import { parsePollExtras } from './poll-ballots.ts'
+import {
+  BOARD_MESSAGE_TYPES, isPresenterBoardMessage, parseBoardSeed, parseBoardSettings, parseBoardStateView, parsePresenterBoardMessage,
+  type BoardSeedCard, type BoardSettings, type BoardStateView, type PresenterBoardMessage,
+} from './board-protocol.ts'
 
 export type SlideFocusKind = 'reveal' | 'focus'
 
@@ -43,7 +47,12 @@ export type InstantSlide =
 export type InstantSlideMessage = { type: 'instant.state'; slide: InstantSlide | null }
 export type PresenterInstantMessage = { type: 'instant.show'; slide: InstantSlide } | { type: 'instant.clear' }
 
-export type PollType = 'single' | 'multiple' | 'open' | 'ranking' | 'rating' | 'categorisation'
+// Feedback boards (ADR-0032): wire types and parsers live in board-protocol.ts.
+export { isPresenterBoardMessage }
+export type { BoardSettings, BoardStateView, PresenterBoardMessage }
+
+/** `board` is a feedback board: its options are the columns and it takes cards, not votes. */
+export type PollType = 'single' | 'multiple' | 'open' | 'ranking' | 'rating' | 'categorisation' | 'board'
 export type PollVisibility = 'live' | 'held'
 export type PollChoice = string | string[] | Record<string, string>
 
@@ -66,6 +75,10 @@ export interface PollDefinition {
   maxSelections?: number
   /** Free-text submissions per participant; omitted means one, null means unlimited. */
   maxSubmissions?: number | null
+  /** A board's settings (type `board` only; the parser fills in defaults). */
+  board?: BoardSettings
+  /** A board's opening cards (type `board` only): pre-work answers. Used once, when the board is first made. */
+  seed?: BoardSeedCard[]
 }
 
 export type PresenterPollMessage =
@@ -109,21 +122,97 @@ export interface PollStateMessage {
   categoryTallies?: Record<string, Record<string, number>>
   tallies?: Record<string, number>
   responses?: Array<{ responseId: string; text: string; name?: string; hidden?: boolean }>
+  /** A board's settings. */
+  board?: BoardSettings
+  /** A board's cards, groups and big-screen view: full for the presenter, public for the audience. */
+  boardState?: BoardStateView
 }
 
-// Reserved for later parcels. Polls are active; questions and reactions remain inert.
-export type QuestionMessage =
-  | { type: 'question.submit'; questionId: string; text: string; name?: string }
-  | { type: 'question.answer'; questionId: string }
+// ── Reactions and questions (ADR-0027 with its 2026-09-29 amendment) ──────────────────────
+// Audience devices send them through the acknowledged recovery path (`reaction.send`,
+// `question.submit` with a submissionId); counts and questions go to presenter sockets only.
 
-export type ReactionMessage =
-  | { type: 'reaction.send'; emoji: string }
-  | { type: 'reaction.echo'; emoji: string }
+/** The registered reaction vocabulary; any other reaction is `custom:<label>`. */
+export const REGISTERED_REACTIONS = ['puzzled', 'helped', 'bookmark', 'agree', 'disagree', 'yes', 'no', 'more', 'slower'] as const
+export type RegisteredReaction = typeof REGISTERED_REACTIONS[number]
+export type ReactionId = RegisteredReaction | `custom:${string}`
 
-export type PresenterMessage = SlidePublishMessage | PresenterPollMessage | PresenterInstantMessage
-export type AudienceMessage = PollVoteMessage
+export const AUDIENCE_FEEDBACK_LIMITS = {
+  customLabelChars: 40,
+  questionChars: 500,
+  nameChars: 60,
+  slideIdChars: 100,
+  /** Question and reaction ids as clients and Runs keep them. */
+  idChars: 100,
+  /** Storage guards for one session's feedback row, not abuse policy (ADR-0027 leaves that open). */
+  /** Reaction submissions that changed state (accepted and stored), per session and per participant. */
+  reactionSubmissions: 4_000,
+  participantReactionSubmissions: 300,
+  /** Accepted questions, per session and per participant. */
+  questions: 400,
+  participantQuestions: 20,
+  /** Stored receipts per participant, reactions and questions together. */
+  participantReceipts: 600,
+  /** UTF-8 bytes of the serialised feedback row; half the Durable Object's 2 MB value limit. */
+  feedbackRowBytes: 1_000_000,
+} as const
+
+/** `{reaction, slideId, tMs}`; an undo is the same with `withdrawn: true`. */
+export interface ReactionInput {
+  reaction: ReactionId
+  slideId: string
+  tMs: number
+  withdrawn?: true
+}
+
+/** `{text, name?, slideId, tMs}`: untrusted text, trimmed, never HTML. */
+export interface QuestionInput {
+  text: string
+  name?: string
+  slideId: string
+  tMs: number
+}
+
+export interface ReactionSendMessage extends ReactionInput { type: 'reaction.send' }
+export interface QuestionSubmitMessage extends QuestionInput { type: 'question.submit' }
+
+/** One accepted change to a participant's reactions, as the Run stores it (no participant). */
+export interface ReactionRecord extends ReactionInput {
+  sequence: number
+  acceptedAt: number
+}
+
+/** Current holders per reaction on one slide; reactions nobody holds are left out. */
+export type ReactionCounts = Record<string, number>
+
+export interface AudienceQuestion extends QuestionInput {
+  questionId: string
+  acceptedAt: number
+  answered: boolean
+}
+
+export interface AudienceSwitches {
+  questionsAllowed: boolean
+  reactionsAllowed: boolean
+}
+
+/** Presenter only: a slide's counts after an accepted reaction, with the records it produced. */
+export interface ReactionCountsMessage { type: 'reaction.counts'; slideId: string; counts: ReactionCounts; records: ReactionRecord[] }
+/** Presenter only: every question, after each new question or answered mark. */
+export interface QuestionsStateMessage { type: 'questions.state'; questions: AudienceQuestion[] }
+/** Every protocol-2 socket: the session's pause switches. */
+export interface SwitchesStateMessage extends AudienceSwitches { type: 'switches.state' }
+
+export type PresenterAudienceMessage =
+  | { type: 'question.answer'; questionId: string; answered: boolean }
+  | { type: 'switches.set'; questionsAllowed?: boolean; reactionsAllowed?: boolean }
+
+export type AudienceFeedbackServerMessage = ReactionCountsMessage | QuestionsStateMessage | SwitchesStateMessage
+
+export type PresenterMessage = SlidePublishMessage | PresenterPollMessage | PresenterInstantMessage | PresenterAudienceMessage | PresenterBoardMessage
+export type AudienceMessage = PollVoteMessage | ReactionSendMessage | QuestionSubmitMessage
 export type PresenterServerMessage = PollStateMessage | PollVoteRecordMessage
-export type ServerMessage = SlideStateMessage | InstantSlideMessage | SessionClosedMessage | PresenterServerMessage | QuestionMessage | ReactionMessage
+export type ServerMessage = SlideStateMessage | InstantSlideMessage | SessionClosedMessage | PresenterServerMessage | AudienceFeedbackServerMessage
 
 export function parseInstantSlide(value: unknown): InstantSlide | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
@@ -150,6 +239,20 @@ export function parsePresenterMessage(value: string): PresenterMessage | null {
   try {
     const message = JSON.parse(value) as Record<string, unknown>
     if (message.type === 'instant.clear') return { type: 'instant.clear' }
+    if ((BOARD_MESSAGE_TYPES as readonly unknown[]).includes(message.type)) return parsePresenterBoardMessage(message)
+    if (message.type === 'question.answer') {
+      if (!nonEmptyString(message.questionId) || (message.answered !== undefined && typeof message.answered !== 'boolean')) return null
+      return { type: 'question.answer', questionId: message.questionId, answered: message.answered !== false }
+    }
+    if (message.type === 'switches.set') {
+      const { questionsAllowed, reactionsAllowed } = message
+      if (questionsAllowed === undefined && reactionsAllowed === undefined) return null
+      if ((questionsAllowed !== undefined && typeof questionsAllowed !== 'boolean')
+        || (reactionsAllowed !== undefined && typeof reactionsAllowed !== 'boolean')) return null
+      return { type: 'switches.set',
+        ...(typeof questionsAllowed === 'boolean' ? { questionsAllowed } : {}),
+        ...(typeof reactionsAllowed === 'boolean' ? { reactionsAllowed } : {}) }
+    }
     if (message.type === 'instant.show') {
       const slide = parseInstantSlide(message.slide)
       return slide ? { type: 'instant.show', slide } : null
@@ -194,12 +297,125 @@ export function parsePresenterMessage(value: string): PresenterMessage | null {
 export function parseAudienceMessage(value: string): AudienceMessage | null {
   try {
     const message = JSON.parse(value) as Record<string, unknown>
+    if (!message || typeof message !== 'object' || Array.isArray(message)) return null
+    if (message.type === 'reaction.send') {
+      const reaction = parseReactionInput(message)
+      return 'value' in reaction ? { type: 'reaction.send', ...reaction.value } : null
+    }
+    if (message.type === 'question.submit') {
+      const question = parseQuestionInput(message)
+      return 'value' in question ? { type: 'question.submit', ...question.value } : null
+    }
     if (message.type !== 'poll.vote' || !nonEmptyString(message.pollId)) return null
     const choice = parsePollChoice(message.choice)
     return choice !== null ? { type: 'poll.vote', pollId: message.pollId, choice } : null
   } catch {
     return null
   }
+}
+
+function parseFeedbackSlideId(value: unknown): Parsed<string> {
+  if (value === undefined || value === null || value === '') return invalid('missing_slide_id', 'slideId is required.')
+  if (!nonEmptyString(value) || value.length > AUDIENCE_FEEDBACK_LIMITS.slideIdChars) return invalid('invalid_slide_id', 'slideId must be a short string.')
+  return { value }
+}
+
+function parseFeedbackTime(value: unknown): Parsed<number> {
+  return Number.isSafeInteger(value) && Number(value) >= 0
+    ? { value: Number(value) } : invalid('invalid_time', 'tMs must be a non-negative integer.')
+}
+
+/** A registered identifier, or `custom:<label>` with a trimmed label of 1–40 characters. */
+export function parseReactionId(value: unknown): Parsed<ReactionId> {
+  if (typeof value !== 'string') return invalid('unknown_reaction', 'reaction must be a registered identifier or custom:<label>.')
+  if ((REGISTERED_REACTIONS as readonly string[]).includes(value)) return { value: value as RegisteredReaction }
+  if (!value.startsWith('custom:')) return invalid('unknown_reaction', 'reaction must be a registered identifier or custom:<label>.')
+  const label = value.slice('custom:'.length).trim()
+  if (!label || label.length > AUDIENCE_FEEDBACK_LIMITS.customLabelChars) {
+    return invalid('invalid_custom_label', `A custom label must be 1–${AUDIENCE_FEEDBACK_LIMITS.customLabelChars} characters.`)
+  }
+  return { value: `custom:${label}` }
+}
+
+export function parseReactionInput(value: unknown): Parsed<ReactionInput> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid('invalid_reaction', 'A reaction must be an object.')
+  const body = value as Record<string, unknown>
+  const reaction = parseReactionId(body.reaction); if ('error' in reaction) return reaction
+  const slideId = parseFeedbackSlideId(body.slideId); if ('error' in slideId) return slideId
+  const tMs = parseFeedbackTime(body.tMs); if ('error' in tMs) return tMs
+  if (body.withdrawn !== undefined && typeof body.withdrawn !== 'boolean') return invalid('invalid_withdrawn', 'withdrawn must be true or absent.')
+  return { value: { reaction: reaction.value, slideId: slideId.value, tMs: tMs.value, ...(body.withdrawn === true ? { withdrawn: true as const } : {}) } }
+}
+
+export function parseQuestionInput(value: unknown): Parsed<QuestionInput> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid('invalid_question', 'A question must be an object.')
+  const body = value as Record<string, unknown>
+  if (typeof body.text !== 'string') return invalid('empty_question', 'The question text is required.')
+  const text = body.text.trim()
+  if (!text) return invalid('empty_question', 'The question text is required.')
+  if (text.length > AUDIENCE_FEEDBACK_LIMITS.questionChars) return invalid('question_too_long', `A question is at most ${AUDIENCE_FEEDBACK_LIMITS.questionChars} characters.`)
+  if (body.name !== undefined && body.name !== null && typeof body.name !== 'string') return invalid('invalid_name', 'Name must be a string.')
+  const name = typeof body.name === 'string' ? body.name.trim() : ''
+  if (name.length > AUDIENCE_FEEDBACK_LIMITS.nameChars) return invalid('name_too_long', `A name is at most ${AUDIENCE_FEEDBACK_LIMITS.nameChars} characters.`)
+  const slideId = parseFeedbackSlideId(body.slideId); if ('error' in slideId) return slideId
+  const tMs = parseFeedbackTime(body.tMs); if ('error' in tMs) return tMs
+  return { value: { text, ...(name ? { name } : {}), slideId: slideId.value, tMs: tMs.value } }
+}
+
+export function parseReactionRecord(value: unknown): ReactionRecord | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  const input = parseReactionInput(record)
+  if ('error' in input || input.value.reaction !== record.reaction
+    || !Number.isSafeInteger(record.sequence) || Number(record.sequence) < 1 || !Number.isFinite(record.acceptedAt)) return null
+  return { ...input.value, sequence: Number(record.sequence), acceptedAt: Number(record.acceptedAt) }
+}
+
+export function parseReactionCounts(value: unknown): ReactionCounts | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const entries = Object.entries(value)
+  if (entries.some(([reaction, count]) => 'error' in parseReactionId(reaction) || !Number.isSafeInteger(count) || Number(count) < 1)) return null
+  return Object.fromEntries(entries) as ReactionCounts
+}
+
+export function parseAudienceQuestion(value: unknown): AudienceQuestion | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const question = value as Record<string, unknown>
+  const input = parseQuestionInput(question)
+  if ('error' in input || input.value.text !== question.text || !nonEmptyString(question.questionId)
+    || question.questionId.length > AUDIENCE_FEEDBACK_LIMITS.idChars
+    || !Number.isFinite(question.acceptedAt) || typeof question.answered !== 'boolean') return null
+  return { questionId: question.questionId, ...input.value, acceptedAt: Number(question.acceptedAt), answered: question.answered }
+}
+
+export function parseAudienceSwitches(value: unknown): AudienceSwitches | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const switches = value as Record<string, unknown>
+  return typeof switches.questionsAllowed === 'boolean' && typeof switches.reactionsAllowed === 'boolean'
+    ? { questionsAllowed: switches.questionsAllowed, reactionsAllowed: switches.reactionsAllowed } : null
+}
+
+/** Reaction counts, questions and pause switches as clients receive them. */
+export function parseAudienceFeedbackServerMessage(value: unknown): AudienceFeedbackServerMessage | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const message = value as Record<string, unknown>
+  if (message.type === 'switches.state') {
+    const switches = parseAudienceSwitches(message)
+    return switches ? { type: 'switches.state', ...switches } : null
+  }
+  if (message.type === 'questions.state') {
+    if (!Array.isArray(message.questions)) return null
+    const questions = message.questions.map(parseAudienceQuestion)
+    return questions.every(Boolean) ? { type: 'questions.state', questions: questions as AudienceQuestion[] } : null
+  }
+  if (message.type === 'reaction.counts') {
+    const slideId = parseFeedbackSlideId(message.slideId)
+    const counts = parseReactionCounts(message.counts)
+    if ('error' in slideId || !counts || !Array.isArray(message.records)) return null
+    const records = message.records.map(parseReactionRecord)
+    return records.every(Boolean) ? { type: 'reaction.counts', slideId: slideId.value, counts, records: records as ReactionRecord[] } : null
+  }
+  return null
 }
 
 export function parsePresenterServerMessage(value: string): PresenterServerMessage | null {
@@ -236,6 +452,10 @@ export function parsePresenterServerMessage(value: string): PresenterServerMessa
     if (message.tallies !== undefined && tallies === null) return null
     if (message.responses !== undefined && responses === null) return null
     if (message.recorded !== undefined && message.recorded !== true) return null
+    const board = message.pollType === 'board' ? parseBoardSettings(message.board, (options as PollOption[]).map((option) => option.optionId)) : null
+    if ((message.pollType === 'board') !== (message.board !== undefined) || (message.board !== undefined && !board)) return null
+    const boardState = message.boardState === undefined ? null : parseBoardStateView(message.boardState)
+    if (message.boardState !== undefined && (!boardState || message.pollType !== 'board')) return null
     return {
       type: 'poll.state',
       pollId: message.pollId,
@@ -254,6 +474,8 @@ export function parsePresenterServerMessage(value: string): PresenterServerMessa
       ...(message.recorded === true ? { recorded: true as const } : {}),
       ...(tallies ? { tallies } : {}),
       ...(responses ? { responses } : {}),
+      ...(board ? { board } : {}),
+      ...(boardState ? { boardState } : {}),
     }
   } catch {
     return null
@@ -334,6 +556,11 @@ export function parsePollDefinition(value: unknown): PollDefinition | null {
   if (new Set(validOptions.map((option) => option.optionId)).size !== validOptions.length) return null
   const extras = parsePollExtras(poll, validOptions)
   if (extras === null) return null
+  // A board's columns are its options; only a board carries board settings.
+  const board = poll.type === 'board' ? parseBoardSettings(poll.board, validOptions.map((option) => option.optionId)) : null
+  if (poll.type === 'board' ? !board : poll.board !== undefined) return null
+  const seed = poll.seed === undefined ? null : poll.type === 'board' && board ? parseBoardSeed(poll.seed, validOptions.map((option) => option.optionId), board.cardChars) : null
+  if (poll.seed !== undefined && !seed) return null
   return {
     ...extras,
     pollId: poll.pollId,
@@ -343,6 +570,8 @@ export function parsePollDefinition(value: unknown): PollDefinition | null {
     options: validOptions,
     visibility: poll.visibility,
     ...pollLimits(poll),
+    ...(board ? { board } : {}),
+    ...(seed && seed.length ? { seed } : {}),
   }
 }
 
@@ -378,7 +607,7 @@ export function parseSlideLightbox(value: unknown): SlideLightboxState | null {
 }
 
 export function isPollType(value: unknown): value is PollType {
-  return typeof value === 'string' && ['single', 'multiple', 'open', 'ranking', 'rating', 'categorisation'].includes(value)
+  return typeof value === 'string' && ['single', 'multiple', 'open', 'ranking', 'rating', 'categorisation', 'board'].includes(value)
 }
 
 /** Limits are optional for existing authored polls; reject invalid explicit configuration. */

@@ -58,7 +58,7 @@
      the cell leading, --list-gap the padding, then --fs-body the type, never below the floor. */
   .slide-table {
     --table-band: calc(77cqh - 150px);
-    --table-row-pad: clamp(.45em, calc((var(--table-band) - var(--table-rows, 4) * 1.35em) / (2 * var(--table-rows, 4))), 1.1em);
+    --table-row-pad: clamp(.9cqh, calc((var(--table-band) - var(--table-rows, 4) * 1.35em) / (2 * var(--table-rows, 4))), .35em);
     width: 100%;
     max-width: none;
   }
@@ -68,9 +68,20 @@
   .slide-table tbody th {
     padding-top: calc(var(--table-row-pad) * var(--list-gap, 1));
     padding-bottom: calc(var(--table-row-pad) * var(--list-gap, 1));
+    /* Slide round 2 (0.37): cells give up side padding (was .8em) so the width goes to the text. */
+    padding-left: .9cqw;
+    padding-right: .9cqw;
     line-height: var(--list-lh, 1.35);
     vertical-align: middle;
   }
+  /* Slide round 2 (0.37): the table's body type is 2.2cqw (42px at 1920), not the 3.2cqw list default; a
+     talk that picks a body size (data-font-body) keeps its choice. The first column stays narrow (labels)
+     and the last takes a little more than an even share; the middle columns split the rest by text length. */
+  .slide:not([data-font-body]) > .slide-content:has(> .slide-table) { --fs-body: max(var(--type-floor), 2.2cqw); }
+  .slide-table { table-layout: auto; }
+  .slide-table thead th { font-size: max(var(--type-floor), 1em); }
+  .slide-table:has(tr > :nth-child(3)) th:first-child, .slide-table:has(tr > :nth-child(3)) td:first-child { width: 13%; }
+  .slide-table:has(tr > :nth-child(4)) th:last-child, .slide-table:has(tr > :nth-child(4)) td:last-child { width: 16%; }
   /* @order 1982 */
   /* {table-columns=off}: hairline rules between rows only — no column dividers, no side borders. */
   .slide-table.table-nocolumns,

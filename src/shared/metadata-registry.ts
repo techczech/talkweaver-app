@@ -320,6 +320,47 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     ownership: 'user'
   },
   {
+    key: 'title_look',
+    aliases: ['title-look'],
+    location: 'frontmatter',
+    type: 'text',
+    vocabulary: {
+      kind: 'closed',
+      options: [
+        { value: '', label: 'Default', explanation: 'Key absent — the plain centred top title.' },
+        { value: 'default', label: 'Default', explanation: 'The plain centred top title.' },
+        { value: 'kicker', label: 'Kicker', explanation: 'A small sentence-case mono line in the section colour, led by a short accent rule.' },
+        { value: 'label', label: 'Label', explanation: 'A tinted tab with a coloured left edge.' },
+        { value: 'tab', label: 'Tab', explanation: 'A solid accent tab flush with the slide edge.' }
+      ]
+    },
+    label: 'Title look',
+    group: 'Design',
+    explanation:
+      'How a top title is drawn across the talk: default, kicker, label or tab. A section’s own titlelook in sections: and a slide’s {titlelook=…} override it, in that order. It never touches the opening slide’s title_style, and left-rail titles are unchanged. An unlisted value falls back to default and raises a compiler warning.',
+    defaultable: true,
+    ownership: 'user'
+  },
+  {
+    key: 'title_look_at',
+    aliases: ['title-look-at'],
+    location: 'frontmatter',
+    type: 'text',
+    vocabulary: {
+      kind: 'closed',
+      options: [
+        { value: '', label: 'Normal', explanation: 'Key absent — the kicker keeps the usual top margin.' },
+        { value: 'normal', label: 'Normal', explanation: 'The kicker keeps the usual top margin.' },
+        { value: 'edge', label: 'Near top edge', explanation: 'The kicker sits near the top edge and the body gets the height.' }
+      ]
+    },
+    label: 'Kicker placement',
+    group: 'Design',
+    explanation: 'Where a Kicker title sits when the talk’s title look is kicker: normal or near the top edge. Ignored for the other looks.',
+    defaultable: true,
+    ownership: 'user'
+  },
+  {
     key: 'claim_style',
     aliases: ['claim-style'],
     location: 'frontmatter',
@@ -336,6 +377,62 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     group: 'Design',
     explanation:
       'How a wholly bold paragraph is set: plain (one step larger) or bar (ADR-0023 §4). A claim is never bold. A slide’s own {claim=…} overrides this; an unlisted style falls back to plain and raises a compiler warning.',
+    defaultable: true,
+    ownership: 'user'
+  },
+  {
+    key: 'narrow_columns',
+    aliases: ['narrow-columns'],
+    location: 'frontmatter',
+    type: 'boolean',
+    vocabulary: bool(
+      'Columns that would be narrower than 22cqw change shape: an icon row of five or more wraps to rows of three, cards beside a rail become icon rows (the default behaviour).',
+      'Columns stay as authored, however narrow.'
+    ),
+    label: 'Reshape narrow columns',
+    group: 'Design',
+    explanation:
+      'Whether columns too narrow for their words (under 22cqw, about 12 characters at body size) change shape (ADR-0033 §5). An authored {iconlist=boxes|list} shape always wins, and a slide’s own {narrowcols=on|off} overrides this key.',
+    defaultable: true,
+    ownership: 'user'
+  },
+  {
+    key: 'screenshot_style',
+    aliases: ['screenshot-style'],
+    location: 'frontmatter',
+    type: 'text',
+    vocabulary: {
+      kind: 'closed',
+      options: [
+        { value: '', label: 'Default (window frames)', explanation: 'Key absent — two or three screenshots in a row sit in light app windows, cropped from their top-left.' },
+        { value: 'frames', label: 'Window frames', explanation: 'Each screenshot in a light app window, cropped from its top-left so it stays crisp (the default).' },
+        { value: 'fanned', label: 'Fanned', explanation: 'Prints with a white border, turned a few degrees and overlapping, captions upright.' }
+      ]
+    },
+    label: 'Screenshot row',
+    group: 'Design',
+    explanation:
+      'How two or three screenshots in one row are drawn: window frames (default) or fanned (ADR-0033 §4). They always stay one row. A slide’s own {screenshots=…} overrides this; an unlisted style falls back to window frames and raises a compiler warning.',
+    defaultable: true,
+    ownership: 'user'
+  },
+  {
+    key: 'screenshot_list',
+    aliases: ['screenshot-list'],
+    location: 'frontmatter',
+    type: 'text',
+    vocabulary: {
+      kind: 'closed',
+      options: [
+        { value: '', label: 'Default (beside lines)', explanation: 'Key absent — each screenshot sits as a thumbnail beside its list line.' },
+        { value: 'beside', label: 'Beside lines', explanation: 'Each screenshot as an equal thumbnail beside its line, cropped from its top-left and framed (the default).' },
+        { value: 'stacked', label: 'Stacked', explanation: 'Each screenshot above its caption, side by side in one row.' }
+      ]
+    },
+    label: 'Screenshots beside a list',
+    group: 'Design',
+    explanation:
+      'How a list whose lines each carry a screenshot is drawn: thumbnails beside the lines (default) or stacked, each screenshot above its caption (ADR-0033 §4). A slide’s own {shotlist=…} overrides this; an unlisted arrangement falls back to beside lines and raises a compiler warning.',
     defaultable: true,
     ownership: 'user'
   },
@@ -610,10 +707,69 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
       { value: 'open', label: 'Open response', explanation: 'Each audience member submits a free-text response; slide list items are not used.' },
       { value: 'ranking', label: 'Ranking', explanation: 'Rank every list item, or exactly the number specified by polltop.' },
       { value: 'rating', label: 'Rating', explanation: 'Rate each list item using the ordered labels in [scale: …].' },
-      { value: 'categorisation', label: 'Categorisation', explanation: 'Assign each list item a label from [categories: …].' }
+      { value: 'categorisation', label: 'Categorisation', explanation: 'Assign each list item a label from [categories: …].' },
+      { value: 'board', label: 'Board', explanation: 'A feedback board: the audience adds short cards to the columns in the slide list (two to four; a nested bullet is a column’s hint). The paragraph under the title is the instructions and a “>” line the example card.' }
     ] },
     label: 'Poll type',
     explanation: 'Turns the slide into a live poll whose question is the slide title and whose choice options are its list items.',
+    ownership: 'user'
+  },
+  // ── Board settings (ADR-0032 §2–3, §7; ticket 01): written only when they differ from the default ──
+  {
+    key: 'limit', location: 'trigger', type: 'text',
+    vocabulary: { kind: 'closed', options: [
+      { value: '', label: '24', explanation: 'Up to 24 cards on the big screen, the most that stay above the minimum text size (the default). Beyond it new cards wait on the phones.' },
+      { value: '12', label: '12', explanation: 'Up to 12 cards on the big screen; the rest wait until you release them.' },
+      { value: '36', label: '36', explanation: 'Up to 36 cards on the big screen, in smaller type.' },
+      { value: 'all', label: 'All', explanation: 'Every card on the big screen, as large as fits.' }
+    ] },
+    label: 'Big screen shows',
+    explanation: 'On a board slide, how many cards the big screen shows before new cards wait (a group counts once). Phones always show every card.',
+    ownership: 'user'
+  },
+  {
+    key: 'length', location: 'trigger', type: 'text',
+    vocabulary: { kind: 'closed', options: [
+      { value: '', label: '140', explanation: 'A card holds up to 140 characters (the default).' },
+      { value: '60', label: '60', explanation: 'A card holds up to 60 characters.' },
+      { value: '100', label: '100', explanation: 'A card holds up to 100 characters.' },
+      { value: '200', label: '200', explanation: 'A card holds up to 200 characters.' }
+    ] },
+    label: 'Card length',
+    explanation: 'On a board slide, the most characters one card may hold.',
+    ownership: 'user'
+  },
+  {
+    key: 'cards', location: 'trigger', type: 'text',
+    vocabulary: { kind: 'closed', options: [
+      { value: '', label: '5', explanation: 'Each phone may add up to 5 cards (the default).' },
+      { value: '1', label: '1', explanation: 'Each phone may add one card.' },
+      { value: '3', label: '3', explanation: 'Each phone may add up to 3 cards.' },
+      { value: '10', label: '10', explanation: 'Each phone may add up to 10 cards.' }
+    ] },
+    label: 'Cards per phone',
+    explanation: 'On a board slide, how many cards one phone may add. A number here never means the cards layout; {cards=grid|rows|stepped} still does.',
+    ownership: 'user'
+  },
+  {
+    key: 'names', location: 'trigger', type: 'boolean',
+    vocabulary: { kind: 'closed', options: [
+      { value: '', label: 'Off', explanation: 'Cards carry no names (the default).' },
+      { value: 'optional', label: 'Optional', explanation: 'Written {names}: a participant may add a name to a card; only you see it.' }
+    ] },
+    label: 'Names',
+    explanation: 'On a board slide, whether participants may add an optional name to their cards. Names never show on the big screen.',
+    ownership: 'user'
+  },
+  {
+    key: 'closes', location: 'trigger', type: 'text',
+    vocabulary: { kind: 'closed', options: [
+      { value: '', label: '7 days', explanation: 'A board left open after the talk closes by itself after 7 days (the default).' },
+      { value: '1d', label: '1 day', explanation: 'A board left open closes after 1 day.' },
+      { value: '30d', label: '30 days', explanation: 'A board left open closes after 30 days.' }
+    ] },
+    label: 'Left open, closes',
+    explanation: 'On a board slide, how long a board left open after the talk keeps taking cards; you can close it sooner in History.',
     ownership: 'user'
   },
   {
@@ -650,6 +806,93 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     ownership: 'user'
   },
 
+  // ── Pre-work (ADR-0032 amendment point 5, ticket 08): the talk's "Before the session" form ──
+  {
+    key: 'prework', location: 'trigger', type: 'boolean',
+    vocabulary: { kind: 'closed', options: [
+      { value: 'true', label: 'Pre-work section', explanation: 'Written {prework} on a ## section: its slides are the pre-work form’s steps, answered on the handout link before the session, and are not presented in the talk.' }
+    ] },
+    label: 'Pre-work section',
+    explanation: 'Marks the talk’s “Before the session” section. The planned Run decides when its form opens and closes.',
+    ownership: 'user'
+  },
+  {
+    key: 'task', location: 'trigger', type: 'boolean',
+    vocabulary: { kind: 'closed', options: [
+      { value: 'true', label: 'Pre-task', explanation: 'Written {task} on a pre-work step: a task participants do before the session and mark as done; the slide’s list is the instructions.' }
+    ] },
+    label: 'Pre-task',
+    explanation: 'A step of the pre-work form that asks participants to do something before the session.',
+    ownership: 'user'
+  },
+  {
+    key: 'readonly', location: 'trigger', type: 'boolean',
+    vocabulary: { kind: 'closed', options: [
+      { value: '', label: 'Mark as done', explanation: 'Participants tick the task off when they have done it; you see how many did (the default).' },
+      { value: 'true', label: 'Read only', explanation: 'Written {readonly}: participants read the task; there is nothing to tick.' }
+    ] },
+    label: 'Read-only task',
+    explanation: 'On a pre-task, whether participants only read it instead of ticking it off when done.',
+    ownership: 'user'
+  },
+  {
+    key: 'minutes', location: 'trigger', type: 'text',
+    vocabulary: { kind: 'closed', options: [
+      { value: '', label: '10 min', explanation: 'The task takes about 10 minutes (the default).' },
+      { value: '5', label: '5 min', explanation: 'The task takes about 5 minutes.' },
+      { value: '20', label: '20 min', explanation: 'The task takes about 20 minutes.' },
+      { value: '30', label: '30 min', explanation: 'The task takes about 30 minutes.' }
+    ] },
+    label: 'Time it takes',
+    explanation: 'On a pre-task, how long participants should expect it to take.',
+    ownership: 'user'
+  },
+  {
+    key: 'check', location: 'trigger', type: 'boolean',
+    vocabulary: { kind: 'closed', options: [
+      { value: 'true', label: 'Quick check', explanation: 'Written {check} on a single-choice poll in the pre-work section: a quick knowledge check whose right option ends with {right}. Participants get no marks.' }
+    ] },
+    label: 'Quick check',
+    explanation: 'A step of the pre-work form that checks what participants already know, without marking them.',
+    ownership: 'user'
+  },
+  {
+    key: 'right', location: 'trigger', type: 'boolean',
+    vocabulary: { kind: 'closed', options: [
+      { value: 'true', label: 'Right answer', explanation: 'Written {right} at the end of a quick check’s list item: the right option. Only you see it; it is removed from everything participants and the room see.' }
+    ] },
+    label: 'Right answer',
+    explanation: 'Marks a quick check’s right option. Choose it in the Inspector’s Quick check section.',
+    ownership: 'user'
+  },
+  {
+    key: 'noask', location: 'trigger', type: 'boolean',
+    vocabulary: { kind: 'closed', options: [
+      { value: '', label: 'On', explanation: 'Participants can ask about this step; you read the questions on the planned Run in History (the default).' },
+      { value: 'true', label: 'Off', explanation: 'Written {noask}: participants cannot ask about this step.' }
+    ] },
+    label: 'Questions about it',
+    explanation: 'On a pre-work step, whether participants can send a question about it.',
+    ownership: 'user'
+  },
+  {
+    key: 'results', location: 'trigger', type: 'text', vocabulary: { kind: 'freeform' },
+    label: 'Answers from pre-work',
+    explanation: 'On a talk slide, the pre-work step (its slide id) whose answers the slide shows. Choose it in the Inspector’s Results section.',
+    ownership: 'user'
+  },
+
+  // ── Slide reactions (ADR-0027 amendment §6, ticket 04) ─────────────────────────────────────
+  {
+    key: 'reactions',
+    location: 'trigger',
+    type: 'text',
+    vocabulary: { kind: 'freeform' },
+    label: 'Reactions',
+    explanation:
+      'Which reactions the audience bar offers under this slide: absent for the standard set (puzzled, helped, bookmark), off for none (Ask stays), or up to four of the registered reactions (puzzled, helped, bookmark, agree, disagree, yes, no, more, slower), or quoted custom labels shown in words. Set it in the Inspector’s Audience section.',
+    ownership: 'user'
+  },
   {
     key: 'pollselections', location: 'trigger', type: 'number', vocabulary: { kind: 'freeform' },
     label: 'Select up to', explanation: 'Maximum distinct options in a multiple-choice answer. Omit to allow all options. Submissions are final.', ownership: 'user'

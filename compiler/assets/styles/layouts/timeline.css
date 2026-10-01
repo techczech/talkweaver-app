@@ -187,27 +187,31 @@
   /* ── Ticket 22: five stops in every mode, centred in the band, clear of the footer ───────────
      The fixed footer occupies the bottom 61px of the stage (56px bar + 3px tick + its border, as
      measured). The timeline slide adds that band to its bottom padding PLUS the gap the top-title
-     regime leaves under the title (stage.css @order 1368: clamp(16px, 2.4cqw, 32px)), and the
+     regime leaves under the title (stage.css @order 1368: 2.2cqh), and the
      content box fills the padded slide exactly, so the top regime's auto margins (@order 1370/1371)
      leave the SAME air between title and track as between track and footer — both axes balanced
      (ADR-0005), nothing under the footer. Timeline layout only (T21 finding: other top-regime
      layouts still overlap the footer; they are not touched here). *//* @order 2020 */
   .slide:has(> .slide-content.layout-timeline) {
     --tl-footer-band: 61px;
-    padding-bottom: calc(var(--tl-footer-band) + clamp(16px, 2.4cqw, 32px));
+    --tl-head-gap: max(2.2cqh, 2.6cqw);
+    padding-bottom: calc(var(--tl-footer-band) + var(--tl-head-gap));
   }/* @order 2021 */
   .slide:has(> .slide-content.layout-timeline) > .slide-content.layout-timeline {
     min-height: 0;
     height: 100%;
   }/* @order 2022 */
+  /* Timeline only: the gap under the title rule is at least 2.4cqw (ticket 09, ADR-0033 §8). The shared compact
+     title spacing (stage.css @order 1368/1680, 2.2cqh) is unchanged for every other layout. */
+  .slide[data-title-layout="top"] > .slide-content.layout-timeline > .slide-head { margin-bottom: var(--tl-head-gap) !important; }/* @order 2074 */
   /* The track is a flex child of the top-regime column: it must never grow past the band. */
   .slide[data-title-layout="top"] > .slide-content.layout-timeline > .timeline { flex: 0 1 auto; min-height: 0; margin-top: 0; }/* @order 2023 */
 
   /* RAIL over stops (ADR-0028 §3, round-2 timeline B): one hairline rail, a ring dot per STOP, the
      bold sans date BESIDE its text (skin/timeline.css @order 1446-1455). Five stops must fit the
-     band at both stages: the text sits on the dense step (--fs-dense, 2.6cqw) and each stop is one
+     band at both stages: the text sits on the body size (--fs-body, 3.2cqw; ADR-0033 §8) and each stop is one
      row, so five one-line stops take 5 x ~1.9em inside the ~600px band under a two-line head. *//* @order 2024 */
-  .timeline.timeline-rail[data-tl-stops] { font-size: var(--fs-dense); }/* @order 2025 */
+  .timeline.timeline-rail[data-tl-stops] { font-size: var(--fs-body); }/* @order 2025 */
   .timeline.timeline-rail[data-tl-stops] .tl-group { padding: .3em 0 .3em 1.9em; }/* @order 2026 */
   .timeline.timeline-rail[data-tl-stops] .tl-group + .tl-group { margin-top: 0; }/* @order 2027 */
   .timeline.timeline-rail[data-tl-stops] .tl-group::before { top: calc(1.02em - 7px); }/* @order 2028 */

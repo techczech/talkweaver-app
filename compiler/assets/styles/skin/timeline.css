@@ -1,6 +1,6 @@
 /* ADR-0028 §3 (2026-09-25, round-2 timeline B): more space between stops; the stop labels bold, in
-   the deck sans, in the case the author typed and 1.25x the entries; the entries on the dense step
-   (--fs-dense). Horizontal and rail only; columns, compact, spine, pills and dynamic are unchanged. */
+   the deck sans, in the case the author typed and 1.25x the entries; the entries on the body size
+   (--fs-body; ADR-0033 §8 moved them off the dense step, labels stay 1.25x). Horizontal and rail only; columns, compact, spine, pills and dynamic are unchanged. */
 /* @order 1434 */
   .timeline.timeline-horizontal {
     display: grid;
@@ -11,7 +11,7 @@
     border-top: 2px solid var(--hairline);
     padding-top: 1em;
     margin-top: auto;
-    font-size: var(--fs-dense);
+    font-size: var(--fs-body);
   }/* @order 1435 */
   .timeline.timeline-horizontal .tl-group {
     position: relative;
@@ -62,7 +62,7 @@
      for every dot and every segment. */
 /* @order 1446 */
   .timeline.timeline-rail {
-    border-left: 0; padding-left: 0; margin-top: auto; font-size: var(--fs-dense); --tl-rail-x: .45em;
+    border-left: 0; padding-left: 0; margin-top: auto; font-size: var(--fs-body); --tl-rail-x: .45em;
     display: grid; grid-template-columns: max-content minmax(0, 1fr); column-gap: 1.1em;
   }/* @order 2069 */
   .timeline.timeline-rail::before { content: none; }/* @order 1447 */

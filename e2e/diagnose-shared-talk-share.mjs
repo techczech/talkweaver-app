@@ -116,7 +116,7 @@ try {
   assert.equal(await page.getByTestId('talk-row-shared').first().isVisible(), true, 'the talk row shows the Shared badge')
   log('status bar says "Shared for comments · <link>"; talk row shows Shared')
 
-  // The share_url stamp and the forced flush are saves too, but change nothing on her page.
+  // The share_url stamp and the forced flush are saves too, but change nothing on their page.
   await wait(3000)
   assert.equal((await talkJson(shareId)).revision, 1, 'metadata-only saves push nothing')
 

@@ -12,7 +12,7 @@
 //   4. the composition ends above the fixed footer band and sits centred in the band: the air
 //      between title and track equals the air between track and footer (±6px); nothing clips;
 //   5. pills and horizontal timelines over their measured stop caps split into balanced
-//      continuation slides (8 stops → 4 + 4) through the spine's continuation mechanism; the
+//      continuation slides (8 stops → 4 + 4 pills, 3 + 3 + 2 horizontal) through the spine's continuation mechanism; the
 //      horizontal cap is four since ticket 08 (entries on the dense step), so its five-stop
 //      showcase renders as 3 + 2 and the checks in 2–4 hold for each part;
 //   6. dynamic mode shows all five stops at its LAST reveal step;
@@ -65,18 +65,19 @@ assert.equal(timelineStopChunks([1, 2, 3, 4, 5], 5), null, 'five stops at cap fi
 
 // The mutant compiles into a scratch directory so the committed sampler artefact stays a true build.
 const { model, html, outPath } = await buildLayoutSampler(isMutant ? mkdtempSync(join(tmpdir(), 'tw-timeline-mutant-')) : undefined)
-for (const base of ['t22-pills-split', 't22-horizontal-split']) {
+// Eight stops: pills cut 4 + 4; horizontal cuts 3 + 3 + 2 since ADR-0033 §8 (entries at the body size hold three stops a slide).
+for (const [base, cut] of [['t22-pills-split', [4, 4]], ['t22-horizontal-split', [3, 3, 2]]]) {
   const parts = model.slides.filter((slide) => slide.id === base || slide.id.startsWith(`${base}-`))
-  assert.equal(parts.length, 2, `${base}: eight stops split into two continuation slides`)
-  assert.deepEqual(parts.map((slide) => slide.blocks[0].stops.length), [4, 4], `${base}: the cut is balanced`)
+  assert.equal(parts.length, cut.length, `${base}: eight stops split into ${cut.length} continuation slides`)
+  assert.deepEqual(parts.map((slide) => slide.blocks[0].stops.length), cut, `${base}: the cut is balanced`)
   assert.equal(parts[1].role, 'content', `${base}: the continuation takes the content role`)
-  assert.match(parts[1].title, /\(2\/2\)$/, `${base}: the continuation title carries its marker`)
+  assert.match(parts[1].title, new RegExp(`\\(2/${cut.length}\\)$`), `${base}: the continuation title carries its marker`)
 }
 for (const mode of MODES) assert(html.includes(`data-id="t22-${mode}"`), `t22-${mode}: fixture compiles`)
 // A showcase fixture and its continuation slides (t22-horizontal, t22-horizontal-2; never the
 // separate t22-horizontal-split fixture).
 const partIdsOf = (id) => model.slides.map((slide) => slide.id).filter((slideId) => slideId === id || new RegExp(`^${id}-\\d+$`).test(slideId))
-assert.deepEqual(partIdsOf('t22-horizontal'), ['t22-horizontal', 't22-horizontal-2'], 't22-horizontal: five stops over the cap of four split into two slides')
+assert.deepEqual(partIdsOf('t22-horizontal'), ['t22-horizontal', 't22-horizontal-2'], 't22-horizontal: five stops over the cap of three split into two slides')
 
 // --- 2–4, 6: rendered contract ------------------------------------------------------------------
 const browser = await chromium.launch({ headless: true })
@@ -201,10 +202,10 @@ try {
         table.push(`${id}:${m.mode} stops=${m.stops} min=${m.minFont.toFixed(1)}px air=${m.topAir.toFixed(0)}/${m.bottomAir.toFixed(0)} bottom=${m.trackBottom.toFixed(0)}`)
       }
     }
-    for (const id of ['t22-pills-split', 't22-pills-split-2', 't22-horizontal-split', 't22-horizontal-split-2']) {
+    for (const [id, count] of [['t22-pills-split', 4], ['t22-pills-split-2', 4], ['t22-horizontal-split', 3], ['t22-horizontal-split-2', 3], ['t22-horizontal-split-3', 2]]) {
       await activate(id)
       const m = await measure(id)
-      assert(m && m.stops === 4 && m.stopsWithDate === 4 && m.stopsWithText === 4, `${id}: continuation part renders its 4 stops`)
+      assert(m && m.stops === count && m.stopsWithDate === count && m.stopsWithText === count, `${id}: continuation part renders its ${count} stops`)
       assert(m.zoom >= 0.99 && m.trackBottom <= m.footerTop + 0.5 && m.clipped === 0, `${id}: continuation part fits the band`)
     }
     console.log(`TIMELINE ${viewport.width}x${viewport.height}: ${table.join(' | ')}`)
@@ -221,7 +222,7 @@ if (!isMutant) {
     encoding: 'utf8'
   })
   assert.notEqual(child.status, 0, 'with the model collapsed to one stop the gate fails')
-  assert.match(child.stderr, /renders 5 stops|five stops|same stops|split into two/, `mutant fails on its own contract, not elsewhere:\n${child.stderr.slice(-800)}`)
+  assert.match(child.stderr, /renders 5 stops|five stops|same stops|split into (two|\d)/, `mutant fails on its own contract, not elsewhere:\n${child.stderr.slice(-800)}`)
   console.log('timeline modes mutation (model collapsed to one stop): FAILS as required')
 }
 

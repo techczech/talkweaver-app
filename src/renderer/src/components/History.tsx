@@ -5,11 +5,18 @@ import {
   BarChart3, CalendarDays, Check, Clock, Copy, ExternalLink, FileText, HardDrive, History as HistoryIcon,
   MoreVertical, PanelLeftClose, PanelLeftOpen, Pencil, Play, Radio,
   Plus, RefreshCw, Search, Settings, Tag, Trash2, UploadCloud, VolumeX, X, FileInput,
-  Image as ImageIcon, Link2, ListPlus, Timer, Type, Zap
+  Image as ImageIcon, LayoutGrid, Link2, ListPlus, Timer, Type, Zap
 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { HistoryLiveCheck, Pathway, RecordingKind, RecordingSession, RunInstantSlide, RunSlideSet, TalkHandouts } from '../../../preload/index'
 import { unresolvedTriggerBlock } from '../../../shared/layout-doctor'
+import PlanRunSheet from './PlanRunSheet'
+import HistoryRunPrework from './HistoryRunPrework'
+import { dayAndTime, preworkWindow, shortDate } from '../../../shared/plan-run'
+import { preworkEnabled } from '../../../shared/prework-flag'
+import { RunQuestions, RunReactions, type FeedbackSlide } from './HistoryRunFeedback'
+import { RunBoardBlock, RunPollsBlock, RunShareDialog, boardLedgerBadge } from './HistoryRunBoard'
+import { runBoardKey } from '../../../shared/run-board'
 import '../history.css'
 
 type SortMode = 'newest' | 'talk' | 'length'
@@ -153,12 +160,18 @@ export default function History({
   isOpen,
   onClose,
   onShowStudio,
-  onShowImporter
+  onShowImporter,
+  planRequest = 0,
+  preworkRequest = null
 }: {
   isOpen: boolean
   onClose: () => void
   onShowStudio?: (sessionId?: string) => void
   onShowImporter?: () => void
+  /** Increments when the window is asked to open the plan sheet. */
+  planRequest?: number
+  /** Asked to open the Run page of a planned Run's pre-work (the talk's status-bar chip). `nonce` makes a repeat request count. */
+  preworkRequest?: { talkSlug: string; runId: string; nonce: number } | null
 }): JSX.Element | null {
   const [sessions, setSessions] = useState<RecordingSession[]>([])
   const [planned, setPlanned] = useState<RecordingSession[]>([])
@@ -183,25 +196,26 @@ export default function History({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [contextDraft, setContextDraft] = useState('')
   const [uploadBusy, setUploadBusy] = useState<string | null>(null)
-  const [planOpen, setPlanOpen] = useState(true)
-  const [planTalk, setPlanTalk] = useState('')
-  const [planDate, setPlanDate] = useState(new Date().toISOString().slice(0, 10))
-  const [planEvent, setPlanEvent] = useState('')
-  const [planAudience, setPlanAudience] = useState('')
-  const [planSlideSet, setPlanSlideSet] = useState('full')
-  const [planPathways, setPlanPathways] = useState<Pathway[]>([])
-  const [planBusy, setPlanBusy] = useState(false)
-  const [editingPlanId, setEditingPlanId] = useState<string | null>(null)
+  // The plan sheet (ADR-0032 point 5) replaces the inline form: null = closed.
+  const [planSheet, setPlanSheet] = useState<{ run: RecordingSession | null } | null>(null)
+  const [pathwayNames, setPathwayNames] = useState<Record<string, Record<string, string>>>({})
   const [detailId, setDetailId] = useState<string | null>(null)
   const [handoutBusy, setHandoutBusy] = useState(false)
   // Ticket 07 (L6): where each instant slide's anchor sits in the talk now, per Run; the row being
   // added; and the last refusal per instant slide (shown under its row).
   const [instantAnchors, setInstantAnchors] = useState<Record<string, Record<string, InstantAnchor | null>>>({})
+  const [feedbackSlides, setFeedbackSlides] = useState<Record<string, Record<string, FeedbackSlide | null>>>({})
   const [instantBusy, setInstantBusy] = useState<string | null>(null)
   const [instantErrors, setInstantErrors] = useState<Record<string, string>>({})
+  // Feedback-boards ticket 06: the board action running (one at a time), the late cards the last
+  // refresh pulled in per Run (R4's banner), and the Run whose share dialog is open (R7).
+  const [boardBusy, setBoardBusy] = useState<{ runId: string; kind: 'refresh' | 'close' } | null>(null)
+  const [boardPulled, setBoardPulled] = useState<Record<string, number>>({})
+  const [shareRun, setShareRun] = useState<RecordingSession | null>(null)
+  // The Run whose pre-work page is open (feedback-boards ticket 11).
+  const [preworkRunId, setPreworkRunId] = useState<string | null>(null)
 
   const searchRef = useRef<HTMLInputElement>(null)
-  const planEventRef = useRef<HTMLInputElement>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const flash = useCallback((msg: string): void => {
@@ -236,67 +250,60 @@ export default function History({
     setHandouts(talks)
   }, [flash])
 
-  useEffect(() => {
-    if (!planTalk) setPlanTalk(Object.keys(handouts)[0] ?? '')
-  }, [handouts, planTalk])
-
+  // Pathway names for the planned rows' slide-set column, per talk.
   useEffect(() => {
     let cancelled = false
-    const talk = handouts[planTalk]
-    if (!talk?.outlinePath) { setPlanPathways([]); return }
+    const slugs = [...new Set(planned.filter((run) => run.slideSet?.kind === 'pathway' || run.pathwayId).map((run) => run.talkSlug))]
     void (async () => {
-      const source = await window.tw.talk.readOutline(talk.outlinePath)
-      if (source === null) return
-      const snapshot = await window.tw.pathways.read(talk.outlinePath, source)
-      if (!cancelled && !('error' in snapshot)) setPlanPathways(snapshot.pathways)
+      for (const slug of slugs) {
+        const talk = handouts[slug]
+        if (!talk?.outlinePath) continue
+        const source = await window.tw.talk.readOutline(talk.outlinePath)
+        if (source === null) continue
+        const snapshot = await window.tw.pathways.read(talk.outlinePath, source)
+        if (cancelled || 'error' in snapshot) continue
+        setPathwayNames((current) => ({ ...current, [slug]: Object.fromEntries(snapshot.pathways.map((pathway) => [pathway.id, pathway.name])) }))
+      }
     })()
     return () => { cancelled = true }
-  }, [handouts, planTalk])
+  }, [handouts, planned])
 
+  // The talk a new Run is planned for: the scoped talk, else the most recently delivered one.
+  const planTalks = useMemo(() => Object.entries(handouts).map(([slug, talk]) => ({ slug, title: talk.title, outlinePath: talk.outlinePath })).filter((talk) => talk.outlinePath), [handouts])
+  const openPlanner = useCallback((run: RecordingSession | null = null): void => {
+    if (run || planTalks.length) setPlanSheet({ run })
+    else flash('No talk to plan a Run for yet')
+  }, [flash, planTalks.length])
+
+  // Asked to open the plan sheet (Plan a run… with no talk open): wait for the talks to load first.
+  const handledPlanRequest = useRef(0)
   useEffect(() => {
-    const openPlanner = (): void => {
-      setPlanOpen(true)
-      window.setTimeout(() => planEventRef.current?.focus(), 0)
-    }
-    window.addEventListener('tw-plan-run', openPlanner)
-    return () => window.removeEventListener('tw-plan-run', openPlanner)
+    if (!planRequest || planRequest === handledPlanRequest.current || !planTalks.length) return
+    handledPlanRequest.current = planRequest
+    setPlanSheet({ run: null })
+  }, [planRequest, planTalks.length])
+
+  // Another window (the talk's status bar) may have planned or edited a Run.
+  useEffect(() => {
+    const refresh = (): void => { void reload() }
+    window.addEventListener('focus', refresh)
+    return () => window.removeEventListener('focus', refresh)
+  }, [reload])
+
+  // Asked to open a Run's pre-work page: once the Run is loaded.
+  const handledPreworkRequest = useRef(0)
+  useEffect(() => {
+    if (!preworkEnabled() || !preworkRequest || preworkRequest.nonce === handledPreworkRequest.current) return
+    if (!planned.some((run) => run.id === preworkRequest.runId && run.talkSlug === preworkRequest.talkSlug)) return
+    handledPreworkRequest.current = preworkRequest.nonce
+    setPreworkRunId(preworkRequest.runId)
+  }, [preworkRequest, planned])
+  const preworkRun = useMemo(() => planned.find((run) => run.id === preworkRunId) ?? null, [planned, preworkRunId])
+  const preworkRunChanged = useCallback((run: RecordingSession): void => {
+    setPlanned((current) => current.map((candidate) => candidate.id === run.id && candidate.talkSlug === run.talkSlug ? run : candidate))
   }, [])
 
-  const submitPlan = useCallback(async (): Promise<void> => {
-    const talk = handouts[planTalk]
-    if (!talk || !planDate || !planEvent.trim()) { flash('Choose a talk, date and event'); return }
-    setPlanBusy(true)
-    const slideSet: RunSlideSet = planSlideSet === 'full' ? { kind: 'full' } : { kind: 'pathway', pathwayId: planSlideSet }
-    const result = editingPlanId
-      ? await window.tw.history.updatePlannedRun(planTalk, editingPlanId, { plannedDate: planDate, eventTitle: planEvent.trim(), audience: planAudience.trim(), slideSet })
-      : await window.tw.history.createPlannedRun({
-        talkSlug: planTalk,
-        talkTitle: talk.title,
-        plannedDate: planDate,
-        eventTitle: planEvent.trim(),
-        audience: planAudience.trim(),
-        slideSet
-      })
-    setPlanBusy(false)
-    if (!result.ok) { flash(`Could not plan Run: ${result.error ?? 'unknown error'}`); return }
-    setPlanEvent('')
-    setPlanAudience('')
-    setEditingPlanId(null)
-    await reload()
-    flash(editingPlanId ? 'Planned Run updated' : 'Run planned')
-  }, [editingPlanId, flash, handouts, planAudience, planDate, planEvent, planSlideSet, planTalk, reload])
-
-  const beginEditPlanned = useCallback((run: RecordingSession): void => {
-    const set = run.slideSet ?? (run.pathwayId ? { kind: 'pathway' as const, pathwayId: run.pathwayId } : { kind: 'full' as const })
-    setPlanTalk(run.talkSlug)
-    setPlanDate(run.plannedDate ?? new Date().toISOString().slice(0, 10))
-    setPlanEvent(run.eventTitle ?? '')
-    setPlanAudience(run.audience ?? '')
-    setPlanSlideSet(set.kind === 'pathway' ? set.pathwayId : 'full')
-    setEditingPlanId(run.id)
-    setPlanOpen(true)
-    window.setTimeout(() => planEventRef.current?.focus(), 0)
-  }, [])
+  const beginEditPlanned = useCallback((run: RecordingSession): void => { openPlanner(run) }, [openPlanner])
 
   const removePlanned = useCallback(async (run: RecordingSession): Promise<void> => {
     const result = await window.tw.history.deletePlannedRun(run.talkSlug, run.id)
@@ -351,7 +358,8 @@ export default function History({
     setHandoutBusy(false)
     if (!result.success) { flash(`Could not publish Run handout: ${result.error ?? 'unknown error'}`); return }
     await reload()
-    if (result.missing?.length) flash(`Run handout published; skipped ${result.missing.length} missing slide id${result.missing.length === 1 ? '' : 's'}`)
+    if (result.warning) flash(`Run handout published. ${result.warning}`)
+    else if (result.missing?.length) flash(`Run handout published; skipped ${result.missing.length} missing slide id${result.missing.length === 1 ? '' : 's'}`)
     else flash('Run handout published')
   }, [flash, handouts, reload])
 
@@ -479,6 +487,22 @@ export default function History({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedInstantKey])
 
+  // Reactions ticket 06: the slides the selected Run's questions and reactions name, as the talk is now.
+  const selectedFeedbackKey = selectedRow && (selectedRow.session.questions?.length || selectedRow.session.reactions?.length
+    || selectedRow.session.boards?.length || selectedRow.session.polls?.length)
+    ? `${selectedRow.session.talkSlug}\0${selectedRow.session.id}\0${selectedRow.session.questions?.length ?? 0}\0${selectedRow.session.reactions?.length ?? 0}\0${selectedRow.session.boards?.length ?? 0}\0${selectedRow.session.polls?.length ?? 0}`
+    : ''
+  useEffect(() => {
+    if (!selectedFeedbackKey || !selectedRow) return
+    let cancelled = false
+    const { talkSlug, id } = selectedRow.session
+    void window.tw.history.feedbackSlides(talkSlug, id).then((slides) => {
+      if (!cancelled) setFeedbackSlides((prev) => ({ ...prev, [id]: slides ?? {} }))
+    }).catch(() => {})
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedFeedbackKey])
+
   const addInstantSlide = useCallback(async (row: Row, entry: RunInstantSlide): Promise<void> => {
     const key = `${row.session.id}\0${entry.id}`
     setInstantBusy(key)
@@ -498,6 +522,44 @@ export default function History({
       setInstantBusy(null)
     }
   }, [flash])
+  // Feedback-boards ticket 06: a Run changed in main (late cards pulled, a card put back) replaces its row.
+  const replaceRun = useCallback((run: RecordingSession): void => {
+    setSessions((prev) => prev.map((session) => session.id === run.id && session.talkSlug === run.talkSlug ? run : session))
+    setShareRun((current) => current && current.id === run.id && current.talkSlug === run.talkSlug ? run : current)
+  }, [])
+
+  const pullBoard = useCallback(async (row: Row, kind: 'refresh' | 'close'): Promise<void> => {
+    if (boardBusy) return
+    setBoardBusy({ runId: row.session.id, kind })
+    try {
+      const result = kind === 'close'
+        ? await window.tw.history.boardClose(row.session.talkSlug, row.session.id)
+        : await window.tw.history.boardRefresh(row.session.talkSlug, row.session.id)
+      if (result.run) replaceRun(result.run)
+      if (!result.ok) { flash(result.error); return }
+      if (kind === 'close') {
+        setBoardPulled((prev) => { const next = { ...prev }; delete next[row.session.id]; return next })
+        flash(result.added ? `Board closed · ${result.added} late card${result.added === 1 ? '' : 's'} pulled in` : 'Board closed · the Run keeps it as it is')
+      } else {
+        setBoardPulled((prev) => ({ ...prev, [row.session.id]: result.added }))
+        flash(result.warning ?? (result.added ? `${result.added} late card${result.added === 1 ? '' : 's'} pulled in` : 'No new cards on the board'))
+      }
+    } catch {
+      flash('The board could not be reached')
+    } finally {
+      setBoardBusy(null)
+    }
+  }, [boardBusy, flash, replaceRun])
+
+  const putBackCard = useCallback(async (row: Row, boardId: string, sessionId: string | undefined, cardId: string, putBack: boolean): Promise<void> => {
+    const result = await window.tw.history.boardPutBack(row.session.talkSlug, row.session.id, boardId, sessionId, cardId, putBack)
+      .catch(() => ({ ok: false as const, error: 'The card could not be changed.' }))
+    if (!result.ok) { flash(result.error); return }
+    replaceRun(result.run)
+    // A share link that could not be pushed may still show (or hide) the card: say so.
+    flash(result.warning ?? (putBack ? 'Card put back: on the board and the share link' : 'Card hidden again'))
+  }, [flash, replaceRun])
+
   const kindFilterDefault = kinds.delivery && !kinds.rehearsal && !kinds.recording
   const anyFilter = !!(query || hasRecording || liveOnly || talkScope || !kindFilterDefault)
 
@@ -529,14 +591,18 @@ export default function History({
   }, [checkLive, flash])
 
   const recheckAll = useCallback(async (): Promise<void> => {
+    // Feedback-boards ticket 06 (R9): boards left open are pulled in too, so late cards show on the ledger.
+    const boards = await window.tw.history.recheckBoards().catch(() => ({ runs: [] as RecordingSession[], late: 0 }))
+    for (const run of boards.runs) replaceRun(run)
+    if ('warning' in boards && boards.warning) { flash(boards.warning); return }
     const urls = Array.from(new Set(rows.map((r) => r.handoutUrl).filter((u): u is string => !!u)))
-    if (!urls.length) { flash('No published handouts to check'); return }
+    if (!urls.length) { flash(boards.runs.length ? `Boards re-checked · ${boards.late} late card${boards.late === 1 ? '' : 's'}` : 'No published handouts to check'); return }
     const results: HistoryLiveCheck[] = []
     for (let start = 0; start < urls.length; start += 6) {
       results.push(...await Promise.all(urls.slice(start, start + 6).map((url) => checkLive(url, true))))
     }
     flash(`${urls.length} handout${urls.length === 1 ? '' : 's'} re-checked · ${results.filter((r) => r.status === 'live').length} still live`)
-  }, [rows, checkLive, flash])
+  }, [rows, checkLive, flash, replaceRun])
 
   const beginEdit = useCallback((row: Row): void => {
     setMenu(null)
@@ -652,6 +718,9 @@ export default function History({
         if (e.key === 'Escape') (target as HTMLElement).blur()
         return
       }
+      // The share dialog and the Copy as Markdown popover (ticket 06) take the keyboard while open;
+      // they close themselves on Escape.
+      if (document.querySelector('[data-share-dialog], [data-board-markdown]')) return
       const key = e.key.toLowerCase()
       if (e.key === '?' || (e.shiftKey && e.key === '/')) { e.preventDefault(); setSheet((s) => !s); return }
       if (e.key === 'Escape') {
@@ -703,7 +772,7 @@ export default function History({
           <button onClick={onShowImporter} title="TalkWeaver Importer — bring PowerPoint slides into the vault"><FileInput className="lt-icon" /> Importer</button>
         </nav>
         <div className="twh-top-spacer" />
-        <button className="twh-tool twh-plan-button" onClick={() => { setPlanOpen(true); window.setTimeout(() => planEventRef.current?.focus(), 0) }}><Plus className="lt-icon" /> Plan a Run</button>
+        <button className="twh-tool twh-plan-button" onClick={() => openPlanner(null)}><Plus className="lt-icon" /> Plan a Run</button>
         <button className="twh-tool" onClick={() => void recheckAll()} title="Re-check every published handout against its live URL"><RefreshCw className="lt-icon" /> Re-check live</button>
         <div className="twh-tool twh-iconbtn" style={{ position: 'relative' }}>
           <button aria-label="History settings" title="History settings" onClick={(e) => { e.stopPropagation(); setSettingsOpen((s) => !s) }}>
@@ -780,28 +849,22 @@ export default function History({
           <section className="twh-planned-wrap" aria-label="Planned Runs">
             <div className="twh-section-label"><span>Planned</span><i /><small>{planned.length} upcoming</small></div>
             <div className="twh-planned-table">
-              <div className="twh-plan-grid head"><span>Date</span><span>Event / audience</span><span>Slide set</span><span /></div>
+              <div className={`twh-plan-grid head${preworkEnabled() ? '' : ' no-prework'}`}><span>Date</span><span>Event / audience</span>{preworkEnabled() && <span>Pre-work</span>}<span>Slide set</span><span /></div>
+              {planned.length === 0 && <div className="twh-plan-empty">Nothing planned. Plan a Run from Plan a Run above, or from Present › Plan a run… in a talk.</div>}
               {planned.map((run) => {
                 const set = run.slideSet ?? (run.pathwayId ? { kind: 'pathway' as const, pathwayId: run.pathwayId } : { kind: 'full' as const })
-                const pathwayName = set.kind === 'pathway' ? planPathways.find((pathway) => pathway.id === set.pathwayId)?.name ?? set.pathwayId : ''
+                const pathwayName = set.kind === 'pathway' ? pathwayNames[run.talkSlug]?.[set.pathwayId] ?? set.pathwayId : ''
+                const window_ = preworkWindow(run)
                 return (
-                  <div className="twh-plan-grid" key={run.id} data-planned-run={run.id}>
+                  <div className={`twh-plan-grid${preworkEnabled() ? '' : ' no-prework'}`} key={run.id} data-planned-run={run.id}>
                     <span className="twh-plan-date"><b>{run.plannedDate ? new Date(`${run.plannedDate}T12:00:00`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '—'}</b><small>{relativePlannedDate(run.plannedDate)}</small></span>
-                    <span className="twh-plan-event"><b>{run.eventTitle || run.talkTitle}</b>{run.audience && <small> · {run.audience}</small>}</span>
+                    <span className="twh-plan-event"><b>{run.eventTitle || run.talkTitle}</b>{run.audience && <small> · {run.audience}</small>}{run.expectedPeople ? <small> · {run.expectedPeople} expected</small> : null}</span>
+                    {preworkEnabled() && <span className="twh-plan-prework" data-plan-prework>{window_ ? <><b>Opens {shortDate(window_.opens)}</b><small>until {dayAndTime(window_.closes)}</small>{run.prework?.entries.length ? <small data-plan-prework-count>{new Set(run.prework.entries.map((entry) => entry.participant)).size} started</small> : null}<button className="twh-btn" data-review-prework onClick={() => setPreworkRunId(run.id)}>Review</button></> : <small>—</small>}</span>}
                     <span><span className={`twh-slide-set ${set.kind}`}>{set.kind === 'full' ? '▣ Full talk' : `◇ ${pathwayName}`}</span></span>
-                    <span className="twh-plan-actions"><details><summary aria-label="Planned Run actions">•••</summary><div><button onClick={() => void presentPlanned(run)}><Play className="lt-icon" /> Present</button><button onClick={() => beginEditPlanned(run)}><Pencil className="lt-icon" /> Edit</button><button className="danger" onClick={() => void removePlanned(run)}><Trash2 className="lt-icon" /> Delete</button></div></details></span>
+                    <span className="twh-plan-actions"><details><summary aria-label="Planned Run actions">•••</summary><div><button onClick={() => void presentPlanned(run)}><Play className="lt-icon" /> Present</button><button data-plan-edit onClick={() => beginEditPlanned(run)}><Pencil className="lt-icon" /> Edit</button><button className="danger" onClick={() => void removePlanned(run)}><Trash2 className="lt-icon" /> Delete</button></div></details></span>
                   </div>
                 )
               })}
-              {planOpen && (
-                <div className="twh-plan-add" data-plan-run-form>
-                  <label><span>Talk</span><select value={planTalk} onChange={(event) => { setPlanTalk(event.target.value); setPlanSlideSet('full') }}>{Object.entries(handouts).map(([slug, talk]) => <option value={slug} key={slug}>{talk.title}</option>)}</select></label>
-                  <label><span>Date</span><input type="date" value={planDate} onChange={(event) => setPlanDate(event.target.value)} /></label>
-                  <label><span>Event / audience</span><input ref={planEventRef} value={planEvent} onChange={(event) => setPlanEvent(event.target.value)} placeholder="e.g. Agents for researchers day" /><input value={planAudience} onChange={(event) => setPlanAudience(event.target.value)} placeholder="Audience" /></label>
-                  <label><span>Slide set</span><select value={planSlideSet} onChange={(event) => setPlanSlideSet(event.target.value)}><option value="full">▣ Full talk</option>{planPathways.map((pathway) => <option value={pathway.id} key={pathway.id}>◇ {pathway.name}</option>)}</select></label>
-                  <button className="twh-btn primary" disabled={planBusy} onClick={() => void submitPlan()}>{planBusy ? 'Saving…' : editingPlanId ? 'Save' : 'Add'}</button>
-                </div>
-              )}
             </div>
           </section>
           <div className="twh-section-label delivered"><span>Delivered</span><i /><small>latest first</small></div>
@@ -837,7 +900,29 @@ export default function History({
                         onRecheck={() => void recheckOne(row)}
                         onUpload={() => void uploadRow(row)}
                         onMenu={(x, y) => { setSelectedId(row.session.id); setMenu({ id: row.session.id, x, y }); setKindChoice(null); setConfirmDelete(null) }}
+                        boardBadge={boardLedgerBadge(row.session, Date.now())}
                       >
+                        {selectedId === row.session.id && row.session.polls?.length ? (
+                          <RunPollsBlock run={row.session} slides={feedbackSlides[row.session.id]} />
+                        ) : null}
+                        {selectedId === row.session.id ? (row.session.boards ?? []).map((board) => (
+                          <RunBoardBlock
+                            key={runBoardKey(board)}
+                            sameBoardTwice={(row.session.boards ?? []).filter((other) => other.id === board.id).length > 1}
+                            run={row.session}
+                            talkTitle={row.title}
+                            board={board}
+                            slide={board.slideId ? feedbackSlides[row.session.id]?.[board.slideId] : undefined}
+                            now={Date.now()}
+                            busy={boardBusy?.runId === row.session.id ? boardBusy.kind : null}
+                            pulled={boardPulled[row.session.id] ?? null}
+                            onRefresh={() => void pullBoard(row, 'refresh')}
+                            onCloseNow={() => void pullBoard(row, 'close')}
+                            onPutBack={(cardId, putBack) => void putBackCard(row, board.id, board.sessionId, cardId, putBack)}
+                            onShare={() => setShareRun(row.session)}
+                            flash={flash}
+                          />
+                        )) : null}
                         {selectedId === row.session.id && row.session.instantSlides?.length ? (
                           <InstantSlidesShown
                             entries={row.session.instantSlides}
@@ -848,6 +933,12 @@ export default function History({
                               .map(([key, value]) => [key.slice(row.session.id.length + 1), value]))}
                             onAdd={(entry) => void addInstantSlide(row, entry)}
                           />
+                        ) : null}
+                        {selectedId === row.session.id && row.session.questions?.length ? (
+                          <RunQuestions questions={row.session.questions} startedAt={row.session.startedAt} slides={feedbackSlides[row.session.id]} />
+                        ) : null}
+                        {selectedId === row.session.id && row.session.reactions?.length ? (
+                          <RunReactions reactions={row.session.reactions} slides={feedbackSlides[row.session.id]} />
                         ) : null}
                       </HistoryEntry>
                     ))}
@@ -926,7 +1017,30 @@ export default function History({
         </div>
       )}
 
+      {preworkEnabled() && preworkRun && (
+        <HistoryRunPrework
+          run={preworkRun}
+          talk={{ title: handouts[preworkRun.talkSlug]?.title || preworkRun.talkTitle, outlinePath: handouts[preworkRun.talkSlug]?.outlinePath ?? null }}
+          onBack={() => setPreworkRunId(null)}
+          onEditPlan={(run) => openPlanner(run)}
+          onRunChanged={preworkRunChanged}
+          flash={flash}
+        />
+      )}
       {sheet && <CheatSheet onClose={() => setSheet(false)} />}
+      {shareRun && <div className="rs-scrim" onClick={() => setShareRun(null)}><RunShareDialog run={shareRun} talkTitle={handouts[shareRun.talkSlug]?.title || shareRun.talkTitle} onClose={() => setShareRun(null)} flash={flash} /></div>}
+      {planSheet && (
+        <PlanRunSheet
+          key={planSheet.run?.id ?? 'new'}
+          talk={planSheet.run
+            ? { slug: planSheet.run.talkSlug, title: planSheet.run.talkTitle, outlinePath: handouts[planSheet.run.talkSlug]?.outlinePath ?? '' }
+            : (planTalks.find((talk) => talk.slug === talkScope) ?? planTalks[0])}
+          talks={planTalks}
+          run={planSheet.run}
+          onClose={() => setPlanSheet(null)}
+          onSaved={(run) => { setPlanSheet(null); void reload(); flash(planSheet.run ? 'Planned Run updated' : `Run planned for ${shortDate(run.plannedDate ?? '')}`) }}
+        />
+      )}
       {toast && <div className="twh-toast show"><Check className="lt-icon" /><span>{toast}</span></div>}
     </div>
   )
@@ -949,6 +1063,8 @@ function HistoryEntry(props: {
   onRecheck: () => void
   onUpload: () => void
   onMenu: (x: number, y: number) => void
+  /** R9: "Board open · 4 late cards" when a board of this Run is left open. */
+  boardBadge?: string | null
   children?: ReactNode
 }): JSX.Element {
   const { row, index, selected, editing, contextDraft, uploadBusy } = props
@@ -984,6 +1100,7 @@ function HistoryEntry(props: {
         <div className="tk-title-line">
           <div className="tk-title">{row.session.eventTitle || row.title}</div>
           <span className={`twh-kind-tag ${kind}`}><Tag className="lt-icon" />{kindLabel(kind)}</span>
+          {props.boardBadge ? <span className="twh-board-badge" data-board-badge><LayoutGrid className="lt-icon" />{props.boardBadge}</span> : null}
         </div>
         <div className="tk-ctx">
           {editing ? (

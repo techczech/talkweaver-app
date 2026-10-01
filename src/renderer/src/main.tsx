@@ -4,6 +4,9 @@ import App from './App'
 import ErrorBoundary from './components/ErrorBoundary'
 import './styles.css'
 import './lighttable.css'
+import './talklist-vaults.css'
+import './vault-sheet.css'
+import './conflict-compare.css'
 import { installMock } from './tw-mock'
 
 // In Electron, window.tw is injected synchronously by the preload script.

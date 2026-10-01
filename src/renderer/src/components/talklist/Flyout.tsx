@@ -56,7 +56,7 @@ export default function Flyout({
   return createPortal(
     <aside ref={boxRef} className="tl-flyout" style={{ left: pos.left, top: pos.top }} aria-label="Talk preview" data-talklist-flyout>
       <div className="tl-flyout-cover">
-        <Cover slug={talk.slug} coverKey={meta?.coverKey ?? null} title={talk.title} />
+        <Cover slug={talk.slug} coverKey={meta?.coverKey ?? null} title={talk.title} vaultId={talk.vaultId} />
       </div>
       <dl className="tl-flyout-meta">
         {meta?.event && (

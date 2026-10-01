@@ -6,13 +6,13 @@ import {
 
 // Feedback rail (ticket 05): docs/design/2026-09-28-shared-talk/LOCKED-feedback-rail-and-markers.html
 // frames 1 and 3. It takes the Inspector's slot beside the outline. Items are text separated by
-// hairlines, newest first: kind, who, when, slide, then the note, a two-line diff, her reason for a
+// hairlines, newest first: kind, who, when, slide, then the note, a two-line diff, their reason for a
 // deletion, or a preview of a proposed new slide with where it goes. Everything shown comes from
 // the talk's feedback file (via main); nothing here talks to the Worker.
 //
-// Ticket 06 (frame 2): Accept, and for an item whose slide changed since she wrote it, Compare —
-// yours now (lines changed since highlighted), hers, and the slide as she saw it — with Keep mine,
-// Use hers and Open slide to merge. Accepted items keep Undo. Opened from a slide's marker, the rail
+// Ticket 06 (frame 2): Accept, and for an item whose slide changed since they wrote it, Compare —
+// yours now (lines changed since highlighted), theirs, and the slide as they saw it — with Keep mine,
+// Use theirs and Open slide to merge. Accepted items keep Undo. Opened from a slide's marker, the rail
 // shows that slide's items with Compare expanded; from a ghost row, it scrolls to that item.
 
 /** Where the rail was opened: a slide's marker (filter to it) or a ghost row (that item). */
@@ -54,11 +54,11 @@ function Compare({ row, busy, onAct, onOpenSlide }: { row: RailRow; busy: boolea
           <div key={i} className={line.changed ? 'fr-cmp-chg' : undefined}>{line.text || '\u00a0'}</div>
         ))}
       </div>
-      {c.hers && (
+      {c.theirs && (
         <>
-          <div className="fr-cmp-l">{c.hersLabel}</div>
-          <div className="fr-cmp-box" data-testid="feedback-compare-hers">
-            {c.hers.map((line, i) => <div key={i}>{line || '\u00a0'}</div>)}
+          <div className="fr-cmp-l">{c.theirsLabel}</div>
+          <div className="fr-cmp-box" data-testid="feedback-compare-theirs">
+            {c.theirs.map((line, i) => <div key={i}>{line || '\u00a0'}</div>)}
           </div>
         </>
       )}
@@ -68,10 +68,10 @@ function Compare({ row, busy, onAct, onOpenSlide }: { row: RailRow; busy: boolea
           ? <div className="fr-cmp-box" data-testid="feedback-compare-base">{c.base.map((line, i) => <div key={i}>{line || '\u00a0'}</div>)}</div>
           : <div className="fr-cmp-none">Not kept on this Mac.</div>}
       </details>
-      <div className="fr-cmp-note">{c.useHersNote}</div>
+      <div className="fr-cmp-note">{c.useTheirsNote}</div>
       <div className="fr-acts">
         <button type="button" className="fr-btn" disabled={busy} data-testid="feedback-keep-mine" onClick={() => onAct('dismiss')}>Keep mine</button>
-        <button type="button" className="fr-btn fr-btn--primary" disabled={busy} data-testid="feedback-use-hers" onClick={() => onAct('accept')}>Use hers</button>
+        <button type="button" className="fr-btn fr-btn--primary" disabled={busy} data-testid="feedback-use-theirs" onClick={() => onAct('accept')}>Use theirs</button>
         {row.slideId && <button type="button" className="fr-btn fr-btn--quiet" data-testid="feedback-open-slide" onClick={onOpenSlide}>Open slide to merge</button>}
       </div>
     </div>

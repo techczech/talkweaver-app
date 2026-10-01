@@ -127,7 +127,7 @@ export interface RevisionSnapshot {
   pushedAt: string
   slides: SharedTalkSlide[]
   /** The outline text this revision was built from (a proposals change with switch 1 off rebuilds
-   *  her page from it, so she keeps the talk as she has it). */
+   *  their page from it, so they keep the talk as they have it). */
   source: string
 }
 
@@ -407,7 +407,7 @@ export function createSharedTalks(deps: SharedTalkDeps): SharedTalks {
       let source: string
       let payload: { html: string; slides: SharedTalkSlide[] }
       if (mode.kind === 'confirmed') {
-        // Switch 1 off and switch 2 changed: her page's permissions change, the talk she sees does
+        // Switch 1 off and switch 2 changed: their page's permissions change, the talk they see does
         // not — rebuilt from the last CONFIRMED revision as kept on disk, never the outline now.
         const snapshot = record.revision > 0 ? readRevisionSnapshot(record.outlinePath, record.shareId, record.revision) : null
         if (!snapshot || !snapshot.source) throw new Error(`revision ${record.revision} is not kept on this Mac; use Update shared copy.`)
@@ -573,8 +573,8 @@ export function createSharedTalks(deps: SharedTalkDeps): SharedTalks {
       if (!record.liveUpdates) cancelPending(record.key)
       persist()
       emit(record.key)
-      // Her page's permissions are baked into the pushed page, so a proposals change is pushed at
-      // once — from the text she already has when switch 1 is off.
+      // Their page's permissions are baked into the pushed page, so a proposals change is pushed at
+      // once — from the text they already have when switch 1 is off.
       if (proposalsChanged && record.revision > 0) {
         await enqueue(record.key, record.liveUpdates ? { kind: 'current' } : { kind: 'confirmed' }).catch(() => {})
       }

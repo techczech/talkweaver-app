@@ -55,6 +55,10 @@
   }/* @order 1710 */
   .card-gallery.cards-rows .card::after { display: none; }/* @order 1711 */
   .card-gallery.cards-rows .card .lblgrp { border-top: none; padding: 0; }
+  /* A body-less card (its label is the whole claim) has nothing for the second column: the label takes the row,
+     rather than wrapping down a 22% column until the slide overflows and loses its title. */
+  /* @order 1855 */
+  .card-gallery.cards-rows .card.card-claim { grid-template-columns: minmax(0, 1fr); }
   /* @order 1861 */
   .card-gallery .card.card-claim {
     justify-content: center;

@@ -1,3 +1,4 @@
+import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { TalkInfo, ProjectionRow } from '../../../preload/index'
 import type { LayoutDoctorFinding } from '../../../shared/layout-doctor'
@@ -87,7 +88,7 @@ function groupBySection(rows: ProjectionRow[]): SectionGroup[] {
   for (const g of groups) {
     const titleRow = g.rows.find((r) => r.row.role === 'section-title')
     if (titleRow) {
-      const t = titleRow.row.nav_title || titleRow.row.title
+      const t = plainInlineText(titleRow.row.nav_title || titleRow.row.title)
       if (t) g.title = t
     }
   }
@@ -105,7 +106,7 @@ interface CellThumbProps {
 // Memoized: during a drag the whole grid re-renders on each cell-crossing (dropTarget state), but a
 // cell's thumbnail props (row + url) don't change — so the heavy <img> tree is skipped, keeping drag smooth.
 const CellThumb = React.memo(function CellThumb({ row, thumbnailUrl, triggerFindings }: CellThumbProps) {
-  const title = row.nav_title || row.title || 'Slide'
+  const title = plainInlineText(row.nav_title || row.title) || 'Slide'
   const warnings = surfacedWarnings(row, 'strip-badge', triggerFindings)
   return (
     <div style={{ position: 'relative', paddingTop: '56.25%', background: 'var(--paper)' }}>
@@ -217,7 +218,7 @@ const GridCell = React.memo(function GridCell({
 }: GridCellProps) {
   const key = thumbKey(row)
   const thumbnailUrl = key && thumbnails ? thumbnails[key] ?? null : null
-  const title = row.nav_title || row.title || '(untitled)'
+  const title = plainInlineText(row.nav_title || row.title) || '(untitled)'
 
   // Carousel sub-slides (ADR-0022): one full-bleed thumbnail per stepped sub-slide
   // of a #### / {carousel} slide, keyed `${key}__N`. Static multi-part layouts emit

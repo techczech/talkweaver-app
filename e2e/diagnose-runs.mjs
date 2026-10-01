@@ -48,21 +48,33 @@ const toolsPromise = app.waitForEvent('window')
 await editor.evaluate(() => window.dispatchEvent(new Event('tw-open-history')))
 const history = await toolsPromise
 await history.waitForSelector('.twhistory')
-await history.waitForSelector('[data-plan-run-form]')
+await history.locator('.twh-plan-button').click()
+const sheet = history.locator('[data-testid="plan-run-sheet"]')
+await sheet.waitFor()
 
 const future = new Date(Date.now() + 8 * 86_400_000).toISOString().slice(0, 10)
-await history.locator('[data-plan-run-form] select').nth(0).selectOption(talkSlug)
-await history.locator('[data-plan-run-form] input[type=date]').fill(future)
-await history.locator('[data-plan-run-form] input').nth(1).fill('Dept. seminar')
-await history.locator('[data-plan-run-form] input').nth(2).fill('Continuing Education')
-await history.locator('[data-plan-run-form] select').nth(1).selectOption('short')
-await history.locator('[data-plan-run-form] button', { hasText: 'Add' }).click()
+await sheet.locator('[data-field="date"]').fill(future)
+await sheet.locator('[data-field="event"]').fill('Dept. seminar')
+await sheet.locator('[data-field="audience"]').fill('Continuing Education')
+await sheet.locator('[data-field="slide-set"] option[value="short"]').waitFor({ state: 'attached' })
+await sheet.locator('[data-field="slide-set"]').selectOption('short')
+await sheet.locator('[data-testid="plan-run-save"]').click()
 await history.waitForSelector('[data-planned-run]')
 
 const files = readdirSync(ledgerDir).filter((name) => name.endsWith('.json') && name !== 'manifest.json')
 const plannedPath = join(ledgerDir, files[0])
 const planned = JSON.parse(readFileSync(plannedPath, 'utf8'))
-record('History inline row creates a planned Run', planned.status === 'planned' && planned.eventTitle === 'Dept. seminar')
+record('History plan sheet creates a planned Run', planned.status === 'planned' && planned.eventTitle === 'Dept. seminar')
+// Reactions ticket 06 fix round: a live session may already have written into the planned Run before
+// the delivery is saved onto it; the save must keep all of it.
+const seeded = {
+  polls: [{ id: 'seed-poll', type: 'single', question: 'Choose', options: [{ optionId: 'a', label: 'A' }], visibility: 'live' }],
+  pollResponses: [{ responseId: 'seed:1', pollId: 'seed-poll', choice: 'a', tMs: 5, slideId: 's3' }],
+  instantSlides: [{ id: 'text-1', kind: 'text', shownAt: 1, afterSlideId: 's3', text: 'Seeded' }],
+  reactions: [{ id: 'seed:r1', reaction: 'puzzled', slideId: 's3', tMs: 1000 }, { id: 'seed:r2', reaction: 'puzzled', slideId: 's3', tMs: 2000, withdrawn: true }],
+  questions: [{ id: 'seed:question-1', text: 'Seeded question?', slideId: 's3', tMs: 1500, answered: true }],
+}
+writeFileSync(plannedPath, JSON.stringify({ ...planned, ...seeded }, null, 2), 'utf8')
 record('Planned row renders the pathway slide-set chip', (await history.locator(`[data-planned-run="${planned.id}"] .twh-slide-set`).textContent()).includes('Short route'))
 
 const presenterPromise = app.waitForEvent('window')
@@ -94,6 +106,11 @@ if (!presenter.isClosed()) throw new Error('presenter window did not close after
 
 const delivered = JSON.parse(readFileSync(plannedPath, 'utf8'))
 record('save offer attaches instead of minting a second Run', delivered.status === 'delivered' && readdirSync(ledgerDir).filter((name) => name.endsWith('.json') && name !== 'manifest.json').length === 1)
+record('the save keeps the polls, answers, instant slides, reactions and questions a live session flushed into the planned Run',
+  JSON.stringify(['polls', 'pollResponses', 'instantSlides', 'reactions', 'questions'].map((key) => (delivered[key] ?? []).map((entry) => entry.id ?? entry.responseId)))
+    === JSON.stringify([['seed-poll'], ['seed:1'], ['text-1'], ['seed:r1', 'seed:r2'], ['seed:question-1']]),
+  JSON.stringify({ polls: delivered.polls?.length, reactions: delivered.reactions?.length, questions: delivered.questions?.length }))
+record('the saved Run file is complete JSON with no temporary file left beside it', readdirSync(ledgerDir).every((name) => !name.endsWith('.tmp')))
 record('attached Run keeps its event metadata', delivered.eventTitle === 'Dept. seminar' && delivered.plannedDate === future)
 
 const local = await history.evaluate(async ({ talkSlug, runId }) => window.tw.history.buildRunHandout(talkSlug, runId), { talkSlug, runId: planned.id })

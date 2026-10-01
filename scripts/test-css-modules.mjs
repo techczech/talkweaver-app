@@ -8,6 +8,20 @@ const repo = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const styles = join(repo, 'compiler/assets/styles')
 const manifest = JSON.parse(readFileSync(join(styles, 'layout-scopes.json'), 'utf8'))
 const modules = layoutModulesInRegistryOrder()
+// Split a selector list on commas outside (), so `:is(a, b)` / `:has(a, b)` stay one selector part.
+function splitTopLevel(selector) {
+  const parts = []
+  let depth = 0
+  let start = 0
+  for (let i = 0; i < selector.length; i += 1) {
+    const ch = selector[i]
+    if (ch === '(' || ch === '[') depth += 1
+    else if (ch === ')' || ch === ']') depth -= 1
+    else if (ch === ',' && depth === 0) { parts.push(selector.slice(start, i)); start = i + 1 }
+  }
+  parts.push(selector.slice(start))
+  return parts
+}
 
 assert.deepEqual(modules, Object.keys(manifest), 'scope manifest order must match unique registry cssModule order')
 for (const name of modules) {
@@ -19,7 +33,7 @@ for (const name of modules) {
   for (const [path, css] of [[name, layoutCss], [`skin/${name}`, skinCss]]) {
     const uncommented = css.replace(/\/\*[\s\S]*?\*\//g, '')
     const selectors = [...uncommented.matchAll(/(?:^|})\s*([^{}]+)\{/gm)].map((match) => match[1].trim()).filter((selector) => !selector.startsWith('@'))
-    const escaped = selectors.filter((selector) => !selector.split(',').every((part) => manifest[name].some((scope) => part.includes(scope))))
+    const escaped = selectors.filter((selector) => !splitTopLevel(selector).every((part) => manifest[name].some((scope) => part.includes(scope))))
     assert.deepEqual(escaped, [], `${path}: selector(s) outside declared scopes: ${escaped.join(' | ')}`)
   }
 }

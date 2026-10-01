@@ -86,6 +86,8 @@ export const PRESENTER_PALETTE: Group[] = [
     { id: 'audience', name: 'Open audience window', icon: 'monitor-up', shortcut: 'presenter.audience', controls: ['#presenterAudienceApp'] },
     { id: 'join-link', name: 'Show join link and venue screen', icon: 'scan-qr-code', controls: ['#liveShowJoin'] },
     { id: 'copy-venue-link', name: 'Copy venue-screen link', icon: 'link', controls: ['#liveCopyVenueLink'] },
+    { id: 'allow-questions', name: 'Allow slide questions', icon: 'message-circle-question-mark', controls: ['#liveAllowQuestions'], needs: LIVE_BRIDGE, words: ['pause', 'phones', 'audience'] },
+    { id: 'allow-reactions', name: 'Allow slide reactions', icon: 'smile-plus', controls: ['#liveAllowReactions'], needs: LIVE_BRIDGE, words: ['pause', 'phones', 'audience'] },
     { id: 'talk-qr', name: 'Show talk QR code', icon: 'qr-code', shortcut: 'presenter.talk-qr', controls: ['#liveTalkQr'] },
     { id: 'instant-compose', name: 'Compose instant slide…', icon: 'zap', shortcut: 'presenter.instant-compose', controls: ['#presenterInstantButton', '#navInstant'] },
     { id: 'instant-paste', name: 'Instant slide from clipboard', icon: 'clipboard', shortcut: 'presenter.instant-paste', controls: ['#liveInstantPaste'] },
@@ -98,7 +100,12 @@ export const PRESENTER_PALETTE: Group[] = [
     { id: 'poll-panel', name: 'Show poll panel', icon: 'chart-bar', controls: ['#presenterPollPanelToggle'] },
     { id: 'quick-poll-restore', name: 'Show Quick poll on screens', icon: 'monitor-play', controls: ['#presenterQuickPollRestore'] },
     { id: 'quick-poll-dismiss', name: 'Dismiss Quick poll', icon: 'x', controls: ['#presenterQuickPollDismiss'] },
-    { id: 'questions', name: 'Open questions', icon: 'message-circle-question-mark', controls: ['#pollMenuQuestions'] }
+    { id: 'board-close', name: 'Close board to new cards or reopen it', icon: 'lock', shortcut: 'presenter.poll-primary', controls: ['#pollMenuBoardClose'], needs: LIVE_BRIDGE, words: ['board', 'cards'] },
+    { id: 'board-freeze', name: 'Freeze or unfreeze the board', icon: 'snowflake', controls: ['#pollMenuBoardFreeze'], needs: LIVE_BRIDGE, words: ['board', 'final'] },
+    { id: 'board-panel', name: 'Show board panel', icon: 'layout-grid', controls: ['#pollMenuBoardPanel'], words: ['board', 'inbox'] },
+    { id: 'board-full', name: 'Board full screen', icon: 'maximize-2', controls: ['#pollMenuBoardFull'], words: ['board'] },
+    { id: 'board-popout', name: 'Pop out the board', icon: 'picture-in-picture-2', controls: ['#pollMenuBoardPopout'], words: ['board', 'window', 'screen'] },
+    { id: 'questions', name: 'Open questions', icon: 'message-circle-question-mark', shortcut: 'presenter.questions', controls: ['#pollMenuQuestions'], needs: LIVE_BRIDGE }
   ]],
   ['View', [
     { id: 'previews-larger', name: 'Larger previews', icon: 'gallery-vertical-end', shortcut: 'presenter.preview-size', keyPart: 1 },
@@ -152,6 +159,7 @@ export const PRESENTER_KEY_NEEDS: Record<string, string> = {
   'presenter.poll-primary': LIVE_BRIDGE,
   'presenter.poll-reveal': LIVE_BRIDGE,
   'presenter.poll-compose': LIVE_BRIDGE,
+  'presenter.questions': LIVE_BRIDGE,
   'presenter.edit': EDIT_BRIDGE,
   'presenter.refresh': EDIT_BRIDGE
 }

@@ -1,0 +1,91 @@
+/* The compare screen for a conflict copy (several-vaults ticket 10; LOCKED-conflict frames 2, 3, 6).
+   It fills the window above everything else; the talk stays underneath, untouched. */
+
+.cc-screen {
+  --cc-del: #9f1239; --cc-del-bg: #fbe9ec; --cc-add: #166534; --cc-add-bg: #e6f2e9; --cc-diff-line: #e0a72e;
+  position: fixed; inset: 0; z-index: 1400; display: flex; flex-direction: column;
+  background: var(--paper); color: var(--ink); font-family: var(--font-ui);
+}
+.cc-top { flex: none; display: flex; align-items: center; gap: 16px; padding: 26px 22px 12px 92px; background: var(--panel); border-bottom: 1px solid var(--line); -webkit-app-region: drag; }
+.cc-top button { -webkit-app-region: no-drag; }
+.cc-back { display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; color: var(--muted); font: 600 12.5px var(--font-ui); cursor: pointer; padding: 4px 6px; border-radius: 6px; }
+.cc-back:hover { background: var(--hover); color: var(--ink); }
+.cc-vb { --c: #6d28d9; display: inline-flex; align-items: center; justify-content: center; flex: none; width: 30px; height: 30px; border-radius: 8px; background: var(--c); color: #fff; font: 800 15px/1 system-ui, sans-serif; }
+.cc-top-text { min-width: 0; }
+.cc-top-title { font-size: 15px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cc-top-sub { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cc-steps { margin-left: auto; display: flex; gap: 10px; align-items: center; font-size: 12.5px; flex: none; }
+.cc-s { display: flex; align-items: center; gap: 7px; color: var(--faint); font-weight: 600; }
+.cc-s i { width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--line); display: flex; align-items: center; justify-content: center; font: 700 11px var(--font-ui); font-style: normal; }
+.cc-s--on { color: var(--ink); }
+.cc-s--on i { background: var(--oxford); border-color: var(--oxford); color: #fff; }
+.cc-s--done i { background: var(--green); border-color: var(--green); color: #fff; }
+.cc-bar { width: 36px; height: 1.5px; background: var(--line); }
+
+.cc-stale { flex: none; display: flex; align-items: center; gap: 12px; margin: 16px 48px 0; padding: 12px 16px; border-radius: 10px; background: var(--amber-bg); color: var(--amber); border: 1px solid color-mix(in srgb, var(--amber) 30%, transparent); font-size: 13px; }
+.cc-stale span { flex: 1; color: var(--ink); }
+.cc-main { flex: 1; min-height: 0; overflow: auto; padding: 26px 48px 24px; }
+.cc-main--stale section { opacity: .55; }
+.cc-eyebrow { font: 700 10px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.cc-h { font-size: 22px; font-weight: 700; letter-spacing: -.01em; margin: 4px 0 6px; }
+.cc-h2row { display: flex; align-items: baseline; gap: 16px; }
+.cc-keeping { margin-left: auto; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+.cc-keeping em { font-style: normal; font: 700 10px var(--font-mono); text-transform: uppercase; letter-spacing: .08em; background: var(--amber-bg); color: var(--amber); padding: 2px 6px; border-radius: 4px; }
+.cc-keeping b { color: var(--ink); }
+.cc-p { font-size: 13.5px; color: var(--muted); max-width: 80em; margin: 0 0 18px; }
+.cc-error, .cc-loading, .cc-none { font-size: 14px; color: var(--muted); padding: 24px 0; }
+.cc-error { color: var(--cc-del); }
+
+/* step 1: the two version cards */
+.cc-vers { display: flex; gap: 22px; align-items: flex-start; }
+.cc-ver { flex: 1; min-width: 0; text-align: left; border: 1.5px solid var(--line); border-radius: 14px; background: var(--panel); padding: 18px 20px; cursor: pointer; font: inherit; color: inherit; }
+.cc-ver--sel { border: 2.5px solid var(--oxford); background: color-mix(in srgb, var(--oxford) 4%, var(--panel)); padding: 17px 19px; }
+.cc-ver-head { display: flex; align-items: center; gap: 12px; }
+.cc-radio { width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--line); flex: none; }
+.cc-ver--sel .cc-radio { border-color: var(--oxford); background: radial-gradient(var(--oxford) 0 45%, transparent 50%); }
+.cc-ver-name { display: flex; flex-direction: column; min-width: 0; }
+.cc-ver-name b { font-size: 16px; }
+.cc-ver-name span { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cc-ver-count { margin-left: auto; font-size: 16px; font-weight: 700; white-space: nowrap; }
+.cc-mini { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 10px 8px; margin-top: 14px; }
+.cc-mini > div { position: relative; min-width: 0; }
+.cc-mini-d .cc-slide { outline: 2.5px solid var(--cc-diff-line); outline-offset: 1px; }
+.cc-mini-n { font: 10px var(--font-mono); color: var(--faint); margin-top: 3px; text-align: center; }
+.cc-mini-dn { color: var(--amber); font-weight: 700; }
+
+/* a slide: the compiled picture, or a card drawn from its text */
+.cc-slide { display: block; width: 100%; aspect-ratio: 16 / 9; background: #fdfdfb; color: #101418; border: 1px solid var(--hairline); border-radius: 3px; overflow: hidden; container-type: inline-size; position: relative; }
+.cc-slide--pic { object-fit: cover; }
+.cc-slide-in { position: absolute; inset: 0; padding: 6cqw 6.5cqw; display: flex; flex-direction: column; justify-content: center; gap: 1.6cqw; font-family: "Trebuchet MS", system-ui, sans-serif; }
+.cc-slide-k { font: 500 max(6px, 3.4cqw)/1 ui-monospace, monospace; letter-spacing: .14em; color: #0f4bd8; }
+.cc-slide-in b { font-size: max(7px, 7.5cqw); line-height: 1.1; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.cc-slide-li { font-size: max(5px, 4.6cqw); line-height: 1.25; color: #3b4450; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cc-slide--none { display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--faint); background: var(--hover); }
+
+/* step 2: one row per differing slide */
+.cc-picks { display: grid; gap: 14px; }
+.cc-pick { display: flex; gap: 14px; border: 1.5px solid var(--line); border-radius: 12px; background: var(--panel); padding: 16px 18px; cursor: pointer; }
+.cc-pick--on { border-color: var(--oxford); background: color-mix(in srgb, var(--oxford) 4%, var(--panel)); }
+.cc-pick input { width: 18px; height: 18px; margin-top: 1px; accent-color: var(--oxford); flex: none; }
+.cc-pick-body { flex: 1; min-width: 0; }
+.cc-pick-title { font-size: 14px; font-weight: 650; margin-bottom: 10px; }
+.cc-badge { display: inline-block; margin-left: 6px; font: 700 10px var(--font-mono); text-transform: uppercase; letter-spacing: .06em; color: var(--amber); background: var(--amber-bg); padding: 2px 6px; border-radius: 4px; }
+.cc-pick-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.cc-pick-col { min-width: 0; }
+.cc-col-h { font-size: 12.5px; font-weight: 650; margin-bottom: 6px; }
+.cc-col-h em { font-style: normal; font: 700 10px var(--font-mono); text-transform: uppercase; letter-spacing: .06em; color: var(--muted); background: var(--hover); padding: 2px 6px; border-radius: 4px; margin-right: 4px; }
+.cc-pair { display: grid; grid-template-columns: minmax(120px, 200px) 1fr; gap: 12px; align-items: start; }
+.cc-diff { font: 11.5px/1.55 var(--font-mono); min-width: 0; border: 1px solid var(--hairline); border-radius: 6px; padding: 6px 0; background: var(--panel); }
+.cc-diff > div { padding: 0 10px; white-space: pre-wrap; word-break: break-word; }
+.cc-diff-same { color: var(--muted); }
+.cc-diff-gap { color: var(--faint); }
+.cc-diff-del { color: var(--cc-del); background: var(--cc-del-bg); }
+.cc-diff-add { color: var(--cc-add); background: var(--cc-add-bg); }
+
+.cc-foot { flex: none; display: flex; align-items: center; gap: 14px; padding: 14px 48px; border-top: 1px solid var(--line); background: var(--panel); }
+.cc-foot-note { margin-right: auto; font-size: 12.5px; color: var(--muted); }
+.cc-btn { border: 1px solid var(--line); background: var(--panel); border-radius: 7px; padding: 8px 16px; font: 600 13px var(--font-ui); color: var(--ink); cursor: pointer; }
+.cc-btn:hover:not(:disabled) { background: var(--hover); }
+.cc-btn--primary { background: var(--oxford); border-color: var(--oxford); color: #fff; }
+.cc-btn--primary:hover:not(:disabled) { background: color-mix(in srgb, var(--oxford) 88%, #000); }
+.cc-btn:disabled { opacity: .45; cursor: default; }

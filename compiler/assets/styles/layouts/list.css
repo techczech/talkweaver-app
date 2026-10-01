@@ -92,7 +92,10 @@
   .feature-list.fl-annotated {
     display: grid;
     grid-template-columns: max-content 1fr;
-    align-items: baseline;
+    /* Slide round 2 (0.37): rows align by their first line box, not the flex lead's synthesised baseline
+       (the icon has none, so the label sat ~6px above the annotation). Label and annotation share
+       font size and --list-lh, so their baselines meet. */
+    align-items: start;
     /* Reset the default gap set on .feature-list; the row gap is the long-list fitting seam. */
     gap: calc(clamp(10px, 2.7cqw, 28px) * var(--list-gap, 1)) clamp(18px, 3.4cqw, 48px);
   }/* @order 0142 */
@@ -115,7 +118,8 @@
     white-space: nowrap;
     font-size: max(var(--type-floor), var(--fs-body));
     font-weight: 650;
-    line-height: 1.2;
+    /* Slide round 2 (0.37): label and annotation share --list-lh so their baselines meet. */
+    line-height: var(--list-lh, 1.35);
     color: var(--ink);
   }/* @order 0146 */
   .feature-list.fl-annotated > li > .fl-lead .fl-icon {
@@ -131,14 +135,13 @@
     font-size: max(var(--type-floor), var(--fs-body));
     color: var(--ink);
     line-height: var(--list-lh, 1.35);
-    max-width: 40ch;
-    align-self: baseline;
+    align-self: start;
   }/* @order 0150 */
   /* Sub-list in annotation column (col 2): indented bullets, muted, annotation-scale type.
      display:contents on <li> lifts .fl-sublist alongside .fl-lead into the shared grid;
      the sub-list sits in col 2 naturally without any extra grid-column override. *//* @order 0151 */
   .feature-list.fl-annotated > li > .fl-sublist {
-    align-self: baseline;
+    align-self: start;
     font-size: max(var(--type-floor), var(--fs-body));
     color: var(--ink);
     margin: 0;

@@ -1,36 +1,36 @@
 // Accept (shared-talk ticket 06): the pure text operations behind the Feedback rail's Accept, Use
-// hers, the changed-since flag and Undo. Text in, text out, no I/O; the renderer runs them inside the
+// theirs, the changed-since flag and Undo. Text in, text out, no I/O; the renderer runs them inside the
 // one-writer seam (lib/outlineMutation apply), so an accept is one minimal change to the editor's
 // buffer, saved through the file's queue and its external-change guard, never a file rewrite.
 //
 //   readOutlineSlides(text)                 every slide of the outline: id, heading line, block, and
 //                                           its visible text exactly as the share push computes it
 //                                           (main/shared-talk-build slideTextsByLine).
-//   applyProposal(text, item, base)         the outline with her proposal applied, the changed-since
+//   applyProposal(text, item, base)         the outline with their proposal applied, the changed-since
 //                                           verdict, and where it landed.
 //   spliceEdit(before, after) / undoEdit     the minimal splice an accept made, and its reversal.
 //
 // What a slide's text is: the pushed text is the heading, its Trigger line and its content lines,
 // with speaker notes (`:::notes` … `:::`) and HTML comments removed. So a `replace` is a line merge,
-// not a block swap: her lines are matched against the block's visible lines (LCS); matched lines keep
-// his bytes (an inline comment survives), unmatched lines of his go, hers come in where his went, and
+// not a block swap: their lines are matched against the block's visible lines (LCS); matched lines keep
+// his bytes (an inline comment survives), unmatched lines of his go, theirs come in where his went, and
 // every notes line and comment-only line stays where it was. The block's `{id=…}` always survives: if
-// her text dropped or changed it, it is put back on the Trigger line.
+// their text dropped or changed it, it is put back on the Trigger line.
 //
 // Slides are found by their `{id=…}` (the compiled slide id); `base.line` (the compile's heading line)
 // is the fallback for a slide the save has not stamped yet.
 //
 // Insert: after the named slide's own block (before the next heading, whatever its depth), at the
 // depth that keeps every other slide's parent: the named slide's depth, or its first child's when it
-// has children (the new slide then comes first among them). Her headings are re-levelled uniformly.
-// With a section: a grouping heading at that depth and her slide one deeper as its first child, in
+// has children (the new slide then comes first among them). Their headings are re-levelled uniformly.
+// With a section: a grouping heading at that depth and their slide one deeper as its first child, in
 // Insert section's shape (heading, blank line, the slide re-levelled with the depth inside kept, a
 // blank line each side). Unlike Insert section, whose placement goes to the end of the caret's
-// section, it goes where she put it: right after the named slide. `{id=…}` tokens in her text are
+// section, it goes where they put it: right after the named slide. `{id=…}` tokens in their text are
 // dropped: the save mints fresh ids (ADR-0032).
 //
 // Every result is checked: outside the lines it changed, the talk's headings must read exactly as
-// before (her text cannot open a code fence or comment that swallows the rest of the talk).
+// before (their text cannot open a code fence or comment that swallows the rest of the talk).
 
 import { parseOutlineTree, type OutlineTreeNode } from '../../compiler/scripts/lib/14-outline-tree.mjs'
 import { parseTriggerLine } from '../../compiler/scripts/lib/02-triggers-layout.mjs'
@@ -94,7 +94,7 @@ export interface ProposalBase {
   remembered?: AcceptedEdit | null
 }
 
-/** Recorded instead of a splice when Accept found the slide already saying what she wrote: accepted,
+/** Recorded instead of a splice when Accept found the slide already saying what they wrote: accepted,
  *  nothing changed, no Undo. */
 export const ALREADY = 'already' as const
 
@@ -125,10 +125,10 @@ export type ApplyProposalResult =
       line: number
       /** insert: the last non-blank line of the old text before the new block (the rail's "after line 19"). */
       afterLine: number | null
-      /** The outline already holds her proposal: `text` is unchanged. For an insert this is only ever
+      /** The outline already holds their proposal: `text` is unchanged. For an insert this is only ever
        *  the block an earlier Accept of this item put there (`base.remembered`), and `edit` removes it.
        *  For a replace, `edit` is the remembered splice when it is still there, else an empty splice
-       *  (removed === inserted): the slide already says what she wrote, and there is nothing to undo. */
+       *  (removed === inserted): the slide already says what they wrote, and there is nothing to undo. */
       already?: boolean
     }
   | { ok: false; code: 'not-found' | 'refused' | 'note'; error: string }
@@ -288,9 +288,9 @@ export function undoEdit(text: string, edit: AcceptedEdit): { ok: true; text: st
   return { ok: false, error: 'The accepted text has been edited since, so Undo cannot put it back safely. Nothing was changed; edit the slide by hand, or use ⌘Z in the editor.' }
 }
 
-// ── Her text ─────────────────────────────────────────────────────────────────────────────────────
+// ── Their text ─────────────────────────────────────────────────────────────────────────────────────
 
-/** Her lines: line endings normalised, trailing space dropped, runs of blank lines as one, no
+/** Their lines: line endings normalised, trailing space dropped, runs of blank lines as one, no
  *  leading or trailing blank lines. */
 function herLines(text: string | undefined): string[] {
   const out: string[] = []
@@ -303,7 +303,7 @@ function herLines(text: string | undefined): string[] {
   return out
 }
 
-/** Drop `{id=…}` tokens (all, or all but `keep`) from her lines; a Trigger line left empty goes. */
+/** Drop `{id=…}` tokens (all, or all but `keep`) from their lines; a Trigger line left empty goes. */
 function dropIds(lines: string[], keep?: string): string[] {
   const out: string[] = []
   for (const line of lines) {
@@ -356,9 +356,9 @@ export function linesChangedSince(base: string, now: string): boolean[] {
   return marks
 }
 
-/** The block's visible lines replaced by hers; notes and comment-only lines kept in place. Returns
+/** The block's visible lines replaced by theirs; notes and comment-only lines kept in place. Returns
  *  the block's new lines (its trailing blank and hidden lines untouched). */
-function mergeBlock(read: OutlineSlides, slide: OutlineSlide, hers: string[], eol: string): string[] {
+function mergeBlock(read: OutlineSlides, slide: OutlineSlide, theirs: string[], eol: string): string[] {
   const { lines, blanked, notes } = read
   // Each line of the block: visible (keyed by what the push shows), blank, or hidden (a notes line,
   // or a line the comment blanking emptied). The push shows a comment-only line as a blank line.
@@ -387,8 +387,8 @@ function mergeBlock(read: OutlineSlides, slide: OutlineSlide, hers: string[], eo
     if (showsBlank) { units.push({ item: keys.length, lines: run }); keys.push('') }
     else units.push({ item: null, lines: run })
   }
-  const her = hers.map((line) => (isBlank(line) ? '' : line))
-  const ops = align(keys, her)
+  const their = theirs.map((line) => (isBlank(line) ? '' : line))
+  const ops = align(keys, their)
   const unitOf = new Map<number, number>()
   units.forEach((unit, u) => { if (unit.item !== null) unitOf.set(unit.item, u) })
 
@@ -397,10 +397,10 @@ function mergeBlock(read: OutlineSlides, slide: OutlineSlide, hers: string[], eo
   const emitUpTo = (stop: number): void => {
     for (; u < stop; u += 1) for (const k of units[u].lines) out.push(lines[k])
   }
-  const herLine = (j: number): string => her[j] + (eol === '\r\n' ? '\r' : '')
-  // A change group (the deletions and additions between two kept lines): her lines take the places of
+  const herLine = (j: number): string => their[j] + (eol === '\r\n' ? '\r' : '')
+  // A change group (the deletions and additions between two kept lines): their lines take the places of
   // his deleted lines one for one, in order, so a comment or notes line between them keeps its place;
-  // hers left over follow her last placed line. With no deletion, hers go right after the kept line.
+  // theirs left over follow their last placed line. With no deletion, theirs go right after the kept line.
   let dels: number[] = []
   let adds: number[] = []
   const flush = (): void => {
@@ -466,11 +466,11 @@ function structureKept(oldText: string, newText: string, from: number, oldCount:
 }
 
 export const SECTION_DELETE = 'This slide opens a section: deleting it would move its slides under the slide before it. Accept cannot do that; delete the section by hand if you mean to.'
-const OPEN_MARKUP = 'Her text leaves an HTML comment (<!--) or a code fence open, so it would hide or swallow what follows it. Nothing was changed; open the slide and paste what you want by hand.'
-const RESTRUCTURE = 'Her text changes the slide\u2019s heading level or adds a heading or a title line, which would change how the talk is organised. Nothing was changed; open the slide and edit it by hand.'
-const NOT_PLACED = 'Her text could not be put into the slide without changing what else it shows. Nothing was changed; open the slide and edit it by hand.'
+const OPEN_MARKUP = 'Their text leaves an HTML comment (<!--) or a code fence open, so it would hide or swallow what follows it. Nothing was changed; open the slide and paste what you want by hand.'
+const RESTRUCTURE = 'Their text changes the slide\u2019s heading level or adds a heading or a title line, which would change how the talk is organised. Nothing was changed; open the slide and edit it by hand.'
+const NOT_PLACED = 'Their text could not be put into the slide without changing what else it shows. Nothing was changed; open the slide and edit it by hand.'
 
-/** Her lines leave a code fence or an HTML comment open (read on their own, as the compiler would). */
+/** Their lines leave a code fence or an HTML comment open (read on their own, as the compiler would). */
 function leavesMarkupOpen(lines: string[]): boolean {
   const r = readOutline(lines.join('\n'))
   return r.openFence || r.openComment
@@ -483,7 +483,7 @@ function withoutIds(line: string): string | null {
   return line.replace(ID_TOKEN_RE, '').replace(/[ \t\r]+$/, '')
 }
 
-const REFUSED_STRUCTURE = 'Her text has a code fence or an HTML comment that is never closed, so it would change how the rest of the talk reads. Nothing was changed; open the slide and paste what you want by hand.'
+const REFUSED_STRUCTURE = 'Their text has a code fence or an HTML comment that is never closed, so it would change how the rest of the talk reads. Nothing was changed; open the slide and paste what you want by hand.'
 
 /** The 1-based last non-blank line before 0-based line index `index` (0 when none). */
 function lastNonBlankBefore(lines: string[], index: number): number {
@@ -558,23 +558,23 @@ export function applyProposal(outlineText: string, item: ProposalItem, base: Pro
       if (!structureKept(text, next, slide.start, slide.blockEnd - slide.start, 0)) return { ok: false, code: 'refused', error: REFUSED_STRUCTURE }
       return done(next, Math.min(slide.line, next.split('\n').length), since, null)
     }
-    const hers = dropIds(herLines(item.text), slide.id || undefined)
-    if (!hers.length) return { ok: false, code: 'refused', error: 'Her proposed text is empty. Nothing was changed; use the deletion instead.' }
-    if (leavesMarkupOpen(hers)) return { ok: false, code: 'refused', error: OPEN_MARKUP }
+    const theirs = dropIds(herLines(item.text), slide.id || undefined)
+    if (!theirs.length) return { ok: false, code: 'refused', error: 'Their proposed text is empty. Nothing was changed; use the deletion instead.' }
+    if (leavesMarkupOpen(theirs)) return { ok: false, code: 'refused', error: OPEN_MARKUP }
     // The slide keeps its place in the talk: one heading, first, at its own depth; no title line.
-    const herLevels = readOutline(hers.join('\n')).levels
+    const herLevels = readOutline(theirs.join('\n')).levels
     if (herLevels[0] !== slide.level || herLevels.slice(1).some((level) => level > 0)) return { ok: false, code: 'refused', error: RESTRUCTURE }
-    // Only the slide's own lines (a container's folded children are not in the text she saw, and stay).
-    const merged = ensureId(mergeBlock(read, slide, hers, eol), slide.id, eol)
+    // Only the slide's own lines (a container's folded children are not in the text they saw, and stay).
+    const merged = ensureId(mergeBlock(read, slide, theirs, eol), slide.id, eol)
     if (leavesMarkupOpen(merged)) return { ok: false, code: 'refused', error: OPEN_MARKUP }
     const next = [...lines.slice(0, slide.start), ...merged, ...lines.slice(slide.end)].join('\n')
     if (!structureKept(text, next, slide.start, slide.end - slide.start, merged.length)) return { ok: false, code: 'refused', error: REFUSED_STRUCTURE }
-    // What the slide now shows must be exactly her text (with its id): nothing of his became visible
-    // or hidden by her markup.
-    // (Blank lines aside: his comment lines read as blank lines on her page.)
+    // What the slide now shows must be exactly their text (with its id): nothing of his became visible
+    // or hidden by their markup.
+    // (Blank lines aside: his comment lines read as blank lines on their page.)
     const inked = (t: string | undefined): string => String(t ?? '').split('\n').filter((line) => !isBlank(line)).join('\n')
     const shown = readOutlineSlides(next).slides.find((s) => s.start === slide.start)?.text
-    const meant = readOutlineSlides(ensureId(hers, slide.id, '\n').join('\n')).slides[0]?.text
+    const meant = readOutlineSlides(ensureId(theirs, slide.id, '\n').join('\n')).slides[0]?.text
     if (!shown || inked(shown) !== inked(meant)) return { ok: false, code: 'refused', error: NOT_PLACED }
     if (next === text) {
       const undo = base.remembered && editStillThere(text, base.remembered) ? base.remembered : spliceEdit(text, text, slide.line)
@@ -586,26 +586,26 @@ export function applyProposal(outlineText: string, item: ProposalItem, base: Pro
   // insert
   const atStart = item.afterSlideId === 'start'
   const after = atStart ? null : findSlide(read, item.afterSlideId, base.line)
-  if (!atStart && !after) return { ok: false, code: 'not-found', error: 'The slide she put this after is no longer in the talk. Nothing was changed.' }
+  if (!atStart && !after) return { ok: false, code: 'not-found', error: 'The slide they put this after is no longer in the talk. Nothing was changed.' }
   const first = read.slides[0] ?? null
-  let hers = dropIds(herLines(item.text))
-  if (!hers.length) return { ok: false, code: 'refused', error: 'Her proposed slide is empty. Nothing was changed.' }
-  if (leavesMarkupOpen(hers)) return { ok: false, code: 'refused', error: OPEN_MARKUP }
-  if (!readOutline(hers.join('\n')).levels.some((level) => level >= 2)) hers = ['## New slide', ...hers]
-  let herLevels = readOutline(hers.join('\n')).levels
-  if (herLevels.includes(1)) return { ok: false, code: 'refused', error: 'Her proposed slide has a talk title line (a single #) in it; inserted, it would retitle the talk. Nothing was changed.' }
-  // Her own heading first: stray lines she wrote above it follow it.
+  let theirs = dropIds(herLines(item.text))
+  if (!theirs.length) return { ok: false, code: 'refused', error: 'Their proposed slide is empty. Nothing was changed.' }
+  if (leavesMarkupOpen(theirs)) return { ok: false, code: 'refused', error: OPEN_MARKUP }
+  if (!readOutline(theirs.join('\n')).levels.some((level) => level >= 2)) theirs = ['## New slide', ...theirs]
+  let herLevels = readOutline(theirs.join('\n')).levels
+  if (herLevels.includes(1)) return { ok: false, code: 'refused', error: 'Their proposed slide has a talk title line (a single #) in it; inserted, it would retitle the talk. Nothing was changed.' }
+  // Their own heading first: stray lines they wrote above it follow it.
   const rootAt = herLevels.findIndex((level) => level >= 2)
   if (rootAt > 0) {
-    hers = [...hers.slice(rootAt), ...hers.slice(0, rootAt)]
-    herLevels = readOutline(hers.join('\n')).levels
+    theirs = [...theirs.slice(rootAt), ...theirs.slice(0, rootAt)]
+    herLevels = readOutline(theirs.join('\n')).levels
   }
   const masked = herLevels.map((level) => level < 2)
   const herMax = Math.max(...herLevels)
-  /** Her lines with her heading at `depth`, every heading inside shifted with it; null past `######`. */
+  /** Their lines with their heading at `depth`, every heading inside shifted with it; null past `######`. */
   const atDepth = (depth: number): string[] | null =>
-    herMax + depth - herLevels[0] > 6 ? null : reLevelHeadingLines(hers, depth - herLevels[0], masked)
-  const TOO_DEEP = 'Her proposed slide nests too deep to go in here. Nothing was changed.'
+    herMax + depth - herLevels[0] > 6 ? null : reLevelHeadingLines(theirs, depth - herLevels[0], masked)
+  const TOO_DEEP = 'Their proposed slide nests too deep to go in here. Nothing was changed.'
   const cr = eol === '\r\n' ? '\r' : ''
   const section = item.section?.trim() || ''
 
@@ -626,7 +626,7 @@ export function applyProposal(outlineText: string, item: ProposalItem, base: Pro
     at = lines.length
     level = 2
   }
-  // A section: its heading at that depth, her slide one deeper as its first child (Insert section's
+  // A section: its heading at that depth, their slide one deeper as its first child (Insert section's
   // shape and spacing: heading, blank line, the slide re-levelled with its depth inside kept).
   const slideAt = atDepth(section ? level + 1 : level)
   if (!slideAt || (section && level + 1 > 6)) return { ok: false, code: 'refused', error: TOO_DEEP }

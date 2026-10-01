@@ -46,9 +46,12 @@ const MENUS = {
       ['liveTalkQr', 'Show talk QR code'], ['presenterInstantButton', 'Compose instant slide…'], ['liveInstantPaste', 'Instant slide from clipboard'], ['liveInstantBack', 'Back to slide']]
   },
   presenterMenuPoll: {
-    name: 'Poll menu', label: 'Poll', sections: ['Quick poll', 'Current poll', 'Questions'],
+    // The Board group (feedback-boards ticket 05, round-2 D19) shows only while the current poll is a
+    // board; these menus are read on slides without one.
+    name: 'Poll menu', label: 'Poll', sections: ['Quick poll', 'Current poll', 'Questions', 'From phones · this talk'],
     items: [['presenterQuickPollButton', 'Compose Quick poll…'], ['presenterQuickPollRestore', 'Show Quick poll on screens'], ['pollMenuPrimary', 'Open or close current poll'],
-      ['pollMenuReveal', 'Reveal results'], ['presenterPollPanelToggle', 'Show poll panel'], ['pollMenuQuestions', 'Open questions']]
+      ['pollMenuReveal', 'Reveal results'], ['presenterPollPanelToggle', 'Show poll panel'], ['pollMenuQuestions', 'Open questions'],
+      ['liveAllowQuestions', 'Allow slide questions'], ['liveAllowReactions', 'Allow slide reactions']]
   },
   presenterMenuView: {
     name: 'View menu', label: 'View', sections: ['Layout', 'Slide on every screen'],
@@ -56,6 +59,7 @@ const MENUS = {
       ['viewHighlight', 'Highlight text'], ['viewHighlightClear', 'Clear highlights'], ['viewShortcuts', 'Keyboard shortcuts'], ['viewCommands', 'All commands…']]
   }
 }
+const SWITCH_ITEMS = ['liveAllowQuestions', 'liveAllowReactions']
 // Every action that had a top-bar button before this ticket, and where it is now.
 const OLD_TOP_BAR = ['liveGoButton', 'presenterQuickPollButton', 'presenterInstantButton', 'presenterQuickPollRestore', 'presenterPollPanelToggle', 'notesPlacementBtn', 'presenterAudienceApp']
 
@@ -249,8 +253,9 @@ if (window === window.top && window.twLivePollBridge) window.twLivePollBridge.on
         return {
           open: shown(menu), expanded: button.getAttribute('aria-expanded'), role: menu?.getAttribute('role'),
           others: [...document.querySelectorAll('.tw-menu')].filter((x) => x !== menu && shown(x)).map((x) => x.id),
-          sections: [...menu.querySelectorAll('.tw-menu-sec')].map((s) => s.textContent.trim()),
-          items: [...menu.querySelectorAll('.tw-mi, .tw-seg-btn')].map((item) => ({
+          // A group hidden where it does not apply (the Poll menu's Board group off a board) is not in the menu.
+          sections: [...menu.querySelectorAll('.tw-menu-sec')].filter((s) => !s.hidden).map((s) => s.textContent.trim()),
+          items: [...menu.querySelectorAll('.tw-mi, .tw-seg-btn')].filter((item) => !item.hidden).map((item) => ({
             id: item.id, label: item.querySelector('.tw-btn-label')?.firstChild?.textContent.trim() || '',
             key: item.querySelector('.tw-mi-key')?.textContent ?? null, disabled: item.disabled,
             icon: [...(item.querySelector(':scope > svg')?.classList || [])].find((c) => c.startsWith('lucide-')) || null
@@ -266,7 +271,9 @@ if (window === window.top && window.twLivePollBridge) window.twLivePollBridge.on
         check(!!control, `${item.id}: in the presenter control table`)
         if (!control) continue
         check(item.icon === `lucide-${control.icon}`, `${item.id}: lucide icon ${control.icon} (${item.icon})`)
-        check(item.key === keysOf(item.id), `${item.id}: shows the registry's key "${keysOf(item.id)}" (${item.key})`)
+        // A switch item carries its switch where a shortcut would sit, and no key.
+        if (SWITCH_ITEMS.includes(item.id)) check(item.key === null, `${item.id}: a switch item shows a switch, not a key (${item.key})`)
+        else check(item.key === keysOf(item.id), `${item.id}: shows the registry's key "${keysOf(item.id)}" (${item.key})`)
       }
       if (id === 'presenterMenuView') check(m.previews === 'Large Medium* Small Off', `View: Previews row Large / Medium / Small / Off, the current one pressed (${m.previews})`)
       if (id === 'presenterMenuLive') {
@@ -297,7 +304,7 @@ if (window === window.top && window.twLivePollBridge) window.twLivePollBridge.on
     check(k.open && k.focus === 'presenterQuickPollButton', `keyboard: Enter on Poll opens it on its first enabled item (${JSON.stringify(k)})`)
     await page.keyboard.press('ArrowDown'); await settle(page, 60)
     k = await page.evaluate(() => ({ focus: document.activeElement?.id }))
-    check(k.focus === 'presenterQuickPollButton', `keyboard: ↓ wraps over disabled items (${k.focus})`)
+    check(k.focus === 'liveAllowQuestions', `keyboard: ↓ skips the disabled items and lands on the first switch (${k.focus})`)
     await page.keyboard.press('ArrowRight'); await settle(page, 120)
     k = await page.evaluate(() => ({ view: document.getElementById('presenterViewMenu').hidden === false, poll: document.getElementById('presenterPollMenu').hidden === false, focus: document.activeElement?.id }))
     check(k.view && !k.poll, `keyboard: → moves to the View menu (${JSON.stringify(k)})`)
@@ -430,7 +437,7 @@ if (window === window.top && window.twLivePollBridge) window.twLivePollBridge.on
     await page.evaluate(() => window.__audience?.({ reactions: null, questions: 3 }))
     await tap(page, '#presenterMenuPoll'); await settle(page)
     const q = await page.evaluate(() => ({ sub: document.getElementById('pollMenuQuestionsSub').textContent, disabled: document.getElementById('pollMenuQuestions').disabled }))
-    check(q.sub === '3 waiting' && q.disabled, `Poll: while live Open questions shows "3 waiting" (disabled: no questions tray yet) (${JSON.stringify(q)})`)
+    check(q.sub === '3 waiting' && !q.disabled, `Poll: while live Open questions shows "3 waiting" and is enabled (the questions tray, key A) (${JSON.stringify(q)})`)
     await context.close()
   })
   // View menu
@@ -533,6 +540,62 @@ if (window === window.top && window.twLivePollBridge) window.twLivePollBridge.on
     await context.close()
   })
 
+  // ── 4. From phones · this talk (reactions ticket 05) ──────────────────────────────────────
+  // Two checked items in the Poll menu, on by default, kept per talk across windows, sent to the
+  // worker (through the live:switches channel, as switches.set) when the session goes live and on
+  // every change while one is up; the chip and counter dim with a pause mark while their switch is off.
+  await guard('phone switches', async () => {
+    const { page, context } = await open([1440, 900], 'two')
+    const state = (p) => p.evaluate(() => {
+      const item = (id) => { const b = document.getElementById(id); return { role: b.getAttribute('role'), checked: b.getAttribute('aria-checked'), sub: document.getElementById(id + 'Sub').textContent, hasSwitch: !!b.querySelector('.tw-sw') } }
+      const chip = (id) => { const e = document.getElementById(id); const mark = e.querySelector(':scope > .tw-pause-mark'); return { paused: e.dataset.paused || 'false', mark: !!mark && !mark.hidden, tip: e.dataset.tip, opacity: e.querySelector(':scope > :not(.tw-pause-mark)') ? getComputedStyle(e.querySelector(':scope > :not(.tw-pause-mark)')).opacity : null } }
+      return { q: item('liveAllowQuestions'), r: item('liveAllowReactions'), chip: chip('presenterReactions'), counter: chip('presenterQuestions'),
+        stored: Object.keys(localStorage).filter((k) => k.endsWith(':audience-switches')).map((k) => JSON.parse(localStorage.getItem(k))),
+        sent: window.__ipcArgs.filter(([c]) => c === 'live:switches').map(([, a]) => JSON.stringify(a)),
+        menuOpen: document.getElementById('presenterPollMenu').hidden === false }
+    })
+    await page.evaluate(() => window.__audience({ reactions: { puzzled: 1, helped: 2, bookmark: 3 }, questions: 4 })); await settle(page)
+    let st = await state(page)
+    check(st.q.role === 'menuitemcheckbox' && st.r.role === 'menuitemcheckbox' && st.q.hasSwitch && st.r.hasSwitch, `switches: two checked items with a switch each (${JSON.stringify([st.q.role, st.r.role])})`)
+    check(st.q.checked === 'true' && st.r.checked === 'true' && st.q.sub === 'Phones show Ask' && st.r.sub === 'Phones show reactions', `switches: both on by default, with their sub-lines (${JSON.stringify([st.q, st.r])})`)
+    check(st.chip.paused === 'false' && !st.chip.mark && st.counter.paused === 'false' && !st.counter.mark, `switches: nothing is marked paused while both are on (${JSON.stringify([st.chip, st.counter])})`)
+    // Reactions off before the session: the item, the chip and the saved choice change; nothing is sent.
+    await tap(page, '#presenterMenuPoll'); await tap(page, '#liveAllowReactions'); await settle(page, 200)
+    st = await state(page)
+    check(st.r.checked === 'false' && st.r.sub === 'Off. Paused on every phone' && st.q.checked === 'true', `switches: pressing Allow slide reactions turns it off (${JSON.stringify([st.q, st.r])})`)
+    check(st.menuOpen, 'switches: the menu stays open so the change is seen')
+    check(st.chip.paused === 'true' && st.chip.mark && st.chip.tip === 'Reactions paused. Counts so far kept. Turn on in the Poll menu.' && st.counter.paused === 'false', `switches: the chip shows a pause mark and its paused tooltip (${JSON.stringify([st.chip, st.counter])})`)
+    check(Number(st.chip.opacity) < 1, `switches: the chip's counts are dimmed (${st.chip.opacity})`)
+    check(same(st.stored, [{ questionsAllowed: true, reactionsAllowed: false }]), `switches: the choice is kept for the talk (${JSON.stringify(st.stored)})`)
+    check(st.sent.length === 0, `switches: with no session, nothing goes to the worker (${st.sent})`)
+    await page.keyboard.press('Escape')
+    // Going live sends both, once; a later change sends only itself.
+    await goLive(page)
+    st = await state(page)
+    check(same(st.sent, ['{"questionsAllowed":true,"reactionsAllowed":false}']), `switches: going live sends both switches once (${st.sent})`)
+    await page.evaluate(() => window.__push('live:status', 'paused-reconnecting')); await page.evaluate(() => window.__push('live:status', 'live')); await settle(page)
+    check((await state(page)).sent.length === 1, 'switches: reconnecting in the same session does not send again')
+    await tap(page, '#presenterMenuPoll'); await tap(page, '#liveAllowQuestions'); await settle(page, 200)
+    st = await state(page)
+    check(st.sent[1] === '{"questionsAllowed":false}' && st.q.checked === 'false' && st.counter.paused === 'true' && st.counter.mark && st.counter.tip.startsWith('Questions paused.'), `switches: pressing Allow slide questions while live sends it and marks the counter (${JSON.stringify([st.sent, st.counter])})`)
+    await tap(page, '#liveAllowQuestions'); await settle(page, 200)
+    st = await state(page)
+    check(st.sent[2] === '{"questionsAllowed":true}' && st.q.checked === 'true' && st.counter.paused === 'false' && !st.counter.mark, `switches: pressing it again turns it back on and clears the mark (${JSON.stringify([st.sent, st.counter])})`)
+    check(page.errors.length === 0, `switches: no page errors (${page.errors.join('; ')})`)
+    // A finished session forgets it was told: the next one is sent both again.
+    await page.keyboard.press('Escape')
+    await page.evaluate(() => window.__push('live:status', 'ended')); await page.evaluate(() => window.__push('live:status', 'live')); await settle(page)
+    check((await state(page)).sent.length === 4 && (await state(page)).sent[3] === '{"questionsAllowed":true,"reactionsAllowed":false}', `switches: a new session is sent both switches (${(await state(page)).sent})`)
+    // Closing and reopening the talk's presenter window: the choice is still there.
+    const again = await context.newPage()
+    await again.goto(`${pathToFileURL(fixturePath).href}?presenter=1#two`, { waitUntil: 'load', timeout: 120000 })
+    await again.waitForFunction(() => /scale\(([\d.]+)\)/.test(document.querySelector('#currentPreview iframe')?.style.transform || ''), null, { timeout: 30000 })
+    await again.evaluate(() => window.__audience({ reactions: { puzzled: 0, helped: 0, bookmark: 0 }, questions: 0 })); await settle(again)
+    st = await state(again)
+    check(st.r.checked === 'false' && st.q.checked === 'true' && st.chip.paused === 'true' && st.counter.paused === 'false', `switches: the choice survives reopening the talk's presenter window (${JSON.stringify([st.q.checked, st.r.checked])})`)
+    await context.close()
+  })
+
   // ── Build shots ───────────────────────────────────────────────────────────────────────────
   if (SHOTS) {
     await mkdir(SHOTS, { recursive: true })
@@ -565,6 +628,22 @@ if (window === window.top && window.twLivePollBridge) window.twLivePollBridge.on
         await tap(page, '#presenterPollDismiss')
         await tap(page, '#presenterMenuPoll'); await page.mouse.move(5, 500); await settle(page, 250)
         await page.screenshot({ path: join(SHOTS, 'menu-poll-open-1440x900.png') })
+      }
+      // The Poll menu with the phone switches (L1-L4 of the reactions round 2): both on, reactions off,
+      // questions off, both off, each with the chip and counter as the switch leaves them.
+      if (size[0] === 1440) {
+        await page.keyboard.press('Escape'); await page.evaluate(() => { location.hash = 'two' }); await settle(page, 500)
+        const flip = async (id) => { await tap(page, '#presenterMenuPoll'); await tap(page, `#${id}`); await page.mouse.move(5, 500); await settle(page, 300) }
+        const snap = async (name) => { await page.screenshot({ path: join(SHOTS, `${name}-1440x900.png`) }) }
+        await tap(page, '#presenterMenuPoll'); await page.mouse.move(5, 500); await settle(page, 300)
+        await snap('L1-poll-menu-both-on')
+        await tap(page, '#liveAllowReactions'); await page.mouse.move(5, 500); await settle(page, 300)
+        await snap('L2-poll-menu-reactions-off')
+        await tap(page, '#liveAllowReactions'); await tap(page, '#liveAllowQuestions'); await page.mouse.move(5, 500); await settle(page, 300)
+        await snap('L3-poll-menu-questions-off')
+        await tap(page, '#liveAllowReactions'); await page.mouse.move(5, 500); await settle(page, 300)
+        await snap('L4-poll-menu-both-off')
+        await tap(page, '#liveAllowReactions'); await tap(page, '#liveAllowQuestions'); await page.keyboard.press('Escape')
       }
       await context.close()
     }

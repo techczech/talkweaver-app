@@ -99,3 +99,36 @@
   /* Statement paragraphs never carry the content-p accent bar, wherever they appear. *//* @order 1397 */
 
   /* Statement (mockup .t-statement): weight 500, tight measure, centred by the layout */
+
+  /* Ticket 10 — a statement slide with a screenshot. The rail rule puts every non-head child on
+     row 1 / span 99 of the content column, so the figure took the whole column at the image's
+     natural height and the caption paragraph fell on an auto row BELOW the slide edge (whole-slide
+     zoom 0.81 did not bring it back). Stack them instead: the figure takes the height left after
+     the caption (`minmax(0, 1fr)`), the caption sits on its own row, and the column is exactly the
+     slide tall so nothing can overflow. The image is scaled down into its cell, never clipped. */
+  .slide:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content.layout-statement:has(> .slide-figure) {
+    height: 100%;
+    min-height: 0;
+    grid-template-rows: minmax(0, 1fr) auto !important;
+    row-gap: clamp(12px, 2.4cqh, 32px);
+  }
+  /* The rail head spanned 99 rows; with a row-gap that is 98 gaps of dead space. Two rows now. */
+  .slide:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content.layout-statement:has(> .slide-figure) > .slide-head {
+    grid-row: 1 / span 2 !important;
+  }
+  .slide:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content.layout-statement:has(> .slide-figure) > .slide-figure {
+    grid-row: 1 !important;
+    align-self: stretch;
+    min-height: 0;
+    min-width: 0;
+  }
+  .slide:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content.layout-statement:has(> .slide-figure) > .slide-figure > img,
+  .slide:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content.layout-statement:has(> .slide-figure) > .slide-figure > video {
+    max-height: 100%;
+    min-height: 0;
+    min-width: 0;
+  }
+  .slide:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content.layout-statement:has(> .slide-figure) > .slide-figure ~ *:not(.slide-head) {
+    grid-row: 2 !important;
+    margin-top: 0;
+  }

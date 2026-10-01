@@ -6,7 +6,7 @@ import ts from "typescript";
 import { SECTION_ONLY_TRIGGER_KEYS, TRIGGER_DICTIONARY, VALUE_TRIGGER_DICTIONARY, resolveDynamicTrigger } from "../compiler/scripts/triggers.mjs";
 import { parseHeadingAttrs } from "../compiler/scripts/lib/02-triggers-layout.mjs";
 import { prepareSource } from "../compiler/scripts/lib/08-source-adapters.mjs";
-import { LAYOUTS } from "../src/shared/layout-registry/entries.ts";
+import { LAYOUTS, isPickerEligible } from "../src/shared/layout-registry/entries.ts";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const registryPath = join(root, "src/shared/layout-registry/entries.ts");
@@ -88,10 +88,37 @@ for (const entry of entries) {
   assert(Array.isArray(entry.triggerWords), `${entry.name}: triggerWords must be an array`);
 }
 
+const PREWORK_STEP_TOKENS = ["prework", "task", "readonly", "check", "right", "noask"];
+// ADR-0032 §4-§5: every picker-eligible entry carries a purpose and a when-it-fits line.
+const PURPOSES = ["Everyday", "Structure", "Diagrams", "Modes", "Specialised"];
+const eligible = entries.filter((entry) => entry.kind !== "component" && entry.pickerEligible !== false);
+for (const entry of entries) {
+  if (entry.kind === "component") assert(entry.pickerEligible === false || !eligible.includes(entry), `${entry.name}: component-kind entries are not picker-eligible`);
+  assert(PURPOSES.includes(entry.purpose), `${entry.name}: missing or invalid purpose`);
+}
+const missingWhenItFits = eligible.filter((entry) => typeof entry.whenItFits !== "string" || !entry.whenItFits.trim()).map((entry) => entry.name);
+assert.deepEqual(missingWhenItFits, [], `Picker-eligible entr(ies) missing whenItFits: ${missingWhenItFits.join(", ")}`);
+assert.deepEqual(
+  entries.filter((entry) => entry.kind !== "component" && entry.pickerEligible === false).map((entry) => entry.name),
+  [...PREWORK_STEP_TOKENS, "names"],
+  "only the board-only `names` modifier and the pre-work step tokens are opted out of the picker besides component entries"
+);
+assert.deepEqual(
+  Object.fromEntries(PURPOSES.map((p) => [p, eligible.filter((entry) => entry.purpose === p).length])),
+  { Everyday: 13, Structure: 7, Diagrams: 13, Modes: 16, Specialised: 22 },
+  "picker-eligible counts per purpose match the locked mockup"
+);
+assert.deepEqual(
+  LAYOUTS.filter((entry) => entry.kind === "component").map((entry) => entry.name).sort(),
+  ["action", "auto-embed", "code", "countdown", "embed", "mermaid", "qr", "svg"],
+  "the eight component-kind entries leave the picker"
+);
+assert(LAYOUTS.every((entry) => (entry.kind === "component") === !isPickerEligible(entry) || entry.name === "names" || PREWORK_STEP_TOKENS.includes(entry.name)), "isPickerEligible agrees with the declared data");
+
 assert.deepEqual(
   entries.filter((entry) => entry.sectionOnly).map((entry) => entry.name),
-  ["accent", "grid-linear", "grid-zoom", "contents", "timer-audience"],
-  "only the five level-constrained triggers are section-only"
+  ["accent", "prework", "grid-linear", "grid-zoom", "contents", "timer-audience"],
+  "only the six level-constrained triggers are section-only"
 );
 
 const missingSamplerNames = entries.map((entry) => entry.name).filter((name) => !sampler.includes(name));

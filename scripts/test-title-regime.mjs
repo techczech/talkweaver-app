@@ -207,4 +207,83 @@ assert.equal(samplerHtml.includes('kicker-compact'), false, 'the kicker-compact 
   assert.equal(placementOf(authoredClosing), placementOf(autoClosing), 'authored {closing} and the auto closing share one title regime')
 }
 
+
+// -----------------------------------------------------------------------------
+// 6. Compact top title (ADR-0033 §2, round-b notes §3): computed size, paddings and rule gap on the
+//    top regime, no 18-character cap, the rescaled ladder, left-rail untouched, fitTitle intact.
+//    Read in headless Chromium; the stage is a 1280×720 canvas, so 3.9cqw = 49.92px (75px at 1920).
+// -----------------------------------------------------------------------------
+{
+  const { chromium } = await import('playwright')
+  const LONG = 'York expenses: from email to completed forms'
+  const source = [
+    '---', 'title: Compact title probe', 'auto_title_slide: false', 'auto_thanks_slide: false', '---', '',
+    '## Fixtures', '',
+    `### ${LONG}`, '{titletop} {id=t-top}', '', '- One', '- Two', '',
+    '### Rail title stays', '{sidebar} {id=t-rail}', '', '- One', '- Two', '',
+    ...['xs', 's', 'l', 'xl'].flatMap((size) => [`### Ladder ${size}`, `{titletop} {font-title=${size}} {id=t-${size}}`, '', '- One', '- Two', '']),
+    '### Unbreakablesupercalifragilisticexpialidociousxxxxxxxxxxxxx', '{titletop} {id=t-fit}', '', '- One', '- Two'
+  ].join('\n')
+  const path = join(dir, 'compact.md')
+  writeFileSync(path, source, 'utf8')
+  const model = await prepareSource(path, source, 'Compact title probe', statSync(path))
+  const htmlPath = join(dir, 'compact.html')
+  writeFileSync(htmlPath, model.fullHtml, 'utf8')
+  const browser = await chromium.launch({ headless: true })
+  try {
+    const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } })
+    await page.goto(`file://${htmlPath}`, { waitUntil: 'load' })
+    await page.evaluate(() => document.fonts?.ready)
+    const probe = (id) => page.evaluate((slideId) => {
+      const slides = [...document.querySelectorAll('.stage > .slide')]
+      const slide = slides.find((node) => node.dataset.id === slideId)
+      if (!slide) return null
+      slides.forEach((node) => node.classList.toggle('active', node === slide))
+      window.__autofitForTest?.()
+      const stage = slide.parentElement, k = stage.getBoundingClientRect().width / stage.offsetWidth
+      const content = slide.querySelector(':scope > .slide-content')
+      const head = content.querySelector(':scope > .slide-head')
+      const h1 = head.querySelector('h1')
+      const cs = getComputedStyle(content), hs = getComputedStyle(head), hh = getComputedStyle(h1)
+      const range = document.createRange(); range.selectNodeContents(h1)
+      const bottoms = [...range.getClientRects()].filter((r) => r.width > 0).map((r) => Math.round(r.bottom))
+      return {
+        titleLayout: slide.dataset.titleLayout,
+        stageWidth: stage.offsetWidth,
+        fontSize: parseFloat(hh.fontSize), maxWidth: hh.maxWidth, lineHeight: parseFloat(hh.lineHeight),
+        padTop: parseFloat(cs.paddingTop), headPadBottom: parseFloat(hs.paddingBottom), headMarginBottom: parseFloat(hs.marginBottom),
+        lines: new Set(bottoms).size, h1Width: h1.getBoundingClientRect().width / k, headWidth: head.getBoundingClientRect().width / k,
+        overflow: h1.scrollWidth - h1.clientWidth
+      }
+    }, id)
+    const near = (a, b, label, tol = 0.6) => assert(Math.abs(a - b) <= tol, `${label}: expected ${b}, got ${a}`)
+    const top = await probe('t-top')
+    assert.equal(top.titleLayout, 'top', 'probe slide sits on the top regime')
+    assert.equal(top.stageWidth, 1280, 'stage is the 1280 canvas')
+    near(top.fontSize, 0.039 * 1280, 'top title size (3.9cqw = 75px at 1920)')
+    near(top.padTop, 0.04 * 720, 'space above the title (4cqh)')
+    near(top.headPadBottom, 0.011 * 720, 'title to rule (1.1cqh)')
+    near(top.headMarginBottom, 0.022 * 720, 'under the rule (2.2cqh)')
+    near(top.lineHeight, 1.12 * top.fontSize, 'title line height 1.12')
+    assert.equal(top.maxWidth, 'none', 'top title has no 18ch cap')
+    assert.equal(top.lines, 1, `"${LONG}" fits on one line`)
+    // Left rail: unchanged (its own size and cap; the ladder does not reach it as a top size).
+    const rail = await probe('t-rail')
+    assert.equal(rail.titleLayout, 'left', 'rail probe is a left-rail title')
+    assert.notEqual(rail.maxWidth, 'none', 'left-rail title keeps its width cap')
+    near(rail.fontSize, 0.038 * 1280 < 38 ? 38 : 0.038 * 1280, 'left-rail title size unchanged (--fs-rail max(38px, 3.8cqw))')
+    // Ladder xs 3.0 / s 3.4 / l 4.6 / xl 5.2 cqw (with px floors 26 / 30 / 40 / 44).
+    for (const [size, cqw, floor] of [['xs', 3.0, 26], ['s', 3.4, 30], ['l', 4.6, 40], ['xl', 5.2, 44]]) {
+      const got = await probe(`t-${size}`)
+      near(got.fontSize, Math.max(floor, cqw / 100 * 1280), `title ladder ${size}`)
+    }
+    // fitTitle still shrinks an over-long unbreakable top title until it fits (never below 60%).
+    const fit = await probe('t-fit')
+    assert(fit.fontSize < 0.039 * 1280 - 1, `over-long top title is shrunk by fitTitle (got ${fit.fontSize})`)
+    assert(fit.overflow <= 1, 'fitted title no longer overflows')
+  } finally {
+    await browser.close()
+  }
+}
+
 console.log(`title regime: PASS (${LAYOUTS.filter((e) => e.kind === 'layout').length} layouts declared, ${CLASS_FIXTURES.length} class fixtures, ${OVERRIDES.length * 2 + 1} override checks, sampler clean)`)

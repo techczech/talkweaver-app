@@ -49,6 +49,14 @@ assert.match(
   'the editor retries the id mint after an injected same-outline collision'
 )
 
+// A slide already stamped elsewhere than its Trigger block — on the heading, or on an id-only line past a
+// blank — keeps that id: the insert never stamps a second one (review S4; the shared resolver decides).
+for (const stamped of ['### Title {id=abc12}\nBody', '### Title\n{cards}\n\n{id=abc12}\n\nBody']) {
+  const prepared = triggerCommit.prepareObjectInsertDocument(stamped, stamped.indexOf('Body'), undefined, () => 0.123456789)
+  assert.equal([...prepared.doc.matchAll(/\{id=/g)].length, 1, `no second id is stamped on ${JSON.stringify(stamped)} (got ${JSON.stringify(prepared.doc)})`)
+  assert.match(prepared.doc, /\{id=abc12\}/)
+}
+
 function lineAt(doc, position) {
   const before = doc.slice(0, position)
   const from = before.lastIndexOf('\n') + 1
@@ -231,7 +239,7 @@ for (const command of objectCommands) {
 }
 assert.deepEqual(
   toolbarCommands('insert').map((command) => command.id),
-  ['layout', 'image', 'search', 'icon-picker', 'insert-object-table', 'insert-object-mindmap', 'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg'],
-  'toolbarCommands(insert) is exactly the four built-ins then the six objects, in order'
+  ['layout', 'image', 'search', 'insert-board-slide', 'icon-picker', 'insert-object-table', 'insert-object-mindmap', 'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg', 'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-component-auto-embed', 'insert-component-countdown'],
+  'toolbarCommands(insert) is the five built-ins, the six objects, then the six components, in order'
 )
 console.log('test:insert-objects OK')

@@ -9,9 +9,9 @@
 // fraction of the stage width:
 //   content column   min(1180px, stage − 2 × 5.6cqw)                       → 1180px at 1600, 1137px at 1280
 //   type floor       1.9375cqw (stage.css)                                  → 31px at 1600, 24.8px at 1280
-//   horizontal entry the dense step, --fs-dense = max(floor, 2.6cqw) (skin/base.css; the track takes it
+//   horizontal entry the body step, --fs-body = max(floor, 3.2cqw) (ADR-0033 §8) (skin/base.css; the track takes it
 //                    at skin @order 1434 and each entry max(floor, 1em) of it at @order 2068)
-//                                                                           → 41.6px at 1600, 33.28px at 1280
+//                                                                           → 51.2px at 1600, 40.96px at 1280
 //   horizontal stop  one 1fr column per stop, no column gap on the track (skin @order 1434); the text is
 //                    inset by padding-right 1.4em at the entry size (skin @order 1435, ADR-0028 §3)
 //   pills card       width min(190% of the column, clamp(160px, 16cqw, 205px)), padding .75em
@@ -28,8 +28,8 @@
 //
 // DERIVED CAPS (the tighter of the two reference stages):
 //   horizontal  N ≤ (W + gap) / (11 × 0.471e + 1.4e + gap), e = entry size
-//                                          → 4.31 at 1600 (5.19 at 1280) → 4 (computed, not a constant:
-//                                            HORIZONTAL_STOPS_PER_SLIDE below; was 6 at the floor and a 1em inset)
+//                                          → 3.50 at 1600 (4.22 at 1280) → 3 (computed, not a constant:
+//                                            HORIZONTAL_STOPS_PER_SLIDE below; was 4 on the dense step, 6 at the floor and a 1em inset)
 //   pills       N ≤ W / card(205px)        → 5.75 at 1600 (5.55 at 1280) → 5 (six cards would touch)
 //   spine       N ≤ 2W / card(205px)       → 11.5 at 1600 (11.1 at 1280) → 10 (the tuned constant,
 //               inside the bound; the 0.66 font ramp keeps the date labels inside their columns)
@@ -46,7 +46,7 @@ const CARD_MIN_PX = 160
 
 // The horizontal track's type and spacing tokens, as the stylesheets set them (see GEOMETRY).
 export const HORIZONTAL_TRACK_TOKENS = Object.freeze({
-  entryDenseCqw: 2.6, // --fs-dense: max(var(--type-floor), 2.6cqw) — skin/base.css
+  entryBodyCqw: 3.2, // --fs-body: max(var(--type-floor), 3.2cqw) — skin/base.css
   textInsetEm: 1.4, // .timeline-horizontal .tl-group { padding: 0 1.4em 0 0 } — skin @order 1435
   columnGapPx: 0 // the track grid sets no column-gap — skin @order 1434
 })
@@ -61,7 +61,7 @@ export function timelineStageGeometry(viewport) {
   const floorPx = (TYPE_FLOOR_CQW / 100) * width
   const contentWidthPx = Math.min(CONTENT_COLUMN_MAX_PX, width - 2 * (SLIDE_PAD_X_CQW / 100) * width)
   const cardWidthPx = Math.min(CARD_MAX_PX, Math.max(CARD_MIN_PX, (CARD_CQW / 100) * width))
-  const entryPx = Math.max(floorPx, (HORIZONTAL_TRACK_TOKENS.entryDenseCqw / 100) * width)
+  const entryPx = Math.max(floorPx, (HORIZONTAL_TRACK_TOKENS.entryBodyCqw / 100) * width)
   const insetPx = HORIZONTAL_TRACK_TOKENS.textInsetEm * entryPx
   const gapPx = HORIZONTAL_TRACK_TOKENS.columnGapPx
   const glyphPx = GLYPH_WIDTH_EM * entryPx

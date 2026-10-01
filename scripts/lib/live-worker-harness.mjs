@@ -71,7 +71,10 @@ export function openSocket(url, timeoutMs = 5000, options = undefined) {
   })
 }
 
-export async function startLiveWorker() {
+/** `vars`: extra Worker vars for this run only (e.g. a short PREWORK_IDLE_PURGE_MS). */
+export async function startLiveWorker({ vars = {} } = {}) {
+  // A local Worker: submissions without cf-connecting-ip share one pre-work source (unless a test clears it).
+  vars = { PREWORK_LOCAL_SOURCE: '1', ...vars }
   const root = resolve(import.meta.dirname, '../..')
   const scratch = await mkdtemp(join(tmpdir(), 'talkweaver-live-worker-'))
   const port = await freePort()
@@ -82,6 +85,7 @@ export async function startLiveWorker() {
   const child = spawn('wrangler', [
     'dev', '--config', join(root, 'worker/wrangler.jsonc'), '--ip', '127.0.0.1', '--port', String(port),
     '--var', `ADMIN_SECRET:${adminSecret}`, '--var', `SESSION_SIGNING_SECRET:${signingSecret}`,
+    ...Object.entries(vars).flatMap(([key, value]) => ['--var', `${key}:${value}`]),
     '--persist-to', join(scratch, 'state'), '--show-interactive-dev-session=false', '--log-level=error',
   ], {
     cwd: scratch,

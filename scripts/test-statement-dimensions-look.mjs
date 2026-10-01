@@ -147,7 +147,7 @@ try {
       return {
         className: content.className, titleLayout: slide.dataset.titleLayout, zoom: content.style.zoom || '1',
         slideBg: ss.backgroundColor, slideBgImage: ss.backgroundImage, tint: ss.getPropertyValue('--tint').trim(),
-        head: head ? box(head) : null, headText: head?.textContent.trim() ?? '',
+        head: head ? box(head) : null, headText: head?.textContent.replace(/\u00a0/g, ' ').trim() ?? '',
         column: (() => {
           if (slide.dataset.titleLayout !== 'left') return null
           const cs = getComputedStyle(content)

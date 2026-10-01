@@ -9,6 +9,8 @@ import type {
   InstantSlide, InstantSlideMessage,
 } from './protocol'
 import type { RecoveryState } from './recovery-state'
+import type { AudienceFeedbackState } from './audience-feedback'
+import { boardView, ensureBoard, seedBoard, type StoredBoard } from './board-state'
 
 export interface StoredPoll extends PollDefinition {
   open: boolean
@@ -29,6 +31,16 @@ export interface StoredLiveSession {
   revision: number
   polls: Record<string, StoredPoll>
   recovery?: RecoveryState
+  /** Reactions, questions and pause switches. The Durable Object stores it in its own row. */
+  feedback?: AudienceFeedbackState
+  /** Each board poll's cards and groups, by pollId. The Durable Object stores each in its own row. */
+  boards?: Record<string, StoredBoard>
+  /** Boards left open after End live, with when each closes (late-boards.ts). */
+  lateBoards?: Record<string, number>
+  /** When End live kept boards open (ms). */
+  endedAt?: number
+  /** Boards left open that have since closed: when, and why (late-boards.ts). */
+  lateClosed?: Record<string, { at: number; reason: 'expired' | 'closed' | 'superseded' }>
 }
 
 export function createSession(input: Omit<StoredLiveSession, 'status' | 'slideState' | 'revision' | 'polls'>): StoredLiveSession {
@@ -72,9 +84,15 @@ export function openPoll(session: StoredLiveSession, definition: PollDefinition)
   // answers. A genuinely new pollId starts empty.
   const previous = session.polls[definition.pollId]
   // A reopened poll is the same round: its definition and limits remain fixed.
-  if (previous) { previous.open = true; return pollStateMessage(previous, 'presenter') }
+  if (previous) {
+    previous.open = true
+    // A board that never held a card (its first open was not saved, or it opened with no seed) still takes one.
+    if (previous.type === 'board') seedBoard(ensureBoard(session, previous), definition.seed, Date.now())
+    return pollStateFor(session, previous, 'presenter')
+  }
+  const { seed, ...stored } = definition
   const poll: StoredPoll = {
-    ...definition,
+    ...stored,
     options: definition.options.map((option) => ({ ...option })),
     open: true,
     revealed: definition.visibility === 'live',
@@ -82,19 +100,20 @@ export function openPoll(session: StoredLiveSession, definition: PollDefinition)
     hiddenResponseIds: [],
   }
   session.polls[definition.pollId] = poll
-  return pollStateMessage(poll, 'presenter')
+  if (poll.type === 'board') seedBoard(ensureBoard(session, poll), seed, Date.now())
+  return pollStateFor(session, poll, 'presenter')
 }
 
 export function closePoll(session: StoredLiveSession, pollId: string): PollStateMessage {
   const poll = requirePoll(session, pollId)
   poll.open = false
-  return pollStateMessage(poll, 'presenter')
+  return pollStateFor(session, poll, 'presenter')
 }
 
 export function revealPoll(session: StoredLiveSession, pollId: string): PollStateMessage {
   const poll = requirePoll(session, pollId)
   poll.revealed = true
-  return pollStateMessage(poll, 'presenter')
+  return pollStateFor(session, poll, 'presenter')
 }
 
 export function voteInPoll(
@@ -104,6 +123,7 @@ export function voteInPoll(
   choice: PollChoice,
 ): PollStateMessage {
   const poll = requireOpenPoll(session, pollId)
+  if (poll.type === 'board') throw new Error('A board takes cards, not votes.')
   poll.votes[connectionId] = validChoice(poll, choice)
   return pollStateMessage(poll, 'presenter')
 }
@@ -122,10 +142,16 @@ export function hidePollResponse(
   return pollStateMessage(poll, 'presenter')
 }
 
+/** A poll's state for one role, with its board when it is a board poll. */
+export function pollStateFor(session: StoredLiveSession, poll: StoredPoll, role: 'presenter' | 'audience', recorded = false): PollStateMessage {
+  return pollStateMessage(poll, role, recorded, poll.type === 'board' ? session.boards?.[poll.pollId] : undefined)
+}
+
 export function pollStateMessage(
   poll: StoredPoll,
   role: 'presenter' | 'audience',
   recorded = false,
+  board?: StoredBoard,
 ): PollStateMessage {
   const base: PollStateMessage = {
     ...extendedDefinitionFields(poll),
@@ -142,6 +168,11 @@ export function pollStateMessage(
     ...(poll.slideId ? { slideId: poll.slideId } : {}),
     ...(recorded ? { recorded: true as const } : {}),
   }
+  // A board is public by nature: its cards are on the big screen, whatever the visibility says.
+  if (poll.type === 'board' && poll.board) {
+    return { ...base, board: { ...poll.board, ...(poll.board.hints ? { hints: { ...poll.board.hints } } : {}) },
+      ...(board ? { boardState: boardView(board, poll.options.map((option) => option.optionId), role) } : {}) }
+  }
   const maySeeResults = role === 'presenter' || poll.visibility === 'live' || poll.revealed
   if (!maySeeResults) return base
   if (poll.type === 'open') return { ...base, responses: responsesFor(poll, role) }
@@ -156,7 +187,7 @@ export function currentPollStateMessages(
   role: 'presenter' | 'audience',
 ): PollStateMessage[] {
   return Object.values(session.polls)
-    .map((poll) => pollStateMessage(poll, role))
+    .map((poll) => pollStateFor(session, poll, role))
 }
 
 export function closeSession(session: StoredLiveSession): SessionClosedMessage {

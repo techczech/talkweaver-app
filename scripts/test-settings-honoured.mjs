@@ -95,6 +95,24 @@ const LOGO_BODY = [
   '- MiniMax'
 ]
 
+// Five icon-row columns beside nothing wrap to rows of three (ADR-0033 §5); the setting switches that off.
+const NARROW_BODY = [
+  '## First section',
+  '',
+  '### Five roles {iconrow}',
+  '',
+  '- Assistant {icon=lucide:headset}',
+  '  - Reduces tasks',
+  '- Tutor {icon=tabler:chalkboard-teacher}',
+  '  - Stages load',
+  '- Consultant {icon=lucide:briefcase-business}',
+  '  - Promotes dialogue',
+  '- Translator {icon=lucide:languages}',
+  '  - Reduces load',
+  '- Tool maker {icon=tabler:tools}',
+  '  - Creates tools'
+]
+
 const CLAIM_BODY = [
   '## First section',
   '',
@@ -103,6 +121,37 @@ const CLAIM_BODY = [
   '**This is the claim the slide makes.**',
   '',
   'And ordinary prose beneath it.'
+]
+
+const SHOT_BODY = [
+  '## First section',
+  '',
+  '### Three screenshots',
+  '{image-grid}',
+  '',
+  '![One](https://example.com/one.png)',
+  '- First',
+  '',
+  '![Two](https://example.com/two.png)',
+  '- Second',
+  '',
+  '![Three](https://example.com/three.png)',
+  '- Third'
+]
+
+const SHOT_LIST_BODY = [
+  '## First section',
+  '',
+  '### Three screenshots {sidebar}',
+  '',
+  '![One](https://example.com/one.png)',
+  '- First',
+  '',
+  '![Two](https://example.com/two.png)',
+  '- Second',
+  '',
+  '![Three](https://example.com/three.png)',
+  '- Third'
 ]
 
 const EFFECTS = {
@@ -157,12 +206,48 @@ const EFFECTS = {
     expect: { '': '', trebuchet: '', 'gill-sans': 'gill-sans', verdana: 'verdana' },
     unknown: { value: 'papyrus', warning: 'font-unknown' }
   },
+  narrow_columns: {
+    effect: 'an icon row of five columns wraps to rows of three when its columns would be narrower than 22cqw',
+    body: NARROW_BODY,
+    probe: ({ document }) => (document.querySelector('.icon-row')?.classList.contains('ir-rows') ? 'rows' : 'one-line'),
+    expect: { '': 'rows', true: 'rows', false: 'one-line' },
+    unknown: { value: 'perhaps', warning: 'deck-flag-unknown' }
+  },
   claim_style: {
     effect: 'a wholly bold paragraph takes the deck claim treatment',
     body: CLAIM_BODY,
     probe: ({ document }) => document.querySelector('p.claim')?.getAttribute('data-claim-style') ?? '',
     expect: { '': 'plain', plain: 'plain', bar: 'bar' },
     unknown: { value: 'underline', warning: 'claim-style-unknown' }
+  },
+  screenshot_style: {
+    effect: 'a row of three screenshots is drawn in the deck screenshot treatment',
+    body: SHOT_BODY,
+    probe: ({ document }) => document.querySelector('.image-grid[data-shot-row]')?.getAttribute('data-shot-row') ?? '',
+    expect: { '': 'frames', frames: 'frames', fanned: 'fanned' },
+    unknown: { value: 'neon', warning: 'screenshot-style-unknown' }
+  },
+  screenshot_list: {
+    effect: 'a list whose lines each carry a screenshot is arranged as the deck says',
+    body: SHOT_LIST_BODY,
+    probe: ({ document }) => document.querySelector('.slot[data-slot-arrange]')?.getAttribute('data-slot-arrange') ?? '',
+    expect: { '': 'beside', beside: 'beside', stacked: 'stacked' },
+    unknown: { value: 'diagonal', warning: 'screenshot-list-unknown' }
+  },
+  title_look: {
+    effect: 'a top title is drawn in the named look',
+    body: ['## First section', '', '### A content slide', '{titletop}', '', '- One', '- Two'],
+    probe: ({ document }) => document.querySelector('section.slide[data-role="content"]')?.getAttribute('data-title-look') ?? '',
+    expect: { '': '', default: '', kicker: 'kicker', label: 'label', tab: 'tab' },
+    unknown: { value: 'sparkle', warning: 'title-look-unknown' }
+  },
+  title_look_at: {
+    effect: 'a Kicker title sits near the top edge',
+    meta: ['title_look: kicker'],
+    body: ['## First section', '', '### A content slide', '{titletop}', '', '- One', '- Two'],
+    probe: ({ document }) => document.querySelector('section.slide[data-role="content"]')?.getAttribute('data-title-look-at') ?? '',
+    expect: { '': '', normal: '', edge: 'edge' },
+    unknown: { value: 'high', warning: 'title-look-at-unknown' }
   },
   palette: {
     effect: 'the section accent cycle switches to the green palette',
@@ -449,6 +534,8 @@ for (const id of [
   'colour-unknown',
   'title-style-unknown',
   'claim-style-unknown',
+  'screenshot-style-unknown',
+  'screenshot-list-unknown',
   'palette-unknown',
   'logo-colour-unknown',
   'links-index-empty',

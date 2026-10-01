@@ -1,4 +1,5 @@
 import { escapeHtml } from "./01-cli-utils.mjs";
+import { plainInlineText } from "./00-inline-render.mjs";
 
 // =============================================================================
 // 4. HTML extraction — extractStyles / extractSlides over self-generated HTML (strip <script> first — see handout regression)
@@ -110,7 +111,8 @@ export function extractSlides(html) {
 }
 
 export function updateDeckTitle(html, title) {
-  const titleText = escapeHtml(title);
+  // The <title> element and the meta tag cannot carry markup: inline markers are dropped.
+  const titleText = escapeHtml(plainInlineText(title));
   let nextHtml = html.replace(/<title[^>]*>[\s\S]*?<\/title>/i, `<title>${titleText}</title>`);
   if (/<meta\s+name=["']deck-title["'][^>]*>/i.test(nextHtml)) {
     nextHtml = nextHtml.replace(/<meta\s+name=["']deck-title["'][^>]*>/i, `<meta name="deck-title" content="${titleText}">`);

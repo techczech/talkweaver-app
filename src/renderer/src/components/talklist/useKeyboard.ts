@@ -1,6 +1,6 @@
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { TalkInfo } from '../../../../preload/index'
-import type { RowRef, TalkSortKey } from './model'
+import { collapseId, type RowRef, type TalkSortKey } from './model.ts'
 
 // The panel-scoped keyboard model (identical in both view modes — ADR-0008):
 // ↑↓ walk · → expand · ← collapse (from a talk: fold its containing folder) ·
@@ -14,9 +14,11 @@ interface Deps {
   focusedRow: RowRef | null
   focusedTalk: TalkInfo | null
   collapsed: Set<string>
-  toggleFolder: (path: string) => void
+  toggleFolder: (path: string, vaultId?: string) => void
   /** Drill into a folder (breadcrumb navigation) — Enter/→ on a folder row. */
-  drillInto: (path: string) => void
+  drillInto: (path: string, vaultId?: string) => void
+  /** ↵ / → / ← on a vault header or an empty vault's block: fold or open the section, or make its first talk. */
+  activateVaultRow: (row: Extract<RowRef, { kind: 'vault' | 'empty' }>, key: 'enter' | 'expand' | 'collapse') => void
   /** ⌘↑ — go up one breadcrumb level; refocuses the folder just left. No-op at root. */
   upOneLevel: () => void
   /** ⌘← / ⌘→ — collapse / expand every subfolder of the current drilled-in view. */
@@ -34,7 +36,7 @@ interface Deps {
   anyOverlayOpen: boolean
   onSelectTalk: (talk: TalkInfo) => void
   startRename: (talk: TalkInfo) => void
-  startRenameFolder: (path: string) => void
+  startRenameFolder: (path: string, vaultId?: string) => void
   startDuplicate: (talk: TalkInfo) => void
   startDelete: (talk: TalkInfo) => void
   startMove: (talk: TalkInfo, at: { x: number; y: number }) => void
@@ -43,10 +45,11 @@ interface Deps {
 
 /** The folder row that CONTAINS the given row, from render order: the nearest preceding
  *  folder row one level shallower. Null for rows at the current view's root. */
-function containingFolder(rows: RowRef[], row: RowRef): Extract<RowRef, { kind: 'folder' }> | null {
+function containingFolder(rows: RowRef[], row: Extract<RowRef, { kind: 'talk' | 'folder' }>): Extract<RowRef, { kind: 'folder' }> | null {
   const idx = rows.findIndex((r) => r.key === row.key)
   for (let i = idx - 1; i >= 0; i--) {
     const r = rows[i]
+    if (r.kind === 'vault') return null
     if (r.kind === 'folder' && r.depth === row.depth - 1) return r
   }
   return null
@@ -118,18 +121,20 @@ export function makePanelKeyHandler(d: Deps) {
       if (e.key === 'ArrowRight') {
         e.preventDefault()
         // Expand only — drilling in belongs to ↵/⌘O (an already-expanded folder is a no-op).
-        if (d.focusedRow?.kind === 'folder' && d.collapsed.has(d.focusedRow.path)) d.toggleFolder(d.focusedRow.path)
+        if (d.focusedRow?.kind === 'folder' && d.collapsed.has(collapseId(d.focusedRow.vaultId, d.focusedRow.path))) d.toggleFolder(d.focusedRow.path, d.focusedRow.vaultId)
+        else if (d.focusedRow?.kind === 'vault') d.activateVaultRow(d.focusedRow, 'expand')
         return
       }
       if (e.key === 'ArrowLeft') {
         e.preventDefault()
-        if (d.focusedRow?.kind === 'folder' && !d.collapsed.has(d.focusedRow.path)) { d.toggleFolder(d.focusedRow.path); return }
+        if (d.focusedRow?.kind === 'folder' && !d.collapsed.has(collapseId(d.focusedRow.vaultId, d.focusedRow.path))) { d.toggleFolder(d.focusedRow.path, d.focusedRow.vaultId); return }
+        if (d.focusedRow?.kind === 'vault') { d.activateVaultRow(d.focusedRow, 'collapse'); return }
         // From a TALK row: one keystroke jumps to its containing folder and folds it.
         if (d.focusedRow?.kind === 'talk') {
           const parent = containingFolder(d.rows, d.focusedRow)
           if (parent) {
             d.setFocusKey(parent.key)
-            d.toggleFolder(parent.path) // contents were visible, so this collapses
+            d.toggleFolder(parent.path, parent.vaultId) // contents were visible, so this collapses
             return
           }
         }
@@ -141,13 +146,14 @@ export function makePanelKeyHandler(d: Deps) {
         e.preventDefault()
         if (d.focusedRow?.kind === 'talk') d.onSelectTalk(d.focusedRow.talk)
         // Opening is the default for folders too: Enter drills in (folding stays on ←/→ and the caret).
-        else if (d.focusedRow?.kind === 'folder') d.drillInto(d.focusedRow.path)
+        else if (d.focusedRow?.kind === 'folder') d.drillInto(d.focusedRow.path, d.focusedRow.vaultId)
+        else if (d.focusedRow?.kind === 'vault' || d.focusedRow?.kind === 'empty') d.activateVaultRow(d.focusedRow, 'enter')
         return
       }
       // F2 = rename the focused item, talk or folder (the classic file-manager chord).
       if (e.key === 'F2') {
         if (d.focusedRow?.kind === 'talk') { e.preventDefault(); d.startRename(d.focusedRow.talk) }
-        else if (d.focusedRow?.kind === 'folder') { e.preventDefault(); d.startRenameFolder(d.focusedRow.path) }
+        else if (d.focusedRow?.kind === 'folder') { e.preventDefault(); d.startRenameFolder(d.focusedRow.path, d.focusedRow.vaultId) }
         return
       }
     }
@@ -156,7 +162,8 @@ export function makePanelKeyHandler(d: Deps) {
       if (e.key === 'o' || e.key === 'O') {
         e.preventDefault(); e.stopPropagation()
         if (d.focusedRow?.kind === 'talk') d.onSelectTalk(d.focusedRow.talk)
-        else if (d.focusedRow?.kind === 'folder') d.drillInto(d.focusedRow.path)
+        else if (d.focusedRow?.kind === 'folder') d.drillInto(d.focusedRow.path, d.focusedRow.vaultId)
+        else if (d.focusedRow?.kind === 'vault' || d.focusedRow?.kind === 'empty') d.activateVaultRow(d.focusedRow, 'enter')
         return
       }
       // stopPropagation on the ⌘-arrows: GridView binds ⌘↑/⌘↓ on a window listener that only

@@ -7,6 +7,8 @@ interface Props {
   minLeftPct?: number
   maxLeftPct?: number
   storageKey?: string
+  /** The right pane keeps at least this many pixels; the left pane gives way (the docked layout picker, ADR-0032 §8). */
+  minRightPx?: number
 }
 
 const DIVIDER_WIDTH = 6
@@ -33,7 +35,8 @@ export default function ResizablePanes({
   initialLeftPct = 55,
   minLeftPct = 25,
   maxLeftPct = 80,
-  storageKey
+  storageKey,
+  minRightPx
 }: Props): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [leftPct, setLeftPct] = useState<number>(() =>
@@ -89,9 +92,10 @@ export default function ResizablePanes({
     >
       <div
         style={{
-          width: `${leftPct}%`,
+          width: minRightPx ? `max(0px, min(${leftPct}%, calc(100% - ${DIVIDER_WIDTH}px - ${minRightPx}px)))` : `${leftPct}%`,
           height: '100%',
           minWidth: 0,
+          flex: minRightPx ? 'none' : undefined,
           overflow: 'hidden'
         }}
       >
@@ -119,7 +123,8 @@ export default function ResizablePanes({
       />
       <div
         style={{
-          width: `${100 - leftPct}%`,
+          width: minRightPx ? undefined : `${100 - leftPct}%`,
+          flex: minRightPx ? '1 1 0' : undefined,
           height: '100%',
           minWidth: 0,
           overflow: 'hidden'

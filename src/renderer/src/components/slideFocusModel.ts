@@ -10,6 +10,8 @@
 // level) or EOF, with trailing blank lines trimmed so the band sits flush — matching the focus-scope
 // extension's range semantics (from inclusive, to the block's upper edge; an insert AT `to` grows it).
 
+import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
+
 const HEADING_RE = /^#{1,6}\s/
 // `{id=…}` slide-identity token, as stamped on a slide's heading or its Trigger line.
 const ID_RE = /\{id=([A-Za-z0-9_-]+)\}/
@@ -129,7 +131,7 @@ export function readableSectionLabel(
   if (rows && index >= 0 && index < rows.length) {
     for (let i = index; i >= 0; i -= 1) {
       if (rows[i]?.role === 'section-title') {
-        const t = rows[i].nav_title || rows[i].title || ''
+        const t = plainInlineText(rows[i].nav_title || rows[i].title)
         if (t) return t
       }
     }

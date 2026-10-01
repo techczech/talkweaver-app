@@ -111,6 +111,23 @@
     stroke-width: 1.4;
   }
 
+  /* Slide round 2 (0.37): a short-line icon list of five items or fewer (the compiler stamps
+     .fl-short-lines) under a top title runs in two columns, so it reads at 2.3cqw (44px at 1920) instead
+     of a smaller zoomed single column. An item never splits across the columns; the dotted rule between
+     rows goes (it would start the second column with a stray line). A talk's own body size wins. */
+  .slide[data-title-layout="top"]:not([data-font-body]) > .slide-content:has(> .feature-list.fl-short-lines) { --fs-body: max(var(--type-floor), 2.3cqw); --list-lh: 1.22; }
+  .slide[data-title-layout="top"] > .slide-content > .feature-list.fl-iconlist-list.fl-short-lines:not(.fl-annotated) {
+    display: block;
+    columns: 2;
+    column-gap: 4cqw;
+    width: 100%;
+  }
+  .slide[data-title-layout="top"] > .slide-content > .feature-list.fl-iconlist-list.fl-short-lines:not(.fl-annotated) > li {
+    break-inside: avoid;
+    margin-bottom: 1.2cqh;
+    border-top: 0;
+  }
+
   /* ADR-0028 §4, cards (boxes / logolist with children): the same faint dotted line separates
      the sub-items inside each card — between sub-items only, none above the first or below the
      last. The sub-list stretches to the card's inner width so the line spans the card. */

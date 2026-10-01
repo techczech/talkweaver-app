@@ -12,6 +12,10 @@ export interface RenderThumbnailsOptions {
   fullHtml: string
   /** Replaces obsolete pending renders from the same editor. */
   requestKey?: string
+  /** A layout variant's render (the picker's and the Inspector's pictures of the slide): it starts only
+   *  when no normal render is pending, so it never holds a queued normal render up; one already
+   *  running is not interrupted. Its compile is on the preparation gate's background lane likewise. */
+  background?: boolean
   /** Ordered slides — one per ProjectionRow, in presentation order. key is the cache key;
    *  layout (when a multi-part one) drives per-part sub-thumbnail capture. */
   slides: Array<{ key: string; cacheKey?: string; layout?: string; index?: number }>
@@ -103,7 +107,7 @@ async function ensureDeckLoaded(fullHtml: string): Promise<BrowserWindow> {
 export async function renderThumbnails(
   opts: RenderThumbnailsOptions
 ): Promise<Record<string, string>> {
-  return enqueueRender(opts, opts.requestKey)
+  return enqueueRender(opts, opts.requestKey, opts.background === true)
 }
 
 async function renderThumbnailsSerialized(

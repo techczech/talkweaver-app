@@ -1,4 +1,7 @@
 import type { OperationAck, RecoveredVoteRecord, RecoveryClientMessage, VoteAck } from './recovery-protocol'
+import { answerQuestion, setAudienceSwitches } from './audience-feedback'
+import { applyBoardOperation, ensureBoard } from './board-state'
+import type { PresenterBoardMessage } from './board-protocol'
 import { closePoll, hidePollResponse, openPoll, revealPoll, setInstantSlide, voteInPoll, type StoredLiveSession } from './session-state'
 
 export interface RecoveryState {
@@ -11,19 +14,27 @@ export function recoveryState(session: StoredLiveSession): RecoveryState {
   return session.recovery ??= { operations: {}, submissions: {}, voteRecords: [] }
 }
 
-function operationFingerprint(action: Extract<RecoveryClientMessage, {type:'operation'}>['action']): string {
-  if (action.type !== 'instant.show' || action.slide.kind !== 'image') return JSON.stringify(action)
-  // A full JSON fingerprint would store every image twice in the single session row.
-  // Keep a compact content fingerprint for retry deduplication instead.
+/** A compact content digest: a full JSON fingerprint would store big payloads twice in the single session row. */
+function digest(text: string): string {
   let first = 2166136261, second = 0x9e3779b9
-  for (let i = 0; i < action.slide.dataUrl.length; i++) {
-    const code = action.slide.dataUrl.charCodeAt(i)
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i)
     first = Math.imul(first ^ code, 16777619)
     second = Math.imul(second ^ (code + i), 2246822519)
   }
+  return `${first >>> 0}:${second >>> 0}`
+}
+
+function operationFingerprint(action: Extract<RecoveryClientMessage, {type:'operation'}>['action']): string {
+  if (action.type === 'poll.open' && action.poll.seed) {
+    // A seeded board's opening cards (pre-work answers) can be large, and every reopen sends them again.
+    const { seed, ...poll } = action.poll
+    return JSON.stringify({ type: action.type, poll, seed: { cards: seed.length, length: JSON.stringify(seed).length, digest: digest(JSON.stringify(seed)) } })
+  }
+  if (action.type !== 'instant.show' || action.slide.kind !== 'image') return JSON.stringify(action)
   return JSON.stringify({ type: action.type, kind: 'image', shownAt: action.slide.shownAt,
     width: action.slide.width, height: action.slide.height, length: action.slide.dataUrl.length,
-    digest: `${first >>> 0}:${second >>> 0}` })
+    digest: digest(action.slide.dataUrl) })
 }
 
 export function applyPollOperation(session: StoredLiveSession, message: Extract<RecoveryClientMessage, {type:'operation'}>): OperationAck {
@@ -41,7 +52,10 @@ export function applyPollOperation(session: StoredLiveSession, message: Extract<
     else if (action.type === 'poll.reveal') revealPoll(session, action.pollId)
     else if (action.type === 'poll.hide') hidePollResponse(session, action.pollId, action.responseId, action.hidden ?? true)
     else if (action.type === 'instant.show') setInstantSlide(session, action.slide)
-    else setInstantSlide(session, null)
+    else if (action.type === 'question.answer') answerQuestion(session, action.questionId, action.answered)
+    else if (action.type === 'switches.set') setAudienceSwitches(session, action)
+    else if (action.type === 'instant.clear') setInstantSlide(session, null)
+    else applyBoardAction(session, action)
     ack = { type: 'operation.ack', operationId: message.operationId, status: 'confirmed' }
   } catch (error) {
     ack = { type: 'operation.ack', operationId: message.operationId, status: 'rejected',
@@ -49,6 +63,15 @@ export function applyPollOperation(session: StoredLiveSession, message: Extract<
   }
   recovery.operations[key] = { fingerprint, ack }
   return ack
+}
+
+/** A presenter board operation on a board poll of this session; throws the refusal code. */
+export function applyBoardAction(session: StoredLiveSession, action: PresenterBoardMessage): void {
+  if (session.status !== 'open') throw new Error('Session is closed.')
+  const poll = session.polls[action.pollId]
+  if (!poll) throw new Error('Poll not found.')
+  if (poll.type !== 'board') throw new Error('not_a_board')
+  applyBoardOperation(ensureBoard(session, poll), poll, action)
 }
 
 export function acceptSubmission(

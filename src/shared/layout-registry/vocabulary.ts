@@ -174,7 +174,8 @@ export function winningAuthoredLayout(
     ?? implied('contrast', 'contrast')
     ?? implied('equation', 'equation')
     ?? implied('blocks', 'grid', isCompilerGridDimension)
-    ?? implied('cards', 'cards')
+    // ADR-0032: a NUMBER is a board's cards-per-phone setting ({cards=3}), never the cards layout.
+    ?? implied('cards', 'cards', (value) => value !== true && !/^\d+$/.test(String(value)))
 }
 
 function rawTriggerTokens(source: string): string[] {
