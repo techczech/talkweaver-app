@@ -26,6 +26,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { chromium } from 'playwright'
 import { buildLayoutSampler } from './build-layout-sampler.mjs'
 import { presenterSelectors, audienceSelectors } from './lib/mode-selectors.mjs'
+import { EMPH_STEP_SELECTOR } from '../compiler/assets/runtime/emphasis-steps.js'
 import { extractSlides, extractStyles } from '../compiler/scripts/lib/04-html-extraction.mjs'
 import { buildShareHtml } from '../compiler/scripts/lib/09-output-builders.mjs'
 
@@ -80,8 +81,10 @@ const browser = await chromium.launch({ headless: true })
 let failures = 0
 try {
   // Each runtime is driven by ITS OWN selector — that is the whole point of the comparison.
-  const deckSelector = presenterSelectors().join(',')
-  const handoutSelector = audienceSelectors().join(',')
+  // Emphasis spans (0.38 ticket 02) are units in the same enumeration on a slide with
+  // {emphasis-steps}; both runtimes read them through one shared module, so its selector joins each.
+  const deckSelector = [...presenterSelectors(), EMPH_STEP_SELECTOR].join(',')
+  const handoutSelector = [...audienceSelectors(), EMPH_STEP_SELECTOR].join(',')
   const read = async (path, selector) => {
     const page = await browser.newPage({ viewport: { width: 1280, height: 720 } })
     await page.goto(pathToFileURL(path).href)
@@ -129,6 +132,11 @@ try {
     }
   }
 
+  const emphasisUnits = (handoutUnits['emphasis-steps'] || []).filter((unit) => /^(strong|mark|u|s)\|/.test(unit))
+  if (emphasisUnits.length !== 4) {
+    console.error(`FAIL emphasis-steps: the sampler slide should enumerate 4 emphasis spans, found ${emphasisUnits.length}`)
+    failures++
+  }
   console.log(`compared ${compared} slides (${withUnits} carry reveal units) across both runtimes`)
 } finally {
   await browser.close()

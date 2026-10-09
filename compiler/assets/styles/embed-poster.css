@@ -1,0 +1,144 @@
+/* Embedded local page (0.38 ticket 11): the labelled box shown wherever the page is not running.
+   The compiler writes it into the figure beside an empty sandboxed frame (embed-frame.mjs); the
+   deck runtime sets data-embed-state="live" on the figure only while its slide is being presented.
+   Everything here is CSS on compiled markup, so previews, thumbnails, print and a page with no
+   script show the box. It covers the frame's own area (the frame keeps its place in the layout,
+   hidden), so a slide is laid out the same whether the page runs or not. */
+.embed-poster { display: none; }
+figure.slide-embed[data-embed="local"]:not([data-embed-state="live"]) > iframe { visibility: hidden; }
+figure.slide-embed[data-embed="local"]:not([data-embed-state="live"]) > .embed-interact-chip { display: none; }
+figure.slide-embed[data-embed="local"]:not([data-embed-state="live"]) > .embed-poster {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5em;
+  padding: 1em 1.5em;
+  overflow: hidden;
+  text-align: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: inherit;
+  line-height: 1.25;
+}
+.embed-poster-icon { display: inline-flex; color: var(--accent); }
+.embed-poster-icon svg { display: block; width: clamp(24px, 3.2cqw, 56px); height: clamp(24px, 3.2cqw, 56px); }
+.embed-poster-kind {
+  font-size: clamp(11px, 1.2cqw, 20px);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.embed-poster-title {
+  max-width: 100%;
+  font-size: clamp(16px, 2.3cqw, 40px);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.embed-poster-note { font-size: clamp(11px, 1.3cqw, 22px); color: var(--muted); }
+/* A page stopped by the focus budget (runtime/embed-focus.js): the placeholder says so. */
+figure.slide-embed[data-embed="local"][data-embed-stopped] > .embed-poster .embed-poster-note { display: none; }
+figure.slide-embed[data-embed="local"][data-embed-stopped] > .embed-poster::after {
+  content: "Stopped: a page on this slide kept taking the keyboard";
+  font-size: clamp(11px, 1.3cqw, 22px);
+  color: var(--muted);
+}
+/* A stopped page keeps its Interact chip: it is how the person runs that one page again. (Not on
+   the audience display, in a preview or in print, where the chip never shows.) */
+body:not(.audience-mode) figure.slide-embed[data-embed="local"][data-embed-stopped] > .embed-interact-chip { display: inline-flex; }
+.preview figure.slide-embed[data-embed="local"][data-embed-stopped] > .embed-interact-chip { display: none; }
+@media print { figure.slide-embed[data-embed="local"][data-embed-stopped] > .embed-interact-chip { display: none; } }
+/* Print hides every embed frame, so the box stands in the flow there, live or not. */
+@media print {
+  figure.slide-embed[data-embed="local"] > .embed-poster {
+    position: static;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5em;
+    min-height: 9em;
+    padding: 1em 1.5em;
+    text-align: center;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
+}
+
+/* Embedded page full screen (0.38 ticket 13), like the image zoom: the page's figure covers the
+   whole slide, title and text behind it. It is the slide stage, not the browser's full screen, and
+   it is a size change only: the figure and its frame stay where they are in the document, so the
+   page keeps running. Every box between the slide and the figure stops being a positioning or
+   clipping context, so the figure's box is the slide's. */
+.slide.embed-full-screen :has(figure.slide-embed.embed-stage-expanded) { position: static !important; zoom: 1 !important; transform: none !important; contain: none !important; container-type: normal !important; overflow: visible !important; filter: none !important; }
+.slide.embed-full-screen figure.slide-embed.embed-stage-expanded { position: absolute !important; inset: 0 !important; border: 0 !important; border-radius: 0 !important; padding: 0 !important; z-index: 20; box-sizing: border-box; width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; margin: 0 !important; background: var(--paper, #fff); }
+.slide.embed-full-screen figure.slide-embed.embed-stage-expanded > iframe { width: 100% !important; height: 100% !important; max-height: none !important; min-height: 0 !important; border: 0 !important; border-radius: 0 !important; }
+
+/* The presenter's Current pane (ticket 11.2, after the security review): a cover over the live
+   page takes the first press, in the deck's own document, which is how the deck knows the person
+   chose to use the page. It steps aside while the pane is engaged. */
+.preview.preview-live-sim .live-sim-cover {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  margin: 0;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.preview.preview-live-sim.embed-engaged .live-sim-cover { display: none; }
+/* A page stopped by the focus budget: the cover stands for the page and says so. */
+.preview.preview-live-sim.embed-stopped .live-sim-cover {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--paper, #fff);
+}
+.preview.preview-live-sim.embed-stopped > iframe.live-sim-frame { visibility: hidden; }
+/* The pane shows the slide around the page (0.38 ticket 13): the slide's picture is the pane's
+   first frame, the page's frame lies over its place in it (the deck sets the box), and the
+   full-screen button sits inside the page's top-right corner, under the cover's label. */
+.preview.preview-live-sim > iframe.live-sim-frame[data-embed-local] { z-index: 1; }
+.preview.preview-live-sim > .embed-stage-fullscreen {
+  position: absolute;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(11, 17, 23, 0.82);
+  color: #fff;
+  cursor: pointer;
+}
+.preview.preview-live-sim > .embed-stage-fullscreen:hover,
+.preview.preview-live-sim > .embed-stage-fullscreen[aria-pressed="true"] { background: rgba(11, 17, 23, 0.95); }
+.preview.preview-live-sim > .embed-stage-fullscreen:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.preview.preview-live-sim > .embed-stage-fullscreen > .tw-btn-label { display: none; }
+.live-sim-cover-note { font: 500 12px/1.3 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--muted, #555); }
+.live-sim-cover-label {
+  font: 600 12px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #fff;
+  background: rgba(11, 17, 23, 0.78);
+  padding: 5px 10px;
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+.live-sim-cover:hover .live-sim-cover-label { background: rgba(11, 17, 23, 0.95); }
+.live-sim-cover:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

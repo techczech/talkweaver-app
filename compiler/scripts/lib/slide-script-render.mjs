@@ -14,10 +14,10 @@
  * rendered QR anchors as placeholders that a later link pass put inside href="…"; restoring them
  * closed the attribute and ran the author's text as event handlers — found in review 2026-09-28.)
  *
- * Emphasis (`**`, `*`, `__`, `_`, `==mark==`) is the compiler's own grammar
- * (renderEmphasisEscaped, replaceMarkSyntax) applied to the escaped text with each finished
+ * Emphasis (`**`, `*`, `__`, `_`, `==mark==`, `~~strike~~`, `++underline++`) is the compiler's own grammar
+ * (renderEmphasisEscaped, replaceInlineMarks) applied to the escaped text with each finished
  * fragment standing as one opaque U+FFFC character. Those passes only wrap text in bare
- * <strong>/<em> tags and the constant <mark class="ink-marker">, so a fragment is swapped back
+ * <strong>/<em> tags and the constant <mark class="ink-marker">, <s> and <u>, so a fragment is swapped back
  * in, in order, at a position that is always element content.
  *
  * Braces follow the lexer (03-markdown-lexer.mjs, takeItemIcon): a `{key=value}` token is
@@ -35,7 +35,7 @@ import {
   codeSpanAt,
   indexCodeSpanClosers,
   markdownLinkAt,
-  replaceMarkSyntax
+  replaceInlineMarks
 } from './00-inline-protection.mjs'
 import { normalizeIconOverrideKey } from './05-icons.mjs'
 
@@ -165,7 +165,7 @@ function renderLine(text, { links = true, listItem = false } = {}) {
       atom(links ? anchor(token.url, escapeHtml(token.label)) : escapeHtml(token.label))
     }
   }
-  const marked = replaceMarkSyntax(line.trim(), (inner) => `<mark class="ink-marker">${inner}</mark>`)
+  const marked = replaceInlineMarks(line.trim())
   const emphasised = renderEmphasisEscaped(marked)
   let next = 0
   const html = emphasised.replace(/\ufffc/g, () => fragments[next++] ?? '')
@@ -210,6 +210,8 @@ export function renderScriptBlocks(blocks) {
       out.push({ type: 'table', rows: (block.rows || []).map((row) => row.map((cell) => renderLine(cell))) })
     } else if (block.type === 'media') {
       out.push({ type: 'media', alt: String(block.alt || '') })
+    } else if (block.type === 'audio') {
+      out.push({ type: 'audio', title: String(block.title || '') })
     } else if (block.type === 'diagram') {
       out.push({ type: 'diagram' })
     } else if (block.type === 'code') {

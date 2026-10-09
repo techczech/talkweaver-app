@@ -5,7 +5,7 @@ const bundled = await build({ entryPoints: ['src/preload/present-recorder.ts'], 
   build.onResolve({ filter: /^electron$|present-edit-bridge$|present-live-bridge$/ }, args => ({ path: args.path, namespace: 'test' }))
   build.onLoad({ filter: /.*/, namespace: 'test' }, args => ({ contents: args.path === 'electron' ? 'export const ipcRenderer = window.testIpc' : 'export const mountEditBridge = () => {}; export const mountLiveBridge = () => {};', loader: 'js' }))
 } }] })
-const browser = await chromium.launch({ headless: true, channel: 'chrome' })
+const browser = await chromium.launch({ headless: true })
 try {
   const page = await browser.newPage()
   await page.setContent('<section class="slide active" data-id="a"></section>')

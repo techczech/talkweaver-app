@@ -229,9 +229,13 @@ function runGeneratedDocumentFallback() {
   assert.match(model.fullHtml, /id="quickPollOpen"/)
   assert.match(model.fullHtml, /presenter-poll-hide/)
   assert.match(model.fullHtml, /type: "poll.hide"/)
-  assert.match(model.fullHtml, /\["Q","Open or close current poll"\]/)
-  assert.match(model.fullHtml, /\["⇧ Q","Reveal held poll results"\]/)
-  assert.match(model.fullHtml, /\["K","Compose a Quick poll"\]/)
+  const help = JSON.parse(model.fullHtml.match(/const SHORTCUTS_LIST = (\[.*\]);/)[1])
+  const rows = help.flatMap(([, entries]) => entries)
+  for (const [id, key, label] of [
+    ['presenter.poll-primary', 'Q', 'Open or close current poll'],
+    ['presenter.poll-reveal', '⇧ Q', 'Reveal held poll results'],
+    ['presenter.poll-compose', 'K', 'Compose a Quick poll'],
+  ]) assert.deepEqual(rows.find(row => row[3] === id).slice(0, 2), [key, label])
 
   const script = [...model.fullHtml.matchAll(/<script>\s*([\s\S]*?)<\/script>/g)].at(-1)?.[1] ?? ''
   assert.doesNotThrow(() => new Function(script), 'the generated presenter runtime parses as JavaScript')

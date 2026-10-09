@@ -177,6 +177,23 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     ownership: 'user'
   },
 
+  {
+    key: 'image_steps',
+    aliases: ['image-steps'],
+    location: 'frontmatter',
+    type: 'boolean',
+    vocabulary: bool(
+      'On a slide with images, Next shows each image enlarged in turn with its label, then the whole slide again, then the next slide.',
+      'Next goes from one slide to the next; Z still enlarges an image by hand (the default behaviour).'
+    ),
+    label: 'Step through images',
+    group: 'Presenting',
+    explanation:
+      'Whether Next walks through a slide’s images one at a time, enlarged, before moving on (off by default). A single image that already fills the slide is not stepped; videos, QR codes, audio and carousel cards are left out. A slide’s own {image-steps} or {no-image-steps} overrides this key.',
+    defaultable: true,
+    ownership: 'user'
+  },
+
   // ── Opening & closing slides ─────────────────────────────────────────────────
   {
     key: 'auto_title_slide',

@@ -1125,4 +1125,28 @@ assert.equal(sectionIdAtScrollTop([], 0), null, 'no sections, no lit pill')
   console.log('PASS prework: every pre-work token resolves; the Before the session section shows each step kind, the section and a results slide')
 }
 
+// ── Ticket 13: the Page width group is offered only beside an embedded page with body text ──
+{
+  const pageGroupOf = (source, trigger) => inspectorModel([{ layout: 'list', source_markdown: source }], 0, 3, trigger, LAYOUTS, source)
+    .sections.flatMap((section) => section.bindings).find((binding) => binding.group.key === 'page-width')
+  const withText = '### Page\n\n- Words beside the page\n\n[Embed: page.html]\n'
+  const binding = pageGroupOf(withText, '')
+  assert.ok(binding, 'a slide with an embedded page and body text offers Page width')
+  assert.deepEqual(binding.values.map((value) => value.label), ['60%', '70%', '80%'])
+  assert.equal(binding.selectedToken, '', 'nothing stored lights 70%')
+  assert.equal(pageGroupOf(withText, '{page-80}').selectedToken, 'page-80', 'a stored page-80 lights 80%')
+  assert.equal(pageGroupOf(withText, '{page-70}').selectedToken, '', 'page-70 is the default and lights 70%')
+  assert.equal(pageGroupOf('### Page\n\n[Simulation: page.html]\n', ''), undefined, 'a page with no body text: not offered')
+  assert.equal(pageGroupOf('### Words\n\n- Only words\n', ''), undefined, 'body text with no page: not offered')
+  // The group is offered exactly when the compiler makes a local-page-beside-text composition.
+  assert.ok(pageGroupOf('### Page\n\n- Words\n\n[Simulation: sim.html]\n', ''), 'local simulation + text: offered')
+  assert.equal(pageGroupOf('### Page\n\n- Words\n\n[Embed: https://example.com/a]\n', ''), undefined, 'remote embed + text: not offered (the width CSS is for local pages)')
+  assert.equal(pageGroupOf('### Page\n\n[Embed: page.html]\n\n![A picture](pic.png)\n', ''), undefined, 'local page + picture, no body text: not offered')
+  assert.equal(pageGroupOf('### Page\n\n- Words\n\n![A picture](pic.png)\n', ''), undefined, 'picture + text: not offered')
+  assert.equal(pageGroupOf('### Page\n{id=a}{page-80}\n\n[Embed: page.html]\n', ''), undefined, 'title + page + adjacent trigger groups on one line: not offered')
+  assert.equal(pageGroupOf('### Page\n{id=a}\n\n[Embed: page.html]\n', ''), undefined, 'title + page + one trigger group: not offered')
+  assert.ok(pageGroupOf('### Page\n{id=a}{page-80}\n\n- Words\n\n[Embed: page.html]\n', ''), 'adjacent groups plus body text and a local page: offered')
+  console.log('PASS page width: offered on embed + body text only; 60/70/80 with 70 the unwritten default')
+}
+
 console.log('inspector model: pane migration, navigation, applicable groups and step derivation pass')

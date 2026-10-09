@@ -125,12 +125,22 @@ export const PRESENTER_PALETTE: Group[] = [
   ['Slide on every screen', [
     { id: 'reveal', name: 'Reveal mode', icon: 'layers', shortcut: 'presenter.reveal', controls: ['#viewReveal', '#presenterReveal'] },
     { id: 'focus', name: 'Focus mode', icon: 'focus', shortcut: 'presenter.focus', controls: ['#presenterFocus', '#viewFocus'] },
+    { id: 'pointer', name: 'Pointer', icon: 'mouse-pointer-2', shortcut: 'presenter.pointer', controls: ['#presenterPointer', '#viewPointer', '#morePointer'] },
+    { id: 'pen', name: 'Pen', icon: 'pen-tool', shortcut: 'presenter.pen', controls: ['#presenterPen', '#viewPen', '#morePen'] },
+    { id: 'pen-freehand', name: 'Pen tool: Freehand', icon: 'pen-line', controls: ['#penToolFreehand', '#penStripFreehand'], words: ['draw'] },
+    { id: 'pen-arrow', name: 'Pen tool: Arrow', icon: 'move-up-right', controls: ['#penToolArrow', '#penStripArrow'], words: ['draw'] },
+    { id: 'pen-rectangle', name: 'Pen tool: Rectangle', icon: 'square', controls: ['#penToolRectangle', '#penStripRectangle'], words: ['draw', 'box'] },
+    { id: 'pen-next-tool', name: 'Pen: next tool', icon: 'pen-tool', shortcut: 'presenter.pen-tool', keyPart: 0 },
+    { id: 'ink-undo', name: 'Undo last stroke', icon: 'undo-2', shortcut: 'presenter.ink-undo', controls: ['#penUndo', '#penStripUndo'], words: ['pen', 'drawing'] },
+    { id: 'ink-clear', name: 'Clear drawing on this slide', icon: 'eraser', shortcut: 'presenter.ink-clear', controls: ['#presenterInkClear', '#viewInkClear', '#moreInkClear'], words: ['pen'] },
+    { id: 'ink-clear-all', name: 'Clear all drawings', icon: 'eraser', shortcut: 'presenter.ink-clear-all', controls: ['#viewInkClearAll', '#moreInkClearAll'], words: ['pen'] },
     { id: 'highlight', name: 'Highlight text', icon: 'highlighter', shortcut: 'presenter.highlight', controls: ['#presenterHighlight', '#viewHighlight'] },
     { id: 'highlight-clear', name: 'Clear highlights', icon: 'eraser', controls: ['#presenterHighlightClear', '#viewHighlightClear', '#presenterHighlightChipClear'] },
     { id: 'font-smaller', name: 'Slide text smaller', icon: 'a-arrow-down', shortcut: 'presenter.font-smaller', controls: ['#fontDown', '#viewFontDown'] },
     { id: 'font-larger', name: 'Slide text larger', icon: 'a-arrow-up', shortcut: 'presenter.font-larger', controls: ['#fontUp', '#viewFontUp'] },
     { id: 'media', name: 'Play or pause media', icon: 'play', shortcut: 'presenter.media', controls: ['#presenterMediaPlay', '#presenterMediaPause'] },
     { id: 'video-fullscreen', name: 'Video full screen', icon: 'fullscreen', shortcut: 'presenter.video-fullscreen', controls: ['#presenterVideoFullscreen'] },
+    { id: 'embed-fullscreen', name: 'Embedded page: full screen', icon: 'maximize-2', shortcut: 'presenter.embed-fullscreen', controls: ['#presenterEmbedFullscreen'] },
     { id: 'gallery', name: 'Image gallery', icon: 'images', shortcut: 'presenter.gallery', controls: ['#presenterGalleryBtn'] }
   ]],
   ['Editor and help', [
@@ -196,6 +206,7 @@ export function presenterPaletteKeyCode(entry: PresenterPaletteEntry, registry: 
 export function presenterPaletteData(registry: readonly RegistryEntry[], palette: Group[] = PRESENTER_PALETTE) {
   return palette.map(([group, entries]) => [group, entries.map((entry) => ({
     id: entry.id,
+    shortcut: entry.shortcut ?? null,
     name: entry.name,
     icon: entry.icon,
     keys: presenterPaletteKeys(entry, registry),

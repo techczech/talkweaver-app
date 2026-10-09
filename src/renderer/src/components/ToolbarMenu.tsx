@@ -102,7 +102,7 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
   )
 }
 
-export type MenuItem = { icon: IconName; label: string; onClick: () => void; danger?: boolean; hint?: string; separatorBefore?: boolean }
+export type MenuItem = { icon: IconName; label: string; onClick: () => void; danger?: boolean; hint?: string; separatorBefore?: boolean; disabled?: boolean }
 
 // A toolbar button that opens a polished popup menu of icon+label items.
 export default function ToolbarMenu({
@@ -150,7 +150,9 @@ export default function ToolbarMenu({
                 <button
                   role="menuitem"
                   className={`toolbar-menu-item ${it.danger ? 'is-danger' : ''}`}
-                  onClick={() => { setOpen(false); it.onClick() }}
+                  disabled={it.disabled}
+                  aria-disabled={it.disabled || undefined}
+                  onClick={() => { if (it.disabled) return; setOpen(false); it.onClick() }}
                 >
                   <Icon name={it.icon} size={15} />
                   <span>{it.label}</span>

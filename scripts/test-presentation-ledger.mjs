@@ -147,4 +147,40 @@ check('buildSlideTimeIndex keeps legacy highlight marks without ranges valid', (
   })
 })
 
+check('buildSlideTimeIndex carries the Pen\'s ink (checked) on the recording clock and drops malformed ink', () => {
+  const ink = [{ tool: 'arrow', ink: 'red', width: 'thin', points: [[640, 360], [900, 500]] }]
+  const idx = buildSlideTimeIndex([
+    { event: 'enter', slideId: 'a', tMs: 0 },
+    { event: 'pause', tMs: 1000 }, { event: 'resume', tMs: 3000 },
+    { event: 'ink', slideId: 'a', ink, tMs: 4000 },
+    { event: 'ink', slideId: 'a', ink: [{ ...ink[0], ink: '<b>' }], tMs: 5000 },
+    { event: 'ink', slideId: 'a', ink: [], tMs: 6000 },
+  ])
+  assert.deepEqual(idx.filter(m => m.event === 'ink'), [
+    { event: 'ink', slideId: 'a', tMs: 2000, ink },
+    { event: 'ink', slideId: 'a', tMs: 4000, ink: [] },
+  ])
+})
+
+check('buildSlideTimeIndex keeps a zoomed image\'s ink with its image, in image units, and caps it', () => {
+  const box = [{ tool: 'rectangle', ink: 'blue', width: 'thick', points: [[0.1, 0.2], [0.8, 0.9]] }]
+  const heavy = Array.from({ length: 6 }, () => ({ tool: 'freehand', ink: 'red', width: 'thin',
+    points: Array.from({ length: 400 }, (_, i) => [100 + i / 1000 + 0.1234567890123, 200 + i / 1000 + 0.9876543210987]) }))
+  const idx = buildSlideTimeIndex([
+    { event: 'enter', slideId: 'p', tMs: 0 },
+    { event: 'ink', slideId: 'p', space: 'image', image: 2, ink: box, tMs: 1000 },
+    { event: 'ink', slideId: 'p', space: 'image', image: 2, ink: [{ ...box[0], points: [[0.1, 0.2], [1.5, 0.9]] }], tMs: 1100 },
+    { event: 'ink', slideId: 'p', space: 'image', image: -1, ink: box, tMs: 1200 },
+    { event: 'ink', slideId: 'p', space: 'image', image: '2', ink: box, tMs: 1300 },
+    { event: 'ink', slideId: 'p', ink: box, tMs: 1400 },
+    { event: 'ink', slideId: 'p', ink: heavy, tMs: 1500 },
+    { event: 'ink', slideId: 'p', ink: [], tMs: 2000 },
+  ])
+  assert.deepEqual(idx.filter(m => m.event === 'ink'), [
+    { event: 'ink', slideId: 'p', tMs: 1000, space: 'image', image: 2, ink: box },
+    { event: 'ink', slideId: 'p', tMs: 1400, ink: box },
+    { event: 'ink', slideId: 'p', tMs: 2000, ink: [] },
+  ])
+})
+
 console.log(failures ? `\n${failures} FAILED` : '\nall passed'); process.exit(failures?1:0)

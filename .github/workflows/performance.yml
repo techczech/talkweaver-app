@@ -2,8 +2,13 @@ name: Performance regression checks
 on:
   pull_request:
   push:
-    branches: ['**']
+    branches: [main, 'next/**']
   workflow_dispatch:
+    inputs:
+      hosted:
+        description: 'Run on a GitHub-hosted runner instead of the self-hosted Mac Studio (emergency switch; uses paid minutes)'
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -11,10 +16,15 @@ concurrency:
   cancel-in-progress: true
 jobs:
   performance:
-    runs-on: macos-14
+    # Required check (branch protection): keep the job name `performance`.
+    # Runs on the self-hosted Mac Studio; `hosted: true` on a manual run uses macos-14.
+    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name != 'pull_request'
+    runs-on: ${{ inputs.hosted && 'macos-14' || fromJSON('["self-hosted","macOS","ARM64"]') }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 24

@@ -2,11 +2,41 @@ import {
   EditorView,
   ViewPlugin,
   Decoration,
-  DecorationSet,
+  type DecorationSet,
   WidgetType,
-  ViewUpdate
+  type ViewUpdate
 } from '@codemirror/view'
-import { Extension, RangeSetBuilder } from '@codemirror/state'
+import { type Extension, RangeSetBuilder, StateEffect, type Text } from '@codemirror/state'
+import { placementLabel, type ImagePlacement, type PlacementKind } from '../../../shared/image-placement.ts'
+import { openFullScreenPreview } from './imageFullScreenPreview.ts'
+
+/** Dispatch when the compiled slides change so the placement labels redraw. */
+export const imagePlacementsChanged = StateEffect.define<null>()
+
+const CHIP_ICONS: Record<PlacementKind, string> = {
+  full: '<path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4"/>',
+  beside: '<rect x="1.5" y="3" width="13" height="10" rx="1"/><path d="M9 3v10"/>',
+  thumbnail: '<rect x="1.5" y="3" width="13" height="10" rx="1"/><rect x="3.5" y="5" width="4" height="3" rx=".5"/>',
+  row: '<rect x="1.5" y="4" width="5.5" height="8" rx="1"/><rect x="9" y="4" width="5.5" height="8" rx="1"/>',
+  gallery: '<rect x="1.5" y="2.5" width="5.5" height="5" rx="1"/><rect x="9" y="2.5" width="5.5" height="5" rx="1"/><rect x="1.5" y="9" width="5.5" height="5" rx="1"/><rect x="9" y="9" width="5.5" height="5" rx="1"/>',
+  'image-quote': '<rect x="1.5" y="3" width="13" height="10" rx="1"/><path d="M9 6h3M9 8.5h3M9 11h2"/>',
+  statement: '<rect x="1.5" y="3" width="13" height="10" rx="1"/><path d="M9 6h3M9 8.5h3M9 11h2"/>',
+  carousel: '<rect x="4" y="3.5" width="8" height="9" rx="1"/><path d="M2 6v4M14 6v4"/>'
+}
+
+function makePlacementChip(label: { kind: PlacementKind; name: string }): HTMLElement {
+  const chip = document.createElement('span')
+  chip.className = 'cm-image-placement-chip'
+  chip.dataset.placement = label.kind
+  chip.style.cssText = [
+    'position: absolute', 'left: 6px', 'top: 6px', 'display: inline-flex', 'align-items: center', 'gap: 5px',
+    'background: rgba(23, 32, 42, 0.86)', 'color: #fff', 'font: 600 11px var(--font-ui, system-ui, sans-serif)',
+    'padding: 3px 8px 3px 6px', 'border-radius: 999px', 'line-height: 1.3', 'white-space: nowrap', 'pointer-events: none'
+  ].join('; ')
+  chip.innerHTML = `<svg viewBox="0 0 16 16" width="13" height="13" style="stroke:#fff;fill:none;stroke-width:1.6">${CHIP_ICONS[label.kind]}</svg>`
+  chip.appendChild(document.createTextNode(label.name))
+  return chip
+}
 
 // Any markdown image at the start of a line: ![alt](src) (optional "title" ignored).
 // src may be a vault asset id (img-XXXXXXX), a legacy double-prefixed id (img-img-XXXXXXX),
@@ -64,15 +94,31 @@ function resolveSrc(
   return { url: `twfile://f/${b64url(abs)}`, vaultId: null, isVideo: false }
 }
 
-class ImageWidget extends WidgetType {
+export class ImageWidget extends WidgetType {
+  private readonly url: string | null
+  private readonly caption: string
+  private readonly vaultId: string | null
+  private readonly onClick: ImageWidgetClick | null | undefined
+  private readonly isVideo: boolean
+  private readonly placement: ImagePlacement | null
+
+  // Explicit fields, not parameter properties: the unit tier loads this file with Node's
+  // type-stripping, which does not support them.
   constructor(
-    private readonly url: string | null,
-    private readonly caption: string,
-    private readonly vaultId: string | null,
-    private readonly onClick: ImageWidgetClick | null | undefined,
-    private readonly isVideo: boolean = false
+    url: string | null,
+    caption: string,
+    vaultId: string | null,
+    onClick: ImageWidgetClick | null | undefined,
+    isVideo: boolean = false,
+    placement: ImagePlacement | null = null
   ) {
     super()
+    this.url = url
+    this.caption = caption
+    this.vaultId = vaultId
+    this.onClick = onClick
+    this.isVideo = isVideo
+    this.placement = placement
   }
 
   eq(other: ImageWidget): boolean {
@@ -81,12 +127,15 @@ class ImageWidget extends WidgetType {
       other.caption === this.caption &&
       other.vaultId === this.vaultId &&
       other.onClick === this.onClick &&
-      other.isVideo === this.isVideo
+      other.isVideo === this.isVideo &&
+      other.placement?.kind === this.placement?.kind &&
+      other.placement?.index === this.placement?.index &&
+      other.placement?.count === this.placement?.count
     )
   }
 
   toDOM(): HTMLElement {
-    const clickable = !!(this.onClick && this.vaultId)
+    const clickable = !!this.url && !this.isVideo
     const wrap = document.createElement('span')
     wrap.className = 'cm-image-widget'
     if (this.vaultId) wrap.dataset.imgId = this.vaultId
@@ -104,12 +153,17 @@ class ImageWidget extends WidgetType {
     ].join('; ')
 
     if (clickable) {
-      const handler = this.onClick as ImageWidgetClick
-      const id = this.vaultId as string
+      // Click opens the full-screen (Z) view; the arrow keys still reach the image line as text.
+      const url = this.url as string
+      const details = this.onClick && this.vaultId ? () => (this.onClick as ImageWidgetClick)(this.vaultId as string) : null
       wrap.addEventListener('mousedown', (event) => {
         event.preventDefault()
         event.stopPropagation()
-        handler(id)
+      })
+      wrap.addEventListener('click', (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        openFullScreenPreview({ url, caption: this.caption, onDetails: details })
       })
     }
 
@@ -137,6 +191,8 @@ class ImageWidget extends WidgetType {
       frame.appendChild(img)
       frame.appendChild(placeholder)
       if (this.isVideo) frame.appendChild(makePlayBadge())
+      const label = placementLabel(this.placement)
+      if (label) frame.appendChild(makePlacementChip(label))
       wrap.appendChild(frame)
     } else if (this.isVideo) {
       const frame = document.createElement('span')
@@ -214,6 +270,8 @@ interface WidgetOpts {
   // changes when the user switches talks, and relative image paths resolve against it.
   talkDir?: string | null | (() => string | null | undefined)
   onClick?: ImageWidgetClick | null
+  // The compiler's placement for the image on this 1-based line (null when unknown).
+  placementForLine?: ((line: number, doc: Text) => ImagePlacement | null) | null
 }
 
 function buildDecorations(view: EditorView, opts: WidgetOpts): DecorationSet {
@@ -227,7 +285,7 @@ function buildDecorations(view: EditorView, opts: WidgetOpts): DecorationSet {
       if (match) {
         const caption = match[1]
         const { url, vaultId, isVideo } = resolveSrc(match[2], opts.vaultRoot, talkDir)
-        const widget = new ImageWidget(url, caption, vaultId, opts.onClick, isVideo)
+        const widget = new ImageWidget(url, caption, vaultId, opts.onClick, isVideo, opts.placementForLine?.(line.number, view.state.doc) ?? null)
         builder.add(line.from, line.to, Decoration.replace({ widget, inclusive: false, block: false }))
       }
       pos = line.to + 1
@@ -250,7 +308,7 @@ export function imageWidgetExtension(opts: WidgetOpts): Extension {
         this.decorations = buildDecorations(view, opts)
       }
       update(update: ViewUpdate) {
-        if (update.docChanged || update.viewportChanged) {
+        if (update.docChanged || update.viewportChanged || update.transactions.some((t) => t.effects.some((e) => e.is(imagePlacementsChanged)))) {
           this.decorations = buildDecorations(update.view, opts)
         }
       }

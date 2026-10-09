@@ -64,7 +64,7 @@ for (const shortcut of SHORTCUT_REGISTRY) {
 
 const expectedPaletteIds = [
   'refresh', 'optimize-images', 'ocr-index', 'check-embeds', 'layout-doctor', 'where-used', 'focus-slide',
-  'toggle-inspector', 'studio', 'history', 'importer', 'plan-run', 'pathways', 'new-window', 'new-talk', 'new-folder',
+  'toggle-inspector', 'studio', 'history', 'importer', 'plan-run', 'pathways', 'new-window', 'open-in-new-window', 'new-talk', 'new-folder',
   'refresh-talks', 'change-vault', 'search-talks',
   'find-talk', 'add-talk-beside', 'talk-beside', 'close-talk-beside', 'select-whole-section',
   'present-window', 'present-presenter',
@@ -72,7 +72,7 @@ const expectedPaletteIds = [
   'image', 'search', 'insert-board-slide', 'icon-picker', 'insert-object-table', 'insert-object-mindmap',
   'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg',
   'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-component-auto-embed', 'insert-component-countdown',
-  'format-bold', 'format-italic', 'format-inline-code', 'format-highlight', 'format-link',
+  'format-bold', 'format-italic', 'format-inline-code', 'format-highlight', 'format-strikethrough', 'format-underline', 'format-link',
   'deck-design', 'metadata', 'tag-slide', 'abstract',
   'view-editor', 'view-both', 'view-strip', 'view-grid', 'fold-all', 'unfold-all',
   'normalize-triggers', 'undo', 'redo', 'new-slide', 'promote-heading', 'demote-heading', 'bulleted-list', 'numbered-list', 'delete-slide', 'app.command-palette', 'help', 'settings'
@@ -249,7 +249,7 @@ assert.equal(
   '⌘⌥⌫',
   'with an override, delete-slide reflects the live override label'
 )
-for (const id of ['format-italic', 'format-inline-code', 'format-highlight']) {
+for (const id of ['format-italic', 'format-inline-code', 'format-highlight', 'format-strikethrough', 'format-underline']) {
   const unbound = paletteCommands().find((command) => command.id === id)
   assert(unbound, `${id} command exists`)
   assert.equal(commandShortcutLabel(unbound), 'no default', `${id} palette row says no default`)

@@ -4,6 +4,7 @@
 import { plainInlineText } from '../../../../../compiler/scripts/lib/00-inline-render.mjs'
 import type { LedgerVersion, RecordingSession, TagCount, TalkInfo, TalkMeta } from '../../../../preload/index'
 import { tagsOfBlock } from '../../../../shared/tags.ts'
+import { thumbAddress } from '../../../../shared/thumb-url.ts'
 import {
   type ContentKey, type RailFacets,
   CONTENT_KEYS, CONTENT_LABELS, agoLabel, facetLayoutOf, outlineChunks, rowHasContent
@@ -18,12 +19,6 @@ import {
 } from './types.ts'
 
 /* ---------- formatting ---------- */
-
-export function rowMarkdown(row: SearchResult): string {
-  return row.source_markdown && row.source_markdown.trim() !== ''
-    ? row.source_markdown
-    : `### ${row.nav_title || row.title || 'Untitled'}\n`
-}
 
 export function rowTitle(row: SearchResult): string {
   return plainInlineText(row.nav_title || row.title) || '(untitled)'
@@ -110,11 +105,6 @@ export function rowTagsOf(row: { tags?: string[]; source_markdown?: string }): s
 /** The optimistic in-place tag change of a row after tags:apply succeeded. */
 export function tagsAfter(current: string[], tag: string, action: 'add' | 'remove'): string[] {
   return action === 'add' ? (current.includes(tag) ? current : [...current, tag]) : current.filter((t) => t !== tag)
-}
-
-/** What an insert hands the host, per row. */
-export function insertItemsFor(rows: SearchResult[]): { markdown: string; fromSlug: string; sourceOutlinePath: string }[] {
-  return rows.map((r) => ({ markdown: rowMarkdown(r), fromSlug: r.talkSlug, sourceOutlinePath: r.outlinePath }))
 }
 
 /** A version's source outline: its own vault-relative `outline` against the vault root (an old
@@ -270,7 +260,7 @@ export function treeSectionsBySlug(
 export function coverUrlOf(talk: string | undefined, talkMeta: TalkMeta): string | null {
   if (!talk) return null
   const key = talkMeta[talk]?.coverKey
-  return key ? `twthumb://${talk}/${key}` : null
+  return key ? thumbAddress(talk, key) : null
 }
 
 export function recentEditRows(talkMeta: TalkMeta, titleBySlug: Map<string, string>): CollectionRow[] {

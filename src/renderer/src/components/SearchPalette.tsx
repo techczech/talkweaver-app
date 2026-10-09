@@ -1,6 +1,7 @@
 import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { thumbUrl } from '../lib/thumbUrl'
+import { insertItemsFor } from '../../../shared/slide-insert-source'
 import type { ProjectionRow, TalkInfo } from '../../../preload/index'
 import { selRowKey, rangeKeys, sectionKeysAt, isSingleTalk, groupBySection } from './searchPaletteSelection'
 
@@ -29,11 +30,6 @@ const DAY_MS = 86400000
 function topicOf(path: string): string {
   const parts = path.replace(/\/+$/, '').split('/')
   return parts.length >= 2 ? parts[parts.length - 2] : '(root)'
-}
-function rowMarkdown(row: SearchResult): string {
-  return row.source_markdown && row.source_markdown.trim() !== ''
-    ? row.source_markdown
-    : `### ${row.nav_title || row.title || 'Untitled'}\n`
 }
 function layoutOf(r: SearchResult): string { return (r.triggers?.layout || r.layout || '') as string }
 function isIconSlide(r: SearchResult): boolean {
@@ -193,17 +189,26 @@ export default function SearchPalette({ isOpen, onClose, onInsert, onInsertMany,
   function toggleLayout(l: string): void {
     setLayoutSet((prev) => { const n = new Set(prev); if (n.has(l)) n.delete(l); else n.add(l); return n })
   }
-  function insertRows(rows: SearchResult[]): void {
-    const items = rows.map((r) => ({ markdown: rowMarkdown(r), fromSlug: r.talkSlug, sourceOutlinePath: r.outlinePath }))
-    if (items.length === 0) return
-    if (items.length > 1 && onInsertMany) onInsertMany(items)
-    else items.forEach((it) => onInsert(it.markdown, it.fromSlug, it.sourceOutlinePath))
-    onClose()
+  // The markdown comes from the shared insert helper (a quick check's block is read from its talk,
+  // so the copy keeps its {right}); the same one the Slide Browser uses.
+  // A second ⌘↵ while the outline read is pending must not insert the rows twice.
+  const insertingRef = useRef(false)
+  async function insertRows(rows: SearchResult[]): Promise<void> {
+    if (rows.length === 0 || insertingRef.current) return
+    insertingRef.current = true
+    try {
+      const items = await insertItemsFor(rows, (p) => window.tw.talk.readOutline(p))
+      if (items.length > 1 && onInsertMany) onInsertMany(items)
+      else items.forEach((it) => onInsert(it.markdown, it.fromSlug, it.sourceOutlinePath))
+      onClose()
+    } finally {
+      insertingRef.current = false
+    }
   }
   // ⌘-Enter / "Insert N selected": the selected set in shown-order, else the active slide.
   function doInsert(): void {
     const chosen = shown.filter((r, i) => selected.has(selRowKey(shown, i)))
-    insertRows(chosen.length > 0 ? chosen : (shown[activeIndex] ? [shown[activeIndex]] : []))
+    void insertRows(chosen.length > 0 ? chosen : (shown[activeIndex] ? [shown[activeIndex]] : []))
   }
   function toggleAt(idx: number): void {
     const k = selRowKey(shown, idx)

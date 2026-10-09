@@ -1,8 +1,8 @@
 {
   "version": 1,
   "reference": "neutral invented corpus",
-  "lineCount": 500,
-  "markCaseCount": 20,
+  "lineCount": 512,
+  "markCaseCount": 32,
   "outputs": [
     "Example 001: <strong>bold</strong> and <em>italic</em> words.",
     "Example 002: <strong>strong</strong> beside <em>emphasis</em>.",
@@ -503,6 +503,18 @@
     "before <code><strong>middle</strong></code> then <mark class=\"ink-marker\">mark</mark>",
     "<mark class=\"ink-marker\">mark</mark> then <code><strong>end</strong></code>",
     "<a href=\"https://eef.example\" title=\"The ==key== finding\" target=\"_blank\" rel=\"noopener\">EEF report</a>",
-    "<a href=\"https://ex.com/report\" target=\"_blank\" rel=\"noopener\">read ==x== now</a>"
+    "<a href=\"https://ex.com/report\" target=\"_blank\" rel=\"noopener\">read ==x== now</a>",
+    "a <s>gone</s> word and <u>added</u> words",
+    "<strong><u>bold underline</u></strong> and <u><strong>underline bold</strong></u>",
+    "<s>a</s> <mark class=\"ink-marker\">b</mark> <u>c</u>",
+    "<u>see <a href=\"https://ex.com/r\" target=\"_blank\" rel=\"noopener\">the report</a> now</u>",
+    "C++ and i++ and j++ in running prose",
+    "C++ is older than Go, and <u>new</u> is not",
+    "a ++ b ++ c and a ~~ b ~~ c",
+    "<code>++code++</code> and <code>~~code~~</code> stay as typed",
+    "<a href=\"https://ex.com/a++b++c\" target=\"_blank\" rel=\"noopener\">https://ex.com/a++b++c</a> and <a href=\"https://ex.com/~~x~~\" target=\"_blank\" rel=\"noopener\">https://ex.com/~~x~~</a>",
+    "<a href=\"https://ex.com/x++y++z\" title=\"~~title~~\" target=\"_blank\" rel=\"noopener\">++label++</a>",
+    "~~~ three tildes +++ three plus ~~~",
+    "++open only and ~~open only"
   ]
 }

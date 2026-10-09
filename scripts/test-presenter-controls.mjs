@@ -36,6 +36,8 @@ for (const control of PRESENTER_CONTROLS) {
 for (const name of presenterIconNames()) assert.ok(lucide[name]?.body, `${name} is a lucide icon`)
 // The keys come from the registry: change the registry and the tooltips follow.
 const tips = presenterControlTips(SHORTCUT_REGISTRY)
+assert.deepEqual(tips.presenterPointer, ['Pointer: show your mouse on every screen', 'I'])
+assert.deepEqual(tips.presenterPointerExit, ['Turn off pointer', 'Esc'])
 assert.deepEqual(tips.skipNextBtn, ['Skip next slide', 'S'])
 assert.deepEqual(tips.twResetBtn, ['Reset timer', ''], 'no key: name only')
 assert.deepEqual(tips['twedit-btn'], ['Edit this slide in TalkWeaver', '⌘E'])

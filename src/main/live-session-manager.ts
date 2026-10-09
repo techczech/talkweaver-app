@@ -1,5 +1,5 @@
 import { createLivePresenterClient, isTerminalLiveStatus, type LiveStatus } from './live-presenter-client'
-import type { AudienceQuestion, InstantSlide, PollStateMessage, PresenterAudienceMessage, PresenterBoardMessage, PresenterInstantMessage, PresenterPollMessage, ReactionCounts, ReactionRecord, SlideState } from '../../worker/protocol'
+import type { InkMessage, PointerMessage, AudienceQuestion, InstantSlide, PollStateMessage, PresenterAudienceMessage, PresenterBoardMessage, PresenterInstantMessage, PresenterPollMessage, ReactionCounts, ReactionRecord, SlideState } from '../../worker/protocol'
 import type { SessionRecoveryRecord } from './live-session-store'
 import type { LiveAudienceFeedback } from './live-session-history'
 import { runInstantSlideFrom } from './runs'
@@ -10,7 +10,7 @@ const isHistoryGone = (error: unknown): boolean => !!error && typeof error === '
 /** Reactions and questions are written to the Run at most once per this interval while they arrive. */
 export const FEEDBACK_FLUSH_MS = 1500
 
-type Client = Pick<ReturnType<typeof createLivePresenterClient>, 'disconnect' | 'reconnect' | 'publish' | 'sendPoll'>
+type Client = Pick<ReturnType<typeof createLivePresenterClient>, 'disconnect' | 'reconnect' | 'publish' | 'sendPoll' | 'pointer' | 'ink'>
 interface Runtime {
   record: SessionRecoveryRecord
   windowId: number | null
@@ -371,6 +371,17 @@ export function createLiveSessionManager(deps: {
       if (!runtime || !reference || reference.talkSlug !== runtime.record.talkSlug) return
       if (!runtime.record.runId) commit(runtime, { runId: reference.runId })
       history(runtime)
+    },
+    pointer(windowId: number, message: PointerMessage) {
+      const runtime = runtimeForWindow(windowId)
+      if (!runtime || runtime.record.endRequested || isTerminalLiveStatus(runtime.record.status)) return
+      runtime.client?.pointer(message)
+    },
+    /** The Pen's current layer: never committed to the session record (memory only). */
+    ink(windowId: number, message: InkMessage) {
+      const runtime = runtimeForWindow(windowId)
+      if (!runtime || runtime.record.endRequested || isTerminalLiveStatus(runtime.record.status)) return
+      runtime.client?.ink(message)
     },
     publish(windowId: number, slide: SlideState) {
       const runtime = runtimeForWindow(windowId)

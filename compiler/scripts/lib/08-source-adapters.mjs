@@ -1,7 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
-import { basename, dirname, extname, join, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { args, slugify, parseGridDims, escapeHtml } from "./01-cli-utils.mjs";
 import { titleRegimeForLayout, parseHeadingAttrs, parseTriggerLine, resolveAuthoredMode, parseCountdownDuration, timelineBlockFieldsFromStops, renderInline, accentForSectionName, accentForDeckColour, backgroundTintForName, resolveClaimStyle, applyQuoteTitleAttribution, CLAIM_STYLES, DECK_ACCENT_NAMES } from "./02-triggers-layout.mjs";
 import { lexMarkdownBlocks } from "./03-markdown-lexer.mjs";
@@ -26,12 +26,18 @@ import { audienceSourceLines } from "./slide-script.mjs";
 import { readDeckFlag, deckFlagOn, readDeckChoice, readDeckMinutes, DECK_PALETTES, DECK_FONTS, DECK_LOGO_COLOURS } from "./deck-settings.mjs";
 import { sequence } from "./15-sequencer.mjs";
 import { resolveNarrowColumns } from "./narrow-columns.mjs";
+import { resolveImageSteps } from "./image-steps.mjs";
+import { resolveEmphasisSteps } from "./emphasis-steps.mjs";
+import { resolvePlayOnNext } from "./media-steps.mjs";
 import { pollDirectivesFor, pollDefinitionFor, rebasePollDefinition } from "./poll-authoring.mjs";
 import { preworkFeedsFromTree, preworkFindings, preworkFromTree, takeRightMarkers } from "./prework.mjs";
 import { readReactionsValue, reactionWarnings } from "./reaction-sets.mjs";
 import { SECTION_ONLY_TRIGGER_KEYS } from "../triggers.mjs";
 import { isStatementDimensionKey, resolveStatementOptions } from "./statement-options.mjs";
 import { pictureKeyForSlide } from "./10-projections.mjs";
+import { createAssetContainment, remoteReferenceUrl } from "./asset-containment.mjs";
+import { referenceFileName, shownReference } from "./shown-reference.mjs";
+import { withEmbedLead, embedPageTitle } from "./embed-frame.mjs";
 
 // =============================================================================
 // 8. Source adapters — outline v2/v1, JSON, static HTML -> model; prepareSource dispatches
@@ -212,9 +218,15 @@ function normalizeRole(role, warnings, slideId) {
   return "content";
 }
 
-async function adaptSourceProject(projectDir, explicitTitle) {
-  const structurePath = join(projectDir, "presentation.structure.json");
-  const structureText = await readFile(structurePath, "utf8");
+// A source PROJECT (a folder with `presentation.structure.json` naming one Markdown file per slide)
+// reads files its structure names, so it is under the same rule as media (ADR-0036): the structure
+// file and every slide source must really be inside the allowed roots (the project folder when the
+// caller gives none). A slide source outside them is left out with `asset-outside-vault`.
+async function adaptSourceProject(projectDir, explicitTitle, containment = createAssetContainment([resolve(projectDir)])) {
+  const structurePath = join(resolve(projectDir), "presentation.structure.json");
+  const structureFile = await containment.file(structurePath);
+  if (!structureFile.ok) throw new Error("presentation.structure.json was not found in the source folder");
+  const structureText = await readFile(structureFile.path, "utf8");
   const structure = JSON.parse(structureText);
   const warnings = [];
   const slides = [];
@@ -223,7 +235,10 @@ async function adaptSourceProject(projectDir, explicitTitle) {
     const sourceRef = entry.source || "";
     let parsed = { frontmatter: {}, title: "", html: "", notes: "" };
     if (sourceRef) {
-      parsed = parseMarkdownSource(await readFile(resolve(projectDir, sourceRef), "utf8"));
+      const sourceFile = await containment.file(resolve(projectDir, String(sourceRef)));
+      if (sourceFile.ok) parsed = parseMarkdownSource(await readFile(sourceFile.path, "utf8"));
+      else if (sourceFile.reason === "outside") warnings.push(`asset-outside-vault:${rawId}:${containment.label(sourceRef)}`);
+      else throw new Error(`Slide source not found: ${sourceRef}`);
     }
     const frontmatter = parsed.frontmatter || {};
     const role = normalizeRole(entry.role || frontmatter.role, warnings, rawId);
@@ -393,8 +408,10 @@ export function renderLicenseBody(license) {
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const parts = ["<h3>License</h3>"];
   if (license.name) {
-    parts.push(license.url
-      ? `<p class="license-name"><a href="${esc(license.url)}" target="_blank" rel="noopener noreferrer">${esc(license.name)}</a></p>`
+    // The licence link is a web address or it is not a link (a `license-url:` is talk content).
+    const licenseUrl = remoteReferenceUrl(license.url);
+    parts.push(licenseUrl
+      ? `<p class="license-name"><a href="${esc(licenseUrl)}" target="_blank" rel="noopener noreferrer">${esc(license.name)}</a></p>`
       : `<p class="license-name">${esc(license.name)}</p>`);
   }
   if (license.note) parts.push(`<p class="license-note">${esc(license.note)}</p>`);
@@ -438,6 +455,10 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
   // ADR-0033 §5: the deck-wide narrow-columns setting is read once, so an unreadable value says so.
   const narrowColumnsFlag = readDeckFlag(meta.narrow_columns ?? meta["narrow-columns"]);
   if (narrowColumnsFlag.state === "unreadable") warnings.push(`deck-flag-unknown:narrow_columns:${narrowColumnsFlag.raw}`);
+  // 0.38 ticket 03 (ADR-0034): "Step through images" is read per slide (resolveImageSteps); the
+  // deck-wide value is checked once here so an unreadable one says so.
+  const imageStepsFlag = readDeckFlag(meta.image_steps ?? meta["image-steps"]);
+  if (imageStepsFlag.state === "unreadable") warnings.push(`deck-flag-unknown:image_steps:${imageStepsFlag.raw}`);
   const hideEmail = deckFlagOn(hideEmailFlag);
   if (hideEmail && typeof meta.author === "string") {
     meta.author = meta.author
@@ -1257,6 +1278,9 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
         suffix += 1;
       }
       const finalRecord = { ...record, id: finalId };
+      // 0.38 ticket 05: settle {play-on-next} on the slide's files before anything renders them
+      // ({nostep} drops it, it wins over {autoplay}, an image or an embed cannot take it).
+      resolvePlayOnNext([finalRecord.blocks, finalRecord.carousel, finalRecord.cards], { noStep: finalRecord.noStep === true, slideId: finalId }, (warning) => warnings.push(warning));
       if (finalRecord.poll && finalId !== record.id) {
         finalRecord.poll = rebasePollDefinition(finalRecord.poll, finalId);
       }
@@ -1345,6 +1369,12 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
       // ADR-0033 §5: columns too narrow for their words change shape unless {narrowcols=off} on the
       // slide or `narrow_columns: off` on the deck says otherwise.
       narrowColumns: resolveNarrowColumns(slide.attrs, meta),
+      // 0.38 ticket 03 (ADR-0034): Next walks this slide's still images in the zoomed view —
+      // {image-steps} / {no-image-steps} on the slide, else the deck's `image_steps:`, else off.
+      imageSteps: resolveImageSteps(slide.attrs, meta),
+      // 0.38 ticket 02: {emphasis-steps} — bold, underline, strikethrough and highlight in the
+      // slide body each appear on a press of Next. {nostep} on the same slide switches it off.
+      emphasisSteps: resolveEmphasisSteps(slide.attrs),
       // {font-body=xs|s|m|l|xl} / {font-title=…}: per-slide type-ramp override (m = ramp default).
       fontBody: ["xs","s","m","l","xl"].includes(String(slide.attrs["font-body"] ?? "")) ? slide.attrs["font-body"] : "",
       fontTitle: ["xs","s","m","l","xl"].includes(String(slide.attrs["font-title"] ?? "")) ? slide.attrs["font-title"] : "",
@@ -1417,6 +1447,9 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
         return { titleLook: look, titleLookPlace: place };
       })(),
       split: slide.attrs.split != null && slide.attrs.split !== true ? String(slide.attrs.split).trim() : "",
+      // Ticket 13: {page-60|70|80} (key embedsplit) — raw text here, validated against a fixed set
+      // where it is stamped (slot-composition.mjs).
+      embedSplit: slide.attrs.embedsplit != null && slide.attrs.embedsplit !== true ? String(slide.attrs.embedsplit).trim() : "",
       // Wide timelines (horizontal track + the spine) take the full slide width → top-title.
       timelineHorizontal,
       blocks: (slide.attrs.cards === "rows"
@@ -2173,6 +2206,12 @@ const MIME_TYPES = new Map([
   [".gif", "image/gif"],
 ]);
 
+const AUDIO_MIME_TYPES = new Map([
+  [".mp3", "audio/mpeg"],
+  [".m4a", "audio/mp4"],
+  [".wav", "audio/wav"],
+  [".ogg", "audio/ogg"],
+]);
 const VIDEO_MIME_TYPES = new Map([
   [".mp4", "video/mp4"],
   [".m4v", "video/x-m4v"],
@@ -2326,15 +2365,15 @@ const DATA_URI_CACHE_LIMIT_BYTES = 256 * 1024 * 1024;
 const dataUriCache = new Map(); // absolute -> { mtimeMs, size, uri, dims }
 let dataUriCacheBytes = 0;
 
-async function pictureKeysForModel(model, sourceDir) {
+async function pictureKeysForModel(model, sourceDir, containment) {
   const digestsByPath = new Map();
   async function imageDigest(src) {
     if (typeof src !== "string" || /^(data:|https?:)/.test(src)) return null;
-    let absolute = resolve(sourceDir, src);
-    try { await stat(absolute); } catch {
-      try { absolute = resolve(sourceDir, decodeURIComponent(src)); await stat(absolute); }
-      catch { return null; }
-    }
+    // The same lookup the inliner uses (ADR-0036): a file outside the allowed roots is never
+    // opened, so not even a digest of it reaches the compiled rows.
+    const found = await containment.reference(sourceDir, src);
+    if (!found.ok) return null;
+    const absolute = found.path;
     if (!digestsByPath.has(absolute)) {
       const hash = createHash("sha256");
       try {
@@ -2350,6 +2389,12 @@ async function pictureKeysForModel(model, sourceDir) {
       const src = value.type === "image" ? value.src : value.data?.logo;
       const digest = await imageDigest(src);
       if (digest) entries.push([src, digest]);
+    }
+    // An embedded local page (ticket 11): its placeholder shows the page's own <title>, which is
+    // read from the file after these keys are taken, so the file's bytes are part of the picture.
+    if (value.type === "embed") {
+      const digest = await imageDigest(value.src);
+      if (digest) entries.push([value.src, digest]);
     }
     for (const child of Object.values(value)) {
       if (Array.isArray(child)) for (const item of child) await collect(item, entries);
@@ -2390,21 +2435,35 @@ async function inlineDataUri(absolute, mime) {
   return entry;
 }
 
-async function inlineAndCollectAssets(model, sourceDir, budget = createMediaInlineBudget()) {
+// The policy an inlined local embed page runs under (ADR-0036). No 'self' and no `file:`: the page
+// may use what it carries inline, data: and blob: URLs it builds, and the web. `http:` and `https:`
+// do NOT cover ws:/wss:, so a WebSocket from an embedded page is refused (probed, design 3.1).
+// Delivered as <meta>, so it binds the embedded document only.
+export const EMBED_PAGE_POLICY = "default-src data: blob: http: https: 'unsafe-inline' 'unsafe-eval'; form-action http: https:";
+const EMBED_PAGE_POLICY_META = `<meta http-equiv="Content-Security-Policy" content="${EMBED_PAGE_POLICY}">`;
+
+async function inlineAndCollectAssets(model, sourceDir, budget = createMediaInlineBudget(), containment = createAssetContainment([sourceDir])) {
   const collected = []; // { absolute, name }
   if (!sourceDir) return collected;
   // Obsidian (and other editors) write URL-encoded links — `assets/Pasted%20image.png` for a
   // file with real spaces. Resolve the raw form first, then the decoded form (2026-06-10).
   // (Asset bytes themselves are memoized across compiles — see inlineDataUri above.)
+  //
+  // CONTAINMENT (ADR-0036): every file this function reads comes through `resolveAsset` (or, for a
+  // video's sibling poster, `containment.file`), which answers only for a regular file whose real
+  // path is inside the allowed roots. The answer carries two paths: `lexical`, the reference as the
+  // author wrote it made absolute (its name and extension decide the MIME type and the poster's
+  // name, as before), and `real`, the checked file — the ONLY path that is ever opened.
+  // A reference that lands outside is `{ outside: true }`: nothing is read or copied, the slide
+  // renders as it does for a missing file, and `asset-outside-vault` names the reference as written.
   const resolveAsset = async (src) => {
-    const raw = resolve(sourceDir, src);
-    try { await stat(raw); return raw; } catch { /* try decoded */ }
-    try {
-      const decoded = resolve(sourceDir, decodeURIComponent(src));
-      await stat(decoded);
-      return decoded;
-    } catch { return null; }
+    const found = await containment.reference(sourceDir, String(src));
+    if (found.ok) return { lexical: found.lexical, real: found.path };
+    return found.reason === "outside" ? { outside: true } : null;
   };
+  // The warning shows the reference as the author wrote it, never the path it resolved to: a build
+  // log travels with a shared talk and must not describe this Mac's folders.
+  const refuse = (slideId, src) => { model.warnings.push(`asset-outside-vault:${slideId}:${containment.label(src)}`); };
   const used = new Set();
   function uniqueName(src) {
     let name = basename(src);
@@ -2413,32 +2472,92 @@ async function inlineAndCollectAssets(model, sourceDir, budget = createMediaInli
     used.add(name);
     return name;
   }
+  // THE OUTPUT PROPERTY (ADR-0036): the compiled page never carries a local media or embed URL
+  // that this function did not itself resolve inside the allowed roots. Every address that comes
+  // from talk content leaves here as one of exactly four things:
+  //   (i)   a data: URI — made here from a contained file, or written by the author and carrying
+  //         its own bytes of the right kind (`data:image/…` for a picture, and so on);
+  //   (ii)  `assets/<name>`, for a contained file listed in `collected`;
+  //   (iii) an http: or https: URL, decided by PARSING the reference (remoteReferenceUrl), never by
+  //         looking for bad spellings;
+  //   (iv)  empty.
+  // So a reference that is missing, outside, of an unknown type or unreadable is EMPTIED, not left
+  // as written: a browser reads the written text as a URL and its reading is wider than a file
+  // name's (`file:` URLs, `\` as `/`, tabs dropped), so a page loaded from the talk's folder would
+  // fetch a file the compiler never saw. The warning keeps the reference as written.
+  const unresolvedBlock = (block) => ({ ...block, src: "", unresolved: true });
+  // What an unresolved reference is CALLED where the page names it (the "Missing embed" line): never
+  // a folder on this Mac. An absolute path is named as in the warning (from its allowed root, else
+  // its file name); anything else by the shown-reference rule (as written inside the talk's folder,
+  // else its file name). The block keeps this name in place of the reference, so nothing later in
+  // the pipeline (renderers, rows, shared pages) holds the path as written.
+  const shownName = (src) => (isAbsolute(String(src ?? "")) ? containment.label(src) : shownReference(src));
+  const carriesOwnBytes = (src, kind) => typeof src === "string" && src.slice(0, kind.length + 6).toLowerCase() === `data:${kind}/`;
+  // The reference to emit when it is remote, or null: `{ ...block, src }` only when the spelling changes.
+  const remoteBlock = (block, remote) => (remote === block.src ? block : { ...block, src: remote });
+  // An embedded local page is a whole document that runs inside the slide. Its own references are
+  // addresses the compiler did not resolve, so the page is given a policy, as the first thing in the
+  // document, that lets it load inline, data:, blob: and http(s) content and nothing local: no
+  // `file:` URL and no path relative to the talk's folder (no 'self': a srcdoc frame's own origin
+  // is the folder the deck was opened from). It goes directly after a leading doctype, else at the
+  // very start, so nothing the page's author writes can come before it or comment it out.
+  // The policy is the first element of the lead embed-frame.mjs writes there (policy, referrer,
+  // `about:srcdoc` base, the agent script).
+  const withEmbedPolicy = (html) => withEmbedLead(html, EMBED_PAGE_POLICY_META);
+  // Every block that has been through the visitor (pass 2 below skips these).
+  const finished = new WeakSet();
   async function visitBlock(block, slideId) {
+    const out = await visitOne(block, slideId);
+    if (out && typeof out === "object") finished.add(out);
+    return out;
+  }
+  async function visitOne(block, slideId) {
     if (!block || typeof block !== "object") return block;
     if (block.type === "title-poster" && block.data?.logo) {
       const logo = String(block.data.logo);
-      if (/^(data:|https?:)/.test(logo)) return block;
-      const absolute = await resolveAsset(logo);
-      const mime = absolute ? MIME_TYPES.get(extname(absolute).toLowerCase()) : null;
-      if (!absolute) {
-        model.warnings.push(`missing-image:${slideId}:${logo}`);
+      if (carriesOwnBytes(logo, "image")) return block;
+      const remoteLogo = remoteReferenceUrl(logo);
+      if (remoteLogo) return remoteLogo === block.data.logo ? block : { ...block, data: { ...block.data, logo: remoteLogo } };
+      const found = await resolveAsset(logo);
+      if (found?.outside) {
+        refuse(slideId, logo);
+        return { ...block, data: { ...block.data, logo: "" } };
+      }
+      const mime = found ? MIME_TYPES.get(extname(found.lexical).toLowerCase()) : null;
+      if (!found) {
+        model.warnings.push(`missing-image:${slideId}:${containment.label(logo)}`);
         return { ...block, data: { ...block.data, logo: "" } };
       }
       if (!mime) {
-        model.warnings.push(`unknown-image-type:${slideId}:${logo}`);
+        model.warnings.push(`unknown-image-type:${slideId}:${containment.label(logo)}`);
         return { ...block, data: { ...block.data, logo: "" } };
       }
       try {
-        const { uri } = await inlineDataUri(absolute, mime);
+        const { uri } = await inlineDataUri(found.real, mime);
         return { ...block, data: { ...block.data, logo: uri } };
       } catch {
-        model.warnings.push(`missing-image:${slideId}:${logo}`);
+        model.warnings.push(`missing-image:${slideId}:${containment.label(logo)}`);
         return { ...block, data: { ...block.data, logo: "" } };
       }
     }
-    if (block.type === "image" && !/^(data:|https?:)/.test(block.src)) {
-      const absolute = (await resolveAsset(block.src)) || resolve(sourceDir, block.src);
-      const mime = MIME_TYPES.get(extname(absolute).toLowerCase());
+    if (block.type === "image") {
+      if (carriesOwnBytes(block.src, "image")) return block;
+      const remote = remoteReferenceUrl(block.src);
+      if (remote) return remoteBlock(block, remote);
+      const written = String(block.src ?? "");
+      const found = await resolveAsset(written);
+      if (found?.outside) {
+        refuse(slideId, written);
+        return unresolvedBlock(block);
+      }
+      // A file that is not there keeps the old answers: its written extension still decides between
+      // "unknown image type" and "missing image". Nothing is opened for it.
+      const mime = MIME_TYPES.get(extname(found ? found.lexical : resolve(sourceDir, written)).toLowerCase());
+      if (mime && !found) {
+        model.warnings.push(`missing-image:${slideId}:${containment.label(written)}`);
+        return unresolvedBlock(block);
+      }
+      const absolute = found?.real;
       if (mime) {
         // Once the per-deck budget is spent every FURTHER media file stays a reference, images
         // included: a talk can carry two hundred screenshots whose sum is the problem even when
@@ -2447,9 +2566,9 @@ async function inlineAndCollectAssets(model, sourceDir, budget = createMediaInli
           let size = 0;
           try { size = (await stat(absolute)).size; } catch { /* a miss is reported by inlineDataUri below */ }
           if (size && !budget.allowsImage(size)) {
-            const name = uniqueName(block.src);
+            const name = uniqueName(written);
             collected.push({ absolute, name });
-            model.warnings.push(`media-budget-exhausted:${slideId}:${basename(block.src)}`);
+            model.warnings.push(`media-budget-exhausted:${slideId}:${basename(written)}`);
             return { ...block, src: `assets/${name}`, assetOnly: true };
           }
         }
@@ -2460,28 +2579,43 @@ async function inlineAndCollectAssets(model, sourceDir, budget = createMediaInli
           budget.spend(size);
           return { ...block, src: uri, ...(dims || {}) };
         } catch {
-          model.warnings.push(`missing-image:${slideId}:${block.src}`);
-          return block;
+          model.warnings.push(`missing-image:${slideId}:${containment.label(written)}`);
+          return unresolvedBlock(block);
         }
       }
-      model.warnings.push(`unknown-image-type:${slideId}:${block.src}`);
-      return block;
+      model.warnings.push(`unknown-image-type:${slideId}:${containment.label(written)}`);
+      return unresolvedBlock(block);
     }
-    if (block.type === "video" && !/^(data:|https?:)/.test(block.src)) {
-      const absolute = await resolveAsset(block.src);
-      if (!absolute) {
-        model.warnings.push(`missing-asset:${slideId}:${block.src}`);
-        return block;
+    if (block.type === "video") {
+      if (carriesOwnBytes(block.src, "video")) return block;
+      const remote = remoteReferenceUrl(block.src);
+      if (remote) {
+        model.warnings.push(`remote-video:${slideId}`);
+        return remoteBlock(block, remote);
       }
+      block = { ...block, src: String(block.src ?? "") };
+      const found = await resolveAsset(block.src);
+      if (found?.outside) {
+        refuse(slideId, block.src);
+        return unresolvedBlock(block);
+      }
+      if (!found) {
+        model.warnings.push(`missing-asset:${slideId}:${containment.label(block.src)}`);
+        return unresolvedBlock(block);
+      }
+      const absolute = found.real;
       const info = await stat(absolute);
-      const out = { ...block, videoName: basename(block.src) };
+      const out = { ...block, videoName: referenceFileName(block.src) };
       // Poster: a sibling image with the same stem (talk.mp4 → talk.png/.jpg/.jpeg/.webp),
       // inlined as a data URI — shown before play, and standing in for the video in share
       // exports when the file itself is too big to inline.
       for (const ext of [".png", ".jpg", ".jpeg", ".webp"]) {
-        const posterPath = absolute.slice(0, -extname(absolute).length) + ext;
+        // The poster is a second file the talk names (by the video's own name), so it is checked
+        // like any other: a `talk.png` that is a link to a picture elsewhere is not a poster.
+        const posterFile = await containment.file(found.lexical.slice(0, -extname(found.lexical).length) + ext);
+        if (!posterFile.ok) continue;
         try {
-          const poster = await inlineDataUri(posterPath, MIME_TYPES.get(ext));
+          const poster = await inlineDataUri(posterFile.path, MIME_TYPES.get(ext));
           out.poster = poster.uri;
           // Ticket 15: a video container does not expose dimensions at compile time, but its
           // sibling poster normally has the same frame. Reuse the image-header dimensions already
@@ -2490,7 +2624,7 @@ async function inlineAndCollectAssets(model, sourceDir, budget = createMediaInli
           break;
         } catch { /* no poster with this ext */ }
       }
-      const mime = VIDEO_MIME_TYPES.get(extname(absolute).toLowerCase()) || "video/mp4";
+      const mime = VIDEO_MIME_TYPES.get(extname(found.lexical).toLowerCase()) || "video/mp4";
       if (budget.allowsVideo(info.size)) {
         const inlined = await inlineDataUri(absolute, mime);
         budget.spend(info.size);
@@ -2502,25 +2636,65 @@ async function inlineAndCollectAssets(model, sourceDir, budget = createMediaInli
       if (budget.largeMediaMode === "poster" && !out.poster) out.poster = REFUSED_VIDEO_POSTER;
       return { ...out, src: `assets/${name}`, assetOnly: true };
     }
-    if (block.type === "embed" && !/^https?:/.test(block.src)) {
-      const absolute = await resolveAsset(block.src);
-      if (!absolute) {
-        model.warnings.push(`missing-asset:${slideId}:${block.src}`);
-        return { ...block, missing: true };
+    if (block.type === "audio") {
+      if (carriesOwnBytes(block.src, "audio")) return block;
+      const remote = remoteReferenceUrl(block.src);
+      if (remote) {
+        model.warnings.push(`remote-audio:${slideId}`);
+        return remoteBlock(block, remote);
       }
-      // Self-contained: inline the HTML document into the slide via srcdoc. No external file, no
-      // copy step — survives Present (even from tmpdir), build, and a shared standalone file.
-      // srcdoc inherits the page origin (keeps the future audience-mirroring spec feasible).
-      const srcdoc = await readFile(absolute, "utf8");
-      return { ...block, srcdoc };
+      block = { ...block, src: String(block.src ?? "") };
+      // The chip is named from its file when it has no title; an emptied address keeps that name (text only).
+      const unresolvedAudioName = referenceFileName(block.src.split(/[?#]/)[0]);
+      // Audio follows the video rule exactly (ticket 04): inline when it fits the per-file limit and
+      // the deck budget, else an asset beside the page with a warning. A missing file warns the same
+      // way a missing video does.
+      const found = await resolveAsset(block.src);
+      if (found?.outside) {
+        refuse(slideId, block.src);
+        return unresolvedBlock({ ...block, audioName: unresolvedAudioName });
+      }
+      if (!found) {
+        model.warnings.push(`missing-asset:${slideId}:${containment.label(block.src)}`);
+        return unresolvedBlock({ ...block, audioName: unresolvedAudioName });
+      }
+      const absolute = found.real;
+      const info = await stat(absolute);
+      const out = { ...block, audioName: basename(block.src.split(/[?#]/)[0]) };
+      if (budget.allowsVideo(info.size)) {
+        const inlined = await inlineDataUri(absolute, AUDIO_MIME_TYPES.get(extname(found.lexical).toLowerCase()) || "audio/mpeg");
+        budget.spend(info.size);
+        return { ...out, src: inlined.uri };
+      }
+      const name = uniqueName(block.src);
+      collected.push({ absolute, name });
+      model.warnings.push(`audio-asset-only:${slideId}:${out.audioName} (${Math.round(info.size / 1024 / 1024)}MB > inline limit; share exports show a static label)`);
+      return { ...out, src: `assets/${name}`, assetOnly: true };
     }
-    if (block.type === "embed" && /^https?:/.test(block.src)) {
-      model.warnings.push(`remote-embed:${slideId}`);
-      return block;
-    }
-    if (block.type === "video" && /^https?:/.test(block.src)) {
-      model.warnings.push(`remote-video:${slideId}`);
-      return block;
+    if (block.type === "embed") {
+      const remote = remoteReferenceUrl(block.src);
+      if (remote) {
+        model.warnings.push(`remote-embed:${slideId}`);
+        return remoteBlock(block, remote);
+      }
+      block = { ...block, src: String(block.src ?? "") };
+      const found = await resolveAsset(block.src);
+      if (found?.outside) {
+        refuse(slideId, block.src);
+        return { ...block, src: shownName(block.src), missing: true };
+      }
+      if (!found) {
+        model.warnings.push(`missing-asset:${slideId}:${containment.label(block.src)}`);
+        return { ...block, src: shownName(block.src), missing: true };
+      }
+      const absolute = found.real;
+      // Self-contained: the HTML document is inlined into the slide. No external file, no copy
+      // step — survives Present (even from tmpdir), build, and a shared standalone file. The frame
+      // that will hold it is sandboxed with an opaque origin (ticket 11; embed-frame.mjs).
+      const page = await readFile(absolute, "utf8");
+      const srcdoc = withEmbedPolicy(page);
+      const pageTitle = embedPageTitle(page);
+      return { ...block, srcdoc, ...(pageTitle ? { pageTitle } : {}), shownName: shownName(block.src) };
     }
     if (block.type === "image-claim") return { ...block, image: await visitBlock(block.image, slideId) };
     if (block.type === "cta-screenshots") {
@@ -2558,6 +2732,34 @@ async function inlineAndCollectAssets(model, sourceDir, budget = createMediaInli
       }
     }
   }
+  // PASS 2 — nothing is left as written. The visitor above knows the shapes that carry media today;
+  // a block nested in a shape it does not know (a new layout, a field other than `blocks`) would
+  // otherwise reach the page with its reference as the author wrote it. So every slide is walked
+  // whole, and any image, video, audio, embed or title poster that has not been through the visitor
+  // goes through it now: the output property does not depend on the visitor's list being complete.
+  const MEDIA_TYPES = new Set(["image", "video", "audio", "embed", "title-poster"]);
+  const swept = new WeakSet();
+  async function sweep(value, slideId, depth) {
+    if (!value || typeof value !== "object" || depth > 40) return value;
+    if (Array.isArray(value)) {
+      for (let i = 0; i < value.length; i++) value[i] = await sweep(value[i], slideId, depth + 1);
+      return value;
+    }
+    if (finished.has(value)) {
+      // Already resolved; what it holds (a card's blocks, a claim's image) was resolved with it.
+      if (MEDIA_TYPES.has(value.type)) return value;
+    } else if (MEDIA_TYPES.has(value.type)) {
+      return visitBlock(value, slideId);
+    }
+    if (swept.has(value)) return value; // an object reachable twice (or a cycle) is walked once
+    swept.add(value);
+    for (const key of Object.keys(value)) {
+      const child = value[key];
+      if (child && typeof child === "object") value[key] = await sweep(child, slideId, depth + 1);
+    }
+    return value;
+  }
+  for (const slide of model.slides) await sweep(slide, slide.id, 0);
   return collected;
 }
 
@@ -2565,16 +2767,37 @@ async function inlineAndCollectAssets(model, sourceDir, budget = createMediaInli
 // --notes-from-source). Splits the body at level-2/3 headings (#### stays within its slide) and
 // appends a `:::notes` block to each slide carrying that slide's verbatim Markdown in a fenced
 // block — so opening the notes shows exactly the source that produced the slide. Merges into an
-// existing :::notes block (the adapter allows one fence per slide). A 4-backtick wrapper keeps
-// any inner ``` code fences in the slide intact.
+// existing :::notes block (the adapter allows one fence per slide). The wrapper is one backtick
+// longer than the longest backtick run opening a line of the slide's text (at least four), so any
+// fence inside it -- ``` code, or a ````md wrapper from an earlier run -- can never close it early.
+export function notesWrapperFence(text) {
+  let longest = 0;
+  for (const line of String(text).split("\n")) {
+    const run = line.match(/^[ \t]*(`+)/);
+    if (run && run[1].length > longest) longest = run[1].length;
+  }
+  return "`".repeat(Math.max(4, longest + 1));
+}
+
 export function injectPerSlideNotes(markdown) {
   const fm = (markdown.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/) || [""])[0];
   const body = markdown.slice(fm.length);
   const isBoundary = (l) => /^(##|###)\s/.test(l);
   const chunks = [];
   let cur = null;
+  // A `##`/`###` line inside a fence (a code sample, or a wrapper an earlier run wrote into the
+  // notes) is text, not a slide boundary -- the tree parse reads it the same way.
+  let fenceOpening = null;
   for (const l of body.split("\n")) {
-    if (isBoundary(l)) { if (cur) chunks.push(cur); cur = [l]; }
+    let boundary = false;
+    if (fenceOpening) {
+      if (isMarkdownFenceClosingLine(l, fenceOpening)) fenceOpening = null;
+    } else {
+      const open = parseMarkdownFenceOpeningLine(l);
+      if (open) fenceOpening = open;
+      else boundary = isBoundary(l);
+    }
+    if (boundary) { if (cur) chunks.push(cur); cur = [l]; }
     else if (cur) cur.push(l);
     else chunks.push([l]); // preamble before the first heading — kept verbatim
   }
@@ -2586,7 +2809,8 @@ export function injectPerSlideNotes(markdown) {
     const m = text.match(noteRe);
     const existing = m ? m[1].replace(/\s+$/, "") : "";
     const slideSource = (m ? text.replace(noteRe, "\n") : text).replace(/\s+$/, "");
-    const noteBody = [existing, existing ? "" : null, "**Markdown for this slide:**", "````md", slideSource, "````"]
+    const fence = notesWrapperFence(slideSource);
+    const noteBody = [existing, existing ? "" : null, "**Markdown for this slide:**", `${fence}md`, slideSource, fence]
       .filter((x) => x !== null).join("\n");
     return `${slideSource}\n\n:::notes\n${noteBody}\n:::\n`;
   });
@@ -2600,7 +2824,8 @@ export function injectPerSlideNotes(markdown) {
 export async function prepareSource(sourcePath, sourceText, explicitTitle, sourceStat, defaults, options = {}) {
   const fallbackTitle = explicitTitle || basename(sourcePath, extname(sourcePath));
   if (sourceStat?.isDirectory()) {
-    const model = await adaptSourceProject(sourcePath, explicitTitle);
+    const projectRoots = Array.isArray(options?.allowedAssetRoots) ? options.allowedAssetRoots : [resolve(sourcePath)];
+    const model = await adaptSourceProject(sourcePath, explicitTitle, createAssetContainment(projectRoots));
     const fullHtml = await buildDeckHtmlFromModel(model);
     return { ...model, fullHtml };
   }
@@ -2670,7 +2895,11 @@ export async function prepareSource(sourcePath, sourceText, explicitTitle, sourc
     }
     // Both compilation modes key the pre-inline model and the referenced file bytes. Inlining
     // changes src and adds dimensions, but those representation details cannot change identity.
-    model.pictureKeys = await pictureKeysForModel(model, dirname(resolve(sourcePath)));
+    // ADR-0036: the folders this talk's media may be read from come from the caller (the app passes
+    // the talk's vault). With none given, the talk's own folder is the only one.
+    const sourceDir = dirname(resolve(sourcePath));
+    const containment = createAssetContainment(Array.isArray(options?.allowedAssetRoots) ? options.allowedAssetRoots : [sourceDir]);
+    model.pictureKeys = await pictureKeysForModel(model, sourceDir, containment);
     // Projections-only (search index / cross-talk search): buildPerSlideProjections reads model.slides
     // ONLY — never fullHtml or assets. Skip media inlining + the full-HTML build so warming or
     // searching a large media vault never loads video/image Buffers into the MAIN process. This was
@@ -2678,7 +2907,7 @@ export async function prepareSource(sourcePath, sourceText, explicitTitle, sourc
     if (options.projectionsOnly) {
       return { ...model, assets: [], fullHtml: "", sourceDir: dirname(resolve(sourcePath)) };
     }
-    const assets = await inlineAndCollectAssets(model, dirname(resolve(sourcePath)), createMediaInlineBudget(options));
+    const assets = await inlineAndCollectAssets(model, sourceDir, createMediaInlineBudget(options), containment);
     const fullHtml = await buildDeckHtmlFromModel(model);
     return { ...model, assets, fullHtml, sourceDir: dirname(resolve(sourcePath)) };
   }

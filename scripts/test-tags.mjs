@@ -157,10 +157,10 @@ check('readSlideTags + blockRefsForId', () => {
 
 // ── 4. projections ──────────────────────────────────────────────────────────────
 console.log('Projections:')
-function fakeModel(attrs) {
+function fakeModel(attrs, text = 'hello') {
   return {
     slides: [{
-      id: 's1', title: 'A slide', blocks: [{ type: 'paragraph', text: 'hello' }],
+      id: 's1', title: 'A slide', blocks: [{ type: 'paragraph', text }],
       attrs, sourceMarkdown: '### A slide\n\nhello\n'
     }]
   }
@@ -178,6 +178,18 @@ check('tagging never changes render_hash (thumbnail cache stays warm)', () => {
   const b = projections.buildPerSlideProjections(fakeModel({ tags: 'intro,team' }), 'deck')[0]
   assert.equal(a.render_hash, b.render_hash)
   assert.equal(a.content_hash, b.content_hash)
+})
+check('++underline++ reads as its text: excerpt stripped, content_hash equals the plain slide', () => {
+  const rows = projections.buildPerSlideProjections(fakeModel({}, '++new++ idea'), 'deck')
+  const plain = projections.buildPerSlideProjections(fakeModel({}, 'new idea'), 'deck')
+  assert.equal(rows[0].text_excerpt, 'new idea')
+  assert.equal(rows[0].content_hash, plain[0].content_hash)
+})
+check('++ without an underline pair stays literal in the excerpt', () => {
+  for (const text of ['C++', 'i++ and j++', 'a ++ b ++ c', 'a lone ++ sign']) {
+    const rows = projections.buildPerSlideProjections(fakeModel({}, text), 'deck')
+    assert.equal(rows[0].text_excerpt, text, `excerpt: ${text}`)
+  }
 })
 
 // ── 5. vocabulary + renderer read ───────────────────────────────────────────────

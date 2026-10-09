@@ -316,7 +316,8 @@ function escapeHtml(value: string): string {
 }
 
 function inlineHtml(value: string): string {
-  return transformInlineMarks(escapeHtml(value), (inner) => `<mark class="ink-marker">${inner}</mark>`)
+  return transformInlineMarks(escapeHtml(value), (inner, kind) =>
+    kind === 'strike' ? `<s>${inner}</s>` : kind === 'underline' ? `<u>${inner}</u>` : `<mark class="ink-marker">${inner}</mark>`)
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/__([^_]+)__/g, '<strong>$1</strong>')

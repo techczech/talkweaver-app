@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import { performance } from 'node:perf_hooks'
 
 const { renderInline } = await import(new URL('../compiler/scripts/lib/02-triggers-layout.mjs', import.meta.url))
+const { plainInlineText } = await import(new URL('../compiler/scripts/lib/00-inline-render.mjs', import.meta.url))
 const inlineMark = await import(new URL('../src/renderer/src/extensions/inlineMark.ts', import.meta.url))
 const inlineProtection = await import(new URL('../compiler/scripts/lib/00-inline-protection.mjs', import.meta.url))
 const { prepareSource } = await import(new URL('../compiler/scripts/lib/08-source-adapters.mjs', import.meta.url))
@@ -121,7 +122,7 @@ assert.deepEqual(
   'the editor decorates only marker interiors outside code and every part of a link'
 )
 assert.deepEqual(
-  inlineMark.inlineMarkRanges('``==code==`` and ==inner text=='),
+  inlineMark.inlineMarkRanges('``==code==`` and ==inner text==').map(({ from, to }) => ({ from, to })),
   [{ from: 19, to: 29 }],
   'backtick runs are protected and the decoration covers inner text rather than == delimiters'
 )
@@ -141,6 +142,48 @@ assert.match(
   readFileSync(new URL('../src/renderer/src/extensions/inlineMark.ts', import.meta.url), 'utf8'),
   /view\.visibleRanges/,
   'the editor decoration pass is bounded to CodeMirror visible ranges'
+)
+
+// ~~strike~~ and ++underline++: same protected-range rules, kinds reported to the editor.
+const authored = '~~gone~~ ++added++ ==marked== `++code++` C++ and i++ ++see [x](https://ex.com/a++b++c)++'
+assert.deepEqual(
+  inlineMark.inlineMarkRanges(authored).map(({ from, to, kind }) => [kind, authored.slice(from, to)]),
+  [
+    ['strike', 'gone'],
+    ['underline', 'added'],
+    ['highlight', 'marked'],
+    ['underline', 'see [x](https://ex.com/a++b++c)']
+  ],
+  'the editor decorates strike and underline interiors, spans a link, and skips code, C++ and URLs'
+)
+assert.deepEqual(
+  inlineMark.inlineMarkRanges('**++x++** ~~a ==b==~~').map(({ from, to, kind }) => [kind, from, to]),
+  [['underline', 4, 5], ['strike', 12, 19], ['highlight', 16, 17]],
+  'nested marks are all reported, outer before inner'
+)
+for (const [source, html] of [
+  ['~~x~~', '<s>x</s>'],
+  ['++x++', '<u>x</u>'],
+  ['**++x++**', '<strong><u>x</u></strong>'],
+  ['~~a~~ ==b==', '<s>a</s> <mark class="ink-marker">b</mark>'],
+  ['++a ~~b~~ c++', '<u>a <s>b</s> c</u>'],
+  ['++see [x](https://ex.com/r)++', '<u>see <a href="https://ex.com/r" target="_blank" rel="noopener">x</a></u>'],
+  ['C++', 'C++'],
+  ['i++ then j++', 'i++ then j++'],
+  ['a ++ b ++ c', 'a ++ b ++ c'],
+  ['++open', '++open'],
+  ['~~open', '~~open'],
+  ['~~ spaced ~~', '~~ spaced ~~'],
+  ['`++a++`', '<code>++a++</code>'],
+  ['https://ex.com/~~x~~', '<a href="https://ex.com/~~x~~" target="_blank" rel="noopener">https://ex.com/~~x~~</a>']
+]) {
+  assert.equal(renderInline(source), html, `renderInline(${JSON.stringify(source)})`)
+}
+assert.equal(plainInlineText('A ~~gone~~ and ++added++ title, C++ stays'), 'A gone and added title, C++ stays', 'titles drop the strike and underline markers')
+assert.equal(
+  inlineProtection.transformInlineMarks('~~a~~ and `~~b~~`', (inner) => inner),
+  'a and `~~b~~`',
+  'the plain-text transform strips authored marks and leaves code alone'
 )
 
 let pathological = ''
@@ -171,7 +214,9 @@ try {
     '',
     '### Marker',
     '',
-    'The ==feedback is the lesson==.'
+    'The ==feedback is the lesson==.',
+    '',
+    'A ~~struck~~ and ++underlined++ pair.'
   ].join('\n')
   writeFileSync(outlinePath, source)
   const model = await prepareSource(outlinePath, source, 'inline-marker', statSync(outlinePath))
@@ -189,7 +234,11 @@ try {
   const plainSpaces = (text) => text.replace(/&nbsp;/g, ' ')
   assert.ok(plainSpaces(model.fullHtml).includes(markerHtml), 'compiled deck output contains ink-marker markup')
   assert.ok(plainSpaces(handout).includes(markerHtml), 'compiled handout output contains ink-marker markup')
-  console.log('fixture: deck ink-marker=present; handout ink-marker=present')
+  for (const html of ['<s>struck</s>', '<u>underlined</u>']) {
+    assert.ok(model.fullHtml.includes(html), `compiled deck output contains ${html}`)
+    assert.ok(handout.includes(html), `compiled handout output contains ${html}`)
+  }
+  console.log('fixture: deck ink-marker=present; handout ink-marker=present; strike/underline present in both')
 } finally {
   rmSync(scratch, { recursive: true, force: true })
 }

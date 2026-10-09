@@ -17,6 +17,7 @@ import { showPresentationCloseOffer } from './present-close-flow'
 import { RECORDING_OFFER_VISIBLE_MS } from './present-recording-offer'
 import { recView, fmtClock, kindLabel, type RecButton, type RunKind } from './present-rec-view'
 import type { RecorderController } from './present-recorder'
+import { lossReasonText } from './recording-loss'
 import { dressPresenterButton, presenterControl, presenterControlKeys, presenterIconSvg } from '../shared/presenter-controls.ts'
 import { SHORTCUT_REGISTRY } from '../shared/shortcut-registry.ts'
 
@@ -68,6 +69,10 @@ const REC_CSS = `
   #twrec-module[data-tone="saved"] .rec-mark { color:var(--rec-ok); }
   #twrec-module[data-tone="error"] { color:#ffb4ae; }
   #twrec-module[data-tone="error"] .rec-dot { background:var(--rec-red); }
+  /* Audio lost while recording: a hollow red ring, not the filled REC dot. */
+  #twrec-module[data-tone="lost"] { color:#ffb4ae; }
+  #twrec-module[data-tone="lost"] .rec-dot { background:transparent; box-shadow:inset 0 0 0 2px var(--rec-red); }
+  #twrec-module[data-tone="lost"] .rec-clock { color:#ffb4ae; }
   #twrec-module .rec-btn { display:inline-flex; align-items:center; justify-content:center; gap:5px; height:26px; padding:0 9px;
     box-sizing:border-box; margin-left:2px; border:1px solid var(--rec-line); border-radius:6px; background:var(--rec-ctl);
     color:var(--rec-text); font:500 13px/1 var(--rec-ui); white-space:nowrap; cursor:pointer; }
@@ -96,6 +101,7 @@ const REC_CSS = `
   .twrec-toast .rt-dot { width:9px; height:9px; border-radius:50%; background:#5d6d7c; flex:none; }
   .twrec-toast .rt-dot.amber { background:var(--rec-amber); }
   .twrec-toast .rt-dot.blue { background:var(--rec-blue); }
+  .twrec-toast .rt-dot.red { background:transparent; box-shadow:inset 0 0 0 2px var(--rec-red); }
   .twrec-toast .rt-ok { color:var(--rec-ok); }
   .twrec-toast .rt-text { font:500 14px/1 var(--rec-ui); color:var(--rec-muted); }
   .twrec-toast .rt-text b { color:var(--rec-text); font-weight:600; margin-right:3px; }
@@ -138,9 +144,10 @@ const REC_CSS = `
 const RECORDING_CONTROL_IDS = [
   'twrec-primary', 'twrec-change-kind', 'twrec-pause', 'twrec-resume', 'twrec-stop', 'twrec-keep', 'twrec-discard',
   'twrec-toast-yes', 'twrec-toast-no', 'twrec-save-delivery', 'twrec-save-as', 'twrec-save-dismiss',
-  'twrec-start-record', 'twrec-start-dismiss', 'twrec-saved-change', 'twrec-saved-dismiss'
+  'twrec-start-record', 'twrec-start-dismiss', 'twrec-saved-change', 'twrec-saved-dismiss',
+  'twrec-lost-resume', 'twrec-lost-dismiss', 'twrec-back-dismiss', 'twrec-disk-dismiss', 'twrec-export'
 ] as const
-const CLUSTER_BUTTONS: RecButton[] = ['primary', 'pause', 'resume', 'stop', 'change-kind', 'keep', 'discard']
+const CLUSTER_BUTTONS: RecButton[] = ['primary', 'pause', 'resume', 'stop', 'change-kind', 'keep', 'export', 'discard']
 const recKeys = (id: string): string => presenterControlKeys(presenterControl(id), SHORTCUT_REGISTRY)
 /** A key cap in a toast button: the registry's text, with Enter drawn as ↵. */
 const kbd = (id: string): string => `<span class="kbd">${recKeys(id).replace(/^Enter$/, '↵')}</span>`
@@ -177,6 +184,7 @@ export function mountRecUi(controller: RecorderController): void {
     <button type="button" class="rec-btn icon rec-stop" id="twrec-stop" hidden><span class="tw-btn-label">Stop and save recording</span></button>
     <button type="button" class="rec-btn" id="twrec-change-kind" hidden><span class="tw-btn-label">Change</span></button>
     <button type="button" class="rec-btn rec-keep" id="twrec-keep" hidden><span class="tw-btn-label">Keep</span></button>
+    <button type="button" class="rec-btn" id="twrec-export" hidden><span class="tw-btn-label">Save audio elsewhere…</span></button>
     <button type="button" class="rec-btn" id="twrec-discard" hidden><span class="tw-btn-label">Discard</span></button>`
 
   // The presenter's status bar keeps a slot for the recording block (ADR-0031 §2, presenter
@@ -236,7 +244,24 @@ export function mountRecUi(controller: RecorderController): void {
     <span class="rt-text" id="twrec-saved-text"><b>Saved to History</b></span>
     <button type="button" class="rec-btn" id="twrec-saved-change"><span class="tw-btn-label">Change</span>${kbd('twrec-saved-change')}</button>
     <button type="button" class="rt-dismiss" id="twrec-saved-dismiss"></button>`)
-  const toasts = [toast, saveToast, startToast, savedToast]
+  // Audio lost while recording: stays up until the audio is back (or Stop), with one-click Resume.
+  const lostToast = makeToast('twrec-toast twrec-lost-note', `
+    <span class="rt-dot red" aria-hidden="true"></span>
+    <span class="rt-text" id="twrec-lost-text"><b>Audio stopped.</b></span>
+    <button type="button" class="rec-btn rec-go" id="twrec-lost-resume"><span class="tw-btn-label">Resume recording</span></button>
+    <button type="button" class="rt-dismiss" id="twrec-lost-dismiss"></button>`)
+  lostToast.setAttribute('role', 'alert')
+  const backToast = makeToast('twrec-toast twrec-back-note', `
+    ${presenterIconSvg('circle-check').replace('class="tw-ico', 'class="rt-ok tw-ico')}
+    <span class="rt-text" id="twrec-back-text"><b>Audio is back.</b></span>
+    <button type="button" class="rt-dismiss" id="twrec-back-dismiss"></button>`)
+  // Main could not write the audio to disk: it is held in memory until Stop, and saved then.
+  const diskToast = makeToast('twrec-toast twrec-disk-note', `
+    <span class="rt-dot red" aria-hidden="true"></span>
+    <span class="rt-text"><b>Audio is not being saved to disk.</b> It is kept until Stop.</span>
+    <button type="button" class="rt-dismiss" id="twrec-disk-dismiss"></button>`)
+  diskToast.setAttribute('role', 'alert')
+  const toasts = [toast, saveToast, startToast, savedToast, lostToast, backToast, diskToast]
 
   // Icons, names and keys for every recording control, from the presenter-controls table; the
   // presenter template's delegated tooltip shows data-tip and data-key.
@@ -253,6 +278,7 @@ export function mountRecUi(controller: RecorderController): void {
   const primary = buttons.get('primary'), btnChangeKind = buttons.get('change-kind'), btnPause = buttons.get('pause')
   const btnResume = buttons.get('resume'), btnStop = buttons.get('stop'), btnKeep = buttons.get('keep'), btnDiscard = buttons.get('discard')
   const saveText = $('twrec-save-text'), savedText = $('twrec-saved-text')
+  const lostText = $('twrec-lost-text'), backText = $('twrec-back-text'), lostResume = $('twrec-lost-resume')
 
   // Toast placement (surfaces-drawn.md, Toasts): under the status strip, centred on it, kept left
   // of the current slide's right edge so it never covers Next. Without a strip, the old corner.
@@ -305,6 +331,35 @@ export function mountRecUi(controller: RecorderController): void {
     showOnly(savedToast)
     if (savedToastTimer !== null) window.clearTimeout(savedToastTimer)
     savedToastTimer = window.setTimeout(hideSavedToast, SAVED_TOAST_VISIBLE_MS)
+  }
+
+  // Audio lost / back notices (present-audio-capture.ts reports; recording-loss.ts says why).
+  let lostDismissed = false
+  const hideLostToast = (): void => lostToast.classList.remove('show')
+  const showLostToast = (): void => {
+    const audio = controller.audioStatus()
+    if (!audio.lost || lostDismissed) return
+    if (lostText) {
+      const since = audio.lostAtMs !== null ? ` at ${fmtClock(audio.lostAtMs)}` : ''
+      lostText.innerHTML = audio.recovering
+        ? `<b>Audio stopped${since}.</b> Reconnecting the microphone…`
+        : `<b>Audio stopped${since}.</b> ${lossReasonText(audio.reason)}`
+    }
+    if (lostResume) {
+      lostResume.hidden = audio.recovering
+    }
+    showOnly(lostToast)
+  }
+  let backToastTimer: number | null = null
+  const hideBackToast = (): void => {
+    if (backToastTimer !== null) { window.clearTimeout(backToastTimer); backToastTimer = null }
+    backToast.classList.remove('show')
+  }
+  const showBackToast = (gapMs: number): void => {
+    if (backText) backText.innerHTML = `<b>Audio is back.</b> The ${Math.max(1, Math.round(gapMs / 1000))} s gap is noted in the Run.`
+    showOnly(backToast)
+    if (backToastTimer !== null) window.clearTimeout(backToastTimer)
+    backToastTimer = window.setTimeout(hideBackToast, SAVED_TOAST_VISIBLE_MS)
   }
 
   function chooseKind(initial: RunKind = 'delivery'): Promise<RunKind | null> {
@@ -384,7 +439,8 @@ export function mountRecUi(controller: RecorderController): void {
   function render(): void {
     const st = controller.getState()
     const gate = controller.runGate()
-    const view = recView({ state: st, displayMs: controller.displayMs(), kind: controller.currentKind(), audioHeld: gate.audioArmed })
+    const audio = controller.audioStatus()
+    const view = recView({ state: st, displayMs: controller.displayMs(), kind: controller.currentKind(), audioHeld: gate.audioArmed, audio })
     module.dataset.rec = st
     module.dataset.tone = view.tone
     if (dot) dot.hidden = view.mark !== 'dot'
@@ -405,7 +461,8 @@ export function mountRecUi(controller: RecorderController): void {
     // The length a saved recording carries, for the saved toast after Change.
     if (st === 'saving') savingAudio = gate.audioArmed
     else if (st === 'saved' && savingAudio) { savedLengthMs = controller.displayMs(); savingAudio = false }
-    if (st !== 'paused') hideToast()
+    if (st !== 'paused' || audio.lost) hideToast()
+    if (!audio.lost || (st !== 'recording' && st !== 'paused')) { hideLostToast(); lostDismissed = false }
     if (st !== 'idle') hideStartToast()
     if (st === 'recording' || st === 'paused' || st === 'confirm') hideSavedToast()
     if (gate.saved || gate.audioArmed) hideSaveToast()
@@ -416,6 +473,12 @@ export function mountRecUi(controller: RecorderController): void {
   controller.onRunOffer(showSaveToast)
   controller.onRecordingStartOffer(showStartToast)
   controller.onCloseOffer((offer) => { hideSaveToast(); showPresentationCloseOffer(controller, offer) })
+  controller.onAudio((_status, event, detail) => {
+    if (event === 'disk-failed') { showOnly(diskToast); return }
+    if (event === 'lost') lostDismissed = false
+    if (event === 'restored') { hideLostToast(); showBackToast(detail?.gapMs ?? 0) }
+    else showLostToast()
+  })
   controller.onError((msg) => {
     const n = document.createElement('div')
     n.className = 'twrec-error'
@@ -435,6 +498,7 @@ export function mountRecUi(controller: RecorderController): void {
   btnStop?.addEventListener('click', () => { void controller.stop() })
   btnKeep?.addEventListener('click', () => { void controller.confirmSave(true) })
   btnDiscard?.addEventListener('click', () => { void controller.confirmSave(false) })
+  $('twrec-export')?.addEventListener('click', () => { void controller.exportHeldAudio() })
   $('twrec-toast-yes')?.addEventListener('click', () => { controller.resume(); hideToast() })
   $('twrec-toast-no')?.addEventListener('click', hideToast)
   $('twrec-save-delivery')?.addEventListener('click', () => { hideSaveToast(); void saveRun('delivery') })
@@ -444,6 +508,10 @@ export function mountRecUi(controller: RecorderController): void {
   $('twrec-start-dismiss')?.addEventListener('click', hideStartToast)
   $('twrec-saved-change')?.addEventListener('click', () => { void saveWithPicker() })
   $('twrec-saved-dismiss')?.addEventListener('click', hideSavedToast)
+  lostResume?.addEventListener('click', () => { void controller.reacquireAudio() })
+  $('twrec-lost-dismiss')?.addEventListener('click', () => { lostDismissed = true; hideLostToast() })
+  $('twrec-back-dismiss')?.addEventListener('click', hideBackToast)
+  $('twrec-disk-dismiss')?.addEventListener('click', () => diskToast.classList.remove('show'))
 
   // 5) Keyboard — ⇧R record/stop, ⇧P pause/resume. Capture phase so we act before the
   // presenter's own handler; plain P/R stay the presenter's (pacing timer / reveal).

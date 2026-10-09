@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs'
 
 assert.ok(existsSync('src/preload/present-close-flow.ts'), 'shared presentation close flow exists')
 const bundled = await build({ entryPoints: ['src/preload/present-close-flow.ts'], bundle: true, write: false, format: 'iife', globalName: 'CloseFlow', platform: 'browser' })
-const browser = await chromium.launch({ headless: true, channel: 'chrome' })
+const browser = await chromium.launch({ headless: true })
 const page = await browser.newPage()
 try {
   async function open(offer, options = {}) {

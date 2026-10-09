@@ -149,7 +149,7 @@ assert.deepEqual(
 )
 assert.deepEqual(
   SHORTCUT_REGISTRY.filter((entry) => entry.unbound).map((entry) => entry.id),
-  ['editor.new-slide', 'editor.bulleted-list', 'editor.numbered-list', 'editor.italic', 'editor.inline-code', 'editor.highlight'],
+  ['editor.new-slide', 'editor.bulleted-list', 'editor.numbered-list', 'editor.italic', 'editor.inline-code', 'editor.highlight', 'editor.strikethrough', 'editor.underline'],
   'unbound commands include the new slide and list actions alongside the existing text-formatting residents'
 )
 assert.deepEqual(
@@ -310,7 +310,14 @@ const directEditorFallthrough = new Set([
   // Esc closes the talk beside as one step of the picker's close ladder (slide-picker.close).
   'slide-picker.close-beside',
   // ⌫ removes a talk chip only in an empty Find a talk box; elsewhere it clears the rail's scope.
-  'slide-picker.remove-chip'
+  'slide-picker.remove-chip',
+  // 0.38 ticket 13: Z is the slide's zoom. The presenter's handler gives it to the picture where
+  // the slide has one (presenter.gallery); the embedded page takes it only on a slide with a page
+  // and no picture.
+  'presenter.embed-fullscreen',
+  // 0.38 ticket 08: ⌘Z undoes the Pen's last stroke only while the pen is on; the board panel,
+  // while it shows, takes ⌘Z first (presenter.board-undo).
+  'presenter.ink-undo'
 ])
 for (const conflict of sharedBindingConflicts(
   SHORTCUT_REGISTRY,
@@ -393,6 +400,7 @@ const SCAN_IGNORE = new Map([
   ['src/renderer/src/components/ReactionsControl.tsx', 'Enter on the native custom-labels field commits it (ticket 04); no shortcut is bound'],
   ['src/renderer/src/components/EmbedCheckPanel.tsx', 'Escape-only panel dismissal'],
   ['src/renderer/src/components/ExplainPanel.tsx', 'Escape-only panel dismissal'],
+  ['src/renderer/src/extensions/imageFullScreenPreview.ts', 'Escape-only dismissal of the full-screen image view; no shortcut is bound'],
   ['src/renderer/src/components/ImageMetaPanel.tsx', 'Escape-only panel dismissal'],
   ['src/renderer/src/components/KeyboardHelp.tsx', 'Escape only closes the shortcut dialog; the opening command is app.help'],
   ['src/renderer/src/components/LayoutDoctorPanel.tsx', 'Escape-only panel dismissal'],
@@ -541,7 +549,7 @@ const PRESENTER_KEY_REGIONS = [
   // the template's own (no preload needed).
   ['template board panel', readFileSync(join(root, 'compiler/assets/runtime/board-panel.js'), 'utf8'), 'function boardUndoKey(event) {', '\n  return {']
 ]
-const KEY_COMPARISON = /\b(?:key|code|e\.key|event\.key|event\.code|input\.key)(?:\.toLowerCase\(\))?\s*[!=]==\s*['"]|\.test\((?:key|e\.key|event\.key)\)|new Set\(\[\s*["']|(?<!function )isTalkQrKey\(event\)|addEventListener\('paste'/
+const KEY_COMPARISON = /event\.key\.toLowerCase\(\) === 'i'|\b(?:key|code|e\.key|event\.key|event\.code|input\.key)(?:\.toLowerCase\(\))?\s*[!=]==\s*['"]|\.test\((?:key|e\.key|event\.key)\)|new Set\(\[\s*["']|(?<!function )isTalkQrKey\(event\)|addEventListener\('paste'/
 // [region, line pattern, registry ids]. An empty id list needs `!isPresenter` in the line.
 const PRESENTER_KEY_CLAIMS = [
   ['template handleKey', /event\.metaKey && event\.shiftKey && !event\.altKey && event\.key\.toLowerCase\(\) === 'p'/, ['presenter.command-palette']],
@@ -567,6 +575,8 @@ const PRESENTER_KEY_CLAIMS = [
   ['template handleKey', /\(key === "v" \|\| key === "V"\) && slideVideos\(\)\.length > 0\) \{ event\.preventDefault\(\); videoFullscreenCommand\(\); return; \}/, ['presenter.video-fullscreen']],
   ['template handleKey', /if \(key === "(?:Home|End)"\) \{ event\.preventDefault\(\); publish\(\{ lightbox/, ['presenter.gallery']],
   ['template handleKey', /key === "Escape" && interactingFrame/, ['presenter.close']],
+  // Esc puts the slide back when its embedded page is full screen and not in use (ticket 13).
+  ['template handleKey', /key === "Escape" && embedFullScreenOn\(\)/, ['presenter.close']],
   ['template handleKey', /key === "e" \|\| key === "E"/, ['presenter.embed']],
   ['template handleKey', /\/\^\[1-9\]\$\/\.test\(key\)/, ['presenter.grid-child']],
   ['template handleKey', /isPresenter && key === "Escape"/, ['presenter.close']],
@@ -583,9 +593,17 @@ const PRESENTER_KEY_CLAIMS = [
   ['template handleKey', /isPresenter && key === "[[\]]"/, ['presenter.preview-size']],
   ['template handleKey', /key === "t" \|\| key === "T"/, ['presenter.duration']],
   ['template handleKey', /key === "p" \|\| key === "P"/, ['presenter.timer']],
+  ['template handleKey', /event\.key\.toLowerCase\(\) === 'i'/, ['presenter.pointer']],
+  ['template handleKey', /event\.key === 'Escape' && pointerArmed/, ['presenter.close']],
+  // The Pen (0.38 ticket 08): Esc abandons a drag or turns it off; D, W / ⇧W, X / ⇧X, ⌘Z while on.
+  ['template handleKey', /event\.key === 'Escape' && penArmed/, ['presenter.close']],
+  ['template handleKey', /event\.key\.toLowerCase\(\) === 'd'/, ['presenter.pen']],
+  ['template handleKey', /event\.key\.toLowerCase\(\) === 'w'/, ['presenter.pen-tool']],
+  ['template handleKey', /event\.key\.toLowerCase\(\) === 'x'/, ['presenter.ink-clear', 'presenter.ink-clear-all']],
+  ['template handleKey', /penArmed && \(event\.metaKey \|\| event\.ctrlKey\).*event\.key\.toLowerCase\(\) === 'z'/, ['presenter.ink-undo']],
   ['template handleKey', /key === "h" \|\| key === "H"/, ['presenter.highlight']],
   ['template handleKey', /key === "m" \|\| key === "M"/, ['presenter.media']],
-  ['template handleKey', /isPresenter && \(key === "z" \|\| key === "Z"\)/, ['presenter.gallery']],
+  ['template handleKey', /isPresenter && \(key === "z" \|\| key === "Z"\)/, ['presenter.gallery', 'presenter.embed-fullscreen']],
   ['template handleKey', /isPresenter && \(key === "v" \|\| key === "V"\)/, ['presenter.video-fullscreen']],
   ['template handleKey', /key === "s" \|\| key === "S"/, ['presenter.skip']],
   ['template handleKey', /key === "b" \|\| key === "B"/, ['presenter.return']],
@@ -594,6 +612,7 @@ const PRESENTER_KEY_CLAIMS = [
   ['template handleKey', /!isPresenter && /, []],
   ['template isTalkQrKey', /event\.key === "u" \|\| event\.key === "U"/, ['presenter.talk-qr']],
   ['template paste', /addEventListener\('paste'/, ['presenter.instant-paste']],
+  ['template paletteKey', /key === ',' && paletteHighlight/, ['presenter.rebind']],
   ['template paletteKey', /key === 'Escape'/, ['picker.close']],
   ['template paletteKey', /key === 'ArrowDown' \|\| key === 'ArrowUp'/, ['picker.navigate']],
   ['template paletteKey', /key === 'Enter'/, ['picker.choose']],
@@ -911,7 +930,7 @@ const RESERVED_CHORDS = new Map([
   ['Mod-Shift-f', ['app.slide-focus']],
   ['Mod-,', ['app.settings']],
   ['Mod-/', ['app.help']],
-  ['Mod-Shift-,', []]
+  ['Mod-Shift-,', ['presenter.rebind']]
 ])
 const reservedHolders = SHORTCUT_REGISTRY.flatMap((entry) => entry.codes
   .filter((code) => RESERVED_CHORDS.has(code) && !RESERVED_CHORDS.get(code).includes(entry.id))

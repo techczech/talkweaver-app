@@ -27,7 +27,8 @@ try {
   const resolved = resolveImageRefs(source, root)
   assert.ok(resolved.includes(pooled), 'main resolves the pooled image before both compiler modes')
   const compile = async projectionsOnly => buildPerSlideProjections(
-    await prepareSource(outline, resolved, 'pictures', statSync(outline), undefined, { projectionsOnly }),
+    // The pooled picture is at the vault root, so the vault is the allowed root, as the app passes it (ADR-0036).
+    await prepareSource(outline, resolved, 'pictures', statSync(outline), undefined, { projectionsOnly, allowedAssetRoots: [root] }),
     'pictures'
   )
   const indexed = await compile(true)

@@ -100,8 +100,8 @@ const missingWhenItFits = eligible.filter((entry) => typeof entry.whenItFits !==
 assert.deepEqual(missingWhenItFits, [], `Picker-eligible entr(ies) missing whenItFits: ${missingWhenItFits.join(", ")}`);
 assert.deepEqual(
   entries.filter((entry) => entry.kind !== "component" && entry.pickerEligible === false).map((entry) => entry.name),
-  [...PREWORK_STEP_TOKENS, "names"],
-  "only the board-only `names` modifier and the pre-work step tokens are opted out of the picker besides component entries"
+  ["image-steps", "emphasis-steps", ...PREWORK_STEP_TOKENS, "names", "page-70"],
+  "only the board-only `names` modifier, the pre-work step tokens and the page-70, image-steps and emphasis-steps option tokens are opted out of the picker besides component entries"
 );
 assert.deepEqual(
   Object.fromEntries(PURPOSES.map((p) => [p, eligible.filter((entry) => entry.purpose === p).length])),
@@ -113,7 +113,7 @@ assert.deepEqual(
   ["action", "auto-embed", "code", "countdown", "embed", "mermaid", "qr", "svg"],
   "the eight component-kind entries leave the picker"
 );
-assert(LAYOUTS.every((entry) => (entry.kind === "component") === !isPickerEligible(entry) || entry.name === "names" || PREWORK_STEP_TOKENS.includes(entry.name)), "isPickerEligible agrees with the declared data");
+assert(LAYOUTS.every((entry) => (entry.kind === "component") === !isPickerEligible(entry) || entry.name === "names" || entry.name === "image-steps" || entry.name === "page-70" || entry.name === "emphasis-steps" || PREWORK_STEP_TOKENS.includes(entry.name)), "isPickerEligible agrees with the declared data");
 
 assert.deepEqual(
   entries.filter((entry) => entry.sectionOnly).map((entry) => entry.name),

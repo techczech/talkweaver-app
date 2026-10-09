@@ -69,6 +69,20 @@ export function createPreworkForm(options) {
     if (text !== undefined && text !== null) node.textContent = String(text)
     return node
   }
+  // A copy of a step's slide is a picture of it: an embedded local page shows its placeholder and
+  // the copy carries no document for it (a page runs only on the slide view's own current slide).
+  function pictureOf(source) {
+    const copy = source.cloneNode(true)
+    copy.querySelectorAll('figure.slide-embed[data-embed="local"]').forEach((figure) => {
+      figure.setAttribute('data-embed-state', 'idle')
+      figure.querySelectorAll('iframe').forEach((frame) => {
+        frame.removeAttribute('data-embed-doc')
+        frame.removeAttribute('srcdoc')
+        frame.classList.remove('embed-live')
+      })
+    })
+    return copy
+  }
   function icon(name, cls) {
     const span = el('span', 'pw-ico' + (cls ? ' ' + cls : ''))
     span.innerHTML = svg(name)
@@ -350,7 +364,7 @@ export function createPreworkForm(options) {
     if (!source) return null
     const canvas = el('div', 'pw-canvas')
     const inner = el('div', 'pw-inner')
-    const copy = source.cloneNode(true)
+    const copy = pictureOf(source)
     copy.classList.add('active')
     copy.removeAttribute('id')
     const notes = copy.querySelector('.notes')
@@ -756,7 +770,7 @@ export function createPreworkForm(options) {
     layer.setAttribute('aria-modal', 'true')
     layer.setAttribute('aria-label', 'Slide full screen')
     const inner = el('div', 'pw-fsinner')
-    const copy = source.cloneNode(true)
+    const copy = pictureOf(source)
     copy.classList.add('active')
     copy.removeAttribute('id')
     const notes = copy.querySelector('.notes')

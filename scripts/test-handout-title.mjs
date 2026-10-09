@@ -16,6 +16,7 @@ assert.equal(between(bold, 'title'), 'TalkWeaver Pre-work Workshop — handout',
 assert(!/\*/.test(between(bold, 'title')) && !/\*/.test(between(bold, 'h1')), 'no asterisks survive anywhere in the title')
 assert.equal(between(await page('An *italic* and `code` title'), 'h1'), 'An <em>italic</em> and <code>code</code> title')
 assert.equal(plainInlineText('An *italic* and `code` [link](https://a.test) title'), 'An italic and code link title')
+assert.equal(plainInlineText('A ~~gone~~ and ++added++ title, C++ stays'), 'A gone and added title, C++ stays', 'strike and underline markers are dropped, C++ is not')
 assert.equal(plainInlineText('snake_case_name stays'), 'snake_case_name stays', 'underscores inside words are not emphasis')
 
 const hostile = await page('<script>alert(1)</script> **bold** <img src=x onerror=alert(1)>')

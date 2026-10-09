@@ -33,6 +33,7 @@ import {
   updatePlannedRun
 } from '../src/main/runs.ts'
 import { parseAudienceQuestion } from '../worker/protocol.ts'
+import { INK_READBACK_BYTES, inkMarkFileBytes, readbackInkMark, readbackSlideTimeIndex, sessionForList } from '../src/main/run-ink-readback.ts'
 import { applyRunBoards } from '../src/main/runs.ts'
 import { isHiddenCard, runBoardFromPollState, runBoardMarkdown, runBoardState, runBoardView, setRunBoardCardPutBack } from '../src/shared/run-board.ts'
 import { runSharePayload } from '../src/shared/run-results-share.ts'
@@ -216,6 +217,29 @@ assert.equal(survived[0].id, 'survivor')
     ['time-4000', 'time', null], ['image-5000', 'image', 'slide-12'],
   ])
   assert.deepEqual(run.instantSlides[2], { id: 'countdown-3000', kind: 'countdown', shownAt: 3000, afterSlideId: 'slide-7', durationMs: 300000, label: 'Discussion' })
+  // A link shown with text or a countdown is kept (never its QR); Runs without one read unchanged; unsafe links are not kept.
+  {
+    const link = 'https://example.com/form'
+    const withLink = [
+      runInstantSlideFrom({ kind: 'text', text: 'Fill in', link, linkQrSvg: '<svg>big</svg>', shownAt: 6000 }, 'slide-2'),
+      runInstantSlideFrom({ kind: 'countdown', startedAt: 7000, durationMs: 60000, link, linkQrSvg: '<svg>big</svg>', shownAt: 7000 }, null),
+    ]
+    assert.equal(withLink[0].link, link); assert.equal(withLink[1].link, link)
+    assert.equal(JSON.stringify(withLink).includes('<svg'), false, 'the link QR is not stored')
+    assert.equal('link' in shown[1], false, 'a text slide without a link carries no link key')
+    const kept = applyRunInstantSlides(bare, withLink)
+    assert.deepEqual(kept.instantSlides.map((e) => e.link), [link, link])
+    const dir = mkdtempSync(join(tmpdir(), 'talkweaver-instant-link-'))
+    persistRun(dir, kept)
+    assert.deepEqual(readRun(dir, 'live-talk', 'run-live').instantSlides, kept.instantSlides, 'the link survives a write and re-read')
+    assert.equal(runInstantSlideFrom({ kind: 'text', text: 'T', link: 'https://x.com/<!--', shownAt: 8000 }, null).link, 'https://x.com/%3C!--', 'a Run stores the canonical href')
+    assert.equal(normaliseRun({ ...bare, instantSlides: [{ kind: 'link', url: 'https://x.com/a>b', shownAt: 9 }] }).instantSlides[0].url, 'https://x.com/a%3Eb')
+    assert.equal(normaliseRun({ ...bare, instantSlides: [{ kind: 'text', text: 'T', link: 'https://x.com/?q=`', shownAt: 9 }] }).instantSlides[0].link, undefined)
+    for (const bad of ['javascript:alert(1)', 'https://good.example@evil.example/x', 'https://x.com/?q=`', 'example.com/form', 'https://a b.example', '', 5]) {
+      const dropped = normaliseRun({ ...bare, instantSlides: [{ kind: 'text', text: 'T', link: bad, shownAt: 1 }, { kind: 'countdown', durationMs: 60000, link: bad, shownAt: 2 }] })
+      assert.deepEqual(dropped.instantSlides.map((e) => 'link' in e), [false, false], `link ${JSON.stringify(bad)} is not kept; the slides are`)
+    }
+  }
   assert.equal(applyRunInstantSlides(run, shown), run, 're-flushing the same shows changes nothing')
   run = markRunInstantSlideAdded(run, 'text-1000', { afterSlideNumber: 3, afterSlideTitle: 'Three shifts', slideId: 'k2x9a', at: '2026-09-24T09:00:00.000Z' })
   run = applyRunInstantSlides(run, [{ ...shown[1], afterSlideId: 'other' }])
@@ -974,6 +998,93 @@ assert.equal(survived[0].id, 'survivor')
   assert.equal(zoneToSend(null, 'Europe/Prague', true), 'Europe/Prague')
   assert.equal(zoneToSend(prague, 'Europe/London', false), undefined, 'no pre-work, no zone')
   assert.equal(zoneToSend({ preworkOpens: '2026-10-01T09:00' }, 'Europe/London', true), 'Europe/London')
+}
+
+// The Pen's ink in a stored recording is checked and capped as it is read, before it goes anywhere;
+// a bad ink mark is dropped and the rest of the recording kept.
+{
+  const box = { tool: 'rectangle', ink: 'blue', width: 'thick', points: [[100, 100], [400, 300]] }
+  const picture = { tool: 'arrow', ink: 'red', width: 'thin', points: [[0.2, 0.2], [0.7, 0.6]] }
+  const heavy = Array.from({ length: 6 }, () => ({ tool: 'freehand', ink: 'red', width: 'thin',
+    points: Array.from({ length: 400 }, (_, i) => [100 + i / 1000 + 0.1234567890123, 200 + i / 1000 + 0.9876543210987]) }))
+  const raw = [
+    { event: 'enter', slideId: 's1', tMs: 0 },
+    { event: 'ink', slideId: 's1', tMs: 100, ink: [box] },
+    { event: 'ink', slideId: 's1', tMs: 110, ink: [{ ...box, href: 'javascript:x' }] },
+    { event: 'ink', slideId: 's1', tMs: 120, ink: [box], note: 'x' },
+    { event: 'ink', slideId: 's1', tMs: 130, ink: [{ ...box, junk: 'x'.repeat(2_000_000) }] },
+    { event: 'ink', slideId: 's1', tMs: 200, space: 'image', image: 1, ink: [picture] },
+    { event: 'ink', slideId: 's1', tMs: 300, ink: [{ ...box, ink: ['red'] }] },
+    { event: 'ink', slideId: 's1', tMs: 310, ink: [{ ...box, ink: { toString: null, valueOf: null } }] },
+    { event: 'ink', slideId: 's1', tMs: 320, ink: heavy },
+    { event: 'ink', slideId: 's1', tMs: 330, ink: Array.from({ length: 101 }, () => box) },
+    { event: 'ink', slideId: 's1', tMs: 340, space: 'image', image: 1, ink: [box] },
+    { event: 'ink', slideId: 's1', tMs: 350, space: 'image', image: '1', ink: [picture] },
+    { event: 'ink', slideId: 's1', tMs: 360, space: 'canvas', ink: [box] },
+    { event: 'ink', slideId: 's1', tMs: 'x', ink: [box] },
+    { event: 'ink', tMs: 370, ink: [box] },
+    'junk',
+    { event: 'reveal', slideId: 's1', hidden: 1, tMs: 400 },
+  ]
+  const run = normaliseRun({ id: 'ink-run', talkSlug: 'ink-talk', startedAt: '2026-10-09T10:00:00.000Z', slideTimeIndex: raw })
+  assert.deepEqual(run.slideTimeIndex, [
+    { event: 'enter', slideId: 's1', tMs: 0 },
+    { event: 'ink', slideId: 's1', tMs: 100, ink: [box] },
+    { event: 'ink', slideId: 's1', tMs: 200, space: 'image', image: 1, ink: [picture] },
+    'junk',
+    { event: 'reveal', slideId: 's1', hidden: 1, tMs: 400 },
+  ], 'valid ink kept, a zoomed image\'s with its image; every bad ink mark dropped, an unknown field anywhere included')
+  // Structure first: an unknown field is refused without its value being read (no serialising it).
+  let reads = 0
+  const trap = { ...box }
+  Object.defineProperty(trap, 'junk', { enumerable: true, get() { reads++; return 'x'.repeat(2_000_000) } })
+  const markTrap = { event: 'ink', slideId: 's1', tMs: 1, ink: [box] }
+  Object.defineProperty(markTrap, 'extra', { enumerable: true, get() { reads++; return 'x' } })
+  assert.equal(readbackInkMark({ event: 'ink', slideId: 's1', tMs: 1, ink: [trap] }), null)
+  assert.equal(readbackInkMark(markTrap), null)
+  assert.equal(reads, 0, 'unknown fields are refused unread')
+  assert.equal(readbackInkMark({ event: 'ink', slideId: 's1', tMs: 1, ink: [{ ...box, tool: 'x'.repeat(5000) }] }), null, 'an oversized field')
+  assert.deepEqual(normaliseRun({ id: 'r', talkSlug: 't', slideTimeIndex: 'nope' }).slideTimeIndex, [])
+  // The recording's ink as a whole is capped: past the budget the later ink is dropped.
+  const full = Array.from({ length: 5 }, () => ({ ...heavy[0], points: heavy[0].points.map(([x, y]) => [Math.round(x), Math.round(y)]) }))
+  const many = Array.from({ length: 2000 }, (_, i) => ({ event: 'ink', slideId: 's1', tMs: i, ink: full }))
+  const capped = readbackSlideTimeIndex(many)
+  const bytes = capped.reduce((sum, m) => sum + inkMarkFileBytes(m), 0)
+  assert.ok(capped.length > 0 && capped.length < many.length && bytes <= INK_READBACK_BYTES, `${capped.length} marks, ${bytes} bytes`)
+  // The budget is what the ink takes in the written file (indented), not its compact form.
+  const compact = capped.reduce((sum, m) => sum + new TextEncoder().encode(JSON.stringify(m)).length, 0)
+  assert.ok(compact < INK_READBACK_BYTES / 3, `compact ${compact} is a fraction of the file form ${bytes}`)
+  const fileVault = mkdtempSync(join(tmpdir(), 'talkweaver-run-ink-file-'))
+  const plain = { id: 'sess-20261009-110000-a', talkSlug: 'ink-file', startedAt: '2026-10-09T11:00:00.000Z', slideTimeIndex: [{ event: 'enter', slideId: 's1', tMs: 0 }] }
+  persistRunForTalk(fileVault, 'ink-file', plain.id, normaliseRun(plain))
+  const plainSize = readFileSync(runPathForTalk(fileVault, 'ink-file', plain.id)).length
+  persistRunForTalk(fileVault, 'ink-file', plain.id, normaliseRun({ ...plain, slideTimeIndex: [...plain.slideTimeIndex, ...many] }))
+  const grown = readFileSync(runPathForTalk(fileVault, 'ink-file', plain.id)).length - plainSize
+  assert.equal(grown, bytes, `the ink grows the Run file by exactly its measured bytes (${grown})`)
+  assert.ok(grown <= 2_000_000, `a recording's ink takes at most 2 MB of its file (${grown})`)
+  assert.deepEqual(capped.map((m) => m.tMs), capped.map((_, i) => i), 'the first ink is the ink kept')
+  // Once the budget is spent, later ink marks are dropped without being looked at.
+  let after = 0
+  const late = Array.from({ length: 50 }, (_, i) => {
+    const mark = { event: 'ink', slideId: 's1', tMs: 5000 + i }
+    Object.defineProperty(mark, 'ink', { enumerable: true, get() { after++; return [box] } })
+    return mark
+  })
+  const withLate = readbackSlideTimeIndex([...many, ...late, { event: 'reveal', slideId: 's1', hidden: 0, tMs: 9999 }])
+  assert.equal(after, 0, 'no ink mark after the budget is read')
+  assert.equal(withLate.length, capped.length + 1, 'only the non-ink mark after it is kept')
+}
+
+// Studio's lists: a session file whose root is not an object is skipped (it would break the sort and
+// blank the list); a session is listed with its ink checked and a default kind.
+{
+  for (const root of [null, [], [{ id: 'x' }], 3, 'text', true]) assert.equal(sessionForList(root), null, JSON.stringify(root))
+  const listed = [null, { id: 'b', startedAt: '2026-10-09T10:00:00.000Z' }, 7, { id: 'a', startedAt: '2026-10-08T10:00:00.000Z', kind: 'rehearsal',
+    slideTimeIndex: [{ event: 'ink', slideId: 's', tMs: 1, ink: [{ tool: 'arrow', ink: ['red'], width: 'thin', points: [[1, 1], [2, 2]] }] }] }]
+    .map(sessionForList).filter(Boolean)
+  listed.sort((x, y) => String(y.startedAt ?? '').localeCompare(String(x.startedAt ?? '')))
+  assert.deepEqual(listed.map((x) => [x.id, x.kind]), [['b', 'delivery'], ['a', 'rehearsal']])
+  assert.deepEqual(listed[1].slideTimeIndex, [], 'its bad ink dropped')
 }
 
 console.log('runs: planned CRUD, legacy interpretation, attach, slide sets, cover and URLs, DS_Store tolerance, instant slides, image checks, reactions and questions, Run path boundary, plan fields, boards, pre-work passed')

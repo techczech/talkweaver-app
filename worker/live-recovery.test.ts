@@ -2,6 +2,7 @@ import { describe, expect, spyOn, test } from 'bun:test'
 import { createSignedToken } from './auth'
 import { LiveSession } from './index'
 import { createSession } from './session-state'
+import { recoveryState } from './recovery-state'
 
 // Exercise the actual Durable Object handlers. Only the platform storage/socket boundary is fake.
 function harness() {
@@ -715,5 +716,200 @@ describe('feedback boards through actual Worker handlers', () => {
     await deliver(h.worker, phone, { type: 'card.add', submissionId: 'submission-v1-card', pollId: 'poll-board', column: 'keep', text: 'x' })
     expect(phone.sent.at(-1)).toEqual({ type: 'protocol.error', code: 'invalid_or_inert_message' })
     expect(h.ctx.storage.sql.exec('SELECT value FROM kv WHERE key = ?', 'board:poll-board')).toHaveLength(1)
+  })
+})
+
+
+describe('Pointer through the actual Worker socket seam', () => {
+  test('authenticated presenter only, venue only, no echo, rate capped and never persisted', async () => {
+    const h = harness()
+    const presenter = h.socket('presenter', 'pointer-owner')
+    const screen = h.socket('audience', 'pointer-screen', 2, 'screen-user', 'screen')
+    const phone = h.socket('audience', 'pointer-phone')
+    const message = { type: 'pointer.live', pointer: { x: 640, y: 360, space: 'slide', slideId: 'text' } }
+    const before = h.state()
+    await deliver(h.worker, screen, message)
+    expect(screen.sent.filter((m:any)=>m.type==='pointer.live')).toHaveLength(0)
+    for(let i=0;i<25;i++) await deliver(h.worker,presenter,message)
+    expect(screen.sent.filter((m:any)=>m.type==='pointer.live')).toHaveLength(20)
+    expect(phone.sent.filter((m:any)=>m.type==='pointer.live')).toHaveLength(0)
+    expect(presenter.sent).toHaveLength(0)
+    expect(presenter.closed).toBe(false)
+    expect(h.state()).toEqual(before)
+    expect(h.feedback()).toBeUndefined()
+    const clock = spyOn(Date, 'now').mockReturnValue(Date.now() + 1001)
+    try { await deliver(h.worker,presenter,{type:'pointer.live',pointer:'gone'}) } finally { clock.mockRestore() }
+    expect(screen.sent.filter((m:any)=>m.type==='pointer.live')).toHaveLength(21)
+    expect(screen.sent.at(-1)).toEqual({type:'pointer.live',pointer:'gone'})
+    const rejoined = h.socket('audience','pointer-rejoin',2,'rejoin','screen')
+    await deliver(h.reload(),rejoined,{type:'session.sync',syncId:'pointer-sync'})
+    expect(JSON.stringify(rejoined.sent)).not.toContain('pointer.live')
+  })
+  test('phone frames and oversized presenter frames skip the extra transient parse', async () => {
+    const h = harness()
+    const phone = h.socket('audience', 'pointer-parse-phone', 1)
+    const presenter = h.socket('presenter', 'pointer-parse-presenter', 1)
+    for (const [socket, raw] of [
+      [phone, JSON.stringify({ type: 'pointer.live', pointer: 'gone' })],
+      [presenter, JSON.stringify({ type: 'pointer.live', pointer: 'gone', padding: 'x'.repeat(600) })],
+    ]) {
+      const parse = JSON.parse
+      let incomingParses = 0
+      const probe = spyOn(JSON, 'parse').mockImplementation((value, reviver) => {
+        if (value === raw) incomingParses++
+        return parse(value, reviver)
+      })
+      try { await h.worker.webSocketMessage(socket, raw) } finally { probe.mockRestore() }
+      // The original role-specific routing may parse; the transient branch must add no parse.
+      expect(incomingParses).toBe(1)
+    }
+  })
+  test('a superseded presenter cannot send pointer.live after a reconnect', async () => {
+    const h = harness()
+    const old = h.socket('presenter', 'pointer-old')
+    const screen = h.socket('audience', 'pointer-reconnect-screen', 2, 'screen', 'screen')
+    await deliver(h.worker, old, { type: 'session.sync', syncId: 'old-sync' })
+    const next = h.socket('presenter', 'pointer-new')
+    await deliver(h.worker, next, { type: 'session.sync', syncId: 'new-sync' })
+    // acceptSocket persists the new authenticated owner before closing the previous socket.
+    const state = h.state()
+    recoveryState(state).presenterConnectionId = 'pointer-new'
+    h.ctx.storage.sql.exec('INSERT INTO kv (key, value) VALUES (?, ?)', 'session', JSON.stringify(state))
+    const reconnected = h.reload()
+    await deliver(reconnected, old, { type: 'pointer.live', pointer: { x: 123, y: 456, space: 'slide', slideId: 'text' } })
+    expect(screen.sent.filter((message: any) => message.type === 'pointer.live')).toHaveLength(0)
+    expect(old.sent.at(-1)).toEqual({ type: 'session.superseded' })
+    await deliver(reconnected, next, { type: 'pointer.live', pointer: 'gone' })
+    expect(screen.sent.at(-1)).toEqual({ type: 'pointer.live', pointer: 'gone' })
+  })
+  test('malformed and oversized pointers never reach a screen; recovery operations cannot persist them', async () => {
+    const h = harness()
+    const p = h.socket('presenter', 'pointer-validate')
+    const v = h.socket('audience', 'pointer-venue', 2, 'venue', 'screen')
+    const before=h.state()
+    const invalid = [{ x: -1, y: 0, space: 'slide', slideId: 'text' },
+      { x: 1, y: 2, space: 'image', slideId: 'image' }, null]
+    for (const pointer of invalid) await deliver(h.worker, p, { type: 'pointer.live', pointer })
+    await deliver(h.worker,p,{type:'pointer.live',pointer:'gone',padding:'x'.repeat(600)})
+    await deliver(h.worker,p,{type:'operation',operationId:'pointer-operation',action:{type:'pointer.live',pointer:'gone'}})
+    expect(v.sent.filter((m:any)=>m.type==='pointer.live')).toHaveLength(0)
+    expect(h.state()).toEqual(before)
+  })
+})
+
+describe('Pen ink through the actual Worker socket seam', () => {
+  const stroke = { tool: 'arrow', ink: 'red', width: 'thick', points: [[640, 360], [900, 500]] }
+  const message = { type: 'ink.live', ink: { slideId: 'text', space: 'slide', strokes: [stroke], draft: null } }
+  const inkSent = (socket: any) => socket.sent.filter((m: any) => m.type === 'ink.live')
+  test('authenticated presenter only, venue screens only, rate capped, never written to session storage', async () => {
+    const h = harness()
+    const presenter = h.socket('presenter', 'ink-owner')
+    const screen = h.socket('audience', 'ink-screen', 2, 'ink-screen-user', 'screen')
+    const phone = h.socket('audience', 'ink-phone')
+    const before = h.state()
+    await deliver(h.worker, screen, message)
+    await deliver(h.worker, phone, message)
+    expect(inkSent(screen)).toHaveLength(0)
+    for (let i = 0; i < 25; i++) await deliver(h.worker, presenter, message)
+    expect(inkSent(screen)).toHaveLength(20)
+    expect(inkSent(screen).at(-1)).toEqual(message)
+    expect(inkSent(phone)).toHaveLength(0)
+    expect(presenter.sent).toHaveLength(0)
+    expect(h.state()).toEqual(before)
+    expect(h.feedback()).toBeUndefined()
+    expect(JSON.stringify([...h.ctx.storage.sql.exec('SELECT', 'session')])).not.toContain('ink')
+  })
+  test('a venue screen that joins or reconnects gets the current drawing; a phone does not; ending the session forgets it', async () => {
+    const h = harness()
+    const presenter = h.socket('presenter', 'ink-late-owner')
+    await deliver(h.worker, presenter, message)
+    const late = h.socket('audience', 'ink-late-screen', 2, 'ink-late', 'screen')
+    await deliver(h.worker, late, { type: 'session.sync', syncId: 'ink-late-sync' })
+    expect(late.sent.at(-2).type).toBe('session.snapshot')
+    expect(late.sent.at(-1)).toEqual(message)
+    const phone = h.socket('audience', 'ink-late-phone', 2, 'ink-late-phone')
+    await deliver(h.worker, phone, { type: 'session.sync', syncId: 'ink-phone-sync' })
+    expect(inkSent(phone)).toHaveLength(0)
+    // Cleared by the presenter: the empty layer replaces the drawing for screens that join later.
+    const cleared = { type: 'ink.live', ink: { slideId: 'text', space: 'slide', strokes: [], draft: null } }
+    await deliver(h.worker, presenter, cleared)
+    const later = h.socket('audience', 'ink-later-screen', 2, 'ink-later', 'screen')
+    await deliver(h.worker, later, { type: 'session.sync', syncId: 'ink-later-sync' })
+    expect(later.sent.at(-1)).toEqual(cleared)
+    await deliver(h.worker, presenter, message)
+    // A reloaded object (memory gone) holds no ink, as it lived in memory only: a screen that joins
+    // has the presenter asked to resend its layer at once, and the answer reaches the screen.
+    const reloaded = h.reload()
+    const storedBefore = JSON.stringify([...h.ctx.storage.sql.exec('SELECT', 'session')])
+    const afterReload = h.socket('audience', 'ink-reload-screen', 2, 'ink-reload', 'screen')
+    const requestsBefore = presenter.sent.filter((m: any) => m.type === 'ink.request').length
+    expect(requestsBefore).toBe(0)
+    await deliver(reloaded, afterReload, { type: 'session.sync', syncId: 'ink-reload-sync' })
+    expect(inkSent(afterReload)).toHaveLength(0)
+    expect(presenter.sent.at(-1)).toEqual({ type: 'ink.request' })
+    // A second screen within the second does not ask again; a phone never asks.
+    const second = h.socket('audience', 'ink-reload-screen-2', 2, 'ink-reload-2', 'screen')
+    await deliver(reloaded, second, { type: 'session.sync', syncId: 'ink-reload-sync-2' })
+    const reloadPhone = h.socket('audience', 'ink-reload-phone', 2, 'ink-reload-phone')
+    await deliver(reloaded, reloadPhone, { type: 'session.sync', syncId: 'ink-reload-phone-sync' })
+    expect(presenter.sent.filter((m: any) => m.type === 'ink.request')).toHaveLength(1)
+    await deliver(reloaded, presenter, message)
+    expect(inkSent(afterReload)).toEqual([message])
+    expect(inkSent(second)).toEqual([message])
+    expect(inkSent(reloadPhone)).toHaveLength(0)
+    // Held in memory again; never written to storage.
+    const third = h.socket('audience', 'ink-reload-screen-3', 2, 'ink-reload-3', 'screen')
+    await deliver(reloaded, third, { type: 'session.sync', syncId: 'ink-reload-sync-3' })
+    expect(inkSent(third)).toEqual([message])
+    expect(JSON.stringify([...h.ctx.storage.sql.exec('SELECT', 'session')])).toBe(storedBefore)
+    expect(storedBefore).not.toContain('"strokes"')
+    const ender = h.worker as any
+    await ender.endSession('ended')
+    expect(ender.liveInk).toBeNull()
+  })
+  test('a screen that syncs again and again gets the cached layer at most once a second, and new ink at once', async () => {
+    const h = harness()
+    const presenter = h.socket('presenter', 'ink-sync-owner')
+    await deliver(h.worker, presenter, message)
+    const screen = h.socket('audience', 'ink-sync-screen', 2, 'ink-sync', 'screen')
+    let now = Date.now()
+    const clock = spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      for (let i = 0; i < 10; i++) await deliver(h.worker, screen, { type: 'session.sync', syncId: 'ink-sync-' + i })
+      expect(inkSent(screen)).toHaveLength(1)
+      now += 1001
+      await deliver(h.worker, screen, { type: 'session.sync', syncId: 'ink-sync-later' })
+      expect(inkSent(screen)).toHaveLength(2)
+      const next = { ...message, ink: { ...message.ink, strokes: [] } }
+      await deliver(h.worker, presenter, next)
+      expect(inkSent(screen).at(-1)).toEqual(next)
+      expect(presenter.sent.filter((m: any) => m.type === 'ink.request')).toHaveLength(0)
+    } finally { clock.mockRestore() }
+  })
+  test('a superseded presenter cannot draw; malformed and oversized ink never reaches a screen; operations cannot carry it', async () => {
+    const h = harness()
+    const old = h.socket('presenter', 'ink-old')
+    const screen = h.socket('audience', 'ink-reconnect-screen', 2, 'ink-screen', 'screen')
+    await deliver(h.worker, old, { type: 'session.sync', syncId: 'ink-old-sync' })
+    const next = h.socket('presenter', 'ink-new')
+    await deliver(h.worker, next, { type: 'session.sync', syncId: 'ink-new-sync' })
+    const state = h.state()
+    recoveryState(state).presenterConnectionId = 'ink-new'
+    h.ctx.storage.sql.exec('INSERT INTO kv (key, value) VALUES (?, ?)', 'session', JSON.stringify(state))
+    const reconnected = h.reload()
+    await deliver(reconnected, old, message)
+    expect(inkSent(screen)).toHaveLength(0)
+    expect(old.sent.at(-1)).toEqual({ type: 'session.superseded' })
+    const before = h.state()
+    for (const ink of [{ ...message.ink, strokes: [{ ...stroke, ink: 'purple' }] }, { ...message.ink, strokes: [{ ...stroke, points: [[-5, 0], [1, 1]] }] },
+      { ...message.ink, strokes: Array.from({ length: 101 }, () => stroke) }, { ...message.ink, slideId: '' }, null]) {
+      await deliver(reconnected, next, { type: 'ink.live', ink })
+    }
+    await deliver(reconnected, next, { ...message, padding: 'x'.repeat(70_000) })
+    await deliver(reconnected, next, { type: 'operation', operationId: 'ink-operation', action: message })
+    expect(inkSent(screen)).toHaveLength(0)
+    expect(h.state()).toEqual(before)
+    await deliver(reconnected, next, message)
+    expect(inkSent(screen)).toEqual([message])
   })
 })

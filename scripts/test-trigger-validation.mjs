@@ -24,6 +24,10 @@ assert.deepEqual(warningsOf('T {timeline=banana}'), ['unresolved-trigger:timelin
 assert.deepEqual(warningsOf('T {frobnicate=7}'), ['unresolved-trigger:frobnicate=7'])
 assert.deepEqual(warningsOf('T {blocks:banana}'), ['unresolved-trigger:blocks=banana'])
 
+// Ticket 13: {page-60|70|80} is registered; any other width is unresolved (the compiler falls back to 70).
+for (const value of ['60', '70', '80']) assert.deepEqual(warningsOf(`T {page-${value}}`), [], `page-${value} is registered`)
+assert.deepEqual(warningsOf('T {page-55}'), ['unknown-trigger:page-55'])
+
 // Registered reality stays silent (Milestone B registrations + approved audit closures).
 assert.deepEqual(warningsOf('T {timeline=rail}'), [])
 assert.deepEqual(warningsOf('T {contrast=cards}'), [])
@@ -140,7 +144,10 @@ const dynamicSamples = [
   'countdown-digits-30s',
   'countdown-bar-3min',
   'sidebar-30',
-  'sidebar-50'
+  'sidebar-50',
+  'page-60',
+  'page-70',
+  'page-80'
 ]
 for (const pattern of DYNAMIC_PATTERNS) {
   const matches = dynamicSamples.filter((sample) => new RegExp(pattern.source).test(sample))

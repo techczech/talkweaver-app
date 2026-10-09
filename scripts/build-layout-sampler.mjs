@@ -13,7 +13,10 @@ export const samplerArtefactsDir = join(repo, 'artefacts/layout-sampler')
 export async function buildLayoutSampler(outputDir = samplerArtefactsDir) {
   writeDeckStyles()
   const source = readFileSync(samplerOutlinePath, 'utf8')
-  const model = await prepareSource(samplerOutlinePath, source, 'TalkWeaver Layout Sampler', statSync(samplerOutlinePath))
+  // The sampler's two videos are test fixtures in e2e/fixtures, outside docs/: name that folder as an
+  // allowed root beside the sampler's own (ADR-0036; the compiler's default is the talk's folder alone).
+  const model = await prepareSource(samplerOutlinePath, source, 'TalkWeaver Layout Sampler', statSync(samplerOutlinePath), undefined,
+    { allowedAssetRoots: [dirname(samplerOutlinePath), join(repo, 'e2e/fixtures')] })
   const html = await buildDeckHtmlFromModel(model)
   mkdirSync(outputDir, { recursive: true })
   const outPath = join(outputDir, 'layout-sampler.html')

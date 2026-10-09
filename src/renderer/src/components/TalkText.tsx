@@ -17,6 +17,7 @@ import type {
 import NotesDocument, { type NotesDisplayPart } from './NotesDocument'
 import { diffWords, type DiffToken } from '../lib/wordDiff'
 import { buildSlideIndex, createRequestGeneration, createSurfaceRequestGeneration, mergeNoteSources, seekLoadedAudio } from '../lib/talkTextRuntime'
+import { runAudioSummary } from '../../../shared/run-audio'
 import '../talktext.css'
 
 type Mode = 'notes' | 'script'
@@ -1030,7 +1031,7 @@ export default function TalkText({
 
   const trimmedMs = active?.trims?.reduce((sum, trim) => sum + Math.max(0, trim.end - trim.start), 0) ?? 0
   const documentMeta = model
-    ? [model.meta.event, humanDate(model.meta.date), `${minutes(model.meta.recordedMs)} recorded`, trimmedMs ? `raw ${minutes(model.meta.recordedMs + trimmedMs)}` : null, `${model.slides.length} slides`].filter(Boolean).join(' · ')
+    ? [model.meta.event, humanDate(model.meta.date), `${minutes(model.meta.recordedMs)} recorded`, trimmedMs ? `raw ${minutes(model.meta.recordedMs + trimmedMs)}` : null, active ? runAudioSummary(active).label : null, `${model.slides.length} slides`].filter(Boolean).join(' · ')
     : ''
 
   return (
@@ -1053,7 +1054,7 @@ export default function TalkText({
               <div className="tt-pop tt-recording-pop">
                 <div className="tt-search"><Search className="lt-icon" /><input autoFocus value={pickerQuery} onChange={(e) => setPickerQuery(e.target.value)} placeholder="Search recordings…" aria-label="Search recordings" />{pickerQuery ? <button onClick={() => setPickerQuery('')} aria-label="Clear recording search"><X className="lt-icon" /></button> : null}</div>
                 <div className="tt-recording-list">
-                  {filteredSessions.map((item) => <button key={item.id} className={item.id === active.id ? 'sel' : ''} onClick={() => { setPickerOpen(false); setPickerQuery(''); void load(item.id) }}><span><b>{item.talkTitle}</b><small>{humanDate(item.startedAt)} · {minutes(item.recordingMs)}</small></span>{item.id === active.id ? <Check className="lt-icon" /> : null}</button>)}
+                  {filteredSessions.map((item) => <button key={item.id} className={item.id === active.id ? 'sel' : ''} onClick={() => { setPickerOpen(false); setPickerQuery(''); void load(item.id) }}><span><b>{item.talkTitle}</b><small>{humanDate(item.startedAt)} · {minutes(item.recordingMs)}{runAudioSummary(item).label ? ` · ${runAudioSummary(item).label}` : ''}</small></span>{item.id === active.id ? <Check className="lt-icon" /> : null}</button>)}
                   {filteredSessions.length === 0 ? <p>No recordings match that search.</p> : null}
                 </div>
               </div>

@@ -1,6 +1,8 @@
 // Folding for the outline editor: collapse a heading's whole section, or a list item's
 // sub-items. Drives the fold gutter arrows + the fold keymap (Ctrl-Shift-[ / ]).
-import { foldService } from '@codemirror/language'
+import { foldNodeProp, foldService } from '@codemirror/language'
+import { isImageBlockLine } from '../../../../compiler/scripts/lib/image-line-rules.mjs'
+import type { MarkdownConfig } from '@lezer/markdown'
 import type { EditorState } from '@codemirror/state'
 import { headingLevel, listMatch, leadingWidth, isBlank } from './outliner'
 
@@ -39,3 +41,23 @@ export const outlineFoldService = foldService.of(
     return null
   }
 )
+
+// Markdown folds every multi-line paragraph from its first line, so a run of image lines (or a
+// trigger line such as {image-grid} above them) grew a second collapse arrow beside the pictures,
+// under the slide heading's own. The heading already collapses those lines; a paragraph that
+// holds an image line gets no fold of its own. Other paragraphs keep markdown's default fold.
+
+export const imageParagraphNoFold: MarkdownConfig = {
+  props: [
+    foldNodeProp.add({
+      Paragraph: (node, state) => {
+        const first = state.doc.lineAt(node.from)
+        const last = state.doc.lineAt(node.to)
+        for (let n = first.number; n <= last.number; n += 1) {
+          if (isImageBlockLine(state.doc.line(n).text.trim())) return null
+        }
+        return { from: first.to, to: node.to }
+      }
+    })
+  ]
+}

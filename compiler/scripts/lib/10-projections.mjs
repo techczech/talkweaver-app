@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { parseTagsValue } from "./12-outline-edit.mjs";
+import { UNDERLINE_SOURCE } from "./00-inline-protection.mjs";
+import { imagePlacementsForSlide } from "./image-placement.mjs";
 
 // ----------------------------------------------------------------------------
 // PER-SLIDE PROJECTIONS (P1 integration bridge — the safe, non-destructive half).
@@ -18,15 +20,23 @@ import { parseTagsValue } from "./12-outline-edit.mjs";
 // ----------------------------------------------------------------------------
 
 // Strip the small subset of inline markdown the renderer understands so projected
-// text reads like the rendered slide (links → their label, **/*/`/~~ dropped).
+// text reads like the rendered slide (links → their label, ++underline++ → its
+// text via the renderer's own boundary rule, **/*/`/~~ dropped; ==highlight==
+// deliberately kept).
 // =============================================================================
 // 10. Per-slide projections — stable per-slide records for the Slide Library
 // =============================================================================
+
+// ++underline++ → its inner text, using the exact boundary-aware rule the renderer
+// applies (exported here so the two never drift); `C++`, `i++ and j++`,
+// `a ++ b ++ c` and a lone `++` stay literal.
+const UNDERLINE_TO_TEXT = new RegExp(UNDERLINE_SOURCE, "g");
 
 function stripInlineMarkdown(value) {
   return String(value == null ? "" : value)
     .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")            // images → nothing
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")          // links → label
+    .replace(UNDERLINE_TO_TEXT, "$1")                 // ++underline++ → its text
     .replace(/[*_~`]+/g, "")                          // bold / italic / code / strike marks
     .replace(/\s+/g, " ")
     .trim();
@@ -120,6 +130,7 @@ function blockText(block) {
       return (block.cards || []).map((c) => [stripInlineMarkdown(c.title), ...(c.blocks || []).map(blockText)].filter(Boolean).join(" ")).join(" ");
     case "embed":
     case "video":
+    case "audio":
     case "qr":
     case "action":
     case "actions":
@@ -263,6 +274,9 @@ export function buildPerSlideProjections(model, deckSlug) {
       // compiled before it existed, which callers must read as "not known".
       ...(Array.isArray(model.titleLayouts) && index < model.titleLayouts.length ? { title_layout: model.titleLayouts[index] } : {}),
       elements: buildSlideElements(slide),
+      // Where each image of this slide lands (full screen, beside text, in a row, ...) in outline
+      // order — the compiler's own decision, read by the editor's image preview label.
+      image_placements: imagePlacementsForSlide(slide),
       warnings: warningsBySlide.get(slideId) || []
     };
   });

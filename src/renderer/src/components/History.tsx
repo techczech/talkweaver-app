@@ -17,6 +17,7 @@ import { preworkEnabled } from '../../../shared/prework-flag'
 import { RunQuestions, RunReactions, type FeedbackSlide } from './HistoryRunFeedback'
 import { RunBoardBlock, RunPollsBlock, RunShareDialog, boardLedgerBadge } from './HistoryRunBoard'
 import { runBoardKey } from '../../../shared/run-board'
+import { runAudioSummary } from '../../../shared/run-audio'
 import '../history.css'
 
 type SortMode = 'newest' | 'talk' | 'length'
@@ -1133,6 +1134,11 @@ function HistoryEntry(props: {
             <>
               <span className="rec-len">{fmtMins(deliveredMs(row.session))}</span>
               {row.session.trims?.length ? <span className="rec-raw">raw {fmtMins(row.session.recordingMs)}</span> : null}
+              {/* When the microphone was lost mid-recording, the Run holds less audio than its length. */}
+              {(() => {
+                const audio = runAudioSummary(row.session)
+                return audio.label ? <span className="rec-audio-short" title="The audio is shorter than the recording: the microphone input was lost.">{audio.label}</span> : null
+              })()}
             </>
           ) : (
             <>
@@ -1193,11 +1199,11 @@ function instantKind(entry: RunInstantSlide): { icon: JSX.Element; label: string
   if (entry.kind === 'link') return { icon: <Link2 className="lt-icon" />, label: 'Link', text: entry.url ?? '' }
   if (entry.kind === 'countdown') {
     const minutes = Math.round((entry.durationMs ?? 0) / 60_000)
-    return { icon: <Timer className="lt-icon" />, label: `Countdown · ${minutes >= 1 ? `${minutes} min` : `${Math.round((entry.durationMs ?? 0) / 1000)} s`}`, text: entry.label || 'Countdown' }
+    return { icon: <Timer className="lt-icon" />, label: `Countdown · ${minutes >= 1 ? `${minutes} min` : `${Math.round((entry.durationMs ?? 0) / 1000)} s`}`, text: (entry.label || 'Countdown') + (entry.link ? ` · ${entry.link.replace(/^https?:\/\//, '')}` : '') }
   }
   if (entry.kind === 'time') return { icon: <Clock className="lt-icon" />, label: 'Clock', text: 'Current time' }
   if (entry.kind === 'image') return { icon: <ImageIcon className="lt-icon" />, label: 'Image', text: `Image shown live · ${entry.width ?? '?'} × ${entry.height ?? '?'}` }
-  return { icon: <Type className="lt-icon" />, label: 'Text', text: entry.text ?? '' }
+  return { icon: <Type className="lt-icon" />, label: entry.link ? 'Text and link' : 'Text', text: entry.link ? `${entry.text ?? ''} · ${entry.link.replace(/^https?:\/\//, '')}` : entry.text ?? '' }
 }
 
 function InstantThumb({ entry }: { entry: RunInstantSlide }): JSX.Element {
@@ -1205,7 +1211,7 @@ function InstantThumb({ entry }: { entry: RunInstantSlide }): JSX.Element {
   if (entry.kind === 'countdown') return <span className="isl-th-clock"><small>{entry.label || 'Countdown'}</small>{countdownDigits(entry.durationMs ?? 0)}</span>
   if (entry.kind === 'time') return <span className="isl-th-clock">{clockTime(entry.shownAt)}</span>
   if (entry.kind === 'link') return <span className="isl-th-link"><Link2 className="lt-icon" />{(entry.url ?? '').replace(/^https?:\/\//, '')}</span>
-  return <span className="isl-th-text">{entry.text}</span>
+  return <span className="isl-th-text">{entry.text}{entry.link ? ` · ${entry.link.replace(/^https?:\/\//, '')}` : ''}</span>
 }
 
 // Frame L6: the instant slides shown during the Run, inside the selected Run's card.

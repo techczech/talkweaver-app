@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { PathwayWindowContext, TalkInfo, VaultView } from '../../preload/index'
 import VaultSetup from './components/VaultSetup'
-import TalkList, { PromptModal } from './components/TalkList'
+import TalkList, { PromptModal } from './components/talklist/TalkList'
 import WorkspaceLayout, { type OutlineOps } from './components/WorkspaceLayout'
 import NewTalkDialog from './components/NewTalkDialog'
 import SlidesOrganizer from './components/SlidesOrganizer'
@@ -17,6 +17,8 @@ import ConflictCompare from './components/ConflictCompare'
 import { CONFLICT_COMPARE_EVENT } from './components/talklist/ConflictLine'
 import { VaultSheet, type VaultSheetState } from './components/talklist/VaultSheet'
 import { notify } from './lib/notify'
+import type { OpenInNewWindowTarget } from '../../shared/open-in-new-window'
+import { encodeFocus } from './components/talklist/vaultSections'
 import { armOutlineSwitch, consumeEditorEngagement } from './lib/outlineSwitch'
 import { effectiveKeys, eventToCMKey, KEYMAP_CHANGED_EVENT } from './keymap/store'
 
@@ -186,6 +188,9 @@ function ToolsShell({ initialView }: { initialView: ToolsView }): JSX.Element {
   )
 }
 
+// The window's one answer from main to "what was I opened for" (see MainApp's take-open-request effect).
+let takeOpenRequestOnce: Promise<OpenInNewWindowTarget | null> | null = null
+
 function MainApp() {
   const [state, setState] = useState<AppState>({ phase: 'loading' })
   const pendingTalkBatchesRef = useRef<Array<{ vaultId: string; batch: TalkInfo[]; reset: boolean }>>([])
@@ -213,6 +218,8 @@ function MainApp() {
   // the live state for anything else that reads it).
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>('talks')
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false)
+  const sidebarShowsTalksRef = useRef(true)
+  sidebarShowsTalksRef.current = sidebarMode === 'talks' && !sidebarCollapsed
   // The current talk's outline, mirrored up from WorkspaceLayout so the Slide-outline
   // sidebar view renders the live structure; jumpRef jumps the editor + strip to a line.
   const [outlineContent, setOutlineContent] = useState('')
@@ -316,6 +323,36 @@ function MainApp() {
     outlineSwitchArmedRef.current = armOutlineSwitch(talk?.outlinePath ?? null)
     void selectTalk(talk)
   }, [selectTalk])
+  // A window opened by the file list's "Open in new window" asks main once what it was opened for.
+  // A talk is selected through the same selectTalk as any open (claim, guard) once the talk list holds
+  // it; a folder scopes the new window's file list to that folder (TalkList drill-in).
+  const [openRequest, setOpenRequest] = useState<OpenInNewWindowTarget | null>(null)
+  const openRequestAtRef = useRef(0)
+  const [folderRequest, setFolderRequest] = useState<{ path: string; vaultId?: string; nonce: number } | null>(null)
+  useEffect(() => {
+    let live = true
+    // One ask per window, shared by every setup of this effect (StrictMode runs setup, cleanup, setup in dev):
+    // main hands the request out once, so the second setup must reuse the first call's answer.
+    takeOpenRequestOnce ??= window.tw.windows?.takeOpenRequest?.() ?? Promise.resolve(null)
+    void takeOpenRequestOnce.then((req) => { if (live && req) { openRequestAtRef.current = Date.now(); setOpenRequest(req) } }).catch(() => undefined)
+    return () => { live = false }
+  }, [])
+  useEffect(() => {
+    if (!openRequest || state.phase !== 'ready') return
+    if (openRequest.kind === 'folder') {
+      talkFocusPathRef.current = encodeFocus({ vaultId: openRequest.vaultId ?? state.vaults.find((v) => v.open && !v.unavailable)?.id ?? '', path: openRequest.topic })
+      setFolderRequest({ path: openRequest.topic, vaultId: openRequest.vaultId, nonce: Date.now() })
+      setOpenRequest(null)
+      return
+    }
+    const talk = state.talks.find((t) => t.outlinePath === openRequest.outlinePath)
+    if (talk) { setOpenRequest(null); void selectTalk(talk); return }
+    // Talks arrive in batches: wait for the one that holds it. 15 s in all from the request, not from the last state change.
+    const left = Math.max(0, 15000 - (Date.now() - openRequestAtRef.current))
+    const timer = window.setTimeout(() => { setOpenRequest(null); void window.tw.windows?.claimTalk?.(null) /* release: this window is no longer "starting" for the talk */; notify('Couldn’t find that talk to open it in this window.', 'error') }, left)
+    return () => window.clearTimeout(timer)
+  }, [openRequest, state, selectTalk])
+
   // WorkspaceLayout calls this on the editor's two engagement triggers (see Editor.onEditorEngaged).
   // Talks-panel folder position is untouched: the panel unmounts on the switch and talkFocusPathRef
   // restores it when the user comes back via the tab or sidebar.talks.
@@ -416,6 +453,14 @@ function MainApp() {
     // first vault (ticket 07). First-run setup still chooses a root through VaultSetup.
     const changeVaultEv = (): void => { void addVault() }
     const searchTalks = (): void => { setSidebarMode('talks'); setSidebarCollapsed(false) }
+    // Palette command open-in-new-window: show the file list first (it is unmounted when the sidebar is
+    // collapsed or on Slide outline), then let it act on its focused row.
+    const openInNewWindow = (): void => {
+      if (sidebarShowsTalksRef.current) { window.dispatchEvent(new Event('tw-open-in-new-window-run')); return }
+      // The list was hidden: show it, but do not act on the row it focuses by itself on mount.
+      setSidebarMode('talks'); setSidebarCollapsed(false)
+      notify('Select a talk or folder in the file list first.', 'info')
+    }
     const searchSlides = (): void => { setSidebarMode('slides'); setSidebarCollapsed(false) }
     const openMetadata = (): void => { if (activeTalkRef.current) setMetadataTalk(activeTalkRef.current) }
     window.addEventListener('tw-open-settings', openSettings)
@@ -427,6 +472,7 @@ function MainApp() {
     window.addEventListener('tw-refresh-talks', refresh)
     window.addEventListener('tw-change-vault', changeVaultEv)
     window.addEventListener('tw-search-talks', searchTalks)
+    window.addEventListener('tw-open-in-new-window', openInNewWindow)
     window.addEventListener('tw-search-slides', searchSlides)
     window.addEventListener('tw-open-metadata', openMetadata)
     return () => {
@@ -439,6 +485,7 @@ function MainApp() {
       window.removeEventListener('tw-refresh-talks', refresh)
       window.removeEventListener('tw-change-vault', changeVaultEv)
       window.removeEventListener('tw-search-talks', searchTalks)
+      window.removeEventListener('tw-open-in-new-window', openInNewWindow)
       window.removeEventListener('tw-search-slides', searchSlides)
       window.removeEventListener('tw-open-metadata', openMetadata)
     }
@@ -708,6 +755,7 @@ function MainApp() {
               // …and the external-change guard's leave check before any move of the active talk.
               leaveActive={async () => { const guard = leaveGuardRef.current; if (guard) return guard(); await flushSaveRef.current?.(); return true }}
               initialFocusPath={talkFocusPathRef.current}
+              focusRequest={folderRequest}
               onFocusPathChange={rememberTalkFocusPath}
             />
           )}

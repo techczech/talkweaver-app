@@ -1,3 +1,5 @@
+import { isImageBlockLine, IMAGE_SYNTAX_RE, imageSyntaxIsVideo, imageSyntaxIsAudio } from "./image-line-rules.mjs";
+export { isImageBlockLine };
 import { isVideoEmbedUrl, normalizeEmbedUrl, isBareUrl, timelineBlockFields, quoteFromQuotedParagraph, claimFromBoldParagraph, foldQuoteAttribution, parseTrace } from "./02-triggers-layout.mjs";
 import {
   chartObjectTokenAt,
@@ -11,7 +13,10 @@ import { normalizeIconOverrideKey } from "./05-icons.mjs";
 // Playback intent for a video, from trailing curly tokens on the media line (ADR-0028):
 // ![alt](clip.mp4){autoplay}{loop}{muted}{controls}. A GIF converted by TalkWeaver carries
 // {autoplay}{loop}{muted} (ambient, indistinguishable from the original GIF); a bare MP4 carries
-// none (manual, control-barred). Unknown tokens are ignored. Returns {} when there are no tokens.
+// none (manual, control-barred). {play-on-next} (0.38 ticket 05) makes the file a step of its slide:
+// the press of Next that reaches it starts it (lib/media-steps.mjs). Unknown tokens are ignored.
+// Returns {} when there are no tokens.
+const PLAY_ON_NEXT_RE = /\{\s*play-on-next\s*\}/i;
 function parseMediaFlags(raw) {
   const flags = {};
   if (!raw) return flags;
@@ -19,6 +24,7 @@ function parseMediaFlags(raw) {
     const k = m[1].trim().toLowerCase();
     if (k === "autoplay" || k === "loop" || k === "muted" || k === "controls") flags[k] = true;
     else if (k === "mute") flags.muted = true;
+    else if (k === "play-on-next") flags.playOnNext = true;
   }
   return flags;
 }
@@ -200,15 +206,18 @@ export function lexMarkdownBlocks(lines) {
       blocks.push({ type: "embed", variant: m[1].toLowerCase(), src });
       i += 1; continue;
     }
-    if ((m = t.match(/^\[Video:\s*(.+?)\]$/i))) {
+    // `[Video: …]` takes one trailing token, {play-on-next}: a file plays as a step; a YouTube or
+    // Vimeo player cannot, and the block carries the token only so the compiler can say so.
+    if ((m = t.match(/^\[Video:\s*(.+?)\]\s*(\{\s*play-on-next\s*\})?$/i))) {
       const rawSrc = m[1].trim();
+      const playOnNext = Boolean(m[2]);
       // A YouTube/Vimeo link is a live PLAYER, not a media file — route it to an iframe embed
       // (which plays in the standalone HTML from file://), not an HTML5 <video> that cannot load
       // a YouTube page. Real video file URLs / local assets stay as a <video> element.
       if (isVideoEmbedUrl(rawSrc)) {
-        blocks.push({ type: "embed", variant: "video", src: normalizeEmbedUrl(rawSrc) });
+        blocks.push({ type: "embed", variant: "video", src: normalizeEmbedUrl(rawSrc), ...(playOnNext ? { playOnNext: true } : {}) });
       } else {
-        blocks.push({ type: "video", src: rawSrc });
+        blocks.push({ type: "video", src: rawSrc, ...(playOnNext ? { flags: { playOnNext: true } } : {}) });
       }
       i += 1; continue;
     }
@@ -221,14 +230,19 @@ export function lexMarkdownBlocks(lines) {
       if (url) blocks.push({ type: "qr", url, label: (m[2] || "").trim() });
       i += 1; continue;
     }
-    if ((m = t.match(/^!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)\s*((?:\{[^}]*\}\s*)*)$/))) {
+    if ((m = t.match(IMAGE_SYNTAX_RE))) {
       // A video FILE in image syntax is a video block (2026-06-10): ![alt](assets/talk.mp4)
       // is the natural authoring form next to images; [Video:] remains equivalent. Trailing curly
       // tokens (group 4) carry playback intent for videos (ADR-0028); images ignore them.
-      if (/\.(mp4|webm|mov|m4v)$/i.test(m[2].split(/[?#]/)[0]) && !isVideoEmbedUrl(m[2])) {
+      if (imageSyntaxIsVideo(m[2])) {
         blocks.push({ type: "video", src: m[2], alt: m[1] || "", caption: m[3] || "", flags: parseMediaFlags(m[4]) });
+      } else if (imageSyntaxIsAudio(m[2])) {
+        // An audio FILE in image syntax is an `audio` block: a speaker chip that sits in the slide's
+        // text flow. {autoplay} and {loop} carry over from video; the alt text is the chip's title.
+        blocks.push({ type: "audio", src: m[2], title: m[1] || "", flags: parseMediaFlags(m[4]) });
       } else {
-        blocks.push({ type: "image", alt: m[1], src: m[2], caption: m[3] || "" });
+        // {play-on-next} on a line that is not a video or audio file is carried only to be reported.
+        blocks.push({ type: "image", alt: m[1], src: m[2], caption: m[3] || "", ...(PLAY_ON_NEXT_RE.test(m[4] || "") ? { playOnNext: true } : {}) });
       }
       i += 1; continue;
     }

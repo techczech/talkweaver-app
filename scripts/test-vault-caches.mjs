@@ -64,7 +64,7 @@ try {
     writeFileSync(join(dirA, '0123456789abcdef-key1.png'), png)
     const urlA = thumbUrl('alpha', 'key1', A.id)
     const urlB = thumbUrl('alpha', 'key1', B.id)
-    assert.equal(urlA, `twthumb://alpha/key1?vault=${A.id}`)
+    assert.equal(urlA, `twthumb://thumb/alpha/key1?vault=${A.id}`)
     const find = (url) => {
       const req = parseThumbUrl(url)
       for (const d of thumbLookupDirs(ns, req, [A.id, B.id])) { const hit = resolveThumbFile(d, req.key); if (hit) return hit }
@@ -81,7 +81,7 @@ try {
     // A bare URL (what the renderer builds today) looks in the open vaults in order, then the namespace.
     assert.deepEqual(thumbLookupDirs(ns, parseThumbUrl('twthumb://alpha/key1'), [A.id, B.id]),
       [join(ns, VAULTS_DIR, A.id, 'alpha'), join(ns, VAULTS_DIR, B.id, 'alpha'), join(ns, 'alpha')])
-    assert.equal(thumbUrl('alpha', 'key1', null), 'twthumb://alpha/key1', 'a talk in no vault keeps the bare URL')
+    assert.equal(thumbUrl('alpha', 'key1', null), 'twthumb://thumb/alpha/key1', 'a talk in no vault keeps the bare URL')
     assert.equal(parseThumbUrl('twthumb://alpha/key1?vault=../x').vaultId, null, 'an unusable vault id is ignored')
   })
 

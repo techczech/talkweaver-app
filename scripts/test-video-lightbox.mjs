@@ -178,9 +178,14 @@ try {
       video.dataset.t24 = 'audience-one'
       const deckId = document.body.dataset.deckId || location.pathname
       const commandType = `html-presentations:${deckId}:t24-${id}:command`
-      window.postMessage({ type: commandType, command: 'video', videoCommand: { action: 'fullscreen', target: 0, nonce: 'n1' }, index: [...document.querySelectorAll('.stage > .slide')].findIndex((s) => s.classList.contains('active')) }, '*')
-      window.postMessage({ type: commandType, command: 'video', videoCommand: { action: 'fullscreen', target: 0, nonce: 'n1' }, index: [...document.querySelectorAll('.stage > .slide')].findIndex((s) => s.classList.contains('active')) }, '*')
-      await new Promise((r) => setTimeout(r, 100))
+      // The command arrives the way the presenter's does: on the session's BroadcastChannel. (A deck
+      // takes peer commands by postMessage only from the window it established as its peer, never
+      // from a message a page posts to itself: embed sandbox ticket 11.2.)
+      const peer = new BroadcastChannel(`html-presentations:${deckId}:t24-${id}`)
+      peer.postMessage({ type: commandType, command: 'video', videoCommand: { action: 'fullscreen', target: 0, nonce: 'n1' }, index: [...document.querySelectorAll('.stage > .slide')].findIndex((s) => s.classList.contains('active')) })
+      peer.postMessage({ type: commandType, command: 'video', videoCommand: { action: 'fullscreen', target: 0, nonce: 'n1' }, index: [...document.querySelectorAll('.stage > .slide')].findIndex((s) => s.classList.contains('active')) })
+      await new Promise((r) => setTimeout(r, 200))
+      peer.close()
       return { calls: window.__fsCalls.map((el) => el.dataset.t24), commandType }
     }, testCase.id)
     assert.deepEqual(audienceResult.calls, ['audience-one'], `${testCase.id}: the audience runs the presenter's video command once (nonce de-duplicated) on the targeted video`)
@@ -196,7 +201,8 @@ try {
   const source = `---\ntitle: T24 playing video\nauto_title_slide: false\nauto_thanks_slide: false\n---\n\n### Playing clip {id=t24-playing}\n\n- The clip keeps playing while enlarged.\n\n[Video: ${join(repo, 'e2e/fixtures/media-row-4x3.webm')}]\n`
   const sourcePath = join(dir, 't24.md')
   await writeFile(sourcePath, source)
-  const model = await prepareSource(sourcePath, source, 't24', statSync(sourcePath))
+  // The clip is a fixture named by absolute path: its folder is an allowed root (ADR-0036).
+  const model = await prepareSource(sourcePath, source, 't24', statSync(sourcePath), undefined, { allowedAssetRoots: [dir, join(repo, 'e2e/fixtures')] })
   const deckPath = join(dir, 't24.html')
   await writeFile(deckPath, model.fullHtml)
   const playing = await browser.newPage({ viewport: { width: 1600, height: 900 } })

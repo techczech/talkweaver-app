@@ -44,17 +44,18 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
 const BAR = {
   left: ['outlineBtn'],
   mid: ['presenterPrev', 'presenterNext', 'skipNextBtn'],
-  right: ['navQuickPoll', 'navInstant', 'presenterFocus', 'presenterHighlight', 'presenterMore', 'twedit-btn']
+  right: ['navQuickPoll', 'navInstant', 'presenterFocus', 'presenterPointer', 'presenterPen', 'presenterHighlight', 'presenterMore', 'twedit-btn']
 }
-const LABELS = { outlineBtn: 'Outline', presenterPrev: 'Previous', presenterNext: 'Next', navQuickPoll: 'Quick poll', navInstant: 'Instant slide', presenterFocus: 'Focus', presenterHighlight: 'Highlight' }
+const LABELS = { outlineBtn: 'Outline', presenterPrev: 'Previous', presenterNext: 'Next', navQuickPoll: 'Quick poll', navInstant: 'Instant slide', presenterFocus: 'Focus', presenterPointer: 'Pointer', presenterPen: 'Pen', presenterHighlight: 'Highlight' }
 const ICON_ONLY = ['skipNextBtn', 'presenterMore', 'twedit-btn']
 // The drawn More menu (shot menu-more-open-1440x900.png), with Reveal mode, which the ticket puts
 // in More, first under "This slide".
 const MORE = {
-  sections: ['Go to', 'This slide'],
+  sections: ['Go to', 'This slide', 'Mark the slide'],
   items: [['presenterFirst', 'First slide'], ['presenterLast', 'Last slide'], ['moreReturn', 'Return to where you jumped from'], ['moreGridCard', 'Card on a grid slide'],
-    ['presenterReveal', 'Reveal mode'], ['presenterHighlightClear', 'Clear highlights'], ['moreEmbed', 'Interact with embedded page'], ['fontDown', 'Slide text smaller'], ['fontUp', 'Slide text larger'],
-    ['moreRefresh', 'Refresh with latest edits']]
+    ['presenterReveal', 'Reveal mode'], ['moreEmbed', 'Interact with embedded page'], ['fontDown', 'Slide text smaller'], ['fontUp', 'Slide text larger'],
+    ['morePointer', 'Pointer'], ['morePen', 'Pen'], ['moreInkClear', 'Clear drawing on this slide'], ['moreInkClearAll', 'Clear all drawings'],
+    ['presenterHighlightClear', 'Clear highlights'], ['moreRefresh', 'Refresh with latest edits']]
 }
 
 const FIXTURE = `---
@@ -122,7 +123,7 @@ try {
 window.__ipcCalls = []; window.__ipcOn = {}
 export const ipcRenderer = {
   invoke: async (channel, ...args) => { window.__ipcCalls.push([channel, args[0] ?? null]); return channel in answers ? answers[channel] : {} },
-  on(channel, fn) { (window.__ipcOn[channel] ||= []).push(fn) }, send() {}, removeListener() {}
+  on(channel, fn) { (window.__ipcOn[channel] ||= []).push(fn) }, send(channel, value) { window.__ipcCalls.push([channel, value, Date.now()]) }, removeListener() {}
 }
 window.__push = (channel, value) => { for (const fn of window.__ipcOn[channel] || []) fn(null, value) }
 export const contextBridge = { exposeInMainWorld: (name, api) => { window[name] = api } }
@@ -390,6 +391,72 @@ if (window === window.top && window.twLivePollBridge) window.twLivePollBridge.on
       floating: [...document.querySelectorAll('body > button, body > #twedit-btn')].filter(shown).map((b) => b.id)
     }
   })
+  await guard('Pointer suspension and event-driven live delivery', async () => {
+    const { page, context } = await open([1280, 800], 'two')
+    try {
+      const pointerCalls = () => page.evaluate(() => window.__ipcCalls.filter(([channel]) => channel === 'live:pointer'))
+      const move = async () => {
+        const box = await page.locator('#currentPreview iframe').boundingBox()
+        await page.mouse.move(box.x + box.width * .3, box.y + box.height * .8)
+      }
+      await page.evaluate(() => { window.__ipcCalls = [] })
+      await page.waitForTimeout(1200)
+      assert.equal((await pointerCalls()).length, 0, 'Pointer off emits no polling traffic')
+      await page.keyboard.press('i')
+      await move()
+      await page.waitForTimeout(150)
+      await page.evaluate(() => { window.__ipcCalls = [] })
+      await page.waitForTimeout(6000)
+      const resting = await pointerCalls()
+      assert.ok(resting.length >= 5, 'resting Pointer sends keep-alives')
+      assert.ok(resting.length <= 7, `resting Pointer sends at most one a second: ${resting.length}`)
+      for (const [, message] of resting) assert.equal(message.type, 'pointer.live')
+      const surfaces = [
+        ['#presenterMenuView', '#presenterMenuView', null],
+        ['#presenterMore', '#presenterMore', null],
+        ['#twDurationBtn', '#twDurationBtn', null],
+        ['#navQuickPoll', '#quickPollClose', '#quickPollQuestion'],
+        ['#navInstant', '#instantClose', '#instantText'],
+        ['#presenterGoLive', '#liveGoPanelClose', null],
+      ]
+      for (const [open, close, field] of surfaces) {
+        await page.click(open)
+        await page.waitForTimeout(80)
+        await move()
+        await page.waitForTimeout(80)
+        assert.equal(await page.locator('.tw-live-overlay').evaluate(el => getComputedStyle(el).pointerEvents), 'none', open)
+        assert.equal(await page.locator('.tw-live-overlay').evaluate(el => getComputedStyle(el).cursor), 'auto', open)
+        assert.equal(await page.locator('.tw-pointer-ring').isVisible(), false, open)
+        assert.equal((await pointerCalls()).at(-1)[1].pointer, 'gone', open)
+        assert.equal(await page.locator('#presenterPointer').getAttribute('aria-pressed'), 'true', open)
+        if (field) await page.locator(field).fill('Reachable with Pointer armed')
+        await page.click(close)
+        await move()
+        await page.waitForTimeout(100)
+        assert.equal(await page.locator('.tw-pointer-ring').isVisible(), true, close)
+      }
+      // The questions tray follows the live preload's existing availability and A key path.
+      await page.evaluate(() => window.__push('live:status', 'live'))
+      await page.keyboard.press('a')
+      await page.locator('#presenterQuestionsTray').waitFor({ state: 'visible' })
+      await move()
+      await page.waitForTimeout(100)
+      assert.equal(await page.locator('.tw-pointer-ring').isVisible(), false)
+      assert.equal((await pointerCalls()).at(-1)[1].pointer, 'gone')
+      await page.keyboard.press('Escape')
+      await move()
+      await page.waitForTimeout(100)
+      assert.equal(await page.locator('.tw-pointer-ring').isVisible(), true)
+      // Refresh sends gone before asking main to replace the page.
+      await page.click('#presenterMore')
+      await page.click('#moreRefresh')
+      assert.equal((await pointerCalls()).at(-1)[1].pointer, 'gone')
+      await page.keyboard.press('i')
+      await page.evaluate(() => { window.__ipcCalls = [] })
+      await page.waitForTimeout(1200)
+      assert.equal((await pointerCalls()).length, 0)
+    } finally { await context.close() }
+  })
   for (const size of [[1280, 800], [1440, 900], [1728, 1117]]) {
     await guard(`fit ${size.join('x')}`, async () => {
       const { page, context } = await open(size, 'two')
@@ -410,11 +477,9 @@ if (window === window.top && window.twLivePollBridge) window.twLivePollBridge.on
       check(m.floating.length === 0, `${at}: nothing floats over the window (${m.floating.join(', ')})`)
       check(m.fits === 'true', `${at}: the bar reports that it fits (${m.fits})`)
       check(m.topFits === 'true', `${at}: the top bar still fits (${m.topFits}, ${m.topCollapse})`)
-      if (size[0] === 1280) check(m.collapse === 'n1', `1280x800: step n1 applies, and only n1 (${m.collapse})`)
-      else {
-        check(m.collapse === '', `${at}: nothing collapses (${m.collapse})`)
-        check(Math.abs(m.nextCentre - (size[0] / 2 + 60)) <= 70, `${at}: the centre group is centred on the window (Next centre ${m.nextCentre})`)
-      }
+      // With the Pen in the mark group (0.38 ticket 08) n1 is the normal step at every drawn size.
+      check(m.collapse === 'n1', `${at}: tools stay labelled and the layout uses its normal fit step (${m.collapse})`)
+      if (size[0] >= 1600) check(Math.abs(m.nextCentre - (size[0] / 2 + 60)) <= 70, `${at}: the centre group is centred on the window (${m.nextCentre})`)
       // The More menu: opens upward from "…", inside the window, items unclipped, drawn order.
       await tap(page, '#presenterMore'); await settle(page, 200)
       const menu = await page.evaluate(() => {
@@ -508,7 +573,7 @@ if (window === window.top && window.twLivePollBridge) window.twLivePollBridge.on
   }
 
   assert.deepEqual(failures, [], `presenter bottom bar:\n  ${failures.join('\n  ')}`)
-  console.log('presenter bottom bar: Outline · Previous, Next, Skip next · Quick poll, Instant slide, Focus, Highlight, More, pencil; every button, More item and chip × runs the same function as its key; the pencil opens editing through the edit bridge; a mode chip for Reveal, Focus and Highlight, × leaves it; no overlap at 1280/1440/1728, n1 at 1280 with labels kept, nothing collapsing at 1440 and 1728; n2, n3 and c10 in narrow windows')
+  console.log('presenter bottom bar: Outline · Previous, Next, Skip next · Quick poll, Instant slide, Focus, Pointer, Pen, Highlight, More, pencil; every button, More item and chip × runs the same function as its key; the pencil opens editing through the edit bridge; a mode chip for Reveal, Focus and Highlight, × leaves it; no overlap at 1280/1440/1728, n1 at 1280, 1440 and 1728 with labels kept; n2, n3 and c10 in narrow windows')
 } finally {
   await browser?.close()
   await rm(scratch, { recursive: true, force: true })

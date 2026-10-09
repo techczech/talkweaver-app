@@ -71,6 +71,8 @@ interface Props {
    *  so App holds this so switching to Slide outline and back doesn't dump you to the vault root. */
   initialFocusPath?: string
   onFocusPathChange?: (path: string) => void
+  /** Scope the list to this folder (a window opened for it by "Open in new window"). Applied when `nonce` changes. */
+  focusRequest?: { path: string; vaultId?: string; nonce: number } | null
 }
 
 // viaKeyboard: opened by ⌘K — the menu starts with its first item highlighted (right-click starts blank).
@@ -93,7 +95,7 @@ const NO_FOLDERS: string[] = []
 export default function TalkList({
   talks, foldersByVault, vaults, activeTalk,
   onSelectTalk, onDeletedTalk, onRefresh, onChangeVault, onNewTalk, onAddVault, onSetVaultOpen, onEditVault, onOpenMetadata, flushActive, leaveActive,
-  initialFocusPath, onFocusPathChange
+  initialFocusPath, onFocusPathChange, focusRequest
 }: Props) {
   // Vaults whose talks the panel lists: open, and their folder is there (ticket 07).
   const openVaults = useMemo(() => vaults.filter((v) => v.open && !v.unavailable), [vaults])
@@ -312,6 +314,31 @@ export default function TalkList({
   useEffect(() => { try { window.localStorage.setItem(VIEW_STORAGE_KEY, viewMode) } catch { /* ignore */ } }, [viewMode])
   useEffect(() => { try { window.localStorage.setItem(SORT_STORAGE_KEY, sortKey) } catch { /* ignore */ } }, [sortKey])
   useEffect(() => { try { window.localStorage.setItem(NAMING_STORAGE_KEY, naming) } catch { /* ignore */ } }, [naming])
+
+  // "Open in new window" for a folder: this window's list is scoped to it (drill-in) and the folder selected.
+  // Applied once: it waits for the vault (open and available) it names, then is not applied again.
+  const appliedRequestRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (!focusRequest || appliedRequestRef.current === focusRequest.nonce) return
+    const id = focusRequest.vaultId ?? primary?.id
+    if (!id || !openVaults.some((v) => v.id === id)) return // not loaded yet: runs again when the vaults arrive
+    appliedRequestRef.current = focusRequest.nonce
+    setFocus({ vaultId: id, path: focusRequest.path })
+    setSelectedFolder(`${id}\u001f${focusRequest.path}`)
+  }, [focusRequest, primary?.id, openVaults])
+
+  // The palette command (open-in-new-window): the focused row in the list, a talk or a folder.
+  const openNewWindowRef = useRef<() => void>(() => undefined)
+  openNewWindowRef.current = () => {
+    if (focusedRow?.kind === 'talk') actions.openInNewWindow({ kind: 'talk', outlinePath: focusedRow.talk.outlinePath })
+    else if (focusedRow?.kind === 'folder') actions.openInNewWindow({ kind: 'folder', topic: focusedRow.path, vaultId: focusedRow.vaultId })
+    else notify('Select a talk or folder in the file list first.', 'info')
+  }
+  useEffect(() => {
+    const run = (): void => openNewWindowRef.current()
+    window.addEventListener('tw-open-in-new-window-run', run)
+    return () => window.removeEventListener('tw-open-in-new-window-run', run)
+  }, [])
 
   // Report the drill-in outward so App can restore it after this panel unmounts on a tab switch.
   useEffect(() => { onFocusPathChange?.(encodeFocus(focus)) }, [focus, onFocusPathChange])

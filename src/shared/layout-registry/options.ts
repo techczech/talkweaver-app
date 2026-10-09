@@ -34,6 +34,8 @@ export interface OptionContext {
    * step. Absent = not known, which (unlike every other fact) offers no pre-work group.
    */
   preworkKind?: PreworkStepKind | null
+  /** Ticket 13: the slide carries an embedded page and body text. Absent = not known = not offered. */
+  embedBesideText?: boolean
 }
 
 export interface ApplicableOptionGroup {
@@ -80,7 +82,33 @@ function clauseHolds(clause: OptionApplicability, context: OptionContext, entry?
   // Ticket 08: the one facet an unknown fact DOES exclude on. Only a surface that read the talk's
   // pre-work section (the Inspector) offers a step's rows; elsewhere the tokens are typed as written.
   if (clause.preworkKinds && !(context.preworkKind && clause.preworkKinds.includes(context.preworkKind))) return false
+  if (clause.embedBesideText && !context.embedBesideText) return false
   return true
+}
+
+/**
+ * Ticket 13: does this slide's source carry a LOCAL page ([Embed:] / [Simulation:] with a file, on a
+ * line of its own, outside a code fence) AND body text? That is the one composition the compiler
+ * gives a page column and a copy column (compiler/scripts/lib/slot-composition.mjs: media = image,
+ * embed, video; copy = everything else); only a local page carries `data-embed="local"`, which the
+ * width CSS targets. So a remote page, a picture, a [Video:] line and a bare URL are media: they
+ * are neither the page nor text. Trigger lines of one or more adjacent groups ({id=a}{page-80}) are
+ * not text. Read from the slide's markdown; the one place the rule lives.
+ */
+export function slideHasEmbedBesideText(source: string): boolean {
+  let embed = false
+  let text = false
+  let fenced = false
+  for (const raw of source.split('\n')) {
+    const line = raw.trim()
+    if (/^(```|~~~)/.test(line)) { fenced = !fenced; continue }
+    if (fenced || line === '' || /^#{1,6}\s/.test(line) || /^(\{[^}]*\})+$/.test(line)) continue
+    const page = line.match(/^\[(Embed|Simulation):\s*(.+?)\]$/i)
+    if (page) { if (!/^https?:/i.test(page[2].trim())) embed = true; continue }
+    if (/^\[Video:/i.test(line) || /^!\[[^\]]*\]\([^)]*\)$/.test(line) || /^https?:\/\/\S+$/i.test(line)) continue
+    text = true
+  }
+  return embed && text
 }
 
 /** Any option group a CONTAINER entry owns is a container-context choice, Container mode included. */
@@ -149,7 +177,7 @@ export function appliesToHoldsOnTokens(group: OptionGroup, selectedTokens: Reado
 }
 
 export function optionGroupsForSlide(
-  context: Pick<OptionContext, 'layoutName' | 'headingLevel' | 'hasChildren' | 'titleRegime' | 'preworkKind'>
+  context: Pick<OptionContext, 'layoutName' | 'headingLevel' | 'hasChildren' | 'titleRegime' | 'preworkKind' | 'embedBesideText'>
 ): ApplicableOptionGroup[] {
   const entry = layoutEntryFor(context.layoutName)
   const entryGroups = (entry?.options ?? [])

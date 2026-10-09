@@ -88,6 +88,15 @@ export function pairsLinesWithScreenshots(media, copy) {
   });
 }
 
+// Ticket 13: the share of the width an embedded page takes beside text. Only these values are ever
+// stamped (as data-embed-split, which media.css keys fixed rules on); anything else is the default.
+export const VALID_EMBED_SPLITS = new Set(["60", "70", "80"]);
+export const DEFAULT_EMBED_SPLIT = "70";
+export function embedSplitFor(raw) {
+  const value = raw == null || raw === true ? "" : String(raw).trim();
+  return VALID_EMBED_SPLITS.has(value) ? value : DEFAULT_EMBED_SPLIT;
+}
+
 const NO_SLOT = Object.freeze({ kind: "none", side: "left", align: "center", media: [], copy: [], arrange: "" });
 
 /**
@@ -140,7 +149,7 @@ export function slotCompositionFor(slide, bodyBlocks, layoutSlug) {
   // authored escape hatch and survives from the old .split.align-top.
   const align = slide.frame?.align === "top" ? "top" : "center";
   const arrange = pairsLinesWithScreenshots(media, copy) ? (slide.shotList || DEFAULT_SHOT_LIST) : "";
-  return { kind: "beside", side, align, media, copy, arrange };
+  return { kind: "beside", side, align, media, copy, arrange, embedSplit: embedSplitFor(slide.embedSplit) };
 }
 
 // 5+ media blocks stacked as 5+ rows leaves each one a letterbox strip, so the media column
@@ -177,6 +186,8 @@ export function renderSlotComposition(comp, renderBlock, ctx = {}) {
   ];
   if (comp.media.length >= MEDIA_GRID_THRESHOLD) attrs.push(`data-slot-media-grid="2col"`);
   if (comp.align === "top") attrs.push(`data-slot-align="top"`);
+  // Always one of the three fixed values (embedSplitFor), never the authored text.
+  if (comp.media.some((block) => block.type === "embed")) attrs.push(`data-embed-split="${embedSplitFor(comp.embedSplit)}"`);
   if (comp.arrange) {
     // ADR-0033 §4: lines that each carry a screenshot. The frame follows the slide's screenshot
     // treatment (window frames by default), the same one ticket 05's row uses.

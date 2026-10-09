@@ -1,0 +1,36 @@
+/* Play as a step (0.38 ticket 05): `![alt](clip.mp4){play-on-next}` / `![Title](clip.mp3){play-on-next}`.
+   Two small controls, neither on the audience's screen in the ordinary case:
+     .media-step-mark  the presenter's current-slide preview only: "plays on Next" on a file whose
+                       step has not come, "playing" on a video at its step (runtime/media-steps.js,
+                       paintMediaStepMarks). Never written on the projector or the venue screen.
+     .media-step-tap   a display whose browser refused to start the file without a gesture: "Tap for
+                       sound" on a video that is playing muted, "Tap to play" on an audio chip.
+   Both use the audio chip's pill, in the slide's own type and accent colour. */
+.media-step-mark,
+.media-step-tap {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  flex: none;
+  padding: 0.25em 0.7em;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: clamp(12px, 1.2cqw, 18px);
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.media-step-mark { background: var(--paper); color: var(--ink); pointer-events: none; }
+.media-step-mark svg { width: 1.1em; height: 1.1em; display: block; flex: none; color: var(--accent); }
+.media-step-tap { background: var(--accent); color: var(--paper); cursor: pointer; }
+.media-step-tap:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+/* On a video the control sits over the picture; on a chip it is one more item in the pill's row. */
+figure.slide-figure.slide-video > .media-step-mark { position: absolute; top: 8px; left: 8px; z-index: 2; }
+figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50%; bottom: 12%; z-index: 3; transform: translateX(-50%); }
+.slide-audio > .media-step-mark,
+.slide-audio > .media-step-tap { font-size: 0.8em; margin-left: 0.2em; }
+@media print {
+  .media-step-mark, .media-step-tap { display: none !important; }
+}

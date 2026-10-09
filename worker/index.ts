@@ -11,7 +11,7 @@ import {
   type Env,
   type SocketAttachment,
 } from './http'
-import { parseAudienceMessage, parsePresenterMessage } from './protocol'
+import { INK_LIMITS, POINTER_LIMITS, parseAudienceMessage, parsePresenterMessage, type InkMessage } from './protocol'
 import {
   LIVE_PROTOCOL_VERSION, LIVE_WORKER_BUILD, parseRecoveryClientMessage, validRecoveryId,
   type RecoveryClientMessage, type SessionSnapshot, type SessionPresence,
@@ -448,6 +448,7 @@ export class LiveSession {
     }
     const current = this.session && currentStateMessage(this.session)
     if (current && socketRoleReceivesSlideState(role)) server.send(JSON.stringify(current))
+    if (kind === 'screen') this.inkForScreen(server)
     if (this.session) {
       // Old handouts have no closed-state display contract; retain their original initial snapshot.
       for (const message of currentPollStateMessages(this.session, role).filter((p) => p.open)) server.send(JSON.stringify(message))
@@ -522,6 +523,7 @@ export class LiveSession {
     const now = Date.now()
     const kept = keepBoards && reason === 'ended' ? keepBoardsOpen(this.session, now) : {}
     const message = closeSession(this.session)
+    this.liveInk = null
     this.save()
     for (const socket of this.sockets()) {
       this.send(socket, socket.deserializeAttachment<LiveSocketAttachment>()?.protocol === 2 ? { ...message, reason } : message)
@@ -658,6 +660,54 @@ export class LiveSession {
     return errorResponse('not_found', 'Session action not found.', 404)
   }
 
+  private pointerRates = new WeakMap<HibernatingWebSocket, { at: number; count: number }>()
+  private inkRates = new WeakMap<HibernatingWebSocket, { at: number; count: number }>()
+  /**
+   * The Pen's latest ink (ticket 08): the presenter's current layer, held in this object's memory
+   * only (never this.save(), never storage) so a venue screen that joins or reconnects is sent it.
+   * Gone when the session ends or the object is evicted; the presenter resends it on reconnect.
+   */
+  private liveInk: InkMessage | null = null
+  private liveInkVersion = 0
+  private inkRequestedAt = 0
+  /** The cached layer last sent to a screen on join or sync: which version, and when. */
+  private inkRepliedTo = new WeakMap<HibernatingWebSocket, { version: number; at: number }>()
+
+  /**
+   * A venue screen joined or reconnected: send it the current layer. When this object holds none
+   * (evicted: ink lives in memory only), ask the presenter to send it again (at most once a second);
+   * the answer reaches every venue screen through the ordinary ink relay. Ink is never stored.
+   */
+  private inkForScreen(screen: HibernatingWebSocket): void {
+    if (this.liveInk) {
+      // A screen that syncs again and again gets the same layer at most once a second (a new
+      // drawing reaches it through the relay anyway).
+      const now = Date.now(), previous = this.inkRepliedTo.get(screen)
+      if (previous && previous.version === this.liveInkVersion && now - previous.at < 1000) return
+      this.inkRepliedTo.set(screen, { version: this.liveInkVersion, at: now })
+      this.send(screen, this.liveInk)
+      return
+    }
+    if (this.session?.status !== 'open') return
+    const now = Date.now()
+    if (now - this.inkRequestedAt < 1000) return
+    const owner = this.session.recovery?.presenterConnectionId
+    const presenters = this.sockets('presenter').filter((socket) => {
+      const a = socket.deserializeAttachment<LiveSocketAttachment>()
+      return a?.protocol === 2 && (!owner || a.connectionId === owner)
+    })
+    if (!presenters.length) return
+    this.inkRequestedAt = now
+    for (const presenter of presenters) this.send(presenter, { type: 'ink.request' })
+  }
+
+  /** Venue screens only: phones never receive the pointer or ink. */
+  private sendToScreens(message: unknown): void {
+    for (const follower of this.sockets('audience')) {
+      if (follower.deserializeAttachment<LiveSocketAttachment>()?.kind === 'screen') this.send(follower, message)
+    }
+  }
+
   async webSocketMessage(socket: HibernatingWebSocket, value: string | ArrayBuffer): Promise<void> {
     const attachment = socket.deserializeAttachment<LiveSocketAttachment>()
     if (!attachment || !this.session || typeof value !== 'string') return
@@ -675,6 +725,34 @@ export class LiveSession {
       return
     }
     if (value.length > 128_000) { this.send(socket, { type: 'protocol.error', code: 'message_too_large' }); return }
+    // A transient message bypasses the durable operation queue. Authority is the authenticated
+    // socket attachment, including the supersession check above, never a payload claim.
+    // Ink frames are larger than a pointer's; only a frame naming ink.live pays for this extra parse
+    // (the name is no authority: parsePresenterMessage checks the frame in full).
+    const transient = attachment.role === 'presenter'
+      && (value.length <= POINTER_LIMITS.bytes || (value.length <= INK_LIMITS.bytes && value.includes('"ink.live"')))
+      ? parsePresenterMessage(value) : null
+    if (transient?.type === 'pointer.live') {
+      if (attachment.role !== 'presenter') return
+      const now = Date.now(), previous = this.pointerRates.get(socket)
+      const rate = previous && now - previous.at < 1000 ? previous : { at: now, count: 0 }
+      this.pointerRates.set(socket, rate)
+      if (++rate.count > POINTER_LIMITS.perSecond) return
+      this.sendToScreens(transient)
+      return
+    }
+    if (transient?.type === 'ink.live') {
+      // Checked by parsePresenterMessage: bytes, strokes per layer, points per stroke and per layer.
+      if (attachment.role !== 'presenter') return
+      const now = Date.now(), previous = this.inkRates.get(socket)
+      const rate = previous && now - previous.at < 1000 ? previous : { at: now, count: 0 }
+      this.inkRates.set(socket, rate)
+      if (++rate.count > INK_LIMITS.perSecond) return
+      this.liveInk = transient
+      this.liveInkVersion++
+      this.sendToScreens(transient)
+      return
+    }
     const recovery = attachment.protocol === 2 ? parseRecoveryClientMessage(value) : null
     if (recovery) {
       this.handleRecoveryMessage(socket, attachment, recovery)
@@ -711,7 +789,7 @@ export class LiveSession {
     }
 
     const message = parsePresenterMessage(value)
-    if (!message || message.type === 'question.answer' || message.type === 'switches.set'
+    if (!message || message.type === 'pointer.live' || message.type === 'ink.live' || message.type === 'question.answer' || message.type === 'switches.set'
       || isPresenterBoardMessage(message)) {
       this.send(socket, { type: 'protocol.error', code: 'invalid_or_inert_message' })
       return
@@ -898,6 +976,8 @@ export class LiveSession {
         })
       }
       this.send(socket, snapshot)
+      // A venue screen that joins or reconnects is sent the drawing on the presenter's current layer.
+      if (attachment.role === 'audience' && attachment.kind === 'screen') this.inkForScreen(socket)
       return
     }
     if (message.type === 'operation' && attachment.role === 'presenter') {

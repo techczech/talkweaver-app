@@ -1,3 +1,5 @@
+import { parsePresenterMessage } from './protocol'
+import { LiveSession } from './index'
 import { describe, expect, test } from 'bun:test'
 import {
   closeSession,
@@ -19,6 +21,56 @@ import {
 import * as sessionState from './session-state'
 
 describe('LiveSession state', () => {
+  test('Pointer is transient traffic, excluded from the canonical slide-state message', () => {
+    const session = openSession()
+    publishSlideState(session, {slideId:'text',reveal:0,focus:null})
+    const before = structuredClone(session)
+    const pointer = parsePresenterMessage(JSON.stringify({type:'pointer.live',pointer:{x:640,y:360,space:'slide',slideId:'text'}}))
+    expect(pointer?.type).toBe('pointer.live')
+    // There is no Pointer field in SlideState; its relay never calls a state writer.
+    expect(Object.keys(currentStateMessage(session)!)).toEqual(['type','slideId','reveal','focus','revision'])
+    expect(session).toEqual(before)
+  })
+
+  test('Pen ink is transient traffic: relaying it through the live session leaves stored session state byte for byte', async () => {
+    // The actual Durable Object relay path; only the platform storage and sockets are fake.
+    const rows = new Map<string, string>()
+    const writes: string[] = []
+    const session = { ...openSession(), expiresAt: Date.now() + 60_000 }
+    publishSlideState(session, { slideId: 'text', reveal: 0, focus: null })
+    rows.set('session', JSON.stringify(session))
+    const sockets: any[] = []
+    const ctx: any = {
+      storage: {
+        sql: { exec(query: string, ...args: any[]) {
+          if (query.startsWith('SELECT')) return rows.has(args[0]) ? [{ value: rows.get(args[0]) }] : []
+          if (query.startsWith('INSERT')) { writes.push(String(args[0])); rows.set(args[0], args[1]) }
+          return []
+        } },
+        setAlarm: async () => {}, deleteAlarm: async () => {},
+      },
+      blockConcurrencyWhile: (fn: () => void) => fn(),
+      getWebSockets: () => sockets, acceptWebSocket: (s: any) => sockets.push(s),
+    }
+    const socket = (role: string, connectionId: string, kind?: string) => {
+      const ws: any = { sent: [] as any[], deserializeAttachment: () => ({ role, connectionId, protocol: 2, participantId: 'participant-' + connectionId, kind }),
+        send: (m: string) => ws.sent.push(JSON.parse(m)), close: () => {} }
+      sockets.push(ws)
+      return ws
+    }
+    const worker = new LiveSession(ctx, { SESSION_SIGNING_SECRET: 'test-secret', ADMIN_SECRET: 'test-admin' } as any)
+    const presenter = socket('presenter', 'pen-owner'), screen = socket('audience', 'pen-screen', 'screen')
+    const stored = rows.get('session')
+    const ink = { type: 'ink.live', ink: { slideId: 'text', space: 'slide',
+      strokes: [{ tool: 'rectangle', ink: 'green', width: 'thick', points: [[10, 10], [200, 120]] }], draft: null } }
+    await worker.webSocketMessage(presenter, JSON.stringify(ink))
+    await worker.webSocketMessage(presenter, JSON.stringify({ ...ink, ink: { ...ink.ink, strokes: [] } }))
+    expect(screen.sent.filter((m: any) => m.type === 'ink.live')).toHaveLength(2)
+    expect(writes).toEqual([])
+    expect(rows.get('session')).toBe(stored)
+    expect(Object.keys(currentStateMessage(JSON.parse(rows.get('session')!))!)).toEqual(['type', 'slideId', 'reveal', 'focus', 'revision'])
+  })
+
   test('retains the gallery image for a venue snapshot', () => {
     const session = openSession()
     publishSlideState(session, { slideId: 'gallery', reveal: 0, focus: null, lightbox: { open: true, index: 1 } })

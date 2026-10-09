@@ -31,6 +31,20 @@ export interface PresenterControl {
   preload?: 'recorder' | 'edit' | 'live'
 }
 
+/** The pen's option rows: the popover above the Pen button and the strip on a zoomed image share them. */
+function penOptionControls(tool: string, ink: string, width: string, undo: string, clear: string): PresenterControl[] {
+  return [
+    { id: `${tool}Freehand`, name: 'Freehand: draw with the mouse', icon: 'pen-line' },
+    { id: `${tool}Arrow`, name: 'Arrow: press on the point, drag to the tail', icon: 'move-up-right' },
+    { id: `${tool}Rectangle`, name: 'Rectangle: drag from one corner to the opposite', icon: 'square' },
+    { id: `${ink}Red`, name: 'Red ink' }, { id: `${ink}Yellow`, name: 'Yellow ink' },
+    { id: `${ink}Green`, name: 'Green ink' }, { id: `${ink}Blue`, name: 'Blue ink' },
+    { id: `${width}Thin`, name: 'Thin line' }, { id: `${width}Thick`, name: 'Thick line' },
+    { id: undo, name: 'Undo last stroke', icon: 'undo-2', shortcut: 'presenter.ink-undo' },
+    { id: clear, name: 'Clear this slide', icon: 'eraser', shortcut: 'presenter.ink-clear' }
+  ]
+}
+
 export const PRESENTER_CONTROLS: PresenterControl[] = [
   // Status bar: the clock is the pause/resume button (its name follows the timer state, from
   // TIMER_BUTTON_NAMES; it shows the time, not an icon). The chevron beside it opens the clock
@@ -133,9 +147,29 @@ export const PRESENTER_CONTROLS: PresenterControl[] = [
   { id: 'presenterMediaPause', name: 'Pause media', icon: 'pause' },
   { id: 'presenterVideoFullscreen', name: 'Video full screen', icon: 'fullscreen', shortcut: 'presenter.video-fullscreen' },
   { id: 'presenterGalleryBtn', name: 'Image gallery', icon: 'images', shortcut: 'presenter.gallery' },
+  // On the Current pane, beside a running embedded page (0.38 ticket 13); the deck places it.
+  { id: 'presenterEmbedFullscreen', name: 'Embedded page: full screen', icon: 'maximize-2', iconOnly: true, shortcut: 'presenter.embed-fullscreen' },
   { id: 'navQuickPoll', name: 'Compose Quick poll', icon: 'vote', shortcut: 'presenter.poll-compose' },
   { id: 'navInstant', name: 'Compose instant slide', icon: 'zap', shortcut: 'presenter.instant-compose' },
   { id: 'presenterFocus', name: 'Focus mode', icon: 'focus', shortcut: 'presenter.focus' },
+  { id: 'presenterPointer', name: 'Pointer: show your mouse on every screen', icon: 'mouse-pointer-2', shortcut: 'presenter.pointer' },
+  { id: 'viewPointer', name: 'Pointer', icon: 'mouse-pointer-2', shortcut: 'presenter.pointer' },
+  { id: 'morePointer', name: 'Pointer', icon: 'mouse-pointer-2', shortcut: 'presenter.pointer' },
+  { id: 'presenterPointerExit', name: 'Turn off pointer', icon: 'x', iconOnly: true, shortcut: 'presenter.close' },
+  // The Pen (0.38 ticket 08; ADR-0037, docs/design/2026-10-06-pointer-and-pen/): the bar button,
+  // its menu items, the status chip and Clear drawing, the options popover and the zoomed-image strip.
+  { id: 'presenterPen', name: 'Pen: draw on the slide on every screen', icon: 'pen-tool', shortcut: 'presenter.pen' },
+  { id: 'viewPen', name: 'Pen', icon: 'pen-tool', shortcut: 'presenter.pen' },
+  { id: 'morePen', name: 'Pen', icon: 'pen-tool', shortcut: 'presenter.pen' },
+  { id: 'presenterPenExit', name: 'Turn off pen', icon: 'x', iconOnly: true, shortcut: 'presenter.close' },
+  { id: 'presenterInkClear', name: 'Clear the drawing on this slide', icon: 'eraser', shortcut: 'presenter.ink-clear' },
+  { id: 'viewInkClear', name: 'Clear drawing on this slide', icon: 'eraser', shortcut: 'presenter.ink-clear' },
+  { id: 'moreInkClear', name: 'Clear drawing on this slide', icon: 'eraser', shortcut: 'presenter.ink-clear' },
+  { id: 'viewInkClearAll', name: 'Clear all drawings', icon: 'eraser', shortcut: 'presenter.ink-clear-all' },
+  { id: 'moreInkClearAll', name: 'Clear all drawings', icon: 'eraser', shortcut: 'presenter.ink-clear-all' },
+  ...penOptionControls('penTool', 'penInk', 'penWidth', 'penUndo', 'penClear'),
+  ...penOptionControls('penStrip', 'penStripInk', 'penStripWidth', 'penStripUndo', 'penStripClear'),
+  { id: 'penStripOff', name: 'Pen off', icon: 'x', shortcut: 'presenter.close' },
   { id: 'presenterHighlight', name: 'Highlight text', icon: 'highlighter', shortcut: 'presenter.highlight' },
   { id: 'presenterMore', name: 'More', icon: 'ellipsis', iconOnly: true },
   // The More menu (opens upward from "…"). Go to: first and last slide, return from a jump, a card
@@ -178,6 +212,13 @@ export const PRESENTER_CONTROLS: PresenterControl[] = [
   { id: 'twrec-start-dismiss', name: 'Dismiss recording offer', icon: 'x', iconOnly: true, preload: 'recorder' },
   { id: 'twrec-saved-change', name: 'Change run kind', icon: 'tags', shortcut: 'presenter.save-run-as', preload: 'recorder' },
   { id: 'twrec-saved-dismiss', name: 'Dismiss', icon: 'x', iconOnly: true, preload: 'recorder' },
+  // The audio-lost notice (the microphone went away mid-recording) and the audio-back note.
+  { id: 'twrec-lost-resume', name: 'Resume recording', icon: 'circle-dot', preload: 'recorder' },
+  { id: 'twrec-lost-dismiss', name: 'Dismiss', icon: 'x', iconOnly: true, preload: 'recorder' },
+  { id: 'twrec-back-dismiss', name: 'Dismiss', icon: 'x', iconOnly: true, preload: 'recorder' },
+  { id: 'twrec-disk-dismiss', name: 'Dismiss', icon: 'x', iconOnly: true, preload: 'recorder' },
+  // A failed save keeps the audio: Retry, or write it to a folder of the presenter's choice.
+  { id: 'twrec-export', name: 'Save the recording\'s audio to another folder', icon: 'copy', preload: 'recorder' },
   // Edit pencil (src/preload/present-edit-bridge.ts)
   { id: 'twedit-btn', name: 'Edit this slide in TalkWeaver', icon: 'pencil', iconOnly: true, shortcut: 'presenter.edit', preload: 'edit' }
 ]

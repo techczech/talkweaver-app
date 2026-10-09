@@ -1,4 +1,5 @@
-import { basename } from "node:path";
+import { audioChipTitle } from "./audio-chip-title.mjs";
+import { referenceFileName, shownReference } from "./shown-reference.mjs";
 import { imageAspect, takesScreenshotRow } from "./screenshot-row.mjs";
 import { highlightCode } from "../highlight.mjs";
 import { slugify, chooseBalancedColumns, escapeHtml, makeQrSvg, cleanQrUrl } from "./01-cli-utils.mjs";
@@ -7,6 +8,7 @@ import { withoutScripts } from "./04-html-extraction.mjs";
 import { resolveIconOverrides, decideFeatureListStyle, iconSvg } from "./05-icons.mjs";
 import { parseChartItems, renderChartBlock } from "./06-chart-renderer.mjs";
 import { plainListForcedIcons } from "./11-frame.mjs";
+import { embedLocalFigureMarkup } from "./embed-frame.mjs";
 import { stripWrappingQuoteMarks } from "./quote-layout.mjs";
 import { iconRowPerRow, cardsTooNarrow } from "./narrow-columns.mjs";
 import { VALUE_TRIGGER_DICTIONARY } from "../triggers.mjs";
@@ -195,6 +197,37 @@ export function groupActionBlocks(blocks) {
   return out;
 }
 
+// An audio file on a slide (ticket 04 of 0.38): a small speaker chip that sits in the slide's TEXT
+// flow. It is deliberately not a `figure.slide-figure` (no media slot, no Z-gallery entry, no
+// reveal unit, no layout change): `div.slide-audio` matches none of the media selectors. Three
+// states, driven by the deck runtime through `data-audio-state`: ready, playing (animated bars and
+// the elapsed time), finished. The <audio> is `preload="none"`, so nothing loads until the
+// projector window is told to play; handout, phone and venue builds drop the element and keep the
+// chip as a static label (09-output-builders, stripAudioElements). The one exception is the venue
+// screen's copy of a {play-on-next} chip, which it plays from the presenter's step (ticket 05).
+export { audioChipTitle };
+
+function renderAudioChip(block) {
+  const f = block.flags || {};
+  const title = audioChipTitle(block);
+  const attrs = [];
+  // 0.38 ticket 05: {play-on-next} — the chip is a step of its slide (lib/media-steps.mjs). First,
+  // right after the state, where hasMediaSteps looks for it.
+  if (f.playOnNext) attrs.push("data-play-on-next");
+  if (f.autoplay) attrs.push("data-audio-autoplay");
+  if (f.loop) attrs.push("data-audio-loop");
+  if (block.assetOnly) attrs.push(`data-audio-asset-only data-audio-name="${escapeHtml(block.audioName || referenceFileName(block.src))}"`);
+  const attrStr = attrs.length ? " " + attrs.join(" ") : "";
+  const loop = f.loop ? " loop" : "";
+  return `<div class="slide-audio" data-audio-state="ready"${attrStr} role="group" aria-label="Audio: ${escapeHtml(title)}">`
+    + `<span class="slide-audio-icon" aria-hidden="true">${iconSvg("lucide:volume-2")}</span>`
+    + `<span class="slide-audio-title">${escapeHtml(title)}</span>`
+    + `<span class="slide-audio-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>`
+    + `<span class="slide-audio-time" aria-hidden="true">0:00</span>`
+    + `<audio preload="none"${loop} src="${escapeHtml(block.src)}"></audio>`
+    + `</div>`;
+}
+
 export function renderBlock(block, deckUsed = null, frameIcons = "off") {
   if (typeof block === "string") return `<p>${escapeHtml(block)}</p>`;
   if (!block || typeof block !== "object") return "";
@@ -278,15 +311,18 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     if (!f.autoplay) attrs.push('preload="metadata"');
     const attrStr = attrs.length ? " " + attrs.join(" ") : "";
     const poster = block.poster ? ` poster="${escapeHtml(block.poster)}"` : "";
-    const assetOnly = block.assetOnly ? ` data-video-asset-only data-video-name="${escapeHtml(block.videoName || basename(block.src))}"` : "";
+    const assetOnly = block.assetOnly ? ` data-video-asset-only data-video-name="${escapeHtml(block.videoName || referenceFileName(block.src))}"` : "";
     const caption = block.caption ? `<figcaption>${renderInline(block.caption)}</figcaption>` : "";
     // Ticket 24 (Dominik 2026-09-13, orm-slot-stacked): every slide video carries ONE enlarge
     // affordance. The deck runtime opens the lightbox on it — the same seam images use — moving
     // this very <video> element to the stage (playback position and state ride along). Hidden in
     // print (media.css). The presenter's V key / button and the Z gallery reach the same lightbox.
     const enlarge = `<button class="video-enlarge" type="button" title="Enlarge video (v)" aria-label="Enlarge video">\u2922</button>`;
-    return `<figure class="slide-figure slide-video"${mediaAspectAttrs(block)}${assetOnly}><video${attrStr}${poster} src="${escapeHtml(block.src)}"></video>${enlarge}${caption}</figure>`;
+    // 0.38 ticket 05: {play-on-next} — the figure is a step of its slide (lib/media-steps.mjs).
+    const playOnNext = f.playOnNext ? " data-play-on-next" : "";
+    return `<figure class="slide-figure slide-video"${playOnNext}${mediaAspectAttrs(block)}${assetOnly}><video${attrStr}${poster} src="${escapeHtml(block.src)}"></video>${enlarge}${caption}</figure>`;
   }
+  if (block.type === "audio") return renderAudioChip(block);
   if (block.type === "qr") {
     // [QR: url | label] → a build-time QR SVG (no dependency, no runtime fetch) with the
     // caption beneath. The figure is a steppable mode unit (figure.slide-figure is in
@@ -315,15 +351,18 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     // normal interactive behaviour — so the chip is omitted for them below.
     const interactChip = `<button class="embed-interact-chip" type="button" title="Interact with this embed (press e)" aria-label="Interact with this embed">Interact <kbd>e</kbd></button>`;
     const aspectAttrs = mediaAspectAttrs(block);
-    // Self-contained local HTML embed: inline the document via srcdoc (same-origin → mirror-ready,
-    // no external file, no 404). Set by inlineAndCollectAssets in 08-source-adapters.
+    // A local page (ticket 11, embed-frame.mjs): the inlined document travels in an inert attribute
+    // of an empty sandboxed frame, beside a labelled placeholder. The deck runtime loads the frame
+    // only on the slide being presented. Set by inlineAndCollectAssets in 08-source-adapters.
     if (block.srcdoc != null) {
-      // For self-contained embeds the local file path must not appear in the output (no external ref).
-      return `<figure class="slide-embed${block.variant === "simulation" ? " slide-simulation" : ""}"${aspectAttrs}><iframe srcdoc="${escapeHtml(block.srcdoc)}" scrolling="no" title="${escapeHtml(block.title || "")}" loading="lazy" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>${interactChip}</figure>`;
+      // The title: the one written in the outline, else the page's own <title>, else the file name
+      // as it may be shown (never a folder outside the talk's).
+      const title = block.title || block.pageTitle || block.shownName || shownReference(block.src || "");
+      return embedLocalFigureMarkup({ doc: block.srcdoc, title, simulation: block.variant === "simulation", figureAttrs: aspectAttrs, icon: iconSvg("lucide:mouse-pointer-click"), after: interactChip });
     }
     // A local embed whose source file was missing: show a visible placeholder, never a broken iframe.
     if (block.missing) {
-      return `<figure class="slide-embed slide-embed-missing"${aspectAttrs}><p class="embed-missing">Missing embed: ${escapeHtml(block.src || "")}</p></figure>`;
+      return `<figure class="slide-embed slide-embed-missing"${aspectAttrs}><p class="embed-missing">Missing embed: ${escapeHtml(shownReference(block.src || ""))}</p></figure>`;
     }
     const rawSrc = block.src ?? "";
     const src = escapeHtml(rawSrc);

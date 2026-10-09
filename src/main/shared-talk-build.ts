@@ -33,6 +33,8 @@ export interface BuildSharedTalkInput {
   content: string
   /** The text the compiler reads (pooled image refs resolved). Same line count as `content`. */
   compileContent?: string
+  /** The folders this talk's media may be read from (its vault). Omitted: the talk's own folder only. */
+  allowedAssetRoots?: string[]
   slug: string
   ownerName: string
   proposals: boolean
@@ -117,7 +119,10 @@ export async function buildSharedTalkPayload(input: BuildSharedTalkInput): Promi
   const { prepareSource } = await import(libUrl(compilerDir, '08-source-adapters.mjs'))
   const { extractStyles, extractSlides } = await import(libUrl(compilerDir, '04-html-extraction.mjs'))
   const { buildShareHtml } = await import(libUrl(compilerDir, '09-output-builders.mjs'))
-  const model = await prepareSource(outlinePath, shareSafeOutline(tree, input.compileContent ?? content), slug, statSync(outlinePath))
+  // ADR-0036: the caller names the folders this talk's media may come from (its vault). Without
+  // them the compiler allows the talk's own folder only.
+  const compileOptions = input.allowedAssetRoots ? { allowedAssetRoots: input.allowedAssetRoots } : {}
+  const model = await prepareSource(outlinePath, shareSafeOutline(tree, input.compileContent ?? content), slug, statSync(outlinePath), undefined, compileOptions)
   const title = frontmatterValue(content, 'title') || String(model.title || '') || slug
   const fullHtml = String(model.fullHtml)
   // A {prework} section's slides are not part of a shared talk (they are not presented or published).

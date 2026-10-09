@@ -38,11 +38,102 @@ export interface SlidePublishMessage extends SlideState {
   type: 'slide.publish'
 }
 
+export type PointerPosition = { x: number; y: number; space: 'slide' | 'image'; slideId: string }
+export type PointerMessage = { type: 'pointer.live'; pointer: PointerPosition | 'gone' }
+export const POINTER_LIMITS = { bytes: 512, perSecond: 20 } as const
+export function parsePointerMessage(value: unknown): PointerMessage | null {
+  if (!value || typeof value !== 'object') return null
+  const message = value as Record<string, unknown>
+  if (message.type !== 'pointer.live') return null
+  if (message.pointer === 'gone') return { type: 'pointer.live', pointer: 'gone' }
+  if (!message.pointer || typeof message.pointer !== 'object') return null
+  const p = message.pointer as Record<string, unknown>
+  if ((p.space !== 'slide' && p.space !== 'image') || !nonEmptyString(p.slideId) || p.slideId.length > AUDIENCE_FEEDBACK_LIMITS.slideIdChars
+    || typeof p.x !== 'number' || !Number.isFinite(p.x) || p.x < 0 || p.x > (p.space === 'image' ? 1 : 1280)
+    || typeof p.y !== 'number' || !Number.isFinite(p.y) || p.y < 0 || p.y > (p.space === 'image' ? 1 : 720)) return null
+  return { type: 'pointer.live', pointer: { x: p.x, y: p.y, space: p.space, slideId: p.slideId } }
+}
+
+// The Pen's live ink (ticket 08): one layer's strokes (a slide, or one zoomed image of it) and the
+// stroke being drawn. Presenter to venue screens only, never stored in session state, never sent to
+// phones. The deck runtime's validator is compiler/assets/runtime/pen-ink.js (penInkView); the two
+// agree on every case in worker/protocol.test.ts.
+export type InkTool = 'freehand' | 'arrow' | 'rectangle'
+export type InkColour = 'red' | 'yellow' | 'green' | 'blue'
+export type InkWidth = 'thin' | 'thick'
+export type InkStroke = { tool: InkTool; ink: InkColour; width: InkWidth; points: Array<[number, number]> }
+export type InkView = { slideId: string; space: 'slide' | 'image'; image?: number; strokes: InkStroke[]; draft: InkStroke | null }
+export type InkMessage = { type: 'ink.live'; ink: InkView }
+export const INK_LIMITS = { bytes: 64_000, pointsPerStroke: 400, strokesPerLayer: 100, pointsPerLayer: 2400, images: 1000, perSecond: 20 } as const
+const INK_TOOLS: readonly string[] = ['freehand', 'arrow', 'rectangle']
+const INK_COLOURS: readonly string[] = ['red', 'yellow', 'green', 'blue']
+const INK_WIDTHS: readonly string[] = ['thin', 'thick']
+function parseInkStroke(value: unknown, space: 'slide' | 'image'): InkStroke | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const s = value as Record<string, unknown>
+  if (typeof s.tool !== 'string' || !INK_TOOLS.includes(s.tool) || typeof s.ink !== 'string' || !INK_COLOURS.includes(s.ink)
+    || typeof s.width !== 'string' || !INK_WIDTHS.includes(s.width)) return null
+  if (!Array.isArray(s.points) || s.points.length < 1 || s.points.length > INK_LIMITS.pointsPerStroke) return null
+  if (s.tool !== 'freehand' && s.points.length !== 2) return null
+  const [w, h] = space === 'image' ? [1, 1] : [1280, 720]
+  const points: Array<[number, number]> = []
+  for (const point of s.points as unknown[]) {
+    if (!Array.isArray(point) || point.length !== 2) return null
+    const [x, y] = point as unknown[]
+    if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x > w || y > h) return null
+    points.push([x, y])
+  }
+  return { tool: s.tool as InkTool, ink: s.ink as InkColour, width: s.width as InkWidth, points }
+}
+export function parseInkMessage(value: unknown): InkMessage | null {
+  if (!value || typeof value !== 'object') return null
+  const message = value as Record<string, unknown>
+  if (message.type !== 'ink.live' || !message.ink || typeof message.ink !== 'object' || Array.isArray(message.ink)) return null
+  const v = message.ink as Record<string, unknown>
+  if (!nonEmptyString(v.slideId) || v.slideId.length > AUDIENCE_FEEDBACK_LIMITS.slideIdChars) return null
+  if (v.space !== 'slide' && v.space !== 'image') return null
+  const space = v.space
+  if (space === 'image' ? !Number.isSafeInteger(v.image) || Number(v.image) < 0 || Number(v.image) >= INK_LIMITS.images : v.image !== undefined) return null
+  if (!Array.isArray(v.strokes) || v.strokes.length > INK_LIMITS.strokesPerLayer) return null
+  const strokes: InkStroke[] = []
+  let total = 0
+  for (const raw of v.strokes) {
+    const stroke = parseInkStroke(raw, space)
+    if (!stroke) return null
+    total += stroke.points.length
+    strokes.push(stroke)
+  }
+  let draft: InkStroke | null = null
+  if (v.draft != null) {
+    draft = parseInkStroke(v.draft, space)
+    if (!draft) return null
+    total += draft.points.length
+  }
+  if (total > INK_LIMITS.pointsPerLayer) return null
+  return { type: 'ink.live', ink: { slideId: v.slideId, space, ...(space === 'image' ? { image: Number(v.image) } : {}), strokes, draft } }
+}
+
+/**
+ * parseInkMessage plus the byte cap, for ink that does not arrive as a frame (the recorder, a
+ * recording checkpoint, a stored recording): the checked message, rebuilt from known fields only
+ * (bounded by the stroke and point caps), must serialise within INK_LIMITS.bytes. Never throws.
+ */
+export function parseCappedInkMessage(value: unknown): InkMessage | null {
+  try {
+    const message = parseInkMessage(value)
+    if (!message) return null
+    return new TextEncoder().encode(JSON.stringify(message)).length <= INK_LIMITS.bytes ? message : null
+  } catch {
+    return null
+  }
+}
+
+export type EndSound = 'none' | 'chime' | 'alarm'
 export type InstantSlide =
-  | { kind: 'text'; text: string; shownAt: number }
+  | { kind: 'text'; text: string; link?: string; linkQrSvg?: string; shownAt: number }
   | { kind: 'link'; url: string; qrSvg: string; shownAt: number }
   | { kind: 'time'; shownAt: number }
-  | { kind: 'countdown'; startedAt: number; durationMs: number; label?: string; shownAt: number }
+  | { kind: 'countdown'; startedAt: number; durationMs: number; label?: string; endSound?: EndSound; soundAtEnd?: boolean; link?: string; linkQrSvg?: string; shownAt: number }
   | { kind: 'image'; dataUrl: string; width: number; height: number; shownAt: number }
 export type InstantSlideMessage = { type: 'instant.state'; slide: InstantSlide | null }
 export type PresenterInstantMessage = { type: 'instant.show'; slide: InstantSlide } | { type: 'instant.clear' }
@@ -209,19 +300,46 @@ export type PresenterAudienceMessage =
 
 export type AudienceFeedbackServerMessage = ReactionCountsMessage | QuestionsStateMessage | SwitchesStateMessage
 
-export type PresenterMessage = SlidePublishMessage | PresenterPollMessage | PresenterInstantMessage | PresenterAudienceMessage | PresenterBoardMessage
+export type PresenterMessage = PointerMessage | InkMessage | SlidePublishMessage | PresenterPollMessage | PresenterInstantMessage | PresenterAudienceMessage | PresenterBoardMessage
 export type AudienceMessage = PollVoteMessage | ReactionSendMessage | QuestionSubmitMessage
 export type PresenterServerMessage = PollStateMessage | PollVoteRecordMessage
-export type ServerMessage = SlideStateMessage | InstantSlideMessage | SessionClosedMessage | PresenterServerMessage | AudienceFeedbackServerMessage
+export type ServerMessage = PointerMessage | InkMessage | SlideStateMessage | InstantSlideMessage | SessionClosedMessage | PresenterServerMessage | AudienceFeedbackServerMessage
+
+const END_SOUNDS: readonly string[] = ['none', 'chime', 'alarm']
+
+// An optional web link on a text or countdown slide, with the QR code of it. Returns the fields to
+// carry, or null when either is present but malformed (the whole slide is then refused).
+// The canonical form of a web link: http(s), no username or password, and `new URL(...).href`, which
+// percent-encodes < > " and (in paths) backticks. Anything that still holds one of those or a control
+// character is refused, so a link can never open an HTML comment or a Markdown construct downstream.
+function canonicalWebLink(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length > 2048 || !/^https?:\/\/[^\s]+$/i.test(value) || /[\u0000-\u001f\u007f]/.test(value)) return null
+  try {
+    const url = new URL(value)
+    if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username || url.password) return null
+    return url.href.length <= 2048 && !/[<>"`\u0000-\u001f\u007f]/.test(url.href) ? url.href : null
+  } catch { return null }
+}
+
+function parseSlideLink(v: Record<string, unknown>): { link?: string; linkQrSvg?: string } | null {
+  if (v.link === undefined && v.linkQrSvg === undefined) return {}
+  const link = canonicalWebLink(v.link)
+  if (!link) return null
+  if (v.linkQrSvg !== undefined && (typeof v.linkQrSvg !== 'string' || v.linkQrSvg.length > 100_000 || !/^<svg\b/i.test(v.linkQrSvg.trim()))) return null
+  return { link, ...(typeof v.linkQrSvg === 'string' ? { linkQrSvg: v.linkQrSvg } : {}) }
+}
 
 export function parseInstantSlide(value: unknown): InstantSlide | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const v = value as Record<string, unknown>
   if (!Number.isSafeInteger(v.shownAt) || Number(v.shownAt) < 0) return null
-  if (v.kind === 'text' && nonEmptyString(v.text) && v.text.length <= 2000) return { kind: 'text', text: v.text, shownAt: Number(v.shownAt) }
-  if (v.kind === 'link' && nonEmptyString(v.url) && v.url.length <= 2048 && /^https?:\/\//i.test(v.url)
+  if (v.kind === 'text' && nonEmptyString(v.text) && v.text.length <= 2000) {
+    const link = parseSlideLink(v)
+    return link ? { kind: 'text', text: v.text, ...link, shownAt: Number(v.shownAt) } : null
+  }
+  if (v.kind === 'link' && canonicalWebLink(v.url)
     && typeof v.qrSvg === 'string' && v.qrSvg.length <= 100_000 && /^<svg\b/i.test(v.qrSvg.trim()))
-    return { kind: 'link', url: v.url, qrSvg: v.qrSvg, shownAt: Number(v.shownAt) }
+    return { kind: 'link', url: canonicalWebLink(v.url) as string, qrSvg: v.qrSvg, shownAt: Number(v.shownAt) }
   if (v.kind === 'time') return { kind: 'time', shownAt: Number(v.shownAt) }
   if (v.kind === 'image' && typeof v.dataUrl === 'string' && /^data:image\/webp;base64,[A-Za-z0-9+/]+={0,2}$/.test(v.dataUrl)
     && v.dataUrl.length <= 120_000 && Number.isSafeInteger(v.width) && Number.isSafeInteger(v.height)
@@ -229,15 +347,24 @@ export function parseInstantSlide(value: unknown): InstantSlide | null {
     return { kind: 'image', dataUrl: v.dataUrl, width: Number(v.width), height: Number(v.height), shownAt: Number(v.shownAt) }
   if (v.kind === 'countdown' && Number.isSafeInteger(v.startedAt) && Number.isSafeInteger(v.durationMs)
     && Number(v.durationMs) >= 1000 && Number(v.durationMs) <= 86_400_000
-    && (v.label === undefined || (typeof v.label === 'string' && v.label.length <= 120)))
+    && (v.label === undefined || (typeof v.label === 'string' && v.label.length <= 120))
+    && (v.soundAtEnd === undefined || typeof v.soundAtEnd === 'boolean')
+    && (v.endSound === undefined || (typeof v.endSound === 'string' && END_SOUNDS.includes(v.endSound)))) {
+    const link = parseSlideLink(v)
+    if (!link) return null
     return { kind: 'countdown', startedAt: Number(v.startedAt), durationMs: Number(v.durationMs),
-      ...(typeof v.label === 'string' ? { label: v.label } : {}), shownAt: Number(v.shownAt) }
+      ...(typeof v.label === 'string' ? { label: v.label } : {}),
+      ...(typeof v.endSound === 'string' ? { endSound: v.endSound as EndSound } : {}),
+      ...(typeof v.soundAtEnd === 'boolean' ? { soundAtEnd: v.soundAtEnd } : {}), ...link, shownAt: Number(v.shownAt) }
+  }
   return null
 }
 
 export function parsePresenterMessage(value: string): PresenterMessage | null {
   try {
     const message = JSON.parse(value) as Record<string, unknown>
+    if (message.type === 'pointer.live') return new TextEncoder().encode(value).length <= POINTER_LIMITS.bytes ? parsePointerMessage(message) : null
+    if (message.type === 'ink.live') return new TextEncoder().encode(value).length <= INK_LIMITS.bytes ? parseInkMessage(message) : null
     if (message.type === 'instant.clear') return { type: 'instant.clear' }
     if ((BOARD_MESSAGE_TYPES as readonly unknown[]).includes(message.type)) return parsePresenterBoardMessage(message)
     if (message.type === 'question.answer') {

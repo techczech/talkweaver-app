@@ -7,7 +7,7 @@
 // `<vault>/_PRESENTATIONS/`, symlinks resolved). Local files under `<userData>/recordings/` are
 // named by the session id alone, which must be a safe Run id.
 
-import { lstatSync, realpathSync } from 'fs'
+import { lstatSync, readdirSync, realpathSync } from 'fs'
 import { readdir, stat } from 'fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'path'
 import { isSafeRunId, isSafeTalkSlug, runPathForTalk, talkRunFolderForTalk } from './runs.ts'
@@ -18,6 +18,10 @@ export type RecordingPath = { ok: true; path: string } | { ok: false; error: Rec
 
 function refuse(error: RecordingPathError): RecordingPath {
   return { ok: false, error }
+}
+
+function lexists(path: string): boolean {
+  try { lstatSync(path); return true } catch { return false }
 }
 
 function nameError(talkSlug: unknown, sessionId: unknown): RecordingPathError | null {
@@ -32,6 +36,60 @@ export function localRecordingPath(userDataDir: string, sessionId: unknown, ext:
   const recDir = resolve(userDataDir, 'recordings')
   const path = join(recDir, `${sessionId}.${ext}`)
   return dirname(path) === recDir ? { ok: true, path } : refuse('unsafe-path')
+}
+
+/**
+ * One continuous audio segment of a session, written as it is recorded: segment 0 is
+ * `<sessionId>.webm` (the file every reader already knows), segment n > 0 is
+ * `<sessionId>.seg-<n+1>.webm`. A new segment starts when the microphone is picked up again after
+ * a loss (WebM from two MediaRecorders does not concatenate into one valid file).
+ */
+export function localSegmentPath(userDataDir: string, sessionId: unknown, index: unknown): RecordingPath {
+  if (!isSafeRunId(sessionId)) return refuse('unsafe-session-id')
+  if (typeof index !== 'number' || !Number.isInteger(index) || index < 0 || index > 999) return refuse('unsafe-path')
+  if (index === 0) return localRecordingPath(userDataDir, sessionId, 'webm')
+  const recDir = resolve(userDataDir, 'recordings')
+  const path = join(recDir, `${sessionId}.seg-${index + 1}.webm`)
+  return dirname(path) === recDir ? { ok: true, path } : refuse('unsafe-path')
+}
+
+/** `<userData>/recordings/<sessionId>.recording.json` — present while a recording streams to disk. */
+export function streamMarkerPath(userDataDir: string, sessionId: unknown): RecordingPath {
+  if (!isSafeRunId(sessionId)) return refuse('unsafe-session-id')
+  const recDir = resolve(userDataDir, 'recordings')
+  const path = join(recDir, `${sessionId}.recording.json`)
+  return dirname(path) === recDir ? { ok: true, path } : refuse('unsafe-path')
+}
+
+/**
+ * The segment files of a session that exist on disk, in segment order. Listed from the folder, so a
+ * missing segment (one that recorded nothing) does not hide the ones after it.
+ */
+export function existingSegmentPaths(userDataDir: string, sessionId: unknown): string[] {
+  if (!isSafeRunId(sessionId)) return []
+  const recDir = resolve(userDataDir, 'recordings')
+  let names: string[]
+  try { names = readdirSync(recDir) } catch { return [] }
+  const found: Array<{ index: number; path: string }> = []
+  for (const name of names) {
+    let index: number
+    if (name === `${sessionId}.webm`) index = 0
+    else {
+      const m = name.startsWith(`${sessionId}.seg-`) ? /^\.seg-(\d{1,4})\.webm$/.exec(name.slice(sessionId.length)) : null
+      if (!m) continue
+      index = Number(m[1]) - 1
+    }
+    const target = localSegmentPath(userDataDir, sessionId, index)
+    if (target.ok && target.path === join(recDir, name)) found.push({ index, path: target.path })
+  }
+  return found.sort((a, b) => a.index - b.index).map((f) => f.path)
+}
+
+/** The segment index a segment file name stands for (`<id>.webm` → 0, `<id>.seg-3.webm` → 2). */
+export function segmentIndexOfFile(file: string): number | null {
+  if (/^[^/\\]+\.seg-\d{1,4}\.webm$/.test(file)) return Number(/\.seg-(\d{1,4})\.webm$/.exec(file)![1]) - 1
+  if (/^[^/\\.]+\.webm$/.test(file)) return 0
+  return null
 }
 
 /** `<vault>/_PRESENTATIONS/<talkSlug>/<sessionId>.json`, guarded by `runPathForTalk`. */
@@ -103,10 +161,6 @@ function resolvesInside(parent: string, child: string): boolean {
   } catch {
     return false
   }
-}
-
-function lexists(path: string): boolean {
-  try { lstatSync(path); return true } catch { return false }
 }
 
 /**

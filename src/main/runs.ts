@@ -1,3 +1,4 @@
+import type { RunAudioFields } from '../shared/run-audio.ts'
 import { AUDIENCE_FEEDBACK_LIMITS, parsePollDefinition, parsePollChoice, parseQuestionInput, parseReactionInput, type InstantSlide, type PollDefinition, type PollChoice } from '../../worker/protocol.ts'
 import { preworkWindow } from '../shared/plan-run.ts'
 import { reactionCountsBySlide, type RunQuestion, type RunReaction, type SlideReactionCounts } from '../shared/run-feedback.ts'
@@ -7,6 +8,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSy
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { resolvePathways, type Pathway, type PathwaySlideRow } from './pathways.ts'
 import { pathStaysInside } from './path-containment.ts'
+import { readbackSlideTimeIndex } from './run-ink-readback.ts'
 
 export type { RunBoard, RunPrework, RunQuestion, RunReaction, SlideReactionCounts }
 export { reactionCountsBySlide, preworkWindow }
@@ -14,7 +16,7 @@ export { reactionCountsBySlide, preworkWindow }
 export type RunStatus = 'planned' | 'delivered'
 export type RunSlideSet = { kind: 'full' } | { kind: 'pathway'; pathwayId: string }
 export type RunKind = 'delivery' | 'rehearsal' | 'recording'
-export type RunMark = { event: string; slideId?: string; tMs: number; hidden?: number; marks?: number }
+export type RunMark = { event: string; slideId?: string; tMs: number; hidden?: number; marks?: number; space?: 'image'; image?: number; ink?: unknown }
 export type RunPollType = PollDefinition['type']
 export type RunPollVisibility = 'live' | 'held'
 export interface RunPoll extends Omit<PollDefinition, 'pollId'> {
@@ -47,6 +49,8 @@ export interface RunInstantSlide {
   afterSlideId: string | null
   text?: string
   url?: string
+  /** A web link shown with a text or countdown slide (http(s), no username or password). Never its QR code: that is regenerated. */
+  link?: string
   durationMs?: number
   label?: string
   dataUrl?: string
@@ -87,7 +91,8 @@ export interface RunRecord {
   timerTargetMin: number
   context: string | null
   pathwayId: string | null
-  audio: { r2Key: string; bytes: number; uploaded: boolean } | null
+  /** Local audio; segments/gaps/audioMs/partial when the recording lost its input or never reached Stop (run-audio.ts). */
+  audio: ({ r2Key: string; bytes: number; uploaded: boolean } & RunAudioFields) | null
   transcript: unknown | null
   trims?: Array<{ start: number; end: number }>
   slideTimeIndex: RunMark[]
@@ -285,6 +290,20 @@ function normaliseInstantAdded(value: unknown): RunInstantSlideAdded | undefined
   return { afterSlideNumber, afterSlideTitle: asText(raw.afterSlideTitle), slideId, at: asText(raw.at) }
 }
 
+/**
+ * The link a Run keeps with an instant slide, in its canonical form `new URL(value).href` (which percent-encodes
+ * < > " and path backticks): http(s) only, no userinfo, nothing left that could open an HTML comment or a
+ * Markdown construct. Otherwise undefined.
+ */
+export function asInstantLink(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length > 2048 || !/^https?:\/\/[^\s]+$/i.test(value) || /[\u0000-\u001f\u007f]/.test(value)) return undefined
+  try {
+    const url = new URL(value)
+    if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username || url.password) return undefined
+    return url.href.length <= 2048 && !/[<>"`\u0000-\u001f\u007f]/.test(url.href) ? url.href : undefined
+  } catch { return undefined }
+}
+
 function normaliseInstantSlides(value: unknown): RunInstantSlide[] {
   if (!Array.isArray(value)) return []
   const seen = new Set<string>()
@@ -300,15 +319,19 @@ function normaliseInstantSlides(value: unknown): RunInstantSlide[] {
     if (kind === 'text') {
       if (typeof raw.text !== 'string' || !raw.text.trim()) return []
       entry.text = raw.text
+      const link = asInstantLink(raw.link)
+      if (link) entry.link = link
     } else if (kind === 'link') {
-      const url = asText(raw.url)
-      if (!/^https?:\/\//i.test(url)) return []
+      const url = asInstantLink(asText(raw.url).replace(/\s/g, '%20'))
+      if (!url) return []
       entry.url = url
     } else if (kind === 'countdown') {
       const durationMs = Number(raw.durationMs)
       if (!Number.isSafeInteger(durationMs) || durationMs < 1000) return []
       entry.durationMs = durationMs
       if (asText(raw.label)) entry.label = asText(raw.label)
+      const link = asInstantLink(raw.link)
+      if (link) entry.link = link
     } else if (kind === 'image') {
       const dataUrl = typeof raw.dataUrl === 'string' ? raw.dataUrl : ''
       const width = Number(raw.width)
@@ -419,7 +442,8 @@ export function normaliseRun(value: unknown): RunRecord {
     pathwayId,
     audio: raw.audio && typeof raw.audio === 'object' ? raw.audio as RunRecord['audio'] : null,
     transcript: raw.transcript ?? null,
-    slideTimeIndex: Array.isArray(raw.slideTimeIndex) ? raw.slideTimeIndex as RunMark[] : [],
+    // The Pen's ink in it is checked and capped here, on the way in, before it goes anywhere.
+    slideTimeIndex: readbackSlideTimeIndex<RunMark>(raw.slideTimeIndex),
     polls: normalisePolls(raw.polls),
     pollResponses: normalisePollResponses(raw.pollResponses)
   }
@@ -498,9 +522,9 @@ export function applyRunPollBuffer(
 // URL whenever needed); everything else the audience saw is kept.
 export function runInstantSlideFrom(slide: InstantSlide, afterSlideId: string | null): RunInstantSlide {
   const base = { id: `${slide.kind}-${slide.shownAt}`, kind: slide.kind, shownAt: slide.shownAt, afterSlideId: afterSlideId || null }
-  if (slide.kind === 'text') return { ...base, text: slide.text }
+  if (slide.kind === 'text') return { ...base, text: slide.text, ...(asInstantLink(slide.link) ? { link: asInstantLink(slide.link) } : {}) }
   if (slide.kind === 'link') return { ...base, url: slide.url }
-  if (slide.kind === 'countdown') return { ...base, durationMs: slide.durationMs, ...(slide.label ? { label: slide.label } : {}) }
+  if (slide.kind === 'countdown') return { ...base, durationMs: slide.durationMs, ...(slide.label ? { label: slide.label } : {}), ...(asInstantLink(slide.link) ? { link: asInstantLink(slide.link) } : {}) }
   if (slide.kind === 'image') return { ...base, dataUrl: slide.dataUrl, width: slide.width, height: slide.height }
   return base
 }

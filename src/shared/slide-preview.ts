@@ -23,7 +23,7 @@ body[data-tw-preview] .share-shell { min-height: 100vh; grid-template-rows: 1fr;
 
 // The scheme-hosted preview has its own origin, so the parent cannot synthesise arrow keys
 // inside it. postMessage crosses that boundary and this bridge replays the deck step locally.
-const STEP_BRIDGE = `<script data-tw-step-bridge>window.addEventListener('message',function(e){var d=e&&e.data;if(d&&d.type==='tw-step'&&(d.key==='ArrowRight'||d.key==='ArrowLeft')){window.dispatchEvent(new KeyboardEvent('keydown',{key:d.key,code:d.key,bubbles:true}))}})</script>`
+const STEP_BRIDGE = `<script data-tw-step-bridge>window.addEventListener('message',function(e){var d=e&&e.data;if(e&&e.source!==window.parent)return;if(d&&d.type==='tw-step'&&(d.key==='ArrowRight'||d.key==='ArrowLeft')){window.dispatchEvent(new KeyboardEvent('keydown',{key:d.key,code:d.key,bubbles:true}))}})</script>`
 
 export type SlidePreviewStore = {
   get: (id: string) => string | undefined
@@ -128,7 +128,14 @@ export function selectedThumbnailSlideAtLine(
 }
 
 /** Mark shared preview HTML so Slide Focus and Inspector use the same chrome-free stage. */
-export function markSlidePreviewHtml(html: string): string {
+export function markSlidePreviewHtml(rawHtml: string): string {
+  // A preview never plays or loads an audio chip's file: drop the <audio> elements (and any inlined
+  // data URI) before the preview document exists. The chip itself stays as a static label.
+  // Nor does a preview contain an embedded local page (ticket 11): the inlined document is removed
+  // from its frame, so nothing of the page exists in a thumbnail, Slide Focus, the Inspector or the
+  // layout preview. The frame stays empty and the compiled placeholder shows in its place. The
+  // attribute's value is HTML-escaped by the compiler, so it holds no double quote.
+  const html = rawHtml.replace(/<audio\b[^>]*>\s*<\/audio>/gi, '').replace(/\sdata-embed-doc="[^"]*"/g, '')
   const withHook = /<body\b[^>]*data-tw-preview/i.test(html)
     ? html
     : /<body\b[^>]*>/i.test(html)
