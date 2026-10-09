@@ -1,5 +1,5 @@
 import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import type { TalkInfo, ProjectionRow } from '../../../preload/index'
 import type { LayoutDoctorFinding } from '../../../shared/layout-doctor'
 import { triggerWarningPayloadsForSlide } from '../../../shared/layout-doctor'
@@ -532,6 +532,14 @@ function SlideCard({
   )
 }
 
+// IDENTITY CONTRACT — every prop compared below must keep its identity unless its data changed.
+// Derive per-card values (warnings, markers, urls) once per input change in SlideStrip's useMemo
+// (see `stripWarnings`), never inline in `renderCard`: an inline `[...]`/`{...}`/`.map()` is a new
+// object on every strip render, the comparator never matches, and every card re-renders on every
+// keystroke, selection change and thumbnail arrival. That happened once (187007c, 27 July → fixed
+// here) and nothing noticed for two months. Handlers are NOT compared: route them through the
+// latest-refs below so a skipped render cannot keep a stale parent callback.
+// Guarded by `npm run test:strip-render-budget` (part of test:performance / check:performance).
 const MemoSlideCard = React.memo(
   SlideCard,
   (prev, next) =>
@@ -682,10 +690,12 @@ export default function SlideStrip({
   const onEditRef = useRef(onEdit)
   const onReorderRef = useRef(onReorder)
   const onExplainRef = useRef(onExplain)
+  const onMarkerRef = useRef(onMarker)
   onSelectSlideRef.current = onSelectSlide
   onEditRef.current = onEdit
   onReorderRef.current = onReorder
   onExplainRef.current = onExplain
+  onMarkerRef.current = onMarker
 
   function resetDrag() {
     dragFromRef.current = null
@@ -730,6 +740,17 @@ export default function SlideStrip({
       setUsingCompiler(false)
     }
   }, [compiledSlides, fallbackContent])
+
+  // Strip-badge warnings per display index, derived once per (slides, triggerFindings) change so each
+  // card's `warnings` array keeps its identity across renders (MemoSlideCard's identity contract).
+  // Rows without a compiled row (pre-first-compile fallback) keep their own `slide.warnings`.
+  const stripWarnings = useMemo(() => {
+    const byIndex = new Map<number, SurfaceWarningBadge[]>()
+    for (const slide of slides) {
+      byIndex.set(slide.index, slide.row ? surfacedWarnings(slide.row, 'strip-badge', triggerFindings) : slide.warnings)
+    }
+    return byIndex
+  }, [slides, triggerFindings])
 
   // Scroll the active card to the TOP of the strip when activeIndex changes, so the slide
   // you're editing sits at the top of the sidebar (requested) rather than just "nearest".
@@ -823,9 +844,7 @@ export default function SlideStrip({
     const key = thumbKey(slide.row)
     const slideId = slide.row?.slide_id ?? null
     const thumbnailUrl = key && thumbnails ? thumbnails[key] ?? null : null
-    const warnings = slide.row
-      ? surfacedWarnings(slide.row, 'strip-badge', triggerFindings)
-      : slide.warnings
+    const warnings = stripWarnings.get(slide.index) ?? slide.warnings
     // Carousel sub-slides (ADR-0022): a #### / {carousel} slide captures one full-bleed
     // thumbnail per stepped sub-slide, keyed `${key}__N`. Static multi-part layouts (columns,
     // contrast, image-grid, cards-grid, gallery) emit no `__N` keys, so they show no sub-cards.
@@ -885,7 +904,9 @@ export default function SlideStrip({
             if (dragFromRef.current === null || !isBlock) return
             e.preventDefault()
             if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
-            if (dropTargetIndex !== slide.index) setDropTargetIndex(slide.index)
+            // Functional update: a skipped card render keeps this closure, so it must not read a
+            // captured dropTargetIndex.
+            setDropTargetIndex((current) => (current === slide.index ? current : slide.index))
           }}
           onDrop={(e) => {
             e.preventDefault()
@@ -912,7 +933,7 @@ export default function SlideStrip({
           }}
           onDragEnd={resetDrag}
           marker={slideId ? markers?.bySlide[slideId] ?? null : null}
-          onMarker={onMarker ? () => onMarker(slide.index) : undefined}
+          onMarker={onMarker ? () => onMarkerRef.current?.(slide.index) : undefined}
         />
       </div>
       {slideId && ghostsAfter(slideId).map((ghost) => (

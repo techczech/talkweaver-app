@@ -78,6 +78,16 @@ check('HTML in the source is escaped; unsafe link targets are neutralised', () =
 check('==mark== goes through the compiler renderer', () => {
   assert.equal(r('a ==marked== word'), 'a <mark class="ink-marker">marked</mark> word')
 })
+check('~~strike~~ and ++underline++ render, nest, span links and leave C++ and code alone', () => {
+  assert.equal(r('a ~~gone~~ and ++added++ word'), 'a <s>gone</s> and <u>added</u> word')
+  assert.equal(r('**++x++** ~~a~~ ==b=='), '<strong><u>x</u></strong> <s>a</s> <mark class="ink-marker">b</mark>')
+  assert.equal(r('++see [x](https://ex.com/r)++'),
+    '<u>see <a href="https://ex.com/r" target="_blank" rel="noopener">x</a></u>')
+  assert.equal(r('C++ and i++ and a ++ b ++ c'), 'C++ and i++ and a ++ b ++ c')
+  assert.equal(r('`++a++` and https://ex.com/~~x~~'),
+    '<code>++a++</code> and <a href="https://ex.com/~~x~~" target="_blank" rel="noopener">https://ex.com/~~x~~</a>')
+  assert.equal(r('++open and ~~open'), '++open and ~~open')
+})
 check('emphasis spans a code span or link and never enters it', () => {
   assert.equal(r('**bold `a*b` [a *b* c](https://x/_y_/)**'),
     '<strong>bold <code>a*b</code> <a href="https://x/_y_/" target="_blank" rel="noopener">a <em>b</em> c</a></strong>')
@@ -121,7 +131,7 @@ check('the nav title renders from the slide section attribute', () => {
 // closed the outer href and ran the author's text as event handlers.
 const TAG_RE = /<[^>]*>/g
 const OPEN_A_RE = /^<a href="([^"<>]*)" target="_blank" rel="noopener">$/
-const SIMPLE_TAGS = new Set(['<strong>', '</strong>', '<em>', '</em>', '<code>', '</code>', '<mark class="ink-marker">', '</mark>', '</a>'])
+const SIMPLE_TAGS = new Set(['<strong>', '</strong>', '<em>', '</em>', '<code>', '</code>', '<mark class="ink-marker">', '</mark>', '<s>', '</s>', '<u>', '</u>', '</a>'])
 const decode = (v) => v.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
 const SCRIPT_SCHEME_RE = /^[\s\u0000-\u001f]*(?:j\s*a\s*v\s*a\s*s\s*c\s*r\s*i\s*p\s*t|data|vbscript)\s*:/i
 

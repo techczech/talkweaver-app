@@ -165,6 +165,7 @@
 .tws-sc-len { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .tws-sc-rec { font-family: var(--lt-mono); font-size: 15px; color: var(--lt-ink); font-weight: 500; }
 .tws-sc-plan { font-family: var(--lt-mono); font-size: 10.5px; color: var(--lt-ink-faint); }
+.tws-sc-audio-short { font-family: var(--lt-mono); font-size: 10.5px; color: var(--lt-red); }
 .tws-delta { font-family: var(--lt-mono); font-size: 10px; padding: 1.5px 6px; border-radius: 8px; white-space: nowrap; }
 .tws-delta.over { background: var(--lt-amber-soft); color: var(--lt-amber); }
 .tws-delta.under { background: var(--lt-green-soft); color: var(--lt-green); }

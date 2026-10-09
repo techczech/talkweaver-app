@@ -51,9 +51,16 @@ export async function buildShortcutHelp() {
     let group = groups.find(([name]) => name === entry.group)
     if (!group) { group = [entry.group, []]; groups.push(group) }
     // A third field names the preload a row's key needs (the ? sheet shows it only when mounted).
-    group[1].push(PRESENTER_KEY_NEEDS[entry.id] ? [entry.keys, entry.label, PRESENTER_KEY_NEEDS[entry.id]] : [entry.keys, entry.label])
+    group[1].push([entry.keys, entry.label, PRESENTER_KEY_NEEDS[entry.id] || null, entry.id])
+  }
+  const paletteData = presenterPaletteData(SHORTCUT_REGISTRY)
+  const commandKeys = SHORTCUT_REGISTRY.filter(item => item.scope === 'presenter').map(({ id, label, codes, keys }) => ({ id, label, codes, keys }))
+  for (const entry of paletteData.flatMap(([, entries]) => entries)) {
+    if (!entry.shortcut) commandKeys.push({ id: `palette.${entry.id}`, label: entry.name, codes: [], keys: '' })
   }
   return [
+    `const PRESENTER_COMMAND_KEYS = ${JSON.stringify(commandKeys)};`,
+    `const PRESENTER_CONTROL_COMMANDS = ${JSON.stringify(Object.fromEntries(PRESENTER_CONTROLS.filter(item => item.shortcut).map(item => [item.id, item.shortcut])))};`,
     `const PRESENTER_TIPS = ${JSON.stringify(tips)};`,
     `const PRESENTER_ICON_OF = ${JSON.stringify(iconOf)};`,
     `const TIMER_BUTTON = ${JSON.stringify({ names: TIMER_BUTTON_NAMES })};`,

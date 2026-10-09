@@ -123,6 +123,49 @@ async function compiledOrder(path, text) {
   assert.equal(order[order.indexOf('aa11') + 1], result.slideId)
 }
 
+// 2b. Text and link together: the text, the link and its QR, in the talk's Markdown for links; it compiles in place.
+{
+  const path = talkFile(OUTLINE)
+  const { before, after, result } = await add(path, 'aa11', entry('text', { text: 'Tell us what you think', link: 'https://example.com/form' }))
+  assert.equal(result.ok, true, result.error)
+  assertOnlyInserted(before, after, result)
+  assert.match(result.inserted, /^## Tell us what you think\n\{id=[a-z0-9]{5}\}\n\nTell us what you think\n\n<https:\/\/example\.com\/form>\n\n\[QR: https:\/\/example\.com\/form \| example\.com\]\n\n$/)
+  const order = await compiledOrder(path, after)
+  assert.equal(order[order.indexOf('aa11') + 1], result.slideId)
+  // a text slide without a link is unchanged
+  const plain = await add(talkFile(OUTLINE), 'aa11', entry('text', { text: 'Just text' }))
+  assert.match(plain.result.inserted, /\{statement\}/)
+  assert.ok(!plain.result.inserted.includes('[QR:'))
+}
+
+// 2c. Hostile links: < > " and backticks are percent-encoded in the written href, so a link can never open an HTML
+//     comment that swallows the slides up to a later `-->`; countdowns carry their link in the same Markdown.
+{
+  const withComment = OUTLINE.replace('## Last {id=ee55}', '<!-- a later comment -->\n\n## Last {id=ee55}')
+  const original = await compiledOrder(talkFile(withComment), withComment)
+  for (const [kind, extra, expect] of [
+    ['text', { text: 'Hostile', link: 'https://x.com/<!--' }, 'https://x.com/%3C!--'],
+    ['text', { text: 'Hostile', link: 'https://x.com/a>b"c`d' }, 'https://x.com/a%3Eb%22c%60d'],
+    ['link', { url: 'https://x.com/<!--' }, 'https://x.com/%3C!--'],
+    ['countdown', { durationMs: 300_000, label: 'Break', link: 'https://x.com/<!--' }, 'https://x.com/%3C!--'],
+  ]) {
+    const path = talkFile(withComment)
+    const { before, after, result } = await add(path, 'aa11', entry(kind, extra))
+    assert.equal(result.ok, true, result.error)
+    assertOnlyInserted(before, after, result)
+    assert.ok(result.inserted.includes(`<${expect}>`) && result.inserted.includes(`[QR: ${expect} |`), kind + ': the canonical href is written, twice')
+    assert.ok(!/<!--|[`"]/.test(result.inserted.replace(/\{id=[a-z0-9]+\}/, '')), kind + ': nothing in the slide can open a comment')
+    const order = await compiledOrder(path, after)
+    assert.deepEqual(order.filter((id) => id !== result.slideId), original, kind + ': every other slide still compiles after the comment')
+    assert.equal(order[order.indexOf('aa11') + 1], result.slideId)
+  }
+  // an unsafe link is left out rather than written: the text slide stays a plain statement
+  const dropped = await add(talkFile(OUTLINE), 'aa11', entry('text', { text: 'No link', link: 'javascript:alert(1)' }))
+  assert.ok(!dropped.result.inserted.includes('[QR:') && /\{statement\}/.test(dropped.result.inserted))
+  const countdown = await add(talkFile(OUTLINE), 'aa11', entry('countdown', { durationMs: 300_000, label: 'Break', link: 'example.com/form' }))
+  assert.ok(!countdown.result.inserted.includes('[QR:'), 'a scheme-less link is not written either')
+}
+
 // 3. Countdown, anchored at the last slide: appended at the end, file still ends with one newline.
 {
   const path = talkFile(OUTLINE)

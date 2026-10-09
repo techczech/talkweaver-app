@@ -1,5 +1,5 @@
 import { escapeHtml } from "./00-html.mjs";
-import { replaceMarkSyntax, segmentInlineSource } from "./00-inline-protection.mjs";
+import { protectInlineSegments, replaceInlineMarks } from "./00-inline-protection.mjs";
 
 // The one rule for which link targets become real hrefs. Every renderer that builds an href
 // from outline text (this one, the phone text view in slide-script-render.mjs) calls it; a
@@ -33,6 +33,7 @@ export function plainInlineText(text) {
   out = out.replace(/(^|[^\w`])__(?=\S)([^_]*?\S)__(?!\w)/g, "$1$2");
   out = out.replace(/(^|[^\w`])_(?=\S)([^_]*?\S)_(?!\w)/g, "$1$2");
   out = out.replace(/==([^=]+)==/g, "$1");
+  out = replaceInlineMarks(out, (inner) => inner);
   return out.replace(/\s+/g, " ").trim();
 }
 
@@ -53,29 +54,16 @@ export function renderInline(text) {
   };
 
   const escaped = escapeHtml(text);
-  if (!escaped.includes("==")) return renderLegacyEscaped(escaped);
+  if (!/==|\+\+|~~/.test(escaped)) return renderLegacyEscaped(escaped);
 
-  // Code, links and bare URLs stay opaque only to ==mark==. Opaque control tokens isolate the
-  // marker pass. The ==-free fast path above is the historical renderer byte-for-byte. On marker
+  // Code, links and bare URLs stay opaque to the marks (==highlight==, ~~strike~~, ++underline++).
+  // Opaque control tokens isolate the mark pass, so a mark may span a link but never reach into
+  // one. The delimiter-free fast path above is the historical renderer byte-for-byte. On marked
   // lines, whole-line emphasis sees inert placeholders, then protected segments regain their
-  // rendered forms without allowing marker matching inside them.
-  const protectedSegments = [];
-  let tokenPrefix = "\u0001TW";
-  while (escaped.includes(tokenPrefix)) tokenPrefix += "TW";
-  const marked = segmentInlineSource(escaped).map((segment) => {
-    if (segment.kind === "text") {
-      return replaceMarkSyntax(segment.source, (inner) => `<mark class="ink-marker">${inner}</mark>`);
-    }
-    const token = `${tokenPrefix}${protectedSegments.length.toString(36)}\u0002`;
-    const rendered = segment.kind === "code"
+  // rendered forms without allowing mark matching inside them.
+  const { masked, restore } = protectInlineSegments(escaped, (segment) =>
+    segment.kind === "code"
       ? `<code>${renderLegacyEscaped(segment.content)}</code>`
-      : renderLegacyEscaped(segment.source);
-    protectedSegments.push({ token, rendered });
-    return token;
-  }).join("");
-  let out = renderLegacyEscaped(marked);
-  for (const segment of protectedSegments) {
-    out = out.split(segment.token).join(segment.rendered);
-  }
-  return out;
+      : renderLegacyEscaped(segment.source));
+  return restore(renderLegacyEscaped(replaceInlineMarks(masked)));
 }

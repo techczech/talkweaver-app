@@ -1,0 +1,12 @@
+/* @order 9990 */
+.tw-mark-tools { display: flex; flex: none; gap: 2px; padding: 2px; border: 1px solid #334552; border-radius: 7px; }
+/* @order 9991 */
+#presenterPointer[aria-pressed="true"] .tw-ico { color: #ffd86b; }
+/* @order 9992 */
+#presenterPointerChip { background: #3f3511; color: #ffd86b; }
+/* @order 9993 */
+@media print { .tw-live-overlay { display: none !important; } }
+/* @order 9994 */
+.tw-shortcut-rebind { margin: 0; position: fixed; z-index: 20000; top: 25%; left: 50%; transform: translateX(-50%); background: #17232e; color: #e8edf2; border: 1px solid #425666; border-radius: 8px; padding: 20px; box-shadow: 0 10px 50px #0008; }
+/* @order 9995 */
+.tw-shortcut-rebind button { margin-right: 8px; }

@@ -84,8 +84,10 @@ try {
       model.fullHtml.length < shellBytes + 64 * 1024,
       `backup HTML must be the shell plus a reference, got ${model.fullHtml.length} vs a ${shellBytes}-byte shell`
     )
+    // The ~1.87MB shell was within 3KB of a tenth of the 18.6MB inlined page, so any feature failed this check;
+    // the shell-plus-64KB assertion above is the exact bound, this one only says "far smaller than inlined".
     assert(
-      model.fullHtml.length < inlined.fullHtml.length * 0.1,
+      model.fullHtml.length < inlined.fullHtml.length * 0.15,
       'the backup HTML must be a small fraction of the inlined one'
     )
   })

@@ -1,3 +1,5 @@
+import type { InkStroke } from '../../worker/protocol'
+import type { RunAudioFields } from '../shared/run-audio'
 import type { VariantThumbnail } from '../shared/variant-thumbnail-result'
 import type { EditorDocumentReply, EditorDocumentRequest } from '../shared/editor-document'
 import type { RunQuestion, RunReaction } from '../shared/run-feedback'
@@ -234,6 +236,8 @@ export type ProjectionRow = {
   /** 1-based source line of this slide's heading (null for synthesized cover/closing slides) —
    *  the editor↔strip sync reads this directly so it can never drift. */
   source_line?: number | null
+  /** Where each image of the slide lands, in outline order (compiler decision; see shared/image-placement.ts). */
+  image_placements?: Array<{ kind: string; index: number; count: number }>
   content_hash: string
   /** Hash of the rendered slide MODEL (layout + blocks), not just text — the thumbnail cache key. */
   render_hash: string
@@ -380,13 +384,14 @@ export type RecordingSession = {
   timerTargetMin: number
   context: string | null
   pathwayId: string | null
-  audio: { r2Key: string; bytes: number; uploaded: boolean } | null
+  /** segments/gaps/audioMs/partial: see src/shared/run-audio.ts (how much audio the Run holds). */
+  audio: ({ r2Key: string; bytes: number; uploaded: boolean } & RunAudioFields) | null
   transcript: null
   trims?: TrimRange[]
   // enter = slide change · reveal = in-slide build step (hidden = fragments still hidden) ·
   // highlight = live highlight change (marks = count; ranges = reconstructed text spans when available) ·
   // pause/resume. All on the recording clock.
-  slideTimeIndex: Array<{ event: string; slideId?: string; tMs: number; hidden?: number; marks?: number; ranges?: HighlightRange[] }>
+  slideTimeIndex: Array<{ event: string; slideId?: string; tMs: number; hidden?: number; marks?: number; ranges?: HighlightRange[]; ink?: InkStroke[]; space?: 'image'; image?: number }>
   /** Instant slides shown during a live session (ticket 07), oldest first. */
   instantSlides?: RunInstantSlide[]
   /** Reactions from phones (reactions ticket 06): taps and undos, times from the Run's start. */
@@ -422,6 +427,7 @@ export type RunInstantSlide = {
   afterSlideId: string | null
   text?: string
   url?: string
+  link?: string
   durationMs?: number
   label?: string
   dataUrl?: string
@@ -825,6 +831,7 @@ const api = {
       display?: string
       error?: string
       updatedOutline?: string
+      warning?: string
     }> => ipcRenderer.invoke('talk:publish-handout', outlinePath, content),
     // `lane` separates independent requesters inside ONE window: the editor strip and the Slide
     // Browser's background per-talk render must not supersede each other (2026-09-15).
@@ -835,10 +842,12 @@ const api = {
     clearThumbCache: (slug: string, outlinePath?: string): Promise<boolean> => ipcRenderer.invoke('talk:clear-thumb-cache', slug, outlinePath),
     // Convert a talk's relative PNG/JPG images to WebP (smaller → faster previews + handouts).
     // Returns the rewritten outline; originals go to the OS Trash (recoverable).
+    // `failed`: could not be converted (missing, outside the vault, a link). `leftAlone`: pictures that
+    // belong to another talk or the shared pool. `clashes`: a .webp of that name already exists.
     optimizeImages: (
       outlinePath: string,
       content: string
-    ): Promise<{ success: boolean; converted?: number; savedBytes?: number; failed?: number; newContent?: string; error?: string }> =>
+    ): Promise<{ success: boolean; converted?: number; savedBytes?: number; failed?: number; leftAlone?: number; clashes?: number; newContent?: string; error?: string }> =>
       ipcRenderer.invoke('talk:optimize-images', outlinePath, content),
     // Cross-talk reuse: materialize a slide's relative images into the vault pool (img-<hash>) so they
     // resolve in the destination talk. Returns the rewritten markdown.
@@ -1365,6 +1374,13 @@ const api = {
   // (and focuses the window that has it) so the caller keeps its current talk. Pass null to release.
   windows: {
     open: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('window:new'),
+    // File-list "Open in new window": a talk opens in a new window (or its existing window is
+    // focused); a folder opens a new window with the file list scoped to it.
+    openInNewWindow: (target: { kind: 'talk'; outlinePath: string } | { kind: 'folder'; topic: string; vaultId?: string }): Promise<{ ok: boolean; focused?: boolean; reason?: string }> =>
+      ipcRenderer.invoke('window:open-in-new-window', target),
+    // A window started by openInNewWindow asks, once, what it was opened for (null for a plain ⌘N window).
+    takeOpenRequest: (): Promise<{ kind: 'talk'; outlinePath: string } | { kind: 'folder'; topic: string; vaultId?: string } | null> =>
+      ipcRenderer.invoke('window:take-open-request'),
     claimTalk: (outlinePath: string | null): Promise<{ ok: boolean; reason?: string }> =>
       ipcRenderer.invoke('window:claim-talk', outlinePath)
   },

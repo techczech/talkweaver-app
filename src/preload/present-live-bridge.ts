@@ -1,5 +1,8 @@
 /// <reference lib="dom" />
+import { parsePointerMessage, type InkMessage } from '../../worker/protocol'
+import { readInkSlot } from './recorder-ink'
 import { askEndLiveWithBoards, type OpenBoard } from './present-end-live-boards'
+// `clipboard` is used to WRITE the join link only; reading it is main's (`live:read-clipboard`).
 import { clipboard, contextBridge, ipcRenderer } from 'electron'
 import type { LiveStatus } from '../main/live-presenter-client'
 import { venueScreenLinkFromUrl } from '../shared/venue-screen-link'
@@ -131,12 +134,17 @@ async function forwardPollAction(message: PresenterPollMessage | PresenterInstan
 
 try {
   contextBridge.exposeInMainWorld('twLivePollBridge', {
+    qrSvg: (url: string) => ipcRenderer.invoke('live:instant-qr', url) as Promise<{ success: boolean; svg?: string }>,
     fitImage: (bytes: Uint8Array) => ipcRenderer.invoke('live:fit-instant-image', bytes),
     // The Live menu's "Instant slide from clipboard" (presenter redesign ticket 04): a menu press
-    // has no paste event, and the window's permission handler denies the web clipboard.
-    readClipboard: () => {
-      const image = clipboard.readImage()
-      return { text: clipboard.readText(), image: image && !image.isEmpty() ? new Uint8Array(image.toPNG()) : null }
+    // has no paste event, and the window's permission handler denies the web clipboard. The read is
+    // main's (`live:read-clipboard`: presenter window, focused, a real press in the last five
+    // seconds; embed-sandbox design 4.3). Here it is asked for only while this page holds a user
+    // activation, which a click on the menu item or Enter in the palette gives it.
+    readClipboard: async (): Promise<{ text: string; image: Uint8Array | null }> => {
+      if (navigator.userActivation?.isActive !== true) return { text: '', image: null }
+      const clip = await ipcRenderer.invoke('live:read-clipboard') as { text?: unknown; image?: unknown } | null
+      return { text: typeof clip?.text === 'string' ? clip.text : '', image: clip?.image instanceof Uint8Array ? clip.image : null }
     },
     action: (message: PresenterPollMessage | PresenterInstantMessage) => forwardPollAction(message),
     onInstant: (callback: (value: InstantSlide | null) => void) => {
@@ -500,6 +508,50 @@ export function mountLiveBridge(): void {
     if (state.slideId !== audienceSlideId) { audienceSlideId = state.slideId; showAudienceCounts() }
     ipcRenderer.send('live:publish-slide', state)
   }
+  let pointerLast = ''
+  const reportPointer = (): void => {
+    const raw = document.documentElement.dataset.twLivePointer || ''
+    // Attribute ticks are page events: movement is throttled there, resting keep-alives are 1 Hz.
+    pointerLast = raw
+    try {
+      const message = parsePointerMessage({ type: 'pointer.live', pointer: JSON.parse(raw) })
+      if (message) ipcRenderer.send('live:pointer', message)
+    } catch { /* malformed page data is inert */ }
+  }
+  const pointerObserver = new MutationObserver(reportPointer)
+  pointerObserver.observe(document.documentElement, {
+    attributes: true, attributeFilter: ['data-tw-live-pointer', 'data-tw-live-pointer-tick'],
+  })
+  const clearPointer = (): void => {
+    if (pointerLast && pointerLast !== '"gone"') ipcRenderer.send('live:pointer', { type: 'pointer.live', pointer: 'gone' })
+    pointerObserver.disconnect()
+  }
+  window.addEventListener('pagehide', clearPointer, { once: true })
+  window.addEventListener('beforeunload', clearPointer, { once: true })
+  // The Pen's ink (ticket 08): the deck writes its current layer on the root; the deck limits it to
+  // 15 writes a second and adds a keep-alive tick. Checked here, in main and in the worker.
+  let inkLast: InkMessage | null = null
+  const reportInk = (): void => {
+    try {
+      // Length first, then the capped check: an oversized slot is refused before it is parsed.
+      const message = readInkSlot(document.documentElement.dataset.twLiveInk)
+      if (!message) return
+      inkLast = message
+      ipcRenderer.send('live:ink', message)
+    } catch { /* malformed page data is inert */ }
+  }
+  const inkObserver = new MutationObserver(reportInk)
+  inkObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-tw-live-ink', 'data-tw-live-ink-tick'] })
+  // Closing the presenter ends the talk's drawings: the venue screen is told the layer is empty.
+  const clearInk = (): void => {
+    if (inkLast && (inkLast.ink.strokes.length || inkLast.ink.draft)) {
+      ipcRenderer.send('live:ink', { type: 'ink.live', ink: { ...inkLast.ink, strokes: [], draft: null } })
+    }
+    inkLast = null
+    inkObserver.disconnect()
+  }
+  window.addEventListener('pagehide', clearInk, { once: true })
+  window.addEventListener('beforeunload', clearInk, { once: true })
   const poll = window.setInterval(report, 150)
   window.addEventListener('hashchange', report)
   window.addEventListener('beforeunload', () => window.clearInterval(poll), { once: true })

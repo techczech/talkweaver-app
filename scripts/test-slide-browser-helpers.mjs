@@ -4,8 +4,8 @@
 // the shipped code.
 import { strict as assert } from 'node:assert'
 import {
-  rowMarkdown, rowTitle, formatVersionDate, versionTitle, sealLabel, cardTitleFor, countLabelFor,
-  clampDensity, toggleInSet, addAllToSet, rowTagsOf, tagsAfter, insertItemsFor, versionSourceOutline,
+  rowTitle, formatVersionDate, versionTitle, sealLabel, cardTitleFor, countLabelFor,
+  clampDensity, toggleInSet, addAllToSet, rowTagsOf, tagsAfter, versionSourceOutline,
   expansionPos, expansionAfterIndex, toggleFacetValue, mergedSectionNames, rowsGroupedByTalk,
   withoutActiveTalk, sectionNumbers, titleMap, buildOutlinePlan, viewerDeckFor, viewerIndexFor,
   sectionSourceFor, countByTalk, treeSectionsBySlug, coverUrlOf, recentEditRows, deliveryRows,
@@ -19,11 +19,6 @@ const check = (name, fn) => { fn(); checks++; console.log(`  ✓ ${name}`) }
 const row = (o) => ({ talkSlug: 'a', talkTitle: 'Talk A', outlinePath: '/v/a.md', ...o })
 
 console.log('Formatting:')
-check('rowMarkdown keeps a stamped source and falls back to a heading', () => {
-  assert.equal(rowMarkdown(row({ source_markdown: '### Hi\n{id=x}\n' })), '### Hi\n{id=x}\n')
-  assert.equal(rowMarkdown(row({ source_markdown: '  \n', nav_title: 'Nav' })), '### Nav\n')
-  assert.equal(rowMarkdown(row({})), '### Untitled\n')
-})
 check('rowTitle prefers the nav title', () => {
   assert.equal(rowTitle(row({ nav_title: 'N', title: 'T' })), 'N')
   assert.equal(rowTitle(row({ title: 'T' })), 'T')
@@ -72,9 +67,6 @@ check('tagsAfter adds once and removes', () => {
   assert.deepEqual(tagsAfter(['a'], 'b', 'add'), ['a', 'b'])
   assert.deepEqual(tagsAfter(['a', 'b'], 'b', 'add'), ['a', 'b'])
   assert.deepEqual(tagsAfter(['a', 'b'], 'a', 'remove'), ['b'])
-})
-check('insertItemsFor maps rows to the insert contract', () => {
-  assert.deepEqual(insertItemsFor([row({ source_markdown: '### S\n' })]), [{ markdown: '### S\n', fromSlug: 'a', sourceOutlinePath: '/v/a.md' }])
 })
 check('versionSourceOutline resolves the version outline against the vault root', () => {
   assert.equal(versionSourceOutline({ outline: 'x/t.md' }, '/vault/', '/fallback.md'), '/vault/x/t.md')
@@ -174,7 +166,7 @@ check('treeSectionsBySlug counts sectioned slides with authored labels', () => {
   assert.deepEqual(m.get('b'), [{ sec: 'deep', label: 'deep', count: 1 }])
 })
 check('coverUrlOf', () => {
-  assert.equal(coverUrlOf('a', { a: { coverKey: 'k1' } }), 'twthumb://a/k1')
+  assert.equal(coverUrlOf('a', { a: { coverKey: 'k1' } }), 'twthumb://thumb/a/k1')
   assert.equal(coverUrlOf('a', {}), null)
   assert.equal(coverUrlOf(undefined, { a: { coverKey: 'k1' } }), null)
 })

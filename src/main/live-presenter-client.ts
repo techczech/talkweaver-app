@@ -1,4 +1,4 @@
-import { parsePresenterServerMessage, parseInstantSlide, type AudienceQuestion, type InstantSlide, type PollStateMessage, type PresenterAudienceMessage, type PresenterBoardMessage, type PresenterInstantMessage, type PresenterPollMessage, type ReactionCounts, type ReactionRecord, type SlideFocusState, type SlideLightboxState, type SlideState } from '../../worker/protocol'
+import { parseInkMessage, type InkMessage, parsePointerMessage, type PointerMessage, parsePresenterServerMessage, parseInstantSlide, type AudienceQuestion, type InstantSlide, type PollStateMessage, type PresenterAudienceMessage, type PresenterBoardMessage, type PresenterInstantMessage, type PresenterPollMessage, type ReactionCounts, type ReactionRecord, type SlideFocusState, type SlideLightboxState, type SlideState } from '../../worker/protocol'
 import { parseRecoveredVoteRecord, parseRecoveryServerMessage, type RecoveredVoteRecord, type SessionSnapshot, type SessionPresence } from '../../worker/recovery-protocol'
 
 export type LiveStatus = 'connecting' | 'live' | 'paused-reconnecting' | 'ending' | 'ended'
@@ -75,6 +75,8 @@ export function createLivePresenterClient(options: {
   let socket: SocketLike | null = null
   let stopped = false, attempt = 0, generation = 0
   let latest: SlideState | null = options.latest ?? null
+  // The Pen's latest layer, in memory only: sent again once a reconnect is synchronised.
+  let latestInk: InkMessage | null = null
   let cursor = options.afterSequence ?? 0
   const bufferedRecords = new Map<number, RecoveredVoteRecord>()
   let reactionCursor = options.afterReactionSequence ?? 0
@@ -109,6 +111,7 @@ export function createLivePresenterClient(options: {
   function terminal(status: LiveStatus) {
     if (stopped) return
     stopped = true; generation++
+    latestInk = null
     disposeSocket()
     setStatus(status)
   }
@@ -195,6 +198,8 @@ export function createLivePresenterClient(options: {
           const message = parseRecoveryServerMessage(event.data)
           if (message?.type === 'session.closed') { terminal(message.reason === 'expired' ? 'expired' : 'ended'); return }
           if (message?.type === 'session.superseded') { terminal('superseded'); return }
+          // The worker lost its copy of the drawing (evicted) and a venue screen joined: resend now.
+          if (message?.type === 'ink.request') { if (liveStatus === 'live' && latestInk) send(latestInk); return }
           if (message?.type === 'session.hello') { sendSync(); return }
           if (message?.type === 'session.pong') {
             if (message.nonce === nonce) { cancel('pong'); nonce = ''; heartbeat() }
@@ -216,6 +221,7 @@ export function createLivePresenterClient(options: {
             syncId = ''; attempt = 0
             setStatus('live')
             diagnostic('synchronised')
+            if (latestInk) send(latestInk)
             heartbeat(); flush()
             return
           }
@@ -259,6 +265,16 @@ export function createLivePresenterClient(options: {
       if (stopped || !slideId || !Number.isInteger(reveal) || reveal < 0) return
       latest = { slideId, reveal, focus, ...(lightbox ? { lightbox } : {}), ...(talkQr ? { talkQr: true } : {}) }
       if (liveStatus === 'live') send({ type: 'slide.publish', ...latest })
+    },
+    pointer(message: PointerMessage) {
+      const clean = parsePointerMessage(message)
+      if (!stopped && liveStatus === 'live' && clean) send(clean)
+    },
+    ink(message: InkMessage) {
+      const clean = parseInkMessage(message)
+      if (stopped || !clean) return
+      latestInk = clean
+      if (liveStatus === 'live') send(clean)
     },
     sendPoll(action: PresenterPollMessage | PresenterInstantMessage | PresenterAudienceMessage | PresenterBoardMessage): string | false {
       if (stopped) return false

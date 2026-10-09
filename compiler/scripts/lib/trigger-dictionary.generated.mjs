@@ -296,6 +296,18 @@ export const TRIGGER_DICTIONARY = {
     "key": "nostep",
     "value": true
   },
+  "image-steps": {
+    "key": "image-steps",
+    "value": true
+  },
+  "no-image-steps": {
+    "key": "image-steps",
+    "value": "off"
+  },
+  "emphasis-steps": {
+    "key": "emphasis-steps",
+    "value": true
+  },
   "prework": {
     "key": "prework",
     "value": true
@@ -381,6 +393,15 @@ export const DYNAMIC_PATTERNS = [
       },
       {
         "key": "split",
+        "value": "$1"
+      }
+    ]
+  },
+  {
+    "source": "^page-(60|70|80)$",
+    "resolution": [
+      {
+        "key": "embedsplit",
         "value": "$1"
       }
     ]
@@ -570,6 +591,11 @@ export const VALUE_TRIGGER_DICTIONARY = {
   "titlelook-at": [
     "normal",
     "edge"
+  ],
+  "embedsplit": [
+    "60",
+    "70",
+    "80"
   ],
   "section": [
     "on",

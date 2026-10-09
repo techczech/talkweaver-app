@@ -8,6 +8,8 @@ const warning = (id, severity, message, remedy, surfaces = ['doctor']) => ({
 // Compiler warning definitions are data so every UI surface uses the same language and remedy.
 // `{payload}` is the complete suffix after the first colon; `{1}`, `{2}`… address its segments.
 export const WARNING_REGISTRY = [
+  warning('asset-outside-vault', 'error', 'Slide {1} names {2}. This file is outside the talk’s vault, so it was not included.', 'Move the file into the talk’s folder or its vault and point the reference at it there.', ['strip-badge', 'inspector', 'doctor']),
+  warning('audio-asset-only', 'hint', 'Slide {1} audio stays as an external asset: {2}.', 'Keep the audio file beside the exported talk; handouts and phones show the chip as a label.', ['doctor']),
   warning('accent-unknown', 'warning', 'Unknown accent colour: {payload}.', 'Choose a named accent from Deck design.'),
   warning('beats-records-mismatch', 'error', 'Presentation sequence and slide records disagree at {payload}.', 'Rebuild the deck and inspect the affected slide structure.'),
   warning('board-columns-few', 'warning', 'Board slide {1} has {2} column(s); a board needs at least two.', 'Add columns as list items under the board’s heading, two to four.', ['strip-badge', 'inspector', 'doctor']),
@@ -86,6 +88,9 @@ export const WARNING_REGISTRY = [
   warning('remind-missing-time', 'warning', 'Reminder has no usable time: {payload}.', 'Add remind-at or remind-in to the reminder.'),
   warning('remind-unparsed', 'warning', 'Reminder time could not be read: {payload}.', 'Use a supported clock time or relative duration.'),
   warning('retired-title-compact', 'hint', 'Slide {payload} still sets the retired compact title treatment.', 'Remove the token — the slide already renders in its layout’s own title regime.', ['inspector', 'doctor']),
+  warning('play-on-next-autoplay', 'hint', 'Slide {1}: {2} has both {play-on-next} and {autoplay}; it plays on Next.', 'Remove {autoplay} from the file, or remove {play-on-next} to have it start with the slide.', ['inspector', 'doctor']),
+  warning('play-on-next-ignored', 'warning', 'Slide {1}: {play-on-next} does nothing on {2}; only a video or audio file can play as a step.', 'Remove {play-on-next}, or use a video or audio file. A YouTube or Vimeo player is started by hand with Play.', ['inspector', 'doctor']),
+  warning('remote-audio', 'hint', 'Slide {payload} contains a remote audio file.', 'Check the audio online before presenting.', ['doctor']),
   warning('remote-embed', 'hint', 'Slide {payload} contains a remote embed.', 'Check the site online before presenting.', ['doctor']),
   warning('remote-video', 'hint', 'Slide {payload} contains a remote video.', 'Check the video online before presenting.', ['doctor']),
   warning('role-token-overrides-structure', 'hint', 'Slide {1} takes the role “{2}” you set rather than the divider role its child headings imply.', 'Remove the role trigger if this heading should divide the talk.'),

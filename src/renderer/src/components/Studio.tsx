@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import type { RecordingSession, Transcript, TranscriptSegment, TrimRange } from '../../../preload/index'
 import { shortcutById } from '../../../shared/shortcut-registry'
+import { runAudioSummary } from '../../../shared/run-audio'
 import { eventToCMKey } from '../keymap/store'
 import '../studio.css'
 
@@ -21,7 +22,7 @@ const UNSAFE_NAME_ERRORS = new Set(['unsafe-talk-slug', 'unsafe-session-id', 'un
 type Session = RecordingSession & { audio: NonNullable<RecordingSession['audio']> }
 type SlideInfo = { title: string; section: string; thumbUrl: string | null; n: number; tag: string }
 type SlideTimeMark = RecordingSession['slideTimeIndex'][number]
-type ReplayState = { slideId: string; hiddenCount: number; highlights: Array<{ block: number; start: number; end: number }> }
+type ReplayState = { slideId: string; hiddenCount: number; highlights: Array<{ block: number; start: number; end: number }>; ink: unknown[]; inkImage: number | null }
 type SessionGroup = { key: string; title: string; sessions: Session[]; newestAt: string; longestMs: number }
 
 const fmt = (sec: number): string => {
@@ -109,12 +110,20 @@ function replayStateAt(session: Session | null, tMs: number): ReplayState | null
   const since = enter.tMs ?? 0
   let hiddenCount = 0
   let highlights: ReplayState['highlights'] = []
+  // The Pen's strokes on the layer shown at this moment (ticket 08): the slide's own, or a zoomed
+  // image's (inkImage: its index). Checked when the recording was read; the replay checks them again.
+  let ink: unknown[] = []
+  let inkImage: number | null = null
   for (const mark of session.slideTimeIndex) {
     if (mark.tMs < since || mark.tMs > tMs + 1 || mark.slideId !== enter.slideId) continue
     if (mark.event === 'reveal') hiddenCount = Math.max(0, Number(mark.hidden) || 0)
     if (mark.event === 'highlight') highlights = Array.isArray(mark.ranges) ? mark.ranges : []
+    if (mark.event === 'ink') {
+      ink = Array.isArray(mark.ink) ? mark.ink : []
+      inkImage = mark.space === 'image' && Number.isSafeInteger(mark.image) ? Number(mark.image) : null
+    }
   }
-  return { slideId: enter.slideId, hiddenCount, highlights }
+  return { slideId: enter.slideId, hiddenCount, highlights, ink, inkImage }
 }
 
 export default function Studio({
@@ -489,7 +498,9 @@ export default function Studio({
       type: 'tw-replay-state',
       slideId: replayState.slideId,
       hiddenCount: replayState.hiddenCount,
-      highlights: replayState.highlights
+      highlights: replayState.highlights,
+      ink: replayState.ink,
+      ...(replayState.inkImage !== null ? { inkSpace: 'image', inkImage: replayState.inkImage } : {})
     }
     const key = JSON.stringify(payload)
     if (key === lastReplayKey.current) return
@@ -904,6 +915,7 @@ export default function Studio({
                           <div className="tws-sc-len">
                             <span className="tws-sc-rec">{mins(recSec)}m</span>
                             {s.trims?.length ? <span className="tws-sc-plan">raw {mins(rawSec)}m</span> : null}
+                            {runAudioSummary(s).label ? <span className="tws-sc-audio-short" title="The audio is shorter than the recording: the microphone input was lost.">{runAudioSummary(s).label}</span> : null}
                             {s.timerTargetMin ? <span className="tws-sc-plan">planned {s.timerTargetMin}m</span> : null}
                             {d ? <span className={`tws-delta ${d.cls}`}>{d.text}</span> : null}
                             <span className={`tws-sc-up ${s.audio.uploaded ? '' : 'local'}`}>

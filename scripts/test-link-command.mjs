@@ -41,6 +41,8 @@ const {
   setOpenObjectBlock,
   toggleBold,
   toggleHighlight,
+  toggleStrikethrough,
+  toggleUnderline,
   toggleInlineCode,
   toggleItalic
 } = registry
@@ -138,7 +140,9 @@ for (const [marker, command] of [
   ['**', toggleBold],
   ['*', toggleItalic],
   ['`', toggleInlineCode],
-  ['==', toggleHighlight]
+  ['==', toggleHighlight],
+  ['~~', toggleStrikethrough],
+  ['++', toggleUnderline]
 ]) {
   const view = commandView('formative', 0, 'formative'.length)
   command(view)
@@ -181,7 +185,9 @@ try {
     ['**', toggleBold],
     ['*', toggleItalic],
     ['`', toggleInlineCode],
-    ['==', toggleHighlight]
+    ['==', toggleHighlight],
+  ['~~', toggleStrikethrough],
+  ['++', toggleUnderline]
   ]) {
     const doc = `${marker}a${marker} b ${marker}c${marker}`
     const gapFrom = marker.length * 2 + 1
@@ -225,6 +231,16 @@ try {
     },
     'inline-code refusal uses the shared notification channel'
   )
+
+  for (const [command, bad, message] of [
+    [toggleStrikethrough, 'a~b', "Strikethrough can't span ~ characters / line breaks"],
+    [toggleUnderline, 'a+b', "Underline can't span + characters / line breaks"]
+  ]) {
+    const view = commandView(bad, 0, bad.length)
+    command(view)
+    assert.equal(view.state.doc.toString(), bad, `${message}: bytes unchanged`)
+    assert.deepEqual(toasts.at(-1)?.message, message, `${message}: notified`)
+  }
 
   const partialCode = multiCommandView('good\nbad`range', [[0, 4], [5, 14]])
   toggleInlineCode(partialCode)

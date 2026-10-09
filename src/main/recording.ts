@@ -34,23 +34,47 @@ import {
 } from './runs'
 import {
   deleteTargets,
+  existingSegmentPaths,
   localRecordingPath,
+  localSegmentPath,
   saveTargets,
   sessionJsonPath,
   listSessionJsonFiles,
+  streamMarkerPath,
   vaultSessionPath,
 } from './recording-paths'
+import type { FinalisedStream, RecordingStreams, StreamTailChunk } from './recording-stream'
+import { audioBlock, normaliseTimeline, registerRecordingStreamIpc, toBytes } from './recording-stream-ipc'
+import type { RunAudioFields, RunAudioSegment } from '../shared/run-audio'
+import { createRecordingPermissions } from './recording-permissions'
+import { appWindowIds } from './window-kinds'
+import { sessionForList } from './run-ink-readback'
 
-// ── Task 4: mic permission for the present window ────────────────────────────
-// Grant ONLY the microphone, and ONLY to this present window's webContents, so the bridge's
-// getUserMedia({audio}) resolves; deny everything else. The handler is installed on the
-// window's session (the default session): the app requests no other permissions, so denying
-// the rest changes nothing — and it stops any other window from grabbing the mic.
+export { recoverInterruptedRecordings } from './recording-stream-ipc'
+
+// ── Task 4: permissions ───────────────────────────────────────────────────────
+// One table for every window from app start (recording-permissions.ts): the microphone ONLY to the
+// main frame of an open presenter window and ONLY audio, so the bridge's getUserMedia({audio})
+// resolves; full screen to any frame; clipboard write to a window's own page; clipboard read to the editor,
+// Tools and Pathways pages; nothing else to anyone. The handlers are the session's (the default
+// session) and are shared by every window.
+const recordingPermissions = createRecordingPermissions({ appWindowIds })
+
+/** At app start: from then on every permission request and check is answered by the table. */
+export function installRecordingPermissions(session: Parameters<typeof recordingPermissions.install>[0]): void {
+  recordingPermissions.install(session)
+}
+
 export function setupRecordingPermissions(win: BrowserWindow): void {
-  const targetId = win.webContents.id
-  win.webContents.session.setPermissionRequestHandler((wc, permission, callback) => {
-    callback(permission === 'media' && wc.id === targetId)
-  })
+  recordingPermissions.addPresenter(win as unknown as Parameters<typeof recordingPermissions.addPresenter>[0])
+}
+
+/**
+ * An editor, Tools or Pathways window, entered in the app's one list of such windows
+ * (window-kinds.ts): its own page may read the clipboard, and its own links are the owner's.
+ */
+export function registerAppWindowPermissions(win: BrowserWindow): void {
+  recordingPermissions.addAppWindow(win as unknown as Parameters<typeof recordingPermissions.addAppWindow>[0])
 }
 
 // ── Task 5: per-window context + local-first save ────────────────────────────
@@ -91,7 +115,7 @@ export interface RecordingDeps {
 
 // The slide-time index is data, so it round-trips as-is; the session shape is the spec's data model.
 // reveal/highlight marks additionally carry hidden/marks so replay can reproduce in-slide state.
-interface SlideTimeMark { event: string; slideId?: string; tMs: number; hidden?: number; marks?: number }
+interface SlideTimeMark { event: string; slideId?: string; tMs: number; hidden?: number; marks?: number; space?: 'image'; image?: number; ink?: unknown }
 type RunKind = 'delivery' | 'rehearsal' | 'recording'
 type TrimRange = { start: number; end: number }
 interface SessionJson {
@@ -112,7 +136,7 @@ interface SessionJson {
   timerTargetMin: number
   context: string | null
   pathwayId: string | null
-  audio: { r2Key: string; bytes: number; uploaded: boolean } | null
+  audio: ({ r2Key: string; bytes: number; uploaded: boolean } & RunAudioFields) | null
   transcript: null
   trims?: TrimRange[]
   slideTimeIndex: SlideTimeMark[]
@@ -307,16 +331,20 @@ function sessionPath(deps: RecordingDeps, talkSlug: unknown, sessionId: unknown)
   return sessionJsonPath(deps.vaultRoot(), deps.userDataDir(), talkSlug, sessionId)
 }
 
-function withDefaultKind(session: unknown): unknown {
-  if (session && typeof session === 'object' && !('kind' in session)) {
-    return { ...(session as Record<string, unknown>), kind: 'delivery' }
-  }
-  return session
-}
-
 // Install the two IPC handlers the bridge calls: recording:context (on load) and
 // recording:save (on stop). Registered once at startup; the deps are read lazily per call.
 export function registerRecordingIpc(deps: RecordingDeps): void {
+  // Audio streams to disk while recording (recording:stream-*; recording-stream-ipc.ts).
+  const streamStore: RecordingStreams = registerRecordingStreamIpc({
+    userDataDir: () => deps.userDataDir(),
+    vaultRoot: () => deps.vaultRoot(),
+    ledger: async () => {
+      const compilerDir = deps.compilerDir()
+      return compilerDir ? await loadLedger(compilerDir) : null
+    },
+    onSessionSaved: deps.onSessionSaved
+  })
+
   ipcMain.handle('recording:context', (event) => {
     const ctx = contexts.get(event.sender.id)
     return {
@@ -358,19 +386,50 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       if (requestedPlannedId && (!planned || planned.status !== 'planned')) {
         return { ok: false, error: 'planned-run-not-found' }
       }
-      const sessionId = planned?.id ?? L.newSessionId(Date.now(), Math.random)
-      const audioBuf = mode === 'recording' ? Buffer.from(payload.audio as ArrayBuffer) : null
+      // Audio already streamed to disk while recording: the session id is the stream's, and the
+      // files are the ones main wrote (plus any chunks the bridge could not hand over in time).
+      const streamId = mode === 'recording' && typeof payload?.stream?.sessionId === 'string' ? payload.stream.sessionId as string : null
+      if (streamId && requestedPlannedId) return { ok: false, error: 'planned-run-not-allowed' }
+      let streamed: FinalisedStream | null = null
+      if (streamId) {
+        const tail: StreamTailChunk[] = Array.isArray(payload?.stream?.tail)
+          ? (payload.stream.tail as Array<{ index?: unknown; bytes?: unknown }>).flatMap((chunk) => {
+            const bytes = toBytes(chunk?.bytes)
+            return bytes && Number.isInteger(chunk?.index) ? [{ index: Number(chunk.index), bytes }] : []
+          })
+          : []
+        const segmentTimes = payload?.audioTimeline ? normaliseTimeline(payload.audioTimeline).segments : undefined
+        const fin = streamStore.finalise(event.sender.id, streamId, { recordingMs, segments: segmentTimes }, tail)
+        if (!fin.ok) return { ok: false, error: `stream-${fin.error}` }
+        streamed = fin
+      }
+      const sessionId = streamId ?? planned?.id ?? L.newSessionId(Date.now(), Math.random)
+      const audioBuf = mode === 'recording' && !streamed ? Buffer.from(payload.audio as ArrayBuffer) : null
+      const extraBufs = audioBuf && Array.isArray(payload?.extraAudio)
+        ? (payload.extraAudio as unknown[]).flatMap((b) => { const bytes = toBytes(b); return bytes ? [Buffer.from(bytes)] : [] })
+        : []
       // Both paths are settled (and refused if unsafe) before anything is written.
       const targets = saveTargets(vault, deps.userDataDir(), talkSlug, sessionId, !!audioBuf)
       if (!targets.ok) return { ok: false, error: targets.error }
+      const extraTargets = extraBufs.map((_, i) => localSegmentPath(deps.userDataDir(), sessionId, i + 1))
+      if (extraTargets.some((t) => !t.ok)) return { ok: false, error: 'unsafe-path' }
 
       // 1) LOCAL FIRST — audio to disk before any network call, so a dropped connection
       //    (or an unconfigured R2) can never lose the recording.
       const recDir = join(deps.userDataDir(), 'recordings')
       if (!existsSync(recDir)) mkdirSync(recDir, { recursive: true })
+      const memoryFiles: RunAudioSegment[] = []
       if (audioBuf && targets.audio) {
         writeFileSync(targets.audio, audioBuf)
+        memoryFiles.push({ file: `${sessionId}.webm`, bytes: audioBuf.byteLength, startMs: 0, endMs: recordingMs })
+        extraBufs.forEach((buf, i) => {
+          const t = extraTargets[i]
+          if (!t.ok) return
+          writeFileSync(t.path, buf)
+          memoryFiles.push({ file: `${sessionId}.seg-${i + 2}.webm`, bytes: buf.byteLength, startMs: 0, endMs: recordingMs })
+        })
       }
+      const timeline = payload?.audioTimeline ? normaliseTimeline(payload.audioTimeline) : null
 
       // 2) session.json (metadata + slide-time index) → the Vault Presentation Ledger.
       const startedAt = String(payload?.startedAt ?? new Date().toISOString())
@@ -393,7 +452,11 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
         timerTargetMin: Number(payload?.timerTargetMin ?? 0),
         context: null,
         pathwayId: typeof payload?.pathwayId === 'string' ? payload.pathwayId : null,
-        audio: audioBuf ? { r2Key, bytes: audioBuf.byteLength, uploaded: false } : null,
+        audio: streamed
+          ? audioBlock(r2Key, streamed.segments, timeline, recordingMs, false)
+          : audioBuf
+            ? timeline ? audioBlock(r2Key, memoryFiles, timeline, recordingMs, false) : { r2Key, bytes: audioBuf.byteLength, uploaded: false }
+            : null,
         transcript: null,
         slideTimeIndex: L.buildSlideTimeIndex(rawMarks) as SlideTimeMark[]
       }
@@ -413,6 +476,8 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       // The same atomic writer as every other Run write (temporary file, then rename): a live
       // session's history flush may write this Run too, and a reader never sees half a file.
       writeRunFile(targets.sessionJson, finalSession)
+      // The Run names the audio now: the in-progress marker can go (the audio stays).
+      if (streamId) streamStore.complete(streamId)
       if (pendingPolls) livePollBuffers.delete(event.sender.id)
       deps.onSessionSaved?.({ talkSlug, kind, runId: sessionId })
 
@@ -437,7 +502,10 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       const out: unknown[] = []
       for (const file of await listSessionJsonFiles(vault, talkSlug)) {
         try {
-          out.push(withDefaultKind(JSON.parse(await readFileAsync(file, 'utf8'))))
+          // A file whose root is not a session (null, an array, a number) is skipped: it would
+          // break the sort below and blank the whole list.
+          const session = sessionForList(JSON.parse(await readFileAsync(file, 'utf8')))
+          if (session) out.push(session)
         } catch {
           /* skip an unreadable session file rather than failing the whole list */
         }
@@ -462,7 +530,10 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       // Every talk folder and session file is checked to resolve inside the vault first.
       for (const file of await listSessionJsonFiles(vault)) {
         try {
-          out.push(withDefaultKind(JSON.parse(await readFileAsync(file, 'utf8'))))
+          // A file whose root is not a session (null, an array, a number) is skipped: it would
+          // break the sort below and blank the whole list.
+          const session = sessionForList(JSON.parse(await readFileAsync(file, 'utf8')))
+          if (session) out.push(session)
         } catch {
           /* skip an unreadable session file */
         }
@@ -656,8 +727,13 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       if (!targets.ok) return { ok: false, error: targets.error }
       const p = targets.sessionJson
       const audioPath = targets.audio
+      // Later segments of a recording that lost and regained its input (listed before the first goes).
+      const extraSegments = existingSegmentPaths(deps.userDataDir(), sessionId).slice(1)
       if (p && existsSync(p)) await shell.trashItem(p)
       if (existsSync(audioPath)) await shell.trashItem(audioPath)
+      for (const extra of extraSegments) await shell.trashItem(extra)
+      const marker = streamMarkerPath(deps.userDataDir(), sessionId)
+      if (marker.ok && existsSync(marker.path) && !streamStore.isOpen(sessionId)) await shell.trashItem(marker.path)
       return { ok: true }
     } catch (e) {
       return { ok: false, error: String(e) }

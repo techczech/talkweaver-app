@@ -1,5 +1,7 @@
 import { OPEN_PATTERN_TOKENS, VALUE_TRIGGER_DICTIONARY, resolveTrigger, resolveDynamicTrigger } from "../triggers.mjs";
 import { renderInline } from "./00-inline-render.mjs";
+import { parseVideoEmbed, isVideoEmbedUrl } from "./image-line-rules.mjs";
+export { parseVideoEmbed, isVideoEmbedUrl };
 import { LIST_VALUE_KEYS, TRIGGER_LINE_RE, tokenizeTriggerBody } from "./trigger-tokenizer.mjs";
 import { TITLE_REGIME_BY_LAYOUT } from "./trigger-dictionary.generated.mjs";
 
@@ -360,55 +362,6 @@ export function bodyDensitySignal(bodyHtml) {
   // A VISUAL slide carries an image/diagram/embed — it is mostly a picture, never "mostly a title".
   const hasVisual = /<(?:figure|img|svg|iframe|video)\b/i.test(html);
   return { bodyText: text, blockCount, hasVisual };
-}
-
-// Robustly extract a YouTube/Vimeo video id (+ optional start time) from any common URL form.
-// Returns null for non-video URLs. Forms covered:
-//   YouTube: watch?v=ID, youtu.be/ID, /embed/ID, /v/ID, /shorts/ID (id = 11 url-safe chars).
-//   Vimeo:   vimeo.com/ID, vimeo.com/video/ID, player.vimeo.com/video/ID (numeric id).
-//   Start time: YouTube t= / start= (accepts "90", "90s", "1m30s", "1h2m3s"); Vimeo #t=… .
-export function parseVideoEmbed(rawSrc) {
-  const src = String(rawSrc || "").trim();
-  if (!src) return null;
-  const yt = src.match(/(?:youtube(?:-nocookie)?\.com\/(?:watch\?(?:[^#]*&)?v=|embed\/|v\/|shorts\/)|youtu\.be\/)([\w-]{11})/i);
-  if (yt) {
-    const query = src.includes("?") ? src.slice(src.indexOf("?") + 1).split("#")[0] : "";
-    const params = new URLSearchParams(query);
-    const start = secondsFromTimeToken(params.get("start") || params.get("t") || timeFromHash(src));
-    return { kind: "youtube", id: yt[1], start };
-  }
-  const vimeo = src.match(/(?:player\.)?vimeo\.com\/(?:video\/)?(\d+)/i);
-  if (vimeo) {
-    const start = secondsFromTimeToken(timeFromHash(src));
-    return { kind: "vimeo", id: vimeo[1], start };
-  }
-  return null;
-}
-
-function timeFromHash(src) {
-  const h = src.includes("#") ? src.slice(src.indexOf("#") + 1) : "";
-  const m = h.match(/(?:^|[&;])t=([^&;]+)/i);
-  return m ? m[1] : "";
-}
-
-// Parse a YouTube-style time token into integer seconds. Accepts plain seconds ("90", "90s")
-// and the "1h2m3s" colon-free form. Returns 0 when nothing parseable is present.
-function secondsFromTimeToken(token) {
-  const t = String(token || "").trim();
-  if (!t) return 0;
-  if (/^\d+s?$/.test(t)) return parseInt(t, 10);
-  const m = t.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/i);
-  if (m && (m[1] || m[2] || m[3])) {
-    return (parseInt(m[1] || 0, 10) * 3600) + (parseInt(m[2] || 0, 10) * 60) + parseInt(m[3] || 0, 10);
-  }
-  return 0;
-}
-
-// True when a URL is a YouTube or Vimeo video (any common form). These embed endpoints PLAY
-// from file:// (the iframe loads over https; only third-party cookies are limited), so unlike an
-// arbitrary site embed they must never be swapped for the offline fallback card.
-export function isVideoEmbedUrl(rawSrc) {
-  return parseVideoEmbed(rawSrc) !== null;
 }
 
 // Normalize remote video/embed URLs so they actually play.

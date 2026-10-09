@@ -347,7 +347,7 @@ export function createSharedTalkPage(options) {
     const clone = slide.cloneNode(true)
     clone.classList.add('active')
     clone.removeAttribute('id')
-    clone.querySelectorAll('iframe, video, .notes').forEach((node) => node.remove())
+    clone.querySelectorAll('iframe, video, audio, .notes').forEach((node) => node.remove())
     return clone
   }
   function renderGrid() {

@@ -1,5 +1,6 @@
+import { INK_LIMITS, parseInkMessage, parsePointerMessage } from '../../worker/protocol'
 import { createLatestThumbnailRequestHandler } from './thumbnail-queue'
-import { app, BrowserWindow, ipcMain, dialog, Menu, net, protocol, shell, session, safeStorage, screen, powerMonitor, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, clipboard, ipcMain, dialog, Menu, net, protocol, shell, session, safeStorage, screen, powerMonitor, type MenuItemConstructorOptions } from 'electron'
 import { join, basename, dirname, extname } from 'path'
 
 // EPIPE guard: when the packaged binary is launched with stdout/stderr piped and the pipe
@@ -32,16 +33,11 @@ app.commandLine.appendSwitch('js-flags', '--max-old-space-size=8192')
 // traps natively (SIGTRAP). So also APPEND every main-process error to a log file on disk with a
 // full stack, so the next occurrence is diagnosable from the user's machine (2026-07-19, after a
 // SIGTRAP on delete whose symbolicated stack was unusable).
+// Bounded (1 MB, trimmed to its last 512 KB) so a crash loop cannot fill the user's disk.
+const appendMainError = createErrorLog(() => join(app.getPath('userData'), 'tw-main-errors.log'))
 function logMainError(kind: string, err: unknown): void {
   try { console.error(`[main] ${kind}:`, err) } catch {}
-  try {
-    const e = err as Error
-    const line = `\n[${new Date().toISOString()}] ${kind}: ${e?.stack || e?.message || String(err)}\n`
-    const dir = app.getPath('userData')
-    appendFileSync(join(dir, 'tw-main-errors.log'), line)
-  } catch {
-    // app not ready yet, or disk unavailable — the console.error above still fired.
-  }
+  appendMainError(kind, err)
 }
 process.on('unhandledRejection', (reason) => { logMainError('unhandledRejection', reason) })
 process.on('uncaughtException', (error) => { logMainError('uncaughtException', error) })
@@ -63,8 +59,37 @@ protocol.registerSchemesAsPrivileged([
   // Serves the compiled present HTML and sibling assets for Studio replay iframes.
   { scheme: 'twpresent', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
 ])
+// No window navigates away from its own page: a web or mail link goes to the OS, anything else is
+// refused (navigation-guard.ts). Installed before the first window; under E2E links are only logged.
+installNavigationGuard(app, {
+  openExternal: (url) => E2E ? console.log('[navigation] external (E2E):', url) : shell.openExternal(url),
+  openPath: (path) => E2E ? console.log('[navigation] local page (E2E):', path) : shell.openPath(path),
+  // No window hands the OS a link whose host is local as written, or anything from a blank page
+  // (hand-out.ts): the rule is for EVERY window, so a deck renderer added later is covered without
+  // being marked. A hidden renderer (thumbnail capture: window-kinds.ts) navigates nowhere and hands
+  // out nothing at all.
+  refuseHandOut: (_contents, link, from) => contentHandOutRefusal({ url: link, from }),
+  isHiddenRenderer: (contents) => isHiddenRenderer((contents as { id?: unknown } | null)?.id)
+})
+// No IPC listener answers a frame that is not its window's main frame (ipc-main-frame-only.ts).
+// Applied to ipcMain itself, here, BEFORE the first registration below and before any module is
+// handed ipcMain: a listener registered earlier would not be covered (a unit test checks the order).
+applyMainFrameOnly(ipcMain)
+// When a real key or mouse press last reached each window (recent-press.ts): asked by the clipboard
+// read and by a deck window's web links. Installed before the first window.
+const pressLedger = createPressLedger()
+installPressLedger(app, pressLedger)
 import { pathToFileURL } from 'url'
 import { homedir, hostname, tmpdir } from 'os'
+import { installNavigationGuard } from './navigation-guard'
+import { applyMainFrameOnly } from './ipc-main-frame-only'
+import { contentHandOutRefusal, handOutLink } from './hand-out'
+import { decideDownload, isHiddenRenderer } from './window-kinds'
+import { createPressLedger, installPressLedger } from './recent-press'
+import { liveReadClipboardHandler } from './live-read-clipboard'
+import { appLocalHostOf, installLocalAddressFilter } from './local-address-filter'
+import { createOpenRequests, refuseOpenTarget } from './open-requests'
+import { decideOpenInNewWindow, parseOpenInNewWindowTarget, type OpenInNewWindowTarget } from '../shared/open-in-new-window'
 import { canonicalOutlinePath, editorEntryForOutline, outlineIdentity, type EditorWindowEntry } from './outline-identity'
 import {
   configureTalkWriter, emptyOverNonemptyMessage, flushTalkForPublish, isStructurallyEmptyOutline, readTalkOutline, withTalkFileLock, writeTalkOutline,
@@ -74,14 +99,13 @@ import { createOutlineDiskGuard } from './outline-disk-guard'
 import { createOutlineRecovery } from './outline-recovery'
 import { createDirectoryWatcherRegistry } from './talkTextWatchers'
 import type { OutlineDiskChange } from '../shared/outline-disk-change'
-import { type Dirent, existsSync, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, realpathSync, cpSync, rmSync, renameSync, createReadStream, mkdtempSync, openSync, readSync, closeSync, appendFileSync, watch } from 'fs'
+import { type Dirent, existsSync, lstatSync, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, realpathSync, cpSync, rmSync, renameSync, createReadStream, mkdtempSync, openSync, readSync, closeSync, appendFileSync, watch } from 'fs'
 import { createHash, randomBytes } from 'crypto'
 import { execFile, execFileSync, spawn, type ChildProcessByStdio } from 'child_process'
 import type { Readable } from 'stream'
 import { resolve as resolvePath, sep as pathSep, relative as relativePath } from 'path'
 import { renderThumbnails } from './thumbnails'
 import { createVariantThumbnailHandler, createVariantThumbnailRenderer, mediaFingerprint } from './layout-variant-thumbnail'
-import { resolveThumbFile } from './thumb-key-resolution'
 import {
   abstractPath,
   assetSidecarPath,
@@ -98,7 +122,10 @@ import {
   thumbCacheDir
 } from './vault-paths'
 import { pathStaysInside } from './path-containment'
+import { decideShellPath } from './shell-path-policy'
 import { resolveImageRefs } from './image-refs'
+import { assetRootsForTalk, talkVaultRoot } from './asset-roots'
+import { convertibleImageRefs, planOptimisation, rewriteConvertedRefs, writeNewFile, type AssetContainment } from './optimise-images'
 import { isSearchIndexEntryFresh } from './search-index-freshness'
 import { sweepOrphanedThumbCaches } from './thumbnail-cache-gc'
 import { createPreparationRoute, createPreparedTalkCache, memoiseUntilFailure, preparedTalkGroup, type PreparationLane } from './prepared-talk-cache'
@@ -110,7 +137,7 @@ import {
   thumbnailMediaOptions,
   waitForHeap
 } from './thumbnail-media-policy'
-import { createAppendLog } from './main-log'
+import { createAppendLog, createErrorLog } from './main-log'
 import {
   contentHashForPrerender,
   loadPrerenderLedger,
@@ -140,7 +167,7 @@ import { createVaultFileStore, fileText } from './vault-file'
 import { registerVaultSettingsIpc, refusalOutcome, talkFolderRelOf } from './vault-settings-ipc'
 import { resolveNewTalkDefaults } from '../shared/vault-defaults'
 import { pathsInVault, pathsOutsideOpenVaults, searchVaults } from './vault-scope'
-import { VAULTS_DIR, adoptLegacyThumbDirs, isPlainSegment, parseThumbUrl, talkThumbDir, thumbLookupDirs, thumbUrl, touchNamespace } from './thumb-cache-dirs'
+import { VAULTS_DIR, adoptLegacyThumbDirs, isPlainSegment, parseThumbUrl, talkThumbDir, thumbFileFor, thumbLookupDirs, thumbUrl, touchNamespace } from './thumb-cache-dirs'
 import { createConfigFile, type ConfigFile } from './config-file'
 import {
   createSlidePreviewStore,
@@ -153,6 +180,8 @@ import {
 import { readFile as readFileAsync, readdir as readdirAsync } from 'fs/promises'
 import {
   setupRecordingPermissions,
+  installRecordingPermissions,
+  registerAppWindowPermissions,
   registerRecordingIpc,
   registerRecordingContext,
   unregisterRecordingContext,
@@ -160,7 +189,8 @@ import {
   recordingAudioArmed,
   recordingRunReference,
   sendRecordingCloseOffer,
-  recordingAudioPath
+  recordingAudioPath,
+  recoverInterruptedRecordings
 } from './recording'
 import { registerHistoryIpc } from './history'
 import {
@@ -262,8 +292,9 @@ import { buildSharedTalkPayload, ownerNameFrom } from './shared-talk-build'
 import { stampShareUrl } from '../shared/handout-stamp'
 import { isValidShareDomain } from '../shared/shared-talk'
 import { deckWindowKeyAction, deckWindowMode, OPEN_AUDIENCE_SCRIPT } from './deck-window-keys'
+import { appWindowOpenHandler, guardDeckWindowTree, isAppAudienceUrl } from './present-window-open'
 import { isPresenterBoardMessage, parsePresenterMessage, parseSlideLightbox } from '../../worker/protocol'
-import { viewerPageHtml } from './handout-viewer-page'
+import { handoutHomeDetails, handoutHomePrework } from '../shared/handout-home'
 import { preworkEnabled } from '../shared/prework-flag'
 
 const slidePreviewStore = createSlidePreviewStore(8)
@@ -411,6 +442,21 @@ function vaultRootFor(absPath: string | null | undefined): string | undefined {
   const hit = typeof absPath === 'string' && absPath ? vaultRegistry.resolve(absPath) : null
   if (hit && hit.vault.open) return vaultAvailable(hit.vault) ? hit.vault.root : undefined
   return currentVaultRoot()
+}
+/** The folders the compiler may read a talk's media from (ADR-0036; passed as `allowedAssetRoots` on
+ *  EVERY prepareSource call): the registered vault holding the talk, else the talk's own folder.
+ *  Unlike vaultRootFor there is no fallback to the current vault: a talk outside every vault is never
+ *  given a vault to read from. Pooled `_assets` media sits at the vault root, so a compile that
+ *  omitted this would lose its pooled pictures (the compiler's default is the talk's folder alone). */
+function assetRootsFor(outlinePath: string, extra: string[] = []): string[] {
+  return assetRootsForTalk(vaultRegistry, outlinePath, extra)
+}
+/** A talk's text with its pooled ids (`img-…`, `vid-…`) pointed at the pool of the talk's OWN vault:
+ *  the registered vault that holds it, open or closed, current or not (the same vault assetRootsFor
+ *  allows). A talk in no vault keeps its ids as written. Never the current vault's pool. */
+function resolvePooledRefs(content: string, outlinePath: string): string {
+  const root = talkVaultRoot(vaultRegistry, outlinePath)
+  return root ? resolveImageRefs(content, root, outlinePath) : content
 }
 /** vaultRootFor for a write: a path in no open vault falls back to writableVaultRoot(), never to the
  *  next available vault. */
@@ -656,6 +702,15 @@ ipcMain.handle('live:snapshot', (event) => {
   return snapshot ? { ...snapshot, preworkQuestions: preworkEnabled() ? preworkTrayForSession(currentVaultRoot() ?? null, record) : [] } : null
 })
 ipcMain.handle('live:status', (event): LiveStatus => attachLiveWindow(event.sender.id)?.status ?? 'ended')
+ipcMain.on('live:pointer', (event, value: unknown) => {
+  const message = parsePointerMessage(value)
+  if (message) liveSessions?.pointer(event.sender.id, message)
+})
+// The Pen's ink (ticket 08): relayed to the worker, held nowhere in main.
+ipcMain.on('live:ink', (event, value: unknown) => {
+  const message = parseInkMessage(value)
+  if (message && new TextEncoder().encode(JSON.stringify(message)).length <= INK_LIMITS.bytes) liveSessions?.ink(event.sender.id, message)
+})
 ipcMain.on('live:publish-slide', (event, state: { slideId?: string; reveal?: number; focus?: unknown; lightbox?: unknown; talkQr?: unknown }) => {
   if (!state || typeof state.slideId !== 'string' || !Number.isInteger(state.reveal) || Number(state.reveal) < 0) return
   const focus = state.focus == null ? null : state.focus as { kind: 'reveal' | 'focus'; step: number }
@@ -750,6 +805,16 @@ ipcMain.handle('live:switches', (event, patch: unknown) => {
     return liveSessions?.poll(event.sender.id, message) ?? { success: false, error: 'No live session.' }
   } catch (cause) { return { success: false, error: cause instanceof Error ? cause.message : String(cause) } }
 })
+async function instantLinkQrSvg(url: string): Promise<string> {
+  const compilerDir = getCompilerPath()
+  if (!compilerDir) throw new Error('Compiler not found.')
+  const { makeQrSvg } = await import(pathToFileURL(join(compilerDir, 'lib/01-cli-utils.mjs')).href)
+  return String(makeQrSvg(url) || '') // '' when the link is longer than a QR code can hold: the slide then shows the link without one
+}
+ipcMain.handle('live:instant-qr', async (event, url: unknown) => {
+  if (!livePresenterContexts.has(event.sender.id) || typeof url !== 'string' || !/^https?:\/\/[^\s]+$/i.test(url) || url.length > 2048) return { success: false }
+  try { const svg = await instantLinkQrSvg(url); return { success: Boolean(svg), svg } } catch { return { success: false } }
+})
 ipcMain.handle('live:instant-action', async (event, action: unknown) => {
   const wcId = event.sender.id
   if (!livePresenterContexts.has(wcId)) return { success: false, error: 'Instant slides are available in the presenter window only.' }
@@ -766,6 +831,14 @@ ipcMain.handle('live:instant-action', async (event, action: unknown) => {
         slide.qrSvg = String(makeQrSvg(slide.url) || '')
       } catch (error) { return { success: false, error: error instanceof Error ? error.message : 'Invalid link.' } }
     }
+    // A text or countdown slide may carry a web link; its QR code is made here, from the link, never taken from the window.
+    if ((slide.kind === 'text' || slide.kind === 'countdown') && typeof slide.link === 'string') {
+      try {
+        if (!['http:', 'https:'].includes(new URL(slide.link).protocol)) throw new Error('Only web links can be shown.')
+        const svg = await instantLinkQrSvg(slide.link)
+        if (svg) slide.linkQrSvg = svg; else delete slide.linkQrSvg
+      } catch (error) { return { success: false, error: error instanceof Error ? error.message : 'Invalid link.' } }
+    }
     candidate.slide = slide
   }
   const message = parsePresenterMessage(JSON.stringify(candidate))
@@ -778,6 +851,18 @@ ipcMain.handle('live:fit-instant-image', async (event, bytes: Uint8Array) => {
   if (!(bytes instanceof Uint8Array) || bytes.byteLength > 50_000_000) return { success: false, error: 'This image is too large to process. Try a smaller screenshot.' }
   return fitInstantImage(bytes)
 })
+// The Live menu's "Instant slide from clipboard": the clipboard is read here, never in the preload,
+// and only for a focused presenter window that had a real press in the last five seconds
+// (live-read-clipboard.ts). ⌘V is another path: the page's own paste event.
+ipcMain.handle('live:read-clipboard', liveReadClipboardHandler({
+  isPresenter: (wcId) => livePresenterContexts.has(wcId),
+  isFocused: (sender) => {
+    const win = BrowserWindow.fromWebContents(sender as Electron.WebContents)
+    return !!win && !win.isDestroyed() && win.isFocused()
+  },
+  pressedRecently: (wcId) => pressLedger.pressedRecently(wcId),
+  clipboard,
+}))
 
 ipcMain.handle('publish:set-token', (_event, token: string) => {
   if (!safeStorage.isEncryptionAvailable()) {
@@ -909,6 +994,27 @@ ipcMain.handle('settings:set-transcription', (_event, cfg: { python?: string; sc
   return transcriptionSettings()
 })
 
+// window.open / target="_blank" in any app window: web and mail links go to the OS (logged instead
+// under E2E), nothing else opens in-app except a deck's own pages (present-window-open.ts).
+const appWindowOpenOpts = { openExternal: (url: string) => E2E ? console.log('[window-open] external (E2E):', url) : shell.openExternal(url) }
+// A deck window hands a link to the OS only after a real press in that window (present-window-open.ts).
+const deckWindowOpenOpts = { ...appWindowOpenOpts, pressedRecently: (contents: { id: number }) => pressLedger.pressedRecently(contents.id), ...(E2E ? { allowOptions: { overrideBrowserWindowOptions: { show: false, webPreferences: { backgroundThrottling: false } } } } : {}) }
+
+// The end-of-break chime plays only in the audience (projector) window, and a browser starts audio
+// only after a user gesture. Both ways that window comes to exist (the presenter's window.open and
+// "Present to audience") end in a page load, so every audience page is unlocked here with a
+// user-gesture script. That covers the chime's audio context alone: no autoplay policy is relaxed,
+// so videos and iframes in a deck window still need a click.
+app.on('web-contents-created', (_event, contents) => {
+  contents.on('did-finish-load', () => {
+    try {
+      // Only the top-level page of an app-created window (not a webview, not an iframe: did-finish-load is the main frame) at the app's own file: deck URL.
+      if (contents.getType() !== 'window' || contents.hostWebContents || !isAppAudienceUrl(contents.getURL())) return
+      contents.executeJavaScript('window.__twUnlockChime && window.__twUnlockChime()', true).catch(() => {})
+    } catch { /* not a page with a URL */ }
+  })
+})
+
 function createWindow(): BrowserWindow {
   const bounds = getConfig('windowBounds', { width: 1400, height: 900 })
 
@@ -940,6 +1046,8 @@ function createWindow(): BrowserWindow {
     return { windowBounds: { width, height } }
   }))
 
+  win.webContents.setWindowOpenHandler(appWindowOpenHandler(appWindowOpenOpts, () => pressLedger.pressedRecently(win.webContents.id)))
+  registerAppWindowPermissions(win) // this window's own page may read the clipboard (recording-permissions.ts)
   if (process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
@@ -1011,6 +1119,12 @@ const liveWindow = (win: BrowserWindow): boolean => !win.isDestroyed()
 // The editor window, other than `except`, whose open talk is the same file as `outlinePath`.
 function otherEditorHolding(outlinePath: string, except: BrowserWindow | undefined): BrowserWindow | null {
   return editorEntryForOutline(editorWindows.values(), outlinePath, liveWindow, except)?.win ?? null
+}
+/** Restore, show and focus a window (E2E windows stay hidden). */
+function bringToFront(win: BrowserWindow): void {
+  if (win.isMinimized()) win.restore()
+  if (!E2E) win.show()
+  win.focus()
 }
 let mainWindow: BrowserWindow | null = null
 
@@ -1203,6 +1317,8 @@ function createToolsWindow(view: ToolsView, sessionId?: string): BrowserWindow {
   })
 
   toolsWindow = win
+  win.webContents.setWindowOpenHandler(appWindowOpenHandler(appWindowOpenOpts, () => pressLedger.pressedRecently(win.webContents.id)))
+  registerAppWindowPermissions(win) // this window's own page may read the clipboard (recording-permissions.ts)
   loadRenderer(win, view)
   sendToolsShow(win, view, sessionId)
   return win
@@ -1255,6 +1371,8 @@ function openPathwayWindow(context: PathwayWindowContext): void {
       }
     })
     pathwayWindow = win
+    win.webContents.setWindowOpenHandler(appWindowOpenHandler(appWindowOpenOpts, () => pressLedger.pressedRecently(win.webContents.id)))
+    registerAppWindowPermissions(win) // this window's own page may read the clipboard (recording-permissions.ts)
     loadRenderer(win, 'pathways')
   }
   pathwayWindowContext = context
@@ -1550,8 +1668,13 @@ function backupSlugFor(outlinePath: string): string {
 function talkAssetsBytes(outlinePath: string): number {
   try {
     const assetsDir = join(dirname(outlinePath), 'assets')
+    // lstat, never stat: a link (the folder itself, or a file in it) is not followed, so the total
+    // never includes the size of a file somewhere else on this Mac (ADR-0036).
+    if (!lstatSync(assetsDir).isDirectory()) return 0
     let total = 0
-    for (const f of readdirSync(assetsDir)) { try { total += statSync(join(assetsDir, f)).size } catch { /* skip */ } }
+    for (const f of readdirSync(assetsDir)) {
+      try { const info = lstatSync(join(assetsDir, f)); if (info.isFile()) total += info.size } catch { /* skip */ }
+    }
     return total
   } catch { return 0 }
 }
@@ -1566,8 +1689,8 @@ async function buildTalkFullHtml(
   const slug = backupSlugFor(outlinePath)
   const content = readFileSync(outlinePath, 'utf8')
   const vaultRoot = vaultRootFor(outlinePath)
-  const resolved = vaultRoot ? resolveImageRefs(content, vaultRoot) : content
-  const model = await prepareSource(outlinePath, resolved, slug, stat, timerSettings(), mediaOptions)
+  const resolved = resolvePooledRefs(content, outlinePath)
+  const model = await prepareSource(outlinePath, resolved, slug, stat, timerSettings(), { ...mediaOptions, allowedAssetRoots: assetRootsFor(outlinePath) })
   return String(model.fullHtml ?? '')
 }
 
@@ -2423,7 +2546,8 @@ ipcMain.handle('layout:preview-thumbnails', async () => {
     const outlinePath = join(refWork, `${slug}-outline.md`)
     writeFileSync(outlinePath, outline, 'utf8')
     const stat = statSync(outlinePath)
-    const model = await prepareSource(outlinePath, outline, slug, stat)
+    // The reference deck is the app's own: its media is the fixtures folder copied into this temp folder.
+    const model = await prepareSource(outlinePath, outline, slug, stat, undefined, { allowedAssetRoots: [refWork] })
     const rows = (buildPerSlideProjections(model, slug) ?? []) as Array<{
       slide_id?: string
       render_hash?: string
@@ -2462,7 +2586,7 @@ ipcMain.handle('layout:preview-thumbnails', async () => {
     const out: Record<string, string> = {}
     for (const [layoutName, fixtureId] of Object.entries(buildMap)) {
       const key = keyByFixtureId[fixtureId] || keyByFixtureId[`${fixtureId}-title`]
-      if (key) out[layoutName] = 'twthumb://' + cacheSlug + '/' + key
+      if (key) out[layoutName] = thumbUrl(cacheSlug, key, null)
     }
     layoutPreviewThumbsCache = out
     return out
@@ -2557,8 +2681,10 @@ async function prepareTalk(
   const stat = statSync(outlinePath)
   const slug = basename(outlinePath).replace('-outline.md', '')
   const vaultRoot = vaultRootFor(outlinePath)
-  const resolved = vaultRoot ? resolveImageRefs(content, vaultRoot) : content
-  const group = preparedTalkGroup(outlinePath, defaults, options)
+  const resolved = resolvePooledRefs(content, outlinePath)
+  // The allowed media folders are part of what was compiled, so they are part of the cache group.
+  const compileOptions = { ...(options ?? {}), allowedAssetRoots: assetRootsFor(outlinePath) }
+  const group = preparedTalkGroup(outlinePath, defaults, compileOptions)
   const key = group + '\0' + createHash('sha256').update(resolved).digest('hex')
   const load = async (gated: <R>(task: () => Promise<R>) => Promise<R>): Promise<PreparedTalk> => {
     if (process.env.TW_REC_TEST === '1') {
@@ -2571,7 +2697,7 @@ async function prepareTalk(
     const { buildPerSlideProjections } = await import(
       pathToFileURL(join(compilerDir, 'lib/10-projections.mjs')).href
     )
-    const model = await gated(() => prepareSource(outlinePath, resolved, slug, stat, defaults, options ?? {})) as PreparedTalk['model']
+    const model = await gated(() => prepareSource(outlinePath, resolved, slug, stat, defaults, compileOptions)) as PreparedTalk['model']
     const rows = buildPerSlideProjections(model, slug) ?? null
     return { slug, model, rows }
   }
@@ -2747,7 +2873,7 @@ const renderVariantThumbnail = createVariantThumbnailRenderer({
   documentId: (html) => thumbnailDocumentId(html),
   inputsFingerprint: (outlinePath, content) => {
     const vaultRoot = vaultRootFor(outlinePath)
-    return mediaFingerprint(outlinePath, vaultRoot ? resolveImageRefs(content, vaultRoot) : content)
+    return mediaFingerprint(outlinePath, resolvePooledRefs(content, outlinePath))
   }
 })
 ipcMain.handle('layout:variant-thumbnail', createVariantThumbnailHandler(outlineRefused, renderVariantThumbnail))
@@ -2814,7 +2940,7 @@ function decodeHtmlEntities(s: string): string {
 }
 
 // Every embed compiles to `<iframe data-src="URL" …>` inside its slide `<section data-id…>`.
-// Local inlined sims use `srcdoc` (no data-src) and always work, so they are skipped here —
+// Local inlined pages carry their document in `data-embed-doc` (no data-src) and always work, so they are skipped here —
 // this preflight is only about embeds that load over the network.
 function extractDeckEmbeds(html: string): Array<{ slideId: string; title: string; url: string; isVideo: boolean }> {
   const out: Array<{ slideId: string; title: string; url: string; isVideo: boolean }> = []
@@ -2904,8 +3030,8 @@ ipcMain.handle('talk:check-embeds', async (_event, outlinePath: string, content:
     const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
     const { parseVideoEmbed } = await import(pathToFileURL(join(compilerDir, 'lib/02-triggers-layout.mjs')).href)
     const vaultRoot = vaultRootFor(outlinePath)
-    const resolved = vaultRoot ? resolveImageRefs(content, vaultRoot) : content
-    const model = await prepareSource(outlinePath, resolved, slug, stat)
+    const resolved = resolvePooledRefs(content, outlinePath)
+    const model = await prepareSource(outlinePath, resolved, slug, stat, undefined, { allowedAssetRoots: assetRootsFor(outlinePath) })
     const embeds = extractDeckEmbeds(model.fullHtml || '')
     if (!embeds.length) return []
     // Check each unique URL once, then map the result back to every slide that uses it.
@@ -2936,10 +3062,10 @@ ipcMain.handle('talk:explain-slide', async (_event, outlinePath: string, content
     const stat = statSync(outlinePath)
     const slug = basename(outlinePath).replace('-outline.md', '')
     const vaultRoot = vaultRootFor(outlinePath)
-    const resolved = vaultRoot ? resolveImageRefs(content, vaultRoot) : content
+    const resolved = resolvePooledRefs(content, outlinePath)
     const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
     const { buildPerSlideProjections } = await import(pathToFileURL(join(compilerDir, 'lib/10-projections.mjs')).href)
-    const model = await prepareSource(outlinePath, resolved, slug, stat)
+    const model = await prepareSource(outlinePath, resolved, slug, stat, undefined, { allowedAssetRoots: assetRootsFor(outlinePath) })
     const rows = (buildPerSlideProjections(model, slug) ?? []) as ProjectionRowMain[]
     const fullHtml = String(model.fullHtml ?? '')
     // The Nth `<section class="slide" …>` opening tag is this slide's render decisions.
@@ -3083,10 +3209,10 @@ async function ensureTalkRows(
     return entry.rows
   }
   const content = readFileSync(talk.outlinePath, 'utf8')
-  const resolved = resolveImageRefs(content, vaultRoot)
+  const resolved = resolveImageRefs(content, vaultRoot, talk.outlinePath)
   // projectionsOnly: search rows are pure TEXT — never inline this talk's media (video/image Buffers)
   // into the main process. A whole-vault warm/search over a heavy-media vault used to OOM-crash here.
-  const model = await prepareSource(talk.outlinePath, resolved, talk.slug, stat, undefined, { projectionsOnly: true })
+  const model = await prepareSource(talk.outlinePath, resolved, talk.slug, stat, undefined, { projectionsOnly: true, allowedAssetRoots: assetRootsFor(talk.outlinePath) })
   const rows = buildPerSlideProjections(model, talk.slug)
   if (!rows) return null
   searchCache.set(talk.outlinePath, { mtimeMs: stat.mtimeMs, compilerTag, rows, talkTitle: talk.title, slug: talk.slug, meta: parseTalkMeta(content) })
@@ -3158,8 +3284,8 @@ async function prerenderAllThumbnails(): Promise<void> {
         await new Promise<void>((resolve) => setImmediate(resolve))
         compiled += 1
         const stat = statSync(talk.outlinePath)
-        const resolved = resolveImageRefs(content, vaultRoot)
-        const model = await prepareSource(talk.outlinePath, resolved, talk.slug, stat)
+        const resolved = resolveImageRefs(content, vaultRoot, talk.outlinePath)
+        const model = await prepareSource(talk.outlinePath, resolved, talk.slug, stat, undefined, { allowedAssetRoots: assetRootsFor(talk.outlinePath) })
         const rows = (buildPerSlideProjections(model, talk.slug) ?? []) as Array<{
           content_hash?: string
           render_hash?: string
@@ -3290,7 +3416,8 @@ function gatherVaultImages(vaultRoot: string): string[] {
     try { entries = readdirSync(dir) } catch { return }
     for (const name of entries) {
       const full = join(dir, name)
-      try { if (statSync(full).isFile() && IMG_EXTS.has(extname(name).toLowerCase())) out.push(full) } catch { /* ignore */ }
+      // A picture that is a link out of the vault is not this vault's picture: never OCR'd (ADR-0036).
+      try { if (IMG_EXTS.has(extname(name).toLowerCase()) && pathStaysInside(vaultRoot, full) && statSync(full).isFile()) out.push(full) } catch { /* ignore */ }
     }
   }
   scanDir(join(vaultRoot, '_assets'))
@@ -3330,12 +3457,15 @@ function resolveImageAbs(ref: string, talkDir: string, vaultRoot: string): strin
   if (/^img-[0-9a-f]{7}$/.test(s)) {
     for (const ext of ['webp', 'png', 'jpg', 'jpeg', 'gif']) {
       const p = join(vaultRoot, '_assets', s + '.' + ext)
-      if (existsSync(p)) return p
+      if (existsSync(p)) return pathStaysInside(vaultRoot, p) ? p : null
     }
     return null
   }
   try { s = decodeURIComponent(s) } catch { /* keep raw */ }
-  return s.startsWith('/') ? s : join(talkDir, s)
+  // Only a picture really inside this vault: a slide must not pick up the recognised text of a
+  // picture elsewhere on this Mac (another vault's, say) by naming its path (ADR-0036).
+  const abs = s.startsWith('/') ? s : join(talkDir, s)
+  return pathStaysInside(vaultRoot, abs) ? abs : null
 }
 // The cached OCR text for one slide's images (lowercased), memoized by a stable slide key.
 function slideOcrText(row: ProjectionRowMain, talkDir: string, vaultRoot: string): string {
@@ -4254,7 +4384,8 @@ ipcMain.handle('ledger:version-thumbnails', async (_event, id: string) => {
     const outlinePath = join(work, `${cacheSlug}-outline.md`)
     writeFileSync(outlinePath, resolved, 'utf8')
     const stat = statSync(outlinePath)
-    const model = await prepareSource(outlinePath, resolved, cacheSlug, stat)
+    // The versions are this vault's slides, staged in a temp folder: their pooled media is in the vault.
+    const model = await prepareSource(outlinePath, resolved, cacheSlug, stat, undefined, { allowedAssetRoots: assetRootsFor(outlinePath, [vaultRoot]) })
     const rows = (buildPerSlideProjections(model, cacheSlug) ?? []) as Array<{
       source_line?: number | null
       render_hash?: string
@@ -4281,7 +4412,7 @@ ipcMain.handle('ledger:version-thumbnails', async (_event, id: string) => {
     versions.forEach((v, vi) => {
       if (vi >= authoredIndexes.length) return
       const key = keyFor(v)
-      if (rendered[key]) out[v.file] = 'twthumb://' + cacheSlug + '/' + key
+      if (rendered[key]) out[v.file] = thumbUrl(cacheSlug, key, null)
     })
     try { rmSync(work, { recursive: true, force: true }) } catch { /* temp only */ }
     return out
@@ -4508,15 +4639,11 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
     // to a second display if one exists; otherwise leave it as a normal window on this screen.
     // The board's own window is a blank page the presenter window draws into (feedback-boards ticket
     // 05); under its name nothing else opens.
-    win.webContents.setWindowOpenHandler((details) => details.frameName === 'tw-board-window' && details.url !== 'about:blank' ? { action: 'deny' } : ({
-      action: 'allow',
-      ...(E2E ? {
-        overrideBrowserWindowOptions: {
-          show: false,
-          webPreferences: { backgroundThrottling: false }
-        }
-      } : {})
-    }))
+    // Only the deck's own pages and the board open in-app; a web / mail link (target="_blank") goes
+    // to the browser, so a remote page never inherits this window's bridges (present-window-open.ts).
+    // The same handler goes on every window opened from here, at any depth (presentation → Presenter
+    // → Audience is a grandchild).
+    guardDeckWindowTree(win.webContents, deckWindowOpenOpts)
     win.webContents.on('did-create-window', (child, details) => {
       // The board's own window (feedback-boards ticket 05, D23): the presenter window draws it. It
       // goes to another display when there is one (not full screen: it is managed there), and it
@@ -4586,11 +4713,38 @@ ipcMain.handle('present:edit-slide', (event, payload: { slideId?: string; index?
 // in one window (window:claim-talk enforces it), so two windows always hold two different talks.
 ipcMain.handle('window:new', () => { createWindow(); return { ok: true } })
 
+// Right-click "Open in new window" (and the palette command): the same route as ⌘N then opening the
+// file, in one step. A talk already open in any window (including the asking one) is focused instead
+// (one writer per talk file); otherwise a new window starts and takes `target` from main once it has
+// loaded its talk list (window:take-open-request — pull, so nothing is lost to a load race).
+const openRequests = createOpenRequests((p) => outlineIdentity(p).key, (wcId) => { const w = editorWindows.get(wcId)?.win; return !!w && liveWindow(w) })
+ipcMain.handle('window:open-in-new-window', (_event, raw: unknown) => {
+  const target = parseOpenInNewWindowTarget(raw)
+  if (!target) return { ok: false, reason: 'bad-target' }
+  const refusal = refuseOpenTarget(target, { outlineRefused: (p) => outlineRefused(p), hasVault: (id) => !!vaultRegistry.get(id) })
+  if (refusal) return { ok: false, reason: refusal }
+  if (target.kind === 'talk') {
+    // Open in any window, or in a window still starting for it (it has not claimed the talk yet).
+    const startingId = openRequests.startingFor(target.outlinePath)
+    const holder = editorEntryForOutline(editorWindows.values(), target.outlinePath, liveWindow)?.win
+      ?? (startingId !== null ? editorWindows.get(startingId)?.win ?? null : null)
+    const decision = decideOpenInNewWindow(holder)
+    if (decision.action === 'focus') { bringToFront(decision.window); return { ok: true, focused: true } }
+  }
+  const win = createWindow()
+  const wcId = win.webContents.id
+  openRequests.start(wcId, target)
+  win.on('closed', () => { openRequests.closed(wcId) })
+  return { ok: true, focused: false }
+})
+ipcMain.handle('window:take-open-request', (event) => openRequests.take(event.sender.id))
+
 // Same-talk guard (block-and-focus). The renderer calls this before switching a window to `outlinePath`.
 // If ANOTHER editor window already has that talk active, focus it and refuse (the renderer keeps its
 // current talk); otherwise record it as this window's active talk. null releases (window has no talk).
 ipcMain.handle('window:claim-talk', (event, outlinePath: string | null) => {
   const entry = editorWindows.get(event.sender.id)
+  openRequests.claimed(event.sender.id) // any claim attempt ends this window's "starting" state
   // Opening a talk does not enrol it, but it does keep an enrolled talk alive (ADR-0024 §2).
   if (outlinePath) { try { noteAppOpen(outlinePath) } catch { /* never block opening a talk */ } }
   // Compared by file identity (device + inode), so a talk reached through a symlinked outline or
@@ -4599,9 +4753,7 @@ ipcMain.handle('window:claim-talk', (event, outlinePath: string | null) => {
   if (outlinePath) {
     const holder = otherEditorHolding(outlinePath, entry?.win)
     if (holder) {
-      if (holder.isMinimized()) holder.restore()
-      if (!E2E) holder.show()
-      holder.focus()
+      bringToFront(holder)
       return { ok: false, reason: 'open-elsewhere' }
     }
   }
@@ -4749,8 +4901,8 @@ ipcMain.handle('talk:build', async (_event, outlinePath: string, content: string
     const talkDir = dirname(outlinePath)
     const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
     const vaultRoot = vaultRootFor(outlinePath)
-    const resolved = vaultRoot ? resolveImageRefs(content, vaultRoot) : content
-    const model = await prepareSource(outlinePath, resolved, slug, stat, timerSettings())
+    const resolved = resolvePooledRefs(content, outlinePath)
+    const model = await prepareSource(outlinePath, resolved, slug, stat, timerSettings(), { allowedAssetRoots: assetRootsFor(outlinePath) })
     const html = model.fullHtml as string
     const distDir = join(talkDir, 'dist')
     if (!existsSync(distDir)) mkdirSync(distDir) // only inside a talk folder that is there (a vanished vault is never re-created)
@@ -4776,10 +4928,10 @@ ipcMain.handle('talk:build-variants', async (_event, outlinePath: string, conten
     const slug = basename(outlinePath).replace('-outline.md', '')
     const talkDir = dirname(outlinePath)
     const vaultRoot = vaultRootFor(outlinePath)
-    const resolved = vaultRoot ? resolveImageRefs(content, vaultRoot) : content
+    const resolved = resolvePooledRefs(content, outlinePath)
 
     const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
-    const model = await prepareSource(outlinePath, resolved, slug, stat, timerSettings())
+    const model = await prepareSource(outlinePath, resolved, slug, stat, timerSettings(), { allowedAssetRoots: assetRootsFor(outlinePath) })
 
     const distDir = join(talkDir, 'dist')
     if (!existsSync(distDir)) mkdirSync(distDir) // only inside a talk folder that is there (a vanished vault is never re-created)
@@ -4851,6 +5003,8 @@ ipcMain.handle('talk:build-variants', async (_event, outlinePath: string, conten
 type RunHandoutArtifact = {
   path: string
   html: string
+  /** The same handout built to load its slide media lazily (published <slug>.html); only when asked for. */
+  lazyHtml?: string
   title: string
   slug: string
   slideIds: string[]
@@ -4864,7 +5018,8 @@ async function buildRunHandoutArtifact(
   content: string,
   outputSlug?: string,
   workerBaseUrl?: string,
-  prework?: HandoutPreworkConfig
+  prework?: HandoutPreworkConfig,
+  options: { lazyAssets?: boolean } = {}
 ): Promise<RunHandoutArtifact> {
   const compilerDir = getCompilerPath()
   if (!compilerDir) throw new Error('Compiler not found')
@@ -4900,16 +5055,18 @@ async function buildRunHandoutArtifact(
   const slides = allSlides.filter((slide) => !preworkIds.has(slide.id))
   const preworkSlides = allSlides.filter((slide) => preworkIds.has(slide.id))
   const slug = outputSlug ?? runHandoutSlug(talk.slug, run.eventTitle ?? 'run', run.plannedDate ?? run.startedAt.slice(0, 10), [])
-  const html = buildShareHtml({
+  const shareArgs = {
     title: compiled.title, slides, styles, includeNotes: false, slug,
     workerBaseUrl: workerBaseUrl ?? '', liveTalkSlug: talk.slug,
     ...(prework ? { prework: { ...prework, steps: preworkSlides.map((slide) => ({ id: slide.id, html: slide.html })) } } : {}),
-  }) as string
+  }
+  const html = buildShareHtml(shareArgs) as string
+  const lazyHtml = options.lazyAssets ? buildShareHtml({ ...shareArgs, lazyAssets: true }) as string : undefined
   const distDir = join(dirname(talk.outlinePath), 'dist')
   if (!existsSync(distDir)) mkdirSync(distDir) // only inside a talk folder that is there (a vanished vault is never re-created)
   const path = join(distDir, `${slug}-handout.html`)
   writeFileSync(path, html, 'utf8')
-  return { path, html, title: compiled.title, slug, slideIds, missing,
+  return { path, html, lazyHtml, title: compiled.title, slug, slideIds, missing,
     venueSource: { slides, styles, license: null, liveTalkSlug: talk.slug } }
 }
 
@@ -4929,10 +5086,10 @@ ipcMain.handle('talk:export-handout', async (_event, outlinePath: string, conten
     const slug = basename(outlinePath).replace('-outline.md', '')
     const talkDir = dirname(outlinePath)
     const vaultRoot = vaultRootFor(outlinePath)
-    const resolved = vaultRoot ? resolveImageRefs(content, vaultRoot) : content
+    const resolved = resolvePooledRefs(content, outlinePath)
 
     const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
-    const model = await prepareSource(outlinePath, resolved, slug, stat)
+    const model = await prepareSource(outlinePath, resolved, slug, stat, undefined, { allowedAssetRoots: assetRootsFor(outlinePath) })
     const title = (model.title as string) ?? slug
     const fullHtml = model.fullHtml as string
 
@@ -5017,9 +5174,15 @@ function slimHandoutHtml(html: string): string {
   const stripVideos = (h: string, limit: number): string =>
     h.replace(/<figure class="slide-figure slide-video"[^>]*>[\s\S]*?<\/figure>/g, (fig) => {
       if (/video-placeholder/.test(fig)) return fig
+      if (/\sdata-lazy-src="/.test(fig)) return fig // published beside the page (handout-lazy-assets.mjs): not inline
       const data = fig.match(/src="data:video\/[^;]+;base64,([A-Za-z0-9+/=]+)"/)
       const bytes = data ? Math.floor(data[1].length * 0.75) : Infinity
-      return bytes <= limit ? fig : VIDEO_PLACEHOLDER
+      if (bytes <= limit) return fig
+      // A {play-on-next} video stays a step of its slide (0.38 ticket 05): the placeholder keeps the
+      // mark, so the venue screen counts the slide's steps as the projector does. It has nothing to play.
+      return /^<figure class="slide-figure slide-video" data-play-on-next[\s>]/.test(fig)
+        ? VIDEO_PLACEHOLDER.replace('<figure class="slide-figure slide-video video-placeholder"', '<figure class="slide-figure slide-video video-placeholder" data-play-on-next')
+        : VIDEO_PLACEHOLDER
     })
 
   // Re-encode every inlined image (png / jpeg / webp, over ~120 KB) to webp at the given cwebp
@@ -5141,11 +5304,11 @@ ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, conte
     const stat = statSync(outlinePath)
     const slug = basename(outlinePath).replace('-outline.md', '')
     const vaultRoot = vaultRootFor(outlinePath)
-    const resolved = vaultRoot ? resolveImageRefs(published, vaultRoot) : published
+    const resolved = resolvePooledRefs(published, outlinePath)
 
     // Build the handout HTML exactly like talk:export-handout (share-no-notes).
     const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
-    const model = await prepareSource(outlinePath, resolved, slug, stat)
+    const model = await prepareSource(outlinePath, resolved, slug, stat, undefined, { allowedAssetRoots: assetRootsFor(outlinePath) })
     // Title for the handout <title> + viewer page: prefer the outline's frontmatter `title:`
     // (the canonical deck title), like the old publisher did — model.title falls back to the slug
     // for plain-markdown decks the v1 adapter routes, which would show the slug instead of the title.
@@ -5160,10 +5323,12 @@ ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, conte
     // Ticket 09: pre-work steps are never slides of a handout (the evergreen one included).
     const slides = withoutPreworkSlides(extractSlides(fullHtml) as Array<{ id: string; html: string; notes: string }>, model.prework as CompiledPrework | undefined)
     const license = (model as { license?: unknown }).license
-    const handoutHtml = buildShareHtml({
+    const shareArgs = {
       title, slides, styles, includeNotes: false, slug, license,
       workerBaseUrl: liveWorker.baseUrl, liveTalkSlug: slug,
-    })
+    }
+    const handoutHtml = buildShareHtml(shareArgs)
+    const lazyHandoutHtml = buildShareHtml({ ...shareArgs, lazyAssets: true })
 
     // Publish output: each handout
     // folder gets the slimmed handout as <slug>.html PLUS a viewer/landing index.html (Open +
@@ -5186,12 +5351,27 @@ ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, conte
     }
     const url = publishUrl({ base, slug, id, useShortIds })
 
-    // The handout file (slimmed for the 25 MiB/file Pages cap) + the viewer/landing page that links to it.
     const handoutFile = `${slug}.html`
-    writeFileSync(join(talkOutDir, handoutFile), slimHandoutHtml(handoutHtml), 'utf8')
+    const downloadFile = `${slug}-download.html`
     const { makeQrSvg } = await import(pathToFileURL(join(compilerDir, 'lib/01-cli-utils.mjs')).href)
     const qr = (makeQrSvg(url) as string) || ''
-    writeFileSync(join(talkOutDir, 'index.html'), await viewerPageHtml({ title, handoutFile, url, qr }, compilerDir), 'utf8')
+    // The home page the QR code and short link open: the handout bundle in home mode, live first
+    // (design 2026-10-02 B), so its live surface is the handout's own live client.
+    const { buildHandoutHomePageHtml } = await import(pathToFileURL(join(compilerDir, 'lib/handout-home-page.mjs')).href)
+    const homeHtml = buildHandoutHomePageHtml({
+      title, slides, styles, slug, license, workerBaseUrl: liveWorker.baseUrl, liveTalkSlug: slug, lazyAssets: true,
+      home: { url, qr, downloadHref: downloadFile, ...handoutHomeDetails({ outline: published }) },
+    })
+    // <slug>.html and index.html load their slide media lazily from slide-assets/ (moved out before any
+    // slimming); the Download button saves <slug>-download.html, the self-contained handout, slimmed for
+    // the 25 MiB/file Pages cap. Written together: new assets, then pages via temp + rename, then a prune
+    // that keeps the previous publish's assets for phones still open on it.
+    const { publishLazyHandoutPages } = await import(pathToFileURL(join(compilerDir, 'lib/handout-lazy-assets.mjs')).href)
+    const pagesWritten = publishLazyHandoutPages(talkOutDir, [
+      { fileName: downloadFile, html: handoutHtml, lazy: false },
+      { fileName: handoutFile, html: lazyHandoutHtml },
+      { fileName: 'index.html', html: homeHtml },
+    ], { slim: slimHandoutHtml }) as { warnings: string[] }
     const { buildVenuePageHtml, buildUnavailableVenuePageHtml } = await import(pathToFileURL(join(compilerDir, 'lib/venue-page.mjs')).href)
     const venueDir = join(talkOutDir, 'p')
     mkdirSync(venueDir, { recursive: true })
@@ -5245,7 +5425,7 @@ ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, conte
       if (stamped.ok) updatedOutline = stamped.text
     }
     void ledgerSeal(outlinePath, published, 'publish')
-    return { success: true, url, display: url, updatedOutline }
+    return { success: true, url, display: url, updatedOutline, ...(pagesWritten.warnings.length ? { warning: pagesWritten.warnings.join(' ') } : {}) }
   } catch (e) {
     console.error('[publish-handout]', e)
     return { success: false, error: String(e) }
@@ -5555,7 +5735,8 @@ function sharedTalks(): SharedTalks {
       const vaultRoot = vaultRootFor(outlinePath)
       const payload = await buildSharedTalkPayload({
         compilerDir, outlinePath, content, slug, proposals,
-        compileContent: vaultRoot ? resolveImageRefs(content, vaultRoot) : content,
+        compileContent: resolvePooledRefs(content, outlinePath),
+        allowedAssetRoots: assetRootsFor(outlinePath),
         // The talk's vault's personal author first (ticket 04), then Settings.
         ownerName: ownerNameFrom(content, vaultPersonalAuthor(outlinePath) || String(metadataDefaults().author ?? '')),
       })
@@ -5812,11 +5993,11 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
         if (published.open) prework = { preworkId: published.preworkId, workerBaseUrl: published.workerBaseUrl, form }
       }
     }
-    const artifact = await buildRunHandoutArtifact(talk, run, content, slug, liveWorkerBaseUrl, prework)
+    const artifact = await buildRunHandoutArtifact(talk, run, content, slug, liveWorkerBaseUrl, prework, { lazyAssets: true })
     const talkOutDir = join(siteDir, slug)
     if (!existsSync(talkOutDir)) mkdirSync(talkOutDir, { recursive: true })
     const handoutFile = `${slug}.html`
-    writeFileSync(join(talkOutDir, handoutFile), slimHandoutHtml(artifact.html), 'utf8')
+    const downloadFile = `${slug}-download.html`
 
     const base = resolveBase({ baseUrl: getConfig('publishBaseUrl', undefined) ?? (process.env.TW_REC_TEST === '1' ? 'https://mock-run-handouts.test' : undefined), project })
     const useShortIds = getConfig('publishUseShortIds', false) ?? false
@@ -5837,7 +6018,21 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
     if (!compilerDir) return { success: false, error: 'Compiler not found' }
     const { makeQrSvg } = await import(pathToFileURL(join(compilerDir, 'lib/01-cli-utils.mjs')).href)
     const qr = (makeQrSvg(url) as string) || ''
-    writeFileSync(join(talkOutDir, 'index.html'), await viewerPageHtml({ title: `${artifact.title} — ${run.eventTitle ?? 'Run'}`, handoutFile, url, qr }, compilerDir), 'utf8')
+    // The home page, live first (design 2026-10-02 B): the Run's handout bundle in home mode; the event
+    // and date sit in the line under the title, and a planned start time gives the "Not live yet" line.
+    const { buildHandoutHomePageHtml } = await import(pathToFileURL(join(compilerDir, 'lib/handout-home-page.mjs')).href)
+    const homeHtml = buildHandoutHomePageHtml({
+      title: artifact.title, ...artifact.venueSource, slug, workerBaseUrl: liveWorkerBaseUrl, lazyAssets: true,
+      home: { url, qr, downloadHref: downloadFile, ...handoutHomeDetails({ outline: content, run }), prework: handoutHomePrework(prework?.form) },
+    })
+    // As talk:publish-handout: lazy <slug>.html + index.html, self-contained <slug>-download.html.
+    const { publishLazyHandoutPages } = await import(pathToFileURL(join(compilerDir, 'lib/handout-lazy-assets.mjs')).href)
+    const pagesWritten = publishLazyHandoutPages(talkOutDir, [
+      { fileName: downloadFile, html: artifact.html, lazy: false },
+      { fileName: handoutFile, html: artifact.lazyHtml ?? artifact.html },
+      { fileName: 'index.html', html: homeHtml },
+    ], { slim: slimHandoutHtml }) as { warnings: string[] }
+    if (pagesWritten.warnings.length) preworkWarning = [preworkWarning, ...pagesWritten.warnings].filter(Boolean).join(' ')
     const { buildVenuePageHtml, buildUnavailableVenuePageHtml } = await import(pathToFileURL(join(compilerDir, 'lib/venue-page.mjs')).href)
     const venueDir = join(talkOutDir, 'p')
     mkdirSync(venueDir, { recursive: true })
@@ -5904,57 +6099,56 @@ ipcMain.handle('talk:optimize-images', async (_event, outlinePath: string, conte
   try {
     const sharp = require('sharp')
     const talkDir = dirname(outlinePath)
-    // Unique convertible refs: relative path ending .png/.jpg/.jpeg (not img- ids, urls, data:).
-    const refs = new Set<string>()
-    const re = /!\[[^\]]*\]\(([^)]+)\)/g
-    let m: RegExpExecArray | null
-    while ((m = re.exec(content)) !== null) {
-      const raw = m[1].trim().replace(/\s+"[^"]*"$/, '') // drop optional "title"
-      if (/^(https?:|data:|img-)/.test(raw)) continue
-      if (!/\.(png|jpe?g)$/i.test(raw)) continue
-      refs.add(raw)
-    }
-    let newContent = content
-    const rewrites: Array<[string, string]> = []
-    let converted = 0
+    // What may be touched is decided by optimise-images.ts (ADR-0036): a plain picture really inside
+    // the talk's allowed folders AND in this talk's own folder, whose .webp does not exist yet. Every
+    // reference is decided before anything is converted; a picture named several ways is converted
+    // once. A reference that is left alone has NOTHING read, written or trashed for it.
+    const compilerDir = getCompilerPath()
+    if (!compilerDir) return { success: false, error: 'Compiler not found' }
+    const { createAssetContainment } = await import(pathToFileURL(join(compilerDir, 'lib/asset-containment.mjs')).href)
+    const containment = createAssetContainment(assetRootsFor(outlinePath)) as AssetContainment
+    const plan = await planOptimisation(convertibleImageRefs(content), talkDir, containment)
+    const converted = new Map<string, string>()
+    let pictures = 0
     let savedBytes = 0
     const failed: string[] = []
-    for (const ref of refs) {
-      let rel = ref
-      try { rel = decodeURIComponent(ref) } catch { rel = ref }
-      const abs = rel.startsWith('/') ? rel : join(talkDir, rel)
-      if (!existsSync(abs)) { failed.push(ref); continue }
-      const webpRef = ref.replace(/\.(png|jpe?g)$/i, '.webp') // keep the ref's encoding form
-      const webpRel = rel.replace(/\.(png|jpe?g)$/i, '.webp')
-      const webpAbs = webpRel.startsWith('/') ? webpRel : join(talkDir, webpRel)
+    for (const skip of plan.skipped) {
+      if (skip.reason !== 'missing') console.warn('[optimize-images] left alone (' + skip.reason + '):', skip.ref)
+      if (skip.reason !== 'elsewhere' && skip.reason !== 'clash') failed.push(skip.ref)
+    }
+    for (const conversion of plan.conversions) {
       try {
-        const before = statSync(abs).size
-        await sharp(abs)
+        const before = statSync(conversion.source).size
+        const webp: Buffer = await sharp(conversion.source)
           .resize({ width: 2560, height: 2560, fit: 'inside', withoutEnlargement: true })
           .webp({ quality: 82 })
-          .toFile(webpAbs)
-        const after = statSync(webpAbs).size
-        newContent = newContent.split(ref).join(webpRef)
-        rewrites.push([ref, webpRef])
-        savedBytes += Math.max(0, before - after)
-        converted += 1
-        if (resolvePath(webpAbs) !== resolvePath(abs)) {
-          try { await shell.trashItem(abs) } catch { /* leave the original if trashing fails */ }
-        }
+          .toBuffer()
+        // A new file only, never onto one that is there; the original goes to the Trash after it exists.
+        await writeNewFile(conversion.output, webp)
+        for (const [ref, webpRef] of conversion.refs) converted.set(ref, webpRef)
+        pictures += 1
+        savedBytes += Math.max(0, before - webp.length)
+        try { await shell.trashItem(conversion.source) } catch { /* leave the original if trashing fails */ }
       } catch (convErr) {
-        console.warn('[optimize-images] failed for', ref, convErr)
-        failed.push(ref)
+        console.warn('[optimize-images] failed for', conversion.refs[0]?.[0], convErr)
+        for (const [ref] of conversion.refs) failed.push(ref)
       }
     }
-    if (converted > 0) {
+    // Pictures left alone on purpose, by reason (new fields beside `failed`): another talk's or the
+    // shared pool's, and ones whose .webp name is taken.
+    const leftAlone = plan.skipped.filter((skip) => skip.reason === 'elsewhere').length
+    const clashes = plan.skipped.filter((skip) => skip.reason === 'clash').length
+    let newContent = content
+    if (converted.size > 0) {
       // The same ref rewrites, applied to the talk's CURRENT text — the open editor's buffer when a
-      // window has it (talk-writer.ts), so edits made during the conversion survive.
-      const written = await writeTalkOutline(outlinePath, (current) => rewrites.reduce((text, [from, to]) => text.split(from).join(to), current), 'optimize-images')
+      // window has it (talk-writer.ts), so edits made during the conversion survive. Only an image
+      // link whose whole target was converted is rewritten.
+      const written = await writeTalkOutline(outlinePath, (current) => rewriteConvertedRefs(current, converted), 'optimize-images')
       if (!written.ok) throw new Error(written.error)
       newContent = written.text
       invalidateVaultCaches(outlinePath)
     }
-    return { success: true, converted, savedBytes, failed: failed.length, newContent }
+    return { success: true, converted: pictures, savedBytes, failed: failed.length, leftAlone, clashes, newContent }
   } catch (e) {
     console.error('[optimize-images]', e)
     return { success: false, error: String(e) }
@@ -7390,9 +7584,14 @@ ipcMain.handle('vault:delete-folder', async (_event, folderRel: string, vaultId?
 })
 
 // Open a built artifact (file or folder) in the OS file manager / browser.
+// The path comes from the renderer: only a folder or a document inside an open vault, never an app,
+// installer or script (shell-path-policy.ts).
+const openVaultRoots = (): string[] => vaultRegistry.list().filter((v) => v.open).map((v) => v.root)
 ipcMain.handle('shell:open-path', async (_event, path: string): Promise<boolean> => {
   try {
-    const err = await shell.openPath(path)
+    const target = decideShellPath('open', path, openVaultRoots())
+    if (!target.ok) { console.error('[shell:open-path] refused', target.reason, String(path).slice(0, 300)); return false }
+    const err = await shell.openPath(target.path)
     return err === ''
   } catch (e) {
     console.error('[shell:open-path]', e)
@@ -7403,7 +7602,9 @@ ipcMain.handle('shell:open-path', async (_event, path: string): Promise<boolean>
 // Reveal a file in Finder (select it in its folder) — for "I want to copy the file, not view it".
 ipcMain.handle('shell:show-item-in-folder', async (_event, path: string): Promise<boolean> => {
   try {
-    shell.showItemInFolder(path)
+    const target = decideShellPath('reveal', path, openVaultRoots())
+    if (!target.ok) { console.error('[shell:show-item-in-folder] refused', target.reason, String(path).slice(0, 300)); return false }
+    shell.showItemInFolder(target.path)
     return true
   } catch (e) {
     console.error('[shell:show-item-in-folder]', e)
@@ -7414,8 +7615,12 @@ ipcMain.handle('shell:show-item-in-folder', async (_event, path: string): Promis
 // Open an external URL (e.g. the published handout link) in the default browser.
 ipcMain.handle('shell:open-external', async (_event, url: string): Promise<boolean> => {
   try {
-    if (!/^https?:\/\//i.test(url)) return false
-    await shell.openExternal(url)
+    // The editor's own links (the published handout, the share link, an embed's source, a Run's
+    // handout). Some of these strings come from a talk or a Run record, so the link is parsed once
+    // and handed out as that parsed object's normalised href: web links only (hand-out.ts).
+    const link = handOutLink(url)
+    if (!link || link.kind !== 'web') { console.error('[shell:open-external] refused', String(url).slice(0, 200)); return false }
+    await shell.openExternal(link.href)
     return true
   } catch (e) {
     console.error('[shell:open-external]', e)
@@ -7781,9 +7986,31 @@ app.whenReady().then(async () => {
     } catch { return { ok: false as const } }
   })
   startRunPreworkTimer(runPrework(), () => notifyTalkMetaUpdated())
+  // A recording that never reached Stop last time (crash, power loss) becomes a Run marked partial
+  // that references the audio already on disk. Never blocks launch; never deletes audio.
+  void recoverInterruptedRecordings()
+    .then((n) => { if (n) console.log(`[recording] recovered ${n} interrupted recording(s)`) })
+    .catch((error) => console.warn('[recording] recovery failed', error))
   // Feedback rail: open the owner socket of every shared talk (never blocks launch).
   try { sharedTalkFeedback().sync() } catch (error) { console.warn('[shared-talk] feedback start failed', error) }
   installApplicationMenu()
+  // Every permission request and check is answered by one table from app start: the microphone to a
+  // presenter window's own page, clipboard and full screen to a window's own page, nothing to a
+  // frame embedded in a slide (recording-permissions.ts).
+  installRecordingPermissions(session.defaultSession)
+  // A page embedded in a slide does not reach this Mac's services or the local network
+  // (local-address-filter.ts). The session's ONE onBeforeRequest listener; the two hooks below are
+  // other events (onHeadersReceived, onBeforeSendHeaders) and are untouched.
+  // A request with no frame (main's own, or a worker's) may reach a local address only at a host
+  // registered here: the dev server in development. Main asks for no other local address this way.
+  // Only an app window saves a download; a deck window, a hidden renderer and a request with no
+  // window are cancelled (window-kinds.ts). There was no handler: any page could raise the Save dialog.
+  session.defaultSession.on('will-download', (event, item, contents) => {
+    if (decideDownload(contents?.id) === 'allow') return
+    event.preventDefault()
+    console.warn(`[download] cancelled ${String(item?.getURL?.() ?? '').slice(0, 120)} from window ${String(contents?.id ?? '?')}: only the editor saves downloads`)
+  })
+  installLocalAddressFilter(session.defaultSession, { appLocalHosts: [appLocalHostOf(process.env['ELECTRON_RENDERER_URL'])].filter((host): host is string => !!host) })
   // Let embedded iframes load sites that would otherwise refuse framing (X-Frame-Options /
   // CSP frame-ancestors). Scoped to SUB-FRAMES only, so app/editor chrome and top-level loads
   // are untouched. App-only — a shared HTML file in a browser can't do this (hence the compile-
@@ -7841,20 +8068,20 @@ app.whenReady().then(async () => {
     }
     callback({ error: -2 })
   })
-  // Serve rendered slide thumbnails: twthumb://<slug>/<key> -> {userData}/thumb-cache/<slug>/<key>.png
-  // `?vault=<id>` reads that vault's folder only; a bare URL tries the open vaults in order, then the
-  // namespace level (thumb-cache-dirs.ts).
+  // Serve rendered slide thumbnails: twthumb://thumb/<slug>/<key> -> {userData}/thumb-cache/<slug>/<key>.png
+  // (slug and key percent-encoded, shared/thumb-url.ts). `?vault=<id>` reads that vault's folder only;
+  // a bare URL tries the open vaults in order, then the namespace level (thumb-cache-dirs.ts).
   protocol.registerFileProtocol('twthumb', (request, callback) => {
     try {
       const req = parseThumbUrl(request.url)
       if (!req) { callback({ error: -2 }); return }
-      // Slug and key come from the URL: only a PNG inside this talk's thumbnail folders.
+      // Slug and key come from the URL, decoded: only a PNG inside this talk's thumbnail folders
+      // (thumbFileFor runs the containment guards on the decoded values).
       const namespaceDir = thumbNamespaceDir()
       if (!thumbCacheDir(namespaceDir, req.slug).ok) { callback({ error: -2 }); return }
       adoptLegacyThumbsOnce()
       touchNamespaceHourly() // a read-only session keeps older builds' cache sweep away too
       const openIds = vaultRegistry.list().filter((v) => v.open).map((v) => v.id)
-      const dirs = thumbLookupDirs(namespaceDir, req, openIds).filter((d) => pathStaysInside(namespaceDir, d) !== null)
       // Fallback: the pre-render writes DOCUMENT-SCOPED filenames `<documentId>-<render_hash>.png`
       // (thumbnailDocumentCacheKey), but the Slide Browser can only address a slide by its bare
       // `render_hash` — it never compiles the talk, so it cannot know the documentId. Resolve the
@@ -7862,10 +8089,8 @@ app.whenReady().then(async () => {
       // (it already folds in layout + section accent), so any file with that suffix is the same
       // picture. Without this, tens of thousands of correctly-built thumbnails were unreachable and
       // every browser card rendered blank (2026-07-19).
-      for (const dir of dirs) {
-        const hit = resolveThumbFile(dir, req.key)
-        if (hit) { callback({ path: hit }); return }
-      }
+      const hit = thumbFileFor(namespaceDir, req, openIds)
+      if (hit) { callback({ path: hit }); return }
     } catch { /* fall through */ }
     callback({ error: -2 })
   })

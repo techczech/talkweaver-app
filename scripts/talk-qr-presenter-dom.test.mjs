@@ -14,7 +14,9 @@ const slides = [
 ]
 const html = await buildDeckHtmlFromModel({ title: 'Talk QR test', slides, meta: { handout_url: 'https://handouts.fyi/k7m2' } })
 assert.match(html, /<template id="twTalkQr" data-url="https:\/\/handouts\.fyi\/k7m2"><svg/)
-assert.match(html, /\["U","Show the talk's QR code"\]/, 'the cheat sheet lists the command with its key')
+const help = JSON.parse(html.match(/const SHORTCUTS_LIST = (\[.*\]);/)[1])
+const qrKey = help.flatMap(([, rows]) => rows).find(row => row[3] === 'presenter.talk-qr')
+assert.deepEqual(qrKey.slice(0, 2), ['U', "Show the talk's QR code"], 'the cheat sheet lists the command with its key')
 assert.doesNotThrow(() => new Function([...html.matchAll(/<script>\s*([\s\S]*?)<\/script>/g)].at(-1)?.[1] || ''))
 
 function open(markup, role, bridge) {
@@ -152,6 +154,9 @@ assert.deepEqual(presenter.errors, [])
 assert.deepEqual(projector.errors, [])
 presenter.window.close()
 projector.window.close()
+await settle()
+assert.deepEqual(presenter.errors, [])
+assert.deepEqual(projector.errors, [])
 
 // A talk with no published handout and no live session: the command explains itself instead.
 const unpublished = open(await buildDeckHtmlFromModel({ title: 'Unpublished', slides }), 'presenter', null)
@@ -161,5 +166,7 @@ assert.equal(overlay(unpublished.document), null)
 assert.match(unpublished.document.getElementById('modeBanner').textContent, /publish the handout or go live/)
 assert.deepEqual(unpublished.errors, [])
 unpublished.window.close()
+await settle()
+assert.deepEqual(unpublished.errors, [])
 
 console.log('talk QR presenter DOM: U key, palette, cheat sheet, projector overlay, live vs handout link, Esc return passed')

@@ -13,7 +13,7 @@ import {
 } from './board-protocol'
 
 export const LIVE_PROTOCOL_VERSION = 2
-export const LIVE_WORKER_BUILD = '19-board-seed'
+export const LIVE_WORKER_BUILD = '20-pointer-live'
 export interface SessionPresence {
   type: 'session.presence'
   presenterConnected: boolean
@@ -89,7 +89,7 @@ export interface SessionSnapshot {
 export type RecoveryClientMessage =
   | { type: 'session.ping'; nonce: string }
   | { type: 'session.sync'; syncId: string; slideState?: SlideState | null; afterSequence?: number; afterReactionSequence?: number }
-  | { type: 'operation'; operationId: string; action: Exclude<PresenterMessage, { type: 'slide.publish' }> }
+  | { type: 'operation'; operationId: string; action: Exclude<PresenterMessage, { type: 'slide.publish' | 'pointer.live' | 'ink.live' }> }
   | { type: 'vote.submit'; submissionId: string; pollId: string; choice: PollChoice }
   | ({ type: 'reaction.send'; submissionId: string } & ReactionInput)
   | ({ type: 'question.submit'; submissionId: string } & QuestionInput)
@@ -105,6 +105,9 @@ export type RecoveryServerMessage =
   | { type: 'session.pong'; nonce: string }
   | { type: 'session.closed'; reason?: 'ended' | 'expired' }
   | { type: 'session.superseded' }
+  // The Pen (ticket 08): a venue screen joined and this object holds no ink (it was evicted, and
+  // ink is never stored), so the presenter is asked to send its current layer again at once.
+  | { type: 'ink.request' }
   | SessionSnapshot | SessionPresence | OperationAck | VoteAck | ReactionAck | QuestionAck | CardAck | AudienceFeedbackServerMessage
 
 export function validRecoveryId(value: unknown): value is string {
@@ -136,7 +139,7 @@ export function parseRecoveryClientMessage(value: string): RecoveryClientMessage
     }
     if (m.type === 'operation' && validRecoveryId(m.operationId)) {
       const action = parsePresenterMessage(JSON.stringify(m.action))
-      return action && action.type !== 'slide.publish' ? { type: m.type, operationId: m.operationId, action } : null
+      return action && action.type !== 'slide.publish' && action.type !== 'pointer.live' && action.type !== 'ink.live' ? { type: m.type, operationId: m.operationId, action } : null
     }
     if (m.type === 'vote.submit' && validRecoveryId(m.submissionId)) {
       const vote = parseAudienceMessage(JSON.stringify({ ...m, type: 'poll.vote' }))
@@ -194,6 +197,7 @@ export function parseRecoveryServerMessage(value: string): RecoveryServerMessage
     if (m.type === 'session.pong' && validRecoveryId(m.nonce)) return { type: m.type, nonce: m.nonce }
     if (m.type === 'session.closed') return { type: m.type, reason: m.reason === 'expired' ? 'expired' : 'ended' }
     if (m.type === 'session.superseded') return { type: m.type }
+    if (m.type === 'ink.request') return { type: m.type }
     if (m.type === 'vote.ack') return parseVoteAck(m)
     if (m.type === 'reaction.ack' || m.type === 'question.ack') return parseFeedbackAck(m)
     if (m.type === 'card.ack') return parseCardAck(m)

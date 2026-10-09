@@ -1,0 +1,68 @@
+/* Audio chip (0.38 ticket 04): `![Title](clip.mp3)` is a small speaker chip in the slide's own type
+   and accent colour. It sits in the text flow (a plain block, not a figure, so it takes no media
+   slot). Three states set by the deck runtime on `data-audio-state`: ready, playing (animated bars
+   plus elapsed time) and finished. The bars and time slots are always laid out (visibility, not
+   display), and the time uses tabular figures in a fixed-width slot, so the chip never changes
+   width while the clock runs. */
+.slide-audio {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 0.55em;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0.5em 0;
+  padding: 0.4em 0.85em 0.4em 0.7em;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: clamp(14px, 1.55cqw, 24px);
+  line-height: 1.2;
+}
+.slide-audio-icon { flex: none; display: inline-flex; color: var(--accent); }
+.slide-audio-icon svg { width: 1.25em; height: 1.25em; display: block; }
+.slide-audio-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.slide-audio-bars {
+  flex: none;
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 0.14em;
+  width: 1.1em;
+  height: 1em;
+  visibility: hidden;
+}
+.slide-audio-bars > i {
+  flex: 1 1 0;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 1px;
+  transform-origin: bottom;
+  transform: scaleY(0.35);
+}
+.slide-audio-time {
+  flex: none;
+  min-width: 4.6ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  visibility: hidden;
+}
+.slide-audio[data-audio-state="playing"] { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.slide-audio[data-audio-state="playing"] .slide-audio-bars,
+.slide-audio[data-audio-state="playing"] .slide-audio-time,
+.slide-audio[data-audio-state="finished"] .slide-audio-time { visibility: visible; }
+.slide-audio[data-audio-state="playing"] .slide-audio-bars > i { animation: slide-audio-bar 0.9s ease-in-out infinite alternate; }
+.slide-audio[data-audio-state="playing"] .slide-audio-bars > i:nth-child(2) { animation-delay: -0.3s; }
+.slide-audio[data-audio-state="playing"] .slide-audio-bars > i:nth-child(3) { animation-delay: -0.6s; }
+.slide-audio[data-audio-state="playing"] .slide-audio-bars > i:nth-child(4) { animation-delay: -0.15s; }
+.slide-audio[data-audio-state="finished"] { border-color: color-mix(in srgb, var(--accent) 45%, transparent); color: color-mix(in srgb, var(--ink) 65%, transparent); }
+.slide-audio[data-audio-state="finished"] .slide-audio-icon { color: color-mix(in srgb, var(--accent) 60%, transparent); }
+@keyframes slide-audio-bar { from { transform: scaleY(0.3); } to { transform: scaleY(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .slide-audio[data-audio-state="playing"] .slide-audio-bars > i { animation: none; transform: scaleY(0.7); }
+}
+@media print {
+  .slide-audio-bars, .slide-audio-time { visibility: hidden !important; }
+}

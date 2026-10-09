@@ -4,6 +4,8 @@ import {
   resolveTrigger
 } from '../triggers.mjs'
 import { tokenizeTriggerBody } from './trigger-tokenizer.mjs'
+import { parseMarkdownFenceOpeningLine, isMarkdownFenceClosingLine } from './image-line-rules.mjs'
+export { parseMarkdownFenceOpeningLine, isMarkdownFenceClosingLine }
 
 const CHART_SHAPES = new Set(VALUE_TRIGGER_DICTIONARY.chart ?? [])
 const LIST_ITEM_RE = /^\s*(?:[-*]\s+|\d+[.)]\s+)/
@@ -87,27 +89,6 @@ export function parseChartFenceBodyList(lines) {
     items: roots.map((node) => node.text),
     children: roots.map((node) => node.children)
   }
-}
-
-/** Parse one Markdown backtick- or tilde-fence opening and retain its marker character and length. */
-export function parseMarkdownFenceOpeningLine(line) {
-  const match = String(line ?? '').replace(/\r$/, '').trim().match(/^(`{3,}|~{3,})(.*)$/)
-  if (!match) return null
-  return {
-    marker: match[1],
-    info: match[2].trim()
-  }
-}
-
-/** A closing marker uses the opening marker's character and is at least as long. */
-export function isMarkdownFenceClosingLine(line, opening) {
-  const match = String(line ?? '').replace(/\r$/, '').trim().match(/^(`{3,}|~{3,})\s*$/)
-  return Boolean(
-    match
-    && opening
-    && match[1][0] === opening.marker[0]
-    && match[1].length >= opening.marker.length
-  )
 }
 
 /**

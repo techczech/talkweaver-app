@@ -5,7 +5,7 @@ import { triggerFindingsForSlide } from '../../../shared/layout-doctor.ts'
 import type { LayoutDef } from '../../../shared/layout-registry/entries.ts'
 import type { OptionGroup, OptionValue } from '../../../shared/layout-registry/entries.ts'
 import {
-  groupApplies, layoutEntryFor, optionGroupsForSlide, sectionedOptionGroups, valuesForGroup,
+  groupApplies, slideHasEmbedBesideText, layoutEntryFor, optionGroupsForSlide, sectionedOptionGroups, valuesForGroup,
   type ApplicableOptionGroup, type InspectorOptionSection, type SectionedOptionBinding
 } from '../../../shared/layout-registry/options.ts'
 import { commitOptionSelection, groupHasSelection, logicalTriggerBlockAfterHeading, reportTriggerMergeWarnings, selectionForGroup } from '../../../shared/trigger-line.ts'
@@ -185,7 +185,9 @@ export function inspectorModel(
   const titlePainted = typeof titleLayout === 'string' ? titleLayout !== 'hidden' && titleLayout !== '' : undefined
   // Ticket 08: a pre-work step's rows (prework-*) are offered only when the slide is a step.
   const preworkKind = preworkKindOf(prework)
-  const candidates = optionGroupsForSlide({ layoutName, headingLevel, hasChildren, preworkKind })
+  // Ticket 13: the Page width group is offered only on a slide with an embedded page and body text.
+  const embedBesideText = slideHasEmbedBesideText(sourceMarkdown ?? row?.source_markdown ?? '')
+  const candidates = optionGroupsForSlide({ layoutName, headingLevel, hasChildren, preworkKind, embedBesideText })
   // T32: applicability reads the DECIDED selection — for List style with no authored token that is
   // the deck's choice, so the treatment is offered exactly when the compiled list is an icon list.
   const deckDecided = (key: string): string | undefined => key === DECK_DECIDED_GROUP ? deckListStyle : undefined
@@ -204,7 +206,7 @@ export function inspectorModel(
   }))
   const groups = unresolved
     ? []
-    : candidates.filter(({ group }) => groupApplies(group, { headingLevel, hasChildren, layoutName, selectedTokens, preworkKind }))
+    : candidates.filter(({ group }) => groupApplies(group, { headingLevel, hasChildren, layoutName, selectedTokens, preworkKind, embedBesideText }))
   // ADR-0032 (round-3 A2–A6): a board's Poll section is its Board section — the columns, hints,
   // prompt, example and settings, read from the slide's own text.
   const isBoard = !unresolved && selectedTokens['poll-type'] === 'poll=board'
@@ -221,7 +223,7 @@ export function inspectorModel(
       heading: isBoard && section.id === 'poll' ? 'Board' : section.id === 'prework' && prework ? prework.heading : section.heading,
       ...(section.id === 'prework' && prework ? { chip: prework.chip } : {}),
       bindings: section.bindings.map((binding) => bindingModel(binding, selectedTokens, deckListStyle, {
-        layoutName, headingLevel, hasChildren, selectedTokens, titlePainted, preworkKind
+        layoutName, headingLevel, hasChildren, selectedTokens, titlePainted, preworkKind, embedBesideText
       }))
     })),
     deckListStyle,

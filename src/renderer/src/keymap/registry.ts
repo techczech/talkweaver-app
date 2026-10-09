@@ -215,6 +215,20 @@ export const toggleHighlight = toggleInlineMarker(
     message: "Highlight can't span = characters / line breaks"
   }
 )
+export const toggleStrikethrough = toggleInlineMarker(
+  '~~',
+  {
+    test: (selection) => /[~\n]/.test(selection),
+    message: "Strikethrough can't span ~ characters / line breaks"
+  }
+)
+export const toggleUnderline = toggleInlineMarker(
+  '++',
+  {
+    test: (selection) => /[+\n]/.test(selection),
+    message: "Underline can't span + characters / line breaks"
+  }
+)
 
 export function isHttpUrl(text: string): boolean {
   if (!text || text !== text.trim() || /\s/.test(text)) return false
@@ -343,6 +357,8 @@ export const EDITOR_COMMANDS: EditorCommand[] = [
   command('italic', toggleItalic),
   command('inline-code', toggleInlineCode),
   command('highlight', toggleHighlight),
+  command('strikethrough', toggleStrikethrough),
+  command('underline', toggleUnderline),
   command('link', insertLink),
   surfaceCommand('find-talk', 'app.find-talk'),
   surfaceCommand('add-beside', 'slide-picker.add-beside'),

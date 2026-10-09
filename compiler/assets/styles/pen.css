@@ -1,0 +1,93 @@
+/* The Pen (0.38 ticket 08; ADR-0037; drawn in docs/design/2026-10-06-pointer-and-pen/, P2 shots
+   05a-05d, 07, 08, 08b, 12). The bar button with its ink dot and tool glyph, the "Pen on" chip and
+   the quiet "Clear drawing" button in the status bar, the options popover above the Pen button,
+   the same rows as a strip at the foot of a zoomed image, and the mark on the Next and Then
+   previews and in the outline for a slide that carries a drawing. The ink itself is SVG in the
+   live overlay (compiler/assets/runtime/pen-ink.js), never in a slide. */
+#presenterPen[aria-pressed="true"] .tw-ico { color: #ffd86b; }
+#presenterPen .tw-pen-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; margin-left: 2px; box-shadow: 0 0 0 1.5px #4a4015, 0 0 0 2.5px #ffffffcc; }
+#presenterPen .tw-pen-glyph { display: inline-flex; flex: none; margin-left: 1px; color: #ffd86b; }
+#presenterPen .tw-pen-glyph .tw-ico { width: 13px; height: 13px; }
+#presenterPen [hidden] { display: none !important; }
+#presenterPenChip { background: #3f3511; color: #ffd86b; }
+#presenterTopBar #presenterInkStatus { padding: 0; background: transparent; box-shadow: none; }
+#presenterTopBar #presenterInkStatus .tw-st-btn { color: #b9c9d8; border: 1px solid #ffffff22; background: transparent; }
+#presenterTopBar #presenterInkStatus .tw-st-btn:hover { border-color: #ffffff55; }
+#presenterTopBar #presenterInkStatus .tw-st-btn .tw-ico { color: #ffe08a; }
+
+/* The options popover: above the Pen button, right edges aligned (placePenPop in the template). */
+.tw-penpop {
+  position: fixed; z-index: 10010; width: 388px; box-sizing: border-box; padding: 8px 8px 10px;
+  background: #16202a; border: 1px solid #ffffff26; border-radius: 10px; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+  font: 500 14px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; color: #f7f3ea; white-space: nowrap;
+}
+.tw-penpop[hidden], .tw-penstrip[hidden] { display: none !important; }
+.tw-pp-head { display: flex; align-items: center; gap: 8px; padding: 2px 6px 8px; font-weight: 600; }
+.tw-pp-head .tw-ico { color: #ffe08a; }
+.tw-pp-mark { display: inline-flex; }
+.tw-pp-state { color: #a3b3c2; font-weight: 500; font-size: 13px; margin-left: 2px; }
+.tw-pp-kbd { margin-left: auto; font-family: inherit; font-weight: 500; font-size: 13px; line-height: 1; color: #a3b3c2; }
+.tw-penstrip .tw-pp-kbd { margin-left: 0; }
+.tw-pp-row { display: flex; align-items: center; gap: 12px; padding: 5px 6px; }
+.tw-pp-lbl { width: 44px; font-size: 13px; color: #71849a; }
+.tw-pp-tools, .tw-pp-inks, .tw-pp-widths { display: inline-flex; align-items: center; gap: 8px; }
+.tw-pp-inks { gap: 10px; }
+.tw-pp-widths { gap: 0; border: 1px solid #ffffff1c; border-radius: 7px; overflow: hidden; }
+.tw-pp-chip, .tw-pp-width {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; box-sizing: border-box;
+  border: 1px solid #ffffff1c; border-radius: 7px; background: #111a22; color: #a3b3c2; font-family: inherit; font-weight: 500; font-size: 13px; line-height: 1; cursor: pointer;
+}
+.tw-pp-chip .tw-ico { width: 15px; height: 15px; }
+.tw-pp-chip[aria-pressed="true"] { background: #244d88; color: #fff; border-color: #ffffff55; box-shadow: 0 0 0 2px #16202a, 0 0 0 4px #f7f3ea; }
+.tw-pp-width { border: 0; border-radius: 0; background: transparent; }
+.tw-pp-width[aria-pressed="true"] { background: #244d88; color: #fff; }
+.tw-pp-line { display: inline-block; width: 18px; border-radius: 3px; background: currentColor; }
+.tw-pp-line.thin { height: 2px; }
+.tw-pp-line.thick { height: 6px; }
+.tw-pp-ink {
+  width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: var(--ink, transparent); cursor: pointer;
+  box-shadow: inset 0 0 0 1.5px #ffffff55, 0 0 0 1px #0007;
+}
+.tw-pp-ink[aria-pressed="true"] { box-shadow: inset 0 0 0 1.5px #ffffff55, 0 0 0 2px #16202a, 0 0 0 4px #f7f3ea; }
+.tw-pp-hr { height: 1px; background: #ffffff14; margin: 5px 4px; }
+.tw-pp-item {
+  display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 10px;
+  width: 100%; min-height: 32px; padding: 0 10px; box-sizing: border-box; border: 0; border-radius: 6px;
+  background: none; color: #f7f3ea; font-family: inherit; font-weight: 500; font-size: 14px; line-height: 1.2; text-align: left; cursor: pointer;
+}
+.tw-pp-item::after { content: attr(data-key); font-size: 13px; color: #a3b3c2; }
+.tw-pp-item .tw-ico { color: #a3b3c2; }
+.tw-pp-item:not(:disabled):hover, .tw-pp-item:focus-visible { background: #2a4260; outline: none; }
+.tw-pp-item:disabled { color: #5f7183; cursor: default; }
+.tw-pp-hint { margin: 6px 6px 0; font-size: 13px; line-height: 1.35; color: #71849a; white-space: normal; }
+
+/* Over a zoomed image the same rows sit in a strip at the foot of the view (shot 07). */
+.tw-penstrip {
+  position: fixed; z-index: 10010; left: 0; right: 0; bottom: 22px; margin: 0 auto; width: max-content; display: flex; align-items: center; gap: 14px;
+  max-width: calc(100vw - 24px); box-sizing: border-box; padding: 8px 12px; flex-wrap: wrap; justify-content: center;
+  background: #16202af2; border: 1px solid #ffffff30; border-radius: 12px; box-shadow: 0 12px 34px rgba(0, 0, 0, 0.6);
+  font: 500 14px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; color: #f7f3ea; white-space: nowrap;
+}
+.tw-ps-name { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; color: #ffe08a; }
+.tw-ps-btn {
+  display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 11px; box-sizing: border-box;
+  border: 1px solid #ffffff1c; border-radius: 7px; background: #1f2c39; color: #f7f3ea; font-family: inherit; font-weight: 500; font-size: 14px; line-height: 1; cursor: pointer;
+}
+.tw-ps-btn::after { content: attr(data-key); margin-left: 4px; font-size: 13px; color: #a3b3c2; }
+.tw-ps-btn .tw-ico { color: #a3b3c2; }
+.tw-ps-btn:disabled { color: #5f7183; cursor: default; }
+.tw-ps-btn.tw-ps-off { background: #4a4015; border-color: #ffe08a88; color: #fff0c2; }
+.tw-ps-btn.tw-ps-off .tw-ico { color: #ffe08a; }
+
+/* A slide that carries a drawing: a small mark on the Next and Then previews and in the outline. */
+#nextPreview, #followingPreview { position: relative; }
+#nextPreview > .tw-ink-mark, #followingPreview > .tw-ink-mark {
+  position: absolute; top: 6px; right: 6px; z-index: 5; display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: 6px; background: #0b1118e0; color: #ffe08a; border: 1px solid #ffffff44; box-sizing: border-box;
+}
+.tw-ink-mark .tw-ico { width: 14px; height: 14px; }
+#presenterOutline .slide-link { position: relative; }
+#presenterOutline .slide-link .tw-ink-mark { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); display: inline-flex; color: #ffe08a; }
+
+/* Live ink is never printed. */
+@media print { .tw-penpop, .tw-penstrip, .tw-ink-mark { display: none !important; } }

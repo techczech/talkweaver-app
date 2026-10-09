@@ -56,7 +56,7 @@ const MENUS = {
   presenterMenuView: {
     name: 'View menu', label: 'View', sections: ['Layout', 'Slide on every screen'],
     items: [['notesPlacementBtn', 'Notes placement and scrolling…'], ['viewOutline', 'Outline'], ['viewFontDown', 'Smaller'], ['viewFontUp', 'Larger'], ['viewReveal', 'Reveal mode'], ['viewFocus', 'Focus mode'],
-      ['viewHighlight', 'Highlight text'], ['viewHighlightClear', 'Clear highlights'], ['viewShortcuts', 'Keyboard shortcuts'], ['viewCommands', 'All commands…']]
+      ['viewHighlight', 'Highlight text'], ['viewPointer', 'Pointer'], ['viewPen', 'Pen'], ['viewInkClear', 'Clear drawing on this slide'], ['viewInkClearAll', 'Clear all drawings'], ['viewHighlightClear', 'Clear highlights'], ['viewShortcuts', 'Keyboard shortcuts'], ['viewCommands', 'All commands…']]
   }
 }
 const SWITCH_ITEMS = ['liveAllowQuestions', 'liveAllowReactions']
@@ -104,6 +104,7 @@ try {
   // The recording preload as the app ships it (it mounts the live bridge); electron stubbed.
   // invoke() answers the channels the preloads call and logs [channel, first argument]; on() keeps
   // the handlers so the test can push live status and poll state; the clipboard is a fixture.
+  // The clipboard is read in main (live:read-clipboard, embed-sandbox design 4.3): invoke() answers it from the fixture.
   const stubPath = join(scratch, 'electron-stub.mjs')
   await writeFile(stubPath, `const answers = {
   'recording:context': { testMode: true, talkSlug: 'menus', discardThresholdMs: 0 }, 'live:status': 'ended', 'live:snapshot': {},
@@ -114,7 +115,7 @@ try {
 }
 window.__ipcCalls = []; window.__ipcArgs = []; window.__ipcOn = {}; window.__ipcDelay = {}; window.__clipboardWrites = []; window.__clipboardText = ''
 export const ipcRenderer = {
-  invoke: async (channel, ...args) => { window.__ipcArgs.push([channel, args[0]]); window.__ipcCalls.push([channel, args[0] && typeof args[0] === 'object' ? (args[0].pollId || args[0].type || 'object') : args[0] ?? null]); const ms = window.__ipcDelay?.[channel]; if (ms) await new Promise((r) => setTimeout(r, ms)); return channel in answers ? answers[channel] : {} },
+  invoke: async (channel, ...args) => { window.__ipcArgs.push([channel, args[0]]); window.__ipcCalls.push([channel, args[0] && typeof args[0] === 'object' ? (args[0].pollId || args[0].type || 'object') : args[0] ?? null]); const ms = window.__ipcDelay?.[channel]; if (ms) await new Promise((r) => setTimeout(r, ms)); if (channel === 'live:read-clipboard') return { text: window.__clipboardText, image: null }; return channel in answers ? answers[channel] : {} },
   on(channel, fn) { (window.__ipcOn[channel] ||= []).push(fn) }, send() {}, removeListener() {}
 }
 window.__push = (channel, value) => { for (const fn of window.__ipcOn[channel] || []) fn(null, value) }

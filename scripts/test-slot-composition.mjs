@@ -32,6 +32,9 @@ const here = dirname(fileURLToPath(import.meta.url))
 const repo = resolve(here, '..')
 const baselinePath = join(repo, 'scripts/fixtures/slot-composition-baseline.json')
 const dir = mkdtempSync(join(tmpdir(), 'tw-slot-'))
+// The decks are written to a temp folder and name pictures in scripts/fixtures/layout by absolute
+// path: both folders are the allowed roots (ADR-0036; the default is the deck's own folder alone).
+const FIXTURE_ROOTS = { allowedAssetRoots: [dir, join(repo, 'scripts/fixtures/layout')] }
 writeFileSync(join(dir, 'known-video.mp4'), Buffer.from('fixture video bytes'))
 copyFileSync(join(repo, 'scripts/fixtures/layout/sample-image.png'), join(dir, 'known-video.png'))
 
@@ -267,7 +270,7 @@ async function compile(name) {
   const path = join(dir, `${name}.md`)
   const source = deckSourceFor(name)
   writeFileSync(path, source, 'utf8')
-  const model = await prepareSource(path, source, `slot-${name}`, statSync(path))
+  const model = await prepareSource(path, source, `slot-${name}`, statSync(path), undefined, FIXTURE_ROOTS)
   const slide = model.slides.find((entry) => entry.nodeLevel === 3) ?? model.slides.at(-1)
   return { model, slide, html: model.fullHtml }
 }
@@ -737,7 +740,7 @@ const shotLines = (title, images, labels, tokens = '', frontmatter = []) => [
 async function compileSource(name, source) {
   const path = join(dir, `${name}.md`)
   writeFileSync(path, source, 'utf8')
-  const model = await prepareSource(path, source, `slot-${name}`, statSync(path))
+  const model = await prepareSource(path, source, `slot-${name}`, statSync(path), undefined, FIXTURE_ROOTS)
   return { model, slide: model.slides.find((entry) => entry.nodeLevel === 3), html: model.fullHtml }
 }
 const labels3 = ['Released web resource', 'Session with an open model', 'Explainer built']

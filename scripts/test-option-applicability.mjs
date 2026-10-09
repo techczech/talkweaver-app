@@ -43,7 +43,7 @@ assert.deepEqual(undeclared, [], `every global option group declares appliesTo: 
 
 const KNOWN_FACETS = new Set([
   'kinds', 'layouts', 'excludeLayouts', 'titleRegimes', 'headingLevels',
-  'requiresChildren', 'requiresTokens', 'anyOf', 'preworkKinds'
+  'requiresChildren', 'requiresTokens', 'anyOf', 'preworkKinds', 'embedBesideText'
 ])
 const knownLayoutNames = new Set(LAYOUTS.map((entry) => entry.name))
 for (const group of GLOBAL_OPTION_GROUPS) {
@@ -328,7 +328,7 @@ assert.deepEqual(sectionsFor('list', '{list}{iconlist}'), [
   ['Layout', ['list-style', 'list-style>iconlist-variant', 'icon-level']],
   ['Title', ['title-placement', 'title-display', 'font-title']],
   ['Slide', ['background', 'font-body', 'media-placement', 'section-label', 'claim-style', 'narrow-columns']],
-  ['Steps', ['arrival-mode', 'stepping']],
+  ['Steps', ['arrival-mode', 'stepping', 'image-steps', 'emphasis-steps']],
   ['Poll', ['poll-type']],
   ['Audience', ['reactions']]
 ], 'an icon list: layout section first (an undeclared global, Claim style, falls into Slide) with the treatment under List style, then the fixed run in the drawn order')
@@ -357,7 +357,7 @@ assert.deepEqual(
     ['Layout', ['Style', 'Icon treatment', 'Icons on']],
     ['Title', ['Placement', 'Display', 'Size']],
     ['Slide', ['Background', 'Body size', 'Media', 'Section label', 'Claim style', 'Narrow columns']],
-    ['Steps', ['Arrival', 'Stepping']],
+    ['Steps', ['Arrival', 'Stepping', 'Step through images', 'Emphasis appears on Next']],
     ['Poll', ['Type']],
     ['Audience', ['Reactions']]
   ],

@@ -1062,6 +1062,30 @@ You cannot act in the world and look up everything. You must know things in a sp
 - Even with reveal mode active
 - Useful for reference slides
 
+### image-steps
+{image-steps}
+
+![First picture](assets/sample-image.png "Next enlarges each picture in turn")
+![Second picture](assets/sample-image.png "Then the whole slide again")
+
+### emphasis-steps
+{emphasis-steps}
+
+- The first point has a **key phrase**
+- The second has a ==highlighted claim==
+- The third is ++underlined++, and one word is ~~struck~~
+
+### page-70
+{page-80}
+
+[Simulation: assets/sampler-embedded-page.html]
+
+- The page takes 80% of the width; 70% is the default
+
+### embedded-page
+
+[Simulation: assets/sampler-embedded-page.html]
+
 ### plainlist
 {plainlist}
 

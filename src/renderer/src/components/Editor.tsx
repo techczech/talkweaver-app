@@ -1,7 +1,8 @@
 import { runActionBarEditing } from './actionBar/editing-command'
 import { boardStarterInsertion, mintBoardSlideId } from '../../../../compiler/scripts/lib/board-slide.mjs'
 import { useEffect, useRef, useCallback } from 'react'
-import { imageWidgetExtension } from '../extensions/imageWidget'
+import { imageWidgetExtension, imagePlacementsChanged } from '../extensions/imageWidget'
+import { imagePlacementForLine, type PlacementRow } from '../../../shared/image-placement.ts'
 import {
   getCursorListItemContext,
   minimalChange,
@@ -18,7 +19,7 @@ import {
   KEYMAP_CHANGED_EVENT
 } from '../keymap/store'
 import { EDITOR_COMMANDS } from '../keymap/registry'
-import { outlineFoldService } from '../extensions/outlineFold'
+import { imageParagraphNoFold, outlineFoldService } from '../extensions/outlineFold'
 import { frontmatterTableExtension } from '../extensions/frontmatterTable'
 import { inlineMarkExtension } from '../extensions/inlineMark'
 import {
@@ -26,7 +27,7 @@ import {
   objectBlocksExtension,
   setOpenObjectBlock
 } from '../extensions/objectBlocks/field'
-import { EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view'
+import { EditorView, keymap, highlightActiveLine } from '@codemirror/view'
 import { EditorState, EditorSelection, Prec, Compartment } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap, undo, redo } from '@codemirror/commands'
 import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/search'
@@ -48,6 +49,7 @@ import { lookForRecovery, noteOutlineSaveReply, outlineDiskChanges } from '../li
 import { applyMinimalChange } from '../lib/minimalChange'
 import { triggerCompleteExtension } from '../extensions/triggerComplete'
 import { tokenProtectExtension } from '../extensions/idProtect'
+import { setSlideNumberLines, slideNumberGutterExtension } from '../extensions/slideNumberGutter'
 import { setTextFitNotes, textFitWarningExtension } from '../extensions/textFitWarning'
 import type { TextFitNote } from '../../../shared/text-fit-notes.ts'
 import { flashTriggerEchoAt, triggerEchoChange } from '../extensions/triggerEcho'
@@ -144,6 +146,10 @@ interface Props {
   focusRange?: FocusRange | null
   /** ADR-0033 §1: heading lines of slides whose text cannot fit at the readable minimum. */
   textFitNotes?: readonly TextFitNote[]
+  /** Heading line of each compiled slide (strip order): the gutter numbers those lines, nothing else. */
+  slideLines?: ReadonlyArray<number | null>
+  /** Compiled slide rows: each carries the compiler's image placements for the editor's image labels. */
+  placementRows?: readonly PlacementRow[] | null
   onCursorLine?: (line: number) => void
   onImageWidgetClick?: (id: string) => void
   /** Opens the app-wide generated shortcut sheet from a focused object editor. */
@@ -201,7 +207,7 @@ interface Props {
     cutSelection: () => void
     copySelection: () => void
     pasteClipboard: () => void
-    runFormat: (id: 'bold' | 'italic' | 'inline-code' | 'highlight' | 'link') => void
+    runFormat: (id: 'bold' | 'italic' | 'inline-code' | 'highlight' | 'strikethrough' | 'underline' | 'link') => void
   }) => void
   // Icon picker (ADR-0021): on mount Editor registers a reader that returns the CURRENT caret's
   // top-level list-item context ({heading, occurrence, itemIndex}) — or null when the caret is not
@@ -291,6 +297,8 @@ export default function Editor({
   focusLine,
   focusRange,
   textFitNotes,
+  slideLines,
+  placementRows,
   onCursorLine,
   onImageWidgetClick,
   onOpenHelp,
@@ -339,6 +347,8 @@ export default function Editor({
   useEffect(() => { onCursorLineRef.current = onCursorLine }, [onCursorLine])
   const onDirtyRef = useRef(onDirty)
   useEffect(() => { onDirtyRef.current = onDirty }, [onDirty])
+  const placementRowsRef = useRef(placementRows)
+  const placementMemo = useRef<{ doc: unknown; rows: unknown; text: string } | null>(null)
   const onImageWidgetClickRef = useRef(onImageWidgetClick)
   useEffect(() => { onImageWidgetClickRef.current = onImageWidgetClick }, [onImageWidgetClick])
   const onOpenHelpRef = useRef(onOpenHelp)
@@ -632,11 +642,11 @@ export default function Editor({
               return false
             }
           }),
-          lineNumbers(),
+          slideNumberGutterExtension,
           historyCompartment.of(history()),
           highlightActiveLine(),
           syntaxHighlighting(defaultHighlightStyle),
-          markdown({ base: markdownLanguage, codeLanguages: languages }),
+          markdown({ base: markdownLanguage, codeLanguages: languages, extensions: [imageParagraphNoFold] }),
           // Folding: collapse any heading section or list subtree (gutter arrows + Ctrl-Shift-[/]).
           codeFolding(),
           foldGutter(),
@@ -774,7 +784,15 @@ export default function Editor({
             vaultRoot: vaultRoot ?? null,
             // currentTalkRef holds the active outline path; derive its dir (reused across talks).
             talkDir: () => currentTalkRef.current.replace(/\/[^/]*$/, '') || null,
-            onClick: (id) => onImageWidgetClickRef.current?.(id)
+            onClick: (id) => onImageWidgetClickRef.current?.(id),
+            placementForLine: (line, doc) => {
+              const rows = placementRowsRef.current
+              if (!rows) return null
+              const memo = placementMemo.current
+              const text = memo && memo.doc === doc ? memo.text : doc.toString()
+              placementMemo.current = { doc, rows, text }
+              return imagePlacementForLine(rows, text, line)
+            }
           }),
           EditorView.lineWrapping
         ]
@@ -821,6 +839,22 @@ export default function Editor({
     const v = viewRef.current
     if (v) setTextFitNotes(v, textFitNotes ?? [])
   }, [textFitNotes, talk.outlinePath])
+
+  // Image placement labels follow the compiler: redraw the previews when the compiled rows change.
+  useEffect(() => {
+    placementRowsRef.current = placementRows
+    viewRef.current?.dispatch({ effects: imagePlacementsChanged.of(null) })
+  }, [placementRows])
+
+  // Slide numbers beside headings (replaces line numbers); same effect-driven refresh, no remount.
+  // Keyed on the line list's CONTENT: slideLines is rebuilt on every keystroke but only changes
+  // value on a recompile, and between compiles the gutter tracks edits itself.
+  const slideLinesKey = (slideLines ?? []).join(',')
+  useEffect(() => {
+    const v = viewRef.current
+    if (v) setSlideNumberLines(v, slideLines ?? [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slideLinesKey, talk.outlinePath])
 
   // e2e seam (mirrors KEYMAP_CHANGED_EVENT): the diagnose harness drives focus by dispatching a
   // `tw-focus-scope` window event carrying {from,to} | null, so the scoped view can be exercised in

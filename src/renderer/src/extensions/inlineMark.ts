@@ -9,9 +9,15 @@ import { inlineMarkRanges } from '../../../../compiler/scripts/lib/00-inline-pro
 
 export { inlineMarkRanges }
 
+const MARK_CLASS = {
+  highlight: 'cm-ink-marker',
+  strike: 'cm-strike-marker',
+  underline: 'cm-underline-marker'
+} as const
+
 function buildMarks(view: EditorView): DecorationSet {
   // The editor and compiler share protected-range semantics, not merely a regex: matching
-  // backtick runs and whole Markdown link constructs are opaque to ==mark==. Decoration covers
+  // backtick runs and whole Markdown link constructs are opaque to ==mark==, ~~strike~~ and ++underline++. Decoration covers
   // the marker interior only, mirroring the deck after its delimiters have been removed. Expand
   // each visible range to complete lines so a protected construct cannot be clipped at a viewport
   // edge, then scan only those lines rather than the whole document.
@@ -27,7 +33,7 @@ function buildMarks(view: EditorView): DecorationSet {
   return Decoration.set(
     visibleLines.flatMap((visible) =>
       inlineMarkRanges(view.state.sliceDoc(visible.from, visible.to))
-        .map(({ from, to }) => Decoration.mark({ class: 'cm-ink-marker' })
+        .map(({ from, to, kind }) => Decoration.mark({ class: MARK_CLASS[kind] })
           .range(visible.from + from, visible.from + to))
     ),
     true
@@ -50,6 +56,13 @@ export const inlineMarkExtension = [
     '.cm-ink-marker': {
       background: '#ffe45e66',
       borderRadius: '2px'
+    },
+    '.cm-strike-marker': {
+      textDecoration: 'line-through'
+    },
+    '.cm-underline-marker': {
+      textDecoration: 'underline',
+      textUnderlineOffset: '0.18em'
     }
   })
 ]

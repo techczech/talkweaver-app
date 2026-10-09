@@ -1,11 +1,13 @@
+import { validPointer, createPointerOverlay, pointerOverlayRuntimeSource } from './pointer-overlay.js'
+import { penInkView, penDraw, penInkRuntimeSource } from './pen-ink.js'
 import { isExtendedPoll, normaliseExtendedPollFields, normaliseExtendedPollAggregates, normaliseBallotChoice, samePollChoice, renderExtendedPollResults, createExtendedBallot, extendedPollRuntimeSource } from './poll-extended.js'
-import { createInstantSlideSurface, instantSlideRuntimeSource } from './instant-slide.js'
+import { createInstantSlideSurface, createBreakChime, instantSlideRuntimeSource } from './instant-slide.js'
 import { createAudienceReactions, audienceReactionsSupported, audienceReactionsRuntimeSource, audienceReactionIcons } from './audience-reactions.js'
 import { createAudienceAsk, audienceAskRuntimeSource } from './audience-ask.js'
 import { createQuestionLog, pollAnswerRecord, myNotesPollAnswerKey, audienceMyNotesRuntimeSource } from './audience-my-notes.js'
 import { createAudienceBoard, audienceBoardRuntimeSource, audienceBoardIcons, normaliseBoardPoll, normaliseOwnBoards, normaliseCardAck } from './audience-board.js'
 
-/** @typedef {import('../../../worker/protocol').SlideStateMessage | import('../../../worker/protocol').InstantSlideMessage | import('../../../worker/protocol').SessionClosedMessage | import('../../../worker/protocol').PollStateMessage | import('../../../worker/recovery-protocol').SessionPresence} FollowServerMessage */
+/** @typedef {import('../../../worker/protocol').SlideStateMessage | import('../../../worker/protocol').InstantSlideMessage | import('../../../worker/protocol').SessionClosedMessage | import('../../../worker/protocol').PollStateMessage | import('../../../worker/recovery-protocol').SessionPresence | import('../../../worker/protocol').PointerMessage | import('../../../worker/protocol').InkMessage} FollowServerMessage */
 
 export function normaliseFocus(value) {
   if (!value || typeof value !== 'object') return null
@@ -130,8 +132,16 @@ export function parseServerMessage(value) {
       return { type: 'session.presence', presenterConnected: message.presenterConnected, venueScreens: message.venueScreens }
     }
     if (message?.type === 'poll.state') return normalisePollState(message)
-    if (message?.type === 'instant.state') return message.slide == null || normaliseInstantSlide(message.slide)
-      ? { type: 'instant.state', slide: message.slide ?? null } : null
+    if (message?.type === 'pointer.live') return validPointer(message.pointer) ? { type: 'pointer.live', pointer: message.pointer } : null
+    if (message?.type === 'ink.live') {
+      // The Pen's ink (ticket 08): checked field by field again here, drawn only by venue screens.
+      const ink = penInkView(message.ink)
+      return ink ? { type: 'ink.live', ink } : null
+    }
+    if (message?.type === 'instant.state') {
+      const slide = message.slide == null ? null : normaliseInstantSlide(message.slide)
+      return message.slide == null || slide ? { type: 'instant.state', slide } : null
+    }
     const focus = message?.focus == null ? null : normaliseFocus(message.focus)
     const lightbox = message?.lightbox === undefined ? undefined : normaliseLightbox(message.lightbox)
     if (
@@ -149,16 +159,33 @@ export function parseServerMessage(value) {
 
 export function normaliseInstantSlide(slide) {
   if (!slide || typeof slide !== 'object' || !Number.isSafeInteger(slide.shownAt)) return null
-  if (slide.kind === 'text') return typeof slide.text === 'string' && slide.text.trim() && slide.text.length <= 2000 ? slide : null
-  if (slide.kind === 'link') return typeof slide.url === 'string' && /^https?:\/\//i.test(slide.url)
-    && typeof slide.qrSvg === 'string' && /^<svg\b/i.test(slide.qrSvg.trim()) ? slide : null
+  // A link is forwarded in its canonical form (new URL(...).href), or the slide is refused: http(s) only, no userinfo,
+  // and nothing left that could open an HTML comment (< > " `) or a control character.
+  const canonical = (value) => {
+    if (typeof value !== 'string' || value.length > 2048 || !/^https?:\/\/[^\s]+$/i.test(value) || /[\u0000-\u001f\u007f]/.test(value)) return null
+    try {
+      const url = new URL(value)
+      if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username || url.password) return null
+      return url.href.length <= 2048 && !/[<>"`\u0000-\u001f\u007f]/.test(url.href) ? url.href : null
+    } catch { return null }
+  }
+  const withLink = () => {
+    if (slide.link == null) return slide
+    const link = canonical(slide.link)
+    return link && (slide.linkQrSvg == null || (typeof slide.linkQrSvg === 'string' && /^<svg\b/i.test(slide.linkQrSvg.trim()))) ? { ...slide, link } : null
+  }
+  if (slide.kind === 'text') return typeof slide.text === 'string' && slide.text.trim() && slide.text.length <= 2000 ? withLink() : null
+  if (slide.kind === 'link') return canonical(slide.url)
+    && typeof slide.qrSvg === 'string' && /^<svg\b/i.test(slide.qrSvg.trim()) ? { ...slide, url: canonical(slide.url) } : null
   if (slide.kind === 'time') return slide
   if (slide.kind === 'image') return typeof slide.dataUrl === 'string'
     && /^data:image\/webp;base64,[A-Za-z0-9+/]+={0,2}$/.test(slide.dataUrl) && slide.dataUrl.length <= 120000
     && Number.isSafeInteger(slide.width) && Number.isSafeInteger(slide.height)
     && slide.width > 0 && slide.height > 0 && Math.max(slide.width, slide.height) <= 1600 ? slide : null
   if (slide.kind === 'countdown') return Number.isSafeInteger(slide.startedAt) && Number.isSafeInteger(slide.durationMs)
-    && slide.durationMs >= 1000 && slide.durationMs <= 86400000 && (slide.label == null || typeof slide.label === 'string') ? slide : null
+    && slide.durationMs >= 1000 && slide.durationMs <= 86400000 && (slide.label == null || typeof slide.label === 'string')
+    && (slide.soundAtEnd == null || typeof slide.soundAtEnd === 'boolean')
+    && (slide.endSound == null || slide.endSound === 'none' || slide.endSound === 'chime' || slide.endSound === 'alarm') ? withLink() : null
   return null
 }
 
@@ -637,7 +664,20 @@ export function createAudienceFollowRuntime(options) {
     onAnswered: () => options.onPollAnswered?.(),
     sendVote: (pollId, choice) => client?.sendVote(pollId, choice) || false,
   }) : null
-  const instantSurface = document.body ? createInstantSlideSurface(document.body) : { show() {} }
+  const pointer = options.venue && document.body ? createPointerOverlay({ document, staleMs: 2000, drawInk: penDraw, surface: () => {
+    const image = document.getElementById('lightboxImg')
+    const box = document.getElementById('lightbox')
+    const zoomed = box?.classList.contains('open')
+    const target = zoomed ? image : document.querySelector('.stage')
+    return target ? { element: target, rect: target.getBoundingClientRect(),
+      canvasScale: document.querySelector('.stage').getBoundingClientRect().width / 1280,
+      space: zoomed ? 'image' : 'slide', image: zoomed ? Math.max(0, Number(box?.dataset.index) || 0) : undefined,
+      slideId: options.getViewerPosition()?.slideId } : null
+  } }) : null
+  const instantSurface = document.body ? createInstantSlideSurface(document.body, options.venue
+    // The venue screen is a room display: it shows the talk's QR and plays the end-of-break chime.
+    // Phones (not venue) get neither, no QR code at all, and their link stays clickable.
+    ? { qr: options.breakQr || undefined, showQr: true, clickable: false, chime: createBreakChime(document.defaultView) } : {}) : { show() {} }
   // The reaction bar (ADR-0027): drawn only where the page carries its dock (never the venue screen).
   const reactionDock = options.reactions ? document.getElementById('rxDock') : null
   let ask = null
@@ -705,9 +745,15 @@ export function createAudienceFollowRuntime(options) {
       .catch(() => {}).then(() => { reactionsChecking = false })
   }
   let currentInstant = null
+  // The handout home page holds the full-screen instant slide back while the person reads the Handout
+  // tab (instantAllowed), says so on its Live tab (onInstantChanged) and shows it on return (refreshInstant).
+  function showInstant(slide) {
+    instantSurface.show(slide && (!options.instantAllowed || options.instantAllowed()) ? slide : null)
+  }
   function receiveInstant(slide) {
     currentInstant = slide
-    instantSurface.show(following ? slide : null)
+    showInstant(following ? slide : null)
+    options.onInstantChanged?.(following ? slide : null)
   }
 
   function renderControls() {
@@ -721,6 +767,8 @@ export function createAudienceFollowRuntime(options) {
     nowLiveBadges.forEach((badge) => { badge.hidden = !sessionLive })
     if (!sessionLive) nameWrap.hidden = true
     options.reactions?.onSwitchesChanged?.()
+    // The handout home page shows its Live tab while a session is live (design 2026-10-02 B).
+    options.onLiveChanged?.(sessionLive)
   }
   function markEnded(reason = 'ended') {
     lateBoardShown = ''
@@ -731,9 +779,13 @@ export function createAudienceFollowRuntime(options) {
     following = false
     diverged = false
     latestState = null
+    // The talk's drawings end with it.
+    pointer?.ink(null)
+    options.releaseLiveSlideState?.()
     presenterConnected = true
     currentInstant = null
     instantSurface.show(null)
+    options.onInstantChanged?.(null)
     pollRuntime?.end()
     reactions?.end()
     board?.end()
@@ -746,6 +798,7 @@ export function createAudienceFollowRuntime(options) {
   }
   let lastPollSlideId = null
   function receiveLiveState(message) {
+    options.onLiveSlideState?.(message.slideId)
     // Presenter moved on → clear any poll card so the room sees the new slide.
     if (message.slideId !== lastPollSlideId) {
       lastPollSlideId = message.slideId
@@ -783,7 +836,10 @@ export function createAudienceFollowRuntime(options) {
           : status === 'incompatible' ? 'This handout needs a compatible live service.'
           : 'live paused · reconnecting'
       },
-      onSlideState: receiveLiveState,
+      onPointer: (value) => { if (following) pointer?.show(value) },
+      // The Pen's ink: kept for its own layer; the overlay draws it only while that layer is on screen.
+      onInk: (value) => { pointer?.ink(value) },
+      onSlideState: (value) => { pointer?.show('gone'); receiveLiveState(value); },
       onPresence: (presence) => {
         const reconnected = !presenterConnected && presence.presenterConnected
         presenterConnected = presence.presenterConnected
@@ -816,7 +872,7 @@ export function createAudienceFollowRuntime(options) {
   function resumeFollowing() {
     if (!sessionLive) return
     following = true
-    instantSurface.show(currentInstant)
+    showInstant(currentInstant)
     diverged = false
     ensureClient()
     if (latestState && !options.applyLiveSlideState(latestState)) {
@@ -838,6 +894,8 @@ export function createAudienceFollowRuntime(options) {
     if (following) {
       following = false
       diverged = false
+      // The page keeps the slide but drops what only a follower shows (emphasis steps, ADR-0035).
+      options.releaseLiveSlideState?.()
       renderControls()
       return
     }
@@ -875,7 +933,7 @@ export function createAudienceFollowRuntime(options) {
   }
   void discoverSession()
   ;(options.scheduleDiscovery || ((callback) => window.setInterval(callback, 5000)))(discoverSession)
-  return { discoverSession, viewerMoved, markEnded, slideChanged: () => { reactions?.slideChanged(); board?.slideChanged() }, reactions, ask, board, venueKeyboardAvailable: () => Boolean(options.venue && !(sessionLive && presenterConnected)) }
+  return { discoverSession, viewerMoved, markEnded, refreshInstant: () => showInstant(following ? currentInstant : null), slideChanged: () => { pointer?.show('gone'); reactions?.slideChanged(); board?.slideChanged() }, reactions, ask, board, venueKeyboardAvailable: () => Boolean(options.venue && !(sessionLive && presenterConnected)) }
 }
 
 /** @param {any} message */
@@ -1208,6 +1266,8 @@ export function createAudienceFollowClient(options) {
           if (parsed?.type === 'poll.state') options.onPollState?.(parsed)
           else if (parsed?.type === 'slide.state') applySlide(parsed)
           else if (parsed?.type === 'session.presence') options.onPresence?.(parsed)
+          else if (parsed?.type === 'pointer.live') { if (options.kind === 'screen') options.onPointer?.(parsed.pointer) }
+          else if (parsed?.type === 'ink.live') { if (options.kind === 'screen') options.onInk?.(parsed.ink) }
           else if (parsed?.type === 'instant.state') applyInstant(parsed)
         } catch { fail() }
       }
@@ -1308,7 +1368,7 @@ export function createAudienceFollowClient(options) {
 }
 
 export function liveFollowRuntimeSource() {
-  return extendedPollRuntimeSource() + '\n' + instantSlideRuntimeSource() + '\n' + audienceReactionsRuntimeSource() + '\n' + audienceAskRuntimeSource() + '\n' + audienceBoardRuntimeSource() + '\n' + audienceMyNotesRuntimeSource() + '\n' + [normaliseFocus, normaliseLightbox, audienceSocketUrl, normaliseBoardPollState, normalisePollState, normaliseInstantSlide, parseServerMessage, escapePollHtml,
+  return pointerOverlayRuntimeSource() + '\n' + penInkRuntimeSource() + '\n' + extendedPollRuntimeSource() + '\n' + instantSlideRuntimeSource() + '\n' + audienceReactionsRuntimeSource() + '\n' + audienceAskRuntimeSource() + '\n' + audienceBoardRuntimeSource() + '\n' + audienceMyNotesRuntimeSource() + '\n' + [normaliseFocus, normaliseLightbox, audienceSocketUrl, normaliseBoardPollState, normalisePollState, normaliseInstantSlide, parseServerMessage, escapePollHtml,
     pollTypeLabel, submissionLimit, renderAudiencePollMarkup, shouldRenderAudiencePollUpdate, createAudiencePollRuntime, reconnectDelay,
     audiencePositionsMatch, createAudienceFollowRuntime, normaliseVoteReceipt, normaliseReactionAck, normaliseSwitches, probeAudienceSession, createAudienceFollowClient]
     .map((fn) => fn.toString()).join('\n')

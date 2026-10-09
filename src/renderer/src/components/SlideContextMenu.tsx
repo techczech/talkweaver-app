@@ -10,7 +10,7 @@ import { Fragment, useState } from 'react'
 import {
   BarChart3, Bold, ClipboardPaste, Code, Copy, Crosshair, FileCode2, GitFork, Highlighter,
   ImagePlus, Info, Italic, LayoutTemplate, Layers, Link2, Network, Play, Scissors, Share2,
-  Sparkles, Table2, Tag, Trash2
+  Sparkles, Strikethrough, Table2, Tag, Trash2, Underline
 } from 'lucide-react'
 import { useClamped, useDismiss, useMenuKeyNav } from './talklist/menus'
 import {
@@ -26,7 +26,7 @@ export type SlideMenuAction =
   | 'layout' | 'icon' | 'image' | 'tag'
   | 'insert-table' | 'insert-mindmap' | 'insert-chart'
   | 'insert-mermaid' | 'insert-diagram' | 'insert-svg'
-  | 'fmt-bold' | 'fmt-italic' | 'fmt-code' | 'fmt-highlight' | 'fmt-link'
+  | 'fmt-bold' | 'fmt-italic' | 'fmt-code' | 'fmt-highlight' | 'fmt-strikethrough' | 'fmt-underline' | 'fmt-link'
   | 'focus' | 'where-used' | 'explain' | 'present-here'
   | 'delete'
   | 'cut' | 'copy' | 'paste'
@@ -91,6 +91,8 @@ const FORMAT_ITEMS: Item[] = [
   { action: 'fmt-italic', icon: <Italic size={IC} />, label: 'Italic', shortcutId: 'editor.italic' },
   { action: 'fmt-code', icon: <Code size={IC} />, label: 'Inline code', shortcutId: 'editor.inline-code' },
   { action: 'fmt-highlight', icon: <Highlighter size={IC} />, label: 'Highlight', shortcutId: 'editor.highlight' },
+  { action: 'fmt-strikethrough', icon: <Strikethrough size={IC} />, label: 'Strikethrough', shortcutId: 'editor.strikethrough' },
+  { action: 'fmt-underline', icon: <Underline size={IC} />, label: 'Underline', shortcutId: 'editor.underline' },
   { action: 'fmt-link', icon: <Link2 size={IC} />, label: 'Link', shortcutId: 'editor.link' }
 ]
 

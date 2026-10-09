@@ -21,7 +21,9 @@ import { outlineWritesSettled, queueOutlineWrite, setOutlinePathResolver } from 
 import { checkPreconditions, publishUrl, resolveBase } from '../src/main/publishing-logic.ts'
 import { stampHandoutUrl } from '../src/shared/handout-stamp.ts'
 import { outlineRefusal } from '../src/main/vault-paths.ts'
+import { assetRootsForTalk } from '../src/main/asset-roots.ts'
 import { withoutPreworkSlides } from '../src/shared/run-prework.ts'
+import { handoutHomeDetails, handoutHomePrework } from '../src/shared/handout-home.ts'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
 const sourceText = readFileSync(join(REPO, 'src/main/index.ts'), 'utf8')
@@ -149,6 +151,8 @@ function publishDeps(siteDir, trace) {
     currentVaultRoot: () => config.vaultRoot,
     writableVaultRoot: () => config.vaultRoot,
     vaultRootFor: () => config.vaultRoot,
+    // The real root choice (ADR-0036), with the test's vault as the one registered vault.
+    assetRootsFor: (path) => assetRootsForTalk({ resolve: () => (config.vaultRoot ? { vault: { root: config.vaultRoot } } : null) }, path),
     readToken: () => 'token',
     augmentedPath: (p) => p,
     wranglerFoundOn: () => true,
@@ -156,7 +160,7 @@ function publishDeps(siteDir, trace) {
     ensureLiveWorker: async () => { trace.liveWorker += 1; return { baseUrl: 'http://127.0.0.1:8787', adminSecret: 'x' } },
     flushTalkForPublish,
     statSync, basename, join, pathToFileURL, existsSync, mkdirSync, writeFileSync, readdirSync,
-    resolveImageRefs: (text) => text,
+    resolveImageRefs: (text) => text, resolvePooledRefs: (text) => text,
     publishSiteDir: () => siteDir,
     resolveBase, publishUrl, stampHandoutUrl, writeTalkOutline,
     readHandoutUrl: () => null, recoverIdFromUrl: () => undefined, readHandoutRegistry: () => ({}), writeHandoutRegistry: () => {},
@@ -164,7 +168,7 @@ function publishDeps(siteDir, trace) {
     slimHandoutHtml: (html) => html,
     withoutPreworkSlides,
     preworkEnabled: () => false, // pre-work is hidden for 0.37; the pre-work publish test forces it on
-    viewerPageHtml: () => '<!doctype html><title>viewer</title>',
+    handoutHomeDetails, handoutHomePrework,
     app: { getPath: () => root },
     execFile: (_cmd, _args, _opts, cb) => { trace.deploys += 1; cb(null, '', '') },
     ledgerSeal: async (path, text, reason) => { trace.sealed.push({ path, text, reason }) },
@@ -194,6 +198,9 @@ const handoutOf = (siteDir, path) => {
     assert.equal(result.success, true, result.error)
     const html = handoutOf(siteDir, path)
     assert.ok(html, 'the handout was built')
+    const home = readFileSync(join(siteDir, basename(path).replace('-outline.md', ''), 'index.html'), 'utf8')
+    assert.ok(home.includes('id="handoutHome"') && home.includes('"workerBaseUrl":"http://127.0.0.1:8787"'), 'the home page is the handout bundle in home mode, with its live client')
+    assert.ok(home.includes('Kestrelwing'), 'the home page carries the same slides as the handout')
     assert.ok(html.includes('Kestrelwing'), 'the handout has what the renderer sent')
     assert.ok(html.includes('Zebrafinch'), 'the handout has the buffer\'s last keystrokes, which the renderer\'s copy lacked')
     assert.ok(!html.includes('Typed during the deploy'), 'and nothing typed after the flush')

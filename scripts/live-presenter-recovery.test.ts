@@ -50,6 +50,55 @@ function harness(extra: any = {}) {
   return { client, sockets, statuses, operations, records, advance, hello, snapshot, timers }
 }
 describe('live presenter recovery', () => {
+  test('Pointer bypasses persistence, drops offline and does not replay after reconnect', () => {
+    const h = harness(), message = { type: 'pointer.live' as const, pointer: {x:640,y:360,space:'slide' as const,slideId:'text'} }
+    h.client.pointer(message); expect(h.sockets[0].sent).toHaveLength(0)
+    h.hello(); h.snapshot()
+    const operations = [...h.operations]
+    h.client.pointer(message); expect(h.sockets[0].sent.at(-1)).toEqual(message)
+    expect(h.operations).toEqual(operations)
+    h.sockets[0].drop(); h.client.pointer({type:'pointer.live',pointer:'gone'})
+    h.advance(10000); h.hello(); h.snapshot()
+    expect(h.sockets.at(-1)!.sent.filter(m=>m.type==='pointer.live')).toHaveLength(0)
+    h.client.disconnect()
+  })
+
+  test('Pen ink bypasses persistence and the operation queue; the latest layer is sent again once a reconnect is synchronised', () => {
+    const h = harness()
+    const ink = (n: number) => ({ type: 'ink.live' as const, ink: { slideId: 'text', space: 'slide' as const,
+      strokes: Array.from({ length: n }, () => ({ tool: 'arrow' as const, ink: 'red' as const, width: 'thin' as const, points: [[1, 1], [500, 300]] as Array<[number, number]> })), draft: null } })
+    h.client.ink(ink(1)); expect(h.sockets[0].sent).toHaveLength(0)
+    h.hello(); h.snapshot()
+    expect(h.sockets[0].sent.at(-1)).toEqual(ink(1))
+    h.client.ink(ink(2)); expect(h.sockets[0].sent.at(-1)).toEqual(ink(2))
+    expect(h.operations).toEqual([])
+    h.sockets[0].drop(); h.client.ink(ink(3))
+    h.advance(10000); h.hello()
+    expect(h.sockets.at(-1)!.sent.filter((m) => m.type === 'ink.live')).toHaveLength(0)
+    h.snapshot()
+    expect(h.sockets.at(-1)!.sent.filter((m) => m.type === 'ink.live')).toEqual([ink(3)])
+    h.client.ink({ type: 'ink.live', ink: { ...ink(1).ink, strokes: [{ tool: 'arrow', ink: 'red', width: 'thin', points: [[-1, 1], [5, 5]] }] } } as any)
+    expect(h.sockets.at(-1)!.sent.filter((m) => m.type === 'ink.live')).toHaveLength(1)
+    h.client.disconnect()
+  })
+
+  test('the worker asking for ink (it was evicted and a venue screen joined) gets the current layer at once', () => {
+    const h = harness()
+    const ink = { type: 'ink.live' as const, ink: { slideId: 'text', space: 'slide' as const,
+      strokes: [{ tool: 'rectangle' as const, ink: 'blue' as const, width: 'thick' as const, points: [[1, 1], [500, 300]] as Array<[number, number]> }], draft: null } }
+    h.hello(); h.snapshot()
+    const socket = h.sockets.at(-1)!
+    socket.receive({ type: 'ink.request' })
+    expect(socket.sent.filter((m) => m.type === 'ink.live')).toHaveLength(0)
+    h.client.ink(ink)
+    const sent = socket.sent.length
+    socket.receive({ type: 'ink.request' })
+    expect(socket.sent.length).toBe(sent + 1)
+    expect(socket.sent.at(-1)).toEqual(ink)
+    expect(h.statuses.at(-1)).toBe('live')
+    h.client.disconnect()
+  })
+
   test('publishes the current gallery image in live and recovery states', () => {
     const h = harness()
     h.client.publish('gallery', 0, null, { open: true, index: 1 })

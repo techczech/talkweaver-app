@@ -38,6 +38,17 @@ try {
       window.__sockets = []
       window.fetch = async (url) => ({ ok: true, json: async () => String(url).endsWith('/capabilities')
         ? { protocol: 2 } : String(url).endsWith('/status') ? { status: 'open' } : { live: true, sessionId: 'session-1' } })
+      // A stand-in AudioContext that counts the notes of the end-of-break chime (two per chime).
+      // Like a browser's, it starts suspended and only resumes after a key, click or tap.
+      window.__notes = 0
+      window.__gesture = false
+      for (const name of ['pointerdown', 'keydown', 'click', 'touchstart']) document.addEventListener(name, () => { window.__gesture = true }, true)
+      window.AudioContext = class {
+        state = 'suspended'; currentTime = 0; destination = {}
+        resume() { if (window.__gesture) this.state = 'running'; return Promise.resolve() }
+        createOscillator() { window.__notes += 1; return { frequency: {}, connect() {}, start() {}, stop() {} } }
+        createGain() { return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {} } }
+      }
       window.WebSocket = class {
         static OPEN = 1
         readyState = 1
@@ -68,6 +79,72 @@ try {
     await page.waitForFunction(() => Boolean(document.fullscreenElement))
     await page.evaluate(() => window.__sockets[0].emit({ type: 'slide.state', slideId: 'content', reveal: 0, focus: null, revision: 1 }))
     await page.locator('.slide.active[data-id="content"]').waitFor()
+    const sendPointer = () => page.evaluate(() => window.__sockets[0].emit({type:'pointer.live',pointer:{x:640,y:360,space:'slide',slideId:'content'}}))
+    const pointerGone = () => page.waitForFunction(() => getComputedStyle(document.querySelector('.tw-pointer-ring')).display === 'none')
+    await sendPointer()
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.tw-pointer-ring')).display !== 'none')
+    await page.evaluate(() => document.exitFullscreen())
+    for (const viewport of [{ width: 1280, height: 720 }, { width: 900, height: 1000 }]) {
+      await page.setViewportSize(viewport)
+      for (const [x, y] of [[640, 360], [321, 569], [1120, 100]]) {
+        await page.evaluate(point => window.__sockets[0].emit({ type: 'pointer.live',
+          pointer: { ...point, space: 'slide', slideId: 'content' } }), { x, y })
+        const mapped = await page.evaluate(({ x, y }) => {
+          const canvas = document.querySelector('.stage').getBoundingClientRect()
+          const red = document.querySelector('.tw-pointer-ring circle[stroke="#ff3b30"]')
+          const ring = red.getBoundingClientRect()
+          const outer = 1 + Number(red.getAttribute('stroke-width')) / (2 * Number(red.getAttribute('r')))
+          return {
+            dx: ring.x + ring.width / 2 - (canvas.x + canvas.width * x / 1280),
+            dy: ring.y + ring.height / 2 - (canvas.y + canvas.height * y / 720),
+            diameter: ring.width * outer, expected: 46 * canvas.width / 1280
+          }
+        }, { x, y })
+        assert.ok(Math.abs(mapped.dx) < 1, JSON.stringify(mapped))
+        assert.ok(Math.abs(mapped.dy) < 1, JSON.stringify(mapped))
+        assert.ok(Math.abs(mapped.diameter - mapped.expected) < 1, JSON.stringify(mapped))
+      }
+    }
+    await page.setViewportSize({ width: 1280, height: 720 })
+    await page.evaluate(() => window.__sockets[0].emit({type:'pointer.live',pointer:'gone'})); await pointerGone()
+    await sendPointer(); await pointerGone() // a silent presenter expires in two seconds
+    await sendPointer()
+    await page.evaluate(() => window.__sockets[0].emit({type:'slide.state',slideId:'title',reveal:0,focus:null,revision:2})); await pointerGone()
+    await page.evaluate(() => window.__sockets[0].emit({type:'slide.state',slideId:'content',reveal:0,focus:null,revision:3}))
+    console.log('PASS venue Pointer: centre, gone, slide change and 2-second silence')
+
+
+    let imageRevision = 3
+    for (const viewport of [{ width: 1920, height: 1080 }, { width: 900, height: 1000 }]) {
+      await page.setViewportSize(viewport)
+      await page.evaluate(revision => window.__sockets[0].emit({ type: 'slide.state', slideId: 'gallery',
+        reveal: 0, focus: null, lightbox: { open: true, index: 0 }, revision }), ++imageRevision)
+      await page.locator('#lightbox.open').waitFor()
+      for (const [width, height] of [[300, 1500], [1500, 300], [600, 600]]) {
+        const src = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"/>`)}`
+        await page.locator('#lightboxImg').evaluate((el, url) => { el.src = url }, src)
+        await page.waitForFunction(w => document.querySelector('#lightboxImg').naturalWidth === w, width)
+        await page.evaluate(() => window.__sockets[0].emit({ type: 'pointer.live',
+          pointer: { x: .3, y: .8, space: 'image', slideId: 'gallery' } }))
+        const mapped = await page.evaluate(() => {
+          const image = document.querySelector('#lightboxImg').getBoundingClientRect()
+          const canvas = document.querySelector('.stage').getBoundingClientRect()
+          const red = document.querySelector('.tw-pointer-ring circle[stroke="#ff3b30"]')
+          const ring = red.getBoundingClientRect()
+          const outer = 1 + Number(red.getAttribute('stroke-width')) / (2 * Number(red.getAttribute('r')))
+          return { dx: ring.x + ring.width / 2 - (image.x + image.width * .3),
+            dy: ring.y + ring.height / 2 - (image.y + image.height * .8),
+            diameter: ring.width * outer, expected: 46 * canvas.width / 1280 }
+        })
+        assert.ok(Math.abs(mapped.dx) < 1, JSON.stringify(mapped))
+        assert.ok(Math.abs(mapped.dy) < 1, JSON.stringify(mapped))
+        assert.ok(Math.abs(mapped.diameter - mapped.expected) < 1, JSON.stringify(mapped))
+      }
+      await page.evaluate(revision => window.__sockets[0].emit({ type: 'slide.state', slideId: 'content',
+        reveal: 0, focus: null, lightbox: { open: false, index: 0 }, revision }), ++imageRevision)
+    }
+    await page.setViewportSize({ width: 1280, height: 720 })
+
     await page.keyboard.press('ArrowLeft')
     assert.equal(await page.locator('.slide.active').getAttribute('data-id'), 'content', 'venue keys do nothing while presenter is online')
     await page.evaluate(() => window.__sockets[0].emit({ type: 'session.presence', presenterConnected: false, venueScreens: 1 }))
@@ -85,13 +162,13 @@ try {
     await page.evaluate(() => window.__sockets[0].emit({ type: 'session.presence', presenterConnected: true, venueScreens: 1 }))
     assert.equal(await page.locator('.slide.active').getAttribute('data-id'), 'content', 'reconnect restores the last laptop slide without waiting for a new slide state')
     await page.evaluate(() => {
-      window.__sockets[0].emit({ type: 'slide.state', slideId: 'title', reveal: 0, focus: null, revision: 2 })
+      window.__sockets[0].emit({ type: 'slide.state', slideId: 'title', reveal: 0, focus: null, revision: 8 })
     })
     await page.locator('.slide.active[data-id="title"]').waitFor()
     await page.keyboard.press('ArrowRight')
     assert.equal(await page.locator('.slide.active').getAttribute('data-id'), 'title', 'venue keys stop when presenter returns')
     // Ticket 09: while the laptop drives the session, the presenting-mode keys are inert too.
-    await page.evaluate(() => window.__sockets[0].emit({ type: 'slide.state', slideId: 'gallery', reveal: 0, focus: null, revision: 3 }))
+    await page.evaluate(() => window.__sockets[0].emit({ type: 'slide.state', slideId: 'gallery', reveal: 0, focus: null, revision: 9 }))
     await page.locator('.slide.active[data-id="gallery"]').waitFor()
     for (const key of ['z', 'f', 'r', 'Z', 'F', 'R']) {
       await page.keyboard.press(key)
@@ -99,25 +176,25 @@ try {
       assert.equal(await page.locator('.slide.active.mode-active').count(), 0, `${key} starts no mode while the laptop drives`)
     }
     const galleryState = (open, index, revision) => ({ type: 'slide.state', slideId: 'gallery', reveal: 0,
-      focus: null, lightbox: { open, index }, revision })
-    await page.evaluate((state) => window.__sockets[0].emit(state), galleryState(true, 0, 4))
+      focus: null, lightbox: { open, index }, revision: revision + 4 })
+    await page.evaluate((state) => window.__sockets[0].emit(state), galleryState(true, 0, 6))
     await page.locator('.lightbox:visible #lightboxImg[alt="First"]').waitFor()
     assert.equal(await page.locator('#lightboxCounter').textContent(), '1 / 2')
     assert.equal(await page.locator('.lightbox-nav').first().isVisible(), false, 'venue gallery has no visible controls')
     assert.equal(await page.locator('.lightbox-bar').isVisible(), false, 'venue gallery has no footer')
     assert.deepEqual(await page.locator('.lightbox').boundingBox().then(({ x, y, width, height }) => ({ x, y, width, height })),
       { x: 0, y: 0, width: 1280, height: 720 }, 'venue gallery fills the screen')
-    await page.evaluate((state) => window.__sockets[0].emit(state), galleryState(true, 1, 5))
+    await page.evaluate((state) => window.__sockets[0].emit(state), galleryState(true, 1, 7))
     await page.locator('.lightbox:visible #lightboxImg[alt="Second"]').waitFor()
     assert.equal(await page.locator('#lightboxCounter').textContent(), '2 / 2')
     await page.evaluate((state) => {
       window.__snapshotSlideState = state
       document.getElementById('lightboxClose').click()
       window.__sockets[0].onclose?.()
-    }, galleryState(true, 1, 5))
+    }, galleryState(true, 1, 7))
     await page.waitForFunction(() => window.__sockets.length === 2)
     await page.locator('.lightbox:visible #lightboxImg[alt="Second"]').waitFor()
-    await page.evaluate((state) => window.__sockets[1].emit(state), galleryState(false, 1, 6))
+    await page.evaluate((state) => window.__sockets[1].emit(state), galleryState(false, 1, 8))
     await page.locator('.lightbox').waitFor({ state: 'hidden' })
     assert.equal(await page.locator('.slide.active').getAttribute('data-id'), 'gallery')
     await page.evaluate(() => window.__sockets[1].emit({
@@ -132,6 +209,22 @@ try {
     }))
     await page.locator('.instant-slide-surface:visible .instant-slide-link').getByText(/example.test/).waitFor()
     assert.match(await page.locator('.instant-slide-surface .instant-slide-qr img').getAttribute('src'), /^data:image\/svg\+xml/)
+    // Break slide on the room screen: the talk's QR and handout link bottom-right, one chime at zero.
+    // (the chime's audio context unlocks on the first key or click: the venue page has had keys by now)
+    const pageErrors = []
+    page.on('pageerror', (error) => pageErrors.push(error.message))
+    await page.evaluate(() => window.__sockets[1].emit({ type: 'instant.state',
+      slide: { kind: 'countdown', startedAt: Date.now(), durationMs: 1000, label: 'Break', soundAtEnd: true, shownAt: Date.now() } }))
+    await page.locator('.instant-slide-surface:visible .instant-slide-corner-qr img').waitFor()
+    assert.equal(await page.locator('.instant-slide-corner-link').textContent(), 'handouts.fyi/k7m2')
+    assert.equal(await page.locator('.instant-slide-corner-link a').count(), 0, 'the venue screen shows the handout link as plain text, not an anchor')
+    await page.waitForFunction(() => window.__notes === 2)
+    await page.waitForTimeout(500)
+    assert.equal(await page.evaluate(() => window.__notes), 2, 'the chime plays once')
+    await page.evaluate(() => window.__sockets[1].emit({ type: 'instant.state',
+      slide: { kind: 'countdown', startedAt: Date.now(), durationMs: 1000, soundAtEnd: false, shownAt: Date.now() } }))
+    await page.waitForTimeout(1400)
+    assert.equal(await page.evaluate(() => window.__notes), 2, 'toggle off: no chime')
     const imageBytes = await sharp({ create: { width: 960, height: 600, channels: 3, background: '#25749a' } }).webp().toBuffer()
     const imageSlide = { kind: 'image', dataUrl: `data:image/webp;base64,${imageBytes.toString('base64')}`, width: 960, height: 600, shownAt: Date.now() }
     await page.evaluate((slide) => window.__sockets[1].emit({ type: 'instant.state', slide }), imageSlide)
@@ -148,7 +241,7 @@ try {
     }
     assert.equal(await page.locator('button:visible').count(), 0, 'ordinary slides show no visible buttons')
     // Ticket 04 (V6): the talk's QR overlay follows the presenter from a slide with no QR code.
-    await page.evaluate(() => window.__sockets[1].emit({ type: 'slide.state', slideId: 'content', reveal: 0, focus: null, talkQr: true, revision: 7 }))
+    await page.evaluate(() => window.__sockets[1].emit({ type: 'slide.state', slideId: 'content', reveal: 0, focus: null, talkQr: true, revision: 13 }))
     const talkQr = page.locator('#venueTalkQr')
     await talkQr.waitFor({ state: 'visible' })
     assert.equal(await page.locator('.slide.active').getAttribute('data-id'), 'content')
@@ -157,7 +250,7 @@ try {
     assert.equal(await talkQr.locator('svg').count(), 1)
     assert.deepEqual(await talkQr.boundingBox().then(({ x, y, width, height }) => ({ x, y, width, height })),
       { x: 0, y: 0, width: 1280, height: 720 }, 'the QR overlay fills the venue screen')
-    await page.evaluate(() => window.__sockets[1].emit({ type: 'slide.state', slideId: 'content', reveal: 0, focus: null, revision: 8 }))
+    await page.evaluate(() => window.__sockets[1].emit({ type: 'slide.state', slideId: 'content', reveal: 0, focus: null, revision: 14 }))
     await talkQr.waitFor({ state: 'hidden' })
     assert.equal(await page.locator('.slide.active').getAttribute('data-id'), 'content', 'closing the QR overlay returns to the same slide')
     await page.evaluate(() => window.__sockets[1].emit({
@@ -167,8 +260,55 @@ try {
     }))
     await page.getByText('Choose one').waitFor()
     assert.equal(await page.locator('.share-footer').isVisible(), false)
+    let penRevision = 100
+    // The Pen's ink (ticket 08): drawn at the same place on the slide, only on its own layer,
+    // checked before it is drawn, gone when cleared, on a zoomed image only for that image.
+    {
+      const box = { tool: 'rectangle', ink: 'green', width: 'thick', points: [[320, 180], [960, 540]] }
+      const ink = (slideId, extra = {}) => ({ type: 'ink.live', ink: { slideId, space: 'slide', strokes: [box], draft: null, ...extra } })
+      const shown = () => page.evaluate(() => {
+        const root = document.querySelector('.tw-live-overlay')
+        return root && getComputedStyle(root).display !== 'none' ? root.querySelectorAll('[data-pen-stroke]').length : 0
+      })
+      const emit = (m) => page.evaluate((m) => window.__sockets[1].emit(m), m)
+      await emit(ink('content'))
+      await page.waitForFunction(() => document.querySelectorAll('.tw-live-overlay [data-pen-stroke="rectangle"]').length === 1)
+      const placed = await page.evaluate(() => {
+        const s = document.querySelector('.stage').getBoundingClientRect()
+        const r = document.querySelector('.tw-live-overlay [data-pen-stroke="rectangle"] rect:last-child').getBoundingClientRect()
+        return [(r.x - s.x) / s.width, (r.y - s.y) / s.height, r.width / s.width, r.height / s.height]
+      })
+      for (const [i, v] of [0.25, 0.25, 0.5, 0.5].entries()) assert.ok(Math.abs(placed[i] - v) < 0.005, `venue ink placement ${placed}`)
+      await emit(ink('title'))
+      await page.waitForFunction(() => !document.querySelector('.tw-live-overlay [data-pen-stroke]'))
+      await emit({ type: 'ink.live', ink: { slideId: 'content', space: 'slide', strokes: [{ ...box, ink: '#fff' }], draft: null } })
+      await emit({ type: 'ink.live', ink: { slideId: 'content', space: 'slide', strokes: [{ ...box, points: [[0, 0], [5000, 1]] }], draft: null } })
+      await page.waitForTimeout(100)
+      assert.equal(await shown(), 0, 'malformed ink is never drawn')
+      await emit(ink('content'))
+      await page.waitForFunction(() => document.querySelectorAll('.tw-live-overlay [data-pen-stroke]').length === 1)
+      await emit(ink('content', { strokes: [] }))
+      await page.waitForFunction(() => !document.querySelector('.tw-live-overlay [data-pen-stroke]'))
+      // A zoomed image's layer shows only on that image.
+      await emit({ type: 'slide.state', slideId: 'gallery', reveal: 0, focus: null, lightbox: { open: true, index: 1 }, revision: ++penRevision })
+      await page.locator('#lightbox.open').waitFor()
+      await emit({ type: 'ink.live', ink: { slideId: 'gallery', space: 'image', image: 1, strokes: [{ ...box, points: [[0.1, 0.1], [0.9, 0.9]] }], draft: null } })
+      await page.waitForFunction(() => document.querySelectorAll('.tw-live-overlay [data-pen-stroke]').length === 1)
+      await emit({ type: 'slide.state', slideId: 'gallery', reveal: 0, focus: null, lightbox: { open: true, index: 0 }, revision: ++penRevision })
+      await page.waitForFunction(() => !document.querySelector('.tw-live-overlay [data-pen-stroke]'))
+      await emit({ type: 'slide.state', slideId: 'content', reveal: 0, focus: null, lightbox: { open: false, index: 0 }, revision: ++penRevision })
+      await page.emulateMedia({ media: 'print' })
+      await emit(ink('content'))
+      assert.equal(await page.locator('.tw-live-overlay').evaluate((el) => getComputedStyle(el).display), 'none', 'ink never prints')
+      await page.emulateMedia({ media: 'screen' })
+      await emit(ink('content', { strokes: [] }))
+    }
+    console.log('PASS venue Pen: same place, own layer only, malformed ignored, cleared, zoomed image only, never printed')
+    await page.evaluate(() => window.__sockets[1].emit({ type: 'ink.live', ink: { slideId: 'content', space: 'slide', strokes: [{ tool: 'arrow', ink: 'red', width: 'thin', points: [[10, 10], [600, 300]] }], draft: null } }))
+    await page.waitForFunction(() => document.querySelector('.tw-live-overlay [data-pen-stroke="arrow"]'))
     await page.evaluate(() => window.__sockets[1].emit({ type: 'session.closed', reason: 'ended' }))
     await page.getByText('Slides and links').waitFor()
+    assert.equal(await page.locator('.tw-live-overlay [data-pen-stroke]').count(), 0, 'the drawings end with the session')
     assert.equal(await page.locator('.slide.active').getAttribute('data-id'), 'title')
     assert.equal(await page.locator('.audience-poll-surface').isVisible(), false)
     await page.keyboard.press('PageDown')
@@ -285,11 +425,27 @@ try {
     await standalone.keyboard.press('ArrowRight')
     await standalone.evaluate(() => { window.__sessionLive = true })
     await standalone.waitForFunction(() => window.__sockets[0]?.synced, { timeout: 7000 })
-    await standalone.evaluate(() => window.__sockets[0].emit({ type: 'slide.state', slideId: 'gallery', reveal: 0, focus: null, revision: 1 }))
+    await standalone.evaluate(() => window.__sockets[0].emit({ type: 'slide.state', slideId: 'gallery', reveal: 0, focus: null, revision: 5 }))
     await standalone.locator('.slide.active[data-id="gallery"]').waitFor()
     await standalone.keyboard.press('ArrowLeft')
     assert.equal(await standalone.locator('.slide.active').getAttribute('data-id'), 'gallery', 'go-live restores laptop control')
     await standalone.close()
+    // A fresh venue page: audio is locked until the first key or click. A break that ends before then
+    // is silent and raises no error; after a key press the next one chimes.
+    await page.goto(pathToFileURL(path).href)
+    await page.waitForFunction(() => window.__sockets.length === 1)
+    const lockedErrors = []
+    page.on('pageerror', (error) => lockedErrors.push(error.message))
+    const breakFor = (extra = {}) => page.evaluate((more) => window.__sockets[0].emit({ type: 'instant.state',
+      slide: { kind: 'countdown', startedAt: Date.now(), durationMs: 1000, shownAt: Date.now(), ...more } }), extra)
+    await breakFor()
+    await page.locator('.instant-slide-surface:visible .instant-slide-corner-qr img').waitFor()
+    await page.waitForTimeout(1500)
+    assert.equal(await page.evaluate(() => window.__notes), 0, 'audio still locked at zero: silent')
+    assert.deepEqual(lockedErrors, [], 'a blocked chime raises no error')
+    await page.keyboard.press('Shift')
+    await breakFor()
+    await page.waitForFunction(() => window.__notes === 2)
     await page.goto(pathToFileURL(unavailablePath).href)
     assert.equal(await page.getByText('This talk isn’t available').isVisible(), true)
     await page.goto(pathToFileURL(phonePath).href)
@@ -299,7 +455,18 @@ try {
     await page.keyboard.press('z')
     assert.equal(await page.locator('.lightbox').isVisible(), true, 'phone keeps its local Z gallery')
     await page.keyboard.press('Escape')
-    await page.evaluate(() => window.__sockets[0].emit({ type: 'slide.state', slideId: 'gallery', reveal: 0, focus: null, talkQr: true, revision: 2 }))
+    await page.evaluate(() => window.__sockets[0].emit({ type: 'slide.state', slideId: 'gallery', reveal: 0, focus: null, talkQr: true, revision: 6 }))
+    await page.evaluate(() => window.__sockets[0].emit({ type: 'instant.state',
+      slide: { kind: 'countdown', startedAt: Date.now(), durationMs: 1000, soundAtEnd: true, shownAt: Date.now() } }))
+    await page.waitForTimeout(1500)
+    assert.equal(await page.locator('.instant-slide-corner').count(), 0, 'a phone shows no corner QR on the break slide')
+    assert.equal(await page.evaluate(() => window.__notes), 0, 'a phone never plays the end-of-break chime')
+    const own = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path d="M0 0h1v1H0z"/></svg>'
+    await page.evaluate((svg) => window.__sockets[0].emit({ type: 'instant.state',
+      slide: { kind: 'text', text: 'Tell us', link: 'https://example.com/form', linkQrSvg: svg, shownAt: Date.now() } }), own)
+    await page.locator('.instant-slide-surface:visible .instant-slide-link a').waitFor()
+    assert.equal(await page.locator('.instant-slide-surface img').count(), 0, 'a phone shows no QR code on a text and link slide')
+    assert.equal(await page.locator('.instant-slide-link a').getAttribute('href'), 'https://example.com/form', 'the phone link is clickable')
     assert.equal(await page.locator('#venueTalkQr, .qr-fullscreen').count(), 0, 'a following phone is never shown the talk QR overlay')
   } finally { await browser.close() }
 } finally { await rm(dir, { recursive: true, force: true }) }

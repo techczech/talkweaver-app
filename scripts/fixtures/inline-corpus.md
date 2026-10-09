@@ -498,3 +498,15 @@ before `**middle**` then ==mark==
 ==mark== then `**end**`
 [EEF report](https://eef.example "The ==key== finding")
 [read ==x== now](https://ex.com/report)
+a ~~gone~~ word and ++added++ words
+**++bold underline++** and ++**underline bold**++
+~~a~~ ==b== ++c++
+++see [the report](https://ex.com/r) now++
+C++ and i++ and j++ in running prose
+C++ is older than Go, and ++new++ is not
+a ++ b ++ c and a ~~ b ~~ c
+`++code++` and `~~code~~` stay as typed
+https://ex.com/a++b++c and https://ex.com/~~x~~
+[++label++](https://ex.com/x++y++z "~~title~~")
+~~~ three tildes +++ three plus ~~~
+++open only and ~~open only

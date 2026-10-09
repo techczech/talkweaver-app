@@ -5,6 +5,8 @@
 // 13-slide-ledger's mintId(rng), nothing here reads the clock or randomness itself:
 // callers pass `now`/`rand` in, keeping every function deterministic and testable.
 
+import { penInkView } from '../../assets/runtime/pen-ink.js';
+
 // YYYYMMDD-HHMMSS in UTC. Identical recipe to 13-slide-ledger's utcStamp (kept local
 // so this module imports nothing from its sibling — no coupling, no cycle risk).
 function utcStamp(ms) {
@@ -63,7 +65,7 @@ export function buildSlideTimeIndex(rawMarks) {
     } else if (m.event === "resume") {
       if (pauseStart !== null) { paused += m.tMs - pauseStart; pauseStart = null; }
       out.push({ event: "resume", tMs: m.tMs - paused });
-    } else if (m.event === "enter" || m.event === "reveal" || m.event === "highlight") {
+    } else if (m.event === "enter" || m.event === "reveal" || m.event === "highlight" || m.event === "ink") {
       // If a mark somehow lands inside an open pause, freeze it at the pause start.
       const openPaused = pauseStart !== null ? m.tMs - pauseStart : 0;
       const mark = { event: m.event, slideId: m.slideId, tMs: m.tMs - paused - openPaused };
@@ -73,6 +75,18 @@ export function buildSlideTimeIndex(rawMarks) {
       if (m.event === "highlight") {
         mark.marks = m.marks;
         if (Array.isArray(m.ranges)) mark.ranges = m.ranges;
+      }
+      // ink = the Pen's strokes on the layer shown (ticket 08): the slide's own, or a zoomed image's
+      // (space "image" and its index, in the image's 0–1 units). Checked again, caps and bytes
+      // included, before they are stored; a malformed mark is dropped.
+      if (m.event === "ink") {
+        const image = m.space === "image";
+        const view = typeof m.slideId === "string"
+          ? penInkView({ slideId: m.slideId, space: image ? "image" : "slide", ...(image ? { image: m.image } : {}), strokes: m.ink, draft: null })
+          : null;
+        if (!view) continue;
+        if (image) { mark.space = "image"; mark.image = view.image; }
+        mark.ink = view.strokes;
       }
       out.push(mark);
     }

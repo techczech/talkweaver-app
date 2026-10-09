@@ -6,9 +6,10 @@
 //   <name>/                     app-level caches (`__layout-preview__-*`, `__ledger__`), talks outside
 //                               every vault, and the per-slug folders older builds wrote
 //
-// URLs: `twthumb://<slug>/<key>?vault=<vaultId>` names one vault's picture and is looked up in that
-// vault's folder only. A bare `twthumb://<slug>/<key>` (what the renderer builds today) is looked up
-// in each open vault's folder in order, then the namespace-level folder.
+// URLs: `twthumb://thumb/<slug>/<key>?vault=<vaultId>` names one vault's picture and is looked up in
+// that vault's folder only. A bare `twthumb://thumb/<slug>/<key>` is looked up in each open vault's
+// folder in order, then the namespace-level folder. Slug and key are percent-encoded path segments
+// (shared/thumb-url.ts builds and reads them; the older `twthumb://<slug>/<key>` still reads).
 //
 // The per-slug folders older builds wrote belong to the vault they rendered for, which the registry
 // migrated into the first open vault; adoptLegacyThumbDirs moves them there once (a rename, no copy),
@@ -16,6 +17,10 @@
 import { createHash } from 'crypto'
 import { existsSync, mkdirSync, readdirSync, renameSync, statSync, utimesSync } from 'fs'
 import { join } from 'path'
+import { thumbAddress, thumbAddressParts } from '../shared/thumb-url.ts'
+import { pathStaysInside } from './path-containment.ts'
+import { resolveThumbFile } from './thumb-key-resolution.ts'
+import { thumbCacheDir } from './vault-paths.ts'
 
 export const VAULTS_DIR = '@vaults'
 
@@ -35,7 +40,7 @@ export function talkThumbDir(namespaceDir: string, vaultId: string | null, slug:
 
 /** The twthumb:// URL for a rendered picture; key is the PNG basename. */
 export function thumbUrl(slug: string, key: string, vaultId: string | null): string {
-  const base = 'twthumb://' + slug + '/' + key
+  const base = thumbAddress(slug, key)
   return vaultId ? base + '?vault=' + vaultDirName(vaultId) : base
 }
 
@@ -51,8 +56,9 @@ export function isPlainSegment(s: string): boolean {
 export function parseThumbUrl(raw: string): ThumbRequest | null {
   try {
     const url = new URL(raw)
-    const slug = decodeURIComponent(url.hostname)
-    const key = decodeURIComponent(url.pathname.replace(/^\//, ''))
+    const parts = thumbAddressParts(url)
+    if (!parts) return null
+    const { slug, key } = parts
     if (!isPlainSegment(slug) || !isPlainSegment(key)) return null
     const vault = url.searchParams.get('vault')
     return { slug, key, vaultId: vault && safeSegment(vault) ? vault : null }
@@ -69,6 +75,20 @@ export function thumbLookupDirs(namespaceDir: string, req: ThumbRequest, openVau
     ...openVaultIds.map((id) => talkThumbDir(namespaceDir, id, req.slug)),
     talkThumbDir(namespaceDir, null, req.slug)
   ]
+}
+
+/** The PNG a parsed request names, or null. Every guard runs on the DECODED slug and key: the slug
+ *  must be a safe talk folder name inside the namespace (vault-paths.ts thumbCacheDir), each folder
+ *  looked in must stay inside it (pathStaysInside), and the key must be one plain file name
+ *  (thumb-key-resolution.ts). The twthumb:// handler (main/index.ts) serves only what this returns. */
+export function thumbFileFor(namespaceDir: string, req: ThumbRequest, openVaultIds: string[]): string | null {
+  if (!thumbCacheDir(namespaceDir, req.slug).ok) return null
+  const dirs = thumbLookupDirs(namespaceDir, req, openVaultIds).filter((d) => pathStaysInside(namespaceDir, d) !== null)
+  for (const dir of dirs) {
+    const hit = resolveThumbFile(dir, req.key)
+    if (hit) return hit
+  }
+  return null
 }
 
 /** Bump the namespace folder's mtime (creating it if needed). Older builds' cache sweeps judge a

@@ -397,3 +397,37 @@ session takes it once, when the board is first made (`seedBoard`): a board that 
 reopened or replayed one, takes no second seed. Seeded cards are ordinary cards owned by no participant
 (`seed:prework`), so no phone can edit or withdraw one; the seed is not kept on the stored poll and is
 never sent back. The app builds it in `src/main/run-prework-seed.ts`.
+
+
+## Transient Pointer
+
+The presenter sends `{ "type": "pointer.live", "pointer": { "x": 640, "y": 360,
+"space": "slide", "slideId": "text" } }`, or `{ "type": "pointer.live", "pointer": "gone" }`.
+`space` is `slide` (1280×720 canvas units) or `image` (0–1 fractions of the zoomed image).
+Both coordinates must be finite and in range. The slide id uses the existing non-empty string
+rule, capped at 100 characters. The entire frame is limited to 512 UTF-8 bytes.
+
+Only the authenticated, current presenter socket can publish a pointer. The Worker drops messages
+beyond 20 per second per socket, relays accepted messages only to audience sockets with `kind=screen`,
+and never echoes or saves them. Pointer is excluded from acknowledged operations and snapshots.
+
+## Transient Pen ink
+
+The presenter sends the Pen's current layer, whole, each time it changes: `{ "type": "ink.live",
+"ink": { "slideId": "text", "space": "slide", "strokes": [ … ], "draft": null } }`; on a zoomed image
+`space` is `image` and `image` is the zoomable's index (0–999). A stroke is `{ "tool": "freehand" |
+"arrow" | "rectangle", "ink": "red" | "yellow" | "green" | "blue", "width": "thin" | "thick", "points":
+[[x, y], …] }` in the pointer's units (an arrow's points are head then tail; a rectangle's two opposite
+corners). `parseInkMessage` in `protocol.ts` checks every field and range and copies only the known
+fields; caps (`INK_LIMITS`): 400 points per stroke, 100 strokes and 2,400 points per layer, 64,000
+UTF-8 bytes per frame, 20 frames a second per socket.
+
+Only the authenticated, current presenter socket can send ink. The Worker relays it only to audience
+sockets with `kind=screen`, never to phones, never echoes it, and keeps the latest frame in the Durable
+Object's memory only (never in storage) so a venue screen that joins or reconnects is sent it after its
+snapshot. Ending the session forgets it; after an eviction the presenter's client sends its latest
+layer again once it is synchronised. Ink is excluded from acknowledged operations and snapshots.
+The presenter preload samples movement and a stationary heartbeat every 67 ms. Venue clients clear
+a pointer after two seconds without another message, on slide changes and on `gone`; phone clients
+ignore it. Build `20-pointer-live` triggers the app's existing Worker version check. This parcel
+does not deploy the Worker.

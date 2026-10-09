@@ -752,3 +752,18 @@
 .slot[data-slot-arrange="stacked"] > .slot-media > figure:nth-child(1), .slot[data-slot-arrange="stacked"] > .slot-copy > .feature-list:nth-child(1) { grid-column: 1; }
 .slot[data-slot-arrange="stacked"] > .slot-media > figure:nth-child(2), .slot[data-slot-arrange="stacked"] > .slot-copy > .feature-list:nth-child(2) { grid-column: 2; }
 .slot[data-slot-arrange="stacked"] > .slot-media > figure:nth-child(3), .slot[data-slot-arrange="stacked"] > .slot-copy > .feature-list:nth-child(3) { grid-column: 3; }
+
+/* A slide with an embedded page beside text (0.38 ticket 13): the page takes seven parts of the
+   slide's width and the text three (70/30). The side is the authored one. A slide with a picture and
+   no page keeps the widths above; the picture arrangements ([data-slot-arrange]) are not touched;
+   on a narrow stage the columns stack as every slot does (the 950px rule above). This is CSS on
+   compiled markup, so every rendering of the slide follows it. */
+@container (min-width: 951px) {
+  .slot:not([data-slot-arrange]):has(> .slot-media figure.slide-embed[data-embed="local"]) { grid-template-columns: minmax(0, 3fr) minmax(0, 7fr); }
+  .slot:not([data-slot-arrange])[data-slot-side="left"]:has(> .slot-media figure.slide-embed[data-embed="local"]) { grid-template-columns: minmax(0, 7fr) minmax(0, 3fr); }
+  /* Per-slide page width ({page-60} / {page-80}): data-embed-split is only ever 60, 70 or 80. */
+  .slot[data-embed-split="60"]:not([data-slot-arrange]):has(> .slot-media figure.slide-embed[data-embed="local"]) { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); }
+  .slot[data-embed-split="60"]:not([data-slot-arrange])[data-slot-side="left"]:has(> .slot-media figure.slide-embed[data-embed="local"]) { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+  .slot[data-embed-split="80"]:not([data-slot-arrange]):has(> .slot-media figure.slide-embed[data-embed="local"]) { grid-template-columns: minmax(0, 1fr) minmax(0, 4fr); }
+  .slot[data-embed-split="80"]:not([data-slot-arrange])[data-slot-side="left"]:has(> .slot-media figure.slide-embed[data-embed="local"]) { grid-template-columns: minmax(0, 4fr) minmax(0, 1fr); }
+}

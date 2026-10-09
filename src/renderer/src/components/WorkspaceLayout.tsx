@@ -5,6 +5,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import type { TalkInfo, ProjectionRow, RecordingSession } from '../../../preload/index'
 import { textFitNotesFor } from '../../../shared/text-fit-notes.ts'
+import { computeSlideLines } from '../../../shared/slide-lines.ts'
 import { dismissToast, notify } from '../lib/notify'
 import Editor, { type ObjectInsertHandler } from './Editor'
 import SlideFocus from './SlideFocus'
@@ -174,55 +175,6 @@ function readGridColumns(): number {
   }
 }
 
-// 1-based outline line for EACH compiled slide, aligned to the compiledSlides INDEX.
-// The old version counted only `### ` lines, but compiledSlides also contains synthesized
-// rows (cover, section-title dividers, closing) — so a content-slide count never matched the
-// compiledSlides index and the editor↔strip sync highlighted the wrong card. Here we walk the
-// compiled rows and the source headings together: a `### ` content row consumes the next
-// level-3 heading, a section-title row consumes the next level-1/2 heading, synthesized rows
-// (cover/closing) map to null. Returns lineForSlide[compiledIndex] = source line (or null).
-function computeSlideLines(rows: ProjectionRow[] | null, content: string): (number | null)[] {
-  const lines = content.split('\n')
-  const headings: Array<{ line: number; level: number }> = []
-  lines.forEach((t, i) => {
-    const m = t.match(/^(#{1,6})\s/)
-    if (m) headings.push({ line: i + 1, level: m[1].length })
-  })
-  // No compiler output yet → the fallback strip shows one card per `### ` heading in order.
-  if (!rows) return headings.filter((h) => h.level === 3).map((h) => h.line)
-
-  // PREFERRED: the engine stamps each slide's source line (ADR — no drift). Use it directly when
-  // present; a synthesized cover/closing slide has null → the cover maps to the top of the file.
-  if (rows.some((r) => typeof r.source_line === 'number')) {
-    return rows.map((r, i) => (typeof r.source_line === 'number' ? r.source_line : i === 0 ? 1 : null))
-  }
-
-  // FALLBACK (older projections / non-markdown adapters): walk rows + headings together.
-  let h = 0
-  return rows.map((row, i) => {
-    const isBlock = /^###\s/.test((row.source_markdown ?? '').trimStart())
-    const isSection = row.role === 'section-title'
-    if (isBlock) {
-      // content slide ← next `### ` (level-3) heading
-      while (h < headings.length && headings[h].level !== 3) h += 1
-      const ln = h < headings.length ? headings[h].line : null
-      if (h < headings.length) h += 1
-      return ln
-    }
-    if (isSection) {
-      // section divider ← next `## ` (level-2) heading (level-1 belongs to the title slide)
-      while (h < headings.length && headings[h].level !== 2) h += 1
-      const ln = h < headings.length ? headings[h].line : null
-      if (h < headings.length) h += 1
-      return ln
-    }
-    // The leading synthesized cover/title slide maps to the top of the file, so the cursor
-    // in the frontmatter or on a `# ` (h1) heading jumps to the title slide.
-    if (i === 0) return 1
-    return null // closing / other synthesized rows have no source heading
-  })
-}
-
 export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange, registerJump, onOpenSettings, registerOutlineOps, onSelectTalk, onEditorEngaged, registerFlushSave, registerLeaveGuard, onDiscardTalk, onActiveLineChange }: Props) {
   const commandHandlersRef = useRef<Record<PaletteCommandHandlerId, () => void> | null>(null)
   const [, setKeymapRevision] = useState(0)
@@ -277,6 +229,9 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // Publishing is a long, opaque wrangler deploy (no streamed progress) — show a prominent
   // blocking overlay with an elapsed-seconds ticker so it never looks hung.
   const [publishing, setPublishing] = useState<boolean>(false)
+  // Re-entry guard for Publish: a ref, so the command registry's (possibly older) closure sees it too.
+  // Two overlapping publishes of one talk would race on its slide-assets/ folder.
+  const publishingRef = useRef(false)
   // Share for comments (ticket 03): the sheet, and every shared talk (status bar chip).
   const [shareSheetOpen, setShareSheetOpen] = useState<boolean>(false)
   // The plan sheet (ADR-0032 point 5): a new Run (run null) or editing a planned one.
@@ -432,7 +387,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     cutSelection: () => void
     copySelection: () => void
     pasteClipboard: () => void
-    runFormat: (id: 'bold' | 'italic' | 'inline-code' | 'highlight' | 'link') => void
+    runFormat: (id: 'bold' | 'italic' | 'inline-code' | 'highlight' | 'strikethrough' | 'underline' | 'link') => void
   } | null>(null)
   // Reads the caret's current top-level list-item context for the icon picker (ADR-0021).
   const iconContextRef = useRef<(() => CursorListItemContext | null) | null>(null)
@@ -1296,6 +1251,8 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       case 'fmt-italic': editorCmdsRef.current?.runFormat('italic'); break
       case 'fmt-code': editorCmdsRef.current?.runFormat('inline-code'); break
       case 'fmt-highlight': editorCmdsRef.current?.runFormat('highlight'); break
+      case 'fmt-strikethrough': editorCmdsRef.current?.runFormat('strikethrough'); break
+      case 'fmt-underline': editorCmdsRef.current?.runFormat('underline'); break
       case 'fmt-link': editorCmdsRef.current?.runFormat('link'); break
       case 'focus': enterFocusRef.current(activeSlideRef.current); break
       case 'where-used': openWhereUsed(); break
@@ -1597,9 +1554,11 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // so a stamp main could not apply — the buffer moved during the minutes-long deploy — still lands,
   // and newer typing is never replaced by the text the publish started from (one-writer spec D1).
   async function handlePublishHandout() {
+    if (publishingRef.current) return
     if (!activeTalk || !outlineContent) return
     if (blockedByUnresolved(outlineContent)) return
     const outlinePath = activeTalk.outlinePath
+    publishingRef.current = true
     setBuildStatus('building')
     setPublishElapsed(0)
     setPublishing(true)
@@ -1612,6 +1571,8 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         if (!stamped.ok && stamped.reason !== 'not-open') {
           notify(`Published, but the link could not be written into the outline: ${stamped.error}`, 'warning')
         }
+        // e.g. a video over the per-file limit was published as a "plays live" placeholder.
+        if (res.warning) notify('Published with a warning: ' + res.warning, 'warning', 'publish-warning')
       }
       if (res?.success && res.url) {
         setBuildStatus('done')
@@ -1632,6 +1593,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       }
     } finally {
       clearInterval(ticker)
+      publishingRef.current = false
       setPublishing(false)
     }
   }
@@ -1681,12 +1643,18 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     }
     // The rewritten refs are already in the buffer: main applied them through the D1 seam
     // (talk-writer.ts routes the open talk to this window) and saved them through the queue.
+    // What was left alone on purpose, said in words (never a silent skip).
+    const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`
+    const leftNotes: string[] = []
+    if (res.leftAlone) leftNotes.push(`${plural(res.leftAlone, 'picture belongs', 'pictures belong')} to another talk or the shared pool and ${res.leftAlone === 1 ? 'was' : 'were'} left alone`)
+    if (res.clashes) leftNotes.push(`${plural(res.clashes, 'picture was', 'pictures were')} left alone because a .webp of the same name is already there`)
+    const leftNote = leftNotes.length ? ` ${leftNotes.join('; ')}.` : ''
     if ((res.converted ?? 0) > 0 && res.newContent) {
       const mb = ((res.savedBytes ?? 0) / 1048576).toFixed(1)
       const failNote = res.failed ? ` (${res.failed} couldn’t convert)` : ''
-      notify(`Optimized ${res.converted} image${res.converted === 1 ? '' : 's'} to WebP — saved ${mb} MB${failNote}. Previews will rebuild faster.`, 'success', 'optimize')
+      notify(`Optimized ${res.converted} image${res.converted === 1 ? '' : 's'} to WebP — saved ${mb} MB${failNote}. Previews will rebuild faster.${leftNote}`, 'success', 'optimize')
     } else {
-      notify('No PNG/JPG images to convert in this talk.', 'info', 'optimize')
+      notify(leftNote ? `Nothing converted.${leftNote}` : 'No PNG/JPG images to convert in this talk.', 'info', 'optimize')
     }
   }
 
@@ -1946,6 +1914,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       })()
     },
     'new-window': () => { void window.tw.windows?.open?.() },
+    'open-in-new-window': () => window.dispatchEvent(new Event('tw-open-in-new-window')),
     'new-talk': () => window.dispatchEvent(new Event('tw-new-talk')),
     'new-folder': () => window.dispatchEvent(new Event('tw-new-folder')),
     'refresh-talks': () => window.dispatchEvent(new Event('tw-refresh-talks')),
@@ -1957,7 +1926,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     'present-audience': () => handlePresent('audience'),
     handout: () => { void handleExportHandout() },
     build: () => { void handleBuild() },
-    'publish-handout': () => { void handlePublishHandout() },
+    'publish-handout': () => { if (!publishingRef.current) void handlePublishHandout() },
     'share-for-comments': () => handleShareForComments(),
     'copy-venue-screen-link': () => { void handleCopyVenueScreenLink() },
     layout: openLayoutPicker,
@@ -1988,6 +1957,8 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     'format-italic': () => editorCmdsRef.current?.runFormat('italic'),
     'format-inline-code': () => editorCmdsRef.current?.runFormat('inline-code'),
     'format-highlight': () => editorCmdsRef.current?.runFormat('highlight'),
+    'format-strikethrough': () => editorCmdsRef.current?.runFormat('strikethrough'),
+    'format-underline': () => editorCmdsRef.current?.runFormat('underline'),
     'format-link': () => editorCmdsRef.current?.runFormat('link'),
     'deck-design': () => setDeckDesignOpen(true),
     metadata: () => window.dispatchEvent(new Event('tw-open-metadata')),
@@ -2167,6 +2138,8 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       vaultRoot={vaultRoot}
       focusRange={focusRange}
       textFitNotes={textFitNotes}
+      slideLines={slideLines}
+      placementRows={compiledSlides}
       registerLayoutContext={(fn) => { editorLayoutContextRef.current = fn }}
       registerApplyLayout={(fn) => { editorApplyLayoutRef.current = fn }}
       registerApplyOption={(fn) => { editorApplyOptionRef.current = fn }}
@@ -2569,7 +2542,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
             items={[
               { icon: 'handout', label: 'Handout (reveal in Finder)', onClick: handleExportHandout },
               { icon: 'html', label: 'HTML presentation (reveal in Finder)', onClick: handleBuild },
-              { icon: 'publish', label: 'Publish to Cloudflare', onClick: handlePublishHandout },
+              { icon: 'publish', label: publishing ? 'Publishing…' : 'Publish to Cloudflare', onClick: handlePublishHandout, disabled: publishing },
               { icon: 'comment', label: 'Share for comments…', onClick: handleShareForComments, separatorBefore: true }
             ]}
           />

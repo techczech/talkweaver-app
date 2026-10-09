@@ -10,7 +10,8 @@ import { readFile as readFileAsync } from 'fs/promises'
 import { tmpdir } from 'os'
 import { basename, dirname, join } from 'path'
 import { spawn, type ChildProcess } from 'child_process'
-import { localRecordingPath, transcriptPath as transcriptPathFor, type RecordingPath } from './recording-paths'
+import { existingSegmentPaths, localRecordingPath, sessionJsonPath, transcriptPath as transcriptPathFor, type RecordingPath } from './recording-paths'
+import { silencesBetween, transcodeArgs } from './transcode-args'
 
 // Empty by default — the user sets these in Settings -> Transcription. Until then
 // humanEngineError() surfaces a friendly "configure the engine" prompt instead of running.
@@ -54,6 +55,22 @@ function transcriptPath(deps: TranscriptionDeps, talkSlug: string, sessionId: st
 
 function audioPath(deps: TranscriptionDeps, sessionId: string): RecordingPath {
   return localRecordingPath(deps.userDataDir(), sessionId, 'webm')
+}
+
+// The silence to put before each segment, from the Run's segment times; zeros when the Run has
+// none (an older Run, or one that cannot be read — the segments are then joined back to back).
+function segmentSilences(deps: TranscriptionDeps, talkSlug: string, sessionId: string, count: number): number[] {
+  const none = new Array<number>(count).fill(0)
+  if (count <= 1) return none
+  try {
+    const target = sessionJsonPath(deps.vaultRoot(), deps.userDataDir(), talkSlug, sessionId)
+    if (!target.ok) return none
+    const run = JSON.parse(readFileSync(target.path, 'utf8')) as { audio?: { segments?: Array<{ startMs: number; endMs: number }> } | null }
+    const segments = Array.isArray(run?.audio?.segments) ? run.audio.segments : []
+    return segments.length === count ? silencesBetween(segments) : none
+  } catch {
+    return none
+  }
 }
 
 function emitProgress(win: BrowserWindow | null, sessionId: string, note: string): void {
@@ -252,16 +269,20 @@ export function registerTranscriptionIpc(deps: TranscriptionDeps): void {
       if (!audio.ok) return { ok: false, error: audio.error }
       const sourceAudio = audio.path
       if (!existsSync(sourceAudio)) return { ok: false, error: 'The local audio file for this Run is missing.' }
+      // A Run that lost its microphone and picked it up again has several segments: one WAV of all
+      // of them in order, with the gaps as silence, so timestamps stay on the recording clock.
+      const sources = existingSegmentPaths(deps.userDataDir(), sid)
+      const silences = segmentSilences(deps, String(talkSlug), sid, sources.length)
 
       const base = `${basename(sid)}-${Date.now()}`
       const wavPath = join(tmpdir(), `talkweaver-${base}.wav`)
       const srtPath = join(tmpdir(), `talkweaver-${base}.srt`)
       activeJob.tempPaths.push(wavPath, srtPath)
 
-      emitProgress(win, sid, 'Converting WebM audio to WAV for Parakeet.')
+      emitProgress(win, sid, sources.length > 1 ? `Joining ${sources.length} audio segments into one WAV for Parakeet.` : 'Converting WebM audio to WAV for Parakeet.')
       const ffmpegPath = resolveFfmpegPath(cfg)
       const childEnv = childEnvWithFfmpegPath(ffmpegPath)
-      const ffmpeg = await spawnAndCollect(ffmpegPath, ['-y', '-i', sourceAudio, wavPath], win, sid, 'ffmpeg', childEnv)
+      const ffmpeg = await spawnAndCollect(ffmpegPath, transcodeArgs(sources.length ? sources : [sourceAudio], silences, wavPath), win, sid, 'ffmpeg', childEnv)
       if (!ffmpeg.ok) {
         if (ffmpeg.error === 'cancelled') return { ok: false, error: 'cancelled' }
         return { ok: false, error: humanFfmpegError(ffmpeg) }

@@ -100,6 +100,14 @@ export function mergeTalkSearchResults(results: TalkSearchResult[]): TalkSearchR
   }
 }
 
+/**
+ * The options for the renderer's one talks:search call: every vault in a single request (the main
+ * process searches them and merges in this order), or no vault list for the first open vault.
+ */
+export function talkSearchRequestOptions(within: string, vaultIds?: string[]): TalkSearchOptions {
+  return { ...(within ? { within } : {}), ...(vaultIds ? { vaultIds } : {}) }
+}
+
 // App-infrastructure folders the Talks browser hides; search hides the same talks.
 export function isIgnoredTalkFolder(folder: string): boolean {
   return ['cache', 'scripts'].includes(folder.split('/')[0].toLowerCase())

@@ -105,6 +105,11 @@ export interface OptionApplicability {
    * above: a caller that did not read the section is not offered the group.
    */
   preworkKinds?: readonly PreworkStepKind[]
+  /**
+   * 0.38 ticket 13: the slide must carry an embedded page ([Embed:] / [Simulation:]) AND body
+   * text. Like `preworkKinds`, a caller that did not read the slide is not offered the group.
+   */
+  embedBesideText?: boolean
 }
 
 /** The kinds of a pre-work step (compiler/scripts/lib/prework.mjs PREWORK_KINDS). */
@@ -448,6 +453,24 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     ]
   },
   {
+    key: 'page-width',
+    label: 'Page width',
+    sectionLabel: 'Page',
+    preview: 'segmented',
+    section: 'slide',
+    // 0.38 ticket 13: the share of the slide's width an embedded page takes beside body text.
+    // Nothing stored = 70 (the compiler's default); the stored value only selects one of three
+    // fixed CSS rules (media.css, keyed on data-embed-split).
+    appliesTo: { embedBesideText: true },
+    // The compiler's own key for {page-NN} (resolution of the page-70 entry); like `split` for the sidebar.
+    dictionaryTokens: ['embedsplit=60', 'embedsplit=70', 'embedsplit=80'],
+    values: [
+      { token: 'page-60', label: '60%', description: 'The page takes 60% of the width, the text 40%' },
+      { token: '', label: '70%', description: 'The page takes 70% of the width, the text 30% (default)', altTokens: ['page-70'] },
+      { token: 'page-80', label: '80%', description: 'The page takes 80% of the width, the text 20%' }
+    ]
+  },
+  {
     key: 'media-placement',
     label: 'Media placement',
     sectionLabel: 'Media',
@@ -566,6 +589,33 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     values: [
       { token: '', label: 'Auto' },
       { token: 'nostep', label: 'Nostep', description: 'Disable stepping on this slide' }
+    ]
+  },
+  {
+    key: 'image-steps',
+    label: 'Step through images',
+    preview: 'segmented',
+    section: 'steps',
+    // 0.38 ticket 03 (ADR-0034): any slide can carry images, so the choice is universal, as arrival
+    // mode is. The runtime decides whether there is anything to step through.
+    appliesTo: {},
+    values: [
+      { token: '', label: 'Deck default', description: 'Use the talk’s setting (off unless the frontmatter says image_steps: true)' },
+      { token: 'image-steps', label: 'On', description: 'Next shows each image on this slide enlarged in turn, then the whole slide again' },
+      { token: 'no-image-steps', label: 'Off', description: 'Next goes straight on; Z still enlarges an image by hand' }
+    ]
+  },
+  {
+    key: 'emphasis-steps',
+    label: 'Emphasis appears on Next',
+    preview: 'segmented',
+    section: 'steps',
+    // 0.38 ticket 02: any slide can carry bold, underline, strikethrough or highlight in its body,
+    // so the choice is universal, as arrival mode is. A slide with none steps exactly as before.
+    appliesTo: {},
+    values: [
+      { token: '', label: 'Off', description: 'Emphasis shows as soon as the slide does' },
+      { token: 'emphasis-steps', label: 'On', description: 'Bold, underline, strikethrough and highlight on this slide each appear on a press of Next, in reading order' }
     ]
   },
   {
@@ -2641,6 +2691,54 @@ The visible heading is suppressed.`,
     whenItFits: 'A slide that should show everything at once in a stepped section.'
   },
   {
+    // 0.38 ticket 03 (ADR-0034): Next walks the slide's still images in the zoomed view.
+    // {no-image-steps} is the same key switched off, for a talk that has the setting on.
+    // Not a layout to pick: it is offered in the Inspector's Steps options and in the talk's
+    // settings, so the layout picker (locked by ADR-0032 §4) is unchanged.
+    name: 'image-steps',
+    label: 'Step through images',
+    trigger: '{image-steps}',
+    aliases: [],
+    triggerWords: ['image-steps'],
+    bareAliases: [{ word: 'no-image-steps', key: 'image-steps', value: 'off' }],
+    kind: 'modifier',
+    status: 'stable',
+    sample: `### Step through images
+{image-steps}
+
+![First](assets/sample-image.png)
+![Second](assets/sample-image.png)`,
+    description: 'Next shows each image enlarged in turn, then the whole slide again',
+    category: 'modes',
+    purpose: 'Modes',
+    whenItFits: 'A slide of several images you want to talk through one at a time.',
+    pickerEligible: false
+  },
+  {
+    // 0.38 ticket 02: every piece of bold, underline, strikethrough and highlight in the slide
+    // body starts as plain text and gains its emphasis on a press of Next. Italic and the title
+    // are not steps. Not a layout to pick: it is offered in the Inspector's Steps options, so the
+    // layout picker (locked by ADR-0032 §4) is unchanged.
+    name: 'emphasis-steps',
+    label: 'Emphasis appears on Next',
+    trigger: '{emphasis-steps}',
+    aliases: [],
+    triggerWords: ['emphasis-steps'],
+    kind: 'modifier',
+    status: 'stable',
+    sample: `### Emphasis appears on Next
+{emphasis-steps}
+
+- The first point has a **key phrase**
+- The second has a ==highlighted claim==
+- The third is ++underlined++, and one word is ~~struck~~`,
+    description: 'Bold, underline, strikethrough and highlight each appear on a press of Next, in reading order',
+    category: 'modes',
+    purpose: 'Modes',
+    whenItFits: 'A slide where you want to draw the eye to one phrase at a time as you speak.',
+    pickerEligible: false
+  },
+  {
     // ADR-0032 amendment point 5 (ticket 08): the talk's "Before the session" section. Its slides
     // are the pre-work form's steps, answered on the handout link before the day; presenting leaves
     // them out. Only on a `##` section.
@@ -2839,6 +2937,33 @@ Three short steps before Monday.
     category: 'modes',
     purpose: 'Modes',
     whenItFits: 'A title band wider or narrower than the layout gives by default.'
+  },
+  {
+    name: 'page-70',
+    label: 'Page width',
+    // An Inspector option token (Page width group), not a layout to pick.
+    pickerEligible: false,
+    trigger: '{page-80}',
+    aliases: ['{page-60}', '{page-70}'],
+    triggerWords: [],
+    kind: 'modifier',
+    dynamicPatterns: [{
+      source: '^page-(60|70|80)$',
+      resolution: [
+        { key: 'embedsplit', value: '$1' }
+      ]
+    }],
+    status: 'stable',
+    sample: `### page-80 — wide embedded page
+{page-80}
+
+- Text beside the page stays short
+
+[Embed: page.html]`,
+    description: 'Pin the share of the slide width an embedded page takes beside text (60/70/80%)',
+    category: 'modes',
+    purpose: 'Modes',
+    whenItFits: 'A slide with a live page and a few words, where the page needs more or less room.'
   },
   {
     name: 'font-body',

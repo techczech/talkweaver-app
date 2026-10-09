@@ -2,6 +2,7 @@ import type { TalkInfo, VaultView } from '../../../../preload/index'
 import { rebaseTalk, topicOf } from '../talkTreeNav'
 import { notify } from '../../lib/notify'
 import { talkKey } from './model'
+import type { OpenInNewWindowTarget } from '../../../../shared/open-in-new-window'
 import type { TalkAction, FolderAction } from './menus'
 
 // Vault operations for the Talks browser. Every op toasts on failure — a silent no-op
@@ -141,9 +142,18 @@ export function useTalkActions(deps: Deps) {
     if (!ok) notify('Couldn’t move the folder to the Bin.', 'error')
     onRefresh()
   }
+  /** Right-click / palette "Open in new window". The current window is left as it is. */
+  function openInNewWindow(target: OpenInNewWindowTarget): void {
+    const open = window.tw?.windows?.openInNewWindow
+    if (!open) { notify('Couldn’t open a new window.', 'error'); return }
+    open(target)
+      .then((res) => { if (!res?.ok) notify('Couldn’t open a new window.', 'error') })
+      .catch(() => notify('Couldn’t open a new window.', 'error'))
+  }
   function onTalkAction(talk: TalkInfo, action: TalkAction, at: { x: number; y: number }): void {
     setMenu(null)
     if (action === 'open') onSelectTalk(talk)
+    else if (action === 'open-new-window') openInNewWindow({ kind: 'talk', outlinePath: talk.outlinePath })
     else if (action === 'rename') startRename(talk)
     else if (action === 'duplicate') startDuplicate(talk)
     else if (action === 'move') startMove(talk, at)
@@ -160,7 +170,8 @@ export function useTalkActions(deps: Deps) {
   function onFolderAction(topic: string, action: FolderAction, vaultId?: string): void {
     setMenu(null)
     const leaf = topic.split('/').pop() || topic
-    if (action === 'new-talk') onNewTalk?.(topic, vaultId)
+    if (action === 'open-new-window') openInNewWindow({ kind: 'folder', topic, vaultId })
+    else if (action === 'new-talk') onNewTalk?.(topic, vaultId)
     else if (action === 'new-subfolder') setPrompt({ label: `New subfolder inside “${leaf}”`, initial: '', cta: 'Create', onSubmit: (v) => void doNewFolder(v, topic, vaultId) })
     else if (action === 'rename') setPrompt({ label: `Rename folder “${leaf}” to`, initial: leaf, cta: 'Rename', onSubmit: (v) => void doRenameFolder(topic, v, vaultId) })
     else if (action === 'delete') {
@@ -175,5 +186,5 @@ export function useTalkActions(deps: Deps) {
     }
   }
 
-  return { startRename, startDuplicate, startDelete, startMove, doMove, doNewFolder, onTalkAction, onFolderAction }
+  return { startRename, startDuplicate, startDelete, startMove, doMove, doNewFolder, onTalkAction, onFolderAction, openInNewWindow }
 }

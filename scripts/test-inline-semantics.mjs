@@ -105,6 +105,14 @@ check('the slide token beats the frontmatter default', () => {
   assert.equal(tokenWins.section.querySelector('p.claim')?.getAttribute('data-claim-style'), 'plain')
 })
 
+const authoredMarks = await compile(['Agents are ~~old~~ ++new++ applications, not C++.', '', '**++Agents are the new applications.++**'])
+check('authored strike and underline render in a slide; underline inside a whole-bold line keeps the claim', () => {
+  const html = authoredMarks.section.innerHTML
+  assert(html.includes('<s>old</s>') && html.includes('<u>new</u>'), 'strike and underline reach the slide as <s> and <u>')
+  assert(html.includes('C++') && !html.includes('<u>, not C'), 'a lone ++ stays literal')
+  assert(authoredMarks.section.querySelector('p.claim u'), 'underline nested in a wholly bold paragraph survives the claim path')
+})
+
 const partial = await compile(['Agents are the **new** applications.'])
 check('partial bold stays a paragraph with inline <strong>', () => {
   assert.equal(partial.section.querySelector('p.claim'), null, 'partial bold is not a claim')

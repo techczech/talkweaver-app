@@ -136,12 +136,13 @@ export function SortPopover({
 
 // ── context menus ────────────────────────────────────────────────────────────
 
-export type TalkAction = 'open' | 'rename' | 'duplicate' | 'move' | 'metadata' | 'reveal' | 'open-file' | 'copy-path' | 'delete'
+export type TalkAction = 'open' | 'open-new-window' | 'rename' | 'duplicate' | 'move' | 'metadata' | 'reveal' | 'open-file' | 'copy-path' | 'delete'
 
 type MenuItemDef<A extends string> = { action: A; icon: JSX.Element; label: string; k?: string; danger?: boolean }
 
 const TALK_MENU_ITEMS: MenuItemDef<TalkAction>[] = [
   { action: 'open', icon: <IcOpen size={12} />, label: 'Open', k: '↵' },
+  { action: 'open-new-window', icon: <IcOpen size={12} />, label: 'Open in new window' },
   { action: 'rename', icon: <IcRename size={12} />, label: 'Rename…', k: 'F2' },
   { action: 'move', icon: <IcMoveFolder size={12} />, label: 'Move to folder…', k: 'M' },
   { action: 'duplicate', icon: <IcDuplicate size={12} />, label: 'Duplicate…', k: '⌘D' },
@@ -213,15 +214,16 @@ export function TalkContextMenu({
   )
 }
 
-export type FolderAction = 'new-talk' | 'new-subfolder' | 'rename' | 'delete'
+export type FolderAction = 'open-new-window' | 'new-talk' | 'new-subfolder' | 'rename' | 'delete'
 
 const FOLDER_MENU_ITEMS: MenuItemDef<FolderAction>[] = [
+  { action: 'open-new-window', icon: <IcOpen size={12} />, label: 'Open in new window' },
   { action: 'new-talk', icon: <IcOpen size={12} />, label: 'New talk here…' },
   { action: 'new-subfolder', icon: <IcMoveFolder size={12} />, label: 'New subfolder…' },
   { action: 'rename', icon: <IcRename size={12} />, label: 'Rename folder…', k: 'F2' },
   { action: 'delete', icon: <IcTrash size={12} />, label: 'Delete folder…', danger: true }
 ]
-const FOLDER_MENU_BREAKS = new Set<FolderAction>(['new-subfolder'])
+const FOLDER_MENU_BREAKS = new Set<FolderAction>(['open-new-window', 'new-subfolder'])
 
 export function FolderContextMenu({
   x, y, startAtFirst = false, onAction, onClose

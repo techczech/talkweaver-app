@@ -4,6 +4,11 @@ import { plainInlineText } from "./00-inline-render.mjs";
 import { renderLicenseBody } from "./08-source-adapters.mjs";
 import { liveFollowRuntimeSource } from "../../assets/runtime/live-follow.js";
 import { instantSlideStyles } from "../../assets/runtime/instant-slide.js";
+import { emphasisStepsRuntimeSource } from "../../assets/runtime/emphasis-steps.js";
+import { audioChipRuntimeSource } from "../../assets/runtime/audio-chip.js";
+import { mediaStepsRuntimeSource } from "../../assets/runtime/media-steps.js";
+import { embedChannelSource } from "../../assets/runtime/embed-channel.js";
+import { EMBED_DOC_ATTRIBUTE } from "./embed-frame.mjs";
 import { audienceReactionsStyles } from "../../assets/runtime/audience-reactions.js";
 import { audienceAskStyles } from "../../assets/runtime/audience-ask.js";
 import { audienceBoardStyles } from "../../assets/runtime/audience-board.js";
@@ -13,6 +18,9 @@ import { sharedTalkStyles } from "../../assets/runtime/shared-talk-styles.js";
 import { preworkStatusRuntimeSource } from "../../assets/runtime/prework-status.js";
 import { preworkFormStyles, preworkFormRuntimeSource } from "../../assets/runtime/prework-form.js";
 import { renderScriptBlocks, renderSlideNavTitle } from "./slide-script-render.mjs";
+import { handoutHomeMarkup } from "./handout-home.mjs";
+import { handoutHomeStyles, handoutHomeRuntimeSource } from "../../assets/runtime/handout-home.js";
+import { lazySlideAssetsStyles, lazySlideAssetsRuntimeSource } from "../../assets/runtime/lazy-slide-assets.js";
 
 // =============================================================================
 // 9. Output builders — share exports + local launch tools; mostly literal injected JS/CSS strings
@@ -40,7 +48,32 @@ function venueTalkQrMarkup(svg, url) {
 // and the step slides, kept in an inert <template> so they are never ordinary slides. The page asks
 // the Worker whether pre-work is open and marks body[data-prework]; while it is open the form (ticket 10,
 // prework-form.js) takes the place of the slide list, and once it has closed a banner sits over the list.
-export function buildShareHtml({ title, slides, styles, includeNotes, slug, license, workerBaseUrl = "", liveTalkSlug = slug, venue = false, venueQr = "", venueUrl = "", sharedTalk = false, prework = null }) {
+// Handout, phone, print and venue pages show an audio chip as a static label and never load or play
+// the file: the <audio> element (and any data URI it carries) is dropped from the share markup.
+// One exception (0.38 ticket 05): the venue screen plays a {play-on-next} chip when the presenter's
+// step reaches it, so `keepPlayOnNext` leaves the <audio> of those chips in place.
+const AUDIO_ELEMENT_RE = /<audio\b[^>]*>\s*<\/audio>/gi;
+export function stripAudioElements(html, { keepPlayOnNext = false } = {}) {
+  const source = String(html ?? "");
+  if (!keepPlayOnNext) return source.replace(AUDIO_ELEMENT_RE, "");
+  // A chip holds spans and its <audio>, never another <div>.
+  const kept = [];
+  const held = source.replace(/<div class="slide-audio" data-audio-state="ready" data-play-on-next[\s>][\s\S]*?<\/div>/g, (chip) => {
+    kept.push(chip);
+    return `<!--tw-kept-audio-${kept.length - 1}-->`;
+  });
+  return held.replace(AUDIO_ELEMENT_RE, "").replace(/<!--tw-kept-audio-(\d+)-->/g, (_, i) => kept[Number(i)]);
+}
+
+export function buildShareHtml({ title, slides, styles, includeNotes, slug, license, workerBaseUrl = "", liveTalkSlug = slug, venue = false, venueQr = "", venueUrl = "", sharedTalk = false, prework = null, home = null, lazyAssets = false }) {
+  // `lazyAssets` (published index.html and <slug>.html): the page carries the slide-asset loader; the
+  // publisher then moves heavy inline media out (handout-lazy-assets.mjs). The Download handout and
+  // every other export leave it off and stay self-contained.
+  const lazyOn = Boolean(lazyAssets && !venue && !sharedTalk);
+  // `home` (handout home page, design 2026-10-02 B): the page the QR code and short link open is this
+  // bundle in home mode (handout-home-page.mjs), so its live surface is this page's own live client.
+  const homeOn = Boolean(home && !venue && !sharedTalk);
+  const homeStartsAt = homeOn && Number.isSafeInteger(home.startsAt) ? home.startsAt : null;
   const sharedTalkOptions = sharedTalk && !venue
     ? JSON.stringify({ proposals: sharedTalk === true || sharedTalk.proposals !== false, ownerName: String((sharedTalk && sharedTalk.ownerName) || "").slice(0, 60) }).replace(/</g, "\\u003c")
     : "null";
@@ -60,7 +93,7 @@ export function buildShareHtml({ title, slides, styles, includeNotes, slug, lice
     ? JSON.stringify({ preworkId: String(prework.preworkId), workerBaseUrl: String(prework.workerBaseUrl).replace(/\/+$/, ""), form: prework.form }).replace(/</g, "\\u003c")
     : "null";
   const preworkTemplate = preworkOn
-    ? `<template id="preworkSteps">${(prework.steps || []).map((step) => withoutScripts(String(step.html || ""))).join("\n")}</template>`
+    ? `<template id="preworkSteps">${(prework.steps || []).map((step) => stripAudioElements(withoutScripts(String(step.html || "")))).join("\n")}</template>`
     : "";
   const liveControls = workerBaseUrl
     ? '<button class="btn follow-live-btn" id="followLiveBtn" type="button" hidden><span class="live-dot" aria-hidden="true"></span><span class="btn-label">Stop following</span></button><button class="btn return-live-btn" id="returnToPresenterBtn" type="button" hidden>Return to presenter</button><label class="live-name" id="liveNameWrap" hidden>Your name <input id="liveName" type="text" placeholder="optional" autocomplete="name"></label><span class="live-follow-status" id="liveFollowStatus" role="status" aria-live="polite" hidden></span>'
@@ -69,10 +102,12 @@ export function buildShareHtml({ title, slides, styles, includeNotes, slug, lice
     const notes = includeNotes && slide.notes
       ? `<aside class="notes">${withoutScripts(slide.notes)}</aside>`
       : "";
-    return slide.html
+    return stripAudioElements(slide.html, { keepPlayOnNext: venue })
       .replace(/<section\b([^>]*)>/i, `<section$1 data-share-index="${index}">`)
       .replace(/<\/section>\s*$/i, `${notes}</section>`);
   }).join("\n\n");
+  // Embedded local pages (ticket 11): the channel is inlined only when a slide carries one.
+  const hasLocalEmbed = slideMarkup.includes(` ${EMBED_DOC_ATTRIBUTE}="`);
   // The overview list is rendered at RUNTIME by the shared createOverview factory so it mirrors the
   // full deck's grouped, clickable, searchable overview from the same slide data attributes.
 
@@ -93,6 +128,8 @@ ${pollExtendedStyles}
 ${styles}
 ${sharedTalk && !venue ? sharedTalkStyles : ""}
 ${preworkOn ? preworkFormStyles : ""}
+${homeOn ? handoutHomeStyles : ""}
+${lazyOn ? lazySlideAssetsStyles : ""}
 body { margin: 0; }
 .presenter-root, #presenterBtn { display: none !important; }
 .share-shell { min-height: 100vh; display: grid; grid-template-rows: 1fr auto; }
@@ -329,7 +366,8 @@ html, body, .share-shell { width: 100%; height: 100%; overflow: hidden; }
 ` : ''}
 </style>
 </head>
-<body class="${venue ? 'venue-screen' : ''}">
+<body class="${venue ? 'venue-screen' : homeOn ? 'hh-mode' : ''}">
+${homeOn ? handoutHomeMarkup(home, { title, slideCount: slides.length }) : ''}
 ${preworkOn ? '<div class="pw-closed-host pw-closed-top" id="preworkClosedTop" hidden></div>' : ''}
 <main class="share-shell">
   <div class="phone-bar" id="phoneBar" hidden>
@@ -437,7 +475,12 @@ ${hasMermaid ? mermaidVendorSource : ""}
 <script>
 (() => {
   const VENUE_MODE = ${venue ? 'true' : 'false'};
+  const HOME_MODE = ${homeOn ? 'true' : 'false'};
+  var handoutHome = null;
   const slides = Array.from(document.querySelectorAll(".slide"));
+  ${lazyOn ? `${lazySlideAssetsRuntimeSource()}
+  // Heavy slide media arrive after the page: live → the speaker's slide first; otherwise what is on screen.
+  var lazySlideAssets = createLazySlideAssets({ document, window, slides, liveConfigured: ${workerBaseUrl ? "true" : "false"} });` : "var lazySlideAssets = null;"}
   // Shared talk: each slide's markup as served, read before anything below touches it, so a
   // later push can tell exactly which slides changed.
   const SHARED_TALK_OPTIONS = ${sharedTalkOptions};
@@ -543,27 +586,180 @@ ${hasMermaid ? mermaidVendorSource : ""}
     }
     return u.toString();
   }
-  // A self-contained sim renders from a BLOB URL, not srcdoc: a srcdoc document inherits the deck's
-  // base URL, so an in-sim <a href="#section"> would load the whole deck into the frame. A blob URL
-  // is the doc's own base, so #hash / relative links resolve within the sim (scroll).
-  function simBlobSrc(html) {
-    try { return URL.createObjectURL(new Blob([html || ""], { type: "text/html" })); }
-    catch { return null; }
+  // === Embedded local pages (0.38 ticket 11) ==================================================
+  // The same mechanism as the deck (templates/presenter-popup-single-html.html): a local page is an
+  // empty sandboxed frame (opaque origin) carrying its document in data-embed-doc beside a labelled
+  // placeholder. It is loaded only on the active slide and unloaded on leaving it. This page gives
+  // every frame role "none": the page's agent forwards navigation keys and Escape, and nothing is
+  // mirrored. The channel source is inlined only when the page has such a slide.
+  ${hasLocalEmbed ? embedChannelSource() : ""}
+  var SHARE_EMBED_FRAMES = 'figure.slide-embed[data-embed="local"] > iframe[data-embed-doc]';
+  var shareEmbedChannel = typeof embedCreateChannel === "function" ? embedCreateChannel({
+    // The channel has checked the fixed key list, that THIS page engaged the frame (the reader
+    // pressed its Interact chip), that the frame has the focus, a live user activation, and the rate.
+    onKey: function (who, key) {
+      if (key === "Escape") { leaveShareEmbed(who.frame); return; }
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: key, bubbles: true }));
+    }
+  }) : null;
+  // The page's own frames that are live now, and the one the reader is using (engaged), if any.
+  function liveShareEmbeds() {
+    return Array.prototype.slice.call(document.querySelectorAll('figure.slide-embed[data-embed="local"][data-embed-state="live"] > iframe'));
   }
-  function blobifySrcdocSims(root) {
-    if (!root) return;
-    root.querySelectorAll("figure.slide-embed > iframe[srcdoc]").forEach((f) => {
-      if (f.dataset.simBlobbed === "1") return;
-      const url = simBlobSrc(f.getAttribute("srcdoc"));
-      if (!url) return;
-      f.dataset.simBlobbed = "1";
-      f.removeAttribute("srcdoc");
-      f.addEventListener("load", () => { try { URL.revokeObjectURL(url); } catch { /* noop */ } }, { once: true });
-      f.src = url;
+  function shareEmbedInUse() {
+    if (!shareEmbedChannel) return null;
+    return liveShareEmbeds().filter(function (frame) { var status = shareEmbedChannel.status(frame); return status && status.engaged; })[0] || null;
+  }
+  // THE RULE (runtime/embed-focus.js, the deck's own guard): an embedded page the reader has not
+  // engaged never holds this page's focus; a text field of this page that a page took the focus
+  // from gets it back; a frame hands the focus to this page before it is unloaded.
+  var shareEmbedFocus = shareEmbedChannel && typeof embedCreateFocusGuard === "function"
+    ? embedCreateFocusGuard({ channel: shareEmbedChannel, livePresent: function () { return liveShareEmbeds().length > 0; }, inUse: shareEmbedInUse, guarded: shareFrameMayNotHoldFocus, pages: unusedShareEmbeds, onStopped: function () { syncLocalShareEmbeds(); } })
+    : null;
+  // STOPPED (the guard's budget, counted for the slide): when the pages of the slide keep taking
+  // the keyboard, every page of it that is not in use is unloaded to its placeholder, which says
+  // so, until the slide is left and opened again, or the reader chooses one with its chip. The
+  // record is the guard's; the figures carry it as an attribute (syncLocalShareEmbeds).
+  function shareEmbedOrder(slide, frame) {
+    return Math.max(0, Array.prototype.indexOf.call(slide.querySelectorAll("figure.slide-embed iframe"), frame));
+  }
+  // Frames with no record that may not hold the focus either (a page can put the focus on any
+  // frame of this page): a local page's frame, loaded or not, and a frame of a slide not shown.
+  function shareFrameMayNotHoldFocus(el) {
+    if (el === shareEmbedInUse()) return false;
+    if (el.matches(SHARE_EMBED_FRAMES)) return true;
+    var slide = el.closest(".slide");
+    return Boolean(slide && Array.prototype.indexOf.call(slides, slide) >= 0 && slide !== slides[index]);
+  }
+  function unusedShareEmbeds() {
+    var slide = slides[index];
+    if (!slide) return [];
+    var inUse = shareEmbedInUse();
+    return Array.prototype.slice.call(slide.querySelectorAll(SHARE_EMBED_FRAMES)).filter(function (frame) { return frame !== inUse; }).map(function (frame) { return shareEmbedOrder(slide, frame); });
+  }
+  // A local page's frame is compiled with scrolling="no" (no scrollbar, no wheel). While the reader
+  // is using the page the attribute is off, so it scrolls with the wheel; it goes back afterwards.
+  function setShareEmbedScrollable(frame, scrollable) {
+    if (scrollable) frame.removeAttribute("scrolling");
+    else frame.setAttribute("scrolling", "no");
+  }
+  function leaveShareEmbed(frame) {
+    if (shareEmbedChannel) shareEmbedChannel.disengage(frame);
+    frame.classList.remove("embed-live");
+    setShareEmbedScrollable(frame, false);
+    try { frame.blur(); } catch (e) { /* noop */ }
+    try { window.focus(); } catch (e) { /* noop */ }
+    // The pages suspended while this one was in use run again (from their beginning).
+    syncLocalShareEmbeds();
+  }
+  // The stage is the view the reader is looking at. It is not while the phone's slide list, the
+  // phone's full-screen picture or the pre-work form covers it, nor on the home page outside its
+  // Live tab. Each of those calls syncLocalShareEmbeds() when it comes and goes.
+  function shareStageShowing() {
+    var body = document.body;
+    if (body.classList.contains("phone-list-mode") || body.classList.contains("pw-open")) return false;
+    var full = document.getElementById("fsOverlay");
+    if (full && full.classList.contains("is-open")) return false;
+    if (HOME_MODE && !(handoutHome && handoutHome.view() === "live")) return false;
+    return true;
+  }
+  // A copy of a slide (a phone list row, the phone's full-screen picture) is a picture of it and
+  // never runs a page: it carries no document, whatever state the slide it was copied from is in.
+  // Called before the copy is put in the page.
+  function idleEmbedClone(clone) {
+    clone.querySelectorAll('figure.slide-embed[data-embed="local"]').forEach(function (figure) {
+      figure.setAttribute("data-embed-state", "idle");
+      figure.querySelectorAll("iframe").forEach(function (frame) {
+        frame.removeAttribute("data-embed-doc");
+        frame.removeAttribute("srcdoc");
+        frame.classList.remove("embed-live");
+      });
     });
+    return clone;
   }
+  // A page runs in ONE place: the current slide of the stage, while the stage is the view showing.
+  // Only the stage's own slides are looked at (never the document: a copy of a slide carries
+  // .active for its layout), so nothing outside the stage can be loaded from here.
+  function syncLocalShareEmbeds() {
+    var showing = !document.body.hasAttribute("data-tw-preview") && shareStageShowing();
+    // SUSPENSION, as in the deck: while the reader is using one page, every other local page is
+    // unloaded to its placeholder. A page that is engaged has this page's focus, and the browser
+    // does not report a second page taking the keyboard from it.
+    var inUse = shareEmbedInUse();
+    if (inUse && !(slides[index] && slides[index].contains(inUse))) inUse = null;
+    // A visit to a slide ends when another slide is opened: the record of stopped pages goes with it.
+    if (shareEmbedFocus) shareEmbedFocus.visit(index);
+    slides.forEach(function (slide, slideIndex) { slide.querySelectorAll(SHARE_EMBED_FRAMES).forEach(function (frame) {
+      var figure = frame.parentElement;
+      var live = figure.getAttribute("data-embed-state") === "live";
+      figure.toggleAttribute("data-embed-stopped", Boolean(shareEmbedFocus && slideIndex === index && shareEmbedFocus.isStopped(shareEmbedOrder(slide, frame))));
+      // Only a frame whose sandbox gives it an opaque origin is ever loaded.
+      var want = Boolean(showing && shareEmbedChannel && slideIndex === index && slide.classList.contains("active")
+        && frame.hasAttribute("sandbox") && !frame.sandbox.contains("allow-same-origin") && (!inUse || inUse === frame) && !figure.hasAttribute("data-embed-stopped"));
+      if (want && !live) {
+        var order = shareEmbedOrder(slide, frame);
+        // The record first, then the document: the agent's ready must find it.
+        if (!shareEmbedChannel.activate(frame, { slide: slide.dataset.id || "", index: order, role: "none" })) return;
+        figure.setAttribute("data-embed-state", "live");
+        // Not a tab stop: the way into a page is its Interact chip, which this page sees.
+        frame.tabIndex = -1;
+        frame.setAttribute("srcdoc", frame.getAttribute("data-embed-doc") || "");
+        if (shareEmbedFocus) shareEmbedFocus.watch();
+      } else if (!want && live) {
+        // Before the page is unloaded: a frame that goes away holding the focus leaves this page with none.
+        if (shareEmbedFocus) shareEmbedFocus.release(frame);
+        shareEmbedChannel.deactivate(frame);
+        frame.classList.remove("embed-live");
+        setShareEmbedScrollable(frame, false);
+        figure.setAttribute("data-embed-state", "idle");
+        // Without srcdoc (and it never has src) the frame goes back to about:blank.
+        frame.removeAttribute("srcdoc");
+      }
+    }); });
+  }
+  // Interact: a local page takes the pointer and the keyboard only after its chip is pressed;
+  // Escape inside it, a press anywhere outside it, or leaving the slide hands them back.
+  document.addEventListener("click", function (event) {
+    var chip = event.target instanceof Element ? event.target.closest('figure.slide-embed[data-embed="local"] > .embed-interact-chip') : null;
+    if (!chip) return;
+    var frame = chip.parentElement.querySelector("iframe");
+    if (!frame || !event.isTrusted) return;
+    event.preventDefault();
+    // One page at a time: a page still in use is left first, which also runs this one again if it
+    // was suspended (its record is made before it is engaged).
+    document.querySelectorAll(SHARE_EMBED_FRAMES + ".embed-live").forEach(function (other) { if (other !== frame) leaveShareEmbed(other); });
+    // A stopped page that the reader chooses runs again (the slide's other stopped pages do not).
+    if (chip.parentElement.hasAttribute("data-embed-stopped") && shareEmbedFocus && slides[index]) {
+      shareEmbedFocus.resume(shareEmbedOrder(slides[index], frame));
+      syncLocalShareEmbeds();
+    }
+    frame.classList.add("embed-live");
+    // ENGAGED: a trusted press on the chip, in this document. Only then may a stepping key the page
+    // forwards move the deck (a page can focus itself, and this window's user activation outlives
+    // the reader's own key press, so neither proves the reader is using the page).
+    if (shareEmbedChannel) shareEmbedChannel.engage(frame);
+    setShareEmbedScrollable(frame, true);
+    // At once: from here on no other local page may be running.
+    syncLocalShareEmbeds();
+    try { frame.focus(); } catch (e) { /* noop */ }
+  });
+  // A trusted key press that reaches THIS document means the reader is back in the deck.
+  window.addEventListener("keydown", function (event) {
+    if (event.isTrusted) document.querySelectorAll(SHARE_EMBED_FRAMES + ".embed-live").forEach(leaveShareEmbed);
+  }, true);
+  // So does a trusted press (mouse, touch or pen) anywhere outside the figure of the page in use.
+  // pointerdown, not mousedown: a touch that becomes a drag or a scroll sends no mouse events.
+  // (Presses inside the page never arrive here; its own chip is hidden while it is in use.)
+  window.addEventListener("pointerdown", function (event) {
+    if (!event.isTrusted) return;
+    var target = event.target instanceof Element ? event.target : null;
+    document.querySelectorAll(SHARE_EMBED_FRAMES + ".embed-live").forEach(function (frame) {
+      if (target && frame.parentElement && frame.parentElement.contains(target)) return;
+      leaveShareEmbed(frame);
+    });
+  }, true);
   function syncShareEmbeds() {
-    blobifySrcdocSims(document.querySelector(".slide.active"));
+    syncLocalShareEmbeds();
     document.querySelectorAll(".slide.active iframe[data-src]").forEach((frame) => {
       if (!frame.src) frame.src = embedSrcFor(frame);
     });
@@ -668,7 +864,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
         if (row.dataset.filled) return;
         row.dataset.filled = "1";
         var i = Number(row.dataset.index);
-        var clone = slides[i].cloneNode(true);
+        var clone = idleEmbedClone(slides[i].cloneNode(true));
         clone.classList.add("active");
         clone.removeAttribute("id");
         var note = clone.querySelector(".notes");
@@ -711,7 +907,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
       // No IntersectionObserver: fill everything, correctness over cost.
       phoneList.querySelectorAll(".pslide-row").forEach(function (row) {
         var i = Number(row.dataset.index);
-        var clone = slides[i].cloneNode(true);
+        var clone = idleEmbedClone(slides[i].cloneNode(true));
         clone.classList.add("active");
         row.querySelector(".pslide-inner").appendChild(clone);
         fitPhoneRow(row);
@@ -726,6 +922,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
     document.body.classList.remove("phone-detail-mode");
     if (phoneBar) phoneBar.hidden = true;
     if (phoneList) phoneList.hidden = false;
+    // The list covers the stage: the page on its current slide stops.
+    syncLocalShareEmbeds();
     buildPhoneList();
     refreshPhoneListMarks();
   }
@@ -827,6 +1025,17 @@ ${hasMermaid ? mermaidVendorSource : ""}
         code.textContent = block.text || "";
         pre.appendChild(code);
         host.appendChild(pre);
+      } else if (block.type === "audio") {
+        // An audio file is a static label here: the phone never loads or plays it.
+        var au = document.createElement("div");
+        au.className = "ps-media";
+        var auLabel = document.createElement("b");
+        auLabel.textContent = "Audio";
+        var auTitle = document.createElement("span");
+        auTitle.textContent = block.title || "";
+        au.appendChild(auLabel);
+        au.appendChild(auTitle);
+        host.appendChild(au);
       } else if (block.type === "diagram") {
         // A diagram fence (mermaid, svg) is a picture on the slide: named, never its source.
         var dg = document.createElement("div");
@@ -882,6 +1091,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
     if (phoneBar) phoneBar.hidden = false;
     syncPhoneDetail();
     fitStage();
+    // The stage shows again: the page on its current slide starts from its beginning.
+    syncLocalShareEmbeds();
   }
 
   function applyPhoneMode() {
@@ -893,6 +1104,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
       if (phoneList) phoneList.hidden = true;
       if (phoneBar) phoneBar.hidden = true;
       fitStage();
+      syncLocalShareEmbeds();
     }
   }
 
@@ -922,7 +1134,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
   function paintFullScreen() {
     if (!fsInner) return;
     fsInner.replaceChildren();
-    var clone = slides[index].cloneNode(true);
+    var clone = idleEmbedClone(slides[index].cloneNode(true));
     clone.classList.add("active");
     clone.removeAttribute("id");
     var note = clone.querySelector(".notes");
@@ -935,10 +1147,13 @@ ${hasMermaid ? mermaidVendorSource : ""}
   function openFullScreen() {
     if (!fsOverlay) return;
     fsOverlay.classList.add("is-open");
+    // The full-screen picture covers the stage: the page under it stops (the picture holds none).
+    syncLocalShareEmbeds();
     paintFullScreen();
   }
   function closeFullScreen() {
     if (fsOverlay) fsOverlay.classList.remove("is-open");
+    syncLocalShareEmbeds();
   }
   function stepFullScreen(delta) {
     go((index + delta + slides.length) % slides.length);
@@ -980,7 +1195,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
     if (overview.isOpen()) overview.render();
     count.textContent = (index + 1) + " / " + slides.length;
     const id = slides[index]?.dataset.id;
-    if (id) history.replaceState(null, "", "#" + id);
+    if (id && !HOME_MODE) history.replaceState(null, "", "#" + id);
+    if (handoutHome) handoutHome.slideChanged(index);
     if (notesBody) {
       const note = slides[index]?.querySelector(".notes");
       notesBody.replaceChildren();
@@ -995,6 +1211,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
     if (sharedTalkController) sharedTalkController.slideChanged();
   }
   let liveNavigationObserver = null;
+  // The venue screen's playback of {play-on-next} files (set further down; null on every other page).
+  let venueMediaSteps = null;
   let sharedTalkController = null;
   let audienceRevealIndex = 0;
   function go(nextIndex, options = {}) {
@@ -1003,11 +1221,16 @@ ${hasMermaid ? mermaidVendorSource : ""}
     // NOT auto-entered here. Reveal/Focus is opt-in (the Reveal button / R / F); once the reader
     // turns it on it is sticky across slides, with the step just resetting to 0 on each slide.
     modeStep = 0;
+    // Whatever the presenter last sent belonged to the slide being left (a live arrival sets it
+    // again in applyLiveSlideState).
+    liveFocus = null;
     galleryStep = 0;
     audienceRevealIndex = 0;
     render();
     applyModeDimming();
     applyGallery();
+    // A move of the venue screen's own (its keyboard, with no presenter driving) stops every file.
+    if (venueMediaSteps && !options.fromLive) venueMediaSteps.apply(slides[index], [], []);
     if (liveNavigationObserver) liveNavigationObserver(slides[index]?.dataset.id || "", Boolean(options.fromLive));
   }
   // Live protocol helpers are injected from compiler/assets/runtime/live-follow.js, the same
@@ -1027,8 +1250,10 @@ ${hasMermaid ? mermaidVendorSource : ""}
       document,
       liveConfig: LIVE_CONFIG,
       venue: VENUE_MODE,
+      breakQr: ${venue ? '() => ({ svg: VENUE_JOIN.qrSvg, url: VENUE_JOIN.shortUrl, link: /^https?:\\/\\//i.test(VENUE_JOIN.shortUrl) })' : 'null'},
       getViewerPosition: currentViewerPosition,
       applyLiveSlideState,
+      releaseLiveSlideState,
       // A phone that joins a board left open after End live has no slide to follow: take it to the board's slide.
       showSlide: (slideId) => {
         const at = slides.findIndex((slide) => slide.dataset.id === slideId);
@@ -1084,6 +1309,13 @@ ${hasMermaid ? mermaidVendorSource : ""}
         isBlocked: () => helpOverlay.classList.contains("open") || lbOpen,
       },
       onPollAnswered: () => renderMyNotes(),
+      // The home page (design 2026-10-02 B) turns to its Live tab while a session is live.
+      onLiveChanged: (live) => { if (handoutHome) handoutHome.setLive(live); if (lazySlideAssets) lazySlideAssets.setLive(live); },
+      // The speaker's slide, followed or not: its media are fetched first.
+      onLiveSlideState: (slideId) => { if (lazySlideAssets) lazySlideAssets.setLiveSlide(slides.findIndex((slide) => slide.dataset.id === slideId)); },
+      // A full-screen instant slide waits while the person reads the Handout tab; the Live tab says it is there.
+      instantAllowed: () => !handoutHome || handoutHome.view() === 'live' || !handoutHome.isLive(),
+      onInstantChanged: (slide) => { if (handoutHome) handoutHome.setInstant(slide); },
       // A board that cannot be drawn must not drop the live connection the client guards with fail().
       onBoardState: ${venue ? "(message) => { try { venueBoards.receive(message); } catch (error) { console.error(error); } }" : "undefined"},
       onEnded: VENUE_MODE ? showVenueClosing : undefined,
@@ -1141,6 +1373,80 @@ ${hasMermaid ? mermaidVendorSource : ""}
   const CARD_UNIT_SELECTOR = ".feature-list > li,blockquote,figure.slide-figure,p.content-p";
   let modeKind = null;   // null | "reveal" | "focus"
   let modeStep = 0;
+  // "Emphasis appears on Next" (0.38 ticket 02). The order and count of a slide's steps when its
+  // emphasis steps, inlined from compiler/assets/runtime/emphasis-steps.js: the SAME source the
+  // deck runtime runs, so the venue screen and the projector read one step the same way.
+  ${emphasisStepsRuntimeSource()}
+  ${venue ? `// "Play as a step" (0.38 ticket 05): the venue screen starts and stops a {play-on-next} file from
+  // the step it is sent, with the SAME playback source the projector runs (runtime/media-steps.js)
+  // and the audio chip's own runtime. A handout and a phone never carry either: they show the file
+  // in its static form.
+  ${audioChipRuntimeSource()}
+  ${mediaStepsRuntimeSource()}
+  venueMediaSteps = createMediaStepController({
+    canPlay: function () { return !document.body.hasAttribute("data-tw-preview"); },
+    audioChips: createAudioChipController({})
+  });` : ""}
+  // A handout, the phone view and print show all emphasis: the reader's own Reveal / Focus steps
+  // the block units only. Emphasis follows a step only while this page shows what the presenter
+  // sent, which is what the venue screen always shows.
+  //
+  // liveFocus is that message's focus AS SENT ({ kind, step }, the wire form of ADR-0035), kept
+  // only while the page still shows it; null for the reader's own modes and after any move of the
+  // reader's own. modeKind / modeStep are the mode ON SHOW, decoded: an emphasis-only step is sent
+  // as kind "reveal" and is no mode at all, so modeKind is null there and one click on Reveal (or
+  // Focus) enters the reader's own mode.
+  let liveFocus = null;
+  let emphasisPainted = null;
+  // Whether the image sequence runs on this slide: the deck runtime's imageStops rule, read from
+  // the same markup (the setting's stamp, no carousel, no {nostep}, a still image that is not the
+  // slide's lone full-bleed figure).
+  function imageSequenceHere(slide) {
+    if (!slide.hasAttribute("data-image-steps") || slide.hasAttribute("data-carousel") || slide.hasAttribute("data-nostep") || galleryIn(slide)) return false;
+    const stills = slide.querySelectorAll("figure.slide-figure img, .image-grid .ig-media img");
+    if (stills.length !== 1) return stills.length > 0;
+    const figure = stills[0].closest("figure.slide-figure");
+    return !(figure && figure.parentElement && figure.parentElement.matches(".slide-content.layout-media"));
+  }
+  // "Play as a step" on the venue screen: each {play-on-next} file's state is read from ONE live
+  // message, its focus (the step, in the wire form of ADR-0035) and its lightbox (the image
+  // sequence, which runs after the slide's own steps: once it has begun no file plays). Called
+  // once per message, after the slide, the card and the mode are in place, so a message that
+  // repeats the step never restarts a file. With no focus every file on the slide waits.
+  function applyVenueMedia(focus, lightbox) {
+    if (!venueMediaSteps) return;
+    const slide = slides[index];
+    const found = focus ? liveEmphasisUnits(slide) : null;
+    const at = found ? emphasisFromWire(found.units, focus) : null;
+    if (!at) { venueMediaSteps.apply(slide, [], []); return; }
+    const movedOn = Boolean(lightbox && (lightbox.open || Number(lightbox.index) > 0)) && imageSequenceHere(slide);
+    venueMediaSteps.apply(slide, mediaStepFiles(found.els), mediaStepStates(found.units, at.mode, at.step, movedOn));
+  }
+  function liveEmphasisUnits(slide) {
+    if (!slide || !(slide.hasAttribute("data-emphasis-steps") || slide.hasAttribute("data-media-steps"))) return null;
+    const gallery = galleryIn(slide);
+    const card = gallery ? (gallery.querySelector(".card.active-card") || gallery.querySelector(".card")) : null;
+    const blocks = !gallery ? MODE_SELECTOR : (card && !card.classList.contains("card-title") ? CARD_UNIT_SELECTOR : "");
+    const els = emphasisStepElements(gallery ? card : slide, blocks, isVisibleUnit);
+    // Something steps with no mode on: an emphasis span or a {play-on-next} file.
+    const units = emphasisStepUnits(els);
+    if (!units.some((unit) => unit.kind !== "block")) return null;
+    return { els, units };
+  }
+  function liveEmphasisPlan(slide) {
+    const found = liveFocus ? liveEmphasisUnits(slide) : null;
+    if (!found) return null;
+    const at = emphasisFromWire(found.units, liveFocus);
+    return { els: found.els, units: found.units, kind: at.mode, states: emphasisStepStates(found.units, at.mode, at.step) };
+  }
+  // The reader stops following without moving (the Follow button, or the session ends): the page
+  // goes back to what a handout shows, all emphasis on. The venue screen never leaves the session's
+  // last state this way.
+  function releaseLiveSlideState() {
+    if (VENUE_MODE || !liveFocus) return;
+    liveFocus = null;
+    applyModeDimming();
+  }
   const modeBanner = document.getElementById("modeBanner");
   const MODE_BANNER_TEXT = {
     reveal: 'Reveal &middot; <kbd>&rarr;</kbd> to add &middot; <kbd>R</kbd>/<kbd>Esc</kbd> to exit',
@@ -1202,17 +1508,52 @@ ${hasMermaid ? mermaidVendorSource : ""}
     if (!slide) return;
     // A reveal step changes what is laid out: fit again, as the app does on every step.
     scheduleSlideFit();
-    slide.classList.toggle("mode-active", Boolean(modeKind));
-    slide.classList.toggle("mode-reveal", modeKind === "reveal");
-    slide.classList.toggle("mode-focus", modeKind === "focus");
-    syncRevealBtn();
-    const units = modeKind ? modeElements() : [];
+    // Emphasis steps sent by the presenter (null on every other slide and for the reader's own
+    // modes). Its kind is the mode the step belongs to: null when only emphasis steps.
+    const emphasis = liveEmphasisPlan(slide);
+    const kind = emphasis ? emphasis.kind : modeKind;
+    slide.classList.toggle("mode-active", Boolean(kind));
+    slide.classList.toggle("mode-reveal", kind === "reveal");
+    slide.classList.toggle("mode-focus", kind === "focus");
+    syncRevealBtn(kind);
+    if (emphasisPainted && emphasisPainted !== slide) {
+      paintEmphasisStates(emphasisPainted, [], []);
+      emphasisPainted.classList.remove("emph-anim");
+      emphasisPainted = null;
+    }
+    if (emphasis) {
+      stampEmphasisPlainWeight(slide, getComputedStyle);
+      paintEmphasisStates(slide, emphasis.els, emphasis.states);
+      if (emphasisPainted !== slide) {
+        emphasisPainted = slide;
+        requestAnimationFrame(() => { if (emphasisPainted === slide) slide.classList.add("emph-anim"); });
+      }
+    } else if (emphasisPainted === slide) {
+      paintEmphasisStates(slide, [], []);
+      slide.classList.remove("emph-anim");
+      emphasisPainted = null;
+    }
+    const units = !kind ? [] : emphasis ? emphasis.els.filter((_, i) => stepUnitIsBlock(emphasis.units[i])) : modeElements();
     const live = new Set(units);
     slide.querySelectorAll(".mode-el").forEach((el) => {
       if (live.has(el)) return;
       el.classList.remove("mode-el");
       el.removeAttribute("data-mode-state");
     });
+    if (emphasis) {
+      const blockStates = emphasis.states.filter((_, i) => stepUnitIsBlock(emphasis.units[i]));
+      const blocksOn = blockStates.some((value) => value === "full") ? units.length + 1 : blockStates.filter((value) => value === "soft" || value === "current").length;
+      applyMindmapRevealForSlide(slide, kind, kind ? blocksOn : 0);
+      if (!kind || units.length === 0) return;
+      var newest = null;
+      units.forEach((el, i) => {
+        if (!el.classList.contains("mode-el")) el.classList.add("mode-el");
+        if (blockStates[i] === "current") newest = el;
+        if (el.getAttribute("data-mode-state") !== blockStates[i]) el.setAttribute("data-mode-state", blockStates[i]);
+      });
+      if (newest) scrollCurrentUnitIntoView([newest], 1);
+      return;
+    }
     // Mindmap unfold rides the same step as the .mm-step markers (counted in units).
     applyMindmapRevealForSlide(slide, modeKind, clampStep(modeStep, units.length));
     if (!modeKind || units.length === 0) return;
@@ -1237,20 +1578,28 @@ ${hasMermaid ? mermaidVendorSource : ""}
       catch (e) { el.scrollIntoView(false); }
     });
   }
-  function setModeState(kind, step, announce) {
+  function setModeState(kind, step, announce, fromLive) {
     closeLightbox();
     modeKind = kind === "reveal" || kind === "focus" ? kind : null;
     modeStep = modeKind ? Math.max(0, Number(step) || 0) : 0;
+    liveFocus = fromLive === true && modeKind ? { kind: modeKind, step: modeStep } : null;
+    // On a slide whose emphasis steps, what was sent is decoded before it becomes the page's mode.
+    const sent = liveFocus ? liveEmphasisUnits(slides[index]) : null;
+    if (sent) {
+      const at = emphasisFromWire(sent.units, liveFocus);
+      modeKind = at.mode;
+      modeStep = at.mode ? at.step : 0;
+    }
     if (announce && modeKind) showModeBanner(modeKind); else hideModeBanner();
     applyModeDimming();
   }
   function enterMode(kind) { setModeState(kind, 0, true); }
   function exitMode() { setModeState(null, 0, false); }
   function toggleMode(kind) { if (modeKind === kind) exitMode(); else enterMode(kind); liveNavigationObserver?.("", false); }
-  function syncRevealBtn() {
+  function syncRevealBtn(kind) {
     const btn = document.getElementById("revealBtn");
     if (!btn) return;
-    const on = modeKind === "reveal";
+    const on = kind === "reveal";
     btn.classList.toggle("is-on", on);
     btn.setAttribute("aria-pressed", on ? "true" : "false");
   }
@@ -1261,6 +1610,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
     const target = clampStep(modeStep, units.length) + delta;
     if (target < 0) { go(index - 1); return; }
     if (target > maxStepFor(units.length)) { go(index + 1); return; }
+    liveFocus = null;
     modeStep = target;
     applyModeDimming();
     liveNavigationObserver?.("", false);
@@ -1269,7 +1619,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
     return {
       slideId: slides[index]?.dataset.id || "",
       reveal: activeGallery() ? galleryStep : audienceRevealIndex,
-      focus: modeKind ? { kind: modeKind, step: modeStep } : null,
+      // While the page shows what the presenter sent, its position is that message's own focus.
+      focus: liveFocus ? { kind: liveFocus.kind, step: liveFocus.step } : modeKind ? { kind: modeKind, step: modeStep } : null,
     };
   }
   function applyLiveSlideState(message) {
@@ -1279,12 +1630,13 @@ ${hasMermaid ? mermaidVendorSource : ""}
     audienceRevealIndex = Math.max(0, Number(message.reveal) || 0);
     galleryStep = audienceRevealIndex;
     applyGallery();
-    setModeState(message.focus?.kind || null, message.focus?.step || 0, false);
+    setModeState(message.focus?.kind || null, message.focus?.step || 0, false, true);
     if (VENUE_MODE) {
       document.getElementById('venueClosing').hidden = true;
       if (message.lightbox?.open) openLightbox(message.lightbox.index);
       else closeLightbox();
       showVenueTalkQr(message.talkQr === true);
+      applyVenueMedia(message.focus || null, message.lightbox || null);
     }
     return true;
   }
@@ -1517,7 +1869,20 @@ ${hasMermaid ? mermaidVendorSource : ""}
         };
       } catch (e) { return null; }
     }).filter(Boolean);
-    return stills.concat(qrs).filter((entry) => entry.src);
+    // Image-grid cells are zoomables in the presenting runtime (slideImages), after the figures and
+    // before the QR codes. The venue screen is sent that runtime's lightbox index, so the list here
+    // keeps the same order (0.38 ticket 03: the image sequence steps through grid cells too).
+    const cellText = (img, selector) => {
+      const cell = img.closest(".ig-cell");
+      const node = cell && cell.querySelector(selector);
+      return (node && node.textContent || "").trim();
+    };
+    const gridImages = Array.from(slide.querySelectorAll(".image-grid .ig-media img")).map((img) => ({
+      src: img.currentSrc || img.src || img.getAttribute("src") || "",
+      alt: img.getAttribute("alt") || "",
+      caption: cellText(img, ".ig-note h4") || cellText(img, ".ig-note") || img.getAttribute("alt") || ""
+    }));
+    return stills.concat(gridImages, qrs).filter((entry) => entry.src);
   }
   function renderLightbox() {
     if (!lbOpen || lbImages.length === 0) {
@@ -1530,6 +1895,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
     const entry = lbImages[lbIndex];
     lightbox.hidden = false;
     lightbox.classList.add("open");
+    // The image's place in the slide's zoomables: the venue screen's Pen ink belongs to it (ticket 08).
+    lightbox.dataset.index = String(lbIndex);
     lightboxImg.src = entry.src;
     lightboxImg.alt = entry.alt;
     // QR entries get URL-display treatment (.qr-focus, shared CSS): the caption is the URL
@@ -2205,6 +2572,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
       if (!lbOpen && !modeKind && !VENUE_DECK_KEYS.includes(event.key)) return;
       document.getElementById('venueClosing').hidden = true;
     }
+    // The home page follows the speaker: no deck keys move it (Esc still closes My Notes).
+    if (HOME_MODE) { if (event.key === "Escape") setMyNotesOpen(false); return; }
     const tag = event.target?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
     // Modifier chords belong to the reader's browser (Cmd+R reload, Cmd+F find), not the deck.
@@ -2260,6 +2629,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
     else if (event.key === "Escape") { navPanel.classList.remove("open"); notesPanel?.classList.remove("open"); setMyNotesOpen(false); }
   });
   window.addEventListener("hashchange", () => {
+    if (HOME_MODE) return;
     const nextIndex = slides.findIndex((slide) => slide.dataset.id === location.hash.slice(1));
     if (nextIndex >= 0) go(nextIndex);
   });
@@ -2272,11 +2642,26 @@ ${hasMermaid ? mermaidVendorSource : ""}
     const el = document.getElementById(id);
     if (el && el.querySelector(".btn-label") && !el.querySelector(".btn-ico")) el.insertAdjacentHTML("afterbegin", BTN_ICONS[id]);
   });
+  ${homeOn ? `${handoutHomeRuntimeSource()}
+  handoutHome = createHandoutHome({
+    document,
+    slideCount: slides.length,
+    titleHtml: (i) => PHONE_TITLE_HTML[i] || "",
+    startsAt: ${homeStartsAt === null ? "null" : homeStartsAt},
+    openMyNotes: () => setMyNotesOpen(true),
+    onShowLive: () => { fitStage(); scheduleSlideFit(); },
+    onViewChanged: (view) => { if (view === 'live' && audienceFollowController) audienceFollowController.refreshInstant(); },
+    // The stage lives in the Live pane: a page on its slide runs only while that pane shows.
+    onStageShown: () => syncLocalShareEmbeds(),
+    parts: { stage: document.getElementById("stageFit"), poll: document.getElementById("audiencePollSurface"), board: document.getElementById("bdPanel"), reactions: document.getElementById("rxDock") },
+  });` : ""}
   render();
   applyModeDimming();
   applyGallery();
   // ADR-0018: on a phone the handout opens on the slide LIST, unless a deep link named a slide.
-  if (!VENUE_MODE) {
+  if (HOME_MODE) {
+    // The home page has no slide list or deep links: its Live tab shows the slide the speaker is on.
+  } else if (!VENUE_MODE) {
     applyPhoneMode();
     if (isPhone() && hadInitialHash) showPhoneDetail();
   } else {
@@ -2305,6 +2690,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
     const detail = event.detail || {};
     const status = detail.status;
     preworkForm.setStatus(status, detail.steps);
+    // The pre-work form covers the stage while it is open (body.pw-open).
+    syncLocalShareEmbeds();
     if (status && status.state === "closed") {
       showPreworkClosed(document, [document.getElementById("preworkClosedTop"), document.getElementById("preworkClosedList")], status);
       document.body.classList.add("pw-closed-page");
@@ -3276,6 +3663,7 @@ a.local-launch-handout-link:hover { background: #e1eaf6; }
     clone.querySelectorAll("[id]").forEach((el) => el.removeAttribute("id"));
     clone.querySelectorAll("aside.notes").forEach((el) => el.remove());
     clone.querySelectorAll("[data-mode-state]").forEach((el) => el.removeAttribute("data-mode-state"));
+    clone.querySelectorAll("[data-emph-state]").forEach((el) => el.removeAttribute("data-emph-state"));
     clone.querySelectorAll("iframe, video").forEach((el) => {
       el.replaceWith(createElement("div", { className: "slide-grid-media-ph", text: el.tagName === "VIDEO" ? "Video" : "Embed" }));
     });

@@ -48,7 +48,20 @@ const MARK_CASES = [
   'before `**middle**` then ==mark==',
   '==mark== then `**end**`',
   '[EEF report](https://eef.example "The ==key== finding")',
-  '[read ==x== now](https://ex.com/report)'
+  '[read ==x== now](https://ex.com/report)',
+  // ~~strike~~ and ++underline++ share the corpus: literal when lone, spaced or inside protected ranges.
+  'a ~~gone~~ word and ++added++ words',
+  '**++bold underline++** and ++**underline bold**++',
+  '~~a~~ ==b== ++c++',
+  '++see [the report](https://ex.com/r) now++',
+  'C++ and i++ and j++ in running prose',
+  'C++ is older than Go, and ++new++ is not',
+  'a ++ b ++ c and a ~~ b ~~ c',
+  '`++code++` and `~~code~~` stay as typed',
+  'https://ex.com/a++b++c and https://ex.com/~~x~~',
+  '[++label++](https://ex.com/x++y++z "~~title~~")',
+  '~~~ three tildes +++ three plus ~~~',
+  '++open only and ~~open only'
 ]
 
 const INLINE_SHAPES = [
@@ -196,7 +209,7 @@ async function compareWholeRepository(reference) {
     const lines = readFileSync(join(repo, path), 'utf8').split(/\r?\n/)
     lines.forEach((line, index) => {
       totalLines += 1
-      if (line.includes('==')) {
+      if (/==|\+\+|~~/.test(line)) {
         permittedMarkLines += 1
         return
       }

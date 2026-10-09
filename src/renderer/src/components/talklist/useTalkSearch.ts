@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { emptyTalkSearchResult, mergeTalkSearchResults, type TalkSearchResult } from '../../../../shared/talk-search'
+import { emptyTalkSearchResult, talkSearchRequestOptions, type TalkSearchResult } from '../../../../shared/talk-search'
 import { hasSearchTerms } from '../../../../shared/talk-query'
 
 // The one talk-search call of the renderer (ADR-0029 §1): the Talks browser's search box and the
@@ -22,9 +22,6 @@ export interface TalkSearchState {
   settled: boolean
 }
 
-/** One result from several vaults' results: hits in vault order, counts added. */
-export const mergeSearchResults = mergeTalkSearchResults
-
 export function useTalkSearch({ query, within = '', vaultIds, talksVersion }: {
   query: string
   /** Limit to this folder (vault-relative) and its subfolders; '' = everywhere. */
@@ -45,9 +42,10 @@ export function useTalkSearch({ query, within = '', vaultIds, talksVersion }: {
     if (noVaults) { setResult(emptyTalkSearchResult(query, within)); return }
     let cancelled = false
     const id = window.setTimeout(() => {
-      const ids = vaultKey ? vaultKey.split('\u001f') : [undefined]
-      Promise.all(ids.map((vaultId) => window.tw.talks.search(query, { ...(within ? { within } : {}), ...(vaultId ? { vaultId } : {}) })))
-        .then((all) => { if (!cancelled && all.length) setResult(mergeSearchResults(all)) })
+      // One IPC call for every vault: the main process searches them and merges the results in
+      // this order (hits in vault order, counts added), as several calls merged here used to.
+      window.tw.talks.search(query, talkSearchRequestOptions(within, vaultKey ? vaultKey.split('\u001f') : undefined))
+        .then((merged) => { if (!cancelled && merged) setResult(merged) })
         .catch(() => { /* a failed search leaves the last result up */ })
     }, result ? SEARCH_DEBOUNCE_MS : 0)
     return () => { cancelled = true; window.clearTimeout(id) }

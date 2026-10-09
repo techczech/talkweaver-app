@@ -17,6 +17,9 @@ import {
 } from './03-object-token.mjs'
 import { parseOutlineTree } from './14-outline-tree.mjs'
 import { blankHtmlComments } from './html-comments.mjs'
+import { IMAGE_SYNTAX_RE, imageSyntaxIsAudio } from './image-line-rules.mjs'
+import { audioChipTitle } from './audio-chip-title.mjs'
+import { shownReference } from './shown-reference.mjs'
 
 // Fence languages the slide renders as a picture rather than as code (06-block-renderers.mjs).
 const DIAGRAM_FENCE_LANGS = new Set(['mermaid', 'svg'])
@@ -24,6 +27,7 @@ const DIAGRAM_FENCE_LANGS = new Set(['mermaid', 'svg'])
 /** @typedef {{type:'list',items:{depth:number,text:string,pair?:string}[]}
  *          | {type:'p'|'quote'|'attrib',text:string}
  *          | {type:'media',alt:string}
+ *          | {type:'audio',title:string}
  *          | {type:'diagram'}
  *          | {type:'code',text:string}
  *          | {type:'table',rows:string[][]}} ScriptBlock */
@@ -119,7 +123,14 @@ export function parseSlideScript(sourceMarkdown) {
     if (/^(\{[^}]*\}\s*)+$/.test(line)) return
 
     const img = line.match(/^!\[([^\]]*)\]\(([^)]*)\)/)
-    if (img) { blocks.push({ type: 'media', alt: img[1] || '' }); return }
+    if (img) {
+      // An audio file is named as audio (a static label on the phone), not as a figure.
+      // Decided by the lexer's own rule (image-line-rules): its destination excludes a "caption".
+      const full = IMAGE_SYNTAX_RE.exec(line)
+      const audio = Boolean(full) && imageSyntaxIsAudio(full[2])
+      blocks.push(audio ? { type: 'audio', title: audioChipTitle({ title: img[1], src: full[2] }) } : { type: 'media', alt: img[1] || '' })
+      return
+    }
 
     if (line.startsWith('>')) { blocks.push({ type: 'quote', text: line.replace(/^>\s?/, '') }); return }
 
@@ -149,6 +160,15 @@ export function parseSlideScript(sourceMarkdown) {
       const last = blocks.at(-1)
       if (last?.type === 'list') last.items.push(item)
       else blocks.push({ type: 'list', items: [item] })
+      return
+    }
+
+    // An [Embed:] / [Simulation:] / [Video:] line is shown as text on the phone. A local target is
+    // named by the shown-reference rule (ADR-0036): as written inside the talk's folder, else by its
+    // file name alone, so the phone page never spells out a folder on the author's machine.
+    const directive = line.match(/^\[(Embed|Simulation|Video):\s*(.*?)\s*\](.*)$/i)
+    if (directive && !/^https?:\/\//i.test(directive[2])) {
+      blocks.push({ type: 'p', text: `[${directive[1]}: ${shownReference(directive[2])}]${directive[3]}` })
       return
     }
 

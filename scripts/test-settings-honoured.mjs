@@ -213,6 +213,13 @@ const EFFECTS = {
     expect: { '': 'rows', true: 'rows', false: 'one-line' },
     unknown: { value: 'perhaps', warning: 'deck-flag-unknown' }
   },
+  image_steps: {
+    effect: 'a slide with images is marked for Next to walk through them one at a time',
+    body: ['## First section', '', '### Two pictures', '{id=two-pictures}', '', '![One](https://example.com/one.png)', '![Two](https://example.com/two.png)'],
+    probe: ({ document }) => (slideById(document, 'two-pictures')?.hasAttribute('data-image-steps') ? 'steps' : 'no-steps'),
+    expect: { '': 'no-steps', true: 'steps', false: 'no-steps' },
+    unknown: { value: 'perhaps', warning: 'deck-flag-unknown' }
+  },
   claim_style: {
     effect: 'a wholly bold paragraph takes the deck claim treatment',
     body: CLAIM_BODY,

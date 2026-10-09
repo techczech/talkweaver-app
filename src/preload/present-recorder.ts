@@ -2,7 +2,8 @@
 // Recording bridge — a preload TalkWeaver attaches to the PRESENT window only when it
 // opens it (opt-in). A deck opened as a plain portable file has no preload, so it has no
 // REC control and stays fully portable (spec, ADR-0035). Running here, the bridge:
-//   • records the presenter's mic with MediaRecorder,
+//   • records the presenter's mic (present-audio-capture.ts: MediaRecorder, loss detection and
+//     reacquiring the input, chunks streamed to disk through main as they arrive),
 //   • builds the slide-time index by watching which slide id is in the URL hash,
 //   • hands the audio + raw marks + session metadata to main on stop (recording:save).
 //
@@ -10,8 +11,8 @@
 // (contextIsolation), so it never touches the presenter template's code — it ADDS the REC
 // cluster and its toasts (present-rec-ui.ts, mounted in the status bar's recording slot) and
 // reads the hash the runtime already maintains. Nothing here removes
-// or moves an existing control, and no path can lose a saved recording: audio is buffered
-// and written to local disk before any upload (main, Task 5/6).
+// or moves an existing control, and no path can lose a saved recording: audio is written to
+// local disk as it is recorded, before any upload (main, recording-stream.ts).
 //
 // SLIDE CAPTURE — why polling, not `hashchange`: the runtime updates the slide hash via
 // `history.replaceState` (template line ~5578), and replaceState/pushState DO NOT fire a
@@ -22,12 +23,15 @@
 // any externally-driven change (audience sync, manual URL edit).
 
 import { ipcRenderer } from 'electron'
+import type { InkStroke } from '../../worker/protocol'
+import { recordedInk } from './recorder-ink'
 import { mountEditBridge } from './present-edit-bridge'
 import { mountLiveBridge } from './present-live-bridge'
 import type { PresentationCloseOffer, LiveCloseAction } from './present-close-flow'
 import { shouldOfferRecordingStart } from './present-recording-offer'
 import { mountRecUi } from './present-rec-ui'
 import type { RunKind } from './present-rec-view'
+import { createAudioCapture, type AudioCapture, type AudioEvent, type AudioStatus, type CapturedAudio } from './present-audio-capture'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,7 +44,10 @@ export type RecState = 'idle' | 'recording' | 'paused' | 'confirm' | 'saving' | 
 // onto the pause-aware recording clock — the bridge does no pause math for the marks.
 // enter = slide change · reveal = an in-slide build step (fragments shown/hidden) ·
 // highlight = a live highlight added/cleared — so replay can reproduce what was on screen.
-type RawEvent = 'enter' | 'reveal' | 'highlight' | 'pause' | 'resume' | 'stop'
+// ink = the Pen's strokes on the layer being shown changed (ticket 08): only while recording, into
+// the recording file only (owner, 9 Oct 2026). The slide's own layer, or a zoomed image's (`space:
+// 'image'` and the image's index, in the image's own 0–1 units, as the projector and venue use).
+type RawEvent = 'enter' | 'reveal' | 'highlight' | 'ink' | 'pause' | 'resume' | 'stop'
 type HighlightRange = { block: number; start: number; end: number }
 export interface RawMark {
   event: RawEvent
@@ -49,6 +56,9 @@ export interface RawMark {
   hidden?: number // reveal: fragments still hidden on the slide (fewer = more revealed)
   marks?: number // highlight: count of live highlight marks on the slide
   ranges?: HighlightRange[] // highlight: reconstructed text ranges; omitted if reconstruction fails
+  ink?: InkStroke[] // ink: the layer's strokes after the change (checked by recorder-ink.ts, caps and bytes)
+  space?: 'image' // ink: a zoomed image's layer (absent: the slide's own)
+  image?: number // ink: which image of the slide (its zoom index)
 }
 
 export interface RecContext {
@@ -115,6 +125,14 @@ export interface RecorderController {
   onRecordingStartOffer(cb: () => void): void
   onCloseOffer(cb: (offer: PresentationCloseOffer) => void): void
   closeWindow(liveAction?: LiveCloseAction): Promise<void>
+  /** Whether audio is still arriving while recording (lost, reconnecting, gaps so far). */
+  audioStatus(): AudioStatus
+  /** Open the default input again after the audio was lost ("Resume recording" on the notice). */
+  reacquireAudio(): Promise<boolean>
+  /** A failed save: write the held audio (and any of it already on disk) to a folder the presenter picks. */
+  exportHeldAudio(): Promise<boolean>
+  /** Fired when audio is lost, being reconnected, restored, or a reconnect fails. */
+  onAudio(cb: (status: AudioStatus, event: AudioEvent, detail?: { gapMs?: number }) => void): void
 }
 
 // ── Context from main ────────────────────────────────────────────────────────
@@ -147,15 +165,6 @@ function normaliseKind(value: unknown): RunKind {
   return value === 'rehearsal' || value === 'recording' ? value : 'delivery'
 }
 
-function pickMimeType(): string | undefined {
-  // Prefer explicit opus; fall back to bare webm. undefined lets MediaRecorder choose.
-  const prefs = ['audio/webm;codecs=opus', 'audio/webm']
-  for (const m of prefs) {
-    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(m)) return m
-  }
-  return undefined
-}
-
 // A deterministic, mic-free stream for the e2e harness: a 440Hz tone routed into a
 // MediaStream. Produces a real, non-empty webm so the whole capture→save→upload path is
 // tested without hardware or an OS permission prompt.
@@ -179,11 +188,18 @@ function syntheticStream(): MediaStream {
 export function createRecorderController(ctx: RecContext): RecorderController {
   let state: RecState = 'idle'
   const rawMarks: RawMark[] = []
-  let chunks: Blob[] = []
-  let recorder: MediaRecorder | null = null
-  let stream: MediaStream | null = null
-  let mime: string | undefined
   let startedAtIso = ''
+  // The microphone, MediaRecorder, loss detection and the stream to disk (present-audio-capture.ts).
+  const audioCbs: Array<(s: AudioStatus, e: AudioEvent, d?: { gapMs?: number }) => void> = []
+  const capture: AudioCapture = createAudioCapture({
+    invoke: (channel, payload) => ipcRenderer.invoke(channel, payload),
+    getStream: () => getStream(),
+    clock: () => displayMs()
+  })
+  capture.onStatus((s, e, d) => {
+    for (const cb of audioCbs) cb(s, e, d)
+    emitChange()
+  })
 
   // Timing on the raw clock (performance.now). Marks use rawNow(); the visible clock is
   // pause-aware and freezes while paused (pauseStartRaw), so it matches the audio length.
@@ -195,8 +211,9 @@ export function createRecorderController(ctx: RecContext): RecorderController {
   let lastHash = hashSlideId()
   let lastReveal = 0 // fragments hidden on the current slide (reveal build state)
   let lastHl = 0 // live highlight marks on the current slide
+  let lastInk = '' // `${slideId}|${space}|${image}|${strokes}` of the Pen's ink last recorded
   let saveResult: SaveResult | null = null
-  let pendingBlob: Blob | null = null // a stopped recording awaiting save (or a Keep/Discard choice)
+  let pendingAudio: CapturedAudio | null = null // a stopped recording awaiting save (or a Keep/Discard choice)
   let savedRunSessionId: string | null = null
   let savedRunKind: RunKind = 'delivery'
   let savedRunCanFinalise = false
@@ -254,7 +271,7 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     if (!active) return -1
     return allSlides().indexOf(active)
   }
-  const isAudioArmed = (): boolean => state === 'recording' || state === 'paused' || state === 'confirm' || ((state === 'saving' || state === 'error') && !!pendingBlob)
+  const isAudioArmed = (): boolean => state === 'recording' || state === 'paused' || state === 'confirm' || ((state === 'saving' || state === 'error') && !!pendingAudio)
   const gatePassed = (): boolean => runLastSlideReached || (runNow() >= 5 * 60_000 && runForwardAdvances >= 5)
 
   function highlightableBlocks(slide: Element | null): Element[] {
@@ -323,6 +340,21 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     return mark
   }
 
+  // The Pen's committed strokes on the layer shown (the slide's, or a zoomed image's), from the slot
+  // the deck writes for the venue screen (data-tw-live-ink). A change is a mark, and so is a change
+  // of layer on the same slide (zoom in or out), so replay shows the layer the audience saw. While a
+  // stroke is being drawn (a draft, and a long line's pieces with it) nothing is recorded.
+  function noteInk(slideId: string, tMs: number): void {
+    const read = recordedInk(document.documentElement.dataset.twLiveInk, slideId)
+    if (!read) return
+    const { strokes, layer } = read
+    const signature = `${slideId}|${layer.space ?? 'slide'}|${layer.image ?? ''}|${JSON.stringify(strokes)}`
+    if (signature === lastInk) return
+    const sameSlide = lastInk.startsWith(`${slideId}|`)
+    lastInk = signature
+    if (strokes.length || sameSlide) rawMarks.push({ event: 'ink', slideId, tMs, ...layer, ink: strokes })
+  }
+
   function pushRunState(): void {
     void ipcRenderer.invoke('recording:run-state', {
       talkSlug: ctx.talkSlug,
@@ -383,39 +415,40 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     savedRunKind = 'delivery'
     savedRunCanFinalise = false
     runMarks.length = 0
-    try {
-      stream = await getStream()
-    } catch (e) {
-      state = 'error'
-      emitError('Microphone unavailable — enable mic access for TalkWeaver to record. Presenting is unaffected.')
-      emitChange()
-      // Reset to idle so a later attempt (after granting) can retry without reload.
-      state = 'idle'
-      return
-    }
-    mime = pickMimeType()
-    chunks = []
     rawMarks.length = 0
-    try {
-      recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
-    } catch (e) {
-      state = 'error'
-      emitError('Recording could not start on this machine (codec unsupported). Presenting is unaffected.')
-      emitChange()
-      stopTracks()
-      state = 'idle'
-      return
-    }
-    recorder.ondataavailable = (ev: BlobEvent): void => { if (ev.data && ev.data.size > 0) chunks.push(ev.data) }
-    // A 1s timeslice keeps chunks flowing rather than one blob at the end. (Incremental
-    // streaming of chunks to disk mid-talk is a Phase-2 hardening; Phase 1 buffers then
-    // writes locally on stop, before any network — main, Task 5.)
-    recorder.start(1000)
+    // While the mic opens, the clock reads 0 (the capture stamps its first segment at 0). The
+    // recording's origin — t0 for slide marks, the clock the gaps and stall use, and the Run's
+    // startedAt — is when the first recorder actually starts, returned by capture.start().
     t0 = performance.now()
     pausedAccum = 0
     pauseStartRaw = null
-    frozenDisplayMs = null
+    frozenDisplayMs = 0
     startedAtIso = new Date().toISOString()
+    let origin: { perf: number; iso: string }
+    try {
+      // 1 s chunks stream to a file as they arrive (main, recording:stream-*); a lost input is
+      // detected, reported and picked up again (present-audio-capture.ts).
+      origin = await capture.start({
+        talkSlug: ctx.talkSlug,
+        talkTitle: ctx.talkTitle,
+        startedAt: startedAtIso,
+        timerTargetMin: ctx.timerTargetMin,
+        pathwayId: ctx.pathwayId
+      })
+    } catch (e) {
+      state = 'error'
+      emitError(e instanceof Error && e.message === 'codec'
+        ? 'Recording could not start on this machine (codec unsupported). Presenting is unaffected.'
+        : 'Microphone unavailable — enable mic access for TalkWeaver to record. Presenting is unaffected.')
+      emitChange()
+      // Reset to idle so a later attempt (after granting) can retry without reload.
+      state = 'idle'
+      frozenDisplayMs = null
+      return
+    }
+    t0 = origin.perf
+    startedAtIso = origin.iso
+    frozenDisplayMs = null
     // First mark: the slide we start on, at the recording origin. Baseline its reveal/highlight
     // state so an in-progress build isn't misread as a step the moment recording begins.
     lastHash = hashSlideId()
@@ -423,14 +456,16 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     lastReveal = activeAtStart ? activeAtStart.querySelectorAll('.hidden-fragment').length : 0
     lastHl = activeAtStart ? activeAtStart.querySelectorAll('mark.hl-mark').length : 0
     rawMarks.push({ event: 'enter', slideId: lastHash, tMs: 0 })
+    lastInk = ''
+    noteInk(lastHash, 0)
     state = 'recording'
     pushRunState()
     emitChange()
   }
 
   function pause(): void {
-    if (state !== 'recording' || !recorder) return
-    try { recorder.pause() } catch { /* already paused / unsupported — state still freezes the clock */ }
+    if (state !== 'recording') return
+    capture.pause()
     rawMarks.push({ event: 'pause', tMs: rawNow() })
     pauseStartRaw = rawNow()
     state = 'paused'
@@ -438,39 +473,25 @@ export function createRecorderController(ctx: RecContext): RecorderController {
   }
 
   function resume(): void {
-    if (state !== 'paused' || !recorder) return
-    try { recorder.resume() } catch { /* ignore */ }
+    if (state !== 'paused') return
     const now = rawNow()
     rawMarks.push({ event: 'resume', tMs: now })
     if (pauseStartRaw !== null) { pausedAccum += now - pauseStartRaw; pauseStartRaw = null }
     state = 'recording'
+    capture.resume()
     emitChange()
-  }
-
-  function stopTracks(): void {
-    try { stream?.getTracks().forEach((t) => t.stop()) } catch { /* ignore */ }
-    stream = null
   }
 
   async function stop(forceKeep = false): Promise<SaveResult | null> {
     if (state !== 'recording' && state !== 'paused') return null
-    if (!recorder) return null
     // Close any open pause into the accumulator so displayMs freezes at the true length.
     if (pauseStartRaw !== null) { pausedAccum += rawNow() - pauseStartRaw; pauseStartRaw = null }
     rawMarks.push({ event: 'stop', tMs: rawNow() })
     frozenDisplayMs = Math.max(0, rawNow() - pausedAccum)
 
-    const rec = recorder
-    const finished = new Promise<Blob>((resolve) => {
-      rec.onstop = (): void => resolve(new Blob(chunks, { type: mime ?? 'audio/webm' }))
-    })
-    try { rec.stop() } catch { /* onstop may still fire; guarded by the race below */ }
-    // Guard against a recorder that never fires onstop — resolve from whatever we have.
-    pendingBlob = await Promise.race([
-      finished,
-      new Promise<Blob>((resolve) => setTimeout(() => resolve(new Blob(chunks, { type: mime ?? 'audio/webm' })), 4000))
-    ])
-    stopTracks()
+    // The capture closes the last segment (and any open gap) at the frozen length, and waits for
+    // every chunk to reach main before the save names the files.
+    pendingAudio = await capture.stop()
     pushRunState()
 
     // A short recording is NEVER silently dropped — ask Keep/Discard first. At/above the
@@ -485,7 +506,8 @@ export function createRecorderController(ctx: RecContext): RecorderController {
 
   // Persist the pending recording. `force` skips main's own discard check (a kept short run).
   async function doSave(force: boolean): Promise<SaveResult | null> {
-    if (!pendingBlob) return null
+    if (!pendingAudio) return null
+    const audio = pendingAudio
     state = 'saving'
     pushRunState()
     emitChange()
@@ -503,8 +525,15 @@ export function createRecorderController(ctx: RecContext): RecorderController {
         kind: 'delivery',
         force
       }
-      payload.audio = await pendingBlob.arrayBuffer()
-      payload.mimeType = mime ?? 'audio/webm'
+      payload.mimeType = audio.mimeType
+      // Segments and gaps on the recording clock: the Run says how much audio it holds.
+      payload.audioTimeline = { segments: audio.segments, gaps: audio.gaps, audioMs: audio.audioMs }
+      if (audio.mode === 'stream') {
+        payload.stream = { sessionId: audio.sessionId, tail: audio.tail }
+      } else {
+        payload.audio = await audio.blobs[0]?.arrayBuffer()
+        payload.extraAudio = await Promise.all(audio.blobs.slice(1).map((b) => b.arrayBuffer()))
+      }
       const res = (await ipcRenderer.invoke('recording:save', payload)) as SaveResult
       result = res ?? { ok: false, error: 'no-response' }
     } catch (e) {
@@ -513,7 +542,7 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     // A changed main-process threshold may reject a clip the preload expected to keep.
     // Retain the captured audio until a kept save succeeds or the presenter discards it.
     if (result.discarded) result = { ok: false, error: 'Recording was not saved. Try saving again to keep it.' }
-    if (result.ok) pendingBlob = null
+    if (result.ok) pendingAudio = null
     saveResult = result
     if (result.ok && !result.discarded && result.sessionId) {
       savedRunSessionId = result.sessionId
@@ -532,10 +561,37 @@ export function createRecorderController(ctx: RecContext): RecorderController {
   }
 
   // Resolve a Keep/Discard on a short recording. Keep forces the save; Discard drops it.
+  // A save that failed keeps the audio; this writes it elsewhere (main asks for a folder). The
+  // pending audio stays held either way, so Retry still works afterwards.
+  async function exportHeldAudio(): Promise<boolean> {
+    const audio = pendingAudio
+    if (!audio) return false
+    try {
+      const parts = audio.mode === 'stream'
+        ? audio.tail.map((chunk) => ({ index: chunk.index, bytes: chunk.bytes }))
+        : await Promise.all(audio.blobs.map(async (blob, index) => ({ index, bytes: await blob.arrayBuffer() })))
+      const res = (await ipcRenderer.invoke('recording:export-held-audio', {
+        sessionId: audio.mode === 'stream' ? audio.sessionId : null,
+        talkSlug: ctx.talkSlug,
+        parts
+      })) as { ok?: boolean; error?: string } | undefined
+      if (res?.ok) return true
+      if (res?.error !== 'cancelled') emitError('The audio could not be written to that folder. It is still kept here; try another folder or Retry.')
+    } catch {
+      emitError('The audio could not be written to that folder. It is still kept here; try another folder or Retry.')
+    }
+    return false
+  }
+
   async function confirmSave(keep: boolean): Promise<SaveResult | null> {
-    if (state !== 'confirm' && !(state === 'error' && pendingBlob)) return null
+    if (state !== 'confirm' && !(state === 'error' && pendingAudio)) return null
     if (keep) return doSave(true)
-    pendingBlob = null
+    const dropped = pendingAudio
+    pendingAudio = null
+    // Audio already streamed to disk goes to the Trash (recoverable), never silently deleted.
+    if (dropped?.mode === 'stream' && dropped.sessionId) {
+      void ipcRenderer.invoke('recording:stream-discard', { sessionId: dropped.sessionId }).catch(() => {})
+    }
     saveResult = { ok: true, discarded: true }
     state = 'idle'
     frozenDisplayMs = null
@@ -705,6 +761,7 @@ export function createRecorderController(ctx: RecContext): RecorderController {
       lastHl = marks
       if (state === 'recording') rawMarks.push(highlightMark(now, marks, rawNow(), currentHighlightRanges(active)))
     }
+    if (state === 'recording') noteInk(now, rawNow())
     const runHidden = hiddenCount(active)
     if (!isAudioArmed() && runHidden !== runLastReveal) {
       runLastReveal = runHidden
@@ -721,9 +778,13 @@ export function createRecorderController(ctx: RecContext): RecorderController {
   }
   const pollId = setInterval(checkState, 150)
   window.addEventListener('hashchange', checkState) // belt-and-braces for external hash changes
+  let checkpointTicks = 0
   const stateTickId = setInterval(() => {
     pushRunState()
     scheduleFinalise()
+    // Every 10 s, refresh the in-progress marker beside the audio with the slide marks, so a crash
+    // still leaves a Run with its slide timings.
+    if ((state === 'recording' || state === 'paused') && ++checkpointTicks % 5 === 0) capture.checkpoint(rawMarks.slice())
   }, 2000)
   window.addEventListener('beforeunload', () => {
     clearInterval(pollId)
@@ -768,6 +829,10 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     onRunOffer: (cb) => { runOfferCbs.push(cb) },
     onRecordingStartOffer: (cb) => { startOfferCbs.push(cb) },
     onCloseOffer: (cb) => { closeOfferCbs.push(cb) },
+    audioStatus: () => capture.status(),
+    exportHeldAudio,
+    reacquireAudio: () => capture.reacquire(),
+    onAudio: (cb) => { audioCbs.push(cb) },
     closeWindow: async (liveAction) => {
       if (isAudioArmed()) throw new Error('Save the recording before closing the presentation.')
       await finaliseRun()

@@ -487,6 +487,44 @@ export const clipboard = { writeText() {} }
     await context.close()
   }
 
+  // The locked Pointer chip uses the same status-bar fit and exit control as the other tools.
+  for (const size of [[1280,800],[1440,900]]) {
+    const {page,context}=await open(size,'two')
+    await page.keyboard.press('i'); await settle(page)
+    check(await page.locator('#presenterPointerChip').isVisible(), `Pointer chip is visible at ${size[0]}`)
+    check((await page.locator('#presenterPointerChip').innerText())==='Pointer on', 'Pointer chip names the armed tool')
+    check(await page.locator('#presenterPointerChip .lucide-mouse-pointer-2').count()===1, 'Pointer chip has the locked icon')
+    check(await page.locator('#presenterTopBar').getAttribute('data-fits')==='true', 'status bar fits with Pointer on')
+    await tap(page,'#presenterPointerExit'); await settle(page)
+    check(!(await page.locator('#presenterPointerChip').isVisible()), 'Pointer chip × turns the tool off')
+    check(await page.locator('#presenterPointer').getAttribute('aria-pressed')==='false', 'Pointer button follows chip exit')
+    check(page.errors.length===0,`Pointer chip has no page errors (${page.errors.join('; ')})`)
+    await context.close()
+  }
+
+  // The Pen's chip (0.38 ticket 08) the same way; with the pen off, a slide carrying a drawing
+  // shows one quiet "Clear drawing" in the status bar, and it fits.
+  for (const size of [[1280,800],[1440,900]]) {
+    const {page,context}=await open(size,'two')
+    await page.keyboard.press('d'); await settle(page)
+    check(await page.locator('#presenterPenChip').isVisible(), `Pen chip is visible at ${size[0]}`)
+    check((await page.locator('#presenterPenChip').innerText())==='Pen on', 'Pen chip names the armed tool')
+    check(await page.locator('#presenterPenChip .lucide-pen-tool').count()===1, 'Pen chip has the locked icon')
+    check(await page.locator('#presenterTopBar').getAttribute('data-fits')==='true', 'status bar fits with the Pen on')
+    const r = await page.locator('#currentPreview iframe').boundingBox()
+    await page.mouse.move(r.x + r.width * .3, r.y + r.height * .3); await page.mouse.down()
+    await page.mouse.move(r.x + r.width * .6, r.y + r.height * .5, { steps: 5 }); await page.mouse.up()
+    await tap(page,'#presenterPenExit'); await settle(page)
+    check(!(await page.locator('#presenterPenChip').isVisible()), 'Pen chip × turns the tool off')
+    check(await page.locator('#presenterPen').getAttribute('aria-pressed')==='false', 'Pen button follows chip exit')
+    check(await page.locator('#presenterInkClear').isVisible(), `"Clear drawing" shows with no tool on at ${size[0]}`)
+    check(await page.locator('#presenterTopBar').getAttribute('data-fits')==='true', 'status bar fits with Clear drawing')
+    await tap(page,'#presenterInkClear'); await settle(page)
+    check(!(await page.locator('#presenterInkClear').isVisible()), 'Clear drawing clears the slide and leaves')
+    check(page.errors.length===0,`Pen chip has no page errors (${page.errors.join('; ')})`)
+    await context.close()
+  }
+
   assert.deepEqual(failures, [], `presenter status bar:\n  ${failures.join('\n  ')}`)
   console.log(`presenter status bar: timer (clock, P, popover length/presets/reminders/reset beside a recording), live status once with End live, reactions and questions from a fixture, fit at 3 sizes × idle/L1/L2 — collapse ${reached.join('; ')}`)
 } finally {

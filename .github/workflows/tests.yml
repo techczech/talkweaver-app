@@ -1,0 +1,113 @@
+name: Tests
+on:
+  pull_request:
+  # Push only to long-lived branches; a feature branch is covered by its pull request,
+  # so a push to it must not start a second copy of every job.
+  push:
+    branches: [main, 'next/**']
+  workflow_dispatch:
+    inputs:
+      hosted:
+        description: 'Run on GitHub-hosted runners instead of the self-hosted Spark/Studio runners (emergency switch; uses paid minutes)'
+        type: boolean
+        default: false
+  schedule:
+    # Nightly browser and Electron tiers (03:17 UTC).
+    - cron: '17 3 * * *'
+permissions:
+  contents: read
+concurrency:
+  # Per trigger as well as per ref: a push must not cancel the nightly browser run, nor the reverse.
+  group: tests-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+# Runners: every job runs on the self-hosted Mac Studio (no GitHub minutes).
+# `workflow_dispatch` with `hosted: true` sends one run back to GitHub-hosted runners
+# (`unit` then runs on ubuntu-latest). Self-hosted jobs never run for pull requests from forks.
+# See _MACHINECONFIG/github-runners.md.
+jobs:
+  unit:
+    # Required check (branch protection): keep the job name `unit`.
+    # Plain-Node tier of `npm test` (scripts/test-tiers.json), typecheck and the
+    # Worker's bun tests, on the self-hosted Mac Studio (ubuntu-latest when `hosted`).
+    # The runner also fails if a script chained in `npm test` is missing from the tier file.
+    # Scripts listed in MACOS_ONLY_TESTS assert macOS file-system behaviour and run
+    # in `unit-macos` instead (kept skipped here so the hosted Linux fallback passes):
+    #   test:vault-paths  needs APFS Unicode normalisation (NFC/NFD folder names);
+    #                     ext4 on Linux keeps the two forms distinct, so it fails there.
+    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name != 'pull_request'
+    runs-on: ${{ inputs.hosted && 'ubuntu-latest' || fromJSON('["self-hosted","macOS","ARM64"]') }}
+    timeout-minutes: 20
+    env:
+      MACOS_ONLY_TESTS: test:vault-paths
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      # test:board-panel (unit tier) runs `bun test`, so bun is needed before test:unit.
+      - uses: oven-sh/setup-bun@v2
+      - run: npm ci
+      - run: npm run typecheck
+      - name: Unit tier (minus macOS-only scripts)
+        run: |
+          node scripts/run-tests.mjs --check
+          names=$(node -p "const skip = process.env.MACOS_ONLY_TESTS.split(' '); require('./scripts/test-tiers.json').unit.filter((n) => !skip.includes(n)).join(' ')")
+          node scripts/run-tests.mjs $names
+      - name: Worker tests
+        run: bun test ./worker
+
+  unit-macos:
+    # The same unit tier on macOS, including the macOS-only scripts, where it matters:
+    # pull requests into main, pushes to main and manual runs (so `hosted: true` covers it).
+    # Not a required check.
+    if: >-
+      (github.event_name == 'pull_request' && github.base_ref == 'main' &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ${{ inputs.hosted && 'macos-14' || fromJSON('["self-hosted","macOS","ARM64"]') }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+      - run: npm ci
+      - run: npm run test:unit
+
+  browser-tiers:
+    # Playwright Chromium (dom) and Electron (e2e) tiers. Not required: several
+    # checks measure font/pixel layout and are still being made portable, so
+    # these run on demand and nightly, and a failure does not fail the workflow.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ${{ inputs.hosted && 'macos-14' || fromJSON('["self-hosted","macOS","ARM64"]') }}
+    timeout-minutes: 60
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        tier: [dom, e2e]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+      - run: npm ci
+      # On the Studio runner PLAYWRIGHT_BROWSERS_PATH (runner .env) points at a shared
+      # cache under ~/actions-runner, so browsers are not installed per user or globally.
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium chromium-headless-shell
+      # Build once up front so parallel Electron tests do not race to rebuild out/.
+      - run: npm run build
+      - run: npm run test:${{ matrix.tier }}

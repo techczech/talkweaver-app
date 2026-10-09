@@ -20,7 +20,9 @@ import { outlineRefusal } from '../src/main/vault-paths.ts'
 import { clearRunHandoutUrl, persistRun, persistRunForTalk, preworkWindow, readRun, readRunForTalk, normaliseRun, setRunHandoutUrl } from '../src/main/runs.ts'
 import { createRunPrework } from '../src/main/run-prework.ts'
 import { preworkWindowMs, publicPreworkForm, withoutPreworkSlides } from '../src/shared/run-prework.ts'
+import { handoutHomeDetails, handoutHomePrework } from '../src/shared/handout-home.ts'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
+import { assetRootsForTalk } from '../src/main/asset-roots.ts'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
 const sourceText = readFileSync(join(REPO, 'src/main/index.ts'), 'utf8')
@@ -95,6 +97,8 @@ const config = { vaultRoot: vault, cfAccountId: 'acct', cfPagesProject: 'talks',
 const common = {
   getConfig: (key, fallback) => (key in config ? config[key] : fallback),
   currentVaultRoot: () => vault, writableVaultRoot: () => vault, vaultRootFor: () => vault,
+  // The real root choice (ADR-0036), with the test's vault as the one registered vault.
+  assetRootsFor: (path) => assetRootsForTalk({ resolve: () => ({ vault: { root: vault } }) }, path),
   unresolvedOutboundFailure: () => null,
   flushTalkForPublish, readFileSync, existsSync, mkdirSync, readdirSync, writeFileSync, rmSync, join, basename, dirname, statSync, pathToFileURL,
   getCompilerPath: () => join(REPO, 'compiler/scripts'),
@@ -103,7 +107,7 @@ const common = {
   pickShortId: () => { throw new Error('short ids are off') }, generateShortId: () => 'x', randomBytes: () => Buffer.alloc(8),
   publishSiteDir: () => siteDir,
   slimHandoutHtml: (html) => html,
-  viewerPageHtml: () => '<!doctype html><title>viewer</title>',
+  handoutHomeDetails, handoutHomePrework,
   deployPublishedSite: async () => { trace.deploys += 1; return { ok: true } },
   ensureLiveWorker: async () => ({ baseUrl: 'https://live.example.test', adminSecret: 'admin' }),
   process: { env: {} },
@@ -183,7 +187,7 @@ const planned = (id, extra = {}) => normaliseRun({ id, talkSlug: slug, talkTitle
 // 3. The evergreen handout: pre-work steps are never its slides.
 {
   const evergreen = { ...common, outlineRefused: (p) => outlineRefusal(vault, p), readToken: () => 'token', augmentedPath: (p) => p, wranglerFoundOn: () => true,
-    resolveImageRefs: (text) => text, readHandoutUrl: () => null, app: { getPath: () => root },
+    resolveImageRefs: (text) => text, resolvePooledRefs: (text) => text, readHandoutUrl: () => null, app: { getPath: () => root },
     execFile: (_cmd, _args, _opts, cb) => { trace.deploys += 1; cb(null, '', '') },
     ledgerSeal: async () => {}, localHandoutWorkerBaseUrl: () => 'http://127.0.0.1:8787' }
   const published = await loadHandler('talk:publish-handout', evergreen)(null, outlinePath, OUTLINE)

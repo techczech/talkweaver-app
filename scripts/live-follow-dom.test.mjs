@@ -97,6 +97,10 @@ async function runBrowserTest() {
     )
     assert.deepEqual(focusStates, ['soft', 'current', 'fuzzy', 'fuzzy'], 'real MODE_SELECTOR units focus the current item at step 2')
 
+    await page.evaluate(() => window.__liveSockets[0].emit({type:'pointer.live',pointer:{x:640,y:360,space:'slide',slideId:'slide-a'}}))
+    assert.equal(await page.locator('.tw-live-overlay').count(),0,'phone ignores transient Pointer messages')
+    await page.evaluate(() => window.__liveSockets[0].emit({type:'ink.live',ink:{slideId:'slide-a',space:'slide',strokes:[{tool:'arrow',ink:'red',width:'thin',points:[[1,1],[600,300]]}],draft:null}}))
+    assert.equal(await page.locator('[data-pen-stroke]').count(),0,'phone ignores the Pen\'s ink')
     await page.locator('#nextBtn').click()
     assert.equal(await returnButton.isVisible(), true, 'Return appears after the viewer steps away from the live reveal')
     assert.equal(await followButton.isVisible(), false, 'Stop is hidden while the viewer is diverged')

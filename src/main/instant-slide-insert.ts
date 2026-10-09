@@ -26,7 +26,7 @@ import { access, readFile, realpath } from 'fs/promises'
 import { basename, join } from 'path'
 import { pathToFileURL } from 'url'
 import {
-  decodeInstantImage, isSafeRunId, isSafeTalkSlug, markRunInstantSlideAdded, persistRunForTalk, readRunForTalk,
+  asInstantLink, decodeInstantImage, isSafeRunId, isSafeTalkSlug, markRunInstantSlideAdded, persistRunForTalk, readRunForTalk,
   type InstantImageFormat, type RunInstantSlide, type RunRecord
 } from './runs.ts'
 import { retryPause, withTalkFileLock, writeTalkFileInPlace } from './talk-writer.ts'
@@ -67,8 +67,10 @@ export async function loadOutlineTools(compilerDir: string): Promise<OutlineTool
     mintId: (rng, taken) => ledger.mintId(rng, taken),
     async compiledSlides(outlinePath, text) {
       // The same model path the presenter deck is compiled through, minus media inlining.
+      // No allowed media folder (ADR-0036): only ids, titles and source lines are read here, so no
+      // file a talk names is opened on this path, not even for a picture digest.
       const model = await adapters.prepareSource(outlinePath, text, basename(outlinePath).replace(/-outline\.md$/, ''),
-        undefined, undefined, { projectionsOnly: true })
+        undefined, undefined, { projectionsOnly: true, allowedAssetRoots: [] })
       const slides = Array.isArray(model?.slides) ? model.slides : []
       return slides.map((slide: { id?: unknown; title?: unknown; sourceLine?: unknown }) => ({
         id: String(slide.id ?? ''),
@@ -202,17 +204,26 @@ function hostOf(url: string): string {
 /** The slide's Markdown lines (no line endings). `imageRef` is the stored asset id for an image slide. */
 export function instantSlideMarkdown(entry: RunInstantSlide, depth: number, id: string, imageRef?: string): string[] | null {
   const hashes = '#'.repeat(Math.min(6, Math.max(2, depth)))
+  // Only the canonical href is ever written (new URL(...).href, no < > " or backtick left in it), so a link
+  // cannot open an HTML comment or close the QR directive; a link that is not safe is left out.
+  const safeLink = asInstantLink((entry.kind === 'link' ? entry.url : entry.link)?.replace(/\s/g, '%20'))
+  const linkLines = (url: string): string[] =>
+    ['', `<${url}>`, '', `[QR: ${url.replace(/\|/g, '%7C').replace(/\]/g, '%5D')} | ${headingText(hostOf(url)).replace(/[|\]]/g, '')}]`]
+  if (entry.kind === 'text' && entry.text && safeLink) {
+    // Text and link together: the text, the link and its QR, in the talk's Markdown for links.
+    return [`${hashes} ${shortTitle(entry.text) || headingText(hostOf(safeLink))}`, `{id=${id}}`, '',
+      ...entry.text.replace(/\r\n?/g, '\n').trim().split('\n').map(escapeBodyLine), ...linkLines(safeLink)]
+  }
   if (entry.kind === 'text' && entry.text) {
     return [`${hashes} ${shortTitle(entry.text) || 'Instant slide'}`, `{statement} {id=${id}}`, '',
       ...entry.text.replace(/\r\n?/g, '\n').trim().split('\n').map(escapeBodyLine)]
   }
-  if (entry.kind === 'link' && entry.url) {
-    const url = entry.url.replace(/\s/g, '%20')
-    const host = headingText(hostOf(url))
-    return [`${hashes} ${host}`, `{id=${id}}`, '', `<${url}>`, '', `[QR: ${url.replace(/\|/g, '%7C').replace(/\]/g, '%5D')} | ${host.replace(/[|\]]/g, '')}]`]
+  if (entry.kind === 'link' && safeLink) {
+    return [`${hashes} ${headingText(hostOf(safeLink))}`, `{id=${id}}`, ...linkLines(safeLink)]
   }
   if (entry.kind === 'countdown' && entry.durationMs) {
-    return [`${hashes} ${headingText(entry.label ?? '') || 'Countdown'}`, `{countdown-digits-${durationToken(entry.durationMs)}} {id=${id}}`]
+    return [`${hashes} ${headingText(entry.label ?? '') || 'Countdown'}`, `{countdown-digits-${durationToken(entry.durationMs)}} {id=${id}}`,
+      ...(safeLink ? linkLines(safeLink) : [])]
   }
   if (entry.kind === 'image' && imageRef) {
     return [`${hashes} Image`, `{media} {id=${id}}`, '', `![](${imageRef})`]

@@ -130,6 +130,7 @@ function createOverview(host) {
         const clone = s.el.cloneNode(true);
         clone.classList.add("active");
         clone.removeAttribute("aria-hidden");
+        clone.querySelectorAll("audio").forEach((m) => m.remove());
         clone.querySelectorAll("iframe, video").forEach((m) => {
           const ph = document.createElement("div");
           ph.className = "tw-thumb-embed";
@@ -266,7 +267,9 @@ function createOverview(host) {
   });
   host.searchEl?.addEventListener("input", () => { build(host.searchEl.value, true, !host.searchEl.value.trim()); });
   host.searchEl?.addEventListener("keydown", onKey);
-  host.drawerEl?.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+  // Esc closes the drawer from whichever control inside it has focus, and that Esc is spent: it must
+  // not also reach the deck's key handler (which would end a page full screen in the same press).
+  host.drawerEl?.addEventListener("keydown", (e) => { if (e.key === "Escape" && isOpen()) { close(); e.stopPropagation(); } });
 
   // render() with no argument re-reads the live search value — so callers on slide change need not
   // know which drawer (standalone/presenter) is mounted.

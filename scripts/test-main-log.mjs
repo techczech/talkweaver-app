@@ -12,7 +12,7 @@ import { strict as assert } from 'node:assert'
 import { mkdtempSync, readFileSync, statSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createAppendLog, formatLogLine, truncateLogText } from '../src/main/main-log.ts'
+import { appendBounded, createAppendLog, createErrorLog, formatErrorEntry, formatLogLine, readLogTail, truncateLogText } from '../src/main/main-log.ts'
 
 const dir = mkdtempSync(join(tmpdir(), 'tw-main-log-'))
 let failures = 0
@@ -79,6 +79,62 @@ check('logging never throws, whatever the filesystem does', () => {
   writeFileSync(file, 'x'.repeat(100))
   assert.doesNotThrow(() => log('second'))
   assert.ok(existsSync(file))
+})
+
+check('tw-main-errors.log keeps whole stacks and is bounded like every other log', () => {
+  const at = new Date('2026-09-15T08:35:01.123Z')
+  const err = new Error('boom')
+  err.stack = 'Error: boom\n    at a (x.js:1:1)\n    at b (y.js:2:2)'
+  assert.equal(formatErrorEntry('uncaughtException', err, at),
+    '\n[2026-09-15T08:35:01.123Z] uncaughtException: Error: boom\n    at a (x.js:1:1)\n    at b (y.js:2:2)\n',
+    'the stack keeps its line breaks — that is what makes the entry diagnosable')
+  assert.match(formatErrorEntry('unhandledRejection', 'plain string', at), /unhandledRejection: plain string\n$/)
+  assert.match(formatErrorEntry('unhandledRejection', undefined, at), /unhandledRejection: undefined\n$/)
+
+  const file = join(dir, 'tw-main-errors.log')
+  const log = createErrorLog(() => file, { maxBytes: 2048, keepBytes: 800 })
+  for (let i = 0; i < 300; i++) {
+    const e = new Error(`failure ${i}`)
+    e.stack = `Error: failure ${i}\n    at frame (z.js:${i}:1)`
+    log('uncaughtException', e)
+  }
+  const size = statSync(file).size
+  assert.ok(size <= 2048, `a crash loop must not grow the log without limit, got ${size} bytes`)
+  const text = readFileSync(file, 'utf8')
+  assert.match(text, /Error: failure 299\n    at frame \(z\.js:299:1\)\n$/, 'the newest error and its stack survive')
+  assert.ok(!text.includes('failure 0\n'), 'the oldest errors are gone')
+  assert.match(text, /^\[log truncated to the last 800 bytes\]\n/, 'and the cut says so')
+})
+
+check('the error log never throws, even before the path can be resolved', () => {
+  // Process handlers are installed before app ready; app.getPath may not be usable yet.
+  const early = createErrorLog(() => { throw new Error("Failed to get 'userData' path") })
+  assert.doesNotThrow(() => early('uncaughtException', new Error('very early')))
+  const missing = createErrorLog(() => join(dir, 'no-such-directory', 'tw-main-errors.log'))
+  assert.doesNotThrow(() => missing('unhandledRejection', new Error('x')))
+  // An error whose stack getter itself throws.
+  const hostile = { get stack() { throw new Error('nope') } }
+  const file = join(dir, 'hostile.log')
+  assert.doesNotThrow(() => createErrorLog(() => file)('uncaughtException', hostile))
+  assert.match(readFileSync(file, 'utf8'), /uncaughtException: \(unprintable error\)/)
+})
+
+
+check('an already oversized log is trimmed by reading only its tail (Codex review, PR #3)', () => {
+  // An unbounded log from before this bound existed can be past V8's maximum string length, so the
+  // trim must never read the whole file. readLogTail reads only the last keepBytes and keeps exactly
+  // what truncateLogText would keep from the whole text.
+  const file = join(dir, 'oversized.log')
+  const lines = Array.from({ length: 5000 }, (_, i) => `[2026-09-01T00:00:00.000Z] old entry ${i}`).join('\n') + '\n'
+  writeFileSync(file, lines)
+  const size = statSync(file).size
+  assert.equal(readLogTail(file, size, 2000), truncateLogText(lines, 2000), 'same result as trimming the whole text')
+  appendBounded(file, 'newest entry\n', { maxBytes: 10_000, keepBytes: 2000 })
+  const kept = readFileSync(file, 'utf8')
+  assert.ok(statSync(file).size < 2100, `trimmed to the tail (got ${statSync(file).size} bytes)`)
+  assert.match(kept, /^\[log truncated to the last 2000 bytes\]\n\[2026/, 'marked, and starts on a line boundary')
+  assert.ok(kept.endsWith('newest entry\n'), 'keeps the newest entry')
+  assert.equal(readLogTail(file, 5, 2000), kept.slice(0, 5), 'a file shorter than keepBytes is read as it is')
 })
 
 if (failures) {

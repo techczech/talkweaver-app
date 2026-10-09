@@ -45,6 +45,7 @@ const ENTRIES = presenterPaletteEntries()
 const GROUPS = ['Slides', 'Timer', 'Recording', 'Live', 'Poll and questions', 'View', 'Slide on every screen', 'Editor and help']
 // Presenter keys that are not palette commands.
 const KEYS_NOT_IN_PALETTE = {
+  'presenter.rebind': 'records the highlighted command in the palette',
   'presenter.close': 'Esc closes whatever is open; it is not a command of its own',
   'presenter.command-palette': 'opens the palette itself',
   'presenter.save-run': '↵ acts only while the save offer shows, on that toast; Save run as… is the command',
@@ -65,9 +66,12 @@ const CONTROLS_NOT_IN_PALETTE = {
   '[data-remind]': 'a reminder chip of the talk-length popover',
   '[data-preview-size-option]': 'the Previews row sets a size; the palette steps it, as [ and ] do',
   '#presenterModeExit': 'leaves the mode on: the mode\'s own entry, or Esc',
+  '#presenterPointerExit': 'leaves Pointer: Pointer, or Esc',
+  '#presenterPenExit': 'leaves the Pen: Pen, or Esc',
   '#presenterHighlightExit': 'leaves highlighting: Highlight text, or Esc',
   '#twrec-keep': 'answers the short-recording question on the cluster',
-  '#twrec-discard': 'answers the short-recording question on the cluster'
+  '#twrec-discard': 'answers the short-recording question on the cluster',
+  '#twrec-export': 'answers the failed-save question on the cluster (beside Retry save and Discard)'
 }
 
 const LONG_NOTE = Array.from({ length: 12 }, (_, i) => `Paragraph ${i + 1} of a long stand-in note, long enough that the notes panel has to scroll to show the rest of it to the presenter.`).join('\n\n')
@@ -109,7 +113,7 @@ let browser
 try {
   // ── Static: the table against the registry ──────────────────────────────────────────────────
   check(same(PRESENTER_PALETTE.map(([g]) => g), GROUPS), `palette groups are the drawn eight (${PRESENTER_PALETTE.map(([g]) => g).join(', ')})`)
-  check(ENTRIES.length === 63, `the palette has the drawn 56 commands, the two phone switches and the five board commands, 63 (${ENTRIES.length})`)
+  check(ENTRIES.length === 73, `the palette has the drawn 56 commands, the two phone switches, the five board commands, Pointer, Embedded page: full screen and the Pen's eight (ticket 08), 73 (${ENTRIES.length})`)
   check(new Set(ENTRIES.map((e) => e.id)).size === ENTRIES.length, 'palette ids are unique')
   const presenterKeys = SHORTCUT_REGISTRY.filter((e) => e.scope === 'presenter')
   for (const entry of presenterKeys) {
@@ -118,7 +122,7 @@ try {
   }
   for (const entry of ENTRIES) {
     if (entry.shortcut) check(presenterKeys.some((k) => k.id === entry.shortcut), `${entry.id}: its key is a presenter key in the registry (${entry.shortcut})`)
-    check(entry.controls?.length || ['previews-larger', 'previews-smaller', 'notes-forward', 'notes-back'].includes(entry.id), `${entry.id}: it runs through a control, its key, or the template's run map`)
+    check(entry.controls?.length || ['previews-larger', 'previews-smaller', 'notes-forward', 'notes-back', 'pen-next-tool'].includes(entry.id), `${entry.id}: it runs through a control, its key, or the template's run map`)
   }
 
   const sourcePath = join(scratch, 'palette.md')
@@ -184,7 +188,7 @@ export const clipboard = { writeText() {}, readText() { return '' }, readImage()
     check(await page.evaluate(() => document.activeElement?.id === 'presenterCommandSearch'), 'the search field has focus')
     check(await page.evaluate(() => document.getElementById('presenterCommandSearch').placeholder) === 'Search presenter commands', 'the search field reads "Search presenter commands"')
     const count = await page.textContent('#presenterCommandCount')
-    check(count === '63 commands', `the count reads "63 commands" (${count})`)
+    check(count === '73 commands', `the count reads "73 commands" (${count})`)
     const list = await rows(page)
     check(list.length === ENTRIES.length, `every entry has a row (${list.length} of ${ENTRIES.length})`)
     for (const [group, entries] of PRESENTER_PALETTE) {
@@ -263,7 +267,7 @@ export const clipboard = { writeText() {}, readText() { return '' }, readImage()
     }
     check(found.out.length > 60, `the bars were enumerated (${found.out.length} buttons)`)
     // Controls only a preload or a state adds are absent from the fixture: named, not a failure.
-    const allowedAbsent = ['#presenterQuickPollDismiss', '#presenterInstantBack', '#presenterPollOpen', '#presenterPollClose', '#presenterPollReveal']
+    const allowedAbsent = ['#presenterQuickPollDismiss', '#presenterInstantBack', '#presenterPollOpen', '#presenterPollClose', '#presenterPollReveal', '#presenterEmbedFullscreen']
     for (const m of found.missing) check(allowedAbsent.some((s) => m.endsWith(s)), `palette control not in the window: ${m}`)
     check(page.errors.length === 0, `coverage: no page errors (${page.errors.join('; ')})`)
     await context.close()

@@ -77,6 +77,48 @@ const settle = (page) => page.waitForTimeout(250)
 check(!/"right"\s*:/.test(html) && !html.includes('{right}'), 'the handout carries no right answer (no "right" key, no {right} marker)')
 check(form.steps.length === 7 && form.steps[2].kind === 'check' && form.steps[2].poll.type === 'single', 'the fixture form has the seven drawn steps, the third a quick check')
 
+// ── A step's slide is shown as a copy: an embedded local page in it never runs there ─────────
+// (0.38 ticket 11: a page runs only on the slide view's own current slide; a copy carries no document.)
+{
+  const s = await session(PHONE)
+  const { page } = s
+  await openOverview(page)
+  const planted = await page.evaluate(() => {
+    window.__embedRan = 0
+    window.addEventListener('message', (event) => { if (event.data === 'pw-embed-ran') window.__embedRan += 1 })
+    // The steps' slides are kept in a template (inert); the form copies them from there.
+    const source = document.getElementById('preworkSteps')?.content.querySelector('.slide[data-id="pwwelcome"]')
+    if (!source) return false
+    // The worst case, a frame as the share runtime leaves a LIVE one: state "live", the document in both attributes.
+    const doc = '<script>parent.postMessage("pw-embed-ran", "*")<\/script>'
+    const figure = document.createElement('figure')
+    figure.className = 'slide-embed'
+    figure.setAttribute('data-embed', 'local')
+    figure.setAttribute('data-embed-state', 'live')
+    const frame = document.createElement('iframe')
+    frame.setAttribute('sandbox', 'allow-scripts')
+    frame.setAttribute('data-embed-doc', doc)
+    figure.appendChild(frame)
+    source.querySelector('.slide-content').appendChild(figure)
+    frame.setAttribute('srcdoc', doc)
+    return true
+  })
+  check(planted, 'embed: the step\'s own slide is in the page\'s template')
+  const copies = (selector) => page.evaluate((sel) => Array.from(document.querySelectorAll(sel + ' figure.slide-embed[data-embed="local"]')).map((figure) => {
+    const frame = figure.querySelector('iframe')
+    return [figure.getAttribute('data-embed-state'), frame.hasAttribute('data-embed-doc'), frame.hasAttribute('srcdoc')]
+  }), selector)
+  await page.click('[data-pw-cta]')
+  await page.waitForSelector('.pw-stepview')
+  await settle(page)
+  check(JSON.stringify(await copies('.pw-canvas')) === JSON.stringify([['idle', false, false]]), 'embed: the step\'s copy of the slide carries no document and is idle')
+  await page.click('.pw-full')
+  await settle(page)
+  check(JSON.stringify(await copies('.pw-fsview')) === JSON.stringify([['idle', false, false]]), 'embed: nor does its full-screen copy')
+  check((await page.evaluate(() => window.__embedRan)) === 0, 'embed: no copy ran the page')
+  await s.close()
+}
+
 // ═══ Phone, 360x740 ══════════════════════════════════════════════════════════════════════════
 {
   const s = await session(PHONE)

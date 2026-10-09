@@ -14,6 +14,17 @@ import { withColumnWidth } from "./narrow-columns.mjs";
 import { pollFrameEligible, renderPollFrame } from "./poll-frame.mjs";
 import { buildSlideScriptPayload, renderSlideScriptTag } from './slide-script.mjs';
 import { instantSlideRuntimeSource, instantSlideStyles } from '../../assets/runtime/instant-slide.js';
+import { presenterShortcutsRuntimeSource } from '../../assets/runtime/presenter-shortcuts.js';
+import { pointerOverlayRuntimeSource } from '../../assets/runtime/pointer-overlay.js';
+import { penInkRuntimeSource } from '../../assets/runtime/pen-ink.js';
+import { audioChipRuntimeSource } from '../../assets/runtime/audio-chip.js';
+import { imageStepsRuntimeSource } from '../../assets/runtime/image-steps.js';
+import { emphasisStepsRuntimeSource } from '../../assets/runtime/emphasis-steps.js';
+import { markEmphasisSteps } from './emphasis-steps.mjs';
+import { mediaStepsRuntimeSource } from '../../assets/runtime/media-steps.js';
+import { embedChannelSource } from '../../assets/runtime/embed-channel.js';
+import { EMBED_DOC_ATTRIBUTE } from './embed-frame.mjs';
+import { hasMediaSteps } from './media-steps.mjs';
 import { keepLastTwoWordsTogether, keepStatementLastWordsTogether, tieShortWords } from "./no-lone-word.mjs";
 import { slotCompositionFor, renderSlotComposition } from "./slot-composition.mjs";
 import { plainInlineText } from "./00-inline-render.mjs";
@@ -490,10 +501,15 @@ function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = n
       const sourceHtml = sourceBlocks.length
         ? `\n<p class="slide-source">${sourceBlocks.map((b) => renderInline(b.text ?? "")).join("<br>")}</p>`
         : "";
+      // 0.38 ticket 02: the cards' emphasis becomes steps. The runtimes step a carousel inside the
+      // card on show, so only the cards are marked: the title (headHtml) and the shared source line
+      // under the cards belong to no card, and their emphasis shows from arrival.
+      const galleryHtml = `<div class="card-gallery carousel" data-exclusive>${subHtml}</div>`;
+      const emphasis = slide.emphasisSteps ? markEmphasisSteps(galleryHtml) : null;
       const contentHtml = `<div class="slide-content layout-carousel">
-${headHtml}<div class="card-gallery carousel" data-exclusive>${subHtml}</div>${sourceHtml}
+${headHtml}${emphasis ? emphasis.html : galleryHtml}${sourceHtml}
   </div>`;
-      return `<section class="slide" data-id="${escapeHtml(id)}" data-section="${escapeHtml(section)}" data-subsection="${escapeHtml(subsection)}" data-role="${escapeHtml(role)}" data-layout="${escapeHtml(layout)}" data-carousel data-nav-title="${escapeHtml(title)}"${navLabelAttr}${titlePlacement.mode ? ` data-title-layout="${titlePlacement.mode}"` : ""}${titlePlacement.split ? ` data-split="${titlePlacement.split}"` : ""}${pollAttr}${reactionsAttr}${authoredMode ? ` data-mode="${escapeHtml(authoredMode)}"` : ""}${preparesFor ? ` data-prepares-for="${escapeHtml(preparesFor)}"` : ""}${slide.noStep ? " data-nostep" : ""}${slide.noValues ? " data-novalues" : ""}${slide.fontBody ? ` data-font-body="${slide.fontBody}"` : ""}${slide.fontTitle ? ` data-font-title="${slide.fontTitle}"` : ""}${accentStyle}>
+      return `<section class="slide" data-id="${escapeHtml(id)}" data-section="${escapeHtml(section)}" data-subsection="${escapeHtml(subsection)}" data-role="${escapeHtml(role)}" data-layout="${escapeHtml(layout)}" data-carousel data-nav-title="${escapeHtml(title)}"${navLabelAttr}${titlePlacement.mode ? ` data-title-layout="${titlePlacement.mode}"` : ""}${titlePlacement.split ? ` data-split="${titlePlacement.split}"` : ""}${pollAttr}${reactionsAttr}${authoredMode ? ` data-mode="${escapeHtml(authoredMode)}"` : ""}${preparesFor ? ` data-prepares-for="${escapeHtml(preparesFor)}"` : ""}${slide.noStep ? " data-nostep" : ""}${slide.imageSteps ? " data-image-steps" : ""}${emphasis?.count ? " data-emphasis-steps" : ""}${!slide.noStep && hasMediaSteps(contentHtml) ? " data-media-steps" : ""}${slide.noValues ? " data-novalues" : ""}${slide.fontBody ? ` data-font-body="${slide.fontBody}"` : ""}${slide.fontTitle ? ` data-font-title="${slide.fontTitle}"` : ""}${accentStyle}>
   ${contentHtml}
   ${notes ? `<aside class="notes">${notes}</aside>` : ""}
 </section>`;
@@ -526,7 +542,16 @@ ${headHtml}<div class="card-gallery carousel" data-exclusive>${subHtml}</div>${s
       const linksHtml = renderLinksBlock(deckLinks);
       contentHtml = contentHtml.replace(/(\s*<\/div>\s*)$/, `\n${linksHtml}$1`);
     }
-    return `<section class="slide" data-id="${escapeHtml(id)}" data-section="${escapeHtml(section)}" data-subsection="${escapeHtml(subsection)}" data-role="${escapeHtml(role)}" data-layout="${escapeHtml(layout)}" data-nav-title="${escapeHtml(title)}"${navLabelAttr}${pollAttr}${reactionsAttr}${authoredMode ? ` data-mode="${escapeHtml(authoredMode)}"` : ""}${preparesFor ? ` data-prepares-for="${escapeHtml(preparesFor)}"` : ""}${slide.noStep ? " data-nostep" : ""}${slide.noValues ? " data-novalues" : ""}${slide.fontBody ? ` data-font-body="${slide.fontBody}"` : ""}${slide.fontTitle ? ` data-font-title="${slide.fontTitle}"` : ""}${slide.countdownSeconds ? ` data-countdown="${slide.countdownSeconds}" data-countdown-style="${slide.countdownStyle || "digits"}"` : ""}${slide.sectionTimerSeconds ? ` data-section-timer="${slide.sectionTimerSeconds}" data-section-timer-show="${slide.sectionTimerShow || "presenter"}"` : ""}${slide.remindText ? ` data-remind="${escapeHtml(slide.remindText)}"${slide.remindAtMinutes != null ? ` data-remind-at="${slide.remindAtMinutes}"` : ""}${slide.remindInSeconds != null ? ` data-remind-in="${slide.remindInSeconds}"` : ""}` : ""}${titlePlacement.mode ? ` data-title-layout="${titlePlacement.mode}"` : ""}${effectiveTitleStyle ? ` data-title-style="${escapeHtml(effectiveTitleStyle)}"` : ""}${titlePlacement.mode === "top" && slide.titleLook ? ` data-title-look="${slide.titleLook}"${slide.titleLookPlace ? ` data-title-look-at="${slide.titleLookPlace}"` : ""}` : ""}${titlePlacement.split ? ` data-split="${titlePlacement.split}"` : ""}${containerAttrs}${slideStyle}>
+    // 0.38 ticket 02: on an {emphasis-steps} slide the body's bold, underline, strikethrough and
+    // highlight are marked as steps (lib/emphasis-steps.mjs). The section says so only where a
+    // span was marked, so a slide with the option and no emphasis steps exactly as before.
+    let emphasisCount = 0;
+    if (slide.emphasisSteps) {
+      const marked = markEmphasisSteps(contentHtml);
+      contentHtml = marked.html;
+      emphasisCount = marked.count;
+    }
+    return `<section class="slide" data-id="${escapeHtml(id)}" data-section="${escapeHtml(section)}" data-subsection="${escapeHtml(subsection)}" data-role="${escapeHtml(role)}" data-layout="${escapeHtml(layout)}" data-nav-title="${escapeHtml(title)}"${navLabelAttr}${pollAttr}${reactionsAttr}${authoredMode ? ` data-mode="${escapeHtml(authoredMode)}"` : ""}${preparesFor ? ` data-prepares-for="${escapeHtml(preparesFor)}"` : ""}${slide.noStep ? " data-nostep" : ""}${slide.imageSteps ? " data-image-steps" : ""}${emphasisCount ? " data-emphasis-steps" : ""}${!slide.noStep && hasMediaSteps(contentHtml) ? " data-media-steps" : ""}${slide.noValues ? " data-novalues" : ""}${slide.fontBody ? ` data-font-body="${slide.fontBody}"` : ""}${slide.fontTitle ? ` data-font-title="${slide.fontTitle}"` : ""}${slide.countdownSeconds ? ` data-countdown="${slide.countdownSeconds}" data-countdown-style="${slide.countdownStyle || "digits"}"` : ""}${slide.sectionTimerSeconds ? ` data-section-timer="${slide.sectionTimerSeconds}" data-section-timer-show="${slide.sectionTimerShow || "presenter"}"` : ""}${slide.remindText ? ` data-remind="${escapeHtml(slide.remindText)}"${slide.remindAtMinutes != null ? ` data-remind-at="${slide.remindAtMinutes}"` : ""}${slide.remindInSeconds != null ? ` data-remind-in="${slide.remindInSeconds}"` : ""}` : ""}${titlePlacement.mode ? ` data-title-layout="${titlePlacement.mode}"` : ""}${effectiveTitleStyle ? ` data-title-style="${escapeHtml(effectiveTitleStyle)}"` : ""}${titlePlacement.mode === "top" && slide.titleLook ? ` data-title-look="${slide.titleLook}"${slide.titleLookPlace ? ` data-title-look-at="${slide.titleLookPlace}"` : ""}` : ""}${titlePlacement.split ? ` data-split="${titlePlacement.split}"` : ""}${containerAttrs}${slideStyle}>
   ${contentHtml}
 ${cornerQrHtml ? `  ${cornerQrHtml}\n` : ""}${cornerSectionHtml ? `  ${cornerSectionHtml}\n` : ""}  ${notes ? `<aside class="notes">${notes}</aside>` : ""}
 </section>`;
@@ -557,6 +582,22 @@ export async function buildDeckHtmlFromModel(model) {
   // Inline the pure presenter timer core (fmtClock / bigTimerState) verbatim — single source of truth.
   html = html.replace("<!--TIMER_RUNTIME-->", timerRuntimeSource);
   html = html.replace("<!--INSTANT_RUNTIME-->", () => instantSlideRuntimeSource());
+  html = html.replace("<!--AUDIO_RUNTIME-->", () => audioChipRuntimeSource());
+  // The image-sequence decisions (0.38 ticket 03): the same source scripts/test-image-steps.mjs asserts.
+  html = html.replace("<!--POINTER_OVERLAY_RUNTIME-->", () => pointerOverlayRuntimeSource() + '\n' + presenterShortcutsRuntimeSource());
+  // The Pen's stroke model, store, gesture and drawing (0.38 ticket 08).
+  html = html.replace("<!--PEN_INK_RUNTIME-->", () => penInkRuntimeSource());
+  html = html.replace("<!--IMAGE_STEPS_RUNTIME-->", () => imageStepsRuntimeSource());
+  // The emphasis-step order and count (0.38 ticket 02): the same source the handout / venue page
+  // inlines and scripts/test-emphasis-steps.mjs asserts.
+  html = html.replace("<!--EMPHASIS_STEPS_RUNTIME-->", () => emphasisStepsRuntimeSource());
+  // Playback of a {play-on-next} file from its step (0.38 ticket 05): the same source the venue
+  // page inlines.
+  html = html.replace("<!--MEDIA_STEPS_RUNTIME-->", () => mediaStepsRuntimeSource());
+  // Embedded local pages (0.38 ticket 11): the deck side of the channel to a sandboxed page, and
+  // the protocol it shares with the page's agent. Inlined only into a deck that has such a page
+  // (as the mermaid vendor is); without it the template's embed code finds no channel and no frame.
+  html = html.replace("<!--EMBED_CHANNEL_RUNTIME-->", () => (allSlides.includes(` ${EMBED_DOC_ATTRIBUTE}="`) ? embedChannelSource() : ""));
   html = html.replace("/*INSTANT_STYLES*/", () => instantSlideStyles);
   // Inline the shared overview runtime (rankSlides / deriveSlideStatus / createOverview) verbatim —
   // the presenter drawer runs the SAME factory the handout does. Single source of truth.

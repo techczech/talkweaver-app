@@ -266,6 +266,7 @@
 .wave.muted .lt-icon { width: 15px; height: 15px; stroke-width: 1.8; }
 .rec-len { font-family: var(--lt-mono); font-size: 13px; color: var(--lt-ink); font-weight: 500; }
 .rec-raw { font-family: var(--lt-mono); font-size: 10px; color: var(--lt-ink-faint); white-space: nowrap; }
+.rec-audio-short { font-family: var(--lt-mono); font-size: 10px; color: var(--lt-red); white-space: nowrap; }
 .rec-none { font-size: 12px; color: var(--lt-ink-faint); font-style: italic; }
 .rec-plan { font-family: var(--lt-mono); font-size: 10.5px; color: var(--lt-ink-faint); }
 .rec-delta { font-family: var(--lt-mono); font-size: 10px; color: var(--lt-ink-faint); padding: 1px 5px; border-radius: 8px; }

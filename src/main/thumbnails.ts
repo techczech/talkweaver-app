@@ -1,4 +1,5 @@
 import { BrowserWindow } from 'electron'
+import { markHiddenRenderer } from './window-kinds'
 import type { NativeImage } from 'electron'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -62,9 +63,17 @@ async function ensureDeckLoaded(fullHtml: string): Promise<BrowserWindow> {
       show: false,
       width: 1280,
       height: 720,
-      webPreferences: { offscreen: false, backgroundThrottling: false }
+      // disableDialogs: an alert / confirm / prompt from a page in a slide would otherwise put a
+      // dialog on screen from a window nobody sees and hold the capture until it is dismissed.
+      webPreferences: { offscreen: false, backgroundThrottling: false, disableDialogs: true }
     })
+    // Nobody sees or presses in this window: it hands nothing to the OS, navigates nowhere but the
+    // file loaded into it, and downloads nothing (window-kinds.ts, navigation-guard.ts).
+    markHiddenRenderer(win)
     win.on('closed', () => { renderWin = null; renderWinHtmlKey = null })
+    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' })) // a hidden renderer opens nothing
+    win.webContents.on('will-prevent-unload', (event) => event.preventDefault()) // a beforeunload handler never holds the next deck back
+    win.webContents.setAudioMuted(true)
     renderWin = win
   }
   renderWinHtmlKey = null // not valid until the load below succeeds

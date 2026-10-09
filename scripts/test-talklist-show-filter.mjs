@@ -3,7 +3,8 @@
 import assert from 'node:assert/strict'
 import { buildTree } from '../src/renderer/src/components/talkTreeNav.ts'
 import { effectiveShow, hiddenNote, showFilterVisible, showOptions, talksInShow, unavailableNote, unavailableSubline } from '../src/renderer/src/components/talklist/vaultFilter.ts'
-import { emptyTalkSearchResult, mergeTalkSearchResults } from '../src/shared/talk-search.ts'
+import { readFileSync } from 'node:fs'
+import { emptyTalkSearchResult, mergeTalkSearchResults, talkSearchRequestOptions } from '../src/shared/talk-search.ts'
 import { sectionRows, talksByVault } from '../src/renderer/src/components/talklist/vaultSections.ts'
 import { heightOf, VAULT_COMPACT_PX, VAULT_UNAVAILABLE_PX, VAULT_EMPTY_PX } from '../src/renderer/src/components/talklist/window.ts'
 
@@ -89,6 +90,23 @@ test('S2: a search over no vaults is an empty, settled result for the query', ()
   assert.equal(merged.hits.length, 2)
   assert.equal(merged.everywhereCount, 2)
   assert.deepEqual(merged.slideText, { read: 1, total: 2 })
+})
+test('search asks once for every vault: one talks:search call, merged by main in vault order', () => {
+  assert.deepEqual(talkSearchRequestOptions('', ['a', 'b']), { vaultIds: ['a', 'b'] })
+  assert.deepEqual(talkSearchRequestOptions('agents', ['a']), { within: 'agents', vaultIds: ['a'] })
+  assert.deepEqual(talkSearchRequestOptions('', undefined), {}, 'no list: the first open vault, as before')
+  assert.deepEqual(talkSearchRequestOptions('', []), { vaultIds: [] }, 'an empty list still searches nothing')
+  // Main merges the per-vault results with the same function the renderer used to apply to one
+  // call per vault, so the hits, their order and the counts are unchanged.
+  const r = emptyTalkSearchResult('rubric', '')
+  const a = { ...r, hits: [{ x: 'a1' }, { x: 'a2' }], everywhereCount: 3, slideText: { read: 2, total: 2 } }
+  const b = { ...r, hits: [{ x: 'b1' }], everywhereCount: 1, slideText: { read: 0, total: 1 } }
+  assert.deepEqual(mergeTalkSearchResults([a, b]).hits.map((h) => h.x), ['a1', 'a2', 'b1'])
+  assert.equal(mergeTalkSearchResults([a]), a, 'one vault: its result as it is')
+  const hook = readFileSync(new URL('../src/renderer/src/components/talklist/useTalkSearch.ts', import.meta.url), 'utf8')
+  assert.equal((hook.match(/window\.tw\.talks\.search\(/g) ?? []).length, 1, 'one search call in the hook')
+  assert.doesNotMatch(hook, /Promise\.all\(/, 'not one call per vault')
+  assert.match(hook, /talkSearchRequestOptions\(within, vaultKey \? vaultKey\.split/)
 })
 test('S5: the unavailable note (frame 2C): headline, why, and that copied slides still say where they came from', () => {
   const note = unavailableNote({ name: 'Oxford AICC', unavailable: { ...GONE, message: 'OneDrive is not signed in. Sign in and it comes back on its own.' } })

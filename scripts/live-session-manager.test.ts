@@ -21,7 +21,7 @@ function harness(initial: any[] = [], endRemote = async () => 'ended', extra: an
     createClient: (options: any) => {
       const client = { options, disconnected: false,
         disconnect() { this.disconnected = true }, reconnect() {},
-        publish() {}, sendPoll(action: any) {
+        publish() {}, pointer() {}, ink() {}, sendPoll(action: any) {
           const operationId = 'operation-test'
           options.onPendingChange([{ operationId, action }])
           return operationId

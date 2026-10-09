@@ -197,6 +197,9 @@ interface GridCellProps {
   onDragEnd: () => void
 }
 
+// IDENTITY CONTRACT — React.memo compares every prop by identity, handlers included: pass only
+// data that keeps its identity unless it changed, and handlers from GridView's useCallback/latest-refs,
+// never inline arrows or parent callbacks directly. Guarded by `npm run test:strip-render-budget`.
 const GridCell = React.memo(function GridCell({
   row,
   triggerFindings,
@@ -516,15 +519,30 @@ export default function GridView({
     }
   }
 
+  // Latest-refs for the parent callbacks. WorkspaceLayout passes plain functions and inline arrows,
+  // new on every one of its renders; depending on them directly made every handler below (and so
+  // every memoised GridCell) change identity on each parent render — a selection change re-rendered
+  // all cells. The handlers read the current callback through these refs and never change identity.
+  const onSelectSlideRef = useRef(onSelectSlide)
+  const onEditRef = useRef(onEdit)
+  const onExplainRef = useRef(onExplain)
+  const onReorderRef = useRef(onReorder)
+  onSelectSlideRef.current = onSelectSlide
+  onEditRef.current = onEdit
+  onExplainRef.current = onExplain
+  onReorderRef.current = onReorder
+  const stableOnEdit = useCallback((index: number) => onEditRef.current?.(index), [])
+  const stableOnExplain = useCallback((index: number) => onExplainRef.current?.(index), [])
+
   // Stable handler callbacks — deps are minimal so these survive re-renders during drag.
   // Selecting by click also claims keyboard focus for the grid container, so arrows work
   // immediately after a click (a plain div click otherwise focuses nothing).
   const onSelect = useCallback(
     (index: number) => {
       containerRef.current?.focus({ preventScroll: true })
-      onSelectSlide(index)
+      onSelectSlideRef.current(index)
     },
-    [onSelectSlide]
+    []
   )
 
   const onDragStart = useCallback(
@@ -562,11 +580,11 @@ export default function GridView({
       const fromBlock = dragFromBlockRef.current
       resetDrag()
       if (fromBlock !== null && blockIdx !== null && fromBlock !== blockIdx) {
-        onReorder?.(fromBlock, blockIdx)
-        onSelectSlide(index)
+        onReorderRef.current?.(fromBlock, blockIdx)
+        onSelectSlideRef.current(index)
       }
     },
-    [onReorder, onSelectSlide, resetDrag]
+    [resetDrag]
   )
 
   const onDragEnd = resetDrag
@@ -704,8 +722,8 @@ export default function GridView({
                     isDragging={dragFrom === globalIndex}
                     cellDraggable={canReorder && blockIndex !== null}
                     onSelect={onSelect}
-                    onEdit={onEdit}
-                    onExplain={onExplain}
+                    onEdit={onEdit ? stableOnEdit : undefined}
+                    onExplain={onExplain ? stableOnExplain : undefined}
                     onDragStart={onDragStart}
                     onDragEnter={onDragEnter}
                     onDragOver={onDragOver}
