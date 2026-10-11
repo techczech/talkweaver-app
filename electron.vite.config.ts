@@ -33,7 +33,11 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: {
-          index: resolve(__dirname, 'src/main/index.ts')
+          index: resolve(__dirname, 'src/main/index.ts'),
+          // A publish builds and writes its handout pages in a worker thread, off the main process (handout-pages.ts).
+          'handout-pages-worker': resolve(__dirname, 'src/main/handout-pages-worker.ts'),
+          // The live compile (prepareTalk) runs in a worker thread too (prepare-talk-worker.ts).
+          'prepare-talk-worker': resolve(__dirname, 'src/main/prepare-talk-worker.ts')
         }
       }
     }

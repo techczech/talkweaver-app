@@ -1,0 +1,59 @@
+{
+  "id": "delivery-2026-09-26",
+  "talkSlug": "lightning-round",
+  "talkTitle": "Lightning round",
+  "kind": "delivery",
+  "status": "delivered",
+  "eventTitle": "Club night",
+  "slideSet": {
+    "kind": "full"
+  },
+  "startedAt": "2026-09-26T19:30:00.000Z",
+  "endedAt": "2026-09-26T19:35:10.000Z",
+  "recordingMs": 0,
+  "wallClockMs": 310000,
+  "timerTargetMin": 5,
+  "context": null,
+  "pathwayId": null,
+  "audio": null,
+  "transcript": null,
+  "slideTimeIndex": [
+    {
+      "event": "enter",
+      "slideId": "deck-title",
+      "tMs": 0
+    },
+    {
+      "event": "enter",
+      "slideId": "s21",
+      "tMs": 25000
+    },
+    {
+      "event": "enter",
+      "slideId": "s22",
+      "tMs": 95000
+    },
+    {
+      "event": "enter",
+      "slideId": "s23",
+      "tMs": 165000
+    },
+    {
+      "event": "enter",
+      "slideId": "s24",
+      "tMs": 225000
+    },
+    {
+      "event": "enter",
+      "slideId": "07-share",
+      "tMs": 275000
+    },
+    {
+      "event": "enter",
+      "slideId": "deck-thanks",
+      "tMs": 300000
+    }
+  ],
+  "polls": [],
+  "pollResponses": []
+}

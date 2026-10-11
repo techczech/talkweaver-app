@@ -12,6 +12,7 @@ import { embedLocalFigureMarkup } from "./embed-frame.mjs";
 import { stripWrappingQuoteMarks } from "./quote-layout.mjs";
 import { iconRowPerRow, cardsTooNarrow } from "./narrow-columns.mjs";
 import { VALUE_TRIGGER_DICTIONARY } from "../triggers.mjs";
+import { renderSimulation } from "./simulation-layout.mjs";
 
 export { parseChartItems } from "./06-chart-renderer.mjs";
 
@@ -235,6 +236,16 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
   const text = block.text ?? block.content ?? block.body ?? "";
   if (block.type === "heading" || block.type === "title") return `<h2>${escapeHtml(text)}</h2>`;
   if (block.type === "subheading") return `<h3>${renderInline(text)}</h3>`;
+  if (block.type === "quote" && block.practice) {
+    // Ticket 05: a practice quotation ("**Try it.** Press <kbd>→</kbd> …") is an instruction,
+    // not someone's words. No quotation-mark device, no wrapping-mark strip, no length bucket and
+    // no split: the practice style (left rule, body type, upright key caps; skin/practice-quote.css).
+    // An authored `> — cite` line still renders.
+    const paras = Array.isArray(block.paragraphs) && block.paragraphs.length ? block.paragraphs : [block.text ?? ""];
+    const body = paras.map((p) => `<p>${renderInline(p)}</p>`).join("");
+    const cite = block.cite ? `<cite>${renderInline(block.cite)}</cite>` : "";
+    return `<blockquote class="practice-quote">${body}${cite}</blockquote>`;
+  }
   if (block.type === "quote") {
     // G1: the decorative quote-mark device SUPPLIES the quotation marks, so a single wrapping
     // pair of literal double quotes comes off the body — covers `> "…"` quotes (author wrote the
@@ -582,6 +593,9 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     return `<table class="${classes.join(" ")}" style="--table-rows:${rowCount}"${density}>${head}<tbody>${bodyRows.map((r) => renderRow(r, "td")).join("")}</tbody></table>`;
   }
   if (block.type === "code") {
+    // AI chat / terminal simulation fences (spec: ai-chat-and-terminal-simulation-locked-spec.md).
+    if (block.sim) return renderSimulation(block);
+    if (block.simIgnored) return "";
     if (block.lang === "svg") {
       const source = block.text || "";
       if (typeof sanitiseSvgForCompiler !== "function") {
@@ -1552,6 +1566,12 @@ export function mapBlocksToLayout(layout, blocks) {
     return featurizeRemainingLists([...rest([firstList]), { type: "contrast", pairs }]);
   }
   if (layout === "list" && firstList) {
+    // Ticket 05: a practice quotation stays AFTER the list it refers to ("Four stalls … Try it:
+    // move a slide"); every other block keeps the list layout's order (list last).
+    const practice = blocks.filter((b) => b.type === "quote" && b.practice);
+    if (practice.length) {
+      return featurizeRemainingLists([...rest([firstList, ...practice]), { type: "feature-list", items: firstList.items, ordered: firstList.ordered, children: firstList.children, ...(firstList.iconOverrides ? { iconOverrides: firstList.iconOverrides } : {}) }, ...practice]);
+    }
     return featurizeRemainingLists([...rest([firstList]), { type: "feature-list", items: firstList.items, ordered: firstList.ordered, children: firstList.children, ...(firstList.iconOverrides ? { iconOverrides: firstList.iconOverrides } : {}) }]);
   }
   if (layout === "grid" && firstList) return featurizeRemainingLists([...rest([firstList]), { type: "tiles", items: firstList.items }]);

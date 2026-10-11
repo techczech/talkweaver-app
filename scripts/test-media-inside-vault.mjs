@@ -31,6 +31,9 @@ const { resolveImageRefs } = await import(pathToFileURL(join(process.cwd(), 'src
 const { assetRootsForTalk, talkVaultRoot } = await import(pathToFileURL(join(process.cwd(), 'src/main/asset-roots.ts')).href)
 const { resolveInVaults } = await import(pathToFileURL(join(process.cwd(), 'src/main/vault-registry.ts')).href)
 const { buildSharedTalkPayload } = await import(pathToFileURL(join(process.cwd(), 'src/main/shared-talk-build.ts')).href)
+const { requireAllowedAssetRoots, requireCompileOptionsWithRoots } = await import(pathToFileURL(join(process.cwd(), 'src/main/compile-roots.ts')).href)
+const { createPrepareTalkOffThread } = await import(pathToFileURL(join(process.cwd(), 'src/main/prepare-talk-off-thread.ts')).href)
+const { buildHandoutPages } = await import(pathToFileURL(join(process.cwd(), 'src/main/handout-pages.ts')).href)
 
 const fsSync = await import('node:fs')
 let failures = 0
@@ -358,22 +361,116 @@ await check('the shared-talk build: pooled media with the vault supplied, none o
   for (const needle of needles(secrets.image.marker)) assert.equal(Buffer.from(shared.html).includes(needle), false, 'a shared talk never carries an outside file')
 })
 
-await check('no compile in the main process is left without allowed roots', () => {
-  const calls = []
-  for (const file of ['src/main/index.ts', 'src/main/shared-talk-build.ts', 'src/main/layout-variant-thumbnail.ts', 'src/main/thumbnails.ts', 'src/main/backup-sweep.mjs', 'src/main/run-prework.ts', 'src/main/talk-search.ts']) {
-    const lines = readFileSync(join(process.cwd(), file), 'utf8').split('\n')
-    lines.forEach((line, index) => {
-      // A call (awaited or passed to the gate), not the import, a type or a comment.
-      if (/(?:await |=> )prepareSource\(/.test(line) && !/^\s*(\/\/|\*)/.test(line)) calls.push({ file, line: index + 1, text: line.trim() })
-    })
+// Every file of the main process and its worker threads is read (src/main, found by walking it, not
+// a fixed list): a compile moved to a new file or a new worker is still found here.
+function mainProcessSources() {
+  const found = []
+  const walk = (dir) => {
+    for (const entry of fsSync.readdirSync(join(process.cwd(), dir), { withFileTypes: true })) {
+      const rel = `${dir}/${entry.name}`
+      if (entry.isDirectory()) walk(rel)
+      else if (/\.(?:ts|mts|mjs|js|cjs)$/.test(entry.name) && !/\.(?:test|spec)\.[a-z]+$/.test(entry.name) && !entry.name.endsWith('.d.ts')) found.push(rel)
+    }
   }
-  assert.ok(calls.length >= 12, `expected the main process's compiles, found ${calls.length}`)
+  walk('src/main')
+  return found.sort()
+}
+// Each call of prepareSource in a file (any receiver: `prepareSource(`, `adapters.prepareSource(`),
+// with the whole call's text up to its closing parenthesis, however many lines it spans. Comments
+// are blanked first so a mention in prose is not a call.
+function prepareSourceCalls(file) {
+  const raw = readFileSync(join(process.cwd(), file), 'utf8')
+  const text = raw.replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' ')).replace(/(^|[^:'"`])\/\/[^\n]*/g, (c, lead) => lead + ' '.repeat(c.length - lead.length))
+  const calls = []
+  for (const match of text.matchAll(/\bprepareSource\s*\(/g)) {
+    let depth = 0
+    let end = match.index + match[0].length - 1
+    for (; end < text.length; end++) {
+      if (text[end] === '(') depth++
+      else if (text[end] === ')' && --depth === 0) break
+    }
+    calls.push({ file, line: text.slice(0, match.index).split('\n').length, text: text.slice(match.index, end + 1).replace(/\s+/g, ' ') })
+  }
+  return calls
+}
+// The worker entry files (they listen on parentPort) and the files of src/main they import.
+function workerSideFiles(files) {
+  const entries = files.filter((file) => /\bparentPort\b/.test(readFileSync(join(process.cwd(), file), 'utf8')))
+  const side = new Set(entries)
+  for (const entry of entries) {
+    for (const match of readFileSync(join(process.cwd(), entry), 'utf8').matchAll(/^import[^'"]*['"](\.\/[^'"]+)['"]/gm)) {
+      const target = join(dirname(entry), match[1]).replace(/\\/g, '/')
+      const hit = files.find((file) => file === target || file.replace(/\.(?:ts|mts|mjs|js|cjs)$/, '') === target.replace(/\.(?:ts|mts|mjs|js|cjs)$/, ''))
+      if (hit) side.add(hit)
+    }
+  }
+  return { entries, side: [...side] }
+}
+
+await check('no compile in the main process or its worker threads is left without allowed roots', () => {
+  const files = mainProcessSources()
+  const calls = files.flatMap(prepareSourceCalls)
+  // 15 on 2026-10-10: index.ts 10, shared-talk-build.ts 1, instant-slide-insert.ts 1, prepare-talk-worker.ts 1, handout-pages.ts 2.
+  assert.ok(calls.length >= 15, `expected the main process's compiles, found ${calls.length}: ${calls.map((c) => `${c.file}:${c.line}`).join(', ')}`)
   const without = calls.filter((call) => !/allowedAssetRoots|compileOptions/.test(call.text))
   assert.deepEqual(without, [], 'a prepareSource call with no allowedAssetRoots would lose pooled _assets media')
+  // A compile in a worker thread is handed its roots as plain data in a job: there the roots must go
+  // through the refusal (compile-roots.ts), so a job posted without them fails instead of compiling.
+  const { entries, side } = workerSideFiles(files)
+  assert.ok(entries.includes('src/main/prepare-talk-worker.ts') && entries.includes('src/main/handout-pages-worker.ts'), `the worker entries: ${entries.join(', ')}`)
+  assert.ok(side.includes('src/main/handout-pages.ts'), `the files the workers run: ${side.join(', ')}`)
+  const workerCalls = calls.filter((call) => side.includes(call.file))
+  assert.ok(workerCalls.length >= 3, `expected the worker threads' compiles, found ${workerCalls.length}`)
+  for (const call of workerCalls) {
+    const source = readFileSync(join(process.cwd(), call.file), 'utf8')
+    const checked = /requireAllowedAssetRoots\(/.test(call.text) ||
+      (/\bcompileOptions\b/.test(call.text) && /const compileOptions = requireCompileOptionsWithRoots\(/.test(source))
+    assert.ok(checked, `a worker-thread compile whose roots are not checked: ${call.file}:${call.line} ${call.text}`)
+  }
   const index = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
   assert.match(index, /const compileOptions = \{ \.\.\.\(options \?\? \{\}\), allowedAssetRoots: assetRootsFor\(outlinePath\) \}/)
+  // The live compile's job carries those options to the worker.
+  assert.match(index, /prepareTalkOffThread\(\{ compilerDir, outlinePath, text: resolved, slug, defaults, options: compileOptions \}\)/)
+  assert.equal((index.match(/prepareTalkOffThread\(\{/g) ?? []).length, 1, 'one place posts the live compile, and it is the one above')
+  // Both handout builds are handed the talk's roots.
+  assert.equal((index.match(/buildHandoutPagesOffThread\(\{[\s\S]*?\n\s*\}\)/g) ?? []).filter((job) => /assetRoots: assetRootsFor\((?:talk\.)?outlinePath\)/.test(job)).length, 2)
   assert.match(readFileSync(join(process.cwd(), 'src/main/shared-talk-build.ts'), 'utf8'), /const compileOptions = input\.allowedAssetRoots \? \{ allowedAssetRoots: input\.allowedAssetRoots \} : \{\}/)
   assert.match(index, /allowedAssetRoots: assetRootsFor\(outlinePath\),\n\s+\/\/ The talk's vault's personal author/)
+})
+
+await check('a compile job without allowed roots is refused, in the live compile\'s worker thread and in the handout build', async () => {
+  for (const bad of [undefined, null, 'vault', [''], ['relative/vault'], [vault, 3]]) {
+    assert.throws(() => requireAllowedAssetRoots(bad, 'The compile'), /was refused/, JSON.stringify(bad))
+  }
+  assert.deepEqual(requireAllowedAssetRoots([], 'The compile'), [], 'an empty list is "no local media", not a missing list')
+  assert.deepEqual(requireCompileOptionsWithRoots({ projectionsOnly: true, allowedAssetRoots: [vault] }, 'The compile'), { projectionsOnly: true, allowedAssetRoots: [vault] })
+
+  // The real worker thread, started from its source file as the app starts its built copy.
+  const outlinePath = join(talk, 'talk-outline.md')
+  await writeFile(outlinePath, pooledSource)
+  const compilerDir = join(process.cwd(), 'compiler/scripts')
+  const offThread = createPrepareTalkOffThread(join(process.cwd(), 'src/main/prepare-talk-worker.ts'), 10)
+  const text = resolveImageRefs(pooledSource, vault)
+  const job = { compilerDir, outlinePath, text, slug: 'talk' }
+  for (const options of [{}, { projectionsOnly: true }, { allowedAssetRoots: undefined }, { allowedAssetRoots: ['relative/vault'] }]) {
+    await assert.rejects(offThread({ ...job, options }), /was refused/, JSON.stringify(options))
+  }
+  const answered = await offThread({ ...job, options: { allowedAssetRoots: assetRootsForTalk(vaults, outlinePath) } })
+  assert.ok(String(answered.model.fullHtml).includes(pooledUri), 'with the roots the worker compiles, pooled media included')
+
+  // The handout build (what its worker runs): refused before anything is compiled or written.
+  const site = join(base, 'handout-site')
+  const handoutJob = {
+    compilerDir, talkOutDir: join(site, 'talk'), siteDir: site, slug: 'talk', live: '', url: 'https://example.org/talk', qr: '',
+    downloadFile: 'talk-download.html', handoutFile: 'talk.html', kind: 'talk', outlinePath, text, outline: pooledSource, homeDetails: {},
+  }
+  for (const assetRoots of [undefined, ['relative/vault']]) {
+    await assert.rejects(buildHandoutPages({ ...handoutJob, assetRoots }, (html) => html), /was refused/, JSON.stringify(assetRoots))
+  }
+  assert.equal(fsSync.existsSync(site), false, 'a refused handout build writes nothing')
+  const runJob = { ...handoutJob, kind: 'run', defaults: {}, talkSlug: 'talk', run: {}, homePrework: null, distPath: join(talk, 'dist', 'run.html') }
+  await assert.rejects(buildHandoutPages(runJob, (html) => html), /was refused/)
+  assert.equal(fsSync.existsSync(join(talk, 'dist')), false)
 })
 
 // ── 5. The output property: no local address the compiler did not resolve ────────────────────

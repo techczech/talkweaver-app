@@ -475,7 +475,7 @@ try {
     await context.close()
   })
 
-  await check('home page: the stage\'s page runs only while the Live pane shows', async () => {
+  await check('home page: the stage\'s page runs only while the live layout shows', async () => {
     // The live service, as scripts/handout-home-live-dom.test.mjs stubs it: discovery answers from
     // window.__live; the socket greets and answers a sync with an empty snapshot.
     const stub = () => {
@@ -486,7 +486,7 @@ try {
       window.WebSocket = class {
         static OPEN = 1
         readyState = 0
-        constructor() { queueMicrotask(() => { this.readyState = 1; this.onopen?.(); this.emit({ type: 'session.hello', protocol: 2, expiresAt: Date.now() + 6e6 }) }) }
+        constructor() { window.__socket = this; queueMicrotask(() => { this.readyState = 1; this.onopen?.(); this.emit({ type: 'session.hello', protocol: 2, expiresAt: Date.now() + 6e6 }) }) }
         send(raw) {
           const m = JSON.parse(raw)
           if (m.type === 'session.ping') this.emit({ type: 'session.pong', nonce: m.nonce })
@@ -507,19 +507,18 @@ try {
       assert.deepEqual([runs(), await loadedIn(quiet)], [[0, 0, 0], []], `${viewport.width}px, not live: the hidden stage runs nothing`)
       await quiet.close()
 
-      // Live: the Live pane shows the stage, and its page runs; the Handout tab stops it.
+      // Live: the live layout shows the stage, and its page runs. The home page has no Live/Handout
+      // switch (Handout 4b): the session ending, which turns the page into the handout, stops it.
       await context.addInitScript(() => { if (window === window.top) window.__live = true })
       const page = await open(context, '/home.html')
       await page.waitForFunction(() => document.getElementById('liveFollowStatus')?.textContent === 'live')
       const live = await liveFrame(page)
       await live.frame.waitForFunction(() => window.storage)
       assert.deepEqual([runs(), await loadedIn(page), live.visible], [[1, 0, 0], ['stage:sim'], true], `${viewport.width}px, live: the page on the speaker's slide runs`)
-      await page.click('#hhTabHandout')
+      await page.evaluate(() => { window.__live = false; window.__socket.emit({ type: 'session.closed' }) })
+      await page.waitForFunction(() => document.getElementById('handoutHome')?.dataset.layout === 'handout')
       await stageIdle(page, 'sim')
-      await page.click('#hhTabLive')
-      const again = await liveFrame(page)
-      await again.frame.waitForFunction(() => window.storage)
-      assert.deepEqual([runs(), await loadedIn(page)], [[2, 0, 0], ['stage:sim']], 'back on Live: it starts again')
+      assert.deepEqual(runs(), [1, 0, 0], `${viewport.width}px, the session ended: the handout's cover runs no page`)
       await context.close()
     }
   })

@@ -19,6 +19,10 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
 import { openSocket, startLiveWorker } from './lib/live-worker-harness.mjs'
+import { memoryOwnerTokens } from './lib/memory-secrets.mjs'
+
+// Owner tokens live in the secrets store (an in-memory one here), never in a registry file.
+const testOwnerTokens = memoryOwnerTokens()
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 async function until(read, predicate, timeoutMs, label) {
@@ -138,7 +142,7 @@ try {
 
   // The Run's share link, served by the same worker.
   const registryPath = join(scratch, 'userData', 'run-results-share-registry.json')
-  const shares = m.createRunResultsShares({ registryPath, endpoint: async () => ({ baseUrl: worker.baseUrl, adminSecret: worker.adminSecret }),
+  const shares = m.createRunResultsShares({ ownerTokens: testOwnerTokens, registryPath, endpoint: async () => ({ baseUrl: worker.baseUrl, adminSecret: worker.adminSecret }),
     linkBase: () => null, fetch })
   const shared = await shares.share(talkSlug, 'run-live', run(), { lifetime: '7', include: { board: true, polls: true } })
   assert.equal('ownerToken' in shared, false, 'a window never sees the owner token')

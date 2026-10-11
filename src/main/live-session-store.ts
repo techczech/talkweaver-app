@@ -1,5 +1,3 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
-import { dirname } from 'path'
 import type { InstantSlide, PollStateMessage, SlideState } from '../../worker/protocol'
 import type { RecoveredVoteRecord } from '../../worker/recovery-protocol'
 import type { LiveStatus, PendingPollOperation } from './live-presenter-client'
@@ -48,37 +46,38 @@ export interface SessionRecoveryRecord {
   /** The last pull from boards left open (ms). */
   boardsRefreshedAt?: number
 }
-interface Cipher {
-  isEncryptionAvailable(): boolean
-  encryptString(text: string): Buffer
-  decryptString(bytes: Buffer): string
+/** The `live-sessions` slot of the secrets store (secrets-store.ts `secretsSlot`). */
+interface RecoverySlot {
+  read(): string | null
+  write(text: string): void
+  check(): void
 }
-export function createLiveSessionStore(path: string, cipher: Cipher) {
-  function requireCipher() {
-    if (!cipher.isEncryptionAvailable()) throw new Error('Secure storage is unavailable; live session recovery cannot be saved.')
-  }
+/**
+ * Live session recovery, kept in the secrets store: presenter tokens are in it. The slot's file
+ * ({userData}/live-sessions.enc) and its contents are what earlier versions wrote.
+ */
+export function createLiveSessionStore(slot: RecoverySlot) {
   return {
     load(): SessionRecoveryRecord[] {
-      if (!existsSync(path)) return []
-      requireCipher()
-      const parsed = JSON.parse(cipher.decryptString(readFileSync(path)))
+      const text = slot.read()
+      if (text === null) return []
+      let parsed: { version?: unknown; sessions?: unknown }
+      // Never the parser's own message: it can quote the text it failed on.
+      try { parsed = JSON.parse(text) } catch { throw new Error('Live session recovery data could not be read.') }
       if (parsed?.version !== 1 || !Array.isArray(parsed.sessions)) throw new Error('Live session recovery data could not be read.')
       for (const record of parsed.sessions) {
+        let protocol = ''
+        try { protocol = new URL(record?.baseUrl).protocol } catch { /* invalid below */ }
         if (!record || typeof record.sessionId !== 'string' || typeof record.presenterToken !== 'string'
           || typeof record.talkSlug !== 'string' || !Number.isFinite(record.expiresAt)
           || !Array.isArray(record.pending) || !Array.isArray(record.polls) || !Array.isArray(record.voteRecords)
-          || !/^https?:$/.test(new URL(record.baseUrl).protocol)) throw new Error('Live session recovery data is invalid.')
+          || !/^https?:$/.test(protocol)) throw new Error('Live session recovery data is invalid.')
       }
-      return parsed.sessions
+      return parsed.sessions as SessionRecoveryRecord[]
     },
     save(sessions: SessionRecoveryRecord[]) {
-      requireCipher()
-      const bytes = cipher.encryptString(JSON.stringify({ version: 1, sessions }))
-      mkdirSync(dirname(path), { recursive: true })
-      const temporary = path + '.tmp'
-      writeFileSync(temporary, bytes, { mode: 0o600 })
-      renameSync(temporary, path)
+      slot.write(JSON.stringify({ version: 1, sessions }))
     },
-    check() { requireCipher() },
+    check() { slot.check() },
   }
 }

@@ -1,11 +1,12 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createLiveSessionManager } from '../src/main/live-session-manager'
 import { feedbackWallClock, flushLiveSessionHistory, LiveHistoryGoneError, recoverFinalLiveHistory } from '../src/main/live-session-history'
 import { attachDeliveryToPlanned, normaliseRun, persistRun, reactionCountsBySlide, readRun } from '../src/main/runs'
 import { createLiveSessionStore } from '../src/main/live-session-store'
+import { createSecretsStore, secretsSlot } from '../src/main/secrets-store'
 
 const record = () => ({
   sessionId: 'session-test', baseUrl: 'https://live.example.test', presenterToken: 'test-token',
@@ -174,17 +175,27 @@ describe('durable live session ownership', () => {
 test('recovery tokens and records are written through the cipher and restored atomically', () => {
   const dir = mkdtempSync(join(tmpdir(),'tw-live-store-'))
   try {
-    const path = join(dir,'recovery.bin')
+    const path = join(dir,'live-sessions.enc')
     const cipher = {
       isEncryptionAvailable: () => true,
       encryptString: (text: string) => Buffer.from(text).map((v) => v ^ 0x55),
       decryptString: (bytes: Buffer) => Buffer.from(bytes.map((v) => v ^ 0x55)).toString(),
     }
-    const store = createLiveSessionStore(path,cipher)
+    // The store keeps recovery in the secrets module's `live-sessions` slot ({userData}/live-sessions.enc).
+    const slot = (c: typeof cipher) => secretsSlot(createSecretsStore({ dir, cipher: c, platform: 'darwin' }), 'live-sessions')
+    const store = createLiveSessionStore(slot(cipher))
     store.save([record()])
     expect(readFileSync(path).toString()).not.toContain('test-token')
     expect(store.load()[0].presenterToken).toBe('test-token')
-    expect(() => createLiveSessionStore(path,{...cipher,isEncryptionAvailable:()=>false}).save([])).toThrow()
+    const unavailable = createLiveSessionStore(slot({...cipher,isEncryptionAvailable:()=>false}))
+    expect(() => unavailable.save([])).toThrow("This computer's secure storage is unavailable, so live session recovery cannot be saved")
+    expect(() => unavailable.check()).toThrow()
+    expect(() => unavailable.load()).toThrow()
+    // Recovery text that is not JSON is reported in fixed words, never with the parser's quote of it.
+    writeFileSync(path, cipher.encryptString('test-token-not-json'))
+    let message = ''
+    try { store.load() } catch (error) { message = String((error as Error).message) }
+    expect(message).toBe('Live session recovery data could not be read.')
   } finally { rmSync(dir,{recursive:true,force:true}) }
 })
 

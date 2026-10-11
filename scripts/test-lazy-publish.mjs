@@ -1,5 +1,5 @@
 // Publishing the lazy handout pages (handout-lazy-assets.mjs publishLazyHandoutPages) with the REAL
-// slimHandoutHtml from src/main/index.ts:
+// slimHandoutHtml (src/main/handout-slimming.ts: sharp, which answers later, so through the async variant):
 //  1. slim + externalise together: a large image and a 10 MB video reach slide-assets/ untouched (slim
 //     never sees them); the Download page is slimmed whole; a video over the per-file cap stays in the
 //     page, is slimmed to today's placeholder, and the result carries a warning.
@@ -15,17 +15,8 @@ import { deflateSync, crc32 } from 'node:zlib'
 import { randomBytes } from 'node:crypto'
 import ts from 'typescript'
 import { buildShareHtml } from '../compiler/scripts/lib/09-output-builders.mjs'
-import { publishLazyHandoutPages, SLIDE_ASSET_DIR } from '../compiler/scripts/lib/handout-lazy-assets.mjs'
-
-// The real slimHandoutHtml, lifted out of src/main/index.ts with its fs/child_process dependencies.
-const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
-const source = readFileSync(join(REPO, 'src/main/index.ts'), 'utf8')
-const file = ts.createSourceFile('index.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-const decl = file.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === 'slimHandoutHtml')
-assert.ok(decl, 'slimHandoutHtml is in src/main/index.ts')
-const js = ts.transpileModule(decl.getText(file), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
-const deps = { existsSync, mkdtempSync, join, tmpdir, writeFileSync, readFileSync, rmSync, execFileSync, Buffer }
-const slimHandoutHtml = Function(...Object.keys(deps), `${js}\nreturn slimHandoutHtml`)(...Object.values(deps))
+import { publishLazyHandoutPages, publishLazyHandoutPagesAsync, SLIDE_ASSET_DIR } from '../compiler/scripts/lib/handout-lazy-assets.mjs'
+import { slimHandoutHtml } from '../src/main/handout-slimming.ts'
 
 // A PNG stored without compression (deflate level 0), so slim would re-encode it to WebP.
 function flatPng(w, h, shade) {
@@ -53,7 +44,7 @@ try {
     const dir = join(root, 'one'); mkdirSync(dir)
     const big = flatPng(700, 500, 0) // ~1 MB stored PNG
     const slides = [imgSlide('a', big, video(10 * 1024 * 1024)), imgSlide('b', flatPng(64, 64, 9), video(25 * 1024 * 1024))]
-    const result = publishLazyHandoutPages(dir, [
+    const result = await publishLazyHandoutPagesAsync(dir, [
       { fileName: 'pub-download.html', html: page(slides, false), lazy: false },
       { fileName: 'index.html', html: page(slides) },
     ], { slim: slimHandoutHtml })

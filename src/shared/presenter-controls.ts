@@ -28,7 +28,7 @@ export interface PresenterControl {
   /** SHORTCUT_REGISTRY id whose `keys` the tooltip shows. */
   shortcut?: string
   /** Placed by a preload rather than the template. */
-  preload?: 'recorder' | 'edit' | 'live'
+  preload?: 'recorder' | 'edit' | 'live' | 'guide'
 }
 
 /** The pen's option rows: the popover above the Pen button and the strip on a zoomed image share them. */
@@ -220,7 +220,9 @@ export const PRESENTER_CONTROLS: PresenterControl[] = [
   // A failed save keeps the audio: Retry, or write it to a folder of the presenter's choice.
   { id: 'twrec-export', name: 'Save the recording\'s audio to another folder', icon: 'copy', preload: 'recorder' },
   // Edit pencil (src/preload/present-edit-bridge.ts)
-  { id: 'twedit-btn', name: 'Edit this slide in TalkWeaver', icon: 'pencil', iconOnly: true, shortcut: 'presenter.edit', preload: 'edit' }
+  { id: 'twedit-btn', name: 'Edit this slide in TalkWeaver', icon: 'pencil', iconOnly: true, shortcut: 'presenter.edit', preload: 'edit' },
+  // Guide chip in the top bar (src/preload/present-guide.ts; onboarding 0.38.1 ticket 10)
+  { id: 'twguide-chip', name: 'Guide: Present chapter', icon: 'graduation-cap', preload: 'guide' }
 ]
 
 /** Icons a control switches to at runtime (Retry save, the refreshed hint, media play/pause). */
@@ -253,6 +255,8 @@ export const OUTLINE_STATUS_ICONS = { shown: 'circle', skipped: 'circle-slash', 
  */
 export const PRESENTER_BOARD_ICONS = ['layout-grid', 'lock', 'lock-open', 'snowflake', 'maximize-2', 'minimize-2', 'picture-in-picture-2', 'x', 'monitor', 'list-end', 'monitor-up', 'monitor-off', 'chevron-down', 'inbox', 'grip-vertical', 'arrow-right', 'eye-off', 'eye', 'ungroup', 'ellipsis', 'group', 'circle-alert', 'circle-check', 'undo-2', 'hand', 'presentation', 'pencil', 'check'] as const
 export const PRESENTER_MENU_ICONS = ['chevron-down', 'gallery-vertical-end', 'a-arrow-up', 'eye-off', 'panel-bottom', 'panel-right', 'panel-top', 'webcam', 'check', 'hand', 'play', 'radio-off'] as const
+/** The Guide column's icons (src/preload/present-guide.ts): its title, close, chapter mark, ticks and the live note. */
+export const PRESENTER_GUIDE_ICONS = ['graduation-cap', 'x', 'presentation', 'check', 'radio'] as const
 
 /**
  * Names the clock button takes in each timer state (its tooltip and accessible name). The Start
@@ -274,7 +278,7 @@ interface RegistryEntry { id: string; keys: string }
 
 /** Every lucide icon the presenter chrome uses, sorted, unique. */
 export function presenterIconNames(controls: PresenterControl[] = PRESENTER_CONTROLS): string[] {
-  const names = new Set<string>([...PRESENTER_STATE_ICONS, ...PRESENTER_STATUS_ICONS, ...PRESENTER_MENU_ICONS, ...PRESENTER_BOARD_ICONS, ...PRESENTER_PALETTE_ICONS])
+  const names = new Set<string>([...PRESENTER_STATE_ICONS, ...PRESENTER_STATUS_ICONS, ...PRESENTER_MENU_ICONS, ...PRESENTER_BOARD_ICONS, ...PRESENTER_PALETTE_ICONS, ...PRESENTER_GUIDE_ICONS])
   for (const control of controls) if (control.icon) names.add(control.icon)
   // The command palette's rows (src/shared/presenter-palette.ts).
   for (const entry of presenterPaletteEntries()) names.add(entry.icon)

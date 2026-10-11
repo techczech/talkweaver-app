@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef } from 'react'
 import type { TalkInfo } from '../../../preload/index'
-import { initialShareSheet, shareSheetReducer, shareSheetView } from '../../../shared/shared-talk'
+import { initialShareSheet, shareSheetReducer, shareSheetView, type SharedTalkInspection } from '../../../shared/shared-talk'
 import { notify } from '../lib/notify'
 
 // Share for comments (ticket 03) — the share sheet, built to
@@ -25,23 +25,38 @@ export default function ShareSheet({ talk, title, onClose }: { talk: TalkInfo; t
     const res = await window.tw.sharedTalk.share(outlinePath, title)
     if (cancelledRef.current) return
     if (res.success && res.share) { keyRef.current = res.share.key; dispatch({ type: 'created', share: res.share }) }
-    else dispatch({ type: 'failed', error: res.error || 'Could not share this talk.' })
+    // A Stop overtook this Share (here or in another window): the sheet says the talk is not shared.
+    else if (res.success && res.stopped) dispatch({ type: 'share-stopped', shareId: res.shareId ?? null })
+    else dispatch({ type: 'failed', error: res.error || 'Could not share this talk.', ...(res.setup ? { setup: res.setup } : {}) })
+  }
+
+  // Going live is not set up (ticket 05): Open Settings, where its row sets it up. Nothing is set up from the sheet.
+  function openSettings(): void {
+    void window.tw.cloudflare.openSettings().catch(() => {})
+    onClose()
   }
 
   useEffect(() => {
     cancelledRef.current = false
     const off = window.tw.sharedTalk.onChanged(({ key, state, previousKey }) => {
       if (cancelledRef.current) return
-      if (previousKey && previousKey === keyRef.current) keyRef.current = key
-      const mine = key === keyRef.current || state?.outlinePath === outlinePath || state?.realPath === outlinePath
-      if (mine) dispatch({ type: 'changed', share: state })
+      // The sheet follows the talk, not its own request (ticket 12): the key is taken from every
+      // broadcast for this talk, and a "stopped" broadcast (null) matches on that key or the old one.
+      const matches = state
+        ? key === keyRef.current || (!!previousKey && previousKey === keyRef.current) || state.outlinePath === outlinePath || state.realPath === outlinePath
+        : key === keyRef.current || (!!previousKey && previousKey === keyRef.current)
+      if (!matches) return
+      if (state) keyRef.current = key
+      dispatch({ type: 'changed', share: state })
     })
     void (async () => {
-      const seen = await window.tw.sharedTalk.inspect(outlinePath).catch(() => ({ share: null, foreignShareUrl: null }))
+      const seen = await window.tw.sharedTalk.inspect(outlinePath).catch((): SharedTalkInspection => ({ share: null, foreignShareUrl: null }))
       if (cancelledRef.current) return
       if (seen.share) keyRef.current = seen.share.key
-      dispatch({ type: 'inspected', share: seen.share, foreignShareUrl: seen.foreignShareUrl })
-      if (!seen.share && !seen.foreignShareUrl) await shareNow()
+      dispatch({ type: 'inspected', share: seen.share, foreignShareUrl: seen.foreignShareUrl, ...(seen.stopped ? { stopped: seen.stopped } : {}), ...(seen.interruptedShare ? { interruptedShare: seen.interruptedShare } : {}) })
+      // Stopped while the sheet looked (another window's Stop): the talk is not shared again unasked.
+      // A share from before the app last quit: the sheet says so and asks (Share here replaces it).
+      if (!seen.share && !seen.foreignShareUrl && !seen.stopped && !seen.interruptedShare) await shareNow()
     })()
     return () => { cancelledRef.current = true; off() }
   }, [outlinePath, title])
@@ -75,12 +90,15 @@ export default function ShareSheet({ talk, title, onClose }: { talk: TalkInfo; t
   async function setOption(option: 'liveUpdates' | 'proposals', value: boolean): Promise<void> {
     const res = await window.tw.sharedTalk.setOptions(outlinePath, { [option]: value })
     if (res.success && res.share) dispatch({ type: 'changed', share: res.share })
+    else if (res.success && res.stopped) dispatch({ type: 'share-stopped', shareId: res.shareId ?? null })
     else dispatch({ type: 'failed', error: res.error || 'Could not change the setting.' })
   }
 
   async function updateCopy(): Promise<void> {
     const res = await window.tw.sharedTalk.update(outlinePath)
     if (res.success && res.share) dispatch({ type: 'changed', share: res.share })
+    // Stopped while the update ran (ticket 12 round 2): never the closed share's link.
+    else if (res.success && res.stopped) dispatch({ type: 'share-stopped', shareId: res.shareId ?? null })
     else dispatch({ type: 'failed', error: res.error || 'Could not update the shared copy.' })
   }
 
@@ -107,7 +125,7 @@ export default function ShareSheet({ talk, title, onClose }: { talk: TalkInfo; t
           <div className="sh-link-main">
             <div className="sh-field" data-testid="share-link">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" /><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" /></svg>
-              <span className="sh-field-text">{view.link || (model.phase === 'error' ? 'No link' : model.phase === 'confirm-replace' ? 'Not shared from this Mac yet' : 'Creating the link…')}</span>
+              <span className="sh-field-text">{view.link || (model.phase === 'error' || model.phase === 'stopped' ? 'No link' : model.phase === 'confirm-replace' ? 'Not shared from this Mac yet' : 'Creating the link…')}</span>
             </div>
             {view.replaceWarning ? (
               <div className="sh-replace" role="alert" data-testid="share-replace-warning">
@@ -121,6 +139,14 @@ export default function ShareSheet({ talk, title, onClose }: { talk: TalkInfo; t
               <div className="sh-btnrow">
                 <button type="button" className="sh-btn" disabled={!view.canCopy} onClick={() => { void copyLink() }} data-testid="share-copy">{view.copyLabel}</button>
                 {view.showPasteHint && <span className="sh-hint" data-testid="share-paste-hint">Paste it into Teams or an email.</span>}
+              </div>
+            )}
+            {view.setupPrompt && (
+              <div className="sh-replace" role="status" data-testid="share-live-setup" data-prompt={view.setupPrompt.prompt}>
+                <div>{view.setupPrompt.title}</div>
+                <div className="sh-btnrow">
+                  <button type="button" className="sh-btn" onClick={openSettings} data-testid="share-live-setup-action">{view.setupPrompt.action}</button>
+                </div>
               </div>
             )}
             {view.localNote && <div className="sh-status sh-local" data-testid="share-local-note">{view.localNote}</div>}

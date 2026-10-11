@@ -1,3 +1,5 @@
+import { taskGroupLabel } from './task-groups.ts'
+
 // The presenter's command palette (⌘⇧P; ADR-0031 §6, presenter redesign ticket 07; drawn in
 // docs/design/2026-09-26-presenter-redesign/round-2/, shot palette-open-1440x900.png): every
 // presenter command, in eight groups, each with its icon, its name and its current key.
@@ -25,6 +27,16 @@
 // Shortcut text always comes from the registry: `shortcut` names a SHORTCUT_REGISTRY id, and
 // `keyPart` picks one key of an entry that lists several ("→ Space ↓ PgDn" → "→").
 
+/** Presenter keys that are not palette commands, each with its reason (written, and checked by scripts/test-presenter-palette.mjs and scripts/test-task-groups.mjs). */
+export const KEYS_NOT_IN_PALETTE: Readonly<Record<string, string>> = {
+  'presenter.rebind': 'records the highlighted command in the palette',
+  'presenter.close': 'Esc closes whatever is open; it is not a command of its own',
+  'presenter.command-palette': 'opens the palette itself',
+  'presenter.save-run': '↵ acts only while the save offer shows, on that toast; Save run as… is the command',
+  'presenter.board-pick': '⌥↵ acts on the board card that has focus in the board panel; it is the keyboard\'s drag, not a command of its own',
+  'presenter.board-undo': '⌘Z undoes the board panel\'s last change while the panel shows (its toast\'s Undo button); there is nothing to run without one'
+}
+
 export interface PresenterPaletteEntry {
   /** Stable id (the template's run map and the tests use it). */
   id: string
@@ -49,6 +61,8 @@ type Group = [string, PresenterPaletteEntry[]]
 
 const RECORDER = '#twrec-module'
 const EDIT_BRIDGE = '#twedit-btn'
+/** The Guide chip (src/preload/present-guide.ts): mounted only in the presenter TalkWeaver opens, while the Guide button is on. */
+export const GUIDE_CHIP = '#twguide-chip'
 /**
  * The live preload (src/preload/present-live-bridge.ts) marks the document with this attribute
  * once it has bound G and exposed the live bridge that polls go through. A presenter window opened
@@ -146,7 +160,8 @@ export const PRESENTER_PALETTE: Group[] = [
   ['Editor and help', [
     { id: 'edit', name: 'Edit this slide in TalkWeaver', icon: 'pencil', shortcut: 'presenter.edit', controls: ['#twedit-btn'] },
     { id: 'refresh', name: 'Refresh with latest edits', icon: 'refresh-cw', shortcut: 'presenter.refresh', controls: ['#moreRefresh'] },
-    { id: 'shortcuts', name: 'Keyboard shortcuts', icon: 'keyboard', shortcut: 'presenter.help', controls: ['#viewShortcuts'] }
+    { id: 'shortcuts', name: 'Keyboard shortcuts', icon: 'keyboard', shortcut: 'presenter.help', controls: ['#viewShortcuts'] },
+    { id: 'guide', name: 'Guide: Present chapter', icon: 'graduation-cap', controls: [GUIDE_CHIP], needs: GUIDE_CHIP, words: ['learn', 'onboarding', 'chapter', 'tried'] }
   ]]
 ]
 
@@ -202,6 +217,11 @@ export function presenterPaletteKeyCode(entry: PresenterPaletteEntry, registry: 
   return code
 }
 
+/** The task group a row shows: its key's command, or the entry's own record in the command map. */
+export function presenterPaletteTaskGroup(entry: PresenterPaletteEntry): string {
+  return taskGroupLabel(entry.shortcut ?? `presenter-palette.${entry.id}`)
+}
+
 /** The palette as the template's generated block carries it: groups of resolved rows. */
 export function presenterPaletteData(registry: readonly RegistryEntry[], palette: Group[] = PRESENTER_PALETTE) {
   return palette.map(([group, entries]) => [group, entries.map((entry) => ({
@@ -213,6 +233,7 @@ export function presenterPaletteData(registry: readonly RegistryEntry[], palette
     controls: entry.controls ?? [],
     code: presenterPaletteKeyCode(entry, registry),
     needs: entry.needs ?? null,
-    words: entry.words ?? []
+    words: entry.words ?? [],
+    task: presenterPaletteTaskGroup(entry)
   }))])
 }

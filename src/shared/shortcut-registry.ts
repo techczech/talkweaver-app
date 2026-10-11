@@ -1,10 +1,12 @@
+import { taskGroupFields, type TaskGroupFields } from './task-groups.ts'
+
 // 'slide-picker' is the ⌘S slide picker (SlideBrowser + its Find a talk box): its own surface with its own
 // keys, so its S (select section) and the Talks panel's S (sort, 'browser' scope) are two surfaces'
 // keys, never one keystroke claimed twice (talk search 08).
 export const SHORTCUT_SCOPES = ['app', 'editor', 'browser', 'slide-picker', 'layout-picker', 'inspector', 'presenter', 'picker', 'pathway', 'studio', 'talktext', 'importer'] as const
 export type ShortcutScope = (typeof SHORTCUT_SCOPES)[number]
 
-export interface ShortcutEntry {
+export interface ShortcutEntry extends TaskGroupFields {
   id: string
   keys: string
   codes: string[]
@@ -26,6 +28,7 @@ const entries = (scope: ShortcutScope, rows: ShortcutRow[]): ShortcutEntry[] =>
     label,
     explanation,
     group,
+    ...taskGroupFields(id),
     ...(unbound ? { unbound: true as const } : {})
   }))
 
@@ -37,7 +40,7 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['app.settings', '⌘,', ['Mod-,'], 'Settings', 'Opens or closes the application settings panel.', 'App'],
     ['app.slide-search', '⌘S', ['Mod-s'], 'Search slides across all talks', 'Opens the cross-talk slide browser for finding and inserting slides.', 'Find & insert'],
     ['app.find-talk', '⇧⌘S', ['Mod-Shift-s'], 'Find a talk', 'Opens the slide picker with the cursor in Find a talk, or moves it there when the picker is already open.', 'Find & insert'],
-    ['app.context-menu', '⌘K', ['Mod-k'], 'Context menu', 'Opens the context menu for the focused talk, slide, or editor slide.', 'App'],
+    ['app.context-menu', '⌘K', ['Mod-k'], 'Actions here', 'Opens Actions here: what you can do where the caret, the selected slide or the selected row is.', 'App'],
     ['app.layout-picker', '⌘L', ['Mod-l'], 'Layout picker: Open', 'Opens the layout picker in the Inspector column for the current slide; pressed again, it closes and puts the slide back.', 'Find & insert'],
     ['app.icon-picker', '⌘I', ['Mod-i'], 'Icon picker', 'Opens the icon picker for the current bullet.', 'Find & insert'],
     ['app.image-search', '⌘⇧I', ['Mod-Shift-i'], 'Insert an archived image', 'Searches images recovered from earlier PowerPoint files.', 'Find & insert'],
@@ -215,6 +218,7 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['presenter.refresh', '⌘R / ⇧F5', ['Mod-r', 'Shift-F5'], 'Refresh with latest edits', 'Refreshes a deck window with the latest edits while retaining position.', 'Editor'],
     ['presenter.command-palette', '⌘⇧P', ['Mod-Shift-p'], 'Command palette', 'Opens the list of every presenter command, with its key.', 'Help'],
     ['presenter.help', '?', ['?'], 'Show shortcuts', 'Shows or hides this generated shortcut sheet.', 'Help'],
+    // The Guide's Present chapter has no key (owner check 10 Oct: "no need for a keyboard shortcut"): its button, in the bottom bar, and the palette entry "Guide: Present chapter" open it.
     ['presenter.close', 'Esc', ['Escape'], 'Close overlay or mode', 'Closes the most local overlay, interaction, or active presentation mode.', 'Help']
   ]),
   ...entries('pathway', [

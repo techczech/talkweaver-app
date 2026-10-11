@@ -526,7 +526,7 @@ export async function discoverRenderer(
       rasterPath,
       officeVersion: null,
       rasterVersion: null,
-      error: `Missing ${!officePath ? 'LibreOffice' : 'pdftoppm'}.`
+      error: 'Slide pictures need the separate TalkWeaver PPT Extractor app.'
     }
   }
   const [officeVersion, rasterVersion] = await Promise.all([

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHmac } from 'node:crypto'
-import { nextMessage, nextMessages, openSocket, startLiveWorker } from './lib/live-worker-harness.mjs'
+import { nextMessage, nextMessages, notPresence, openSocket, startLiveWorker } from './lib/live-worker-harness.mjs'
 
 // Attach the inbox before the handshake so immediate v2 hello/snapshot messages cannot race a listener.
 async function openRecoverySocket(url) {
@@ -69,7 +69,10 @@ try {
   )
   sockets.push(presenter)
 
-  const firstState = nextMessage(audience)
+  // `session.presence` goes to every socket whenever any socket joins or leaves, and may still be in
+  // flight when a wait starts (here: the presenter has just joined). Every wait below for the answer
+  // to an action therefore skips presence; the two places that assert presence itself name it.
+  const firstState = nextMessage(audience, 5000, notPresence)
   presenter.send(JSON.stringify({
     type: 'slide.publish', slideId: 'slide-2', reveal: 1, focus: { kind: 'reveal', step: 2 },
   }))
@@ -91,8 +94,8 @@ try {
   const liveDiscovery = await fetch(`${baseUrl}/session/integration-talk`).then((response) => response.json())
   assert.deepEqual(liveDiscovery, { live: true, sessionId: created.sessionId })
 
-  const liveOpenState = nextMessage(lateAudience)
-  const presenterLiveOpenState = nextMessage(presenter)
+  const liveOpenState = nextMessage(lateAudience, 5000, notPresence)
+  const presenterLiveOpenState = nextMessage(presenter, 5000, notPresence)
   presenter.send(JSON.stringify({
     type: 'poll.open',
     poll: {
@@ -106,8 +109,8 @@ try {
     visibility: 'live', open: true, revealed: true, tallies: { 'option-a': 0, 'option-b': 0 },
   })
   await presenterLiveOpenState
-  const liveVoteState = nextMessage(lateAudience)
-  const presenterVoteMessages = nextMessages(presenter, 2)
+  const liveVoteState = nextMessage(lateAudience, 5000, notPresence)
+  const presenterVoteMessages = nextMessages(presenter, 2, 5000, notPresence)
   lateAudience.send(JSON.stringify({ type: 'poll.vote', pollId: 'poll-live', choice: 'option-a' }))
   assert.deepEqual(await liveVoteState, {
     type: 'poll.state', pollId: 'poll-live', pollType: 'single', question: 'Choose one',
@@ -122,13 +125,13 @@ try {
     visibility: 'live', open: true, revealed: true, tallies: { 'option-a': 1, 'option-b': 0 },
   })
 
-  const rejectedLegacyEdit = nextMessage(lateAudience)
+  const rejectedLegacyEdit = nextMessage(lateAudience, 5000, notPresence)
   lateAudience.send(JSON.stringify({ type: 'poll.vote', pollId: 'poll-live', choice: 'option-b' }))
   assert.deepEqual(await rejectedLegacyEdit, { type: 'protocol.error', code: 'invalid_poll_vote' },
     'legacy audience cannot change an accepted answer on the same connection')
 
-  const heldOpenStates = nextMessages(lateAudience, 2)
-  const presenterHeldOpenStates = nextMessages(presenter, 2)
+  const heldOpenStates = nextMessages(lateAudience, 2, 5000, notPresence)
+  const presenterHeldOpenStates = nextMessages(presenter, 2, 5000, notPresence)
   presenter.send(JSON.stringify({
     type: 'poll.open',
     poll: {
@@ -148,8 +151,8 @@ try {
     visibility: 'held', open: true, revealed: false,
   })
   await presenterHeldOpenStates
-  const heldRecordedState = nextMessage(lateAudience)
-  const presenterHeldVoteMessages = nextMessages(presenter, 2)
+  const heldRecordedState = nextMessage(lateAudience, 5000, notPresence)
+  const presenterHeldVoteMessages = nextMessages(presenter, 2, 5000, notPresence)
   lateAudience.send(JSON.stringify({ type: 'poll.vote', pollId: 'poll-held', choice: ['option-a', 'option-b'] }))
   assert.deepEqual(await heldRecordedState, {
     type: 'poll.state', pollId: 'poll-held', pollType: 'multiple', question: 'Choose any',
@@ -159,8 +162,8 @@ try {
   assert.deepEqual((await presenterHeldVoteMessages)[0], {
     type: 'poll.vote-record', pollId: 'poll-held', choice: ['option-a', 'option-b'],
   })
-  const heldRevealedState = nextMessage(lateAudience)
-  const presenterHeldRevealState = nextMessage(presenter)
+  const heldRevealedState = nextMessage(lateAudience, 5000, notPresence)
+  const presenterHeldRevealState = nextMessage(presenter, 5000, notPresence)
   presenter.send(JSON.stringify({ type: 'poll.reveal', pollId: 'poll-held' }))
   assert.deepEqual(await heldRevealedState, {
     type: 'poll.state', pollId: 'poll-held', pollType: 'multiple', question: 'Choose any',
@@ -169,8 +172,8 @@ try {
   })
   await presenterHeldRevealState
 
-  const quickOpenAudienceStates = nextMessages(lateAudience, 2)
-  const quickOpenPresenterStates = nextMessages(presenter, 2)
+  const quickOpenAudienceStates = nextMessages(lateAudience, 2, 5000, notPresence)
+  const quickOpenPresenterStates = nextMessages(presenter, 2, 5000, notPresence)
   presenter.send(JSON.stringify({
     type: 'poll.open',
     poll: {
@@ -196,17 +199,17 @@ try {
   const secondAudienceQuickState = await nextMessage(secondAudience)
   assert.deepEqual(secondAudienceQuickState, quickOpenState)
 
-  const firstAudienceUpdates = nextMessage(lateAudience)
-  const firstSecondAudienceUpdates = nextMessage(secondAudience)
-  const firstPresenterUpdates = nextMessages(presenter, 2)
+  const firstAudienceUpdates = nextMessage(lateAudience, 5000, notPresence)
+  const firstSecondAudienceUpdates = nextMessage(secondAudience, 5000, notPresence)
+  const firstPresenterUpdates = nextMessages(presenter, 2, 5000, notPresence)
   lateAudience.send(JSON.stringify({ type: 'poll.vote', pollId: 'quick-integration-open', choice: 'Accountability' }))
   const firstOpenVoteState = await firstAudienceUpdates
   assert.deepEqual(await firstSecondAudienceUpdates, firstOpenVoteState)
   await firstPresenterUpdates
 
-  const secondAudienceUpdates = nextMessage(lateAudience)
-  const secondSecondAudienceUpdates = nextMessage(secondAudience)
-  const secondPresenterUpdates = nextMessages(presenter, 2)
+  const secondAudienceUpdates = nextMessage(lateAudience, 5000, notPresence)
+  const secondSecondAudienceUpdates = nextMessage(secondAudience, 5000, notPresence)
+  const secondPresenterUpdates = nextMessages(presenter, 2, 5000, notPresence)
   secondAudience.send(JSON.stringify({ type: 'poll.vote', pollId: 'quick-integration-open', choice: 'Judgement' }))
   const twoResponseAudienceState = await secondAudienceUpdates
   assert.deepEqual(await secondSecondAudienceUpdates, twoResponseAudienceState)
@@ -214,9 +217,9 @@ try {
   const hiddenResponseId = twoResponsePresenterState.responses.find((response) => response.text === 'Accountability')?.responseId
   assert.ok(hiddenResponseId)
 
-  const hiddenAudienceUpdate = nextMessage(lateAudience)
-  const hiddenSecondAudienceUpdate = nextMessage(secondAudience)
-  const hiddenPresenterUpdate = nextMessage(presenter)
+  const hiddenAudienceUpdate = nextMessage(lateAudience, 5000, notPresence)
+  const hiddenSecondAudienceUpdate = nextMessage(secondAudience, 5000, notPresence)
+  const hiddenPresenterUpdate = nextMessage(presenter, 5000, notPresence)
   presenter.send(JSON.stringify({
     type: 'poll.hide', pollId: 'quick-integration-open', responseId: hiddenResponseId, hidden: true,
   }))
@@ -229,7 +232,7 @@ try {
     twoResponsePresenterState.responses.find((response) => response.text === 'Judgement'),
   ])
 
-  const closedMessage = nextMessage(lateAudience)
+  const closedMessage = nextMessage(lateAudience, 5000, notPresence)
   const closeResponse = await fetch(`${baseUrl}/sessions/${created.sessionId}/close`, {
     method: 'POST', headers: { authorization: `Bearer ${created.presenterToken}` },
   })

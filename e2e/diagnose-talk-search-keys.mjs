@@ -221,13 +221,20 @@ try {
     await page.keyboard.press('Control+/')
     await sheet.waitFor()
   }
-  const sheetText = (await sheet.textContent()) ?? ''
-  for (const expected of ['Slide picker · Talks', 'Show the result’s talk beside', 'Close the talk beside', 'Add the talk beside', 'Select whole section', 'Find a talk', 'Select section', 'Sort talks']) {
-    assert.ok(sheetText.includes(expected), `the cheat sheet lists “${expected}”`)
+  // The sheet (onboarding 0.38.1 ticket 04) shows Here, then the task groups; its filter searches every
+  // command, so each talk-search key is found by its name.
+  const filter = sheet.locator('input[aria-label="Filter all commands"]')
+  for (const [query, expected] of [
+    ['find a talk', 'Find a talk'], ['beside', 'Add the highlighted talk beside'], ['beside', 'Show the focused result’s talk beside the results'],
+    ['beside', 'Close the talk beside the results'], ['whole section', 'Select the focused slide’s whole section'], ['sort talks', 'Sort talks'], ['focus filter', 'Focus filter']
+  ]) {
+    await filter.fill(query)
+    const sheetText = (await sheet.textContent()) ?? ''
+    assert.ok(sheetText.includes(expected), `the cheat sheet filter “${query}” lists “${expected}”`)
+    assert.ok(!sheetText.includes('Insert section'), 'no cheat-sheet row still says Insert section')
   }
-  assert.ok(!sheetText.includes('Insert section'), 'no cheat-sheet row still says Insert section')
   if (shots) {
-    await sheet.getByText('Slide picker · Select & insert').scrollIntoViewIfNeeded()
+    await filter.fill('beside')
     await page.waitForTimeout(400)
     await page.screenshot({ path: join(shots, 'cheat-sheet-slide-picker.png') })
   }

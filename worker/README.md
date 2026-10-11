@@ -1,7 +1,10 @@
 # TalkWeaver Live sessions Worker
 
-This standalone Cloudflare Worker provides the Live-session channel and the shared-talk (share for
-comments) channel. It does not contain Electron wiring.
+This standalone Cloudflare Worker is the **live service**: the Live-session channel, the shared-talk
+(share for comments) channel, a Run's read-only share link and a planned Run's pre-work. It does not
+contain Electron wiring. A person never runs it by hand: TalkWeaver uploads it to their own
+Cloudflare account from a bundle that ships inside the app (see "How the app ships and sets up this
+Worker" below). `wrangler dev` is only for tests and the unpackaged app.
 
 ## Durable Objects
 
@@ -21,19 +24,22 @@ comments) channel. It does not contain Electron wiring.
 
 ## Required secrets
 
-Set both values with `wrangler secret put` or through the deployment environment. Never put their
-values in `wrangler.jsonc`.
+The Worker needs two secrets. **TalkWeaver sets both when it sets up going live** (Settings →
+Cloudflare → Set up going live, or `TalkWeaver setup cloudflare live`): it makes them, uploads
+them with the Worker, and keeps them in the computer's secure storage. A person using the app never
+types them. Never put their values in `wrangler.jsonc`.
 
-- `ADMIN_SECRET`: bearer secret required by `POST /sessions`. The later Electron deployment bridge
-  will hold this credential.
+- `ADMIN_SECRET`: bearer secret required by `POST /sessions`, `POST /shares`, `POST /results` and
+  `POST /prework`. The app holds it.
 - `SESSION_SIGNING_SECRET`: high-entropy HMAC key used to mint and verify presenter tokens and
   shared-talk owner tokens. The token's role keeps the two from standing in for each other.
 
-Example secret setup, without literal values:
+Only for a Worker you run yourself outside the app (tests, or your own deployment), set them with
+the repository's wrangler, without literal values in the command:
 
 ```sh
-bunx wrangler secret put ADMIN_SECRET --config worker/wrangler.jsonc
-bunx wrangler secret put SESSION_SIGNING_SECRET --config worker/wrangler.jsonc
+npx wrangler secret put ADMIN_SECRET --config worker/wrangler.jsonc
+npx wrangler secret put SESSION_SIGNING_SECRET --config worker/wrangler.jsonc
 ```
 
 ## HTTP and WebSocket routes
@@ -376,12 +382,26 @@ and puts the id in the Run's handout; nothing is registered by talk here. Build 
   close, the alarm deletes everything; the id then answers `410 prework_gone`.
   `PREWORK_IDLE_PURGE_MS` shortens this for local test Workers only.
 
+## How the app ships and sets up this Worker
+
+The app never compiles this Worker on the person's computer. `npm run build` first runs
+`npm run build:worker-dist`, which compiles it once, with the repository's wrangler, into
+`worker-dist/` (the bundle `index.js`, its upload settings taken from `wrangler.jsonc`, and a
+`manifest.json` with the wrangler version, `LIVE_WORKER_BUILD` and the bundle's SHA-256). That folder
+ships in the app's resources. "Set up going live" checks the bundle against the manifest and uploads
+it with Cloudflare's API (`src/main/live-service-upload.ts` plans the requests,
+`src/main/live-service-deploy.ts` sends them), applying only the Durable Object migrations after the
+deployed tag. electron-builder refuses to package a `worker-dist/` that is missing, empty, does not
+match its manifest or is older than these sources (`npm run check:worker-dist`). `wrangler dev` is
+still how tests and the unpackaged app run the Worker on this computer.
+
 ## Local verification
 
 ```sh
 bun test worker/*.test.ts
-bunx tsc -p worker/tsconfig.json --noEmit
-bunx wrangler deploy --config worker/wrangler.jsonc --dry-run
+npx tsc -p worker/tsconfig.json --noEmit
+npx wrangler deploy --config worker/wrangler.jsonc --dry-run
+npm run build:worker-dist && npm run test:worker-dist && npm run test:live-service-upload
 npm run test:live-worker:integration
 npm run test:shared-talk-worker:integration
 npm run test:run-boards-worker:integration

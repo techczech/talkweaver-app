@@ -24,6 +24,10 @@ import {
 import { mergeRunPrework, normaliseRunPrework } from '../src/shared/run-prework.ts'
 import { normaliseRun, persistRunForTalk, readRunForTalk, applyRunPrework } from '../src/main/runs.ts'
 import { createRunPrework } from '../src/main/run-prework.ts'
+import { memoryOwnerTokens } from './lib/memory-secrets.mjs'
+
+// Owner tokens live in the secrets store (an in-memory one here), never in a registry file.
+const testOwnerTokens = memoryOwnerTokens()
 import { seedBoardFromPrework, seedPollForRun, withoutSeed } from '../src/main/run-prework-seed.ts'
 import { answerPreworkTrayQuestion, isPreworkQuestionId, preworkTrayForSession, preworkTrayQuestions } from '../src/main/prework-tray.ts'
 import { parsePollDefinition } from '../worker/protocol.ts'
@@ -186,7 +190,7 @@ const pass = (name) => { results.push(name); console.log(`PASS  ${name}`) }
   try {
     mkdirSync(join(root, '_PRESENTATIONS', SLUG), { recursive: true })
     persistRunForTalk(root, SLUG, RUN_ID, normaliseRun(plannedRun()))
-    const service = createRunPrework({ registryPath: join(root, 'registry.json'), endpoint: async () => ({ baseUrl: 'https://live.example.test', adminSecret: 'unused' }), vaultRoot: () => root, fetch: async () => { throw new Error('no network') } })
+    const service = createRunPrework({ ownerTokens: testOwnerTokens, registryPath: join(root, 'registry.json'), endpoint: async () => ({ baseUrl: 'https://live.example.test', adminSecret: 'unused' }), vaultRoot: () => root, fetch: async () => { throw new Error('no network') } })
     const rows = answerRows(readRunForTalk(root, SLUG, RUN_ID).prework, 'pwhope')
     const first = service.changePick(SLUG, RUN_ID, 'pwhope', { type: 'toggle', id: rows[1].id })
     assert.equal(first.ok, true)

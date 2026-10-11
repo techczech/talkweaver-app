@@ -1,11 +1,13 @@
 // Shared harness for the live-sessions Worker integration tests: starts `wrangler dev` on a free
-// port with throwaway secrets and state, and offers small WebSocket helpers.
+// port with throwaway secrets and state, and offers small WebSocket helpers. wrangler is the app's
+// own dependency, started through the app's launcher (never a `wrangler` found on PATH).
 import { randomBytes } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
+import { prepareWranglerRun } from '../../src/main/wrangler-launcher.ts'
 
 function freePort() {
   return new Promise((resolvePort, reject) => {
@@ -28,22 +30,29 @@ async function waitForWorker(baseUrl, output) {
   throw new Error(`wrangler dev did not start\n${output().slice(-4000)}`)
 }
 
-export function nextMessage(socket, timeoutMs = 5000) {
-  return new Promise((resolveMessage, reject) => {
-    const timer = setTimeout(() => reject(new Error('Timed out waiting for WebSocket message')), timeoutMs)
-    socket.addEventListener('message', (event) => {
-      clearTimeout(timer)
-      resolveMessage(JSON.parse(String(event.data)))
-    }, { once: true })
-  })
+/** For `accept`: every message but the presence broadcast (sent to ALL sockets whenever any socket joins or leaves). */
+export const notPresence = (message) => message?.type !== 'session.presence'
+
+/**
+ * The next message on `socket`. With `accept`, the next message it accepts: others are skipped, so a
+ * broadcast that happens to be in flight (presence, after another socket joined or left) cannot be
+ * taken for the answer being waited for.
+ */
+export function nextMessage(socket, timeoutMs = 5000, accept = () => true) {
+  return nextMessages(socket, 1, timeoutMs, accept).then((messages) => messages[0])
 }
 
-export function nextMessages(socket, count, timeoutMs = 5000) {
+export function nextMessages(socket, count, timeoutMs = 5000, accept = () => true) {
   return new Promise((resolveMessages, reject) => {
     const messages = []
-    const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${count} WebSocket messages`)), timeoutMs)
+    const timer = setTimeout(() => {
+      socket.removeEventListener('message', onMessage)
+      reject(new Error(count === 1 ? 'Timed out waiting for WebSocket message' : `Timed out waiting for ${count} WebSocket messages`))
+    }, timeoutMs)
     const onMessage = (event) => {
-      messages.push(JSON.parse(String(event.data)))
+      const message = JSON.parse(String(event.data))
+      if (!accept(message)) return
+      messages.push(message)
       if (messages.length < count) return
       clearTimeout(timer)
       socket.removeEventListener('message', onMessage)
@@ -82,14 +91,16 @@ export async function startLiveWorker({ vars = {} } = {}) {
   const adminSecret = randomBytes(24).toString('hex')
   const signingSecret = randomBytes(24).toString('hex')
   let output = ''
-  const child = spawn('wrangler', [
+  const resolved = prepareWranglerRun({ execPath: process.execPath, appRoot: root, platform: process.platform, workDir: join(scratch, 'wrangler-runs') }, [
     'dev', '--config', join(root, 'worker/wrangler.jsonc'), '--ip', '127.0.0.1', '--port', String(port),
     '--var', `ADMIN_SECRET:${adminSecret}`, '--var', `SESSION_SIGNING_SECRET:${signingSecret}`,
     ...Object.entries(vars).flatMap(([key, value]) => ['--var', `${key}:${value}`]),
     '--persist-to', join(scratch, 'state'), '--show-interactive-dev-session=false', '--log-level=error',
-  ], {
-    cwd: scratch,
-    env: { ...process.env, WRANGLER_LOG_PATH: join(scratch, 'wrangler.log') },
+  ], { inherited: process.env, set: { WRANGLER_LOG_PATH: join(scratch, 'wrangler.log') } })
+  if (!resolved.ok) throw new Error(`${resolved.error}. ${resolved.details} (run npm ci)`)
+  const child = spawn(resolved.launch.command, resolved.launch.args, {
+    cwd: resolved.launch.cwd,
+    env: resolved.launch.env,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   child.stdout.on('data', (chunk) => { output += String(chunk) })

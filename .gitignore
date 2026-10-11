@@ -18,3 +18,18 @@ native/media
 docs/layout-doctor/
 # Local Worker state left by `wrangler dev` (integration tests)
 worker/.wrangler/
+
+# Local handout preview output (scripts/local-handout-preview.mjs)
+.local-handout-preview/
+
+# The live service as it ships: compiled by `npm run build:worker-dist` (and `npm run build`), never committed.
+worker-dist/
+worker-dist.staged-*/
+.worker-dist-build-*/
+
+# The pinned plain-GPL ffmpeg the macOS app ships: downloaded and hash-checked by `npm run fetch:ffmpeg-mac`
+# (and the before-pack hook) from scripts/lib/ffmpeg-mac-pin.json, never committed.
+/ffmpeg-mac/
+# Its GPL corresponding source, packed for the release by `npm run build:ffmpeg-source` from
+# scripts/lib/ffmpeg-mac-source-manifest.json (downloads cached here), never committed.
+/ffmpeg-mac-source/

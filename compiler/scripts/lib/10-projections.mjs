@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { parseTagsValue } from "./12-outline-edit.mjs";
-import { UNDERLINE_SOURCE } from "./00-inline-protection.mjs";
+import { UNDERLINE_SOURCE, keyCapsToText } from "./00-inline-protection.mjs";
 import { imagePlacementsForSlide } from "./image-placement.mjs";
 
 // ----------------------------------------------------------------------------
@@ -33,7 +33,7 @@ import { imagePlacementsForSlide } from "./image-placement.mjs";
 const UNDERLINE_TO_TEXT = new RegExp(UNDERLINE_SOURCE, "g");
 
 function stripInlineMarkdown(value) {
-  return String(value == null ? "" : value)
+  return keyCapsToText(String(value == null ? "" : value)) // <kbd>⌘K</kbd> → ⌘K
     .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")            // images → nothing
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")          // links → label
     .replace(UNDERLINE_TO_TEXT, "$1")                 // ++underline++ → its text

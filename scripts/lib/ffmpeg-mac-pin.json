@@ -1,0 +1,25 @@
+{
+  "about": "The one ffmpeg build the macOS app ships (ADR-0003, amendment of 2026-10-09: plain GPL, pinned by checksum). Fetched by scripts/fetch-ffmpeg-mac.mjs, checked again by scripts/electron-builder-before-pack.cjs. To move to a newer build: download it, run `ffmpeg -buildconf` (no --enable-nonfree), then change every field below (contentSha256 with scripts/verify-mac-package.mjs --content-hash <binary>) together with resources/ffmpeg-mac/FFMPEG-NOTICE.md and scripts/lib/ffmpeg-mac-source-manifest.json (the corresponding source).",
+  "platform": "darwin",
+  "arch": "arm64",
+  "version": "9.0.2",
+  "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip",
+  "archiveSha256": "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924",
+  "binarySha256": "2e11c6f90993cdb79fff84d3f90044d28316b310e75b3e030cfc9a54f2c9d384",
+  "binaryBytes": 66332880,
+  "contentSha256": "28ea80b855803d6553e7b0691e9dbec7d33dd97b2b4310f32aac889b7b48885d",
+  "contentSha256About": "SHA-256 of the binary with its code signature removed (codesign --remove-signature) and the __LINKEDIT segment's vmsize set to zero (scripts/lib/ffmpeg-ship-check.cjs, machoContentSha256): the same for the published binary and for any re-signed copy of it, so scripts/verify-mac-package.mjs can identify the pinned program inside a signed app. Measured 2026-10-09 on the published binary, an ad-hoc re-signed copy and a hardened-runtime re-signed copy.",
+  "licence": "GPL-3.0-or-later",
+  "configured": "--enable-gpl --enable-version3 (no --enable-nonfree)",
+  "signedBy": "Developer ID Application: Martin Riedl (KU3N25YGLU)",
+  "source": {
+    "ffmpeg": "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz",
+    "ffmpegSha256": "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e",
+    "buildScript": "https://git.martin-riedl.de/ffmpeg/build-script",
+    "buildScriptRevision": "6a611e19870e197bc37c6e4c7fccddebd3715466",
+    "buildScriptRevisionEvidence": "no build log names it; it is the head of the develop branch when this build was made (commit 18:00 CEST, build 21:18 CEST on 2026-09-20; next commit 2026-09-24), and every library version in its version/ folder equals versions.txt below. Details in ffmpeg-mac-source-manifest.json.",
+    "componentVersions": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/versions.txt",
+    "correspondingSource": "scripts/lib/ffmpeg-mac-source-manifest.json; packed by scripts/build-ffmpeg-source-bundle.mjs and attached to every GitHub release that ships this binary as TalkWeaver-<version>-ffmpeg-9.0.2-corresponding-source.tar"
+  },
+  "verified": "2026-10-09: downloaded; archive and binary hashes computed locally, archive hash equal to the published ffmpeg.zip.sha256; ffmpeg -buildconf shows --enable-gpl --enable-version3 and no --enable-nonfree; links only macOS system libraries"
+}

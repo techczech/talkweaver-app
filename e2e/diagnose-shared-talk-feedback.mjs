@@ -87,7 +87,7 @@ try {
 
   app = await electron.launch({
     args: ['.', `--user-data-dir=${userData}`], cwd: root,
-    env: { ...process.env, TW_E2E: '1', TALKWEAVER_LIVE_ADMIN_SECRET: worker.adminSecret },
+    env: { ...process.env, TW_E2E: '1', TW_LIVE_LOCAL: '1', TALKWEAVER_LIVE_ADMIN_SECRET: worker.adminSecret }, // TW_LIVE_LOCAL: a live service on this computer only when asked for (spec D8)
   })
   await app.evaluate(({ app, BrowserWindow }) => {
     const hide = (win) => { win.setPosition(-20000, -20000); win.hide() }

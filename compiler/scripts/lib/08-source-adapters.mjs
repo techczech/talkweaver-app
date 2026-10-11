@@ -13,6 +13,7 @@ import { buildDeckHtmlFromModel, adaptCanonicalPptJson, adaptLearnWeaverExport }
 import { annotateQuoteLayout, quoteSplitCountForBlocks, splitQuoteSlideBlocks } from "./quote-layout.mjs";
 import { timelineContinuationParts } from "./timeline-layout.mjs";
 import { annotateCodeLayout } from "./code-layout.mjs";
+import { annotateSimulationLayout, simulationMode, simulationLayoutForFence } from "./simulation-layout.mjs";
 import { annotateTextLayout } from "./text-layout.mjs";
 import { resolveSlideFrame, FRAME_BUILTINS } from "./11-frame.mjs";
 import { parseSimpleYaml } from "./simple-yaml.mjs";
@@ -459,6 +460,11 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
   // deck-wide value is checked once here so an unreadable one says so.
   const imageStepsFlag = readDeckFlag(meta.image_steps ?? meta["image-steps"]);
   if (imageStepsFlag.state === "unreadable") warnings.push(`deck-flag-unknown:image_steps:${imageStepsFlag.raw}`);
+  // Handout page fix round (2026-10-09): `live_look_ahead: false` keeps people following a live talk on the
+  // handout page from stepping past the speaker's slide. On unless the talk turns it off.
+  const liveLookAheadFlag = readDeckFlag(meta.live_look_ahead ?? meta["live-look-ahead"]);
+  if (liveLookAheadFlag.state === "unreadable") warnings.push(`deck-flag-unknown:live_look_ahead:${liveLookAheadFlag.raw}`);
+  const liveLookAhead = liveLookAheadFlag.state !== "off";
   const hideEmail = deckFlagOn(hideEmailFlag);
   if (hideEmail && typeof meta.author === "string") {
     meta.author = meta.author
@@ -648,7 +654,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     // gets the trace layout, any other code gets the generic code layout. The big title rides
     // above the panel. Media + code still falls through to copy-visual/media below.
     const codeBlock = blocks.find((b) => b.type === "code");
-    if (codeBlock && !hasMedia) return codeBlock.lang === "trace" ? "trace" : "code";
+    if (codeBlock && !hasMedia) return simulationLayoutForFence(codeBlock.lang) || (codeBlock.lang === "trace" ? "trace" : "code");
     // A timeline is a graphical element (like media). When it is paired with a COMMENT — a
     // standalone paragraph or quote, no other media — lay the two side by side (timeline one
     // column, comment beside, centred as a unit) instead of stacking the comment under the
@@ -670,7 +676,10 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     // nothing else structural — no list, no media, no paragraph, no timeline/table/code. The
     // quote IS the slide, full-bleed; the heading is NAV-ONLY by default (not drawn — see the
     // titleMode default for `quote`). Re-show the heading with `{title=show}`.
+    // A practice quotation (ticket 05: a `>` line carrying a key cap) is an instruction on an
+    // ordinary slide, never a quote-only slide: its title stays and it is not split.
     if (hasQuote && !hasList && !hasParagraph
+        && blocks.some((b) => b.type === "quote" && !b.practice)
         && !blocks.some((b) => ["timeline", "table", "code"].includes(b.type))) {
       return "quote";
     }
@@ -830,7 +839,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     const hasQuote = blocks.some((b) => b.type === "quote");
     const hasText = hasList || hasParagraph || hasQuote;
     const codeBlock = blocks.find((b) => b.type === "code");
-    if (codeBlock && !hasMedia) return codeBlock.lang === "trace" ? "trace" : "code";
+    if (codeBlock && !hasMedia) return simulationLayoutForFence(codeBlock.lang) || (codeBlock.lang === "trace" ? "trace" : "code");
     if (blocks.some((b) => b.type === "timeline")) {
       const hasComment = (hasParagraph || hasQuote) && !hasMedia && !hasList;
       return hasComment ? "timeline-visual" : "timeline";
@@ -838,7 +847,10 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     if (hasMedia && hasList && !hasParagraph && !hasQuote) return "list-visual";
     if (hasMedia && (hasText || blocks.some((b) => b.type === "table"))) return "copy-visual";
     if (hasMedia) return "media";
+    // A practice quotation (ticket 05: a `>` line carrying a key cap) is an instruction on an
+    // ordinary slide, never a quote-only slide: its title stays and it is not split.
     if (hasQuote && !hasList && !hasParagraph
+        && blocks.some((b) => b.type === "quote" && !b.practice)
         && !blocks.some((b) => ["timeline", "table", "code"].includes(b.type))) {
       return "quote";
     }
@@ -1293,6 +1305,8 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     applyQuoteTitleAttribution(blocks, slide.title);
     annotateQuoteLayout(blocks, layout, baseId, (warning) => warnings.push(warning));
     annotateCodeLayout(blocks, layout, baseId, (warning) => warnings.push(warning));
+    // AI chat / terminal simulations: parse the fence the layout tag names (chat, chat-lanes, terminal, terminal-agent).
+    annotateSimulationLayout(blocks, layout, slide.attrs, { id: baseId, title: slide.title }, (warning) => warnings.push(warning));
     // ADR-0033 §1: text that cannot fit at the type floor. The compiler estimates the same condition
     // the presenter's autofitContent reports at runtime (data-text-fit="too-long").
     annotateTextLayout({
@@ -1344,7 +1358,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
       ...(reactionSet.mode !== "standard" ? { reactions: reactionSet.ids } : {}),
       // Authored stepping mode: {mode=reveal|focus} activates that mode on arrival. The legacy
       // {reveal=steps} attr is kept as an alias for {mode=reveal} (documented; migrate lazily).
-      mode: resolveAuthoredMode(slide.attrs),
+      mode: simulationMode(layout, resolveAuthoredMode(slide.attrs)),
       titleMode: slide.attrs.title === "show" || slide.attrs.title === "compact" ? slide.attrs.title : "",
       // {notitle}: drop the on-slide heading (nav-only sr-only h1 stays). Title-less statement etc.
       noTitle: slide.attrs.notitle === true,
@@ -2175,6 +2189,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     ...(deckLinks.length ? { deckLinks } : {}),
     ...(durationSeconds ? { durationSeconds } : {}),
     ...(deckFont ? { deckFont } : {}),
+    ...(liveLookAhead ? {} : { liveLookAhead: false }),
     warnAtMinutes, urgentAtMinutes,
     ...(license ? { license } : {}),
     palette: deckPalette === "green" ? "green" : "",

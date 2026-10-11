@@ -4,6 +4,8 @@ import type {
   VaultStyleOption, VaultView
 } from '../../../../preload/index'
 import { IcLock, IcPeople, IcWarn } from './icons'
+import { ExampleVaultCard } from '../ExampleVaultCard'
+import { EXAMPLE_VAULT_TEXT } from '../../../../shared/example-vault'
 
 // Add a vault, Edit this vault, and "This folder is already a vault" (several-vaults ticket 04;
 // docs/design/2026-09-29-multi-vault/LOCKED-edit-vault.html). One sheet, two groups, never mixed:
@@ -16,6 +18,8 @@ export type VaultSheetState =
   | { mode: 'join'; chosen: Extract<ChosenVaultFolder, { ok: true }> }
   | { mode: 'edit'; vaultId: string }
   | { mode: 'refused'; reason: string; message: string; other?: VaultRef | null }
+  /** Add vault… while the example vault is not in the list (onboarding ticket 06): a folder, or the example. */
+  | { mode: 'add' }
 
 type Props = {
   state: VaultSheetState
@@ -26,6 +30,8 @@ type Props = {
   onChooseAnother: () => void
   /** "Show <vault>" on the already-open refusal. */
   onShowVault: (vaultId: string) => void
+  /** "Open example vault" on the Add vault sheet: null when it opened, else the sentence to show. */
+  onOpenExample?: () => Promise<string | null>
 }
 
 function Badge({ color, initial, size }: { color: string; initial: string; size?: 'sm' | 'lg' | 'xl' }) {
@@ -37,7 +43,40 @@ const firstLetter = (name: string): string => ([...name.trim()][0] ?? '').toUppe
 export function VaultSheet(props: Props) {
   const { state } = props
   if (state.mode === 'refused') return <RefusedSheet {...props} state={state} />
+  if (state.mode === 'add') return <AddSheet {...props} />
   return <SettingsSheet {...props} state={state} />
+}
+
+/** Add vault… with the example offer (onboarding ticket 06): "Choose a folder…" runs the folder
+ *  picker exactly as Add vault… did before; the example card is the one first launch shows. */
+function AddSheet({ onClose, onChooseAnother, onOpenExample }: Props) {
+  useEscape(onClose)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+  const open = async (): Promise<void> => {
+    if (!onOpenExample || busy) return
+    setBusy(true)
+    setMessage(null)
+    try { setMessage(await onOpenExample()) } finally { setBusy(false) }
+  }
+  return (
+    <>
+      <div className="vs-backdrop" onClick={onClose} />
+      <div className="vs-sheet vs-sheet--add" role="dialog" aria-modal="true" aria-label="Add vault" data-vault-sheet="add">
+        <h2 className="vs-add-h">Add vault</h2>
+        <div className="vs-alert-btns vs-add-btns">
+          <button type="button" className="vs-btn plain" onClick={onClose}>Cancel</button>
+          <button type="button" className="vs-btn" onClick={onChooseAnother} data-choose-folder>Choose a folder…</button>
+        </div>
+        {onOpenExample && (
+          <>
+            <div className="vault-setup-or"><span>{EXAMPLE_VAULT_TEXT.or}</span></div>
+            <ExampleVaultCard busy={busy} message={message} onOpen={() => { void open() }} />
+          </>
+        )}
+      </div>
+    </>
+  )
 }
 
 function RefusedSheet({ state, onClose, onChooseAnother, onShowVault }: Props & { state: Extract<VaultSheetState, { mode: 'refused' }> }) {

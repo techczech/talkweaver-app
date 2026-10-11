@@ -4,6 +4,7 @@ export interface Command {
   id: string
   title: string
   hint?: string // e.g. a keyboard shortcut shown on the right
+  group?: string // the task group the command belongs to, shown on the right beside the key
   keywords?: string[]
   run: () => void
 }
@@ -12,11 +13,13 @@ interface Props {
   isOpen: boolean
   onClose: () => void
   commands: Command[]
+  /** Text the palette opens with (Actions here hands over what was typed in its filter). */
+  initialQuery?: string
 }
 
 // ⌘⇧P command palette: fuzzy-filter and run any app command. Mirrors the ⌘S / "/" palettes'
 // keyboard model (↑↓ navigate, ↵ run, esc close).
-export default function CommandMenu({ isOpen, onClose, commands }: Props) {
+export default function CommandMenu({ isOpen, onClose, commands, initialQuery = '' }: Props) {
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -29,9 +32,13 @@ export default function CommandMenu({ isOpen, onClose, commands }: Props) {
 
   useEffect(() => {
     if (!isOpen) return
-    setQuery('')
+    setQuery(initialQuery)
     setActive(0)
-    requestAnimationFrame(() => inputRef.current?.focus())
+    requestAnimationFrame(() => {
+      inputRef.current?.focus()
+      inputRef.current?.setSelectionRange(initialQuery.length, initialQuery.length)
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen])
 
   useEffect(() => {
@@ -105,6 +112,7 @@ export default function CommandMenu({ isOpen, onClose, commands }: Props) {
                   }}
                 >
                   <span className="command-menu-title">{cmd.title}</span>
+                  {cmd.group && <span className="command-menu-group">{cmd.group}</span>}
                   {cmd.hint && <span className="command-menu-hint">{cmd.hint}</span>}
                 </li>
               )

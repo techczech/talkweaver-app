@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Click counter</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+body{margin:0;padding:32px;background:#f6f4ee;color:#1b1f24;font-family:system-ui,-apple-system,sans-serif;font-size:28px;text-align:center}
+#count{font-size:120px;font-weight:700;margin:16px 0}
+button{font:inherit;font-size:32px;padding:16px 36px;margin:8px;border-radius:12px;border:2px solid #1f3a8a;background:#fff;color:#1f3a8a;cursor:pointer}
+button.main{background:#1f3a8a;color:#fff}
+p{margin:12px 0}
+</style></head><body>
+<div id="count">0</div>
+<button class="main" id="add" type="button">Add one</button>
+<button id="reset" type="button">Reset</button>
+<p>Page started at <strong id="started"></strong></p>
+<script>
+var n=0,c=document.getElementById('count');
+var d=new Date(),p=function(x){return String(x).padStart(2,'0')};
+document.getElementById('started').textContent=p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+document.getElementById('add').addEventListener('click',function(){n++;c.textContent=n});
+document.getElementById('reset').addEventListener('click',function(){n=0;c.textContent=n});
+</script></body></html>

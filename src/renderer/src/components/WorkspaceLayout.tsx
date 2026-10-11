@@ -15,8 +15,15 @@ import Inspector from './Inspector'
 import { applyBoardEditToOutline, type BoardEdit } from '../../../../compiler/scripts/lib/board-slide.mjs'
 import { applyRightAnswerToOutline } from '../../../../compiler/scripts/lib/prework.mjs'
 import SlideStrip from './SlideStrip'
+import RightColumnTabs from './RightColumnTabs'
+import type { RightColumnTab } from '../../../shared/guide'
 import GridView from './GridView'
 import StatusBar from './StatusBar'
+import { usePlace } from '../lib/usePlace'
+import { placeAt, type Place } from '../../../shared/place.ts'
+import { actionRowsAt, paletteChordText, type ActionRow } from '../../../shared/actions-here.ts'
+import ActionsHerePanel from './ActionsHerePanel'
+import type { SheetRow } from '../../../shared/keyboard-sheet.ts'
 import { useTalkFacts } from '../lib/talkFacts'
 import LayoutPickerColumn from './LayoutPickerColumn'
 import { reanchorPickerSlide, selectionFromTriggerLine, toggleLayoutSelection, type LayoutPickerContext } from './layoutPickerModel'
@@ -29,6 +36,9 @@ import SlideBrowser from './SlideBrowser'
 import PropagationChecklist, { type AdoptVersion } from './PropagationChecklist'
 import MergeConfirm from './MergeConfirm'
 import ShareSheet from './ShareSheet'
+import PublishNotReadySheet from './PublishNotReadySheet'
+import { earlierHandoutsToast, publishedWithoutLiveToast } from '../lib/publish-failure-toast'
+import type { PublishNotReady } from '../../../preload/index'
 import PlanRunSheet from './PlanRunSheet'
 import RunStatusChips from './RunStatusChips'
 import ConflictLine from './talklist/ConflictLine'
@@ -56,13 +66,18 @@ import AbstractPanel from './AbstractPanel'
 import DeckDesignPanel from './DeckDesignPanel'
 import CommandMenu, { type Command } from './CommandMenu'
 import {
+  COMMAND_REGISTRY,
   paletteCommands,
+  listedPaletteCommands,
+  type CommandDefinition,
   toolbarCommands,
   type PaletteCommandHandlerId,
   type ToolbarMenuName
 } from '../../../shared/command-registry'
 import { componentInsertEntries } from '../../../shared/layout-registry/entries'
-import { liveCommandShortcutLabel, liveShortcutLabel, onKeymapChanged } from '../keymap/store'
+import { effectiveKeys, liveCommandShortcutLabel, liveShortcutLabel, onKeymapChanged } from '../keymap/store'
+import { chordEventInit } from '../../../shared/chord-event'
+import { shortcutById } from '../../../shared/shortcut-registry'
 import { surfaceKey } from '../keymap/surfaceKeys'
 import type { PickerCommandOutcome, SlidePickerCommands } from './slidePickerCommands'
 import ActionBar from './actionBar/ActionBar'
@@ -79,6 +94,7 @@ import SlideContextMenu, { type SlideMenuAction } from './SlideContextMenu'
 import { outlineWritesSettled, queueOutlineWrite } from '../lib/saveQueue'
 import { createOutlineMutator, type OutlineMutate, type OutlineMutationOptions, type OutlineMutationResult, type OutlineMutator } from '../lib/outlineMutation'
 import { stampHandoutUrl } from '../../../shared/handout-stamp'
+import { commandRan, ran, reportingHandlers, setCommandRanContext } from '../commands/command-ran'
 import { editFrontmatterText, type FrontmatterEdit } from '../../../shared/frontmatter-editor'
 import type { CursorListItemContext } from '../extensions/outliner'
 import {
@@ -97,6 +113,21 @@ import {
   type LayoutDoctorFinding
 } from '../../../shared/layout-doctor'
 
+// Handlers that report for themselves, because they can decline after they start (the slide picker's
+// talk-search actions answer "nothing to act on"): runPickerCommand reports once the action acted.
+const SELF_REPORTING_HANDLERS: ReadonlySet<string> = new Set(['add-talk-beside', 'talk-beside', 'close-talk-beside', 'select-whole-section'])
+
+// The slide menu's actions that are registry commands (the menu now opens only from the triple-backtick
+// Insert-object access; Actions here's carried rows reach the same handlers): the command each reports.
+const SLIDE_MENU_COMMANDS: Readonly<Partial<Record<SlideMenuAction, string>>> = {
+  layout: 'layout', icon: 'icon-picker', image: 'image', tag: 'tag-slide',
+  'insert-table': 'insert-object-table', 'insert-mindmap': 'insert-object-mindmap', 'insert-chart': 'insert-object-chart',
+  'insert-mermaid': 'insert-object-mermaid', 'insert-diagram': 'insert-object-diagram', 'insert-svg': 'insert-object-svg',
+  'fmt-bold': 'format-bold', 'fmt-italic': 'format-italic', 'fmt-code': 'format-inline-code', 'fmt-highlight': 'format-highlight',
+  'fmt-strikethrough': 'format-strikethrough', 'fmt-underline': 'format-underline', 'fmt-link': 'format-link',
+  focus: 'focus-slide', 'where-used': 'where-used', 'present-here': 'present-from-here', delete: 'delete-slide'
+}
+
 export type OutlineOps = {
   move: (line: number, dir: 'up' | 'down') => void
   reLevel: (line: number, dir: -1 | 1, withSubtree: boolean) => void
@@ -106,9 +137,21 @@ export type OutlineOps = {
 // What a queued outline save answers (window.tw.talk.writeOutline).
 type OutlineSaveResult = Awaited<ReturnType<typeof window.tw.talk.writeOutline>>
 
+/** The Guide's hold on the right-hand column (onboarding ticket 07). App owns whether its tab is up; the
+ *  column owns which tab is showing. `nonce` rises on every request to open it. */
+export interface GuideColumn {
+  open: boolean
+  nonce: number
+  /** The Guide itself (GuidePane): the column only hosts it. */
+  body: React.ReactNode
+  onClose: () => void
+}
+
 interface Props {
   activeTalk: TalkInfo | null
   vaultRoot: string
+  /** The Guide's hold on the right-hand column (onboarding ticket 07); absent = no Guide. */
+  guide?: GuideColumn
   // Lets App's left sidebar (Outline / Slides views) mirror the live outline and jump the
   // editor + strip to a source line.
   onOutlineChange?: (content: string) => void
@@ -175,7 +218,7 @@ function readGridColumns(): number {
   }
 }
 
-export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange, registerJump, onOpenSettings, registerOutlineOps, onSelectTalk, onEditorEngaged, registerFlushSave, registerLeaveGuard, onDiscardTalk, onActiveLineChange }: Props) {
+export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange, registerJump, onOpenSettings, registerOutlineOps, onSelectTalk, onEditorEngaged, registerFlushSave, registerLeaveGuard, onDiscardTalk, onActiveLineChange, guide }: Props) {
   const commandHandlersRef = useRef<Record<PaletteCommandHandlerId, () => void> | null>(null)
   const [, setKeymapRevision] = useState(0)
   useEffect(
@@ -208,14 +251,61 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     setActionBarVisible(state.visible)
     setActionBarItemsStored(state.items)
   }), [])
+  // The place chip (onboarding ticket 02): the caret's place from the editor, combined with where
+  // the keyboard is; the setting "Show where I am in the status bar" (on by default).
+  const [editorPlace, setEditorPlace] = useState<Place>('slide-text')
+  const { place, row: placeRow, activate: activatePlace } = usePlace(editorPlace)
+  // The chip counts the list Actions here shows (shared/actions-here.ts), so the two always agree.
+  const placeCount = useMemo(() => actionRowsAt(place, { row: placeRow }).length, [place, placeRow])
+  const editorPlaceRef = useRef<Place>(editorPlace)
+  editorPlaceRef.current = editorPlace
+  const [placeChipVisible, setPlaceChipVisible] = useState(true)
+  useEffect(() => {
+    let cancelled = false
+    window.tw.settings.getPlaceChip()
+      .then((state) => { if (!cancelled) setPlaceChipVisible(state.visible) })
+      .catch(() => { /* settings unavailable — keep the default */ })
+    return () => { cancelled = true }
+  }, [])
+  useEffect(() => window.tw.settings.onPlaceChipChanged((state) => setPlaceChipVisible(state.visible)), [])
+  const placeChip = { place, count: placeCount, chord: liveShortcutLabel('app.context-menu'), visible: placeChipVisible, onActivate: activatePlace }
   const runRegisteredCommand = useCallback((handlerId: PaletteCommandHandlerId): void => {
     commandHandlersRef.current?.[handlerId]()
+  }, [])
+  // A palette row runs its handler; a command only a key reaches (the outline's move and jump keys,
+  // the sidebar and find keys) is run by sending its effective key to the editor, as the presenter
+  // palette does for its viaKey entries.
+  const runListedCommand = useCallback((command: CommandDefinition): void => {
+    const handler = commandHandlersRef.current?.[command.handlerId as PaletteCommandHandlerId]
+    if (handler) { handler(); return }
+    if (!command.shortcutId) return
+    const code = shortcutById(command.shortcutId).codes[0]
+    if (!code) return
+    const keys = effectiveKeys(command.shortcutId) || code
+    window.setTimeout(() => {
+      const target = document.querySelector<HTMLElement>('.cm-content')
+      target?.focus()
+      ;(target ?? document.body).dispatchEvent(new KeyboardEvent('keydown', chordEventInit(keys)))
+    }, 0)
   }, [])
   const [paneState, setPaneState] = useState<PaneState>(readPaneState)
   const [inspectorMode, setInspectorMode] = useState<boolean>(readInspectorMode)
   // Grid mode is a distinct full-width view; any pane-toggle click clears it.
   const [gridMode, setGridMode] = useState<boolean>(false)
   const [gridColumns, setGridColumns] = useState<number>(readGridColumns)
+  // The Guide tab (onboarding ticket 07). Up while App says so; `guideActive` is whether it is the tab
+  // showing (Slides and Inspector are the others). Each request to open it shows it and brings the
+  // right-hand column up, as the Inspector's own toggle does.
+  const [guideActive, setGuideActive] = useState<boolean>(false)
+  const guideUp = guide?.open === true
+  useEffect(() => {
+    if (!guide || !guide.open || guide.nonce === 0) return
+    setGuideActive(true)
+    setGridMode(false)
+    setPaneState((current) => (current === 'editor' ? 'both' : current))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [guide?.nonce])
+  useEffect(() => { if (!guideUp) setGuideActive(false) }, [guideUp])
   const [archiveOpen, setArchiveOpen] = useState<boolean>(false)
   const [iconPickerOpen, setIconPickerOpen] = useState<boolean>(false)
   const [outlineContent, setOutlineContent] = useState<string>('')
@@ -234,6 +324,8 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   const publishingRef = useRef(false)
   // Share for comments (ticket 03): the sheet, and every shared talk (status bar chip).
   const [shareSheetOpen, setShareSheetOpen] = useState<boolean>(false)
+  // Publish handout could not start: what is missing, for the sheet (spec: the "not ready" table).
+  const [publishNotReady, setPublishNotReady] = useState<PublishNotReady | null>(null)
   // The plan sheet (ADR-0032 point 5): a new Run (run null) or editing a planned one.
   const [planSheet, setPlanSheet] = useState<{ run: RecordingSession | null } | null>(null)
   const sharedTalks = useSharedTalks()
@@ -303,6 +395,10 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   const [abstractOpen, setAbstractOpen] = useState<boolean>(false)
   const [deckDesignOpen, setDeckDesignOpen] = useState<boolean>(false)
   const [cmdMenuOpen, setCmdMenuOpen] = useState<boolean>(false)
+  // Text the palette opens with: Actions here hands over what was typed in its filter.
+  const [cmdMenuQuery, setCmdMenuQuery] = useState<string>('')
+  // Actions here (⌘K, right-click, Menu key): the panel at the caret or the selected slide.
+  const [actionsHere, setActionsHere] = useState<{ x: number; y: number; place: Place; returnTo: HTMLElement | null } | null>(null)
 
   // Slide Focus (B1/B3/B4). A VIEW state (peer of gridMode, not a scrim): the compiled index of the
   // focused slide, or null. `focusRange` is the line-aligned band handed to the Editor's focusRange
@@ -640,11 +736,11 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       browserOpen || searchOpen || archiveOpen || iconPickerOpen || helpOpen ||
       cmdMenuOpen || abstractOpen || deckDesignOpen || embedCheckOpen || layoutDoctorOpen ||
       explainIndex != null || whereUsedId != null || imageMetaId != null ||
-      adoptTarget != null || mergeRequest != null || tagSlide != null || slideMenu != null
+      adoptTarget != null || mergeRequest != null || tagSlide != null || slideMenu != null || actionsHere != null
   }, [
     browserOpen, searchOpen, archiveOpen, iconPickerOpen, helpOpen, cmdMenuOpen,
     abstractOpen, deckDesignOpen, embedCheckOpen, layoutDoctorOpen, explainIndex, whereUsedId, imageMetaId,
-    adoptTarget, mergeRequest, tagSlide, slideMenu
+    adoptTarget, mergeRequest, tagSlide, slideMenu, actionsHere
   ])
 
   // Open the slide context menu anchored near the caret's slide: the editor's live cursor
@@ -671,6 +767,29 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   }, [])
   const openSlideMenuRef = useRef(openSlideMenu)
   useEffect(() => { openSlideMenuRef.current = openSlideMenu }, [openSlideMenu])
+
+  // Actions here: the place decides the rows. `at` is the pointer (right-click); otherwise the panel
+  // opens at the caret, or at the selected slide's card in the strip or grid.
+  const openActionsHere = useCallback((opts: { region: 'editor' | 'strip'; at?: { x: number; y: number } }) => {
+    const place: Place = opts.region === 'strip'
+      ? placeAt({ focus: 'strip', row: null, editorPlace: editorPlaceRef.current })
+      : editorPlaceRef.current
+    let anchor = opts.at ?? null
+    if (!anchor && opts.region === 'strip') {
+      const card = document.querySelector<HTMLElement>(`[data-place-region="strip"] [data-slide-index="${activeSlideRef.current}"]`)
+      const box = card?.getBoundingClientRect()
+      if (box) anchor = { x: box.left + 24, y: box.top + 24 }
+    }
+    if (!anchor && opts.region === 'editor') anchor = editorCmdsRef.current?.cursorCoords() ?? null
+    if (!anchor) {
+      const bar = document.querySelector('.workspace-toolbar')?.getBoundingClientRect()
+      anchor = bar ? { x: bar.left + 16, y: bar.bottom + 8 } : { x: 80, y: 80 }
+    }
+    const active = document.activeElement
+    setActionsHere({ x: anchor.x, y: anchor.y, place, returnTo: active instanceof HTMLElement ? active : null })
+  }, [])
+  const openActionsHereRef = useRef(openActionsHere)
+  useEffect(() => { openActionsHereRef.current = openActionsHere }, [openActionsHere])
 
   // The current slide's block (same activeSlide→slideLines plumbing as currentSlideId), plus
   // its {heading, occurrence} address for an unstamped write. Occurrence counts identical
@@ -972,6 +1091,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   function toggleInspector(): void {
     returnToGridRef.current = false
     setGridMode(false)
+    setGuideActive(false)
     setInspectorMode((current) => {
       const next = !current
       if (next) {
@@ -1006,6 +1126,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         e.preventDefault()
         e.stopPropagation()
         setHelpOpen((prev) => !prev)
+        commandRan('help')
         return
       }
       // Escape in the EDITOR returns to the grid — only as the one-shot bounce-back after
@@ -1027,6 +1148,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       if (e.key === '?' && !isTypingTarget(e.target)) {
         e.preventDefault()
         setHelpOpen(prev => !prev)
+        commandRan('help')
         return
       }
       // ⌘Z / ⌘⇧Z route to undo/redo when focus is OUTSIDE the editor (grid / slides / strip), so a
@@ -1044,14 +1166,15 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
           const pushTo = e.shiftKey ? reorderUndoRef : reorderRedoRef
           const text = popFrom.current.pop()
           if (text == null) return // nothing left to undo/redo
+          commandRan(e.shiftKey ? 'redo' : 'undo')
           // Through the buffer (one-writer spec D1): one minimal change, saved through the queue, no
           // remount. The buffer it replaced goes on the other stack.
           void applyOutlineMutation(talk.outlinePath, () => text).then((result) => {
             if (result.ok || result.applied) { if (result.base != null) pushTo.current.push(result.base) }
             else { popFrom.current.push(text); notify(`Couldn’t undo the move — ${result.error}`, 'warning') }
           })
-        } else if (e.shiftKey) editorCmdsRef.current?.redo()
-        else editorCmdsRef.current?.undo()
+        } else if (e.shiftKey) { editorCmdsRef.current?.redo(); commandRan('redo') }
+        else { editorCmdsRef.current?.undo(); commandRan('undo') }
         return
       }
       // ⇧⌘S (app.find-talk, rebindable): the same picker, with the cursor in Find a talk.
@@ -1073,22 +1196,22 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         if (focusSlideRef.current != null) return
         if (browserOpenRef.current) browserFocusSearchRef.current?.()
         else setBrowserOpen(true)
+        commandRan('search')
         return
       }
-      // ⌘K = context menu for the FOCUSED item (freed by the Browser's move to ⌘S). Where the
-      // keyboard is decides what opens: the Talks panel gets its row menu (talk or folder, exactly
-      // as right-click would); the grid/strip gets the Explain panel for the active slide; the
-      // EDITOR gets the slide context menu for the caret's slide (v0.15 stage 4), anchored at the
-      // caret. Anywhere else — text fields outside CodeMirror, or with an overlay covering the
-      // workspace — the key is NOT swallowed, so any other binding still sees it. preventDefault
+      // ⌘K = Actions here for the FOCUSED item (onboarding 0.38.1 ticket 03; it replaces the context
+      // menu). Where the keyboard is decides what opens:
+      // the Talks panel gets Actions here for its row (TalkList); the grid/strip gets it for the
+      // selected slide; the EDITOR gets it at the caret. Anywhere else — text fields outside
+      // CodeMirror, or with an overlay covering the workspace — the key is NOT swallowed, so any other binding still sees it. preventDefault
       // only when we acted.
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'k' || e.key === 'K')) {
         const overlayOpen = overlayOpenRef.current || focusSlideRef.current != null
         if (!overlayOpen) {
           const active = document.activeElement
-          // Editor owns focus → the slide menu (first row highlighted — keyboard opening).
-          // Deliberately BEFORE the isTypingTarget guard: CodeMirror is a typing target, but
-          // an ordinary text INPUT outside it still falls through unswallowed.
+          // Editor owns focus → Actions here at the caret. Deliberately BEFORE the isTypingTarget
+          // guard: CodeMirror is a typing target, but an ordinary text INPUT outside it still
+          // falls through unswallowed.
           if (
             activeTalkRef.current &&
             e.target instanceof HTMLElement && e.target.closest('.cm-content') &&
@@ -1096,7 +1219,8 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
           ) {
             e.preventDefault()
             e.stopPropagation()
-            openSlideMenuRef.current({ startAtFirst: true, withText: false })
+            openActionsHereRef.current({ region: 'editor' })
+            commandRan('app.context-menu')
             return
           }
           if (!isTypingTarget(e.target)) {
@@ -1104,12 +1228,15 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
               e.preventDefault()
               e.stopPropagation()
               window.dispatchEvent(new Event('tw-context-menu'))
+              commandRan('app.context-menu')
               return
             }
-            if (activeTalkRef.current && gridModeRef.current) {
+            // The strip or the grid: Actions here for the selected slide.
+            if (activeTalkRef.current && (gridModeRef.current || (active instanceof HTMLElement && active.closest('[data-place-region="strip"]')))) {
               e.preventDefault()
               e.stopPropagation()
-              setExplainIndex(activeSlideRef.current)
+              openActionsHereRef.current({ region: 'strip' })
+              commandRan('app.context-menu')
               return
             }
           }
@@ -1123,12 +1250,14 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         e.preventDefault()
         e.stopPropagation()
         setIconPickerOpen((prev) => !prev)
+        commandRan('icon-picker')
         return
       }
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'i' || e.key === 'I')) {
         e.preventDefault()
         e.stopPropagation()
         setArchiveOpen((prev) => !prev)
+        commandRan('image')
         return
       }
       // ⌘L opens the LAYOUT picker (replaces the old `/` auto-popup, which left stray slashes). It
@@ -1144,6 +1273,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         if (blockedByUnresolved(content)) return
         const t = activeTalkRef.current
         if (t) {
+          commandRan(e.shiftKey ? 'present-from-here' : 'present-presenter')
           let startSlideId: string | undefined
           if (e.shiftKey) {
             startSlideId = currentSlideId() ?? undefined
@@ -1159,6 +1289,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         e.preventDefault()
         e.stopPropagation()
         openLayoutPicker()
+        commandRan('layout')
         return
       }
       // ⌘⇧U opens the where-used & versions panel for the current slide (ADR-0032 ledger MVP). In Slide
@@ -1168,6 +1299,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         e.stopPropagation()
         if (focusSlideRef.current != null) return
         openWhereUsed()
+        commandRan('where-used')
         return
       }
       // ⌘⇧F focuses the current slide (Slide Focus). ⌘F (no Shift) stays CodeMirror's find. No-op if
@@ -1175,7 +1307,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
         e.preventDefault()
         e.stopPropagation()
-        if (focusSlideRef.current == null) enterFocusRef.current(activeSlideRef.current)
+        if (focusSlideRef.current == null) { enterFocusRef.current(activeSlideRef.current); commandRan('focus-slide') }
         return
       }
       // ⌘⇧P opens the command palette (all app commands). Capture + stopPropagation. Routes
@@ -1199,43 +1331,129 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       // focus. The old renderer keydown was removed 2026-07-19 to avoid a double-open.
       // ⌘1/2/3 for pane switching (also clears grid mode); ⌘4 enters the grid. All preserve the
       // editor's scroll position rather than snapping to the top.
-      if ((e.metaKey || e.ctrlKey) && e.key === '1') { e.preventDefault(); selectPane('editor') }
-      if ((e.metaKey || e.ctrlKey) && e.key === '2') { e.preventDefault(); selectPane('both') }
-      if ((e.metaKey || e.ctrlKey) && e.key === '3') { e.preventDefault(); selectPane('strip') }
-      if ((e.metaKey || e.ctrlKey) && e.key === '4') { e.preventDefault(); selectGrid() }
+      if ((e.metaKey || e.ctrlKey) && e.key === '1') { e.preventDefault(); selectPane('editor'); commandRan('view-editor') }
+      if ((e.metaKey || e.ctrlKey) && e.key === '2') { e.preventDefault(); selectPane('both'); commandRan('view-both') }
+      if ((e.metaKey || e.ctrlKey) && e.key === '3') { e.preventDefault(); selectPane('strip'); commandRan('view-strip') }
+      if ((e.metaKey || e.ctrlKey) && e.key === '4') { e.preventDefault(); selectGrid(); commandRan('view-grid') }
     }
     window.addEventListener('keydown', handleGlobalKey, { capture: true })
     return () => window.removeEventListener('keydown', handleGlobalKey, { capture: true })
   }, [])
 
   useEffect(() => window.tw.app?.onCommand?.(runRegisteredCommand), [runRegisteredCommand])
+  // Every report of a command run says which talk this window is in, so main can tell the example vault
+  // (commands that delete tick only there: lock decision 12).
+  useEffect(() => setCommandRanContext(() => ({ outlinePath: activeTalkRef.current?.outlinePath ?? null })), [])
 
-  // Right-click inside the editing surface opens the slide context menu at the pointer — the
-  // native menu is suppressed. The caret first moves to the clicked position, so "the current
-  // slide" is the slide under the pointer (matching every native editor's contextual convention);
-  // the cursor move re-syncs activeSlide via the editor's onCursorLine. Right-click openings add
-  // the Text (cut/copy/paste) group and start with no row highlighted (mouse opening). In Slide
-  // Focus or under an overlay we leave the event alone. useDismiss's arming fix means the very
-  // contextmenu gesture that opens the menu cannot also dismiss it.
+  // Right-click and the Menu key open Actions here, the same panel as ⌘K (ticket 03); the native menu
+  // is suppressed. Inside the editing surface a right-click first moves the caret to the clicked
+  // position, so "here" is the line under the pointer; the Menu key opens at the caret. A right-click
+  // on a card in the strip or the grid selects that slide and opens the panel for it. In Slide Focus
+  // or under an overlay we leave the event alone. useDismiss's arming fix means the very contextmenu
+  // gesture that opens the panel cannot also dismiss it.
   useEffect(() => {
     function onContextMenu(e: MouseEvent): void {
       const t = e.target
-      if (!(t instanceof HTMLElement) || !t.closest('.cm-content')) return
+      if (!(t instanceof HTMLElement)) return
       if (!activeTalkRef.current) return
       if (overlayOpenRef.current || focusSlideRef.current != null) return
-      e.preventDefault()
-      e.stopPropagation()
-      editorCmdsRef.current?.placeCursorAtCoords(e.clientX, e.clientY)
-      openSlideMenuRef.current({ startAtFirst: false, withText: true, at: { x: e.clientX, y: e.clientY } })
+      if (t.closest('.cm-content')) {
+        e.preventDefault()
+        e.stopPropagation()
+        if (e.button === 2) {
+          editorCmdsRef.current?.placeCursorAtCoords(e.clientX, e.clientY)
+          openActionsHereRef.current({ region: 'editor', at: { x: e.clientX, y: e.clientY } })
+        } else {
+          openActionsHereRef.current({ region: 'editor' })
+        }
+        return
+      }
+      const card = t.closest<HTMLElement>('[data-place-region="strip"] [data-slide-index]')
+      if (card) {
+        e.preventDefault()
+        e.stopPropagation()
+        const index = Number(card.getAttribute('data-slide-index'))
+        if (Number.isInteger(index)) {
+          activeSlideRef.current = index
+          selectSlideRef.current(index)
+        }
+        openActionsHereRef.current({ region: 'strip', at: e.button === 2 ? { x: e.clientX, y: e.clientY } : undefined })
+      }
     }
     window.addEventListener('contextmenu', onContextMenu, { capture: true })
     return () => window.removeEventListener('contextmenu', onContextMenu, { capture: true })
   }, [])
 
+  // Closing Actions here (Escape, a click outside) returns the keyboard to where it was.
+  const actionsHereRef = useRef(actionsHere)
+  actionsHereRef.current = actionsHere
+  const closeActionsHere = useCallback((): void => {
+    const target = actionsHereRef.current?.returnTo
+    setActionsHere(null)
+    if (target && target.isConnected) target.focus()
+    requestAnimationFrame(() => {
+      // A panel opened again before this frame ran owns the focus now (its filter box); this late
+      // refocus would take it, and the typed text would land in the editor.
+      if (actionsHereRef.current) return
+      if (target && target.isConnected) target.focus()
+      else (document.querySelector('.cm-content') as HTMLElement | null)?.focus()
+    })
+  }, [])
+
+  // Running a row is running the command: a registry command goes the palette's route
+  // (runListedCommand); a carried row (no registry command) has its handler in
+  // runCarriedActionRow. Focus goes back first, so a command that works on the caret finds it.
+  const runActionRow = useCallback((row: ActionRow): void => {
+    const target = actionsHere?.returnTo
+    setActionsHere(null)
+    if (target && target.isConnected) target.focus()
+    else (document.querySelector('.cm-content') as HTMLElement | null)?.focus()
+    if (row.commandId) {
+      const command = COMMAND_REGISTRY.find((candidate) => candidate.id === row.commandId)
+      if (command) runListedCommand(command)
+      return
+    }
+    runCarriedActionRowRef.current(row.key)
+  }, [actionsHere, runListedCommand])
+  // The keyboard sheet's Run action: the same route as a row of Actions here (ticket 04).
+  const runSheetRow = useCallback((row: SheetRow): void => {
+    const target = document.querySelector<HTMLElement>('.cm-content')
+    target?.focus()
+    if (row.commandId) {
+      const command = COMMAND_REGISTRY.find((candidate) => candidate.id === row.commandId)
+      if (command) runListedCommand(command)
+      return
+    }
+    runCarriedActionRowRef.current(row.key)
+  }, [runListedCommand])
+  const sheetCanRunCarried = useCallback((key: string): boolean => key === 'explain-rendering' || key === 'present-from-here', [])
+  const openPaletteWith = useCallback((query: string): void => {
+    setActionsHere(null)
+    setCmdMenuQuery(query)
+    setCmdMenuOpen(true)
+  }, [])
+  // The Talks panel hosts its own Actions here (TalkList): its All commands… row and the rows that
+  // are plain registry commands come back here.
+  useEffect(() => {
+    const onPalette = (event: Event): void => openPaletteWith(String((event as CustomEvent<string>).detail ?? ''))
+    const onRun = (event: Event): void => {
+      const command = COMMAND_REGISTRY.find((candidate) => candidate.id === (event as CustomEvent<string>).detail)
+      if (command) runListedCommand(command)
+    }
+    window.addEventListener('tw-open-palette', onPalette)
+    window.addEventListener('tw-run-command', onRun)
+    return () => {
+      window.removeEventListener('tw-open-palette', onPalette)
+      window.removeEventListener('tw-run-command', onRun)
+    }
+  }, [openPaletteWith, runListedCommand])
+
   // Slide context menu → the existing handlers, verbatim. The menu closes first; actions that
   // stay in the editor hand focus back so the keyboard flow is unbroken.
   function handleSlideMenuAction(action: SlideMenuAction): void {
     setSlideMenu(null)
+    const reported = SLIDE_MENU_COMMANDS[action]
+    if (reported) commandRan(reported)
     switch (action) {
       case 'layout': openLayoutPicker(); break
       case 'icon': setIconPickerOpen(true); break
@@ -1264,6 +1482,21 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       case 'paste': editorCmdsRef.current?.pasteClipboard(); break
     }
   }
+
+  // The rows Actions here carries over from the old context menu that no registry command runs
+  // (shared/actions-here.ts CARRIED_ROWS, the slide places): same handlers as before.
+  function runCarriedActionRow(key: string): void {
+    switch (key) {
+      case 'explain-rendering': handleSlideMenuAction('explain'); break
+      case 'present-from-here': handleSlideMenuAction('present-here'); break
+      case 'cut': handleSlideMenuAction('cut'); break
+      case 'copy': handleSlideMenuAction('copy'); break
+      case 'paste': handleSlideMenuAction('paste'); break
+    }
+  }
+  const runCarriedActionRowRef = useRef(runCarriedActionRow)
+  runCarriedActionRowRef.current = runCarriedActionRow
+  const selectSlideRef = useRef<(i: number) => void>(() => undefined)
 
   // ⌘E in a live deck window (presenter or presentation window) jumps this editor to that slide.
   // Main forwards the deck's current slide — its stable ledger id AND its compiled index — and brings
@@ -1449,6 +1682,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     if (gridModeRef.current) setGridMode(false)
     if (paneStateRef.current === 'editor') setPaneState('both')
     if (feedbackOpen) setFeedbackOpen(false)
+    setGuideActive(false)
     setInspectorMode(true)
     // The Inspector previews the slide the picker acts on, stamped or not (an unstamped one is found by its heading line).
     const index = target.id
@@ -1573,6 +1807,13 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         }
         // e.g. a video over the per-file limit was published as a "plays live" placeholder.
         if (res.warning) notify('Published with a warning: ' + res.warning, 'warning', 'publish-warning')
+        // Published without live features (spec D7): "Published. Going live is not set up: Settings → Cloudflare".
+        const withoutLive = publishedWithoutLiveToast(res, 'publish-without-live', notify, () => { void window.tw.cloudflare.openSettings() })
+        if (withoutLive) notify(withoutLive.message, withoutLive.level, withoutLive.key, withoutLive.action)
+        else dismissToast('publish-without-live')
+        const earlier = earlierHandoutsToast(res, 'publish-earlier-handouts', notify)
+        if (earlier) notify(earlier.message, earlier.level, earlier.key, earlier.action)
+        else dismissToast('publish-earlier-handouts')
       }
       if (res?.success && res.url) {
         setBuildStatus('done')
@@ -1585,11 +1826,19 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
           label: 'Copy link',
           onAction: () => { navigator.clipboard.writeText(link).then(() => notify('Link copied.', 'success')).catch(() => notify('Couldn’t copy the link.', 'warning')) }
         })
+      } else if (res?.notReady) {
+        // Publishing could not start (not connected, or one thing missing): the sheet, not a failure toast.
+        setBuildStatus('idle')
+        setPublishNotReady(res.notReady)
       } else {
         setBuildStatus('error')
         if (res?.display || res?.url) setBuildPath(res.display || res.url || null)
         console.warn('[publish-handout]', res?.error)
-        notify('Publish failed: ' + (res?.error || 'unknown error'), 'error')
+        // What lies behind the message (e.g. which bundled file is missing) is shown on request.
+        const details = res?.details
+        notify('Publish failed: ' + (res?.error || 'unknown error'), 'error', 'publish-failed', details
+          ? { label: 'Details', onAction: () => notify(details, 'info', 'publish-failed-details') }
+          : undefined)
       }
     } finally {
       clearInterval(ticker)
@@ -1866,7 +2115,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   }
 
   // A picker command from the palette or a key: it acts on the open picker, or says why it cannot.
-  const runPickerCommand = (run: (commands: SlidePickerCommands) => PickerCommandOutcome): void => {
+  const runPickerCommand = (run: (commands: SlidePickerCommands) => PickerCommandOutcome, id: string): void => {
     const commands = pickerCommandsRef.current
     if (!browserOpenRef.current || !commands) {
       notify(`Open the slide picker (${liveShortcutLabel('app.slide-search')}) first.`, 'info', 'picker-command')
@@ -1874,12 +2123,13 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     }
     const outcome = run(commands)
     if (outcome !== true) notify(outcome, 'info', 'picker-command')
+    else commandRan(id)
   }
 
   // Every generated palette, native-menu, and toolbar item reaches renderer behaviour through
   // this typed handler map. It is assigned before the empty-state return because the Talk-free
   // Tools menu uses the same registered commands.
-  commandHandlersRef.current = {
+  commandHandlersRef.current = reportingHandlers({
     refresh: () => { void handleRefresh() },
     'optimize-images': () => { void handleOptimizeImages() },
     'ocr-index': () => { void handleOcrIndex() },
@@ -1936,10 +2186,10 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       pickerCommandsRef.current?.focusFindTalk()
       if (!browserOpenRef.current) setBrowserOpen(true)
     },
-    'add-talk-beside': () => runPickerCommand((picker) => picker.addTalkBeside()),
-    'talk-beside': () => runPickerCommand((picker) => picker.talkBeside()),
-    'close-talk-beside': () => runPickerCommand((picker) => picker.closeTalkBeside()),
-    'select-whole-section': () => runPickerCommand((picker) => picker.selectWholeSection()),
+    'add-talk-beside': () => runPickerCommand((picker) => picker.addTalkBeside(), 'add-talk-beside'),
+    'talk-beside': () => runPickerCommand((picker) => picker.talkBeside(), 'talk-beside'),
+    'close-talk-beside': () => runPickerCommand((picker) => picker.closeTalkBeside(), 'close-talk-beside'),
+    'select-whole-section': () => runPickerCommand((picker) => picker.selectWholeSection(), 'select-whole-section'),
     'icon-picker': () => setIconPickerOpen(true),
     'insert-object-table': () => editorInsertObjectRef.current?.('table'),
     'insert-object-mindmap': () => editorInsertObjectRef.current?.('mindmap'),
@@ -1982,8 +2232,11 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     'delete-slide': handleDeleteSlide,
     help: () => setHelpOpen(true),
     settings: () => onOpenSettings?.(),
+    'guide.open': () => window.dispatchEvent(new Event('tw-guide-open')),
+    'guide.show-button': () => window.dispatchEvent(new Event('tw-guide-show-button')),
+    'example.restore': () => window.dispatchEvent(new Event('tw-restore-example')),
     'app.command-palette': () => setCmdMenuOpen(prev => !prev)
-  }
+  }, (handlerId) => { if (!SELF_REPORTING_HANDLERS.has(handlerId)) commandRan(handlerId) })
 
   const toolbarItems = (menu: ToolbarMenuName, excludedHandlerIds: string[] = []): MenuItem[] => {
     let lastGroup: string | undefined
@@ -2083,6 +2336,20 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   }, [registerOutlineOps])
 
 
+  // With the Guide tab up the column gets a tab row (Guide, Slides, Inspector) over the body it chose.
+  // Slides and Inspector keep their own panes and keys; the tab only picks between them.
+  const columnTab: RightColumnTab = guideActive ? 'guide' : inspectorMode && !railOpen ? 'inspector' : 'slides'
+  function selectColumnTab(tab: RightColumnTab): void {
+    if (tab === 'guide') { setGuideActive(true); return }
+    setGuideActive(false)
+    if (tab === 'inspector' && !inspectorMode) toggleInspector()
+    if (tab === 'slides' && inspectorMode) toggleInspector()
+  }
+  const guidePane = <div className="pane pane--guide">{guide?.body}</div>
+  const tabsRow = (hasTalk: boolean): React.ReactNode => (
+    <RightColumnTabs guideUp={guideUp} hasTalk={hasTalk} active={columnTab} onSelect={selectColumnTab} onCloseGuide={() => guide?.onClose()} />
+  )
+
   if (!activeTalk) {
     return (
       <div className="workspace">
@@ -2097,13 +2364,29 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
             />
           </div>
         </div>
-        <div className="workspace-empty">
-          <div className="workspace-empty-hint">
-            Select a Talk from the list to start editing
-          </div>
-        </div>
-        <StatusBar minimal />
-        <KeyboardHelp isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
+        {(() => {
+          const empty = (
+            <div className="workspace-empty">
+              <div className="workspace-empty-hint">
+                Select a Talk from the list to start editing
+              </div>
+            </div>
+          )
+          // The Guide opens with no talk open too: it takes the right-hand column beside the empty state.
+          if (!guideUp) return empty
+          return (
+            <div className="workspace-panes workspace-panes--both">
+              <ResizablePanes
+                left={empty}
+                right={<div className="pane pane--tabs" data-right-column>{tabsRow(false)}<div className="pane-tabs-body">{guidePane}</div></div>}
+                storageKey="tw-split"
+                initialLeftPct={55}
+              />
+            </div>
+          )
+        })()}
+        <StatusBar minimal placeChip={placeChip} />
+        <KeyboardHelp isOpen={helpOpen} onClose={() => setHelpOpen(false)} />  {/* no talk open: no Here section */}
       </div>
     )
   }
@@ -2145,6 +2428,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       registerApplyOption={(fn) => { editorApplyOptionRef.current = fn }}
       focusLine={focusLine}
       onCursorLine={handleCursorLine}
+      onPlace={setEditorPlace}
       onImageWidgetClick={(id) => setImageMetaId(id)}
       onOpenHelp={() => setHelpOpen(true)}
       registerInsert={(fn) => { editorInsertRef.current = fn }}
@@ -2216,6 +2500,8 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     // Card click: aim the editor viewport but do NOT steal focus — the strip keeps keyboard nav.
     if (target != null) setFocusLine({ line: target, takeFocus: false })
   }
+
+  selectSlideRef.current = handleSelectSlide
 
   function handleSelectInspectorSlide(i: number): void {
     const row = compiledSlides?.[i]
@@ -2373,6 +2659,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   }
   // A marker on the slide pane: the rail beside the pane, on that slide (frame 2).
   function openFeedbackBeside(focus: Omit<FeedbackFocus, 'nonce'>): void {
+    setGuideActive(false)
     if (gridModeRef.current) setGridMode(false)
     if (paneStateRef.current !== 'both') setPaneState('both')
     setRailWithStrip(true)
@@ -2390,6 +2677,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   }
 
   function toggleFeedback(): void {
+    setGuideActive(false)
     setRailWithStrip(false)
     setFeedbackFocus(null) // from the toolbar: every item, not the last marker's slide
     setFeedbackOpen((open) => {
@@ -2402,9 +2690,13 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     })
   }
 
-  const stripSurface = railOpen
+  const slidesSurface = railOpen
     ? (railWithStrip ? <div className="pane pane--strip-rail">{stripPane}{feedbackPane}</div> : feedbackPane)
     : inspectorMode ? inspectorPane : stripPane
+
+  const stripSurface = guideUp
+    ? <div className="pane pane--tabs" data-right-column>{tabsRow(true)}<div className="pane-tabs-body">{guideActive ? guidePane : slidesSurface}</div></div>
+    : slidesSurface
 
   const gridPane = (
     <div className="pane pane--grid">
@@ -2472,28 +2764,28 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         <div className="pane-toggle">
           <button
             className={`pane-btn ${!gridMode && paneState === 'editor' ? 'pane-btn--active' : ''}`}
-            onClick={() => selectPane('editor')}
+            onClick={ran('view-editor', () => selectPane('editor'))}
             title="Editor only"
           >
             <Icon name="pane-editor" size={17} />
           </button>
           <button
             className={`pane-btn ${!gridMode && paneState === 'both' ? 'pane-btn--active' : ''}`}
-            onClick={() => selectPane('both')}
+            onClick={ran('view-both', () => selectPane('both'))}
             title="Editor + slide strip"
           >
             <Icon name="pane-both" size={17} />
           </button>
           <button
             className={`pane-btn ${!gridMode && paneState === 'strip' ? 'pane-btn--active' : ''}`}
-            onClick={() => selectPane('strip')}
+            onClick={ran('view-strip', () => selectPane('strip'))}
             title="Slide strip only"
           >
             <Icon name="pane-strip" size={17} />
           </button>
           <button
             className={`pane-btn ${gridMode ? 'pane-btn--active' : ''}`}
-            onClick={() => setGridMode(true)}
+            onClick={ran('view-grid', () => setGridMode(true))}
             title="Grid"
             data-testid="grid-toggle"
           >
@@ -2540,10 +2832,10 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
             label="Share"
             title="Export, build, or publish this talk"
             items={[
-              { icon: 'handout', label: 'Handout (reveal in Finder)', onClick: handleExportHandout },
-              { icon: 'html', label: 'HTML presentation (reveal in Finder)', onClick: handleBuild },
-              { icon: 'publish', label: publishing ? 'Publishing…' : 'Publish to Cloudflare', onClick: handlePublishHandout, disabled: publishing },
-              { icon: 'comment', label: 'Share for comments…', onClick: handleShareForComments, separatorBefore: true }
+              { icon: 'handout', label: 'Handout (reveal in Finder)', onClick: ran('handout', handleExportHandout) },
+              { icon: 'html', label: 'HTML presentation (reveal in Finder)', onClick: ran('build', handleBuild) },
+              { icon: 'publish', label: publishing ? 'Publishing…' : 'Publish to Cloudflare', onClick: ran('publish-handout', handlePublishHandout), disabled: publishing },
+              { icon: 'comment', label: 'Share for comments…', onClick: ran('share-for-comments', handleShareForComments), separatorBefore: true }
             ]}
           />
           <ToolbarMenu
@@ -2595,6 +2887,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         )}
       </div>
       <StatusBar
+        placeChip={placeChip}
         slideCount={compiledSlides?.length ?? null}
         wordCount={wordCount}
         lastSaved={lastSaved}
@@ -2754,6 +3047,10 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       <KeyboardHelp
         isOpen={helpOpen}
         onClose={() => setHelpOpen(false)}
+        place={place}
+        placeRow={placeRow}
+        onRun={runSheetRow}
+        canRunCarried={sheetCanRunCarried}
       />
       <ExplainPanel
         isOpen={explainIndex != null}
@@ -2762,6 +3059,15 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         content={outlineContent}
         index={explainIndex}
       />
+      {publishNotReady && (
+        <PublishNotReadySheet
+          what="Publish handout"
+          notReady={publishNotReady}
+          onClose={() => setPublishNotReady(null)}
+          onSaveAsFile={() => { void handleExportHandout() }}
+          onRetry={() => { void handlePublishHandout() }}
+        />
+      )}
       {shareSheetOpen && (
         <ShareSheet
           key={activeTalk.outlinePath}
@@ -2826,18 +3132,31 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       )}
       <CommandMenu
         isOpen={cmdMenuOpen}
-        onClose={() => setCmdMenuOpen(false)}
-        commands={paletteCommands()
-          // Palette-hidden commands ("All commands…" opens the palette; it must not list itself).
-          .filter((command) => command.palette.visible)
-          .map((command): Command => ({
+        initialQuery={cmdMenuQuery}
+        onClose={() => { setCmdMenuOpen(false); setCmdMenuQuery('') }}
+        // Every command, each with its task group (onboarding 01). The few it cannot run are
+        // the written exclusion list in command-registry.ts (PALETTE_EXCLUSIONS).
+        commands={listedPaletteCommands().map((command): Command => ({
           id: command.id,
           title: command.label,
           hint: liveCommandShortcutLabel(command),
+          group: command.taskGroup ?? undefined,
           keywords: command.palette.keywords,
-          run: () => runRegisteredCommand(command.handlerId)
+          run: () => runListedCommand(command)
         }))}
       />
+      {actionsHere && (
+        <ActionsHerePanel
+          x={actionsHere.x}
+          y={actionsHere.y}
+          rows={actionRowsAt(actionsHere.place)}
+          chordOf={liveShortcutLabel}
+          paletteChord={paletteChordText(liveShortcutLabel('app.command-palette'))}
+          onRun={runActionRow}
+          onAllCommands={openPaletteWith}
+          onClose={closeActionsHere}
+        />
+      )}
       {slideMenu && (
         <SlideContextMenu
           x={slideMenu.x}

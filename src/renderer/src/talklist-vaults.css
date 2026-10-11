@@ -109,3 +109,11 @@
 .tl-vuact { padding: 4px 10px; border: 1px solid #c9b16a; border-radius: 5px; background: var(--paper); font-size: 11px; font-weight: 700; color: var(--ink); cursor: pointer; }
 .tl-vuact:hover { border-color: var(--oxford); color: var(--oxford); }
 .tl-vunlisted { display: block; margin-top: 6px; font-size: 10.5px; color: var(--faint); }
+
+/* The example vault (onboarding ticket 06, locked drawing states 02 and 03): the Example pill */
+/* The example line wraps beside the pill rather than being cut to "Removable · l…" (onboarding 0.38.1 visuals). */
+.tl-vhead[data-vault-example] .tl-vsub { white-space: normal; }
+.tl-vexample {
+  flex: none; font: 600 9.5px var(--font-ui); white-space: nowrap;
+  background: #d9efe9; color: #0f5f58; border: 1px solid #9fd2c8; border-radius: 8px; padding: 2px 6px;
+}

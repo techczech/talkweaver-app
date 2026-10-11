@@ -77,6 +77,13 @@ const shot = (name) => page.screenshot({ path: join(SHOTS, `07-${name}.png`) })
 const focusWindow = async () => { await page.evaluate(() => window.dispatchEvent(new Event('focus'))); await page.waitForTimeout(700) }
 const showBtn = () => page.locator('[data-show-filter] .tl-show')
 const vaultList = () => page.evaluate(() => window.tw.vault.list())
+// Onboarding ticket 06: while the example vault is not in the list, Add vault… first offers a folder
+// or the example vault; "Choose a folder…" runs the picker as Add vault… did before.
+const toFolderPicker = async () => {
+  const sheet = page.locator('[data-vault-sheet="add"]')
+  await sheet.waitFor({ state: 'visible', timeout: 8000 })
+  await sheet.locator('[data-choose-folder]').click()
+}
 
 try {
   await ensureTalksMode(page)
@@ -295,6 +302,7 @@ try {
   const addItems = await page.locator('.command-menu-item', { hasText: 'Add vault…' }).count()
   const changeItems = await page.locator('.command-menu-item', { hasText: 'Change vault folder' }).count()
   await page.locator('.command-menu-item', { hasText: 'Add vault…' }).first().click()
+  await toFolderPicker()
   await page.locator('[data-vault-sheet="refused"]').waitFor({ state: 'visible', timeout: 8000 }).catch(() => {})
   record('the palette lists Add vault… (no Change vault folder…)', addItems >= 1 && changeItems === 0)
   record('the palette Add vault… opens the Add vault flow (an open vault is refused, by name)', (await page.locator('[data-vault-sheet="refused"]').getAttribute('data-refusal').catch(() => null)) === 'duplicate')
@@ -318,6 +326,7 @@ try {
   const pick = (p) => app.evaluate(({ dialog }, folder) => { const original = dialog.showOpenDialog; dialog.showOpenDialog = async () => { dialog.showOpenDialog = original; return { canceled: false, filePaths: [folder] } } }, p)
   await pick(personal) // a folder that is already a vault
   await btn.click()
+  await toFolderPicker()
   await page.locator('[data-vault-sheet="refused"]').waitFor({ state: 'visible', timeout: 8000 })
   record('the button opens the Add vault flow (an open vault is refused, by name)', (await page.locator('[data-vault-sheet="refused"]').getAttribute('data-refusal')) === 'duplicate' && (await page.locator('[data-vault-sheet="refused"]').innerText()).includes('Personal'))
   await page.keyboard.press('Escape')

@@ -19,9 +19,11 @@ import {
   KEYMAP_CHANGED_EVENT
 } from '../keymap/store'
 import { EDITOR_COMMANDS } from '../keymap/registry'
+import { placeOfLine, type Place } from '../../../shared/place.ts'
 import { imageParagraphNoFold, outlineFoldService } from '../extensions/outlineFold'
 import { frontmatterTableExtension } from '../extensions/frontmatterTable'
 import { inlineMarkExtension } from '../extensions/inlineMark'
+import { keyCapExtension } from '../extensions/keyCap'
 import {
   canRunInlineFormatting,
   objectBlocksExtension,
@@ -30,7 +32,8 @@ import {
 import { EditorView, keymap, highlightActiveLine } from '@codemirror/view'
 import { EditorState, EditorSelection, Prec, Compartment } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap, undo, redo } from '@codemirror/commands'
-import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/search'
+import { search, searchKeymap, highlightSelectionMatches, openSearchPanel } from '@codemirror/search'
+import { commandRan } from '../commands/command-ran'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { languages } from '@codemirror/language-data'
 import {
@@ -151,6 +154,8 @@ interface Props {
   /** Compiled slide rows: each carries the compiler's image placements for the editor's image labels. */
   placementRows?: readonly PlacementRow[] | null
   onCursorLine?: (line: number) => void
+  /** Onboarding ticket 02: the place of the caret's line (shared/place.ts), reported when it changes. */
+  onPlace?: (place: Place) => void
   onImageWidgetClick?: (id: string) => void
   /** Opens the app-wide generated shortcut sheet from a focused object editor. */
   onOpenHelp?: () => void
@@ -300,6 +305,7 @@ export default function Editor({
   slideLines,
   placementRows,
   onCursorLine,
+  onPlace,
   onImageWidgetClick,
   onOpenHelp,
   registerInsert,
@@ -345,6 +351,9 @@ export default function Editor({
   const loadedPathRef = useRef<string | null>(null)
   const onCursorLineRef = useRef(onCursorLine)
   useEffect(() => { onCursorLineRef.current = onCursorLine }, [onCursorLine])
+  const onPlaceRef = useRef(onPlace)
+  useEffect(() => { onPlaceRef.current = onPlace }, [onPlace])
+  const lastPlaceRef = useRef<Place | null>(null)
   const onDirtyRef = useRef(onDirty)
   useEffect(() => { onDirtyRef.current = onDirty }, [onDirty])
   const placementRowsRef = useRef(placementRows)
@@ -691,6 +700,8 @@ export default function Editor({
           frontmatterTableExtension(),
           // ==mark== stays visible while authoring without changing the outline's Markdown source.
           inlineMarkExtension,
+          // <kbd>⌘K</kbd> shows as a key cap off the caret's line, as its source on it (ticket 05).
+          keyCapExtension,
           // RIVER object blocks: slide-white rendered widgets in the warm-paper outline flow.
           objectBlocksExtension({
             onInsertMenu: (coords) => onInsertObjectMenuRef.current?.(coords),
@@ -706,6 +717,8 @@ export default function Editor({
           // Plain-text find (⌘F opens the search panel) + match highlighting.
           search({ top: true }),
           highlightSelectionMatches(),
+          // ⌘F opens CodeMirror's find panel (Find in outline, app.find); the Guide counts it when it opened.
+          keymap.of([{ key: 'Mod-f', run: (view) => { const opened = openSearchPanel(view); if (opened) commandRan('app.find'); return opened }, scope: 'editor search-panel' }]),
           keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap, ...searchKeymap]),
           outlinerKeymapExtension(),
           twTheme,
@@ -778,6 +791,18 @@ export default function Editor({
               const head = update.state.selection.main.head
               const lineNumber = update.state.doc.lineAt(head).number
               onCursorLineRef.current(lineNumber)
+            }
+
+            // The caret's place (onboarding ticket 02), read from the caret's line only: no parse.
+            // Reported only when it changes, so typing within a line costs one regex pass.
+            if ((update.selectionSet || update.docChanged) && onPlaceRef.current) {
+              const doc = update.state.doc
+              const line = doc.lineAt(update.state.selection.main.head)
+              const place = placeOfLine(line.text, line.number, (n) => (n >= 1 && n <= doc.lines ? doc.line(n).text : ''))
+              if (place !== lastPlaceRef.current) {
+                lastPlaceRef.current = place
+                onPlaceRef.current(place)
+              }
             }
           }),
           imageWidgetExtension({
@@ -1320,5 +1345,5 @@ export default function Editor({
     if (focusLine.takeFocus) view.focus()
   }, [focusLine])
 
-  return <div ref={containerRef} className="editor-container" />
+  return <div ref={containerRef} className="editor-container" data-place-region="editor" />
 }

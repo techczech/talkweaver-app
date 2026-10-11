@@ -4,6 +4,9 @@ import type { VariantThumbnail } from '../shared/variant-thumbnail-result'
 import type { EditorDocumentReply, EditorDocumentRequest } from '../shared/editor-document'
 import type { RunQuestion, RunReaction } from '../shared/run-feedback'
 import type { RunBoard } from '../shared/run-board'
+import type { ExampleVaultResult } from '../shared/example-vault'
+import type { ExampleRemovalPreview, ExampleRemovalState, ExampleRemoveResult, ExampleRestoreResult } from '../shared/example-vault-removal'
+import type { ConnectionRow } from '../shared/guide-connections'
 import type { RunPrework } from '../shared/run-prework'
 import type { PickChange } from '../shared/run-prework-results'
 import type { PreworkFeed } from '../../compiler/scripts/lib/prework.mjs'
@@ -14,6 +17,11 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { PaletteCommandHandlerId } from '../shared/command-registry'
 import type { LayoutDoctorFinding } from '../shared/layout-doctor'
 import type { SharedTalkInspection, SharedTalkState } from '../shared/shared-talk'
+import type { CloudflareStatus } from '../shared/cloudflare-status'
+import type { RecordingStorageRow } from '../shared/recording-storage-status'
+import type { GoingLiveRow, LiveSetupPrompt } from '../shared/live-service-status'
+import type { TranscriptionRow } from '../shared/transcription-status'
+import type { PublishNotReady } from '../shared/publish-status'
 import type { FeedbackList, FeedbackStatus, FeedbackSummary } from '../shared/feedback'
 import type { AcceptRecord } from '../shared/feedback-accept'
 import type { TalkFolderCount, TalkSearchOptions, TalkSearchResult } from '../shared/talk-search'
@@ -35,6 +43,34 @@ import type {
 
 export type { TalkTextModel, DraftPart, NotesPart, CleanMode, CleanPrepareOptions, TalkTextExportOptions }
 export type { TalkFolderCount, TalkSearchOptions, TalkSearchResult, TalkSearchHit, TalkMatchLine } from '../shared/talk-search'
+export type { CloudflareStatus } from '../shared/cloudflare-status'
+export type { RecordingStorageRow } from '../shared/recording-storage-status'
+export type { GoingLiveRow, LiveSetupPrompt } from '../shared/live-service-status'
+export type { TranscriptionRow } from '../shared/transcription-status'
+export type { PublishNotReady } from '../shared/publish-status'
+
+/**
+ * What a publish that could not start, or that went up without live features, adds to its reply
+ * (spec docs/plans/cloudflare-setup-in-app, D7 and the "not ready" table). Fixed sentences only.
+ */
+export type PublishReplyExtras = {
+  /** Publishing could not start: what is missing and the one button that fixes it (the sheet). */
+  notReady?: PublishNotReady
+  /** "Published. Going live is not set up: Settings → Cloudflare", with the sorted reason when a set-up failed. */
+  liveNotice?: string
+  /** What lies behind `liveNotice`; shown on request, never as the message. */
+  liveDetails?: string
+  /** How many handouts an earlier version published with an address on this computer: they need publishing again. */
+  earlierNotice?: string
+  /** Their names, one to a line; shown on request. */
+  earlierDetails?: string
+}
+// What every Settings → Cloudflare call answers. `error` is always a fixed sentence from the main
+// process. The state itself (CloudflareStatus) is a shared type, as SharedTalkState and
+// TalkSearchResult are; the reply that carries it over IPC is typed here.
+export type CloudflareReply = { ok: true; status: CloudflareStatus } | { ok: false; error: string; status: CloudflareStatus }
+/** What "Set up going live" (and Try again, and "Set up going live now") answers: the row, and on failure a fixed sentence with its Details (numbers only). */
+export type LiveSetUpReply = { ok: true; row: GoingLiveRow } | { ok: false; error: string; details: string | null; row: GoingLiveRow }
 export type {
   ImportPackRequest,
   ImportProgress,
@@ -94,6 +130,8 @@ export type VaultView = {
   duplicateOf: { id: string; name: string } | null
   /** Its folder is missing or unreadable right now: greyed section, no talks, one action (ticket 07). */
   unavailable: VaultUnavailableInfo | null
+  /** The example vault (onboarding ticket 06): Example pill, "Removable · local folder", teal badge. */
+  example?: boolean
 }
 export type VaultUnavailableInfo = {
   reason: 'not-signed-in' | 'folder-moved' | 'no-permission' | 'folder-not-found' | 'not-responding'
@@ -528,6 +566,19 @@ const api = {
     // Test-only (TW_E2E=1); the app changes the root with chooseRoot.
     setRoot: (path: string): Promise<{ success: boolean; error?: string }> => ipcRenderer.invoke('vault:set-root', path),
     chooseRoot: (): Promise<string | null> => ipcRenderer.invoke('vault:choose-root'),
+    // Open example vault (onboarding ticket 06): no argument; main writes to its fixed path.
+    openExample: (): Promise<ExampleVaultResult> => ipcRenderer.invoke('vault:open-example'),
+    // Remove the example vault and bring it back (onboarding ticket 12). No path crosses: the preview's
+    // token is all Remove gives back; main checks the window and the folder itself.
+    exampleState: (): Promise<ExampleRemovalState> => ipcRenderer.invoke('example:state'),
+    exampleRemovalPreview: (): Promise<ExampleRemovalPreview> => ipcRenderer.invoke('example:removal-preview'),
+    removeExample: (token: string): Promise<ExampleRemoveResult> => ipcRenderer.invoke('example:remove', token),
+    restoreExample: (): Promise<ExampleRestoreResult> => ipcRenderer.invoke('example:restore'),
+    onExampleChanged: (cb: (event: { removed: boolean; moved: boolean }) => void): (() => void) => {
+      const listener = (_e: unknown, event: { removed: boolean; moved: boolean }): void => cb(event)
+      ipcRenderer.on('example:changed', listener)
+      return () => ipcRenderer.removeListener('example:changed', listener)
+    },
     // Every vault, open or closed, with its name, badge colour and initial, and service label.
     list: (): Promise<VaultView[]> => ipcRenderer.invoke('vault:list'),
     // ⋯ › Reveal in Finder: main resolves the folder from the vault id (an unknown id is refused).
@@ -641,10 +692,17 @@ const api = {
     getTimer: (): Promise<TimerSettings> => ipcRenderer.invoke('settings:get-timer'),
     setTimer: (patch: { warnAtMinutes?: number; urgentAtMinutes?: number }): Promise<TimerSettings> =>
       ipcRenderer.invoke('settings:set-timer', patch),
-    // Local Parakeet bridge paths. These are non-secret and default to the speech-to-text skill.
+    // Local transcription paths (optional; spec D16). Non-secret; unset by default. An empty ffmpeg
+    // uses the one that ships with the app.
     getTranscription: (): Promise<TranscriptionSettings> => ipcRenderer.invoke('settings:get-transcription'),
     setTranscription: (cfg: { python: string; script: string; ffmpeg: string }): Promise<TranscriptionSettings> =>
       ipcRenderer.invoke('settings:set-transcription', cfg),
+    // The Transcription row: whether it can run, or the one missing thing (never a path).
+    transcriptionStatus: (): Promise<TranscriptionRow> => ipcRenderer.invoke('transcription:status'),
+    // "Copy instructions for your agent": the prompt, with this computer's set-up and user-data folders.
+    transcriptionAgentPrompt: (): Promise<string> => ipcRenderer.invoke('transcription:agent-prompt'),
+    // Opens the set-up folder that ships with the app (SETUP.md, the script, requirements.txt).
+    openTranscriptionSetupFolder: (): Promise<boolean> => ipcRenderer.invoke('transcription:open-setup-folder'),
     // Presenter identity and deck defaults (Ticket 9b): one map of metadata-registry key → the
     // value pre-filled into new talks. A blank value clears that default; nothing is ever
     // overwritten in an existing outline without an explicit click.
@@ -668,6 +726,56 @@ const api = {
       const listener = (_e: unknown, state: { visible: boolean; items: unknown }): void => cb(state)
       ipcRenderer.on('action-bar:changed', listener)
       return () => ipcRenderer.removeListener('action-bar:changed', listener)
+    },
+    // The status-bar place chip (onboarding ticket 02): one app-wide flag, broadcast to every window.
+    getPlaceChip: (): Promise<{ visible: boolean }> =>
+      ipcRenderer.invoke('settings:get-place-chip'),
+    setPlaceChipVisible: (visible: boolean): Promise<boolean> =>
+      ipcRenderer.invoke('settings:set-place-chip-visible', visible),
+    onPlaceChipChanged: (cb: (state: { visible: boolean }) => void): (() => void) => {
+      const listener = (_e: unknown, state: { visible: boolean }): void => cb(state)
+      ipcRenderer.on('place-chip:changed', listener)
+      return () => ipcRenderer.removeListener('place-chip:changed', listener)
+    },
+    // The Guide button in the sidebar (onboarding ticket 07): one app-wide flag, broadcast to every window.
+    getGuideButton: (): Promise<{ visible: boolean }> =>
+      ipcRenderer.invoke('settings:get-guide-button'),
+    setGuideButtonVisible: (visible: boolean): Promise<boolean> =>
+      ipcRenderer.invoke('settings:set-guide-button-visible', visible),
+    onGuideButtonChanged: (cb: (state: { visible: boolean }) => void): (() => void) => {
+      const listener = (_e: unknown, state: { visible: boolean }): void => cb(state)
+      ipcRenderer.on('guide-button:changed', listener)
+      return () => ipcRenderer.removeListener('guide-button:changed', listener)
+    }
+  },
+  // The Guide's progress (onboarding ticket 07): app config, outside every vault.
+  guide: {
+    getProgress: (): Promise<{ exampleTalkOpened: boolean }> => ipcRenderer.invoke('guide:get-progress'),
+    noteExampleTalkOpened: (): Promise<{ exampleTalkOpened: boolean }> => ipcRenderer.invoke('guide:note-example-talk-opened'),
+    onProgressChanged: (cb: (progress: { exampleTalkOpened: boolean }) => void): (() => void) => {
+      const listener = (_e: unknown, progress: { exampleTalkOpened: boolean }): void => cb(progress)
+      ipcRenderer.on('guide:progress-changed', listener)
+      return () => ipcRenderer.removeListener('guide:progress-changed', listener)
+    },
+    // Chapter progress (ticket 08). `commandRan` is the one report every route makes (the renderer's
+    // commands/command-ran.ts calls it); `outlinePath` is the talk the window is in, for decision 12.
+    getLearn: (): Promise<unknown> => ipcRenderer.invoke('guide:get-learn'),
+    // The presenter's "All chapters" link: main brings this window forward and says so; no payload.
+    onShowChapterList: (cb: () => void): (() => void) => {
+      const listener = (): void => cb()
+      ipcRenderer.on('guide:show-chapter-list', listener)
+      return () => ipcRenderer.removeListener('guide:show-chapter-list', listener)
+    },
+    commandRan: (id: string, outlinePath?: string): Promise<{ id: string | null; ticked: boolean }> => ipcRenderer.invoke('guide:command-ran', id, outlinePath),
+    chapterOpened: (task: string): Promise<boolean> => ipcRenderer.invoke('guide:chapter-opened', task),
+    topicRead: (topic: string): Promise<boolean> => ipcRenderer.invoke('guide:topic-read', topic),
+    // What it connects to (ticket 11): read-only probes of this Mac, run on ask; `openLink` names a link main holds.
+    connections: (): Promise<ConnectionRow[]> => ipcRenderer.invoke('guide:connections'),
+    openLink: (id: 'slidewell-download'): Promise<boolean> => ipcRenderer.invoke('guide:open-link', id),
+    onLearnChanged: (cb: (record: unknown) => void): (() => void) => {
+      const listener = (_e: unknown, record: unknown): void => cb(record)
+      ipcRenderer.on('guide:learn-changed', listener)
+      return () => ipcRenderer.removeListener('guide:learn-changed', listener)
     }
   },
   backup: {
@@ -819,7 +927,7 @@ const api = {
       content: string
     ): Promise<{ success: boolean; path?: string; error?: string }> =>
       ipcRenderer.invoke('talk:export-handout', outlinePath, content),
-    // Publish the handout to the user's Cloudflare Pages site (Settings → Publishing). Returns the
+    // Publish the handout to the user's Cloudflare Pages site (Settings → Cloudflare). Returns the
     // live URL; `updatedOutline` reports the handout_url stamp main wrote through the one writer (the
     // renderer does not adopt it: it stamps its own buffer as it stands, WorkspaceLayout).
     publishHandout: (
@@ -830,9 +938,11 @@ const api = {
       url?: string
       display?: string
       error?: string
+      /** What lies behind `error` (e.g. which bundled file is missing); shown on request, never as the message. */
+      details?: string
       updatedOutline?: string
       warning?: string
-    }> => ipcRenderer.invoke('talk:publish-handout', outlinePath, content),
+    } & PublishReplyExtras> => ipcRenderer.invoke('talk:publish-handout', outlinePath, content),
     // `lane` separates independent requesters inside ONE window: the editor strip and the Slide
     // Browser's background per-talk render must not supersede each other (2026-09-15).
     thumbnails: (outlinePath: string, content: string, opts?: { lane?: string }): Promise<Record<string, string> | null> =>
@@ -913,8 +1023,8 @@ const api = {
       ipcRenderer.invoke('slide:render-preview', outlinePath, outlineContent)
   },
   publish: {
-    // Cloudflare Pages publishing config (Settings → Publishing). getConfig NEVER returns the token —
-    // only hasToken. The token is stored OS-keychain-encrypted in the main process via safeStorage.
+    // Cloudflare Pages publishing config (Settings → Cloudflare). getConfig NEVER returns the token —
+    // only hasToken. The token is saved and removed through `cloudflare` below.
     getConfig: (): Promise<{
       accountId: string
       project: string
@@ -936,9 +1046,65 @@ const api = {
       // Invalid shareDomain (not a bare hostname): refused whole, with a plain-language error, and
       // never saved — see isValidShareDomain in src/shared/shared-talk.ts.
     }): Promise<{ success: boolean; error?: string }> => ipcRenderer.invoke('publish:set-config', cfg),
-    setToken: (token: string): Promise<{ success: boolean; error?: string }> =>
-      ipcRenderer.invoke('publish:set-token', token),
-    clearToken: (): Promise<{ success: boolean }> => ipcRenderer.invoke('publish:clear-token')
+  },
+  // Settings → Cloudflare (spec docs/plans/cloudflare-setup-in-app): the one token, the account it
+  // reaches and the Publishing handouts row. The token only ever travels INTO the main process
+  // (saveToken); every reply and every push is a CloudflareStatus, which holds states, an account's
+  // name and id and fixed sentences, never the token. A call resolves when its work is done, but
+  // nothing in the window waits on it: `onStatus` delivers each change as it happens.
+  cloudflare: {
+    status: (): Promise<CloudflareStatus> => ipcRenderer.invoke('cloudflare:status'),
+    /** `opened`: Settings → Cloudflare was opened (the main process checks at most once a minute). */
+    check: (reason: 'asked' | 'opened' = 'asked'): Promise<CloudflareReply> => ipcRenderer.invoke('cloudflare:check', reason),
+    /** Save or replace the token; the check follows by itself. */
+    saveToken: (token: string): Promise<CloudflareReply> => ipcRenderer.invoke('cloudflare:save-token', token),
+    chooseAccount: (accountId: string): Promise<CloudflareReply> => ipcRenderer.invoke('cloudflare:choose-account', accountId),
+    /** Make the Pages site the Publishing handouts row names. */
+    createSite: (): Promise<CloudflareReply> => ipcRenderer.invoke('cloudflare:create-site'),
+    /** Remove the token. Nothing at Cloudflare is touched. */
+    disconnect: (): Promise<CloudflareReply> => ipcRenderer.invoke('cloudflare:disconnect'),
+    /**
+     * The Share-link domain row's button, "Use share.<handout domain>": the main process saves the
+     * address the row suggests (it takes none from the window) and, with the live service set up and
+     * the permission there, attaches it now.
+     */
+    useShareDomain: (): Promise<CloudflareReply> => ipcRenderer.invoke('cloudflare:use-share-domain'),
+    onStatus: (listener: (status: CloudflareStatus) => void): (() => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, status: CloudflareStatus): void => listener(status)
+      ipcRenderer.on('cloudflare:status', handler)
+      return () => { ipcRenderer.removeListener('cloudflare:status', handler) }
+    },
+    /**
+     * "Open Settings" from a publish sheet or notice: brings the editor window forward with
+     * Settings → Cloudflare showing. Works from any window (History has no Settings of its own).
+     * False when there is no editor window to show it in.
+     */
+    openSettings: (): Promise<boolean> => ipcRenderer.invoke('cloudflare:open-settings'),
+    /** The editor window: asked to show Settings → Cloudflare. */
+    onShowSettings: (listener: () => void): (() => void) => {
+      const handler = (): void => listener()
+      ipcRenderer.on('cloudflare:show-settings', handler)
+      return () => { ipcRenderer.removeListener('cloudflare:show-settings', handler) }
+    }
+  },
+  // Going live and sharing (spec D9, ticket 05): its Settings row, the set-up, and what the person is
+  // told while the live service is set up or updated. A row holds states, the service's address and
+  // build, and fixed sentences; never a key.
+  liveService: {
+    status: (): Promise<GoingLiveRow> => ipcRenderer.invoke('live-service:status'),
+    /** "Set up going live", Try again or "Set up going live now". Resolves when the set-up has finished. */
+    setUp: (): Promise<LiveSetUpReply> => ipcRenderer.invoke('live-service:set-up'),
+    onStatus: (listener: (row: GoingLiveRow) => void): (() => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, row: GoingLiveRow): void => listener(row)
+      ipcRenderer.on('live-service:status', handler)
+      return () => { ipcRenderer.removeListener('live-service:status', handler) }
+    },
+    /** "Updating the live service…" (before a use), "Setting up going live…". */
+    onNotice: (listener: (message: string) => void): (() => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, message: string): void => listener(message)
+      ipcRenderer.on('live-service:notice', handler)
+      return () => { ipcRenderer.removeListener('live-service:notice', handler) }
+    },
   },
   asset: {
     // outlinePath: the talk being edited; the image goes to that talk's vault (default: the current vault).
@@ -1100,9 +1266,9 @@ const api = {
       success: boolean; path?: string; slideIds?: string[]; missing?: string[]; error?: string
     }> => ipcRenderer.invoke('run:build-handout', { talkSlug, runId }),
     publishRunHandout: (talkSlug: string, runId: string): Promise<{
-      success: boolean; url?: string; path?: string; slideIds?: string[]; missing?: string[]; error?: string; warning?: string
-    }> => ipcRenderer.invoke('run:publish-handout', { talkSlug, runId }),
-    unpublishRunHandout: (talkSlug: string, runId: string): Promise<{ success: boolean; error?: string }> =>
+      success: boolean; url?: string; path?: string; slideIds?: string[]; missing?: string[]; error?: string; details?: string; warning?: string
+    } & PublishReplyExtras> => ipcRenderer.invoke('run:publish-handout', { talkSlug, runId }),
+    unpublishRunHandout: (talkSlug: string, runId: string): Promise<{ success: boolean; error?: string; details?: string } & Pick<PublishReplyExtras, 'notReady'>> =>
       ipcRenderer.invoke('run:unpublish-handout', { talkSlug, runId }),
     // Live-presenting ticket 07 (L6): where each recorded instant slide's anchor sits in the talk NOW
     // (null = that slide is no longer in the talk), and "Add to talk" for one of them.
@@ -1391,12 +1557,15 @@ const api = {
     inspect: (outlinePath: string): Promise<SharedTalkInspection> => ipcRenderer.invoke('shared-talk:inspect', outlinePath),
     list: (): Promise<SharedTalkState[]> => ipcRenderer.invoke('shared-talk:list'),
     // Creates the share (or returns the talk's existing one) and pushes revision 1.
-    share: (outlinePath: string, title?: string): Promise<{ success: boolean; share?: SharedTalkState; error?: string }> =>
+    /** `setup`: no live service to share with, and what the sheet offers for it (Open Settings, or Set up going live now).
+     *  `stopped`: a Stop overtook this Share (ticket 12) — no link; `shareId` is the closed share, or null. */
+    share: (outlinePath: string, title?: string): Promise<{ success: boolean; share?: SharedTalkState; stopped?: true; shareId?: string | null; error?: string; setup?: LiveSetupPrompt }> =>
       ipcRenderer.invoke('shared-talk:share', outlinePath, title),
-    setOptions: (outlinePath: string, options: { liveUpdates?: boolean; proposals?: boolean }): Promise<{ success: boolean; share?: SharedTalkState; error?: string }> =>
+    // `stopped`: the share was stopped while the change ran (ticket 12) — no link, as for share().
+    setOptions: (outlinePath: string, options: { liveUpdates?: boolean; proposals?: boolean }): Promise<{ success: boolean; share?: SharedTalkState; stopped?: true; shareId?: string | null; error?: string }> =>
       ipcRenderer.invoke('shared-talk:set-options', outlinePath, options),
     // "Update shared copy": push the talk as it is now, whatever switch 1 says.
-    update: (outlinePath: string): Promise<{ success: boolean; share?: SharedTalkState; error?: string }> =>
+    update: (outlinePath: string): Promise<{ success: boolean; share?: SharedTalkState; stopped?: true; shareId?: string | null; error?: string }> =>
       ipcRenderer.invoke('shared-talk:update', outlinePath),
     // serverClosed false: the Worker refused the owner token; the share is stopped here and `message`
     // says so (the link retires on its own).
@@ -1431,22 +1600,31 @@ const api = {
     getStorage: (): Promise<{
       endpoint: string
       bucket: string
-      credsSource: 'bws' | 'settings'
-      bwsSecretId: string
       discardSeconds: number
       hasKeys: boolean
     }> => ipcRenderer.invoke('recording:get-storage'),
     setStorage: (cfg: {
       endpoint: string
       bucket: string
-      credsSource: 'bws' | 'settings'
-      bwsSecretId: string
       discardSeconds: number
     }): Promise<{ success: boolean }> => ipcRenderer.invoke('recording:set-storage', cfg),
-    // Store the R2 access keys (OS-keychain-encrypted in main; never read back to the renderer).
+    // Store the R2 access keys (in the secrets store in main; never read back to the renderer).
+    // `error` is a fixed sentence.
     setKeys: (keys: { accessKeyId: string; secretAccessKey: string }): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke('recording:set-keys', keys),
     clearKeys: (): Promise<{ success: boolean }> => ipcRenderer.invoke('recording:clear-keys'),
+    // The Recording storage row of Settings → Cloudflare: its state, the bucket's name and fixed
+    // sentences. Never a key. `checkStorage` lists the bucket once (a read; it writes nothing).
+    storageStatus: (): Promise<RecordingStorageRow> => ipcRenderer.invoke('recording:storage-status'),
+    checkStorage: (): Promise<RecordingStorageRow> => ipcRenderer.invoke('recording:check-storage'),
+    onStorageStatus: (listener: (row: RecordingStorageRow) => void): (() => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, row: RecordingStorageRow): void => listener(row)
+      ipcRenderer.on('recording:storage-status', handler)
+      return () => { ipcRenderer.removeListener('recording:storage-status', handler) }
+    },
+    // "Recording storage: enter your access keys" for an install that took its keys from Bitwarden:
+    // answered once, then null for good.
+    takeSetupNotice: (): Promise<string | null> => ipcRenderer.invoke('recording:take-setup-notice'),
     // Sessions recorded for a talk, from the Vault Presentation Ledger (newest first) — the
     // minimum Studio/History (Plans 2–3) read. Each is the session.json data model (ADR-0035).
     listSessions: (talkSlug: string): Promise<RecordingSession[]> =>
@@ -1454,7 +1632,9 @@ const api = {
     // Every Session across all talks (Studio's rail), newest first.
     listAllSessions: (): Promise<RecordingSession[]> => ipcRenderer.invoke('recording:list-all-sessions'),
     // Upload ONE session to R2 — direct and ONLY on request (never automatic). On failure the
-    // recording stays local; error is 'r2-not-configured' / 'r2-no-credentials' / a network error.
+    // recording stays local, untouched. `error` is a fixed word, never an error's text: an
+    // UploadFailure ('not-set-up' / 'keys-rejected' / 'bucket-not-found' / 'offline' / 'failed' /
+    // 'audio-missing') or a local reason; uploadFailureMessage (shared/recording-storage-status.ts) turns it into the sentence.
     upload: (talkSlug: string, sessionId: string): Promise<{ ok: boolean; uploaded?: boolean; error?: string }> =>
       ipcRenderer.invoke('recording:upload', { talkSlug, sessionId }),
     // Edit (or clear) a session's context label.

@@ -6,6 +6,7 @@ import './styles.css'
 import './lighttable.css'
 import './talklist-vaults.css'
 import './vault-sheet.css'
+import './guide.css'
 import './conflict-compare.css'
 import { installMock } from './tw-mock'
 

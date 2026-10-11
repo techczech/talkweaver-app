@@ -126,16 +126,47 @@ const defaultIo = { writeFile: (path, data) => writeFileSync(path, data), rename
  */
 export function publishLazyHandoutPages(talkOutDir, pages, options = {}) {
   const slim = options.slim || ((html) => html)
-  const io = options.io || defaultIo
   const warnings = []
+  const built = pages.map((page) => {
+    const plan = planLazyPage(page, options, warnings)
+    return { fileName: page.fileName, html: plan.slim ? slim(plan.html) : plan.html, files: plan.files }
+  })
+  return writeLazyHandoutPages(talkOutDir, pages, built, warnings, options)
+}
+
+/**
+ * The same, for a `slim` that answers later (a promise): the published handout is slimmed with a
+ * picture library that works asynchronously. Every page is slimmed before anything is written, so
+ * the order and the guarantees of publishLazyHandoutPages hold unchanged.
+ * @param {string} talkOutDir
+ * @param {Array<{ fileName: string, html: string, lazy?: boolean }>} pages
+ * @param {{ slim?: (html: string) => string | Promise<string>, minBytes?: number, maxAssetBytes?: number, io?: { writeFile: Function, rename: Function } }} [options]
+ * @returns {Promise<{ pages: Array<{ fileName: string, bytes: number, assets: number }>, warnings: string[] }>}
+ */
+export async function publishLazyHandoutPagesAsync(talkOutDir, pages, options = {}) {
+  const slim = options.slim || ((html) => html)
+  const warnings = []
+  const built = []
+  for (const page of pages) {
+    const plan = planLazyPage(page, options, warnings)
+    built.push({ fileName: page.fileName, html: plan.slim ? await slim(plan.html) : plan.html, files: plan.files })
+  }
+  return writeLazyHandoutPages(talkOutDir, pages, built, warnings, options)
+}
+
+/** Step 1 for one page: its assets moved out, and whether what is left must be slimmed. */
+function planLazyPage(page, options, warnings) {
+  if (page.lazy === false) return { html: page.html, files: [], slim: true }
+  const { html, files, oversize } = externaliseSlideAssets(page.html, options)
+  for (const o of oversize) warnings.push(`${page.fileName}: a ${o.type} of ${(o.bytes / 1048576).toFixed(1)} MB is over the per-file limit; it stays in the page and may be replaced by a placeholder.`)
+  return { html, files, slim: Buffer.byteLength(html, 'utf8') > MAX_ASSET_BYTES }
+}
+
+/** Steps 2 to 5: the built pages and their assets, written. */
+function writeLazyHandoutPages(talkOutDir, pages, built, warnings, options) {
+  const io = options.io || defaultIo
   // Unique per call (pid + nonce): two overlapping publishes of one talk never share a temp file.
   const tempSuffix = `.tmp-${process.pid}-${randomBytes(6).toString('hex')}`
-  const built = pages.map((page) => {
-    if (page.lazy === false) return { fileName: page.fileName, html: slim(page.html), files: [] }
-    const { html, files, oversize } = externaliseSlideAssets(page.html, options)
-    for (const o of oversize) warnings.push(`${page.fileName}: a ${o.type} of ${(o.bytes / 1048576).toFixed(1)} MB is over the per-file limit; it stays in the page and may be replaced by a placeholder.`)
-    return { fileName: page.fileName, html: Buffer.byteLength(html, 'utf8') > MAX_ASSET_BYTES ? slim(html) : html, files }
-  })
   const previous = new Set()
   for (const page of pages) {
     const path = join(talkOutDir, page.fileName)

@@ -1,6 +1,9 @@
 import { strict as assert } from 'node:assert'
 import { readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import ts from 'typescript'
+import { grantedPublishing } from './lib/publishing-fakes.mjs'
 
 const sourceText = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
 const sourceFile = ts.createSourceFile(
@@ -80,7 +83,9 @@ const dependencies = {
   talkBySlug: () => ({ slug: 'talk', outlinePath: '/vault/talk-outline.md' }),
   readFileSync: () => brokenOutline,
   // The Run handlers build from the flushed text (talk-writer.ts flushTalkForPublish), not the file.
-  flushTalkForPublish: async () => ({ ok: true, via: 'disk', changed: false, text: brokenOutline })
+  flushTalkForPublish: async () => ({ ok: true, via: 'disk', changed: false, text: brokenOutline }),
+  // The Run's publish takes its turn in the site's queue first (the real sequence; leave always given) and refuses at its first step.
+  handoutPublishing: () => grantedPublishing({ siteDir: join(tmpdir(), 'tw-outbound-gates-site-never-written') })
 }
 
 const cases = [

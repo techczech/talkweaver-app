@@ -12,7 +12,13 @@ const invoke = mock((channel: string) => channel === 'live:snapshot' ? snapshot 
 mock.module('electron', () => ({
   contextBridge: { exposeInMainWorld: (_name: string, api: unknown) => { exposed = api } },
   clipboard: { writeText: (value: string) => { copied = value } },
-  ipcRenderer: { invoke, send: (channel: string, value: unknown) => { if (channel === 'live:pointer') pointerSends.push(value); if (channel === 'live:ink') inkSends.push(value) }, on: (channel: string, listener: (...args: any[]) => void) => { listeners.set(channel, listener) } },
+  ipcRenderer: {
+    invoke,
+    send: (channel: string, value: unknown) => { if (channel === 'live:pointer') pointerSends.push(value); if (channel === 'live:ink') inkSends.push(value) },
+    on: (channel: string, listener: (...args: any[]) => void) => { listeners.set(channel, listener) },
+    // Go live listens for "Updating the live service…" while it waits, then stops (ticket 05).
+    removeListener: (channel: string, listener: (...args: any[]) => void) => { if (listeners.get(channel) === listener) listeners.delete(channel) },
+  },
 }))
 const bridge = await import('../src/preload/present-live-bridge')
 afterAll(() => mock.restore())
@@ -183,5 +189,35 @@ test('Pen ink crosses isolation on mutations and keep-alive ticks, is validated,
   await tick()
   expect(inkSends).toHaveLength(afterHide)
   dom.window.dispatchEvent(new dom.window.Event('beforeunload'))
+  dom.window.close()
+})
+
+test('Go live with nothing set up shows the Open Settings prompt, never a set-up; a script\'s click on it does nothing (ticket 05)', async () => {
+  const dom = new JSDOM('<button id="liveGoButton"></button><aside id="liveGoPanel" hidden><button id="liveGoPanelClose"></button><div id="liveQr"></div><div id="liveShortUrl"></div></aside>', { url: 'https://example.test' })
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, location: dom.window.location, HTMLElement: dom.window.HTMLElement })
+  const asked: string[] = []
+  invoke.mockImplementation((channel: string) => {
+    asked.push(channel)
+    if (channel === 'live:go') return Promise.resolve({ success: false, error: 'Going live is not set up: Settings → Cloudflare', setup: 'open-settings' })
+    if (channel === 'live-service:set-up') return Promise.resolve({ ok: true })
+    return Promise.resolve(channel === 'live:status' ? 'ended' : { success: true })
+  })
+  listeners.get('live:status')?.(null, 'ended')
+  bridge.mountLiveBridge()
+  document.getElementById('liveGoButton')!.click()
+  for (let i = 0; i < 6; i += 1) await tick()
+  const prompt = document.getElementById('twLiveSetupPrompt')!
+  expect(prompt.dataset.prompt).toBe('open-settings')
+  expect([...prompt.querySelectorAll('button')].map((button) => button.textContent)).toEqual(['Open Settings', 'Not now'])
+  expect(document.getElementById('liveGoPanel')!.hidden).toBe(true)
+  // A click made by a script (an embed in a slide, say) is not a person's: it does nothing.
+  const action = prompt.querySelector('[data-part="action"]') as HTMLButtonElement
+  action.click()
+  action.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, detail: 1 }))
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  expect(asked.includes('live-service:set-up')).toBe(false)
+  expect(asked.includes('cloudflare:open-settings')).toBe(false)
+  expect(asked.filter((channel) => channel === 'live:go').length).toBe(1)
+  expect(document.getElementById('twLiveSetupPrompt')).not.toBe(null)
   dom.window.close()
 })

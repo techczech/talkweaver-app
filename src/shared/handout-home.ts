@@ -1,7 +1,7 @@
-// What the handout home page says about the talk (design 2026-10-02, direction B): the line under the
-// title (date · event · speaker) and, for a planned Run with a start time, when the talk starts, so the
-// page can say "Not live yet" until then. Pure; the publishers pass the result to the compiler's
-// buildHandoutHomePageHtml.
+// What the handout home page says about the talk (design 2026-10-07, "Handout 4b"): the parts of the navy
+// band (day, start time, event, speaker) and, for a planned Run with a start time, when the talk starts,
+// so the page shows its "before the talk" layout until then. Pure; the publishers pass the result to the
+// compiler's buildHandoutHomePageHtml.
 import { zonedLocalToMs } from './run-prework.ts'
 
 export interface HandoutHomeRun {
@@ -13,9 +13,46 @@ export interface HandoutHomeRun {
 }
 
 export interface HandoutHomeDetails {
-  meta: string
+  /** The Run's planned day without the year ("Tue 6 Oct") and with it ("Tue 6 Oct 2026"); '' without one. */
+  day: string
+  date: string
+  /** The Run's start time ("17:30"); '' without one. */
+  startTime: string
+  /** The Run's event, else the talk's series; '' without either. */
+  event: string
+  /** From the talk's frontmatter; '' when it has none. */
+  author: string
+  subtitle: string
+  affiliation: string
+  /** When a planned Run starts (ms); null for any other talk. */
   startsAt: number | null
-  notLive: { today: string; later: string } | null
+  /** Frontmatter `live_look_ahead`: false keeps people on the live page from stepping past the speaker's slide. */
+  lookAhead: boolean
+}
+
+export interface HandoutHomePreworkStep {
+  label: string
+  /** Minutes a pre-task takes; null when the step names none. */
+  minutes: number | null
+  kind: string
+}
+
+export interface HandoutHomePrework {
+  /** The form's one-row summary: its title (or "N steps to do before the session") and its length. */
+  label: string
+  detail: string
+  /** The steps' minutes added up; 0 when none names any. */
+  minutes: number
+  steps: HandoutHomePreworkStep[]
+}
+
+// The compiler's flag words (compiler/scripts/lib/deck-settings.mjs DECK_FLAG_OFF); test-handout-home-details pins them equal.
+export const LOOK_AHEAD_OFF_WORDS = ['false', 'no', 'off', 'hide', '0']
+
+/** `live_look_ahead` (alias `live-look-ahead`): on unless the frontmatter turns it off with a flag word. */
+export function handoutLookAhead(outline: string): boolean {
+  const raw = frontmatterField(outline, 'live_look_ahead') || frontmatterField(outline, 'live-look-ahead')
+  return !LOOK_AHEAD_OFF_WORDS.includes(raw.trim().toLowerCase())
 }
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -38,32 +75,37 @@ export function handoutDayLabel(date: string, withYear = true): string {
 
 export function handoutHomeDetails(opts: { outline: string; run?: HandoutHomeRun | null }): HandoutHomeDetails {
   const run = opts.run ?? null
-  const author = frontmatterField(opts.outline, 'author')
-  const event = (run?.eventTitle ?? '').trim() || frontmatterField(opts.outline, 'series')
-  const meta = [run?.plannedDate ? handoutDayLabel(run.plannedDate) : '', event, author].filter(Boolean).join(' · ')
-  const time = /^\d{2}:\d{2}$/.test(run?.startTime ?? '') ? run!.startTime! : ''
-  const planned = Boolean(run && run.status === 'planned' && run.plannedDate && time)
-  const startsAt = planned ? zonedLocalToMs(`${run!.plannedDate}T${time}`, run!.timeZone) : Number.NaN
-  if (!Number.isSafeInteger(startsAt)) return { meta, startsAt: null, notLive: null }
-  const tail = ' Polls, questions and reactions appear on this page when it does.'
+  const startTime = /^\d{2}:\d{2}$/.test(run?.startTime ?? '') ? run!.startTime! : ''
+  const planned = Boolean(run && run.status === 'planned' && run.plannedDate && startTime)
+  const startsAt = planned ? zonedLocalToMs(`${run!.plannedDate}T${startTime}`, run!.timeZone) : Number.NaN
   return {
-    meta,
-    startsAt,
-    notLive: {
-      today: `Not live yet. The talk starts at ${time}.${tail}`,
-      later: `Not live yet. The talk starts on ${handoutDayLabel(run!.plannedDate!, false)} at ${time}.${tail}`,
-    },
+    day: run?.plannedDate ? handoutDayLabel(run.plannedDate, false) : '',
+    date: run?.plannedDate ? handoutDayLabel(run.plannedDate) : '',
+    startTime,
+    event: (run?.eventTitle ?? '').trim() || frontmatterField(opts.outline, 'series'),
+    author: frontmatterField(opts.outline, 'author'),
+    subtitle: frontmatterField(opts.outline, 'subtitle'),
+    affiliation: frontmatterField(opts.outline, 'affiliation'),
+    startsAt: Number.isSafeInteger(startsAt) ? startsAt : null,
+    lookAhead: handoutLookAhead(opts.outline),
   }
 }
 
-/** The home page's "Before the session" row for a Run's pre-work form; null without one. */
-export function handoutHomePrework(form: { title?: string; steps?: Array<{ minutes?: number }> } | null | undefined): { label: string; detail: string } | null {
+/** The home page's "Before the session" card for a Run's pre-work form; null without one. */
+export function handoutHomePrework(form: { title?: string; steps?: Array<{ title?: string; minutes?: number; kind?: string }> } | null | undefined): HandoutHomePrework | null {
   const steps = Array.isArray(form?.steps) ? form!.steps! : []
   if (!form || steps.length === 0) return null
-  const minutes = steps.reduce((sum, step) => sum + (typeof step.minutes === 'number' && step.minutes > 0 ? step.minutes : 0), 0)
+  const minutesOf = (step: { minutes?: number }): number => (typeof step.minutes === 'number' && step.minutes > 0 ? step.minutes : 0)
+  const minutes = steps.reduce((sum, step) => sum + minutesOf(step), 0)
   const count = `${steps.length} step${steps.length === 1 ? '' : 's'}`
   return {
     label: (form.title ?? '').trim() || `${count} to do before the session`,
     detail: minutes > 0 ? `${minutes} min` : count,
+    minutes,
+    steps: steps.map((step, index) => ({
+      label: (step.title ?? '').trim() || `Step ${index + 1}`,
+      minutes: minutesOf(step) || null,
+      kind: typeof step.kind === 'string' ? step.kind : '',
+    })),
   }
 }

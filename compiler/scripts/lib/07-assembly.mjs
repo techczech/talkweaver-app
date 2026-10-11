@@ -16,6 +16,7 @@ import { buildSlideScriptPayload, renderSlideScriptTag } from './slide-script.mj
 import { instantSlideRuntimeSource, instantSlideStyles } from '../../assets/runtime/instant-slide.js';
 import { presenterShortcutsRuntimeSource } from '../../assets/runtime/presenter-shortcuts.js';
 import { pointerOverlayRuntimeSource } from '../../assets/runtime/pointer-overlay.js';
+import { simTypingRuntimeSource } from '../../assets/runtime/sim-typing.js';
 import { penInkRuntimeSource } from '../../assets/runtime/pen-ink.js';
 import { audioChipRuntimeSource } from '../../assets/runtime/audio-chip.js';
 import { imageStepsRuntimeSource } from '../../assets/runtime/image-steps.js';
@@ -591,6 +592,9 @@ export async function buildDeckHtmlFromModel(model) {
   // The emphasis-step order and count (0.38 ticket 02): the same source the handout / venue page
   // inlines and scripts/test-emphasis-steps.mjs asserts.
   html = html.replace("<!--EMPHASIS_STEPS_RUNTIME-->", () => emphasisStepsRuntimeSource());
+  // Typing and streaming on the chat and terminal simulation slides (0.38.2): the same source
+  // scripts/sim-typing.test.mjs asserts with an injected clock.
+  html = html.replace("<!--SIM_TYPING_RUNTIME-->", () => simTypingRuntimeSource());
   // Playback of a {play-on-next} file from its step (0.38 ticket 05): the same source the venue
   // page inlines.
   html = html.replace("<!--MEDIA_STEPS_RUNTIME-->", () => mediaStepsRuntimeSource());
@@ -629,6 +633,11 @@ export async function buildDeckHtmlFromModel(model) {
   // can show remaining time beside the elapsed clock.
   if (model.durationSeconds) {
     html = html.replace('<main class="deck"', `<main class="deck" data-talk-duration="${model.durationSeconds}"`);
+  }
+  // `live_look_ahead: false` rides the container, so the compiled deck records that the talk keeps people
+  // on the speaker's slide. The handout publishers read the same key for the home page (handoutHomeDetails).
+  if (model.liveLookAhead === false) {
+    html = html.replace('<main class="deck"', '<main class="deck" data-live-look-ahead="off"');
   }
   // Deck font option (ADR-0005): frontmatter `font:` rides the container; CSS variants key off it.
   if (model.deckFont) {

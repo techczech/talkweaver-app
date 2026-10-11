@@ -254,6 +254,8 @@ export const OPEN_PATTERN_TOKENS: OpenPatternToken[] = [
   { key: 'reactions', form: 'equals', pattern: '[^,]+(?:,[^,]+)*', description: 'The slide’s reactions: off, registered names, or quoted custom labels, at most four.', justification: 'A list of registered reaction names or free custom labels, written by the Inspector’s Audience section (compiler/scripts/lib/reaction-sets.mjs).' },
   { key: 'from', form: 'equals', pattern: '.+', description: 'Provenance of an adopted slide.', justification: 'System provenance for adopted slides.' },
   { key: 'clonedFrom', form: 'equals', pattern: '.+', description: 'Provenance of a cloned slide.', justification: 'System provenance for cloned slides.' },
+  { key: 'model', form: 'equals', pattern: '.+', description: 'Model name shown by the chat and agent-terminal layouts.', justification: 'Free display text for the simulated model picker or status line.' },
+  { key: 'window-title', form: 'equals', pattern: '.+', description: 'Title-bar text of the terminal layouts.', justification: 'Free display text for the simulated terminal window.' },
   { key: 'icon', form: 'equals', pattern: '.+', description: 'Icon payload chosen by the icon picker.', justification: 'Free icon payload chosen by the icon picker.' },
   { key: 'kicker', form: 'equals', pattern: '.+', description: 'Authored kicker text.', justification: 'Free authored display text.' },
   { key: 'remind', form: 'equals', pattern: '.+', description: 'Presenter reminder text.', justification: 'Free presenter-reminder text.' },
@@ -832,6 +834,64 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     ]
   }
 ]
+
+/**
+ * AI chat and terminal simulation slides ({chat}, {chat-lanes}, {terminal}, {terminal-agent}).
+ * The option groups are shared by value: each layout lists the ones that apply to it. Spec:
+ * docs/design/2026-10-08-ai-chat-and-terminal-simulation-designs/ai-chat-and-terminal-simulation-locked-spec.md
+ * (section 1.3 and "Decisions after lock"). `model=` and `window-title=` are open text, declared in
+ * OPEN_PATTERN_TOKENS; `reveal=steps` is the existing arrival-mode alias, `reveal=all` is new.
+ */
+const SIM_REVEAL_GROUP: OptionGroup = {
+  key: 'sim-reveal',
+  label: 'Reveal',
+  preview: 'segmented',
+  dictionaryTokens: ['reveal=all'],
+  values: [
+    { token: '', label: 'All at once', description: 'The whole conversation is on screen on arrival' },
+    { token: 'reveal=steps', label: 'Step by step', description: 'One part per press: question, reasoning, context, tool call, answer' }
+  ]
+}
+const SIM_SIZE_GROUP: OptionGroup = {
+  key: 'sim-size',
+  label: 'Text size',
+  preview: 'segmented',
+  dictionaryTokens: ['size=compact'],
+  values: [
+    { token: '', label: 'Compact', description: 'The drawn sizes: a full conversation fits the window' },
+    { token: 'size=large', label: 'Large', description: 'Running text at the type floor; long conversations scroll to the latest turn' }
+  ]
+}
+const SIM_SIDEBAR_GROUP: OptionGroup = {
+  key: 'sim-sidebar',
+  label: 'History sidebar',
+  preview: 'segmented',
+  dictionaryTokens: ['sidebar=on'],
+  values: [
+    { token: '', label: 'Shown', description: 'A history sidebar with this slide’s title highlighted' },
+    { token: 'sidebar=off', label: 'Hidden', description: 'No sidebar; the conversation recentres' }
+  ]
+}
+const SIM_OPEN_GROUP: OptionGroup = {
+  key: 'sim-open',
+  label: 'Disclosures',
+  preview: 'segmented',
+  dictionaryTokens: ['open=none'],
+  values: [
+    { token: '', label: 'Closed', description: 'Rows, results and extra lines start closed; a click opens them' },
+    { token: 'open=all', label: 'Open', description: 'Everything starts open' }
+  ]
+}
+const SIM_STREAM_GROUP: OptionGroup = {
+  key: 'sim-stream',
+  label: 'Streaming',
+  preview: 'segmented',
+  dictionaryTokens: ['stream=off'],
+  values: [
+    { token: '', label: 'Instant', description: 'Each part appears whole' },
+    { token: 'stream=on', label: 'Stream', description: 'The answer and reasoning stream in at about 70 tokens a second as they come on screen' }
+  ]
+}
 
 export const LAYOUTS: LayoutDef[] = [
   // -- Everyday ---------------------------------------------------------------
@@ -1656,6 +1716,115 @@ Listener: It is still a trace.`,
     purpose: 'Specialised',
     whenItFits: 'Any conversation between named speakers, line by line.',
     cssModule: 'trace'
+  },
+  {
+    name: 'chat',
+    label: 'AI chat',
+    trigger: '{chat}',
+    aliases: [],
+    triggerWords: ['chat'],
+    kind: 'layout',
+    titleRegime: 'hidden',
+    status: 'stable',
+    sample: `### Refund policy
+{chat}
+
+\`\`\`chat
+user: What changed in our refund policy last month?
+model-reasoning (4s): They want last month’s changes.
+context-retrieval:
+  Refund Policy v4.2
+tool-call: search_policy_docs {"topic": "refunds"}
+tool-results:
+  Refund window cut from 30 to 14 days
+bot: The refund window shrank from 30 to 14 days.
+\`\`\``,
+    description: 'A chat window; reasoning, sources and tool calls are rows you click open',
+    category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'An AI conversation with the hidden work shown as rows between question and answer.',
+    cssModule: 'simulation',
+    options: [SIM_SIDEBAR_GROUP, SIM_OPEN_GROUP, SIM_REVEAL_GROUP, SIM_STREAM_GROUP, SIM_SIZE_GROUP]
+  },
+  {
+    name: 'chat-lanes',
+    label: 'AI chat with behind the scenes',
+    trigger: '{chat-lanes}',
+    aliases: [],
+    triggerWords: ['chat-lanes'],
+    kind: 'layout',
+    titleRegime: 'hidden',
+    status: 'stable',
+    sample: `### Refund policy
+{chat-lanes}
+
+\`\`\`chat
+user: What changed in our refund policy last month?
+model-reasoning (4s): They want last month’s changes.
+tool-call: search_policy_docs {"topic": "refunds"}
+tool-results:
+  Refund window cut from 30 to 14 days
+bot: The refund window shrank from 30 to 14 days.
+\`\`\``,
+    description: 'A chat window beside a Behind the scenes panel of reasoning, context and tool cards',
+    category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'An AI conversation where the audience should see the work beside the answer.',
+    cssModule: 'simulation',
+    options: [SIM_SIDEBAR_GROUP, SIM_OPEN_GROUP, SIM_REVEAL_GROUP, SIM_STREAM_GROUP, SIM_SIZE_GROUP]
+  },
+  {
+    name: 'terminal',
+    label: 'Terminal',
+    trigger: '{terminal}',
+    aliases: [],
+    triggerWords: ['terminal'],
+    kind: 'layout',
+    titleRegime: 'hidden',
+    status: 'stable',
+    sample: `### A shell session
+{terminal}
+
+\`\`\`terminal
+~/policy $ ls
+change-log.md  refund-policy.md
+$ git log --oneline -1
+a41c9e2 Cut refund window to 14 days
+\`\`\``,
+    description: 'A plain shell window with typed commands and their output',
+    category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'Commands and their output, as they would look in a terminal.',
+    cssModule: 'simulation',
+    options: [SIM_REVEAL_GROUP, SIM_SIZE_GROUP]
+  },
+  {
+    name: 'terminal-agent',
+    label: 'Agent in a terminal',
+    trigger: '{terminal-agent}',
+    aliases: [],
+    triggerWords: ['terminal-agent'],
+    kind: 'layout',
+    titleRegime: 'hidden',
+    status: 'stable',
+    sample: `### An agent at work
+{terminal-agent}
+
+\`\`\`terminal
+user: What changed in our refund policy last month?
+model-reasoning (4s): check the change log first
+tool-call: search_policy_docs {"topic": "refunds"}
+tool-results:
+  Refund window cut from 30 to 14 days
+  Digital goods: refundable only if unused
+bot: The refund window shrank from 30 to 14 days.
+\`\`\``,
+    description: 'A coding-agent command line: prompt, thinking, tool calls and an answer',
+    category: 'specialised',
+    purpose: 'Specialised',
+    whenItFits: 'An AI agent doing work in a terminal, one tool block at a time.',
+    cssModule: 'simulation',
+    options: [SIM_OPEN_GROUP, SIM_REVEAL_GROUP, SIM_SIZE_GROUP]
   },
   {
     name: 'code',

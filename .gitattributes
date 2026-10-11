@@ -1,0 +1,4 @@
+# The vendored transcription files are hashed (PROVENANCE.md records the SHA-256 of parakeet_to_srt.py)
+# and shipped as-is, so they must check out with LF on every platform, including Windows runners
+# where core.autocrlf would otherwise write CRLF. Tests: scripts/test-transcription-setup.mjs section 6.
+resources/agent-setup/transcription/** eol=lf

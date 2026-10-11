@@ -3,14 +3,18 @@ import { markHiddenRenderer } from './window-kinds'
 import type { NativeImage } from 'electron'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { existsSync, mkdirSync, writeFileSync, unlinkSync } from 'fs'
-import { createHash, randomBytes } from 'crypto'
+import { existsSync, mkdirSync, unlinkSync } from 'fs'
+import { rename, unlink, writeFile } from 'fs/promises'
+import { randomBytes, webcrypto } from 'crypto'
 import { createThumbnailQueue } from './thumbnail-queue'
 import { markSlidePreviewHtml } from '../shared/slide-preview'
 
 export interface RenderThumbnailsOptions {
   /** Full compiled single-file presentation HTML (the presenter-popup runtime). */
   fullHtml: string
+  /** sha256 (hex) of markSlidePreviewHtml(fullHtml), when the caller has it (prepareTalk's worker
+   *  thread works it out): an unchanged deck is then recognised without touching the HTML here. */
+  deckKey?: string
   /** Replaces obsolete pending renders from the same editor. */
   requestKey?: string
   /** A layout variant's render (the picker's and the Inspector's pictures of the slide): it starts only
@@ -52,9 +56,83 @@ function destroyRenderWin(): void {
   renderWinHtmlKey = null
 }
 
-async function ensureDeckLoaded(fullHtml: string): Promise<BrowserWindow> {
+// Responsiveness (0.38.2): everything below that touches a whole deck or a whole picture is kept off
+// the main process's thread or split into short steps, with a turn of the event loop between them. On
+// a talk of 14 large photographs the old synchronous steps held the main process for up to 450 ms at a
+// time (measured: preview marking 69 ms, the deck's hash 93 ms and its temp-file write 113 ms in one
+// block; each slide's PNG encoding 230 ms) — the beachball after a talk opened or changed.
+// A zero timeout, not setImmediate: an immediate can run before the event loop's timers and I/O get a turn.
+const nextTurn = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+
+/** The deck's identity (sha256 of the marked HTML, as before) and its bytes for the temp file. The
+ *  hash runs on the thread pool (WebCrypto); only the string-to-bytes copy runs here. */
+async function deckBytesAndKey(fullHtml: string, knownKey?: string): Promise<{ bytes: Buffer; key: string }> {
+  const bytes = Buffer.from(fullHtml, 'utf8')
+  await nextTurn()
+  if (knownKey) return { bytes, key: knownKey }
+  const digest = await webcrypto.subtle.digest('SHA-256', bytes)
+  return { bytes, key: Buffer.from(digest).toString('hex') }
+}
+
+type Sharp = typeof import('sharp')
+let sharpModule: Sharp | null | undefined
+function loadSharp(): Sharp | null {
+  if (sharpModule !== undefined) return sharpModule
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    sharpModule = require('sharp') as Sharp
+  } catch (error) {
+    console.warn('[thumbnails] sharp could not be loaded; encoding pictures in this thread', error)
+    sharpModule = null
+  }
+  return sharpModule
+}
+
+/**
+ * A captured picture as PNG bytes, encoded off the main process's thread: the raw pixels are copied
+ * out (toBitmap, a few ms) and `sharp` encodes them on its own threads. Electron's bitmap is BGRA, so
+ * the red and blue channels are swapped back. If sharp is not there or the bitmap is not the size it
+ * says, the picture is encoded here as before (toPNG), so a thumbnail is never lost to this.
+ */
+async function encodePng(img: NativeImage): Promise<Buffer> {
+  const sharp = loadSharp()
+  if (sharp) {
+    try {
+      const scaleFactor = img.getScaleFactors?.()[0] ?? 1
+      const { width, height } = img.getSize(scaleFactor)
+      const bitmap = img.toBitmap({ scaleFactor })
+      if (width > 0 && height > 0 && bitmap.length === width * height * 4) {
+        return await sharp(bitmap, { raw: { width, height, channels: 4 } })
+          .recomb([[0, 0, 1], [0, 1, 0], [1, 0, 0]])
+          .png()
+          .toBuffer()
+      }
+    } catch (error) {
+      console.warn('[thumbnails] off-thread PNG encoding failed; encoding in this thread', error)
+    }
+  }
+  return img.toPNG()
+}
+
+/** Write a picture by temp file + rename: with the write no longer synchronous, nothing that reads
+ *  the cache (the existence check above, the thumbnail protocol) can see a half-written PNG. */
+async function writePicture(path: string, bytes: Buffer): Promise<void> {
+  const temp = `${path}.${randomBytes(4).toString('hex')}.tmp`
+  try {
+    await writeFile(temp, bytes)
+    await rename(temp, path)
+  } catch (error) {
+    await unlink(temp).catch(() => {})
+    throw error
+  }
+}
+
+async function ensureDeckLoaded(fullHtml: string, knownKey?: string): Promise<BrowserWindow> {
+  // The deck this window already shows: nothing of the HTML is touched.
+  if (knownKey && renderWin && !renderWin.isDestroyed() && renderWinHtmlKey === knownKey) return renderWin
   fullHtml = markSlidePreviewHtml(fullHtml)
-  const key = createHash('sha256').update(fullHtml).digest('hex')
+  await nextTurn()
+  const { bytes, key } = await deckBytesAndKey(fullHtml, knownKey)
   if (renderWin && !renderWin.isDestroyed() && renderWinHtmlKey === key) return renderWin
   let win = renderWin
   if (!win || win.isDestroyed()) {
@@ -81,7 +159,7 @@ async function ensureDeckLoaded(fullHtml: string): Promise<BrowserWindow> {
   // self-contained (assets inlined), so the file can be deleted as soon as the load finishes.
   const tmpHtmlPath = join(tmpdir(), `talk-weaver-thumb-${randomBytes(8).toString('hex')}.html`)
   try {
-    writeFileSync(tmpHtmlPath, fullHtml, 'utf8')
+    await writeFile(tmpHtmlPath, bytes)
     await win.loadFile(tmpHtmlPath)
     renderWinHtmlKey = key
     return win
@@ -123,7 +201,7 @@ async function renderThumbnailsSerialized(
   opts: RenderThumbnailsOptions,
   signal: AbortSignal
 ): Promise<Record<string, string>> {
-  const { fullHtml, slides, cacheDir } = opts
+  const { fullHtml, deckKey, slides, cacheDir } = opts
   const result: Record<string, string> = {}
 
   if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true })
@@ -151,9 +229,12 @@ async function renderThumbnailsSerialized(
   if (renderWinIdleTimer) { clearTimeout(renderWinIdleTimer); renderWinIdleTimer = null }
 
   try {
-    const win = await ensureDeckLoaded(fullHtml)
+    const win = await ensureDeckLoaded(fullHtml, deckKey)
 
     for (const item of pending) {
+      // One slide at a time, with a turn of the event loop between them: the queue never holds the
+      // main process for more than one short step.
+      await nextTurn()
       if (signal.aborted) break
       try {
         await navigateToSlide(win, item.index)
@@ -182,7 +263,7 @@ async function renderThumbnailsSerialized(
           continue
         }
         const img: NativeImage = await win.webContents.capturePage()
-        writeFileSync(item.pngPath, img.toPNG())
+        await writePicture(item.pngPath, await encodePng(img))
         result[item.key] = item.pngPath
 
         // ADR-0022: ONLY a carousel (the active slide carries .card-gallery[data-exclusive]) gets
@@ -191,7 +272,7 @@ async function renderThumbnailsSerialized(
           const parts = await captureCarouselSubSlides(win)
           for (let i = 0; i < parts.length; i += 1) {
             const p = join(cacheDir, `${item.cacheKey}__${i}.png`)
-            writeFileSync(p, parts[i].toPNG())
+            await writePicture(p, await encodePng(parts[i]))
             result[`${item.key}__${i}`] = p
           }
         }

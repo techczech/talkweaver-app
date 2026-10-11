@@ -2,25 +2,22 @@
 // exactly (same algorithm) — this is a logic guard, since the main process has no TS test runner.
 // (Same convention as scripts/test-selector-logic.mjs.)
 
-const CFG_ERR = 'Configure Cloudflare publishing in Settings → Publishing (see docs/PUBLISHING.md)'
-const WRANGLER_ERR = 'wrangler not found — install it (npm i -g wrangler) — see docs/PUBLISHING.md'
+const CFG_ERR = 'Configure Cloudflare publishing in Settings → Cloudflare (see docs/PUBLISHING.md)'
 
 function checkPreconditions(c) {
   if (!c.accountId || !c.project || !c.hasToken) return { ok: false, error: CFG_ERR }
-  if (!c.wranglerFound) return { ok: false, error: WRANGLER_ERR }
   return { ok: true }
 }
 function resolveBase(opts) {
   const raw = opts.baseUrl && opts.baseUrl.trim() ? opts.baseUrl.trim() : `https://${opts.project}.pages.dev`
   return raw.replace(/\/+$/, '')
 }
-function publishUrl(opts) {
-  if (opts.useShortIds && opts.id) return `${opts.base}/${opts.id}`
-  return `${opts.base}/${opts.slug}/`
+function pathSegment(name) {
+  return encodeURIComponent(String(name)).replace(/\*/g, '%2A')
 }
-function augmentedPath(processPath) {
-  return ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', processPath || '']
-    .filter(Boolean).join(':')
+function publishUrl(opts) {
+  if (opts.useShortIds && opts.id) return `${opts.base}/${pathSegment(opts.id)}`
+  return `${opts.base}/${pathSegment(opts.slug)}/`
 }
 function readHandoutUrl(text) {
   const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/)
@@ -56,7 +53,7 @@ function buildRedirects(registry, existingSlugs) {
   const lines = Object.entries(registry)
     .filter(([slug]) => exists.has(slug))
     .sort((a, b) => a[1].localeCompare(b[1]))
-    .flatMap(([slug, id]) => [`/${id}  /${slug}/  302`, `/${id}/p  /${slug}/p/  302`])
+    .flatMap(([slug, id]) => [`/${pathSegment(id)}  /${pathSegment(slug)}/  302`, `/${pathSegment(id)}/p  /${pathSegment(slug)}/p/  302`])
   return lines.length ? lines.join('\n') + '\n' : ''
 }
 function stampHandoutUrl(outlineText, url) {
@@ -73,10 +70,9 @@ let fail = 0
 const ck = (c, m) => { if (!c) { console.error('FAIL:', m); fail++ } }
 
 // checkPreconditions
-ck(checkPreconditions({ project: 'p', hasToken: true, wranglerFound: true }).error === CFG_ERR, 'precond: missing account → cfg error')
-ck(checkPreconditions({ accountId: 'a', project: 'p', hasToken: false, wranglerFound: true }).error === CFG_ERR, 'precond: no token → cfg error')
-ck(checkPreconditions({ accountId: 'a', project: 'p', hasToken: true, wranglerFound: false }).error === WRANGLER_ERR, 'precond: no wrangler → wrangler error')
-ck(checkPreconditions({ accountId: 'a', project: 'p', hasToken: true, wranglerFound: true }).ok === true, 'precond: all present → ok')
+ck(checkPreconditions({ project: 'p', hasToken: true }).error === CFG_ERR, 'precond: missing account → cfg error')
+ck(checkPreconditions({ accountId: 'a', project: 'p', hasToken: false }).error === CFG_ERR, 'precond: no token → cfg error')
+ck(checkPreconditions({ accountId: 'a', project: 'p', hasToken: true }).ok === true, 'precond: all present → ok')
 
 // resolveBase
 ck(resolveBase({ baseUrl: 'https://h.fyi/', project: 'p' }) === 'https://h.fyi', 'resolveBase strips trailing slash')
@@ -87,9 +83,6 @@ ck(publishUrl({ base: 'https://x.pages.dev', slug: 's', id: 'a1', useShortIds: t
 ck(publishUrl({ base: 'https://x.pages.dev', slug: 's', useShortIds: false }) === 'https://x.pages.dev/s/', 'publishUrl slug')
 ck(publishUrl({ base: 'https://x.pages.dev', slug: 's', useShortIds: true }) === 'https://x.pages.dev/s/', 'publishUrl short-on but no id → slug')
 
-// augmentedPath
-ck(augmentedPath('/foo/bin').includes('/opt/homebrew/bin'), 'augmentedPath includes homebrew')
-ck(augmentedPath('/foo/bin').endsWith('/foo/bin'), 'augmentedPath appends process PATH')
 
 // readHandoutUrl
 ck(readHandoutUrl('---\ntitle: x\nhandout_url: https://h.fyi/ab12\n---\nbody') === 'https://h.fyi/ab12', 'readHandoutUrl from frontmatter')
@@ -117,6 +110,11 @@ ck(pickShortId({ registry: { x: 'dd44' }, slug: 'z', recoveredId: 'dd44', gen: (
 ck(buildRedirects({ a: 'a1', b: 'b2', c: 'c3' }, ['a', 'b']) === '/a1  /a/  302\n/a1/p  /a/p/  302\n/b2  /b/  302\n/b2/p  /b/p/  302\n', 'buildRedirects only existing slugs, sorted by id')
 ck(buildRedirects({ a: 'a1', b: 'b2' }, ['a']) === '/a1  /a/  302\n/a1/p  /a/p/  302\n', 'buildRedirects publishes the venue short link only for a published talk')
 ck(buildRedirects({}, []) === '', 'buildRedirects empty → empty string')
+// A name is one encoded path segment (ticket 04 round 3): never a second field, a fragment or another address.
+ck(publishUrl({ base: 'https://x.pages.dev', slug: 'two words', useShortIds: false }) === 'https://x.pages.dev/two%20words/', 'publishUrl encodes a space')
+ck(publishUrl({ base: 'https://x.pages.dev', slug: 'a#b?c%d/e*', useShortIds: false }) === 'https://x.pages.dev/a%23b%3Fc%25d%2Fe%2A/', 'publishUrl encodes # ? % / *')
+ck(buildRedirects({ 'two words': 'a1' }, ['two words']) === '/a1  /two%20words/  302\n/a1/p  /two%20words/p/  302\n', 'buildRedirects encodes a name with a space: still three fields a line')
+ck(['my-talk', 'agents-itss-2026-10-06', 'Talk_2.final~x'].every((name) => pathSegment(name) === name), 'an ordinary name is byte for byte itself')
 
 // stampHandoutUrl
 ck(stampHandoutUrl('no frontmatter', 'https://x/y') === 'no frontmatter', 'stamp: no frontmatter → unchanged')

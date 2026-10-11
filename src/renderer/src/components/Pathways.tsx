@@ -23,6 +23,9 @@ import {
   type PathwayViewMode
 } from './pathwayViewModel'
 import '../pathways.css'
+import { commandRan } from '../commands/command-ran'
+
+const VIEW_COMMANDS: Readonly<Record<'grid' | 'list' | 'matrix', string>> = { grid: 'pathway.grid', list: 'pathway.list', matrix: 'pathway.matrix' }
 
 type Dialog = { kind: 'new'; name: string; note: string } | { kind: 'rename'; name: string } | { kind: 'delete' }
 
@@ -80,6 +83,13 @@ export default function Pathways({ context, onClose }: { context: PathwayWindowC
   const [view, setView] = useState<PathwayViewMode>(readPathwayViewPreference)
   const [previews, setPreviews] = useState(readPathwayPreviewsPreference)
   const [reordering, setReordering] = useState(false)
+  // Each Pathways command reports to the Guide, from the key and from the button alike: this window is
+  // not the editor's, so the report says which talk it is in (decision 12 reads that for Delete pathway).
+  const report = useCallback((id: string): void => commandRan(id, { outlinePath: context?.outlinePath ?? null }), [context])
+  const chooseView = useCallback((mode: PathwayViewMode): void => { setView(mode); report(VIEW_COMMANDS[mode]) }, [report])
+  const togglePreviews = useCallback((): void => { setPreviews((current) => !current); report('pathway.previews') }, [report])
+  const toggleReordering = useCallback((): void => { setReordering((current) => !current); report('pathway.reorder') }, [report])
+  const openSheet = useCallback((): void => { setSheet(true); report('pathway.help') }, [report])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [dialog, setDialog] = useState<Dialog | null>(null)
@@ -205,7 +215,8 @@ export default function Pathways({ context, onClose }: { context: PathwayWindowC
     const focused = document.activeElement instanceof HTMLElement ? document.activeElement.dataset.slideId : undefined
     if (!focused) return
     void setSlideIds(selected, reorder(selected.slideIds, focused, delta))
-  }, [selected, setSlideIds])
+    report('pathway.move-item')
+  }, [selected, setSlideIds, report])
 
   const present = useCallback(async (): Promise<void> => {
     if (!context || !selected || selected.present.length === 0) return
@@ -213,13 +224,15 @@ export default function Pathways({ context, onClose }: { context: PathwayWindowC
     if (blocked) { setError(blocked.message); return }
     const result = await window.tw.pathways.present(context.outlinePath, content, selected.id)
     if (!result.success) setError(result.error || 'The pathway could not be presented.')
-  }, [content, context, selected])
+    else report('pathway.present')
+  }, [content, context, selected, report])
 
   const dropMissing = useCallback((): void => {
     if (!selected || selected.missing.length === 0) return
     const missing = new Set(selected.missing)
     void setSlideIds(selected, selected.slideIds.filter((id) => !missing.has(id)))
-  }, [selected, setSlideIds])
+    report('pathway.drop-missing')
+  }, [selected, setSlideIds, report])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -230,20 +243,20 @@ export default function Pathways({ context, onClose }: { context: PathwayWindowC
       const target = event.target as HTMLElement | null
       if (target?.matches('input, textarea')) return
       const key = event.key.toLowerCase()
-      if (event.key === '?') { event.preventDefault(); setSheet(true); return }
+      if (event.key === '?') { event.preventDefault(); openSheet(); return }
       if ((event.metaKey || event.ctrlKey) && event.altKey && key === 'p') return
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key === 'Backspace') { event.preventDefault(); dropMissing(); return }
       if ((event.metaKey || event.ctrlKey) && event.key === 'Backspace') { event.preventDefault(); if (selected) setDialog({ kind: 'delete' }); return }
       if ((event.metaKey || event.ctrlKey) && !event.altKey && key === 'n') { event.preventDefault(); setDialog({ kind: 'new', name: '', note: '' }); return }
       if ((event.metaKey || event.ctrlKey) && !event.altKey && key === 'r') { event.preventDefault(); if (selected) setDialog({ kind: 'rename', name: selected.name }); return }
-      if (event.altKey && key === 'r') { event.preventDefault(); setReordering((current) => !current); return }
+      if (event.altKey && key === 'r') { event.preventDefault(); toggleReordering(); return }
       if ((event.metaKey || event.ctrlKey) && event.key === 'ArrowUp') { event.preventDefault(); moveSelected(-1); return }
       if ((event.metaKey || event.ctrlKey) && event.key === 'ArrowDown') { event.preventDefault(); moveSelected(1); return }
       if (event.metaKey || event.ctrlKey || event.altKey) return
-      if (key === 'g') { event.preventDefault(); setView('grid'); return }
-      if (key === 'l') { event.preventDefault(); setView('list'); return }
-      if (key === 'm') { event.preventDefault(); setView('matrix'); return }
-      if (key === 'p' && view !== 'grid') { event.preventDefault(); setPreviews((current) => !current); return }
+      if (key === 'g') { event.preventDefault(); chooseView('grid'); return }
+      if (key === 'l') { event.preventDefault(); chooseView('list'); return }
+      if (key === 'm') { event.preventDefault(); chooseView('matrix'); return }
+      if (key === 'p' && view !== 'grid') { event.preventDefault(); togglePreviews(); return }
       if (event.key === 'Enter') { event.preventDefault(); void present(); return }
       if (event.key === 'Escape') { event.preventDefault(); onClose(); return }
       if (event.key === ' ' && selected && target?.dataset.slideId) { event.preventDefault(); toggle(selected, target.dataset.slideId); return }
@@ -257,21 +270,21 @@ export default function Pathways({ context, onClose }: { context: PathwayWindowC
     }
     window.addEventListener('keydown', onKey, { capture: true })
     return () => window.removeEventListener('keydown', onKey, { capture: true })
-  }, [dialog, dropMissing, moveSelected, onClose, present, selected, sheet, toggle, view])
+  }, [dialog, dropMissing, moveSelected, onClose, present, selected, sheet, toggle, view, openSheet, toggleReordering, chooseView, togglePreviews])
 
   const submitDialog = async (): Promise<void> => {
     if (!context || !dialog) return
     if (dialog.kind === 'new') {
       if (!dialog.name.trim()) return
       const ok = await mutate((outlinePath, source) => window.tw.pathways.create(outlinePath, source, dialog.name, dialog.note))
-      if (ok) setDialog(null)
+      if (ok) { setDialog(null); report('pathway.new') }
     } else if (dialog.kind === 'rename' && selected) {
       if (!dialog.name.trim()) return
       const ok = await mutate((outlinePath, source) => window.tw.pathways.rename(outlinePath, source, selected.id, dialog.name))
-      if (ok) setDialog(null)
+      if (ok) { setDialog(null); report('pathway.rename') }
     } else if (dialog.kind === 'delete' && selected) {
       const ok = await mutate((outlinePath, source) => window.tw.pathways.delete(outlinePath, source, selected.id))
-      if (ok) setDialog(null)
+      if (ok) { setDialog(null); report('pathway.delete') }
     }
   }
 
@@ -290,7 +303,7 @@ export default function Pathways({ context, onClose }: { context: PathwayWindowC
         <div className="twp-spacer" />
         <button onClick={() => setDialog({ kind: 'new', name: '', note: '' })}><Plus /> New pathway <kbd>⌘N</kbd></button>
         <button className="primary" disabled={!selected?.present.length || busy} onClick={() => void present()}><Presentation /> Present this pathway <kbd>↵</kbd></button>
-        <button className="icon" aria-label="Keyboard cheat-sheet" title="Keyboard cheat-sheet (?)" onClick={() => setSheet(true)}>?</button>
+        <button className="icon" aria-label="Keyboard cheat-sheet" title="Keyboard cheat-sheet (?)" onClick={openSheet}>?</button>
         <button className="icon" aria-label="Close Pathway view" onClick={onClose}><X /></button>
       </header>
 
@@ -313,18 +326,18 @@ export default function Pathways({ context, onClose }: { context: PathwayWindowC
             <span>{selected ? `${selected.present.length} of ${snapshot?.slides.length ?? 0} slides ticked` : 'Create a pathway to begin'}</span>
             <div className="twp-spacer" />
             <div className="twp-segment" aria-label="Pathway view">
-              <button className={view === 'grid' ? 'active' : ''} onClick={() => setView('grid')}><kbd>G</kbd> Grid</button>
-              <button className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}><kbd>L</kbd> List</button>
-              <button className={view === 'matrix' ? 'active' : ''} onClick={() => setView('matrix')}><kbd>M</kbd> Matrix</button>
+              <button className={view === 'grid' ? 'active' : ''} onClick={() => chooseView('grid')}><kbd>G</kbd> Grid</button>
+              <button className={view === 'list' ? 'active' : ''} onClick={() => chooseView('list')}><kbd>L</kbd> List</button>
+              <button className={view === 'matrix' ? 'active' : ''} onClick={() => chooseView('matrix')}><kbd>M</kbd> Matrix</button>
             </div>
             <small>{view === 'grid' ? "this pathway's slides" : view === 'list' ? 'running order · with previews' : 'all pathways side by side'}</small>
             {view !== 'grid' ? <button
               className={`previews ${previews ? 'active' : ''}`}
               data-pathway-previews-toggle
               aria-pressed={previews}
-              onClick={() => setPreviews((current) => !current)}
+              onClick={togglePreviews}
             >{previews ? <ImageIcon /> : <ImageOff />} Previews <kbd>P</kbd></button> : null}
-            <button className={`reorder ${reordering ? 'active' : ''}`} onClick={() => setReordering((current) => !current)}><GripVertical /> Reorder <kbd>⌥R</kbd></button>
+            <button className={`reorder ${reordering ? 'active' : ''}`} onClick={toggleReordering}><GripVertical /> Reorder <kbd>⌥R</kbd></button>
           </div>
 
           {error ? <div className="twp-error" role="alert"><AlertTriangle /><span>{error}</span><button onClick={() => void refresh()}>Try again</button></div> : null}

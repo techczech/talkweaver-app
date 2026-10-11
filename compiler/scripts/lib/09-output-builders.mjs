@@ -2,6 +2,7 @@ import { escapeHtml, qrGeneratorSource, overviewRuntimeSource, slideFitRuntimeSo
 import { withoutScripts } from "./04-html-extraction.mjs";
 import { plainInlineText } from "./00-inline-render.mjs";
 import { renderLicenseBody } from "./08-source-adapters.mjs";
+import { simulationStatic } from "./simulation-layout.mjs";
 import { liveFollowRuntimeSource } from "../../assets/runtime/live-follow.js";
 import { instantSlideStyles } from "../../assets/runtime/instant-slide.js";
 import { emphasisStepsRuntimeSource } from "../../assets/runtime/emphasis-steps.js";
@@ -19,7 +20,9 @@ import { preworkStatusRuntimeSource } from "../../assets/runtime/prework-status.
 import { preworkFormStyles, preworkFormRuntimeSource } from "../../assets/runtime/prework-form.js";
 import { renderScriptBlocks, renderSlideNavTitle } from "./slide-script-render.mjs";
 import { handoutHomeMarkup } from "./handout-home.mjs";
-import { handoutHomeStyles, handoutHomeRuntimeSource } from "../../assets/runtime/handout-home.js";
+import { handoutHomeRuntimeSource } from "../../assets/runtime/handout-home.js";
+import { liveStepRuntimeSource } from "../../assets/runtime/live-step.js";
+import { handoutHomeStyles } from "../../assets/runtime/handout-home-styles.js";
 import { lazySlideAssetsStyles, lazySlideAssetsRuntimeSource } from "../../assets/runtime/lazy-slide-assets.js";
 
 // =============================================================================
@@ -65,14 +68,25 @@ export function stripAudioElements(html, { keepPlayOnNext = false } = {}) {
   return held.replace(AUDIO_ELEMENT_RE, "").replace(/<!--tw-kept-audio-(\d+)-->/g, (_, i) => kept[Number(i)]);
 }
 
-export function buildShareHtml({ title, slides, styles, includeNotes, slug, license, workerBaseUrl = "", liveTalkSlug = slug, venue = false, venueQr = "", venueUrl = "", sharedTalk = false, prework = null, home = null, lazyAssets = false }) {
+/**
+ * The mark on every line where this builder writes an address into a page as configuration
+ * (LIVE_CONFIG, VENUE_JOIN, PREWORK_CONFIG). The publisher reads ONLY lines that carry it
+ * (src/main/handout-publishing.ts), so a line of the author's that merely looks like one is the
+ * author's. Keep the two in step.
+ */
+export const APP_CONFIG_MARK = "/* talkweaver:app-config */";
+
+export function buildShareHtml({ title, slides, styles, includeNotes, slug, license, workerBaseUrl = "", liveTalkSlug = slug, venue = false, venueQr = "", venueUrl = "", sharedTalk = false, prework = null, home = null, lazyAssets = false, homeHref = "" }) {
   // `lazyAssets` (published index.html and <slug>.html): the page carries the slide-asset loader; the
   // publisher then moves heavy inline media out (handout-lazy-assets.mjs). The Download handout and
   // every other export leave it off and stay self-contained.
   const lazyOn = Boolean(lazyAssets && !venue && !sharedTalk);
-  // `home` (handout home page, design 2026-10-02 B): the page the QR code and short link open is this
-  // bundle in home mode (handout-home-page.mjs), so its live surface is this page's own live client.
+  // `home` (handout home page, locked design 2026-10-07 "Handout 4b"): the page the QR code and short link
+  // open is this bundle in home mode (handout-home-page.mjs), so its live layout is this page's own live client.
   const homeOn = Boolean(home && !venue && !sharedTalk);
+  // `homeHref` (published <slug>.html beside its home page, fix round 2026-10-09): the slides view offers
+  // the way back to the handout home page, in its footer and at the top of the phone's slide list.
+  const homeLink = !homeOn && !venue && !sharedTalk && typeof homeHref === "string" && homeHref ? escapeHtml(homeHref) : "";
   const homeStartsAt = homeOn && Number.isSafeInteger(home.startsAt) ? home.startsAt : null;
   const sharedTalkOptions = sharedTalk && !venue
     ? JSON.stringify({ proposals: sharedTalk === true || sharedTalk.proposals !== false, ownerName: String((sharedTalk && sharedTalk.ownerName) || "").slice(0, 60) }).replace(/</g, "\\u003c")
@@ -102,7 +116,7 @@ export function buildShareHtml({ title, slides, styles, includeNotes, slug, lice
     const notes = includeNotes && slide.notes
       ? `<aside class="notes">${withoutScripts(slide.notes)}</aside>`
       : "";
-    return stripAudioElements(slide.html, { keepPlayOnNext: venue })
+    return simulationStatic(stripAudioElements(slide.html, { keepPlayOnNext: venue }))
       .replace(/<section\b([^>]*)>/i, `<section$1 data-share-index="${index}">`)
       .replace(/<\/section>\s*$/i, `${notes}</section>`);
   }).join("\n\n");
@@ -142,6 +156,10 @@ body { margin: 0; }
 .stage-fit { position: relative; overflow: hidden; min-height: 0; }
 .stage { position: absolute; top: 0; left: 0; width: var(--slide-w); height: var(--slide-h); transform-origin: top left; }
 
+/* The way back to the handout home page (published slides view only). */
+.share-home { display: inline-flex; align-items: center; text-decoration: none; color: inherit; }
+.phone-home { display: flex; align-items: center; min-height: 48px; padding: 0 14px; border-bottom: 1px solid #e3e2dc; background: #fff; color: #0b3a6b; font-weight: 600; text-decoration: none; }
+.phone-home:focus-visible { outline: 2px solid #0f4bd8; outline-offset: -3px; }
 /* ---- ADR-0018 phone view: a LIST of slides; tap one for the slide detail ---- */
 .phone-list, .phone-bar, .fs-overlay, .phone-script { display: none; }
 .phone-list[hidden], .phone-bar[hidden] { display: none !important; }
@@ -188,6 +206,7 @@ body { margin: 0; }
   .phone-script .ps-pair::before { content: " \2014 "; }
   .phone-script blockquote { margin: 0 0 8px; padding: 10px 14px; background: #e8eefc; border-left: 3px solid #0f4bd8; font-size: 17px; line-height: 1.5; }
   .phone-script .ps-attrib { font-size: 14px; color: #5c6570; margin: 0 0 14px; }
+  .phone-script kbd.key-cap { display: inline-block; font: 500 .82em/1.3 system-ui, -apple-system, "Segoe UI", sans-serif; padding: 0 .35em; border: 1px solid #d8d3c4; border-bottom-width: 2px; border-radius: 4px; background: #f1efe8; color: #44505c; white-space: nowrap; }
   .phone-script .ps-media { display: flex; align-items: center; gap: 9px; margin: 0 0 13px; padding: 9px 12px; border: 1px dashed #e3e2dc; background: #fff; font-size: 14px; color: #5c6570; }
   .phone-script .ps-media b { color: #101418; }
   .phone-script table { border-collapse: collapse; width: 100%; margin: 0 0 13px; font-size: 15px; }
@@ -367,7 +386,7 @@ html, body, .share-shell { width: 100%; height: 100%; overflow: hidden; }
 </style>
 </head>
 <body class="${venue ? 'venue-screen' : homeOn ? 'hh-mode' : ''}">
-${homeOn ? handoutHomeMarkup(home, { title, slideCount: slides.length }) : ''}
+${homeOn ? handoutHomeMarkup(home, { title, slideCount: slides.length, firstSlideId: (/\bdata-id="([^"]+)"/.exec(String(slides[0] && slides[0].html || "")) || [])[1] || "" }) : ''}
 ${preworkOn ? '<div class="pw-closed-host pw-closed-top" id="preworkClosedTop" hidden></div>' : ''}
 <main class="share-shell">
   <div class="phone-bar" id="phoneBar" hidden>
@@ -375,7 +394,7 @@ ${preworkOn ? '<div class="pw-closed-host pw-closed-top" id="preworkClosedTop" h
     <span class="phone-bar-title" id="phoneBarTitle"></span>
     <button type="button" id="phoneFull" style="margin-left:auto" aria-label="Full screen">⤢ Full screen</button>
   </div>
-  <div class="phone-list" id="phoneList" hidden>${preworkOn ? '<div class="pw-closed-host pw-closed-list" id="preworkClosedList" hidden></div>' : ''}</div>
+  <div class="phone-list" id="phoneList" hidden>${homeLink ? `<a class="phone-home" id="phoneHome" href="${homeLink}">&lsaquo; Handout home</a>` : ''}${preworkOn ? '<div class="pw-closed-host pw-closed-list" id="preworkClosedList" hidden></div>' : ''}</div>
   <div class="stage-fit" id="stageFit">
   <div class="stage" id="stage">
 ${slideMarkup}
@@ -391,6 +410,7 @@ ${slideMarkup}
   <footer class="share-footer">
     <div><strong id="slideCount">1 / ${slides.length}</strong>${workerBaseUrl ? '<span class="now-live-badge" id="nowLiveBadge" hidden><span class="live-dot" aria-hidden="true"></span>Now live</span>' : ''}</div>
     <div class="share-actions">
+      ${homeLink ? `<a class="btn share-home" id="shareHome" href="${homeLink}"><span class="btn-label">&lsaquo; Handout home</span></a>` : ''}
       <button class="btn" id="prevBtn" type="button"><span class="btn-label">Previous</span></button>
       <button class="btn" id="nextBtn" type="button"><span class="btn-label">Next</span></button>
       <button class="btn" id="overviewBtn" type="button"><span class="btn-label">Overview</span></button>
@@ -660,7 +680,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
     if (body.classList.contains("phone-list-mode") || body.classList.contains("pw-open")) return false;
     var full = document.getElementById("fsOverlay");
     if (full && full.classList.contains("is-open")) return false;
-    if (HOME_MODE && !(handoutHome && handoutHome.view() === "live")) return false;
+    if (HOME_MODE && !(handoutHome && handoutHome.layout() === "live")) return false;
     return true;
   }
   // A copy of a slide (a phone list row, the phone's full-screen picture) is a picture of it and
@@ -1236,11 +1256,11 @@ ${hasMermaid ? mermaidVendorSource : ""}
   // Live protocol helpers are injected from compiler/assets/runtime/live-follow.js, the same
   // testable module exercised by scripts/live-follow-client.test.mjs.
   ${liveFollowRuntimeSource()}
-  const LIVE_CONFIG = ${liveConfig};
+  const LIVE_CONFIG = ${liveConfig}; ${APP_CONFIG_MARK}
   ${venue ? `// Feedback boards (ADR-0032, ticket 04): the venue screen draws each board into its slide with the
   // frame the big screen uses. The join is the talk's own link, the one phones open.
   ${boardScreenRuntimeSource}
-  const VENUE_JOIN = ${JSON.stringify({ shortUrl: String(venueUrl || ""), qrSvg: String(venueQr || "") }).replace(/</g, "\\u003c")};
+  const VENUE_JOIN = ${JSON.stringify({ shortUrl: String(venueUrl || ""), qrSvg: String(venueQr || "") }).replace(/</g, "\\u003c")}; ${APP_CONFIG_MARK}
   const venueBoards = createBoardScreen({ slides: () => slides, join: () => VENUE_JOIN });` : ""}
   let venueFollowController = null;
   let audienceFollowController = null;
@@ -1294,6 +1314,10 @@ ${hasMermaid ? mermaidVendorSource : ""}
         // Note on the phone bar: a note kept on this device for a slide, sent as a question only when ticked.
         onSlideNote: (input) => addSlideNote(input),
         getNoteCount: (slideId) => readerNotes.filter((entry) => entry.slideId === slideId).length,
+        // The home page's bar: three tiles with short labels, Note and "Ask a question" at every width.
+        tiles: HOME_MODE,
+        // ... and it stays while a board is open (Dominik 2026-10-08), as it does with a poll.
+        keepOnBoard: HOME_MODE,
         // The speaker paused or resumed questions, or the live session started or stopped: the popup follows.
         onSwitchesChanged: () => { if (!notePop.hidden) renderNotePop(); },
         isPhone,
@@ -1309,13 +1333,18 @@ ${hasMermaid ? mermaidVendorSource : ""}
         isBlocked: () => helpOverlay.classList.contains("open") || lbOpen,
       },
       onPollAnswered: () => renderMyNotes(),
-      // The home page (design 2026-10-02 B) turns to its Live tab while a session is live.
+      // The home page lets the person step through the slides while live: the reactions and the board stay,
+      // the board on the speaker's slide; it is told whether the page follows the speaker.
+      audienceSteps: HOME_MODE,
+      onFollowChanged: (state) => {
+        if (!handoutHome) return;
+        const at = state.speakerSlideId ? slides.findIndex((slide) => slide.dataset.id === state.speakerSlideId) : -1;
+        handoutHome.followChanged({ speaker: at >= 0 ? at : null, following: state.following });
+      },
+      // The home page takes its live layout while a session is live and its handout layout when it ends.
       onLiveChanged: (live) => { if (handoutHome) handoutHome.setLive(live); if (lazySlideAssets) lazySlideAssets.setLive(live); },
       // The speaker's slide, followed or not: its media are fetched first.
       onLiveSlideState: (slideId) => { if (lazySlideAssets) lazySlideAssets.setLiveSlide(slides.findIndex((slide) => slide.dataset.id === slideId)); },
-      // A full-screen instant slide waits while the person reads the Handout tab; the Live tab says it is there.
-      instantAllowed: () => !handoutHome || handoutHome.view() === 'live' || !handoutHome.isLive(),
-      onInstantChanged: (slide) => { if (handoutHome) handoutHome.setInstant(slide); },
       // A board that cannot be drawn must not drop the live connection the client guards with fail().
       onBoardState: ${venue ? "(message) => { try { venueBoards.receive(message); } catch (error) { console.error(error); } }" : "undefined"},
       onEnded: VENUE_MODE ? showVenueClosing : undefined,
@@ -1369,7 +1398,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
   // 2026-07-19: ".timeline .tl-dyn-entries > li" was missing here, so {timeline=dynamic} slides
   // enumerated ZERO units on the audience handout and reveal/focus following silently no-opped
   // on them. The parity test named above did not exist at the time; it does now.
-  const MODE_SELECTOR = ".feature-list[data-reveal-group],.feature-list > li:not(.image-grid *):not([data-reveal-group] *),.feature-list .fl-sublist > li:not([data-reveal-group] *),.timeline .tl-entries > li,.timeline .tl-dyn-entries > li,.timeline .tl-spine-track > li,.timeline > li,.slide-content > blockquote,.statement,.slide-content .content-p:not(.card-gallery *):not(.evidence-layout *):not(.cta-layout *):not(.image-grid *),figure.slide-figure:not(.evidence-layout *):not(.cta-layout *),.trace .turn,.contrast-grid > .contrast-pair,.tile-grid > div,.system-map > div:not(.system-centre),.evidence-layout .callouts > li,.cta-layout .cta-shot,.cta-layout .callouts > li,.cta-layout .slide-action,.smartart-node:not(.smartart-node *),.flow > .flow-node,.flow-cycle-row > .flow-node,.flow-snake-row > .flow-node,.flow > .flow-item,.pyramid .pyr-tier,.orgchart .org-box,.stats-row > .stat,.process-strip > .proc-step,.steps-diagram > .step-col,.icon-row > .ir-item,.image-grid > .ig-cell,.chart-cols > .chart-col,.cycle-diagram .cycle-node,.cycle-diagram .cycle-arc-svg,.timetable tbody tr,.slide-table tbody tr,.mindmap-mm > .mm-step,.layout-compare .compare-half.half-b";
+  const MODE_SELECTOR = ".feature-list[data-reveal-group],.feature-list > li:not(.image-grid *):not([data-reveal-group] *),.feature-list .fl-sublist > li:not([data-reveal-group] *),.timeline .tl-entries > li,.timeline .tl-dyn-entries > li,.timeline .tl-spine-track > li,.timeline > li,.slide-content > blockquote,.statement,.slide-content .content-p:not(.card-gallery *):not(.evidence-layout *):not(.cta-layout *):not(.image-grid *),figure.slide-figure:not(.evidence-layout *):not(.cta-layout *),.trace .turn,.contrast-grid > .contrast-pair,.tile-grid > div,.system-map > div:not(.system-centre),.evidence-layout .callouts > li,.cta-layout .cta-shot,.cta-layout .callouts > li,.cta-layout .slide-action,.smartart-node:not(.smartart-node *),.flow > .flow-node,.flow-cycle-row > .flow-node,.flow-snake-row > .flow-node,.flow > .flow-item,.pyramid .pyr-tier,.orgchart .org-box,.stats-row > .stat,.process-strip > .proc-step,.steps-diagram > .step-col,.icon-row > .ir-item,.image-grid > .ig-cell,.chart-cols > .chart-col,.cycle-diagram .cycle-node,.cycle-diagram .cycle-arc-svg,.timetable tbody tr,.slide-table tbody tr,.mindmap-mm > .mm-step,.layout-compare .compare-half.half-b,.sim .sim-step";
   const CARD_UNIT_SELECTOR = ".feature-list > li,blockquote,figure.slide-figure,p.content-p";
   let modeKind = null;   // null | "reveal" | "focus"
   let modeStep = 0;
@@ -1491,10 +1520,13 @@ ${hasMermaid ? mermaidVendorSource : ""}
     const raw = Array.from(slide.querySelectorAll(MODE_SELECTOR));
     return raw.filter((el, i) => isVisibleUnit(el) && raw.indexOf(el) === i);
   }
-  function maxStepFor(count) { return count <= 1 ? count : count + 1; }
-  function clampStep(step, total) { return Math.max(0, Math.min(maxStepFor(total), Number(step) || 0)); }
-  function unitState(kind, step, total, i) {
-    if (step >= maxStepFor(total) && step >= total) return "full";
+  // collapse: every unit is a simulation step (.sim .sim-step), which never dims, so the extra
+  // "all full" step would change nothing on screen; it folds onto the last reveal (deck runtime same).
+  function maxStepFor(count, collapse) { return count <= 1 || collapse ? count : count + 1; }
+  function collapsesFullStep(units) { return units.length > 0 && units.every(function (el) { return el.matches(".sim .sim-step"); }); }
+  function clampStep(step, total, collapse) { return Math.max(0, Math.min(maxStepFor(total, collapse), Number(step) || 0)); }
+  function unitState(kind, step, total, i, collapse) {
+    if (step >= maxStepFor(total, collapse) && step >= total) return "full";
     if (step <= 0) return kind === "focus" ? "fuzzy" : "hidden";
     var cur = step - 1;
     if (i === cur) return "current";
@@ -1555,12 +1587,13 @@ ${hasMermaid ? mermaidVendorSource : ""}
       return;
     }
     // Mindmap unfold rides the same step as the .mm-step markers (counted in units).
-    applyMindmapRevealForSlide(slide, modeKind, clampStep(modeStep, units.length));
+    var collapse = collapsesFullStep(units);
+    applyMindmapRevealForSlide(slide, modeKind, clampStep(modeStep, units.length, collapse));
     if (!modeKind || units.length === 0) return;
-    modeStep = clampStep(modeStep, units.length);
+    modeStep = clampStep(modeStep, units.length, collapse);
     units.forEach((el, i) => {
       if (!el.classList.contains("mode-el")) el.classList.add("mode-el");
-      var want = unitState(modeKind, modeStep, units.length, i);
+      var want = unitState(modeKind, modeStep, units.length, i, collapse);
       if (el.getAttribute("data-mode-state") !== want) el.setAttribute("data-mode-state", want);
     });
     // Scroll-follow (Fix 3): bring the newly-current unit into view inside its scroll container
@@ -1573,6 +1606,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
     var idx = Math.min(step - 1, units.length - 1);
     var el = units[idx];
     if (!el || typeof el.scrollIntoView !== "function") return;
+    // Simulation steps never scroll into view (the handout shows them static and open).
+    if (el.closest(".sim")) return;
     requestAnimationFrame(function () {
       try { el.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" }); }
       catch (e) { el.scrollIntoView(false); }
@@ -1607,9 +1642,10 @@ ${hasMermaid ? mermaidVendorSource : ""}
     if (!modeKind) { go(index + (delta > 0 ? 1 : -1)); return; }
     const units = modeElements();
     if (units.length === 0) { go(index + (delta > 0 ? 1 : -1)); return; }
-    const target = clampStep(modeStep, units.length) + delta;
+    const collapse = collapsesFullStep(units);
+    const target = clampStep(modeStep, units.length, collapse) + delta;
     if (target < 0) { go(index - 1); return; }
-    if (target > maxStepFor(units.length)) { go(index + 1); return; }
+    if (target > maxStepFor(units.length, collapse)) { go(index + 1); return; }
     liveFocus = null;
     modeStep = target;
     applyModeDimming();
@@ -2387,6 +2423,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
   }
   function renderMyNotes(focusNoteId) {
     refreshSlideMarks();
+    // The home page's "From your session" counts follow what My Notes holds.
+    if (handoutHome) handoutHome.refresh();
     if (!myNotesPanel.classList.contains("open")) return;
     if (focusNoteId) myNotesDrawer.edit(focusNoteId);
     else myNotesDrawer.render();
@@ -2643,16 +2681,27 @@ ${hasMermaid ? mermaidVendorSource : ""}
     if (el && el.querySelector(".btn-label") && !el.querySelector(".btn-ico")) el.insertAdjacentHTML("afterbegin", BTN_ICONS[id]);
   });
   ${homeOn ? `${handoutHomeRuntimeSource()}
+  ${liveStepRuntimeSource()}
   handoutHome = createHandoutHome({
     document,
     slideCount: slides.length,
     titleHtml: (i) => PHONE_TITLE_HTML[i] || "",
     startsAt: ${homeStartsAt === null ? "null" : homeStartsAt},
+    liveConfigured: ${workerBaseUrl ? "true" : "false"},
     openMyNotes: () => setMyNotesOpen(true),
+    gatherNotes: gatherEverything,
     onShowLive: () => { fitStage(); scheduleSlideFit(); },
-    onViewChanged: (view) => { if (view === 'live' && audienceFollowController) audienceFollowController.refreshInstant(); },
+    // The handout's cover is slide 1, whatever slide the speaker ended on.
+    onShowCover: () => { if (index !== 0) go(0); else { fitStage(); scheduleSlideFit(); } },
     // The stage lives in the Live pane: a page on its slide runs only while that pane shows.
     onStageShown: () => syncLocalShareEmbeds(),
+    // Stepping through the slides while live (live-step.js). The talk's live_look_ahead: false keeps
+    // people from stepping past the speaker's slide.
+    lookAhead: ${home.lookAhead === false ? "false" : "true"},
+    steps: { view: liveStepView, target: liveStepTarget, caption: liveStepCaption },
+    onStep: (at) => go(at),
+    onReturnToSpeaker: () => { if (audienceFollowController) audienceFollowController.returnToSpeaker(); },
+    onFullScreen: () => { fitStage(); scheduleSlideFit(); },
     parts: { stage: document.getElementById("stageFit"), poll: document.getElementById("audiencePollSurface"), board: document.getElementById("bdPanel"), reactions: document.getElementById("rxDock") },
   });` : ""}
   render();
@@ -2660,7 +2709,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
   applyGallery();
   // ADR-0018: on a phone the handout opens on the slide LIST, unless a deep link named a slide.
   if (HOME_MODE) {
-    // The home page has no slide list or deep links: its Live tab shows the slide the speaker is on.
+    // The home page has no slide list or deep links: live, it shows the slide the speaker is on.
   } else if (!VENUE_MODE) {
     applyPhoneMode();
     if (isPhone() && hadInitialHash) showPhoneDetail();
@@ -2673,7 +2722,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
   initialiseLiveFollow();
   initialiseSharedTalk();${preworkOn ? `
   // Pre-work (ticket 09): ask the Worker whether this Run's pre-work is open and mark the page.
-  const PREWORK_CONFIG = ${preworkConfig};
+  const PREWORK_CONFIG = ${preworkConfig}; ${APP_CONFIG_MARK}
   ${preworkStatusRuntimeSource()}
   ${preworkFormRuntimeSource()}
   const preworkStatus = createPreworkStatus({ document, config: PREWORK_CONFIG });

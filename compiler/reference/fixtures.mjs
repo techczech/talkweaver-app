@@ -515,6 +515,90 @@ Maya: Mixed at first — one engineer said: "this will never scale." It did.
 \`\`\``,
   },
   {
+    id: "ref-chat",
+    group: "specialised",
+    name: "AI chat",
+    explicit: "{chat}",
+    shorthand: "{chat}",
+    blurb: "A simulated chat window: reasoning, sources and tool calls are rows between question and answer that open on click.",
+    markdown: `### Refund policy {id=ref-chat}
+{chat}
+
+\`\`\`chat
+user: What changed in our refund policy last month?
+model-reasoning (4s): They want last month’s changes. I should check the policy and its change log.
+context-retrieval:
+  Refund Policy v4.2 (September 2026)
+tool-call: search_policy_docs {"topic": "refunds"}
+tool-results:
+  Refund window cut from 30 to 14 days
+  Digital goods: refundable only if unused
+bot: The refund window shrank from 30 to 14 days, and digital goods are now refundable only if unused.
+\`\`\``,
+  },
+  {
+    id: "ref-chat-lanes",
+    group: "specialised",
+    name: "AI chat with behind the scenes",
+    explicit: "{chat-lanes}",
+    shorthand: "{chat-lanes}",
+    blurb: "The chat on the left; reasoning, retrieved context and tool calls as cards in a Behind the scenes panel.",
+    markdown: `### Refund policy {id=ref-chat-lanes}
+{chat-lanes}
+
+\`\`\`chat
+user: What changed in our refund policy last month?
+model-reasoning (4s): They want last month’s changes. I should check the policy and its change log.
+context-retrieval:
+  Refund Policy v4.2 (September 2026)
+tool-call: search_policy_docs {"topic": "refunds"}
+tool-results:
+  Refund window cut from 30 to 14 days
+  Digital goods: refundable only if unused
+bot: The refund window shrank from 30 to 14 days, and digital goods are now refundable only if unused.
+\`\`\``,
+  },
+  {
+    id: "ref-terminal",
+    group: "specialised",
+    name: "Terminal",
+    explicit: "{terminal}",
+    shorthand: "{terminal}",
+    blurb: "A plain shell window: `$ ` lines are typed commands, other lines their output; fixed text size.",
+    markdown: `### A shell session {id=ref-terminal}
+{terminal window-title="policy — shell"}
+
+\`\`\`terminal
+~ $ cd policy
+~/policy $ ls
+change-log.md  refund-policy.md
+$ git log --oneline -1
+a41c9e2 Cut refund window to 14 days
+\`\`\``,
+  },
+  {
+    id: "ref-terminal-agent",
+    group: "specialised",
+    name: "Agent in a terminal",
+    explicit: "{terminal-agent}",
+    shorthand: "{terminal-agent}",
+    blurb: "A coding-agent command line with the same labels as the chat fence: prompt, thinking, tool blocks, answer.",
+    markdown: `### Refund policy {id=ref-terminal-agent}
+{terminal-agent model="example-model"}
+
+\`\`\`terminal
+user: What changed in our refund policy last month?
+model-reasoning (4s): They want last month’s changes. I should check the policy and its change log.
+context-retrieval:
+  Refund Policy v4.2 (September 2026)
+tool-call: search_policy_docs {"topic": "refunds"}
+tool-results:
+  Refund window cut from 30 to 14 days
+  Digital goods: refundable only if unused
+bot: The refund window shrank from 30 to 14 days, and digital goods are now refundable only if unused.
+\`\`\``,
+  },
+  {
     id: "ref-code",
     group: "specialised",
     name: "Code",

@@ -17,6 +17,18 @@ import ConflictCompare from './components/ConflictCompare'
 import { CONFLICT_COMPARE_EVENT } from './components/talklist/ConflictLine'
 import { VaultSheet, type VaultSheetState } from './components/talklist/VaultSheet'
 import { notify } from './lib/notify'
+import GuidePane from './components/GuidePane'
+import RemoveExampleConfirm from './components/RemoveExampleConfirm'
+import { EXAMPLE_REMOVAL_TEXT, type ExampleRemovalPreview } from '../../shared/example-vault-removal'
+import { commandRan, onCommandTicked } from './commands/command-ran'
+import { liveShortcutLabel } from './keymap/store'
+import { CHAPTER_TALK, chapterOfCommand, deriveChapters } from '../../shared/guide-chapters'
+import { emptyGuideLearn, guideLearnFrom, type GuideLearn } from '../../shared/guide-learn'
+import type { TopicTarget } from '../../shared/guide-topics'
+import type { ConnectionActionId, ConnectionRow } from '../../shared/guide-connections'
+import type { TaskGroup } from '../../shared/task-groups'
+import { rowChords, shortChord, type PracticeState } from './components/GuideChapters'
+import { GUIDE_DEFAULT_SEGMENT, GUIDE_TEXT, EMPTY_GUIDE_PROGRESS, firstSteps, type FirstStepId, type GuideProgress, type GuideSegment } from '../../shared/guide'
 import type { OpenInNewWindowTarget } from '../../shared/open-in-new-window'
 import { encodeFocus } from './components/talklist/vaultSections'
 import { armOutlineSwitch, consumeEditorEngagement } from './lib/outlineSwitch'
@@ -71,6 +83,9 @@ function mergeVaultBatch(existing: TalkInfo[], vaultId: string, batch: TalkInfo[
 }
 
 /** The vault holding a talk: its stamped id, else the longest vault root that contains its path. */
+// The ten chapters, derived once from the registries (src/shared/guide-chapters.ts).
+const GUIDE_CHAPTERS = deriveChapters()
+
 function vaultOfTalk(talk: TalkInfo | null, vaults: VaultView[]): VaultView | null {
   if (!talk) return null
   const byId = talk.vaultId ? vaults.find((v) => v.id === talk.vaultId) : undefined
@@ -167,25 +182,30 @@ function ToolsShell({ initialView }: { initialView: ToolsView }): JSX.Element {
     return <Importer isOpen onClose={() => window.close()} onShowStudio={showStudio} onShowHistory={showHistory} />
   }
 
-  return view === 'studio' ? (
-    <Studio
-      isOpen
-      onClose={() => window.close()}
-      initialSessionId={studioInitialSessionId}
-      onShowHistory={showHistory}
-      onShowImporter={showImporter}
-      onOpenTalkText={showTalkText}
-    />
-  ) : (
-    <History
-      isOpen
-      onClose={() => window.close()}
-      onShowStudio={showStudio}
-      onShowImporter={showImporter}
-      planRequest={planRequest}
-      preworkRequest={preworkRequest}
-    />
-  )
+  // Studio and History say why an upload did not go through as a notification with its one action
+  // ("Set up recording storage"), so this window shows the notification stack too.
+  return (<>
+    {view === 'studio' ? (
+      <Studio
+        isOpen
+        onClose={() => window.close()}
+        initialSessionId={studioInitialSessionId}
+        onShowHistory={showHistory}
+        onShowImporter={showImporter}
+        onOpenTalkText={showTalkText}
+      />
+    ) : (
+      <History
+        isOpen
+        onClose={() => window.close()}
+        onShowStudio={showStudio}
+        onShowImporter={showImporter}
+        planRequest={planRequest}
+        preworkRequest={preworkRequest}
+      />
+    )}
+    <Toasts />
+  </>)
 }
 
 // The window's one answer from main to "what was I opened for" (see MainApp's take-open-request effect).
@@ -209,7 +229,134 @@ function MainApp() {
   const [newFolderOpen, setNewFolderOpen] = useState(false)
   // Add vault / Edit this vault / join / refusal sheet (several-vaults ticket 04).
   const [vaultSheet, setVaultSheet] = useState<VaultSheetState | null>(null)
+  // Whether the example vault is in the list (onboarding ticket 06): read by Add vault…, which is
+  // also reached from listeners set up once.
+  const exampleListedRef = useRef(false)
+  // "Get started: show the example vault again" (ticket 12) reaches the restore through this ref.
+  const restoreExampleRef = useRef<(() => Promise<void>) | null>(null)
+  useEffect(() => {
+    const restoreRequest = (): void => { void restoreExampleRef.current?.() }
+    window.addEventListener('tw-restore-example', restoreRequest)
+    return () => window.removeEventListener('tw-restore-example', restoreRequest)
+  }, [])
+  // The Guide (onboarding ticket 07). Per window and in no vault: whether its tab is up, which segment
+  // it shows, and a counter that tells the column to bring itself up on each request. The Settings
+  // switch and the progress are app-wide, kept in app config, and heard from every window.
+  const [guideOpen, setGuideOpen] = useState(false)
+  const [guideNonce, setGuideNonce] = useState(0)
+  const [guideSegment, setGuideSegment] = useState<GuideSegment>(GUIDE_DEFAULT_SEGMENT)
+  const [guideButtonOn, setGuideButtonOn] = useState(true)
+  const [guideProgress, setGuideProgress] = useState<GuideProgress>(EMPTY_GUIDE_PROGRESS)
+  const guideButtonOnRef = useRef(true)
+  guideButtonOnRef.current = guideButtonOn
+  const openGuide = useCallback((): void => { setGuideOpen(true); setGuideNonce((n) => n + 1) }, [])
+  useEffect(() => {
+    let cancelled = false
+    window.tw.settings.getGuideButton().then((s) => { if (!cancelled) setGuideButtonOn(s.visible) }).catch(() => { /* keep the default */ })
+    window.tw.guide.getProgress().then((p) => { if (!cancelled) setGuideProgress(p) }).catch(() => { /* keep the default */ })
+    // The switch turned off, here or in another window, removes the button and the tab.
+    const offSwitch = window.tw.settings.onGuideButtonChanged((s) => { setGuideButtonOn(s.visible); if (!s.visible) setGuideOpen(false) })
+    const offProgress = window.tw.guide.onProgressChanged(setGuideProgress)
+    // The presenter's "All chapters": the Guide opens on the chapter list (Commands segment, no chapter open).
+    const offChapterList = window.tw.guide.onShowChapterList(() => { setGuideSegment('commands'); setGuideChapter(null); openGuide() })
+    // Palette: "Get started: open the Guide" works with the button off (this session only);
+    // "Get started: show the Guide button" turns the switch back on.
+    const openRequest = (): void => openGuide()
+    const showButton = (): void => {
+      void window.tw.settings.setGuideButtonVisible(true).then(() => notify(GUIDE_TEXT.onFlash, 'info'))
+    }
+    window.addEventListener('tw-guide-open', openRequest)
+    window.addEventListener('tw-guide-show-button', showButton)
+    return () => {
+      cancelled = true
+      offSwitch(); offProgress(); offChapterList()
+      window.removeEventListener('tw-guide-open', openRequest)
+      window.removeEventListener('tw-guide-show-button', showButton)
+    }
+  }, [openGuide])
+  // Learn the commands (ticket 08): the chapters are derived from the registries once; the record of what
+  // has been tried is app-wide, kept by main and heard from every window. The open chapter and the row
+  // that has just ticked are this window's own.
+  const [guideLearn, setGuideLearn] = useState<GuideLearn>(emptyGuideLearn)
+  const [guideChapter, setGuideChapter] = useState<TaskGroup | null>(null)
+  const [flashRow, setFlashRow] = useState<string | null>(null)
+  const guideOpenRef = useRef(false)
+  guideOpenRef.current = guideOpen
+  useEffect(() => {
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    window.tw.guide.getLearn().then((record) => { if (!cancelled) setGuideLearn(guideLearnFrom(record)) }).catch(() => { /* keep the empty record */ })
+    const offLearn = window.tw.guide.onLearnChanged((record) => setGuideLearn(guideLearnFrom(record)))
+    // A row that ticks in this window flashes, and a toast says which: only while the Guide is up.
+    const offTick = onCommandTicked((id) => {
+      const chapter = chapterOfCommand(GUIDE_CHAPTERS, id)
+      const row = chapter?.rows.find((candidate) => candidate.ids.includes(id))
+      if (!chapter || !row || !guideOpenRef.current) return
+      setFlashRow(row.id)
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => setFlashRow(null), 1600)
+      const chord = rowChords(row, liveShortcutLabel)[0]
+      notify(`${GUIDE_TEXT.chapters.ticked} · ${row.label}${chord ? ` ${shortChord(chord)}` : ''}`, 'success', 'guide-tick')
+    })
+    return () => { cancelled = true; offLearn(); offTick(); if (timer) clearTimeout(timer) }
+  }, [])
+  // How it works (ticket 11): the open topic is this window's own; opening one marks it Read (kept by main,
+  // app-wide). A Features row reads Read when clicked. What it connects to is read from this Mac by main.
+  const [guideTopic, setGuideTopic] = useState<string | null>(null)
+  const openGuideTopic = useCallback((id: string): void => {
+    setGuideTopic(id)
+    void window.tw.guide.topicRead(id).catch(() => { /* not recorded */ })
+  }, [])
+  const markFeatureRead = useCallback((id: string): void => { void window.tw.guide.topicRead(id).catch(() => { /* not recorded */ }) }, [])
+  const readConnections = useCallback((): Promise<ConnectionRow[]> => window.tw.guide.connections(), [])
+  const runConnectionAction = useCallback((action: ConnectionActionId): void => {
+    if (action === 'open-settings') window.dispatchEvent(new Event('tw-open-settings'))
+    // Settings, scrolled to its Cloudflare section (the same route as a publish sheet's Open Settings).
+    else if (action === 'open-cloudflare') { setSettingsCloudflare((asked) => asked + 1); setSettingsOpen(true) }
+    else if (action === 'get-slidewell') void window.tw.guide.openLink('slidewell-download').catch(() => undefined)
+  }, [])
+  const selectGuideChapter = useCallback((task: TaskGroup): void => {
+    setGuideChapter(task)
+    void window.tw.guide.chapterOpened(task).catch(() => { /* not recorded */ })
+  }, [])
+  // The third first step ticks when a talk of the example vault is open in any window.
+  useEffect(() => {
+    if (state.phase !== 'ready' || !activeTalk || guideProgress.exampleTalkOpened) return
+    if (vaultOfTalk(activeTalk, state.vaults)?.example === true) void window.tw.guide.noteExampleTalkOpened().then(setGuideProgress).catch(() => { /* not recorded */ })
+  }, [state, activeTalk, guideProgress.exampleTalkOpened])
+  // Remove the example vault and bring it back (onboarding ticket 12). `exampleRemoved` is main's answer
+  // (removed, and not in the list now), heard from every window; the confirmation is this window's own.
+  const [exampleRemoved, setExampleRemoved] = useState(false)
+  const [removeConfirm, setRemoveConfirm] = useState<{ preview: ExampleRemovalPreview | null; busy: boolean; error: string | null } | null>(null)
+  const openRemoveConfirm = useCallback((): void => {
+    setRemoveConfirm({ preview: null, busy: false, error: null })
+    void window.tw.vault.exampleRemovalPreview()
+      .then((preview) => setRemoveConfirm((current) => (current ? { ...current, preview } : current)))
+      .catch(() => setRemoveConfirm(null))
+  }, [])
+  const confirmRemoveExample = useCallback((token: string): void => {
+    setRemoveConfirm((current) => (current ? { ...current, busy: true, error: null } : current))
+    void window.tw.vault.removeExample(token).then(async (result) => {
+      if (result.ok) { setRemoveConfirm(null); return }
+      // The token is used up: a fresh look, with the sentence that says why nothing was removed.
+      const preview = await window.tw.vault.exampleRemovalPreview().catch(() => null)
+      setRemoveConfirm((current) => (current ? { preview, busy: false, error: result.message } : current))
+    }).catch(() => setRemoveConfirm(null))
+  }, [])
+  useEffect(() => {
+    let cancelled = false
+    window.tw.vault.exampleState?.().then((s) => { if (!cancelled) setExampleRemoved(s.removed) }).catch(() => { /* keep the default */ })
+    const offChanged = window.tw.vault.onExampleChanged?.((event) => {
+      setExampleRemoved(event.removed)
+      if (event.moved) notify(EXAMPLE_REMOVAL_TEXT.removedFlash, 'success')
+    })
+    const removeRequest = (): void => openRemoveConfirm()
+    window.addEventListener('tw-remove-example', removeRequest)
+    return () => { cancelled = true; offChanged?.(); window.removeEventListener('tw-remove-example', removeRequest) }
+  }, [openRemoveConfirm])
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // Bumped each time Settings is asked to open at its Cloudflare section.
+  const [settingsCloudflare, setSettingsCloudflare] = useState(0)
   const [sidebarWidth, setSidebarWidth] = useState<number>(readSidebarWidth)
   const draggingRef = useRef(false)
   // Every launch opens on the Talks list, expanded — never restored into Slide-outline mode or
@@ -407,22 +554,26 @@ function MainApp() {
       if (matched === 'sidebar.talks') {
         e.preventDefault()
         focusSidebarSearch('talks')
+        commandRan('app.sidebar-talks')
         return
       }
       if (matched === 'sidebar.outline') {
         e.preventDefault()
         focusSidebarSearch('slides')
+        commandRan('app.sidebar-outline')
         return
       }
       if (matched === 'sidebar.toggle' || ((e.metaKey || e.ctrlKey) && e.key === '\\')) {
         e.preventDefault()
         toggleSidebar(sidebarMode)
+        commandRan('app.sidebar-toggle')
         return
       }
       if ((e.metaKey || e.ctrlKey) && e.key === ',') {
         e.preventDefault()
         e.stopPropagation()
         setSettingsOpen((o) => !o)
+        commandRan('app.settings')
       }
     }
     readSidebarKeys()
@@ -464,6 +615,10 @@ function MainApp() {
     const searchSlides = (): void => { setSidebarMode('slides'); setSidebarCollapsed(false) }
     const openMetadata = (): void => { if (activeTalkRef.current) setMetadataTalk(activeTalkRef.current) }
     window.addEventListener('tw-open-settings', openSettings)
+    // "Open Settings" on a publish sheet or notice (any window): Settings, at its Cloudflare section.
+    const stopShowCloudflare = window.tw.cloudflare.onShowSettings(() => { setSettingsCloudflare((asked) => asked + 1); setSettingsOpen(true) })
+    // The live service is being set up or updated before a use (spec D9: the person is told). One toast, replaced by the next.
+    const stopLiveNotice = window.tw.liveService.onNotice((message) => notify(message, 'info', 'live-service-notice'))
     window.addEventListener('tw-open-studio', openStudio)
     window.addEventListener('tw-open-history', openHistory)
     window.addEventListener('tw-open-importer', openImporter)
@@ -477,6 +632,8 @@ function MainApp() {
     window.addEventListener('tw-open-metadata', openMetadata)
     return () => {
       window.removeEventListener('tw-open-settings', openSettings)
+      stopShowCloudflare()
+      stopLiveNotice()
       window.removeEventListener('tw-open-studio', openStudio)
       window.removeEventListener('tw-open-history', openHistory)
       window.removeEventListener('tw-open-importer', openImporter)
@@ -606,10 +763,41 @@ function MainApp() {
     await loadVaults({ force: true })
   }
 
-  // "+ Add vault…" (ticket 04): pick a folder. A folder with no vault file opens the New vault sheet,
-  // one with a vault file the join sheet; a folder already open as a vault, or inside one, is refused
-  // in a small sheet that names that vault.
+  // "+ Add vault…" (onboarding ticket 06): while the example vault is not in the list, the Add vault
+  // sheet offers a folder or the example vault; otherwise the folder picker opens at once, as before.
   async function addVault(): Promise<void> {
+    if (!exampleListedRef.current) { setVaultSheet({ mode: 'add' }); return }
+    await pickVaultFolder()
+  }
+  // Open example vault (onboarding ticket 06): main writes it (or finds it) at its fixed path and adds
+  // it to the list; the start talk opens once the list holds it. Resolves with the one sentence to
+  // show when nothing was opened, else null. Never a dialog.
+  async function openExampleVault(): Promise<string | null> {
+    const wasListed = exampleListedRef.current
+    const result = await window.tw.vault.openExample()
+    if (!result.ok) return result.message
+    // Opening the example vault for the first time opens the Guide, unless the person has removed its button.
+    if (!wasListed && guideButtonOnRef.current) openGuide()
+    if (result.startTalk) {
+      openRequestAtRef.current = Date.now()
+      setOpenRequest({ kind: 'talk', outlinePath: result.startTalk })
+    }
+    await loadVaults({ force: true })
+    return null
+  }
+  // Bring the example vault back (ticket 12; lock decision 17): a fresh copy (or the marked folder
+  // already there), the vault back in the list, and the Guide with its earlier ticks and read marks.
+  async function restoreExampleVault(): Promise<void> {
+    const result = await window.tw.vault.restoreExample()
+    if (!result.ok) { notify(result.message, 'info'); return }
+    await loadVaults({ force: true })
+    openGuide()
+  }
+  restoreExampleRef.current = restoreExampleVault
+  // Pick a folder (ticket 04). A folder with no vault file opens the New vault sheet, one with a
+  // vault file the join sheet; a folder already open as a vault, or inside one, is refused in a small
+  // sheet that names that vault.
+  async function pickVaultFolder(): Promise<void> {
     const chosen = await window.tw.vault.chooseFolder()
     if (!chosen) return
     if (!chosen.ok) { setVaultSheet({ mode: 'refused', reason: chosen.reason, message: chosen.message, other: chosen.other }); return }
@@ -658,6 +846,17 @@ function MainApp() {
     notify('No vault is available on this Mac right now, so no talk was made.', 'warning')
   }, [newTalkTopic, state])
 
+  // An install whose recordings took their keys from Bitwarden is told once to type them into
+  // Settings. The main process answers once and never again, so it is asked only when the window
+  // can show the answer: the notification stack is on screen once the app shell is.
+  const shellReady = state.phase === 'ready'
+  useEffect(() => {
+    if (!shellReady) return
+    void window.tw.recording.takeSetupNotice().then((notice) => {
+      if (notice) notify(notice, 'warning', 'recording-keys-notice', { label: 'Open Settings', onAction: () => { setSettingsCloudflare((asked) => asked + 1); setSettingsOpen(true) } })
+    }).catch(() => {})
+  }, [shellReady])
+
   if (state.phase === 'loading') {
     return (
       <div className="loading-screen">
@@ -666,8 +865,10 @@ function MainApp() {
     )
   }
 
+  exampleListedRef.current = state.phase === 'ready' && state.vaults.some((v) => v.example === true)
+
   if (state.phase === 'setup') {
-    return <VaultSetup onVaultChosen={handleVaultChosen} />
+    return <VaultSetup onVaultChosen={handleVaultChosen} onOpenExample={openExampleVault} />
   }
 
   // The vault a talk is in decides which root the editor and panels work against; with no talk open, the
@@ -678,6 +879,60 @@ function MainApp() {
   const firstOpenVault = firstUsableVault ?? state.vaults.find((v) => v.open) ?? state.vaults[0]
   const activeVault = vaultOfTalk(activeTalk, state.vaults) ?? firstOpenVault
   const newTalkVault = state.vaults.find((v) => v.id === newTalkVaultId && usableVault(v)) ?? firstUsableVault
+
+  // The Guide's First steps: ticked from the vault list, the talks and the progress; each undone step's
+  // button does the thing. "Make your first talk" goes to a vault of the person's own, never the example.
+  // Once the example vault is removed, its step leaves First steps with it (ticket 12).
+  const steps = firstSteps({ vaults: state.vaults, talks: state.talks, progress: guideProgress })
+    .filter((step) => !(exampleRemoved && !state.vaults.some((v) => v.example) && step.id === 'example-talk'))
+  const runGuideStep = (id: FirstStepId): void => {
+    if (id === 'own-vault') { void addVault(); return }
+    if (id === 'first-talk') {
+      const own = state.vaults.find((v) => usableVault(v) && !v.example)
+      if (!own) { void addVault(); return }
+      setNewTalkVaultId(own.id); setNewTalkTopic('')
+      return
+    }
+    void openExampleVault().then((message) => { if (message) notify(message, 'info') })
+  }
+  // A chapter's practice talk: where it is, and Open this talk, which opens it in its own window (or brings
+  // that window forward) and never replaces the person's own talk (lock decision 10).
+  const exampleVaultIds = new Set(state.vaults.filter((v) => v.example).map((v) => v.id))
+  const exampleVault = state.vaults.find((v) => v.example) ?? null
+  const practiceOf = (task: TaskGroup): PracticeState => {
+    const [talk, section] = CHAPTER_TALK[task]
+    const openNow = activeTalk !== null && activeTalk.title === talk && !!activeTalk.vaultId && exampleVaultIds.has(activeTalk.vaultId)
+    return { talk, section, openNow }
+  }
+  const openExampleTalk = (title: string): void => {
+    const talk = state.talks.find((t) => t.title === title && !!t.vaultId && exampleVaultIds.has(t.vaultId))
+    if (!talk) { notify(GUIDE_TEXT.chapters.noExample, 'info'); return }
+    void window.tw.windows.openInNewWindow({ kind: 'talk', outlinePath: talk.outlinePath })
+      .then((res) => { if (!res?.ok) notify('Couldn’t open a new window.', 'error') })
+      .catch(() => notify('Couldn’t open a new window.', 'error'))
+  }
+  const openPractice = (task: TaskGroup): void => openExampleTalk(CHAPTER_TALK[task][0])
+  // Try it on a How it works topic: an example talk in its own window, or a command that needs no talk open.
+  const runTopicTry = (target: TopicTarget): void => {
+    if (target.kind === 'talk') { openExampleTalk(target.talk); return }
+    window.dispatchEvent(new Event(target.id === 'settings' ? 'tw-open-settings' : target.id === 'history' ? 'tw-open-history' : 'tw-search-talks'))
+  }
+  const guideBody = (
+    <GuidePane
+      segment={guideSegment}
+      onSegment={setGuideSegment}
+      steps={steps}
+      onStep={runGuideStep}
+      chapters={{
+        chapters: GUIDE_CHAPTERS, learn: guideLearn, selected: guideChapter, onSelect: selectGuideChapter, onBack: () => setGuideChapter(null),
+        chordOf: liveShortcutLabel, practice: practiceOf, onOpenPractice: openPractice, flashId: flashRow
+      }}
+      onRemoveExample={exampleVault ? openRemoveConfirm : undefined}
+      how={{ learn: guideLearn, openId: guideTopic, onOpen: openGuideTopic, onBack: () => setGuideTopic(null), onTry: runTopicTry }}
+      features={{ learn: guideLearn, onRead: markFeatureRead, readConnections, onAction: runConnectionAction }}
+    />
+  )
+  const guideButton = guideButtonOn ? { open: guideOpen, onToggle: () => { if (guideOpen) setGuideOpen(false); else openGuide() } } : null
 
   const modes: Array<{ id: SidebarMode; label: string }> = [
     { id: 'talks', label: 'Talks' },
@@ -757,6 +1012,7 @@ function MainApp() {
               initialFocusPath={talkFocusPathRef.current}
               focusRequest={folderRequest}
               onFocusPathChange={rememberTalkFocusPath}
+              guideButton={guideButton}
             />
           )}
           {sidebarMode === 'slides' && (
@@ -793,8 +1049,13 @@ function MainApp() {
           state={vaultSheet}
           onClose={() => setVaultSheet(null)}
           onDone={() => { void vaultSheetDone() }}
-          onChooseAnother={() => { setVaultSheet(null); void addVault() }}
+          onChooseAnother={() => { setVaultSheet(null); void pickVaultFolder() }}
           onShowVault={showVault}
+          onOpenExample={async () => {
+            const message = await openExampleVault()
+            if (message === null) setVaultSheet(null)
+            return message
+          }}
         />
       )}
       {newFolderOpen && (
@@ -823,6 +1084,7 @@ function MainApp() {
         registerLeaveGuard={(fn) => { leaveGuardRef.current = fn }}
         onDiscardTalk={() => { void selectTalk(null) }}
         onActiveLineChange={slidesOutlineVisible ? setActiveOutlineLine : undefined}
+        guide={{ open: guideOpen, nonce: guideNonce, body: guideBody, onClose: () => setGuideOpen(false) }}
       />
       <MetadataPanel
         talk={metadataTalk}
@@ -844,9 +1106,23 @@ function MainApp() {
       <SettingsPanel
         isOpen={settingsOpen}
         onClose={() => setSettingsOpen(false)}
+        showCloudflare={settingsCloudflare}
         vaultRoot={firstOpenVault.root}
         onChangeVault={async () => { setSettingsOpen(false); await addVault() }}
+        onOpenGuide={() => { setSettingsOpen(false); openGuide() }}
+        exampleRemoved={exampleRemoved && !exampleVault}
+        onRestoreExample={() => { setSettingsOpen(false); void restoreExampleVault() }}
       />
+      {removeConfirm && (
+        <RemoveExampleConfirm
+          vault={exampleVault ?? { color: '#0f766e', initial: 'E', name: 'Example vault' }}
+          preview={removeConfirm.preview}
+          busy={removeConfirm.busy}
+          error={removeConfirm.error}
+          onCancel={() => setRemoveConfirm(null)}
+          onConfirm={confirmRemoveExample}
+        />
+      )}
       {compare && (
         <ConflictCompare
           key={compare.outlinePath}

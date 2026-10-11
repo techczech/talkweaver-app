@@ -1,6 +1,10 @@
 // Browser-only mock of window.tw — injected when running outside Electron
 // Not imported in production; used only for dev preview in a plain browser
 
+import { emptyGuideLearn, withChapterOpened, withCommandRan, withTopicRead, type GuideLearn } from '../../shared/guide-learn'
+import { resolveCommandId } from '../../shared/guide-chapters'
+import { NO_SOURCES, connectionRows, type ConnectionSources } from '../../shared/guide-connections'
+
 const MOCK_VAULT_ROOT = '/Users/you/Talks'
 
 const MOCK_TALKS = [
@@ -185,6 +189,12 @@ function mockLineDiff(a: string, b: string): Array<{ kind: 'same' | 'del' | 'add
 // In-memory action-bar state for the plain-browser dev preview (ADR-0025): the flag flips in
 // memory and listeners hear it, so the toggle behaves in the dev preview too.
 const mockActionBar = { visible: false, listeners: new Set<(state: { visible: boolean; items: unknown }) => void>() }
+const mockGuideButton = { visible: true, listeners: new Set<(state: { visible: boolean }) => void>() }
+const mockGuideProgress = { exampleTalkOpened: false, listeners: new Set<(progress: { exampleTalkOpened: boolean }) => void>() }
+/** The browser mock's machine for What it connects to: nothing found, until a test sets `sources`. */
+const mockMachine: { sources: ConnectionSources } = { sources: NO_SOURCES }
+const mockGuideLearn = { record: emptyGuideLearn(), listeners: new Set<(record: GuideLearn) => void>() }
+const mockPlaceChip = { visible: true, listeners: new Set<(state: { visible: boolean }) => void>() }
 
 export function installMock() {
   ;(window as any).tw = {
@@ -197,6 +207,12 @@ export function installMock() {
       setOpen: async () => ({ ok: false, reason: 'last-open', message: 'Keep at least one vault open.' }),
       recheck: async () => false,
       onVaultsChanged: (_cb: unknown) => () => {},
+      // Remove the example vault (onboarding ticket 12): nothing to remove in the dev preview.
+      exampleState: async () => ({ removed: false }),
+      exampleRemovalPreview: async () => ({ ok: false, message: 'The example vault is not in your vaults, so there is nothing to remove.' }),
+      removeExample: async () => ({ ok: false, message: 'The example vault is not in your vaults, so there is nothing to remove.' }),
+      restoreExample: async () => ({ ok: false, message: 'The example vault could not be brought back.' }),
+      onExampleChanged: (_cb: unknown) => () => {},
       listTalks: async () => MOCK_TALKS,
       createTalk: async (opts: { title: string; slug: string; topicFolder?: string }) => {
         const slug = opts.slug
@@ -283,6 +299,69 @@ export function installMock() {
       onActionBarChanged: (cb: (state: { visible: boolean; items: unknown }) => void) => {
         mockActionBar.listeners.add(cb)
         return () => mockActionBar.listeners.delete(cb)
+      },
+      getPlaceChip: async () => ({ visible: mockPlaceChip.visible }),
+      setPlaceChipVisible: async (visible: boolean) => {
+        mockPlaceChip.visible = visible
+        for (const listener of mockPlaceChip.listeners) listener({ visible })
+        return visible
+      },
+      onPlaceChipChanged: (cb: (state: { visible: boolean }) => void) => {
+        mockPlaceChip.listeners.add(cb)
+        return () => mockPlaceChip.listeners.delete(cb)
+      },
+      getGuideButton: async () => ({ visible: mockGuideButton.visible }),
+      setGuideButtonVisible: async (visible: boolean) => {
+        mockGuideButton.visible = visible
+        for (const listener of mockGuideButton.listeners) listener({ visible })
+        return visible
+      },
+      onGuideButtonChanged: (cb: (state: { visible: boolean }) => void) => {
+        mockGuideButton.listeners.add(cb)
+        return () => mockGuideButton.listeners.delete(cb)
+      }
+    },
+    guide: {
+      getProgress: async () => ({ exampleTalkOpened: mockGuideProgress.exampleTalkOpened }),
+      noteExampleTalkOpened: async () => {
+        mockGuideProgress.exampleTalkOpened = true
+        for (const listener of mockGuideProgress.listeners) listener({ exampleTalkOpened: true })
+        return { exampleTalkOpened: true }
+      },
+      onProgressChanged: (cb: (progress: { exampleTalkOpened: boolean }) => void) => {
+        mockGuideProgress.listeners.add(cb)
+        return () => mockGuideProgress.listeners.delete(cb)
+      },
+      getLearn: async () => mockGuideLearn.record,
+      commandRan: async (id: string) => {
+        const resolved = resolveCommandId(id)
+        if (!resolved) return { id: null, ticked: false }
+        const next = withCommandRan(mockGuideLearn.record, resolved)
+        const ticked = next !== mockGuideLearn.record
+        mockGuideLearn.record = next
+        if (ticked) for (const listener of mockGuideLearn.listeners) listener(next)
+        return { id: resolved, ticked }
+      },
+      chapterOpened: async (task: string) => {
+        const next = withChapterOpened(mockGuideLearn.record, task)
+        const changed = next !== mockGuideLearn.record
+        mockGuideLearn.record = next
+        if (changed) for (const listener of mockGuideLearn.listeners) listener(next)
+        return changed
+      },
+      topicRead: async (topic: string) => {
+        const next = withTopicRead(mockGuideLearn.record, topic)
+        const changed = next !== mockGuideLearn.record
+        mockGuideLearn.record = next
+        if (changed) for (const listener of mockGuideLearn.listeners) listener(next)
+        return changed
+      },
+      connections: async () => connectionRows(mockMachine.sources),
+      openLink: async (_id: string) => true,
+      onShowChapterList: (_cb: () => void) => () => undefined,
+      onLearnChanged: (cb: (record: GuideLearn) => void) => {
+        mockGuideLearn.listeners.add(cb)
+        return () => mockGuideLearn.listeners.delete(cb)
       }
     },
     ledger: {

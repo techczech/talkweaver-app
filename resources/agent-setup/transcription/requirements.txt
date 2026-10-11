@@ -1,0 +1,5 @@
+# The speech engine for parakeet_to_srt.py (Parakeet on Apple's MLX). MLX runs only on Macs with
+# Apple silicon, so on any other computer this file installs nothing and the script still answers
+# --help; transcription there needs an engine of the person's own (see SETUP.md).
+# Pinned to the version the script was last used with (2026-10).
+parakeet-mlx==0.5.2 ; sys_platform == "darwin" and platform_machine == "arm64"

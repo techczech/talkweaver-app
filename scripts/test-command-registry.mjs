@@ -75,7 +75,8 @@ const expectedPaletteIds = [
   'format-bold', 'format-italic', 'format-inline-code', 'format-highlight', 'format-strikethrough', 'format-underline', 'format-link',
   'deck-design', 'metadata', 'tag-slide', 'abstract',
   'view-editor', 'view-both', 'view-strip', 'view-grid', 'fold-all', 'unfold-all',
-  'normalize-triggers', 'undo', 'redo', 'new-slide', 'promote-heading', 'demote-heading', 'bulleted-list', 'numbered-list', 'delete-slide', 'app.command-palette', 'help', 'settings'
+  'normalize-triggers', 'undo', 'redo', 'new-slide', 'promote-heading', 'demote-heading', 'bulleted-list', 'numbered-list', 'delete-slide', 'app.command-palette', 'help', 'settings',
+  'get-started-show-example', 'get-started-open-guide', 'get-started-show-guide-button'
 ]
 assert.deepEqual(paletteCommands().map((command) => command.id), expectedPaletteIds, 'palette is generated in its existing order')
 assert.equal(typeof objectPaletteCommands, 'function', 'object palette commands derive from the layout registry')
@@ -220,7 +221,7 @@ for (const menu of ['Insert', 'Deck', 'Tools', 'Present']) {
   assert(!/items=\{\[\s*\{[\s\S]*?label:/.test(block), `${menu} ToolbarMenu must not contain a literal inline item array`)
 }
 assert(workspace.includes("toolbarItems('tools')"), 'Tools toolbar menu is generated from registered placements')
-const handlerBlock = workspace.match(/commandHandlersRef\.current = \{([\s\S]*?)\n  \}/)?.[1] ?? ''
+const handlerBlock = workspace.match(/commandHandlersRef\.current = (?:reportingHandlers\()?\{([\s\S]*?)\n  \}/)?.[1] ?? ''
 const implementedHandlers = [...handlerBlock.matchAll(/^    (?:'([^']+)'|([a-z][\w-]*)):/gm)]
   .map((match) => match[1] ?? match[2])
   .sort()
@@ -299,6 +300,7 @@ try {
         "export { EDITOR_COMMANDS } from './src/renderer/src/keymap/registry.ts'",
         "export * from './src/renderer/src/components/SlideContextMenu.tsx'",
         "export * from './src/renderer/src/keymap/store.ts'",
+        "export { keyboardSheet } from './src/shared/keyboard-sheet.ts'",
         "export function renderKeyboardHelp() {",
         "  return renderToStaticMarkup(React.createElement(KeyboardHelp, { isOpen: true, onClose() {} }))",
         "}",
@@ -324,6 +326,24 @@ try {
 
   window.localStorage.setItem('tw-keymap-overrides', JSON.stringify({ highlight: 'Mod-Alt-h' }))
   shortcutUi = await import(`${uiBundleUrl.href}?t=${Date.now()}`)
+  // The ⌘/ sheet (onboarding 0.38.1 ticket 04) shows one section at a time, so its rows are read
+  // from the data function the sheet renders from: the live chord of a shortcut's row, by shortcut id.
+  const { COMMAND_REGISTRY: sheetCommands } = await import(new URL('../src/shared/command-registry.ts', import.meta.url))
+  const sheetRows = () => {
+    const data = shortcutUi.keyboardSheet({
+      place: null,
+      chordOf: shortcutUi.liveShortcutLabel,
+      defaultChordOf: (id) => { const row = SHORTCUT_REGISTRY.find((entry) => entry.id === id); return !row || row.unbound ? 'no default' : row.keys },
+      canRun: () => false
+    })
+    return { data, rows: [...data.groups.flatMap((group) => group.rows), ...data.surfaces.flatMap((surface) => surface.rows)] }
+  }
+  const sheetRowOf = (shortcutId) => {
+    const command = sheetCommands.find((candidate) => candidate.shortcutId === shortcutId)
+    const row = sheetRows().rows.find((candidate) => candidate.key === command?.id)
+    assert(row, `the cheat sheet lists the row of ${shortcutId}`)
+    return row
+  }
   assert.equal(
     shortcutUi.effectiveKeys('editor.highlight'),
     'Mod-Alt-h',
@@ -386,11 +406,12 @@ try {
     '⌘⌥H',
     'toolbar and palette command labels resolve the live override behaviourally'
   )
-  assert.match(
-    shortcutUi.renderKeyboardHelp(),
-    /⌘⌥H/,
+  assert.equal(
+    sheetRowOf('editor.highlight').chord,
+    '⌘⌥H',
     'the cheat sheet renders the live highlight override'
   )
+  assert.equal(sheetRowOf('editor.highlight').was, 'no key', 'and marks it rebound, with the chord it was')
   assert.match(
     shortcutUi.renderSlideContextMenu(),
     /⌘⌥H/,
@@ -422,25 +443,21 @@ try {
   // ── Talk search 08: the talk-search keys in the cheat sheet and the picker's hint bar, and
   //    rebinding them. ──
   window.localStorage.setItem('tw-keymap-overrides', '{}')
-  const sheet = shortcutUi.renderKeyboardHelp()
-  const sheetRow = (label) => {
-    const at = sheet.indexOf(`>${label}</div>`)
-    assert(at > 0, `the cheat sheet lists “${label}”`)
-    const rowStart = sheet.lastIndexOf('<div style="display:flex', at)
-    return [...sheet.slice(rowStart, at).matchAll(/<kbd[^>]*>([^<]*)<\/kbd>/g)].map((match) => match[1]).join(' ')
-  }
-  for (const [label, keys] of [
-    ['Find a talk', '⇧⌘S'],
-    ['Add the talk beside', '⌘↵'],
-    ['Show the result’s talk beside', 'O'],
-    ['Close the talk beside', 'Esc'],
-    ['Select whole section', '⇧⌘↵'],
-    ['Open Talks panel search', '⌘⇧T'],
-    ['Focus filter', '/'],
-    ['Select section', 'S'],
-    ['Sort talks', 'S']
-  ]) assert.equal(sheetRow(label), keys, `the cheat sheet row “${label}” shows ${keys}`)
-  assert.match(sheet, /Slide picker · Talks/, 'the cheat sheet has a Slide picker section for the talk-search keys')
+  const sheetRow = (shortcutId) => sheetRowOf(shortcutId).chord
+  for (const [shortcutId, keys] of [
+    ['app.find-talk', '⇧⌘S'],
+    ['slide-picker.add-beside', '⌘↵'],
+    ['slide-picker.talk-beside', 'O'],
+    ['slide-picker.close-beside', 'Esc'],
+    ['slide-picker.select-whole-section', '⇧⌘↵'],
+    ['app.sidebar-talks', '⌘⇧T'],
+    ['browser.filter', '/'],
+    ['slide-picker.select-section', 'S'],
+    ['browser.sort', 'S']
+  ]) assert.equal(sheetRow(shortcutId), keys, `the cheat sheet row of ${shortcutId} shows ${keys}`)
+  const sheetHeadings = sheetRows().data.groups.map((group) => group.taskGroup)
+  assert(sheetHeadings.includes('Reuse slides'), 'the cheat sheet has a Reuse slides section (a task group) for the talk-search keys; the old Slide picker · Talks name is no longer shown')
+  assert(!sheetHeadings.includes('Slide picker · Talks'), 'the old group name is not shown')
   const hintKeys = (markup, id) => {
     const span = markup.match(new RegExp(`data-hint="${id.replace('.', '\\.')}">([\\s\\S]*?)<b>`))?.[1] ?? ''
     return [...span.matchAll(/<kbd>([^<]*)<\/kbd>/g)].map((match) => match[1]).join(' ')
@@ -458,13 +475,13 @@ try {
   assert.deepEqual(
     surface.map((command) => [command.id, command.shortcutId, command.category]),
     [
-      ['find-talk', 'app.find-talk', 'Slide picker'],
-      ['add-beside', 'slide-picker.add-beside', 'Slide picker'],
-      ['talk-beside', 'slide-picker.talk-beside', 'Slide picker'],
-      ['close-beside', 'slide-picker.close-beside', 'Slide picker'],
-      ['select-whole-section', 'slide-picker.select-whole-section', 'Slide picker']
+      ['find-talk', 'app.find-talk', 'Reuse slides'],
+      ['add-beside', 'slide-picker.add-beside', 'Reuse slides'],
+      ['talk-beside', 'slide-picker.talk-beside', 'Reuse slides'],
+      ['close-beside', 'slide-picker.close-beside', 'Reuse slides'],
+      ['select-whole-section', 'slide-picker.select-whole-section', 'Reuse slides']
     ],
-    'the five talk-search keys are Settings rows (rebindable), grouped under Slide picker'
+    'the five talk-search keys are Settings rows (rebindable), grouped under their task group, Reuse slides (onboarding 01)'
   )
   assert.deepEqual(
     Object.entries(shortcutUi.SURFACE_KEYS),
@@ -494,16 +511,16 @@ try {
   assert.equal(shortcutUi.surfaceKey(press('Enter', { metaKey: true, shiftKey: true }), 'select-whole-section'), false, 'and no longer ⇧⌘↵')
   assert.equal(shortcutUi.liveShortcutLabel('slide-picker.talk-beside'), '⌘⌥O', 'the live label follows the rebind')
   assert.equal(shortcutUi.liveCommandShortcutLabel(paletteCommands().find((command) => command.id === 'talk-beside')), '⌘⌥O', 'the palette row shows the rebind')
-  assert.match(shortcutUi.renderKeyboardHelp(), /<kbd[^>]*>⌘⌥O<\/kbd>/, 'the cheat sheet shows the rebind')
+  assert.equal(sheetRowOf('slide-picker.talk-beside').chord, '⌘⌥O', 'the cheat sheet shows the rebind')
+  assert.equal(sheetRowOf('slide-picker.talk-beside').was, 'O', 'and marks it rebound with what it was')
   assert.equal(hintKeys(shortcutUi.renderSlidePickerHints(), 'slide-picker.talk-beside'), '⌘⌥O', 'the hint bar shows the rebind')
   assert.equal(hintKeys(shortcutUi.renderSlidePickerHints(), 'slide-picker.select-whole-section'), '⌥↵', 'the hint bar shows the rebound select whole section')
   assert.equal(shortcutUi.buildEditorKeyBindings().some((binding) => binding.key === 'Mod-Alt-o'), false, 'a rebound surface key is still not an editor binding')
 
   window.localStorage.setItem('tw-keymap-overrides', '{}')
-  assert.match(
-    shortcutUi.renderKeyboardHelp(),
-    /no default/,
-    'the cheat sheet uses the shared no-default vocabulary for unbound commands'
+  assert(
+    sheetRows().rows.some((row) => row.chord === 'no key' && row.was === null),
+    'the cheat sheet says "no key" for a command with no chord (onboarding ticket 04; the older no-default wording is the Settings and toolbar vocabulary)'
   )
   assert.match(
     shortcutUi.renderSlideContextMenu(),

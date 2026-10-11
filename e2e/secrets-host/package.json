@@ -1,0 +1,6 @@
+{
+  "name": "talk-weaver",
+  "private": true,
+  "type": "module",
+  "main": "main.mjs"
+}

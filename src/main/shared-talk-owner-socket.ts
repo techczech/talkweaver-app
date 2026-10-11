@@ -140,8 +140,9 @@ export function createOwnerSocket(options: OwnerSocketOptions): OwnerSocket {
     let next: OwnerSocketLike
     try {
       next = createSocket(ownerSocketUrl(options.baseUrl, options.shareId, Math.max(0, options.since() | 0)), { authorization: `Bearer ${options.ownerToken}` })
-    } catch (error) {
-      options.log?.(`[shared-talk] owner socket could not open: ${(error as Error).message}`)
+    } catch {
+      // Never the error's own text: it can quote the header it refused, which holds the owner token.
+      options.log?.('[shared-talk] owner socket could not open')
       retry()
       return
     }

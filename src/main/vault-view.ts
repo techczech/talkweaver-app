@@ -34,6 +34,8 @@ export type VaultView = {
   duplicateOf: { id: string; name: string } | null
   /** The folder is missing or unreadable right now (ticket 07). It stays in the list, lists no talks. */
   unavailable: VaultUnavailable | null
+  /** The example vault (onboarding ticket 06): the Example pill, "Removable · local folder", teal. */
+  example: boolean
 }
 
 /** What the view needs beyond the registry entry; both optional (a vault with neither is a plain
@@ -51,6 +53,8 @@ export type VaultExtras = {
 /** Default badge colours, taken in vault order, and the swatches Edit this vault offers (the LOCKED
  *  edit-vault sheet's six). */
 export const VAULT_PALETTE = ['#c2410c', '#0b3a6b', '#6d28d9', '#0f766e', '#be185d', '#4d5b6b'] as const
+/** The example vault's identity colour (the locked onboarding drawing, states 01 to 03). */
+export const EXAMPLE_VAULT_COLOUR = '#0f766e'
 
 export type ServiceProbe = {
   home: string
@@ -114,13 +118,14 @@ export function viewVaults(vaults: Vault[], probe: ServiceProbe, extras: (v: Vau
         name,
         baseName: name,
         initial: personal?.badgeInitial || vaultInitial(name),
-        color: personal?.badgeColour || VAULT_PALETTE[i % VAULT_PALETTE.length],
+        color: personal?.badgeColour || (v.example === true ? EXAMPLE_VAULT_COLOUR : VAULT_PALETTE[i % VAULT_PALETTE.length]),
         service: service ?? serviceFor(v.root, probe),
         shared: fileShared(f),
         hasFile: !!f,
         createdBy: fileText(f, 'created_by') || null,
         duplicateOf: duplicateOf ?? null,
-        unavailable: unavailable ?? null
+        unavailable: unavailable ?? null,
+        example: v.example === true
       }
     })
   return withDisplayNames(views)

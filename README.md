@@ -25,7 +25,9 @@ everything else is a view of it.**
   outline never changes. View them as a Grid, a numbered List, or a cross-pathway Matrix.
 - **Planned Runs & handouts** — schedule deliveries, attach recordings, and publish a per-Run
   handout, all from History.
-- **Publishing** — optional one-click publish of a deck or handout to your own Cloudflare account.
+- **Publishing and going live** — optional one-click publish of a handout to your own Cloudflare
+  account, plus live polls, questions and Share for comments, all set up from Settings → Cloudflare
+  (the screen explains each step), or by a coding agent with the `TalkWeaver setup` command.
 - Full keyboard parity, a searchable command palette (`⌘⇧P`), and a `?` shortcut cheat-sheet.
 
 ## Install
@@ -59,12 +61,13 @@ folder you already have.
 | Feature | macOS (Apple Silicon) | Windows |
 | --- | --- | --- |
 | Authoring, presenting, designs, Pathways, Runs | ✅ | ✅ |
+| Cloudflare: publishing, going live, share-link domain, recording storage (set up in Settings → Cloudflare, or by an agent with `TalkWeaver setup`) | ✅ | ✅ tested automatically against a stand-in for Cloudflare; a real publish and go-live on a Windows computer is checked by hand, and was not run for 0.38.2 |
+| Secrets (the Cloudflare token, recording keys, share keys) | ✅ macOS Keychain | ✅ Windows protected storage (DPAPI), tested automatically |
 | Slide-image OCR search | ✅ | ✗ (macOS Vision only) |
 | Video/media probing | ✅ | ✗ (macOS only) |
-| Local transcription | ✅ (bring your own Python engine) | ⚠ untested |
-| Cloudflare publishing | ✅ | ✅ |
+| Local transcription | ✅ the engine that ships needs Apple silicon; ffmpeg ships with the app | ⚠ ffmpeg ships and is tested, but the engine that ships cannot run; bring your own engine |
 
-Intel Macs are not built yet.
+Going live is set up per computer. Intel Macs are not built yet.
 
 ## Build from source
 
@@ -87,3 +90,6 @@ Issues and pull requests are welcome. The codebase favours small, test-anchored 
 ## Licence
 
 [MIT](LICENSE) © 2026 Dominik Lukeš
+
+The app also ships parts made by others under their own licences, among them FFmpeg (GNU GPL v3):
+see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

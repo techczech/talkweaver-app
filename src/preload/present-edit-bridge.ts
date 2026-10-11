@@ -12,6 +12,8 @@
 import { ipcRenderer } from 'electron'
 import { dressPresenterButton, presenterControl, presenterIconSvg } from '../shared/presenter-controls.ts'
 import { SHORTCUT_REGISTRY } from '../shared/shortcut-registry.ts'
+import { GUIDE_COMMAND_RAN_EVENT as GUIDE_EVENT, isPresenterCommandId } from '../shared/guide-present.ts'
+import { mountPresenterGuide, reportGuideCommand } from './present-guide.ts'
 
 // The slide on screen, by the two identifiers the editor can resolve: the ledger id the runtime
 // keeps in the URL hash (stable across reorders) and the index among `.slide` elements (a fallback
@@ -124,7 +126,33 @@ function flashHint(msg: string): void {
   hintTimer = setTimeout(() => el?.classList.remove('show'), 2800)
 }
 
+/**
+ * The Guide's tick bridge (onboarding 0.38.1 ticket 08, wired by ticket 10). The deck page cannot reach
+ * main, so the presenter runtime reports a command it ran by dispatching a DOM event on `window`:
+ *
+ *   window.dispatchEvent(new CustomEvent('tw-guide-command-ran', { detail: 'presenter.next' }))
+ *
+ * `detail` is a command id: a presenter shortcut id (`presenter.next`) or a palette entry that has no
+ * key (`presenter-palette.notes-off`). Only an id on the registries' finite presenter list
+ * (`PRESENTER_COMMAND_IDS`) is retained and forwarded; any other id is dropped silently before it
+ * touches the `sent` set or IPC (main checks again). Each id goes once per page: pressing → on every slide sends one message, the first time.
+ * It is fire-and-forget: nothing here can fail a command, and a page with no listener (a deck opened
+ * on its own) simply sees an event nobody hears.
+ */
+export const GUIDE_COMMAND_RAN_EVENT = GUIDE_EVENT
+
+function mountGuideTickBridge(): void {
+  const sent = new Set<string>()
+  window.addEventListener(GUIDE_COMMAND_RAN_EVENT, (event) => {
+    const id = (event as CustomEvent<unknown>).detail
+    if (!isPresenterCommandId(id) || sent.has(id)) return
+    sent.add(id)
+    void ipcRenderer.invoke('guide:command-ran', id).catch(() => { /* a report never fails a command */ })
+  })
+}
+
 export function mountEditBridge(): void {
+  mountGuideTickBridge()
   // ⌘E / Ctrl+E — capture phase so we act before the deck's own keymap; never while typing in a field.
   window.addEventListener(
     'keydown',
@@ -136,6 +164,7 @@ export function mountEditBridge(): void {
       e.preventDefault()
       e.stopImmediatePropagation()
       requestEdit()
+      reportGuideCommand('presenter.edit')
     },
     true
   )
@@ -143,4 +172,6 @@ export function mountEditBridge(): void {
   ipcRenderer.on('present:hint', (_e, msg: string) => flashHint(msg))
   mountButton()
   mountRefreshItem()
+  // The Guide's Present chapter column (ticket 10): the presenter only, and only once main says so.
+  if (presenterEditSlot()) mountPresenterGuide()
 }

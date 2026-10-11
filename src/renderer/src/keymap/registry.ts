@@ -3,6 +3,7 @@ import { undo, redo } from '@codemirror/commands'
 import { runActionBarEditing } from '../components/actionBar/editing-command'
 import { EditorSelection, type StateCommand } from '@codemirror/state'
 import { shortcutById } from '../../../shared/shortcut-registry'
+import { taskGroupLabel } from '../../../shared/task-groups'
 import { notify } from '../lib/notify'
 import {
   closeOpenObject,
@@ -293,7 +294,7 @@ function command(id: string, run: (view: EditorView) => boolean, registryId = `e
   return {
     id,
     label: shortcut.label,
-    category: shortcut.group,
+    category: taskGroupLabel(registryId),
     keys: shortcut.codes[0] ?? '',
     shortcutId: registryId,
     unbound: shortcut.unbound === true,
@@ -309,7 +310,7 @@ function surfaceCommand(id: string, registryId: string): EditorCommand {
   return {
     id,
     label: shortcut.label,
-    category: 'Slide picker',
+    category: taskGroupLabel(registryId),
     keys: shortcut.codes[0] ?? '',
     shortcutId: registryId,
     unbound: shortcut.unbound === true,

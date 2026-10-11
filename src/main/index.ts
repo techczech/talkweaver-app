@@ -1,6 +1,6 @@
 import { INK_LIMITS, parseInkMessage, parsePointerMessage } from '../../worker/protocol'
 import { createLatestThumbnailRequestHandler } from './thumbnail-queue'
-import { app, BrowserWindow, clipboard, ipcMain, dialog, Menu, net, protocol, shell, session, safeStorage, screen, powerMonitor, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, clipboard, ipcMain, dialog, Menu, net, protocol, shell, session, screen, powerMonitor, type MenuItemConstructorOptions } from 'electron'
 import { join, basename, dirname, extname } from 'path'
 
 // EPIPE guard: when the packaged binary is launched with stdout/stderr piped and the pipe
@@ -11,6 +11,47 @@ process.stdout.on('error', () => {})
 process.stderr.on('error', () => {})
 
 const E2E = process.env.TW_E2E === '1'
+
+// `TalkWeaver setup …` (ticket 07, spec D14): the set-up command for an agent. Found here, before
+// the single-instance lock: it opens no window and shows no Dock icon, runs its one command once the
+// app is ready (app.whenReady below) and exits with its code. It takes the same lock as the app
+// (Owner, 10 Oct: setup refuses while the app is open), so only one process ever writes this folder.
+const SETUP_ARGS = setupArguments(process.argv, Boolean(process.defaultApp))
+if (SETUP_ARGS) app.dock?.hide()
+
+// One TalkWeaver per user-data folder (ticket 12): two instances on one folder would share the
+// share registry, the owner-token store and every other file there, each holding its own copy in
+// memory. The lock is Electron's, held per user-data folder, so a run started with its own
+// --user-data-dir (every e2e harness) is unaffected. A second launch on the same folder hands
+// over to the first (its window comes forward) and quits before it touches anything.
+// A setup command says so in the lock's data, so an open TalkWeaver does not bring its window
+// forward for a command it is refusing.
+const SETUP_LOCK_DATA = { talkweaverSetup: true }
+const holdsInstanceLock = app.requestSingleInstanceLock(SETUP_ARGS ? SETUP_LOCK_DATA : undefined)
+if (SETUP_ARGS) {
+  if (!holdsInstanceLock) {
+    // TalkWeaver is open on this folder: refused before anything is parsed, read from standard input
+    // or written. Written at once (a few bytes to a pipe or terminal) so the process can go now.
+    try { writeSync(1, `${appOpenRefusal(SETUP_ARGS)}\n`) } catch { /* the reader has gone */ }
+    app.exit(1)
+  }
+  // Holding the lock: held until this process exits. A TalkWeaver launched meanwhile loses the lock
+  // and exits (below); its 'second-instance' event comes here, where nothing listens for it, so no
+  // window ever opens over a half-finished set-up.
+} else if (!holdsInstanceLock) {
+  app.exit(0)
+} else {
+  app.on('second-instance', (_event, _argv, _cwd, data) => {
+    // A `setup` command that lost the lock refuses on its own: nothing comes forward for it.
+    if ((data as { talkweaverSetup?: unknown } | null)?.talkweaverSetup === true) return
+    // Editor windows only (round 4): a hidden utility window (the thumbnail renderer) is never shown.
+    const win = targetEditorFor(null)
+    if (!win) { if (app.isReady()) createWindow(); return }
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+  })
+}
 
 // Renderer heap headroom (2026-07-20). NOTE (2026-09-15): this switch reaches RENDERER processes
 // only — Electron honours --js-flags for the main process solely when it is passed on the command
@@ -79,12 +120,12 @@ applyMainFrameOnly(ipcMain)
 // read and by a deck window's web links. Installed before the first window.
 const pressLedger = createPressLedger()
 installPressLedger(app, pressLedger)
-import { pathToFileURL } from 'url'
+import { fileURLToPath, pathToFileURL } from 'url'
 import { homedir, hostname, tmpdir } from 'os'
 import { installNavigationGuard } from './navigation-guard'
 import { applyMainFrameOnly } from './ipc-main-frame-only'
 import { contentHandOutRefusal, handOutLink } from './hand-out'
-import { decideDownload, isHiddenRenderer } from './window-kinds'
+import { decideDownload, isAppWindow, isHiddenRenderer } from './window-kinds'
 import { createPressLedger, installPressLedger } from './recent-press'
 import { liveReadClipboardHandler } from './live-read-clipboard'
 import { appLocalHostOf, installLocalAddressFilter } from './local-address-filter'
@@ -99,7 +140,7 @@ import { createOutlineDiskGuard } from './outline-disk-guard'
 import { createOutlineRecovery } from './outline-recovery'
 import { createDirectoryWatcherRegistry } from './talkTextWatchers'
 import type { OutlineDiskChange } from '../shared/outline-disk-change'
-import { type Dirent, existsSync, lstatSync, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, realpathSync, cpSync, rmSync, renameSync, createReadStream, mkdtempSync, openSync, readSync, closeSync, appendFileSync, watch } from 'fs'
+import { type Dirent, existsSync, lstatSync, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, realpathSync, cpSync, rmSync, renameSync, createReadStream, constants as fsConstants, mkdtempSync, openSync, readSync, closeSync, appendFileSync, watch, writeSync } from 'fs'
 import { createHash, randomBytes } from 'crypto'
 import { execFile, execFileSync, spawn, type ChildProcessByStdio } from 'child_process'
 import type { Readable } from 'stream'
@@ -165,6 +206,9 @@ import { viewVaults, refusalMessage, serviceFor, type AddVaultOutcome, type Vaul
 import { createVaultAvailability, nodeAvailabilityProbe, SERVICE_APPS, mkdirBelowRoot, writableRoot, type LastGood } from './vault-availability'
 import { createVaultFileStore, fileText } from './vault-file'
 import { registerVaultSettingsIpc, refusalOutcome, talkFolderRelOf } from './vault-settings-ipc'
+import { ExampleVault, resolveExampleHome } from './example-vault'
+import { ExampleVaultRemoval, windowsOnExample, type OpenAppWindow } from './example-vault-removal'
+import { resolveExampleTrash } from './example-trash-harness'
 import { resolveNewTalkDefaults } from '../shared/vault-defaults'
 import { pathsInVault, pathsOutsideOpenVaults, searchVaults } from './vault-scope'
 import { VAULTS_DIR, adoptLegacyThumbDirs, isPlainSegment, parseThumbUrl, talkThumbDir, thumbFileFor, thumbLookupDirs, thumbUrl, touchNamespace } from './thumb-cache-dirs'
@@ -177,7 +221,7 @@ import {
   selectedThumbnailSlide,
   thumbnailSlides
 } from '../shared/slide-preview'
-import { readFile as readFileAsync, readdir as readdirAsync } from 'fs/promises'
+import { readFile as readFileAsync, readdir as readdirAsync, stat as statAsync, access as accessAsync } from 'fs/promises'
 import {
   setupRecordingPermissions,
   installRecordingPermissions,
@@ -198,6 +242,8 @@ import {
   DEFAULT_TRANSCRIPTION_SCRIPT,
   registerTranscriptionIpc
 } from './transcription'
+import { createTranscriptionSetup, type TranscriptionSetup } from './transcription-setup'
+import { shippedFfmpegCandidates, systemFfmpegCandidates } from './ffmpeg-path'
 import { registerTalkTextIpc } from './talkTextIpc'
 import { registeredKeyNames, openVocabularyFrontmatterKeys, METADATA_REGISTRY } from '../shared/metadata-registry'
 import {
@@ -209,6 +255,16 @@ import { editFrontmatterText, parseFrontmatterPairs } from '../shared/frontmatte
 import { extractSection, type SectionLocation } from '../shared/insert-section'
 import { commandElectronAccelerator, menuCommands } from '../shared/command-registry'
 import { actionBarVisibleFrom } from '../shared/action-bar-settings'
+import { placeChipVisibleFrom } from '../shared/place-chip-settings'
+import { guideButtonVisibleFrom, guideProgressFrom } from '../shared/guide'
+import { GuideLearnStore } from './guide-learn-store'
+import { GUIDE_LINKS, isGuideLinkId, probeConnections } from './guide-connections'
+import { NO_SOURCES, connectionRows, type ConnectionRow, type ConnectionSources } from '../shared/guide-connections'
+import { GUIDE_LEARN_KEY, type GuideLearn } from '../shared/guide-learn'
+import { presentGuideView, type PresentGuideView } from '../shared/guide-present'
+import { chapterFor } from '../shared/guide-chapters'
+import { SHORTCUT_REGISTRY } from '../shared/shortcut-registry'
+import { PresenterGuideHost, SHOW_CHAPTER_LIST_CHANNEL, acceptCommandRan, registerPresenterGuideIpc } from './guide-present'
 import {
   LAYOUT_DOCTOR_VOCABULARY,
   scanOutlineTriggers,
@@ -247,10 +303,12 @@ import {
   type RunRecord
 } from './runs'
 import {
-  checkPreconditions,
+  SITE_FOLDER_REFUSED,
+  siteFolder,
+  resolveSiteDir,
+  pagesBundlingHazard,
   resolveBase,
   publishUrl,
-  augmentedPath,
   readHandoutUrl,
   recoverIdFromUrl,
   generateShortId,
@@ -258,9 +316,33 @@ import {
   buildRedirects,
   stampHandoutUrl
 } from './publishing-logic'
+import { endAllWranglerRuns, prepareWranglerRun, resolveWranglerLaunch, runWrangler, type WranglerInstall, type WranglerMissing, type WranglerRun } from './wrangler-launcher'
+import { liveWorkerDeployConfig } from './live-worker-deploy-config'
+import { blockingFileText, brokenJsonFileInOutput } from './wrangler-failures'
 import { isTerminalLiveStatus, type LiveStatus } from './live-presenter-client'
 import { createLiveSessionManager } from './live-session-manager'
 import { createLiveSessionStore, type SessionRecoveryRecord } from './live-session-store'
+import { secretsSlot, type SecretSlot, type SecretsStore } from './secrets-store'
+import { openSecretsStore } from './secrets-store-electron'
+import { cloudflareApiBase, createCloudflareConnection, standInApiBase, type CloudflareConnectionService, type ConnectionReply as CloudflareReply } from './cloudflare-connection'
+import { LIVE_NOT_SET_UP, LiveServiceError, deployLiveService, lookUpLiveService, type LiveDeployResult } from './live-service-deploy'
+import { createLiveService, setUpAllowedFrom, type LiveService } from './live-service'
+import type { GoingLiveRow, LiveSetupPrompt } from '../shared/live-service-status'
+import { WORKER_DIST_DIR, readShippedFiles, type ShippedFiles } from './live-service-upload'
+import { addressKind, createHandoutPublishing, liveAddressForPages, localLiveAllowed, publishedFolders, removeSiteFolder, writableSiteFolder, type HandoutPublishing } from './handout-publishing'
+import { slimHandoutHtml } from './handout-slimming'
+import { buildRunHandoutHtml, runHandoutSourceFrom, type HandoutPagesJob, type HandoutPagesResult, type RunForHandout, type RunHandoutSource } from './handout-pages'
+import { Worker } from 'node:worker_threads'
+import { createPrepareTalkOffThread } from './prepare-talk-off-thread'
+import { SHARE_LINK_NOT_NOW, type CloudflareStatus } from '../shared/cloudflare-status'
+import { createRecordingStorage, type RecordingStorage } from './recording-storage'
+import type { RecordingStorageRow } from '../shared/recording-storage-status'
+import { appOpenRefusal, runSetup, setupArguments, type ImporterRow } from './setup-cli'
+import { createSetupOperations, type PublishSettings, type RecordingSettings } from './setup-operations'
+import { readSecretInput } from './setup-stdin'
+import { discoverRenderer } from './importer/pptx'
+import { PPT_EXTRACTOR_POINTER, PPT_EXTRACTOR_URL, rendererNotice } from '../shared/importer-renderer-notice'
+import { createOwnerTokens, incompleteOwnerTokenRestores, migrateOwnerTokens, restorePlainOwnerTokens, RESTORE_PLAIN_OWNER_TOKENS_SWITCH, type OwnerTokens } from './owner-tokens'
 import { closeLiveBoardsLeftOpen, flushLiveSessionHistory, recoverFinalLiveHistory } from './live-session-history'
 import { registerRunBoardIpc } from './run-board-ipc'
 import { createRunResultsShares } from './run-results-share'
@@ -280,7 +362,6 @@ import {
   type OutlineDocument, type OutlineTools
 } from './instant-slide-insert'
 import { changeNoun, INSTANT_SLIDE_ORIGIN, type EditorDocumentReply, type EditorDocumentRequestBody } from '../shared/editor-document'
-import { resolveLiveWorkerCloudflareToken } from './live-worker-cloudflare-token'
 import { createSharedTalks, readRevisionSnapshot, type SharedTalks } from './shared-talk'
 import { createFeedbackMirror } from './feedback-mirror'
 import { createSharedTalkFeedback, type SharedTalkFeedback } from './shared-talk-feedback'
@@ -288,9 +369,8 @@ import { parseAcceptRecord, type FeedbackStatus } from '../shared/feedback'
 // What the rail may set: Done, Dismiss, Accept (with the splice it made, for Undo) and back to new
 // (Undo). Every status reaches the Worker from here, never from the renderer.
 const RAIL_STATUSES: readonly FeedbackStatus[] = ['done', 'dismissed', 'accepted', 'new']
-import { buildSharedTalkPayload, ownerNameFrom } from './shared-talk-build'
-import { stampShareUrl } from '../shared/handout-stamp'
-import { isValidShareDomain } from '../shared/shared-talk'
+import { buildInGate, buildSharedTalkPayload, ownerNameFrom } from './shared-talk-build'
+import { isSharedTalkStopped, isValidShareDomain } from '../shared/shared-talk'
 import { deckWindowKeyAction, deckWindowMode, OPEN_AUDIENCE_SCRIPT } from './deck-window-keys'
 import { appWindowOpenHandler, guardDeckWindowTree, isAppAudienceUrl } from './present-window-open'
 import { isPresenterBoardMessage, parsePresenterMessage, parseSlideLightbox } from '../../worker/protocol'
@@ -318,14 +398,16 @@ type Config = {
   toolsWindowBounds?: { x?: number; y?: number; width: number; height: number }
   pathwayWindowBounds?: { x?: number; y?: number; width: number; height: number }
   archiveRoot?: string
-  // Cloudflare Pages publishing (Settings → Publishing). NON-SECRET config only — the API token is
-  // stored separately, OS-keychain-encrypted, via safeStorage ({userData}/cf-pages-token.bin),
-  // NEVER in this file.
+  // Cloudflare Pages publishing (Settings → Cloudflare). NON-SECRET config only — the API token is
+  // kept by the secrets store (secrets-store.ts, slot `cloudflare-token`), encrypted by the operating
+  // system, NEVER in this file.
   cfAccountId?: string
   cfPagesProject?: string
   publishBaseUrl?: string // optional custom domain, e.g. https://handouts.example.com
   liveWorkerBaseUrl?: string // deployed Worker origin; empty means auto-deploy or local wrangler dev
   liveWorkerVersion?: string // LIVE_WORKER_VERSION last deployed to liveWorkerBaseUrl; mismatch → re-deploy
+  liveWorkerAccountId?: string // the Cloudflare account liveWorkerBaseUrl was deployed for (unset on installs from before it was recorded)
+  liveWorkerShareDomain?: string // a share-link domain the live service's set-up may have attached ('' once none of ours is verified attached); written only by deployLiveWorker
   // Share for comments: the host colleagues' links use (ticket 07 sets https://drafts.handouts.fyi once
   // the Worker has that route). Empty = the Worker origin serves shares at /shares/<id>.
   sharedTalkLinkBase?: string
@@ -346,15 +428,15 @@ type Config = {
   timerUrgentAtMinutes?: number
   // Presentation recording (ADR-0035). A run shorter than this is auto-discarded as an accidental
   // open (Settings → Recording). The R2 destination is Settings-configurable; the access keys are
-  // NEVER in this file — 'settings' keys are OS-keychain-encrypted via safeStorage
-  // ({userData}/recording-r2-creds.bin), 'bws' resolves them from Bitwarden Secrets at upload time.
+  // NEVER in this file — they are typed into Settings and kept by the secrets store (slot
+  // `recording-keys`, recording-storage.ts). Two keys of an earlier source of them are read once
+  // and dropped (recording-storage.ts, retireRecordingConfig); they are not part of this type.
   recordingDiscardMs?: number
   recordingR2Endpoint?: string
   recordingR2Bucket?: string
-  recordingR2CredsSource?: 'bws' | 'settings'
-  recordingR2BwsSecretId?: string
-  // Transcription engine (Settings -> Transcription). Non-secret local paths to Dominik's
-  // speech-to-text skill; defaults are expanded at runtime so config.json stays portable.
+  // Transcription engine (Settings -> Transcription; optional, spec D16). Non-secret local paths:
+  // the Python of an environment and the script (both set up from resources/agent-setup/transcription),
+  // and an ffmpeg of the person's own (unset: the one that ships with the app). `~` is expanded at runtime.
   transcriptionPython?: string
   transcriptionScript?: string
   transcriptionFfmpeg?: string
@@ -372,6 +454,20 @@ type Config = {
   // default rather than breaking the bar.
   actionBarVisible?: boolean
   actionBarItems?: string[]
+  // The example vault was removed (onboarding ticket 12): Settings → Get started offers it again.
+  // Beside the vault registry, outside every vault; progress is kept under its own keys.
+  exampleVaultRemoved?: boolean
+  // The status-bar place chip, "Show where I am in the status bar" (onboarding ticket 02): ON
+  // until switched off; read tolerantly (src/shared/place-chip-settings.ts).
+  placeChipVisible?: boolean
+  // The Guide (onboarding ticket 07): "Show the Guide button in the sidebar" (ON until switched off)
+  // and the Guide's progress. Both read tolerantly (src/shared/guide.ts); progress lives here,
+  // beside the vault registry and outside every vault.
+  guideButtonVisible?: boolean
+  guideProgress?: { exampleTalkOpened?: boolean }
+  // Chapter progress (onboarding ticket 08): ticks, chapter opens, read marks. Its own record with a
+  // version; read tolerantly (src/shared/guide-learn.ts), beside the vault registry, outside every vault.
+  guideLearn?: unknown
   // Talks browser folders left open or closed (ADR-0029 §3): vault root → vault-relative folder
   // path → open. Only the user's choices; read tolerantly (src/main/talk-folder-state.ts).
   talkListFolders?: StoredFolderStates
@@ -561,24 +657,96 @@ function expandHomePath(path: string): string {
   return path
 }
 
-// ── Cloudflare publishing: secure token storage (safeStorage / OS keychain) ──────────────────
-// The API token is NEVER stored in config.json. It is encrypted with the OS keychain and written
-// to its own blob; only a hasToken boolean is ever exposed to the renderer.
-function tokenBlobPath(): string {
-  return join(app.getPath('userData'), 'cf-pages-token.bin')
+// ── Secrets: every one sits in the secrets store (secrets-store.ts; spec decision D3) ─────────────
+// The operating system's own encryption, one named slot per secret, nothing in config.json and
+// nothing sent to a window but a "has it" boolean. Opened lazily: app.getPath needs a ready app.
+let secretsStore: SecretsStore | null = null
+function secrets(): SecretsStore {
+  secretsStore ??= openSecretsStore(app.getPath('userData'))
+  return secretsStore
 }
+/** A slot's text, or null when it holds nothing or cannot be read just now. Never throws. */
+function secretOrNull(slot: SecretSlot): string | null {
+  try { return secrets().read(slot) } catch { return null }
+}
+/** Owner tokens for shares, run-results links and pre-work (owner-tokens.ts), in the secrets store. */
+let ownerTokenStore: OwnerTokens | null = null
+function ownerTokens(): OwnerTokens {
+  ownerTokenStore ??= createOwnerTokens(secrets())
+  return ownerTokenStore
+}
+
+// ── Cloudflare: the one token (slot `cloudflare-token`) and the connection made with it ──────────
+// The token is saved, replaced, checked and removed only through cloudflare-connection.ts (spec
+// decisions D1, D4, D5, D6), and handed out only inside its authorisations (a publish, the live
+// service's set-up or lookup). Nothing else is a source of a Cloudflare token: not Bitwarden, not
+// the Keychain command, not an environment variable.
 function tokenExists(): boolean {
-  return existsSync(tokenBlobPath())
+  return secrets().has('cloudflare-token')
 }
-function readToken(): string | null {
-  try {
-    if (!safeStorage.isEncryptionAvailable()) return null
-    if (!tokenExists()) return null
-    return safeStorage.decryptString(readFileSync(tokenBlobPath()))
-  } catch {
-    return null
+/** The environment override for tests, under its three conditions (cloudflare-connection.ts). */
+function cloudflareTestContext(): { packaged: boolean; e2e: boolean; override: unknown } {
+  return { packaged: app.isPackaged, e2e: E2E, override: process.env.TW_E2E_CLOUDFLARE_API_BASE_URL }
+}
+let cloudflareService: CloudflareConnectionService | null = null
+function cloudflareConnection(): CloudflareConnectionService {
+  cloudflareService ??= createCloudflareConnection({
+    secrets: secrets(),
+    settings: {
+      read: () => ({
+        accountId: getConfig('cfAccountId', undefined) ?? '',
+        project: getConfig('cfPagesProject', undefined) ?? '',
+        baseUrl: getConfig('publishBaseUrl', undefined) ?? '',
+        shareDomain: shareDomainFromLinkBase(),
+        productionBranch: getConfig('publishProdBranch', undefined) ?? 'main',
+      }),
+      write: (patch) => writeConfig({
+        ...(patch.accountId ? { cfAccountId: patch.accountId } : {}),
+        ...(patch.project ? { cfPagesProject: patch.project } : {}),
+      }),
+    },
+    fetch: (input, init) => fetch(input, init),
+    apiBase: () => cloudflareApiBase(cloudflareTestContext()),
+    onChange: (status: CloudflareStatus) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        try { if (!win.isDestroyed()) win.webContents.send('cloudflare:status', status) } catch { /* window closing */ }
+      }
+      // The Going live and sharing row is worked out from the connection too (live-service.ts).
+      liveServiceInstance?.refresh()
+    },
+  })
+  return cloudflareService
+}
+// Settings → Cloudflare. Every reply is a status (states, an account's name and id, fixed
+// sentences): never the token. None of these waits on a window or holds one up: they run in the
+// main process's own queue while editing and presenting go on.
+ipcMain.handle('cloudflare:status', () => cloudflareConnection().status())
+ipcMain.handle('cloudflare:check', async (_event, reason: unknown) => {
+  const why = reason === 'opened' ? 'opened' : 'asked'
+  const reply = await cloudflareConnection().check(why)
+  // Opening the screen, or Check again, also looks the live service up at Cloudflare (a Worker
+  // deleted in the dashboard reads Not set up). It does not hold the reply up.
+  void liveService().look(why).catch(() => {})
+  return reply
+})
+ipcMain.handle('cloudflare:save-token', (_event, token: unknown) => cloudflareConnection().saveToken(token))
+ipcMain.handle('cloudflare:choose-account', (_event, id: unknown) => cloudflareConnection().chooseAccount(id))
+ipcMain.handle('cloudflare:create-site', () => cloudflareConnection().createSite())
+ipcMain.handle('cloudflare:disconnect', () => cloudflareConnection().disconnect())
+// "Open Settings" on a publish sheet or notice, from whichever window showed it: the editor window
+// comes forward with Settings → Cloudflare. Carries nothing.
+ipcMain.handle('cloudflare:open-settings', () => {
+  const editor = targetEditorFor(null)
+  if (!editor) return false
+  // A test harness keeps its windows out of the way of whoever is at the computer: it is not brought forward.
+  if (app.isPackaged || process.env.TW_E2E !== '1') {
+    if (editor.isMinimized()) editor.restore()
+    editor.show()
+    editor.focus()
   }
-}
+  editor.webContents.send('cloudflare:show-settings')
+  return true
+})
 
 // Share link domain (ticket 07): Settings shows and takes a bare hostname ("drafts.handouts.fyi");
 // the share module and the live-Worker deploy both want it as a full origin, so config keeps the
@@ -600,10 +768,34 @@ ipcMain.handle('publish:get-config', () => ({
   hasToken: tokenExists()
 }))
 
+/** What Settings → Cloudflare's fields hold: what the window and `setup` both read. */
+function publishSettings(): PublishSettings {
+  return {
+    accountId: getConfig('cfAccountId', undefined) ?? '',
+    project: getConfig('cfPagesProject', undefined) ?? '',
+    baseUrl: getConfig('publishBaseUrl', undefined) ?? '',
+    workerBaseUrl: getConfig('liveWorkerBaseUrl', undefined) ?? '',
+    useShortIds: getConfig('publishUseShortIds', false) ?? false,
+    shareDomain: shareDomainFromLinkBase(),
+  }
+}
+
 ipcMain.handle(
   'publish:set-config',
   (_event, cfg: { accountId?: string; project?: string; baseUrl?: string; workerBaseUrl?: string; useShortIds?: boolean; shareDomain?: string }):
     { success: true } | { success: false; error: string } => {
+    const saved = applyPublishSettings(cfg)
+    return saved.success ? { success: true } : saved
+  }
+)
+
+/**
+ * Settings → Cloudflare's Save: the one writer of these fields, for the window and for `setup`
+ * (ticket 07). `checked`: the check the connection starts when the account, site, custom domain or
+ * share-link address changed (a caller may wait for it; the window does not).
+ */
+function applyPublishSettings(cfg: { accountId?: string; project?: string; baseUrl?: string; workerBaseUrl?: string; useShortIds?: boolean; shareDomain?: string }):
+  { success: true; checked?: Promise<unknown> } | { success: false; error: string } {
     const hostnameInput = (cfg.shareDomain || '').trim().toLowerCase()
     if (hostnameInput && !isValidShareDomain(hostnameInput)) {
       return {
@@ -613,6 +805,8 @@ ipcMain.handle(
     }
     const nextLinkBase = hostnameInput ? `https://${hostnameInput}` : undefined
     const previousLinkBase = getConfig('sharedTalkLinkBase', undefined)
+    const previousWorkerBaseUrl = getConfig('liveWorkerBaseUrl', undefined)
+    const connectionBefore = [getConfig('cfAccountId', undefined), getConfig('cfPagesProject', undefined), getConfig('publishBaseUrl', undefined), getConfig('sharedTalkLinkBase', undefined)].join('\n')
     writeConfig({
       cfAccountId: (cfg.accountId || '').trim() || undefined,
       cfPagesProject: (cfg.project || '').trim() || undefined,
@@ -623,11 +817,19 @@ ipcMain.handle(
       // A domain set, changed or cleared means the deployed Worker's route no longer matches
       // Settings — mark the deploy stale so ensureLiveWorker redeploys before the next share link
       // is issued, rather than a colleague's link 404ing until some unrelated redeploy catches up.
-      ...(nextLinkBase !== previousLinkBase ? { liveWorkerVersion: undefined } : {})
+      ...(nextLinkBase !== previousLinkBase ? { liveWorkerVersion: undefined } : {}),
+      // A Live Worker URL typed by hand is not known to be any account's deploy.
+      ...(((cfg.workerBaseUrl || '').trim().replace(/\/+$/, '') || undefined) !== previousWorkerBaseUrl ? { liveWorkerAccountId: undefined } : {})
     })
+    // The Live Worker URL or the share-link address may have changed what the Going live row says.
+    liveServiceInstance?.refresh()
+    // The account, the site, the custom domain or the share-link address was edited by hand: the Cloudflare rows are asked for again.
+    const connectionAfter = [getConfig('cfAccountId', undefined), getConfig('cfPagesProject', undefined), getConfig('publishBaseUrl', undefined), getConfig('sharedTalkLinkBase', undefined)].join('\n')
+    // An event of the connection, not a refresh of it: what was being checked or offered for the earlier
+    // values is cancelled (a site is never made in an account Settings no longer names).
+    if (connectionAfter !== connectionBefore) return { success: true, checked: cloudflareConnection().settingsChanged() }
     return { success: true }
-  }
-)
+}
 
 function attachLiveWindow(wcId: number) {
   const context = livePresenterContexts.get(wcId)
@@ -676,6 +878,9 @@ ipcMain.handle('live:go', async (event) => {
     liveSessions.bindRun(wcId, recordingRunReference(wcId))
     return { success: true, ...liveSessions.snapshot(wcId) }
   } catch (cause) {
+    // A live service that is not set up or failed its set-up: the sorted sentence; what the tool printed only as `details`;
+    // and what Go live offers for it (Open Settings, or Set up going live now). Presenting goes on either way.
+    if (cause instanceof LiveServiceError) return { success: false, error: cause.message, ...(cause.details ? { details: cause.details } : {}), ...(cause.prompt ? { setup: cause.prompt } : {}) }
     return { success: false, error: cause instanceof Error ? cause.message : String(cause) }
   }
 })
@@ -864,61 +1069,39 @@ ipcMain.handle('live:read-clipboard', liveReadClipboardHandler({
   clipboard,
 }))
 
-ipcMain.handle('publish:set-token', (_event, token: string) => {
-  if (!safeStorage.isEncryptionAvailable()) {
-    return { success: false, error: 'OS keychain encryption unavailable; cannot store the token securely.' }
-  }
-  const t = (token || '').trim()
-  if (!t) return { success: false, error: 'Empty token.' }
-  try {
-    writeFileSync(tokenBlobPath(), safeStorage.encryptString(t))
-    return { success: true }
-  } catch (e) {
-    return { success: false, error: String(e) }
-  }
-})
-
-ipcMain.handle('publish:clear-token', () => {
-  try {
-    if (tokenExists()) rmSync(tokenBlobPath())
-  } catch {
-    /* ignore */
-  }
-  return { success: true }
-})
-
 // ── Recording storage (Settings → Recording) — R2 destination + access keys ──
 // Mirrors the publishing-config pattern: non-secret config in config.json; the R2 access keys go
-// to their own safeStorage blob and are NEVER returned to the renderer (only a hasKeys boolean).
-function r2CredsBlobPath(): string {
-  return join(app.getPath('userData'), 'recording-r2-creds.bin')
-}
-function r2KeysExist(): boolean {
-  return existsSync(r2CredsBlobPath())
-}
-function readR2Keys(): { accessKeyId: string; secretAccessKey: string } | null {
-  try {
-    if (!safeStorage.isEncryptionAvailable() || !r2KeysExist()) return null
-    const parsed = JSON.parse(safeStorage.decryptString(readFileSync(r2CredsBlobPath()))) as {
-      accessKeyId?: string
-      secretAccessKey?: string
-    }
-    if (parsed.accessKeyId && parsed.secretAccessKey) {
-      return { accessKeyId: parsed.accessKeyId, secretAccessKey: parsed.secretAccessKey }
-    }
-    return null
-  } catch {
-    return null
-  }
+// to the secrets store (slot `recording-keys`) through recording-storage.ts, the only module that
+// reads or writes them. They are NEVER returned to a window: it learns a hasKeys boolean and the
+// row's state (RecordingStorageRow: states, the bucket's name, fixed sentences).
+let recordingStorageService: RecordingStorage | null = null
+function recordingStorage(): RecordingStorage {
+  recordingStorageService ??= createRecordingStorage({
+    secrets: secrets(),
+    settings: () => ({ endpoint: getConfig('recordingR2Endpoint', undefined) ?? '', bucket: getConfig('recordingR2Bucket', undefined) ?? '' }),
+    // The two config keys of the source that is gone: read once, then removed from config.json.
+    retired: {
+      read: () => readConfig() as Record<string, unknown>,
+      drop: (keys) => {
+        const kept = { ...(readConfig() as Record<string, unknown>) }
+        for (const key of keys) delete kept[key]
+        configFile().replace(kept as Config)
+      },
+    },
+    onChange: (row: RecordingStorageRow) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        try { if (!win.isDestroyed()) win.webContents.send('recording:storage-status', row) } catch { /* window closing */ }
+      }
+    },
+  })
+  return recordingStorageService
 }
 
 ipcMain.handle('recording:get-storage', () => ({
   endpoint: getConfig('recordingR2Endpoint', undefined) ?? '',
   bucket: getConfig('recordingR2Bucket', undefined) ?? '',
-  credsSource: getConfig('recordingR2CredsSource', 'settings') ?? 'settings',
-  bwsSecretId: getConfig('recordingR2BwsSecretId', undefined) ?? '',
   discardSeconds: Math.round((getConfig('recordingDiscardMs', 20000) ?? 20000) / 1000),
-  hasKeys: r2KeysExist()
+  hasKeys: recordingStorage().hasKeys()
 }))
 
 ipcMain.handle(
@@ -928,51 +1111,47 @@ ipcMain.handle(
     cfg: {
       endpoint?: string
       bucket?: string
-      credsSource?: 'bws' | 'settings'
-      bwsSecretId?: string
       discardSeconds?: number
     }
   ) => {
-    writeConfig({
-      recordingR2Endpoint: (cfg.endpoint || '').trim() || undefined,
-      recordingR2Bucket: (cfg.bucket || '').trim() || undefined,
-      recordingR2CredsSource: cfg.credsSource === 'bws' ? 'bws' : 'settings',
-      recordingR2BwsSecretId: (cfg.bwsSecretId || '').trim() || undefined,
-      recordingDiscardMs: Number.isFinite(cfg.discardSeconds)
-        ? Math.max(0, Math.round((cfg.discardSeconds as number) * 1000))
-        : undefined
-    })
+    applyRecordingSettings(cfg)
     return { success: true }
   }
 )
 
-ipcMain.handle('recording:set-keys', (_event, keys: { accessKeyId?: string; secretAccessKey?: string }) => {
-  if (!safeStorage.isEncryptionAvailable()) {
-    return { success: false, error: 'OS keychain encryption unavailable; cannot store the keys securely.' }
+/** Recording storage's fields: what the window and `setup recording` both read. */
+function recordingSettings(): RecordingSettings {
+  return {
+    endpoint: getConfig('recordingR2Endpoint', undefined) ?? '',
+    bucket: getConfig('recordingR2Bucket', undefined) ?? '',
+    discardSeconds: Math.round((getConfig('recordingDiscardMs', 20000) ?? 20000) / 1000),
   }
-  const accessKeyId = (keys.accessKeyId || '').trim()
-  const secretAccessKey = (keys.secretAccessKey || '').trim()
-  if (!accessKeyId || !secretAccessKey) return { success: false, error: 'Both an access key id and secret are required.' }
-  try {
-    writeFileSync(r2CredsBlobPath(), safeStorage.encryptString(JSON.stringify({ accessKeyId, secretAccessKey })))
-    return { success: true }
-  } catch (e) {
-    return { success: false, error: String(e) }
-  }
-})
+}
+/** Recording storage's Save: the one writer of these fields, for the window and for `setup recording` (ticket 07). */
+function applyRecordingSettings(cfg: { endpoint?: string; bucket?: string; discardSeconds?: number }): void {
+  writeConfig({
+    recordingR2Endpoint: (cfg.endpoint || '').trim() || undefined,
+    recordingR2Bucket: (cfg.bucket || '').trim() || undefined,
+    recordingDiscardMs: Number.isFinite(cfg.discardSeconds)
+      ? Math.max(0, Math.round((cfg.discardSeconds as number) * 1000))
+      : undefined
+  })
+  // What a check found was about the endpoint and bucket as they were.
+  recordingStorage().settingsChanged()
+}
 
-ipcMain.handle('recording:clear-keys', () => {
-  try {
-    if (r2KeysExist()) rmSync(r2CredsBlobPath())
-  } catch {
-    /* ignore */
-  }
-  return { success: true }
-})
+ipcMain.handle('recording:set-keys', (_event, keys: unknown) => recordingStorage().saveKeys(keys))
+ipcMain.handle('recording:clear-keys', () => recordingStorage().clearKeys())
+// The Recording storage row of Settings → Cloudflare, and its Check (one list of the bucket; a read).
+ipcMain.handle('recording:storage-status', () => recordingStorage().status())
+ipcMain.handle('recording:check-storage', () => recordingStorage().check())
+// "Recording storage: enter your access keys", once, for a set-up that took its keys from Bitwarden.
+ipcMain.handle('recording:take-setup-notice', () => recordingStorage().takeNotice())
 
 // ── Transcription engine (Settings → Transcription) ─────────────────────────
-// Non-secret local paths only. Runtime callers receive expanded paths; Settings also receives the
-// unexpanded defaults so it can show exactly what the machine convention is.
+// Non-secret local paths only. Optional (spec D16): whether it can run is the one row decided in
+// transcription-setup.ts, which Settings shows and Studio's Transcribe obeys. The same operations
+// are what the `setup transcription` command will call (ticket 07: setPaths and status).
 function transcriptionSettings(): { python: string; script: string; ffmpeg: string; defaultPython: string; defaultScript: string } {
   return {
     python: getConfig('transcriptionPython', undefined) ?? DEFAULT_TRANSCRIPTION_PYTHON,
@@ -983,9 +1162,33 @@ function transcriptionSettings(): { python: string; script: string; ffmpeg: stri
   }
 }
 
+let transcriptionSetupInstance: TranscriptionSetup | null = null
+function transcriptionSetup(): TranscriptionSetup {
+  if (transcriptionSetupInstance) return transcriptionSetupInstance
+  transcriptionSetupInstance = createTranscriptionSetup({
+    read: () => {
+      const cfg = transcriptionSettings()
+      return { python: expandHomePath(cfg.python.trim()), script: expandHomePath(cfg.script.trim()), ffmpeg: expandHomePath(cfg.ffmpeg.trim()) }
+    },
+    write: (paths) => writeConfig({
+      transcriptionPython: paths.python.trim() || undefined,
+      transcriptionScript: paths.script.trim() || undefined,
+      transcriptionFfmpeg: paths.ffmpeg.trim() || undefined
+    }),
+    shippedFfmpeg: () => shippedFfmpegCandidates({ platform: process.platform, resourcesPath: process.resourcesPath ?? null, appPath: app.getAppPath(), packaged: app.isPackaged }),
+    systemFfmpeg: () => systemFfmpegCandidates(process.platform),
+    setupFolder: () => app.isPackaged
+      ? join(process.resourcesPath, 'agent-setup', 'transcription')
+      : join(app.getAppPath(), 'resources', 'agent-setup', 'transcription'),
+    userData: () => app.getPath('userData')
+  })
+  return transcriptionSetupInstance
+}
+
 ipcMain.handle('settings:get-transcription', () => transcriptionSettings())
 
-ipcMain.handle('settings:set-transcription', (_event, cfg: { python?: string; script?: string; ffmpeg?: string }) => {
+ipcMain.handle('settings:set-transcription', async (_event, cfg: { python?: string; script?: string; ffmpeg?: string }) => {
+  // Settings sends all three; an empty field clears its setting. Stored as typed (`~` kept).
   writeConfig({
     transcriptionPython: (cfg.python || '').trim() || undefined,
     transcriptionScript: (cfg.script || '').trim() || undefined,
@@ -993,6 +1196,11 @@ ipcMain.handle('settings:set-transcription', (_event, cfg: { python?: string; sc
   })
   return transcriptionSettings()
 })
+
+// The Transcription row (spec D16), the agent prompt it copies, and the set-up folder it opens.
+ipcMain.handle('transcription:status', () => transcriptionSetup().status())
+ipcMain.handle('transcription:agent-prompt', () => transcriptionSetup().agentPrompt())
+ipcMain.handle('transcription:open-setup-folder', async () => (await shell.openPath(transcriptionSetup().setupFolder())) === '')
 
 // window.open / target="_blank" in any app window: web and mail links go to the OS (logged instead
 // under E2E), nothing else opens in-app except a deck's own pages (present-window-open.ts).
@@ -1161,7 +1369,7 @@ function installApplicationMenu(): void {
     {
       label: 'File',
       submenu: [
-        { label: 'New Window', accelerator: 'CmdOrCtrl+N', click: () => { createWindow() } },
+        { label: 'New Window', accelerator: 'CmdOrCtrl+N', click: () => { createWindow(); guideLearn.commandRan('new-window', { inExample: false }) } },
         { type: 'separator' },
         { role: 'close' }
       ]
@@ -1205,7 +1413,7 @@ async function closeLiveWorkerSession(record: SessionRecoveryRecord): Promise<'e
 }
 function initialiseLiveSessions() {
   try {
-    liveRecoveryStore = createLiveSessionStore(join(app.getPath('userData'), 'live-sessions.enc'), safeStorage)
+    liveRecoveryStore = createLiveSessionStore(secretsSlot(secrets(), 'live-sessions'))
     liveSessions = createLiveSessionManager({
       load: () => liveRecoveryStore!.load(), save: (records) => liveRecoveryStore!.save(records),
       endRemote: closeLiveWorkerSession, probe: probeLiveSession,
@@ -1542,6 +1750,112 @@ registerVaultSettingsIpc({
   e2e: E2E
 })
 
+// Open example vault (onboarding ticket 06): five talks written from the bundle to
+// ~/Documents/TalkWeaver/Example vault on a click, then added to the list flagged as the example.
+// No argument: the path is fixed in example-vault.ts. A run with TW_E2E never sees the real home.
+const exampleHome = (): string | null => resolveExampleHome({ isPackaged: app.isPackaged, env: process.env, systemHome: homedir, realpath: (p) => realpathSync(p), systemTemp: tmpdir })
+const exampleVault = new ExampleVault({
+  home: exampleHome,
+  bundleDir: app.isPackaged ? join(process.resourcesPath, 'example-vault') : join(app.getAppPath(), 'resources', 'example-vault'),
+  registry: vaultRegistry,
+  log: (event, details) => console.log(`[${event}]`, JSON.stringify(details))
+})
+async function afterExampleVaultChange(): Promise<void> {
+  searchCache.clear()
+  invalidateTalkCache()
+  scheduleVaultWarm()
+  await checkVaultAvailability(true).catch(() => false)
+  for (const win of BrowserWindow.getAllWindows()) {
+    try { if (!win.isDestroyed()) win.webContents.send('vault:vaults-changed') } catch { /* window closing */ }
+  }
+}
+ipcMain.handle('vault:open-example', async () => {
+  const result = await exampleVault.open()
+  if (result.ok) await afterExampleVaultChange()
+  return result
+})
+
+// ── Remove the example vault and bring it back (onboarding ticket 12) ──
+// The rules are in example-vault-removal.ts. The renderer never passes a path: preview takes nothing,
+// remove takes the confirmation's token, restore takes nothing; the sender is main's own number for
+// the asking window, and only an app window may ask.
+const exampleRemoval = new ExampleVaultRemoval({
+  home: exampleHome,
+  registry: vaultRegistry,
+  record: {
+    removed: () => readConfig().exampleVaultRemoved === true,
+    setRemoved: (removed) => { try { writeConfig({ exampleVaultRemoved: removed }); return true } catch { return false } }
+  },
+  writer: exampleVault,
+  trash: resolveExampleTrash({ isPackaged: app.isPackaged, env: process.env, systemTrash: (path) => shell.trashItem(path) }),
+  openWindows: windowsShowingExample,
+  log: (event, details) => console.log(`[${event}]`, JSON.stringify(details))
+})
+// Rule I's port: the names of every window that shows, or might show, an example talk, from main's
+// own bookkeeping (editorWindows, presentWindows, the Pathways window's context). The Tools window
+// and any window opened from a deck window (Presenter from a presentation, Audience, a board) are not
+// tied to a talk here and are judged by windowsOnExample's conservative rule. Removal closes nothing.
+function windowsShowingExample(root: string): string[] {
+  const inExample = (path: string): boolean => {
+    if (vaultRegistry.resolve(path)?.vault.example === true) return true
+    const p = resolvePath(path)
+    return p === root || p.startsWith(root + pathSep)
+  }
+  const talkTitle = (outlinePath: string | null): string => {
+    if (!outlinePath) return ''
+    try { return outlineFrontmatter(outlinePath, statSync(outlinePath).mtimeMs).title ?? basename(outlinePath).replace(/-outline\.md$/, '') } catch { return basename(outlinePath).replace(/-outline\.md$/, '') }
+  }
+  const windows: OpenAppWindow[] = []
+  const placed = new Set<number>()
+  for (const { win, outlinePath } of editorWindows.values()) {
+    if (win.isDestroyed()) continue
+    placed.add(win.webContents.id)
+    windows.push({ kind: 'editor', outlinePath, title: talkTitle(outlinePath) })
+  }
+  const pathways = pathwayWindow
+  if (pathways && !pathways.isDestroyed()) {
+    placed.add(pathways.webContents.id)
+    windows.push({ kind: 'pathways', outlinePath: pathwayWindowContext?.outlinePath ?? null, title: pathwayWindowContext?.talkTitle ?? talkTitle(pathwayWindowContext?.outlinePath ?? null) })
+  }
+  const tools = toolsWindow
+  if (tools && !tools.isDestroyed()) {
+    placed.add(tools.webContents.id)
+    windows.push({ kind: 'tools', title: 'TalkWeaver Tools' })
+  }
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue
+    const id = win.webContents.id
+    if (placed.has(id) || isHiddenRenderer(id)) continue
+    const deck = presentWindows.get(id)
+    if (deck) windows.push({ kind: 'deck', outlinePath: deck.outlinePath, title: talkTitle(deck.outlinePath) })
+    else windows.push({ kind: 'other', url: win.webContents.getURL(), title: win.getTitle() })
+  }
+  return windowsOnExample(windows, inExample, tmpdir(), (url) => {
+    try { return url.startsWith('file:') ? fileURLToPath(url) : null } catch { return null }
+  })
+}
+const notFromAppWindow = { ok: false as const, message: 'This window cannot remove the example vault.' }
+ipcMain.handle('example:state', () => ({ removed: exampleRemoval.wasRemoved() }))
+ipcMain.handle('example:removal-preview', (event) => (isAppWindow(event.sender.id) ? exampleRemoval.preview(event.sender.id) : notFromAppWindow))
+ipcMain.handle('example:remove', async (event, token: unknown) => {
+  if (!isAppWindow(event.sender.id)) return notFromAppWindow
+  const result = await exampleRemoval.remove(token, event.sender.id)
+  if (result.ok) {
+    await afterExampleVaultChange()
+    broadcastToWindows('example:changed', { removed: exampleRemoval.wasRemoved(), moved: true })
+  }
+  return result
+})
+ipcMain.handle('example:restore', async (event) => {
+  if (!isAppWindow(event.sender.id)) return notFromAppWindow
+  const result = await exampleRemoval.restore()
+  if (result.ok) {
+    await afterExampleVaultChange()
+    broadcastToWindows('example:changed', { removed: exampleRemoval.wasRemoved(), moved: false })
+  }
+  return result
+})
+
 ipcMain.handle('vault:add', async (event, path?: unknown): Promise<AddVaultOutcome | null> => {
   let chosen: string
   if (E2E && typeof path === 'string' && path) chosen = path
@@ -1844,6 +2158,169 @@ ipcMain.handle('settings:set-action-bar-visible', (_event, visible: boolean) => 
   writeConfig({ actionBarVisible: visible === true })
   broadcastActionBar()
   return actionBarState().visible
+})
+
+// ── Place chip (onboarding ticket 02): one app-wide visibility setting, broadcast like the bar ──
+function placeChipVisible(): boolean {
+  return placeChipVisibleFrom(readConfig().placeChipVisible)
+}
+ipcMain.handle('settings:get-place-chip', () => ({ visible: placeChipVisible() }))
+ipcMain.handle('settings:set-place-chip-visible', (_event, visible: boolean) => {
+  writeConfig({ placeChipVisible: visible === true })
+  const state = { visible: placeChipVisible() }
+  for (const win of BrowserWindow.getAllWindows()) {
+    try { if (!win.isDestroyed()) win.webContents.send('place-chip:changed', state) } catch { /* window closing */ }
+  }
+  return state.visible
+})
+
+// ── The Guide (onboarding ticket 07): the sidebar button's switch and the Guide's progress ──
+function broadcastToWindows(channel: string, state: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    try { if (!win.isDestroyed()) win.webContents.send(channel, state) } catch { /* window closing */ }
+  }
+}
+function guideButtonVisible(): boolean {
+  return guideButtonVisibleFrom(readConfig().guideButtonVisible)
+}
+ipcMain.handle('settings:get-guide-button', () => ({ visible: guideButtonVisible() }))
+function setGuideButtonVisible(visible: boolean): boolean {
+  writeConfig({ guideButtonVisible: visible === true })
+  const state = { visible: guideButtonVisible() }
+  broadcastToWindows('guide-button:changed', state)
+  // The presenter's chip and column follow the switch (ticket 10): no chip and no column while off.
+  pushPresentChapter()
+  return state.visible
+}
+ipcMain.handle('settings:set-guide-button-visible', (_event, visible: boolean) => setGuideButtonVisible(visible === true))
+ipcMain.handle('guide:get-progress', () => guideProgressFrom(readConfig().guideProgress))
+// A talk of the example vault was opened in some window: kept once, told to every window.
+ipcMain.handle('guide:note-example-talk-opened', () => {
+  const current = guideProgressFrom(readConfig().guideProgress)
+  if (current.exampleTalkOpened) return current
+  writeConfig({ guideProgress: { ...readConfig().guideProgress, exampleTalkOpened: true } })
+  const next = guideProgressFrom(readConfig().guideProgress)
+  broadcastToWindows('guide:progress-changed', next)
+  return next
+})
+
+// ── Chapter progress (onboarding ticket 08): the one place every window reports a command run to ──
+// Main is the one writer. The window says which talk it was in (`outlinePath`) and main decides
+// whether that is the example vault: commands that delete tick only there (lock decision 12).
+const guideLearn = new GuideLearnStore({
+  read: () => readConfig()[GUIDE_LEARN_KEY],
+  write: (record: GuideLearn) => writeConfig({ [GUIDE_LEARN_KEY]: record })
+})
+// The whole record goes to app windows only; a presenter is sent its Present chapter (ticket 10).
+guideLearn.onChange = (record) => {
+  for (const win of BrowserWindow.getAllWindows()) {
+    try { if (!win.isDestroyed() && isAppWindow(win.webContents.id)) win.webContents.send('guide:learn-changed', record) } catch { /* window closing */ }
+  }
+  pushPresentChapter()
+}
+ipcMain.handle('guide:get-learn', (event) => (isAppWindow(event.sender.id) ? guideLearn.read() : null))
+ipcMain.handle('guide:command-ran', (event, id: unknown, outlinePath?: unknown): { id: string | null; ticked: boolean } => {
+  try {
+    // An app window (editor, Tools, Pathways) may report any command. A deck window main opened (the
+    // presenter, a plain presentation window) reaches here through its bridge preload and may report
+    // only a well-formed presenter id (src/main/guide-present.ts); its outline path is not asked for.
+    const appWindow = isAppWindow(event.sender.id)
+    if (!acceptCommandRan({ appWindow, deckWindow: presentWindows.has(event.sender.id) }, id)) return { id: null, ticked: false }
+    const hit = appWindow && typeof outlinePath === 'string' && outlinePath ? vaultRegistry.resolve(outlinePath) : null
+    return guideLearn.commandRan(id, { inExample: hit?.vault.example === true })
+  } catch {
+    return { id: null, ticked: false }
+  }
+})
+ipcMain.handle('guide:chapter-opened', (event, task: unknown) => isAppWindow(event.sender.id) && guideLearn.chapterOpened(task))
+ipcMain.handle('guide:topic-read', (event, topic: unknown) => isAppWindow(event.sender.id) && guideLearn.topicRead(topic))
+
+// ── The Present chapter in the presenter (onboarding ticket 10; src/main/guide-present.ts) ──
+const presenterChordOf = (shortcutId: string): string => SHORTCUT_REGISTRY.find((row) => row.id === shortcutId)?.keys ?? ''
+/** The presenter window main opened for this webContents id, or undefined. */
+function presenterDeck(senderId: number): BrowserWindow | undefined {
+  if (presentWindows.get(senderId)?.mode !== 'presenter') return undefined
+  const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === senderId)
+  return win
+}
+function presentChapterFor(senderId: number): PresentGuideView | null {
+  if (!guideButtonVisible()) return null
+  const chapter = chapterFor(guideLearn.chapters(), 'Present')
+  if (!chapter) return null
+  // "(open now)" when this presenter shows the chapter's practice talk: Lightning round in the example vault.
+  const outlinePath = presentWindows.get(senderId)?.outlinePath
+  const hit = outlinePath ? vaultRegistry.resolve(outlinePath) : null
+  const openNow = hit?.vault.example === true && hit.rel.split('/')[0] === 'lightning-round'
+  return presentGuideView(chapter, guideLearn.read(), presenterChordOf, openNow)
+}
+const presenterGuide = new PresenterGuideHost({
+  isPresenter: (senderId) => presenterDeck(senderId) !== undefined,
+  view: presentChapterFor,
+  showChapterList: (senderId) => {
+    // The editor window that has this deck's talk active, or the last-focused one (as ⌘E does).
+    const win = targetEditorFor(presentWindows.get(senderId)?.outlinePath ?? null)
+    if (!win || win.isDestroyed()) return false
+    if (win.isMinimized()) win.restore()
+    if (!E2E) win.show()
+    win.focus()
+    win.webContents.send(SHOW_CHAPTER_LIST_CHANNEL)
+    return true
+  },
+  hideButton: () => { setGuideButtonVisible(false) }
+})
+registerPresenterGuideIpc(ipcMain, presenterGuide)
+function pushPresentChapter(): void {
+  for (const [wcId, info] of presentWindows) {
+    if (info.mode !== 'presenter') continue
+    const win = presenterDeck(wcId)
+    if (!win) continue
+    try { win.webContents.send('guide:present-chapter-changed', presenterGuide.chapter(wcId)) } catch { /* window closing */ }
+  }
+}
+
+// ── What it connects to (onboarding ticket 11) ──
+// Read-only probes run when the Features segment is opened and on its refresh button, never at launch
+// (src/main/guide-connections.ts). Two asks at once share one read. TW_E2E_MACHINE (an unpackaged E2E
+// run only) stands in for the machine: a JSON ConnectionSources.
+let connectionsInFlight: Promise<ConnectionRow[]> | null = null
+function readConnections(): Promise<ConnectionRow[]> {
+  const stub = process.env.TW_E2E_MACHINE
+  if (E2E && !app.isPackaged && stub) {
+    try { return Promise.resolve(connectionRows({ ...NO_SOURCES, ...(JSON.parse(stub) as Partial<ConnectionSources>) })) } catch { /* fall through to the real probes */ }
+  }
+  connectionsInFlight ??= probeConnections({
+    platform: process.platform,
+    home: homedir(),
+    pathEnv: process.env.PATH,
+    timeoutMs: 1500,
+    stat: async (path) => {
+      try {
+        const s = await statAsync(path)
+        let executable = false
+        try { await accessAsync(path, fsConstants.X_OK); executable = true } catch { /* not runnable */ }
+        return { isFile: s.isFile(), isDirectory: s.isDirectory(), executable }
+      } catch { return null }
+    },
+    config: readConfig(),
+    // The statuses Settings shows, as they stand (none asks the network): the Guide words the same objects.
+    cloudflare: () => cloudflareConnection().status(),
+    goingLive: () => liveService().row(),
+    recording: () => recordingStorage().status(),
+    transcription: () => transcriptionSetup().status(),
+    vaults: () => vaultViews().filter((v) => v.open && !v.unavailable && !v.example).map((v) => ({ name: v.name, service: v.service }))
+  }).finally(() => { connectionsInFlight = null })
+  return connectionsInFlight
+}
+ipcMain.handle('guide:connections', (event): Promise<ConnectionRow[]> => {
+  if (!isAppWindow(event.sender.id)) return Promise.resolve([])
+  return readConnections().catch(() => [])
+})
+ipcMain.handle('guide:open-link', async (event, id: unknown): Promise<boolean> => {
+  if (!isAppWindow(event.sender.id) || !isGuideLinkId(id)) return false
+  if (E2E) { console.log('[guide] link (E2E):', GUIDE_LINKS[id]); return true }
+  const link = handOutLink(GUIDE_LINKS[id])
+  if (!link || link.kind !== 'web') return false
+  try { await shell.openExternal(link.href); return true } catch { return false }
 })
 
 ipcMain.handle('settings:get-backup', () => backupSettings())
@@ -2513,6 +2990,7 @@ const LAYOUT_PREVIEW_NAMES = [
   'media', 'contrast', 'copy-visual', 'cards', 'title', 'section', 'subsection', 'closing',
   'timeline', 'timelinevertical', 'timelinehorizontal', 'timelinespine', 'timeline-pills', 'grid',
   'system-map', 'smartart', 'flow', 'image-claim', 'cta-screenshots', 'trace', 'trace-dialogue',
+  'chat', 'chat-lanes', 'terminal', 'terminal-agent',
   'code', 'table', 'qr', 'action', 'embed', 'auto-embed', 'logolist', 'image-quote', 'image-grid',
   'barchart', 'piechart', 'linechart', 'sigmoid', 'timetable', 'table-outline', 'columns', 'pyramid',
   'orgchart', 'mindmap', 'conceptmap', 'stats', 'process', 'steps', 'iconrow', 'cycle', 'equation',
@@ -2651,6 +3129,8 @@ interface PreparedTalk {
   slug: string
   model: { fullHtml?: unknown; [k: string]: unknown }
   rows: Array<{ [k: string]: unknown }> | null
+  /** sha256 (hex) of markSlidePreviewHtml(model.fullHtml), worked out in the compile's worker thread. */
+  previewKey?: string
 }
 const preparedTalkCache = createPreparedTalkCache<PreparedTalk>({
   maxEntries: 6,
@@ -2666,6 +3146,9 @@ const preparePass = createSingleFlight()
 // A live compile: cached, on the gate's ordinary lane. A layout variant: uncached, on its background lane.
 const routePreparation = createPreparationRoute(preparedTalkCache, preparePass)
 
+// The live compile's worker thread (prepare-talk-off-thread.ts): started on the first compile, ended when idle.
+const prepareTalkOffThread = createPrepareTalkOffThread(join(__dirname, 'prepare-talk-worker.js'))
+
 async function prepareTalk(
   outlinePath: string,
   content: string,
@@ -2678,7 +3161,7 @@ async function prepareTalk(
 ): Promise<PreparedTalk | null> {
   const compilerDir = getCompilerPath()
   if (!compilerDir) return null
-  const stat = statSync(outlinePath)
+  statSync(outlinePath) // an outline that is not there fails here, as before (the worker reads its own stat)
   const slug = basename(outlinePath).replace('-outline.md', '')
   const vaultRoot = vaultRootFor(outlinePath)
   const resolved = resolvePooledRefs(content, outlinePath)
@@ -2691,15 +3174,10 @@ async function prepareTalk(
       const testGlobal = globalThis as typeof globalThis & { __twPrepareCount?: number }
       testGlobal.__twPrepareCount = (testGlobal.__twPrepareCount ?? 0) + 1
     }
-    const { prepareSource } = await import(
-      pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href
-    )
-    const { buildPerSlideProjections } = await import(
-      pathToFileURL(join(compilerDir, 'lib/10-projections.mjs')).href
-    )
-    const model = await gated(() => prepareSource(outlinePath, resolved, slug, stat, defaults, compileOptions)) as PreparedTalk['model']
-    const rows = buildPerSlideProjections(model, slug) ?? null
-    return { slug, model, rows }
+    // The compile and the per-slide rows run in the compile's worker thread (prepare-talk-worker.ts),
+    // still inside the gate: one heavy compile at a time, as before.
+    const { model, rows, previewKey } = await gated(() => prepareTalkOffThread({ compilerDir, outlinePath, text: resolved, slug, defaults, options: compileOptions }))
+    return { slug, model: model as PreparedTalk['model'], rows, previewKey }
   }
   return routePreparation(lane, key, group, load)
 }
@@ -2819,7 +3297,11 @@ function previewDocument(outlinePath: string, content: string, fullHtml: string)
   return { id, html }
 }
 
-function thumbnailDocumentId(html: string): string {
+/** The thumbnails' document id: the first 16 hex digits of sha256(markSlidePreviewHtml(html)). A
+ *  compile from prepareTalk carries that digest already (`previewKey`, from its worker thread), which
+ *  saves the main process a whole-deck regex pass and hash. */
+function thumbnailDocumentId(html: string, previewKey?: string): string {
+  if (previewKey) return previewKey.slice(0, 16)
   return createHash('sha256').update(markSlidePreviewHtml(html)).digest('hex').slice(0, 16)
 }
 
@@ -2841,11 +3323,11 @@ ipcMain.handle('talk:selected-thumbnail', async (_event, outlinePath: string, co
     if (!prepared) return null
     const fullHtml = prepared.model.fullHtml
     if (typeof fullHtml !== 'string' || !prepared.rows) return null
-    const documentId = thumbnailDocumentId(fullHtml)
+    const documentId = thumbnailDocumentId(fullHtml, prepared.previewKey)
     const selected = selectedThumbnailSlide(prepared.rows, String(slideId), documentId)
     if (!selected) return null
     const cacheDir = talkThumbCacheDir(outlinePath, prepared.slug)
-    const rendered = await renderThumbnails({ fullHtml, slides: [selected], cacheDir })
+    const rendered = await renderThumbnails({ fullHtml, deckKey: prepared.previewKey, slides: [selected], cacheDir })
     const renderedPath = rendered[selected.key]
     return renderedPath
       ? { slideId: String(slideId), url: thumbUrl(prepared.slug, basename(renderedPath, '.png'), vaultIdOf(outlinePath)) }
@@ -2888,8 +3370,8 @@ ipcMain.handle('conflict:pictures', async (_event, token: unknown, side: unknown
     if (!prepared) return {}
     const rows = (prepared.rows ?? []) as Array<{ slide_id?: string; render_hash?: string; content_hash?: string; thumbnail_hash?: string; layout?: string; triggers?: Record<string, string> }>
     const fullHtml = prepared.model.fullHtml as string
-    const slides = thumbnailSlides(rows, thumbnailDocumentId(fullHtml))
-    const rendered = await renderThumbnails({ fullHtml, slides, cacheDir: talkThumbCacheDir(version.outlinePath, prepared.slug), requestKey: `conflict:${_event.sender.id}:${side === 'theirs' ? 'theirs' : 'mine'}` })
+    const slides = thumbnailSlides(rows, thumbnailDocumentId(fullHtml, prepared.previewKey))
+    const rendered = await renderThumbnails({ fullHtml, deckKey: prepared.previewKey, slides, cacheDir: talkThumbCacheDir(version.outlinePath, prepared.slug), requestKey: `conflict:${_event.sender.id}:${side === 'theirs' ? 'theirs' : 'mine'}` })
     const vaultId = vaultIdOf(version.outlinePath)
     const out: Record<string, string> = {}
     for (const row of rows) {
@@ -4619,6 +5101,7 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
     })
     win.on('closed', () => {
       liveSessions?.detach(deckWcId)
+      presenterGuide.forget(deckWcId)
       presentWindows.delete(deckWcId)
       livePresenterContexts.delete(deckWcId)
     })
@@ -4629,10 +5112,13 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
       const action = deckWindowKeyAction(deckWindowMode(mode), input)
       if (!action) return
       event.preventDefault()
+      // These keys never reach the page, so main reports them to the Guide itself (ticket 10).
       if (action === 'open-audience') {
         win.webContents.executeJavaScript(OPEN_AUDIENCE_SCRIPT, true).catch((e) => console.warn('[present] F5 audience failed:', e))
+        guideLearn.commandRan('presenter.audience', { inExample: false })
       } else {
         void refreshDeckFromEditor(win)
+        guideLearn.commandRan('presenter.refresh', { inExample: false })
       }
     })
     // F5 in the presenter opens the audience view via window.open(?audience=1). Send it FULL-SCREEN
@@ -4824,13 +5310,7 @@ registerRecordingIpc({
   userDataDir: () => app.getPath('userData'),
   vaultRoot: () => writableVaultRoot() ?? null, // writes: only a vault folder that is there (ticket 07)
   discardThresholdMs: () => Math.max(0, Number(getConfig('recordingDiscardMs', 20000)) || 20000),
-  r2Config: () => ({
-    endpoint: getConfig('recordingR2Endpoint', undefined) ?? '',
-    bucket: getConfig('recordingR2Bucket', undefined) ?? '',
-    credsSource: getConfig('recordingR2CredsSource', 'settings') ?? 'settings',
-    bwsSecretId: getConfig('recordingR2BwsSecretId', undefined) ?? ''
-  }),
-  readSafeKeys: () => readR2Keys(),
+  storage: () => recordingStorage(),
   testMode: () => process.env.TW_REC_TEST === '1',
   beforeCloseWindow: async (id, action) => {
     const record = attachLiveWindow(id)
@@ -4864,13 +5344,8 @@ registerHistoryIpc({
 registerTranscriptionIpc({
   userDataDir: () => app.getPath('userData'),
   vaultRoot: () => writableVaultRoot() ?? null, // writes: only a vault folder that is there (ticket 07)
-  config: () => {
-    const cfg = transcriptionSettings()
-    return {
-      python: expandHomePath(cfg.python),
-      script: expandHomePath(cfg.script)
-    }
-  },
+  config: () => transcriptionSetup().quickStatus().paths,
+  readiness: () => transcriptionSetup().quickStatus(),
   testMode: () => process.env.TW_REC_TEST === '1'
 })
 
@@ -5012,6 +5487,33 @@ type RunHandoutArtifact = {
   venueSource: { slides: Array<{ html: string; notes: string }>; styles: string; license: null; liveTalkSlug: string }
 }
 
+/**
+ * A Run's compiled deck: the talk's prepared model (the editor keeps it warm), with the Run's pathway
+ * and cover applied, and which slides the Run shows. What Build Run handout and Publish handout for
+ * this Run build their pages from (handout-pages.ts buildRunHandoutHtml).
+ */
+async function runHandoutSource(
+  talk: TalkInfo, run: RunRecord, content: string,
+): Promise<{ source: RunHandoutSource; slideIds: string[]; missing: string[] }> {
+  const prepared = await prepareTalk(talk.outlinePath, content, timerSettings())
+  if (!prepared) throw new Error('Compiler not found')
+  return runHandoutSourceFrom(prepared.model, (prepared.rows ?? null) as PathwaySlideRow[] | null, runForHandout(talk, run), prepared.slug, talk.slug)
+}
+
+/** What of a Run its handout's deck depends on: its cover, and its pathway with the talk's pathways. */
+function runForHandout(talk: TalkInfo, run: RunRecord): RunForHandout {
+  const base = { eventTitle: run.eventTitle, talkTitle: run.talkTitle, plannedDate: run.plannedDate, startedAt: run.startedAt }
+  if (run.slideSet.kind !== 'pathway') return base
+  const vaultRoot = vaultRootFor(talk.outlinePath)
+  if (!vaultRoot) throw new Error('Choose a Vault before building a Run handout.')
+  return { ...base, pathway: { id: run.slideSet.pathwayId, pathways: readPathwayManifest(vaultRoot, talk.slug).pathways } }
+}
+
+/** Where a Run's handout is kept on this computer: the talk folder's dist/. */
+function runHandoutDistPath(talk: TalkInfo, slug: string): string {
+  return join(dirname(talk.outlinePath), 'dist', `${slug}-handout.html`)
+}
+
 async function buildRunHandoutArtifact(
   talk: TalkInfo,
   run: RunRecord,
@@ -5023,50 +5525,14 @@ async function buildRunHandoutArtifact(
 ): Promise<RunHandoutArtifact> {
   const compilerDir = getCompilerPath()
   if (!compilerDir) throw new Error('Compiler not found')
-  let compiled = await compileTalkForPresent(talk.outlinePath, content)
-  let slideIds: string[] = []
-  let missing: string[] = []
-  if (run.slideSet.kind === 'pathway') {
-    const pathwayId = run.slideSet.pathwayId
-    const vaultRoot = vaultRootFor(talk.outlinePath)
-    if (!vaultRoot) throw new Error('Choose a Vault before building a Run handout.')
-    const prepared = await prepareTalk(talk.outlinePath, content, timerSettings())
-    const manifest = readPathwayManifest(vaultRoot, talk.slug)
-    const resolved = resolvePathways(manifest.pathways, (prepared?.rows ?? []) as PathwaySlideRow[])
-      .find((pathway) => pathway.id === pathwayId)
-    if (!resolved) throw new Error('The Run pathway no longer exists.')
-    slideIds = resolved.present.map((row) => row.slide_id)
-    missing = resolved.missing
-    compiled = { ...compiled, html: injectPathwayRuntime(compiled.html, slideIds, pathwayId) }
-  } else {
-    const prepared = await prepareTalk(talk.outlinePath, content, timerSettings())
-    slideIds = ((prepared?.rows ?? []) as PathwaySlideRow[]).map((row) => row.slide_id)
-  }
-
-  const datedHtml = injectRunCoverMetadata(compiled.html, run.eventTitle ?? run.talkTitle, run.plannedDate ?? run.startedAt.slice(0, 10))
-  const { extractStyles, extractSlides } = await import(pathToFileURL(join(compilerDir, 'lib/04-html-extraction.mjs')).href)
-  const { buildShareHtml } = await import(pathToFileURL(join(compilerDir, 'lib/09-output-builders.mjs')).href)
-  const styles = extractStyles(datedHtml)
-  // Feedback-boards ticket 09: a Run handout never lists the pre-work steps as ordinary slides. They
-  // travel only as the form's steps (an inert template the form shows while pre-work is open); once it
-  // closes, or on a handout with no pre-work, they are not shown at all.
-  const preworkIds = new Set(compiled.preworkSlideIds ?? [])
-  const allSlides = extractSlides(datedHtml) as Array<{ id: string; html: string; notes: string }>
-  const slides = allSlides.filter((slide) => !preworkIds.has(slide.id))
-  const preworkSlides = allSlides.filter((slide) => preworkIds.has(slide.id))
+  const { source, slideIds, missing } = await runHandoutSource(talk, run, content)
   const slug = outputSlug ?? runHandoutSlug(talk.slug, run.eventTitle ?? 'run', run.plannedDate ?? run.startedAt.slice(0, 10), [])
-  const shareArgs = {
-    title: compiled.title, slides, styles, includeNotes: false, slug,
-    workerBaseUrl: workerBaseUrl ?? '', liveTalkSlug: talk.slug,
-    ...(prework ? { prework: { ...prework, steps: preworkSlides.map((slide) => ({ id: slide.id, html: slide.html })) } } : {}),
-  }
-  const html = buildShareHtml(shareArgs) as string
-  const lazyHtml = options.lazyAssets ? buildShareHtml({ ...shareArgs, lazyAssets: true }) as string : undefined
-  const distDir = join(dirname(talk.outlinePath), 'dist')
+  const { html, lazyHtml, slides, styles } = await buildRunHandoutHtml(compilerDir, source, { slug, workerBaseUrl: workerBaseUrl ?? '', prework, lazyAssets: options.lazyAssets })
+  const path = runHandoutDistPath(talk, slug)
+  const distDir = dirname(path)
   if (!existsSync(distDir)) mkdirSync(distDir) // only inside a talk folder that is there (a vanished vault is never re-created)
-  const path = join(distDir, `${slug}-handout.html`)
   writeFileSync(path, html, 'utf8')
-  return { path, html, lazyHtml, title: compiled.title, slug, slideIds, missing,
+  return { path, html, lazyHtml, title: source.title, slug, slideIds, missing,
     venueSource: { slides, styles, license: null, liveTalkSlug: talk.slug } }
 }
 
@@ -5122,11 +5588,11 @@ ipcMain.handle('talk:export-handout', async (_event, outlinePath: string, conten
 // Build the share-no-notes handout in-process (same path as talk:export-handout), write it into a
 // local accumulating "site" dir, then deploy the WHOLE dir via wrangler with the user's own
 // credentials. Optionally (publishUseShortIds) assign a stable short id and regenerate _redirects so
-// the link is <base>/<id>. The API token is read from the OS keychain (safeStorage); the user's
-// account/project/domain come from config.json (Settings → Publishing). Nothing private is bundled.
+// the link is <base>/<id>. The API token is read from the secrets store (secrets-store.ts); the user's
+// account/project/domain come from config.json (Settings → Cloudflare). Nothing private is bundled.
 
 function publishSiteDir(): string {
-  return getConfig('publishSiteDir', undefined) ?? join(app.getPath('userData'), 'cloudflare-pages-site')
+  return resolveSiteDir(app.getPath('userData'), getConfig('publishSiteDir', undefined))
 }
 function handoutRegistryPath(): string {
   return join(app.getPath('userData'), 'handout-registry.json')
@@ -5142,122 +5608,109 @@ function readHandoutRegistry(): Record<string, string> {
 function writeHandoutRegistry(reg: Record<string, string>): void {
   writeFileSync(handoutRegistryPath(), JSON.stringify(reg, null, 2), 'utf8')
 }
-// True if a `wrangler` executable exists in any dir of the augmented PATH.
-function wranglerFoundOn(pathStr: string): boolean {
-  for (const dir of pathStr.split(':')) {
-    if (dir && existsSync(join(dir, 'wrangler'))) return true
-  }
-  return false
+// wrangler ships inside the app and runs on the app's own Node (wrangler-launcher.ts); every
+// wrangler command in this file goes through the three functions below. `app.getAppPath()` is the
+// folder holding the app's node_modules: Resources/app when packaged, the repository otherwise.
+// Every command runs in a folder kept for wrangler alone (the launcher clears it of `.env` files
+// before each run). It MUST be writable (a packaged app launched from Finder inherits CWD `/`, where
+// wrangler cannot create its `./.wrangler/tmp` scratch) and it is never inside the site folder, so
+// the scratch is never deployed with what is published.
+function wranglerWorkDir(): string {
+  return join(app.getPath('userData'), 'wrangler-runs')
+}
+function wranglerInstall(): WranglerInstall {
+  return { execPath: process.execPath, appRoot: app.getAppPath(), platform: process.platform, workDir: wranglerWorkDir() }
+}
+/** Null when the bundled tool is there; otherwise the message and its Details. */
+function wranglerMissing(): WranglerMissing | null {
+  const resolved = resolveWranglerLaunch(wranglerInstall(), [])
+  return resolved.ok ? null : resolved
+}
+/**
+ * Run one wrangler command to completion, in the folder kept for wrangler runs.
+ * `set` is everything this command is given on purpose (the credentials); nothing else in the app's
+ * own environment can steer wrangler (wrangler-launcher.ts builds the child's environment).
+ */
+function runBundledWrangler(
+  args: string[], options: { set: Record<string, string>; input?: string },
+): Promise<WranglerRun> {
+  return runWrangler(wranglerInstall(), args, { inherited: process.env, set: { ...options.set, ...standInCloudflareApi() }, input: options.input })
+}
+/**
+ * Tests only (spec decision D1: environment overrides are for tests and are ignored in a packaged
+ * build). A harness (TW_E2E=1, never a packaged app) may point the bundled wrangler at a stand-in
+ * Cloudflare API on this computer's own loopback address, so a publish runs to its end with a made-up
+ * token and no request leaves the machine (e2e/diagnose-secrets-gate.mjs). Any other address is ignored.
+ */
+function standInCloudflareApi(): Record<string, string> {
+  // The same rule, in the same function, as for the app's own calls to the API (cloudflare-connection.ts).
+  const base = standInApiBase(cloudflareTestContext())
+  return base ? { CLOUDFLARE_API_BASE_URL: base } : {}
+}
+/** A message when the site about to be published would make `pages deploy` compile code; else null. */
+function pagesBundlingBlock(siteDir: string): string | null {
+  return pagesBundlingHazard(siteDir, wranglerWorkDir(), existsSync)
+}
+/**
+ * A failed `deploy` or `dev`: when what wrangler printed is esbuild refusing a malformed
+ * tsconfig.json, jsconfig.json or package.json in a parent folder, the message that names the file;
+ * otherwise `fallback`. Nothing outside the app is read for this (wrangler-failures.ts).
+ */
+function liveWorkerFailureText(output: string, fallback: string): string {
+  const broken = brokenJsonFileInOutput(output, wranglerWorkDir())
+  return broken ? blockingFileText(broken.path) : fallback
+}
+/** One line for a thrown error, where no separate Details field reaches the screen. */
+function wranglerMissingText(missing: WranglerMissing): string {
+  return `${missing.error}. Details: ${missing.details}`
 }
 
-// Slim the PUBLISHED handout so each file stays under Cloudflare Pages' 25 MiB/file cap (the local
-// build stays pristine — this operates on the in-memory copy only). Ported from the proven
-// The handout builder: (1) drops the data of large inlined videos to a "plays live" note;
-// (2) recompress big inlined PNGs to near-lossless WebP (cwebp), falling back to sips JPEG, never
-// growing a file. Best-effort: if cwebp/sips are missing it returns the html unchanged.
-// Slim a self-contained handout to fit Cloudflare Pages' 25 MiB per-file limit — BUDGET-AWARE
-// (2026-07-20). The old pass compressed images at ONE fixed quality (near_lossless 60) and stripped
-// only videos over 8 MB; a video-heavy imported deck (6 clips ≤8 MB inlined + 40+ screenshots) still
-// landed at ~28 MB and wrangler rejected it. Now: try TOP quality first (unchanged for the ~90% of
-// talks that already fit — they return on the first tier, untouched), and only for the heavy ones
-// escalate — first nudging image quality/dimensions down, and only if even the lowest image tier
-// can't fit, strip progressively smaller videos to placeholders. Videos stay playable as long as
-// possible; quality drops just enough to clear the limit. Verified: a 28.6 MB deck → 24.2 MB with
-// every video still inlined. See [[talkweaver-vault-scale]].
-function slimHandoutHtml(html: string): string {
-  const TARGET = 24 * 1024 * 1024 // ~1 MiB under the 25 MiB Cloudflare Pages ceiling
-  const CWEBP = existsSync('/opt/homebrew/bin/cwebp') ? '/opt/homebrew/bin/cwebp' : 'cwebp'
-  const VIDEO_PLACEHOLDER =
-    '<figure class="slide-figure slide-video video-placeholder"><div class="video-placeholder-note"><span class="vp-glyph" aria-hidden="true">▶</span><span>Video plays in the live presentation</span></div></figure>'
+// Slimming the PUBLISHED handout (each file under Cloudflare Pages' 25 MiB limit) is
+// handout-slimming.ts: `sharp` on every platform, no program taken from the machine (spec D11).
 
-  // Replace every inlined video larger than `limit` bytes with a poster placeholder.
-  const stripVideos = (h: string, limit: number): string =>
-    h.replace(/<figure class="slide-figure slide-video"[^>]*>[\s\S]*?<\/figure>/g, (fig) => {
-      if (/video-placeholder/.test(fig)) return fig
-      if (/\sdata-lazy-src="/.test(fig)) return fig // published beside the page (handout-lazy-assets.mjs): not inline
-      const data = fig.match(/src="data:video\/[^;]+;base64,([A-Za-z0-9+/=]+)"/)
-      const bytes = data ? Math.floor(data[1].length * 0.75) : Infinity
-      if (bytes <= limit) return fig
-      // A {play-on-next} video stays a step of its slide (0.38 ticket 05): the placeholder keeps the
-      // mark, so the venue screen counts the slide's steps as the projector does. It has nothing to play.
-      return /^<figure class="slide-figure slide-video" data-play-on-next[\s>]/.test(fig)
-        ? VIDEO_PLACEHOLDER.replace('<figure class="slide-figure slide-video video-placeholder"', '<figure class="slide-figure slide-video video-placeholder" data-play-on-next')
-        : VIDEO_PLACEHOLDER
-    })
-
-  // Re-encode every inlined image (png / jpeg / webp, over ~120 KB) to webp at the given cwebp
-  // quality flag and max dimension. Always re-encodes from the ORIGINAL `h`, so escalating tiers
-  // never stack lossy-on-lossy. `qualityFlag` is a cwebp arg pair, e.g. ['-near_lossless','60'] or
-  // ['-q','84'].
-  const compressImages = (h: string, qualityFlag: string[], maxDim: number): string => {
-    let tmp: string
-    try { tmp = mkdtempSync(join(tmpdir(), 'handout-slim-')) } catch { return h }
-    let idx = 0
-    try {
-      return h.replace(/data:image\/(png|jpe?g|webp);base64,([A-Za-z0-9+/=]+)/g, (match, fmt: string, b64: string) => {
-        const origBytes = Buffer.byteLength(b64, 'base64')
-        if (origBytes < 120 * 1024) return match // leave small images alone
-        const i = idx++
-        const ext = fmt === 'jpeg' ? 'jpg' : fmt
-        const inPath = join(tmp, `i${i}.${ext}`)
-        writeFileSync(inPath, Buffer.from(b64, 'base64'))
-        // cwebp reads png/jpeg but not webp — transcode a webp source to png via sips first.
-        let src = inPath
-        try {
-          if (fmt === 'webp') {
-            const p = join(tmp, `i${i}s.png`)
-            execFileSync('sips', ['-s', 'format', 'png', inPath, '--out', p], { stdio: 'ignore' })
-            src = p
-          }
-        } catch { return match }
-        let resize: string[] = []
-        try {
-          const g = execFileSync('sips', ['-g', 'pixelWidth', '-g', 'pixelHeight', src], { encoding: 'utf8' })
-          const w = Number((g.match(/pixelWidth:\s*(\d+)/) || [])[1]) || 0
-          const ht = Number((g.match(/pixelHeight:\s*(\d+)/) || [])[1]) || 0
-          if (Math.max(w, ht) > maxDim) resize = w >= ht ? ['-resize', String(maxDim), '0'] : ['-resize', '0', String(maxDim)]
-        } catch { /* dims unknown → encode at native size */ }
-        const webpPath = join(tmp, `i${i}.webp`)
-        try {
-          execFileSync(CWEBP, ['-quiet', ...qualityFlag, ...resize, src, '-o', webpPath], { stdio: 'ignore' })
-          const out = readFileSync(webpPath)
-          if (out.length >= origBytes) return match // never grow a file
-          return 'data:image/webp;base64,' + out.toString('base64')
-        } catch {
-          try {
-            const jpgPath = join(tmp, `i${i}.jpg`)
-            execFileSync('sips', ['-Z', String(maxDim), '-s', 'format', 'jpeg', '-s', 'formatOptions', '82', src, '--out', jpgPath], { stdio: 'ignore' })
-            return 'data:image/jpeg;base64,' + readFileSync(jpgPath).toString('base64')
-          } catch { return match }
-        }
-      })
-    } finally {
-      try { rmSync(tmp, { recursive: true, force: true }) } catch { /* ignore */ }
+// A publish's handout pages are built and written in a worker thread (handout-pages.ts): one worker
+// for the one job, ended when it answers. A build that fails rejects, as the build in this thread did.
+function buildHandoutPagesOffThread(job: HandoutPagesJob): Promise<HandoutPagesResult> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(join(__dirname, 'handout-pages-worker.js'), { workerData: job })
+    let settled = false
+    const settle = (finish: () => void): void => {
+      if (settled) return
+      settled = true
+      finish()
+      void worker.terminate()
     }
-  }
+    worker.once('message', (reply: { ok: true; result: HandoutPagesResult } | { ok: false; error: string }) => {
+      settle(() => (reply.ok ? resolve(reply.result) : reject(new Error(reply.error))))
+    })
+    worker.once('error', (error) => settle(() => reject(error)))
+    worker.once('exit', (code) => settle(() => reject(new Error(`The handout could not be built (the build stopped with code ${code}).`))))
+  })
+}
 
-  // Phase 1: keep every clip playable (strip only >8 MB, as before) and escalate image quality only.
-  const base = stripVideos(html, 8 * 1024 * 1024)
-  const imageTiers: Array<[string[], number]> = [
-    [['-near_lossless', '60'], 2400], // top quality — unchanged from the old behaviour; most talks stop here
-    [['-q', '84'], 2000],
-    [['-q', '80'], 1700],
-    [['-q', '74'], 1500]
-  ]
-  let last = base
-  for (const [flag, dim] of imageTiers) {
-    const out = compressImages(base, flag, dim)
-    if (Buffer.byteLength(out, 'utf8') <= TARGET) return out
-    last = out
-  }
-  // Phase 2: images already at the lowest tier and still over budget — strip progressively smaller
-  // videos to placeholders until it fits.
-  for (const mb of [4, 2, 1]) {
-    const out = compressImages(stripVideos(html, mb * 1024 * 1024), ['-q', '74'], 1500)
-    if (Buffer.byteLength(out, 'utf8') <= TARGET) return out
-    last = out
-  }
-  return last // best effort — still over 25 MiB only if a single clip ≤1 MB + text already exceeds it
+// Every upload of the site goes through this one service (handout-publishing.ts): leave to publish
+// from the connection, the live service's address or its absence, the pages, the one upload. The
+// handlers below supply the pages; they read no token and start no upload themselves.
+let handoutPublishingService: HandoutPublishing | null = null
+function handoutPublishing(): HandoutPublishing {
+  handoutPublishingService ??= createHandoutPublishing({
+    siteDir: () => publishSiteDir(),
+    authorise: () => cloudflareConnection().authorisePublish(),
+    live: async () => (publishRehearsal() ? { baseUrl: getConfig('liveWorkerBaseUrl', undefined) ?? '' } : ensureLiveWorker()),
+    toolMissing: () => wranglerMissing(),
+    bundlingHazard: (siteDir) => pagesBundlingBlock(siteDir),
+    upload: (args, credentials) => runBundledWrangler(args, { set: credentials }),
+    rehearsal: () => publishRehearsal(),
+  })
+  return handoutPublishingService
+}
+/**
+ * Tests only (never a packaged build): with TW_REC_TEST=1 a publish builds its pages and reads them
+ * for addresses on this computer, and nothing is asked of Cloudflare or uploaded.
+ */
+function publishRehearsal(): { project: string } | null {
+  if (app.isPackaged || process.env.TW_REC_TEST !== '1') return null
+  return { project: getConfig('cfPagesProject', undefined) ?? 'talkweaver-test' }
 }
 
 ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, content: string) => {
@@ -5271,24 +5724,6 @@ ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, conte
   const compilerDir = getCompilerPath()
   if (!compilerDir) return { success: false, error: 'Compiler not found' }
 
-  const accountId = getConfig('cfAccountId', undefined)
-  const project = getConfig('cfPagesProject', undefined)
-  const baseUrl = getConfig('publishBaseUrl', undefined)
-  const useShortIds = getConfig('publishUseShortIds', false) ?? false
-  const prodBranch = getConfig('publishProdBranch', undefined) ?? 'main'
-  const token = readToken()
-
-  const PATH = augmentedPath(process.env.PATH)
-  const wranglerFound = wranglerFoundOn(PATH)
-
-  const pre = checkPreconditions({
-    accountId: accountId as string | undefined,
-    project: project as string | undefined,
-    hasToken: !!token,
-    wranglerFound
-  })
-  if (!pre.ok) return { success: false, error: pre.error }
-
   try {
     // What is published is the editor's buffer as it stands when Publish was pressed: flush it to disk
     // first (a forced save of the open editor's buffer through the one writer, talk-writer.ts; a
@@ -5299,120 +5734,73 @@ ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, conte
     const published = flushed.text
     const blockedNow = unresolvedOutboundFailure(published)
     if (blockedNow) return blockedNow
-    const liveWorker = await ensureLiveWorker()
 
-    const stat = statSync(outlinePath)
-    const slug = basename(outlinePath).replace('-outline.md', '')
-    const vaultRoot = vaultRootFor(outlinePath)
-    const resolved = resolvePooledRefs(published, outlinePath)
+    // The sequence (leave to publish, the live service or its absence, the one upload, what a
+    // superseded publish does) is handout-publishing.ts. This supplies the talk's pages: `live` is
+    // the only live address they may carry, and it is '' when the live service is not ready.
+    const outcome = await handoutPublishing().publish({
+      entry: 'talk',
+      prepare: async ({ dir: siteDir, project, live, link, redirects }) => {
+        const baseUrl = getConfig('publishBaseUrl', undefined)
+        const useShortIds = getConfig('publishUseShortIds', false) ?? false
+        // ENTRY FIRST: the address every link of this handout starts with is checked before anything is
+        // built or written (handout-publishing.ts). An address on this computer stops the publish here.
+        const base = link(resolveBase({ baseUrl: baseUrl as string | undefined, project }))
+        const slug = basename(outlinePath).replace('-outline.md', '')
+        // The talk's folder in the site: by the one function that makes a name a folder there
+        // (publishing-logic.ts siteFolder, and never through a link). A name that would not stay inside the site folder is refused here.
+        const talkOutDir = writableSiteFolder(siteDir, slug)
+        if (!talkOutDir) return { ok: false, error: SITE_FOLDER_REFUSED }
+        const resolved = resolvePooledRefs(published, outlinePath)
 
-    // Build the handout HTML exactly like talk:export-handout (share-no-notes).
-    const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
-    const model = await prepareSource(outlinePath, resolved, slug, stat, undefined, { allowedAssetRoots: assetRootsFor(outlinePath) })
-    // Title for the handout <title> + viewer page: prefer the outline's frontmatter `title:`
-    // (the canonical deck title), like the old publisher did — model.title falls back to the slug
-    // for plain-markdown decks the v1 adapter routes, which would show the slug instead of the title.
-    const fmTitle = (published.match(/^title:\s*["']?(.+?)["']?\s*$/m) || [])[1]
-    const title = (fmTitle && fmTitle.trim()) || (model.title as string) || slug
-    const fullHtml = model.fullHtml as string
-    const { extractStyles, extractSlides } = await import(
-      pathToFileURL(join(compilerDir, 'lib/04-html-extraction.mjs')).href
-    )
-    const { buildShareHtml } = await import(pathToFileURL(join(compilerDir, 'lib/09-output-builders.mjs')).href)
-    const styles = extractStyles(fullHtml)
-    // Ticket 09: pre-work steps are never slides of a handout (the evergreen one included).
-    const slides = withoutPreworkSlides(extractSlides(fullHtml) as Array<{ id: string; html: string; notes: string }>, model.prework as CompiledPrework | undefined)
-    const license = (model as { license?: unknown }).license
-    const shareArgs = {
-      title, slides, styles, includeNotes: false, slug, license,
-      workerBaseUrl: liveWorker.baseUrl, liveTalkSlug: slug,
-    }
-    const handoutHtml = buildShareHtml(shareArgs)
-    const lazyHandoutHtml = buildShareHtml({ ...shareArgs, lazyAssets: true })
-
-    // Publish output: each handout
-    // folder gets the slimmed handout as <slug>.html PLUS a viewer/landing index.html (Open +
-    // Download + QR + short link). The whole accumulating site dir is deployed so prior talks survive.
-    const siteDir = publishSiteDir()
-    const talkOutDir = join(siteDir, slug)
-    if (!existsSync(talkOutDir)) mkdirSync(talkOutDir, { recursive: true })
-
-    const base = resolveBase({ baseUrl: baseUrl as string | undefined, project: project as string })
-
-    // Stable short id assigned BEFORE the URL/QR so the viewer page + _redirects carry the final link.
-    let id: string | undefined
-    if (useShortIds) {
-      const registry = readHandoutRegistry()
-      const recoveredId = recoverIdFromUrl(readHandoutUrl(published), base)
-      const gen = (): string => generateShortId((n) => Uint8Array.from(randomBytes(n)))
-      const picked = pickShortId({ registry, slug, recoveredId, gen })
-      id = picked.id
-      writeHandoutRegistry(picked.registry)
-    }
-    const url = publishUrl({ base, slug, id, useShortIds })
-
-    const handoutFile = `${slug}.html`
-    const downloadFile = `${slug}-download.html`
-    const { makeQrSvg } = await import(pathToFileURL(join(compilerDir, 'lib/01-cli-utils.mjs')).href)
-    const qr = (makeQrSvg(url) as string) || ''
-    // The home page the QR code and short link open: the handout bundle in home mode, live first
-    // (design 2026-10-02 B), so its live surface is the handout's own live client.
-    const { buildHandoutHomePageHtml } = await import(pathToFileURL(join(compilerDir, 'lib/handout-home-page.mjs')).href)
-    const homeHtml = buildHandoutHomePageHtml({
-      title, slides, styles, slug, license, workerBaseUrl: liveWorker.baseUrl, liveTalkSlug: slug, lazyAssets: true,
-      home: { url, qr, downloadHref: downloadFile, ...handoutHomeDetails({ outline: published }) },
-    })
-    // <slug>.html and index.html load their slide media lazily from slide-assets/ (moved out before any
-    // slimming); the Download button saves <slug>-download.html, the self-contained handout, slimmed for
-    // the 25 MiB/file Pages cap. Written together: new assets, then pages via temp + rename, then a prune
-    // that keeps the previous publish's assets for phones still open on it.
-    const { publishLazyHandoutPages } = await import(pathToFileURL(join(compilerDir, 'lib/handout-lazy-assets.mjs')).href)
-    const pagesWritten = publishLazyHandoutPages(talkOutDir, [
-      { fileName: downloadFile, html: handoutHtml, lazy: false },
-      { fileName: handoutFile, html: lazyHandoutHtml },
-      { fileName: 'index.html', html: homeHtml },
-    ], { slim: slimHandoutHtml }) as { warnings: string[] }
-    const { buildVenuePageHtml, buildUnavailableVenuePageHtml } = await import(pathToFileURL(join(compilerDir, 'lib/venue-page.mjs')).href)
-    const venueDir = join(talkOutDir, 'p')
-    mkdirSync(venueDir, { recursive: true })
-    writeFileSync(join(venueDir, 'index.html'), slimHandoutHtml(buildVenuePageHtml({
-      title, slides, styles, slug, license, workerBaseUrl: liveWorker.baseUrl,
-      liveTalkSlug: slug, qr, handoutUrl: url,
-    })), 'utf8')
-    writeFileSync(join(siteDir, '404.html'), buildUnavailableVenuePageHtml(), 'utf8')
-
-    // _redirects regenerated AFTER the viewer index.html exists (the scan keys off each folder's index.html).
-    if (useShortIds) {
-      const registry = readHandoutRegistry()
-      const existingSlugs = readdirSync(siteDir).filter((n) => existsSync(join(siteDir, n, 'index.html')))
-      writeFileSync(join(siteDir, '_redirects'), buildRedirects(registry, existingSlugs), 'utf8')
-    }
-
-    // Deploy the whole site dir via wrangler with the user's credentials. execFile resolves the
-    // `wrangler` command using the PATH in env (homebrew/usr/local cover global npm installs).
-    const env = {
-      ...process.env,
-      PATH,
-      CLOUDFLARE_API_TOKEN: token as string,
-      CLOUDFLARE_ACCOUNT_ID: accountId as string
-    }
-    // cwd MUST be a writable dir: a packaged .app launched from Finder/`open` inherits CWD `/`, so
-    // wrangler can't create its `./.wrangler/tmp` scratch (fails with "Missing file or directory:
-    // /.wrangler/tmp"). Use userData — writable, app-owned, and the PARENT of siteDir so the scratch
-    // dir is never inside (and thus never deployed with) the published folder.
-    const wranglerCwd = app.getPath('userData')
-    const deploy = await new Promise<{ ok: boolean; err?: string }>((resolveP) => {
-      execFile(
-        'wrangler',
-        ['pages', 'deploy', siteDir, '--project-name', project as string, '--branch', prodBranch, '--commit-dirty=true'],
-        { cwd: wranglerCwd, env, timeout: 180000, maxBuffer: 64 * 1024 * 1024 },
-        (error, _stdout, stderr) => {
-          if (error) resolveP({ ok: false, err: String(stderr || error.message).slice(-600) })
-          else resolveP({ ok: true })
+        // Publish output: each handout
+        // folder gets the slimmed handout as <slug>.html PLUS a viewer/landing index.html (Open +
+        // Download + QR + short link). The whole accumulating site dir is deployed so prior talks survive.
+        // ENTRY FIRST, the rest of it, all in memory before the first file is written: the stable short
+        // id (so the viewer page and the redirects carry the final link), the handout's own link (it
+        // goes into its pages: the QR code, the venue screen), and the WHOLE redirect file as it will be.
+        let id: string | undefined
+        let redirectsText: string | null = null
+        let registryToKeep: Record<string, string> | null = null
+        if (useShortIds) {
+          const registry = readHandoutRegistry()
+          const recoveredId = recoverIdFromUrl(readHandoutUrl(published), base)
+          const gen = (): string => generateShortId((n) => Uint8Array.from(randomBytes(n)))
+          const picked = pickShortId({ registry, slug, recoveredId, gen })
+          id = picked.id
+          registryToKeep = picked.registry
+          redirectsText = redirects(buildRedirects(picked.registry, [...new Set([...publishedFolders(siteDir), slug])]))
         }
-      )
+        const url = link(publishUrl({ base, slug, id, useShortIds }))
+        // Checked: from here on things are written.
+        if (registryToKeep) writeHandoutRegistry(registryToKeep)
+        if (!existsSync(talkOutDir)) mkdirSync(talkOutDir, { recursive: true })
+
+        const { makeQrSvg } = await import(pathToFileURL(join(compilerDir, 'lib/01-cli-utils.mjs')).href)
+        const qr = (makeQrSvg(url) as string) || ''
+        // The compile, the pages (Download, lazy <slug>.html, the home page, the venue screen) and their
+        // slimming and writing run OFF this thread (handout-pages.ts): a heavy handout held it for
+        // seconds, and the app showed the beachball. Everything it is handed has been checked above.
+        const pagesWritten = await buildHandoutPagesOffThread({
+          kind: 'talk', compilerDir, talkOutDir, siteDir, slug, live, url, qr,
+          downloadFile: `${slug}-download.html`, handoutFile: `${slug}.html`,
+          outlinePath, text: resolved, outline: published, assetRoots: assetRootsFor(outlinePath),
+          homeDetails: handoutHomeDetails({ outline: published }),
+        })
+
+        // The redirect file, as it was checked before the build began.
+        if (redirectsText !== null) writeFileSync(join(siteDir, '_redirects'), redirectsText, 'utf8')
+        return { ok: true, built: { url, warnings: pagesWritten.warnings } }
+      },
     })
-    if (!deploy.ok) return { success: false, error: `wrangler deploy failed: ${deploy.err}` }
+    // A publish that did not go up, or that the connection changed under, records nothing below.
+    if (!outcome.ok) {
+      return {
+        success: false, error: outcome.error,
+        ...(outcome.details ? { details: outcome.details } : {}), ...(outcome.notReady ? { notReady: outcome.notReady } : {}),
+      }
+    }
+    const { url, warnings } = outcome.built
 
     // Best-effort: stamp handout_url into the outline frontmatter (so the short id is recoverable
     // later). No frontmatter → left unchanged. Stamped onto the talk's CURRENT text through the one
@@ -5425,36 +5813,18 @@ ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, conte
       if (stamped.ok) updatedOutline = stamped.text
     }
     void ledgerSeal(outlinePath, published, 'publish')
-    return { success: true, url, display: url, updatedOutline, ...(pagesWritten.warnings.length ? { warning: pagesWritten.warnings.join(' ') } : {}) }
+    return {
+      success: true, url, display: url, updatedOutline, ...(warnings.length ? { warning: warnings.join(' ') } : {}),
+      // Published without live features (spec D7): the sentence, and what lies behind it for "Details".
+      ...(outcome.notice ? { liveNotice: outcome.notice, ...(outcome.noticeDetails ? { liveDetails: outcome.noticeDetails } : {}) } : {}),
+      // Handouts an earlier version left with a dead live address: how many, and their names for "Details".
+      ...(outcome.earlierNotice ? { earlierNotice: outcome.earlierNotice, ...(outcome.earlierDetails ? { earlierDetails: outcome.earlierDetails } : {}) } : {}),
+    }
   } catch (e) {
     console.error('[publish-handout]', e)
     return { success: false, error: String(e) }
   }
 })
-
-async function deployPublishedSite(siteDir: string): Promise<{ ok: boolean; error?: string }> {
-  if (process.env.TW_REC_TEST === '1') return { ok: true }
-  const accountId = getConfig('cfAccountId', undefined)
-  const project = getConfig('cfPagesProject', undefined)
-  const prodBranch = getConfig('publishProdBranch', undefined) ?? 'main'
-  const token = readToken()
-  const PATH = augmentedPath(process.env.PATH)
-  const pre = checkPreconditions({
-    accountId: accountId as string | undefined,
-    project: project as string | undefined,
-    hasToken: !!token,
-    wranglerFound: wranglerFoundOn(PATH)
-  })
-  if (!pre.ok) return { ok: false, error: pre.error }
-  const env = { ...process.env, PATH, CLOUDFLARE_API_TOKEN: token as string, CLOUDFLARE_ACCOUNT_ID: accountId as string }
-  return new Promise((resolveP) => {
-    execFile('wrangler', ['pages', 'deploy', siteDir, '--project-name', project as string, '--branch', prodBranch, '--commit-dirty=true'], {
-      cwd: app.getPath('userData'), env, timeout: 180000, maxBuffer: 64 * 1024 * 1024
-    }, (error, _stdout, stderr) => {
-      resolveP(error ? { ok: false, error: `wrangler deploy failed: ${String(stderr || error.message).slice(-600)}` } : { ok: true })
-    })
-  })
-}
 
 type LiveWorkerCredentials = { adminSecret: string; signingSecret: string }
 let localLiveWorker: { process: ChildProcessByStdio<null, Readable, Readable>; baseUrl: string; adminSecret: string } | null = null
@@ -5462,13 +5832,12 @@ let localLiveWorker: { process: ChildProcessByStdio<null, Readable, Readable>; b
 function liveWorkerDir(): string {
   return app.isPackaged ? join(process.resourcesPath, 'worker') : join(process.cwd(), 'worker')
 }
-function liveCredentialsBlobPath(): string {
-  return join(app.getPath('userData'), 'live-worker-credentials.bin')
-}
+// The live service's admin and signing secrets: slot `live-worker-credentials` of the secrets store.
 function readLiveWorkerCredentials(): LiveWorkerCredentials | null {
   try {
-    if (!safeStorage.isEncryptionAvailable() || !existsSync(liveCredentialsBlobPath())) return null
-    const value = JSON.parse(safeStorage.decryptString(readFileSync(liveCredentialsBlobPath()))) as Partial<LiveWorkerCredentials>
+    const stored = secretOrNull('live-worker-credentials')
+    if (stored === null) return null
+    const value = JSON.parse(stored) as Partial<LiveWorkerCredentials>
     return value.adminSecret && value.signingSecret
       ? { adminSecret: value.adminSecret, signingSecret: value.signingSecret }
       : null
@@ -5477,162 +5846,102 @@ function readLiveWorkerCredentials(): LiveWorkerCredentials | null {
 function getOrCreateLiveWorkerCredentials(): LiveWorkerCredentials {
   const existing = readLiveWorkerCredentials()
   if (existing) return existing
-  if (!safeStorage.isEncryptionAvailable()) throw new Error('OS keychain encryption is unavailable; live Worker credentials cannot be stored securely.')
   const credentials = {
     adminSecret: randomBytes(32).toString('base64url'),
     signingSecret: randomBytes(32).toString('base64url'),
   }
-  writeFileSync(liveCredentialsBlobPath(), safeStorage.encryptString(JSON.stringify(credentials)))
+  // Refused (SecretsError, a fixed sentence) when the operating system's encryption is unavailable.
+  secrets().write('live-worker-credentials', JSON.stringify(credentials))
   return credentials
 }
 
-function runWrangler(
-  args: string[], env: NodeJS.ProcessEnv, input?: string,
-): Promise<{ ok: boolean; stdout: string; stderr: string }> {
-  return new Promise((resolveRun) => {
-    const child = spawn('wrangler', args, {
-      cwd: app.getPath('userData'), env, stdio: ['pipe', 'pipe', 'pipe'],
-    })
-    let stdout = ''
-    let stderr = ''
-    child.stdout.on('data', (chunk) => { stdout += String(chunk) })
-    child.stderr.on('data', (chunk) => { stderr += String(chunk) })
-    const timer = setTimeout(() => child.kill('SIGTERM'), 180_000)
-    child.on('error', (error) => { clearTimeout(timer); resolveRun({ ok: false, stdout, stderr: `${stderr}\n${error.message}` }) })
-    child.on('close', (code) => { clearTimeout(timer); resolveRun({ ok: code === 0, stdout, stderr }) })
-    if (input) child.stdin.end(input)
-    else child.stdin.end()
-  })
-}
-
-// Strips `//` line comments and `/* … */` block comments from JSONC text, leaving string contents
-// untouched, so wrangler.jsonc — which may legitimately carry either, per its own extension — reads
-// as plain JSON. Self-contained rather than depending on a parser package: none of this repo's own
-// declared dependencies ships one, and wrangler.jsonc here is never large.
-function stripJsonComments(text: string): string {
-  let out = ''
-  let inString = false
-  let escaped = false
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i]
-    if (inString) {
-      out += ch
-      if (escaped) escaped = false
-      else if (ch === '\\') escaped = true
-      else if (ch === '"') inString = false
-      continue
-    }
-    if (ch === '"') { inString = true; out += ch; continue }
-    if (ch === '/' && text[i + 1] === '/') {
-      while (i < text.length && text[i] !== '\n') i += 1
-      out += '\n'
-      continue
-    }
-    if (ch === '/' && text[i + 1] === '*') {
-      i += 2
-      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i += 1
-      i += 1
-      continue
-    }
-    out += ch
-  }
-  return out
-}
-
-// Share link domain (ticket 07): the shipped wrangler.jsonc never hardcodes a custom domain — it is
-// per-user (each person deploys the live Worker to their own Cloudflare account). When Settings has
-// a valid domain, the deploy config gets a `routes: [{ pattern, custom_domain: true }]` entry;
-// Workers custom domains create the DNS record and certificate themselves (verified against
-// Cloudflare's docs — no separate DNS-record step is needed here, unlike attaching a domain via the
-// raw API). Unset, or a stored value that no longer passes isValidShareDomain (edited by hand, or
-// saved before that rule existed): the base wrangler.jsonc deploys unchanged, same as sharedTalkLink
-// falling back to the Worker origin for the same reason.
-function liveWorkerDeployConfigPath(baseConfig: string): { ok: true; path: string } | { ok: false; error: string } {
-  try {
-    const linkBase = getConfig('sharedTalkLinkBase', undefined)
-    const hostname = (() => { try { return linkBase ? new URL(linkBase).hostname : null } catch { return null } })()
-    if (!hostname || !isValidShareDomain(hostname)) return { ok: true, path: baseConfig }
-    const source = JSON.parse(stripJsonComments(readFileSync(baseConfig, 'utf8'))) as Record<string, unknown>
-    // Written outside the (possibly read-only, once signed) app resources directory, so `main` is
-    // made absolute rather than left relative to the generated file's own location.
-    const generated = {
-      ...source,
-      main: join(liveWorkerDir(), String(source.main ?? 'index.ts')),
-      // Wrangler disables the workers.dev route by default once any `routes` entry is present unless
-      // `workers_dev` says otherwise — keep it on: the app's own API calls (ensureLiveWorker's baseUrl,
-      // parsed from this same deploy's output below) still go through workers.dev; only the colleague
-      // link moves to the custom domain.
-      workers_dev: true,
-      routes: [{ pattern: hostname, custom_domain: true }],
-    }
-    const generatedPath = join(app.getPath('userData'), 'live-worker-wrangler.generated.jsonc')
-    writeFileSync(generatedPath, JSON.stringify(generated, null, 2), 'utf8')
-    return { ok: true, path: generatedPath }
-  } catch (error) {
-    return { ok: false, error: `Could not generate the live Worker's deploy config: ${error instanceof Error ? error.message : String(error)}` }
-  }
-}
-
-async function deployLiveWorker(env: NodeJS.ProcessEnv): Promise<{ ok: true; baseUrl: string; adminSecret: string } | { ok: false; error: string }> {
-  const accountId = getConfig('cfAccountId', undefined)
-  const PATH = augmentedPath(env.PATH)
-  if (!accountId) return { ok: false, error: 'Configure a Cloudflare account in Settings → Publishing.' }
-  if (!wranglerFoundOn(PATH)) return { ok: false, error: 'wrangler not found — install it before starting a live session.' }
-  const baseConfig = join(liveWorkerDir(), 'wrangler.jsonc')
-  if (!existsSync(baseConfig)) return { ok: false, error: 'Live Worker files are missing from this TalkWeaver installation.' }
-  const generatedConfig = liveWorkerDeployConfigPath(baseConfig)
-  if (!generatedConfig.ok) return generatedConfig
-  const config = generatedConfig.path
-  let token: string
-  try {
-    token = await resolveLiveWorkerCloudflareToken()
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : 'Could not resolve the live Worker Cloudflare API token from Bitwarden Secrets Manager.' }
-  }
-  const credentials = getOrCreateLiveWorkerCredentials()
-  const cloudflareEnv = { ...env, PATH, CLOUDFLARE_API_TOKEN: token, CLOUDFLARE_ACCOUNT_ID: accountId }
-  const deployed = await runWrangler(['deploy', '--config', config], cloudflareEnv)
-  if (!deployed.ok) return { ok: false, error: `wrangler deploy failed: ${String(deployed.stderr || deployed.stdout).slice(-600)}` }
-  const secrets = await runWrangler(
-    ['secret', 'bulk', '--config', config],
-    cloudflareEnv,
-    JSON.stringify({ ADMIN_SECRET: credentials.adminSecret, SESSION_SIGNING_SECRET: credentials.signingSecret }),
+// The config `wrangler dev` is given (the local live service, tests and the unpackaged app only) is
+// ALWAYS a generated copy in the wrangler-runs folder, never the shipped file: wrangler keeps its
+// scratch (`.wrangler/tmp`) beside the config it is given, and the app's own folder must not be
+// written to (it is sealed by its signature, and may not be writable at all).
+function writeLiveWorkerConfig(baseConfig: string, fileName: string, shareHostname: string | null): string {
+  const path = join(wranglerWorkDir(), fileName)
+  // Atomic (temp file, fsync, rename): wrangler never reads a half-written config.
+  createConfigFile<Record<string, unknown>>(path).replace(
+    liveWorkerDeployConfig(readFileSync(baseConfig, 'utf8'), liveWorkerDir(), shareHostname),
   )
-  if (!secrets.ok) return { ok: false, error: `Worker secret setup failed: ${String(secrets.stderr || secrets.stdout).slice(-600)}` }
-  const output = `${deployed.stdout}\n${deployed.stderr}`
-  const baseUrl = output.match(/https:\/\/[^\s]+\.workers\.dev\b/)?.[0]
-  if (!baseUrl) return { ok: false, error: 'Worker deployed, but Wrangler did not report its workers.dev URL. Set the Worker base URL in Settings.' }
-  writeConfig({ liveWorkerBaseUrl: baseUrl, liveWorkerVersion: LIVE_WORKER_VERSION })
-  return { ok: true, baseUrl, adminSecret: credentials.adminSecret }
+  return path
+}
+
+// The live service as it ships: compiled when the app was built, never on this computer (ticket 11).
+function liveWorkerDistDir(): string {
+  return app.isPackaged ? join(process.resourcesPath, WORKER_DIST_DIR) : join(process.cwd(), WORKER_DIST_DIR)
+}
+/** The shipped files, as bytes; null for one that cannot be read (readShippedFiles: never throws). */
+function shippedLiveWorker(): ShippedFiles {
+  const dir = liveWorkerDistDir()
+  return readShippedFiles((name) => { try { return readFileSync(join(dir, name)) } catch { return null } })
+}
+// The share-link domain (ticket 07) is per person (each deploys the live service to their own
+// account): attached to the Worker when Settings has a valid one, and removed when it is cleared.
+// A stored value that no longer passes isValidShareDomain (edited by hand, or saved before that rule
+// existed) counts as none, as sharedTalkLink falls back to the Worker origin for the same reason.
+function liveShareHostname(): string | null {
+  const linkBase = getConfig('sharedTalkLinkBase', undefined)
+  const hostname = (() => { try { return linkBase ? new URL(linkBase).hostname : null } catch { return null } })()
+  return hostname && isValidShareDomain(hostname) ? hostname : null
+}
+
+// The sequence, and every point at which a set-up stops because the token, the account or the site
+// changed under it, is live-service-deploy.ts; this supplies what only the app has. It reads neither
+// the token nor the account for itself: both come with the authorisation (spec D1). A token found
+// not to run the live service is refused there (nothing is redeployed until a sufficient token is
+// entered; a service already deployed keeps working with its stored keys, ensureLiveWorker falls
+// back to it). No program is started: the shipped bundle is uploaded with Cloudflare's API.
+function deployLiveWorker(progress?: (phase: 'upload' | 'secrets') => void): Promise<LiveDeployResult> {
+  return deployLiveService({
+    ...(progress ? { progress } : {}),
+    shipped: () => shippedLiveWorker(),
+    expectedBuild: LIVE_WORKER_VERSION,
+    authorise: () => cloudflareConnection().authoriseLiveDeploy(),
+    storedKeys: () => readLiveWorkerCredentials(),
+    makeKeys: () => getOrCreateLiveWorkerCredentials(),
+    shareHostname: () => liveShareHostname(),
+    shareDomainAttachedBefore: () => Boolean(getConfig('liveWorkerShareDomain', undefined)),
+    // Written before an attach is sent, cleared only after a verified removal (live-service-deploy.ts).
+    recordShareDomain: (hostname) => writeConfig({ liveWorkerShareDomain: hostname ?? '' }),
+    fetch: (input, init) => fetch(input, init),
+    apiBase: () => cloudflareApiBase(cloudflareTestContext()),
+    // With the address, the account it was deployed for: a publish by another account does not publish this address.
+    save: ({ baseUrl, accountId }) => writeConfig({ liveWorkerBaseUrl: baseUrl, liveWorkerVersion: LIVE_WORKER_VERSION, liveWorkerAccountId: accountId }),
+  })
 }
 
 async function startLocalLiveWorker(requestedBaseUrl = 'http://127.0.0.1:8787'): Promise<{ baseUrl: string; adminSecret: string }> {
   if (localLiveWorker && !localLiveWorker.process.killed) {
     return { baseUrl: localLiveWorker.baseUrl, adminSecret: localLiveWorker.adminSecret }
   }
-  const PATH = augmentedPath(process.env.PATH)
-  if (!wranglerFoundOn(PATH)) throw new Error('wrangler not found — install it to run live sessions locally.')
-  const config = join(liveWorkerDir(), 'wrangler.jsonc')
-  if (!existsSync(config)) throw new Error('Live Worker files are missing from this TalkWeaver installation.')
+  const shippedConfig = join(liveWorkerDir(), 'wrangler.jsonc')
+  if (!existsSync(shippedConfig)) throw new Error('Live Worker files are missing from this TalkWeaver installation.')
+  // As for a deploy: a generated copy outside the app's folder, so wrangler's scratch is too.
+  const config = writeLiveWorkerConfig(shippedConfig, 'live-worker-wrangler.local.jsonc', null)
   const adminSecret = randomBytes(24).toString('base64url')
   const signingSecret = randomBytes(24).toString('base64url')
   const requested = new URL(requestedBaseUrl)
   const port = requested.port || '8787'
   const wranglerState = join(app.getPath('userData'), 'live-worker-local-state')
-  const child = spawn('wrangler', [
+  const resolved = prepareWranglerRun(wranglerInstall(), [
     'dev', '--config', config, '--ip', '127.0.0.1', '--port', port,
     '--var', `ADMIN_SECRET:${adminSecret}`, '--var', `SESSION_SIGNING_SECRET:${signingSecret}`,
     // A local Worker only: pre-work submissions without cf-connecting-ip share one source (ticket 09).
     '--var', 'PREWORK_LOCAL_SOURCE:1',
     '--persist-to', wranglerState, '--show-interactive-dev-session=false',
-  ], {
-    cwd: app.getPath('userData'),
-    env: { ...process.env, PATH, WRANGLER_LOG_PATH: join(app.getPath('userData'), 'live-worker-wrangler.log') },
+  ], { inherited: process.env, set: { WRANGLER_LOG_PATH: join(app.getPath('userData'), 'live-worker-wrangler.log') } })
+  if (!resolved.ok) throw new Error(wranglerMissingText(resolved))
+  const child = spawn(resolved.launch.command, resolved.launch.args, {
+    cwd: resolved.launch.cwd,
+    env: resolved.launch.env,
     stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
   })
   const baseUrl = await new Promise<string>((resolveStart, rejectStart) => {
     let output = ''
-    const timer = setTimeout(() => { child.kill('SIGTERM'); rejectStart(new Error(`Local live Worker did not start. ${output.slice(-600)}`)) }, 30_000)
+    const timer = setTimeout(() => { child.kill('SIGTERM'); rejectStart(new Error(liveWorkerFailureText(output, `Local live Worker did not start. ${output.slice(-600)}`))) }, 30_000)
     const inspect = (chunk: Buffer): void => {
       output = `${output}${String(chunk)}`.slice(-4000)
       const found = output.match(/https?:\/\/(?:127\.0\.0\.1|localhost):\d+/)?.[0]
@@ -5647,7 +5956,7 @@ async function startLocalLiveWorker(requestedBaseUrl = 'http://127.0.0.1:8787'):
     child.stdout.on('data', inspect)
     child.stderr.on('data', inspect)
     child.once('error', (error) => { clearTimeout(timer); rejectStart(error) })
-    child.once('exit', (code) => { clearTimeout(timer); rejectStart(new Error(`Local live Worker stopped during startup (${code}). ${output.slice(-600)}`)) })
+    child.once('exit', (code) => { clearTimeout(timer); rejectStart(new Error(liveWorkerFailureText(output, `Local live Worker stopped during startup (${code}). ${output.slice(-600)}`))) })
   })
   localLiveWorker = { process: child, baseUrl, adminSecret }
   child.once('exit', () => { if (localLiveWorker?.process === child) localLiveWorker = null })
@@ -5659,34 +5968,131 @@ async function startLocalLiveWorker(requestedBaseUrl = 'http://127.0.0.1:8787'):
 // silently dropped poll.open; a re-deploy is safe: same URL, same reused secrets.)
 const LIVE_WORKER_VERSION = LIVE_WORKER_BUILD
 
-async function ensureLiveWorker(): Promise<{ baseUrl: string; adminSecret: string }> {
+/** Decision D8: a live service on this computer's own address, only in an unpackaged build started with TW_LIVE_LOCAL=1. */
+function liveLocalAllowed(): boolean {
+  return localLiveAllowed({ packaged: app.isPackaged, flag: process.env.TW_LIVE_LOCAL })
+}
+
+// The live service's admin secret for the address in Settings: the stored one, or (an unpackaged
+// test run only, decision D1) the one handed over in TALKWEAVER_LIVE_ADMIN_SECRET.
+function liveAdminSecret(): string | null {
+  const stored = readLiveWorkerCredentials()?.adminSecret
+  if (stored) return stored
+  const handed = app.isPackaged ? '' : process.env.TALKWEAVER_LIVE_ADMIN_SECRET?.trim()
+  return handed || null
+}
+function broadcast(channel: string, value: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    try { if (!win.isDestroyed()) win.webContents.send(channel, value) } catch { /* window closing */ }
+  }
+}
+// Going live and sharing (live-service.ts): whether there is a live service, what to do before
+// using it, and its Settings row. This supplies what only the app has: the connection's state, the
+// keys' presence, what Settings records as deployed, the set-up sequence and the lookup.
+let liveServiceInstance: LiveService | null = null
+function liveService(): LiveService {
+  liveServiceInstance ??= createLiveService({
+    facts: () => {
+      const status = cloudflareConnection().status()
+      const at = status.connection
+      const connection = at.state === 'connected' && at.account ? 'connected' : at.state === 'checking' || at.state === 'unreachable' ? 'not-checked' : 'not-connected'
+      const configured = getConfig('liveWorkerBaseUrl', undefined)?.replace(/\/+$/, '') || null
+      return {
+        connection,
+        permission: status.liveService.state === 'no-permission' ? 'no-permission' : status.liveService.state === 'not-refused' ? 'not-refused' : 'unknown',
+        accountId: at.state === 'connected' ? at.account?.id ?? null : null,
+        keysStored: liveAdminSecret() !== null,
+        deployed: { baseUrl: configured, version: getConfig('liveWorkerVersion', undefined) ?? null, accountId: getConfig('liveWorkerAccountId', undefined) ?? null },
+        appBuild: LIVE_WORKER_VERSION,
+      }
+    },
+    adminSecret: () => liveAdminSecret(),
+    deploy: (progress) => deployLiveWorker(progress),
+    lookUp: (accountId) => lookUpLiveService({
+      shipped: () => shippedLiveWorker(),
+      expectedBuild: LIVE_WORKER_VERSION,
+      authorise: () => cloudflareConnection().authoriseLiveDeploy(),
+      fetch: (input, init) => fetch(input, init),
+      apiBase: () => cloudflareApiBase(cloudflareTestContext()),
+      accountId,
+    }),
+    // A Worker deleted in the dashboard: its address, build and account are dropped. The keys stay.
+    forget: () => writeConfig({ liveWorkerBaseUrl: undefined, liveWorkerVersion: undefined, liveWorkerAccountId: undefined }),
+    onChange: (row: GoingLiveRow) => {
+      broadcast('live-service:status', row)
+      // `setup cloudflare live` prints its progress from the same rows the window is sent.
+      for (const listener of liveRowListeners) { try { listener(row) } catch { /* a listener that has gone */ } }
+    },
+    tell: (message) => broadcast('live-service:notice', message),
+  })
+  return liveServiceInstance
+}
+const liveRowListeners = new Set<(row: GoingLiveRow) => void>()
+// Settings → Cloudflare's Going live and sharing row. A row holds states, the live service's address,
+// its build and fixed sentences: never a key.
+ipcMain.handle('live-service:status', () => liveService().row())
+ipcMain.handle('live-service:set-up', (event) => {
+  // Only from an editor window's own top frame, where the Settings row is: never a presenter window
+  // (its slides may hold embeds), another window, or a frame embedded in a page.
+  if (!setUpAllowedFrom(event, (id) => editorWindows.has(id))) return { ok: false, error: 'Going live can be set up only from TalkWeaver itself.', details: null, row: liveService().row() }
+  return liveService().setUp()
+})
+
+// Settings → Cloudflare's Share-link domain row: its one button, "Use share.<handout domain>"
+// (Dominik, 10 Oct: "definitely want share.handouts.fyi"). The address is the one the row suggests,
+// read here from the connection's own status, never taken from the window. Pressing it is the only
+// way the suggestion is used: it saves it as the share-link address (`sharedTalkLinkBase`, as
+// typing it in Settings does, so the deployed service is marked out of date), checks the row again,
+// and when the token was not refused the zone's Workers routes and the live service is set up,
+// attaches it now by updating the live service (the ticket-06 path: live-service-deploy.ts). A live
+// service not set up yet attaches it when it is set up. Refused routes: saved, nothing attached, and
+// the row says which permission to add.
+let shareUse: Promise<CloudflareReply> | null = null
+async function useSuggestedShareDomain(): Promise<CloudflareReply> {
+  const before = cloudflareConnection().status()
+  const offered = before.shareLink
+  const host = offered.state === 'none' && !offered.stale ? offered.suggested?.host ?? '' : ''
+  if (before.connection.state !== 'connected' || !isValidShareDomain(host)) return { ok: false, error: SHARE_LINK_NOT_NOW, status: before }
+  writeConfig({ sharedTalkLinkBase: `https://${host}`, liveWorkerVersion: undefined })
+  liveServiceInstance?.refresh()
+  const checked = await cloudflareConnection().settingsChanged()
+  if (checked.status.shareLink.state !== 'not-attached' || checked.status.shareLink.host !== host || liveService().row().state !== 'ready') return { ok: true, status: checked.status }
+  const setUp = await liveService().setUp()
+  const after = await cloudflareConnection().check('asked')
+  return setUp.ok ? { ok: true, status: after.status } : { ok: false, error: setUp.error, status: after.status }
+}
+ipcMain.handle('cloudflare:use-share-domain', (event): Promise<CloudflareReply> | CloudflareReply => {
+  // As Set up going live: only from an editor window's own top frame, where the Settings row is.
+  if (!setUpAllowedFrom(event, (id) => editorWindows.has(id))) return { ok: false, error: 'A share-link address can be set only from TalkWeaver itself.', status: cloudflareConnection().status() }
+  shareUse ??= useSuggestedShareDomain().finally(() => { shareUse = null })
+  return shareUse
+})
+
+// Throws a LiveServiceError (a fixed sentence, with Details, and what Go live offers) when there is
+// no live service to use. Publishing never calls this directly: handout-publishing.ts does, and turns
+// any throw into a handout published without live features (spec D7). Nothing is SET UP here (D9:
+// set up on purpose); an update of a service deployed from here is done before it is used.
+async function ensureLiveWorker(): Promise<{ baseUrl: string; adminSecret: string; accountId?: string | null }> {
   const configured = getConfig('liveWorkerBaseUrl', undefined)?.replace(/\/+$/, '')
+  const local = liveLocalAllowed()
   if (configured) {
-    const url = new URL(configured)
-    if (url.hostname === '127.0.0.1' || url.hostname === 'localhost') {
+    // One rule for "is this address on this computer" (handout-publishing.ts `addressKind`): every spelling of it.
+    const where = addressKind(configured)
+    if (where === 'not-an-address' || !/^https?:\/\//i.test(configured)) throw new LiveServiceError('not-set-up', LIVE_NOT_SET_UP)
+    if (where === 'this-computer') {
+      // An address on this computer is a live service for tests only (D8): no phone can reach it.
+      if (!local) throw new LiveServiceError('not-set-up', LIVE_NOT_SET_UP)
       // A local Worker someone else already runs (the e2e harness, a developer's wrangler dev) and
       // whose admin secret is handed over explicitly: use it rather than spawning a second one.
       const externalSecret = process.env.TALKWEAVER_LIVE_ADMIN_SECRET?.trim()
       if (externalSecret) return { baseUrl: configured, adminSecret: externalSecret }
       return startLocalLiveWorker(configured)
     }
-    // Re-deploy when the bundled Worker is newer than what was last deployed to this URL, if we
-    // have the credentials to do so. On failure, fall through and reuse the URL rather than break go-live.
-    const canDeploy = Boolean(readToken()) && Boolean(getConfig('cfAccountId', undefined))
-    if (getConfig('liveWorkerVersion', undefined) !== LIVE_WORKER_VERSION && canDeploy) {
-      const redeployed = await deployLiveWorker(process.env)
-      if (redeployed.ok) return redeployed
-    }
-    const credentials = readLiveWorkerCredentials()
-    const envSecret = process.env.TALKWEAVER_LIVE_ADMIN_SECRET?.trim()
-    const adminSecret = credentials?.adminSecret ?? envSecret
-    if (!adminSecret) throw new Error('The configured live Worker has no stored admin credential. Clear its URL to deploy or run a local Worker.')
-    return { baseUrl: configured, adminSecret }
+    return liveService().endpoint()
   }
-  if (process.env.TW_LIVE_LOCAL === '1' || !readToken() || !getConfig('cfAccountId', undefined)) return startLocalLiveWorker()
-  const deployed = await deployLiveWorker(process.env)
-  if (!deployed.ok) throw new Error(deployed.error)
-  return deployed
+  if (local) return startLocalLiveWorker()
+  // No address on this computer is ever started as a fallback (D8).
+  return liveService().endpoint()
 }
 
 // ── Pre-work for a planned Run (feedback-boards ticket 09) ─────────────────────────────────────
@@ -5695,6 +6101,7 @@ let runPreworkService: RunPreworkService | null = null
 function runPrework(): RunPreworkService {
   runPreworkService ??= createRunPrework({
     registryPath: join(app.getPath('userData'), 'run-prework-registry.json'),
+    ownerTokens: ownerTokens(),
     endpoint: () => ensureLiveWorker(),
     vaultRoot: () => writableVaultRoot() ?? null, // writes: only a vault folder that is there (ticket 07)
     fetch,
@@ -5714,6 +6121,7 @@ function sharedTalks(): SharedTalks {
   if (sharedTalkService) return sharedTalkService
   sharedTalkService = createSharedTalks({
     registryPath: join(app.getPath('userData'), 'shared-talk-registry.json'),
+    ownerTokens: ownerTokens(),
     endpoint: () => ensureLiveWorker(),
     linkBase: () => getConfig('sharedTalkLinkBase', undefined),
     identityOf: (outlinePath) => outlineIdentity(outlinePath),
@@ -5727,24 +6135,27 @@ function sharedTalks(): SharedTalks {
       if (!flushed.ok) throw new Error(flushed.error)
       return flushed.text
     },
-    build: ({ outlinePath, content, slug, proposals }) => preparePass.background(async () => {
+    // In the compiler's one-at-a-time gate until the compile settles (ticket 12): Stop does not wait
+    // for it (the push races it against Stop's abort), and the compile stops at its next stage.
+    build: ({ outlinePath, content, slug, proposals, signal }) => buildInGate(preparePass, signal, async () => {
       const blocked = unresolvedOutboundFailure(content)
       if (blocked) throw new Error(blocked.error)
       const compilerDir = getCompilerPath()
       if (!compilerDir) throw new Error('Compiler not found.')
       const vaultRoot = vaultRootFor(outlinePath)
       const payload = await buildSharedTalkPayload({
-        compilerDir, outlinePath, content, slug, proposals,
+        compilerDir, outlinePath, content, slug, proposals, signal,
         compileContent: resolvePooledRefs(content, outlinePath),
         allowedAssetRoots: assetRootsFor(outlinePath),
         // The talk's vault's personal author first (ticket 04), then Settings.
         ownerName: ownerNameFrom(content, vaultPersonalAuthor(outlinePath) || String(metadataDefaults().author ?? '')),
       })
       // The Worker takes up to 32 MiB per push; slim media only when a deck comes near it.
-      return payload.html.length > 24 * 1024 * 1024 ? { ...payload, html: slimHandoutHtml(payload.html) } : payload
+      return payload.html.length > 24 * 1024 * 1024 ? { ...payload, html: await slimHandoutHtml(payload.html) } : payload
     }),
-    stampShareUrl: async (outlinePath, url) => {
-      const written = await writeTalkOutline(outlinePath, (current) => stampShareUrl(current, url), 'share-for-comments')
+    // `decide` is the shared-talk module's share_url decision, taken when the write runs (ticket 12).
+    stampShareUrl: async (outlinePath, decide) => {
+      const written = await writeTalkOutline(outlinePath, (current) => decide(current), 'share-for-comments')
       if (!written.ok) throw new Error(written.error)
     },
     qrSvg: async (url) => {
@@ -5825,8 +6236,10 @@ ipcMain.handle('shared-talk:feedback-set-status', async (event, outlinePath: unk
     return { success: true, list }
   } catch (error) { return sharedTalkError(error) }
 })
-function sharedTalkError(error: unknown): { success: false; error: string } {
-  return { success: false, error: error instanceof Error ? error.message : String(error) }
+function sharedTalkError(error: unknown): { success: false; error: string; setup?: LiveSetupPrompt } {
+  // No live service to share with: the sheet offers what Go live offers (spec, "What each user action does").
+  const prompt = error instanceof LiveServiceError ? error.prompt : null
+  return { success: false, error: error instanceof Error ? error.message : String(error), ...(prompt ? { setup: prompt } : {}) }
 }
 ipcMain.handle('shared-talk:status', async (_event, outlinePath: unknown) => {
   if (typeof outlinePath !== 'string' || !outlinePath) return null
@@ -5847,6 +6260,8 @@ ipcMain.handle('shared-talk:share', async (_event, outlinePath: unknown, title: 
     const blocked = unresolvedOutboundFailure(readFileSync(outlinePath, 'utf8'))
     if (blocked) return blocked
     const state = await sharedTalks().share(outlinePath, typeof title === 'string' ? title : undefined)
+    // Stopped part-way (ticket 12): neither a link nor a failure.
+    if (isSharedTalkStopped(state)) return { success: true, stopped: true, shareId: state.shareId }
     return { success: true, share: state }
   } catch (error) { return sharedTalkError(error) }
 })
@@ -5860,6 +6275,8 @@ ipcMain.handle('shared-talk:set-options', async (_event, outlinePath: unknown, o
       ...(typeof liveUpdates === 'boolean' ? { liveUpdates } : {}),
       ...(typeof proposals === 'boolean' ? { proposals } : {}),
     })
+    // Stopped while the change ran (ticket 12 round 2): no link, as for Share.
+    if (isSharedTalkStopped(state)) return { success: true, stopped: true, shareId: state.shareId }
     return { success: true, share: state }
   } catch (error) { return sharedTalkError(error) }
 })
@@ -5867,7 +6284,11 @@ ipcMain.handle('shared-talk:update', async (_event, outlinePath: unknown) => {
   const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
   if (refusal) return { success: false, error: refusal }
   if (typeof outlinePath !== 'string' || !outlinePath) return { success: false, error: 'No talk is open.' }
-  try { return { success: true, share: await sharedTalks().update(outlinePath) } } catch (error) { return sharedTalkError(error) }
+  try {
+    const state = await sharedTalks().update(outlinePath)
+    if (isSharedTalkStopped(state)) return { success: true, stopped: true, shareId: state.shareId }
+    return { success: true, share: state }
+  } catch (error) { return sharedTalkError(error) }
 })
 ipcMain.handle('shared-talk:stop', async (_event, outlinePath: unknown) => {
   if (typeof outlinePath !== 'string' || !outlinePath) return { success: false, error: 'No talk is open.' }
@@ -5881,10 +6302,14 @@ async function liveHttpError(response: Response, fallback: string): Promise<stri
   } catch { return fallback }
 }
 
+// The live address a handout saved on this computer carries ("Export handout", "Save as a file
+// instead", a Run's built handout). The address in Settings, unless it is on this computer and local
+// live is not allowed (D8); with none, the local test service's address only where that is allowed.
+// A packaged build therefore never writes `127.0.0.1` into a handout.
 function localHandoutWorkerBaseUrl(): string {
   const configured = getConfig('liveWorkerBaseUrl', undefined)?.replace(/\/+$/, '')
-  if (configured) return configured
-  return !readToken() || process.env.TW_LIVE_LOCAL === '1' ? 'http://127.0.0.1:8787' : ''
+  if (liveLocalAllowed()) return configured || 'http://127.0.0.1:8787'
+  return liveAddressForPages(configured)
 }
 
 async function ensureLiveJoinUrl(context: { talkSlug: string; shortUrl: string | null }): Promise<string> {
@@ -5896,7 +6321,9 @@ async function ensureLiveJoinUrl(context: { talkSlug: string; shortUrl: string |
   const base = resolveBase({ baseUrl: getConfig('publishBaseUrl', undefined), project })
   if (!current.toString().startsWith(`${base}/`)) return current.toString()
   const siteDir = publishSiteDir()
-  if (!existsSync(join(siteDir, context.talkSlug, 'index.html'))) return current.toString()
+  // The talk's folder in the site, by the one function that makes a name a folder there.
+  const talkFolder = siteFolder(siteDir, context.talkSlug)
+  if (!talkFolder || !existsSync(join(talkFolder, 'index.html'))) return current.toString()
   const registry = readHandoutRegistry()
   const picked = pickShortId({
     registry,
@@ -5905,18 +6332,22 @@ async function ensureLiveJoinUrl(context: { talkSlug: string; shortUrl: string |
     gen: () => generateShortId((n) => Uint8Array.from(randomBytes(n))),
   })
   writeHandoutRegistry(picked.registry)
-  const slugs = existsSync(siteDir)
-    ? readdirSync(siteDir).filter((name) => existsSync(join(siteDir, name, 'index.html')))
-    : []
+  const slugs = publishedFolders(siteDir)
   const redirects = buildRedirects(picked.registry, slugs)
   const redirectPath = join(siteDir, '_redirects')
   const currentRedirects = existsSync(redirectPath) ? readFileSync(redirectPath, 'utf8') : ''
+  const joinUrl = publishUrl({ base, slug: context.talkSlug, id: picked.id, useShortIds: true })
   if (redirects !== currentRedirects) {
-    writeFileSync(redirectPath, redirects, 'utf8')
-    const deployed = await deployPublishedSite(siteDir)
-    if (!deployed.ok) throw new Error(deployed.error || 'Could not deploy the live short URL.')
+    // An upload of the site like any other (handout-publishing.ts): the same leave, the same one upload.
+    const deployed = await handoutPublishing().publish({
+      entry: 'live-short-link',
+      // ENTRY FIRST: the join link and the whole redirect text are checked before the file is written.
+      prepare: async ({ link, redirects: checked }) => { link(joinUrl); writeFileSync(redirectPath, checked(redirects), 'utf8'); return { ok: true, built: null } },
+    })
+    // The sentence is the message; what the tool printed stays behind Details.
+    if (!deployed.ok) throw new LiveServiceError('failed', deployed.error, deployed.details ?? null)
   }
-  return publishUrl({ base, slug: context.talkSlug, id: picked.id, useShortIds: true })
+  return joinUrl
 }
 
 ipcMain.handle('run:build-handout', async (_event, payload: { talkSlug: string; runId: string }) => {
@@ -5944,112 +6375,138 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
   try {
     const vault = writableVaultRoot()
     if (!vault) return { success: false, error: 'no-vault' }
-    const run = readRun(vault, String(payload.talkSlug), String(payload.runId))
+    const asked = readRun(vault, String(payload.talkSlug), String(payload.runId))
     const talk = talkBySlug(String(payload.talkSlug))
     // Feedback-boards ticket 09 (ADR-0032 amendment point 3): a planned Run publishes its handout
     // before the day too, so the link participants get for pre-work is the one the talk will use.
-    if (!run || !talk) return { success: false, error: 'run-not-found' }
-    // As run:build-handout: the open editor's buffer, flushed through the one writer, is what is published.
-    const flushed = await flushTalkForPublish(talk.outlinePath)
-    if (!flushed.ok) return { success: false, error: flushed.error }
-    const content = flushed.text
-    const blocked = unresolvedOutboundFailure(content)
-    if (blocked) return blocked
-    const project = getConfig('cfPagesProject', undefined) ?? (process.env.TW_REC_TEST === '1' ? 'talkweaver-test' : undefined)
-    if (!project) return { success: false, error: 'Configure Cloudflare publishing in Settings → Publishing (see docs/PUBLISHING.md)' }
-    const liveWorkerBaseUrl = process.env.TW_REC_TEST === '1'
-      ? getConfig('liveWorkerBaseUrl', undefined) ?? ''
-      : (await ensureLiveWorker()).baseUrl
-    const siteDir = publishSiteDir()
-    if (!existsSync(siteDir)) mkdirSync(siteDir, { recursive: true })
-    const existing = readdirSync(siteDir).filter((name) => existsSync(join(siteDir, name, 'index.html')))
-    let stableSlug: string | undefined
-    if (run.handoutUrl) {
-      try {
-        const pathPart = new URL(run.handoutUrl).pathname.split('/').filter(Boolean)[0]
-        if (pathPart && existing.includes(pathPart)) stableSlug = pathPart
-        if (!stableSlug) stableSlug = Object.entries(readHandoutRegistry()).find(([, id]) => id === pathPart)?.[0]
-      } catch { /* derive a fresh collision-safe slug below */ }
-    }
-    const slug = stableSlug ?? runHandoutSlug(talk.slug, run.eventTitle ?? 'run', run.plannedDate ?? run.startedAt.slice(0, 10), existing)
-    // A planned Run with a pre-work window carries its form: pushed to the Worker first, then the
-    // handout is built with the pre-work object's id so it can ask whether pre-work is open.
-    let prework: HandoutPreworkConfig | undefined
-    let preworkWarning: string | undefined
-    // Pre-work is hidden for 0.37: no form is pushed to the Worker and none goes into the handout, whatever
-    // pre-work times the Run still holds (they stay on disk).
-    const preworkMs = preworkEnabled() && run.status === 'planned' ? preworkWindowMs(preworkWindow(run), run.timeZone) : null
-    // A window that closes before it opens would publish a handout with no form, silently.
-    if (preworkEnabled() && run.status === 'planned' && run.preworkOpens && !preworkMs) {
-      return { success: false, error: 'Pre-work closes before it opens; fix the dates in the plan.' }
-    }
-    if (preworkMs) {
-      const prepared = await prepareTalk(talk.outlinePath, content, timerSettings())
-      const form = publicPreworkForm(prepared?.model.prework as Parameters<typeof publicPreworkForm>[0],
-        (Array.isArray(prepared?.model.slides) ? prepared!.model.slides : []) as Parameters<typeof publicPreworkForm>[1])
-      if (form) {
-        const published = await runPrework().publish(talk.slug, run.id, form, preworkMs)
-        preworkWarning = published.warning
-        if (published.open) prework = { preworkId: published.preworkId, workerBaseUrl: published.workerBaseUrl, form }
+    if (!asked || !talk) return { success: false, error: 'run-not-found' }
+    const run = asked
+    // The sequence is handout-publishing.ts (as talk:publish-handout). The publish takes its place in
+    // the site's queue AT ONCE, before anything is awaited, so that an unpublish asked for after it
+    // comes after it; what it needs it reads when its turn begins (`begin`), then supplies the Run's
+    // pages: `live` is the only live address they may carry, '' when the live service is not ready.
+    let content = ''
+    let preworkMs: ReturnType<typeof preworkWindowMs> = null
+    const outcome = await handoutPublishing().publish({
+      entry: 'run',
+      begin: async () => {
+        // As run:build-handout: the open editor's buffer, flushed through the one writer, is what is published.
+        const flushed = await flushTalkForPublish(talk.outlinePath)
+        if (!flushed.ok) return { fail: { error: flushed.error } }
+        content = flushed.text
+        const blocked = unresolvedOutboundFailure(content)
+        if (blocked) return { fail: { error: blocked.error, reply: blocked } }
+        // Pre-work is hidden for 0.37: no form is pushed to the Worker and none goes into the handout, whatever
+        // pre-work times the Run still holds (they stay on disk).
+        preworkMs = preworkEnabled() && run.status === 'planned' ? preworkWindowMs(preworkWindow(run), run.timeZone) : null
+        // A window that closes before it opens would publish a handout with no form, silently.
+        if (preworkEnabled() && run.status === 'planned' && run.preworkOpens && !preworkMs) {
+          return { fail: { error: 'Pre-work closes before it opens; fix the dates in the plan.' } }
+        }
+        return null
+      },
+      prepare: async ({ dir: siteDir, project, live: liveWorkerBaseUrl, link, redirects }) => {
+        // ENTRY FIRST: the address every link of this handout starts with, checked before anything is built or written.
+        const base = link(resolveBase({ baseUrl: getConfig('publishBaseUrl', undefined) ?? (process.env.TW_REC_TEST === '1' ? 'https://mock-run-handouts.test' : undefined), project }))
+        // The handouts the site holds: the real names of its own folders (handout-publishing.ts).
+        const existing = publishedFolders(siteDir)
+        // The Run as it stands now, at this publish's turn: an earlier publish or unpublish may have changed its link.
+        const run = readRun(vault, asked.talkSlug, asked.id) ?? asked
+        let stableSlug: string | undefined
+        if (run.handoutUrl) {
+          try {
+            const pathPart = new URL(run.handoutUrl).pathname.split('/').filter(Boolean)[0]
+            // The link holds the folder's name as an encoded path segment (publishing-logic.ts pathSegment).
+            // It is used only to FIND the Run's folder among the site's own folders, never to make a path.
+            const named = decodeURIComponent(pathPart ?? '')
+            if (named && existing.includes(named)) stableSlug = named
+            if (!stableSlug) stableSlug = Object.entries(readHandoutRegistry()).find(([key, id]) => id === named && existing.includes(key))?.[0]
+          } catch { /* derive a fresh collision-safe slug below */ }
+        }
+        const slug = stableSlug ?? runHandoutSlug(talk.slug, run.eventTitle ?? 'run', run.plannedDate ?? run.startedAt.slice(0, 10), existing)
+        // The Run's folder in the site, by the one function that makes a name a folder there: refused before anything is built or sent.
+        const talkOutDir = writableSiteFolder(siteDir, slug)
+        if (!talkOutDir) return { ok: false, error: SITE_FOLDER_REFUSED }
+        // A planned Run with a pre-work window carries its form: pushed to the Worker first, then the
+        // handout is built with the pre-work object's id so it can ask whether pre-work is open.
+        let prework: HandoutPreworkConfig | undefined
+        let preworkWarning: string | undefined
+        if (preworkMs) {
+          const prepared = await prepareTalk(talk.outlinePath, content, timerSettings())
+          const form = publicPreworkForm(prepared?.model.prework as Parameters<typeof publicPreworkForm>[0],
+            (Array.isArray(prepared?.model.slides) ? prepared!.model.slides : []) as Parameters<typeof publicPreworkForm>[1])
+          if (form) {
+            const published = await runPrework().publish(talk.slug, run.id, form, preworkMs)
+            preworkWarning = published.warning
+            // The form's address is published too: one on this computer never is (handout-publishing.ts).
+            const preworkAddress = liveAddressForPages(published.workerBaseUrl)
+            if (published.open && preworkAddress) prework = { preworkId: published.preworkId, workerBaseUrl: preworkAddress, form }
+          }
+        }
+        // What of the Run its deck depends on (its pathway is read from the manifest now); the talk is compiled off this thread, below.
+        const runSource = runForHandout(talk, run)
+        const handoutFile = `${slug}.html`
+        const downloadFile = `${slug}-download.html`
+        let redirectsText: string | null = null
+        let registryToKeep: Record<string, string> | null = null
+
+        const useShortIds = getConfig('publishUseShortIds', false) ?? false
+        let id: string | undefined
+        if (useShortIds) {
+          const registry = readHandoutRegistry()
+          const picked = pickShortId({
+            registry,
+            slug,
+            recoveredId: recoverIdFromUrl(run.handoutUrl, base),
+            gen: () => generateShortId((n) => Uint8Array.from(randomBytes(n)))
+          })
+          id = picked.id
+          registryToKeep = picked.registry
+          redirectsText = redirects(buildRedirects(picked.registry, [...new Set([...existing, slug])]))
+        }
+        const url = link(publishUrl({ base, slug, id, useShortIds }))
+        // Checked (ENTRY FIRST): from here on things are written.
+        if (registryToKeep) writeHandoutRegistry(registryToKeep)
+        if (!existsSync(talkOutDir)) mkdirSync(talkOutDir, { recursive: true })
+        const compilerDir = getCompilerPath()
+        if (!compilerDir) return { ok: false, error: 'Compiler not found' }
+        const { makeQrSvg } = await import(pathToFileURL(join(compilerDir, 'lib/01-cli-utils.mjs')).href)
+        const qr = (makeQrSvg(url) as string) || ''
+        // As talk:publish-handout, built and written OFF this thread (handout-pages.ts): the Run's
+        // handout (and its copy in the talk's dist/ folder), lazy <slug>.html, the home page (locked
+        // design 2026-10-07 "Handout 4b": the day, start time and event in its navy band), the
+        // self-contained <slug>-download.html, the venue screen and the 404 page.
+        const path = runHandoutDistPath(talk, slug)
+        const pagesWritten = await buildHandoutPagesOffThread({
+          kind: 'run', compilerDir, talkOutDir, siteDir, slug, live: liveWorkerBaseUrl, url, qr, downloadFile, handoutFile,
+          outlinePath: talk.outlinePath, text: resolvePooledRefs(content, talk.outlinePath), defaults: timerSettings() as Record<string, unknown>,
+          assetRoots: assetRootsFor(talk.outlinePath), talkSlug: talk.slug, run: runSource,
+          ...(prework ? { prework } : {}), distPath: path,
+          homeDetails: handoutHomeDetails({ outline: content, run }), homePrework: handoutHomePrework(prework?.form),
+        })
+        if (pagesWritten.warnings.length) preworkWarning = [preworkWarning, ...pagesWritten.warnings].filter(Boolean).join(' ')
+        if (redirectsText !== null) writeFileSync(join(siteDir, '_redirects'), redirectsText, 'utf8')
+        return { ok: true, built: { url, artifact: { path, slideIds: pagesWritten.slideIds ?? [], missing: pagesWritten.missing ?? [] }, preworkWarning } }
+      },
+      // The Run's link is kept once the pages are up.
+      record: ({ url }) => { persistRun(vault, setRunHandoutUrl(readRun(vault, asked.talkSlug, asked.id) ?? asked, url)) },
+    })
+    // A refusal of its first step (an unresolved trigger) is answered exactly as before.
+    if (!outcome.ok && outcome.reply) return outcome.reply as { success: false; error: string }
+    if (!outcome.ok) {
+      return {
+        success: false, error: outcome.error,
+        ...(outcome.details ? { details: outcome.details } : {}), ...(outcome.notReady ? { notReady: outcome.notReady } : {}),
       }
     }
-    const artifact = await buildRunHandoutArtifact(talk, run, content, slug, liveWorkerBaseUrl, prework, { lazyAssets: true })
-    const talkOutDir = join(siteDir, slug)
-    if (!existsSync(talkOutDir)) mkdirSync(talkOutDir, { recursive: true })
-    const handoutFile = `${slug}.html`
-    const downloadFile = `${slug}-download.html`
-
-    const base = resolveBase({ baseUrl: getConfig('publishBaseUrl', undefined) ?? (process.env.TW_REC_TEST === '1' ? 'https://mock-run-handouts.test' : undefined), project })
-    const useShortIds = getConfig('publishUseShortIds', false) ?? false
-    let id: string | undefined
-    if (useShortIds) {
-      const registry = readHandoutRegistry()
-      const picked = pickShortId({
-        registry,
-        slug,
-        recoveredId: recoverIdFromUrl(run.handoutUrl, base),
-        gen: () => generateShortId((n) => Uint8Array.from(randomBytes(n)))
-      })
-      id = picked.id
-      writeHandoutRegistry(picked.registry)
+    const { url, artifact, preworkWarning } = outcome.built
+    return {
+      success: true, url, path: artifact.path, slideIds: artifact.slideIds, missing: artifact.missing, ...(preworkWarning ? { warning: preworkWarning } : {}),
+      // Published without live features (spec D7): the sentence, and what lies behind it for "Details".
+      ...(outcome.notice ? { liveNotice: outcome.notice, ...(outcome.noticeDetails ? { liveDetails: outcome.noticeDetails } : {}) } : {}),
+      // Handouts an earlier version left with a dead live address: how many, and their names for "Details".
+      ...(outcome.earlierNotice ? { earlierNotice: outcome.earlierNotice, ...(outcome.earlierDetails ? { earlierDetails: outcome.earlierDetails } : {}) } : {}),
     }
-    const url = publishUrl({ base, slug, id, useShortIds })
-    const compilerDir = getCompilerPath()
-    if (!compilerDir) return { success: false, error: 'Compiler not found' }
-    const { makeQrSvg } = await import(pathToFileURL(join(compilerDir, 'lib/01-cli-utils.mjs')).href)
-    const qr = (makeQrSvg(url) as string) || ''
-    // The home page, live first (design 2026-10-02 B): the Run's handout bundle in home mode; the event
-    // and date sit in the line under the title, and a planned start time gives the "Not live yet" line.
-    const { buildHandoutHomePageHtml } = await import(pathToFileURL(join(compilerDir, 'lib/handout-home-page.mjs')).href)
-    const homeHtml = buildHandoutHomePageHtml({
-      title: artifact.title, ...artifact.venueSource, slug, workerBaseUrl: liveWorkerBaseUrl, lazyAssets: true,
-      home: { url, qr, downloadHref: downloadFile, ...handoutHomeDetails({ outline: content, run }), prework: handoutHomePrework(prework?.form) },
-    })
-    // As talk:publish-handout: lazy <slug>.html + index.html, self-contained <slug>-download.html.
-    const { publishLazyHandoutPages } = await import(pathToFileURL(join(compilerDir, 'lib/handout-lazy-assets.mjs')).href)
-    const pagesWritten = publishLazyHandoutPages(talkOutDir, [
-      { fileName: downloadFile, html: artifact.html, lazy: false },
-      { fileName: handoutFile, html: artifact.lazyHtml ?? artifact.html },
-      { fileName: 'index.html', html: homeHtml },
-    ], { slim: slimHandoutHtml }) as { warnings: string[] }
-    if (pagesWritten.warnings.length) preworkWarning = [preworkWarning, ...pagesWritten.warnings].filter(Boolean).join(' ')
-    const { buildVenuePageHtml, buildUnavailableVenuePageHtml } = await import(pathToFileURL(join(compilerDir, 'lib/venue-page.mjs')).href)
-    const venueDir = join(talkOutDir, 'p')
-    mkdirSync(venueDir, { recursive: true })
-    writeFileSync(join(venueDir, 'index.html'), slimHandoutHtml(buildVenuePageHtml({
-      title: artifact.title, ...artifact.venueSource, slug,
-      workerBaseUrl: liveWorkerBaseUrl, qr, handoutUrl: url,
-    })), 'utf8')
-    writeFileSync(join(siteDir, '404.html'), buildUnavailableVenuePageHtml(), 'utf8')
-    if (useShortIds) {
-      const registry = readHandoutRegistry()
-      const slugs = readdirSync(siteDir).filter((name) => existsSync(join(siteDir, name, 'index.html')))
-      writeFileSync(join(siteDir, '_redirects'), buildRedirects(registry, slugs), 'utf8')
-    }
-    const deployed = await deployPublishedSite(siteDir)
-    if (!deployed.ok) return { success: false, error: deployed.error }
-    persistRun(vault, setRunHandoutUrl(readRun(vault, run.talkSlug, run.id) ?? run, url))
-    return { success: true, url, path: artifact.path, slideIds: artifact.slideIds, missing: artifact.missing, ...(preworkWarning ? { warning: preworkWarning } : {}) }
   } catch (cause) {
     return { success: false, error: cause instanceof Error ? cause.message : String(cause) }
   }
@@ -6059,27 +6516,57 @@ ipcMain.handle('run:unpublish-handout', async (_event, payload: { talkSlug: stri
   try {
     const vault = writableVaultRoot()
     if (!vault) return { success: false, error: 'no-vault' }
-    const run = readRun(vault, String(payload.talkSlug), String(payload.runId))
-    if (!run) return { success: false, error: 'run-not-found' }
-    const siteDir = publishSiteDir()
-    if (run.handoutUrl && existsSync(siteDir)) {
-      const pathPart = new URL(run.handoutUrl).pathname.split('/').filter(Boolean)[0]
-      const registry = readHandoutRegistry()
-      const slug = existsSync(join(siteDir, pathPart)) ? pathPart : Object.entries(registry).find(([, id]) => id === pathPart)?.[0]
-      if (slug) rmSync(join(siteDir, slug), { recursive: true, force: true })
-      if (slug && registry[slug]) {
-        delete registry[slug]
-        writeHandoutRegistry(registry)
-      }
-      const slugs = readdirSync(siteDir).filter((name) => existsSync(join(siteDir, name, 'index.html')))
-      writeFileSync(join(siteDir, '_redirects'), buildRedirects(registry, slugs), 'utf8')
-      const deployed = await deployPublishedSite(siteDir)
-      if (!deployed.ok) return { success: false, error: deployed.error }
-    }
+    const asked = readRun(vault, String(payload.talkSlug), String(payload.runId))
+    if (!asked) return { success: false, error: 'run-not-found' }
     // The pre-work object is NOT closed here: the missing handout is the closure for participants, and
     // publishing again brings back the same open form with its answers. Only "Close pre-work now" or
     // the Run's close date closes it (ticket 09 fix round).
-    persistRun(vault, clearRunHandoutUrl(readRun(vault, run.talkSlug, run.id) ?? run))
+    /** The Run as it stands now (not as it was when Unpublish was pressed). */
+    const runNow = (): RunRecord => readRun(vault, asked.talkSlug, asked.id) ?? asked
+    const forget = (): void => { persistRun(vault, clearRunHandoutUrl(runNow())) }
+    // EVERY unpublish takes its turn in the site's queue, and reads the Run's link when its turn
+    // begins: asked for while a publish of the same Run is still going up, it finds the link that
+    // publish recorded, and the Run ends unpublished. (handout-publishing.ts: the pages are taken
+    // away only with leave to publish, and the Run forgets its link only once the site without them is up.)
+    const outcome = await handoutPublishing().publish({
+      entry: 'run-unpublish',
+      // Nothing published (no link, or no site folder): the Run only forgets, and Cloudflare is not asked.
+      begin: () => {
+        if (runNow().handoutUrl && existsSync(publishSiteDir())) return null
+        forget()
+        return { done: null }
+      },
+      prepare: async ({ dir: siteDir, redirects }) => {
+        const run = runNow()
+        if (!run.handoutUrl) return { ok: true, built: null }
+        const pathPart = new URL(run.handoutUrl).pathname.split('/').filter(Boolean)[0]
+        // The link holds the folder's name as an encoded path segment (publishing-logic.ts pathSegment).
+        // Decoded, it is only ever LOOKED FOR among the site's own folders (their real names, read
+        // from the site folder's listing): a path is never made from it. A link that names nothing
+        // there (`../victim`, an absolute path, a name that is not a folder of the site) removes nothing.
+        let named = ''
+        try { named = decodeURIComponent(pathPart ?? '') } catch { /* not a name: nothing to find */ }
+        const published = publishedFolders(siteDir)
+        const registry = readHandoutRegistry()
+        const slug = published.includes(named) ? named : Object.entries(registry).find(([key, id]) => id === named && published.includes(key))?.[0]
+        if (slug) delete registry[slug]
+        // ENTRY FIRST: the redirect file as it will be without this Run, checked before anything is taken away.
+        const redirectsText = redirects(buildRedirects(registry, published.filter((name) => name !== slug)))
+        // Taking the Run's pages away is what unpublishing is, as it always was: only a folder found in
+        // the site's own listing, and a link is unlinked, never followed (handout-publishing.ts removeSiteFolder).
+        if (slug) removeSiteFolder(siteDir, slug)
+        if (slug) writeHandoutRegistry(registry)
+        writeFileSync(join(siteDir, '_redirects'), redirectsText, 'utf8')
+        return { ok: true, built: null }
+      },
+      record: forget,
+    })
+    if (!outcome.ok) {
+      return {
+        success: false, error: outcome.error,
+        ...(outcome.details ? { details: outcome.details } : {}), ...(outcome.notReady ? { notReady: outcome.notReady } : {}),
+      }
+    }
     return { success: true }
   } catch (cause) {
     return { success: false, error: cause instanceof Error ? cause.message : String(cause) }
@@ -6543,13 +7030,13 @@ const latestThumbnailRequest = createLatestThumbnailRequestHandler(
     // Key on render_hash (layout + block model), NOT content_hash: a layout/trigger change keeps
     // the same content_hash, so keying on it served a STALE thumbnail after every layout edit.
     const fullHtml = model.fullHtml as string
-    const documentId = thumbnailDocumentId(fullHtml)
+    const documentId = thumbnailDocumentId(fullHtml, prepared.previewKey)
     const slides = thumbnailSlides(rows, documentId)
     const cacheDir = talkThumbCacheDir(input.outlinePath, slug)
     const vaultId = vaultIdOf(input.outlinePath)
     let rendered: Record<string, string> = {}
     try {
-      rendered = await renderThumbnails({ fullHtml, slides, cacheDir, requestKey: `editor:${owner}` })
+      rendered = await renderThumbnails({ fullHtml, deckKey: prepared.previewKey, slides, cacheDir, requestKey: `editor:${owner}` })
     } finally {
       // The background sweep has no follow-up request for this deck, so nothing may keep its
       // (possibly 200MB+) model alive once the render is done — including the cache's "one
@@ -7620,6 +8107,7 @@ ipcMain.handle('shell:open-external', async (_event, url: string): Promise<boole
     // and handed out as that parsed object's normalised href: web links only (hand-out.ts).
     const link = handOutLink(url)
     if (!link || link.kind !== 'web') { console.error('[shell:open-external] refused', String(url).slice(0, 200)); return false }
+    if (E2E) { console.log('[shell:open-external] external (E2E):', link.href); return true }
     await shell.openExternal(link.href)
     return true
   } catch (e) {
@@ -7947,9 +8435,85 @@ ipcMain.handle(
   }
 )
 
+// ── `setup` (ticket 07, spec D14): the same operations as the window, with no window ─────────────
+
+/** The Importer's slide-pictures row: the same discovery and the same words as the Importer (D17). */
+async function importerRow(): Promise<ImporterRow> {
+  const available = process.platform === 'darwin'
+  const renderer = await discoverRenderer()
+  const notice = rendererNotice(renderer)
+  return {
+    state: notice.showPointer ? 'not-available' : renderer.status === 'ready' ? 'ready' : 'unknown',
+    available,
+    pointer: notice.showPointer ? PPT_EXTRACTOR_POINTER : null,
+    url: notice.showPointer ? PPT_EXTRACTOR_URL : null,
+  }
+}
+
+/** Run the one setup command and exit with its code. Nothing here opens a window. The process holds
+ *  the single-instance lock (top of this file) until it exits. */
+async function runSetupCommand(args: string[]): Promise<void> {
+  app.dock?.hide()
+  let code = 1
+  const write = (stream: NodeJS.WriteStream, line: string): void => { try { stream.write(`${line}\n`) } catch { /* the reader has gone */ } }
+  try {
+    const ops = createSetupOperations({
+      connection: cloudflareConnection(),
+      liveService: liveService(),
+      recording: recordingStorage(),
+      transcription: transcriptionSetup(),
+      importer: importerRow,
+      publishSettings: { read: publishSettings, apply: applyPublishSettings },
+      recordingSettings: { read: recordingSettings, apply: applyRecordingSettings },
+      watchLiveRow: (listener) => { liveRowListeners.add(listener); return () => { liveRowListeners.delete(listener) } },
+    })
+    code = await runSetup(args, {
+      out: (line) => write(process.stdout, line),
+      err: (line) => write(process.stderr, line),
+      readSecret: (prompts, pipeHint) => readSecretInput(process.stdin, process.stderr, prompts, pipeHint),
+    }, ops, {
+      // A test harness's S3 stand-in on loopback, accepted as the recording endpoint under the same
+      // three conditions as the Cloudflare API override: unpackaged, TW_E2E=1, and named exactly.
+      testEndpoint: !app.isPackaged && E2E ? process.env.TW_E2E_RECORDING_ENDPOINT ?? null : null,
+    })
+  } catch {
+    write(process.stderr, 'Something went wrong. Nothing more was done.')
+    code = 1
+  }
+  // A test harness may confirm that the command opened no window (an unpackaged test run only).
+  if (E2E && !app.isPackaged) write(process.stderr, `[setup] windows=${BrowserWindow.getAllWindows().length}`)
+  // Standard output may be a pipe, which Node writes to later: everything is handed over before exit.
+  await Promise.all([process.stdout, process.stderr].map((stream) => new Promise<void>((done) => {
+    try { stream.write('', () => done()) } catch { done() }
+  })))
+  app.exit(code)
+}
+
 // ── App lifecycle ──────────────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
+  // A setup refused because the app is open has already exited (app.exit above); one holding the
+  // lock runs its command and exits.
+  if (SETUP_ARGS) { if (holdsInstanceLock) await runSetupCommand(SETUP_ARGS); return }
+  // A second instance on this user-data folder is quitting (the lock above): it starts nothing.
+  if (!holdsInstanceLock) return
+  // Owner tokens (owner-tokens.ts). Before anything reads a registry: with the switch, write them
+  // back into the registries for an older version and quit; otherwise move any that are still in a
+  // registry into the secrets store. Only counts are logged.
+  if (app.commandLine.hasSwitch(RESTORE_PLAIN_OWNER_TOKENS_SWITCH)) {
+    const restoredOwnerTokens = restorePlainOwnerTokens(app.getPath('userData'), ownerTokens())
+    console.info('[owner-tokens] restored to the registries', JSON.stringify(restoredOwnerTokens))
+    // Anything short of every row of every registry having its token again is a failure, by name:
+    // a registry that could not be read, or a row the store holds no token for.
+    const notRestored = incompleteOwnerTokenRestores(restoredOwnerTokens)
+    if (notRestored.length > 0) console.error(`[owner-tokens] NOT fully restored: ${notRestored.join(', ')}`)
+    app.exit(notRestored.length > 0 ? 1 : 0)
+    return
+  }
+  const movedOwnerTokens = migrateOwnerTokens(app.getPath('userData'), ownerTokens())
+  if (Object.values(movedOwnerTokens).some((step) => 'failed' in step || step.found > 0)) {
+    console.info('[owner-tokens] moved into secure storage', JSON.stringify(movedOwnerTokens))
+  }
   initialiseLiveSessions()
   // Feedback-boards ticket 06: History's board actions and the Run's read-only share link.
   registerRunBoardIpc({
@@ -7958,6 +8522,7 @@ app.whenReady().then(async () => {
     sessions: () => liveSessions,
     shares: createRunResultsShares({
       registryPath: join(app.getPath('userData'), 'run-results-share-registry.json'),
+      ownerTokens: ownerTokens(),
       endpoint: () => ensureLiveWorker(),
       linkBase: () => getConfig('sharedTalkLinkBase', undefined),
       fetch,
@@ -7991,6 +8556,12 @@ app.whenReady().then(async () => {
   void recoverInterruptedRecordings()
     .then((n) => { if (n) console.log(`[recording] recovered ${n} interrupted recording(s)`) })
     .catch((error) => console.warn('[recording] recovery failed', error))
+  // A share whose create was under way when the app last quit, and whose owner token was never kept:
+  // reported only (ticket 12 round 2) — the log here, and the talk's share sheet, which asks before
+  // sharing; that Share replaces it on the service. No request is sent.
+  try {
+    for (const create of sharedTalks().interruptedCreates()) console.warn(`[shared-talk] ${create.outlinePath}: ${create.message}`)
+  } catch (error) { console.warn('[shared-talk] interrupted creates not read', error) }
   // Feedback rail: open the owner socket of every shared talk (never blocks launch).
   try { sharedTalkFeedback().sync() } catch (error) { console.warn('[shared-talk] feedback start failed', error) }
   installApplicationMenu()
@@ -8224,13 +8795,28 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('will-quit', () => {
+// A share's create on the service under way at quit: up to 5 s for its reply, so its owner token is
+// kept (ticket 12 round 2). What does not finish in time keeps its note: reported at the next start,
+// and replaced on the service when the talk is next shared.
+let sharedTalkCreatesDrained = false
+app.on('will-quit', (event) => {
+  if (!sharedTalkCreatesDrained && sharedTalkService?.createsPending()) {
+    sharedTalkCreatesDrained = true
+    event.preventDefault()
+    void sharedTalkService.drainCreates(5000).catch(() => {}).finally(() => app.quit())
+    return
+  }
   liveSessions?.shutdown()
   sharedTalkFeedbackService?.stopAll()
   try { localLiveWorker?.process.kill('SIGTERM') } catch { /* already stopped */ }
   localLiveWorker = null
+  // A publish or a live-service set-up under way: its tool runs in a process group of its own and
+  // would go on after the app has gone. Ended here, at once (wrangler-launcher.ts).
+  endAllWranglerRuns()
 })
 
 app.on('activate', () => {
+  // The setup command never opens a window, whatever macOS asks of it.
+  if (SETUP_ARGS || !holdsInstanceLock) return
   if (BrowserWindow.getAllWindows().length === 0) createWindow()
 })

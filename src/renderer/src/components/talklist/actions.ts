@@ -1,6 +1,7 @@
 import type { TalkInfo, VaultView } from '../../../../preload/index'
 import { rebaseTalk, topicOf } from '../talkTreeNav'
 import { notify } from '../../lib/notify'
+import { commandRan } from '../../commands/command-ran'
 import { talkKey } from './model'
 import type { OpenInNewWindowTarget } from '../../../../shared/open-in-new-window'
 import type { TalkAction, FolderAction } from './menus'
@@ -77,6 +78,7 @@ export function useTalkActions(deps: Deps) {
       return
     }
     if (!res) { notify(`Couldn’t rename “${talk.title}”.`, 'error'); return }
+    commandRan('browser.rename', { outlinePath: talk.outlinePath })
     onRefresh()
     setFocusKey(talkKey(res.outlinePath))
     // Re-select so the editor reloads from the new path and the window claim moves with it.
@@ -88,7 +90,7 @@ export function useTalkActions(deps: Deps) {
   async function doClone(talk: TalkInfo, newTitle: string): Promise<void> {
     const cloned = await window.tw.vault.cloneTalk(talk.outlinePath, newTitle)
     onRefresh()
-    if (cloned) onSelectTalk(inVaultOf(talk, cloned))
+    if (cloned) { commandRan('browser.duplicate', { outlinePath: talk.outlinePath }); onSelectTalk(inVaultOf(talk, cloned)) }
     else notify(`Couldn’t duplicate “${talk.title}”.`, 'error')
   }
   function startDelete(talk: TalkInfo): void {
@@ -98,6 +100,8 @@ export function useTalkActions(deps: Deps) {
     if (activeTalk?.outlinePath === talk.outlinePath && !(await settleActive())) return
     const ok = await window.tw.vault.deleteTalk(talk.outlinePath)
     if (!ok) { notify(`Couldn’t move “${talk.title}” to the Bin.`, 'error'); return }
+    // Decision 12: main ticks Move talk to Bin only for a talk of the example vault (the path says which).
+    commandRan('browser.delete-talk', { outlinePath: talk.outlinePath })
     onDeletedTalk?.(talk.outlinePath)
     onRefresh()
   }
@@ -111,6 +115,7 @@ export function useTalkActions(deps: Deps) {
     const movedRaw = await window.tw.vault.moveTalk(talk.outlinePath, destTopic)
     const moved = movedRaw ? inVaultOf(talk, movedRaw) : null
     onRefresh()
+    if (moved) commandRan('browser.move-talk', { outlinePath: talk.outlinePath })
     if (moved) setFocusKey(talkKey(moved.outlinePath))
     if (moved && activeTalk?.outlinePath === talk.outlinePath) onSelectTalk(moved)
     if (!moved) notify(`Couldn’t move “${talk.title}” — a talk of that name may already live there.`, 'error')
@@ -152,7 +157,7 @@ export function useTalkActions(deps: Deps) {
   }
   function onTalkAction(talk: TalkInfo, action: TalkAction, at: { x: number; y: number }): void {
     setMenu(null)
-    if (action === 'open') onSelectTalk(talk)
+    if (action === 'open') { onSelectTalk(talk); commandRan('browser.open-talk') }
     else if (action === 'open-new-window') openInNewWindow({ kind: 'talk', outlinePath: talk.outlinePath })
     else if (action === 'rename') startRename(talk)
     else if (action === 'duplicate') startDuplicate(talk)

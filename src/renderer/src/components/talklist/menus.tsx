@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { SORT_OPTIONS, type TalkSortKey, type NamingMode } from './model'
-import { IcOpen, IcRename, IcDuplicate, IcMoveFolder, IcReveal, IcTrash, IcFile, IcMeta, IcClear, IcEye } from './icons'
+import { IcOpen, IcRename, IcDuplicate, IcMoveFolder, IcReveal, IcTrash, IcTrash2, IcFile, IcMeta, IcClear, IcEye } from './icons'
+import { EXAMPLE_REMOVAL_TEXT } from '../../../../shared/example-vault-removal'
 
 // Popovers + context menus for the Talks browser. Every action carries its keyboard
 // shortcut in the menu (ADR-0008: every affordance keyboard-reachable and advertised).
@@ -250,22 +251,26 @@ export function FolderContextMenu({
 
 // ── vault menu (the ⋯ on a vault header) ─────────────────────────────────────
 
-export type VaultAction = 'close' | 'open' | 'edit' | 'only' | 'reveal'
+export type VaultAction = 'close' | 'open' | 'edit' | 'only' | 'reveal' | 'remove-example'
 
 export function VaultContextMenu({
-  x, y, open, unavailable = false, startAtFirst = false, onAction, onClose
+  x, y, open, unavailable = false, example = false, startAtFirst = false, onAction, onClose
 }: {
   x: number
   y: number
   open: boolean
   /** Its folder is not there: only Close vault is offered (nothing to edit, show or reveal). */
   unavailable?: boolean
+  /** The example vault (onboarding ticket 12, state 17): "Remove example vault…" last, after a rule.
+   *  Offered whether the vault is open, closed or unavailable (a folder binned in Finder is taken
+   *  off the list with no trash call). */
+  example?: boolean
   startAtFirst?: boolean
   onAction: (action: VaultAction) => void
   onClose: () => void
 }) {
   // LOCKED-sidebar frame 1: Edit this vault…, Show only this vault, Reveal in Finder, then Close vault.
-  const items: MenuItemDef<VaultAction>[] = !open
+  const base: MenuItemDef<VaultAction>[] = !open
     ? [{ action: 'open', icon: <IcOpen size={12} />, label: 'Open vault' }]
     : unavailable
       ? [{ action: 'close', icon: <IcClear size={12} />, label: 'Close vault', danger: true }]
@@ -275,11 +280,16 @@ export function VaultContextMenu({
         { action: 'reveal', icon: <IcReveal size={12} />, label: 'Reveal in Finder' },
         { action: 'close', icon: <IcClear size={12} />, label: 'Close vault', danger: true }
       ]
+  const items: MenuItemDef<VaultAction>[] = example
+    ? [...base, { action: 'remove-example', icon: <IcTrash2 size={12} />, label: EXAMPLE_REMOVAL_TEXT.menuRemove, danger: true }]
+    : base
+  const breaks = new Set<VaultAction>(open && !unavailable ? ['close'] : [])
+  if (example) breaks.add('remove-example')
   return (
     <ActionMenu
       x={x} y={y}
       items={items}
-      breaks={new Set<VaultAction>(open && !unavailable ? ['close'] : [])}
+      breaks={breaks}
       ariaLabel="Vault actions"
       startAtFirst={startAtFirst}
       onAction={onAction}

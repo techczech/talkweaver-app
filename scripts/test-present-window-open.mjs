@@ -372,11 +372,11 @@ await test('the editor\'s own page opens no window: its links go through main (s
   assert.match(handler, /if \(!link \|\| link\.kind !== 'web'\)/)
   assert.match(handler, /await shell\.openExternal\(link\.href\)/)
   assert.ok(!/openExternal\(url\)/.test(handler), 'never the string the renderer sent')
-  // Every openExternal in main is one of: the two stubs handed to the guard and the handlers, and this IPC handler.
+  // Every openExternal in main is one of: the two stubs handed to the guard and the handlers, this IPC handler, and the Guide's guide:open-link (an id main maps to a fixed URL, handed out through handOutLink).
   const mainDir = fileURLToPath(new URL('../src/main/', import.meta.url))
   const sites = []
   for (const name of readdirSync(mainDir)) if (/\.ts$/.test(name)) for (const m of readFileSync(join(mainDir, name), 'utf8').matchAll(/shell\.openExternal\(([^)]*)\)/g)) sites.push(`${name}: ${m[1]}`)
-  assert.deepEqual(sites.sort(), ['index.ts: link.href', 'index.ts: url', 'index.ts: url'], 'a new openExternal site: hand out a handOutLink href')
+  assert.deepEqual(sites.sort(), ['index.ts: link.href', 'index.ts: link.href', 'index.ts: url', 'index.ts: url'], 'a new openExternal site: hand out a handOutLink href')
   assert.equal(index.match(/appWindowOpenHandler\(appWindowOpenOpts, \(\) => pressLedger\.pressedRecently\(win\.webContents\.id\)\)/g).length, 3, 'editor, Tools and Pathways each ask their own window\'s presses')
 })
 

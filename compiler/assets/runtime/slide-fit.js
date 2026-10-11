@@ -264,7 +264,7 @@ function createSlideFit() {
   const TYPE_FLOOR_CQW = 1.9375;
   // Deliberate presentation chrome that is allowed below the floor (mirrors the Layout Doctor's
   // smallChromeSelectors in scripts/layout-doctor-render.mjs).
-  const SMALL_CHROME = ".sr-only, .kicker, .compare-label, .quote-continuation, .code-lang, .poll-frame-eyebrow, .poll-frame-kind, .poll-frame-sep, .poll-frame-chip, .poll-frame-join-note, .qr-caption, .footer, .gallery-nav, .lightbox-nav";
+  const SMALL_CHROME = ".sr-only, .kicker, .compare-label, .quote-continuation, .code-lang, .poll-frame-eyebrow, .poll-frame-kind, .poll-frame-sep, .poll-frame-chip, .poll-frame-join-note, .qr-caption, .footer, .gallery-nav, .lightbox-nav, .sim";
   // The smallest rendered running-text size (canvas px) inside `content`, or 0 when it has no text.
   function smallestTextPx(content) {
     let smallest = 0;
@@ -291,6 +291,9 @@ function createSlideFit() {
     // A quote that still overflows at 31px is reported by the compiler. Whole-slide zoom would
     // silently violate that floor, so leave the exception visible at its accessible type size.
     if (content.querySelector('blockquote[data-quote-fit="too-long"], .slide-code[data-code-fit="too-long"]')) return;
+    // A chat or terminal simulation is full-bleed at fixed sizes and clips its own overflow (the
+    // latest turn stays in view); its text never shrinks (simulation spec, invariant 6).
+    if (content.querySelector(":scope > .sim")) return;
     const slide = content.closest(".slide");
     if (!slide) return;
     const cs = getComputedStyle(slide);

@@ -20,6 +20,10 @@ import {
   type SurfaceFieldModel
 } from '../../../shared/metadata-surfaces'
 import { ensureMetadataDefaults, saveMetadataDefaults } from '../lib/metadata-defaults'
+import { GUIDE_TEXT } from '../../../shared/guide'
+import { EXAMPLE_REMOVAL_TEXT } from '../../../shared/example-vault-removal'
+import CloudflareSettings from './CloudflareSettings'
+import TranscriptionStatusRow from './TranscriptionStatusRow'
 
 interface Props {
   isOpen: boolean
@@ -28,6 +32,14 @@ interface Props {
   vaultRoot: string
   /** Open the system folder picker for the vault and reload talks (lives in App). */
   onChangeVault: () => void | Promise<void>
+  /** Settings → Get started → Open the Guide (closes Settings and opens the Guide tab; lives in App). */
+  onOpenGuide?: () => void
+  /** The example vault was removed and is not in the list (onboarding ticket 12, state 16): the row
+   *  says so and offers "Show the example vault again", which runs `onRestoreExample` (lives in App). */
+  exampleRemoved?: boolean
+  onRestoreExample?: () => void
+  /** Bumped when Settings is opened from a publish sheet or notice: the Cloudflare section is scrolled into view. */
+  showCloudflare?: number
 }
 
 type Paths = {
@@ -48,14 +60,15 @@ type Paths = {
 
 // Sections the search box matches against: id → searchable keyword blob (title + contents).
 const SECTION_KEYWORDS: Record<string, string> = {
+  getstarted: 'get started guide button sidebar onboarding example vault first steps learn show where i am status bar place chip actions',
   folders: 'folders vault root image archive powerpoint',
   workspace: 'workspace action bar buttons row editor menus toolbar',
   backup: 'presentation backup onedrive dropbox folder interval check every back up now',
   timer: 'timer presenter clock amber dark warning minutes warn urgent',
   metadefaults: 'presenter identity deck defaults author name email affiliation web licence license house style font palette colour logo series retype every talk',
-  publishing: 'publishing cloudflare pages handout account id project custom domain short urls api token wrangler sharing share link domain share for comments',
-  recording: 'recording storage r2 s3 endpoint bucket credentials bitwarden secrets keychain access keys discard seconds',
-  transcription: 'transcription parakeet python script ffmpeg speech to text runs',
+  publishing: 'cloudflare connection token connect disconnect check account site publishing pages handout account id project custom domain short urls api token wrangler sharing share link domain share for comments',
+  recording: 'recording storage r2 s3 endpoint bucket credentials secrets keychain access keys discard seconds',
+  transcription: 'transcription parakeet python script ffmpeg speech to text runs set-up steps agent optional',
   shortcuts: 'keyboard shortcuts keys chord bindings reset all',
   changes: 'changes changelog history recent settings log reset undo'
 }
@@ -65,7 +78,36 @@ type SectionId = keyof typeof SECTION_KEYWORDS
 const NOT_SET = '(not set)'
 const AUTO = '(auto)'
 
-export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVault }: Props) {
+export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVault, onOpenGuide, exampleRemoved = false, onRestoreExample, showCloudflare = 0 }: Props) {
+  const bodyRef = useRef<HTMLDivElement>(null)
+  // Opened for Cloudflare: its section at the top, once it has been laid out.
+  useEffect(() => {
+    if (!isOpen || !showCloudflare) return
+    // The section is drawn a moment after the panel (its status is asked for first): looked for until it is there.
+    let tries = 0
+    const timer = setInterval(() => {
+      const section = bodyRef.current?.querySelector('[data-cloudflare="section"]')
+      if (section) section.scrollIntoView({ block: 'start' })
+      if (section || (tries += 1) > 40) clearInterval(timer)
+    }, 50)
+    return () => clearInterval(timer)
+  }, [isOpen, showCloudflare])
+  // "Set up recording storage" on the Cloudflare row: the Recording storage section scrolled to the top
+  // and its first field focused, once the section is drawn (a search that hid it has been cleared).
+  const [recordingAsked, setRecordingAsked] = useState(0)
+  useEffect(() => {
+    if (!recordingAsked) return
+    let tries = 0
+    const timer = setInterval(() => {
+      const section = bodyRef.current?.querySelector('[data-settings-section="recording"]')
+      if (section) {
+        section.scrollIntoView({ block: 'start' })
+        bodyRef.current?.querySelector<HTMLInputElement>('input[aria-label="Recording storage endpoint"]')?.focus({ preventScroll: true })
+      }
+      if (section || (tries += 1) > 40) clearInterval(timer)
+    }, 50)
+    return () => clearInterval(timer)
+  }, [recordingAsked])
   const [paths, setPaths] = useState<Paths | null>(null)
   // Presentation backup settings + a "backing up now" flag for the manual button.
   const [backup, setBackup] = useState<BackupSettings | null>(null)
@@ -75,11 +117,15 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
   const [timer, setTimer] = useState<TimerSettings | null>(null)
   // Action bar (ADR-0025) visibility — one app-wide setting; null while loading.
   const [actionBar, setActionBar] = useState<boolean | null>(null)
+  // The place chip (onboarding ticket 02): "Show where I am in the status bar".
+  const [placeChip, setPlaceChip] = useState<boolean | null>(null)
+  // The Guide button in the sidebar (onboarding ticket 07): Settings → Get started.
+  const [guideButton, setGuideButton] = useState<boolean | null>(null)
   // Presenter identity and deck defaults (Ticket 9b): one app-level value per identity /
   // house-style metadata key, pre-filled into NEW talks so they are never retyped.
   const [metaDefaults, setMetaDefaults] = useState<MetadataDefaults>({})
   const metaGroups = useMemo(() => metadataDefaultsViewModel(METADATA_REGISTRY, metaDefaults), [metaDefaults])
-  // Cloudflare publishing config (token is write-only here — we only ever learn hasToken).
+  // Cloudflare publishing config. The token is not here at all: CloudflareSettings hands it to the main process.
   const [pub, setPub] = useState<{
     accountId: string
     project: string
@@ -89,7 +135,6 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
     shareDomain: string
     hasToken: boolean
   } | null>(null)
-  const [tokenInput, setTokenInput] = useState('')
   const [pubSaved, setPubSaved] = useState(false)
   // Settings search (Gate-5): filters sections (and shortcut rows) by keyword.
   const [sq, setSq] = useState('')
@@ -98,9 +143,19 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
   // Baselines for blur/save-time diffing: the last values READ from the main process, so a
   // change can be logged as old → new even after the controlled inputs already hold the new text.
   const pubBaseRef = useRef<{ accountId: string; project: string; baseUrl: string; workerBaseUrl: string; useShortIds: boolean; shareDomain: string } | null>(null)
-  const recBaseRef = useRef<{ endpoint: string; bucket: string; credsSource: 'bws' | 'settings'; bwsSecretId: string; discardSeconds: number } | null>(null)
+  const recBaseRef = useRef<{ endpoint: string; bucket: string; discardSeconds: number } | null>(null)
   const trBaseRef = useRef<{ python: string; script: string; ffmpeg: string } | null>(null)
   const timerBaseRef = useRef<TimerSettings | null>(null)
+  // The share-link address Settings → Cloudflare suggests (share.<handout domain>): shown in the empty
+  // field as its proposed value. Only a placeholder, so no other save here can store it: the row's
+  // "Use …" button does that (and attaches it).
+  const [shareSuggestion, setShareSuggestion] = useState('')
+  useEffect(() => {
+    const take = (status: { shareLink: { state: string; suggested: { host: string } | null } }): void => setShareSuggestion(status.shareLink.state === 'none' ? status.shareLink.suggested?.host ?? '' : '')
+    const stop = window.tw.cloudflare.onStatus(take)
+    void window.tw.cloudflare.status().then(take).catch(() => {})
+    return stop
+  }, [])
 
   // Record one settings change into the per-machine changelog (no-op when nothing changed).
   const record = (key: string, label: string, from: string, to: string): void => {
@@ -113,6 +168,23 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
       setPub(p)
       pubBaseRef.current = { accountId: p.accountId, project: p.project, baseUrl: p.baseUrl, workerBaseUrl: p.workerBaseUrl, useShortIds: p.useShortIds, shareDomain: p.shareDomain }
     }).catch(() => setPub(null))
+  }
+  // The main process may have found the account or made the site (Settings → Cloudflare): take those
+  // two values into the fields below, but never over one the person has edited and not yet saved.
+  const adoptFoundPub = (): void => {
+    window.tw.publish.getConfig().then((found) => {
+      const base = pubBaseRef.current
+      if (!base) return
+      const untouched = { accountId: base.accountId, project: base.project }
+      base.accountId = found.accountId
+      base.project = found.project
+      setPub((draft) => (draft ? {
+        ...draft,
+        hasToken: found.hasToken,
+        accountId: draft.accountId === untouched.accountId ? found.accountId : draft.accountId,
+        project: draft.project === untouched.project ? found.project : draft.project,
+      } : draft))
+    }).catch(() => {})
   }
   // Diff the current publishing draft against the last-read baseline and log each changed field.
   const recordPubDiff = (next: { accountId: string; project: string; baseUrl: string; workerBaseUrl: string; useShortIds: boolean; shareDomain: string }): void => {
@@ -143,8 +215,6 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
   const [rec, setRec] = useState<{
     endpoint: string
     bucket: string
-    credsSource: 'bws' | 'settings'
-    bwsSecretId: string
     discardSeconds: number
     hasKeys: boolean
   } | null>(null)
@@ -154,18 +224,18 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
   const refreshRec = (): void => {
     window.tw.recording.getStorage().then((r) => {
       setRec(r)
-      recBaseRef.current = {
-        endpoint: r.endpoint, bucket: r.bucket, credsSource: r.credsSource,
-        bwsSecretId: r.bwsSecretId, discardSeconds: r.discardSeconds
-      }
+      recBaseRef.current = { endpoint: r.endpoint, bucket: r.bucket, discardSeconds: r.discardSeconds }
     }).catch(() => setRec(null))
   }
-  // Transcription engine paths (non-secret): the local speech-to-text skill Python + script.
+  // Transcription engine paths (non-secret, optional): a Python and the transcription script; ffmpeg
+  // empty uses the one that ships with the app. The status row above them is read again on each refresh.
   const [transcription, setTranscription] = useState<TranscriptionSettings | null>(null)
   const [transcriptionSaved, setTranscriptionSaved] = useState(false)
+  const [transcriptionVersion, setTranscriptionVersion] = useState(0)
   const refreshTranscription = (): void => {
     window.tw.settings.getTranscription().then((t) => {
       setTranscription(t)
+      setTranscriptionVersion((n) => n + 1)
       trBaseRef.current = { python: t.python, script: t.script, ffmpeg: t.ffmpeg }
     }).catch(() => setTranscription(null))
   }
@@ -200,11 +270,23 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
       .then((state) => setActionBar(state.visible))
       .catch(() => setActionBar(null))
   }
+  const refreshPlaceChip = (): void => {
+    window.tw.settings
+      .getPlaceChip()
+      .then((state) => setPlaceChip(state.visible))
+      .catch(() => setPlaceChip(null))
+  }
+
+  const refreshGuideButton = (): void => {
+    window.tw.settings
+      .getGuideButton()
+      .then((state) => setGuideButton(state.visible))
+      .catch(() => setGuideButton(null))
+  }
 
   useEffect(() => {
     if (!isOpen) return
     setCapturingId(null)
-    setTokenInput('') // never carry a half-typed token across opens (write-only field)
     setRecKeyId('')
     setRecKeySecret('')
     setSq('')
@@ -213,6 +295,8 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
     refreshBackup()
     refreshTimer()
     refreshActionBar()
+    refreshPlaceChip()
+    refreshGuideButton()
     refreshPub()
     refreshRec()
     refreshTranscription()
@@ -221,12 +305,16 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
     const unsub = window.tw.backup.onStatus((run) => setBackup((b) => (b ? { ...b, lastRun: run } : b)))
     // Another window toggled the action bar — keep this panel's row in step.
     const unsubActionBar = window.tw.settings.onActionBarChanged((state) => setActionBar(state.visible))
+    const unsubPlaceChip = window.tw.settings.onPlaceChipChanged((state) => setPlaceChip(state.visible))
+    const unsubGuideButton = window.tw.settings.onGuideButtonChanged((state) => setGuideButton(state.visible))
     const onChanged = (): void => setTick((t) => t + 1)
     window.addEventListener(KEYMAP_CHANGED_EVENT, onChanged)
     return () => {
       window.removeEventListener(KEYMAP_CHANGED_EVENT, onChanged)
       unsub()
       unsubActionBar()
+      unsubPlaceChip()
+      unsubGuideButton()
     }
   }, [isOpen])
 
@@ -327,6 +415,8 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
       else if (en.key === 'backup.intervalMin') setBackup(await window.tw.settings.setBackup({ intervalMin: Number(v) }))
       else if (en.key === 'backup.folder' && v === NOT_SET) setBackup(await window.tw.settings.clearBackupFolder())
       else if (en.key === 'archive.folder' && v === AUTO) { await window.tw.settings.clearArchive(); refreshPaths() }
+      else if (en.key === 'workspace.placeChip') setPlaceChip(await window.tw.settings.setPlaceChipVisible(v === 'on'))
+      else if (en.key === 'getstarted.guideButton') setGuideButton(await window.tw.settings.setGuideButtonVisible(v === 'on'))
       else if (en.key === 'timer.warnAtMinutes') setTimer(await window.tw.settings.setTimer({ warnAtMinutes: Number(v) }))
       else if (en.key === 'timer.urgentAtMinutes') setTimer(await window.tw.settings.setTimer({ urgentAtMinutes: Number(v) }))
       else if (en.key.startsWith('publish.')) {
@@ -341,14 +431,10 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
         refreshPub()
       } else if (en.key.startsWith('recording.')) {
         const cur = await window.tw.recording.getStorage()
-        const next = {
-          endpoint: cur.endpoint, bucket: cur.bucket, credsSource: cur.credsSource,
-          bwsSecretId: cur.bwsSecretId, discardSeconds: cur.discardSeconds
-        }
+        const next = { endpoint: cur.endpoint, bucket: cur.bucket, discardSeconds: cur.discardSeconds }
         const field = en.key.slice('recording.'.length)
         if (field === 'discardSeconds') next.discardSeconds = Number(v)
-        else if (field === 'credsSource') next.credsSource = v === 'bws' ? 'bws' : 'settings'
-        else if (field === 'endpoint' || field === 'bucket' || field === 'bwsSecretId') next[field] = v
+        else if (field === 'endpoint' || field === 'bucket') next[field] = v
         else throw new Error('unknown recording field')
         await window.tw.recording.setStorage(next)
         refreshRec()
@@ -427,12 +513,70 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
           )}
         </div>
 
-        <div style={body}>
+        <div style={body} ref={bodyRef}>
           {visibleSections.length === 0 && (
             <div style={{ ...hint, padding: '18px 0', textAlign: 'center' }}>
-              No settings match “{sq.trim()}” — try a section name like <i>backup</i>, <i>timer</i>, <i>publishing</i> or <i>shortcuts</i>.
+              No settings match “{sq.trim()}” — try a section name like <i>backup</i>, <i>timer</i>, <i>cloudflare</i> or <i>shortcuts</i>.
             </div>
           )}
+
+          {show('getstarted') && (<>
+          {/* ── Get started (onboarding ticket 07; states 16 and 19) ─────────────────────────── */}
+          <div style={sectionHead} data-settings-section="get-started">{GUIDE_TEXT.settings.section}</div>
+          <div style={rowFolder} data-setting="get-started">
+            <div style={{ minWidth: 0 }}>
+              <div style={folderLabel}>{GUIDE_TEXT.settings.row}</div>
+              {exampleRemoved && <div style={switchSub} data-example-removed-note>{EXAMPLE_REMOVAL_TEXT.settingsNote}</div>}
+            </div>
+            <div style={{ display: 'flex', gap: 8, flex: '0 0 auto' }}>
+              {exampleRemoved && <button style={btn} data-restore-example onClick={() => onRestoreExample?.()}>{EXAMPLE_REMOVAL_TEXT.settingsShow}</button>}
+              <button style={btn} data-open-guide onClick={() => onOpenGuide?.()}>{GUIDE_TEXT.settings.open}</button>
+            </div>
+          </div>
+          <div style={rowFolder} data-setting="guide-button">
+            <div style={{ minWidth: 0 }}>
+              <div style={folderLabel}>{GUIDE_TEXT.settings.switchTitle}</div>
+              <div style={switchSub}>{GUIDE_TEXT.settings.switchSub}</div>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={guideButton !== false}
+              aria-label={GUIDE_TEXT.settings.switchTitle}
+              className="st-switch"
+              disabled={guideButton === null}
+              onClick={() => {
+                const old = guideButton ? 'on' : 'off'
+                window.tw.settings.setGuideButtonVisible(!guideButton).then((visible) => {
+                  setGuideButton(visible)
+                  record('getstarted.guideButton', GUIDE_TEXT.settings.switchTitle, old, visible ? 'on' : 'off')
+                  if (!visible) notify(GUIDE_TEXT.offFlash, 'info')
+                })
+              }}
+            />
+          </div>
+          <div style={rowFolder} data-setting="place-chip">
+            <div style={{ minWidth: 0 }}>
+              <div style={folderLabel}>Show where I am in the status bar</div>
+              <div style={switchSub}>The place chip: “On a slide heading · 14 actions ⌘K”.</div>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={placeChip !== false}
+              aria-label="Show where I am in the status bar"
+              className="st-switch"
+              disabled={placeChip === null}
+              onClick={() => {
+                const old = placeChip ? 'on' : 'off'
+                window.tw.settings.setPlaceChipVisible(!placeChip).then((visible) => {
+                  setPlaceChip(visible)
+                  record('workspace.placeChip', 'Show where I am in the status bar', old, visible ? 'on' : 'off')
+                })
+              }}
+            />
+          </div>
+          </>)}
 
           {show('folders') && (<>
           {/* ── Folders ─────────────────────────────────────────── */}
@@ -743,18 +887,17 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
           </>)}
 
           {show('publishing') && (<>
-          {/* ── Publishing (Cloudflare) ─────────────────────────── */}
-          <div style={sectionHead}>Publishing (Cloudflare)</div>
-          <div style={hint}>
-            Publish a talk's handout to your own Cloudflare Pages site. Install <kbd style={kbd}>wrangler</kbd>{' '}
-            (<kbd style={kbd}>npm&nbsp;i&nbsp;-g&nbsp;wrangler</kbd>) and enter your account id, project, and an API
-            token scoped to <em>Cloudflare Pages → Edit</em>. The token is stored in your OS keychain — never in a
-            config file. See <kbd style={kbd}>docs/PUBLISHING.md</kbd>.
-          </div>
+          {/* ── Cloudflare: the connection and the Publishing handouts row, then the fields ── */}
+          <CloudflareSettings
+            look={{ sectionHead, hint, rowFolder, folderLabel, folderPath, btn, btnGhost, inputStyle, kbd }}
+            record={record}
+            onStatus={adoptFoundPub}
+            onSetUpRecording={() => { setSq(''); setRecordingAsked((n) => n + 1) }}
+          />
 
           <div style={rowFolder}>
             <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={folderLabel}>Account ID</div>
+              <div style={folderLabel}>Account ID <span style={{ color: 'var(--faint)', fontWeight: 500 }}>· found from the token; type one only to override it</span></div>
               <input
                 style={inputStyle}
                 value={pub?.accountId ?? ''}
@@ -770,7 +913,7 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
               <input
                 style={inputStyle}
                 value={pub?.project ?? ''}
-                placeholder="my-handouts"
+                placeholder="talkweaver-handouts"
                 onChange={(e) => setPub((p) => (p ? { ...p, project: e.target.value } : p))}
                 onBlur={persistPub}
               />
@@ -799,7 +942,6 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
                 onChange={(e) => setPub((p) => (p ? { ...p, workerBaseUrl: e.target.value } : p))}
                 onBlur={persistPub}
               />
-              <div style={folderPath}>Leave empty to deploy with your token, or use local Wrangler when no token is configured.</div>
             </div>
           </div>
 
@@ -809,7 +951,8 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
               <input
                 style={inputStyle}
                 value={pub?.shareDomain ?? ''}
-                placeholder="drafts.example.com"
+                placeholder={shareSuggestion || 'drafts.example.com'}
+                data-cloudflare="share-domain-field"
                 onChange={(e) => setPub((p) => (p ? { ...p, shareDomain: e.target.value } : p))}
                 onBlur={persistPub}
               />
@@ -844,55 +987,6 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
             </button>
           </div>
 
-          <div style={rowFolder}>
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={folderLabel}>
-                API token{' '}
-                <span style={{ color: pub?.hasToken ? 'var(--oxford)' : 'var(--faint)', fontWeight: 500 }}>
-                  {pub?.hasToken ? '· saved' : '· not set'}
-                </span>
-              </div>
-              <input
-                style={inputStyle}
-                type="password"
-                value={tokenInput}
-                placeholder={pub?.hasToken ? '•••••••• (enter a new token to replace)' : 'Cloudflare API token'}
-                onChange={(e) => setTokenInput(e.target.value)}
-              />
-            </div>
-            <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'flex-end' }}>
-              {pub?.hasToken && (
-                <button
-                  style={btnGhost}
-                  onClick={() => window.tw.publish.clearToken().then(() => {
-                    setTokenInput('')
-                    refreshPub()
-                    // Presence only — a secret's value never enters the changelog.
-                    record('publish.token', 'Publishing — API token', 'set', 'not set')
-                  })}
-                >
-                  Clear
-                </button>
-              )}
-              <button
-                style={{ ...btn, opacity: tokenInput.trim() ? 1 : 0.5 }}
-                disabled={!tokenInput.trim()}
-                onClick={() =>
-                  window.tw.publish.setToken(tokenInput).then((r) => {
-                    if (r.success) {
-                      const had = pub?.hasToken ? 'set' : 'not set'
-                      setTokenInput(''); refreshPub(); notify('API token saved to the OS keychain.', 'success')
-                      record('publish.token', 'Publishing — API token', had, 'set')
-                    }
-                    else notify('Could not store the token: ' + (r.error || 'unknown error'), 'error')
-                  })
-                }
-              >
-                Save token
-              </button>
-            </div>
-          </div>
-
           <div style={{ ...rowFolder, justifyContent: 'flex-end' }}>
             <button
               style={{ ...btn, borderColor: 'var(--oxford)', color: 'var(--oxford)' }}
@@ -915,12 +1009,14 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
 
           {show('recording') && (<>
           {/* ── Recording storage (R2) ──────────────────────────── */}
-          <div style={sectionHead}>Recording storage</div>
+          <div style={sectionHead} data-settings-section="recording">Recording storage</div>
           <div style={hint}>
-            Where presenter recordings upload. Recording is always saved to this machine first, so an
-            empty or offline destination never loses anything — uploads just queue and retry. Point this
-            at an S3-compatible bucket (Cloudflare R2). Access keys are stored in your OS keychain — never
-            in a config file. Leave blank to keep everything local.
+            Where presenter recordings upload. A recording is always saved to this computer first and
+            is uploaded only when you ask, so an empty or offline destination never loses anything: an
+            upload that does not go through leaves the recording here, and you can upload it again. Point
+            this at an S3-compatible bucket (Cloudflare R2). Access keys are kept in this computer&apos;s
+            secure storage, never in a config file. Leave blank to keep everything local. The Recording
+            storage row under Cloudflare shows whether it is ready.
           </div>
 
           <div style={rowFolder}>
@@ -928,6 +1024,7 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
               <div style={folderLabel}>Endpoint <span style={{ color: 'var(--faint)', fontWeight: 500 }}>· S3-compatible</span></div>
               <input
                 style={inputStyle}
+                aria-label="Recording storage endpoint"
                 value={rec?.endpoint ?? ''}
                 placeholder="https://<account>.r2.cloudflarestorage.com"
                 onChange={(e) => setRec((r) => (r ? { ...r, endpoint: e.target.value } : r))}
@@ -946,39 +1043,8 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
             </div>
           </div>
 
-          <div style={rowFolder}>
-            <div style={{ minWidth: 0 }}>
-              <div style={folderLabel}>Credentials from</div>
-              <div style={folderPath}>
-                {rec?.credsSource === 'bws'
-                  ? <>a <kbd style={kbd}>bws</kbd> secret holding <kbd style={kbd}>{'{accessKeyId, secretAccessKey}'}</kbd></>
-                  : <>the keys entered below (OS keychain)</>}
-              </div>
-            </div>
-            <button
-              style={btn}
-              onClick={() => {
-                const next = rec?.credsSource === 'bws' ? 'settings' : 'bws'
-                setRec((r) => (r ? { ...r, credsSource: next } : r))
-              }}
-            >
-              {rec?.credsSource === 'bws' ? 'Bitwarden Secrets' : 'Keychain keys'}
-            </button>
-          </div>
-
-          {rec?.credsSource === 'bws' ? (
-            <div style={rowFolder}>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={folderLabel}>bws secret id</div>
-                <input
-                  style={inputStyle}
-                  value={rec?.bwsSecretId ?? ''}
-                  placeholder="the Bitwarden Secrets secret id"
-                  onChange={(e) => setRec((r) => (r ? { ...r, bwsSecretId: e.target.value } : r))}
-                />
-              </div>
-            </div>
-          ) : (
+          {/* Typed here, handed to the main process and never read back: this window learns only "saved". */}
+          {(
             <div style={rowFolder}>
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={folderLabel}>
@@ -989,6 +1055,9 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
                 </div>
                 <input
                   style={{ ...inputStyle, marginBottom: 6 }}
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-label="Recording storage access key id"
                   value={recKeyId}
                   placeholder={rec?.hasKeys ? '•••••••• access key id (enter to replace)' : 'access key id'}
                   onChange={(e) => setRecKeyId(e.target.value)}
@@ -996,6 +1065,9 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
                 <input
                   style={inputStyle}
                   type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-label="Recording storage secret access key"
                   value={recKeySecret}
                   placeholder={rec?.hasKeys ? '•••••••• secret access key (enter to replace)' : 'secret access key'}
                   onChange={(e) => setRecKeySecret(e.target.value)}
@@ -1024,7 +1096,7 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
                         setRecKeyId(''); setRecKeySecret(''); refreshRec()
                         record('recording.keys', 'Recording — access keys', had, 'set')
                       }
-                      else notify('Could not store the keys: ' + (r.error || 'unknown error'), 'error')
+                      else notify(r.error || 'The recording keys could not be saved.', 'error')
                     })
                   }
                 >
@@ -1061,16 +1133,12 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
                 if (base) {
                   record('recording.endpoint', 'Recording — endpoint', base.endpoint, rec.endpoint)
                   record('recording.bucket', 'Recording — bucket', base.bucket, rec.bucket)
-                  record('recording.credsSource', 'Recording — credentials source', base.credsSource, rec.credsSource)
-                  record('recording.bwsSecretId', 'Recording — bws secret id', base.bwsSecretId, rec.bwsSecretId)
                   record('recording.discardSeconds', 'Recording — auto-discard (seconds)', String(base.discardSeconds), String(rec.discardSeconds))
                 }
                 window.tw.recording
                   .setStorage({
                     endpoint: rec.endpoint,
                     bucket: rec.bucket,
-                    credsSource: rec.credsSource,
-                    bwsSecretId: rec.bwsSecretId,
                     discardSeconds: rec.discardSeconds
                   })
                   .then(() => { setRecSaved(true); setTimeout(() => setRecSaved(false), 1500); refreshRec() })
@@ -1082,15 +1150,16 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
 
           </>)}
 
-          {show('transcription') && (<>
+          {show('transcription') && (<div data-settings-section="transcription">
           {/* ── Transcription ──────────────────────────────────── */}
           <div style={sectionHead}>Transcription</div>
           <div style={hint}>
-            TalkWeaver uses the local speech-to-text skill to transcribe recorded Runs. Defaults:{' '}
-            <kbd style={pathKbd}>{transcription?.defaultPython ?? '—'}</kbd> and{' '}
-            <kbd style={pathKbd}>{transcription?.defaultScript ?? '—'}</kbd>. Leave these as-is unless
-            this machine keeps the skill somewhere else. Leave ffmpeg blank to auto-detect Homebrew or system ffmpeg.
+            Optional. TalkWeaver can transcribe recorded Runs on this computer with a speech engine you set up
+            once: a Python environment and the transcription script that ships with TalkWeaver. Nothing else in
+            TalkWeaver needs it. ffmpeg ships with TalkWeaver; leave its field empty to use that one.
           </div>
+
+          <TranscriptionStatusRow look={{ hint, folderLabel, folderPath, btn, btnGhost }} version={transcriptionVersion} />
 
           <div style={rowFolder}>
             <div style={{ minWidth: 0, flex: 1 }}>
@@ -1106,7 +1175,7 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
 
           <div style={rowFolder}>
             <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={folderLabel}>Parakeet script</div>
+              <div style={folderLabel}>Transcription script</div>
               <input
                 style={inputStyle}
                 value={transcription?.script ?? ''}
@@ -1122,7 +1191,7 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
               <input
                 style={inputStyle}
                 value={transcription?.ffmpeg ?? ''}
-                placeholder="/opt/homebrew/bin/ffmpeg"
+                placeholder="Empty: the ffmpeg that ships with TalkWeaver"
                 onChange={(e) => setTranscription((t) => (t ? { ...t, ffmpeg: e.target.value } : t))}
               />
             </div>
@@ -1136,7 +1205,7 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
                 const base = trBaseRef.current
                 if (base) {
                   record('transcription.python', 'Transcription — Python', base.python, transcription.python)
-                  record('transcription.script', 'Transcription — Parakeet script', base.script, transcription.script)
+                  record('transcription.script', 'Transcription — script', base.script, transcription.script)
                   record('transcription.ffmpeg', 'Transcription — ffmpeg', base.ffmpeg, transcription.ffmpeg)
                 }
                 window.tw.settings
@@ -1148,7 +1217,7 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
             </button>
           </div>
 
-          </>)}
+          </div>)}
 
           {show('shortcuts') && (<>
           {/* ── Keyboard shortcuts ──────────────────────────────── */}
@@ -1397,6 +1466,7 @@ const sectionHead: React.CSSProperties = {
   padding: '12px 0 6px', fontSize: 11, fontWeight: 700, letterSpacing: '0.08em',
   textTransform: 'uppercase', color: 'var(--faint)', borderBottom: '1px solid var(--line)', marginBottom: 8
 }
+const switchSub: React.CSSProperties = { fontSize: 11.5, color: 'var(--muted)', marginTop: 2, lineHeight: 1.4 }
 const catHead: React.CSSProperties = { fontSize: 11, fontWeight: 600, color: 'var(--muted)', padding: '6px 0 3px' }
 const rowFolder: React.CSSProperties = {
   display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '6px 0'
@@ -1437,4 +1507,3 @@ const kbd: React.CSSProperties = {
   fontFamily: 'var(--font-mono)', fontSize: 11, background: 'var(--hover)', border: '1px solid var(--line)',
   borderRadius: 3, padding: '2px 5px', color: 'var(--ink)', display: 'inline-block', margin: '0 1px'
 }
-const pathKbd: React.CSSProperties = { ...kbd, maxWidth: '100%', whiteSpace: 'normal', overflowWrap: 'anywhere' }

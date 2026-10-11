@@ -2,7 +2,10 @@ name: Release
 
 # Build installers for macOS (Apple Silicon) and Windows and upload them to a GitHub Release.
 # Trigger by pushing a version tag, e.g.  git tag v0.18.0 && git push origin v0.18.0
-# electron-builder uploads to a DRAFT release for that version; review it, then publish.
+# Everything goes to a DRAFT release for that version; review it, then publish.
+# Mac files are uploaded only by scripts/release-mac-assets.mjs, which runs the release gate
+# (scripts/verify-mac-package.mjs) on the very copies it uploads, with the ffmpeg corresponding
+# source. The demo vault zip is attached to the same draft. Windows: electron-builder publishes.
 #
 # macOS builds are code-signed with a Developer ID Application certificate and
 # notarized by Apple, so downloads open without the Gatekeeper warning. The
@@ -39,10 +42,20 @@ jobs:
         run: npm run build:native
       - name: Build renderer/main
         run: npm run build
-      - name: Package + publish (signed + notarized dmg, zip)
-        run: npx electron-builder --mac --publish always
+      # The Mac app ships a GPL ffmpeg; its complete corresponding source goes on the same release.
+      # Made before packaging, so a source that cannot be had stops the release before anything is
+      # uploaded. The downloads are cached by the manifest's hash.
+      - name: Cache the ffmpeg corresponding-source downloads
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg-mac-source/cache
+          key: ffmpeg-mac-source-${{ hashFiles('scripts/lib/ffmpeg-mac-source-manifest.json') }}
+      - name: Assemble the ffmpeg corresponding source (GPL)
+        run: node scripts/build-ffmpeg-source-bundle.mjs
+      # Packaged without publishing: nothing reaches GitHub from electron-builder on the Mac.
+      - name: Package (signed + notarized dmg, zip)
+        run: npx electron-builder --mac --publish never
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Developer ID code signing — electron-builder imports this .p12 into a temp keychain
           CSC_LINK: ${{ secrets.APPLE_DEVID_P12_BASE64 }}
           CSC_KEY_PASSWORD: ${{ secrets.APPLE_DEVID_P12_PASSWORD }}
@@ -50,6 +63,33 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      # The one way Mac files reach the release: scripts/release-mac-assets.mjs copies exactly these
+      # files into a private folder, runs the release gate (scripts/verify-mac-package.mjs
+      # --require-signed) on the copies, refuses a published release or a name already on the draft,
+      # uploads the copies to the draft, and downloads each back to compare its SHA-256. The app and
+      # its corresponding source always land on the same release.
+      - name: Release the verified Mac files to the draft
+        run: |
+          shopt -s nullglob
+          DMG=(release/*.dmg)
+          ZIP=(release/*.zip)
+          [ ${#DMG[@]} -eq 1 ] && [ ${#ZIP[@]} -eq 1 ] || { echo "expected one dmg and one zip under release/, found: ${DMG[*]} ${ZIP[*]}"; exit 1; }
+          VERSION=$(node -p "require('./package.json').version")
+          FFMPEG=$(node -p "require('./scripts/lib/ffmpeg-mac-pin.json').version")
+          BASE="TalkWeaver-$VERSION-ffmpeg-$FFMPEG-corresponding-source"
+          TAG="v$VERSION"
+          node scripts/release-mac-assets.mjs --repo techczech/talkweaver-app --tag "$TAG" "${DMG[0]}" "${ZIP[0]}" "ffmpeg-mac-source/$BASE.tar" "ffmpeg-mac-source/$BASE.SHA256SUMS"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # The demo vault (twelve small talks) goes on the same draft, after the Mac files, so the
+      # draft exists. Never replaced: a zip already there stops this step.
+      - name: Attach the demo vault
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          git archive --format=zip --prefix='TalkWeaver demo vault/' -o TalkWeaver-demo-vault.zip HEAD:demo-vault
+          gh release upload "v$VERSION" TalkWeaver-demo-vault.zip --repo techczech/talkweaver-app
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   windows:
     name: Windows (x64)

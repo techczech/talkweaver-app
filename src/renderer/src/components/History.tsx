@@ -19,6 +19,11 @@ import { RunBoardBlock, RunPollsBlock, RunShareDialog, boardLedgerBadge } from '
 import { runBoardKey } from '../../../shared/run-board'
 import { runAudioSummary } from '../../../shared/run-audio'
 import '../history.css'
+import { earlierHandoutsToast, publishFailureToast, publishedWithoutLiveToast } from '../lib/publish-failure-toast'
+import PublishNotReadySheet from './PublishNotReadySheet'
+import type { PublishNotReady } from '../../../preload/index'
+import { notify } from '../lib/notify'
+import { clearUploadFailure, showUploadFailure } from '../lib/upload-failure-toast'
 
 type SortMode = 'newest' | 'talk' | 'length'
 type GroupMode = 'date' | 'month' | 'talk'
@@ -27,8 +32,6 @@ type LiveUi = { status: 'live' | 'offline' | 'checking' | 'unpub'; checkedAt: st
 type StorageSettings = {
   endpoint: string
   bucket: string
-  credsSource: 'bws' | 'settings'
-  bwsSecretId: string
   discardSeconds: number
   hasKeys: boolean
 }
@@ -202,6 +205,8 @@ export default function History({
   const [pathwayNames, setPathwayNames] = useState<Record<string, Record<string, string>>>({})
   const [detailId, setDetailId] = useState<string | null>(null)
   const [handoutBusy, setHandoutBusy] = useState(false)
+  // Publish (or unpublish) Run handout could not start: what is missing and for which Run, for the sheet.
+  const [publishNotReady, setPublishNotReady] = useState<{ row: Row; notReady: PublishNotReady } | null>(null)
   // Ticket 07 (L6): where each instant slide's anchor sits in the talk now, per Run; the row being
   // added; and the last refusal per instant slide (shown under its row).
   const [instantAnchors, setInstantAnchors] = useState<Record<string, Record<string, InstantAnchor | null>>>({})
@@ -218,6 +223,12 @@ export default function History({
 
   const searchRef = useRef<HTMLInputElement>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // A failed Run handout publish: the sentence, with what the tool printed behind "Details" (never inline).
+  const showPublishFailure = useCallback((what: string, result: { error?: string; details?: string }, key: string): void => {
+    const toast = publishFailureToast(what, result, key, notify)
+    notify(toast.message, toast.level, toast.key, toast.action)
+  }, [])
 
   const flash = useCallback((msg: string): void => {
     setToast(msg)
@@ -357,18 +368,36 @@ export default function History({
     setHandoutBusy(true)
     const result = await window.tw.history.publishRunHandout(row.session.talkSlug, row.session.id)
     setHandoutBusy(false)
-    if (!result.success) { flash(`Could not publish Run handout: ${result.error ?? 'unknown error'}`); return }
+    if (!result.success && result.notReady) { setPublishNotReady({ row, notReady: result.notReady }); return }
+    if (!result.success) { showPublishFailure('Could not publish Run handout', result, 'run-handout-publish-failed'); return }
     await reload()
+    // Published without live features (spec D7): "Published. Going live is not set up: Settings → Cloudflare".
+    const withoutLive = publishedWithoutLiveToast(result, 'run-handout-without-live', notify, () => { void window.tw.cloudflare.openSettings() })
+    if (withoutLive) notify(withoutLive.message, withoutLive.level, withoutLive.key, withoutLive.action)
+    const earlier = earlierHandoutsToast(result, 'run-handout-earlier-handouts', notify)
+    if (earlier) notify(earlier.message, earlier.level, earlier.key, earlier.action)
     if (result.warning) flash(`Run handout published. ${result.warning}`)
     else if (result.missing?.length) flash(`Run handout published; skipped ${result.missing.length} missing slide id${result.missing.length === 1 ? '' : 's'}`)
     else flash('Run handout published')
   }, [flash, handouts, reload])
 
+  // "Save as a file instead" on the sheet: the Run's handout built on this computer and shown in its folder.
+  const saveRunHandoutAsFile = useCallback(async (row: Row): Promise<void> => {
+    setHandoutBusy(true)
+    const result = await window.tw.history.buildRunHandout(row.session.talkSlug, row.session.id)
+    setHandoutBusy(false)
+    if (!result.success || !result.path) { notify(`Could not save the Run handout: ${result.error ?? 'unknown error'}`, 'error', 'run-handout-save-failed'); return }
+    window.tw.shell.showInFolder(result.path)
+    flash('Run handout saved as a file')
+  }, [flash])
+
   const unpublishRunHandout = useCallback(async (row: Row): Promise<void> => {
     setHandoutBusy(true)
-    const result = await window.tw.history.unpublishRunHandout(row.session.talkSlug, row.session.id)
+    const reply = await window.tw.history.unpublishRunHandout(row.session.talkSlug, row.session.id)
     setHandoutBusy(false)
-    if (!result.success) { flash(`Could not unpublish Run handout: ${result.error ?? 'unknown error'}`); return }
+    // Unpublishing uploads the site too: with no connection the sentence says what is missing (no sheet: there is no file to save instead).
+    const result = reply.notReady ? { success: false, error: `${reply.notReady.title}. See Settings → Cloudflare.` } : reply
+    if (!result.success) { showPublishFailure('Could not unpublish Run handout', result, 'run-handout-unpublish-failed'); return }
     await reload()
     flash('Run handout unpublished')
   }, [flash, reload])
@@ -633,11 +662,10 @@ export default function History({
     try {
       const res = await window.tw.recording.upload(row.session.talkSlug, row.session.id)
       if (res.ok && res.uploaded) {
+        clearUploadFailure()
         flash('Uploaded to R2')
         await reload()
-      } else if (res.error === 'r2-not-configured') flash('Set up R2 first: Settings → Recording storage')
-      else if (res.error === 'r2-no-credentials') flash('Add your R2 access keys in Settings → Recording storage')
-      else flash('Upload failed — the recording is safe on this Mac')
+      } else showUploadFailure(res.error)
     } finally {
       setUploadBusy(null)
     }
@@ -1029,6 +1057,15 @@ export default function History({
         />
       )}
       {sheet && <CheatSheet onClose={() => setSheet(false)} />}
+      {publishNotReady && (
+        <PublishNotReadySheet
+          what="Publish Run handout"
+          notReady={publishNotReady.notReady}
+          onClose={() => setPublishNotReady(null)}
+          onSaveAsFile={() => { void saveRunHandoutAsFile(publishNotReady.row) }}
+          onRetry={() => { void publishRunHandout(publishNotReady.row) }}
+        />
+      )}
       {shareRun && <div className="rs-scrim" onClick={() => setShareRun(null)}><RunShareDialog run={shareRun} talkTitle={handouts[shareRun.talkSlug]?.title || shareRun.talkTitle} onClose={() => setShareRun(null)} flash={flash} /></div>}
       {planSheet && (
         <PlanRunSheet

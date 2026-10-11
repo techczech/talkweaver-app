@@ -90,6 +90,13 @@ async function nextPick(app, path) {
   }, path)
 }
 const header = (page, name) => page.locator(`[data-vault-header][data-vault-name="${name}"]`)
+// Onboarding ticket 06: while the example vault is not in the list, Add vault… first offers a folder
+// or the example vault; "Choose a folder…" runs the picker as Add vault… did before.
+async function toFolderPicker(page) {
+  const sheet = page.locator('[data-vault-sheet="add"]')
+  await sheet.waitFor({ state: 'visible', timeout: 8000 })
+  await sheet.locator('[data-choose-folder]').click()
+}
 const shot = (page, name) => page.screenshot({ path: join(SHOTS, `04-${name}.png`) })
 
 let { app, page } = await launch()
@@ -98,6 +105,7 @@ try {
   // ── (A) CREATE ──
   await nextPick(app, workshops)
   await page.locator('[data-add-vault]').click()
+  await toFolderPicker(page)
   const sheet = page.locator('[data-vault-sheet="new"]')
   await sheet.waitFor({ state: 'visible', timeout: 8000 })
   record('Add vault… on a plain folder opens the New vault sheet named after the folder', (await page.locator('[data-vault-sheet-title]').innerText()) === 'Workshops')
@@ -210,6 +218,7 @@ try {
   const annaBefore = snap(shared)
   await nextPick(app, shared)
   await page.locator('[data-add-vault]').click()
+  await toFolderPicker(page)
   const join_ = page.locator('[data-vault-sheet="join"]')
   await join_.waitFor({ state: 'visible', timeout: 8000 })
   const joinText = await join_.innerText()
@@ -226,6 +235,7 @@ try {
   // ── (E) REFUSED ──
   await nextPick(app, sharedCopy)
   await page.locator('[data-add-vault]').click()
+  await toFolderPicker(page)
   const refused = page.locator('[data-vault-sheet="refused"]')
   await refused.waitFor({ state: 'visible', timeout: 8000 })
   const refusedText = await refused.innerText()
@@ -237,6 +247,7 @@ try {
   record('nothing was added', vaults3.length === vaults2.length)
   await nextPick(app, workshops)
   await page.locator('[data-add-vault]').click()
+  await toFolderPicker(page)
   await refused.waitFor({ state: 'visible', timeout: 8000 })
   record('a folder already open as a vault is refused with “Show Workshops”', (await refused.getAttribute('data-refusal')) === 'duplicate' && (await page.locator('[data-show-vault]').innerText()) === 'Show Workshops')
   await shot(page, 'already-open-refused')

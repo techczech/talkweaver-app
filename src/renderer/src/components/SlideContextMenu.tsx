@@ -1,11 +1,10 @@
-// The editor's slide context menu (v0.15 stage 4 — ROADMAP carve + ADR-0009 wave).
-// ⌘K with the editor focused (or right-click inside the editing surface) opens it for the
-// CURRENT slide — the one the caret is in. Every row delegates to an existing WorkspaceLayout
-// handler; the menu owns no behaviour of its own. Keyboard model is the Talks-panel menus'
-// exactly (↑↓ wrap, ↵ runs, ⎋ closes; ⌘K starts with the first row highlighted, right-click
-// starts blank) via the shared primitives in talklist/menus.tsx. Right-click adds a small
-// "Text" group — cut/copy/paste against the CodeMirror selection — at the bottom, where the
-// suppressed native context menu would have offered them.
+// The editor's slide menu (v0.15 stage 4 — ROADMAP carve + ADR-0009 wave).
+// Since onboarding 0.38.1 ticket 03 ⌘K, right-click and the Menu key open Actions here
+// (ActionsHerePanel), which keeps every row this menu offered (shared/actions-here.ts). This menu
+// now opens for one thing: the triple-backtick Insert object access, with the first object command
+// highlighted (`startAtAction`), exactly as before. Every row delegates to an existing
+// WorkspaceLayout handler; the menu owns no behaviour of its own. Keyboard model is the Talks-panel
+// menus' (↑↓ wrap, ↵ runs, ⎋ closes) via the shared primitives in talklist/menus.tsx.
 import { Fragment, useState } from 'react'
 import {
   BarChart3, Bold, ClipboardPaste, Code, Copy, Crosshair, FileCode2, GitFork, Highlighter,

@@ -214,6 +214,9 @@ export function createReactionMarks(options) {
  * a refused tap changed the device's marks; My Notes redraws from it), now(), schedule(fn, ms). On a
  * phone the bar also carries Note (beside Ask) when onNote() is given: getNoteCount(slideId) → how many
  * notes this device holds for the slide (shown as a count on the button; refresh() redraws it).
+ * `tiles` (the handout home page): short labels beside the icons at all times, "Ask a question", and
+ * Note at every width; the page's stylesheet lays the buttons out. `keepOnBoard` (also the home page):
+ * the bar stays while a board is open instead of giving way to it.
  * @param {any} options
  */
 export function createAudienceReactions(options) {
@@ -242,7 +245,13 @@ export function createAudienceReactions(options) {
   const phone = () => Boolean(options.isPhone && options.isPhone())
   const device = () => (phone() ? 'phone' : 'device')
   const slideId = () => String(options.getSlideId ? options.getSlideId() : '')
-  const mode = () => (!marks.used() || wordsSlide === slideId() ? 'words' : 'icons')
+  // Tiles (options.tiles, the handout home page): every button keeps its icon and a short label, Note
+  // is offered at every width and the page's own stylesheet lays the bar out, so fit() leaves it alone.
+  const tiles = Boolean(options.tiles)
+  // keepOnBoard (the handout home page, Dominik 2026-10-08): the bar stays on a board slide too, as it does with a poll.
+  const keepOnBoard = Boolean(options.keepOnBoard)
+  const tileWords = { puzzled: 'Puzzled', helped: 'Helped me', bookmark: 'Bookmark' }
+  const mode = () => (tiles || !marks.used() || wordsSlide === slideId() ? 'words' : 'icons')
   // The slide's own reactions (ticket 04): the standard three, a replacement set, custom labels, or
   // none. Read afresh on every render, so the bar follows the slide it is on.
   const items = () => audienceSlideReactions(options.getSlideReactions ? options.getSlideReactions(slideId()) : null)
@@ -265,7 +274,7 @@ export function createAudienceReactions(options) {
     el.innerHTML = (item.custom ? '' : '<span class="rx-ico">' + svg(item.icon) + '</span>')
       + '<span class="rx-w"></span><span class="rx-tick" aria-hidden="true">' + svg('check') + '</span>'
       + (item.custom ? '' : '<span class="rx-tip" aria-hidden="true"></span>')
-    el.querySelector('.rx-w').textContent = item.words
+    el.querySelector('.rx-w').textContent = (tiles && tileWords[item.id]) || item.words
     if (!item.custom) el.querySelector('.rx-tip').textContent = item.words
     return el
   }
@@ -281,10 +290,10 @@ export function createAudienceReactions(options) {
   function build() {
     dock.innerHTML = '<div class="rx-wrap"><div class="rx-bar words" role="group" aria-label="React to this slide">'
       + '<span class="rx-sep" aria-hidden="true"></span>'
-      // Note (phone only) opens the note sheet (createAudienceAsk.openNote) through options.onNote.
+      // Note (a phone, or tiles) opens the note sheet (createAudienceAsk.openNote) through options.onNote.
       + '<button type="button" class="rx-notebtn" aria-label="Write a note on this slide" aria-haspopup="dialog">' + svg('pen-line') + '<span class="rx-w">Note</span><span class="rx-count" aria-hidden="true" hidden></span></button>'
       // Ask opens the question box (createAudienceAsk); the bar only says so through options.onAsk.
-      + '<button type="button" class="rx-ask" aria-label="Ask the speaker a question" aria-keyshortcuts="A" aria-haspopup="dialog">' + svg('message-circle-question-mark') + '<span>Ask</span><span class="rx-tip" aria-hidden="true">Ask the speaker<kbd>A</kbd></span></button>'
+      + '<button type="button" class="rx-ask" aria-label="Ask the speaker a question" aria-keyshortcuts="A" aria-haspopup="dialog">' + svg('message-circle-question-mark') + '<span>' + (tiles ? 'Ask a question' : 'Ask') + '</span><span class="rx-tip" aria-hidden="true">Ask the speaker<kbd>A</kbd></span></button>'
       + '<span class="rx-note" role="status" aria-live="polite"></span></div></div>'
     built = true
   }
@@ -316,8 +325,8 @@ export function createAudienceReactions(options) {
     dock.querySelector('.rx-ask').hidden = !plan.ask
     dock.querySelector('.rx-sep').hidden = !plan.ask || shownButtons === 0
     bar.classList.toggle('no-ask', !plan.ask)
-    // Note: a phone, and only when the page can open a note sheet. Its count is the slide's notes on this device.
-    const withNote = phone() && Boolean(options.onNote)
+    // Note: a phone or the tiles layout, and only when the page can open a note sheet. Its count is the slide's notes on this device.
+    const withNote = (phone() || tiles) && Boolean(options.onNote)
     const noteButton = dock.querySelector('.rx-notebtn')
     noteButton.hidden = !withNote
     bar.classList.toggle('with-note', withNote)
@@ -360,7 +369,7 @@ export function createAudienceReactions(options) {
     const bar = dock.querySelector('.rx-bar')
     const stage = document.getElementById('stage')
     const box = document.getElementById('stageFit')
-    if (phone() || !stage || !box) { wrap.style.width = ''; dock.style.transform = ''; bar.classList.remove('compact'); return }
+    if (tiles || phone() || !stage || !box) { wrap.style.width = ''; dock.style.transform = ''; bar.classList.remove('compact'); return }
     const canvas = stage.getBoundingClientRect()
     const width = Math.round(canvas.width)
     wrap.style.width = width + 'px'
@@ -473,8 +482,9 @@ export function createAudienceReactions(options) {
   let empty = false
   let onBoard = false // a board slide (ADR-0032): the bar stays away, Ask stays available
   function sync() {
-    dock.hidden = !visible || empty || onBoard
-    if (document.body) document.body.classList.toggle('has-rx-bar', visible && !empty && !onBoard)
+    const away = onBoard && !keepOnBoard
+    dock.hidden = !visible || empty || away
+    if (document.body) document.body.classList.toggle('has-rx-bar', visible && !empty && !away)
   }
   function setEmpty(next) {
     if (next === empty) return
@@ -499,7 +509,7 @@ export function createAudienceReactions(options) {
     setVisible(next) { wanted = Boolean(next); apply() },
     /** Whether the worker reports a build that takes reactions (audienceReactionsSupported). */
     setSupported(next) { supported = Boolean(next); apply() },
-    /** On a board slide the bar is hidden (reactions do not apply to a board), but Ask is still offered. */
+    /** On a board slide the bar is hidden (reactions do not apply to a board), but Ask is still offered; with keepOnBoard it stays. */
     setBoardSlide(next) { onBoard = Boolean(next); sync(); later() },
     slideChanged() { if (noteTimer !== null) cancelSchedule(noteTimer); noteTimer = null; note = null; render() },
     end() { sessionId = ''; pendingNotes.clear(); note = null; plan = audienceBarPlan(null); wanted = false; supported = false; apply() },

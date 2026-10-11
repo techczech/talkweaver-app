@@ -220,6 +220,14 @@ const EFFECTS = {
     expect: { '': 'no-steps', true: 'steps', false: 'no-steps' },
     unknown: { value: 'perhaps', warning: 'deck-flag-unknown' }
   },
+  live_look_ahead: {
+    // The home page's stepping itself is proven in scripts/handout-home-live-dom.test.mjs (it reads the
+    // key through handoutHomeDetails); here, the compiled deck carries the setting.
+    effect: 'the deck container records that the live handout page keeps people on the speaker\'s slide',
+    probe: ({ document }) => deckMain(document)?.getAttribute('data-live-look-ahead') ?? '',
+    expect: { '': '', true: '', false: 'off' },
+    unknown: { value: 'perhaps', warning: 'deck-flag-unknown' }
+  },
   claim_style: {
     effect: 'a wholly bold paragraph takes the deck claim treatment',
     body: CLAIM_BODY,

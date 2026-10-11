@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "description": "Makes this folder its own package for esbuild, which wrangler compiles the Worker with. The empty browser map is what matters: without it, a package.json with a browser map in any folder above could redirect the Worker's imports to other files. Checked by scripts/test-worker-compile-integrity.mjs. The Worker has no dependencies.",
+  "browser": {}
+}

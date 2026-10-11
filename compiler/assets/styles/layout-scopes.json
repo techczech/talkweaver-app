@@ -91,6 +91,11 @@
     "code-overflow-marker",
     "code-block"
   ],
+  "simulation": [
+    "layout-chat",
+    "layout-terminal",
+    "sim"
+  ],
   "table": [
     "layout-table",
     "slide-table",

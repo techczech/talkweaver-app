@@ -1,4 +1,7 @@
-import { useState, useEffect, type ReactNode } from 'react'
+import { useState, useEffect, useRef, type ReactNode } from 'react'
+import { MapPin } from 'lucide-react'
+import type { Place } from '../../../shared/place.ts'
+import { placeChipView } from './placeChipModel'
 import { APP_VERSION, BUILD_SHA, BUILD_TIME } from '../buildInfo'
 import { formatTalkDates, type TalkDates } from '../lib/talkFacts'
 
@@ -19,6 +22,8 @@ interface Props {
   runChips?: ReactNode
   /** Share for comments: "Shared for comments · <link>" while the talk is shared; click reopens the sheet. */
   shared?: { label: string; title?: string; error?: boolean; paused?: boolean; ended?: boolean; onClick?: () => void } | null
+  /** The place chip (onboarding ticket 02): where the caret is and how many actions apply there. */
+  placeChip?: { place: Place; count: number; chord: string; visible: boolean; onActivate: () => void } | null
 }
 
 function formatAge(d: Date): string {
@@ -46,8 +51,21 @@ export default function StatusBar({
   minimal = false,
   shared = null,
   runChips = null,
+  placeChip = null,
 }: Props) {
   const [, tick] = useState(0)
+  // The bar's width, for the chip's absorption steps (placeChipModel).
+  const barRef = useRef<HTMLDivElement | null>(null)
+  const [barWidth, setBarWidth] = useState<number | null>(null)
+  useEffect(() => {
+    const bar = barRef.current
+    if (!bar || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => setBarWidth(Math.round(bar.clientWidth)))
+    observer.observe(bar)
+    setBarWidth(Math.round(bar.clientWidth))
+    return () => observer.disconnect()
+  }, [])
+  const chip = placeChip ? placeChipView({ ...placeChip, minimal, barWidth }) : null
 
   useEffect(() => {
     const id = setInterval(() => tick((n) => n + 1), 1000)
@@ -94,8 +112,29 @@ export default function StatusBar({
   }
 
   return (
-    <div style={styles.bar}>
+    <div style={styles.bar} ref={barRef}>
       <div style={styles.left}>
+        {chip?.show && placeChip && (
+          <>
+            <button
+              type="button"
+              className="tw-place-chip"
+              style={styles.place}
+              title={chip.title}
+              data-testid="status-place"
+              data-place={placeChip.place}
+              data-layout={chip.layout}
+              // Keep the keyboard where it is: the chip acts on that place, as ⌘K would.
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={placeChip.onActivate}
+            >
+              <MapPin size={11} aria-hidden="true" style={styles.placeIcon} />
+              <span>{chip.text}</span>
+              <kbd style={styles.placeKey}>{chip.chord}</kbd>
+            </button>
+            <span style={styles.sep}>|</span>
+          </>
+        )}
         <span
           style={styles.build}
           title={`TalkWeaver ${APP_VERSION} · build ${BUILD_SHA}${BUILD_TIME ? ` · built ${new Date(BUILD_TIME).toLocaleString('en-GB')}` : ''}`}
@@ -208,6 +247,36 @@ const styles: Record<string, React.CSSProperties> = {
   sep: {
     margin: '0 8px',
     color: 'var(--line)',
+  },
+  place: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '5px',
+    flexShrink: 0,
+    height: '18px',
+    padding: '0 3px 0 6px',
+    border: '1px solid color-mix(in srgb, var(--oxford) 35%, var(--line))',
+    borderRadius: '4px',
+    background: 'color-mix(in srgb, var(--oxford) 6%, transparent)',
+    color: 'var(--oxford)',
+    fontFamily: 'inherit',
+    fontSize: '11px',
+    fontWeight: 500,
+    whiteSpace: 'nowrap',
+    cursor: 'pointer',
+  },
+  placeIcon: {
+    flexShrink: 0,
+  },
+  placeKey: {
+    fontFamily: 'var(--font-mono)',
+    fontSize: '10px',
+    padding: '0 4px',
+    border: '1px solid var(--line)',
+    borderRadius: '3px',
+    background: 'var(--panel)',
+    color: 'var(--muted)',
+    lineHeight: '14px',
   },
   chip: {
     fontSize: '11px',

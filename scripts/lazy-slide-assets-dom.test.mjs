@@ -90,6 +90,8 @@ function stub() {
   window.fetch = async (url) => {
     const u = String(url)
     if (u.endsWith('/capabilities')) return { ok: true, status: 200, json: async () => ({ protocol: 2, build: '20' }) }
+    // A slow live service (window.__discoveryDelay ms) answers the first "is it live?" late.
+    if (window.__discoveryDelay) await new Promise((resolve) => setTimeout(resolve, window.__discoveryDelay))
     return { ok: true, status: 200, json: async () => (window.__live ? { live: true, sessionId: 'session-1', protocol: 2 } : { live: false }) }
   }
   window.WebSocket = class {
@@ -164,6 +166,40 @@ try {
     await context.close()
   }
 
+  // 1b. Home page, a live service that answers slowly: until the page hears whether a session is live it
+  // does not draw the handout's cover (slide 1), so that picture does not go ahead of the speaker's slide.
+  {
+    requests.length = 0
+    delayMs = 0
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    const page = await context.newPage()
+    await page.addInitScript(() => { window.__live = true; window.__discoveryDelay = 900 })
+    await page.addInitScript(stub)
+    await page.goto(`${origin}/index.html`)
+    await page.waitForTimeout(500)
+    assert.equal(await page.locator('#stageFit').isVisible(), false, 'live state not yet known: no cover slide drawn')
+    assert.deepEqual(assetRequests(), [], 'live state not yet known: nothing fetched')
+    await page.waitForFunction(() => document.getElementById('liveFollowStatus')?.textContent === 'live')
+    await emit(page, { type: 'slide.state', slideId: 's3', reveal: 0, focus: null, revision: 1 })
+    await waitFor(() => assetRequests().length >= 1, 'an asset request')
+    assert.equal(assetRequests()[0], assetUrls[3], 'the speaker\'s slide\'s image is still the first asset asked for')
+    await context.close()
+  }
+
+  // 1c. Home page, not live: the handout's cover is slide 1, and its picture is the first asked for.
+  {
+    requests.length = 0
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    const page = await context.newPage()
+    await page.addInitScript(stub)
+    await page.goto(`${origin}/index.html`)
+    await page.locator('#hhCoverSlot .slide.active[data-id="s0"]').waitFor()
+    await waitFor(() => assetRequests().length >= 1, 'an asset request')
+    assert.equal(assetRequests()[0], assetUrls[0], 'not live: the cover\'s picture first')
+    await page.waitForFunction(() => document.querySelector('#hhCoverSlot .slide[data-id="s0"] img')?.getAttribute('data-lazy-state') === 'loaded')
+    await context.close()
+  }
+
   // 2. Slides view, not live, laptop, opened on slide 5 whose image fails.
   {
     requests.length = 0
@@ -217,7 +253,7 @@ try {
     const refs = [...download.matchAll(/<(?:img|video|source|script|link|iframe)\b[^>]*\s(?:src|href)="([^"]*)"/gi)].map((m) => m[1])
     assert.deepEqual(refs.filter((u) => !/^data:/.test(u) && u !== ''), [], 'every asset reference in the Download handout is inline')
     const home = await readFile(join(dir, 'index.html'), 'utf8')
-    assert.match(home, new RegExp(`<a class="hh-btn" href="${slug}-download.html" download="${slug}.html">Download</a>`))
+    assert.match(home, new RegExp(`<a class="hh-btn" id="hhDownload" data-hh-for="handout" href="${slug}-download.html" download="${slug}.html"><svg[^>]*>.*?</svg>Download slides</a>`))
     requests.length = 0
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 } })
     const page = await context.newPage()

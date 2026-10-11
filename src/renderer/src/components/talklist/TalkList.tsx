@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { TalkInfo, VaultView } from '../../../../preload/index'
 import { type TreeNode, topicOf, focusNode } from '../talkTreeNav'
@@ -26,10 +27,14 @@ import { SearchHead } from './SearchLine'
 import { CompletionPop, PrefixHints, useSearchAssist } from './SearchAssist'
 import { noResultSuggestions } from './prefixAssist'
 import { useTalkSearch } from './useTalkSearch'
-import { IcFile, IcPlus } from './icons'
+import { IcFile } from './icons'
+import SidebarFoot, { type GuideButtonState } from './SidebarFoot'
 import Tree, { type TreeCallbacks } from './Tree'
 import Flyout from './Flyout'
-import { SortPopover, TalkContextMenu, FolderContextMenu, MoveMenu, VaultContextMenu, type VaultAction } from './menus'
+import { SortPopover, MoveMenu, VaultContextMenu, type VaultAction, type TalkAction, type FolderAction } from './menus'
+import ActionsHerePanel from '../ActionsHerePanel'
+import { actionRowsAt, paletteChordText, type ActionRow, type VaultState } from '../../../../shared/actions-here.ts'
+import { liveShortcutLabel } from '../../keymap/store'
 import { VaultBadge } from './VaultRows'
 import ShowFilter from './ShowFilter'
 import { SHOW_STORE_KEY, effectiveShow, showFilterVisible, talksInShow } from './vaultFilter'
@@ -37,7 +42,9 @@ import {
   type VaultFocus, decodeFocus, drilledRows, encodeFocus, rowVaultId, sectionRows, talksByVault, vaultIdOfTalk
 } from './vaultSections'
 import { notify } from '../../lib/notify'
+import { announcePlaceRow } from '../../lib/usePlace'
 import { PromptModal, ConfirmModal } from './modals'
+import { commandRan, ran } from '../../commands/command-ran'
 
 export { PromptModal, ConfirmModal }
 
@@ -73,13 +80,17 @@ interface Props {
   onFocusPathChange?: (path: string) => void
   /** Scope the list to this folder (a window opened for it by "Open in new window"). Applied when `nonce` changes. */
   focusRequest?: { path: string; vaultId?: string; nonce: number } | null
+  /** The Guide button at the foot (onboarding ticket 07); null or absent = the Settings switch removed it. */
+  guideButton?: GuideButtonState | null
 }
 
-// viaKeyboard: opened by ⌘K — the menu starts with its first item highlighted (right-click starts blank).
+// A row's menu is Actions here (onboarding 0.38.1 ticket 03): ⌘K, right-click and the Menu key open it
+// for the talk, folder or vault row. `button`: the vault header's ⋯ button opens the vault's own
+// menu instead (the place of its Remove action, ticket 12).
 type Menu =
   | { kind: 'talk'; talk: TalkInfo; x: number; y: number; viaKeyboard?: boolean }
   | { kind: 'folder'; topic: string; vaultId?: string; x: number; y: number; viaKeyboard?: boolean }
-  | { kind: 'vault'; vaultId: string; x: number; y: number; viaKeyboard?: boolean }
+  | { kind: 'vault'; vaultId: string; x: number; y: number; viaKeyboard?: boolean; button?: boolean }
 
 // Handout liveness, cached per app session — checked lazily and NEVER blocking a render.
 const liveCache = new Map<string, 'live' | 'offline'>()
@@ -95,7 +106,7 @@ const NO_FOLDERS: string[] = []
 export default function TalkList({
   talks, foldersByVault, vaults, activeTalk,
   onSelectTalk, onDeletedTalk, onRefresh, onChangeVault, onNewTalk, onAddVault, onSetVaultOpen, onEditVault, onOpenMetadata, flushActive, leaveActive,
-  initialFocusPath, onFocusPathChange, focusRequest
+  initialFocusPath, onFocusPathChange, focusRequest, guideButton
 }: Props) {
   // Vaults whose talks the panel lists: open, and their folder is there (ticket 07).
   const openVaults = useMemo(() => vaults.filter((v) => v.open && !v.unavailable), [vaults])
@@ -138,7 +149,16 @@ export default function TalkList({
   const { meta: talkMeta, lastDelivered, handouts, reload } = useTalkFacts()
   const [card, dispatchCard] = useReducer(cardStep, undefined, initialCardState) // preview-card intent (T29)
   const [, setLiveTick] = useState(0) // bumped when a lazy liveness probe lands
-  const [menu, setMenu] = useState<Menu | null>(null)
+  const [menu, setMenuState] = useState<Menu | null>(null)
+  // Where the keyboard was when a row's menu opened: Escape returns it there.
+  const menuReturnRef = useRef<HTMLElement | null>(null)
+  function setMenu(next: Menu | null): void {
+    if (next) {
+      const active = document.activeElement
+      menuReturnRef.current = active instanceof HTMLElement ? active : null
+    }
+    setMenuState(next)
+  }
   const [moveMenu, setMoveMenu] = useState<{ talk: TalkInfo; x: number; y: number } | null>(null)
   const [sortPop, setSortPop] = useState<{ x: number; y: number } | null>(null)
   const [prompt, setPrompt] = useState<Prompt | null>(null)
@@ -259,6 +279,9 @@ export default function TalkList({
   }
   const focusedRow = useMemo(() => rows.find((r) => r.key === focusKey) ?? null, [rows, focusKey])
   const focusedTalk = focusedRow?.kind === 'talk' ? focusedRow.talk : null
+  // The place chip (onboarding ticket 02) names the focused row's kind; it reads, never acts.
+  const focusedRowKind = focusedRow?.kind === 'talk' || focusedRow?.kind === 'folder' || focusedRow?.kind === 'vault' ? focusedRow.kind : null
+  useEffect(() => { announcePlaceRow(focusedRowKind) }, [focusedRowKind])
 
   const sharedTalks = useSharedTalks()
   const sharedFor = (talk: TalkInfo): boolean => Boolean(shareForTalk(sharedTalks, talk.outlinePath))
@@ -562,7 +585,62 @@ export default function TalkList({
     if (action === 'edit') { onEditVault?.(vaultId); return }
     if (action === 'only') { setShow(vaultId); return }
     if (action === 'reveal') { void window.tw.vault.reveal(vaultId); return }
+    if (action === 'remove-example') { window.dispatchEvent(new Event('tw-remove-example')); return }
     onSetVaultOpen?.(vaultId, action === 'open')
+  }
+
+  // ── Actions here for the focused or clicked row ──
+  // The rows are shared/actions-here.ts's list for the place ("on a talk", "on a vault"; a folder
+  // row is "on a vault" with its own rows). Running one is running the row's existing action.
+  const rowMenuVaultState = (m: Menu | null): VaultState | undefined => {
+    if (m?.kind !== 'vault') return undefined
+    const vault = vaultById.get(m.vaultId)
+    return !vault?.open ? 'closed' : vault.unavailable ? 'unavailable' : 'open'
+  }
+  const menuRows: ActionRow[] = menu && !(menu.kind === 'vault' && menu.button)
+    ? actionRowsAt(menu.kind === 'talk' ? 'talk' : 'vault', { row: menu.kind, vault: rowMenuVaultState(menu) })
+    : []
+  function closeRowMenu(returnFocus: boolean): void {
+    const target = menuReturnRef.current
+    setMenuState(null)
+    if (returnFocus && target && target.isConnected) target.focus({ preventScroll: true })
+    if (returnFocus) requestAnimationFrame(() => { if (target && target.isConnected) target.focus({ preventScroll: true }) })
+  }
+  const TALK_ROW_ACTIONS: Readonly<Record<string, TalkAction>> = {
+    'browser.open-talk': 'open', 'open-in-new-window': 'open-new-window', 'browser.rename': 'rename',
+    'browser.move-talk': 'move', 'browser.duplicate': 'duplicate', 'browser.delete-talk': 'delete',
+    'talk.metadata': 'metadata', 'talk.reveal': 'reveal', 'talk.open-file': 'open-file', 'talk.copy-path': 'copy-path'
+  }
+  const FOLDER_ROW_ACTIONS: Readonly<Record<string, FolderAction>> = {
+    'open-in-new-window': 'open-new-window', 'new-talk': 'new-talk', 'new-folder': 'new-subfolder',
+    'folder.rename': 'rename', 'folder.delete': 'delete'
+  }
+  const VAULT_ROW_ACTIONS: Readonly<Record<string, VaultAction>> = {
+    'vault.open': 'open', 'vault.edit': 'edit', 'vault.only': 'only', 'vault.reveal': 'reveal', 'vault.close': 'close'
+  }
+  function runMenuRow(row: ActionRow): void {
+    const m = menu
+    closeRowMenu(false)
+    if (!m) return
+    if (m.kind === 'talk') {
+      const action = TALK_ROW_ACTIONS[row.key]
+      if (action) { actions.onTalkAction(m.talk, action, { x: m.x, y: m.y }); return }
+    } else if (m.kind === 'folder') {
+      const action = FOLDER_ROW_ACTIONS[row.key]
+      if (action) { actions.onFolderAction(m.topic, action, m.vaultId); return }
+    } else {
+      const action = VAULT_ROW_ACTIONS[row.key]
+      if (action) { onVaultAction(m.vaultId, action); return }
+    }
+    // The commands of the Talks panel itself, then every other command by its registry id.
+    const back = menuReturnRef.current
+    if (back && back.isConnected) back.focus({ preventScroll: true })
+    if (row.key === 'browser.fold-all') { collapseAll(); commandRan(row.key) }
+    else if (row.key === 'browser.sort') { toggleSortPop(); commandRan(row.key) }
+    else if (row.key === 'browser.filter') { searchRef.current?.focus(); searchRef.current?.select(); commandRan(row.key) }
+    else if (row.key === 'browser.talk-view') { setViewMode((mode) => (mode === 'ledger' ? 'shelf' : 'ledger')); commandRan(row.key) }
+    else if (row.key === 'browser.talk-names') { setNaming((n) => (n === 'title' ? 'file' : 'title')); commandRan(row.key) }
+    else window.dispatchEvent(new CustomEvent('tw-run-command', { detail: row.key }))
   }
 
   /** The unavailable section's one action: open the cloud service's settings, or look at the folder
@@ -592,22 +670,22 @@ export default function TalkList({
       if (key === 'enter') toggleVault(vault.id)
       else setSection(vault.id, key === 'expand')
     },
-    upOneLevel,
-    collapseAllInView,
-    expandAllInView,
-    cycleViewMode: () => setViewMode((m) => (m === 'ledger' ? 'shelf' : 'ledger')),
-    cycleNaming: () => setNaming((n) => (n === 'title' ? 'file' : 'title')),
+    upOneLevel: ran('browser.up-level', upOneLevel),
+    collapseAllInView: ran('browser.fold-all', collapseAllInView),
+    expandAllInView: ran('browser.fold-all', expandAllInView),
+    cycleViewMode: ran('browser.talk-view', () => setViewMode((m) => (m === 'ledger' ? 'shelf' : 'ledger'))),
+    cycleNaming: ran('browser.talk-names', () => setNaming((n) => (n === 'title' ? 'file' : 'title'))),
     sortPopOpen: !!sortPop,
-    toggleSortPop: () => toggleSortPop(),
+    toggleSortPop: ran('browser.sort', () => toggleSortPop()),
     closeSortPop: () => setSortPop(null),
     setSortKey,
     query,
     clearQuery: () => setQuery(''),
-    focusSearch: () => { searchRef.current?.focus(); searchRef.current?.select() },
+    focusSearch: ran('browser.filter', () => { searchRef.current?.focus(); searchRef.current?.select() }),
     anyOverlayOpen: !!(prompt || confirm || menu || moveMenu),
     // Enter/⌘O open the talk AND retire the keyboard preview (T29: the card follows the opened
     // talk away — never stays behind).
-    onSelectTalk: (talk) => { dispatchCard({ type: 'open', at: Date.now() }); onSelectTalk(talk) },
+    onSelectTalk: (talk) => { dispatchCard({ type: 'open', at: Date.now() }); onSelectTalk(talk); commandRan('browser.open-talk') },
     startRename: actions.startRename,
     startRenameFolder: (path, vaultId) => actions.onFolderAction(path, 'rename', vaultId),
     startDuplicate: actions.startDuplicate,
@@ -680,7 +758,7 @@ export default function TalkList({
     onFolderContext: (path, key, e, vaultId) => { e.preventDefault(); e.stopPropagation(); setFocusKey(key); setMenu({ kind: 'folder', topic: path, vaultId, x: e.clientX, y: e.clientY }) },
     onDrill: setFocusPath,
     onToggleVault: (vaultId, key) => { setFocusKey(key); toggleVault(vaultId); panelRef.current?.focus({ preventScroll: true }) },
-    onVaultMenu: (vaultId, key, e) => { e.preventDefault(); e.stopPropagation(); setFocusKey(key); setMenu({ kind: 'vault', vaultId, x: e.clientX, y: e.clientY }) },
+    onVaultMenu: (vaultId, key, e) => { e.preventDefault(); e.stopPropagation(); setFocusKey(key); setMenu({ kind: 'vault', vaultId, x: e.clientX, y: e.clientY, button: e.type === 'click' }) },
     onNewTalkIn: (vaultId) => onNewTalk?.('', vaultId),
     onUnavailableAction: (vaultId) => runUnavailableAction(vaultId),
     onShowVault: (vaultId) => setShow(vaultId),
@@ -752,7 +830,7 @@ export default function TalkList({
         onSetViewMode={setViewMode}
         onNewTalk={() => onNewTalk?.(targetFolder, targetVaultId)}
         onNewFolder={() => setPrompt({ label: targetFolder ? `New folder inside "${targetFolder.split('/').pop()}"` : 'New folder name', initial: '', cta: 'Create', onSubmit: (v) => void actions.doNewFolder(v, targetFolder, targetVaultId) })}
-        onToggleSort={(e) => { e.stopPropagation(); toggleSortPop() }}
+        onToggleSort={(e) => { e.stopPropagation(); toggleSortPop(); commandRan('browser.sort') }}
         sortOpen={!!sortPop}
         sortBtnRef={sortBtnRef}
         onCollapseAll={collapseAll}
@@ -854,9 +932,7 @@ export default function TalkList({
         cb={treeCallbacks}
       />
 
-      <button type="button" className="tl-addvault" onClick={() => onAddVault?.()} data-add-vault>
-        <IcPlus size={11} />Add vault…
-      </button>
+      <SidebarFoot onAddVault={() => onAddVault?.()} guide={guideButton ?? null} />
 
       <div className="tl-keybar" aria-hidden>
         <span><b>↑↓</b>navigate</span>
@@ -889,16 +965,21 @@ export default function TalkList({
           onPick={(k) => { setSortKey(k); setSortPop(null); panelRef.current?.focus({ preventScroll: true }) }}
           onPickNaming={(m) => { setNaming(m); setSortPop(null); panelRef.current?.focus({ preventScroll: true }) }} />
       )}
-      {menu?.kind === 'talk' && (
-        <TalkContextMenu x={menu.x} y={menu.y} startAtFirst={!!menu.viaKeyboard} onClose={() => setMenu(null)}
-          onAction={(a) => actions.onTalkAction(menu.talk, a, { x: menu.x, y: menu.y })} />
+      {menu && !(menu.kind === 'vault' && menu.button) && createPortal(
+        <ActionsHerePanel
+          x={menu.x}
+          y={menu.y}
+          rows={menuRows}
+          chordOf={liveShortcutLabel}
+          paletteChord={paletteChordText(liveShortcutLabel('app.command-palette'))}
+          onRun={runMenuRow}
+          onAllCommands={(query) => { closeRowMenu(false); window.dispatchEvent(new CustomEvent('tw-open-palette', { detail: query })) }}
+          onClose={() => closeRowMenu(true)}
+        />,
+        document.body
       )}
-      {menu?.kind === 'folder' && (
-        <FolderContextMenu x={menu.x} y={menu.y} startAtFirst={!!menu.viaKeyboard} onClose={() => setMenu(null)}
-          onAction={(a) => actions.onFolderAction(menu.topic, a, menu.vaultId)} />
-      )}
-      {menu?.kind === 'vault' && (
-        <VaultContextMenu x={menu.x} y={menu.y} open={vaultById.get(menu.vaultId)?.open ?? false} unavailable={!!vaultById.get(menu.vaultId)?.unavailable} startAtFirst={!!menu.viaKeyboard}
+      {menu?.kind === 'vault' && menu.button && (
+        <VaultContextMenu x={menu.x} y={menu.y} open={vaultById.get(menu.vaultId)?.open ?? false} unavailable={!!vaultById.get(menu.vaultId)?.unavailable} example={vaultById.get(menu.vaultId)?.example === true} startAtFirst={!!menu.viaKeyboard}
           onClose={() => setMenu(null)} onAction={(a) => onVaultAction(menu.vaultId, a)} />
       )}
       {moveMenu && (

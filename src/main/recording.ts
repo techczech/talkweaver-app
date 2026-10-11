@@ -2,20 +2,19 @@
 // everything the recording bridge (src/preload/present-recorder.ts) hands back:
 //   • mic permission for the present window          (Task 4, below)
 //   • local-first save: audio → userData, session.json → the Vault  (Task 5)
-//   • R2 upload with an offline-safe retry queue       (Task 6)
+//   • upload to recording storage, on request only     (Task 6; recording-storage.ts)
 //
 // Design lock: ADR-0035 + docs/superpowers/specs/2026-07-05-presentation-recording-design.md.
 // Guarantees: nothing here can lose a saved recording — audio is written to local disk
-// before any network call, and uploads queue and retry so a dropped connection never loses
-// anything. None of this touches the data-loss backstops for outlines (unrelated paths).
+// before any network call, and an upload only ever reads it: an upload that fails or is refused
+// leaves the recording exactly where it was. There is no upload queue and no retry in the
+// background. None of this touches the data-loss backstops for outlines (unrelated paths).
 
 import { BrowserWindow, ipcMain, shell } from 'electron'
 import { dirname, join } from 'path'
 import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync } from 'fs'
 import { readFile as readFileAsync } from 'fs/promises'
-import { execFileSync } from 'child_process'
 import { pathToFileURL } from 'url'
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
 import {
   applyRunPollBuffer,
   attachDeliveryToPlanned,
@@ -49,6 +48,7 @@ import type { RunAudioFields, RunAudioSegment } from '../shared/run-audio'
 import { createRecordingPermissions } from './recording-permissions'
 import { appWindowIds } from './window-kinds'
 import { sessionForList } from './run-ink-readback'
+import type { UploadFailure } from '../shared/recording-storage-status'
 
 export { recoverInterruptedRecordings } from './recording-stream-ipc'
 
@@ -88,13 +88,10 @@ export interface RecordingContext {
   preferredPlannedRunId: string | null
 }
 
-// R2 storage config (Settings → Recording storage). Non-secret; the access keys are resolved
-// separately (safeStorage or bws). Empty endpoint/bucket = not configured → uploads queue.
-export interface R2Config {
-  endpoint: string
-  bucket: string
-  credsSource: 'bws' | 'settings'
-  bwsSecretId: string
+// The one upload call (recording-storage.ts). It holds the endpoint, the bucket and the access keys;
+// this file never sees a key. `failure` is one fixed word, never the text of an error.
+export interface RecordingUploader {
+  upload(key: string, body: Uint8Array, contentType: string): Promise<{ ok: true } | { ok: false; failure: UploadFailure }>
 }
 
 // Main provides these so recording.ts stays decoupled from index.ts's config/path helpers.
@@ -103,8 +100,7 @@ export interface RecordingDeps {
   userDataDir: () => string // app.getPath('userData')
   vaultRoot: () => string | null // the current vault's root (vault registry)
   discardThresholdMs: () => number // getConfig('recordingDiscardMs', 20000)
-  r2Config: () => R2Config // Settings → Recording storage (endpoint/bucket/creds source)
-  readSafeKeys: () => { accessKeyId: string; secretAccessKey: string } | null // safeStorage-decrypted keys
+  storage: () => RecordingUploader // Settings → Recording storage (endpoint, bucket and keys)
   testMode?: () => boolean // env flag for the e2e (synthetic audio + upload short-circuit)
   beforeCloseWindow?: (webContentsId: number, liveAction?: 'end' | 'keep') => Promise<{ ok: boolean; error?: string }>
   /** Called after a session is persisted (any kind) — the main window refreshes its talk facts
@@ -240,33 +236,6 @@ export function sendRecordingCloseOffer(win: BrowserWindow, offer?: { live: bool
 }
 
 // ── R2 upload — direct, on request only (never automatic) ────────────────────
-
-// Resolve the R2 access keys. 'settings' = the safeStorage-decrypted keys entered in Settings;
-// 'bws' = shell out to the Bitwarden Secrets CLI for a secret whose value is JSON
-// {accessKeyId, secretAccessKey} (the machine convention). null when unconfigured/unavailable.
-async function readR2Creds(deps: RecordingDeps): Promise<{ accessKeyId: string; secretAccessKey: string } | null> {
-  const cfg = deps.r2Config()
-  if (cfg.credsSource === 'bws') {
-    if (!cfg.bwsSecretId) return null
-    try {
-      const out = execFileSync('bws', ['secret', 'get', cfg.bwsSecretId, '--output', 'json'], { encoding: 'utf8' })
-      const parsed = JSON.parse(out) as { value?: string }
-      const creds = JSON.parse(typeof parsed.value === 'string' ? parsed.value : '') as {
-        accessKeyId?: string
-        secretAccessKey?: string
-      }
-      if (creds.accessKeyId && creds.secretAccessKey) {
-        return { accessKeyId: creds.accessKeyId, secretAccessKey: creds.secretAccessKey }
-      }
-      return null
-    } catch (e) {
-      // bws missing from PATH (packaged app), not logged in, or the secret is shaped differently.
-      console.warn('[recording] bws R2 creds unavailable:', e)
-      return null
-    }
-  }
-  return deps.readSafeKeys()
-}
 
 // Flip a session.json's audio.uploaded to true once its audio is safely in R2, so History/Studio
 // stop showing "upload pending". Plain JSON so it never depends on the compiler being present.
@@ -483,8 +452,8 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
 
       // 3) Local-first is the whole story on save (Dominik's call): the recording lives on this
       //    machine, uploaded:false. R2 upload is ON REQUEST — the Studio "Upload to R2" action
-      //    calls recording:upload, which enqueues + drains (and retries if offline). Nothing goes
-      //    to the network automatically.
+      //    calls recording:upload, which makes one upload call. Nothing goes to the network
+      //    automatically, and nothing is queued or retried in the background.
 
       return { ok: true, sessionId, discarded: false, kind }
     } catch (e) {
@@ -563,12 +532,16 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
   // Upload ONE session to R2 — a direct, one-shot action that runs ONLY on the user's click
   // (Dominik's call: never automatic). No queue, no background retry: on failure the recording
   // stays local and Studio offers a manual retry. Local is always the safe default.
+  //
+  // The local recording is only ever READ here. No branch deletes, moves or rewrites the audio; the
+  // one write is the `uploaded` flag in session.json, made only after storage accepted the upload.
+  // `error` is a fixed word: one of the UploadFailure words for anything about storage, or a local
+  // reason ('no-vault', 'session-not-found', …). Never the text of an error.
   ipcMain.handle('recording:upload', async (_event, { talkSlug, sessionId }: { talkSlug: string; sessionId: string }) => {
+    const refused = (failure: UploadFailure): { ok: false; error: UploadFailure } => ({ ok: false, error: failure })
     try {
       const vault = deps.vaultRoot()
       if (!vault) return { ok: false, error: 'no-vault' }
-      const cfg = deps.r2Config()
-      if (!cfg.endpoint || !cfg.bucket) return { ok: false, error: 'r2-not-configured' }
       const target = vaultSessionPath(vault, talkSlug, sessionId)
       if (!target.ok) return { ok: false, error: target.error }
       const audioTarget = localRecordingPath(deps.userDataDir(), sessionId, 'webm')
@@ -591,15 +564,13 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
         return { ok: true, uploaded: true }
       }
 
-      const creds = await readR2Creds(deps)
-      if (!creds) return { ok: false, error: 'r2-no-credentials' }
-      const s3 = new S3Client({ region: 'auto', endpoint: cfg.endpoint, credentials: creds, forcePathStyle: true })
-      await s3.send(new PutObjectCommand({ Bucket: cfg.bucket, Key: r2Key, Body: readFileSync(audioPath), ContentType: 'audio/webm' }))
+      const sent = await deps.storage().upload(r2Key, readFileSync(audioPath), 'audio/webm')
+      if (!sent.ok) return refused(sent.failure)
       patchSessionUploaded(sessionJsonPath)
       return { ok: true, uploaded: true }
-    } catch (e) {
-      // Offline / R2 error — nothing is lost, the recording is still on this Mac.
-      return { ok: false, error: String(e) }
+    } catch {
+      // Nothing is lost: the recording is still on this computer. What was thrown is not passed on.
+      return refused('failed')
     }
   })
 

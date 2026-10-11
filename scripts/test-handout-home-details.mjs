@@ -1,31 +1,51 @@
-// The handout home page's words about the talk (design 2026-10-02 B): the line under the title, the
-// planned start that drives "Not live yet", the "Before the session" row and the links from the talk.
+// The handout home page's words about the talk (locked design 2026-10-07, "Handout 4b"): the parts of the
+// navy band, the planned start that keeps the page on its "before the talk" layout, the "Before the
+// session" steps and the links mentioned.
 import assert from 'node:assert/strict'
-import { handoutDayLabel, handoutHomeDetails, handoutHomePrework } from '../src/shared/handout-home.ts'
+import { handoutDayLabel, handoutHomeDetails, handoutHomePrework, handoutLookAhead, LOOK_AHEAD_OFF_WORDS } from '../src/shared/handout-home.ts'
 import { collectTalkLinks, handoutHomeMarkup } from '../compiler/scripts/lib/handout-home.mjs'
+import { DECK_FLAG_OFF } from '../compiler/scripts/lib/deck-settings.mjs'
+import { buildShareHtml } from '../compiler/scripts/lib/09-output-builders.mjs'
 
 const outline = '---\ntitle: "Agents"\nauthor: Dominik Lukeš\nseries: ITSS Briefing Sept 2026\n---\n\n# Agents\n'
 assert.equal(handoutDayLabel('2026-10-06'), 'Tue 6 Oct 2026')
 assert.equal(handoutDayLabel('2026-10-06', false), 'Tue 6 Oct')
 assert.equal(handoutDayLabel('soon'), '')
 
-// A talk published on its own: series and speaker, no start time, no "not live yet" line.
-assert.deepEqual(handoutHomeDetails({ outline }), { meta: 'ITSS Briefing Sept 2026 · Dominik Lukeš', startsAt: null, notLive: null })
-assert.equal(handoutHomeDetails({ outline: '# No frontmatter\n' }).meta, '')
+// A talk published on its own: series and speaker as separate parts, no day, no start.
+assert.deepEqual(handoutHomeDetails({ outline }), { day: '', date: '', startTime: '', event: 'ITSS Briefing Sept 2026', author: 'Dominik Lukeš', subtitle: '', affiliation: '', startsAt: null, lookAhead: true })
+assert.deepEqual(handoutHomeDetails({ outline: '# No frontmatter\n' }), { day: '', date: '', startTime: '', event: '', author: '', subtitle: '', affiliation: '', startsAt: null, lookAhead: true })
+// Subtitle and affiliation come from the frontmatter the talk already has.
+const withMore = handoutHomeDetails({ outline: '---\ntitle: Agents\nsubtitle: "What changed"\naffiliation: University of Oxford\n---\n' })
+assert.equal(withMore.subtitle, 'What changed')
+assert.equal(withMore.affiliation, 'University of Oxford')
 
-// A planned Run: date · event · speaker, and the start in the Run's own zone.
+// A planned Run: day, start time, the Run's event (over the series) and the start in the Run's own zone.
 const planned = handoutHomeDetails({ outline, run: { status: 'planned', plannedDate: '2026-10-06', startTime: '10:00', timeZone: 'Europe/London', eventTitle: 'ITSS Briefing, IT Services' } })
-assert.equal(planned.meta, 'Tue 6 Oct 2026 · ITSS Briefing, IT Services · Dominik Lukeš')
-assert.equal(planned.startsAt, Date.UTC(2026, 9, 6, 9, 0), '10:00 in London in October is 09:00 UTC')
-assert.equal(planned.notLive.today, 'Not live yet. The talk starts at 10:00. Polls, questions and reactions appear on this page when it does.')
-assert.match(planned.notLive.later, /^Not live yet\. The talk starts on Tue 6 Oct at 10:00\./)
-// A delivered Run, or one without a start time, says nothing about starting.
-assert.equal(handoutHomeDetails({ outline, run: { status: 'delivered', plannedDate: '2026-10-06', startTime: '10:00' } }).notLive, null)
-assert.equal(handoutHomeDetails({ outline, run: { status: 'planned', plannedDate: '2026-10-06' } }).startsAt, null)
+assert.deepEqual(planned, { day: 'Tue 6 Oct', date: 'Tue 6 Oct 2026', startTime: '10:00', event: 'ITSS Briefing, IT Services', author: 'Dominik Lukeš', subtitle: '', affiliation: '', startsAt: Date.UTC(2026, 9, 6, 9, 0), lookAhead: true }, '10:00 in London in October is 09:00 UTC')
+// A delivered Run keeps its day and time for the band but has no start to wait for; nor has one without a time.
+const delivered = handoutHomeDetails({ outline, run: { status: 'delivered', plannedDate: '2026-10-06', startTime: '10:00' } })
+assert.deepEqual([delivered.date, delivered.startTime, delivered.startsAt], ['Tue 6 Oct 2026', '10:00', null])
+const untimed = handoutHomeDetails({ outline, run: { status: 'planned', plannedDate: '2026-10-06', startTime: 'soon' } })
+assert.deepEqual([untimed.day, untimed.startTime, untimed.startsAt], ['Tue 6 Oct', '', null])
 
+// live_look_ahead: on unless the talk turns it off, read with the compiler's own flag words.
+assert.deepEqual(LOOK_AHEAD_OFF_WORDS, DECK_FLAG_OFF, 'the home page reads off the way the compiler does')
+assert.equal(handoutHomeDetails({ outline: '---\ntitle: A\nlive_look_ahead: false\n---\n' }).lookAhead, false)
+assert.equal(handoutLookAhead('---\nlive-look-ahead: "no"\n---\n'), false, 'the alias and a quoted word')
+assert.equal(handoutLookAhead('---\nlive_look_ahead: Off\n---\n'), false)
+assert.equal(handoutLookAhead('---\nlive_look_ahead: true\n---\n'), true)
+assert.equal(handoutLookAhead('---\nlive_look_ahead: perhaps\n---\n'), true, 'an unreadable value keeps the default (the compiler warns)')
+assert.equal(handoutLookAhead('# body\nlive_look_ahead: false\n'), true, 'only the frontmatter counts')
+
+// Pre-work: the one-row summary, the minutes added up, and each step with its own minutes.
 assert.equal(handoutHomePrework(null), null)
-assert.deepEqual(handoutHomePrework({ title: '', steps: [{ minutes: 2 }, {}, { minutes: 3 }] }), { label: '3 steps to do before the session', detail: '5 min' })
-assert.deepEqual(handoutHomePrework({ title: 'Three questions to answer before Monday', steps: [{}] }), { label: 'Three questions to answer before Monday', detail: '1 step' })
+assert.equal(handoutHomePrework({ title: 'Empty', steps: [] }), null)
+assert.deepEqual(handoutHomePrework({ title: '', steps: [{ title: 'Try one agent', kind: 'task', minutes: 2 }, { title: ' ', kind: 'slide' }, { title: 'Read this', kind: 'task', minutes: 3 }] }), {
+  label: '3 steps to do before the session', detail: '5 min', minutes: 5,
+  steps: [{ label: 'Try one agent', minutes: 2, kind: 'task' }, { label: 'Step 2', minutes: null, kind: 'slide' }, { label: 'Read this', minutes: 3, kind: 'task' }],
+})
+assert.deepEqual(handoutHomePrework({ title: 'Three questions to answer before Monday', steps: [{}] }), { label: 'Three questions to answer before Monday', detail: '1 step', minutes: 0, steps: [{ label: 'Step 1', minutes: null, kind: '' }] })
 
 // Links: http(s) only, once each, never the page's own address; labelled with the slide's title.
 const slides = [
@@ -36,8 +56,37 @@ const slides = [
 const links = collectTalkLinks(slides, { exclude: ['https://handouts.fyi/737u/'] })
 assert.deepEqual(links.map((link) => link.href), ['https://news.test/?a=1&b=2'])
 assert.ok(!/<b>/.test(links[0].labelHtml), 'a slide title with markup stays text')
-const markup = handoutHomeMarkup({ slidesHref: 'agents.html', url: 'https://handouts.fyi/737u', qr: '', links, meta: '<i>m</i>', prework: { label: '<b>x</b>', detail: '2 min' } }, { title: '<script>t</script> **Agents**', slideCount: 3 })
+const home = { slidesHref: 'agents.html', downloadHref: 'agents-download.html', url: 'https://handouts.fyi/737u', qr: '', links,
+  day: '<i>d</i>', date: '<i>dd</i>', startTime: '<i>t</i>', event: '<i>e</i>', author: '<i>a</i>', subtitle: '<i>s</i>', affiliation: '<i>f</i>' }
+const markup = handoutHomeMarkup({ ...home, prework: { label: '<b>x</b>', detail: '2 min', minutes: 2, steps: [{ label: '<b>step</b>', minutes: 2, kind: 'task' }] } }, { title: '<script>t</script> **Agents**', slideCount: 3, firstSlideId: 'a"b' })
 assert.ok(markup.includes('href="https://news.test/?a=1&amp;b=2"') && markup.includes('rel="noopener noreferrer"'))
-assert.ok(!/<script|<i>m|<b>x/.test(markup), 'title, meta and pre-work label are escaped')
+assert.ok(!/<script|<i>|<b>(x|step)/.test(markup), 'title, band parts and pre-work labels are escaped')
+for (const part of ['d', 'dd', 't', 'e', 'a', 's', 'f']) assert.ok(markup.includes(`&lt;i&gt;${part}&lt;/i&gt;`), `the band draws "${part}" as text`)
+assert.ok(markup.includes('&lt;b&gt;step&lt;/b&gt;') && markup.includes('About 2 min'), 'the steps are listed, with the total')
+assert.ok(!markup.includes('&lt;b&gt;x&lt;/b&gt;'), 'with steps listed, the one-row summary is not drawn as well')
 assert.ok(markup.includes('<strong>Agents</strong>'), 'the title keeps its inline formatting')
-console.log('PASS handout home details: meta line, planned start, pre-work row, links from the talk, escaping')
+assert.ok(markup.includes('href="agents.html#a&quot;b"'), 'Start from slide 1 names the first slide, escaped')
+assert.ok(markup.includes('href="agents-download.html" download="agents.html"'), 'Download saves the self-contained file under the handout\'s name')
+assert.ok(markup.includes('Start the pre-work') && markup.includes('Get ready'))
+assert.ok(markup.includes('Open slides</a>') && !markup.includes('hh-label">Open slides') && !markup.includes('Read the slides'), 'the button reads "Open slides" with no label repeating it (Dominik 2026-10-08)')
+assert.ok(!/<p class="hh-label">Open slides/.test(handoutHomeMarkup({ slidesHref: 'agents.html', url: '', qr: '' }, { title: 'Agents', slideCount: 3 })), 'the band with no pre-work has no label above Open slides')
+assert.ok(markup.includes('id="hhStepBack"') && markup.includes('id="hhStepForward"') && markup.includes('id="hhToSpeaker"') && markup.includes('id="hhFull"'), 'the live slide has its step and full-screen controls')
+// A pre-work summary with no steps listed (the earlier shape) keeps its one row.
+const oneRow = handoutHomeMarkup({ ...home, prework: { label: 'Three questions', detail: '1 step' } }, { title: 'Agents', slideCount: 1 })
+assert.match(oneRow, /<span class="hh-row-text">Three questions<\/span><span class="hh-row-detail">1 step<\/span>/)
+assert.ok(oneRow.includes('1 slide<') && !oneRow.includes('1 slides'), 'one slide is singular')
+// No pre-work, no day, no event, no speaker: no button for it and no empty lines in the band.
+const bare = handoutHomeMarkup({ slidesHref: 'agents.html', url: '', qr: '' }, { title: 'Agents', slideCount: 3 })
+assert.ok(!/Start the pre-work|hhPrework|hh-chip" data-hh-for="before"|hh-event|hh-sub|hh-speaker|hhShare|hhLinks/.test(bare), 'nothing is drawn for what the talk does not have')
+// Nothing without behaviour behind it, in any layout.
+assert.doesNotMatch(markup, /Feedback|Add to calendar|About the talk|Email me|Recording|Search|Download PDF|Talk ended|role="tab/)
+
+// The slides view links back to the home page when it is published beside one; nothing else does.
+const shareSlides = [{ id: 'a', html: '<section class="slide" data-id="a" data-nav-title="A"><h1>A</h1></section>', notes: '' }]
+const shareArgs = { title: 'Agents', slides: shareSlides, styles: '', includeNotes: false, slug: 'agents', license: null }
+const withHome = buildShareHtml({ ...shareArgs, homeHref: './' })
+assert.ok(withHome.includes('<a class="btn share-home" id="shareHome" href="./">') && withHome.includes('<a class="phone-home" id="phoneHome" href="./">'), 'the slides view: Handout home in the footer and above the phone list')
+assert.ok(!buildShareHtml(shareArgs).includes('id="shareHome"'), 'the download file and other exports have no home link')
+assert.ok(!buildShareHtml({ ...shareArgs, homeHref: '"><script>' }).includes('"><script>'), 'the link target is escaped')
+assert.ok(!buildShareHtml({ ...shareArgs, homeHref: './', home: { slidesHref: 'agents.html' } }).includes('id="shareHome"'), 'the home page itself has no link to itself')
+console.log('PASS handout home details: band parts, planned start, look-ahead setting, pre-work steps, links mentioned, escaping, nothing drawn without data, slides view link home')

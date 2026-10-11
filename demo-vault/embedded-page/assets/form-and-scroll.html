@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Form and scroll</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+body{margin:0;padding:24px 32px;background:#f6f4ee;color:#1b1f24;font-family:system-ui,-apple-system,sans-serif;font-size:26px}
+nav a{margin-right:24px;color:#1f3a8a}
+input,select{font:inherit;padding:8px 12px;margin:8px 0;border:2px solid #1f3a8a;border-radius:8px;background:#fff;color:#1b1f24}
+input{width:60%}
+label{display:block;margin-top:12px}
+output{display:block;font-weight:700;min-height:1.4em}
+li{padding:4px 0}
+</style></head><body>
+<nav><a href="#line-30">Go to line 30</a><a href="#line-60">Go to line 60</a></nav>
+<label for="t">Type something</label>
+<input id="t" type="text" autocomplete="off">
+<output id="echo"></output>
+<label for="s">Pick one</label>
+<select id="s"><option>Apple</option><option>Banana</option><option>Cherry</option></select>
+<output id="choice">Apple</output>
+<ol>
+<li id="line-1">Line 1: a short line of text to scroll past</li>
+<li id="line-2">Line 2: a short line of text to scroll past</li>
+<li id="line-3">Line 3: a short line of text to scroll past</li>
+<li id="line-4">Line 4: a short line of text to scroll past</li>
+<li id="line-5">Line 5: a short line of text to scroll past</li>
+<li id="line-6">Line 6: a short line of text to scroll past</li>
+<li id="line-7">Line 7: a short line of text to scroll past</li>
+<li id="line-8">Line 8: a short line of text to scroll past</li>
+<li id="line-9">Line 9: a short line of text to scroll past</li>
+<li id="line-10">Line 10: a short line of text to scroll past</li>
+<li id="line-11">Line 11: a short line of text to scroll past</li>
+<li id="line-12">Line 12: a short line of text to scroll past</li>
+<li id="line-13">Line 13: a short line of text to scroll past</li>
+<li id="line-14">Line 14: a short line of text to scroll past</li>
+<li id="line-15">Line 15: a short line of text to scroll past</li>
+<li id="line-16">Line 16: a short line of text to scroll past</li>
+<li id="line-17">Line 17: a short line of text to scroll past</li>
+<li id="line-18">Line 18: a short line of text to scroll past</li>
+<li id="line-19">Line 19: a short line of text to scroll past</li>
+<li id="line-20">Line 20: a short line of text to scroll past</li>
+<li id="line-21">Line 21: a short line of text to scroll past</li>
+<li id="line-22">Line 22: a short line of text to scroll past</li>
+<li id="line-23">Line 23: a short line of text to scroll past</li>
+<li id="line-24">Line 24: a short line of text to scroll past</li>
+<li id="line-25">Line 25: a short line of text to scroll past</li>
+<li id="line-26">Line 26: a short line of text to scroll past</li>
+<li id="line-27">Line 27: a short line of text to scroll past</li>
+<li id="line-28">Line 28: a short line of text to scroll past</li>
+<li id="line-29">Line 29: a short line of text to scroll past</li>
+<li id="line-30">Line 30: a short line of text to scroll past</li>
+<li id="line-31">Line 31: a short line of text to scroll past</li>
+<li id="line-32">Line 32: a short line of text to scroll past</li>
+<li id="line-33">Line 33: a short line of text to scroll past</li>
+<li id="line-34">Line 34: a short line of text to scroll past</li>
+<li id="line-35">Line 35: a short line of text to scroll past</li>
+<li id="line-36">Line 36: a short line of text to scroll past</li>
+<li id="line-37">Line 37: a short line of text to scroll past</li>
+<li id="line-38">Line 38: a short line of text to scroll past</li>
+<li id="line-39">Line 39: a short line of text to scroll past</li>
+<li id="line-40">Line 40: a short line of text to scroll past</li>
+<li id="line-41">Line 41: a short line of text to scroll past</li>
+<li id="line-42">Line 42: a short line of text to scroll past</li>
+<li id="line-43">Line 43: a short line of text to scroll past</li>
+<li id="line-44">Line 44: a short line of text to scroll past</li>
+<li id="line-45">Line 45: a short line of text to scroll past</li>
+<li id="line-46">Line 46: a short line of text to scroll past</li>
+<li id="line-47">Line 47: a short line of text to scroll past</li>
+<li id="line-48">Line 48: a short line of text to scroll past</li>
+<li id="line-49">Line 49: a short line of text to scroll past</li>
+<li id="line-50">Line 50: a short line of text to scroll past</li>
+<li id="line-51">Line 51: a short line of text to scroll past</li>
+<li id="line-52">Line 52: a short line of text to scroll past</li>
+<li id="line-53">Line 53: a short line of text to scroll past</li>
+<li id="line-54">Line 54: a short line of text to scroll past</li>
+<li id="line-55">Line 55: a short line of text to scroll past</li>
+<li id="line-56">Line 56: a short line of text to scroll past</li>
+<li id="line-57">Line 57: a short line of text to scroll past</li>
+<li id="line-58">Line 58: a short line of text to scroll past</li>
+<li id="line-59">Line 59: a short line of text to scroll past</li>
+<li id="line-60">Line 60: a short line of text to scroll past</li>
+</ol>
+<script>
+var t=document.getElementById('t'),e=document.getElementById('echo'),s=document.getElementById('s'),c=document.getElementById('choice');
+t.addEventListener('input',function(){e.textContent=t.value});
+s.addEventListener('change',function(){c.textContent=s.value});
+</script></body></html>

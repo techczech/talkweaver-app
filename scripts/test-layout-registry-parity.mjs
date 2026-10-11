@@ -105,7 +105,7 @@ assert.deepEqual(
 );
 assert.deepEqual(
   Object.fromEntries(PURPOSES.map((p) => [p, eligible.filter((entry) => entry.purpose === p).length])),
-  { Everyday: 13, Structure: 7, Diagrams: 13, Modes: 16, Specialised: 22 },
+  { Everyday: 13, Structure: 7, Diagrams: 13, Modes: 16, Specialised: 26 },
   "picker-eligible counts per purpose match the locked mockup"
 );
 assert.deepEqual(

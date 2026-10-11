@@ -193,6 +193,22 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     defaultable: true,
     ownership: 'user'
   },
+  {
+    key: 'live_look_ahead',
+    aliases: ['live-look-ahead'],
+    location: 'frontmatter',
+    type: 'boolean',
+    vocabulary: bool(
+      'During a live talk people can step forward on the handout page to see the slides that are coming (the default behaviour).',
+      'During a live talk people can step back to catch up but not past the slide you are on.'
+    ),
+    label: 'Audience can look ahead',
+    group: 'Presenting',
+    explanation:
+      'Whether people following a live talk on the handout page can step past the slide you are on (on by default). Stepping back to catch up is always allowed, and polls and boards stay on your slide. It applies to the live handout page; the published slides view and the download still hold every slide.',
+    defaultable: true,
+    ownership: 'user'
+  },
 
   // ── Opening & closing slides ─────────────────────────────────────────────────
   {

@@ -1,0 +1,172 @@
+name: Packaged builds
+# What only a packaged build, or only Windows, can prove (spec docs/plans/cloudflare-setup-in-app,
+# decisions D2 and D13): the publishing tool (wrangler) ships inside the app and runs on the app's own
+# Node, with no Node and no wrangler on PATH; the live service ships as a bundle compiled at build
+# time (worker-dist/) and is set up with Cloudflare's API, compiling nothing (ticket 11). Neither job
+# signs, publishes or contacts Cloudflare.
+on:
+  pull_request:
+  # Push only to long-lived branches; a feature branch is covered by its pull request.
+  push:
+    branches: [main, 'next/**']
+  workflow_dispatch:
+    inputs:
+      hosted:
+        description: 'Run the macOS job on a GitHub-hosted runner instead of the self-hosted Studio (emergency switch; uses paid minutes)'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: packaged-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+# Runners: `windows` needs Windows, so it always runs on GitHub-hosted windows-latest (the one job in
+# this repository that uses GitHub minutes on every run). `macos` runs on the self-hosted Mac Studio
+# like the jobs in tests.yml. Self-hosted jobs never run for pull requests from forks.
+jobs:
+  windows:
+    # The Windows half of D13: the launcher, the secrets module and the connection check.
+    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name != 'pull_request'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # Path shapes (pure), `wrangler --version` through the launcher from the checkout with an
+      # empty PATH, and the guard that no bare `wrangler` call is left.
+      - name: Launcher unit tests
+        run: npm run test:wrangler-launcher
+      # The real commands (dry-run deploy, dev, pages deploy against a local stand-in API) under a
+      # trace: wrangler reads and starts nothing the app did not write or ship, on Windows too.
+      - name: Ambient-access trace
+        run: npm run test:wrangler-ambient-trace
+      # Files in parent folders cannot swap the code wrangler compiles, nor one byte of what the app uploads.
+      - name: Worker compile integrity
+        run: npm run test:worker-compile-integrity
+      # The live service without wrangler (ticket 11): the shipped bundle checked against its manifest,
+      # the planned requests, the sequence against the fake API's model; no secret in any output.
+      - name: Live service upload unit tests
+        run: npm run test:live-service-upload
+      # The build step: worker-dist/ compiled once; a missing, empty, mismatched or stale one stops the build.
+      - name: Live service build step
+        run: npm run test:worker-dist
+      # Overlapping wrangler runs never see a missing or half-written file in the shared run folder.
+      - name: Overlapping runs
+        run: npm run test:wrangler-overlap
+      # The secrets module (spec D3) under plain Node with an injected cipher: slots, refusal when
+      # encryption is unavailable, the platform rule, earlier-version files, no secret in a failure.
+      - name: Secrets store unit tests
+        run: npm run test:secrets-store
+      # Owner tokens moved out of the plain registries: migration, every interruption, going back.
+      - name: Owner-token migration unit tests
+        run: npm run test:owner-tokens
+      # The same module against the real Windows encryption (DPAPI, through Electron's safeStorage)
+      # in a throwaway user-data folder with made-up values: each slot round-trips, files written the
+      # earlier way are read and the reverse, and no value is readable in any file.
+      - name: Secrets store on the real operating-system encryption
+        run: npm run test:secrets-store:electron
+      # The Cloudflare connection (spec D1, D4, D5, D6, D12) with no network: every row of the two
+      # state tables, the pure check, overlapping operations, no token in anything shown.
+      - name: Cloudflare connection unit tests
+        run: npm run test:cloudflare-connection
+      # The same module over real HTTP against the fake Cloudflare API on loopback: connect, create
+      # the site, publish to it with the bundled wrangler, and set up the live service with the API.
+      - name: Cloudflare connection against the fake API
+        run: npm run test:cloudflare-connection:api
+      # Recording storage (spec D10): the row states, the upload failure sorter, one source of keys,
+      # then Check and upload against an S3 stand-in on loopback. No request leaves the runner.
+      - name: Recording storage unit tests
+        run: npm run test:recording-storage
+      - name: Recording storage against the S3 stand-in
+        run: npm run test:recording-storage:s3
+      # Publishing: every entry point through the one sequence, no address on this computer in a
+      # published page, a failed live set-up never a failed publish (plain Node, the fake API's model).
+      - name: Handout publishing unit tests
+        run: npm run test:handout-publishing
+      # Slimming with sharp on Windows, where the earlier cwebp and sips path did nothing at all.
+      - name: Handout slimming with sharp
+        run: npm run test:handout-slimming
+      # Transcription (spec D16): the row from fixture paths, the ffmpeg resolver with Windows names
+      # and Path, and the ffmpeg that npm ci downloaded (ffmpeg.exe) making transcription's WAV.
+      - name: Transcription set-up and the shipped ffmpeg
+        run: npm run test:transcription-setup
+      - run: npm run build
+      # Unpacked build only (release/win-unpacked): no installer, no signing, nothing uploaded.
+      - name: Package (unpacked)
+        run: npx electron-builder --win --dir --publish never
+      # TalkWeaver.exe as Node runs the wrangler inside resources/app; PATH holds only System32.
+      # It also publishes a site (`pages deploy`) against the fake Cloudflare API on loopback, checks
+      # resources/worker-dist against its manifest and sets the live service up from it on
+      # TalkWeaver.exe with the API (no wrangler): no request leaves the runner. It then loads
+      # sharp (handout slimming) on TalkWeaver.exe and has it write WebP, and checks that
+      # resources/ffmpeg/ffmpeg.exe is in the build, is chosen with no path set and runs (ticket 08).
+      - name: Bundled wrangler runs, publishes and deploys from the packaged build
+        run: npm run smoke:packaged-wrangler
+
+  macos:
+    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name != 'pull_request'
+    runs-on: ${{ inputs.hosted && 'macos-14' || fromJSON('["self-hosted","macOS","ARM64"]') }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Worker compile integrity
+        run: npm run test:worker-compile-integrity
+      - name: Live service upload unit tests
+        run: npm run test:live-service-upload
+      - name: Live service build step
+        run: npm run test:worker-dist
+      - name: Overlapping runs
+        run: npm run test:wrangler-overlap
+      - name: Cloudflare connection unit tests
+        run: npm run test:cloudflare-connection
+      - name: Cloudflare connection against the fake API
+        run: npm run test:cloudflare-connection:api
+      # Recording storage (spec D10): the row states, the upload failure sorter, one source of keys,
+      # then Check and upload against an S3 stand-in on loopback. No request leaves the runner.
+      - name: Recording storage unit tests
+        run: npm run test:recording-storage
+      - name: Recording storage against the S3 stand-in
+        run: npm run test:recording-storage:s3
+      - name: Handout publishing unit tests
+        run: npm run test:handout-publishing
+      # The pinned sizes of the earlier cwebp and sips path were measured on macOS: same or smaller here.
+      - name: Handout slimming with sharp
+        run: npm run test:handout-slimming
+      - name: Transcription set-up and the shipped ffmpeg
+        run: npm run test:transcription-setup
+      - name: Build native macOS helpers (Swift)
+        run: npm run build:native
+      - run: npm run build
+      # The plain-GPL ffmpeg the macOS app ships (ADR-0003, amendment of 2026-10-09): the one build in
+      # scripts/lib/ffmpeg-mac-pin.json, refused unless both SHA-256 values match. The before-pack
+      # hook checks it again and would fetch it itself; this step makes the download visible.
+      - name: Fetch the pinned macOS ffmpeg
+        run: npm run fetch:ffmpeg-mac
+      # Unpacked and unsigned, into the job's own workspace (release/mac-arm64); never installed.
+      - name: Package (unpacked, unsigned)
+        run: npx electron-builder --mac --dir --publish never -c.mac.identity=null -c.mac.notarize=false
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      # The release gate on this unsigned build (docs/RELEASING.md): the afterPack attestation for the
+      # committed pin is in the app and its ffmpeg has the pinned SHA-256. Independent of electron-builder.
+      - name: Verify the Mac package (ffmpeg pin, attestation)
+        run: node scripts/verify-mac-package.mjs release/mac-arm64/TalkWeaver.app
+      # Also `pages deploy` against the fake Cloudflare API on loopback, the shipped worker-dist
+      # checked against its manifest and the live service set up from it with the API on the packaged
+      # executable, sharp (handout slimming) loading on the packaged executable, and the shipped
+      # resources/ffmpeg/ffmpeg chosen with no path set and making transcription's WAV (ticket 08).
+      - name: Bundled wrangler runs, publishes and deploys from the packaged build
+        run: npm run smoke:packaged-wrangler

@@ -2615,3 +2615,9 @@
   .statement,
   .slide-content.layout-statement > p:not(.kicker),
   .stmt-list .stmt { text-wrap: pretty; }
+
+/* The presenter's Current pane on a chat or terminal simulation slide (0.38.2): the successor
+   picture waits hidden until it has loaded, so a step never flashes an empty frame (previewSlide's
+   swap); over a disclosure in the picture the pane shows a hand (the pane takes the click). */
+.preview > iframe.preview-incoming { visibility: hidden; }
+.preview.sim-pane-control { cursor: pointer; }

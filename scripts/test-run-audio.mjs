@@ -87,8 +87,7 @@ function launchMain() {
     userDataDir: () => userData,
     vaultRoot: () => vault,
     discardThresholdMs: () => 20000,
-    r2Config: () => ({ endpoint: '', bucket: '', credsSource: 'settings', bwsSecretId: '' }),
-    readSafeKeys: () => null,
+    storage: () => ({ upload: async () => ({ ok: false, failure: 'not-set-up' }) }),
     onSessionSaved: (s) => saved.push(s)
   })
   return { handlers, trashed, saved, recover: module.exports.recoverInterruptedRecordings }

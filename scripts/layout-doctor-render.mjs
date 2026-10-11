@@ -45,7 +45,13 @@ const THRESHOLDS = Object.freeze({
     '.gallery-nav',
     '.gallery-nav *',
     '.lightbox-nav',
-    '.lightbox-nav *'
+    '.lightbox-nav *',
+    // {chat} {chat-lanes} {terminal} {terminal-agent}: drawings of an interface at the locked
+    // mockup's sizes. size=compact (default) is a recorded exemption from the type floor (owner
+    // decision 2026-10-08, simulation spec "Decisions after lock"); size=large lifts the running
+    // text to the floor and scales the interface chrome in proportion, so it stays exempt too.
+    '.sim',
+    '.sim *'
   ]),
   oneWordLineBlockMinimumWords: 4,
   geometryTolerancePx: 1,

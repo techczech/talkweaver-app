@@ -9,6 +9,7 @@ import {
   parseChartObjectFenceInfo
 } from "./03-object-token.mjs";
 import { normalizeIconOverrideKey } from "./05-icons.mjs";
+import { hasKeyCap } from "./00-inline-protection.mjs";
 
 // Playback intent for a video, from trailing curly tokens on the media line (ADR-0028):
 // ![alt](clip.mp4){autoplay}{loop}{muted}{controls}. A GIF converted by TalkWeaver carries
@@ -276,17 +277,11 @@ export function lexMarkdownBlocks(lines) {
       // The final non-empty `>` line, if it starts with an em/en dash, is the citation.
       let cite = "";
       const lastLine = quoteLines[quoteLines.length - 1] || "";
-      if (/^[—–-]\s*/.test(lastLine)) {
+      const dashCite = /^[—–-]\s*/.test(lastLine);
+      if (dashCite) {
         cite = lastLine.replace(/^[—–-]\s*/, "");
         breakAfter.delete(quoteLines.length - 1);
         quoteLines.pop();
-      } else {
-        // ADR-0023 §5: the attribution often follows the `>` block on its OWN line (not
-        // `>`-prefixed). foldQuoteAttribution is the ONE fold — the promoted quoted-paragraph
-        // path below calls the same function, so both quote paths attribute identically.
-        const folded = foldQuoteAttribution(lines, i);
-        cite = folded.cite;
-        i = folded.nextIndex;
       }
       // Group remaining lines into paragraphs honouring the blank-`>` breaks.
       const paras = [];
@@ -297,8 +292,23 @@ export function lexMarkdownBlocks(lines) {
       });
       if (current.length) paras.push(current.join(" ").trim());
       const paragraphs = paras.filter(Boolean);
+      // Onboarding 0.38.1 ticket 05: a `>` block that carries a key cap (`<kbd>…</kbd>`) is a
+      // PRACTICE quotation ("**Try it.** Press <kbd>⌘⇧↓</kbd> …"), not someone's words. It keeps
+      // the slide title (no title-as-cite), takes the practice style, and an attribution-looking
+      // line after it is not folded into a cite. Quotes with no key cap are unchanged. Asked of
+      // the very runs the renderer receives (each paragraph, the cite), so a paragraph whose key
+      // cap is not drawn (link syntax on the run, review round 1) does not count.
+      const practice = [...paragraphs, cite].some((run) => hasKeyCap(run));
+      if (!dashCite && !practice) {
+        // ADR-0023 §5: the attribution often follows the `>` block on its OWN line (not
+        // `>`-prefixed). foldQuoteAttribution is the ONE fold — the promoted quoted-paragraph
+        // path below calls the same function, so both quote paths attribute identically.
+        const folded = foldQuoteAttribution(lines, i);
+        cite = folded.cite;
+        i = folded.nextIndex;
+      }
       // Back-compat: `text` is the whole quote joined; `paragraphs` preserves the breaks.
-      blocks.push({ type: "quote", text: paragraphs.join(" ").trim(), paragraphs, cite });
+      blocks.push({ type: "quote", text: paragraphs.join(" ").trim(), paragraphs, cite, ...(practice ? { practice: true } : {}) });
       continue;
     }
     if (t.startsWith("|") && lines[i + 1] && /^\|[\s:|-]+\|?$/.test(lines[i + 1].trim())) {

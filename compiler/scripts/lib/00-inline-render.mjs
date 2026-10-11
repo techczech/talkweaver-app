@@ -1,5 +1,5 @@
 import { escapeHtml } from "./00-html.mjs";
-import { protectInlineSegments, replaceInlineMarks } from "./00-inline-protection.mjs";
+import { keyCapRanges, keyCapsToText, protectInlineSegments, replaceInlineMarks } from "./00-inline-protection.mjs";
 
 // The one rule for which link targets become real hrefs. Every renderer that builds an href
 // from outline text (this one, the phone text view in slide-script-render.mjs) calls it; a
@@ -24,7 +24,7 @@ export function renderEmphasisEscaped(source) {
 // the same inline markers renderInline understands are dropped and their text kept; links keep their
 // label. Nothing is escaped here, so the caller escapes for its own context.
 export function plainInlineText(text) {
-  let out = String(text == null ? "" : text);
+  let out = keyCapsToText(String(text == null ? "" : text));
   out = out.replace(/!\[[^\]]*\]\([^)]*\)/g, "");
   out = out.replace(/\[([^\]]+)\]\(\s*[^)\s]+(?:\s+"[^"]*")?\s*\)/g, "$1");
   out = out.replace(/`([^`]+)`/g, "$1");
@@ -37,9 +37,44 @@ export function plainInlineText(text) {
   return out.replace(/\s+/g, " ").trim();
 }
 
+// The constant markup of one key cap (ticket 05): a bare <kbd> with one fixed class and escaped
+// text, never an attribute taken from the outline. The phone text view uses the same function.
+export function keyCapHtml(content) {
+  return `<kbd class="key-cap">${escapeHtml(content)}</kbd>`;
+}
+
 // Browser-safe extraction of the compiler's inline renderer. Keep compiler and RIVER object
 // renderers on this import instead of copying the markdown/escaping grammar into the app.
+//
+// Key caps (`<kbd>⌘K</kbd>`, the only inline HTML outline text may carry; the rule is
+// KEY_CAP_SOURCE and keyCapRanges in 00-inline-protection.mjs): each key cap is swapped for an
+// inert control token BEFORE escaping, the historical renderer runs unchanged over the rest, and
+// each token then becomes <kbd class="key-cap">. keyCapRanges returns nothing for a run that
+// carries link syntax, so tokens only ever exist on runs where no pass builds an attribute (the
+// link and bare-URL passes are the only ones that do); such runs, and runs with no key cap, take
+// the historical path byte for byte.
 export function renderInline(text) {
+  const source = String(text ?? "");
+  const caps = keyCapRanges(source);
+  if (!caps.length) return renderInlineEscaped(text);
+  let open = "\u0003";
+  while (source.includes(open)) open += "\u0003";
+  const close = "\u0004";
+  let masked = "";
+  let cursor = 0;
+  caps.forEach((cap, index) => {
+    masked += source.slice(cursor, cap.from) + `${open}${index.toString(36)}${close}`;
+    cursor = cap.to;
+  });
+  masked += source.slice(cursor);
+  const token = new RegExp(`${open}([0-9a-z]+)${close}`, "g");
+  return renderInlineEscaped(masked).replace(token, (hit, index) => {
+    const cap = caps[parseInt(index, 36)];
+    return cap ? keyCapHtml(cap.content) : hit;
+  });
+}
+
+function renderInlineEscaped(text) {
   const renderLegacyEscaped = (source) => {
     let out = renderEmphasisEscaped(source);
     out = out.replace(/`([^`]+)`/g, "<code>$1</code>");

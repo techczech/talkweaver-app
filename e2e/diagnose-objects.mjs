@@ -494,13 +494,15 @@ async function openFenceMenu() {
 }
 
 async function insertDefaultChart(title, nextTitle) {
-  const menu = page.locator('[data-slide-menu]')
   let shell = null
   try {
     await focusEditorLine(`### ${title}`)
+    // ⌘K opens Actions here (onboarding 0.38.1 ticket 03); the old slide menu's Insert chart is its
+    // "Insert Chart" row. The ``` access above still opens the Insert object menu.
     await page.keyboard.press('Meta+k')
-    await menu.waitFor({ state: 'visible', timeout: 3000 })
-    await menu.locator('[data-slide-action="insert-chart"]').click()
+    const actionsHere = page.locator('[data-actions-here]')
+    await actionsHere.waitFor({ state: 'visible', timeout: 3000 })
+    await actionsHere.locator('[data-actions-here-row="insert-object-chart"]').click()
     shell = page.locator('.oe')
     await shell.waitFor({ state: 'visible', timeout: 3000 })
     const outline = shell.locator('.oe-chart-outline')

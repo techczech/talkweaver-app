@@ -104,7 +104,7 @@ writeFileSync(seededPath, `${JSON.stringify(seeded, null, 2)}\n`, 'utf8')
 
 await ensureFreshBuild(repo)
 const app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`], cwd: repo,
-  env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1', TALKWEAVER_LIVE_ADMIN_SECRET: worker.adminSecret } })
+  env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1', TW_LIVE_LOCAL: '1', TALKWEAVER_LIVE_ADMIN_SECRET: worker.adminSecret } })
 const phones = []
 let phoneBrowser = null
 try {

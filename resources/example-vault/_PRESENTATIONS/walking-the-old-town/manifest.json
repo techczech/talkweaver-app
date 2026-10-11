@@ -1,0 +1,19 @@
+{
+  "pathways": [
+    {
+      "id": "ten-minutes",
+      "name": "Ten minutes",
+      "note": "The short version for a club evening.",
+      "slideIds": [
+        "w1",
+        "w5",
+        "w6",
+        "w9",
+        "w13",
+        "w14",
+        "w19",
+        "w21"
+      ]
+    }
+  ]
+}

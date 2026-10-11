@@ -32,13 +32,15 @@
 .tw-pal-sec { font: 600 13px/1 var(--pal-ui); color: var(--pal-dim); padding: 10px 10px 6px; }
 .tw-pal-sec:first-child { padding-top: 6px; }
 .tw-palette .tw-pal-row {
-  display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 12px;
+  display: grid; grid-template-columns: 16px minmax(0, 1fr) auto auto; align-items: center; gap: 12px;
   width: 100%; height: 34px; padding: 0 10px; margin: 0; box-sizing: border-box;
   border: 0; border-radius: 6px; background: none; color: var(--pal-text);
   font: 500 14px/1 var(--pal-ui); text-align: left; white-space: nowrap; cursor: pointer;
 }
 .tw-pal-row > .tw-ico { color: var(--pal-muted); }
 .tw-pal-name { overflow: hidden; text-overflow: ellipsis; }
+/* The task group the command belongs to (onboarding 01), muted, before the key caps. */
+.tw-pal-task { font: 500 13px/1 var(--pal-ui); color: var(--pal-dim); white-space: nowrap; }
 .tw-palette .tw-pal-row.hi { background: #2a4260; }
 .tw-palette .tw-pal-row.hi > .tw-ico { color: var(--pal-text); }
 .tw-palette .tw-pal-row:disabled { color: var(--pal-dim); cursor: default; }

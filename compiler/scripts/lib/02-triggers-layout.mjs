@@ -837,6 +837,9 @@ export function applyQuoteTitleAttribution(blocks, title) {
   let filled = 0;
   visitBlocks(blocks, (block) => {
     if (block.type !== "quote" || String(block.cite ?? "").trim()) return;
+    // A practice quotation (a `>` line carrying a key cap, ticket 05) is an instruction, not a
+    // quotation: it is never attributed, so the slide keeps its visible title.
+    if (block.practice) return;
     block.cite = cite;
     block.citeFromTitle = true;
     filled += 1;

@@ -4,6 +4,7 @@
 // for the slide picker is bound here.
 import { type Dispatch, type MutableRefObject, type RefObject, type SetStateAction, useEffect } from 'react'
 import { notify } from '../../lib/notify'
+import { commandRan } from '../../commands/command-ran'
 import { isTypingKey, surfaceKey } from '../../keymap/surfaceKeys'
 import { findBoxOwnsKey } from '../browser-rail/findTalkModel'
 import { type DisplayCard, gridNavigate } from '../slideBrowserModel'
@@ -124,7 +125,7 @@ export function useSlideBrowserKeys(k: SlideBrowserKeyState): void {
       const keyFree = !inField || !isTypingKey(e)
       // Close the talk beside, when rebound off Esc (Esc itself closes it as a step of the ladder).
       if (e.key !== 'Escape' && besideOn && keyFree && surfaceKey(e, 'close-beside')) {
-        e.preventDefault(); e.stopPropagation(); closeBesideNow(); return
+        e.preventDefault(); e.stopPropagation(); closeBesideNow(); commandRan('slide-picker.close-beside'); return
       }
       // Esc ladder: popover → preview → filmstrip → locations → clear search (typing) → selection → close.
       if (e.key === 'Escape') {
@@ -144,10 +145,11 @@ export function useSlideBrowserKeys(k: SlideBrowserKeyState): void {
         e.preventDefault(); e.stopPropagation()
         const outcome = selectWholeSectionAt(activePos)
         if (outcome !== true) notify(outcome, 'info', 'select-whole-section')
+        else commandRan('slide-picker.select-whole-section')
         return
       }
       if (keyFree && surfaceKey(e, 'talk-beside')) {
-        e.preventDefault(); e.stopPropagation(); openBesideAt(activePos); return
+        e.preventDefault(); e.stopPropagation(); openBesideAt(activePos); commandRan('slide-picker.talk-beside'); return
       }
       if (mod && !e.shiftKey && e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); doInsert(); return }
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {

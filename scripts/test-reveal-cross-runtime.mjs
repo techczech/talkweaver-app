@@ -69,7 +69,9 @@ function enumerateUnits(selector) {
     const raw = [...slide.querySelectorAll(selector)]
     const units = raw.filter((el, i) => raw.indexOf(el) === i).filter(visible)
     out[slide.dataset.id] = units.map((el) => {
-      const cls = (el.getAttribute('class') || '').split(/\s+/).filter(Boolean).sort().join('.')
+      // `is-closed` is runtime disclosure state on a simulation part (the deck closes parts on
+      // arrival, the static handout never does); it hides the part's body, never the unit itself.
+      const cls = (el.getAttribute('class') || '').split(/\s+/).filter((c) => c && c !== 'is-closed').sort().join('.')
       const text = (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 40)
       return `${el.tagName.toLowerCase()}|${cls}|${text}`
     })

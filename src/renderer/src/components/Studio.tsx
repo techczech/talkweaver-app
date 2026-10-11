@@ -14,7 +14,9 @@ import type { RecordingSession, Transcript, TranscriptSegment, TrimRange } from 
 import { shortcutById } from '../../../shared/shortcut-registry'
 import { runAudioSummary } from '../../../shared/run-audio'
 import { eventToCMKey } from '../keymap/store'
+import { commandRan } from '../commands/command-ran'
 import '../studio.css'
+import { clearUploadFailure, showUploadFailure } from '../lib/upload-failure-toast'
 
 // Refusal codes from main when a talk or session name is not a safe file name (recording-paths.ts).
 const UNSAFE_NAME_ERRORS = new Set(['unsafe-talk-slug', 'unsafe-session-id', 'unsafe-path', 'run-path-unsafe'])
@@ -588,14 +590,11 @@ export default function Studio({
     try {
       const r = await window.tw.recording.upload(active.talkSlug, active.id)
       if (r.ok && r.uploaded) {
+        clearUploadFailure()
         flash('Uploaded to R2')
         await reload()
-      } else if (r.error === 'r2-not-configured') {
-        flash('Set up R2 first: Settings → Recording storage')
-      } else if (r.error === 'r2-no-credentials') {
-        flash('Add your R2 access keys in Settings → Recording storage')
       } else {
-        flash('Upload failed — the recording is safe on this Mac. Try again.')
+        showUploadFailure(r.error)
       }
     } finally {
       setUploadBusy(false)
@@ -723,6 +722,7 @@ export default function Studio({
       if (STUDIO_SIDEBAR_SHORTCUT.codes.includes(eventToCMKey(e) ?? '')) {
         e.preventDefault()
         setSidebarCollapsed((collapsed) => !collapsed)
+        commandRan('studio.sidebar-toggle')
         return
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); searchRef.current?.focus(); return }

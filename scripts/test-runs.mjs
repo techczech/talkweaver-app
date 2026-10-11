@@ -44,6 +44,10 @@ import { applyRunPrework } from '../src/main/runs.ts'
 import { mergeRunPrework, preworkWindowMs, publicPreworkForm } from '../src/shared/run-prework.ts'
 import { PREWORK_PURGED_MESSAGE, createRunPrework, registerRunPreworkIpc } from '../src/main/run-prework.ts'
 import { sheetTimeZone, zoneToSend } from '../src/shared/plan-run.ts'
+import { memoryOwnerTokens } from './lib/memory-secrets.mjs'
+
+// Owner tokens live in the secrets store (an in-memory one here), never in a registry file.
+const testOwnerTokens = memoryOwnerTokens()
 
 const root = mkdtempSync(join(tmpdir(), 'talkweaver-runs-'))
 const baseInput = {
@@ -740,7 +744,7 @@ assert.equal(survived[0].id, 'survivor')
     if (fail) throw new Error('offline')
     return new Response(JSON.stringify({ ok: true }), { status: 200 })
   }
-  const shares = createRunResultsShares({ registryPath: join(shareRoot, 'registry.json'), endpoint: async () => ({ baseUrl: 'https://live.example.test', adminSecret: 'admin' }),
+  const shares = createRunResultsShares({ ownerTokens: testOwnerTokens, registryPath: join(shareRoot, 'registry.json'), endpoint: async () => ({ baseUrl: 'https://live.example.test', adminSecret: 'admin' }),
     linkBase: () => null, fetch: fakeFetch })
   const ended = Date.UTC(2026, 8, 28, 14)
   const run = normaliseRun({ id: 'run-share', talkSlug: 'share-talk', talkTitle: 'T', startedAt: new Date(ended - 3_600_000).toISOString(),
@@ -752,7 +756,7 @@ assert.equal(survived[0].id, 'survivor')
   await shares.share('share-talk', 'run-share', run, { lifetime: '7', include: { board: true, polls: false } })
   assert.deepEqual((await shares.refresh('share-talk', 'run-share', run)).ok, true)
   fail = true
-  assert.deepEqual(await shares.refresh('share-talk', 'run-share', run), { ok: false, error: 'offline' }, 'a failed push is returned, not swallowed')
+  assert.deepEqual(await shares.refresh('share-talk', 'run-share', run), { ok: false, error: 'The sharing service could not be reached, so the link was not updated. Try again.' }, 'a failed push is returned, not swallowed, in fixed words (never the transport\'s own error)')
   const handlers = new Map()
   registerRunBoardIpc({ ipcMain: { handle: (channel, fn) => handlers.set(channel, fn) }, vaultRoot: () => vault, sessions: () => null, shares })
   const putBack = await handlers.get('history:board-put-back')(null, { talkSlug: 'share-talk', runId: 'run-share', boardId: 'poll-board', sessionId: 's-1', cardId: 'card-2', putBack: true })
@@ -919,7 +923,7 @@ assert.equal(survived[0].id, 'survivor')
     const page = worker.entries.filter((item) => item.seq > after).slice(0, 2)
     return reply({ seq: worker.entries.length, people: 1, lastActivityAt: 1_600_000_000_000, entries: page, more: page.length === 2 && page[1].seq < worker.entries.length })
   }
-  const service = createRunPrework({ registryPath: join(root, 'registry.json'), endpoint: async () => ({ baseUrl: 'https://live.example.test/', adminSecret: 'admin' }),
+  const service = createRunPrework({ ownerTokens: testOwnerTokens, registryPath: join(root, 'registry.json'), endpoint: async () => ({ baseUrl: 'https://live.example.test/', adminSecret: 'admin' }),
     vaultRoot: () => vault, fetch: fakeFetch, now: () => Date.UTC(2026, 9, 1, 12) })
   const form = { title: 'Before the session', intro: '', steps: [{ id: 'pwwelcome', n: 1, title: 'W', kind: 'slide', questions: true }] }
   const window = { opensAt: Date.UTC(2026, 8, 30, 8), closesAt: Date.UTC(2026, 9, 6, 9) }
@@ -958,7 +962,7 @@ assert.equal(survived[0].id, 'survivor')
   assert.notEqual(oldBytes, readFileSync(join(vault, '_PRESENTATIONS', 'pw-talk', 'run-pw.json'), 'utf8'))
 
   // Purged on the Worker: recorded on the registry row, never asked again, never pulled by the timer.
-  const later = createRunPrework({ registryPath: join(root, 'registry.json'), endpoint: async () => ({ baseUrl: 'https://live.example.test', adminSecret: 'admin' }),
+  const later = createRunPrework({ ownerTokens: testOwnerTokens, registryPath: join(root, 'registry.json'), endpoint: async () => ({ baseUrl: 'https://live.example.test', adminSecret: 'admin' }),
     vaultRoot: () => vault, fetch: fakeFetch, now: () => Date.UTC(2026, 9, 3, 12) })
   worker.gone = true
   const gone = await later.publish('pw-talk', 'run-pw', form, { ...window, closesAt: Date.UTC(2026, 9, 6, 9) })

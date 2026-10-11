@@ -1,6 +1,7 @@
 // Share for comments (ticket 03): the types main, preload and renderer share, plus the pure pieces
 // the share sheet and the main-process module both lean on — the link builder and the sheet's
 // view model. Plain erasable TypeScript: imported by Node tests under native type stripping.
+import { liveSetupPromptCopy, type LiveSetupPrompt } from './live-service-status.ts'
 
 /** One slide as the shared-talk Worker stores it: the proposal editor edits and diffs `text`. */
 export interface SharedTalkSlide {
@@ -49,6 +50,13 @@ export const SHARE_ENDED_MESSAGE = 'Sharing has ended for this link. Stop sharin
 export interface SharedTalkInspection {
   share: SharedTalkState | null
   foreignShareUrl: string | null
+  /** The talk had a share when the look began and a Stop closed it before the answer (ticket 12
+   *  round 2): the sheet says the talk is no longer shared and does not share it again. */
+  stopped?: { shareId: string }
+  /** A create of this talk from before (the app quit while its reply was awaited) was never
+   *  registered: a share may still be open on the service. What to say; the sheet asks before it
+   *  shares, and that Share replaces it (ticket 12 round 2, design note [s]). */
+  interruptedShare?: string
 }
 
 export interface SharedTalkStopResult {
@@ -57,6 +65,19 @@ export interface SharedTalkStopResult {
   /** Said to the person when the stop was local only. */
   message: string | null
 }
+
+/** A Share that was stopped part-way (ticket 12): neither a link nor a failure. `shareId` is the share
+ *  this Share made and that was then closed, or null when none was made. Never a closed link. */
+export interface SharedTalkStopped {
+  stopped: true
+  shareId: string | null
+}
+
+export function isSharedTalkStopped(value: unknown): value is SharedTalkStopped {
+  return Boolean(value) && (value as SharedTalkStopped).stopped === true
+}
+
+export const SHARE_STOPPED_MESSAGE = 'This talk is no longer shared.'
 
 export const STOPPED_LOCALLY_MESSAGE = 'Could not stop it on the server; the link retires on its own.'
 export const FOREIGN_SHARE_WARNING = 'Already shared from another Mac; sharing here replaces that link.'
@@ -106,7 +127,7 @@ function shareLinkHostname(base: string): string | null {
 
 // ── The share sheet's view model ────────────────────────────────────────────────────────────────
 
-export type ShareSheetPhase = 'loading' | 'confirm-replace' | 'creating' | 'ready' | 'stopping' | 'error'
+export type ShareSheetPhase = 'loading' | 'confirm-replace' | 'creating' | 'ready' | 'stopping' | 'error' | 'stopped'
 
 export interface ShareSheetModel {
   phase: ShareSheetPhase
@@ -117,38 +138,70 @@ export interface ShareSheetModel {
   error: string | null
   /** Copy link just succeeded (the button says so briefly). */
   copied: boolean
+  /** The share could not be made because going live is not set up: the sheet offers Open Settings (ticket 05). */
+  setup: LiveSetupPrompt | null
+  /** The share this sheet was told is closed (a null broadcast, a stopped reply): a later message
+   *  carrying it never brings it back (ticket 12 round 2, finding 1). */
+  goneShareId: string | null
+  /** A share from before may still be open (inspected `interruptedShare`, phase confirm-replace). */
+  interruptedShare?: string | null
 }
 
 export type ShareSheetEvent =
-  | { type: 'inspected'; share: SharedTalkState | null; foreignShareUrl: string | null }
+  | { type: 'inspected'; share: SharedTalkState | null; foreignShareUrl: string | null; stopped?: { shareId: string }; interruptedShare?: string }
   | { type: 'creating' }
   | { type: 'created'; share: SharedTalkState }
   | { type: 'changed'; share: SharedTalkState | null }
-  | { type: 'failed'; error: string }
+  | { type: 'failed'; error: string; setup?: LiveSetupPrompt }
   | { type: 'copied' }
   | { type: 'copy-reset' }
   | { type: 'stopping' }
+  /** The sheet's own Share was stopped part-way (the share() reply `{ stopped: true, shareId }`). */
+  | { type: 'share-stopped'; shareId: string | null }
 
 export function initialShareSheet(): ShareSheetModel {
-  return { phase: 'loading', share: null, foreignShareUrl: null, error: null, copied: false }
+  return { phase: 'loading', share: null, foreignShareUrl: null, error: null, copied: false, setup: null, goneShareId: null }
 }
 
+// The table is the ticket 12 design, section 5 (src/main/shared-talk.ts header). The sheet follows the
+// talk, not the request: a broadcast that the share is gone, or a stopped reply, leaves "Creating…"
+// for `stopped`, and the sheet never offers a closed link.
 export function shareSheetReducer(model: ShareSheetModel, event: ShareSheetEvent): ShareSheetModel {
+  const parked = model.phase === 'loading' || model.phase === 'confirm-replace'
   switch (event.type) {
     case 'inspected':
+      if (event.stopped) return { ...model, phase: 'stopped', share: null, foreignShareUrl: null, error: null, goneShareId: event.stopped.shareId }
+      if (event.share && event.share.shareId === model.goneShareId) return model
       if (event.share) return { ...model, phase: 'ready', share: event.share, foreignShareUrl: null, error: null }
+      // Another Mac's share_url, or a share from before this app last quit: asked before sharing.
+      if (event.interruptedShare) return { ...model, phase: 'confirm-replace', share: null, foreignShareUrl: event.foreignShareUrl, error: null, interruptedShare: event.interruptedShare }
       return { ...model, phase: event.foreignShareUrl ? 'confirm-replace' : 'creating', share: null, foreignShareUrl: event.foreignShareUrl, error: null }
     case 'creating':
       return { ...model, phase: 'creating', error: null }
     case 'created':
-      return { ...model, phase: 'ready', share: event.share, foreignShareUrl: null, error: null }
+      if (model.phase === 'stopping') return model
+      return { ...model, phase: 'ready', share: event.share, foreignShareUrl: null, error: null, setup: null }
     case 'changed':
+      if (parked) return model
       // A broadcast for this talk: a null share means it was stopped (here or in another window).
-      if (!event.share) return model.phase === 'ready' ? { ...model, share: null } : model
-      if (model.phase === 'loading' || model.phase === 'confirm-replace') return model
-      return { ...model, share: event.share, phase: model.phase === 'creating' || model.phase === 'error' ? 'ready' : model.phase }
+      if (!event.share) {
+        if (model.phase === 'error' || model.phase === 'stopped') return model
+        return { ...model, phase: 'stopped', share: null, error: null, copied: false, goneShareId: model.share?.shareId ?? model.goneShareId }
+      }
+      // A share this sheet was told is closed never comes back (a reply captured before the Stop).
+      if (event.share.shareId === model.goneShareId) return model
+      return { ...model, share: event.share, phase: model.phase === 'stopping' ? 'stopping' : 'ready' }
+    case 'share-stopped':
+      if (parked || model.phase === 'stopping' || model.phase === 'stopped') return model
+      // A newer share the sheet already follows is not the one that was stopped.
+      if (model.share && model.share.shareId !== event.shareId) return model
+      return { ...model, phase: 'stopped', share: null, error: null, copied: false, setup: null, goneShareId: event.shareId ?? model.goneShareId }
     case 'failed':
-      return { ...model, phase: model.share ? 'ready' : 'error', error: event.error }
+      // A failed Stop (or copy, or switch) keeps the share and re-enables its controls; a failed
+      // Share has no link to show.
+      if (model.phase === 'stopped') return { ...model, error: event.error }
+      if ((model.phase === 'ready' || model.phase === 'stopping') && model.share) return { ...model, phase: 'ready', error: event.error, setup: null }
+      return { ...model, phase: 'error', error: event.error, setup: event.setup ?? null }
     case 'copied':
       return { ...model, copied: true }
     case 'copy-reset':
@@ -175,6 +228,8 @@ export interface ShareSheetView {
   /** One status line under the link: creating, pushing, failures. Empty when all is well. */
   status: string
   statusTone: 'quiet' | 'error'
+  /** Going live is not set up: the prompt (its title and its one button, Open Settings), or null. */
+  setupPrompt: { prompt: LiveSetupPrompt; title: string; action: string } | null
 }
 
 export function shareSheetView(model: ShareSheetModel): ShareSheetView {
@@ -185,6 +240,7 @@ export function shareSheetView(model: ShareSheetModel): ShareSheetView {
   if (model.phase === 'loading') status = ''
   else if (model.phase === 'creating') status = 'Creating the link…'
   else if (model.phase === 'stopping') status = 'Stopping…'
+  else if (model.phase === 'stopped') { status = model.error ?? SHARE_STOPPED_MESSAGE; statusTone = model.error ? 'error' : 'quiet' }
   else if (model.error) { status = model.error; statusTone = 'error' }
   else if (share?.ended) { status = SHARE_ENDED_MESSAGE; statusTone = 'error' }
   else if (share?.lastError) { status = `Their page is not up to date: ${share.lastError}`; statusTone = 'error' }
@@ -193,16 +249,20 @@ export function shareSheetView(model: ShareSheetModel): ShareSheetView {
   const localOnly = Boolean(share?.localOnly)
   return {
     link: share?.url ?? '',
-    canCopy: ready,
+    // An ended share (round 3) is gone: its link is never offered for copying.
+    canCopy: ready && !share?.ended,
     copyLabel: model.copied ? 'Copied' : 'Copy link',
     showPasteHint: !localOnly,
     localNote: localOnly ? 'This link works only on this Mac: sharing is running on a local test service.' : '',
-    replaceWarning: model.phase === 'confirm-replace' ? FOREIGN_SHARE_WARNING : '',
+    replaceWarning: model.phase !== 'confirm-replace' ? ''
+      : model.interruptedShare ? [model.interruptedShare, model.foreignShareUrl ? FOREIGN_SHARE_WARNING : ''].filter(Boolean).join(' ')
+        : FOREIGN_SHARE_WARNING,
     showUpdate: ready && !share!.liveUpdates,
     canStop: ready,
     switchesEnabled: ready,
     status,
     statusTone,
+    setupPrompt: model.setup && model.phase === 'error' ? { prompt: model.setup, ...liveSetupPromptCopy(model.setup) } : null,
   }
 }
 

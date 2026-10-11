@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { FileText, MonitorPlay, Search, X } from 'lucide-react'
 import type { TalkInfo } from '../../../../preload/index'
 import { readingLine } from '../../../../shared/talk-search'
+import { commandRan } from '../../commands/command-ran'
 import { CompletionPop, PrefixHints, useSearchAssist } from '../talklist/SearchAssist'
 import { Marked, SearchLine } from '../talklist/SearchLine'
 import { noResultSuggestions } from '../talklist/prefixAssist'
@@ -96,6 +97,7 @@ export default function FindTalk(props: FindTalkProps) {
       e.preventDefault()
       e.stopPropagation()
       choose(activeRow(), true)
+      commandRan('slide-picker.add-beside')
       return
     }
     if (!findBoxOwnsKey(e.key, { value: query, listing, completing })) return

@@ -697,6 +697,8 @@ export function createAudienceFollowRuntime(options) {
     // Note (phone): the note sheet is the question box's sheet; the count is the page's notes for the slide.
     onNote: options.reactions.onSlideNote ? () => ask?.openNote() : undefined,
     getNoteCount: options.reactions.getNoteCount,
+    tiles: options.reactions.tiles,
+    keepOnBoard: options.reactions.keepOnBoard,
     onMarksChanged: options.reactions.onMarksChanged,
   }) : null
   // Ask the speaker (ADR-0027): the question box opens from the bar's Ask button and from the A key,
@@ -723,7 +725,9 @@ export function createAudienceFollowRuntime(options) {
     document, mount: boardMount, icons: { ...audienceReactionIcons(), ...audienceBoardIcons() },
     isPhone: options.reactions.isPhone,
     isConnected: () => Boolean(client && client.status() === 'live'),
-    getSlideId: () => (options.getViewerPosition() || {}).slideId || '',
+    // A page where the person steps through the slides while live (options.audienceSteps, the handout
+    // home page): the board stays the speaker's slide's, whatever slide the person is looking at.
+    getSlideId: () => (options.audienceSteps && latestState?.slideId) || (options.getViewerPosition() || {}).slideId || '',
     getSlideInfo: options.reactions.getSlideInfo,
     getName: () => nameInput.value,
     isAskAvailable: () => Boolean(reactions.isVisible() && reactions.questionsAllowed()),
@@ -744,31 +748,29 @@ export function createAudienceFollowRuntime(options) {
     request.then((capabilities) => { reactionsKnown = true; reactions.setSupported(audienceReactionsSupported(capabilities)) })
       .catch(() => {}).then(() => { reactionsChecking = false })
   }
+  // The speaker's instant slide, kept so a person who returns to following sees it.
   let currentInstant = null
-  // The handout home page holds the full-screen instant slide back while the person reads the Handout
-  // tab (instantAllowed), says so on its Live tab (onInstantChanged) and shows it on return (refreshInstant).
-  function showInstant(slide) {
-    instantSurface.show(slide && (!options.instantAllowed || options.instantAllowed()) ? slide : null)
-  }
   function receiveInstant(slide) {
     currentInstant = slide
-    showInstant(following ? slide : null)
-    options.onInstantChanged?.(following ? slide : null)
+    instantSurface.show(following ? slide : null)
   }
 
   function renderControls() {
     button.hidden = !sessionLive || diverged
     returnButton.hidden = !sessionLive || !diverged
     button.classList.toggle('is-on', following)
-    reactions?.setVisible(sessionLive && following)
-    board?.setVisible(sessionLive && following)
+    // Stepping away on the home page keeps the reactions (on the slide on screen) and the board (the
+    // speaker's slide's); elsewhere they are shown to a follower only.
+    reactions?.setVisible(sessionLive && (following || Boolean(options.audienceSteps)))
+    board?.setVisible(sessionLive && (following || Boolean(options.audienceSteps)))
     label.textContent = following ? 'Stop following' : 'Follow live'
     nameWrap.hidden = !sessionLive
     nowLiveBadges.forEach((badge) => { badge.hidden = !sessionLive })
     if (!sessionLive) nameWrap.hidden = true
     options.reactions?.onSwitchesChanged?.()
-    // The handout home page shows its Live tab while a session is live (design 2026-10-02 B).
+    // The handout home page takes its live layout while a session is live (design 2026-10-07, Handout 4b).
     options.onLiveChanged?.(sessionLive)
+    options.onFollowChanged?.({ live: sessionLive, following, speakerSlideId: sessionLive && latestState ? latestState.slideId || null : null })
   }
   function markEnded(reason = 'ended') {
     lateBoardShown = ''
@@ -785,7 +787,6 @@ export function createAudienceFollowRuntime(options) {
     presenterConnected = true
     currentInstant = null
     instantSurface.show(null)
-    options.onInstantChanged?.(null)
     pollRuntime?.end()
     reactions?.end()
     board?.end()
@@ -872,7 +873,7 @@ export function createAudienceFollowRuntime(options) {
   function resumeFollowing() {
     if (!sessionLive) return
     following = true
-    showInstant(currentInstant)
+    instantSurface.show(currentInstant)
     diverged = false
     ensureClient()
     if (latestState && !options.applyLiveSlideState(latestState)) {
@@ -933,7 +934,10 @@ export function createAudienceFollowRuntime(options) {
   }
   void discoverSession()
   ;(options.scheduleDiscovery || ((callback) => window.setInterval(callback, 5000)))(discoverSession)
-  return { discoverSession, viewerMoved, markEnded, refreshInstant: () => showInstant(following ? currentInstant : null), slideChanged: () => { pointer?.show('gone'); reactions?.slideChanged(); board?.slideChanged() }, reactions, ask, board, venueKeyboardAvailable: () => Boolean(options.venue && !(sessionLive && presenterConnected)) }
+  return { discoverSession, viewerMoved, markEnded,
+    // The home page's stepping (live-step.js): back to the speaker's slide, and what it needs to know.
+    returnToSpeaker: resumeFollowing, isFollowing: () => following, speakerSlideId: () => (sessionLive && latestState ? latestState.slideId || null : null),
+    slideChanged: () => { pointer?.show('gone'); reactions?.slideChanged(); board?.slideChanged() }, reactions, ask, board, venueKeyboardAvailable: () => Boolean(options.venue && !(sessionLive && presenterConnected)) }
 }
 
 /** @param {any} message */

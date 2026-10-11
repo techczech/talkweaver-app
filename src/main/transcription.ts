@@ -1,6 +1,8 @@
 // Transcription — main-process bridge to a local speech-to-text engine (Parakeet via Python).
-// The engine command + script are user-configured in Settings -> Transcription (unset by
-// default; the feature stays dormant until configured). Runs one job at a time, stores small
+// The engine command + script are set in Settings -> Transcription (unset by default; the feature
+// is optional and stays dormant until set up, spec docs/plans/cloudflare-setup-in-app D16). Whether
+// it can run, and which ffmpeg it uses, is decided once in transcription-setup.ts (ffmpeg: the one
+// set in Settings, else the one that ships with the app). Runs one job at a time, stores small
 // transcript JSON beside the Run, and keeps renderer errors human-readable rather than leaking
 // Python/ffmpeg stack noise.
 
@@ -12,9 +14,11 @@ import { basename, dirname, join } from 'path'
 import { spawn, type ChildProcess } from 'child_process'
 import { existingSegmentPaths, localRecordingPath, sessionJsonPath, transcriptPath as transcriptPathFor, type RecordingPath } from './recording-paths'
 import { silencesBetween, transcodeArgs } from './transcode-args'
+import { childEnvWithFfmpegDir, type FfmpegResolution } from './ffmpeg-path'
+import { transcriptionActionMessage, type TranscriptionRow } from '../shared/transcription-status'
 
-// Empty by default — the user sets these in Settings -> Transcription. Until then
-// humanEngineError() surfaces a friendly "configure the engine" prompt instead of running.
+// Empty by default — the person (or their agent, resources/agent-setup/transcription) sets these in
+// Settings -> Transcription. Until then a transcription action says where to set it up instead of running.
 export const DEFAULT_TRANSCRIPTION_PYTHON = ''
 export const DEFAULT_TRANSCRIPTION_SCRIPT = ''
 
@@ -35,6 +39,8 @@ export interface TranscriptionDeps {
   userDataDir: () => string // app.getPath('userData')
   vaultRoot: () => string | null // the current vault's root (vault registry)
   config: () => TranscriptionConfig // Settings -> Transcription, with defaults expanded
+  // The Transcription row and the ffmpeg to use, for these settings (transcription-setup.ts).
+  readiness: () => { row: TranscriptionRow; ffmpeg: FfmpegResolution }
   testMode?: () => boolean // TW_REC_TEST=1: deterministic fixture, no Python
 }
 
@@ -181,38 +187,14 @@ function spawnAndCollect(
   })
 }
 
-function humanEngineError(cfg: TranscriptionConfig): string | null {
-  if (!cfg.python || !existsSync(cfg.python)) return 'Set the transcription engine in Settings -> Transcription.'
-  if (!cfg.script || !existsSync(cfg.script)) return 'Set the transcription engine in Settings -> Transcription.'
-  return null
-}
-
-function resolveFfmpegPath(cfg: TranscriptionConfig): string {
-  const candidates = [
-    cfg.ffmpeg ?? '',
-    '/opt/homebrew/bin/ffmpeg',
-    '/usr/local/bin/ffmpeg',
-    '/usr/bin/ffmpeg'
-  ].map((p) => p.trim()).filter(Boolean)
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate
-  }
-  return 'ffmpeg'
-}
-
-function childEnvWithFfmpegPath(ffmpegPath: string): NodeJS.ProcessEnv | undefined {
-  if (ffmpegPath === 'ffmpeg') return undefined
-  return { ...process.env, PATH: `${dirname(ffmpegPath)}:${process.env.PATH ?? ''}` }
-}
-
 function humanProcessError(prefix: string, result: { error: string; stderr: string }): string {
   const detail = result.stderr.trim().split(/\r?\n/).filter(Boolean).slice(-1)[0] || result.error
   return `${prefix}: ${detail}`
 }
 
 function humanFfmpegError(result: { error: string; stderr: string }): string {
-  if (/ENOENT|spawn ffmpeg/i.test(result.error)) {
-    return 'Set the ffmpeg path in Settings -> Transcription.'
+  if (/ENOENT|EACCES|spawn/i.test(result.error)) {
+    return 'ffmpeg could not be started. Check it in Settings → Transcription.'
   }
   return humanProcessError('ffmpeg audio conversion failed', result)
 }
@@ -262,8 +244,10 @@ export function registerTranscriptionIpc(deps: TranscriptionDeps): void {
       }
 
       const cfg = deps.config()
-      const engineError = humanEngineError(cfg)
-      if (engineError) return { ok: false, error: engineError }
+      const ready = deps.readiness()
+      const refusal = transcriptionActionMessage(ready.row)
+      if (refusal || !ready.ffmpeg.found) return { ok: false, error: refusal ?? transcriptionActionMessage({ ...ready.row, state: 'ffmpeg-not-found' }) }
+      const ffmpegPath = ready.ffmpeg.path
 
       const audio = audioPath(deps, sid)
       if (!audio.ok) return { ok: false, error: audio.error }
@@ -280,8 +264,7 @@ export function registerTranscriptionIpc(deps: TranscriptionDeps): void {
       activeJob.tempPaths.push(wavPath, srtPath)
 
       emitProgress(win, sid, sources.length > 1 ? `Joining ${sources.length} audio segments into one WAV for Parakeet.` : 'Converting WebM audio to WAV for Parakeet.')
-      const ffmpegPath = resolveFfmpegPath(cfg)
-      const childEnv = childEnvWithFfmpegPath(ffmpegPath)
+      const childEnv = childEnvWithFfmpegDir(ffmpegPath)
       const ffmpeg = await spawnAndCollect(ffmpegPath, transcodeArgs(sources.length ? sources : [sourceAudio], silences, wavPath), win, sid, 'ffmpeg', childEnv)
       if (!ffmpeg.ok) {
         if (ffmpeg.error === 'cancelled') return { ok: false, error: 'cancelled' }

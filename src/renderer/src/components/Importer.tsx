@@ -35,6 +35,7 @@ import type {
   ImporterSettings
 } from '../../../shared/importer'
 import { DEFAULT_IMPORTER_SETTINGS, isFlaggedImportStatus } from '../../../shared/importer'
+import { PPT_EXTRACTOR_BUTTON, PPT_EXTRACTOR_POINTER, PPT_EXTRACTOR_URL, SLIDE_PICTURES_LABEL, rendererNotice } from '../../../shared/importer-renderer-notice'
 import {
   appendImportSources,
   effectiveImportDestination,
@@ -52,6 +53,7 @@ import {
 import { moveSelection, visibleSlides } from './importerModel'
 import '../importer.css'
 import '../importer-batch.css'
+import { commandRan } from '../commands/command-ran'
 
 type Draft = { title: string; layout: ImportLayout; representation: ImportRepresentation; markdown: string }
 
@@ -113,6 +115,7 @@ export default function Importer({
   const [slideRange, setSlideRange] = useState('')
   const [settings, setSettings] = useState<ImporterSettings>(DEFAULT_IMPORTER_SETTINGS)
   const [capabilities, setCapabilities] = useState<{ available: boolean; platform: string; renderer: ImportRendererRecord } | null>(null)
+  const rendererInfo = rendererNotice(capabilities?.renderer)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -317,6 +320,7 @@ export default function Importer({
     try {
       const next = await window.tw.importer.updateSlide(detail.manifest.id, selectedSlide.slideNumber, draft)
       setDetail(next)
+      commandRan('importer.apply')
       await reloadRuns()
     } finally {
       setBusy(false)
@@ -328,6 +332,7 @@ export default function Importer({
     const next = await window.tw.importer.resetSlide(detail.manifest.id, selectedSlide.slideNumber)
     setDetail(next)
     setDraft(draftOf(next.slides.find((slide) => slide.slideNumber === selectedSlide.slideNumber)!))
+    commandRan('importer.reset')
   }, [detail, selectedSlide])
 
   const preparePack = useCallback(async (): Promise<void> => {
@@ -372,16 +377,17 @@ export default function Importer({
       if (event.metaKey && key === 'enter') { event.preventDefault(); void applyDraft(); return }
       if (editing) return
       if (event.key === 'Escape') { event.preventDefault(); helpOpen ? setHelpOpen(false) : onClose(); return }
-      if (event.metaKey && key === 'f') { event.preventDefault(); searchRef.current?.focus(); return }
+      if (event.metaKey && key === 'f') { event.preventDefault(); searchRef.current?.focus(); commandRan('importer.search'); return }
       if (event.metaKey && ['1', '2', '3'].includes(event.key)) {
         event.preventDefault()
         if (event.key === '1') onShowStudio()
         else if (event.key === '2') onShowHistory()
+        commandRan('importer.views')
         return
       }
       if (event.altKey && key === 'r') { event.preventDefault(); void resetDraft(); return }
-      if (key === '?') { event.preventDefault(); setHelpOpen(true); return }
-      if (key === 'f') { event.preventDefault(); setFilter((value) => value === 'flagged' ? 'all' : 'flagged'); return }
+      if (key === '?') { event.preventDefault(); setHelpOpen(true); commandRan('importer.help'); return }
+      if (key === 'f') { event.preventDefault(); setFilter((value) => value === 'flagged' ? 'all' : 'flagged'); commandRan('importer.flagged'); return }
       if ((key === 'j' || key === 'k') && visible.length) {
         event.preventDefault()
         setSelectedNumber(moveSelection(visible, selectedNumber, key === 'j' ? 1 : -1))
@@ -414,7 +420,13 @@ export default function Importer({
             <Toggle label="Preserve speaker notes" checked={settings.preserveNotes} onChange={(value) => void saveSettings({ preserveNotes: value })} />
             <Toggle label="Extract embedded media" checked={settings.extractMedia} onChange={(value) => void saveSettings({ extractMedia: value })} />
             <label>Fallback policy<select value={settings.fallbackPolicy} onChange={(event) => void saveSettings({ fallbackPolicy: event.target.value as ImporterSettings['fallbackPolicy'] })}><option value="uncertain">Only uncertain slides</option><option value="always">Always retain fallback</option></select></label>
-            <div className="twi-health"><b>Renderer</b><span className={capabilities?.renderer.status === 'ready' ? 'ready' : 'blocked'}>{capabilities?.renderer.status ?? 'checking'}</span><small>{capabilities?.renderer.officePath ?? 'LibreOffice not found'}</small><small>{capabilities?.renderer.rasterPath ?? 'pdftoppm not found'}</small></div>
+            <div className="twi-health"><b>{SLIDE_PICTURES_LABEL}</b><span className={rendererInfo.ready ? 'ready' : 'blocked'}>{rendererInfo.statusLabel}</span>{rendererInfo.paths.map((path) => <small key={path}>{path}</small>)}</div>
+            {rendererInfo.showPointer ? (
+              <div className="twi-extractor" data-testid="importer-extractor-pointer">
+                <small>{PPT_EXTRACTOR_POINTER}</small>
+                <button className="twi-link" onClick={() => void window.tw.shell.openExternal(PPT_EXTRACTOR_URL)}>{PPT_EXTRACTOR_BUTTON}</button>
+              </div>
+            ) : null}
             <button className="twi-link" onClick={() => void saveSettings(DEFAULT_IMPORTER_SETTINGS)}>Restore defaults</button>
           </div>
         ) : null}

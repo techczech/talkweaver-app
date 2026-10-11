@@ -19,6 +19,7 @@ import { diffWords, type DiffToken } from '../lib/wordDiff'
 import { buildSlideIndex, createRequestGeneration, createSurfaceRequestGeneration, mergeNoteSources, seekLoadedAudio } from '../lib/talkTextRuntime'
 import { runAudioSummary } from '../../../shared/run-audio'
 import '../talktext.css'
+import { commandRan } from '../commands/command-ran'
 
 type Mode = 'notes' | 'script'
 type Treatment = 'raw' | 'cleaned'
@@ -747,6 +748,7 @@ export default function TalkText({
     try {
       await navigator.clipboard.writeText(text)
       flash('Copied to the clipboard')
+      commandRan('talktext.copy')
     } catch {
       flash('Clipboard access was unavailable. Use Save… instead.')
     }
@@ -766,8 +768,13 @@ export default function TalkText({
     flash('Saved to Downloads')
   }, [exportText, format, model, mode, flash])
 
+  // The mode keys and the help key report to the Guide from the key and from the button alike.
+  const openHelp = useCallback((): void => { setHelpOpen(true); commandRan('talktext.help') }, [])
+  const chooseMode = useCallback((next: 'notes' | 'script'): void => { setMode(next); commandRan(next === 'notes' ? 'talktext.notes' : 'talktext.script') }, [])
+
   const openRewrite = useCallback((): void => {
     setRewriteOpen(true)
+    commandRan('talktext.rewrite')
     setPackBusy(true)
     setPackError(false)
     setPackDir(null)
@@ -1011,9 +1018,9 @@ export default function TalkText({
         else onClose()
         return
       }
-      if (e.key === '?') { e.preventDefault(); setHelpOpen(true) }
-      else if (e.key.toLowerCase() === 'n') { e.preventDefault(); setMode('notes') }
-      else if (e.key.toLowerCase() === 's') { e.preventDefault(); setMode('script') }
+      if (e.key === '?') { e.preventDefault(); openHelp() }
+      else if (e.key.toLowerCase() === 'n') { e.preventDefault(); chooseMode('notes') }
+      else if (e.key.toLowerCase() === 's') { e.preventDefault(); chooseMode('script') }
       else if (e.key.toLowerCase() === 'r') { e.preventDefault(); openRewrite() }
       else if (e.key.toLowerCase() === 'c') { e.preventDefault(); void copyText() }
       else if (e.key === ' ' && mode === 'script' && !(e.target instanceof HTMLButtonElement)) { e.preventDefault(); togglePlay() }
@@ -1025,7 +1032,7 @@ export default function TalkText({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [isOpen, cleanOpen, rewriteOpen, helpOpen, pickerOpen, formatOpen, onClose, openRewrite, copyText, stepSlide, navigateToSlide, mode, togglePlay, seekToMs])
+  }, [isOpen, cleanOpen, rewriteOpen, helpOpen, pickerOpen, formatOpen, onClose, openRewrite, copyText, stepSlide, navigateToSlide, mode, togglePlay, seekToMs, openHelp, chooseMode])
 
   if (!isOpen) return null
 
@@ -1040,7 +1047,7 @@ export default function TalkText({
         <button className="tt-iconbtn tt-back" onClick={() => onBackToStudio(active?.id)} title="Back to Studio"><ArrowLeft className="lt-icon" /></button>
         <div className="tt-brand"><span className="tt-wordmark">TalkWeaver</span><span className="tt-room">Manage notes</span></div>
         <span className="tt-spacer" />
-        <button className="tt-iconbtn tt-help" onClick={() => setHelpOpen(true)} aria-label="Keyboard cheat-sheet" title="Keyboard cheat-sheet (?)">?</button>
+        <button className="tt-iconbtn tt-help" onClick={openHelp} aria-label="Keyboard cheat-sheet" title="Keyboard cheat-sheet (?)">?</button>
         <button className="tt-iconbtn" onClick={onClose} aria-label="Close Manage notes" title="Close (Esc)"><X className="lt-icon" /></button>
       </header>
 
@@ -1061,8 +1068,8 @@ export default function TalkText({
             ) : null}
           </div>
           <div className="tt-seg" role="group" aria-label="Mode">
-            <button className={mode === 'notes' ? 'on' : ''} onClick={() => setMode('notes')}><BookOpen className="lt-icon" />Notes</button>
-            <button className={mode === 'script' ? 'on' : ''} onClick={() => setMode('script')}><MonitorPlay className="lt-icon" />Script</button>
+            <button className={mode === 'notes' ? 'on' : ''} onClick={() => chooseMode('notes')}><BookOpen className="lt-icon" />Notes</button>
+            <button className={mode === 'script' ? 'on' : ''} onClick={() => chooseMode('script')}><MonitorPlay className="lt-icon" />Script</button>
           </div>
           {mode === 'notes' ? <><span className="tt-partstat" title="Notes are written part by part; you approve each">{approvedCount > 0 ? <span className="ps-ok">{approvedCount} approved</span> : null}{approvedCount > 0 && reviewCount > 0 ? <span className="ps-sep">·</span> : null}{reviewCount > 0 ? <span className="ps-draft">{reviewCount} in review</span> : null}{approvedCount === 0 && reviewCount === 0 ? <span>No parts yet</span> : null}</span><button className="tt-btn" onClick={openRewrite}><Wand2 className="lt-icon" />Rewrite…</button></> : (
             <><div className="tt-seg" role="group" aria-label="Transcript treatment"><button className={treatment === 'raw' ? 'on' : ''} onClick={() => setTreatment('raw')}>Raw</button><button className={treatment === 'cleaned' ? 'on' : ''} onClick={() => setTreatment('cleaned')}>Cleaned</button></div><span className="tt-partstat" title="Approved agent-cleaned slides"><span className={cleanedCount > 0 ? 'ps-ok' : ''}>{cleanedCount}/{totalSlideCount} cleaned</span>{cleanedSlides.some((slide) => !slide.approved) ? <><span className="ps-sep">·</span><span className="ps-draft">review ready</span></> : null}</span><button className="tt-btn" onClick={openClean}><Sparkles className="lt-icon" />Clean…</button></>

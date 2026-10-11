@@ -132,6 +132,22 @@ export const TRIGGER_DICTIONARY = {
     "key": "layout",
     "value": "trace"
   },
+  "chat": {
+    "key": "layout",
+    "value": "chat"
+  },
+  "chat-lanes": {
+    "key": "layout",
+    "value": "chat-lanes"
+  },
+  "terminal": {
+    "key": "layout",
+    "value": "terminal"
+  },
+  "terminal-agent": {
+    "key": "layout",
+    "value": "terminal-agent"
+  },
   "code": {
     "key": "layout",
     "value": "code"
@@ -518,6 +534,26 @@ export const VALUE_TRIGGER_DICTIONARY = {
     "loop",
     "branch"
   ],
+  "sidebar": [
+    "on",
+    "off"
+  ],
+  "open": [
+    "none",
+    "all"
+  ],
+  "reveal": [
+    "all",
+    "steps"
+  ],
+  "stream": [
+    "off",
+    "on"
+  ],
+  "size": [
+    "compact",
+    "large"
+  ],
   "media": [
     "left",
     "right"
@@ -621,9 +657,6 @@ export const VALUE_TRIGGER_DICTIONARY = {
     "on",
     "off"
   ],
-  "reveal": [
-    "steps"
-  ],
   "poll": [
     "single",
     "multiple",
@@ -692,6 +725,10 @@ export const VALUE_TRIGGER_DICTIONARY = {
     "cta-screenshots",
     "trace",
     "trace-dialogue",
+    "chat",
+    "chat-lanes",
+    "terminal",
+    "terminal-agent",
     "code",
     "table",
     "image-quote",
@@ -768,6 +805,20 @@ export const OPEN_PATTERN_TOKENS = [
     "pattern": ".+",
     "description": "Provenance of a cloned slide.",
     "justification": "System provenance for cloned slides."
+  },
+  {
+    "key": "model",
+    "form": "equals",
+    "pattern": ".+",
+    "description": "Model name shown by the chat and agent-terminal layouts.",
+    "justification": "Free display text for the simulated model picker or status line."
+  },
+  {
+    "key": "window-title",
+    "form": "equals",
+    "pattern": ".+",
+    "description": "Title-bar text of the terminal layouts.",
+    "justification": "Free display text for the simulated terminal window."
   },
   {
     "key": "icon",
@@ -923,6 +974,8 @@ export const TITLE_REGIME_BY_LAYOUT = {
   "cards": "top",
   "carousel": "top",
   "chart": "top",
+  "chat": "hidden",
+  "chat-lanes": "hidden",
   "closing": "own",
   "code": "top",
   "columns": "top",
@@ -961,6 +1014,8 @@ export const TITLE_REGIME_BY_LAYOUT = {
   "subsection": "own",
   "system-map": "top",
   "table": "top",
+  "terminal": "hidden",
+  "terminal-agent": "hidden",
   "timeline": "top",
   "timeline-visual": "top",
   "timetable": "top",

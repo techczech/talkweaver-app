@@ -7,8 +7,8 @@
  * textContent, all of that reached the audience raw (found 2026-09-28).
  *
  * One left-to-right pass splits a line into typed tokens: text, code span, backslash escape,
- * `[QR: …]`, Markdown link, bare URL, and dropped authoring tokens. Each non-text token is
- * rendered ONCE, from its own raw source fields, into a finished fragment. An href is only ever
+ * key cap (`<kbd>…</kbd>`), `[QR: …]`, Markdown link, bare URL, and dropped authoring tokens.
+ * Each non-text token is rendered ONCE, from its own raw source fields, into a finished fragment. An href is only ever
  * built from a link/URL/QR token's raw target text, validated by isPhoneHref, so no rendered
  * fragment can ever be placed inside an attribute value. (The previous multi-pass design held
  * rendered QR anchors as placeholders that a later link pass put inside href="…"; restoring them
@@ -29,11 +29,13 @@
  * backtick, damaging snake_case words and code.
  */
 import { escapeHtml } from './00-html.mjs'
-import { isSafeLinkUrl, renderEmphasisEscaped } from './00-inline-render.mjs'
+import { isSafeLinkUrl, keyCapHtml, renderEmphasisEscaped } from './00-inline-render.mjs'
 import {
   bareUrlAt,
   codeSpanAt,
+  hasLinkSyntax,
   indexCodeSpanClosers,
+  keyCapAt,
   markdownLinkAt,
   replaceInlineMarks
 } from './00-inline-protection.mjs'
@@ -71,7 +73,7 @@ function anchor(url, labelHtml) {
  * construct that starts there wins: escape, code span, QR directive, Markdown link, bare URL,
  * authoring brace token; otherwise the character is text.
  */
-function tokenize(source, { listItem }) {
+function tokenize(source, { listItem, keyCaps }) {
   const tokens = []
   const closers = indexCodeSpanClosers(source)
   let text = ''
@@ -96,6 +98,17 @@ function tokenize(source, { listItem }) {
       push({ kind: 'code', content: code.content })
       cursor = code.to
       continue
+    }
+    // Ticket 05: `<kbd>…</kbd>` (the one inline tag outline text may carry, KEY_CAP_SOURCE) is a
+    // key cap token, rendered once into constant markup with escaped text. Not on a line that
+    // carries link syntax (review round 1): there it stays text, as on the slide.
+    if (ch === '<' && keyCaps) {
+      const cap = keyCapAt(source, cursor)
+      if (cap) {
+        push({ kind: 'kbd', content: cap.content })
+        cursor = cap.to
+        continue
+      }
     }
     if (ch === '[') {
       const qr = source.slice(cursor).match(QR_AT_RE)
@@ -144,20 +157,24 @@ function tokenize(source, { listItem }) {
  *   QR tokens as their text with no anchor; listItem: the line is a list item's (last) text, so
  *   a trailing `{NAME}` icon token is removed as the lexer removes it
  */
-function renderLine(text, { links = true, listItem = false } = {}) {
+function renderLine(text, { links = true, listItem = false, keyCaps } = {}) {
   const source = String(text ?? '').replace(/\ufffc/g, '\ufffd')
+  // The slide's rule (keyCapRanges): no key caps on a run that carries link syntax. A link label
+  // inherits its line's answer, which is always no.
+  const caps = keyCaps ?? !hasLinkSyntax(source)
   const fragments = []
   let line = ''
   const atom = (html) => {
     fragments.push(html)
     line += ATOM
   }
-  for (const token of tokenize(source, { listItem })) {
+  for (const token of tokenize(source, { listItem, keyCaps: caps })) {
     if (token.kind === 'text') line += escapeHtml(token.value)
     else if (token.kind === 'escape') atom(escapeHtml(token.ch))
     else if (token.kind === 'code') atom(`<code>${escapeHtml(token.content)}</code>`)
+    else if (token.kind === 'kbd') atom(keyCapHtml(token.content))
     else if (token.kind === 'link') {
-      const labelHtml = renderLine(token.label, { links: false })
+      const labelHtml = renderLine(token.label, { links: false, keyCaps: false })
       atom(links ? anchor(token.url, labelHtml) : labelHtml)
     } else if (token.kind === 'url') {
       atom(links ? anchor(token.url, escapeHtml(token.url)) : escapeHtml(token.url))

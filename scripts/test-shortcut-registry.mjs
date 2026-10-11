@@ -156,7 +156,8 @@ assert.deepEqual(
   SHORTCUT_REGISTRY.find((entry) => entry.id === 'pathway.list'),
   {
     id: 'pathway.list', keys: 'L', codes: ['l'], scope: 'pathway', label: 'List view',
-    explanation: 'Shows the pathway as a numbered running order with slide previews', group: 'View'
+    explanation: 'Shows the pathway as a numbered running order with slide previews', group: 'View',
+    taskGroup: 'Shape the talk', subgroup: 'Pathways', surface: null
   },
   'Pathway List command uses the locked L binding and description'
 )
@@ -164,7 +165,8 @@ assert.deepEqual(
   SHORTCUT_REGISTRY.find((entry) => entry.id === 'pathway.previews'),
   {
     id: 'pathway.previews', keys: 'P', codes: ['p'], scope: 'pathway', label: 'Toggle previews',
-    explanation: 'Show or hide slide previews in List and Matrix.', group: 'View'
+    explanation: 'Show or hide slide previews in List and Matrix.', group: 'View',
+    taskGroup: 'Shape the talk', subgroup: 'Pathways', surface: null
   },
   'Pathway Previews command uses the free pathway-scope P binding'
 )
@@ -396,6 +398,7 @@ const SCAN_IGNORE = new Map([
   ['src/renderer/src/components/actionBar/ActionBar.tsx', 'Escape only dismisses the visible tooltip or overflow menu; no shortcut is bound'],
   ['src/renderer/src/components/AbstractPanel.tsx', 'Escape-only modal dismissal and Enter on a native form control'],
   ['src/renderer/src/components/DeckDesignPanel.tsx', 'Escape-only modal dismissal'],
+  ['src/renderer/src/components/RemoveExampleConfirm.tsx', 'Escape-only dismissal of the Remove the example vault? confirmation (onboarding ticket 12, modal, local); no shortcut is bound'],
   ['src/renderer/src/components/InspectorBoard.tsx', 'The Board section’s fields keep their own typing (Enter stays in the one-line instructions; ↑ ↓ on a column’s handle moves that column, ADR-0032 round-3 A2); ⌥↑/⌥↓ still reach the Inspector’s slide navigation; no shortcut is bound'],
   ['src/renderer/src/components/ReactionsControl.tsx', 'Enter on the native custom-labels field commits it (ticket 04); no shortcut is bound'],
   ['src/renderer/src/components/EmbedCheckPanel.tsx', 'Escape-only panel dismissal'],
@@ -403,6 +406,7 @@ const SCAN_IGNORE = new Map([
   ['src/renderer/src/extensions/imageFullScreenPreview.ts', 'Escape-only dismissal of the full-screen image view; no shortcut is bound'],
   ['src/renderer/src/components/ImageMetaPanel.tsx', 'Escape-only panel dismissal'],
   ['src/renderer/src/components/KeyboardHelp.tsx', 'Escape only closes the shortcut dialog; the opening command is app.help'],
+  ['src/renderer/src/components/ActionsHerePanel.tsx', '↑ ↓ Enter and Escape inside the open Actions here panel (modal, local menu keys, as the row menus); the opening command is app.context-menu'],
   ['src/renderer/src/components/LayoutDoctorPanel.tsx', 'Escape-only panel dismissal'],
   ['src/renderer/src/components/NewTalkDialog.tsx', 'Escape dismissal and native form Enter submission'],
   ['src/renderer/src/components/OutlineDiskChangeBar.tsx', 'Escape-only dismissal of the changed-on-disk sheet (answers Stay here); no shortcut is bound'],
@@ -415,8 +419,10 @@ const SCAN_IGNORE = new Map([
   ['src/renderer/src/components/PlanRunSheet.tsx', 'Escape dismissal, Enter in the event field and Cmd+Enter to save in the plan sheet (modal, local)'],
   ['src/renderer/src/components/RunStatusChips.tsx', 'Escape-only dismissal of the Run chip popover'],
   ['src/renderer/src/components/HistoryRunBoard.tsx', 'Escape-only dismissal of the Copy as Markdown popover and the share-link dialog (feedback-boards ticket 06); no shortcut is bound'],
+  ['src/preload/present-live-setup.ts', 'A key on the Going live prompt\'s button only blurs the button, so Space and Enter go on to the slides (ticket 05); no shortcut is bound'],
   ['src/preload/present-end-live-boards.ts', 'Escape cancels and Enter confirms the End live board question (D20, modal, local); no app shortcut is bound'],
   ['src/renderer/src/components/ShareSheet.tsx', 'Escape-only share-sheet dismissal (share for comments)'],
+  ['src/renderer/src/components/PublishNotReadySheet.tsx', 'Escape-only dismissal of the publish "not ready" sheet'],
   ['src/renderer/src/extensions/frontmatterTable.ts', 'Escape-only dismissal of the metadata row\'s "?" help block (T27); no shortcut is bound'],
   ['src/renderer/src/components/WhereUsedPanel.tsx', 'Escape-only panel dismissal'],
   ['src/renderer/src/keymap/store.ts', 'keymap.of appears only in an explanatory comment; bindings are created from EDITOR_COMMANDS'],
@@ -628,6 +634,7 @@ const PRESENTER_KEY_CLAIMS = [
   ['present-live-bridge', /event\.key === 'Escape' && !panel\.hidden/, ['presenter.close']],
   ['present-live-bridge', /event\.key === 'g' \|\| event\.key === 'G'/, ['presenter.live']],
   ['present-edit-bridge', /e\.key !== 'e' && e\.key !== 'E'/, ['presenter.edit']],
+  // The Guide column has no key (owner check 10 Oct): its button in the bottom bar and the palette entry open it.
   // F5 opens the audience view; ⇧F5 refreshes (the routes themselves: deckWindowKeyTruth below).
   // The board panel: ⌘Z undoes the last board change while it shows; ⌥↵ picks up and drops; Esc
   // closes its menu, puts a held card down or leaves full screen; ↵ / Space on a card open its menu
@@ -948,7 +955,10 @@ const presenterScope = SHORTCUT_REGISTRY.filter((entry) => entry.scope === 'pres
 for (const [id, keys] of [['presenter.record', '⇧R'], ['presenter.record-pause', '⇧P'], ['presenter.save-run-as', 'L'], ['presenter.save-run', '↵'], ['presenter.edit', '⌘E'], ['presenter.refresh', '⌘R / ⇧F5'], ['presenter.next', '→ Space ↓ PgDn ↵']]) {
   assert.equal(presenterScope.find((entry) => entry.id === id)?.keys, keys, `${id} is registered in the presenter scope as ${keys}`)
 }
-assert.equal(presenterScope.some((entry) => entry.keys === 'N' || entry.keys === 'C'), false, 'the presenter scope does not list N or C (they do nothing in the presenter)')
+assert.equal(presenterScope.some((entry) => entry.keys === 'N'), false, 'the presenter scope does not list N (it does nothing in the presenter)')
+assert.deepEqual(presenterScope.filter((entry) => entry.keys === 'C').map((entry) => entry.id), [], 'C is bound to nothing in the presenter (the Guide has no key since the owner check of 10 Oct)')
+assert.equal(presenterScope.some((entry) => entry.id === 'presenter.guide'), false, 'no presenter.guide key row')
+assert.equal(readFileSync(new URL('../src/preload/present-guide.ts', import.meta.url), 'utf8').includes("addEventListener('keydown'"), false, 'the Guide preload binds no key')
 const { PRESENTER_CONTROLS: presenterControls } = await import(new URL('../src/shared/presenter-controls.ts', import.meta.url))
 assert.equal(presenterControls.some((control) => 'unregisteredKeys' in control), false, 'every presenter control takes its keys from the registry (no unregisteredKeys)')
 

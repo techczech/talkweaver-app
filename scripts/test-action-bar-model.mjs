@@ -82,7 +82,9 @@ for (const id of seven) {
   assert(command?.palette.visible, `${id}: visible in the command palette`)
   assert(SHORTCUT_REGISTRY.some((entry) => entry.id === command.shortcutId), `${id}: represented in the shortcut sheet`)
 }
-assert(readFileSync(new URL('../src/renderer/src/components/KeyboardHelp.tsx', import.meta.url), 'utf8').includes("SHORTCUT_REGISTRY.filter((shortcut) => shortcut.scope !== 'presenter')"), 'the app shortcut sheet renders the registry rows')
+// The sheet is generated from the registries (onboarding 0.38.1 ticket 04: shared/keyboard-sheet.ts).
+assert(readFileSync(new URL('../src/renderer/src/components/KeyboardHelp.tsx', import.meta.url), 'utf8').includes('keyboardSheet('), 'the app shortcut sheet renders from the generated sheet data')
+assert(readFileSync(new URL('../src/shared/keyboard-sheet.ts', import.meta.url), 'utf8').includes("registry.filter((command) => command.scope !== 'presenter')"), 'the app shortcut sheet renders the registry rows')
 
 // -- An unknown id is dropped from the render but kept in storage ------------------------------
 const stored = ['layout', 'no-such-command', 'image']

@@ -13,6 +13,7 @@
 // The kind of run is chosen when saving (the save toast's "Save as…", Change, or L), never when a
 // recording starts (ADR-0031 §3).
 
+import { reportGuideCommand } from './present-guide'
 import { showPresentationCloseOffer } from './present-close-flow'
 import { RECORDING_OFFER_VISIBLE_MS } from './present-recording-offer'
 import { recView, fmtClock, kindLabel, type RecButton, type RunKind } from './present-rec-view'
@@ -539,6 +540,7 @@ export function mountRecUi(controller: RecorderController): void {
       e.preventDefault()
       e.stopImmediatePropagation()
       void saveWithPicker()
+      reportGuideCommand('presenter.save-run-as')
       return
     }
     if (saveToast.classList.contains('show') && e.key === 'Enter') {
@@ -546,11 +548,12 @@ export function mountRecUi(controller: RecorderController): void {
       e.stopImmediatePropagation()
       hideSaveToast()
       void saveRun('delivery')
+      reportGuideCommand('presenter.save-run')
       return
     }
     if (!e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return
-    if (e.key === 'R' || e.key === 'r') { e.preventDefault(); e.stopImmediatePropagation(); hideStartToast(); toggleRecord() }
-    else if (e.key === 'P' || e.key === 'p') { e.preventDefault(); e.stopImmediatePropagation(); togglePause() }
+    if (e.key === 'R' || e.key === 'r') { e.preventDefault(); e.stopImmediatePropagation(); hideStartToast(); toggleRecord(); reportGuideCommand('presenter.record') }
+    else if (e.key === 'P' || e.key === 'p') { e.preventDefault(); e.stopImmediatePropagation(); togglePause(); reportGuideCommand('presenter.record-pause') }
   }, true)
 
   // The ? sheet's Recording rows come from the shortcut registry (presenter.record,

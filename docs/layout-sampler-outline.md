@@ -671,6 +671,70 @@ User: Yes, and delete the duplicates.
 Agent: Done. 212 duplicates removed, structure written to a manifest you can undo.
 ```
 
+### Refund policy (AI chat)
+{chat model="Example model"}
+
+```chat
+user: What changed in our refund policy last month?
+model-reasoning (4s): They want last month’s changes. I should check the current refund policy and its change log before answering.
+context-retrieval:
+  Refund Policy v4.2 (September 2026)
+  Policy change log, September 2026
+tool-call: search_policy_docs {"topic": "refunds", "since": "2026-09-01"}
+tool-results:
+  Refund window cut from 30 to 14 days
+  Digital goods: refundable only if unused
+  Refunds over £200 need manager sign-off
+bot: Last month the refund window shrank from 30 to 14 days, and digital goods are now refundable only if unused. Refunds over £200 also need manager sign-off.
+```
+
+### Refund policy (AI chat, behind the scenes)
+{chat-lanes model="Example model"}
+
+```chat
+user: What changed in our refund policy last month?
+model-reasoning (4s): They want last month’s changes. I should check the current refund policy and its change log before answering.
+context-retrieval:
+  Refund Policy v4.2 (September 2026)
+  Policy change log, September 2026
+tool-call: search_policy_docs {"topic": "refunds", "since": "2026-09-01"}
+tool-results:
+  Refund window cut from 30 to 14 days
+  Digital goods: refundable only if unused
+  Refunds over £200 need manager sign-off
+bot: Last month the refund window shrank from 30 to 14 days, and digital goods are now refundable only if unused. Refunds over £200 also need manager sign-off.
+```
+
+### A shell session (terminal)
+{terminal window-title="policy — shell"}
+
+```terminal
+~ $ cd policy
+~/policy $ ls
+change-log.md  refund-policy.md  shipping-policy.md
+$ git log --oneline -3
+a41c9e2 Cut refund window to 14 days
+7d03b58 Digital goods: unused only
+e90f1aa Add manager sign-off over £200
+```
+
+### Refund policy (agent in a terminal)
+{terminal-agent window-title="agent-cli · example-model · ~/policy" model="example-model"}
+
+```terminal
+user: What changed in our refund policy last month?
+model-reasoning (4s): check the policy and its change log first
+context-retrieval:
+  Refund Policy v4.2 (September 2026)
+  Policy change log, September 2026
+tool-call: search_policy_docs {"topic": "refunds", "since": "2026-09-01"}
+tool-results:
+  Refund window cut from 30 to 14 days
+  Digital goods: refundable only if unused
+  Refunds over £200 need manager sign-off
+bot: Last month the refund window shrank from 30 to 14 days, and digital goods are now refundable only if unused. Refunds over £200 also need manager sign-off.
+```
+
 ### Code block (ELEMENT, not slide layout — ADR-0006)
 {code}
 

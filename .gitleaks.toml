@@ -27,3 +27,9 @@ regexes = ['''^curve=sigmoid$''']
 [[allowlists]]
 regexTarget = "line"
 regexes = ['''"(?:type-floor-key-value|t18-list-keyvalue)": "[A-Za-z0-9+/=]{1000,}"''']
+
+# The NAME of a retired config key (it held a Bitwarden secret's id, never a secret). The
+# recording storage migration reads the key once and drops it, so the name appears as a string.
+[[allowlists]]
+regexTarget = "secret"
+regexes = ['''^recordingR2BwsSecretId$''']

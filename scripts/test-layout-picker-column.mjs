@@ -65,7 +65,7 @@ const move = (dir) => ({ type: 'move', dir })
 const five = buildPickerCatalog({ outline, slide: 'five' })
 
 test('the catalog offers the 71 picker layouts, none of them components, each with a when-it-fits line', () => {
-  assert.equal(five.entries.length, 71)
+  assert.equal(five.entries.length, 75)
   assert.ok(five.entries.every((entry) => entry.kind !== 'component' && entry.fits.length > 0 && entry.purpose))
 })
 
@@ -101,7 +101,7 @@ test('search reads aliases and the when-it-fits line, and every word must match'
   const byLine = searchPickerEntries(five.entries, 'equal weight').map((entry) => entry.name)
   assert.ok(byLine.includes('cards'))
   assert.deepEqual(searchPickerEntries(five.entries, 'cards xyz'), [])
-  assert.equal(searchPickerEntries(five.entries, '').length, 71)
+  assert.equal(searchPickerEntries(five.entries, '').length, 75)
 })
 
 test('empty box: Recent, Suggested and All layouts with five closed purposes (S1)', () => {
@@ -110,7 +110,7 @@ test('empty box: Recent, Suggested and All layouts with five closed purposes (S1
   const all = view.groups[2]
   assert.deepEqual(all.blocks.map((block) => block.header.purpose), ['Everyday', 'Structure', 'Diagrams', 'Modes', 'Specialised'])
   assert.ok(all.blocks.every((block) => block.rows.length === 0 && block.header.open === false))
-  assert.equal(all.caption, '71')
+  assert.equal(all.caption, '75')
   assert.equal(highlightedStop(view, initialPickerState()), null)
 })
 

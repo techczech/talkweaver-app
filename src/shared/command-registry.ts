@@ -8,6 +8,9 @@ import {
   objectInsertEntries,
   type LayoutDef
 } from './layout-registry/entries.ts'
+import { TASK_GROUPS, taskGroupFields, type TaskGroup, type TaskGroupFields } from './task-groups.ts'
+import { PRESENTER_PALETTE } from './presenter-palette.ts'
+import { placeDeclarationFor, type PlaceDeclaration } from './command-places.ts'
 
 // Renderer command surfaces already bundle LAYOUTS through their layout-registry consumers. Keep
 // this direct registry dependency until the C-D restructure can split it without duplicating truth.
@@ -40,7 +43,8 @@ export interface CommandToolbarPlacement {
   menuLabel?: string
 }
 
-export interface CommandDefinition {
+/** A command as declared; the task group and sub-group are added from the command map (task-groups.ts). */
+export interface CommandInput {
   id: string
   label: string
   scope: CommandScope
@@ -53,6 +57,13 @@ export interface CommandDefinition {
   }
   handlerId: string
 }
+
+/** Where Actions here and the status-bar chip offer the command (command-places.ts); null = undeclared. */
+export interface CommandPlaceFields {
+  places: PlaceDeclaration | null
+}
+
+export interface CommandDefinition extends CommandInput, TaskGroupFields, CommandPlaceFields {}
 
 const OBJECT_PALETTE_COMMAND_IDS = [
   'insert-object-table',
@@ -87,7 +98,7 @@ interface ObjectPaletteCommand {
 
 // The optional fields stay readable on every entry of the derived unions (an entry that omits `toolbar` or
 // `shortcutId` still has the property, typed optional).
-const command = <const T extends CommandDefinition>(definition: T): T & Partial<Pick<CommandDefinition, 'shortcutId' | 'toolbar'>> => definition
+const command = <const T extends CommandInput>(definition: T): T & Partial<Pick<CommandDefinition, 'shortcutId' | 'toolbar'>> => definition
 const objectPaletteCommandIds: ReadonlySet<string> = new Set(OBJECT_PALETTE_COMMAND_IDS)
 
 function objectPaletteCommandId(id: string): ObjectPaletteCommandId | null {
@@ -278,15 +289,27 @@ const PALETTE_COMMANDS = [
   // menu can open the palette too. Palette-hidden: the palette must not list itself.
   command({ id: 'app.command-palette', label: 'All commands…', scope: 'app', shortcutId: 'app.command-palette', menu: null, toolbar: { menu: 'tools', order: 45, icon: 'command' }, palette: { visible: false, keywords: [] }, handlerId: 'app.command-palette' }),
   command({ id: 'help', label: 'Keyboard shortcuts', scope: 'app', shortcutId: 'app.help', menu: null, toolbar: { menu: 'tools', order: 50, icon: 'keyboard' }, palette: { visible: true, keywords: ['help', 'keyboard', 'shortcuts'] }, handlerId: 'help' }),
-  command({ id: 'settings', label: 'Settings', scope: 'app', shortcutId: 'app.settings', menu: null, toolbar: { menu: 'tools', order: 40, icon: 'settings' }, palette: { visible: true, keywords: ['settings', 'preferences'] }, handlerId: 'settings' })
+  command({ id: 'settings', label: 'Settings', scope: 'app', shortcutId: 'app.settings', menu: null, toolbar: { menu: 'tools', order: 40, icon: 'settings' }, palette: { visible: true, keywords: ['settings', 'preferences'] }, handlerId: 'settings' }),
+  // Onboarding ticket 12: first of the three Get started rows (state 16b); it brings the removed example vault back.
+  command({ id: 'get-started-show-example', label: 'Get started: show the example vault again', scope: 'app', menu: null, palette: { visible: true, keywords: ['get started', 'example', 'example vault', 'restore', 'bring back', 'onboarding'] }, handlerId: 'example.restore' }),
+  // Onboarding ticket 07: the Guide's two palette rows (state 16b). No key, no menu, no toolbar placement.
+  command({ id: 'get-started-open-guide', label: 'Get started: open the Guide', scope: 'app', menu: null, palette: { visible: true, keywords: ['get started', 'guide', 'onboarding', 'learn', 'first steps', 'tour'] }, handlerId: 'guide.open' }),
+  command({ id: 'get-started-show-guide-button', label: 'Get started: show the Guide button', scope: 'app', menu: null, palette: { visible: true, keywords: ['get started', 'guide', 'button', 'sidebar', 'onboarding'] }, handlerId: 'guide.show-button' })
 ] as const
 
 export type PaletteCommandHandlerId = (typeof PALETTE_COMMANDS)[number]['handlerId']
 
+const withTaskGroup = <T extends { id: string }>(definition: T): T & TaskGroupFields & CommandPlaceFields => {
+  const fields = taskGroupFields(definition.id)
+  return { ...definition, ...fields, places: placeDeclarationFor(definition.id, fields.taskGroup, fields.surface) }
+}
+
+const STAMPED_PALETTE_COMMANDS = PALETTE_COMMANDS.map(withTaskGroup)
+
 const claimedShortcuts = new Set(PALETTE_COMMANDS.flatMap((entry) => entry.shortcutId ? [entry.shortcutId] : []))
 const shortcutOnlyCommands: CommandDefinition[] = SHORTCUT_REGISTRY
   .filter((shortcut) => !claimedShortcuts.has(shortcut.id))
-  .map((shortcut) => ({
+  .map((shortcut) => withTaskGroup({
     id: shortcut.id,
     label: shortcut.label,
     scope: shortcut.scope,
@@ -297,12 +320,78 @@ const shortcutOnlyCommands: CommandDefinition[] = SHORTCUT_REGISTRY
   }))
 
 export const COMMAND_REGISTRY: readonly CommandDefinition[] = [
-  ...PALETTE_COMMANDS,
+  ...STAMPED_PALETTE_COMMANDS,
   ...shortcutOnlyCommands
 ]
 
-export function paletteCommands(): readonly (typeof PALETTE_COMMANDS)[number][] {
-  return PALETTE_COMMANDS
+export function paletteCommands(): readonly (typeof STAMPED_PALETTE_COMMANDS)[number][] {
+  return STAMPED_PALETTE_COMMANDS
+}
+
+/**
+ * The commands the ⌘⇧P palette does not list, each with its reason (onboarding 01: the palette
+ * lists every command; this is the written exclusion list). A command is excluded when the palette
+ * cannot give it what it needs: a key that works inside a surface, a window of its own, a focused
+ * row, or the key's own context. scripts/test-task-groups.mjs fails when a command is neither
+ * listed nor here, or when an entry here is not a command.
+ */
+export const PALETTE_EXCLUSIONS: Readonly<Record<string, string>> = {
+  'app.command-palette': 'the palette does not list itself',
+  'app.context-menu': 'opens at the caret or the pointer; Actions here (⌘K) replaces it',
+  'app.inspector-slides': 'works only with keyboard focus in the Inspector',
+  'app.inspector-steps': 'works only with keyboard focus in the Inspector',
+  'editor.title-continue': 'the Enter key from a title: acts on the key press itself',
+  'editor.protected-line-continue': 'the Enter key from a protected line: acts on the key press itself',
+  'editor.list-continue': 'the Enter key in a list: acts on the key press itself',
+  'editor.list-indent': 'the Tab key in a list: acts on the key press itself',
+  'editor.list-outdent': 'the ⇧Tab key in a list: acts on the key press itself',
+  'editor.protect-heading-delete': 'the Delete key on a heading: acts on the key press itself',
+  'editor.object-edit': 'needs an object at the caret and the Enter key',
+  'editor.object-raw': 'needs an object widget under the caret',
+  'editor.object-finish': 'needs an open object editor'
+}
+
+// Whole windows and panels whose keys act on their own focused row or state; the palette in the
+// editor window has no such row to give them.
+const EXCLUDED_PREFIXES: readonly (readonly [string, string])[] = [
+  ['pathway.', 'works inside the Pathways window'],
+  ['talktext.', 'works inside the Notes and script window'],
+  ['importer.', 'works inside the Importer window'],
+  ['studio.', 'works inside the Studio window'],
+  ['browser.', 'acts on the focused row of the Talks panel']
+]
+
+/** Why the ⌘⇧P palette (the editor window's) does not list this command, or null when it does. */
+export function paletteExclusion(command: CommandDefinition): string | null {
+  if (command.surface) return `a key inside ${command.surface}`
+  if (command.scope === 'presenter') return 'runs in the presenter window; listed in its own palette'
+  const written = PALETTE_EXCLUSIONS[command.id]
+  if (written) return written
+  const prefixed = EXCLUDED_PREFIXES.find(([prefix]) => command.id.startsWith(prefix))
+  return prefixed ? prefixed[1] : null
+}
+
+/** Every command the editor palette lists: the declared palette commands first, then the rest. */
+export function listedPaletteCommands(): CommandDefinition[] {
+  return COMMAND_REGISTRY.filter((command) => paletteExclusion(command) === null)
+}
+
+/**
+ * How many commands each task group holds, counted from the registries and never typed: every
+ * registry command that is not a key inside a surface, plus the presenter palette's entries that
+ * have no key of their own (they are commands the registry has no row for). Later tickets read this.
+ */
+export function taskGroupCounts(): Record<TaskGroup, number> {
+  const counts = Object.fromEntries(TASK_GROUPS.map((group) => [group, 0])) as Record<TaskGroup, number>
+  for (const command of COMMAND_REGISTRY) if (command.taskGroup) counts[command.taskGroup] += 1
+  for (const group of PRESENTER_PALETTE) {
+    for (const entry of group[1]) {
+      if (entry.shortcut) continue
+      const fields = taskGroupFields(`presenter-palette.${entry.id}`)
+      if (fields.taskGroup) counts[fields.taskGroup] += 1
+    }
+  }
+  return counts
 }
 
 export function menuCommands(): CommandDefinition[] {

@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react'
 import type { VaultView } from '../../../../preload/index'
-import { IcChevronRight, IcEllipsis, IcLock, IcPeople, IcPlus, IcWarn } from './icons'
+import { IcChevronRight, IcEllipsis, IcGraduationCap, IcLock, IcPeople, IcPlus, IcWarn } from './icons'
+import { EXAMPLE_VAULT_TEXT } from '../../../../shared/example-vault'
 import { hiddenNote, unavailableNote, unavailableSubline } from './vaultFilter'
 
 // The vault parts of the Talks panel (LOCKED sidebar, section 4): a coloured badge with the vault's
@@ -72,6 +73,7 @@ export function VaultHeader({
       data-vault-name={vault.name}
       data-vault-open={vault.open ? 'true' : 'false'}
       data-vault-unavailable={vault.open && vault.unavailable ? vault.unavailable.reason : undefined}
+      data-vault-example={vault.example ? 'true' : undefined}
       onClick={onToggle}
       onContextMenu={onMenu}
     >
@@ -82,6 +84,8 @@ export function VaultHeader({
         <span className="tl-vsub">
           {vault.open && vault.unavailable
             ? <><span className="tl-vlock tl-vwarn"><IcWarn size={10} /></span><span className="tl-vsvc" data-vault-reason>{unavailableSubline(vault)}</span></>
+            : vault.open && vault.example
+            ? <><span className="tl-vlock" data-vault-example-line><IcGraduationCap size={10} /></span><span className="tl-vsvc">{EXAMPLE_VAULT_TEXT.subline}</span></>
             : vault.open
             ? vault.shared
               ? <><span className="tl-vlock tl-vshared" title="Shared: others can open this vault" data-vault-shared><IcPeople size={10} /></span><span className="tl-vsvc">{vault.service} · shared</span></>
@@ -91,6 +95,7 @@ export function VaultHeader({
               : <span className="tl-vsvc">Closed · not open on this Mac</span>}
         </span>
       </span>
+      {vault.example && <span className="tl-vexample" data-vault-example-mark>{EXAMPLE_VAULT_TEXT.mark}</span>}
       <button type="button" className="tl-vmore" aria-label={`Actions for ${vault.name}`} title="Vault actions" onClick={onMenu}><IcEllipsis size={14} /></button>
     </div>
   )

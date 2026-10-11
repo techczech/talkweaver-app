@@ -57,3 +57,16 @@ export function transformInlineMarks(
   replacement: (inner: string, kind: InlineMarkKind) => string
 ): string
 export function inlineMarkRanges(source: string): Array<{ from: number; to: number; kind: InlineMarkKind }>
+export type KeyCapRange = {
+  kind: 'kbd'
+  from: number
+  to: number
+  source: string
+  content: string
+}
+export const KEY_CAP_SOURCE: string
+export function keyCapAt(source: string, from: number): KeyCapRange | null
+export function hasLinkSyntax(source: string): boolean
+export function keyCapRanges(source: string): KeyCapRange[]
+export function hasKeyCap(source: string): boolean
+export function keyCapsToText(source: string): string

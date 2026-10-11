@@ -156,6 +156,86 @@ export function segmentInlineSource(source) {
   return segments;
 }
 
+/**
+ * Key caps (onboarding 0.38.1, ticket 05). The ONE inline HTML tag outline text may carry:
+ * exactly `<kbd>`, lower case, no attributes, no whitespace inside the tag, and plain-text content
+ * (no `<`, `>` or newline, at least one non-space character). Anything else that looks like HTML
+ * stays escaped. This pattern is the single definition; the slide renderer (renderInline), the
+ * phone text view, plain-text projections and the outline editor all read it from here.
+ */
+export const KEY_CAP_SOURCE = String.raw`<kbd>((?=[^<>\n]*[^<>\s])[^<>\n]+)</kbd>`;
+
+/** The key cap that starts at `from`, or null. `content` is the raw text between the tags. */
+export function keyCapAt(source, from) {
+  if (source[from] !== "<" || source[from + 1] !== "k") return null;
+  const match = new RegExp(`^${KEY_CAP_SOURCE}`).exec(source.slice(from));
+  if (!match) return null;
+  return { kind: "kbd", from, to: from + match[0].length, source: match[0], content: match[1] };
+}
+
+/**
+ * Link syntax of any kind: an inline link or image (`](`), a reference link or definition (`][`,
+ * `]:`), an autolink (`<scheme:`), a bare http(s) URL or a `[QR: …]` directive. Deliberately
+ * broader than what any renderer turns into an anchor: a false positive only costs the key caps
+ * on that run.
+ */
+const LINK_SYNTAX_RE = /\]\s*[(\[:]|<[A-Za-z][A-Za-z0-9+.-]*:|https?:\/\/|\[QR:/i;
+
+/** Whether an inline run carries link syntax (see LINK_SYNTAX_RE). */
+export function hasLinkSyntax(source) {
+  return LINK_SYNTAX_RE.test(String(source ?? ""));
+}
+
+/**
+ * Every key cap in `source`. A run (the string one renderer call receives: a line, a paragraph,
+ * a list item, a title) that carries link syntax gets NO key caps at all: every `<kbd>` on it stays
+ * escaped literal text and the run renders exactly as before key caps existed (review round 1,
+ * 2026-10-09). So a key cap placeholder never exists on a run where a renderer pass can build an
+ * attribute from author text. A `<kbd>` inside a code span is also left as typed, so
+ * `` `<kbd>K</kbd>` `` shows the syntax. Offsets are into `source`.
+ */
+export function keyCapRanges(source) {
+  const text = String(source ?? "");
+  if (!text.includes("<kbd>")) return [];
+  if (hasLinkSyntax(text)) return [];
+  const ranges = [];
+  for (const segment of segmentInlineSource(text)) {
+    if (segment.kind !== "text") continue;
+    let cursor = segment.from;
+    while (cursor < segment.to) {
+      const at = text.indexOf("<kbd>", cursor);
+      if (at < 0 || at >= segment.to) break;
+      const cap = keyCapAt(text, at);
+      if (cap && cap.to <= segment.to) {
+        ranges.push(cap);
+        cursor = cap.to;
+      } else {
+        cursor = at + 1;
+      }
+    }
+  }
+  return ranges;
+}
+
+/** Whether `source` carries at least one key cap in ordinary text. */
+export function hasKeyCap(source) {
+  return keyCapRanges(source).length > 0;
+}
+
+/** Plain text: every key cap replaced by its content (titles, projections, search text). */
+export function keyCapsToText(source) {
+  const text = String(source ?? "");
+  const ranges = keyCapRanges(text);
+  if (!ranges.length) return text;
+  let out = "";
+  let cursor = 0;
+  for (const range of ranges) {
+    out += text.slice(cursor, range.from) + range.content;
+    cursor = range.to;
+  }
+  return out + text.slice(cursor);
+}
+
 /** Apply ==mark== only to a string already known to contain no protected source ranges. */
 export function replaceMarkSyntax(text, replacement) {
   return text.replace(markerRegex(), (_match, inner) => replacement(inner));

@@ -976,6 +976,7 @@ export default function SlideStrip({
     <div
       tabIndex={0}
       onKeyDown={handleKeyDown}
+      data-place-region="strip"
       style={{
         background: 'var(--panel)',
         borderLeft: '1px solid var(--line)',

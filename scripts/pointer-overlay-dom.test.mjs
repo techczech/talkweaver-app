@@ -366,9 +366,9 @@ try {
             await presenter.keyboard.press(key);
             assert.match(await presenter.locator('#presenterRebind').innerText(), /already used|reserved/);
         }
-        await presenter.keyboard.press('c');
+        await presenter.keyboard.press('n');
         await presenter.waitForSelector('#presenterRebind', { state: 'detached' });
-        assert.equal(await presenter.locator('#palette-pointer').getAttribute('data-keys'), 'C / I');
+        assert.equal(await presenter.locator('#palette-pointer').getAttribute('data-keys'), 'N / I');
         await presenter.keyboard.press('Meta+Shift+,');
         await presenter.keyboard.press('y');
         await presenter.waitForSelector('#presenterRebind', { state: 'detached' });
@@ -399,19 +399,19 @@ try {
         await presenter.keyboard.press('Meta+Shift+p');
         await presenter.locator('#presenterCommandSearch').fill('Focus mode');
         await presenter.keyboard.press('Meta+Shift+,');
-        await presenter.keyboard.press('c');
+        await presenter.keyboard.press(',');
         await presenter.waitForSelector('#presenterRebind', { state: 'detached' });
-        assert.equal(await presenter.locator('#palette-focus').getAttribute('data-keys'), 'C / F');
+        assert.equal(await presenter.locator('#palette-focus').getAttribute('data-keys'), ', / F');
         await presenter.keyboard.press('Escape');
-        await presenter.keyboard.press('c');
+        await presenter.keyboard.press(',');
         assert.equal(await presenter.locator('#presenterFocus').getAttribute('aria-pressed'), 'true');
-        await presenter.keyboard.press('c');
+        await presenter.keyboard.press(',');
         assert.equal(await presenter.locator('#presenterFocus').getAttribute('aria-pressed'), 'false');
         await presenter.keyboard.press('f');
         assert.equal(await presenter.locator('#presenterFocus').getAttribute('aria-pressed'), 'true');
         await presenter.keyboard.press('f');
         await presenter.keyboard.press('?');
-        assert.match(await presenter.locator('.tw-shortcuts-row').filter({ hasText: 'Focus mode' }).innerText(), /C/);
+        assert.match(await presenter.locator('.tw-shortcuts-row').filter({ hasText: 'Focus mode' }).innerText(), /,/);
         await presenter.keyboard.press('Escape');
         await presenter.keyboard.press('k');
         await presenter.locator('#quickPollQuestion').fill('Select this whole question');

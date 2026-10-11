@@ -19,6 +19,7 @@
 //     registry row (new inode) and must not cost a reconnect.
 //   - The owner token stays in main; summaries and lists carry none.
 import { existsSync } from 'fs'
+import { ownerFetch } from './owner-tokens.ts'
 import {
   parseWorkerItem, unreadCount,
   type FeedbackConnection, type FeedbackList, type FeedbackListItem, type FeedbackStatus, type FeedbackSummary,
@@ -107,8 +108,9 @@ export function createSharedTalkFeedback(deps: SharedTalkFeedbackDeps): SharedTa
     try { deps.onChange?.(holder.share.shareId, summaryOf(holder)) } catch { /* a closing window */ }
   }
 
-  function ownerHeaders(share: FeedbackShare): Record<string, string> {
-    return { authorization: `Bearer ${share.ownerToken}`, 'content-type': 'application/json' }
+  /** A request with the share's owner token: a failure to send is a fixed sentence (owner-tokens.ts), safe to log. */
+  function asOwner(share: FeedbackShare, itemId: string, init: RequestInit): Promise<Response> {
+    return ownerFetch(deps.fetch, `${share.workerBaseUrl}/shares/${share.shareId}/items/${itemId}`, share.ownerToken, { ...init, headers: { 'content-type': 'application/json' } })
   }
 
   async function patch(holder: Holder, itemId: string, status: FeedbackStatus): Promise<void> {
@@ -117,9 +119,7 @@ export function createSharedTalkFeedback(deps: SharedTalkFeedbackDeps): SharedTa
     if (patching.has(flight)) return
     patching.add(flight)
     try {
-      const response = await deps.fetch(`${share.workerBaseUrl}/shares/${share.shareId}/items/${encodeURIComponent(itemId)}`, {
-        method: 'PATCH', headers: ownerHeaders(share), body: JSON.stringify({ status }), signal: AbortSignal.timeout(15_000),
-      })
+      const response = await asOwner(share, encodeURIComponent(itemId), { method: 'PATCH', body: JSON.stringify({ status }), signal: AbortSignal.timeout(15_000) })
       const latest = () => deps.mirror.read(holder.path).items.find((item) => item.itemId === itemId)
       if (response.ok) {
         // Only if this is still his latest word on the item (a quick Done then Dismiss).
@@ -143,9 +143,7 @@ export function createSharedTalkFeedback(deps: SharedTalkFeedbackDeps): SharedTa
   /** Is the share still there for this owner token? A status PATCH for an id no item has: 401/403
    *  = token refused, 410 = stopped or retired, anything else = still there (404, 400) or unknown. */
   async function probe(share: FeedbackShare): Promise<EndedReason | null> {
-    const response = await deps.fetch(`${share.workerBaseUrl}/shares/${share.shareId}/items/tw-owner-probe`, {
-      method: 'PATCH', headers: ownerHeaders(share), body: JSON.stringify({ status: 'new' }), signal: AbortSignal.timeout(10_000),
-    })
+    const response = await asOwner(share, 'tw-owner-probe', { method: 'PATCH', body: JSON.stringify({ status: 'new' }), signal: AbortSignal.timeout(10_000) })
     if (response.status === 401 || response.status === 403) return 'refused'
     if (response.status === 410) return 'stopped'
     return null

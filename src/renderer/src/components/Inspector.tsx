@@ -32,6 +32,7 @@ import { inspectorPreworkModel } from './inspectorPreworkModel'
 import { preworkEnabled } from '../../../shared/prework-flag'
 import { usePlannedRuns } from './usePlannedRuns'
 import { localToday, nextPlannedRun } from '../../../shared/plan-run'
+import { commandRan } from '../commands/command-ran'
 
 interface Props {
   talk: TalkInfo
@@ -274,10 +275,12 @@ export default function Inspector({
       event.preventDefault()
       event.stopPropagation()
       event.key === 'ArrowUp' ? onPrev() : onNext()
+      commandRan('app.inspector-slides')
     } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
       event.preventDefault()
       event.stopPropagation()
       moveStep(event.key === 'ArrowLeft' ? -1 : 1)
+      commandRan('app.inspector-steps')
     }
   }
 

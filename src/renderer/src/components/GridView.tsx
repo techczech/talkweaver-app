@@ -617,6 +617,7 @@ export default function GridView({
       ref={containerRef}
       className="grid-view"
       data-view="grid"
+      data-place-region="strip"
       tabIndex={0}
       onKeyDown={handleGridKey}
       style={{

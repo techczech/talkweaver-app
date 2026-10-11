@@ -13,7 +13,7 @@
 //     below with their reason;
 //  3. invoking an entry runs the same command as its control or key: a fresh window each side,
 //     the entry pressed in the palette against the key pressed, compared on the state it changes;
-//  4. the ? sheet lists only keys that work here: no N or C; ⇧F5 (refresh) and ↵ (next); the
+//  4. the ? sheet lists only keys that work here: no N; C only with the Guide chip (ticket 10); ⇧F5 (refresh) and ↵ (next); the
 //     recording, editor and live keys (G, Q, ⇧Q, K) while their preloads are mounted, and not in a
 //     presenter window opened without them, where their palette rows are dimmed (ticket 08).
 // Every check is collected and all failures are reported together.
@@ -33,7 +33,14 @@ import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 
 const repo = fileURLToPath(new URL('..', import.meta.url))
 const { SHORTCUT_REGISTRY } = await import(new URL('../src/shared/shortcut-registry.ts', import.meta.url))
-const { PRESENTER_PALETTE, presenterPaletteEntries, presenterPaletteKeys } = await import(new URL('../src/shared/presenter-palette.ts', import.meta.url))
+const presenterPaletteModule = await import(new URL('../src/shared/presenter-palette.ts', import.meta.url))
+// The Guide's Present chapter as main sends it (onboarding ticket 10): the chip mounts, so C and the palette's Guide row apply.
+const { presentGuideView } = await import(new URL('../src/shared/guide-present.ts', import.meta.url))
+const { deriveChapters } = await import(new URL('../src/shared/guide-chapters.ts', import.meta.url))
+const { emptyGuideLearn } = await import(new URL('../src/shared/guide-learn.ts', import.meta.url))
+const GUIDE_REPLY = { view: presentGuideView(deriveChapters().find((c) => c.task === 'Present'), emptyGuideLearn(), (id) => SHORTCUT_REGISTRY.find((r) => r.id === id)?.keys ?? '', false), open: false }
+const { PRESENTER_PALETTE, presenterPaletteEntries, presenterPaletteKeys, presenterPaletteTaskGroup } = presenterPaletteModule
+const oldGroupOf = (id) => PRESENTER_PALETTE.find(([, entries]) => entries.some((entry) => entry.id === id))?.[0] ?? ''
 const SHOTS = process.env.SHOTS ? resolve(process.env.SHOTS) : null
 const failures = []
 const check = (ok, message) => { if (!ok) failures.push(message) }
@@ -43,17 +50,11 @@ const ENTRIES = presenterPaletteEntries()
 // The drawing: 56 commands in eight groups, and the two Live-menu switches the reactions design added (Allow slide questions, Allow slide reactions): 58;
 // and the Poll menu's Board group (feedback-boards ticket 05, round-2 D19): close or reopen, freeze, panel, full screen, pop out: 63.
 const GROUPS = ['Slides', 'Timer', 'Recording', 'Live', 'Poll and questions', 'View', 'Slide on every screen', 'Editor and help']
-// Presenter keys that are not palette commands.
-const KEYS_NOT_IN_PALETTE = {
-  'presenter.rebind': 'records the highlighted command in the palette',
-  'presenter.close': 'Esc closes whatever is open; it is not a command of its own',
-  'presenter.command-palette': 'opens the palette itself',
-  'presenter.save-run': '↵ acts only while the save offer shows, on that toast; Save run as… is the command',
-  'presenter.board-pick': '⌥↵ acts on the board card that has focus in the board panel; it is the keyboard\'s drag, not a command of its own',
-  'presenter.board-undo': '⌘Z undoes the board panel\'s last change while the panel shows (its toast\'s Undo button); there is nothing to run without one'
-}
+// Presenter keys that are not palette commands (the written list lives in src/shared/presenter-palette.ts).
+const KEYS_NOT_IN_PALETTE = presenterPaletteModule.KEYS_NOT_IN_PALETTE
 // Controls in the bars that are not palette commands.
 const CONTROLS_NOT_IN_PALETTE = {
+  '#twguide-hide': 'the × beside the Guide button: turns the Settings switch off (Settings brings the button back); not a presenter command',
   '#presenterMenuLive': 'opens the Live menu (its items are entries)',
   '#presenterMenuPoll': 'opens the Poll menu (its items are entries)',
   '#presenterMenuView': 'opens the View menu (its items are entries)',
@@ -113,7 +114,7 @@ let browser
 try {
   // ── Static: the table against the registry ──────────────────────────────────────────────────
   check(same(PRESENTER_PALETTE.map(([g]) => g), GROUPS), `palette groups are the drawn eight (${PRESENTER_PALETTE.map(([g]) => g).join(', ')})`)
-  check(ENTRIES.length === 73, `the palette has the drawn 56 commands, the two phone switches, the five board commands, Pointer, Embedded page: full screen and the Pen's eight (ticket 08), 73 (${ENTRIES.length})`)
+  check(ENTRIES.length === 74, `the palette has the drawn 56 commands, the two phone switches, the five board commands, Pointer, Embedded page: full screen, the Pen's eight (ticket 08) and the Guide (onboarding ticket 10), 74 (${ENTRIES.length})`)
   check(new Set(ENTRIES.map((e) => e.id)).size === ENTRIES.length, 'palette ids are unique')
   const presenterKeys = SHORTCUT_REGISTRY.filter((e) => e.scope === 'presenter')
   for (const entry of presenterKeys) {
@@ -133,7 +134,8 @@ try {
   const stubPath = join(scratch, 'electron-stub.mjs')
   await writeFile(stubPath, `const answers = {
   'recording:context': { testMode: true, talkSlug: 'palette', talkTitle: 'Palette', discardThresholdMs: 0 }, 'live:status': 'ended', 'live:snapshot': {}, 'recording:set-kind': { ok: true },
-  'live:go': { success: true, shortUrl: 'https://handouts.fyi/737u/live', qrSvg: '<svg></svg>', status: 'connecting' }
+  'live:go': { success: true, shortUrl: 'https://handouts.fyi/737u/live', qrSvg: '<svg></svg>', status: 'connecting' },
+  'guide:present-chapter': ${JSON.stringify(GUIDE_REPLY)}, 'guide:present-column': { open: true }
 }
 window.__ipcCalls = []; window.__ipcOn = {}
 let sessions = 0
@@ -176,7 +178,8 @@ export const clipboard = { writeText() {}, readText() { return '' }, readImage()
     id: row.dataset.paletteId, name: row.querySelector('.tw-pal-name')?.textContent || '',
     icon: [...(row.querySelector(':scope > svg')?.classList || [])].find((c) => c.startsWith('lucide-')) || null,
     caps: [...row.querySelectorAll('.tw-pal-keys kbd')].map((k) => k.textContent), keys: row.dataset.keys, disabled: row.disabled,
-    group: (() => { let n = row.previousElementSibling; while (n && !n.classList.contains('tw-pal-sec')) n = n.previousElementSibling; return n?.textContent || '' })()
+    task: row.querySelector('.tw-pal-task')?.textContent || '',
+    heading: !!document.querySelector('#presenterCommandResults .tw-pal-sec')
   })))
   const shown = (page, selector) => page.evaluate((s) => { const el = document.querySelector(s); return !!el && !el.hidden && el.getClientRects().length > 0 }, selector)
 
@@ -188,7 +191,7 @@ export const clipboard = { writeText() {}, readText() { return '' }, readImage()
     check(await page.evaluate(() => document.activeElement?.id === 'presenterCommandSearch'), 'the search field has focus')
     check(await page.evaluate(() => document.getElementById('presenterCommandSearch').placeholder) === 'Search presenter commands', 'the search field reads "Search presenter commands"')
     const count = await page.textContent('#presenterCommandCount')
-    check(count === '73 commands', `the count reads "73 commands" (${count})`)
+    check(count === '74 commands', `the count reads "74 commands" (${count})`)
     const list = await rows(page)
     check(list.length === ENTRIES.length, `every entry has a row (${list.length} of ${ENTRIES.length})`)
     for (const [group, entries] of PRESENTER_PALETTE) {
@@ -196,7 +199,9 @@ export const clipboard = { writeText() {}, readText() { return '' }, readImage()
         const row = list.find((r) => r.id === entry.id)
         const keys = presenterPaletteKeys(entry, SHORTCUT_REGISTRY)
         check(row && row.name === entry.name, `${entry.id}: named "${entry.name}" (${row?.name})`)
-        check(row && row.group === group, `${entry.id}: under "${group}" (${row?.group})`)
+        // Onboarding 01: a row shows its task group; the old group names are search words only.
+        check(row && row.task === presenterPaletteTaskGroup(entry), `${entry.id}: shows its task group "${presenterPaletteTaskGroup(entry)}" (${row?.task})`)
+        check(row && !row.heading, `${entry.id}: no old group heading is shown`)
         check(row && row.icon === `lucide-${entry.icon}`, `${entry.id}: lucide icon ${entry.icon} (${row?.icon})`)
         check(row && row.keys === keys && row.caps.join('') === keys.replace(/\s+/g, ''), `${entry.id}: shows its current key "${keys}" as key caps (${row?.caps.join(' | ')})`)
       }
@@ -210,7 +215,7 @@ export const clipboard = { writeText() {}, readText() { return '' }, readImage()
     await page.keyboard.type('poll')
     await settle(page, 80)
     const polled = await rows(page)
-    check(polled.length > 0 && polled.every((r) => /poll/i.test(`${r.name} ${r.group}`)), `"poll" keeps only poll commands (${polled.map((r) => r.name).join(' | ')})`)
+    check(polled.length > 0 && polled.every((r) => /poll/i.test(`${r.name} ${oldGroupOf(r.id)}`)), `"poll" keeps only poll commands (${polled.map((r) => r.name).join(' | ')})`)
     check((await page.textContent('#presenterCommandCount')) === `${polled.length} commands`, 'the count follows the filter')
     await page.fill('#presenterCommandSearch', '')
     await page.keyboard.type('Rl')
@@ -364,7 +369,8 @@ export const clipboard = { writeText() {}, readText() { return '' }, readImage()
     const { page, context } = await open()
     const list = await sheet(page)
     const keys = list.map(([k]) => k)
-    check(!keys.includes('N') && !keys.includes('C'), `the ? sheet does not list N or C (${keys.join(' ')})`)
+    check(!keys.includes('N'), `the ? sheet does not list N (${keys.join(' ')})`)
+    check(!keys.includes('C'), 'the ? sheet does not list C: the Guide has no key')
     for (const k of ['⇧R', '⇧P', 'L', '⌘E', '⌘R / ⇧F5', '→ Space ↓ PgDn ↵', 'J / ⇧J', 'U', 'G', 'Q', '⇧ Q', 'K', '⌘⇧P']) check(keys.includes(k), `the ? sheet lists ${k} in the presenter TalkWeaver opens`)
     const registryRows = SHORTCUT_REGISTRY.filter((e) => e.scope === 'presenter').map((e) => `${e.keys}\u0000${e.label}`)
     for (const [k, label] of list) check(registryRows.includes(`${k}\u0000${label}`), `sheet row "${k} ${label}" is a presenter key in the registry`)
@@ -375,7 +381,7 @@ export const clipboard = { writeText() {}, readText() { return '' }, readImage()
     // Without the preloads (a deck opened on its own) the recording and editor keys do nothing.
     const bare = await open({ withPreload: false })
     const bareKeys = (await sheet(bare.page)).map(([k]) => k)
-    for (const k of ['⇧R', '⇧P', 'L', '↵', '⌘E', '⌘R / ⇧F5']) check(!bareKeys.includes(k), `without the recording and edit preloads the sheet does not list ${k}`)
+    for (const k of ['⇧R', '⇧P', 'L', '↵', '⌘E', '⌘R / ⇧F5', 'C']) check(!bareKeys.includes(k), `without the recording, edit and Guide preloads the sheet does not list ${k}`)
     // Without the live preload there is no live session: G does nothing, and polls cannot reach
     // the audience (ticket 08). The keys that work without it stay.
     for (const k of ['G', 'Q', '⇧ Q', 'K']) check(!bareKeys.includes(k), `without the live preload the sheet does not list ${k}`)
@@ -383,7 +389,7 @@ export const clipboard = { writeText() {}, readText() { return '' }, readImage()
     await bare.page.keyboard.press('Escape')
     await openPalette(bare.page)
     const bareRows = await rows(bare.page)
-    for (const id of ['record-start', 'record-pause', 'record-stop', 'save-run-as', 'edit', 'refresh', 'live', 'quick-poll', 'poll-primary', 'poll-reveal']) check(bareRows.find((r) => r.id === id)?.disabled === true, `without the preloads ${id} is listed but dimmed`)
+    for (const id of ['record-start', 'record-pause', 'record-stop', 'save-run-as', 'edit', 'refresh', 'live', 'quick-poll', 'poll-primary', 'poll-reveal', 'guide']) check(bareRows.find((r) => r.id === id)?.disabled === true, `without the preloads ${id} is listed but dimmed`)
     check(bare.page.errors.length === 0, `bare window: no page errors (${bare.page.errors.join('; ')})`)
     await bare.context.close()
   })

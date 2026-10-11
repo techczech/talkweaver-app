@@ -117,7 +117,10 @@ const openPatternSamples = new Map([
   ['center', 'Core'],
   ['curve', 'sigmoid'],
   ['titlestyle', 'rail'],
-  ['results', 'pwtools']
+  ['results', 'pwtools'],
+  // {chat} {chat-lanes} {terminal-agent}: model picker / status line; terminals: title-bar text
+  ['model', 'example-model'],
+  ['window-title', 'policy-shell']
 ])
 assert.deepEqual(
   [...openPatternSamples.keys()].sort(),
@@ -139,6 +142,20 @@ for (const pattern of OPEN_PATTERN_TOKENS) {
   assertAgreement(ownForm, false)
   assertAgreement(wrongForm, true)
 }
+
+// Simulation options (spec 1.3): quoted free text with spaces, the closed value keys, and an
+// unknown value that falls back to the default and is flagged by both validators.
+for (const [token, expectedFlagged] of [
+  ['chat-lanes model="Example model"', false],
+  ['terminal window-title="policy — shell"', false],
+  ['chat sidebar=off', false],
+  ['chat open=all', false],
+  ['terminal reveal=all', false],
+  ['terminal-agent size=large', false],
+  ['chat sidebar=maybe', true],
+  ['chat open=some', true],
+  ['chat size=huge', true]
+]) assertAgreement(token, expectedFlagged)
 
 const dynamicSamples = [
   'countdown-digits-30s',

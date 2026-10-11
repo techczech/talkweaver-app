@@ -17,7 +17,9 @@ import { randomUUID } from 'node:crypto'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { buildVaultFile, fileSchemaIsOurs, sameVaultFile, type VaultFile, type VaultFileFields, type VaultFileRead, type VaultFileStore } from './vault-file.ts'
 
-export type Vault = { id: string; root: string; open: boolean; order: number }
+/** `example` (onboarding ticket 06): the vault TalkWeaver wrote to ~/Documents/TalkWeaver/Example vault
+ *  on a click. Stored only when true; set only by `add(root, { example: true })`. */
+export type Vault = { id: string; root: string; open: boolean; order: number; example?: true }
 
 /** The slice of config.json the registry owns. */
 export type VaultConfigSlice = {
@@ -72,7 +74,7 @@ export interface VaultRegistry {
   /** Add a folder as a new open vault at the end. Refuses duplicates and nested roots. A folder with a
    *  vault file joins with the file's id (refused as 'duplicate-id' when that id is already in the
    *  list). With `create`, a folder with no vault file gets one, written before config is. */
-  add(root: string, opts?: { create?: { fields: Partial<VaultFileFields>; createdBy?: string } }): Vault
+  add(root: string, opts?: { create?: { fields: Partial<VaultFileFields>; createdBy?: string }; example?: boolean }): Vault
   /** What adding root would meet, without writing anything: the resolved folder and its vault file.
    *  Throws the same refusals as add. */
   probe(root: string): { root: string; file: VaultFileRead }
@@ -89,6 +91,9 @@ export interface VaultRegistry {
    *  (the duplicate state); null otherwise. */
   duplicateOf(id: string): Vault | null
   setOpen(id: string, open: boolean): Vault
+  /** Take a vault off the list (onboarding ticket 12: the example vault, after its folder went to the
+   *  Bin). Config only: nothing in the folder is read or written; personal settings are kept. */
+  remove(id: string): void
   /** Called after every change the registry writes. Returns an unsubscribe function. */
   onChange(cb: (vaults: Vault[]) => void): () => void
   /** SHIM-ONLY: the first open vault, which the single-vault shims (vault:get-root and friends)
@@ -132,10 +137,12 @@ function sanitize(raw: unknown): Vault[] {
   const out: Vault[] = []
   raw.forEach((v, i) => {
     if (!v || typeof v !== 'object') return
-    const { id, root, open, order } = v as Partial<Vault>
+    const { id, root, open, order, example } = v as Partial<Vault>
     if (typeof id !== 'string' || !id || typeof root !== 'string' || !root || seen.has(id)) return
     seen.add(id)
-    out.push({ id, root, open: open !== false, order: typeof order === 'number' && Number.isFinite(order) ? order : i })
+    const entry: Vault = { id, root, open: open !== false, order: typeof order === 'number' && Number.isFinite(order) ? order : i }
+    if (example === true) entry.example = true
+    out.push(entry)
   })
   return renumber(out)
 }
@@ -380,6 +387,7 @@ export function createVaultRegistry(deps: VaultRegistryDeps): VaultRegistry {
         id = file.state === 'ok' ? file.file.id : newId()
       }
       const vault: Vault = { id, root: storedRoot, open: true, order: vaults.length }
+      if (opts?.example === true) vault.example = true
       const next = renumber([...vaults, vault])
       try {
         persist(next, stored)
@@ -449,6 +457,13 @@ export function createVaultRegistry(deps: VaultRegistryDeps): VaultRegistry {
       const next = vaults.map((v) => (v.id === id ? { ...v, open } : v))
       persist(next, stored)
       return { ...target, open }
+    },
+    remove(id) {
+      const stored = load()
+      const { vaults } = stored
+      needVault(vaults, id)
+      persist(renumber(vaults.filter((v) => v.id !== id)), stored)
+      duplicates.delete(id)
     },
     adoptRoot(root) {
       if (typeof root !== 'string' || !isAbsolute(root)) throw new VaultRefusal('not-absolute', 'A vault root must be an absolute folder path.')

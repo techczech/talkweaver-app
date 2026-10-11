@@ -1,0 +1,38 @@
+/* Remove the example vault (onboarding 0.38.1 ticket 12): the confirmation with three bounded lists
+   (state 15), the Guide's Remove link (states 15, 17) and Settings → Get started's removed row (16).
+   Sizes and colours from the locked drawing's .cf, .cf-g, .cf-h, .cf-i, .rm and .bigbtn rules. */
+
+.rx-scrim { position: fixed; inset: 0; z-index: 1200; background: rgba(23, 32, 42, .30); display: flex; align-items: center; justify-content: center; }
+.rx-sheet {
+  width: 560px; max-width: calc(100vw - 40px); max-height: calc(100vh - 40px); overflow-y: auto; box-sizing: border-box;
+  padding: 22px 24px 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 14px 38px #17202a40, 0 3px 10px #17202a1c; font-family: var(--font-ui); color: var(--ink);
+}
+.rx-top { display: flex; gap: 14px; margin-bottom: 14px; }
+.rx-top .tl-vb { border-radius: 9px; flex: 0 0 auto; }
+.rx-top h2 { font-size: 18px; margin: 0 0 5px; }
+.rx-top p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--muted); }
+.rx-group { border: 1px solid var(--line); border-radius: 9px; margin-bottom: 9px; overflow: hidden; }
+.rx-bar { padding: 6px 12px; font: 700 10.5px var(--font-mono); letter-spacing: .09em; text-transform: uppercase; background: var(--paper); border-bottom: 1px solid var(--line); }
+.rx-group--bin .rx-bar { color: #b3261e; }
+.rx-group--kept .rx-bar { color: var(--green); }
+.rx-item { padding: 7px 12px; font-size: 12.5px; border-top: 1px solid var(--hairline); display: flex; flex-direction: column; }
+.rx-bar + .rx-item { border-top: 0; }
+.rx-item b { font: 600 12px var(--font-mono); }
+.rx-item span { font-size: 11.5px; color: var(--muted); }
+.rx-error { margin: 4px 0 0; font-size: 12.5px; line-height: 1.45; color: #b3261e; }
+.rx-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.rx-btn { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 6px; padding: 7px 14px; font: 600 13px var(--font-ui); cursor: pointer; white-space: nowrap; }
+.rx-btn:focus-visible { outline: 1.5px solid var(--oxford); outline-offset: 2px; }
+.rx-btn--danger { background: #b3261e; border-color: #b3261e; color: #fff; }
+.rx-btn:disabled { opacity: .55; cursor: default; }
+
+/* The Guide's link under the chapters (states 15, 17). */
+.guide-remove-wrap { margin-top: 4px; }
+.guide-remove {
+  display: inline-flex; gap: 6px; align-items: center; padding: 4px 10px; cursor: pointer;
+  font: 600 11.5px var(--font-ui); color: var(--crimson); background: var(--panel);
+  border: 1px solid color-mix(in srgb, var(--crimson) 35%, var(--line)); border-radius: 6px;
+}
+.guide-remove:hover { background: color-mix(in srgb, var(--crimson) 6%, var(--panel)); }
+.guide-remove:focus-visible { outline: 1.5px solid var(--crimson); outline-offset: 1px; }

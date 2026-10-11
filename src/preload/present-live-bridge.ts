@@ -1,7 +1,10 @@
 /// <reference lib="dom" />
+import { reportGuideCommand } from './present-guide'
 import { parsePointerMessage, type InkMessage } from '../../worker/protocol'
 import { readInkSlot } from './recorder-ink'
 import { askEndLiveWithBoards, type OpenBoard } from './present-end-live-boards'
+import { showLiveSetupPrompt } from './present-live-setup'
+import type { LiveSetupPrompt } from '../shared/live-service-status.ts'
 // `clipboard` is used to WRITE the join link only; reading it is main's (`live:read-clipboard`).
 import { clipboard, contextBridge, ipcRenderer } from 'electron'
 import type { LiveStatus } from '../main/live-presenter-client'
@@ -41,6 +44,8 @@ type LiveGoResult = {
   shortUrl?: string
   qrSvg?: string
   error?: string
+  /** No live service to go live with: the prompt to show, which opens Settings (ticket 05). Presenting goes on. */
+  setup?: LiveSetupPrompt
 }
 
 // The presenter template runs in the page's main world; this bridge runs in the isolated
@@ -449,7 +454,19 @@ export function mountLiveBridge(): void {
         return
       }
       if (intent.confirm && !window.confirm(intent.confirm)) return
-      const result = await ipcRenderer.invoke('live:go') as LiveGoResult
+      // An update of the live service before this use says so on the button while it runs (spec D9).
+      const onNotice = (_event: Electron.IpcRendererEvent, message: unknown): void => { if (typeof message === 'string') setGoButton(message, liveControlPresentation(status).title) }
+      ipcRenderer.on('live-service:notice', onNotice)
+      let result: LiveGoResult
+      try { result = await ipcRenderer.invoke('live:go') as LiveGoResult } finally { ipcRenderer.removeListener('live-service:notice', onNotice) }
+      if (!result.success && result.setup) {
+        // Not set up: the prompt in the corner, which only opens Settings (the set-up is the Settings
+        // row's alone: slide content can reach this window, never Settings). The slides keep presenting.
+        showLiveSetupPrompt(document, result.setup, result.error || '', {
+          openSettings: () => ipcRenderer.invoke('cloudflare:open-settings'),
+        })
+        return
+      }
       if (!result.success || !result.shortUrl) {
         showError(result.error || 'Could not start the live session')
         return
@@ -485,6 +502,7 @@ export function mountLiveBridge(): void {
       event.preventDefault()
       event.stopImmediatePropagation()
       void toggleLive()
+      reportGuideCommand('presenter.live')
     }
   }, true)
   // G is bound and the live bridge is exposed: the presenter's ? sheet and palette list the live

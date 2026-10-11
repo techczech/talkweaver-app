@@ -19,6 +19,7 @@ import { parseFrontmatterPairs } from '../shared/frontmatter-editor.ts'
 import type { SharedTalkSlide } from '../shared/shared-talk.ts'
 import { outlineCompilerBody, slideVisibleText } from '../shared/slide-source-text.ts'
 import { withoutPreworkSlides, type CompiledPrework } from '../shared/run-prework.ts'
+import type { SingleFlight } from './single-flight.ts'
 
 export interface SharedTalkPayload {
   title: string
@@ -38,6 +39,24 @@ export interface BuildSharedTalkInput {
   slug: string
   ownerName: string
   proposals: boolean
+  /** Stop sharing (ticket 12): checked between the compile's stages, so an aborted build does no more. */
+  signal?: AbortSignal
+}
+
+function cancelled(): Error {
+  return Object.assign(new Error('cancelled: sharing stopped'), { name: 'AbortError' })
+}
+
+/**
+ * A share build in the compiler's one-at-a-time gate (single-flight.ts, background lane). The gate
+ * is held until the compile SETTLES, never released early on abort (ticket 12 round 3): two decks
+ * inlining media at once is what the gate exists to prevent (the main process's memory ceiling).
+ * Stop sharing does not wait for it — the push races the build against its AbortSignal — and the
+ * compile, which gets the signal, stops at its next stage; a build aborted before its turn does
+ * not start. A later Share waits behind the gate as any compile does.
+ */
+export function buildInGate<T>(gate: SingleFlight, signal: AbortSignal | undefined, task: () => Promise<T>): Promise<T> {
+  return gate.background(() => (signal?.aborted ? Promise.reject(cancelled()) : task()))
 }
 
 interface TreeNode { level: number; sourceLine: number; headingLine: string; triggerLine: string; contentLines: string[]; children: TreeNode[] }
@@ -114,7 +133,9 @@ export function ownerNameFrom(content: string, fallback = ''): string {
 }
 
 export async function buildSharedTalkPayload(input: BuildSharedTalkInput): Promise<SharedTalkPayload> {
-  const { compilerDir, outlinePath, content, slug } = input
+  const { compilerDir, outlinePath, content, slug, signal } = input
+  const check = (): void => { if (signal?.aborted) throw cancelled() }
+  check()
   const tree = await loadOutlineTreeLib(compilerDir)
   const { prepareSource } = await import(libUrl(compilerDir, '08-source-adapters.mjs'))
   const { extractStyles, extractSlides } = await import(libUrl(compilerDir, '04-html-extraction.mjs'))
@@ -122,7 +143,9 @@ export async function buildSharedTalkPayload(input: BuildSharedTalkInput): Promi
   // ADR-0036: the caller names the folders this talk's media may come from (its vault). Without
   // them the compiler allows the talk's own folder only.
   const compileOptions = input.allowedAssetRoots ? { allowedAssetRoots: input.allowedAssetRoots } : {}
+  check()
   const model = await prepareSource(outlinePath, shareSafeOutline(tree, input.compileContent ?? content), slug, statSync(outlinePath), undefined, compileOptions)
+  check()
   const title = frontmatterValue(content, 'title') || String(model.title || '') || slug
   const fullHtml = String(model.fullHtml)
   // A {prework} section's slides are not part of a shared talk (they are not presented or published).

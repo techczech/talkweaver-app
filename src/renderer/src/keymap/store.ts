@@ -7,6 +7,7 @@ import type { KeyBinding } from '@codemirror/view'
 import { displayKeys, EDITOR_COMMANDS, NON_CONSUMING } from './registry'
 import { commandShortcutLabel, type CommandDefinition } from '../../../shared/command-registry'
 import { shortcutById, shortcutEventMatches } from '../../../shared/shortcut-registry'
+import { commandRan } from '../commands/command-ran'
 
 const STORAGE_KEY = 'tw-keymap-overrides'
 // Fires (window event) whenever overrides change, so a mounted Editor reconfigures its keymap.
@@ -113,7 +114,16 @@ export function buildEditorKeyBindings(): KeyBinding[] {
     const validOverride = isValidKeyString(override) ? override.trim() : null
     if (c.unbound && validOverride == null) return []
     const key = validOverride ?? c.keys
-    return { key, preventDefault: !NON_CONSUMING.has(c.id), run: c.run }
+    // A key that acted is a run (the Guide ticks it); a key that declined (returned false) is not.
+    return {
+      key,
+      preventDefault: !NON_CONSUMING.has(c.id),
+      run: (view) => {
+        const acted = c.run(view)
+        if (acted) commandRan(c.shortcutId)
+        return acted
+      }
+    }
   })
 }
 

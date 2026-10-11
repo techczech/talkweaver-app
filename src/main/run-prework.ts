@@ -1,8 +1,9 @@
 // A planned Run's pre-work, main-process side (ADR-0032 amendment points 2–4; feedback-boards ticket 09).
 //
 // One pre-work object on the live Worker per Run. The app keeps it in a registry file in app data
-// (mode 0600) with its owner token, which never reaches a window, the window it was pushed with, and
-// how far the Run has been mirrored (`cursor`, the Worker's sequence number).
+// with the window it was pushed with and how far the Run has been mirrored (`cursor`, the Worker's
+// sequence number). Its owner token is kept in the secrets store (owner-tokens.ts), joined to the
+// row when the registry is read, and never reaches a window.
 //   - publish: creates the object on first use (admin secret, once) and pushes the public form and
 //     the Run's window; the handout is then built with the object's id;
 //   - pull: pages every entry after the cursor and merges them onto the Run through the atomic Run
@@ -13,9 +14,16 @@
 // Invariants: the form pushed carries no right answer (publicPreworkForm, checked again by the Worker);
 // a Run is read only from its talk's own folder and written back only there (readRunForTalk /
 // persistRunForTalk); a push or pull only ever goes to the Worker origin the object was created on.
-import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
-import { dirname } from 'path'
+// A new object's owner token is stored and read back before its form is pushed; when it cannot be
+// stored the object is closed again with the token still in hand. Every request that carries an
+// owner token goes through ownerFetch: a failure to send is a fixed sentence, never the transport's
+// error. A row this module cannot use just now (secure storage locked) stays in the registry untouched.
+// Publish, pull and close for one Run run one at a time (a per-Run queue): a second publish waits
+// and reuses the first one's object. Apart from the queue, a new object replaces only the exact row
+// this saw, a write after a request goes ahead only while the object's own row is still there, and
+// an object made here whose row is not registered is closed again.
 import { isShareId } from '../shared/share-id.ts'
+import { createKeyedQueue, openOwnerTokenRegistry, ownerFetch, validOwnerToken, type OwnerTokens } from './owner-tokens.ts'
 import { applyPickChange, type PickChange } from '../shared/run-prework-results.ts'
 import { RUN_PREWORK_MAX_SLIDE_ID } from '../shared/run-prework.ts'
 import type { PreworkForm } from '../shared/run-prework.ts'
@@ -40,6 +48,8 @@ export interface RunPreworkRow {
 export interface RunPreworkDeps {
   /** {userData}/run-prework-registry.json */
   registryPath: string
+  /** Where the objects' owner tokens are kept (the secrets store). */
+  ownerTokens: OwnerTokens
   /** The live Worker and its admin credential. Used to CREATE objects only. */
   endpoint(): Promise<{ baseUrl: string; adminSecret: string }>
   vaultRoot(): string | null
@@ -57,6 +67,10 @@ export interface RunPreworkState {
   purgedAt?: number
 }
 
+export const PREWORK_LOCKED = 'This Run already has pre-work, but its key cannot be read from this computer\'s secure storage just now. Nothing was changed. Try again.'
+export const PREWORK_NOT_KEPT = 'Pre-work could not be saved on this computer, so it was closed again and nothing was put on the handout.'
+export const PREWORK_NOT_KEPT_OPEN = 'Pre-work could not be saved on this computer and could not be closed again. It has no form and cannot be reached from this app.'
+export const PREWORK_FORM_NOT_REACHED = 'The pre-work service could not be reached, so the form was not sent. Try again.'
 export const PREWORK_PURGED_MESSAGE = 'Pre-work was deleted after 60 days without activity; the answers already pulled stay on the Run.'
 
 export type RunPreworkPull =
@@ -85,8 +99,7 @@ function validOrigin(value: unknown): value is string {
 
 function validRow(value: unknown): value is RunPreworkRow {
   const row = value as RunPreworkRow
-  return Boolean(row) && typeof row.key === 'string' && isShareId(row.preworkId) && typeof row.ownerToken === 'string'
-    && row.ownerToken.length >= 16 && row.ownerToken.length <= 4096 && validOrigin(row.workerBaseUrl)
+  return Boolean(row) && typeof row.key === 'string' && isShareId(row.preworkId) && validOwnerToken(row.ownerToken) && validOrigin(row.workerBaseUrl)
     && Number.isSafeInteger(row.opensAt) && Number.isSafeInteger(row.closesAt) && Number.isSafeInteger(row.cursor) && row.cursor >= 0
     && (row.closedAt === undefined || Number.isSafeInteger(row.closedAt))
     && (row.purgedAt === undefined || Number.isSafeInteger(row.purgedAt))
@@ -101,28 +114,33 @@ async function errorText(response: Response, fallback: string): Promise<string> 
 
 export function createRunPrework(deps: RunPreworkDeps) {
   const now = deps.now ?? Date.now
+  // The registry file holds no owner token: each row gets its token from the secrets store here.
+  const registryFile = openOwnerTokenRegistry('run-prework', deps.registryPath, deps.ownerTokens)
 
   function read(): RegistryFile {
     const registry: RegistryFile = { version: 1, preworks: {} }
-    try {
-      const parsed = JSON.parse(readFileSync(deps.registryPath, 'utf8')) as { preworks?: Record<string, unknown> }
-      for (const [key, row] of Object.entries(parsed?.preworks ?? {})) if (validRow(row) && row.key === key) registry.preworks[key] = row
-    } catch { /* no registry yet */ }
+    for (const [key, row] of Object.entries(registryFile.read())) if (validRow(row) && row.key === key) registry.preworks[key] = row
     return registry
   }
 
-  function write(registry: RegistryFile): void {
-    mkdirSync(dirname(deps.registryPath), { recursive: true })
-    const temp = `${deps.registryPath}.${process.pid}.${now().toString(36)}.tmp`
-    writeFileSync(temp, `${JSON.stringify(registry, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
-    renameSync(temp, deps.registryPath)
-    try { chmodSync(deps.registryPath, 0o600) } catch { /* best effort */ }
+  /** One operation at a time per Run: publish, pull and close never interleave. */
+  const queue = createKeyedQueue()
+
+  /**
+   * Add or change this one row; every other row in the file stays as it is. `seen` is the id of the
+   * row this operation saw under the key (null: none): the write happens only if that is still what
+   * the file holds.
+   */
+  function save(row: RunPreworkRow, seen: string | null): void {
+    registryFile.write({ [row.key]: row }, { expect: { [row.key]: seen }, ...(seen !== null && seen !== row.preworkId ? { remove: [row.key] } : {}) })
   }
 
-  function save(row: RunPreworkRow): void {
-    const registry = read()
-    registry.preworks[row.key] = row
-    write(registry)
+  /** Change the object's own row as it is now. False, and nothing written, when that row is no longer there. */
+  function update(row: RunPreworkRow, patch: Partial<RunPreworkRow>): boolean {
+    const current = read().preworks[row.key]
+    if (!current || current.preworkId !== row.preworkId) return false
+    save({ ...current, ...patch }, row.preworkId)
+    return true
   }
 
   function state(row: RunPreworkRow): RunPreworkState {
@@ -130,9 +148,10 @@ export function createRunPrework(deps: RunPreworkDeps) {
       ...(row.purgedAt !== undefined ? { purgedAt: row.purgedAt } : {}) }
   }
 
-  const owner = (row: RunPreworkRow) => ({ authorization: `Bearer ${row.ownerToken}` })
+  /** Every request that carries the object's owner token: a failure to send is a fixed sentence (ownerFetch). */
+  const asOwner = (row: RunPreworkRow, path: string, init: RequestInit) => ownerFetch(deps.fetch, `${row.workerBaseUrl}/prework/${row.preworkId}/${path}`, row.ownerToken, init)
 
-  async function pull(talkSlug: string, runId: string): Promise<RunPreworkPull> {
+  async function pullNow(talkSlug: string, runId: string): Promise<RunPreworkPull> {
     const vaultRoot = deps.vaultRoot()
     const before = vaultRoot ? readRunForTalk(vaultRoot, talkSlug, runId) : null
     if (!vaultRoot || !before) return { ok: false, error: 'This Run is no longer in the vault.' }
@@ -146,12 +165,12 @@ export function createRunPrework(deps: RunPreworkDeps) {
     for (let page = 0; page < MAX_PAGES; page += 1) {
       let response: Response
       try {
-        response = await deps.fetch(`${row.workerBaseUrl}/prework/${row.preworkId}/results?after=${after}`, { headers: owner(row), signal: AbortSignal.timeout(15_000) })
+        response = await asOwner(row, `results?after=${after}`, { signal: AbortSignal.timeout(15_000) })
       } catch {
         return { ok: false, error: 'The pre-work service could not be reached. Try again.', run: before }
       }
       if (response.status === 410) {
-        save({ ...read().preworks[row.key] ?? row, purgedAt: now() })
+        update(row, { purgedAt: now() })
         return { ok: false, error: PREWORK_PURGED_MESSAGE, run: before }
       }
       if (!response.ok) return { ok: false, error: await errorText(response, `The answers could not be read (HTTP ${response.status}).`), run: before }
@@ -176,9 +195,19 @@ export function createRunPrework(deps: RunPreworkDeps) {
     if (!current) return { ok: false, error: 'This Run is no longer in the vault.' }
     const merged = applyRunPrework(current, entries, { people: meta.people, lastActivityAt: meta.lastActivityAt, closedAt: row.closedAt })
     const saved = merged === current ? current : persistRunForTalk(vaultRoot, talkSlug, runId, merged)
-    if (after !== row.cursor) save({ ...read().preworks[row.key] ?? row, cursor: after })
+    if (after !== row.cursor) update(row, { cursor: after })
     const count = (run: RunRecord) => run.prework?.entries.length ?? 0
     return { ok: true, run: saved, added: Math.max(0, count(saved) - count(before)), changed: merged !== current }
+  }
+
+  const pull = (talkSlug: string, runId: string): Promise<RunPreworkPull> => queue.run(runPreworkKey(talkSlug, runId), () => pullNow(talkSlug, runId))
+
+  /** Close an object on the service with its own token. True when the service confirms it is closed or gone. */
+  async function closeRemote(row: RunPreworkRow): Promise<boolean> {
+    try {
+      const response = await asOwner(row, 'close', { method: 'POST', signal: AbortSignal.timeout(10_000) })
+      return response.ok || response.status === 410 || response.status === 404
+    } catch { return false }
   }
 
   return {
@@ -194,10 +223,19 @@ export function createRunPrework(deps: RunPreworkDeps) {
      * form) and a warning when it stays closed. The Run's existing object is always reused: a
      * republish never starts a new one. Throws with a readable message on failure (publishing stops).
      */
-    async publish(talkSlug: string, runId: string, form: PreworkForm, window: { opensAt: number; closesAt: number }):
+    publish(talkSlug: string, runId: string, form: PreworkForm, window: { opensAt: number; closesAt: number }):
       Promise<{ preworkId: string; workerBaseUrl: string; open: boolean; warning?: string }> {
       const key = runPreworkKey(talkSlug, runId)
+      return queue.run(key, async () => {
+      // Asked before the rows are read, so a row read without its token is known to be for good.
+      const storeReadable = deps.ownerTokens.readable()
       const create = async (): Promise<RunPreworkRow> => {
+        // The Run has a row this cannot use. While secure storage cannot be read that row is a
+        // working object whose token is out of reach: it is left alone and no second one is made.
+        const seen = registryFile.idAt(key)
+        if (seen !== null && !storeReadable) throw new Error(PREWORK_LOCKED)
+        // An object whose owner token could not be kept is never made: its answers could not be read.
+        registryFile.assertCanStore()
         const endpoint = await deps.endpoint()
         const origin = new URL(endpoint.baseUrl).origin
         const response = await deps.fetch(`${origin}/prework`, {
@@ -209,51 +247,77 @@ export function createRunPrework(deps: RunPreworkDeps) {
         const candidate = { key, preworkId: created.preworkId, ownerToken: created.ownerToken, workerBaseUrl: origin,
           opensAt: window.opensAt, closesAt: window.closesAt, cursor: 0, createdAt: now() }
         if (!validRow(candidate)) throw new Error('The pre-work service returned an incomplete answer.')
-        save(candidate)
+        // Stored (and read back) before the form is pushed. If that fails the object is closed while
+        // its token is still here: nothing is left on the service that this app cannot reach.
+        try {
+          save(candidate, seen) // the dead row this saw is replaced; any other row is not
+        } catch {
+          throw new Error(await closeRemote(candidate) ? PREWORK_NOT_KEPT : PREWORK_NOT_KEPT_OPEN)
+        }
         return candidate
       }
-      const push = (row: RunPreworkRow) => deps.fetch(`${row.workerBaseUrl}/prework/${row.preworkId}/form`, {
-        method: 'PUT', headers: { ...owner(row), 'content-type': 'application/json' },
-        body: JSON.stringify({ opensAt: window.opensAt, closesAt: window.closesAt, form }), signal: AbortSignal.timeout(15_000),
-      })
+      const push = async (row: RunPreworkRow): Promise<Response> => {
+        try {
+          return await asOwner(row, 'form', {
+            method: 'PUT', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ opensAt: window.opensAt, closesAt: window.closesAt, form }), signal: AbortSignal.timeout(15_000),
+          })
+        } catch {
+          throw new Error(PREWORK_FORM_NOT_REACHED)
+        }
+      }
       const existing = read().preworks[key]
       // Known to be purged: say so without asking the Worker again.
       if (existing?.purgedAt !== undefined) return { preworkId: existing.preworkId, workerBaseUrl: existing.workerBaseUrl, open: false, warning: PREWORK_PURGED_MESSAGE }
       const row = existing ?? await create()
-      const response = await push(row)
+      // An object made here whose row is no longer registered could never be read or closed: close it now.
+      const unregistered = async (): Promise<Error | null> => (existing || registryFile.idAt(key) === row.preworkId ? null
+        : new Error(await closeRemote(row) ? PREWORK_NOT_KEPT : PREWORK_NOT_KEPT_OPEN))
+      let response: Response
+      try {
+        response = await push(row)
+      } catch (cause) {
+        throw await unregistered() ?? cause
+      }
       // Purged on the Worker (60 idle days after it closed) or gone from it: nothing is reopened
       // unasked. The handout goes out without the form; what the Run holds stays on the Run.
       if (existing && (response.status === 404 || response.status === 410)) {
-        save({ ...read().preworks[key] ?? row, purgedAt: row.purgedAt ?? now() })
+        update(row, { purgedAt: row.purgedAt ?? now() })
         return { preworkId: row.preworkId, workerBaseUrl: row.workerBaseUrl, open: false, warning: PREWORK_PURGED_MESSAGE }
       }
       if (!response.ok) throw new Error(await errorText(response, `The pre-work form could not be sent (HTTP ${response.status}).`))
-      save({ ...read().preworks[key] ?? row, opensAt: window.opensAt, closesAt: window.closesAt })
+      if (!update(row, { opensAt: window.opensAt, closesAt: window.closesAt })) {
+        const gone = await unregistered()
+        if (gone) throw gone
+      }
       // Closed early ("Close pre-work now") is for good: the form is updated, it stays closed.
       if (row.closedAt !== undefined) {
         return { preworkId: row.preworkId, workerBaseUrl: row.workerBaseUrl, open: true, warning: 'Pre-work was closed; it stays closed.' }
       }
       return { preworkId: row.preworkId, workerBaseUrl: row.workerBaseUrl, open: true }
+      })
     },
 
     pull,
 
     /** "Close pre-work now": the Worker stops taking answers; then the last answers are pulled. */
-    async close(talkSlug: string, runId: string): Promise<RunPreworkPull> {
+    close(talkSlug: string, runId: string): Promise<RunPreworkPull> {
       const key = runPreworkKey(talkSlug, runId)
+      return queue.run(key, async () => {
       const row = read().preworks[key]
       if (!row) return { ok: false, error: 'This Run has no pre-work on the handout.' }
       let response: Response
       try {
-        response = await deps.fetch(`${row.workerBaseUrl}/prework/${row.preworkId}/close`, { method: 'POST', headers: owner(row), signal: AbortSignal.timeout(10_000) })
+        response = await asOwner(row, 'close', { method: 'POST', signal: AbortSignal.timeout(10_000) })
       } catch {
         return { ok: false, error: 'The pre-work service could not be reached, so pre-work is still open. Try again.' }
       }
       if (!response.ok && response.status !== 410) return { ok: false, error: await errorText(response, 'The pre-work service did not close pre-work. Try again.') }
       const body = await response.json().catch(() => ({})) as { closedAt?: unknown }
       const closedAt = Number.isSafeInteger(body.closedAt) ? Number(body.closedAt) : now()
-      save({ ...read().preworks[key] ?? row, closedAt })
-      return pull(talkSlug, runId)
+      update(row, { closedAt })
+      return pullNow(talkSlug, runId) // already inside this Run's turn
+      })
     },
 
     /**

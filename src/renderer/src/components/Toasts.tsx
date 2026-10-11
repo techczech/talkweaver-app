@@ -55,7 +55,8 @@ export default function Toasts() {
           <span style={{ flex: 1, lineHeight: 1.4 }}>{t.message}</span>
           {t.action && (
             <button
-              style={actionStyle}
+              style={{ ...actionStyle, ...actionTone[t.level] }}
+              data-toast-action={t.level}
               onClick={() => { t.action?.onAction(); dismiss(t.id) }}
             >
               {t.action.label}
@@ -91,7 +92,16 @@ const closeStyle: React.CSSProperties = {
   lineHeight: 1, color: 'inherit', opacity: 0.6, padding: '0 2px'
 }
 const actionStyle: React.CSSProperties = {
-  flexShrink: 0, background: 'currentColor', border: 'none', cursor: 'pointer',
-  fontSize: 12, fontWeight: 600, lineHeight: 1, padding: '5px 10px', borderRadius: 6,
-  color: 'var(--panel)', mixBlendMode: 'normal'
+  flexShrink: 0, border: 'none', cursor: 'pointer',
+  fontSize: 12, fontWeight: 600, lineHeight: 1, padding: '5px 10px', borderRadius: 6
+}
+// The action button is a filled button in the toast's own tone: its text colour as the fill, white
+// on it (the app's filled-button pairing, as `.sh-btn`: var(--oxford) with #fff). It used to set
+// `background: currentColor` with `color: var(--panel)`, which made the fill the panel colour too:
+// a blank box, the label unreadable on every toast.
+const actionTone: Record<string, React.CSSProperties> = {
+  error: { background: '#7a1b14', color: '#fff' },
+  warning: { background: '#6b4e08', color: '#fff' },
+  info: { background: 'var(--oxford)', color: '#fff' },
+  success: { background: '#155c33', color: '#fff' }
 }

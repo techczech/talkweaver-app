@@ -1,14 +1,15 @@
 {
   "name": "talk-weaver",
-  "version": "0.38.0",
+  "version": "0.38.2",
   "description": "Desktop authoring app for the presentation ecosystem",
   "main": "./out/main/index.js",
   "engines": {
     "node": ">=24"
   },
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "npm run build:worker-dist && electron-vite dev",
     "typecheck": "npm run typecheck:app && npm run typecheck:live-follow-protocol",
+    "preview:handout": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --disable-warning=ExperimentalWarning scripts/local-handout-preview.mjs",
     "test:unit": "node scripts/run-tests.mjs --tier unit",
     "test:dom": "node scripts/run-tests.mjs --tier dom",
     "test:e2e": "node scripts/run-tests.mjs --tier e2e",
@@ -17,6 +18,39 @@
     "smoke:compiler": "node scripts/smoke-compiler.mjs",
     "test:notes-never-published": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-notes-never-published.mjs",
     "test:windows-safe-paths": "node scripts/test-windows-safe-paths.mjs",
+    "test:wrangler-launcher": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-wrangler-launcher.mjs",
+    "test:wrangler-ambient-trace": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-wrangler-ambient-trace.mjs",
+    "test:worker-compile-integrity": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-worker-compile-integrity.mjs",
+    "build:worker-dist": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/build-worker-dist.mjs",
+    "fetch:ffmpeg-mac": "node scripts/fetch-ffmpeg-mac.mjs",
+    "build:ffmpeg-source": "node scripts/build-ffmpeg-source-bundle.mjs",
+    "check:worker-dist": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-worker-dist.mjs",
+    "test:worker-dist": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-worker-dist.mjs",
+    "test:live-service-upload": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-live-service-upload.mjs",
+    "test:going-live-row": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-going-live-row.mjs",
+    "test:secrets-store": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-secrets-store.mjs",
+    "test:owner-tokens": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-owner-tokens.mjs",
+    "test:secrets-store:electron": "node e2e/diagnose-secrets-store.mjs",
+    "test:secrets-gate:e2e": "node e2e/diagnose-secrets-gate.mjs",
+    "test:cloudflare-connection": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-cloudflare-connection.mjs",
+    "test:cloudflare-connection:api": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-cloudflare-connection-api.mjs",
+    "test:recording-storage": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-recording-storage.mjs",
+    "test:recording-storage:s3": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-recording-storage-s3.mjs",
+    "test:transcription-setup": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-transcription-setup.mjs",
+    "test:ffmpeg-source-bundle": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-ffmpeg-source-bundle.mjs",
+    "test:transcription-setup:python": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-transcription-setup-python.mjs",
+    "test:transcription-settings:e2e": "node e2e/diagnose-transcription-settings.mjs",
+    "test:cloudflare-settings:e2e": "node e2e/diagnose-cloudflare-settings.mjs",
+    "test:setup-cli": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-setup-cli.mjs",
+    "test:setup-command:e2e": "node e2e/diagnose-setup-command.mjs",
+    "test:publish-responsiveness:e2e": "node e2e/diagnose-publish-responsiveness.mjs",
+    "test:settings-panel-width:e2e": "node e2e/diagnose-settings-panel-width.mjs",
+    "test:handout-publishing": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-handout-publishing.mjs",
+    "test:handout-slimming": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-handout-slimming.mjs",
+    "test:publish-handout:e2e": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON e2e/diagnose-publish-handout.mjs",
+    "test:wrangler-overlap": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-wrangler-overlap.mjs",
+    "smoke:packaged-wrangler": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/smoke-packaged-wrangler.mjs",
+    "verify:mac-package": "node scripts/verify-mac-package.mjs",
     "test:slide-video-materialization": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-slide-video-materialization.mjs",
     "test:object-markup": "node scripts/test-object-markup.mjs",
     "test:sanitise-svg": "node scripts/test-sanitise-svg.mjs",
@@ -42,6 +76,10 @@
     "test:frame": "node scripts/test-frame.mjs",
     "generate:triggers": "node scripts/generate-trigger-dictionary.mjs",
     "test:layout-registry": "node scripts/test-layout-registry-parity.mjs",
+    "test:simulation-layout": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-simulation-layout.mjs",
+    "test:simulation-dom": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/simulation-dom.test.mjs",
+    "test:sim-typing": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-sim-typing.mjs",
+    "test:simulation-present:e2e": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON e2e/diagnose-simulation-present.mjs",
     "test:title-regime": "node scripts/test-title-regime.mjs",
     "test:title-look": "node scripts/test-title-look.mjs",
     "test:section-divider-eyebrow": "node scripts/test-section-divider-eyebrow.mjs",
@@ -70,7 +108,7 @@
     "test:trigger-validation": "node scripts/test-trigger-validation.mjs",
     "test:trigger-order-invariance": "node scripts/test-trigger-order-invariance.mjs",
     "test:sampler-report": "node scripts/test-layout-sampler-report.mjs",
-    "test:outbound-trigger-gates": "node scripts/test-outbound-trigger-gates.mjs",
+    "test:outbound-trigger-gates": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-outbound-trigger-gates.mjs",
     "test:unresolved-trigger-state:e2e": "node e2e/diagnose-unresolved-trigger-state.mjs",
     "test:inspector-tabs:e2e": "node e2e/diagnose-inspector-tabs.mjs",
     "test:options-model": "node scripts/test-layout-options-model.mjs",
@@ -86,12 +124,22 @@
     "test:shortcuts": "node scripts/test-shortcut-registry.mjs",
     "test:deck-window-keys": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-deck-window-keys.mjs",
     "test:commands": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-command-registry.mjs",
+    "test:task-groups": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-task-groups.mjs",
+    "test:places": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-places.mjs",
+    "test:place-chip:e2e": "node e2e/diagnose-place-chip.mjs",
+    "test:actions-here": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-actions-here.mjs",
+    "test:actions-here:e2e": "node e2e/diagnose-actions-here.mjs",
+    "test:keyboard-sheet": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-keyboard-sheet.mjs",
+    "test:keyboard-sheet:e2e": "node e2e/diagnose-keyboard-sheet.mjs",
     "test:action-bar-overflow": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-action-bar-overflow.mjs",
     "test:action-bar-model": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-action-bar-model.mjs",
     "test:action-bar-editing": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-action-bar-editing.mjs && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-action-bar-command-path.mjs",
     "test:link-command": "node scripts/test-link-command.mjs",
     "test:render-inline-corpus": "node scripts/test-render-inline-corpus.mjs",
     "test:render-inline-mark": "node scripts/test-render-inline-mark.mjs",
+    "test:key-caps": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-key-caps.mjs",
+    "test:key-cap-editor": "node scripts/test-key-cap-editor.mjs",
+    "test:practice-quote-look": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-practice-quote-look.mjs",
     "test:chart-renderer": "node scripts/test-chart-renderer.mjs",
     "test:chart-blocks": "node scripts/test-chart-blocks.mjs",
     "test:chart-fences": "node scripts/test-chart-fences.mjs",
@@ -102,6 +150,7 @@
     "test:thumbnail-cache-gc": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-thumbnail-cache-gc.mjs",
     "test:thumbnail-media-policy": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-thumbnail-media-policy.mjs",
     "test:single-flight": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-single-flight.mjs",
+    "test:prepare-talk-off-thread": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-prepare-talk-off-thread.mjs",
     "test:slide-browser-helpers": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-slide-browser-helpers.mjs",
     "test:thumbnail-regen-queue": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-thumbnail-regen-queue.mjs",
     "test:main-log": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-main-log.mjs",
@@ -170,15 +219,33 @@
     "test:importer-batch": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-importer-batch.mjs",
     "test:importer-ipc": "node scripts/test-importer-ipc.mjs",
     "test:importer-ui": "node scripts/test-importer-ui.mjs",
+    "test:importer-renderer-notice": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-importer-renderer-notice.mjs",
     "test:importer-preview": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-importer-preview.mjs",
-    "test": "npm run test:windows-safe-paths && npm run test:performance && npm run test:sequencer && npm run smoke:compiler && npm run test:notes-never-published && npm run test:compiler-svg-parity && npm run test:packaged-compiler && npm run test:mermaid-vendor-security && npm run test:mermaid-vendor-embedding && npm run test:overview && npm run test:presenter-outline-follow && npm run test:presenter-outline-skipped && npm run test:presenter-outline-look && npm run test:presenter-notes-placement && npm run test:presenter-teleprompter && npm run test:presenter-controls && npm run test:presenter-status-bar && npm run test:presenter-menus && npm run test:presenter-palette && npm run test:presenter-recording && npm run test:presenter-bottom-bar && npm run test:presenter-polls && npm run test:beats && npm run test:metadata && npm run test:tags && npm run test:pathways && npm run test:runs && npm run test:plan-run && npm run test:handout-from-buffer && npm run test:instant-slide-label && npm run test:instant-slide-insert && npm run test:outline-disk-guard && npm run test:shared-talk-runtime && npm run test:shared-talk-service && npm run test:shared-talk-build && npm run test:feedback-rail && npm run test:feedback-accept && npm run test:talktext && npm run test:rewritepack && npm run test:cleanpack && npm run test:word-diff && npm run test:talktext-adapter && npm run test:talktext-renderer && npm run test:talktext-safety && npm run test:notes-markdown && npm run test:mode-selector-parity && npm run test:reveal-cross-runtime && npm run test:layout-registry && npm run test:title-regime && npm run test:section-divider-eyebrow && npm run test:statement-quote-subsection-look && npm run test:statement-options-look && npm run test:no-lone-last-word && npm run test:timeline-look && npm run test:list-alignment-look && npm run test:readable-cards-look && npm run test:numbered-lists-look && npm run test:slot-composition && npm run test:layout-precedence-parity && npm run test:structure-vs-tokens && npm run test:trigger-validation && npm run test:trigger-order-invariance && npm run test:sampler-report && npm run test:layout-doctor && npm run test:layout-doctor-render && npm run test:layout-picker && npm run test:options-model && npm run test:options-parity && npm run test:deck-options-parity && npm run test:frontmatter-editor && npm run test:inspector-model && npm run test:inline-trigger-commit && npm run test:trigger-echo && npm run test:talklist-window && npm run test:talklist-vaults && npm run test:talklist-hover && npm run test:talk-search && npm run test:talk-search-prefixes && npm run test:talklist-search && npm run test:talklist-archive && npm run test:picker-tree && npm run test:find-a-talk && npm run test:result-beside && npm run test:insert-section && npm run test:talk-facts && npm run test:outline-switch && npm run test:thumb-key && npm run test:slide-browser-picture-key && npm run test:vault-index-handler && npm run test:vault-index && npm run test:vault-resilience && npm run test:vault-caches && npm run test:config-file && npm run test:vault-registry && npm run test:vault-view && npm run test:cross-vault-insert && npm run test:slide-browser-vaults && npm run test:css-modules && npm run test:shortcuts && npm run test:deck-window-keys && npm run test:commands && npm run test:action-bar-overflow && npm run test:action-bar-model && npm run test:action-bar-editing && npm run test:link-command && npm run test:render-inline-corpus && npm run test:render-inline-mark && npm run test:chart-renderer && npm run test:chart-blocks && npm run test:chart-fences && npm run test:chart-editor && npm run test:prerender-ledger && npm run test:warnings && npm run test:trigger-line && npm run test:protected-lines && npm run test:normalize && npm run test:icon-fallback && npm run test:static-folds && npm run test:contrast-variants && npm run test:round-b-variants && npm run test:deck-boots && npm run test:phone-detail-sync && npm run test:phone-text && npm run test:slide-canvas && npm run test:sampler && npm run test:add-icon && npm run test:vendor-icon-set && npm run test:icon-parity && npm run test:brand-context && npm run test:brand-monochrome && npm run test:object-markup && npm run test:sanitise-svg && npm run test:insert-objects && npm run test:object-blocks && npm run test:object-block-field && npm run test:object-widgets && npm run test:object-editor-shell && npm run test:table-editor && npm run test:markmap-editor && npm run test:trigger-table && npm run test:e2e-check-ledger && npm run test:slide-fit && npm run test:stage-fit && npm run test:video-lightbox && npm run test:audio-chip && npm run test:audio-chip-dom && npm run test:pointer-overlay && npm run test:pointer-overlay-dom && npm run test:pen-ink && npm run test:pen-dom && npm run test:pen-replay-dom && npm run test:image-steps && npm run test:image-steps-dom && npm run test:emphasis-steps && npm run test:emphasis-steps-dom && npm run test:media-steps && npm run test:asset-containment && npm run test:media-inside-vault && npm run test:media-inside-vault-dom && npm run test:optimise-images && npm run test:media-steps-dom && npm run test:metadata-surfaces && npm run test:metadata-defaults && npm run test:inline-semantics && npm run test:poster-parity && npm run test:option-applicability && npm run test:settings-honoured && npm run test:backup-export-budget && npm run test:backup-scope && npm run test:search-index-freshness && npm run test:thumbnail-cache-gc && npm run test:single-flight && npm run test:thumbnail-media-policy && npm run test:slide-browser-helpers && npm run test:thumbnail-regen-queue && npm run test:main-log && npm run test:audience-page-keys && npm run test:audience-reactions && npm run test:reaction-sets && npm run test:audience-ask && npm run test:presenter-questions && npm run test:audience-pause && npm run test:audience-note-sheet && npm run test:audience-my-notes && npm run test:recording-paths && npm run test:vault-paths && npm run test:board-slide && npm run test:board-screen && npm run test:audience-board && npm run test:slide-video-materialization && npm run test:board-panel && npm run test:prework && npm run test:prework-publish && npm run test:prework-form && npm run test:run-prework && npm run test:vault-file && npm run test:vault-defaults && npm run test:vault-settings-ipc && npm run test:shell-path-policy && npm run test:visfix-look && npm run test:narrow-columns && npm run test:screenshot-row && npm run test:layout-verbs && npm run test:layout-variant-thumbnail && npm run test:vault-availability && npm run test:talklist-show-filter && npm run test:conflict-copies && npm run test:talk-activity && npm run test:conflict-merge && npm run test:conflict-compare && npm run test:handout-title && npm run test:handout-home && npm run test:handout-home-dom && npm run test:lazy-slide-assets && npm run test:lazy-publish && npm run test:lazy-slide-assets-dom && npm run test:slide-title-inline && npm run test:prework-hidden && npm run test:navigation-guard && npm run test:present-window-open && npm run test:ipc-main-frame-only && npm run test:live-read-clipboard && npm run test:recording-permissions && npm run test:local-address-filter && npm run test:slide-insert-source && npm run test:thumb-url-slugs && npm run test:notes-wrapper-fence && npm run test:slide-number-gutter && npm run test:open-in-new-window && npm run test:editor-image-size && npm run test:editor-fold-gutter && npm run test:instant-slide-qr-sound && npm run test:recording-loss && npm run test:recording-stream && npm run test:run-audio && npm run test:present-audio-loss && npm run test:instant-slide-link && npm run test:embed-protocol && npm run test:embed-channel && npm run test:embed-agent-dom && npm run test:embed-channel-dom && npm run test:embed-inline && npm run test:embed-sandbox-dom && npm run test:embed-mirroring-dom && npm run test:embed-page-width-dom && npm run test:embed-peer-dom && npm run test:pointer-worker && npm run test:venue-screen && npm run test:live-follow-dom",
+    "test": "npm run test:windows-safe-paths && npm run test:local-live-stub && npm run test:wrangler-launcher && npm run test:wrangler-ambient-trace && npm run test:live-service-upload && npm run test:going-live-row && npm run test:worker-dist && npm run test:secrets-store && npm run test:owner-tokens && npm run test:cloudflare-connection && npm run test:cloudflare-connection:api && npm run test:recording-storage && npm run test:recording-storage:s3 && npm run test:transcription-setup && npm run test:setup-cli && npm run test:ffmpeg-source-bundle && npm run test:handout-publishing && npm run test:handout-slimming && npm run test:performance && npm run test:sequencer && npm run smoke:compiler && npm run test:notes-never-published && npm run test:compiler-svg-parity && npm run test:packaged-compiler && npm run test:mermaid-vendor-security && npm run test:mermaid-vendor-embedding && npm run test:overview && npm run test:presenter-outline-follow && npm run test:presenter-outline-skipped && npm run test:presenter-outline-look && npm run test:presenter-notes-placement && npm run test:presenter-teleprompter && npm run test:presenter-controls && npm run test:presenter-status-bar && npm run test:presenter-menus && npm run test:presenter-palette && npm run test:presenter-guide && npm run test:presenter-recording && npm run test:presenter-bottom-bar && npm run test:presenter-polls && npm run test:beats && npm run test:metadata && npm run test:tags && npm run test:pathways && npm run test:runs && npm run test:plan-run && npm run test:handout-from-buffer && npm run test:instant-slide-label && npm run test:instant-slide-insert && npm run test:outline-disk-guard && npm run test:shared-talk-runtime && npm run test:shared-talk-service && npm run test:shared-talk-build && npm run test:feedback-rail && npm run test:feedback-accept && npm run test:talktext && npm run test:rewritepack && npm run test:cleanpack && npm run test:word-diff && npm run test:talktext-adapter && npm run test:talktext-renderer && npm run test:talktext-safety && npm run test:notes-markdown && npm run test:mode-selector-parity && npm run test:reveal-cross-runtime && npm run test:layout-registry && npm run test:title-regime && npm run test:section-divider-eyebrow && npm run test:statement-quote-subsection-look && npm run test:statement-options-look && npm run test:no-lone-last-word && npm run test:timeline-look && npm run test:list-alignment-look && npm run test:readable-cards-look && npm run test:numbered-lists-look && npm run test:slot-composition && npm run test:layout-precedence-parity && npm run test:structure-vs-tokens && npm run test:trigger-validation && npm run test:trigger-order-invariance && npm run test:sampler-report && npm run test:layout-doctor && npm run test:layout-doctor-render && npm run test:layout-picker && npm run test:options-model && npm run test:options-parity && npm run test:deck-options-parity && npm run test:frontmatter-editor && npm run test:inspector-model && npm run test:inline-trigger-commit && npm run test:trigger-echo && npm run test:talklist-window && npm run test:talklist-vaults && npm run test:talklist-hover && npm run test:talk-search && npm run test:talk-search-prefixes && npm run test:talklist-search && npm run test:talklist-archive && npm run test:picker-tree && npm run test:find-a-talk && npm run test:result-beside && npm run test:insert-section && npm run test:talk-facts && npm run test:outline-switch && npm run test:thumb-key && npm run test:slide-browser-picture-key && npm run test:vault-index-handler && npm run test:vault-index && npm run test:vault-resilience && npm run test:vault-caches && npm run test:config-file && npm run test:vault-registry && npm run test:example-vault && npm run test:example-vault-removal && npm run test:example-talks && npm run test:example-talks-fit && npm run test:guide && npm run test:guide-chapters && npm run test:guide-topics && npm run test:guide-connections && npm run test:command-ran && npm run test:presenter-guide-ipc && npm run test:vault-view && npm run test:cross-vault-insert && npm run test:slide-browser-vaults && npm run test:css-modules && npm run test:shortcuts && npm run test:deck-window-keys && npm run test:commands && npm run test:task-groups && npm run test:places && npm run test:place-chip:e2e && npm run test:actions-here && npm run test:actions-here:e2e && npm run test:keyboard-sheet && npm run test:keyboard-sheet:e2e && npm run test:example-vault:e2e && npm run test:example-vault-removal:e2e && npm run test:example-talks:e2e && npm run test:guide:e2e && npm run test:guide-chapters:e2e && npm run test:guide-topics:e2e && npm run test:presenter-guide:e2e && npm run test:action-bar-overflow && npm run test:action-bar-model && npm run test:action-bar-editing && npm run test:link-command && npm run test:render-inline-corpus && npm run test:render-inline-mark && npm run test:key-caps && npm run test:key-cap-editor && npm run test:practice-quote-look && npm run test:chart-renderer && npm run test:chart-blocks && npm run test:chart-fences && npm run test:chart-editor && npm run test:prerender-ledger && npm run test:warnings && npm run test:trigger-line && npm run test:protected-lines && npm run test:normalize && npm run test:icon-fallback && npm run test:static-folds && npm run test:contrast-variants && npm run test:round-b-variants && npm run test:deck-boots && npm run test:phone-detail-sync && npm run test:phone-text && npm run test:slide-canvas && npm run test:sampler && npm run test:add-icon && npm run test:vendor-icon-set && npm run test:icon-parity && npm run test:brand-context && npm run test:brand-monochrome && npm run test:object-markup && npm run test:sanitise-svg && npm run test:insert-objects && npm run test:object-blocks && npm run test:object-block-field && npm run test:object-widgets && npm run test:object-editor-shell && npm run test:table-editor && npm run test:markmap-editor && npm run test:trigger-table && npm run test:e2e-check-ledger && npm run test:slide-fit && npm run test:stage-fit && npm run test:video-lightbox && npm run test:audio-chip && npm run test:audio-chip-dom && npm run test:pointer-overlay && npm run test:pointer-overlay-dom && npm run test:pen-ink && npm run test:pen-dom && npm run test:pen-replay-dom && npm run test:image-steps && npm run test:image-steps-dom && npm run test:emphasis-steps && npm run test:emphasis-steps-dom && npm run test:media-steps && npm run test:asset-containment && npm run test:media-inside-vault && npm run test:media-inside-vault-dom && npm run test:optimise-images && npm run test:media-steps-dom && npm run test:metadata-surfaces && npm run test:metadata-defaults && npm run test:inline-semantics && npm run test:poster-parity && npm run test:option-applicability && npm run test:settings-honoured && npm run test:backup-export-budget && npm run test:backup-scope && npm run test:search-index-freshness && npm run test:thumbnail-cache-gc && npm run test:single-flight && npm run test:prepare-talk-off-thread && npm run test:thumbnail-media-policy && npm run test:slide-browser-helpers && npm run test:thumbnail-regen-queue && npm run test:main-log && npm run test:audience-page-keys && npm run test:audience-reactions && npm run test:reaction-sets && npm run test:audience-ask && npm run test:presenter-questions && npm run test:audience-pause && npm run test:audience-note-sheet && npm run test:audience-my-notes && npm run test:recording-paths && npm run test:vault-paths && npm run test:board-slide && npm run test:board-screen && npm run test:audience-board && npm run test:slide-video-materialization && npm run test:board-panel && npm run test:prework && npm run test:prework-publish && npm run test:prework-form && npm run test:run-prework && npm run test:vault-file && npm run test:vault-defaults && npm run test:vault-settings-ipc && npm run test:shell-path-policy && npm run test:visfix-look && npm run test:narrow-columns && npm run test:screenshot-row && npm run test:layout-verbs && npm run test:layout-variant-thumbnail && npm run test:vault-availability && npm run test:talklist-show-filter && npm run test:conflict-copies && npm run test:talk-activity && npm run test:conflict-merge && npm run test:conflict-compare && npm run test:handout-title && npm run test:handout-home && npm run test:live-step && npm run test:handout-home-dom && npm run test:lazy-slide-assets && npm run test:lazy-publish && npm run test:lazy-slide-assets-dom && npm run test:slide-title-inline && npm run test:prework-hidden && npm run test:navigation-guard && npm run test:present-window-open && npm run test:ipc-main-frame-only && npm run test:live-read-clipboard && npm run test:recording-permissions && npm run test:local-address-filter && npm run test:slide-insert-source && npm run test:thumb-url-slugs && npm run test:notes-wrapper-fence && npm run test:slide-number-gutter && npm run test:open-in-new-window && npm run test:editor-image-size && npm run test:editor-fold-gutter && npm run test:instant-slide-qr-sound && npm run test:recording-loss && npm run test:recording-stream && npm run test:run-audio && npm run test:present-audio-loss && npm run test:instant-slide-link && npm run test:embed-protocol && npm run test:embed-channel && npm run test:embed-agent-dom && npm run test:embed-channel-dom && npm run test:embed-inline && npm run test:embed-sandbox-dom && npm run test:embed-mirroring-dom && npm run test:embed-page-width-dom && npm run test:embed-peer-dom && npm run test:pointer-worker && npm run test:venue-screen && npm run test:live-follow-dom && npm run test:simulation-layout && npm run test:simulation-dom && npm run test:sim-typing",
     "test:vault-registry": "node scripts/test-vault-registry.mjs",
+    "test:example-vault": "node scripts/test-example-vault.mjs",
+    "test:example-vault:e2e": "node e2e/diagnose-example-vault.mjs",
+    "test:example-vault-removal": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-example-vault-removal.mjs",
+    "test:example-vault-removal:e2e": "node e2e/diagnose-example-vault-removal.mjs",
+    "test:example-talks": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-example-talks.mjs",
+    "test:example-talks-fit": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-example-talks-fit.mjs",
+    "test:example-talks:e2e": "node e2e/diagnose-example-talks.mjs",
+    "test:guide": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-guide.mjs",
+    "test:guide:e2e": "node e2e/diagnose-guide.mjs",
+    "test:guide-chapters": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-guide-chapters.mjs",
+    "test:command-ran": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-command-ran.mjs",
+    "test:guide-chapters:e2e": "node e2e/diagnose-guide-chapters.mjs",
+    "test:guide-topics": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-guide-topics.mjs",
+    "test:guide-connections": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-guide-connections.mjs",
+    "test:guide-topics:e2e": "node e2e/diagnose-guide-topics.mjs",
+    "test:presenter-guide:e2e": "node e2e/diagnose-presenter-guide.mjs",
     "test:vault-view": "node scripts/test-vault-view.mjs",
     "test:vault-availability": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-vault-availability.mjs",
     "test:conflict-copies": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-conflict-copies.mjs",
     "test:talk-activity": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-talk-activity.mjs",
     "test:conflict-copies:e2e": "node e2e/diagnose-conflict-copies.mjs",
     "test:conflict-merge": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-conflict-merge.mjs",
+    "test:live-step": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-live-step.mjs",
     "test:handout-home": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-handout-home-details.mjs",
     "test:handout-home-dom": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/handout-home-live-dom.test.mjs",
     "test:lazy-slide-assets": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-lazy-slide-assets.mjs",
@@ -231,6 +298,7 @@
     "migrate": "node compiler/scripts/migrate-outline.mjs",
     "test:publishing": "node scripts/test-publishing-logic.mjs",
     "test:live-presenter": "bun test ./scripts/live-presenter-client.test.ts ./scripts/live-presenter-recovery.test.ts ./scripts/present-live-state.test.ts",
+    "test:local-live-stub": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/local-live-stub.test.mjs",
     "test:live-follow": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/live-follow-client.test.mjs",
     "test:audience-reactions": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/audience-reactions.test.mjs && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/audience-reactions-dom.test.mjs",
     "test:reaction-sets": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-reaction-sets.mjs && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/audience-reaction-sets-dom.test.mjs && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-presenter-reaction-sets.mjs",
@@ -249,7 +317,6 @@
     "test:live-follow-dom": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/live-follow-dom.test.mjs && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/instant-slide-dom.test.mjs && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/talk-qr-presenter-dom.test.mjs",
     "test:venue-screen": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/venue-screen-link.test.mjs && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/venue-screen-dom.test.mjs",
     "test:venue-publishing:e2e": "node e2e/diagnose-venue-publishing.mjs",
-    "test:live-worker-token": "bun test ./scripts/live-worker-cloudflare-token.test.ts",
     "test:live-worker:integration": "node scripts/test-live-worker-integration.mjs",
     "test:shared-talk-worker:integration": "node scripts/test-shared-talk-worker-integration.mjs",
     "test:run-boards-worker:integration": "node scripts/test-run-boards-worker-integration.mjs",
@@ -275,6 +342,8 @@
     "test:presenter-status-bar": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-presenter-status-bar.mjs",
     "test:presenter-menus": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-presenter-menus.mjs",
     "test:presenter-palette": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-presenter-palette.mjs",
+    "test:presenter-guide": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-presenter-guide.mjs",
+    "test:presenter-guide-ipc": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-presenter-guide-ipc.mjs",
     "test:presenter-recording": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-presenter-recording.mjs",
     "test:presenter-bottom-bar": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-presenter-bottom-bar.mjs",
     "test:presenter-polls": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-presenter-polls.mjs",
@@ -294,7 +363,7 @@
     "build:ocr": "swiftc -O native/ocr.swift -o native/ocr",
     "build:media": "swiftc -O native/media.swift -o native/media",
     "build:native": "npm run build:ocr && npm run build:media",
-    "build": "npm run generate:triggers && npm run generate:compiler-svg-sanitiser && npm run generate:deck-styles && npm run generate:shortcut-help && npm run typecheck:app && electron-vite build",
+    "build": "npm run build:worker-dist && npm run generate:triggers && npm run generate:compiler-svg-sanitiser && npm run generate:deck-styles && npm run generate:shortcut-help && npm run typecheck:app && electron-vite build",
     "preview": "electron-vite preview",
     "start": "electron .",
     "dist:mac": "npm run typecheck:app && npm run build:native && npm run build && electron-builder --mac --dir",
@@ -408,12 +477,19 @@
     },
     "files": [
       "out/**/*",
-      "package.json"
+      "package.json",
+      "!**/node_modules/workerd/bin/**"
     ],
+    "beforePack": "scripts/electron-builder-before-pack.cjs",
+    "afterPack": "scripts/electron-builder-staged-check.cjs",
     "extraResources": [
       {
         "from": "worker",
         "to": "worker"
+      },
+      {
+        "from": "worker-dist",
+        "to": "worker-dist"
       },
       {
         "from": "compiler",
@@ -426,6 +502,14 @@
       {
         "from": "resources/agent-import",
         "to": "agent-import"
+      },
+      {
+        "from": "resources/example-vault",
+        "to": "example-vault"
+      },
+      {
+        "from": "resources/agent-setup",
+        "to": "agent-setup"
       }
     ],
     "publish": {
@@ -460,6 +544,21 @@
         {
           "from": "native/media",
           "to": "media"
+        },
+        {
+          "from": "ffmpeg-mac",
+          "to": "ffmpeg",
+          "filter": [
+            "ffmpeg"
+          ]
+        },
+        {
+          "from": "resources/ffmpeg-mac",
+          "to": "ffmpeg",
+          "filter": [
+            "COPYING.GPLv3",
+            "FFMPEG-NOTICE.md"
+          ]
         }
       ],
       "extendInfo": {
@@ -477,7 +576,20 @@
           "arch": "x64"
         }
       ],
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "extraResources": [
+        {
+          "from": "node_modules/ffmpeg-static",
+          "to": "ffmpeg",
+          "filter": [
+            "ffmpeg",
+            "ffmpeg.exe",
+            "*.README",
+            "*.LICENSE",
+            "LICENSE"
+          ]
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,
@@ -504,6 +616,7 @@
     "electron-builder": "^26.0.12",
     "electron-vite": "5.0.0",
     "esbuild": "0.25.12",
+    "ffmpeg-static": "5.3.0",
     "jsdom": "^29.1.1",
     "playwright": "^1.60.0",
     "react": "^18.3.1",
@@ -519,7 +632,8 @@
     "markmap-lib": "^0.18.12",
     "markmap-view": "^0.18.12",
     "mermaid": "^11.16.0",
-    "sharp": "^0.34.5"
+    "sharp": "^0.34.5",
+    "wrangler": "4.144.0"
   },
   "license": "MIT",
   "author": "Dominik Lukeš",

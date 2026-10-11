@@ -1,0 +1,47 @@
+  /* === Key caps and practice quotations (onboarding 0.38.1, ticket 05) ===
+     `<kbd>⌘K</kbd>` in outline text renders as <kbd class="key-cap"> (renderInline and the phone
+     text view; the class is constant, never authored). The face is the UI sans, not the deck face
+     and never a monospace: the letter O and the digit 0 must read differently ("the letter O"
+     was drawn as a zero by the mono face in the 9 October drawing). Modifier glyphs show as
+     typed. Colours follow the text colour, so a key cap reads on light and dark slides alike;
+     on paper they match the drawing (states 05 to 07). The type never drops below 12px. */
+  kbd.key-cap {
+    display: inline-block;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    font-style: normal;
+    font-weight: 500;
+    font-size: max(12px, .8em);
+    line-height: 1.3;
+    letter-spacing: .02em;
+    padding: .04em .36em .02em;
+    margin: 0 .04em;
+    border: 1px solid color-mix(in srgb, currentColor 24%, transparent);
+    border-bottom-width: 2px;
+    border-radius: .24em;
+    background: color-mix(in srgb, currentColor 6%, transparent);
+    color: color-mix(in srgb, currentColor 82%, transparent);
+    vertical-align: .06em;
+    white-space: nowrap;
+    text-transform: none;
+  }
+  /* A practice quotation (a `>` line carrying a key cap) is an instruction, not someone's words:
+     a left rule in the accent, body type, upright text, the bold lead-in ("Try it.") in ink, no
+     quotation mark, no tint and no cite. Quotations without a key cap keep the quote device. */
+  .slide-content > blockquote.practice-quote,
+  .slide-content blockquote.practice-quote {
+    max-width: 46ch;
+    margin: clamp(18px, 3.4cqh, 34px) 0 0;
+    padding: .08em 0 .08em .85em;
+    border-left: max(4px, .5cqw) solid var(--accent);
+    background: none;
+    box-shadow: none;
+    font-family: var(--sans);
+    font-style: normal;
+    line-height: 1.5;
+    color: var(--ink);
+  }
+  .slide-content blockquote.practice-quote::before { content: none; display: none; }
+  .slide-content blockquote.practice-quote p { margin: 0 0 .3em; font-style: normal; }
+  .slide-content blockquote.practice-quote p:last-of-type { margin-bottom: 0; }
+  /* Plain bold in ink: not the accent colour of quote bold, not the statement layout's box. */
+  .slide-content blockquote.practice-quote strong { color: inherit; font-weight: 700; background: none; padding: 0; border-radius: 0; }
