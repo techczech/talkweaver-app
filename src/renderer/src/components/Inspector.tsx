@@ -4,7 +4,7 @@ import type { ProjectionRow, RecordingSession, TalkInfo } from '../../../preload
 import type { LayoutDoctorFinding } from '../../../shared/layout-doctor'
 import type { LayoutDef, OptionGroup } from '../data/layouts'
 import { LAYOUTS } from '../data/layouts'
-import { deckListStyleForSlide, deckStatementTokenForOutline } from '../../../shared/deck-frame'
+import { deckListStyleForSlide, deckStatementTokenForOutline, inheritedTitleLookForSlide, inheritedTitleToneForSlide } from '../../../shared/deck-frame'
 import {
   extractInspectorSlideBlock, headingLineForSlideId, inspectorCommitToken, inspectorModel, sectionIdAtScrollTop,
   type InspectorBindingModel
@@ -20,6 +20,7 @@ import FixedDeckPreview from './FixedDeckPreview'
 import { headingHasChildSlides } from '../../../shared/trigger-line'
 import type { SlideRef } from '../../../shared/layout-verbs'
 import InspectorBoard from './InspectorBoard'
+import QuoteFormNotes from './QuoteFormNotes'
 import InspectorOptionPictures from './InspectorOptionPictures'
 import VaultOrigin from './VaultOrigin'
 import SlideProvenance from './SlideProvenance'
@@ -85,6 +86,8 @@ export default function Inspector({
     ? false
     : headingHasChildSlides(outlineContent.split('\n'), headingLine - 1)
   const deckListStyle = useMemo(() => deckListStyleForSlide(outlineContent, headingLine), [outlineContent, headingLine])
+  const inheritedTitleTone = useMemo(() => inheritedTitleToneForSlide(outlineContent, headingLine), [outlineContent, headingLine])
+  const inheritedTitleLook = useMemo(() => inheritedTitleLookForSlide(outlineContent, headingLine), [outlineContent, headingLine])
   const deckStatementToken = useMemo(() => deckStatementTokenForOutline(outlineContent), [outlineContent])
   // Ticket 08: the talk's pre-work form, read with the compiler's own reader, and this slide's place in it.
   const preworkDefinition = useMemo(() => preworkFromOutline(outlineContent), [outlineContent])
@@ -97,9 +100,9 @@ export default function Inspector({
   const nextRun = prework ? nextPlannedRun(plannedRuns, talk.slug, localToday(new Date())) : null
   const model = useMemo(
     () => inspectorModel(
-      compiledSlides, activeIndex, headingLevel, triggerLine, LAYOUTS, block, hasChildren, triggerFindings, deckListStyle, deckStatementToken, prework
+      compiledSlides, activeIndex, headingLevel, triggerLine, LAYOUTS, block, hasChildren, triggerFindings, deckListStyle, deckStatementToken, prework, inheritedTitleTone, inheritedTitleLook
     ),
-    [compiledSlides, activeIndex, headingLevel, triggerLine, block, hasChildren, triggerFindings, deckListStyle, deckStatementToken, prework]
+    [compiledSlides, activeIndex, headingLevel, triggerLine, block, hasChildren, triggerFindings, deckListStyle, deckStatementToken, prework, inheritedTitleTone, inheritedTitleLook]
   )
   const entry = LAYOUTS.find((candidate) => candidate.name === model.layoutName)
   const slideId = row?.slide_id ?? ''
@@ -265,6 +268,7 @@ export default function Inspector({
           }}
         />
       )}
+      {binding.group.key === 'quote-form' && pictureSlide && <QuoteFormNotes outline={outlineContent} slide={pictureSlide} compiledLayout={typeof row?.layout === 'string' ? row.layout : undefined} />}
       {children.map((child) => renderGroup(child))}
     </div>
   )

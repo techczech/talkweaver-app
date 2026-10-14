@@ -3,7 +3,7 @@
 // locked command map). Keys are command ids, the shortcut ids those commands carry, and
 // 'presenter-palette.<entry id>' for presenter palette entries that have no key.
 // Commands the map left out, or marked "Did not fit", were placed by their neighbours in the map:
-// format-strikethrough, format-underline, undo, redo, app.context-menu, get-started-open-guide, get-started-show-guide-button (ticket 07), presenter.rebind, presenter.pointer, presenter.pen, presenter.pen-tool, presenter.ink-undo, presenter.ink-clear, presenter.ink-clear-all, presenter.embed-fullscreen, presenter.command-palette, presenter.help, presenter-palette.guide (ticket 10; no key since the owner check of 10 Oct), presenter-palette.pen-freehand, presenter-palette.pen-arrow, presenter-palette.pen-rectangle.
+// format-strikethrough, format-underline, undo, redo, app.context-menu, get-started-open-guide, get-started-show-guide-button (ticket 07), presenter.rebind, presenter.pointer, presenter.pen, presenter.pen-tool, presenter.ink-undo, presenter.ink-clear, presenter.ink-clear-all, presenter.embed-fullscreen, presenter.command-palette, presenter.help, presenter.guide (ticket 10; C returned for the 0.38.2 notes), presenter-palette.pen-freehand, presenter-palette.pen-arrow, presenter-palette.pen-rectangle.
 // Counts per group are derived (taskGroupCounts), never typed anywhere. scripts/test-task-groups.mjs
 // fails when a command has no group here.
 
@@ -108,10 +108,21 @@ export const TASK_GROUP_TABLE: Readonly<Record<string, readonly [TaskGroup, stri
   'deck-design': ['Shape the talk', 'Deck design'],
   'metadata': ['Shape the talk', 'Metadata and abstract'],
   'tag-slide': ['Reuse slides', 'Tags'],
+  'quote-form-auto': ['Build a slide', 'Layouts'],
+  'quote-form-plain': ['Build a slide', 'Layouts'],
+  'quote-form-tweet': ['Build a slide', 'Layouts'],
+  'quote-form-video': ['Build a slide', 'Layouts'],
+  'quote-form-book': ['Build a slide', 'Layouts'],
+  'quote-form-paper': ['Build a slide', 'Layouts'],
+  'quote-form-web': ['Build a slide', 'Layouts'],
   'abstract': ['Shape the talk', 'Metadata and abstract'],
   'view-editor': ['See the talk', 'Views (editor, strip, grid)'],
   'app.view-editor': ['See the talk', 'Views (editor, strip, grid)'],
   'view-both': ['See the talk', 'Views (editor, strip, grid)'],
+  'view-plain': ['See the talk', 'Views (editor, strip, grid)'],
+  'change-heading-level': ['Write the outline', 'Headings and levels'],
+  'change-slide-layout': ['Build a slide', 'Layouts'],
+  'view-markdown': ['See the talk', 'Views (editor, strip, grid)'],
   'app.view-split': ['See the talk', 'Views (editor, strip, grid)'],
   'view-strip': ['See the talk', 'Views (editor, strip, grid)'],
   'app.view-strip': ['See the talk', 'Views (editor, strip, grid)'],
@@ -119,6 +130,8 @@ export const TASK_GROUP_TABLE: Readonly<Record<string, readonly [TaskGroup, stri
   'app.view-grid': ['See the talk', 'Views (editor, strip, grid)'],
   'fold-all': ['Write the outline', 'Fold'],
   'unfold-all': ['Write the outline', 'Fold'],
+  'outline-collapse-all': ['See the talk', 'Views (editor, strip, grid)'],
+  'outline-expand-all': ['See the talk', 'Views (editor, strip, grid)'],
   'normalize-triggers': ['Check and repair', 'Layout Doctor'],
   'undo': ['Write the outline', 'Undo and redo'],
   'editor.undo': ['Write the outline', 'Undo and redo'],
@@ -135,6 +148,8 @@ export const TASK_GROUP_TABLE: Readonly<Record<string, readonly [TaskGroup, stri
   'numbered-list': ['Write the outline', 'Lists'],
   'editor.numbered-list': ['Write the outline', 'Lists'],
   'delete-slide': ['Write the outline', 'Reorder slides and items'],
+  'move-slide-to': ['Write the outline', 'Reorder slides and items'],
+  'move-section-to': ['Write the outline', 'Reorder slides and items'],
   'editor.delete-slide': ['Write the outline', 'Reorder slides and items'],
   'app.command-palette': ['Set up TalkWeaver', 'Command palette'],
   'help': ['Set up TalkWeaver', 'Shortcuts'],
@@ -161,6 +176,7 @@ export const TASK_GROUP_TABLE: Readonly<Record<string, readonly [TaskGroup, stri
   'editor.title-continue': ['Write the outline', 'Headings and levels'],
   'editor.protected-line-continue': ['Build a slide', 'Objects'],
   'editor.list-continue': ['Write the outline', 'Lists'],
+  'editor.quote-paragraph': ['Write the outline', 'Lists'],
   'editor.list-indent': ['Write the outline', 'Lists'],
   'editor.list-outdent': ['Write the outline', 'Lists'],
   'editor.protect-heading-delete': ['Write the outline', 'Headings and levels'],
@@ -227,7 +243,7 @@ export const TASK_GROUP_TABLE: Readonly<Record<string, readonly [TaskGroup, stri
   'presenter.refresh': ['Present', 'Open presenter and audience'],
   'presenter.command-palette': ['Present', 'Help and commands'],
   'presenter.help': ['Present', 'Help and commands'],
-  'presenter-palette.guide': ['Present', 'Help and commands'],
+  'presenter.guide': ['Present', 'Help and commands'],
   'pathway.grid': ['Shape the talk', 'Pathways'],
   'pathway.list': ['Shape the talk', 'Pathways'],
   'pathway.matrix': ['Shape the talk', 'Pathways'],

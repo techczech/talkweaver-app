@@ -83,7 +83,9 @@ function createSlideFit() {
   }
   function titleLineCount(h1) {
     const range = document.createRange();
-    range.selectNodeContents(h1);
+    // A title with an icon (plain view ticket 07) counts the lines of its words only: the icon's
+    // own box sits a few px off the first line's top and would read as one line more.
+    range.selectNodeContents(h1.querySelector(".title-with-icon > .title-text") || h1);
     const scale = canvasScale(h1);
     const tops = new Set([...rangeRects(range)].filter((r) => r.width > 0.5 && r.height > 0.5).map((r) => Math.round(r.top / scale / 4)));
     return tops.size;
@@ -207,6 +209,50 @@ function createSlideFit() {
   }
   function fitQuotes(root = document) {
     root.querySelectorAll(".slide.active .layout-quote > blockquote, .slide.active .image-quote blockquote").forEach(fitQuote);
+    root.querySelectorAll(".slide.active .layout-quote > figure.qf[data-step]").forEach(fitQuoteForm);
+  }
+
+  // Quote forms (ADR-0038, spec 7): the compiler estimates the words' step (1 to 4); on arrival the real
+  // box is checked and the step moves down while the card is taller than the form's limit, never below
+  // step 4 (44 px at 1920). The compiler already refused a form that cannot fit step 4, so a form that
+  // still overflows here is a font-metric difference: it stays at step 4 and its box is scaled down to fit.
+  // Each form names the box that must stay under its limit (1920 design px): the tweet card 900, the video
+  // player's caption block 400, the left side panel's words column 864 (video, book, paper, web), the web page's browser window 940.
+  function quoteFormBox(figure) {
+    if (figure.classList.contains("qf-tweet")) return { box: figure.querySelector(".qf-x-card"), max: 900 };
+    if (figure.classList.contains("qf-side")) return { box: figure.querySelector(".qf-body-in"), max: 864 };
+    if (figure.classList.contains("qf-video")) return { box: figure.querySelector(".qf-yt-captions"), max: 400 };
+    if (figure.classList.contains("qf-web")) return { box: figure.querySelector(".qf-web-win"), max: 940 };
+    return null;
+  }
+  function fitQuoteForm(figure) {
+    const slide = figure.closest(".slide");
+    const found = quoteFormBox(figure);
+    if (!slide || !found || !found.box) return;
+    // Heights are measured in painted px; the slide is drawn at 1920 design px across its own width.
+    const scale = slide.getBoundingClientRect().width / 1920;
+    if (!scale) return;
+    const limit = found.max * scale;
+    const card = found.box;
+    // A previous pass may have scaled the box; measure it unscaled.
+    card.style.transform = "";
+    card.style.transformOrigin = "";
+    delete figure.dataset.qfScaled;
+    let step = Number(figure.dataset.step) || 2;
+    while (card.getBoundingClientRect().height > limit + 1 && step < 4) {
+      step += 1;
+      figure.dataset.step = String(step);
+    }
+    // Last resort at step 4 (the estimate missed, e.g. very wide glyphs): scale the whole card down uniformly
+    // from its centre, never below 0.6, so nothing is clipped. Slides scale, they do not reflow. No transition is
+    // set, so reduced motion has nothing to switch off.
+    const height = card.getBoundingClientRect().height;
+    if (height > limit + 1) {
+      const factor = Math.max(0.6, limit / height);
+      card.style.transformOrigin = "50% 50%";
+      card.style.transform = `scale(${Number(factor.toFixed(4))})`;
+      figure.dataset.qfScaled = "true";
+    }
   }
 
   // Code wraps at every size, so width is never a fitting or warning condition. Type may step down
@@ -264,7 +310,7 @@ function createSlideFit() {
   const TYPE_FLOOR_CQW = 1.9375;
   // Deliberate presentation chrome that is allowed below the floor (mirrors the Layout Doctor's
   // smallChromeSelectors in scripts/layout-doctor-render.mjs).
-  const SMALL_CHROME = ".sr-only, .kicker, .compare-label, .quote-continuation, .code-lang, .poll-frame-eyebrow, .poll-frame-kind, .poll-frame-sep, .poll-frame-chip, .poll-frame-join-note, .qr-caption, .footer, .gallery-nav, .lightbox-nav, .sim";
+  const SMALL_CHROME = ".sr-only, .kicker, .compare-label, .quote-continuation, .code-lang, .poll-frame-eyebrow, .poll-frame-kind, .poll-frame-sep, .poll-frame-chip, .poll-frame-join-note, .qr-caption, .footer, .gallery-nav, .lightbox-nav, .sim, .qf";
   // The smallest rendered running-text size (canvas px) inside `content`, or 0 when it has no text.
   function smallestTextPx(content) {
     let smallest = 0;
@@ -691,6 +737,39 @@ function createSlideFit() {
     content.dataset.listFit = overflows() ? "too-long" : "type";
   }
 
+  // Plain view ticket 07: paragraphs with an icon beside them (06-block-renderers, data-para-icon)
+  // share ONE icon column on a slide. Each is laid out from its own text size and padding first
+  // (title-and-paragraph-icons.css), and a slide may set its paragraphs at different sizes (a
+  // statement's later parts are quieter), which would leave the icons a few px apart. Every later
+  // paragraph of a container therefore takes the first one's icon position, icon size and text
+  // start, as three custom properties the stylesheet reads. A slide with fewer than two such
+  // paragraphs is not touched.
+  function alignParagraphIcons(content) {
+    const paras = [...content.querySelectorAll("p.content-p[data-para-icon]")];
+    if (!paras.length) return;
+    paras.forEach((p) => ["--para-icon-col", "--para-icon-inset", "--para-icon-size"].forEach((name) => p.style.removeProperty(name)));
+    if (paras.length < 2) return;
+    content.style.zoom = "";
+    const scale = canvasScale(content);
+    const groups = new Map();
+    paras.forEach((p) => groups.set(p.parentElement, [...(groups.get(p.parentElement) || []), p]));
+    for (const group of groups.values()) {
+      const icon = group[0].querySelector(":scope > .para-icon");
+      const text = group[0].querySelector(":scope > .para-icon-text");
+      if (group.length < 2 || !icon || !text) continue;
+      const iconRect = icon.getBoundingClientRect();
+      const textLeft = text.getBoundingClientRect().left;
+      if (!(iconRect.width > 0)) continue;
+      for (const p of group.slice(1)) {
+        const cs = getComputedStyle(p);
+        const contentLeft = p.getBoundingClientRect().left + ((parseFloat(cs.borderLeftWidth) || 0) + (parseFloat(cs.paddingLeft) || 0)) * scale;
+        p.style.setProperty("--para-icon-inset", ((iconRect.left - contentLeft) / scale) + "px");
+        p.style.setProperty("--para-icon-col", Math.max(0, (textLeft - contentLeft) / scale) + "px");
+        p.style.setProperty("--para-icon-size", (iconRect.width / scale) + "px");
+      }
+    }
+  }
+
   function fitContent(content) {
     if (!content) return;
     fitQuotes(content);
@@ -704,6 +783,7 @@ function createSlideFit() {
     // ADR-0028 §10: a long statement steps its type down and its panel hugs its lines before the
     // whole-slide zoom may touch it.
     fitStatements(content);
+    alignParagraphIcons(content);
     autofitContent(content);
   }
 

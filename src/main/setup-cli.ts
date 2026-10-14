@@ -37,7 +37,7 @@ import {
   connectionLabel, publishingLabel, publishingRowDetail, publishingRowEdge, shareLinkRowDetail, shareLinkRowEdge,
   type CloudflareStatus, type RowEdge,
 } from '../shared/cloudflare-status.ts'
-import { goingLiveRowDetail, goingLiveRowEdge, SET_UP_GOING_LIVE, type GoingLiveRow } from '../shared/live-service-status.ts'
+import { GOING_LIVE_ELSEWHERE_DETAIL, GOING_LIVE_REMOVED_DETAIL, goingLiveRowDetail, goingLiveRowEdge, SET_UP_GOING_LIVE, type GoingLiveRow } from '../shared/live-service-status.ts'
 import { recordingRowDetail, recordingRowEdge, type RecordingStorageRow } from '../shared/recording-storage-status.ts'
 import { transcriptionRowDetail, transcriptionRowLabel, type TranscriptionRow } from '../shared/transcription-status.ts'
 import { isValidShareDomain } from '../shared/shared-talk.ts'
@@ -334,9 +334,12 @@ function publishingJson(status: CloudflareStatus): RowJson & Record<string, unkn
 }
 function goingLiveJson(row: GoingLiveRow): RowJson & Record<string, unknown> {
   return {
-    state: row.state, label: edgeText(goingLiveRowEdge(row), (action) => (action === SET_UP_GOING_LIVE ? `Not set up — ${action}` : action)),
+    // A row whose edge is a button: what the row says, then the button.
+    state: row.state, label: edgeText(goingLiveRowEdge(row), (action) => (action === SET_UP_GOING_LIVE ? `Not set up — ${action}` : row.state === 'set-up-elsewhere' ? `${GOING_LIVE_ELSEWHERE_DETAIL} — ${action}` : row.state === 'access-removed' ? `${GOING_LIVE_REMOVED_DETAIL} — ${action}` : action)),
     detail: goingLiveRowDetail(row), ready: row.state === 'ready',
     address: row.address, build: row.build, appBuild: row.appBuild, updateDue: row.state === 'ready' && row.build !== row.appBuild,
+    // Other computers on the live service's list (a count, never a key or an id), and whether setting up here updates it first.
+    otherComputers: row.others, updatesFirst: row.updatesFirst,
     permission: row.permission, reason: row.reason, details: row.details,
   }
 }

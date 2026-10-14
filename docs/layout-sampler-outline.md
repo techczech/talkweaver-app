@@ -32,23 +32,40 @@ Trigger syntax is compiler-validated: keep the **Timeline:** blocks, the
 
 ### Clear thinking matters {titletop}
 
-### Statement default variant — panel in the section colour
+### Statement default variant — tinted slide
 {statement=default}
 
-The default statement sits on a panel in the section's sidebar colour.
+The default statement sits on a slide tinted in the section's sidebar colour, with no box around the text.
 
 ### A centred statement stands on its own without a title
 {statement=centred}
 
-### Statement tint variant — panel and accent bar
-{statement=tint}
+### Statement tint variant — tinted background
+{statement-bg=tinted}
 
-The tint panel gives a claim **presence** without turning it into a quote.
+The tinted background gives a claim **presence** without turning it into a quote.
 
-### Statement bar variant — accent bar without the tint
-{statement=bar}
+### Statement rule variant — accent rule above the text
+{statement-bg=rule}
 
-The bar marks a claim with **one line of colour** and no panel.
+The rule marks a claim with **one short line of colour** above it, on the normal page.
+
+### Statement strong colour variant — white text on the section colour
+{statement-bg=strong}
+
+The strong colour fills the slide with the section colour and sets the claim in **white**.
+
+### Statement lower third variant — tinted bottom third
+{statement-bg=lower-third}{notitle}
+
+The lower third tints the bottom of the slide and leaves the rest of the page plain.
+
+### Title look tab soft variant — light tab at the left edge
+{list}{titlelook=tab}{titlelook-tone=soft}
+
+- The tab hangs from the top edge of the slide
+- It sits flush with the left edge
+- The soft tone is a light shade of the section colour with dark text
 
 ### The knowledge you need today
 {list}
@@ -204,6 +221,77 @@ The bar marks a claim with **one line of colour** and no panel.
 > "By the end of this year, the least important thing you will be able to do with frontier AI systems will be getting chatbots to answer questions."
 
 - Dean W. Ball, Among the Agents, 9 Jan 2026
+
+### Quote form — tweet
+{quote}{id=quote-form-tweet}
+
+> Finally a superhuman who never outsources routine tasks they can do themselves to others. Never uses food delivery services, cleaners, fixes their own cars, computers and more. AI agents are only for incompetents like me.
+
+- Dominik Lukeš, 4 Oct 2026, 2:33 PM https://x.com/techczech/status/1234567890123456789
+
+### Quote form — video player
+{quote}{id=quote-form-video-player}
+
+> Sample quotation spoken in a video. It runs to two sentences so the design is tested at a realistic length.
+
+- Sample channel, Sample talk title goes here, 12:34 / 48:10 https://www.youtube.com/watch?v=XXXXXXXXXXX
+
+### Quote form — video with a picture
+{quote}{id=quote-form-video-panel}
+
+![Speaker on stage](assets/sample-image.png)
+
+> Sample quotation spoken in a video. It runs to two sentences so the design is tested at a realistic length.
+
+- Sample channel, Sample talk title goes here, 12:34 / 48:10 https://www.youtube.com/watch?v=XXXXXXXXXXX
+
+### Quote form — book, made cover
+{quote}{id=quote-form-book}
+
+> The essence of metaphor is understanding and experiencing one kind of thing in terms of another.
+
+- George Lakoff and Mark Johnson, *Metaphors We Live By*, University of Chicago Press, 1980, p. 5
+
+### Quote form — book with a cover picture
+{quote}{id=quote-form-book-cover}
+
+![Cover of Metaphors We Live By](assets/sample-image.png)
+
+> The essence of metaphor is understanding and experiencing one kind of thing in terms of another.
+
+- George Lakoff and Mark Johnson, *Metaphors We Live By*, University of Chicago Press, 1980, p. 5
+
+### Quote form — paper, journal page
+{quote form=paper}{id=quote-form-paper}
+
+> We can only see a short distance ahead, but we can see plenty there that needs to be done.
+
+- A. M. Turing, "Computing Machinery and Intelligence", *Mind* 59(236), October 1950, pp. 433–460, p. 460 https://doi.org/10.1093/mind/LIX.236.433
+
+### Quote form — paper with a picture of the page
+{quote form=paper}{id=quote-form-paper-panel}
+
+![First page of the paper](assets/sample-image.png)
+
+> We can only see a short distance ahead, but we can see plenty there that needs to be done.
+
+- A. M. Turing, "Computing Machinery and Intelligence", *Mind* 59(236), October 1950, pp. 433–460, p. 460 https://doi.org/10.1093/mind/LIX.236.433
+
+### Quote form — web page, browser window
+{quote form=web}{id=quote-form-web}
+
+> Sample quotation from a blog post. It runs to two sentences so the design is tested at a realistic length.
+
+- Sample Author, "A sample blog post headline that runs to a second line", *Sample Site*, 3 Sep 2026 https://www.samplesite.example/posts/a-sample-post
+
+### Quote form — web page with a screenshot of the page
+{quote form=web}{id=quote-form-web-panel}
+
+![Screenshot of the post](assets/sample-image.png)
+
+> Sample quotation from a blog post. It runs to two sentences so the design is tested at a realistic length.
+
+- Sample Author, "A sample blog post headline that runs to a second line", *Sample Site*, 3 Sep 2026 https://www.samplesite.example/posts/a-sample-post
 
 ### Contrast — cards variant
 {contrast=cards}

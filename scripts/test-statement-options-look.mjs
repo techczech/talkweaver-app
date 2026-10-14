@@ -1,17 +1,20 @@
 // =============================================================================
 // test:statement-options-look — ADR-0028 decision 10 (statement slides revised, locked 2026-09-28)
 //
+// Reworked by the 13 October 2026 slide redesign: no box round the text, ever; four Backgrounds.
+//
 // What must hold, read from a real compiled deck in the real deck runtime at 1280×720 (the fixed
 // canvas, ADR-0030), after the runtime's own fit pass has run on the slide:
-//   1. Margins. A Default statement without a title keeps 15–20% of the slide width free on each
-//      side of its text, and the two sides are equal (the panel is shrink-wrapped to its lines).
-//   2. Panel. Default (and Centred, and a former Poster) sits on a panel whose colour is the
-//      section's sidebar (rail) colour; no accent bar; the slide itself stays white.
+//   1. Margins. A statement without a title panel starts 20% of the slide width from the left edge;
+//      beside a panel it starts 9% of the slide width right of the panel's edge. Centred is centred
+//      in its area (the slide, or the content column).
+//   2. No box. The paragraph has no background, padding or border in any option. The colour is on
+//      the slide: Tinted (the default, also {statement=tint} / {statement=full} / Poster) tints the
+//      whole slide in the section's sidebar colour, with no line at the panel edge beside
+//      a title; Rule ({statement=bar}) keeps the normal page and draws one accent rule above the text.
 //   3. No lone last word on any of the drawing's specimens (short, medium, long), in every option,
 //      with and without a title — the seven-line centred case included.
-//   4. Each option's look. Centred: centred, balanced lines, only without a title (with a title it
-//      renders as the Default). Tint: tinted panel, accent bar, its own padding without a title too
-//      (the defect in ref-tint-today-without-title.png). Bar: the bar and padding, no tint.
+//   4. Centred: centred, balanced lines, only without a title (with a title it renders as the Default).
 //   5. Poster is retired: {statement=poster} renders exactly as the Default.
 //   6. Long statements step type down (never below the quote size) before anything zooms.
 // Also: the compile-time half of the no-lone-word rule (no-lone-word.mjs) at its seam.
@@ -68,7 +71,7 @@ const TEXT = {
 const TITLE = { short: 'Where to start', medium: 'Chat or agent', long: 'Prompting is briefing' }
 const OPTIONS = ['default', 'centred', 'tint', 'bar', 'poster']
 // Ticket 02: the older options are presets over the separate choices; each choice stamps its own hook.
-const OPTION_HOOK = { tint: 'statement-bar-left', bar: 'statement-bg-none statement-bar-left', full: 'statement-bg-full' }
+const OPTION_HOOK = { bar: 'statement-bg-rule' }
 const token = (option) => option === 'default' ? '{statement}' : `{statement=${option}}`
 const lines = ['---', 'title: Statement options probe', 'auto_title_slide: false', 'auto_thanks_slide: false', '---', '', '## Statements', '']
 for (const option of OPTIONS) {
@@ -151,6 +154,10 @@ try {
         fit: content.dataset.statementFit || '',
         slideBg: slideStyle.backgroundColor,
         slideBgImage: slideStyle.backgroundImage,
+        colGap: px(getComputedStyle(content).columnGap),
+        ruleHeight: px(getComputedStyle(p, '::before').height) || 0,
+        ruleWidth: px(getComputedStyle(p, '::before').width) || 0,
+        ruleColour: getComputedStyle(p, '::before').backgroundColor,
         column: head ? { left: x(content.getBoundingClientRect().left) + px(getComputedStyle(content).gridTemplateColumns.split(' ')[0]) + px(getComputedStyle(content).columnGap), right: x(content.getBoundingClientRect().right) - px(getComputedStyle(content).paddingRight) } : null,
         p: {
           left: x(pr.left), right: x(pr.right), top: (pr.top - sr.top) / k, bottom: (pr.bottom - sr.top) / k,
@@ -195,10 +202,11 @@ try {
     }
   }
 
-  // The section's sidebar colour: the rail every titled slide in the section paints.
-  const railColour = shots['side-short-default'].slideBgImage.match(/rgba?\([^)]*\)/)?.[0]
-  assert(railColour, `the titled statement paints the rail (got ${shots['side-short-default'].slideBgImage})`)
-  const paper = shots['bare-short-default'].slideBg
+  // The section's sidebar colour: the tint every Tinted slide in the section paints.
+  const tint = shots['bare-short-default'].slideBg
+  assert(tint && tint !== 'rgba(0, 0, 0, 0)', `a Tinted statement paints the slide (got ${tint})`)
+  const paper = shots['bare-short-bar'].slideBg
+  check(paper !== tint, `Rule leaves the normal page, not the tint (${paper})`)
 
   for (const [id, shot] of Object.entries(shots)) {
     const [context, length, option] = id.split('-')
@@ -208,57 +216,45 @@ try {
     check(titled ? shot.titleLayout === 'left' : shot.titleLayout === 'hidden', `${id}: title regime ${shot.titleLayout}`)
     // 6. Nothing zooms.
     check(shot.zoom === '1', `${id}: the slide is not zoomed (zoom ${shot.zoom})`)
-
-    const panelled = option === 'default' || option === 'poster' || option === 'centred'
-    if (panelled) {
-      // 2. The panel in the rail colour, no bar, padding outside the measure; the slide stays white.
-      check(shot.p.background === railColour, `${id}: the panel is the sidebar colour ${railColour} (got ${shot.p.background})`)
-      check(shot.p.borderLeft === 0, `${id}: the panel has no accent bar (got ${shot.p.borderLeft}px)`)
-      check(shot.p.boxSizing === 'content-box', `${id}: the panel padding sits outside the measure`)
-      check(near(shot.p.paddingLeft, shot.p.fontSize) && near(shot.p.paddingRight, shot.p.fontSize), `${id}: panel padding is 1em each side (got ${shot.p.paddingLeft}/${shot.p.paddingRight} at ${shot.p.fontSize}px)`)
-      check(near(shot.p.paddingTop, 0.7 * shot.p.fontSize), `${id}: panel padding is .7em above and below (got ${shot.p.paddingTop})`)
-      if (!titled) check(shot.slideBg === paper && shot.slideBgImage === 'none', `${id}: the slide itself stays white (got ${shot.slideBg} ${shot.slideBgImage})`)
-      // Centred only without a title; with a title (and for Default/Poster) the lines are left-aligned.
-      const centred = option === 'centred' && !titled
-      check(/\bstatement-centred\b/.test(shot.className) === centred, `${id}: statement-centred stamped only on a statement without a title (${shot.className})`)
-      check(shot.p.textAlign === (centred ? 'center' : 'left'), `${id}: text-align ${shot.p.textAlign}`)
-      check(shot.p.textWrap === (centred ? 'balance' : 'pretty'), `${id}: text-wrap ${shot.p.textWrap}`)
-      check(!/statement-poster/.test(shot.className), `${id}: Poster stamps no class`)
-      // 1. Margins and balance.
-      if (!titled) {
-        check(near(shot.textLeft, shot.textRight, 2), `${id}: the text sits balanced (left ${shot.textLeft.toFixed(1)}, right ${shot.textRight.toFixed(1)})`)
-        check(near(shot.p.left, W - shot.p.right, 1), `${id}: the panel is centred on the slide`)
-        check(shot.textLeft >= 0.15 * W - 0.5, `${id}: the side margin is at least 15% (got ${(shot.textLeft / W * 100).toFixed(1)}%)`)
-        if (option !== 'centred') {
-          check(shot.textLeft <= 0.20 * W + 0.5 && shot.textRight <= 0.20 * W + 0.5,
-            `${id}: the side margins are at most 20% (got ${(shot.textLeft / W * 100).toFixed(1)}% / ${(shot.textRight / W * 100).toFixed(1)}%)`)
-        }
-        // 6. The type steps down for a long statement, never below the quote size, and leaves air.
-        check(shot.p.fontSize >= Math.max(31, 0.034 * W) - 0.05, `${id}: type ${shot.p.fontSize}px stays at or above the quote size`)
-        check(shot.p.bottom - shot.p.top <= 0.72 * H + 1, `${id}: the panel is at most 72% of the slide height (got ${(shot.p.bottom - shot.p.top).toFixed(0)}px)`)
-        if (length === 'long') check(shot.p.fontSize < 0.054 * W - 1, `${id}: a long statement steps its type down (got ${shot.p.fontSize}px)`)
-        if (length === 'short') check(near(shot.p.fontSize, 0.054 * W, 0.05), `${id}: a short statement keeps the statement size (got ${shot.p.fontSize}px)`)
-      } else {
-        // Beside the rail: body size, measure 14em, the panel centred in the content column.
-        check(near(shot.p.fontSize, 0.032 * W, 0.05), `${id}: beside the rail the statement keeps the body size (got ${shot.p.fontSize}px)`)
-        check(shot.p.right - shot.p.left - 2 * shot.p.paddingLeft <= 14 * shot.p.fontSize + 0.5, `${id}: the text measure stays within 14em`)
-        const columnCentre = (shot.column.left + shot.column.right) / 2
-        check(near((shot.p.left + shot.p.right) / 2, columnCentre, 2), `${id}: the panel is centred in the content column (${((shot.p.left + shot.p.right) / 2).toFixed(1)} vs ${columnCentre.toFixed(1)})`)
-      }
-    } else {
-      // 4. Tint and Bar: the Default's panel box with the accent bar (Tint) or the bar alone (Bar),
-      //    with or without a title. Type and measure are checked against the Default below.
-      // Chromium paints a border at whole pixels, rounding down (.22em of 67.1px paints 14px).
-      check(shot.p.borderLeft === Math.floor(0.22 * shot.p.fontSize) || near(shot.p.borderLeft, 0.22 * shot.p.fontSize, 0.6),
-        `${id}: the accent bar is .22em (got ${shot.p.borderLeft}px at ${shot.p.fontSize}px)`)
-      check(shot.p.borderColor === rgbOf(shot.accent), `${id}: the bar is the section accent ${shot.accent} (got ${shot.p.borderColor})`)
-      check(shot.p.boxSizing === 'content-box', `${id}: the padding sits outside the measure`)
-      check(near(shot.p.paddingLeft, shot.p.fontSize) && near(shot.p.paddingRight, shot.p.fontSize), `${id}: ${option} keeps the panel's 1em padding${titled ? '' : ' without a title'} (got ${shot.p.paddingLeft}/${shot.p.paddingRight}px)`)
-      check(shot.textLeft - shot.p.left >= shot.p.borderLeft + shot.p.fontSize - 1, `${id}: the text clears the bar by the padding`)
-      check(option === 'tint' ? shot.p.background === railColour : shot.p.background === 'rgba(0, 0, 0, 0)',
-        `${id}: ${option === 'tint' ? 'the tint panel is the section tint' : 'Bar has no tint'} (got ${shot.p.background})`)
+    // 2. No box, in any option.
+    check(shot.p.background === 'rgba(0, 0, 0, 0)', `${id}: no background on the text (got ${shot.p.background})`)
+    check(shot.p.paddingLeft === 0 && shot.p.paddingRight === 0 && shot.p.paddingTop === 0, `${id}: no padding on the text (got ${shot.p.paddingLeft}/${shot.p.paddingRight}/${shot.p.paddingTop})`)
+    check(shot.p.borderLeft === 0, `${id}: no bar on the text (got ${shot.p.borderLeft}px)`)
+    check(!/statement-bar-/.test(shot.className), `${id}: no bar hook (${shot.className})`)
+    check(!/statement-poster/.test(shot.className), `${id}: Poster stamps no class`)
+    const rule = option === 'bar'
+    if (rule) {
       check(new RegExp(`\\b${OPTION_HOOK[option]}\\b`).test(shot.className), `${id}: stamps ${OPTION_HOOK[option]} (${shot.className})`)
-      if (!titled) check(shot.slideBg === paper && shot.slideBgImage === 'none', `${id}: ${option} keeps a white slide`)
+      check(shot.ruleWidth > 0, `${id}: one rule above the text`)
+      check(shot.ruleColour === rgbOf(shot.accent), `${id}: the rule is the section accent ${shot.accent} (got ${shot.ruleColour})`)
+      if (!titled) check(shot.slideBg === paper && shot.slideBgImage === 'none', `${id}: Rule keeps the normal page (got ${shot.slideBg} ${shot.slideBgImage})`)
+    } else {
+      check(shot.ruleHeight === 0, `${id}: no rule above the text`)
+      check(shot.slideBg === tint, `${id}: the whole slide is the section tint ${tint} (got ${shot.slideBg})`)
+      if (titled) check(shot.slideBgImage === 'none', `${id}: no line marks the panel edge (got ${shot.slideBgImage})`)
+    }
+    // Centred only without a title; with a title (and for Default/Poster) the lines are left-aligned.
+    const centred = option === 'centred' && !titled
+    check(/\bstatement-centred\b/.test(shot.className) === centred, `${id}: statement-centred stamped only on a statement without a title (${shot.className})`)
+    check(shot.p.textAlign === (centred ? 'center' : 'left'), `${id}: text-align ${shot.p.textAlign}`)
+    check(shot.p.textWrap === (centred ? 'balance' : 'pretty'), `${id}: text-wrap ${shot.p.textWrap}`)
+    // 1. Margins.
+    if (!titled) {
+      if (centred) check(near(shot.textLeft, shot.textRight, 2), `${id}: the centred text sits balanced (left ${shot.textLeft.toFixed(1)}, right ${shot.textRight.toFixed(1)})`)
+      else check(near(shot.textLeft, 0.2 * W, 1), `${id}: the text starts 20% from the left edge (got ${(shot.textLeft / W * 100).toFixed(1)}%)`)
+      // 6. The type steps down for a long statement, never below the quote size, and leaves air.
+      check(shot.p.fontSize >= Math.max(31, 0.034 * W) - 0.05, `${id}: type ${shot.p.fontSize}px stays at or above the quote size`)
+      check(shot.p.bottom - shot.p.top <= 0.72 * H + 1, `${id}: the text block is at most 72% of the slide height (got ${(shot.p.bottom - shot.p.top).toFixed(0)}px)`)
+      if (length === 'long') check(shot.p.fontSize < 0.054 * W - 1, `${id}: a long statement steps its type down (got ${shot.p.fontSize}px)`)
+      if (length === 'short' && !rule) check(near(shot.p.fontSize, 0.054 * W, 0.05), `${id}: a short statement keeps the statement size (got ${shot.p.fontSize}px)`)
+    } else {
+      // Beside the panel: body size, measure 14em; the text starts 9% of the slide right of the panel's edge.
+      check(near(shot.p.fontSize, 0.032 * W, 0.05), `${id}: beside the rail the statement keeps the body size (got ${shot.p.fontSize}px)`)
+      check(shot.p.right - shot.p.left <= 14 * shot.p.fontSize + 0.5, `${id}: the text measure stays within 14em`)
+      if (centred || option !== 'centred') {
+        const expected = shot.column.left - shot.colGap + 0.09 * W
+        check(near(shot.textLeft, expected, 1.5), `${id}: the text starts 9% right of the panel edge (${shot.textLeft.toFixed(1)} vs ${expected.toFixed(1)})`)
+      }
     }
   }
 
@@ -272,11 +268,13 @@ try {
       for (const option of ['centred', 'tint', 'bar']) {
         const id = `${context}-${length}-${option}`
         const shot = shots[id]
-        check(near(shot.p.fontSize, standard.p.fontSize, 0.05), `${id}: type ${shot.p.fontSize}px equals the Default's ${standard.p.fontSize}px`)
-        check(near(shot.measure, standard.measure, 1), `${id}: measure ${shot.measure.toFixed(1)}px equals the Default's ${standard.measure.toFixed(1)}px`)
+        // The Rule sits inside the paragraph's own box, so the fit pass counts it: a statement near the limit may step down once more.
+        if (option === 'bar') check(shot.p.fontSize <= standard.p.fontSize + 0.05, `${id}: type ${shot.p.fontSize}px is no larger than the Default's ${standard.p.fontSize}px`)
+        else check(near(shot.p.fontSize, standard.p.fontSize, 0.05), `${id}: type ${shot.p.fontSize}px equals the Default's ${standard.p.fontSize}px`)
+        if (option !== 'bar') check(near(shot.measure, standard.measure, 1), `${id}: measure ${shot.measure.toFixed(1)}px equals the Default's ${standard.measure.toFixed(1)}px`)
         // Centred balances its lines, so its longest line (and the box hugging it) may be shorter.
-        if (option !== 'centred') check(near(shot.textWidth, standard.textWidth, 2), `${id}: text column ${shot.textWidth.toFixed(1)}px equals the Default's ${standard.textWidth.toFixed(1)}px`)
-        check(shot.lines === standard.lines, `${id}: ${shot.lines} line(s), the Default has ${standard.lines}`)
+        if (option === 'tint') check(near(shot.textWidth, standard.textWidth, 2), `${id}: text column ${shot.textWidth.toFixed(1)}px equals the Default's ${standard.textWidth.toFixed(1)}px`)
+        if (option !== 'bar') check(shot.lines === standard.lines, `${id}: ${shot.lines} line(s), the Default has ${standard.lines}`)
       }
     }
   }
@@ -329,7 +327,7 @@ try {
 
   if (failures) throw new Error(`${failures} statement look check(s) failed`)
   await page.close()
-  console.log('PASS 1280x720: margins 15–20% and balanced, panel in the sidebar colour, no lone last word, Default / Centred / Tint / Bar looks, Poster → Default, long statements step type before any zoom')
+  console.log('PASS 1280x720: 20% / 9% left edges, no box, Tinted and Rule backgrounds, no lone last word, Default / Centred / Tint / Bar looks, Poster → Default, long statements step type before any zoom')
 
   // ── Titles and statements from Dominik's talks (ADR-0028 amendment 2026-09-28) ──────────────
   // Slides on which Chromium's `text-wrap: pretty` alone still ends on a lone word, copied
@@ -538,24 +536,21 @@ try {
     }
     await fixPage.close()
   }
-  const paperNoBg = deckShots['fx-default-none'].slideBg
+  const tintNoBg = deckShots['fx-default-none'].slideBg
+  const paperNoBg = deckShots['fx-bar-none'].slideBg
+  check(tintNoBg !== paperNoBg, `Tinted paints the slide, Rule leaves the page (${tintNoBg} / ${paperNoBg})`)
   for (const [id, shot] of Object.entries(deckShots)) {
     assert(!shot.error, shot.error)
     const [, name, bg] = id.split('-')
     if (name === 'stmt' || name === 'titled' || name.startsWith('side')) continue
-    const barred = name === 'bar' || name === 'claimbar'
-    const panelled = !barred && name !== 'tint'
-    check(/\bstatement-bg-none statement-bar-left\b/.test(shot.className) === barred, `${id}: ${barred ? 'renders as Bar' : 'does not render as Bar'} (${shot.className})`)
+    const ruled = name === 'bar' || name === 'claimbar'
+    check(/\bstatement-bg-rule\b/.test(shot.className) === ruled, `${id}: ${ruled ? 'renders as Rule' : 'does not render as Rule'} (${shot.className})`)
     check(lastLineWords(shot) >= 2, `${id}: the last line has ${lastLineWords(shot)} word(s) (${JSON.stringify(shot.lines)})`)
-    if (barred) {
-      check(shot.panel === CLEAR, `${id}: Bar never shows a panel (got ${shot.panel})`)
-      check(shot.bar > 0, `${id}: Bar draws the accent bar`)
-      check(shot.slideBg === (bg === 'emerald' ? EMERALD : paperNoBg), `${id}: Bar leaves the authored colour on the slide (got ${shot.slideBg})`)
+    check(shot.panel === CLEAR && shot.bar === 0, `${id}: no box and no bar on the text (got ${shot.panel}, ${shot.bar}px)`)
+    if (ruled) {
+      check(shot.slideBg === (bg === 'emerald' ? EMERALD : paperNoBg), `${id}: Rule leaves the page, or the authored colour, on the slide (got ${shot.slideBg})`)
     } else {
-      if (panelled) check(shot.bar === 0, `${id}: the Default panel has no bar (got ${shot.bar}px)`)
-      check(shot.panel === (bg === 'emerald' ? EMERALD : deckShots[`fx-${name}-none`].panel),
-        `${id}: ${bg === 'emerald' ? 'the panel takes the authored background' : 'the panel is the section colour'} (got ${shot.panel})`)
-      check(shot.slideBg === paperNoBg, `${id}: the slide stays white around the panel (got ${shot.slideBg})`)
+      check(shot.slideBg === (bg === 'emerald' ? EMERALD : tintNoBg), `${id}: ${bg === 'emerald' ? 'the whole slide takes the authored background' : 'the whole slide is the section tint'} (got ${shot.slideBg})`)
     }
   }
   // One type size and one measure (preview.9 follow-up): every option equals the Default for the
@@ -571,11 +566,11 @@ try {
     check(Math.abs(shot.measure - standard.measure) <= 1, `${id}: measure ${shot.measure}px equals the Default's ${standard.measure}px`)
     check(JSON.stringify(shot.lines) === JSON.stringify(standard.lines), `${id}: breaks ${JSON.stringify(shot.lines)} as the Default ${JSON.stringify(standard.lines)}`)
   }
-  check(deckShots['fx-claimplain-none'].panel === deckShots['fx-default-none'].panel && deckShots['fx-explicitdefault-none'].panel === deckShots['fx-default-none'].panel,
+  check(deckShots['fx-claimplain-none'].slideBg === tintNoBg && deckShots['fx-explicitdefault-none'].slideBg === tintNoBg,
     '{claim=plain} and an explicit {statement=default} render as the Default')
   const titledBg = deckShots['fx-titled-emerald']
-  check(titledBg.panel === EMERALD, `beside a title the panel takes the authored background (got ${titledBg.panel})`)
-  check(titledBg.slideBgImage !== 'none', `beside a title the rail stays painted under an authored background (got ${titledBg.slideBgImage})`)
+  check(titledBg.slideBg === EMERALD, `beside a title the whole slide takes the authored background (got ${titledBg.slideBg})`)
+  check(titledBg.slideBgImage === 'none', `beside a title no line is painted at the panel edge (got ${titledBg.slideBgImage})`)
   check(deckShots['fx-stmt-none'].bar === 0 && deckShots['fx-stmt-plain'].bar === 0, `stmt-list: Plain (and no token) has no bar (got ${deckShots['fx-stmt-none'].bar} / ${deckShots['fx-stmt-plain'].bar})`)
   check(deckShots['fx-stmt-bar'].bar > 0, 'stmt-list: {claim=bar} draws the accent bar')
 
@@ -587,9 +582,9 @@ try {
   writeFileSync(deckBarPath, deckBarSource, 'utf8')
   const deckBarHtml = String((await prepareSource(deckBarPath, deckBarSource, 'deck-bar', statSync(deckBarPath))).fullHtml)
   const contentClass = (id) => deckBarHtml.match(new RegExp(`data-id="${id}"[\\s\\S]*?<div class="slide-content ([^"]*)"`))?.[1] ?? ''
-  check(/\bstatement-bg-none statement-bar-left\b/.test(contentClass('d-untokened')), `deck claim_style: bar makes an untokened statement a Bar (${contentClass('d-untokened')})`)
-  check(!/\bstatement-bg-none statement-bar-left\b/.test(contentClass('d-plain')), 'a slide {claim=plain} wins over the deck claim_style')
-  check(!/\bstatement-bg-none statement-bar-left\b/.test(contentClass('d-explicit')), 'an explicit {statement=default} wins over the deck claim_style')
+  check(/\bstatement-bg-rule\b/.test(contentClass('d-untokened')), `deck claim_style: bar makes an untokened statement a Rule (${contentClass('d-untokened')})`)
+  check(!/\bstatement-bg-rule\b/.test(contentClass('d-plain')), 'a slide {claim=plain} wins over the deck claim_style')
+  check(!/\bstatement-bg-rule\b/.test(contentClass('d-explicit')), 'an explicit {statement=default} wins over the deck claim_style')
 
   // The same slides in the handout and on the venue page (the share page runtime), at the window
   // sizes they open in, and in the presenter's current and next previews.
@@ -636,7 +631,7 @@ try {
   for (const [view, count] of Object.entries(readCount)) check(count > 0, `${view}: the specimen was read at least once (${count})`)
   console.log(`INFO specimen statements read: ${JSON.stringify(readCount)}`)
   if (failures) throw new Error(`${failures} preview.9 statement check(s) failed`)
-  console.log('PASS preview.9: claim tokens and claim_style map onto Default / Bar; {bg=…} colours the panel (Bar: the slide); stmt-list Plain has no bar; 3b2vn keeps two words together in the deck, handout, venue page and presenter')
+  console.log('PASS preview.9: claim tokens and claim_style map onto Tinted / Rule; {bg=…} colours the whole slide; stmt-list Plain has no bar; 3b2vn keeps two words together in the deck, handout, venue page and presenter')
 
   // ── preview.10 (Dominik's check, 28 Sep, slide 3b2vn with {font-body=xl}{bg=vermilion}) ──────────
   // 1. A fifth option, Full colour ({statement=full}): the whole slide in the colour — the authored
@@ -702,10 +697,11 @@ try {
     if (kind === 'p10long') continue
     const colour = bg === 'vermilion' ? VERMILION : COBALT_TINT
     if (option === 'full') {
-      check(/\bstatement-bg-full\b/.test(shot.className), `${id}: stamps statement-bg-full (${shot.className})`)
-      check(shot.slideBg === colour, `${id}: Full colour paints the whole slide ${colour} (got ${shot.slideBg})`)
-      check(shot.slideBgImage === 'none', `${id}: Full colour leaves no rail or other layer over the colour (got ${shot.slideBgImage})`)
-      check(shot.panel === CLEAR && shot.bar === 0, `${id}: Full colour has no panel and no bar (got ${shot.panel}, ${shot.bar}px)`)
+      // Full colour is Tinted now: the same look, no hook of its own.
+      check(!/\bstatement-bg-/.test(shot.className), `${id}: Full is Tinted and stamps no background hook (${shot.className})`)
+      check(shot.slideBg === colour, `${id}: Full paints the whole slide ${colour} (got ${shot.slideBg})`)
+      check(shot.slideBgImage === 'none', `${id}: nothing is layered over the colour, no line at the panel edge (got ${shot.slideBgImage})`)
+      check(shot.panel === CLEAR && shot.bar === 0, `${id}: Full has no panel and no bar (got ${shot.panel}, ${shot.bar}px)`)
     }
     // One type, one measure: every option equals the Default of the same size and background.
     const standard = p10[`${kind}-default-${size}-${bg}`]
@@ -735,7 +731,7 @@ try {
       `${option}: the deck's triggers: {font-body=xl} sets the statement as the slide's own xl does (${deckShot.fontSize} vs ${p10[`p10-${option}-xl-none`].fontSize}px)`)
   }
   if (failures) throw new Error(`${failures} preview.10 statement check(s) failed`)
-  console.log('PASS preview.10: Full colour paints the whole slide (authored bg or section colour), no panel or bar; statement type follows font-body (slide and deck) in all five options, titled and title-as-statement, floor scaled')
+  console.log('PASS preview.10: Full (now Tinted) paints the whole slide (authored bg or section colour), no panel or bar; statement type follows font-body (slide and deck) in all five options, titled and title-as-statement, floor scaled')
 } finally {
   await browser.close()
 }

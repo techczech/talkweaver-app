@@ -430,9 +430,19 @@ export const VALUE_TRIGGER_DICTIONARY = {
     "off"
   ],
   "statement-bg": [
+    "tinted",
     "halo",
     "full",
-    "none"
+    "none",
+    "rule",
+    "strong",
+    "lower-third"
+  ],
+  "statement-bar": [
+    "none",
+    "left",
+    "top",
+    "bottom"
   ],
   "statement": [
     "default",
@@ -445,12 +455,6 @@ export const VALUE_TRIGGER_DICTIONARY = {
   "statement-align": [
     "left",
     "centred"
-  ],
-  "statement-bar": [
-    "none",
-    "left",
-    "top",
-    "bottom"
   ],
   "accent": [
     "cobalt",
@@ -480,6 +484,15 @@ export const VALUE_TRIGGER_DICTIONARY = {
     "square",
     "plain",
     "styled"
+  ],
+  "form": [
+    "auto",
+    "plain",
+    "tweet",
+    "video",
+    "book",
+    "paper",
+    "web"
   ],
   "sublist": [
     "aside"
@@ -624,9 +637,18 @@ export const VALUE_TRIGGER_DICTIONARY = {
     "label",
     "tab"
   ],
+  "titlelook-tone": [
+    "strong",
+    "soft"
+  ],
   "titlelook-at": [
     "normal",
-    "edge"
+    "edge",
+    "top-edge",
+    "top"
+  ],
+  "title-icon": [
+    "above"
   ],
   "embedsplit": [
     "60",

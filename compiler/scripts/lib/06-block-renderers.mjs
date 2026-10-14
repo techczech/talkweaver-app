@@ -10,9 +10,11 @@ import { parseChartItems, renderChartBlock } from "./06-chart-renderer.mjs";
 import { plainListForcedIcons } from "./11-frame.mjs";
 import { embedLocalFigureMarkup } from "./embed-frame.mjs";
 import { stripWrappingQuoteMarks } from "./quote-layout.mjs";
+import { renderQuoteForm, shortenAddressLinks } from "./quote-forms.mjs";
 import { iconRowPerRow, cardsTooNarrow } from "./narrow-columns.mjs";
 import { VALUE_TRIGGER_DICTIONARY } from "../triggers.mjs";
 import { renderSimulation } from "./simulation-layout.mjs";
+import { chartsFromObjectTokens, featurizeRemainingLists, mapQuoteSlideBlocks } from "./slide-quote-reading.mjs";
 
 export { parseChartItems } from "./06-chart-renderer.mjs";
 
@@ -229,6 +231,21 @@ function renderAudioChip(block) {
     + `</div>`;
 }
 
+// Plain view ticket 07 (spec T14): the markup of a title that carries an icon. One emitter for the
+// slide head's <h1>, the statement paragraph that paints a bodyless heading (07-assembly) and a
+// poster's visible <h2 class="tp-title"> (below). `before` is the default; `above` stacks the icon
+// over the title. No icon, or a key that draws nothing: the title's HTML unchanged.
+export function withTitleIcon(titleHtml, icon, iconAt) {
+  const svg = icon ? iconSvg(icon) : "";
+  if (!svg) return titleHtml;
+  return `<span class="title-with-icon" data-title-icon="${iconAt === "above" ? "above" : "before"}"><span class="fl-icon title-icon">${svg}</span><span class="title-text">${titleHtml}</span></span>`;
+}
+
+// The inner markup of one vendored Lucide icon (quote forms draw their own sized <svg> around it).
+function lucideIconBody(name) {
+  return iconSvg(`lucide:${name}`).replace(/^<svg[^>]*>/, "").replace(/<\/svg>\s*$/, "");
+}
+
 export function renderBlock(block, deckUsed = null, frameIcons = "off") {
   if (typeof block === "string") return `<p>${escapeHtml(block)}</p>`;
   if (!block || typeof block !== "object") return "";
@@ -247,6 +264,10 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     return `<blockquote class="practice-quote">${body}${cite}</blockquote>`;
   }
   if (block.type === "quote") {
+    // Quote forms (docs/design/2026-10-11-source-styled-quote-slides): a quote annotated with a
+    // form that has a renderer draws as that form; every other quote is today's Plain quote.
+    const formMarkup = block.quoteForm ? renderQuoteForm(block, { renderInline, iconBody: lucideIconBody }) : null;
+    if (formMarkup) return formMarkup;
     // G1: the decorative quote-mark device SUPPLIES the quotation marks, so a single wrapping
     // pair of literal double quotes comes off the body — covers `> "…"` quotes (author wrote the
     // marks) and any quote whose first/last paragraph is wrapped. Curly and straight pairs both
@@ -263,7 +284,12 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     const part = block.quotePart && block.quotePart.count > 1 ? block.quotePart : null;
     const sizing = ` data-quote-chars="${len}"${part ? ` data-quote-part="${part.index}" data-quote-parts="${part.count}"` : ""}`;
     const body = paras.map((p) => `<p>${renderInline(p)}</p>`).join("");
-    const cite = block.cite ? `<cite>${renderInline(block.cite)}</cite>` : "";
+    // A link in the source line shows the site, not the address (the href stays the full address).
+    // The cite is a flex row (accent bar + text). Inline markup (italics, bold, a link) would each
+    // become its own flex item, so a source with markup is wrapped in ONE text container; a
+    // plain-text source keeps its exact old markup (the bar and one anonymous text item).
+    const citeInner = block.cite ? shortenAddressLinks(renderInline(block.cite)) : "";
+    const cite = block.cite ? `<cite>${citeInner.includes("<") ? `<span class="cite-text">${citeInner}</span>` : citeInner}</cite>` : "";
     // Parts 1..n−1 carry a small mono continuation mark at the panel's bottom-right; the cite
     // renders on the last part only (the splitter leaves it there).
     const continuation = part && part.index < part.count
@@ -878,10 +904,10 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
       ? `<div class="tp-body">${renderBlocks(mapBlocksToLayout(block.variant === "closing" ? "closing" : "title", bodyBlocks), "", deckUsed, frameIcons)}</div>`
       : "";
     if (block.variant === "banner") {
-      return `<div class="tp tp-banner"><div class="tp-main"><div class="tp-inner">${meta1 ? `<div class="tp-series">${escapeHtml(meta1)}</div>` : ""}<h2 class="tp-title">${renderInline(String(d.title || ""))}</h2>${sub}${tpBody}</div></div><div class="tp-band"><span>${speaker}</span><span class="tp-mono">${escapeHtml(bottomRight)}</span></div></div>`;
+      return `<div class="tp tp-banner"><div class="tp-main"><div class="tp-inner">${meta1 ? `<div class="tp-series">${escapeHtml(meta1)}</div>` : ""}<h2 class="tp-title">${withTitleIcon(renderInline(String(d.title || "")), d.titleIcon, d.titleIconAt)}</h2>${sub}${tpBody}</div></div><div class="tp-band"><span>${speaker}</span><span class="tp-mono">${escapeHtml(bottomRight)}</span></div></div>`;
     }
     if (block.variant === "split") {
-      return `<div class="tp tp-split"><div class="tp-side">${d.series ? `<div class="tp-series">${escapeHtml(String(d.series))}</div>` : ""}<div class="tp-event">${[d.event, d.date].filter(Boolean).map((x) => escapeHtml(String(x))).join("<br>")}</div></div><div class="tp-main-col"><h2 class="tp-title">${renderInline(String(d.title || ""))}</h2>${sub}<p class="tp-author">${speaker}${d.web ? ` \u00b7 <span class="tp-web">${escapeHtml(String(d.web))}</span>` : ""}</p>${tpBody}</div></div>`;
+      return `<div class="tp tp-split"><div class="tp-side">${d.series ? `<div class="tp-series">${escapeHtml(String(d.series))}</div>` : ""}<div class="tp-event">${[d.event, d.date].filter(Boolean).map((x) => escapeHtml(String(x))).join("<br>")}</div></div><div class="tp-main-col"><h2 class="tp-title">${withTitleIcon(renderInline(String(d.title || "")), d.titleIcon, d.titleIconAt)}</h2>${sub}<p class="tp-author">${speaker}${d.web ? ` \u00b7 <span class="tp-web">${escapeHtml(String(d.web))}</span>` : ""}</p>${tpBody}</div></div>`;
     }
     const logo = d.logo ? `<img class="tp-logo" src="${escapeHtml(String(d.logo))}" alt="">` : "";
     const qr = d.handoutUrl ? renderQr({ url: d.handoutUrl }, "tp-qr slide-qr") : "";
@@ -893,7 +919,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
       d.web ? `<span class="tp-web">${escapeHtml(String(d.web))}</span>` : "",
       d.date ? escapeHtml(String(d.date)) : ""
     ].filter(Boolean).join("<br>");
-    return `<div class="tp tp-poster${closingClass}"><div class="tp-side">${logo}${qr}</div><div class="tp-main">${meta1 ? `<div class="tp-kicker">${escapeHtml(meta1)}</div>` : "<div></div>"}<div class="tp-mid"><h2 class="tp-title">${renderInline(String(d.title || ""))}</h2>${subtitle}</div><div class="tp-foot"><div class="tp-who">${speaker}</div><div class="tp-whenweb">${rightMeta}</div></div>${tpBody}</div></div>`;
+    return `<div class="tp tp-poster${closingClass}"><div class="tp-side">${logo}${qr}</div><div class="tp-main">${meta1 ? `<div class="tp-kicker">${escapeHtml(meta1)}</div>` : "<div></div>"}<div class="tp-mid"><h2 class="tp-title">${withTitleIcon(renderInline(String(d.title || "")), d.titleIcon, d.titleIconAt)}</h2>${subtitle}</div><div class="tp-foot"><div class="tp-who">${speaker}</div><div class="tp-whenweb">${rightMeta}</div></div>${tpBody}</div></div>`;
   }
   if (block.type === "stats") {
     // Big-number row. Each cell: huge accent value, label beneath, optional small caption from
@@ -1435,6 +1461,14 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
   // not N container-specific <p> paths) and MODE_SELECTOR steps it as a content unit.
   // Excluded paragraphs (kicker, cite, figcaption, .slide-source, .kicker-compact) are emitted
   // by their own code paths and never pass through here, so they never get `.content-p`.
+  // Plain view ticket 07 (spec T14): a paragraph with an icon is the same `.content-p` (same
+  // sizing and stepping) laid out as two columns: the icon in a fixed column, the text beside it.
+  // The marker is an attribute, not a class, so the exact `class="content-p"` the statement and
+  // no-lone-word passes match is unchanged.
+  if (text && block.type === "paragraph" && block.icon) {
+    const svg = iconSvg(block.icon);
+    if (svg) return `<p class="content-p" data-para-icon><span class="fl-icon para-icon">${svg}</span><span class="para-icon-text">${renderInline(text)}</span></p>`;
+  }
   return text ? `<p class="content-p">${renderInline(text)}</p>` : "";
 }
 
@@ -1535,24 +1569,11 @@ export function parseTimetableRows(items) {
 // for v2 content — every list either becomes a structural block (contrast/tiles/
 // system-map/image-claim/timeline) or a feature-list. Applied as a final pass over
 // all layouts so the caller never needs to enumerate which ones need it.
-function featurizeRemainingLists(blocks) {
-  return blocks.map((b) => (b && b.type === "list" && Array.isArray(b.items)
-    ? { ...b, type: "feature-list" }
-    : b));
-}
-
 export function mapBlocksToLayout(layout, blocks) {
-  blocks = blocks.map((block) => {
-    if (block?.type !== "object-chart" || !block.list) return block;
-    const { points, unparsed } = parseChartItems(block.list.items, block.list.children);
-    return {
-      type: "chart",
-      points,
-      unparsed,
-      shape: block.shape,
-      objectToken: block.token
-    };
-  });
+  // The quote layout takes no block for itself: its mapping is the two steps every layout shares, in
+  // slide-quote-reading.mjs so the app reads a quote slide with the same function.
+  if (layout === "quote") return mapQuoteSlideBlocks(blocks);
+  blocks = chartsFromObjectTokens(blocks);
   const hasObjectChart = blocks.some((block) => block?.type === "chart" && block.objectToken);
   const firstList = blocks.find((b) => b.type === "list");
   const firstImage = blocks.find((b) => b.type === "image");
@@ -1819,8 +1840,19 @@ export function renderBlocks(blocks, fallbackText = "", deckUsed = null, frameIc
   // G5: side-by-side consecutive images in the slide body / gallery flow. A run of
   // `[Action:]` directives groups into one .slide-actions button row (rendered after the
   // other blocks, in document order).
-  const html = groupActionBlocks(groupQrRows(groupImageRows(normalized))).map((b) => renderBlock(b, deckUsed, frameIcons)).filter(Boolean).join("\n");
+  const html = groupActionBlocks(groupQrRows(groupImageRows(withQuoteFormPicture(normalized)))).map((b) => renderBlock(b, deckUsed, frameIcons)).filter(Boolean).join("\n");
   return html || "<p></p>";
+}
+
+// A quote form that draws the slide's picture in its left panel (quote-forms.mjs): the picture block
+// (marked `quoteFormPicture` by annotateQuoteForm, after the asset pass has resolved its src) is taken out
+// of the flow and handed to the quote, so it is drawn once, inside the form.
+function withQuoteFormPicture(blocks) {
+  const picture = blocks.find((b) => b && b.type === "image" && b.quoteFormPicture);
+  if (!picture || !blocks.some((b) => b && b.type === "quote" && b.quoteForm?.picture)) return blocks;
+  return blocks
+    .filter((b) => b !== picture)
+    .map((b) => (b && b.type === "quote" && b.quoteForm?.picture ? { ...b, quoteFormPicture: { src: picture.src, alt: picture.alt || "", width: picture.width, height: picture.height } } : b));
 }
 
 export function renderMediaBlocks(blocks, fallbackText = "", deckUsed = null, frameIcons = "off") {

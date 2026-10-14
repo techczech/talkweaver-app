@@ -12,13 +12,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
 import {
   actionRowsAt, groupActionRows, filterActionRows, rowChordText, noMatchText, allCommandsHint, actionLabel,
-  CARRIED_ROWS, OLD_SLIDE_MENU_COMMANDS, SLIDE_MENU_PLACES, paletteChordText, UNIVERSAL_COMMAND_IDS
+  CARRIED_ROWS, MOVE_TO_PLACES, OLD_SLIDE_MENU_COMMANDS, SECTION_FOLD_COMMAND_IDS, SLIDE_MENU_PLACES, paletteChordText, UNIVERSAL_COMMAND_IDS
 } from '../src/shared/actions-here.ts'
 import { actionIconName, ROW_ICONS, GROUP_ICONS } from '../src/shared/actions-here-icons.ts'
 import * as lucide from 'lucide-react'
 import { actionsAt } from '../src/shared/place.ts'
 import { PLACES } from '../src/shared/command-places.ts'
-import { COMMAND_REGISTRY } from '../src/shared/command-registry.ts'
+import { COMMAND_REGISTRY, MOVE_TO_COMMAND_IDS, QUOTE_FORM_COMMAND_IDS } from '../src/shared/command-registry.ts'
 import { TASK_GROUPS } from '../src/shared/task-groups.ts'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -135,6 +135,23 @@ test('a carried row with no registry command has a handler in WorkspaceLayout or
   }
 })
 
+// Fix round after preview.10: ⌘K with the keyboard in the Slide outline did nothing. The handler lives
+// in WorkspaceLayout's window keydown listener, which no test mounts: this reads that the branch is
+// there, takes the outline's selected row, and opens the panel for a slide (the strip-slide rows).
+test('⌘K in the Slide outline opens Actions here for the selected row', () => {
+  const layout = readFileSync(join(root, 'src/renderer/src/components/WorkspaceLayout.tsx'), 'utf8')
+  const at = layout.indexOf("active.closest('[data-slides-organizer]')) {")
+  assert.ok(at > 0, 'the outline branch of the ⌘K handler')
+  const branch = layout.slice(at, layout.indexOf('// The strip or the grid: Actions here for the selected slide.', at))
+  assert.ok(branch.length > 0 && branch.length < 1600)
+  assert.ok(branch.includes('getOutlineSelection()'), 'for the row selected in the outline')
+  assert.ok(branch.includes('selectSlideRef.current(index)'), 'whose slide becomes the selected slide')
+  assert.ok(branch.includes("openActionsHereRef.current({ region: 'strip', at })"), 'opened at the row')
+  // The rows it shows there are a slide's, with the whole-slide and all-sections actions among them.
+  const have = keys(actionRowsAt('strip-slide'))
+  for (const id of ['move-slide-to', 'move-section-to', 'slide-cut', 'slide-copy', 'slide-paste-after', 'outline-collapse-all', 'outline-expand-all']) assert.ok(have.includes(id), id)
+})
+
 test('the old rows are not duplicated by their registry twin (Present from here shows once)', () => {
   const rows = actionRowsAt('slide-heading')
   assert.equal(rows.filter((row) => row.label === 'Present from here').length, 1)
@@ -211,7 +228,72 @@ test('removing a carried entry removes its row (the data is the whole list)', ()
   const before = actionRowsAt('slide-heading').length
   const slideRows = CARRIED_ROWS.filter((row) => row.places.includes('slide-heading')).length
   const carriedCommands = OLD_SLIDE_MENU_COMMANDS.filter((id) => !actionsAt('slide-heading').some((command) => command.id === id)).length
-  assert.equal(before, actionsAt('slide-heading').length + slideRows + carriedCommands)
+  // Plus the rows every slide place carries beside the drawn ones: Move slide to…, Move section to…,
+  // Collapse all sections and Expand all sections.
+  assert.equal(before, actionsAt('slide-heading').length + slideRows + carriedCommands + MOVE_TO_COMMAND_IDS.length + SECTION_FOLD_COMMAND_IDS.length)
+})
+
+// Fix round after preview.10: typing these names in Actions here found nothing but All commands….
+test('typing finds the whole-slide and all-sections actions on a slide and on a row or card of the outline, strip or grid', () => {
+  const want = {
+    'Collapse all sections': 'outline-collapse-all', 'Expand all sections': 'outline-expand-all',
+    'Cut slide': 'slide-cut', 'Copy slide': 'slide-copy', 'Paste slide after': 'slide-paste-after',
+    'Move slide to…': 'move-slide-to', 'Move section to…': 'move-section-to'
+  }
+  assert.deepEqual([...MOVE_TO_PLACES].sort(), [...SLIDE_MENU_PLACES, 'strip-slide'].sort(), 'every slide place of the editor, and a row or card (strip-slide)')
+  for (const place of MOVE_TO_PLACES) {
+    const rows = actionRowsAt(place)
+    for (const [label, key] of Object.entries(want)) {
+      for (const query of [label, label.toLowerCase(), label.replace('…', '')]) {
+        const found = filterActionRows(rows, query)
+        assert.ok(found.some((row) => row.key === key && row.label === label), `${place}: "${query}" finds ${label}`)
+      }
+      // The first match is the row itself, so Return runs it. (Move section to… comes second: Move
+      // slide to… has "section" among its keywords and is listed before it.)
+      if (key !== 'move-section-to') assert.equal(filterActionRows(rows, label)[0].key, key, `${place}: "${label}" lists it first`)
+    }
+    // What the tester typed: one word.
+    assert.deepEqual(keys(filterActionRows(rows, 'cut')), ['slide-cut'], `${place}: "cut"`)
+    assert.deepEqual(keys(filterActionRows(rows, 'copy')), ['slide-copy'], `${place}: "copy"`)
+    assert.deepEqual(keys(filterActionRows(rows, 'paste')), ['slide-paste-after'], `${place}: "paste"`)
+  }
+  // The universal text Cut, Copy and Paste stay out, and the drawn table gained no row.
+  for (const place of PLACES) {
+    const drawn = actionsAt(place).map((command) => command.id)
+    for (const id of [...Object.values(want)]) assert.ok(!drawn.includes(id), `${place}: ${id} is not a drawn row`)
+  }
+  for (const place of ['talk-title', 'metadata', 'talk', 'vault']) {
+    const have = keys(actionRowsAt(place, { row: 'talk' }))
+    for (const id of Object.values(want)) assert.ok(!have.includes(id), `${place}: ${id} is not offered away from a slide`)
+  }
+  // Each whole-slide row has its own icon and its handler (the handler check above reads WorkspaceLayout).
+  for (const id of ['slide-cut', 'slide-copy', 'slide-paste-after', 'outline-collapse-all', 'outline-expand-all']) assert.ok(ROW_ICONS[id], id)
+})
+
+test('the seven Quote form commands are offered on a quote slide only', () => {
+  assert.equal(QUOTE_FORM_COMMAND_IDS.length, 7)
+  for (const place of ['slide-heading', 'layout-line', 'slide-text', 'list', 'quotation', 'strip-slide']) {
+    const on = keys(actionRowsAt(place, { quoteSlide: true }))
+    assert.deepEqual(QUOTE_FORM_COMMAND_IDS.filter((id) => !on.includes(id)), [], `${place}: all seven on a quote slide`)
+    for (const context of [{}, { quoteSlide: false }]) {
+      const off = keys(actionRowsAt(place, context))
+      assert.deepEqual(QUOTE_FORM_COMMAND_IDS.filter((id) => off.includes(id)), [], `${place}: none on another slide`)
+    }
+  }
+  for (const place of ['talk-title', 'metadata', 'talk', 'vault']) {
+    assert.deepEqual(keys(actionRowsAt(place, { quoteSlide: true, row: 'talk' })).filter((id) => QUOTE_FORM_COMMAND_IDS.includes(id)), [], `${place}: never`)
+  }
+})
+
+test('typing a Quote form name narrows to that form; the shared words list all seven', () => {
+  const rows = actionRowsAt('slide-heading', { quoteSlide: true })
+  const idOf = { Automatic: 'auto', Plain: 'plain', Tweet: 'tweet', Video: 'video', Book: 'book', Paper: 'paper', Web: 'web' }
+  for (const [name, id] of Object.entries(idOf)) {
+    for (const query of [name, name.toLowerCase(), `Quote form: ${name}`]) {
+      assert.deepEqual(keys(filterActionRows(rows, query)).filter((key) => QUOTE_FORM_COMMAND_IDS.includes(key)), [`quote-form-${id}`], `"${query}" lists its own form only, so Return runs it`)
+    }
+  }
+  assert.equal(keys(filterActionRows(rows, 'quote form')).filter((key) => QUOTE_FORM_COMMAND_IDS.includes(key)).length, 7)
 })
 
 // ── the panel's render ─────────────────────────────────────────────────────────
@@ -241,7 +323,10 @@ try {
   test('the panel: filter, count, task-group headings, rows with chords, All commands… ⇧⌘P last', () => {
     const rows = actionRowsAt('slide-heading')
     const html = panel('slide-heading', (id) => (id === 'app.layout-picker' ? '⌘⌥L' : id === 'app.image-search' ? 'no default' : '⌘1'))
-    assert.match(html, /role="dialog"[^>]*aria-label="Actions here"/)
+    assert.match(html, /role="dialog"[^>]*aria-labelledby="actions-here-title"/)
+    assert.match(html, /<div class="actions-here-title" id="actions-here-title"[^>]*>Actions here<\/div>/, 'the panel shows its name, "Actions here", at the top')
+    assert.ok(html.indexOf('actions-here-title') < html.indexOf('actions-here-filter'), 'the name sits above the filter field')
+    assert.match(html, /aria-label="Filter actions"/)
     assert.match(html, /placeholder="Filter actions"/)
     assert.match(html, new RegExp(`data-actions-here-count="true">${rows.length}<`))
     for (const group of groupActionRows(rows)) assert.ok(html.includes(`>${group.taskGroup}</div>`), group.taskGroup)

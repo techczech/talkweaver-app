@@ -67,7 +67,7 @@ await test('a presenter command id is one of the registries\' finite presenter l
   assert.ok(shortcutIds.length > 30 && paletteIds.length > 30)
   assert.deepEqual([...PRESENTER_COMMAND_IDS].sort(), [...new Set([...shortcutIds, ...paletteIds])].sort(), 'exactly the presenter shortcut ids and palette entries')
   for (const id of [...shortcutIds, ...paletteIds]) assert.ok(isPresenterCommandId(id), id)
-  for (const id of ['presenter-palette.guide', 'presenter.next', 'presenter-palette.reset-timer', 'presenter-palette.notes-camera-column']) assert.ok(isPresenterCommandId(id), id)
+  for (const id of ['presenter.guide', 'presenter.next', 'presenter-palette.reset-timer', 'presenter-palette.notes-camera-column']) assert.ok(isPresenterCommandId(id), id)
   // Well-formed but made up: dropped (a deck script could otherwise mint unlimited ids).
   for (const id of ['presenter.not-a-command', 'presenter-palette.not-an-entry', 'presenter.abc123', 'presenter-palette.x', 'format-bold', 'browser.delete-talk', 'delete-slide', 'presenter.', 'presenter..next', 'presenter.Next', 'presenter.next ', 'presenter.next/../x', 'presenter-palette.', '__proto__', 'constructor', 'presenter.next\u0000', `presenter.${'a'.repeat(60)}`, '', null, 42, { id: 'presenter.next' }, ['presenter.next']]) {
     assert.ok(!isPresenterCommandId(id), JSON.stringify(id))
@@ -186,8 +186,8 @@ await test('the presenter is sent the Present chapter only: rows, counts, the pr
   for (const row of rows) assert.deepEqual(Object.keys(row).sort(), ['id', 'keys', 'label', 'noKey', 'tried'])
   const next = rows.find((r) => r.id === 'presenter.next')
   assert.deepEqual([next.label, next.tried, next.keys], ['Next', true, ['→ Space +3']], 'keys as drawn: the first two and +N')
-  assert.deepEqual(rows.find((r) => r.id === 'presenter-palette.guide')?.noKey, true, 'the Guide command is a key-less row of Help and commands (no C since the owner check of 10 Oct)')
-  assert.ok(!rows.some((r) => r.id === 'presenter.guide'), 'no presenter.guide key row')
+  assert.deepEqual(rows.find((r) => r.id === 'presenter.guide')?.noKey, false, 'the Guide command is a keyed row of Help and commands (C)')
+  assert.ok(!rows.some((r) => r.id === 'presenter-palette.guide'), 'no key-less Guide row beside it')
   assert.ok(!rows.some((r) => ['present-window', 'present-audience'].includes(r.id)), 'Presentation window and Audience view are not rows of the Present column')
   assert.ok(view.subgroups.some((g) => g.name === 'Speaker notes'), 'sub-group names as drawn ("(added)" dropped)')
   assert.equal(rows.find((r) => r.id === 'presenter-palette.reset-timer')?.noKey, true)
@@ -253,7 +253,7 @@ await test('the preload builds the column from text only, and its button needs m
   assert.ok(preload.includes('holder.innerHTML = presenterIconSvg(name)'))
   assert.ok(!/insertAdjacentHTML|outerHTML\s*=|document\.write/.test(preload))
   assert.ok(preload.includes("if (!r || !isPresentGuideView(r.view))"), 'a reply that is not a view removes the chip')
-  assert.ok(!preload.includes("addEventListener('keydown'"), 'the Guide binds no key (owner check 10 Oct)')
+  assert.ok(preload.includes("addEventListener('keydown'"), 'the Guide binds C (0.38.2 release notes)')
   assert.ok(preload.includes("ipcRenderer.invoke('guide:present-all-chapters')") && preload.includes("ipcRenderer.invoke('guide:present-hide-button')"), 'All chapters and the × send the bare requests')
   assert.ok(!/invoke\('guide:present-(all-chapters|hide-button)',/.test(preload), 'neither request carries an argument')
   assert.ok(preload.includes("document.getElementById('outlineBtn')"), 'the button sits beside Outline in the bottom bar')

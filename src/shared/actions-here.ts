@@ -7,13 +7,24 @@
 // `carriedCommandIds` (registry commands the old menu offered at more places than the table). This is
 // the "replaces the context menu without losing rows" rule of the ticket. Deleting an entry here
 // removes the row; the tests count the rows from this data, never from a typed number.
-import { COMMAND_REGISTRY, type CommandDefinition } from './command-registry.ts'
+import { COMMAND_REGISTRY, MOVE_TO_COMMAND_IDS, QUOTE_FORM_COMMAND_IDS, type CommandDefinition } from './command-registry.ts'
 import { actionsAt, type PlaceRow } from './place.ts'
 import type { Place } from './command-places.ts'
 import { TASK_GROUPS, type TaskGroup } from './task-groups.ts'
 
 /** The places in the outline editor where the old slide menu opened (⌘K and right-click). */
 export const SLIDE_MENU_PLACES: readonly Place[] = ['slide-heading', 'layout-line', 'slide-text', 'list', 'quotation']
+
+/** Where a quote slide's Quote form commands are offered: every place on the slide, and its card in the strip. */
+const QUOTE_FORM_PLACES: readonly Place[] = ['slide-heading', 'layout-line', 'slide-text', 'list', 'quotation', 'strip-slide']
+/** Where Move slide to… and Move section to… are offered: every place on a slide, and its card in the strip or grid. */
+export const MOVE_TO_PLACES: readonly Place[] = ['slide-heading', 'layout-line', 'slide-text', 'list', 'quotation', 'strip-slide']
+/**
+ * Collapse all sections / Expand all sections: not rows of the drawn place table either; offered at
+ * the same places as Move … to…, so typing the name in Actions here finds them on a slide, on a row
+ * of the Slide outline and on a card of the strip or grid.
+ */
+export const SECTION_FOLD_COMMAND_IDS: readonly string[] = ['outline-collapse-all', 'outline-expand-all']
 /**
  * App-wide editing basics. Every text field has them, the menus and the palette keep them, and they
  * are not offered by place (owner check 10 Oct: "trivial actions such as copy/paste that are universal").
@@ -51,6 +62,8 @@ export interface CarriedRow {
   /** A chord the platform owns, shown as typed. */
   fixedChord?: string
   danger?: boolean
+  /** Extra words the filter matches, beside the label and the task group. */
+  keywords?: readonly string[]
 }
 
 /** Rows the old context menus offered that have no registry command of their own. */
@@ -58,6 +71,12 @@ export const CARRIED_ROWS: readonly CarriedRow[] = [
   { id: 'explain-rendering', label: 'Explain rendering', taskGroup: 'See the talk', places: [...SLIDE_MENU_PLACES, 'strip-slide'] },
   // Present from here is not place-bound in the table (lock decision 11); the old menu offered it on a slide.
   { id: 'present-from-here', label: 'Present from here', taskGroup: 'Present', places: SLIDE_MENU_PLACES, shortcutId: 'app.present-current' },
+  // The whole slide (or the whole section, on a section's title): the rows of the slide and section
+  // context menus. They are not the universal text Cut, Copy and Paste (UNIVERSAL_COMMAND_IDS), which
+  // stay out; they show no chord, because in the editor ⌘X, ⌘C and ⌘V work on the selected text.
+  { id: 'slide-cut', label: 'Cut slide', taskGroup: 'Write the outline', places: MOVE_TO_PLACES, keywords: ['section', 'clipboard', 'whole'] },
+  { id: 'slide-copy', label: 'Copy slide', taskGroup: 'Write the outline', places: MOVE_TO_PLACES, keywords: ['section', 'clipboard', 'whole'] },
+  { id: 'slide-paste-after', label: 'Paste slide after', taskGroup: 'Write the outline', places: MOVE_TO_PLACES, keywords: ['section', 'clipboard', 'whole'] },
   // A talk row.
   { id: 'talk.metadata', label: 'Metadata…', taskGroup: 'Shape the talk', places: ['talk'] },
   { id: 'talk.reveal', label: 'Reveal in Finder', taskGroup: 'Manage talks', places: ['talk'] },
@@ -94,6 +113,8 @@ export interface ActionsContext {
   row?: PlaceRow
   /** The vault row's state; an unopened or missing vault offers only its own rows. Default 'open'. */
   vault?: VaultState
+  /** The slide at the caret (or the selected strip slide) is a quote slide; the Quote form commands are offered only then. */
+  quoteSlide?: boolean
 }
 
 export interface ActionGroup {
@@ -130,7 +151,7 @@ function rowOfCarried(row: CarriedRow): ActionRow {
     commandId: null,
     shortcutId: row.shortcutId ?? null,
     fixedChord: row.fixedChord ?? null,
-    keywords: [],
+    keywords: row.keywords ?? [],
     danger: row.danger === true,
     carried: true
   }
@@ -157,6 +178,14 @@ export function actionRowsAt(place: Place, context: ActionsContext = {}, registr
     : registry.filter((command) => OLD_SLIDE_MENU_COMMANDS.includes(command.id) && !coreIds.has(command.id) && notUniversal(command))
   const ranked: Array<{ row: ActionRow; rank: number; order: number }> = [
     ...core.filter(notUniversal).map((command, order) => ({ row: rowOfCommand(command, false), rank: 0, order })),
+    // The Quote form commands: a quote slide's own rows, at the slide-wide places, after the drawn rows of their group.
+    ...(context.quoteSlide === true && QUOTE_FORM_PLACES.includes(place)
+      ? registry.filter((command) => (QUOTE_FORM_COMMAND_IDS as readonly string[]).includes(command.id)).map((command, order) => ({ row: rowOfCommand(command, false), rank: 0.5, order }))
+      : []),
+    // Move slide to… / Move section to…: after the drawn rows of Write the outline, on a slide.
+    ...(!ownRowsOnly && MOVE_TO_PLACES.includes(place)
+      ? registry.filter((command) => (MOVE_TO_COMMAND_IDS as readonly string[]).includes(command.id) || SECTION_FOLD_COMMAND_IDS.includes(command.id)).map((command, order) => ({ row: rowOfCommand(command, true), rank: 0.6, order }))
+      : []),
     ...carriedCommands
       .sort((a, b) => OLD_SLIDE_MENU_COMMANDS.indexOf(a.id) - OLD_SLIDE_MENU_COMMANDS.indexOf(b.id))
       .map((command, order) => ({ row: rowOfCommand(command, true), rank: 1, order })),

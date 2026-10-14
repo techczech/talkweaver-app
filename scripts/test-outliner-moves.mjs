@@ -2,9 +2,13 @@
 // src/renderer/src/extensions/outliner.ts exactly (same algorithm) — this is a logic guard, since
 // the renderer has no TS test runner. (Same convention as scripts/test-slide-outline.mjs.)
 
+// The real commands (moveNode on an editor state, with every head arrangement, Slide Focus and a
+// generated run) are tested in scripts/test-move-node-heads.mjs.
+// The app's one reader of a heading's id and layout lines (issue 121), the real one.
+import { logicalTriggerBlockAfterHeading } from '../src/shared/trigger-line.ts'
+
 // ---- BEGIN MUST-MATCH (copies from outliner.ts) ----
 const INDENT = '  '
-const TRIGGER_LINE_RE = /^\s*(\{[^}]*\}\s*)+$/
 
 function headingLevel(s) {
   const m = s.match(/^(#{1,6})\s/)
@@ -122,10 +126,7 @@ function moveHeadingBlock(lines, i, dir, bs) {
       fenced.slice(block.start, block.end)
     )
     const rest = [...lines.slice(0, block.start), ...lines.slice(block.end)]
-    let insertAt = block.start + 1
-    if (insertAt < rest.length && rest[insertAt].trim() !== '' && TRIGGER_LINE_RE.test(rest[insertAt])) {
-      insertAt += 1
-    }
+    const insertAt = logicalTriggerBlockAfterHeading(rest, block.start)?.end ?? block.start + 1
     const out = [...rest.slice(0, insertAt), ...moved, ...rest.slice(insertAt)]
     return { lines: out, caret: insertAt + (i - block.start) }
   }
@@ -277,6 +278,20 @@ const S = (r) => (r === null ? null : r.lines.join('\n'))
 {
   const lines = L('## A\n### a1\n```\n# fake\n## B')
   ck(moveHeadingBlock(lines, 1, 'down', 0) === null, 'unterminated fence masks everything below → no-op')
+}
+
+// 13. Issue 121: a block that crosses into the next container lands under the receiving heading's
+//     whole head (its id line and its layout lines), never between them.
+{
+  const one = moveHeadingBlock(L('## A\n### s1\n## B\n{section}\n### s2'), 1, 'down', 0)
+  ck(S(one) === '## A\n## B\n{section}\n### s1\n### s2', 'one layout line under the receiver: after it (as before)')
+  const two = moveHeadingBlock(L('## A\n### s1\n## B\n{id=b}\n{section}\n### s2'), 1, 'down', 0)
+  ck(S(two) === '## A\n## B\n{id=b}\n{section}\n### s1\n### s2', 'id line and layout line under the receiver: after both')
+  ck(two && two.lines[two.caret] === '### s1', 'caret on the moved heading')
+  const blank = moveHeadingBlock(L('## A\n### s1\n## B\n\n{section}\n### s2'), 1, 'down', 0)
+  ck(S(blank) === '## A\n## B\n\n{section}\n### s1\n### s2', 'a blank line before the receiver\'s layout line: after the layout line')
+  const chart = moveHeadingBlock(L('## A\n### s1\n## B\n{id=b}\n{barchart}\n- x: 1'), 1, 'down', 0)
+  ck(S(chart) === '## A\n## B\n{id=b}\n### s1\n{barchart}\n- x: 1', 'a chart token that owns its list is the receiver\'s content, not its head')
 }
 
 if (fail) { console.error(`\n${fail} check(s) failed`); process.exit(1) }

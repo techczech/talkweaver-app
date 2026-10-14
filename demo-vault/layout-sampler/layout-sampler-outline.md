@@ -34,20 +34,20 @@ Trigger syntax is compiler-validated: keep the **Timeline:** blocks, the
 ### Clear thinking matters
 {titletop}{id=2mifq}
 
-### Statement default variant — current treatment
+### Statement default variant — tinted slide
 {statement=default} {id=zky0l}
 
-The default statement remains an oversized claim with a centred block.
+The default statement is an oversized claim, aligned left, on a slide tinted in the section colour.
 
-### Statement tint variant — panel and accent bar
+### Statement tint variant — tinted background
 {statement=tint} {id=lokzg}
 
-The tint panel gives a claim **presence** without turning it into a quote.
+The tinted background gives a claim **presence** without turning it into a quote.
 
-### Statement poster variant — oversized boxed claim
+### Statement poster variant — oversized claim
 {statement=poster} {id=gb2c3}
 
-One **boxed phrase** can carry the whole poster.
+One **large phrase** can carry the whole poster.
 
 ### The knowledge you need today
 {list} {id=kh0hy}

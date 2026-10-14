@@ -208,6 +208,8 @@ try {
       process.chdir(install.workDir) // as the app runs: below the user-data folder, under the planted files
       const upload = (files) => withFilesWhile(files, async () => {
         const before = stub.requests.length
+        // Each one a first set-up: code is uploaded only where there is no Worker, or an older one (decision R3).
+        stub.model.workers.clear()
         const { result } = await setUpLiveService({ distDir, expectedBuild: manifest.build, authorise: async () => ({ ok: true, authorisation: steadyLeave('integrity-test-token-0123456789', 'integrity0account') }), apiBase: stub.baseUrl, keys })
         assert.equal(result.ok, true, JSON.stringify({ ...result, adminSecret: undefined }))
         const request = stub.requests.slice(before).find((entry) => entry.method === 'PUT' && entry.path === '/accounts/integrity0account/workers/scripts/talkweaver-live-sessions')

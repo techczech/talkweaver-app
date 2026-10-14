@@ -431,6 +431,9 @@ function quoteBlockOnQuoteSlide(blocks, layout) {
   if (layout !== 'quote') return null
   const quotes = (blocks || []).filter((b) => b && b.type === 'quote')
   if (quotes.length !== 1) return null
+  // A quote that draws as a form (quote-forms.mjs) is one card or page: never split. A form that
+  // refused carries no `quoteForm`, so it re-enters here as the Plain quote it is drawn as.
+  if (quotes[0].quoteForm) return null
   // Only a quote-only slide splits: a quote beside a figure renders flat on paper and keeps its
   // own composition (base.css `.layout-quote:has(> .slide-figure)`).
   if ((blocks || []).some((b) => b && b !== quotes[0])) return null
@@ -493,6 +496,12 @@ function tooLongAtFloor(paragraphs, hasCite, capacity = DEFAULT_CAPACITY) {
 
 export function annotateQuoteLayout(blocks, layout, slideId, warn) {
   for (const block of blocks || []) {
+    if (layout === 'quote' && block?.type === 'quote' && block.quoteForm) {
+      // Drawn as a form: its own step ladder and refusal (quote-forms.mjs) replace the plain fit.
+      const chars = quoteParagraphs(block).join(' ').length
+      block.quoteLayout = { chars, parts: 1, typeFloorPx: QUOTE_TYPE_FLOOR_PX }
+      continue
+    }
     if (layout === 'quote' && block?.type === 'quote') {
       const paragraphs = stripWrappingQuoteMarks(quoteParagraphs(block))
       const hasCite = Boolean(String(block.cite ?? '').trim())

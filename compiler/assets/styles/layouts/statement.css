@@ -11,7 +11,7 @@
      guard here means a statement paragraph (which is ALSO `.content-p`) takes ONLY the
      `.statement, .layout-statement > p` rule above — the two never fight. Card comments
      (`.content-p.card-comment`) take the card-scoped override (later in this sheet). *//* @order 0023 */
-  .slide-content:not(.layout-statement) .content-p:not(.card-comment) {
+  .slide-content:not(.layout-statement) .content-p:not(.card-comment):not(:where(.layout-statement *)) {
     margin: 0 0 .6em;
     padding-left: 22px;
     border-left: 5px solid var(--accent);
@@ -24,8 +24,8 @@
        token never overflows the slide horizontally. (Titles keep overflow-wrap:normal.) */
     overflow-wrap: anywhere;
   }/* @order 0024 */
-  .slide-content:not(.layout-statement) .content-p:not(.card-comment):last-child { margin-bottom: 0; }/* @order 0025 */
-  .slide-content:not(.layout-statement) .content-p:not(.card-comment) strong { color: var(--accent); }/* @order 0153 */
+  .slide-content:not(.layout-statement) .content-p:not(.card-comment):not(:where(.layout-statement *)):last-child { margin-bottom: 0; }/* @order 0025 */
+  .slide-content:not(.layout-statement) .content-p:not(.card-comment):not(:where(.layout-statement *)) strong { color: var(--accent); }/* @order 0153 */
 
   /* === SD-16 statement-beside-list layout (Task 6, 2026-06-25) === *//* @order 0154 */
   /* Title across the top; body = .stmt-list flex container.

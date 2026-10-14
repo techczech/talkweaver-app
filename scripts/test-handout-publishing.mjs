@@ -14,6 +14,7 @@
 //  7. order and time limits: two publishes, publish then unpublish, a step that never answers;
 //  8. the loopback rule (D8) and the app's test mode;
 //  9. the live service's own set-up failures, sorted, with Details cleaned.
+import { singleKeyPort } from './lib/live-worker-double.mjs'
 import { strict as assert } from 'node:assert'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -27,7 +28,7 @@ import {
   appWrittenLoopback, createHandoutPublishing, liveAddressForPages, localLiveAllowed, publishedFolders, redirectsRefusal, removeSiteFolder, writableSiteFolder,
 } from '../src/main/handout-publishing.ts'
 import {
-  KEY_REMOVED, LIVE_KEYS_FAILED, LIVE_KEYS_LOST, LIVE_NOT_SET_UP, LIVE_SETUP_FAILED, LIVE_SETUP_REFUSED, LiveServiceError, deployLiveService,
+  KEY_REMOVED, LIVE_ACCESS_REMOVED, LIVE_KEYS_FAILED, LIVE_NOT_SET_UP, LIVE_SETUP_FAILED, LIVE_SETUP_REFUSED, LiveServiceError, deployLiveService,
 } from '../src/main/live-service-deploy.ts'
 import {
   PUBLISH_FAILED, PUBLISH_NO_SITE, PUBLISH_REFUSED, PUBLISH_TOKEN_REJECTED, PUBLISH_TOO_LARGE, PUBLISH_UNREACHABLE, buildRedirects, pagesDeployFailure, pathSegment, siteFolder,
@@ -546,7 +547,7 @@ const LIVE_STATES = [
   ['refused: the token cannot run it', async () => { throw new LiveServiceError('failed', LIVE_SETUP_REFUSED, `Authentication error [code: 10000] Bearer ${TOKEN}`) }, { reason: LIVE_SETUP_REFUSED, details: true }],
   ['its set-up failed', async () => { throw new LiveServiceError('failed', LIVE_SETUP_FAILED, `esbuild exploded ${REPLY_TEXT_MARK}`) }, { reason: LIVE_SETUP_FAILED, details: true }],
   ['its keys could not be set', async () => { throw new LiveServiceError('failed', LIVE_KEYS_FAILED, 'secret bulk said no') }, { reason: LIVE_KEYS_FAILED, details: true }],
-  ['its keys are lost on this computer', async () => { throw new LiveServiceError('failed', LIVE_KEYS_LOST) }, { reason: LIVE_KEYS_LOST }],
+  ['this computer\'s access was removed', async () => { throw new LiveServiceError('failed', LIVE_ACCESS_REMOVED) }, { reason: LIVE_ACCESS_REMOVED }],
   ['its set-up was superseded', async () => { throw new LiveServiceError('failed', DEPLOY_SUPERSEDED_ERROR) }, { reason: DEPLOY_SUPERSEDED_ERROR }],
   ['it threw something unsorted', async () => { throw new Error(`Local live Worker did not start. raw tool text ${REPLY_TEXT_MARK} Bearer ${TOKEN}`) }, { reason: LIVE_SETUP_FAILED, details: true }],
   ['it threw a non-error', async () => { throw 'plain string' }, { reason: LIVE_SETUP_FAILED, details: true }], // eslint-disable-line no-throw-literal
@@ -959,11 +960,9 @@ console.log('PASS 7: publishes of one site run one at a time, in order; a thrown
       shipped: () => ({ manifest: files.manifestText, bundle: files.bundle, config: files.configBytes }),
       expectedBuild: files.manifest.build,
       authorise: () => w.connection.authoriseLiveDeploy(),
-      storedKeys: () => KEYS,
-      makeKeys: () => assert.fail('the stored keys are used'),
-      shareHostname: () => null,
-      shareDomainAttachedBefore: () => false,
-      recordShareDomain: () => {},
+      keys: singleKeyPort({ stored: { computerId: 'aaaa0000bbbb1111', adminSecret: KEYS.adminSecret } }, () => ({ computerId: 'aaaa0000bbbb1111', adminSecret: KEYS.adminSecret })),
+      computerName: () => 'Test computer',
+      liveFetch: async () => { throw new TypeError('fetch failed') }, live: { wait: async () => {}, requestMs: 2000, waitMs: 0 },
       fetch: fakeCloudflareFetch(w.api),
       apiBase: () => CLOUDFLARE_API_BASE,
       save: () => {},
@@ -981,7 +980,7 @@ console.log('PASS 7: publishes of one site run one at a time, in order; a thrown
   for (const [what, failAt, sentence] of CASES) {
     const result = await deploy(failAt)
     assert.deepEqual([result.ok, result.error], [false, sentence], `${what}: the sorted sentence`)
-    assert.match(result.details, /^(?:Uploading the live service|Setting its keys): Cloudflare answered \d{3} \(error \d+\)\.$/, `${what}: Details say the step and the answer in numbers`)
+    assert.match(result.details, /^(?:Uploading the live service|Adding this computer's key): Cloudflare answered \d{3} \(error \d+\)\.$/, `${what}: Details say the step and the answer in numbers`)
     for (const secret of [TOKEN, KEYS.adminSecret, KEYS.signingSecret, REPLY_TEXT_MARK]) assert.ok(!result.details.includes(secret) && !result.error.includes(secret), `${what}: no token, no key and no reply text in the message or in Details`)
   }
   assert.ok(LIVE_SETUP_REFUSED.includes('The token cannot run the live service') && LIVE_SETUP_REFUSED.includes(WORKERS_PERMISSION), 'the refusal names the permission')

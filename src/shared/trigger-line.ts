@@ -379,6 +379,18 @@ export interface OptionCommitContext {
    * title (the older {statement=centred} centres only then). deckCommitContext fills both.
    */
   statement?: { deckClaimStyle?: string; titleHidden?: boolean }
+  /**
+   * The Tab tone the slide inherits from its section, `defaults:` or `title_look_tone:` ('soft' or
+   * ''). Choosing Strong on such a slide writes an explicit {titlelook-tone=strong}: the empty
+   * token would only hand the slide back to the soft default.
+   */
+  inheritedTitleTone?: string
+  /**
+   * The Title look the slide inherits from its section, `defaults:` or `title_look:` ('tab',
+   * 'kicker', 'label' or ''). deckCommitContext also hands it to the orphan sweep through
+   * `unwrittenSelections`, so a Tab tone written on a slide that inherits Tab is not swept.
+   */
+  inheritedTitleLook?: string
 }
 
 // ── Ticket 02: the statement options are separate choices ─────────────────────────────────────
@@ -394,7 +406,6 @@ export const STATEMENT_OPTION_GROUPS: Readonly<Record<string, StatementDimension
   'statement-sidebar': 'sidebar',
   'statement-bg': 'bg',
   'statement-align': 'align',
-  'statement-bar': 'bar',
   'statement-colour': 'colour'
 }
 
@@ -458,6 +469,9 @@ export function commitOptionSelection(line: string, group: OptionGroup, token: s
     throw new Error(`Unknown option token for ${group.key}: ${token}`)
   }
   if (STATEMENT_OPTION_GROUPS[group.key]) return commitStatementOption(line, group, token, context)
+  if (group.key === 'title-look-tone' && token === '' && context.inheritedTitleTone === 'soft') {
+    return commitGroupToken(line, group, 'titlelook-tone=strong', context)
+  }
   return commitGroupToken(line, group, token, context)
 }
 

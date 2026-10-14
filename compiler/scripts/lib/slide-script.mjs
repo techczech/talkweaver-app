@@ -20,6 +20,8 @@ import { blankHtmlComments } from './html-comments.mjs'
 import { IMAGE_SYNTAX_RE, imageSyntaxIsAudio } from './image-line-rules.mjs'
 import { audioChipTitle } from './audio-chip-title.mjs'
 import { shownReference } from './shown-reference.mjs'
+import { isBareUrl } from './02-triggers-layout.mjs'
+import { countQuoteBlocks, readQuoteSlideLines } from './quote-forms.mjs'
 
 // Fence languages the slide renders as a picture rather than as code (06-block-renderers.mjs).
 const DIAGRAM_FENCE_LANGS = new Set(['mermaid', 'svg'])
@@ -195,6 +197,62 @@ export function parseSlideScript(sourceMarkdown) {
 }
 
 /**
+ * Quote forms, ticket 10: on a quote slide whose form is set, the web address on its own line under the quotation is
+ * the quote's source line (adoptAddressUnderQuote, quote-forms.mjs). This reader takes the slide's text, not its
+ * blocks, so it reads that line as a paragraph; it is made the attribution it would be as `- <address>`. The compiled
+ * blocks say when: the one quotation's source is exactly that address and no embed block is left. A slide with no
+ * form keeps its embed block, and one with a source line already has its attribution, so both are returned unchanged.
+ */
+function addressSourceAsAttribution(blocks, slide) {
+  if (slide?.layout !== 'quote' || !Array.isArray(slide.blocks) || slide.blocks.some((block) => block?.type === 'embed')) return blocks
+  const quotes = slide.blocks.filter((block) => block?.type === 'quote' && !block.practice)
+  const cite = String(quotes[0]?.cite ?? '').trim()
+  if (quotes.length !== 1 || !isBareUrl(cite) || blocks.some((block) => block.type === 'attrib')) return blocks
+  const at = blocks.findIndex((block, index) => block.type === 'p' && block.text === cite && blocks[index - 1]?.type === 'quote')
+  return at < 0 ? blocks : blocks.map((block, index) => (index === at ? { type: 'attrib', text: cite } : block))
+}
+
+const TRIGGER_ONLY_LINE_RE = /^\s*(\{[^}]*\}\s*)+$/
+
+/**
+ * Quote forms, ticket 10: a paragraph wholly in quotation marks is a quotation to the compiler (a promoted quotation),
+ * but this reader takes the slide's text, where it is a paragraph and its source line a list or a second paragraph.
+ * On a quote slide whose form is set (`quoteFormSet`, 08-source-adapters.mjs) that holds that one quotation and nothing
+ * else but pictures, the phone text is what a `>` quotation gives: the words as a quote and the source as its
+ * attribution, whether the source is the tail of the paragraph, a source line, or the web address on its own line
+ * under it (which the compiler reads as the source line there). The words and the source are read from the slide's
+ * lines by the reader the compiler's own quote grammar backs (readQuoteSlideLines), and taken only when the compiled
+ * blocks say the same: one quotation, those words, that source (or none, when the slide title stands in), nothing else
+ * painting. A slide with no form is returned unchanged, as is any slide that does not fit.
+ */
+function promotedQuoteAsQuote(blocks, slide) {
+  if (slide?.quoteFormSet !== true || slide.layout !== 'quote' || !Array.isArray(slide.blocks) || typeof slide.scriptSourceMarkdown === 'string') return blocks
+  if (!blocks.length || blocks.some((block) => !['p', 'list', 'media'].includes(block.type))) return blocks
+  const quotes = slide.blocks.filter((block) => block?.type === 'quote' && !block.practice)
+  const quote = quotes[0]
+  if (quotes.length !== 1 || slide.blocks.some((block) => block && block !== quote && block.type !== 'image' && block.type !== 'image-row')) return blocks
+  const lines = audienceSourceLines(slide.sourceMarkdown).map((line) => (TRIGGER_ONLY_LINE_RE.test(line) ? '' : line))
+  if (countQuoteBlocks(lines) !== 1) return blocks
+  // Any set form reads the address under the quotation as the source line; which form it is changes nothing here.
+  const read = readQuoteSlideLines(lines, 'plain')
+  if (!read.hasQuote || read.otherContent || !read.paragraphs.length) return blocks
+  const compiledWords = Array.isArray(quote.paragraphs) && quote.paragraphs.length ? quote.paragraphs : [quote.text ?? '']
+  if (JSON.stringify(compiledWords) !== JSON.stringify(read.paragraphs)) return blocks
+  const compiledSource = quote.citeFromTitle ? '' : String(quote.cite ?? '').trim()
+  if (compiledSource !== String(read.cite ?? '').trim()) return blocks
+  const out = []
+  let written = false
+  for (const block of blocks) {
+    if (block.type === 'media') { out.push(block); continue }
+    if (written) continue
+    written = true
+    for (const text of read.paragraphs) out.push({ type: 'quote', text })
+    if (compiledSource) out.push({ type: 'attrib', text: compiledSource })
+  }
+  return out
+}
+
+/**
  * Build the `{ slideId: ScriptBlock[] }` payload embedded in the compiled deck.
  * Slides whose outline carried no body are omitted — an empty section beats apology copy.
  */
@@ -204,9 +262,9 @@ export function buildSlideScriptPayload(slides) {
     if (!slide?.id) continue
     // A slide that folded its `####` children (columns, compare, cards…) carries the wider slice
     // covering them as scriptSourceMarkdown (08-source-adapters.mjs, absorbFoldedChildren).
-    const blocks = parseSlideScript(typeof slide.scriptSourceMarkdown === 'string'
+    const blocks = promotedQuoteAsQuote(addressSourceAsAttribution(parseSlideScript(typeof slide.scriptSourceMarkdown === 'string'
       ? slide.scriptSourceMarkdown
-      : slide.sourceMarkdown)
+      : slide.sourceMarkdown), slide), slide)
     if (blocks.length) out[slide.id] = blocks
   }
   return out

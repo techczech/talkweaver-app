@@ -1,22 +1,27 @@
-// ADR-0028 §10, ticket 02 (Dominik, 29 Sep, no design round): a statement slide's options are
-// separate choices, each its own trigger key. ONE resolver decides what a slide's tokens mean; the
-// compiler (08-source-adapters) renders from it and the Inspector (src/shared/statement-options.ts)
-// lights its buttons and writes its tokens from it, so the two can never disagree.
+// ADR-0028 §10, ticket 02 (Dominik, 29 Sep, no design round), reworked by the 13 October 2026
+// slide redesign: a statement slide's options are separate choices, each its own trigger key. ONE
+// resolver decides what a slide's tokens mean; the compiler (08-source-adapters) renders from it
+// and the Inspector (src/shared/statement-options.ts) lights its buttons and writes its tokens
+// from it, so the two can never disagree.
 //
 //   {statement-sidebar=on|off}          the coloured title sidebar (the rail), or full width
-//   {statement-bg=halo|full|none}       the panel round the text, the whole slide, or no colour
+//   {statement-bg=tinted|rule|strong|lower-third}
+//                                       the whole slide tinted (default), a short accent rule above
+//                                       the text on a plain slide, the whole slide in the accent
+//                                       colour, or the bottom third tinted
 //   {statement-align=left|centred}      aligned left, or centred with balanced lines
-//   {statement-bar=none|left|top|bottom} the accent bar beside, above or below the text
-//   {accent=<name>}                     the sidebar colour (rail, halo, full colour and bar) — the
+//   {statement-bar=…}                   retired: accepted so old talks compile, no effect
+//   {accent=<name>}                     the sidebar colour (rail, tint, strong colour and rule) — the
 //                                       section-accent vocabulary, pinned on this one slide
 //
+// There is no box round the text any more. Old background values map onto the new ones:
+//   halo, panel, default, full → tinted;   none → rule
 // The older one-word options stay valid and are PRESETS over the same dimensions:
-//   {statement}/{statement=default|poster}, {claim=plain}  → Halo, Aligned, no bar
-//   {statement=centred}                                     → Halo, Centred (only without a title,
-//                                                             as preview.11 rendered it), no bar
-//   {statement=tint}                                        → Halo, Aligned, Left bar
-//   {statement=bar}, {claim=bar}, deck `claim_style: bar`   → no colour, Aligned, Left bar
-//   {statement=full}                                        → Full, Aligned, no bar
+//   {statement}/{statement=default|poster}, {claim=plain}  → Tinted, Aligned
+//   {statement=centred}                                     → Tinted, Centred (only without a title,
+//                                                             as preview.11 rendered it)
+//   {statement=tint}, {statement=full}                      → Tinted, Aligned
+//   {statement=bar}, {claim=bar}, deck `claim_style: bar`   → Rule, Aligned
 // A per-dimension token overrides only its own dimension of the preset. The deck's claim_style
 // applies only to a slide that carries no statement or claim token of its own.
 
@@ -30,26 +35,26 @@ export const STATEMENT_DIMENSION_KEYS = Object.freeze({
 /** The values each dimension accepts, canonical first; synonyms map onto a canonical value. */
 export const STATEMENT_DIMENSION_VALUES = Object.freeze({
   sidebar: ["on", "off"],
-  bg: ["halo", "full", "none"],
+  bg: ["tinted", "rule", "strong", "lower-third"],
   align: ["left", "centred"],
-  bar: ["none", "left", "top", "bottom"],
+  bar: ["none", "left", "top", "bottom"], // retired: accepted, never rendered
 });
 const SYNONYMS = {
   sidebar: { with: "on", yes: "on", none: "off", without: "off", no: "off" },
-  bg: { panel: "halo", default: "halo" },
+  bg: { halo: "tinted", panel: "tinted", default: "tinted", full: "tinted", none: "rule" },
   align: { aligned: "left", centre: "centred", center: "centred", centered: "centred" },
   bar: { off: "none", above: "top", below: "bottom" },
 };
 
 /** The look with no token at all. `sidebar: ""` = follows the title (a rail beside a title). */
-export const STATEMENT_DEFAULTS = Object.freeze({ sidebar: "", bg: "halo", align: "left", bar: "none" });
+export const STATEMENT_DEFAULTS = Object.freeze({ sidebar: "", bg: "tinted", align: "left", bar: "none" });
 
 export const STATEMENT_PRESETS = Object.freeze({
-  default: Object.freeze({ bg: "halo", align: "left", bar: "none" }),
-  centred: Object.freeze({ bg: "halo", align: "centred", bar: "none" }),
-  tint: Object.freeze({ bg: "halo", align: "left", bar: "left" }),
-  bar: Object.freeze({ bg: "none", align: "left", bar: "left" }),
-  full: Object.freeze({ bg: "full", align: "left", bar: "none" }),
+  default: Object.freeze({ bg: "tinted", align: "left", bar: "none" }),
+  centred: Object.freeze({ bg: "tinted", align: "centred", bar: "none" }),
+  tint: Object.freeze({ bg: "tinted", align: "left", bar: "none" }),
+  bar: Object.freeze({ bg: "rule", align: "left", bar: "none" }),
+  full: Object.freeze({ bg: "tinted", align: "left", bar: "none" }),
 });
 
 function text(value) {
@@ -111,7 +116,8 @@ export function resolveStatementOptions(attrs = {}, { deckClaimStyle = "" } = {}
       warnings.push(`statement-unknown:${key}=${raw === true ? "" : text(raw)}`);
       continue;
     }
-    look[dimension] = value;
+    // The bar dimension is retired: a valid value is accepted and has no effect.
+    look[dimension] = dimension === "bar" ? "none" : value;
     explicit[dimension] = true;
   }
   const accent = attrs.accent != null && attrs.accent !== true ? text(attrs.accent) : "";

@@ -1,5 +1,5 @@
 import { chartObjectTokenAt, parseMarkdownFenceOpeningLine, isMarkdownFenceClosingLine } from "./03-object-token.mjs";
-import { parseHeadingAttrs, parseTriggerLine } from "./02-triggers-layout.mjs";
+import { parseHeadingAttrs, parseTriggerLine, headingIconGroups } from "./02-triggers-layout.mjs";
 import { TRIGGER_ONLY_RE, duplicateIdWarning, resolveSlideId, slideIdsInPrelude } from "./slide-id.mjs";
 
 // =============================================================================
@@ -79,7 +79,53 @@ function furtherTriggerLines(lines, firstIndex) {
 // the tree still treats as the heading's (the resolver may find the slide's id there).
 const ID_ONLY_LINE_RE = /^\s*(\{id=[A-Za-z0-9_-]+\}\s*)+$/;
 
-// parseOutlineTree(text) → { meta: {rawFrontmatter, title}, root, warnings, notesLineIndexes }
+// The content lines of a node as the compiler hands them to the lexer: outside fenced code, a line
+// made only of `{…}` groups (a stray Trigger line) is taken OUT of the content and folded into the
+// slide's attrs, except a chart token that owns the list below it. One reading, shared by the
+// adapter (08-source-adapters.mjs contentLinesAndAttrs) and the outline verbs that must put a
+// token where the lexer will read it (12-outline-edit.mjs). Returns one entry per content line, in
+// order: { index (into contentLines), line, stray } where `stray` is null for a line the lexer
+// sees, or the parsed Trigger line ({ attrs, warnings }) for one it does not.
+export function classifyContentLines(contentLines) {
+  const out = [];
+  let fenceOpening = null;
+  const lines = contentLines || [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (fenceOpening) {
+      out.push({ index, line, stray: null });
+      if (isMarkdownFenceClosingLine(line, fenceOpening)) fenceOpening = null;
+      continue;
+    }
+    const open = parseMarkdownFenceOpeningLine(line);
+    if (open) {
+      out.push({ index, line, stray: null });
+      fenceOpening = open;
+      continue;
+    }
+    out.push({ index, line, stray: (chartObjectTokenAt(lines, index) ? null : parseTriggerLine(line)) || null });
+  }
+  return out;
+}
+
+// parseOutlineTree(text) → { meta: {rawFrontmatter, title}, root, warnings, notesLineIndexes,
+//                             triggerLineIndexes, deckTitleIcon, contentLineIndexes }
+//
+// `triggerLineIndexes`: 0-based indexes of the lines folded into a heading's attrs (its Trigger
+// block and an id-only line): never content. With `notesLineIndexes` and each node's `sourceLine`
+// this is what a writer needs to address the lines the compiler reads as a slide's content
+// (12-outline-edit.mjs setParagraphIcon).
+//
+// Plain view ticket 07: `deckTitleIcon` is null, or { icon, at } for the `{icon=…}` (and
+// `{title-icon=above}`) written on the `#` line, when the icon is in an authored group
+// (02-triggers-layout.mjs headingBraceGroups). It is a heading token, not front matter.
+// A node carries `titleIcon` (the NAME as written) only when its OWN heading line has an `icon=`
+// in an authored group (headingIconGroups: the last such token decides). That is the one source of a title's icon: an `icon=` on the slide's
+// Trigger line, in the front matter's `triggers:` default or in braces glued to the heading's text
+// (the tail of a URL, an escaped brace) draws nothing, as none of them did before the ticket.
+//
+// `contentLineIndexes`: Map(node → the 0-based line index of each of its `contentLines`), so a
+// writer can address the exact source line of a content line (12-outline-edit.mjs).
 //
 // `notesLineIndexes`: 0-based indexes (into the parsed body's lines) of every speaker-notes line
 // this parse routed away from slide content — the `:::notes` / `:::` markers and every line
@@ -116,14 +162,20 @@ export function parseOutlineTree(text) {
   const consumedTriggerLines = new Set();
 
   let deckTitle = "";
+  let deckTitleIcon = null;
   let inNotes = false;
   let fenceOpening = null;
   const notesLineIndexes = [];
   let lineIndex = 0;
 
+  const contentLineIndexes = new Map();
   const pushLine = (line) => {
     if (inNotes) { top().notesLines.push(line); notesLineIndexes.push(lineIndex); }
-    else top().contentLines.push(line);
+    else {
+      top().contentLines.push(line);
+      if (!contentLineIndexes.has(top())) contentLineIndexes.set(top(), []);
+      contentLineIndexes.get(top()).push(lineIndex);
+    }
   };
 
   for (let li = 0; li < lines.length; li += 1) {
@@ -154,7 +206,12 @@ export function parseOutlineTree(text) {
 
     // Single `#` — deck title; never a node.
     if ((m = line.match(/^#\s+(.+)/)) && !line.startsWith("##")) {
-      deckTitle = parseHeadingWithWarnings(m[1], warnings).title;
+      const parsedTitle = parseHeadingWithWarnings(m[1], warnings);
+      deckTitle = parsedTitle.title;
+      const deckIcon = headingIconGroups(m[1]).key;
+      deckTitleIcon = deckIcon
+        ? { icon: deckIcon, at: parsedTitle.attrs["title-icon"] === "above" ? "above" : "before" }
+        : null;
       continue;
     }
 
@@ -173,6 +230,8 @@ export function parseOutlineTree(text) {
       const node = makeNode(level, parsed.title, parsed.attrs, li + 1, line);
       parent.children.push(node);
       stack.push(node);
+      const ownIcon = headingIconGroups(m[2]).key;
+      if (ownIcon) node.titleIcon = ownIcon;
 
       const tl = triggerLineAfter(lines, li);
       if (tl) {
@@ -213,5 +272,9 @@ export function parseOutlineTree(text) {
     pushLine(line);
   }
 
-  return { meta: { rawFrontmatter, title: deckTitle }, root, warnings, notesLineIndexes };
+  return {
+    meta: { rawFrontmatter, title: deckTitle },
+    root, warnings, notesLineIndexes, deckTitleIcon, contentLineIndexes,
+    triggerLineIndexes: [...consumedTriggerLines].sort((a, b) => a - b)
+  };
 }

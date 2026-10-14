@@ -14,6 +14,7 @@ import {
 } from './model'
 import { useFolderMemory } from './folderMemory'
 import { useTalkFacts } from '../../lib/talkFacts'
+import { startDragAutoScroll } from '../../lib/dragAutoScroll'
 import { shareForTalk, useSharedTalks } from '../../lib/sharedTalks'
 import { useFeedbackSummaries } from '../../lib/feedback'
 import { cardStep, initialCardState } from './hoverIntent'
@@ -180,6 +181,8 @@ export default function TalkList({
   const searchRef = useRef<HTMLInputElement>(null)
   const sortBtnRef = useRef<HTMLButtonElement>(null)
   const treeRef = useRef<HTMLDivElement>(null)
+  const stopAutoScrollRef = useRef<(() => void) | null>(null)
+  useEffect(() => () => { stopAutoScrollRef.current?.() }, [])
   const scrollRafRef = useRef<number | null>(null)
   const pendingScrollTopRef = useRef(0)
   const rowRefs = useRef(new Map<string, HTMLDivElement>())
@@ -726,13 +729,16 @@ export default function TalkList({
       setScrollTop(pendingScrollTopRef.current)
     })
   }
-  function autoScrollDuringDrag(e: React.DragEvent): void {
-    const container = treeRef.current
-    if (!container || !draggingRef.current) return
-    const rect = container.getBoundingClientRect()
-    const delta = e.clientY - rect.top < 24 ? -8 : rect.bottom - e.clientY < 24 ? 8 : 0
-    if (!delta) return
-    container.scrollTop = Math.max(0, Math.min(container.scrollTop + delta, container.scrollHeight - container.clientHeight))
+  // Edge auto-scroll while a talk is dragged: the shared loop (lib/dragAutoScroll), started with the
+  // drag and stopped with it. It also stops itself on drop, so a row the virtual window unmounted
+  // mid-drag (which never gets its dragend) cannot leave it running.
+  function startAutoScroll(): void {
+    stopAutoScrollRef.current?.()
+    stopAutoScrollRef.current = treeRef.current ? startDragAutoScroll(treeRef.current) : null
+  }
+  function stopAutoScroll(): void {
+    stopAutoScrollRef.current?.()
+    stopAutoScrollRef.current = null
   }
   function toggleSortPop(): void {
     setSortPop((open) => {
@@ -763,13 +769,13 @@ export default function TalkList({
     onUnavailableAction: (vaultId) => runUnavailableAction(vaultId),
     onShowVault: (vaultId) => setShow(vaultId),
     hiddenCount: (vaultId) => (talksInVault.get(vaultId) ?? []).length,
-    onDragStartTalk: (talk, key) => { draggingRef.current = talk; setDragKey(key) },
-    onDragEndTalk: () => { draggingRef.current = null; setDragKey(null); setDragTopic(null) },
+    onDragStartTalk: (talk, key) => { draggingRef.current = talk; setDragKey(key); startAutoScroll() },
+    onDragEndTalk: () => { draggingRef.current = null; setDragKey(null); setDragTopic(null); stopAutoScroll() },
     // stopPropagation: without it the SAME dragover bubbles on to the tree container, whose
     // handler overwrites dragTopic to '' — so the folder's .tl-drop highlight never showed
     // (live finding, 0.14.0). The folder row owns the event; the tree only sees open-space drags.
     onFolderDragOver: (path, e, vaultId) => {
-      if (draggingRef.current) { autoScrollDuringDrag(e); e.preventDefault(); e.stopPropagation(); setDragTopic(collapseId(vaultId, path)) }
+      if (draggingRef.current) { e.preventDefault(); e.stopPropagation(); setDragTopic(collapseId(vaultId, path)) }
     },
     // relatedTarget check: dragleave also fires when moving onto the row's own children
     // (name/count spans); only clear when the pointer truly leaves the row's subtree.
@@ -778,7 +784,7 @@ export default function TalkList({
     },
     onFolderDrop: (path, e, vaultId) => { e.preventDefault(); e.stopPropagation(); onDropTo(path, vaultId) },
     // Dropping on empty space (not a folder) moves the talk to the root of its own vault.
-    onTreeDragOver: (e) => { if (draggingRef.current) { autoScrollDuringDrag(e); e.preventDefault(); setDragTopic('') } },
+    onTreeDragOver: (e) => { if (draggingRef.current) { e.preventDefault(); setDragTopic('') } },
     onTreeDrop: (e) => { e.preventDefault(); const t = draggingRef.current; onDropTo('', t ? vaultIdOfTalk(t, vaults) ?? undefined : undefined) }
   }
 

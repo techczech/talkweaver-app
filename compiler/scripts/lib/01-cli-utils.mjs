@@ -94,19 +94,9 @@ export function chooseBalancedColumns(n, max = 4) {
   return best ? best.cols : Math.min(max, count);
 }
 
-// Parse an explicit `{blocks:RxC}` grid dimension (rows × cols) the author sets on a grid/tiles
-// heading. Tolerant of the `x` separator in lower/upper case and the unicode `×`, plus surrounding
-// whitespace; both numbers must be ≥1. Returns { rows, cols } or null when it does not parse (the
-// caller then falls back to the auto-balanced column count). The contract is the test surface.
-export function parseGridDims(value) {
-  if (value == null || value === true) return null;
-  const m = String(value).trim().match(/^(\d+)\s*[x×X]\s*(\d+)$/);
-  if (!m) return null;
-  const rows = parseInt(m[1], 10);
-  const cols = parseInt(m[2], 10);
-  if (!(rows >= 1) || !(cols >= 1)) return null;
-  return { rows, cols };
-}
+// `parseGridDims` ({blocks:RxC}) lives in grid-dims.mjs (pure: the editor bundles it, and the layout inference reads
+// it without this file's Node access); re-exported here for its callers. authored-layout.mjs re-exports the same one.
+export { parseGridDims } from "./grid-dims.mjs";
 
 // QR code generator — SINGLE SOURCE OF TRUTH for both build-time and runtime QR.
 //

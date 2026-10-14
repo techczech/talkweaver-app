@@ -29,6 +29,7 @@
  * backtick, damaging snake_case words and code.
  */
 import { escapeHtml } from './00-html.mjs'
+import { shortenAddressLinks } from './quote-forms.mjs'
 import { isSafeLinkUrl, keyCapHtml, renderEmphasisEscaped } from './00-inline-render.mjs'
 import {
   bareUrlAt,
@@ -241,7 +242,9 @@ export function renderScriptBlocks(blocks) {
         out.push({ type: 'qr', html: renderQrLine(url, (qr[2] || url).trim()) })
         continue
       }
-      const html = renderLine(text)
+      const rendered = renderLine(text)
+      // A source line shows a link's site, not its address (the href stays whole).
+      const html = block.type === 'attrib' ? shortenAddressLinks(rendered) : rendered
       if (html) out.push({ type: block.type === 'quote' || block.type === 'attrib' ? block.type : 'p', html })
     }
   }

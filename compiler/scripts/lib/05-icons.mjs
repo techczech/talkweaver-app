@@ -1092,6 +1092,16 @@ export function normalizeIconOverrideKey(raw) {
   return null;
 }
 
+// The icon a slide's title draws (plain view ticket 07), or "": the NAME written on the heading's
+// own line (the outline tree's node.titleIcon), resolved as a list item's explicit icon is (an
+// unknown prefixed name is the neutral placeholder; an unresolvable bare name is no icon). The
+// adapter draws from it and the outline verb setHeadingIcon checks its own edit against it.
+export function titleIconOfNode(node) {
+  const raw = node?.titleIcon;
+  if (typeof raw !== "string" || !raw.trim()) return "";
+  return normalizeIconOverrideKey(raw) || "";
+}
+
 // Resolve an item's CONCEPT KEY: the top-ranked candidate (restricted to the allowed
 // `sources`) the item maps to. null when the item resolves to nothing.
 function conceptKeyForItem(text, sources = null) {

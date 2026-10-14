@@ -69,12 +69,14 @@ const expectedPaletteIds = [
   'find-talk', 'add-talk-beside', 'talk-beside', 'close-talk-beside', 'select-whole-section',
   'present-window', 'present-presenter',
   'present-from-here', 'present-audience', 'handout', 'build', 'publish-handout', 'share-for-comments', 'copy-venue-screen-link', 'layout',
+  'quote-form-auto', 'quote-form-plain', 'quote-form-tweet', 'quote-form-video', 'quote-form-book', 'quote-form-paper', 'quote-form-web',
   'image', 'search', 'insert-board-slide', 'icon-picker', 'insert-object-table', 'insert-object-mindmap',
   'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg',
   'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-component-auto-embed', 'insert-component-countdown',
   'format-bold', 'format-italic', 'format-inline-code', 'format-highlight', 'format-strikethrough', 'format-underline', 'format-link',
   'deck-design', 'metadata', 'tag-slide', 'abstract',
-  'view-editor', 'view-both', 'view-strip', 'view-grid', 'fold-all', 'unfold-all',
+  'view-editor', 'view-both', 'view-plain', 'view-markdown', 'change-heading-level', 'change-slide-layout', 'view-strip', 'view-grid', 'fold-all', 'unfold-all', 'outline-collapse-all', 'outline-expand-all',
+  'move-slide-to', 'move-section-to',
   'normalize-triggers', 'undo', 'redo', 'new-slide', 'promote-heading', 'demote-heading', 'bulleted-list', 'numbered-list', 'delete-slide', 'app.command-palette', 'help', 'settings',
   'get-started-show-example', 'get-started-open-guide', 'get-started-show-guide-button'
 ]
@@ -551,5 +553,21 @@ const osRoleAllowlist = new Map([
 ])
 const nativeRoles = [...main.matchAll(/\{ role: '([^']+)'(?: as const)? \}/g)].map((match) => match[1])
 assert.deepEqual(nativeRoles.filter((role) => !osRoleAllowlist.has(role)), [], 'native menu role needs a command or justified OS allowlist entry')
+
+// The seven Quote form commands narrow by name: the palette matches the whole query as a substring of the
+// title or one keyword (CommandMenu.tsx), so a form's own name must reach only that form.
+{
+  const forms = COMMAND_REGISTRY.filter((command) => command.id.startsWith('quote-form-'))
+  const paletteFilter = (query) => {
+    const q = query.toLowerCase()
+    return forms.filter((command) => command.label.toLowerCase().includes(q) || command.palette.keywords.some((keyword) => keyword.toLowerCase().includes(q))).map((command) => command.id)
+  }
+  assert.equal(forms.length, 7)
+  for (const [id, name] of [['auto', 'Automatic'], ['plain', 'Plain'], ['tweet', 'Tweet'], ['video', 'Video'], ['book', 'Book'], ['paper', 'Paper'], ['web', 'Web']]) {
+    assert.deepEqual(paletteFilter(name), [`quote-form-${id}`], `typing "${name}" lists only its own form`)
+    assert.deepEqual(paletteFilter(`Quote form: ${name}`), [`quote-form-${id}`], `typing "Quote form: ${name}" lists only its own form`)
+  }
+  assert.equal(paletteFilter('quote form').length, 7, 'the shared words still list all seven')
+}
 
 console.log(`command registry parity: ${COMMAND_REGISTRY.length} commands, ${expectedPaletteIds.length} palette entries, ${menuCommands().length} custom menu item`)

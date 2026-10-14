@@ -7,8 +7,8 @@
 // in the compiled deck: a deck opened on its own, the audience, venue, handout and live-follow pages
 // never carry the chip, the column, its styles or its key.
 //
-//   • The button, in the bottom bar at the left beside Outline: "Guide · Present 13 of 47". It has no key
-//     (owner check 10 Oct). A small × beside it, shown on hover and on keyboard focus, hides it: it turns
+//   • The button, in the bottom bar at the left beside Outline: "Guide · Present 13 of 47". Its key is C
+//     (0.38.2 release notes; owner check 10 Oct had dropped it). A small × beside it, shown on hover and on keyboard focus, hides it: it turns
 //     off the same Settings switch ("Show the Guide button in the sidebar") through main. It shows only
 //     while main sends a view (the Guide button is on in TalkWeaver, lock decision 8).
 //   • The column: the Present chapter as the main window shows it (sub-groups, tried and untried
@@ -18,7 +18,7 @@
 //     and the stage, Next and Notes reflow by their existing rules into what is left. The window is
 //     never resized or moved (review round 1). Main only records that the column is open
 //     (guide:present-column), so a reload brings it back.
-//   • The button and the palette's "Guide: Present chapter" toggle it. "All chapters" at the top of the
+//   • The button, C and the palette's "Guide: Present chapter" toggle it. "All chapters" at the top of the
 //     column asks main (one-way, no payload) to bring the TalkWeaver window forward with the Guide open
 //     on the chapter list; no other chapter's data reaches this window.
 //
@@ -347,7 +347,37 @@ export function mountPresenterGuide(): void {
     else if (r.open === true) openColumn()
   }
 
-  // The button and the palette entry run the same toggle; the template reports their presses (presenter-palette.guide).
+  // The presenter keeps the person's rebinds in this store, keyed by registry id, as { chord, entryId }
+  // (compiler/assets/runtime/presenter-shortcuts.js). Read at each press, so a rebind applies at once.
+  function guideKeyRebound(): boolean {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem('talkweaver:presenter:shortcuts') || '{}') as Record<string, { chord?: unknown } | null> | null
+      const chord = saved?.['presenter.guide']?.chord
+      return typeof chord === 'string' && chord !== ''
+    } catch {
+      return false
+    }
+  }
+
+  // C toggles the column (presenter.guide): the same toggle() the button runs. Not with a modifier, not on
+  // a repeat, not while typing or in a dialog or the command palette, and not without the chip (the Guide
+  // button is off): then C does nothing. A key typed inside an embedded page never reaches this document.
+  // A rebound Guide key is run by the presenter's own key handler (compiler/assets/runtime/presenter-shortcuts.js),
+  // so when the person has rebound it, this literal C listener stands aside and the old key does nothing.
+  window.addEventListener('keydown', (event: KeyboardEvent) => {
+    if (!chip || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || event.repeat) return
+    if (event.key !== 'c' && event.key !== 'C') return
+    if (guideKeyRebound()) return
+    const target = event.target
+    if (target instanceof HTMLElement && target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), dialog')) return
+    const palette = document.getElementById('presenterCommandPalette')
+    if (palette && !palette.hidden) return
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    toggle()
+    reportGuideCommand('presenter.guide')
+  }, true)
+  // The button and the palette entry run the same toggle; the template reports their presses (presenter.guide).
 
   ipcRenderer.on('guide:present-chapter-changed', (_event, reply: unknown) => apply(reply))
   void ipcRenderer.invoke('guide:present-chapter').then(apply).catch(() => {})

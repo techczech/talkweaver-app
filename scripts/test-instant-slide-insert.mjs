@@ -3,7 +3,7 @@
 // against the REAL bundled compiler (slide ids and heading lines exactly as the presenter deck has them).
 // Every successful write is byte-diffed: old = prefix + suffix, new = prefix + one slide + suffix.
 import assert from 'node:assert/strict'
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
@@ -21,6 +21,16 @@ import { applyMinimalChange } from '../src/renderer/src/lib/minimalChange.ts'
 import { stampHandoutUrl } from '../src/shared/handout-stamp.ts'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
+// The editor's insert-at-the-caret plan (Editor.tsx registerInsert → headingEndInsert.ts), bundled
+// because Node cannot resolve the renderer's extensionless TypeScript imports directly.
+const { caretLineInsertion } = await (async () => {
+  const { build } = await import('esbuild')
+  const dir = mkdtempSync(join(tmpdir(), 'tw-instant-insert-bundle-'))
+  try {
+    await build({ entryPoints: [join(REPO, 'src/renderer/src/extensions/headingEndInsert.ts')], bundle: true, format: 'esm', platform: 'node', outfile: join(dir, 'bundle.mjs'), logLevel: 'silent' })
+    return await import(pathToFileURL(join(dir, 'bundle.mjs')).href)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})()
 const tools = await loadOutlineTools(join(REPO, 'compiler/scripts'))
 const root = mkdtempSync(join(tmpdir(), 'tw-instant-insert-'))
 let seq = 0
@@ -759,15 +769,13 @@ function fakeEditorWindow(path, { autosaveMs = 25 } = {}) {
       return ed.doc
     },
     adopt: (p, sent, saved) => { if (p === path && ed.doc === sent) dispatch(saved) },
-    // Editor.tsx registerInsert: the block goes in at the END of the caret's line, surrounded by blank
-    // lines, and the caret moves after it.
+    // Editor.tsx registerInsert: the editor's own plan (headingEndInsert.ts caretLineInsertion), one
+    // change, and the caret moves where the plan says.
     insertAtCaret: (p, block) => {
       if (p !== path) return false
-      const lineEnd = ed.doc.indexOf('\n', ed.caret)
-      const at = lineEnd < 0 ? ed.doc.length : lineEnd
-      const insert = '\n\n' + block.replace(/^\n+/, '').replace(/\n+$/, '') + '\n'
-      dispatch(ed.doc.slice(0, at) + insert + ed.doc.slice(at))
-      ed.caret = at + insert.length
+      const plan = caretLineInsertion(ed.doc, ed.caret, block)
+      dispatch(ed.doc.slice(0, plan.from) + plan.insert + ed.doc.slice(plan.from))
+      ed.caret = plan.cursor
       return true
     },
   }
@@ -958,7 +966,9 @@ const hostAfterAdopt = async (_ed, _path) => {} // WorkspaceLayout: no onAdopted
   const picked = ed.mutator.apply(path, async (text) => {
     await sleep(10) // the outline:set-item-icon round trip
     if (!ed.doc.includes('typed during the icon')) ed.type('- end', ' typed during the icon')
-    return outlineEdit.setListItemIcon(text, { heading: '## Opening {id=aa11}', occurrence: 1 }, 0, 'star')
+    const pinned = outlineEdit.setListItemIcon(text, { heading: '## Opening {id=aa11}', occurrence: 1 }, 0, 'star')
+    if (!pinned.ok) throw new Error(`icon not pinned: ${pinned.reason}`)
+    return pinned.text
   })
   const result = await picked
   assert.equal(result.ok, true, result.error)
@@ -1008,6 +1018,37 @@ const hostAfterAdopt = async (_ed, _path) => {} // WorkspaceLayout: no onAdopted
   const refused = await ed.mutator.insertAtCaret(other, '![](img-zzz)')
   assert.deepEqual([refused.ok, refused.reason, refused.applied], [false, 'not-open', false])
   assert.ok(!ed.doc.includes('img-zzz') && readFileSync(other, 'utf8') === OUTLINE)
+}
+
+// D1g2. A whole slide inserted with the caret on a slide's TITLE (review of 7d58c913): it goes after
+//       that slide's whole block, so the slide keeps its id line and its body; a second slide put in
+//       straight after follows the first; a component on the title still goes under its id line. Each
+//       is one change, saved at once, and the save's id stamping (the compiler's) mints nothing.
+{
+  const TALK = ['# Talk', '', '### A', '{id=a}', '', 'body of A', '', '### B', '{id=b}', '', 'body of B', ''].join('\n')
+  const path = talkFile(TALK)
+  const ed = fakeEditorWindow(path)
+  ed.caret = ed.doc.indexOf('### A') + 3
+  const undoBefore = ed.undo.length
+  const first = await ed.mutator.insertAtCaret(path, '### New\n{id=new01}\n\nnew body')
+  assert.equal(first.ok, true, first.error)
+  const withFirst = ['# Talk', '', '### A', '{id=a}', '', 'body of A', '', '### New', '{id=new01}', '', 'new body', '', '### B', '{id=b}', '', 'body of B', ''].join('\n')
+  assert.equal(readFileSync(path, 'utf8'), withFirst, 'on disk: A keeps its id line and its body; the new slide is between A and B')
+  assert.equal(ed.caret, withFirst.indexOf('new body') + 'new body'.length, 'the caret is at the end of the inserted slide')
+  const second = await ed.mutator.insertAtCaret(path, '### Next\n{id=new02}')
+  assert.equal(second.ok, true, second.error)
+  assert.equal(ed.doc, withFirst.replace('new body\n', 'new body\n\n### Next\n{id=new02}\n\n'), 'a second slide follows the first (the caret is now on a body line: after that line, as before)')
+  assert.equal(ed.undo.length - undoBefore, 2, 'one change each')
+  ed.caret = ed.doc.indexOf('### B') + 5
+  const component = await ed.mutator.insertAtCaret(path, '[QR: https://example.com | Label]')
+  assert.equal(component.ok, true, component.error)
+  assert.ok(ed.doc.includes('### B\n{id=b}\n\n[QR: https://example.com | Label]\n\n\nbody of B\n'), 'a component on a title goes under its id line, as before')
+  await ed.idle()
+  const disk = readFileSync(path, 'utf8')
+  assert.equal(disk, ed.doc, 'disk is the buffer')
+  const outlineEditLib = await import(pathToFileURL(join(REPO, 'compiler/scripts/lib/12-outline-edit.mjs')).href)
+  assert.deepEqual(outlineEditLib.stampMissingIds(disk).stamped, [], 'the save mints no id')
+  assert.deepEqual((await compiledOrder(path, disk)).filter((id) => ['a', 'new01', 'new02', 'b'].includes(id)), ['a', 'new01', 'new02', 'b'], 'compiled: A, the two new slides, B, each with the id it came with')
 }
 
 // D1h. The window's refusals name the writer (outline:editor-request carries the origin): "Add to

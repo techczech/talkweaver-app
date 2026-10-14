@@ -10,6 +10,7 @@
 // 5. an existing install: the saved publishing token is the one token, with nothing to do;
 // 6. no token and no text of a Cloudflare reply in any status, reply, error or line of output;
 // 7. where requests may go, and that no other source of a Cloudflare token is left in the app.
+import { acceptingLive, instantClock, singleKeyPort } from './lib/live-worker-double.mjs'
 import { strict as assert } from 'node:assert'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
@@ -828,11 +829,9 @@ const label = (t) => connectionLabel(t.connection.status().connection, NINE_FOUR
       shipped: () => SHIPPED,
       expectedBuild: BUILD,
       authorise: hooks.authorise ?? (() => t.connection.authoriseLiveDeploy()),
-      storedKeys: () => { did.keys += 1; hooks.atKeys?.(); return null },
-      makeKeys: () => ({ adminSecret: 'made-up-admin', signingSecret: 'made-up-signing' }),
-      shareHostname: () => null,
-      shareDomainAttachedBefore: () => false,
-      recordShareDomain: () => {},
+      keys: singleKeyPort({ stored: null }, () => ({ computerId: 'aaaa0000bbbb1111', adminSecret: 'made-up-admin' }), () => { did.keys += 1; hooks.atKeys?.() }),
+      computerName: () => 'Test computer',
+      liveFetch: acceptingLive({ build: BUILD, self: () => 'aaaa0000bbbb1111' }), live: instantClock().live,
       fetch: async (address, init = {}) => {
         const url = new URL(address)
         const path = url.pathname.replace(/^\/client\/v4/, '')
@@ -842,7 +841,7 @@ const label = (t) => connectionLabel(t.connection.status().connection, NINE_FOUR
         return inner(address, init)
       },
       apiBase: () => CLOUDFLARE_API_BASE,
-      save: (kept) => { did.saved.push(kept) },
+      save: ({ baseUrl, accountId }) => { did.saved.push({ baseUrl, accountId }) },
       timeoutMs: { upload: 2000, request: 2000 },
     })
     return { did, result }
@@ -912,8 +911,8 @@ const label = (t) => connectionLabel(t.connection.status().connection, NINE_FOUR
   {
     const t = steady()
     const { did, result } = deployOver(t)
-    assert.deepEqual(await result, { ok: true, baseUrl: WORKER, adminSecret: 'made-up-admin' })
-    assert.deepEqual(did.launched.map((launched) => launched.step), ['look-up', 'look-up', 'deploy', 'workers-dev', 'secret'])
+    assert.deepEqual(await result, { ok: true, baseUrl: WORKER, adminSecret: 'made-up-admin', others: 0, created: true })
+    assert.deepEqual(did.launched.map((launched) => launched.step), ['look-up', 'look-up', 'deploy', 'workers-dev', 'secret']) // two reads, the code's two requests, then this computer's key: the Worker's secrets are never listed (decision R1)
     assert.ok(did.launched.every((launched) => launched.token === TOKEN && launched.account === ADA.id), 'each with the saved token, in the saved account')
     // The address is kept with the account it was deployed for (ticket 04 fix round: a publish by another account does not publish it).
     assert.deepEqual([did.saved, did.keys], [[{ baseUrl: WORKER, accountId: ADA.id }], 1])

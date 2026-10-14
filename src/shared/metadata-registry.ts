@@ -362,9 +362,9 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
       options: [
         { value: '', label: 'Default', explanation: 'Key absent — the plain centred top title.' },
         { value: 'default', label: 'Default', explanation: 'The plain centred top title.' },
-        { value: 'kicker', label: 'Kicker', explanation: 'A small sentence-case mono line in the section colour, led by a short accent rule.' },
-        { value: 'label', label: 'Label', explanation: 'A tinted tab with a coloured left edge.' },
-        { value: 'tab', label: 'Tab', explanation: 'A solid accent tab flush with the slide edge.' }
+        { value: 'kicker', label: 'Kicker', explanation: 'A sentence-case typewriter line in the section colour, led by a long line from the slide edge.' },
+        { value: 'label', label: 'Label', explanation: 'A straight sticky note flush with the slide edge, with a thick coloured line on its left.' },
+        { value: 'tab', label: 'Tab', explanation: 'An index tab hanging from the top edge, flush with the left slide edge.' }
       ]
     },
     label: 'Title look',
@@ -375,21 +375,21 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     ownership: 'user'
   },
   {
-    key: 'title_look_at',
-    aliases: ['title-look-at'],
+    key: 'title_look_tone',
+    aliases: ['title-look-tone'],
     location: 'frontmatter',
     type: 'text',
     vocabulary: {
       kind: 'closed',
       options: [
-        { value: '', label: 'Normal', explanation: 'Key absent — the kicker keeps the usual top margin.' },
-        { value: 'normal', label: 'Normal', explanation: 'The kicker keeps the usual top margin.' },
-        { value: 'edge', label: 'Near top edge', explanation: 'The kicker sits near the top edge and the body gets the height.' }
+        { value: '', label: 'Strong', explanation: 'Key absent — the tab is the full section colour with white text.' },
+        { value: 'strong', label: 'Strong', explanation: 'The tab is the full section colour with white text.' },
+        { value: 'soft', label: 'Soft', explanation: 'The tab is a deeper light shade of the section colour with dark text.' }
       ]
     },
-    label: 'Kicker placement',
+    label: 'Tab tone',
     group: 'Design',
-    explanation: 'Where a Kicker title sits when the talk’s title look is kicker: normal or near the top edge. Ignored for the other looks.',
+    explanation: 'Colour of a Tab title: strong (the full section colour, white text) or soft (a light shade, dark text). Ignored for the other looks. A section’s own titlelook-tone in sections: and a slide’s {titlelook-tone=…} override it, in that order.',
     defaultable: true,
     ownership: 'user'
   },

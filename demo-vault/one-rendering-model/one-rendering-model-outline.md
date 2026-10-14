@@ -18,13 +18,13 @@ You write Markdown. The slide decides how to look. This talk shows every rule th
 {id=orm-bare-heading}
 
 :::notes
-Demonstrates Ticket 14. This heading has no body and no child headings, so it renders as a statement of itself: white slide, the words at statement size, no sidebar rail, no duplicated title. Before, this became an empty list with the title one word per line.
+Demonstrates Ticket 14. This heading has no body and no child headings, so it renders as a statement of itself: the words at statement size on a tinted slide, no sidebar rail, no duplicated title. Before, this became an empty list with the title one word per line.
 :::
 
 ### A heading with a paragraph is a statement beside its title
 {id=orm-statement}
 
-The sidebar carries the title; the paragraph is the point. The measure stays short enough to read from the back of the room, and the block sits centred on both axes.
+The sidebar carries the title; the paragraph is the point. The slide is tinted in the section colour, and the measure stays short enough to read from the back of the room.
 
 :::notes
 The standard statement layout: tint sidebar title (A3 regime for text layouts), paragraph copy at body size.

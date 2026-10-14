@@ -6,6 +6,7 @@
 // it by talk — the app keeps one link per Run.
 import { createResultsOwnerToken, verifyResultsOwnerToken } from './auth'
 import { adminAuthorised, bearerToken, errorResponse, jsonResponse, readBoundedBytes, readJsonBody, type Env } from './http'
+import { signingKey } from './signing-key'
 import {
   RUN_SHARE_LIMITS, parseRunSharePush, parseRunShareRoute, renderRunSharePage, runShareAlarmAt, runShareExpired,
   runShareRouteMethod, runShareUnavailablePage, type RunSharePush, type RunShareRoute, type StoredRunShare,
@@ -24,6 +25,8 @@ function runShareStub(env: Env, shareId: string): DurableObjectStub {
 /** `POST /results` (admin bearer) → `201 {shareId, ownerToken}`. The link shows nothing until the first push. */
 export async function createRunShare(request: Request, env: Env): Promise<Response> {
   if (!await adminAuthorised(request, env)) return errorResponse('admin_auth_required', 'Admin authentication is required.', 401)
+  // Before anything is made: a link whose token could not be signed is never left behind.
+  const key = await signingKey(env)
   let shareId = ''
   for (let attempt = 0; attempt < 5 && !shareId; attempt += 1) {
     const candidate = generateShortId(undefined, SHARE_ID_LENGTH)
@@ -36,7 +39,7 @@ export async function createRunShare(request: Request, env: Env): Promise<Respon
     else if (init.status !== 409) return init
   }
   if (!shareId) return errorResponse('share_id_exhausted', 'Could not allocate a link. Try again.', 503)
-  const ownerToken = await createResultsOwnerToken({ role: 'results-owner', shareId, iat: Date.now() }, env.SESSION_SIGNING_SECRET)
+  const ownerToken = await createResultsOwnerToken({ role: 'results-owner', shareId, iat: Date.now() }, key)
   return jsonResponse({ shareId, ownerToken }, 201)
 }
 
@@ -54,7 +57,7 @@ export async function forwardToRunShare(request: Request, env: Env, route: RunSh
   if (publicRoute && (request.headers.has('authorization') || url.searchParams.has('token'))) {
     return errorResponse('credentials_not_allowed', 'This route is public and takes no credentials.', 400)
   }
-  if (route.action === 'content' && !await verifyResultsOwnerToken(bearerToken(request), env.SESSION_SIGNING_SECRET, route.shareId)) {
+  if (route.action === 'content' && !await verifyResultsOwnerToken(bearerToken(request), await signingKey(env), route.shareId)) {
     return errorResponse('owner_auth_required', 'Owner authentication is required.', 401)
   }
   const target = new URL(request.url)
@@ -166,7 +169,7 @@ export class RunShare {
     }
     if (route.action === 'content') {
       // The entry Worker checked the owner token already; the object checks it again.
-      if (!await verifyResultsOwnerToken(bearerToken(request), this.env.SESSION_SIGNING_SECRET, share.shareId)) {
+      if (!await verifyResultsOwnerToken(bearerToken(request), await signingKey(this.env), share.shareId)) {
         return errorResponse('owner_auth_required', 'Owner authentication is required.', 401)
       }
       const body = await readJsonBody(request, RUN_SHARE_LIMITS.pushBytes)
@@ -184,7 +187,7 @@ export class RunShare {
       return jsonResponse({ shareId: share.shareId, expiresAt: share.expiresAt, pushedAt: now })
     }
     // close: the owner token, or the admin secret (the app lost its token).
-    if (!await verifyResultsOwnerToken(bearerToken(request), this.env.SESSION_SIGNING_SECRET, share.shareId)
+    if (!await verifyResultsOwnerToken(bearerToken(request), await signingKey(this.env), share.shareId)
       && !await adminAuthorised(request, this.env)) {
       return errorResponse('owner_auth_required', 'Owner authentication is required.', 401)
     }

@@ -21,6 +21,7 @@ import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { EventEmitter } from 'node:events'
+import { fileURLToPath } from 'node:url'
 import {
   SECRET_ARGUMENT_ERROR, SETUP_JSON_FORMAT, UNKNOWN_COMMAND_ERROR, NO_TOKEN_INPUT_ERROR, ONE_TOKEN_ERROR, KEYS_INPUT_ERROR,
   ENDPOINT_ERROR, BUCKET_ERROR, PATH_ERROR, ACCOUNT_ID_ERROR, SITE_NAME_ERROR, SHARE_DOMAIN_ERROR, TOKEN_PIPE_HINT,
@@ -36,6 +37,12 @@ import { unknownGoingLive } from '../src/shared/live-service-status.ts'
 import { recordingStorageRow } from '../src/shared/recording-storage-status.ts'
 import { createFakeCloudflare, fakeCloudflareFetch } from './lib/cloudflare-api-stub.mjs'
 import { memorySecrets } from './lib/memory-secrets.mjs'
+import { createLiveService } from '../src/main/live-service.ts'
+import { deployLiveService, lookUpLiveService, surveyLiveService } from '../src/main/live-service-deploy.ts'
+import { keyKind } from '../src/main/live-service-key.ts'
+import { changeShareAddress } from '../src/main/live-service-share-domain.ts'
+import { instantClock, keyProfile, liveWorkerDouble } from './lib/live-worker-double.mjs'
+import { workerDistFiles } from './lib/worker-dist.mjs'
 
 let passed = 0
 const ok = (label) => { passed += 1; console.log(`  ok ${passed}. ${label}`) }
@@ -322,6 +329,13 @@ try {
   assert.ok(noSite.includes('Publishing handouts: No site yet — Create talkweaver-handouts · No site yet'), 'the row offers the window\'s one action, in its words')
   assert.ok(setupStatusLines(snapshotOf()).includes('Going live and sharing: — · Polls, questions, reactions, the venue screen, Share for comments'))
   assert.ok(setupStatusLines(snapshotOf({ goingLive: { ...unknownGoingLive('b7'), state: 'not-set-up' } })).some((line) => line.startsWith('Going live and sharing: Not set up — Set up going live')))
+  // A second computer on the account, and one whose access was removed: the states, in the row's words, and a count of other computers (never a key or an id).
+  const elsewhere = setupStatusJson('status', snapshotOf({ goingLive: { ...unknownGoingLive('b7'), state: 'set-up-elsewhere', updatesFirst: true } }), { ready: false, error: null }).rows.goingLive
+  assert.deepEqual([elsewhere.state, elsewhere.label, elsewhere.ready, elsewhere.updatesFirst], ['set-up-elsewhere', 'Set up on another computer — Set up going live on this computer', false, true])
+  const removed = setupStatusJson('status', snapshotOf({ goingLive: { ...unknownGoingLive('b7'), state: 'access-removed' } }), { ready: false, error: null }).rows.goingLive
+  assert.deepEqual([removed.state, removed.label, removed.ready], ['access-removed', 'This computer\'s access was removed — Set up going live on this computer', false])
+  const several = setupStatusJson('status', snapshotOf({ goingLive: { ...unknownGoingLive('b7'), state: 'ready', build: 'b7', others: 2 } }), { ready: true, error: null }).rows.goingLive
+  assert.deepEqual([several.label, several.otherComputers, Object.keys(several).filter((key) => /secret|key|token|computerId/i.test(key))], ['Ready · this computer and 2 others', 2, []])
   const choose = setupStatusLines(snapshotOf({ cloudflare: cloudflare({ state: 'choose-account', accounts: [ADA, GRACE] }) }))
   assert.deepEqual(choose.slice(0, 3), ['Cloudflare: Choose an account', `  account ${ADA.id} · ${ADA.name}`, `  account ${GRACE.id} · ${GRACE.name}`])
   assert.ok(setupStatusLines(READY_ALL).includes('Transcription: Not set up — optional · Transcribes recorded Runs on this computer. Nothing else needs it. Use Set-up steps, or ask your agent to set it up.'))
@@ -335,7 +349,7 @@ try {
     cloudflare: { connection: { state: 'string', label: 'string', account: { id: 'string', name: 'string' }, accounts: 'array', lastCheckedAt: 'string', ready: 'boolean' }, notice: 'null', details: 'null' },
     rows: {
       publishing: { state: 'string', label: 'string', detail: 'string', ready: 'boolean', project: 'string', permission: 'null', customDomain: 'string', stale: 'boolean' },
-      goingLive: { state: 'string', label: 'string', detail: 'string', ready: 'boolean', address: 'string', build: 'string', appBuild: 'string', updateDue: 'boolean', permission: 'null', reason: 'null', details: 'null' },
+      goingLive: { state: 'string', label: 'string', detail: 'string', ready: 'boolean', address: 'string', build: 'string', appBuild: 'string', updateDue: 'boolean', otherComputers: 'null', updatesFirst: 'boolean', permission: 'null', reason: 'null', details: 'null' },
       shareLink: { state: 'string', label: 'null', detail: 'string', ready: 'boolean', host: 'string', permission: 'null', stale: 'boolean' },
       recording: { state: 'string', label: 'string', detail: 'string', ready: 'boolean', bucket: 'string', missing: 'array', notice: 'null' },
       transcription: { state: 'string', label: 'string', detail: 'string', ready: 'boolean', pythonVersion: 'null', ffmpeg: 'null' },
@@ -349,7 +363,7 @@ try {
   for (const key of ['format', 'command', 'ready', 'error', 'connection', 'publishing', 'goingLive', 'shareLink', 'recording', 'transcription', 'importer', 'updateDue', 'stale', 'usage', SETUP_JSON_FORMAT]) {
     assert.ok(reference.includes(`"${key}"`) || reference.includes(`\`${key}\``), `the reference names ${key}`)
   }
-  for (const state of ['no-token', 'checking', 'connected', 'choose-account', 'rejected', 'unreachable', 'storage-unavailable', 'no-site', 'keys-lost', 'not-attached', 'bucket-not-found', 'ffmpeg-not-found', 'not-available']) {
+  for (const state of ['no-token', 'checking', 'connected', 'choose-account', 'rejected', 'unreachable', 'storage-unavailable', 'no-site', 'set-up-elsewhere', 'access-removed', 'not-attached', 'bucket-not-found', 'ffmpeg-not-found', 'not-available']) {
     assert.ok(reference.includes(`\`${state}\``), `the reference lists the state ${state}`)
   }
   assert.ok(commandReady({ kind: 'status' }, READY_ALL) && !commandReady({ kind: 'status' }, connected), 'status is ready with the connection, publishing and going live; the rest are optional')
@@ -468,37 +482,89 @@ try {
   ok('TalkWeaver open on the same folder: setup takes its lock or refuses at once with exit 1 and the fixed sentence (--json: state app-open)')
 
   // ── 9. The operations over the real connection and the fake Cloudflare API ───────────────────
-  const api = createFakeCloudflare({ sites: [], accounts: [ADA, GRACE], tokens: { [TOKEN]: { accounts: [ADA.id, GRACE.id] } } })
+  const api = createFakeCloudflare({ sites: [], accounts: [ADA, GRACE], zones: [{ id: 'zone-grace-0001', name: 'handouts.example', account: GRACE.id }], tokens: { [TOKEN]: { accounts: [ADA.id, GRACE.id] } } })
   const secrets = memorySecrets()
   const config = {}
+  const apiFetch = fakeCloudflareFetch(api)
   let settingsChangedCalls = 0
   const connection = createCloudflareConnection({
     secrets: secrets.store,
     settings: {
-      read: () => ({ accountId: config.cfAccountId ?? '', project: config.cfPagesProject ?? '', baseUrl: '', shareDomain: '', productionBranch: 'main' }),
+      read: () => ({ accountId: config.cfAccountId ?? '', project: config.cfPagesProject ?? '', baseUrl: '', shareDomain: config.shareDomain ?? '', productionBranch: 'main' }),
       write: (patch) => { if (patch.accountId) config.cfAccountId = patch.accountId; if (patch.project) config.cfPagesProject = patch.project },
     },
-    fetch: fakeCloudflareFetch(api), apiBase: () => CLOUDFLARE_API_BASE, timeoutMs: 500,
+    fetch: apiFetch, apiBase: () => CLOUDFLARE_API_BASE, timeoutMs: 500,
   })
   const liveCalls = []
+  // The REAL live service over the real key store (live-service.ts, live-service-key.ts), wired as the
+  // main process wires it, with the set-up sequence against the fake API and a stand-in for the
+  // deployed Worker. So `setup cloudflare live` makes a real key, and the output can be searched for it.
+  const LIVE_NAME = 'talkweaver-live-sessions'
+  const LIVE_BUILD = /export const LIVE_WORKER_BUILD\s*=\s*'([^']+)'/.exec(readFileSync(new URL('../worker/recovery-protocol.ts', import.meta.url), 'utf8'))[1]
+  const shippedWorker = workerDistFiles({ repo: fileURLToPath(new URL('..', import.meta.url)), bundle: Buffer.from('// made-up bundle\nexport default { fetch() { return new Response("ok") } }\n') })
+  const shippedFiles = () => ({ manifest: shippedWorker.manifestText, bundle: shippedWorker.bundle, config: shippedWorker.configBytes })
+  const computer = keyProfile({ config })
+  const liveDouble = liveWorkerDouble(api, { account: GRACE.id, name: LIVE_NAME, address: null, build: LIVE_BUILD })
+  const accountInUse = () => { const at = connection.status().connection; return at.state === 'connected' ? at.account?.id ?? null : null }
+  const liveSequence = { shipped: shippedFiles, expectedBuild: LIVE_BUILD, authorise: () => connection.authoriseLiveDeploy(), fetch: apiFetch, apiBase: () => CLOUDFLARE_API_BASE, timeoutMs: { upload: 2000, request: 2000 } }
+  const realLive = createLiveService({
+    facts: () => {
+      const status = connection.status()
+      const at = status.connection
+      const held = computer.store.keysFor({ accountId: config.liveWorkerAccountId ?? accountInUse(), workerName: LIVE_NAME, baseUrl: config.liveWorkerBaseUrl ?? null })[0] ?? null
+      return {
+        connection: at.state === 'connected' && at.account ? 'connected' : at.state === 'checking' || at.state === 'unreachable' ? 'not-checked' : 'not-connected',
+        permission: status.liveService.state === 'no-permission' ? 'no-permission' : status.liveService.state === 'not-refused' ? 'not-refused' : 'unknown',
+        accountId: accountInUse(),
+        key: held ? keyKind(held) : 'none',
+        deployed: { baseUrl: config.liveWorkerBaseUrl ?? null, version: config.liveWorkerVersion ?? null, accountId: config.liveWorkerAccountId ?? null },
+        appBuild: LIVE_BUILD,
+      }
+    },
+    adminSecret: () => computer.store.keysFor({ accountId: config.liveWorkerAccountId ?? null, workerName: LIVE_NAME, baseUrl: config.liveWorkerBaseUrl ?? null })[0]?.key ?? null,
+    deploy: (progress) => deployLiveService({
+      ...liveSequence, keys: computer.store, computerName: () => 'Test computer', liveFetch: liveDouble.fetch, live: instantClock().live, progress,
+      save: ({ baseUrl, accountId }) => Object.assign(config, { liveWorkerBaseUrl: baseUrl, liveWorkerVersion: LIVE_BUILD, liveWorkerAccountId: accountId }),
+    }),
+    lookUp: (accountId) => lookUpLiveService({ ...liveSequence, accountId }),
+    survey: () => surveyLiveService({ ...liveSequence, liveFetch: liveDouble.fetch, keys: computer.store, live: instantClock().live }),
+    forget: () => { delete config.liveWorkerBaseUrl; delete config.liveWorkerVersion; delete config.liveWorkerAccountId },
+  })
+  /** The keys this computer has made: none of them may ever be printed. */
+  const madeKeys = () => computer.entries().map((entry) => entry.key)
+  // The stand-in for the main process's `applyShareAddress`: the share-address action with the
+  // address set in Settings and the list of hostnames this computer's config holds (`liveWorkerShareDomains`).
+  const shareCalls = []
+  const listedShareDomains = () => (config.liveWorkerShareDomains ?? []).map((entry) => entry.hostname)
+  const applyShareAddress = async () => {
+    const now = { wanted: config.shareDomain || null }
+    shareCalls.push(now)
+    if (!accountInUse() || !config.liveWorkerBaseUrl || config.liveWorkerAccountId !== accountInUse()) return null
+    return changeShareAddress({
+      authorise: () => connection.authoriseLiveDeploy(), fetch: apiFetch, apiBase: () => CLOUDFLARE_API_BASE, workerName: LIVE_NAME, timeoutMs: 2000,
+      records: { read: () => ({ liveWorkerShareDomains: config.liveWorkerShareDomains }), write: (entries) => { config.liveWorkerShareDomains = entries } },
+    }, now)
+  }
   const recordingWrites = []
   const operations = createSetupOperations({
     connection,
-    liveService: { row: () => unknownGoingLive('b7'), look: async () => { liveCalls.push('look') }, refresh: () => liveCalls.push('refresh'), setUp: async () => ({ ok: true, row: LIVE_READY }) },
+    liveService: { row: () => realLive.row(), look: async (why) => { liveCalls.push('look'); return realLive.look(why) }, refresh: () => { liveCalls.push('refresh'); return realLive.refresh() }, setUp: () => realLive.setUp() },
     recording: { status: () => recordingStorageRow({ endpoint: '', bucket: '', hasKeys: false }), check: async () => {}, saveKeys: (keys) => { recordingWrites.push(['keys', keys]); return { success: true } } },
     transcription: { status: async () => TRANSCRIPTION_OFF, setPaths: async () => TRANSCRIPTION_OFF },
     importer: async () => ({ state: 'unknown', available: true, pointer: null, url: null }),
     publishSettings: {
-      read: () => ({ accountId: config.cfAccountId ?? '', project: config.cfPagesProject ?? '', baseUrl: '', workerBaseUrl: '', useShortIds: false, shareDomain: '' }),
-      apply: (next) => { config.cfAccountId = next.accountId || undefined; config.cfPagesProject = next.project || undefined; settingsChangedCalls += 1; return { success: true, checked: connection.settingsChanged() } },
+      read: () => ({ accountId: config.cfAccountId ?? '', project: config.cfPagesProject ?? '', baseUrl: '', workerBaseUrl: '', useShortIds: false, shareDomain: config.shareDomain ?? '' }),
+      apply: (next) => { config.cfAccountId = next.accountId || undefined; config.cfPagesProject = next.project || undefined; config.shareDomain = next.shareDomain || ''; settingsChangedCalls += 1; return { success: true, checked: connection.settingsChanged() } },
     },
     recordingSettings: { read: () => ({ endpoint: '', bucket: '', discardSeconds: 20 }), apply: (next) => { recordingWrites.push(['settings', next]) } },
     watchLiveRow: () => () => {},
+    applyShareAddress,
   })
   const drive = async (args, stdin = null) => {
     const streams = io(stdin)
     const code = await runSetup(args, streams.io, operations)
     noSecretIn([...streams.out, ...streams.err].join('\n'), `the output of ${args.join(' ')}`)
+    for (const key of madeKeys()) assert.ok(![...streams.out, ...streams.err].join('\n').includes(key), `no key of this computer in the output of ${args.join(' ')}`)
     return { code, document: JSON.parse(streams.out.join('\n')) }
   }
   const first = await drive(['cloudflare', 'connect', '--json'], `${TOKEN}\n`)
@@ -524,6 +590,46 @@ try {
   const again = await drive(['cloudflare', 'create-site', 'my-handouts', '--json'])
   assert.equal(again.code, 0, 'asked twice: one site')
   assert.equal(api.requests.filter((request) => request.method === 'POST' && request.path.endsWith('/pages/projects')).length, 1)
+
+  // `setup cloudflare share-domain`: the address goes through the window's Save, and is attached or
+  // removed by the share-address action and nothing else. Before going live is set up from this
+  // computer there is nothing to attach to: said so, and nothing is asked of the action.
+  const SHARE_HOST = 'share.handouts.example'
+  const liveScript = `/accounts/${GRACE.id}/workers/scripts/${LIVE_NAME}`
+  const domainWrites = (from = 0) => api.requests.slice(from).filter((request) => request.method !== 'GET' && /\/domains/.test(request.path)).map((request) => `${request.method} ${request.path}`)
+  const early = await drive(['cloudflare', 'share-domain', SHARE_HOST, '--json'])
+  assert.deepEqual([early.code, early.document.error, shareCalls, domainWrites(), config.shareDomain], [1, 'The address is attached when going live is set up: run "setup cloudflare live".', [], [], SHARE_HOST])
+  // Going live set up for real: this computer makes its key, and the one secrets request names it alone.
+  const liveAt = api.requests.length
+  const live = await drive(['cloudflare', 'live', '--json'])
+  assert.deepEqual([live.code, live.document.rows.goingLive.ready, madeKeys().length, config.liveWorkerAccountId], [0, true, 1, GRACE.id], `going live is set up\n${JSON.stringify(live.document)}`)
+  assert.deepEqual(api.requests.slice(liveAt).filter((request) => request.method === 'PATCH').map((request) => Object.keys(JSON.parse(request.body.toString()).secrets)), [[`ADMIN_SECRET_${computer.entries()[0].computerId}`]])
+  assert.deepEqual([domainWrites(liveAt), api.namingSigningSecret()], [[], []], 'set-up attached no domain and named no signing secret')
+  // `setup status --json`: the generated key is nowhere in it, nor in the lines without --json.
+  const statusJson = await drive(['status', '--json'])
+  assert.equal(statusJson.document.rows.goingLive.ready, true)
+  const statusText = JSON.stringify(statusJson.document)
+  for (const key of madeKeys()) assert.ok(key.length >= 40 && !statusText.includes(key), 'setup status --json holds no key of this computer')
+  assert.ok(!statusText.includes(computer.entries()[0].computerId) && !/ADMIN_SECRET|SIGNING/.test(statusText), 'nor its key\'s id, nor a secret\'s name')
+  {
+    const streams = io()
+    assert.equal(await runSetup(['status'], streams.io, operations), statusJson.code)
+    for (const key of madeKeys()) assert.ok(![...streams.out, ...streams.err].join('\n').includes(key), 'setup status prints no key')
+  }
+  // Now there is a live service to attach to: one lookup of that hostname, one attach, no override.
+  const attachAt = api.requests.length
+  const attached = await drive(['cloudflare', 'share-domain', SHARE_HOST, '--json'])
+  assert.deepEqual([attached.code, shareCalls, config.liveWorkerShareDomains], [0, [{ wanted: SHARE_HOST }], [{ hostname: SHARE_HOST, wanted: true }]], `attached\n${JSON.stringify(attached.document)}`)
+  assert.deepEqual(domainWrites(attachAt), [`PUT ${liveScript}/domains/records`])
+  assert.deepEqual(JSON.parse(api.requests.slice(attachAt).find((request) => request.method === 'PUT').body.toString()), { override_scope: false, override_existing_origin: false, override_existing_dns_record: false, origins: [{ hostname: SHARE_HOST }] })
+  assert.equal(attached.document.rows.shareLink.ready, true)
+  // --clear: the recorded hostname is removed, and only that.
+  const clearAt = api.requests.length
+  const cleared = await drive(['cloudflare', 'share-domain', '--clear', '--json'])
+  assert.deepEqual([cleared.code, shareCalls.at(-1), config.shareDomain, listedShareDomains(), domainWrites(clearAt).length, api.model.workerDomains.get(GRACE.id)], [0, { wanted: null }, '', [], 1, []])
+  assert.match(domainWrites(clearAt)[0], new RegExp(`^DELETE /accounts/${GRACE.id}/workers/domains/[0-9a-f]{32}$`))
+  ok('share-domain goes through the share-address action: refused before going live is set up, then one hostname attached with no override and removed by --clear; setup status --json holds no key')
+
   const gone = await drive(['cloudflare', 'disconnect', '--json'])
   assert.equal(gone.code, 0)
   assert.equal(gone.document.cloudflare.connection.label, 'Not connected')

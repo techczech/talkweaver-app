@@ -42,7 +42,7 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['app.find-talk', '⇧⌘S', ['Mod-Shift-s'], 'Find a talk', 'Opens the slide picker with the cursor in Find a talk, or moves it there when the picker is already open.', 'Find & insert'],
     ['app.context-menu', '⌘K', ['Mod-k'], 'Actions here', 'Opens Actions here: what you can do where the caret, the selected slide or the selected row is.', 'App'],
     ['app.layout-picker', '⌘L', ['Mod-l'], 'Layout picker: Open', 'Opens the layout picker in the Inspector column for the current slide; pressed again, it closes and puts the slide back.', 'Find & insert'],
-    ['app.icon-picker', '⌘I', ['Mod-i'], 'Icon picker', 'Opens the icon picker for the current bullet.', 'Find & insert'],
+    ['app.icon-picker', '⌘I', ['Mod-i'], 'Insert icon', 'Puts an icon on the title, paragraph or list item the cursor is on, in the Plain and the Markdown view.', 'Find & insert'],
     ['app.image-search', '⌘⇧I', ['Mod-Shift-i'], 'Insert an archived image', 'Searches images recovered from earlier PowerPoint files.', 'Find & insert'],
     ['app.find', '⌘F', ['Mod-f'], 'Find in outline', 'Opens text search in the current outline editor.', 'Find & insert'],
     ['app.where-used', '⌘⇧U', ['Mod-Shift-u'], 'Where used and versions', 'Shows where the current slide is reused and its available versions.', 'Slides'],
@@ -81,6 +81,7 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['editor.title-continue', '↵', ['Enter'], 'Enter from a title', 'From anywhere in a slide title, moves the caret past the protected Trigger line onto the first body line.', 'Lists'],
     ['editor.protected-line-continue', '↵', ['Enter'], 'Enter from a protected line', 'Moves from a canonical Trigger line to its body, or from a block object token to its first list item, without splitting the structural line.', 'Objects'],
     ['editor.list-continue', '↵', ['Enter'], 'Continue list', 'Continues a list or exits it when the current item is empty.', 'Lists'],
+    ['editor.quote-paragraph', '⇧↵', ['Shift-Enter'], 'New paragraph in a quotation', 'Shift-Enter: new paragraph in a quotation. Starts a new paragraph inside the quotation, with a bare marker line between the two.', 'Lists'],
     ['editor.list-indent', 'Tab', ['Tab'], 'Indent list item', 'Indents the current list item when the editor context permits it.', 'Lists'],
     ['editor.list-outdent', '⇧Tab', ['Shift-Tab'], 'Outdent list item', 'Outdents the current list item when the editor context permits it.', 'Lists'],
     ['editor.bold', '⌘B', ['Mod-b'], 'Bold selection', 'Wraps or unwraps the current selection in Markdown bold markers.', 'Format'],
@@ -218,7 +219,8 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['presenter.refresh', '⌘R / ⇧F5', ['Mod-r', 'Shift-F5'], 'Refresh with latest edits', 'Refreshes a deck window with the latest edits while retaining position.', 'Editor'],
     ['presenter.command-palette', '⌘⇧P', ['Mod-Shift-p'], 'Command palette', 'Opens the list of every presenter command, with its key.', 'Help'],
     ['presenter.help', '?', ['?'], 'Show shortcuts', 'Shows or hides this generated shortcut sheet.', 'Help'],
-    // The Guide's Present chapter has no key (owner check 10 Oct: "no need for a keyboard shortcut"): its button, in the bottom bar, and the palette entry "Guide: Present chapter" open it.
+    // The Guide's Present chapter column (src/preload/present-guide.ts): the button in the bottom bar, the palette entry "Guide: Present chapter" and C toggle it. 0.38.2 release notes: "opens with the top-bar chip or C".
+    ['presenter.guide', 'C', ['c'], 'Guide', 'Shows or hides the Guide column with the Present chapter, while the Guide button is on in TalkWeaver.', 'Help'],
     ['presenter.close', 'Esc', ['Escape'], 'Close overlay or mode', 'Closes the most local overlay, interaction, or active presentation mode.', 'Help']
   ]),
   ...entries('pathway', [

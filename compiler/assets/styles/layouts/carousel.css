@@ -37,3 +37,28 @@
     margin-top: 0 !important;
     margin-bottom: 0 !important;
   }
+
+/* GitHub #127 — a carousel item shows its content as the same content shows on a slide of its
+   own. An item is a `.slide-content` nested in `.card.carousel-subslide` inside the parent's
+   `.slide-content.layout-carousel`, so rules written for a slide's own content miss it, or leak
+   into it through the outer wrapper (statement.css guards its paragraph rules with
+   `:not(:where(.layout-statement *))` for the leak). Two things remain here. */
+
+/* (a) The text-plus-picture slot takes the item's band, as media.css gives it on a slide's own
+   content (that rule matches only `.slide > .slide-content > .slot`). Without it the slot is as
+   tall as its copy and the media column (`height:100%; overflow:hidden`) clips the picture to
+   one text line. The slot centres its own two columns, so the auto margins are cleared. */
+.card-gallery.carousel .card.carousel-subslide > .slide-content > .slot {
+  flex: 1 1 0%;
+  min-height: 0;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+}
+
+/* (b) `.card strong` (base.css) makes bold a full-width block; an item is a `.card` only for the
+   stepping machinery, so bold inside it stays inline, like on a slide of its own. */
+.card-gallery.carousel .card.carousel-subslide strong {
+  display: inline;
+  margin-bottom: 0;
+  font-weight: bolder;
+}

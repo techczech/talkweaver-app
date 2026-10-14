@@ -98,7 +98,7 @@ try {
     jsx: 'automatic',
     keepNames: true,
     plugins: [countMemoRenders],
-    external: ['react', 'react/*', 'react-dom', 'react-dom/*'],
+    external: ['react', 'react/*', 'react-dom', 'react-dom/*', 'lucide-react'], // lucide-react: the grid's slide menu draws icons; bundled, its CommonJS build would require('react')
     outfile: bundle,
     logLevel: 'error'
   })

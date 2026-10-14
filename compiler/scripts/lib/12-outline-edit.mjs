@@ -18,100 +18,32 @@
 // or agents can import it directly.
 
 import { resolveTrigger } from "../triggers.mjs";
-import { LIST_VALUE_KEYS } from "./02-triggers-layout.mjs";
-import { iconCandidatesV3, normalizeIconOverrideKey } from "./05-icons.mjs";
+import { LIST_VALUE_KEYS, headingBraceGroups, iconTokensInGroup } from "./02-triggers-layout.mjs";
+import { tokenizeTriggerBody } from "./trigger-tokenizer.mjs";
+import { lexMarkdownBlocks, paragraphIconTokenAt } from "./03-markdown-lexer.mjs";
+import { iconCandidatesV3 } from "./05-icons.mjs";
 import {
-  mintId, ID_TOKEN_RE, idLineIndex, lineHasUnclosedBrace, preContentWindow, triggerLineBlock
+  mintId, ID_TOKEN_RE, idLineIndex, triggerLineBlock
 } from "./13-slide-ledger.mjs";
-import { parseOutlineTree } from "./14-outline-tree.mjs";
+import {
+  NO_EDIT, applyLineEdit, assertIconKey, compileView, countIconBraces, findNodeByRef, outsideOf,
+  readSlide, resolvedIconKey, sameValue, splitCarriageReturn, withoutIcon
+} from "./outline-compiled-view.mjs";
+import { setListItemIcon, slideListItems } from "./outline-list-item-icon.mjs";
 import { duplicateIdWarning, idTokensToKeep, resolveSlideId } from "./slide-id.mjs";
 import { formatWarning } from "./warning-registry.mjs";
-import { isMarkdownFenceClosingLine, parseMarkdownFenceOpeningLine } from "./03-object-token.mjs";
+import { headingIdKey, headingsMissingIds, listSlideBlocks, scanLines } from "./slide-blocks.mjs";
+// For setHeadingIcon's one render check. (08-source-adapters reaches this file through
+// 10-projections; both names are function declarations and are only called from inside a verb.)
+import { adaptMarkdownOutlineV2 } from "./08-source-adapters.mjs";
+import { renderSlideSections } from "./07-assembly.mjs";
 
 // ── Outline scanning ─────────────────────────────────────────────────────────
 //
-// Mirrors the adapter's structural scan (fence guard is LENGTH-AWARE, HTML comments hide
-// headings) but never strips anything: it only locates boundaries, the text stays whole.
-// Heading-is-slide model: a "slide block" is ANY `##`–`######` heading line through the line
-// before the next structural heading (any depth, outside fences and comments) or EOF — each
-// heading is its own block; children are separate blocks. The deck title (`#`) is a boundary
-// but never a block. `:::notes`, Trigger lines and blank lines live inside their slide's block.
-
-function scanLines(text) {
-  return text.split("\n");
-}
-
-// Per-line structural state: fences and HTML comments (the adapter strips comments before
-// scanning; here a heading inside a comment must simply not count as a boundary). Fences follow
-// the compiler's outline tree exactly (14-outline-tree.mjs, via 03-object-token.mjs): backtick
-// AND tilde openers, and a close must use the opener's character and be at least as long.
-// Comment tracking is sequential per line: a line is "visible" only when it starts outside an
-// open comment.
-function structuralHeadings(lines) {
-  const headings = []; // {index, depth, text}
-  let fenceOpening = null;
-  let inComment = false;
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    const visibleAtStart = !inComment;
-    // advance comment state through this line (comments may open/close mid-line, span lines)
-    if (!fenceOpening) {
-      let pos = 0;
-      for (;;) {
-        if (inComment) {
-          const close = line.indexOf("-->", pos);
-          if (close === -1) break;
-          inComment = false;
-          pos = close + 3;
-        } else {
-          const open = line.indexOf("<!--", pos);
-          if (open === -1) break;
-          inComment = true;
-          pos = open + 4;
-        }
-      }
-    }
-    if (!visibleAtStart) continue;
-    if (fenceOpening) {
-      if (isMarkdownFenceClosingLine(line, fenceOpening)) fenceOpening = null;
-      continue;
-    }
-    const open = parseMarkdownFenceOpeningLine(line);
-    if (open) { fenceOpening = open; continue; }
-    const m = line.match(/^(#{1,6})\s+\S/);
-    if (m) headings.push({ index: i, depth: m[1].length, text: line });
-  }
-  return headings;
-}
-
-// List the outline's slide blocks. Each block: { heading (verbatim heading line, any depth
-// ##–######), occurrence (1-based among identical heading lines), title, start, end } —
-// [start, end) line range, trailing blank lines included (they travel with the slide so spacing
-// survives a move). Occurrence counts on the VERBATIM line — the `#`-prefix is part of it, so
-// headings at different depths never collide — which keeps {heading, occurrence} addressing
-// byte-compatible with the editor's getCursorListItemContext (outliner.ts). The deck title (`#`)
-// is a boundary only, never an addressable block.
-export function listSlideBlocks(text) {
-  const lines = scanLines(text);
-  const headings = structuralHeadings(lines);
-  const blocks = [];
-  const seen = new Map();
-  for (let h = 0; h < headings.length; h += 1) {
-    const { index, depth, text: headingText } = headings[h];
-    if (depth < 2) continue;
-    const end = h + 1 < headings.length ? headings[h + 1].index : lines.length;
-    const occurrence = (seen.get(headingText) || 0) + 1;
-    seen.set(headingText, occurrence);
-    blocks.push({
-      heading: headingText,
-      occurrence,
-      title: headingText.replace(/^#{1,6}\s+/, "").trim(),
-      start: index,
-      end,
-    });
-  }
-  return blocks;
-}
+// The structural scan (scanLines, structuralHeadings, listSlideBlocks) and the reading of which
+// headings a save stamps live in slide-blocks.mjs: that module has no Node imports, so the editor
+// can ask it the same questions this file does.
+export { listSlideBlocks };
 
 function findBlock(blocks, ref) {
   const occurrence = ref.occurrence || 1;
@@ -244,12 +176,6 @@ export function dominantEol(text) {
   return nlCount > 0 && crCount > nlCount / 2 ? "\r" : "";
 }
 
-// Normalised heading key for cross-document id matching: the verbatim heading line with any
-// {id=…} token removed and whitespace collapsed — so "### Foo" in an unstamped buffer matches
-// "### Foo {id=x}" in the previously-stamped disk copy of the same slide.
-const headingIdKey = (heading) =>
-  String(heading).replace(new RegExp(ID_TOKEN_RE.source, "g"), "").replace(/\s+/g, " ").trimEnd();
-
 // Map `normalisedHeading occurrence` → existing {id=…} (heading- or Trigger-line-carried) for
 // every stamped block in `text`. Occurrences count on the NORMALISED heading, so a stamped and an
 // unstamped rendering of the same heading line up. Feed this (built from the ON-DISK file) into
@@ -286,20 +212,9 @@ export function preferredIdsFromText(text) {
 export function stampMissingIds(text, rng = Math.random, { preferred = null } = {}) {
   const eol = dominantEol(text);
   const taken = new Set([...String(text).matchAll(new RegExp(ID_TOKEN_RE.source, "g"))].map((m) => m[1]));
-  const lines = scanLines(text);
-  const normCounts = new Map();
-  const targets = [];
-  for (const block of listSlideBlocks(text)) {
-    const key = headingIdKey(block.heading);
-    const occ = (normCounts.get(key) || 0) + 1;
-    normCounts.set(key, occ);
-    const hasId = idLineIndex(lines, block.start, block.end) >= 0;
-    const window = preContentWindow(lines, block.start, block.end);
-    const isMidTyping = lines.slice(window.start, window.end).some(lineHasUnclosedBrace);
-    if (!hasId && !isMidTyping) {
-      targets.push({ heading: block.heading, occurrence: block.occurrence, prefKey: `${key} ${occ}` });
-    }
-  }
+  // The headings to stamp are read by slide-blocks.mjs, so a caller that must know beforehand
+  // whether a save will stamp anything asks the same reading (headingsMissingIds).
+  const targets = headingsMissingIds(text);
 
   let out = text;
   const stamped = [];
@@ -585,50 +500,341 @@ export function mergeTriggerAtLine(text, lineNumber, triggerString, eol = "", op
   return joinPreservingTrailing(lines);
 }
 
-// ── Per-item icon override (the "Edit icons" op) ──────────────────────────────
+// ── Per-item icon override (the icon picker's write) ─────────────────────────
 //
-// Pins (or clears) the icon on ONE top-level list item of a slide, by writing the canonical
-// `{icon=KEY}` token at the end of that item's line. The "Edit icons" UI addresses an item by
-// its position among the slide block's TOP-LEVEL (indentation-0) list-item lines, in document
-// order across every list/card in the block — the same lines the lexer turns into iconable
-// items (sub-bullets are indented and never carry icons). itemIndex is 0-based.
+// setListItemIcon is in outline-list-item-icon.mjs (issue #120): it finds its item on the
+// compiler's own reading, splices one line and verifies by compiling, as the two verbs below do.
+export { setListItemIcon };
+
+// ── Title icon and paragraph icon (plain view ticket 07, spec T14) ────────────
 //
-// Token-precise: only that one line changes. Any existing trailing icon token — explicit
-// `{icon=…}` or the bare `{name}` shorthand (a single icon-shaped token) — is replaced;
-// ordinary trailing braces like `{a, b}` (spaces/commas) are left alone. iconKey=null clears.
-// The op trusts the key shape; the server validates it against the icon set before calling.
+// setHeadingIcon writes (or, with iconKey=null, removes) the `{icon=KEY}` token on a slide's
+// heading line; setParagraphIcon does the same at the end of one paragraph. Both are write paths
+// into the person's outline and follow one contract:
+//
+//   1. LOCATE on the compiler's own reading. The outline is blanked as adaptMarkdownOutlineV2
+//      blanks it (front matter and HTML comments) and read by parseOutlineTree; a slide's content
+//      lines are the tree's, filtered by classifyContentLines (the adapter's own filter) and lexed
+//      by lexMarkdownBlocks. Nothing here re-implements what a slide, a note, a Trigger line or a
+//      paragraph is.
+//   2. SPLICE one line. Only the token changes:
+//        set      one space and `{icon=KEY}` go in after the last non-space character of the text;
+//                 everything after that point (trailing spaces and tabs, other brace groups, a
+//                 CRLF line's `\r`) stays byte for byte;
+//        replace  only the key's characters change;
+//        remove   the token goes, with the one space before it (the space a set wrote).
+//      So set → remove returns the original outline byte for byte.
+//   3. VERIFY by compiling. The outline is read again as in 1, before and after, and the edit is
+//      kept only when, on the slide concerned:
+//        - the title (setHeadingIcon) or the paragraph block that holds the target line
+//          (setParagraphIcon) now reports exactly the requested icon, or none after a remove;
+//        - every other block, the title's text, the notes, the slide's attributes (apart from
+//          `icon`) and its stray Trigger lines are identical, so the number of paragraph icons
+//          moved by at most one and no visible text changed;
+//        - the visible text holds no `{icon=` that was not there before;
+//        - every other slide is identical.
+//      Otherwise the verb REFUSES: the outline comes back unchanged with a reason. It never
+//      returns text it could not verify.
+//      The check is made on the compiler's OUTLINE TREE, which is the same for both outline
+//      formats. Which format a talk is compiled in (the older `markdown-outline-v1` or the current
+//      `markdown-outline-v2`, chosen by prepareSource from what the text holds) is the talk's, not
+//      the verb's: the first token written on a talk in the older format moves it to the current
+//      one, exactly as setSlideTrigger (a layout), setListItemIcon and the id stamp on every save
+//      do. test:heading-and-paragraph-icon-verbs pins this.
+//   4. setHeadingIcon, on EVERY set that would otherwise succeed (also one that changes nothing,
+//      the title holding that icon already), looks at the RENDERED slide, and at nothing else in
+//      it: the set succeeds only when a section of that heading holds a title-icon span (the one
+//      thing withTitleIcon emits). Otherwise the icon would be written and never seen, and the
+//      verb refuses: a slide whose title is not painted, and a `####` that its parent's layout
+//      folds into itself (a card, a column, a carousel or compare panel, an image-grid cell),
+//      which has no section of its own and no painted icon. A statement slide with no body
+//      passes: its title is hidden as a heading but drawn, icon and all, as the statement. A
+//      remove is never refused for this.
+//
+// Result: { ok: true, text, changed } (changed false: there was nothing to change), or
+// { ok: false, text (the outline as given), reason }. Reasons:
+//   slide-not-found     setHeadingIcon: no slide has that heading (and occurrence);
+//   not-a-paragraph     setParagraphIcon: the line is not in a visible paragraph of a slide (it is
+//                       blank, a heading, a Trigger line, a list item, a quotation, a table, code,
+//                       a directive, speaker notes, front matter, a comment, or before the first slide);
+//   unknown-icon        the key names no icon the compiler can resolve, so it would draw nothing;
+//   icon-set-elsewhere  after the edit the compiler still reports a different icon there;
+//   title-not-shown     setHeadingIcon: the slide does not paint its title (a quotation, compare or
+//                       image-quote slide by default, `{notitle}`, `{title=off}`), or the heading
+//                       is folded into its parent's layout, so the icon would not appear;
+//   cannot-place-here   anything else the check rejects, and a paragraph line that carries an
+//                       HTML comment (a new token is not written beside a comment).
+//
+// Which braces are tokens is the compiler's reading: on a heading, the authored trailing groups
+// (headingBraceGroups); on a paragraph, paragraphIconTokenAt. Braces glued to text (the tail of a
+// URL, an escaped `\{`) are text and are never edited.
+//
+// The key must be icon-shaped (letters, digits, `:._-`); anything else throws before any text is
+// touched, so a key can never close a brace group or start a new line in the outline.
 
-// A top-level (indent-0) list-item line — mirrors the lexer's takeList row match at depth 0.
-const TOP_LEVEL_ITEM_RE = /^(?:[-*]\s+|\d+[.)]\s+)\S/;
-// A trailing icon token: `{icon=name}` or a bare single icon-shaped `{name}` (no spaces/commas).
-const TRAILING_ICON_TOKEN_RE = /\s*\{\s*(?:icon\s*=\s*)?[A-Za-z0-9:._-]+\s*\}\s*$/;
-
-export function setListItemIcon(text, ref, itemIndex, iconKey) {
-  const lines = scanLines(text);
-  const block = findBlock(listSlideBlocks(text), ref);
-  let count = -1;
-  for (let i = block.start; i < block.end; i += 1) {
-    if (!TOP_LEVEL_ITEM_RE.test(lines[i])) continue;
-    count += 1;
-    if (count !== itemIndex) continue;
-    const base = lines[i].replace(TRAILING_ICON_TOKEN_RE, "");
-    lines[i] = iconKey ? `${base} {icon=${iconKey}}` : base;
-    return joinPreservingTrailing(lines);
+// The edit that sets or removes a heading line's icon. Only authored trailing groups are read.
+// With several `icon=` tokens on the line (the compiler takes the last), a set keeps the FIRST,
+// gives it the new key and deletes the rest; a remove deletes them all — either way the line then
+// compiles to what was asked for.
+function headingIconEdit(body, iconKey) {
+  const groups = headingBraceGroups(body).filter((group) => group.authored);
+  const tokens = [];
+  for (const group of groups) {
+    const inGroup = iconTokensInGroup(group.inner);
+    inGroup.forEach((token) => tokens.push({ group, token, from: group.start + 1 + token.start, to: group.start + 1 + token.end }));
   }
-  throw new Error(`outline-edit: top-level list item ${itemIndex} not found under ${JSON.stringify(ref.heading)} (occurrence ${ref.occurrence || 1})`);
+  const deleted = new Set();
+  const inserted = new Map();
+  if (!tokens.length) {
+    if (!iconKey) return NO_EDIT;
+    let textEnd = groups.length ? groups[0].start : body.length;
+    while (textEnd > 0 && /\s/.test(body[textEnd - 1])) textEnd -= 1;
+    inserted.set(textEnd, ` {icon=${iconKey}}`);
+    return { deleted, inserted };
+  }
+  const drop = iconKey ? tokens.slice(1) : tokens;
+  if (iconKey) {
+    const first = tokens[0];
+    // `icon=` as written is five characters; a token written any other way (a quoted key) is
+    // rewritten whole.
+    const valueFrom = body.startsWith("icon=", first.from) ? first.from + 5 : first.from;
+    const next = valueFrom === first.from ? `icon=${iconKey}` : iconKey;
+    if (body.slice(valueFrom, first.to) !== next) {
+      for (let i = valueFrom; i < first.to; i += 1) deleted.add(i);
+      inserted.set(valueFrom, next);
+    }
+  }
+  for (const group of groups) {
+    const dropped = drop.filter((entry) => entry.group === group);
+    if (!dropped.length) continue;
+    const all = tokenizeTriggerBody(group.inner);
+    if (dropped.length === all.length) {
+      // Nothing else in the group: the group goes, with the one space before it.
+      for (let i = group.start; i < group.end; i += 1) deleted.add(i);
+      if (body[group.start - 1] === " ") deleted.add(group.start - 1);
+      continue;
+    }
+    // The group keeps other tokens: the token goes with the separators between it and the token
+    // before it (or, when no token before it is kept, the token after it).
+    const inner = group.start + 1;
+    for (const entry of dropped) {
+      const at = all.findIndex((token) => inner + token.start === entry.from);
+      const isDropped = (token) => dropped.some((other) => other.from === inner + token.start);
+      const keptBefore = all.slice(0, at).some((token) => !isDropped(token));
+      const from = keptBefore ? inner + all[at - 1].end : entry.from;
+      const to = keptBefore || at + 1 >= all.length ? entry.to : inner + all[at + 1].start;
+      for (let i = from; i < to; i += 1) deleted.add(i);
+    }
+  }
+  return { deleted, inserted };
+}
+
+export function setHeadingIcon(text, ref, iconKey) {
+  assertIconKey(iconKey);
+  const source = String(text ?? "");
+  const refuse = (reason) => ({ ok: false, text: source, reason });
+  const key = iconKey || null;
+  const wanted = resolvedIconKey(key);
+  if (key && !wanted) return refuse("unknown-icon");
+  const before = compileView(source);
+  const node = before && findNodeByRef(before, ref);
+  if (!node) return refuse("slide-not-found");
+  const index = node.sourceLine - 1;
+  const { body, cr } = splitCarriageReturn(before.lines[index]);
+  const blanked = before.bodyLines[index];
+  const next = applyLineEdit(body, blanked, before.offsets[index], headingIconEdit(blanked, key));
+  if (next === null) return refuse("cannot-place-here");
+  // The render check of a set (contract item 4), on every path that would answer ok.
+  const notDrawn = (outline) => {
+    if (!key) return null;
+    const drawn = titleIconIsDrawn(outline, node.sourceLine);
+    return drawn === null ? "cannot-place-here" : drawn ? null : "title-not-shown";
+  };
+  if (next === body) {
+    if (readSlide(before, node).titleIcon !== wanted) return refuse(key ? "icon-set-elsewhere" : "cannot-place-here");
+    // The title already holds this icon. It is still a set: where the icon is not drawn the
+    // answer is the same refusal as for a new one.
+    const reason = notDrawn(source);
+    if (reason) return refuse(reason);
+    return { ok: true, text: source, changed: false };
+  }
+  const lines = before.lines.slice();
+  lines[index] = next + cr;
+  const result = joinPreservingTrailing(lines);
+
+  // Verify by compiling: the title reports the requested icon and nothing else moved.
+  const after = compileView(result);
+  const node2 = after?.nodes.find((other) => other.sourceLine === node.sourceLine);
+  if (!node2 || after.nodes.length !== before.nodes.length) return refuse("cannot-place-here");
+  const was = readSlide(before, node);
+  const now = readSlide(after, node2);
+  if (now.titleIcon !== wanted) return refuse(key && now.titleIcon ? "icon-set-elsewhere" : "cannot-place-here");
+  const unchanged = now.title === was.title && now.rest === was.rest
+    && sameValue(now.blocks, was.blocks) && sameValue(now.lexed, was.lexed)
+    && outsideOf(after, node2) === outsideOf(before, node)
+    && countIconBraces([now.title, now.blocks, node2.notesLines]) <= countIconBraces([was.title, was.blocks, node.notesLines]);
+  if (!unchanged) return refuse("cannot-place-here");
+  const reason = notDrawn(result);
+  if (reason) return refuse(reason);
+  return { ok: true, text: result, changed: true };
+}
+
+// Whether the slide whose heading is on `sourceLine` draws a title icon. Read from the rendered
+// slide's own section, the assembly's output, never from the slide's attributes: true only when a
+// section of THAT heading holds the title-icon span, the one thing withTitleIcon emits. False
+// when its title is hidden, and false when the heading has no section of its own: a `####` folded
+// into its parent's layout (a card, a column, a carousel or compare panel, an image-grid cell) is
+// drawn without a title icon. null when that slide cannot be rendered. The outline holds a
+// heading token (the icon asked for), so prepareSource
+// compiles it with this adapter; the section is the one it would put in the deck. Only the target
+// slide is rendered, and nothing is read from disk. (A slide that holds an SVG fence renders only
+// once the compiler's SVG sanitiser is loaded, which is asynchronous: the app's IPC handler loads
+// it before calling the verb. Without it such a slide answers null and the verb refuses.)
+function titleIconIsDrawn(text, sourceLine) {
+  let sections;
+  try {
+    const model = adaptMarkdownOutlineV2(text, "outline");
+    const own = model.slides.filter((slide) => slide.sourceLine === sourceLine);
+    if (!own.length) return false;
+    sections = renderSlideSections({ ...model, slides: own }).map(String);
+  } catch {
+    return null;
+  }
+  return sections.some((html) => /<span class="fl-icon title-icon">/.test(html));
+}
+
+// The edit that sets, replaces or removes the icon token at the end of a paragraph's last line.
+function paragraphIconEdit(body, key) {
+  const token = paragraphIconTokenAt(body);
+  const deleted = new Set();
+  const inserted = new Map();
+  if (token) {
+    if (key) {
+      if (body.slice(token.keyFrom, token.keyTo) === key) return NO_EDIT;
+      for (let i = token.keyFrom; i < token.keyTo; i += 1) deleted.add(i);
+      inserted.set(token.keyFrom, key);
+    } else {
+      const from = body[token.tokenFrom - 1] === " " ? token.tokenFrom - 1 : token.tokenFrom;
+      for (let i = from; i < token.tokenTo; i += 1) deleted.add(i);
+    }
+    return { deleted, inserted };
+  }
+  if (!key) return NO_EDIT;
+  const textEnd = body.replace(/\s+$/, "").length;
+  inserted.set(textEnd, `${textEnd ? " " : ""}{icon=${key}}`);
+  return { deleted, inserted };
+}
+
+// The index of the paragraph block that holds lexed line `at` of a slide, or -1. The LEXER
+// answers: a word that is in no outline is put at the end of that line's text, the slide is lexed
+// again, and the line is in a paragraph exactly when one block, a paragraph before and after,
+// gained that word and nothing else changed. A list item, a quotation, a claim, code, a table, a
+// directive or a blank line gives another answer, so none of them is ever taken for a paragraph.
+function paragraphBlockOfLine(slide, at, probeWord) {
+  const line = slide.lexed[at].line;
+  const token = paragraphIconTokenAt(line);
+  const end = token ? token.from : line.replace(/\s+$/, "").length;
+  if (end === 0) return -1;
+  const probe = lexMarkdownBlocks(slide.lexed.map((entry, i) => (
+    i === at ? `${line.slice(0, end)} ${probeWord}${line.slice(end)}` : entry.line
+  )));
+  if (probe.length !== slide.blocks.length) return -1;
+  let hit = -1;
+  for (let k = 0; k < probe.length; k += 1) {
+    if (sameValue(probe[k], slide.blocks[k])) continue;
+    if (hit >= 0) return -1;
+    hit = k;
+  }
+  if (hit < 0) return -1;
+  const was = slide.blocks[hit];
+  const now = probe[hit];
+  if (was?.type !== "paragraph" || now?.type !== "paragraph") return -1;
+  if (typeof was.text !== "string" || typeof now.text !== "string" || !now.text.includes(probeWord)) return -1;
+  const squash = (value) => value.replace(/\s+/g, " ").trim();
+  if (squash(now.text.replace(probeWord, "")) !== squash(was.text)) return -1;
+  if (!sameValue(withoutIcon(was), { ...withoutIcon(now), text: was.text })) return -1;
+  return (was.icon || "") === (now.icon || "") ? hit : -1;
+}
+
+// line: the 1-based number of a line anywhere inside the paragraph (the caller, the editor, knows
+// the caret's line). The token goes at the end of the LAST source line the compiler puts in that
+// paragraph block, which is where the lexer reads it: a stray Trigger line or speaker notes may
+// lie between the paragraph's lines in the source.
+export function setParagraphIcon(text, line, iconKey) {
+  assertIconKey(iconKey);
+  if (!Number.isInteger(line)) throw new Error(`outline-edit: setParagraphIcon takes a 1-based line number, not ${JSON.stringify(line)}`);
+  const source = String(text ?? "");
+  const refuse = (reason) => ({ ok: false, text: source, reason });
+  const key = iconKey || null;
+  const wanted = resolvedIconKey(key);
+  if (key && !wanted) return refuse("unknown-icon");
+  const before = compileView(source);
+  if (!before) return refuse("cannot-place-here");
+  const node = before.nodes.find((other) => (before.tree.contentLineIndexes.get(other) || []).includes(line - 1));
+  if (!node) return refuse("not-a-paragraph");
+  const was = readSlide(before, node);
+  const at = was.lexed.findIndex((entry) => entry.source === line - 1);
+  if (at < 0) return refuse("not-a-paragraph");
+  let probeWord = "QZXICONPROBEXZQ";
+  while (source.includes(probeWord)) probeWord += "Q";
+  const block = paragraphBlockOfLine(was, at, probeWord);
+  if (block < 0) return refuse("not-a-paragraph");
+  let last = at;
+  while (last + 1 < was.lexed.length && paragraphBlockOfLine(was, last + 1, probeWord) === block) last += 1;
+
+  const index = was.lexed[last].source;
+  const { body, cr } = splitCarriageReturn(before.lines[index]);
+  const blanked = was.lexed[last].line;
+  const edit = paragraphIconEdit(blanked, key);
+  if (edit === NO_EDIT) {
+    if ((was.blocks[block].icon || "") !== wanted) return refuse(key ? "icon-set-elsewhere" : "cannot-place-here");
+    return { ok: true, text: source, changed: false };
+  }
+  // A new token is not written on a line that carries a comment; an existing one is edited only
+  // through the exact offsets of the characters the compiler read.
+  if (!paragraphIconTokenAt(blanked) && blanked !== body) return refuse("cannot-place-here");
+  const next = applyLineEdit(body, blanked, before.offsets[index], edit);
+  if (next === null) return refuse("cannot-place-here");
+  const lines = before.lines.slice();
+  lines[index] = next + cr;
+  const result = joinPreservingTrailing(lines);
+
+  // Verify by compiling: that paragraph reports the requested icon and nothing else moved.
+  const after = compileView(result);
+  const node2 = after?.nodes.find((other) => other.sourceLine === node.sourceLine);
+  if (!node2 || after.nodes.length !== before.nodes.length) return refuse("cannot-place-here");
+  const now = readSlide(after, node2);
+  if (now.blocks.length !== was.blocks.length) return refuse("cannot-place-here");
+  const target = now.blocks[block];
+  if (target?.type !== "paragraph") return refuse("cannot-place-here");
+  if ((target.icon || "") !== wanted) return refuse(key && target.icon ? "icon-set-elsewhere" : "cannot-place-here");
+  const paragraphIcons = (blocks) => blocks.filter((entry) => entry?.type === "paragraph" && entry.icon).length;
+  const moved = paragraphIcons(now.blocks) - paragraphIcons(was.blocks);
+  const unchanged = now.title === was.title && now.titleIcon === was.titleIcon && now.rest === was.rest
+    && now.lexed.length === was.lexed.length
+    && now.blocks.every((entry, k) => (k === block
+      ? sameValue(withoutIcon(entry), withoutIcon(was.blocks[k]))
+      : sameValue(entry, was.blocks[k])))
+    && moved === (wanted ? 1 : 0) - (was.blocks[block].icon ? 1 : 0)
+    && outsideOf(after, node2) === outsideOf(before, node)
+    && countIconBraces([now.title, now.blocks.map(withoutIcon), node2.notesLines]) <= countIconBraces([was.title, was.blocks.map(withoutIcon), node.notesLines]);
+  if (!unchanged) return refuse("cannot-place-here");
+  return { ok: true, text: result, changed: true };
 }
 
 // ── Icon model (the "Edit icons" read side) ───────────────────────────────────
 //
-// Text → the data the Edit-icons UI needs, derived from the SAME line scan setListItemIcon uses
-// so item indices line up exactly. For every ICON-BEARING slide (its heading / Trigger line
-// carries an icon trigger), each top-level list item becomes { index, text, current, candidates }:
-//   index      0-based position among the block's top-level item lines (the op's address)
-//   text       the bullet text with any trailing icon token stripped
+// Text → the data the Edit-icons UI needs. The items are the ones setListItemIcon addresses
+// (slideListItems, outline-list-item-icon.mjs: the compiler's own reading), so item indices line
+// up exactly. For every ICON-BEARING slide (its heading / Trigger line carries an icon trigger),
+// each top-level list item becomes { index, text, current, candidates }:
+//   index      0-based position among the slide's top-level list items (the op's address)
+//   text       the bullet text without its icon token
 //   current    the pinned icon key (normalised) if the bullet already has {icon=…}/{name}, else null
 //   candidates ranked auto-match keys [{key, source}] (top 8) — empty array = a gap to fill
-// Returns one entry per icon-bearing slide: { title, heading, occurrence, items: [...] }. The
-// UI renders glyphs from these keys and writes a choice back with setListItemIcon(ref, index, key).
+// Returns one entry per icon-bearing slide: { title, heading, occurrence, items: [...] }, with
+// `occurrence` counted among the compiler's slides, as setListItemIcon counts it. The UI renders
+// glyphs from these keys and writes a choice back with setListItemIcon(ref, index, key).
 
 const ICON_TRIGGER_WORDS = new Set(["icons", "iconlist", "iconrow", "logolist"]);
 
@@ -648,24 +854,26 @@ function blockTriggerWords(lines, block) {
 
 export function collectIconModel(text) {
   const lines = scanLines(text);
+  const view = compileView(String(text ?? ""));
   const out = [];
-  for (const block of listSlideBlocks(text)) {
+  if (!view) return out;
+  const seen = new Map();
+  const blocks = listSlideBlocks(text);
+  for (const node of view.nodes) {
+    const heading = view.lines[node.sourceLine - 1].replace(/\r$/, "");
+    const occurrence = (seen.get(heading) || 0) + 1;
+    seen.set(heading, occurrence);
+    const block = blocks.find((entry) => entry.start === node.sourceLine - 1);
+    if (!block) continue;
     const words = blockTriggerWords(lines, block);
     if (![...words].some((w) => ICON_TRIGGER_WORDS.has(w))) continue; // not an icon slide
-    const items = [];
-    let index = -1;
-    for (let i = block.start; i < block.end; i += 1) {
-      if (!TOP_LEVEL_ITEM_RE.test(lines[i])) continue;
-      index += 1;
-      const body = lines[i].replace(/^(?:[-*]\s+|\d+[.)]\s+)/, "");
-      const tokenMatch = body.match(TRAILING_ICON_TOKEN_RE);
-      const clean = body.replace(TRAILING_ICON_TOKEN_RE, "").trim();
-      let current = null;
-      if (tokenMatch) current = normalizeIconOverrideKey(tokenMatch[0].replace(/[\s{}]/g, "").replace(/^icon=/i, ""));
-      const candidates = iconCandidatesV3(clean).slice(0, 8).map(({ key, source }) => ({ key, source }));
-      items.push({ index, text: clean, current, candidates });
-    }
-    if (items.length) out.push({ title: block.title, heading: block.heading, occurrence: block.occurrence, items });
+    const items = slideListItems(readSlide(view, node)).map((entry, index) => ({
+      index,
+      text: entry.text,
+      current: entry.icon || null,
+      candidates: iconCandidatesV3(entry.text).slice(0, 8).map(({ key, source }) => ({ key, source }))
+    }));
+    if (items.length) out.push({ title: block.title, heading, occurrence, items });
   }
   return out;
 }

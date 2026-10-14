@@ -7,9 +7,9 @@ export function canonicalStatementValue(dimension: StatementDimension, value: un
 export function isStatementDimensionKey(key: string): boolean
 export interface StatementLook {
   sidebar: '' | 'on' | 'off'
-  bg: 'halo' | 'full' | 'none'
+  bg: 'tinted' | 'rule' | 'strong' | 'lower-third'
   align: 'left' | 'centred'
-  bar: 'none' | 'left' | 'top' | 'bottom'
+  bar: 'none'
   accent: string
   preset: string
   centredNeedsNoTitle: boolean

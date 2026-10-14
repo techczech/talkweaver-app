@@ -3,6 +3,7 @@
 // the Share op around a create (k2, [R*]).
 import { isShareId } from '../shared/share-id.ts'
 import { OwnerRequestError, ownerFetch, validOwnerToken } from './owner-tokens.ts'
+import { LIVE_ACCESS_REMOVED, sendAsAdmin } from './live-admin-request.ts'
 import { isSharedTalkStopped, STOPPED_LOCALLY_MESSAGE, type SharedTalkStopResult } from '../shared/shared-talk.ts'
 import {
   describe, errorMessage, HttpError, NotKept, readJson, SHARE_LOCKED, SHARE_NOT_KEPT, SHARE_NOT_KEPT_OPEN, SHARE_NOT_NOTED,
@@ -58,18 +59,26 @@ export function createShareSteps(
       throw new Error(SHARE_NOT_NOTED)
     }
     let response: Response
+    let refused: boolean
     let body: { shareId?: unknown; ownerToken?: unknown } | null
     try {
       // No answer (the request failed in transit): the share may exist, so the note stays.
-      response = await deps.fetch(`${base}/shares`, {
+      // Each key held for the live service is tried, as Go live does (live-admin-request.ts): a key
+      // refused by its 401 made no share, so the next try makes the only one.
+      ;({ response, refused } = await sendAsAdmin(deps.fetch, endpoint, `${base}/shares`, () => ({
         method: 'POST',
-        headers: { authorization: `Bearer ${endpoint.adminSecret}`, 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ talkSlug: workerSlug, title }),
         signal: AbortSignal.timeout(15_000),
-      })
+      })))
       body = await readJson(response) as { shareId?: unknown; ownerToken?: unknown } | null
     } finally {
       notes.answered(note)
+    }
+    if (refused) {
+      // Every key this computer holds for the live service was refused: no share was made.
+      notes.drop((id) => id === note)
+      throw new HttpError(401, LIVE_ACCESS_REMOVED)
     }
     if (!response.ok) {
       // The Worker answers an error only when it made no share (or discarded the one it made).

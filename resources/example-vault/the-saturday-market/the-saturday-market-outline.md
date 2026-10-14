@@ -62,6 +62,8 @@ Ten pounds a morning, tables lent free.
 
 > **Try it.** At the end of Small change, press <kbd>↵</kbd> for a new item, <kbd>Tab</kbd> to indent it and <kbd>⇧Tab</kbd> to bring it back.
 
+> **Try it.** In a quotation, <kbd>⇧↵</kbd> starts a new paragraph and <kbd>↵</kbd> twice leaves it.
+
 ### Four stalls
 {id=s3}
 

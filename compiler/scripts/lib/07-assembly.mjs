@@ -8,11 +8,12 @@ import { accentForSectionIndex, accentForSectionName, accentForDeckColour, title
 import { findSlideSections, updateDeckTitle, withoutScripts } from "./04-html-extraction.mjs";
 import { createIconVocabulary, buildDeckIconMap, applySlideMonochrome } from "./05-icons.mjs";
 import { withScreenshotStyle, sizeScreenshotRows, screenshotBand, isLoneScreenshot } from "./screenshot-row.mjs";
-import { groupImageRows, groupQrRows, groupActionBlocks, loadCompilerSvgSanitiser, renderBlock, renderBlocks, renderMediaBlocks } from "./06-block-renderers.mjs";
+import { groupImageRows, groupQrRows, groupActionBlocks, loadCompilerSvgSanitiser, renderBlock, renderBlocks, renderMediaBlocks, withTitleIcon } from "./06-block-renderers.mjs";
 import { renderLicenseBody } from "./08-source-adapters.mjs";
 import { withColumnWidth } from "./narrow-columns.mjs";
 import { pollFrameEligible, renderPollFrame } from "./poll-frame.mjs";
 import { buildSlideScriptPayload, renderSlideScriptTag } from './slide-script.mjs';
+import { quoteFormSources, renderQuoteSourcesTag } from './quote-forms-static.mjs';
 import { instantSlideRuntimeSource, instantSlideStyles } from '../../assets/runtime/instant-slide.js';
 import { presenterShortcutsRuntimeSource } from '../../assets/runtime/presenter-shortcuts.js';
 import { pointerOverlayRuntimeSource } from '../../assets/runtime/pointer-overlay.js';
@@ -65,7 +66,19 @@ function modelHasCodeBlock(value, language, seen = new Set()) {
 //
 // A title (and the kicker) carries the same inline formatting as body text — **bold**, *italic*,
 // `code`, ==mark==, links — through renderInline, which escapes first and emits only its own tags.
-function renderSlideHead({ title, kicker, showTitle, hidden }) {
+//
+// Plain view ticket 07 (spec T14): a painted title may carry an icon, written `{icon=NAME}` on the
+// heading. It sits inside the <h1> (so every title rule and the runtime title fit still address
+// one h1, and the fit measures the icon's width with the words):
+//
+//   <h1><span class="title-with-icon" data-title-icon="before|above">
+//         <span class="fl-icon title-icon">SVG</span><span class="title-text">Title</span></span></h1>
+//
+// `before` is the default; `{title-icon=above}` stacks the icon over the title. A hidden (sr-only)
+// title carries no icon; where a bodyless heading is painted as the slide's statement instead, that
+// paragraph carries the same markup. A title with no icon is emitted exactly as before. The emitter
+// is withTitleIcon (06-block-renderers.mjs), which a poster's visible title uses too.
+function renderSlideHead({ title, kicker, showTitle, hidden, icon = "", iconAt = "" }) {
   const safeTitle = renderInline(String(title ?? ""));
   if (hidden) {
     return `<header class="slide-head slide-head-quiet"><h1 class="sr-only">${safeTitle}</h1></header>\n`;
@@ -75,7 +88,8 @@ function renderSlideHead({ title, kicker, showTitle, hidden }) {
   // the compiler joins its last two words with a no-break space (no-lone-word.mjs); CSS
   // `text-wrap: pretty` is the other half. ADR-0033 §7: short words (a, the, of ...) are bound to the
   // next word as well (tieShortWords). The nav-only (sr-only) title above is left verbatim.
-  const titleHtml = showTitle ? `<h1>${tieShortWords(keepLastTwoWordsTogether(safeTitle))}</h1>` : "";
+  const titleText = tieShortWords(keepLastTwoWordsTogether(safeTitle));
+  const titleHtml = showTitle ? `<h1>${withTitleIcon(titleText, icon, iconAt)}</h1>` : "";
   return (kickerHtml || titleHtml) ? `<header class="slide-head">${kickerHtml}${titleHtml}</header>\n` : "";
 }
 
@@ -273,7 +287,8 @@ function renderSlideContent(slide, deckUsed, brandLogoColour = "unified") {
     const statementFromTitle = layout === "statement" && showTitle
       && (bodyHtml.trim() === "" || bodyHtml === "<p></p>")
       && !authorForcesRail && !authorForcesTop && slide.titleMode !== "show";
-    if (statementFromTitle) bodyHtml = `<p>${renderInline(slideTitle)}</p>`;
+    // Plain view ticket 07: the promoted heading keeps its icon, in the title's own icon markup.
+    if (statementFromTitle) bodyHtml = `<p>${withTitleIcon(renderInline(slideTitle), slide.titleIcon, slide.titleIconAt)}</p>`;
     // `{titletop}` is a placement override, not authored body content: keep the promoted statement
     // paragraph, but draw its title at the requested top position instead of making it nav-only.
     const hidePromotedStatementTitle = statementFromTitle && slide.titleTop !== true;
@@ -313,6 +328,8 @@ function renderSlideContent(slide, deckUsed, brandLogoColour = "unified") {
       kicker: slide.kicker,
       showTitle,
       hidden: hideTitleByLayout,
+      icon: slide.titleIcon,
+      iconAt: slide.titleIconAt,
     });
     if (showTitle && !hideTitleByLayout && bodyHtml === "<p></p>") bodyHtml = "";
     if (hideTitleByLayout && bodyHtml === "<p></p>") bodyHtml = "";
@@ -339,16 +356,16 @@ function renderSlideContent(slide, deckUsed, brandLogoColour = "unified") {
       ? `<div class="corner-section" aria-hidden="true">${escapeHtml(slide.section)}</div>`
       : "";
     // ADR-0028 §10, ticket 02: each statement dimension stamps its own hook on .slide-content
-    // (skin/statement.css). Halo, Aligned, no bar and a sidebar that follows the title are the
-    // defaults and stamp nothing, so a plain {statement} keeps its markup. Centred from the older
+    // (skin/statement.css). Tinted, Aligned and a sidebar that follows the title are the
+    // defaults and stamp nothing, so a plain {statement} keeps its markup. The bar choice is
+    // retired (statement-options.mjs accepts it) and stamps nothing. Centred from the older
     // {statement=centred} alone applies only without a painted title, as it did in preview.11;
     // the Alignment choice centres beside a title too. `statement-rail`: the sidebar is on but no
     // title is painted in it. `statement-no-sidebar`: the sidebar is off and the title went to the top.
     const statementHooks = [];
     if (statementLook) {
-      if (statementLook.bg === "full" || statementLook.bg === "none") statementHooks.push(`statement-bg-${statementLook.bg}`);
+      if (statementLook.bg === "rule" || statementLook.bg === "strong" || statementLook.bg === "lower-third") statementHooks.push(`statement-bg-${statementLook.bg}`);
       if (statementLook.align === "centred" && (!statementLook.centredNeedsNoTitle || titlePlacement.mode === "hidden")) statementHooks.push("statement-centred");
-      if (statementLook.bar === "left" || statementLook.bar === "top" || statementLook.bar === "bottom") statementHooks.push(`statement-bar-${statementLook.bar}`);
       if (titlePlacement.mode === "left" && hideTitleByLayout) statementHooks.push("statement-rail");
       if (statementLook.sidebar === "off" && titlePlacement.mode === "top") statementHooks.push("statement-no-sidebar");
     }
@@ -420,7 +437,7 @@ function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = n
     // palette cycle — see accentForDeckColour (Ticket 10).
     const titleSkin = accentForDeckColour(slide.titleAccent, palette);
     // Ticket 02: a statement's Sidebar colour ({accent=…} on the slide) is the section accent pinned
-    // on this one slide — its rail, halo, full colour and bar all follow it.
+    // on this one slide — its rail, tint, strong colour and rule all follow it.
     const statementSkin = slide.layout === "statement" && slide.statementOptions?.accent
       ? accentForDeckColour(slide.statementOptions.accent, palette)
       : null;
@@ -486,6 +503,8 @@ function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = n
         kicker: slide.kicker,
         showTitle: showHead,
         hidden: false,
+        icon: slide.titleIcon,
+        iconAt: slide.titleIconAt,
       });
       const titlePlacement = titlePlacementFor({
         layout,
@@ -524,19 +543,16 @@ ${headHtml}${emphasis ? emphasis.html : galleryHtml}${sourceHtml}
     // (authored, or filled from the title by rule 2) the painted title would just repeat the cite.
     const framedSlide = pollFrameEligible(slide) || quoteCiteEqualsTitle(slide) ? { ...slide, noTitle: true } : slide;
     let { contentHtml, cornerQrHtml, cornerSectionHtml, layout, titlePlacement, effectiveTitleStyle } = renderSlideContent(framedSlide, deckUsed, brandLogoColour);
-    // ADR-0028 §10 (preview.9, preview.10, ticket 02): the statement's Background choice decides
-    // where colour goes. Halo: an authored {bg=…} colours the PANEL, not the slide — the panel takes
-    // the authored colour in place of the section's sidebar colour and the rest of the slide stays
-    // white (a full-tint slide reads like a section divider; tint on tint hides the panel). None:
-    // there is no panel, so an authored colour paints the slide as on any other slide. Full: the
-    // WHOLE slide in the authored colour when there is one (already on the section), else in the
-    // slide's sidebar colour. The section still carries --slide-bg; skin/statement.css reads it.
-    const statementBg = layout === "statement" ? (slide.statementOptions?.bg ?? "halo") : ""
-    const slideStyle = statementBg === "full"
-      ? (slide.backgroundTint ? accentStyle : accentStyle.replace(/"$/, "") + `${accentStyle ? "; " : ' style="'}background: var(--tint)"`)
-      : statementBg === "halo" && slide.backgroundTint
-        ? accentStyle.replace("; background: var(--slide-bg)", "")
-        : accentStyle;
+    // Slide redesign (13 Oct 2026): the statement's Background choice decides where colour goes,
+    // and skin/statement.css paints it. Tinted (default), Strong and the lower third paint the
+    // slide (or its bottom third) themselves, in the authored {bg=…} colour (--slide-bg, carried on
+    // the slide here) or the sidebar colour, so the inline `background` an authored {bg=…} adds
+    // is dropped for them. Rule is the normal page: an authored colour paints the slide as on any
+    // other slide.
+    const statementBg = layout === "statement" ? (slide.statementOptions?.bg ?? "tinted") : ""
+    const slideStyle = statementBg && statementBg !== "rule" && slide.backgroundTint
+      ? accentStyle.replace("; background: var(--slide-bg)", "")
+      : accentStyle;
     // SD-17: for a links-layout slide, append the deck link list into the content HTML (inside
     // the .slide-content div, after the authored blocks but before the closing </div>).
     if (layout === "links" && Array.isArray(deckLinks) && deckLinks.length) {
@@ -552,7 +568,7 @@ ${headHtml}${emphasis ? emphasis.html : galleryHtml}${sourceHtml}
       contentHtml = marked.html;
       emphasisCount = marked.count;
     }
-    return `<section class="slide" data-id="${escapeHtml(id)}" data-section="${escapeHtml(section)}" data-subsection="${escapeHtml(subsection)}" data-role="${escapeHtml(role)}" data-layout="${escapeHtml(layout)}" data-nav-title="${escapeHtml(title)}"${navLabelAttr}${pollAttr}${reactionsAttr}${authoredMode ? ` data-mode="${escapeHtml(authoredMode)}"` : ""}${preparesFor ? ` data-prepares-for="${escapeHtml(preparesFor)}"` : ""}${slide.noStep ? " data-nostep" : ""}${slide.imageSteps ? " data-image-steps" : ""}${emphasisCount ? " data-emphasis-steps" : ""}${!slide.noStep && hasMediaSteps(contentHtml) ? " data-media-steps" : ""}${slide.noValues ? " data-novalues" : ""}${slide.fontBody ? ` data-font-body="${slide.fontBody}"` : ""}${slide.fontTitle ? ` data-font-title="${slide.fontTitle}"` : ""}${slide.countdownSeconds ? ` data-countdown="${slide.countdownSeconds}" data-countdown-style="${slide.countdownStyle || "digits"}"` : ""}${slide.sectionTimerSeconds ? ` data-section-timer="${slide.sectionTimerSeconds}" data-section-timer-show="${slide.sectionTimerShow || "presenter"}"` : ""}${slide.remindText ? ` data-remind="${escapeHtml(slide.remindText)}"${slide.remindAtMinutes != null ? ` data-remind-at="${slide.remindAtMinutes}"` : ""}${slide.remindInSeconds != null ? ` data-remind-in="${slide.remindInSeconds}"` : ""}` : ""}${titlePlacement.mode ? ` data-title-layout="${titlePlacement.mode}"` : ""}${effectiveTitleStyle ? ` data-title-style="${escapeHtml(effectiveTitleStyle)}"` : ""}${titlePlacement.mode === "top" && slide.titleLook ? ` data-title-look="${slide.titleLook}"${slide.titleLookPlace ? ` data-title-look-at="${slide.titleLookPlace}"` : ""}` : ""}${titlePlacement.split ? ` data-split="${titlePlacement.split}"` : ""}${containerAttrs}${slideStyle}>
+    return `<section class="slide" data-id="${escapeHtml(id)}" data-section="${escapeHtml(section)}" data-subsection="${escapeHtml(subsection)}" data-role="${escapeHtml(role)}" data-layout="${escapeHtml(layout)}" data-nav-title="${escapeHtml(title)}"${navLabelAttr}${pollAttr}${reactionsAttr}${authoredMode ? ` data-mode="${escapeHtml(authoredMode)}"` : ""}${preparesFor ? ` data-prepares-for="${escapeHtml(preparesFor)}"` : ""}${slide.noStep ? " data-nostep" : ""}${slide.imageSteps ? " data-image-steps" : ""}${emphasisCount ? " data-emphasis-steps" : ""}${!slide.noStep && hasMediaSteps(contentHtml) ? " data-media-steps" : ""}${slide.noValues ? " data-novalues" : ""}${slide.fontBody ? ` data-font-body="${slide.fontBody}"` : ""}${slide.fontTitle ? ` data-font-title="${slide.fontTitle}"` : ""}${slide.countdownSeconds ? ` data-countdown="${slide.countdownSeconds}" data-countdown-style="${slide.countdownStyle || "digits"}"` : ""}${slide.sectionTimerSeconds ? ` data-section-timer="${slide.sectionTimerSeconds}" data-section-timer-show="${slide.sectionTimerShow || "presenter"}"` : ""}${slide.remindText ? ` data-remind="${escapeHtml(slide.remindText)}"${slide.remindAtMinutes != null ? ` data-remind-at="${slide.remindAtMinutes}"` : ""}${slide.remindInSeconds != null ? ` data-remind-in="${slide.remindInSeconds}"` : ""}` : ""}${titlePlacement.mode ? ` data-title-layout="${titlePlacement.mode}"` : ""}${effectiveTitleStyle ? ` data-title-style="${escapeHtml(effectiveTitleStyle)}"` : ""}${titlePlacement.mode === "top" && slide.titleLook ? ` data-title-look="${slide.titleLook}"${slide.titleLookTone ? ` data-title-look-tone="${slide.titleLookTone}"` : ""}` : ""}${titlePlacement.split ? ` data-split="${titlePlacement.split}"` : ""}${containerAttrs}${slideStyle}>
   ${contentHtml}
 ${cornerQrHtml ? `  ${cornerQrHtml}\n` : ""}${cornerSectionHtml ? `  ${cornerSectionHtml}\n` : ""}  ${notes ? `<aside class="notes">${notes}</aside>` : ""}
 </section>`;
@@ -574,10 +590,18 @@ export function talkQrTemplateTag(handoutUrl) {
   return svg ? `<template id="twTalkQr" data-url="${escapeHtml(url)}">${svg}</template>` : "";
 }
 
+// Each slide of a model as its `<section class="slide">` markup, in model order (one entry per
+// model slide). This is the markup buildDeckHtmlFromModel puts in the deck; nothing is read from
+// disk. The outline verb setHeadingIcon reads the target slide's own section from it
+// (`data-title-layout`, the title-icon span) instead of keeping a copy of the title rules.
+export function renderSlideSections(model) {
+  return renderModelSlides(model.slides, model.palette || "", model.icons || null, model.deckLinks || null, model.brandLogoColour || "unified");
+}
+
 export async function buildDeckHtmlFromModel(model) {
   const templateHtml = await readFile(resolve(scriptDir, "..", "assets/templates/presenter-popup-single-html.html"), "utf8");
   if (modelHasCodeBlock(model.slides, "svg")) await loadCompilerSvgSanitiser();
-  const slideMarkup = renderModelSlides(model.slides, model.palette || "", model.icons || null, model.deckLinks || null, model.brandLogoColour || "unified");
+  const slideMarkup = renderSlideSections(model);
   const allSlides = slideMarkup.join("\n\n");
   let html = updateDeckTitle(replaceSlideSections(templateHtml, allSlides), model.title);
   // Inline the pure presenter timer core (fmtClock / bigTimerState) verbatim — single source of truth.
@@ -660,14 +684,21 @@ export async function buildDeckHtmlFromModel(model) {
   // handout copies the compiled deck verbatim, so there is exactly one emission point and the two
   // outputs cannot drift.
   const slideScript = buildSlideScriptPayload(model.slides);
+  // Quote forms: the written-out source link is not on the stage markup, so the handout reads it from this
+  // side payload (quote-forms-static.mjs), the same way it reads the phone script.
+  const quoteSources = quoteFormSources(model.slides);
   let companionTag = "";
-  if (Object.keys(slideScript).length) {
+  const companionParts = [
+    Object.keys(slideScript).length ? renderSlideScriptTag(slideScript) : "",
+    Object.keys(quoteSources).length ? renderQuoteSourcesTag(quoteSources) : ""
+  ].filter(Boolean);
+  if (companionParts.length) {
     // Inject before the LAST </body>, never the first. The presenter template contains an earlier
     // </body> INSIDE a JS template literal (the preview iframe's srcdoc, ~line 8384); a plain
     // .replace() put the payload inside that string and killed the whole deck runtime — blank
     // presenter, blank Inspector preview, dead buttons (2026-07-19).
     const closeIndex = html.lastIndexOf("</body>");
-    const tag = `${renderSlideScriptTag(slideScript)}\n`;
+    const tag = `${companionParts.join("\n")}\n`;
     companionTag = tag;
     html = closeIndex >= 0
       ? html.slice(0, closeIndex) + tag + html.slice(closeIndex)

@@ -167,7 +167,9 @@ export function inspectorModel(
   triggerFindings: readonly LayoutDoctorFinding[] = [],
   deckListStyle: DeckListStyle = '',
   deckStatementToken: DeckStatementToken = '',
-  prework: InspectorPreworkModel | null = null
+  prework: InspectorPreworkModel | null = null,
+  inheritedTitleTone = '',
+  inheritedTitleLook = ''
 ): InspectorModel {
   const row = rows?.[activeIndex] ?? null
   const layoutName = selectionFromTriggerLine(triggerLine, [...layouts]).find((entry) => entry.kind === 'layout')?.name
@@ -183,6 +185,7 @@ export function inspectorModel(
   // title regime on the row; a row without it (an old cached index row) is "not known".
   const titleLayout = row?.title_layout
   const titlePainted = typeof titleLayout === 'string' ? titleLayout !== 'hidden' && titleLayout !== '' : undefined
+  const titlePanel = typeof titleLayout === 'string' && titleLayout !== '' ? titleLayout === 'left' : undefined
   // Ticket 08: a pre-work step's rows (prework-*) are offered only when the slide is a step.
   const preworkKind = preworkKindOf(prework)
   // Ticket 13: the Page width group is offered only on a slide with an embedded page and body text.
@@ -192,7 +195,7 @@ export function inspectorModel(
   // the deck's choice, so the treatment is offered exactly when the compiled list is an icon list.
   const deckDecided = (key: string): string | undefined => key === DECK_DECIDED_GROUP ? deckListStyle : undefined
   // Ticket 02: each statement control lights what the compiled slide renders — its own token, the
-  // older one-word option it is part of ({statement=tint} lights Halo and Left), or the deck's
+  // older one-word option it is part of ({statement=bar} lights Rule), or the deck's
   // `claim_style: bar`; the sidebar with no token of its own follows the compiled title placement.
   const statementLit = statementSelections(triggerLine, {
     deckClaimStyle: deckStatementToken === 'statement=bar' ? 'bar' : '',
@@ -202,6 +205,11 @@ export function inspectorModel(
     if (isStatementOptionGroup(group.key)) return [group.key, statementLit[group.key] ?? '']
     const deck = deckDecided(group.key)
     if (deck !== undefined && !groupHasSelection(triggerLine, group)) return [group.key, deck]
+    // A Tab tone the section, `defaults:` or deck sets and the slide does not: light what renders.
+    if (group.key === 'title-look-tone' && inheritedTitleTone === 'soft' && !groupHasSelection(triggerLine, group)) return [group.key, 'titlelook-tone=soft']
+    // The Title look the section, `defaults:` or deck sets and the slide does not: light what renders,
+    // so the Tab tone group (which applies only under a Tab look) is offered on an inherited Tab.
+    if (group.key === 'title-look' && inheritedTitleLook && !groupHasSelection(triggerLine, group)) return [group.key, `titlelook=${inheritedTitleLook}`]
     return [group.key, selectionForGroup(triggerLine, group)]
   }))
   const groups = unresolved
@@ -223,7 +231,7 @@ export function inspectorModel(
       heading: isBoard && section.id === 'poll' ? 'Board' : section.id === 'prework' && prework ? prework.heading : section.heading,
       ...(section.id === 'prework' && prework ? { chip: prework.chip } : {}),
       bindings: section.bindings.map((binding) => bindingModel(binding, selectedTokens, deckListStyle, {
-        layoutName, headingLevel, hasChildren, selectedTokens, titlePainted, preworkKind, embedBesideText
+        layoutName, headingLevel, hasChildren, selectedTokens, titlePainted, titlePanel, preworkKind, embedBesideText
       }))
     })),
     deckListStyle,

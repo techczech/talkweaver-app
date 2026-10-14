@@ -24,10 +24,12 @@ import {
   parseChartObjectTokenLine
 } from '../../compiler/scripts/lib/03-object-token.mjs'
 import { scanFencedLines } from './outline-normalize.ts'
+import { STRANDED_TITLE_ICON_MESSAGE, strandedTitleIcons } from './title-icon-restore.ts'
 
 export type DoctorFindingKind =
   | 'unknown-word' | 'unregistered-key' | 'unregistered-value'
   | 'trigger-conflict' | 'duplicate-layout' | 'duplicate-slide-id'
+  | 'stranded-title-icon'
 
 export interface LayoutDoctorFinding {
   kind: DoctorFindingKind
@@ -91,9 +93,20 @@ function leadingFrontmatter(lines: readonly string[]): {
   return null
 }
 
+export interface OutlineTriggerScanOptions {
+  /**
+   * Also report a title's icon left on its layout line (kind 'stranded-title-icon'). Off unless asked
+   * for: it reads the outline with the compiler's facts, which costs tens of milliseconds on a long
+   * talk, so only the Doctor's own debounced callers ask. The editor's per-keystroke scan
+   * (extensions/idProtect.ts inlineConflictFindings) never does.
+   */
+  strandedTitleIcons?: boolean
+}
+
 export function scanOutlineTriggers(
   text: string,
-  vocab: TriggerVocabulary = LAYOUT_DOCTOR_VOCABULARY
+  vocab: TriggerVocabulary = LAYOUT_DOCTOR_VOCABULARY,
+  options: OutlineTriggerScanOptions = {}
 ): LayoutDoctorFinding[] {
   const lines = text.split('\n')
   const fenceScan = LAYOUT_DOCTOR_FENCE_AUTHORITY(lines, {
@@ -401,6 +414,21 @@ export function scanOutlineTriggers(
       }
       if (canonicalTriggerLines.has(i)) recordChartAuthority(line.trim(), i + 1)
     }
+  }
+  // Plain view ticket 15: a title's icon left on its layout line by the tidy-up of the earlier
+  // preview builds. Read with the compiler's own facts (title-icon-restore.ts), which also holds the
+  // one-click move (restoreTitleIcon). A warning: it never blocks publishing. Only for a caller that
+  // asks (OutlineTriggerScanOptions): never on the editor's per-keystroke scan.
+  if (options.strandedTitleIcons !== true) return findings
+  for (const stranded of strandedTitleIcons(text)) {
+    findings.push({
+      kind: 'stranded-title-icon',
+      token: `icon=${stranded.key}`,
+      line: stranded.triggerLine + 1,
+      headingLine: stranded.headingLine + 1,
+      slideTitle: stranded.title,
+      detail: STRANDED_TITLE_ICON_MESSAGE
+    })
   }
   return findings
 }

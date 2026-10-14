@@ -3,25 +3,29 @@ import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { args, slugify, parseGridDims, escapeHtml } from "./01-cli-utils.mjs";
-import { titleRegimeForLayout, parseHeadingAttrs, parseTriggerLine, resolveAuthoredMode, parseCountdownDuration, timelineBlockFieldsFromStops, renderInline, accentForSectionName, accentForDeckColour, backgroundTintForName, resolveClaimStyle, applyQuoteTitleAttribution, CLAIM_STYLES, DECK_ACCENT_NAMES } from "./02-triggers-layout.mjs";
-import { lexMarkdownBlocks } from "./03-markdown-lexer.mjs";
+import { titleRegimeForLayout, parseHeadingAttrs, parseTriggerLine, resolveAuthoredMode, parseCountdownDuration, timelineBlockFieldsFromStops, renderInline, accentForSectionName, accentForDeckColour, backgroundTintForName, resolveClaimStyle, CLAIM_STYLES, DECK_ACCENT_NAMES } from "./02-triggers-layout.mjs";
+import { lexMarkdownBlocks, takeParagraphIcon } from "./03-markdown-lexer.mjs";
 import { chartObjectTokenAt, parseMarkdownFenceOpeningLine, isMarkdownFenceClosingLine } from "./03-object-token.mjs";
 import { extractTitle, updateDeckTitle } from "./04-html-extraction.mjs";
-import { collectIconGapTerms, collectSemanticIconNeeds, collectIconSuggestions, collectIconlistNoIcons } from "./05-icons.mjs";
+import { collectIconGapTerms, collectSemanticIconNeeds, collectIconSuggestions, collectIconlistNoIcons, titleIconOfNode } from "./05-icons.mjs";
 import { mapBlocksToLayout } from "./06-block-renderers.mjs";
 import { buildDeckHtmlFromModel, adaptCanonicalPptJson, adaptLearnWeaverExport } from "./07-assembly.mjs";
 import { annotateQuoteLayout, quoteSplitCountForBlocks, splitQuoteSlideBlocks } from "./quote-layout.mjs";
+import { quoteFormIsSet } from "./quote-forms.mjs";
+import { annotateQuoteSlide, slideReader } from "./slide-quote-reading.mjs";
+import { checkContentLines } from "./slide-containers.mjs";
+import { outlineFrontmatterMeta, slideAttrsFromNode } from "./slide-attrs.mjs";
 import { timelineContinuationParts } from "./timeline-layout.mjs";
 import { annotateCodeLayout } from "./code-layout.mjs";
 import { annotateSimulationLayout, simulationMode, simulationLayoutForFence } from "./simulation-layout.mjs";
 import { annotateTextLayout } from "./text-layout.mjs";
 import { resolveSlideFrame, FRAME_BUILTINS } from "./11-frame.mjs";
 import { parseSimpleYaml } from "./simple-yaml.mjs";
-import { resolveTitleLook, TITLE_LOOKS, TITLE_LOOK_PLACES } from "./title-look.mjs";
+import { resolveTitleLook, TITLE_LOOKS, TITLE_LOOK_TONES } from "./title-look.mjs";
 import { resolveScreenshotStyle, SCREENSHOT_STYLES } from "./screenshot-row.mjs";
 import { resolveShotList, SHOT_LIST_ARRANGEMENTS } from "./slot-composition.mjs";
 import { posterBlockFor, posterAccentFor, applyAuthoredPosters, TITLE_STYLES } from "./title-poster.mjs";
-import { parseOutlineTree } from "./14-outline-tree.mjs";
+import { parseOutlineTree, classifyContentLines } from "./14-outline-tree.mjs";
 import { blankHtmlComments } from "./html-comments.mjs";
 import { audienceSourceLines } from "./slide-script.mjs";
 import { readDeckFlag, deckFlagOn, readDeckChoice, readDeckMinutes, DECK_PALETTES, DECK_FONTS, DECK_LOGO_COLOURS } from "./deck-settings.mjs";
@@ -30,11 +34,12 @@ import { resolveNarrowColumns } from "./narrow-columns.mjs";
 import { resolveImageSteps } from "./image-steps.mjs";
 import { resolveEmphasisSteps } from "./emphasis-steps.mjs";
 import { resolvePlayOnNext } from "./media-steps.mjs";
-import { pollDirectivesFor, pollDefinitionFor, rebasePollDefinition } from "./poll-authoring.mjs";
+import { pollDirectivesFor, rebasePollDefinition } from "./poll-authoring.mjs";
 import { preworkFeedsFromTree, preworkFindings, preworkFromTree, takeRightMarkers } from "./prework.mjs";
 import { readReactionsValue, reactionWarnings } from "./reaction-sets.mjs";
 import { SECTION_ONLY_TRIGGER_KEYS } from "../triggers.mjs";
-import { isStatementDimensionKey, resolveStatementOptions } from "./statement-options.mjs";
+import { resolveStatementOptions } from "./statement-options.mjs";
+import { LIST_STYLES, cardsLayoutDecision, deckTriggerDefaultsFrom, foldChildLayoutNodes, impliedListStyle, nodeContentLinesAndAttrs, sectionDividerDecision, slideLayoutPlan } from "./authored-layout.mjs";
 import { pictureKeyForSlide } from "./10-projections.mjs";
 import { createAssetContainment, remoteReferenceUrl } from "./asset-containment.mjs";
 import { referenceFileName, shownReference } from "./shown-reference.mjs";
@@ -44,68 +49,21 @@ import { withEmbedLead, embedPageTitle } from "./embed-frame.mjs";
 // 8. Source adapters — outline v2/v1, JSON, static HTML -> model; prepareSource dispatches
 // =============================================================================
 
-// AUTHOR WINS (Composition ticket 1). A heading that carries child headings and an empty body is
-// SHAPED like a section divider, so structure supplies the divider DEFAULT — layout `section-title`
-// plus the derived section/subsection role. It is a default, never a verdict: the moment the author
-// writes a token of their own on that heading the slide is theirs, and the normal `inferLayout` +
-// role derivation run with the author's tokens winning. These keys are the exception — they carry
-// no design decision, so a heading wearing only these is still bare:
-//   • identity + provenance (the shared registry's `systemTokens`, entries.ts), stamped by the app;
-//   • the section-scoped triggers, which configure the SECTION (its accent, its timer, how its
-//     children are shown) and say nothing about this heading's own slide — a container section is
-//     divider-shaped by definition.
-const DIVIDER_NEUTRAL_ATTR_KEYS = new Set([
-  "id", "tags", "from", "clonedFrom",
-  ...SECTION_ONLY_TRIGGER_KEYS.map((entry) => entry.key),
-  "timer"
-]);
+// The slide reader over the compiler's lexer (slide-quote-reading.mjs, which the app's check before a quote write
+// runs too): the slide's poll, and one outline-tree node read up to its mapped blocks.
+const { probeNodeSlide, readSlidePoll } = slideReader(lexMarkdownBlocks);
 
-// The divider roles, and the tokens that ASK for a divider. `{sub}` is the registered
-// subsection-divider trigger and `{role=section-title}` / `{role=subsection-title}` name the
-// divider outright: an author writing one of those wants the divider, so it can never suppress it.
-const DIVIDER_ROLES = new Set(["section-title", "subsection-title"]);
-const asksForDivider = (key, attrs) => key === "sub"
-  || ((key === "role" || key === "layout") && DIVIDER_ROLES.has(attrs?.[key]));
+// The section-divider default (`sectionDividerDecision`), the layout inference and the child-fold decision
+// live in authored-layout.mjs: pure, so the editor asks the very functions the compiler runs.
+// slide-quote-reading.mjs and slide-containers.mjs hold the same decisions for the app's check before a
+// quote write (same rules, the address under a quotation included: authored-layout.mjs inferSlideLayout).
+export { sectionDividerDecision };
 
-// The ABSORBING layout families: each one pulls its `####` children INTO the parent slide
-// (foldChildLayoutNodes). A fold leaves the parent holding cards and no children, so a heading that
-// still has BOTH its children and an empty body was REFUSED the fold — wrong child count: contrast
-// wants 2–3, compare and columns want 2+. Their slide would render with nothing in it, so the
-// divider stands. A divider beats a blank slide, and the refusal is already reported on its own
-// terms (contrast-groups-count).
-const ABSORBING_LAYOUTS = new Set(["contrast", "compare", "columns", "cards", "image-grid", "carousel"]);
-
-/**
- * The ONE decision both the slide emitter and the sequencer's spine probe ask: is this heading a
- * section divider by default, and if its shape says yes, did the author's own tokens override it?
- *
- * @param {{isSection?: boolean, lines?: string[], cards?: unknown[]}} slide — the slide (or probe).
- * @param {Iterable<string>} authoredKeys — attribute keys THIS heading set itself (its trigger
- *   group plus any stray trigger line in its body). Deck-wide `triggers:` defaults are deliberately
- *   excluded: they are not a decision about this slide.
- * @param {string} [authoredLayout] — the layout `inferLayout` reads off the author's tokens. Only
- *   used to spot an absorbing family whose fold was refused.
- * @returns {{divider: boolean, structural: boolean, foldRefused: boolean, authorTokens: string[]}}
- *   `structural` = the shape qualifies; `divider` = the divider default actually applies;
- *   `foldRefused` = the divider stands because the author's absorbing layout has nothing to show;
- *   `authorTokens` = the sorted author keys that overrode it (empty unless `structural && !divider`).
- */
-export function sectionDividerDecision(slide, authoredKeys, authoredLayout) {
-  const structural = Boolean(slide?.isSection)
-    && !(slide?.lines || []).some((line) => String(line).trim())
-    && (slide?.cards || []).length === 0;
-  if (!structural) return { divider: false, structural: false, foldRefused: false, authorTokens: [] };
-  if (ABSORBING_LAYOUTS.has(authoredLayout)) {
-    return { divider: true, structural: true, foldRefused: true, authorTokens: [] };
-  }
-  const attrs = slide?.attrs || {};
-  const authorTokens = [...new Set(authoredKeys || [])]
-    .filter((key) => !DIVIDER_NEUTRAL_ATTR_KEYS.has(key) && !asksForDivider(key, attrs))
-    .sort();
-  return { divider: authorTokens.length === 0, structural: true, foldRefused: false, authorTokens };
-}
-
-function markdownLinesToHtml(lines) {
+// `stripParagraphIcons` (plain view ticket 07): the legacy v1 adapter renders a slide body through
+// this function, not through the block renderers, so it draws no paragraph icon. It still removes
+// a paragraph's trailing `{icon=NAME}` (the lexer's own reading, takeParagraphIcon), so the token
+// is never printed on a slide or a handout. Notes are rendered as written.
+function markdownLinesToHtml(lines, { stripParagraphIcons = false } = {}) {
   const html = [];
   let paragraph = [];
   let list = [];
@@ -113,7 +71,8 @@ function markdownLinesToHtml(lines) {
   // so these are safe and not double-escaped).
   function flushParagraph() {
     if (paragraph.length) {
-      html.push(`<p>${renderInline(paragraph.join(" "))}</p>`);
+      const text = stripParagraphIcons ? takeParagraphIcon(paragraph.join(" ")).text : paragraph.join(" ");
+      if (text) html.push(`<p>${renderInline(text)}</p>`);
       paragraph = [];
     }
   }
@@ -304,7 +263,7 @@ function adaptMarkdownOutline(markdown, fallbackTitle) {
       section: current.section,
       title: current.title,
       navTitle: current.title,
-      html: markdownLinesToHtml(current.body),
+      html: markdownLinesToHtml(current.body, { stripParagraphIcons: true }),
       notes: markdownLinesToHtml(current.notes)
     });
   }
@@ -428,7 +387,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
   if (markdown.startsWith("---")) {
     const end = markdown.indexOf("\n---", 3);
     if (end >= 0) {
-      meta = parseSimpleYaml(markdown.slice(3, end).trim());
+      meta = outlineFrontmatterMeta(markdown);
       // Blank the frontmatter IN PLACE (keep its newlines) instead of removing it, so a body line
       // index equals the real source line number — the per-slide sourceLine must point at the true
       // outline line for the editor↔strip sync (no drift).
@@ -576,8 +535,8 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
   if (titleStyleChoice.state === "unknown") warnings.push(`title-style-unknown:${titleStyleChoice.raw}`);
   const titleLookChoice = readDeckChoice(meta.title_look ?? meta["title-look"], ["default", ...TITLE_LOOKS]);
   if (titleLookChoice.state === "unknown") warnings.push(`title-look-unknown:${titleLookChoice.raw}`);
-  const titleLookAtChoice = readDeckChoice(meta.title_look_at ?? meta["title-look-at"], TITLE_LOOK_PLACES);
-  if (titleLookAtChoice.state === "unknown") warnings.push(`title-look-at-unknown:${titleLookAtChoice.raw}`);
+  const titleLookToneChoice = readDeckChoice(meta.title_look_tone ?? meta["title-look-tone"], TITLE_LOOK_TONES);
+  if (titleLookToneChoice.state === "unknown") warnings.push(`title-look-tone-unknown:${titleLookToneChoice.raw}`);
   const claimStyleChoice = readDeckChoice(meta.claim_style ?? meta["claim-style"], CLAIM_STYLES);
   if (claimStyleChoice.state === "unknown") warnings.push(`claim-style-unknown:${claimStyleChoice.raw}`);
   const screenshotListChoice = readDeckChoice(meta.screenshot_list ?? meta["screenshot-list"], SHOT_LIST_ARRANGEMENTS);
@@ -598,102 +557,10 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
   // and overridden by anything the slide sets itself (precedence: trigger line > heading >
   // frontmatter). Per-slide-only keys make no sense deck-wide and are barred with a warning:
   // layout (and its bare-word shorthands) and id.
-  const deckTriggerDefaults = {};
-  if (typeof meta.triggers === "string" && meta.triggers.trim()) {
-    const parsed = parseHeadingAttrs(`{${meta.triggers.replace(/[{}]/g, " ").trim()}}`);
-    for (const w of parsed.warnings || []) warnings.push(w);
-    for (const [key, value] of Object.entries(parsed.attrs)) {
-      if (key === "layout" || key === "id") {
-        warnings.push(`frontmatter-trigger-ignored:${key}=${value}`);
-        continue;
-      }
-      deckTriggerDefaults[key] = value;
-    }
-  }
-
-  function inferLayout(s) {
-    if (s.attrs.layout) return s.attrs.layout;
-    // Value-form statement triggers imply their layout just as {contrast=tint} implies contrast.
-    if (s.attrs.statement != null) return "statement";
-    // Ticket 02: so do the per-dimension statement tokens ({statement-bg=full}, …) — read from the
-    // slide's OWN trigger line only, so a deck-wide `triggers:` default never makes every slide one.
-    if ((s.authoredAttrKeys ?? []).some(isStatementDimensionKey)) return "statement";
-    // {2col}/{3col} resolve to a bare `cols` attr with no explicit layout — pin the columns
-    // layout when a column count is present (a `cols=N` always means "lay these out in columns").
-    if (s.attrs.cols != null && s.attrs.cols !== true) return "columns";
-    // {timeline=dynamic|rail|…} without a bare {timeline}: the mode attr alone means timeline
-    // (the cols→columns / chart-shape pattern).
-    if (s.attrs.timeline != null && s.attrs.timeline !== true) return "timeline";
-    // {barchart}/{piechart}/{linechart}/{curve} resolve to a bare `chart` attr with no explicit
-    // layout — any chart shape means "draw this as a chart" (the cols→columns pattern).
-    if (s.attrs.chart != null && s.attrs.chart !== true) return "chart";
-    // {curve=sigmoid}: `curve` as a VALUE attr means the conceptual S-curve layout. (Bare {curve}
-    // resolves to chart=line via the dictionary and never sets a `curve` attr, so no clash.)
-    if (s.attrs.curve === "sigmoid") return "sigmoid";
-    // {contrast=cards} (the legacy pair-card device) is a `contrast` VALUE attr with no explicit
-    // layout — asking for a contrast variant means the contrast layout.
-    if (s.attrs.contrast != null && s.attrs.contrast !== true) return "contrast";
-    if (s.attrs.equation != null && s.attrs.equation !== true) return "equation";
-    // {blocks:RxC} pins a grid's dimensions, so it also IMPLIES the grid layout when no explicit
-    // layout is set (an author writing `{blocks:3x3}` wants a grid).
-    if (parseGridDims(s.attrs.blocks)) return "grid";
-    // {cards=stepped} sets a `cards` VALUE attr (no explicit layout); asking for a cards variant
-    // means the cards layout (the cols→columns pattern). Bare {cards} sets layout=cards above.
-    // ADR-0032: a NUMBER is a board's cards-per-phone setting ({cards=3}), never the cards layout.
-    if (s.attrs.cards != null && s.attrs.cards !== true && !/^\d+$/.test(String(s.attrs.cards))) return "cards";
-    if (s.cards.length) return "cards";
-    const blocks = lexMarkdownBlocks(s.lines);
-    const hasMedia = blocks.some((b) => ["image", "embed", "video"].includes(b.type));
-    const hasList = blocks.some((b) => b.type === "list");
-    // ADR-0023 §4: a claim is a wholly bold PARAGRAPH — it occupies the same slot, so layout
-    // inference must not see a slide differently because its prose happens to be a claim.
-    const hasParagraph = blocks.some((b) => b.type === "paragraph" || b.type === "claim");
-    const hasQuote = blocks.some((b) => b.type === "quote");
-    const hasText = hasList || hasParagraph || hasQuote;
-    // A slide carrying a fenced code/trace block (and no media) is a code slide: a `trace` block
-    // gets the trace layout, any other code gets the generic code layout. The big title rides
-    // above the panel. Media + code still falls through to copy-visual/media below.
-    const codeBlock = blocks.find((b) => b.type === "code");
-    if (codeBlock && !hasMedia) return simulationLayoutForFence(codeBlock.lang) || (codeBlock.lang === "trace" ? "trace" : "code");
-    // A timeline is a graphical element (like media). When it is paired with a COMMENT — a
-    // standalone paragraph or quote, no other media — lay the two side by side (timeline one
-    // column, comment beside, centred as a unit) instead of stacking the comment under the
-    // rail. This reuses the copy-/list-visual column grammar (Fix 1). A timeline with a list
-    // (not a comment), or a bare timeline, keeps the single-column `timeline` layout.
-    if (blocks.some((b) => b.type === "timeline")) {
-      const hasComment = (hasParagraph || hasQuote) && !hasMedia && !hasList;
-      return hasComment ? "timeline-visual" : "timeline";
-    }
-    // F1: media + list only (no paragraphs, no quotes) → list-visual two-column layout.
-    // The big title is kept; the feature-list fills one column, the media the other.
-    if (hasMedia && hasList && !hasParagraph && !hasQuote) return "list-visual";
-    // A table counts as text-like content here (2026-06-09): table + screenshot slides were
-    // falling through to the stacked full-width media layout; they read far better as the
-    // copy-visual pair (image left, table right).
-    if (hasMedia && (hasText || blocks.some((b) => b.type === "table"))) return "copy-visual";
-    if (hasMedia) return "media";
-    // Quote-only slide: the slide's whole content is one (or more) `>` quote block(s) and
-    // nothing else structural — no list, no media, no paragraph, no timeline/table/code. The
-    // quote IS the slide, full-bleed; the heading is NAV-ONLY by default (not drawn — see the
-    // titleMode default for `quote`). Re-show the heading with `{title=show}`.
-    // A practice quotation (ticket 05: a `>` line carrying a key cap) is an instruction on an
-    // ordinary slide, never a quote-only slide: its title stays and it is not split.
-    if (hasQuote && !hasList && !hasParagraph
-        && blocks.some((b) => b.type === "quote" && !b.practice)
-        && !blocks.some((b) => ["timeline", "table", "code"].includes(b.type))) {
-      return "quote";
-    }
-    // Prose-only slide: at least one paragraph and nothing else structural (no list,
-    // media, timeline, table, quote). The paragraph IS the point — render it as a
-    // statement (large, beside the title), not as an empty list.
-    const hasStructural = blocks.some((b) =>
-      ["list", "timeline", "table", "quote"].includes(b.type));
-    if (hasParagraph && !hasStructural) return "statement";
-    // A bare leaf heading states itself. Every token that implies a different layout or role has
-    // already returned above, so presentation and stepping tokens must not veto this fallthrough.
-    if (blocks.length === 0 && !s.isSection) return "statement";
-    return "list";
-  }
+  // The reading itself is authored-layout.mjs deckTriggerDefaultsFrom, which the editor runs too
+  // (slide-attrs.mjs deckTriggerDefaultsFromMeta is the same reading for the app's quote checks).
+  const { defaults: deckTriggerDefaults, warnings: deckTriggerWarnings } = deckTriggerDefaultsFrom(meta.triggers);
+  for (const w of deckTriggerWarnings) warnings.push(w);
 
   // ADR-0022: the automatic stepped MEDIA gallery (buildMediaGalleryCards) is REMOVED. A slide
   // with 2+ images and no ####/{carousel} is a GALLERY now — a grid on ONE slide (the normal media
@@ -898,34 +765,32 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     // the rendered list) and the text the phone reads, before anything else reads either.
     let checkScriptSource = null;
     if (slide.attrs.check === true) {
-      slide.lines = takeRightMarkers(slide.lines).lines;
+      slide.lines = checkContentLines(slide.attrs, slide.lines);
       const scriptLines = Array.isArray(slide.scriptSourceLines) ? slide.scriptSourceLines : slide.sourceLines;
       if (Array.isArray(scriptLines)) checkScriptSource = takeRightMarkers(scriptLines, { throughHeadings: true }).lines.join("\n").trimEnd();
       // Fix round S2: the slide's own source leaves the compiler without the marker too, so no
       // output tree (projection rows, search, the Library) carries the right answer.
       if (Array.isArray(slide.sourceLines)) slide.sourceLines = takeRightMarkers(slide.sourceLines, { throughHeadings: true }).lines;
     }
-    const authored = pollDirectivesFor(slide.lines);
-    const authoredPoll = pollDefinitionFor(slide, lexMarkdownBlocks(authored.contentLines), baseId, authored, warnings);
-    if (authoredPoll) slide.lines = authored.contentLines;
+    // The slide's poll, and its lines without the poll's directive lines: by the function the app reads a slide with too.
+    const pollRead = readSlidePoll(slide, baseId, warnings);
+    const authoredPoll = pollRead.poll;
+    slide.lines = pollRead.lines;
     // Ticket 04: the slide's own reactions ({reactions=…}); absent is the standard set.
     const reactionSet = readReactionsValue(slide.attrs.reactions);
     warnings.push(...reactionWarnings(baseId, reactionSet.issues));
     // Structure proposes the divider, the author disposes (see sectionDividerDecision).
-    const authoredLayout = inferLayout(slide);
-    const dividerDecision = sectionDividerDecision(slide, slide.authoredAttrKeys, authoredLayout);
+    // The slide's layout before its cards are looked at (authored-layout.mjs slideLayoutPlan, which
+    // the editor runs too): tokens, then content, then the divider default, then chart-only. Quote
+    // forms, ticket 10: the address under the quotation is adopted as its source line there, as
+    // slide-quote-reading.mjs readSlideBlocks does for the app's check before a quote write.
+    const layoutPlan = slideLayoutPlan(slide, lexMarkdownBlocks);
+    const { dividerDecision, rawBlocks } = layoutPlan;
     const titleOnlySection = dividerDecision.divider;
     if (dividerDecision.structural && !dividerDecision.divider) {
       warnings.push(`divider-default-suppressed-by-tokens:${slide.id}:${dividerDecision.authorTokens.join(", ")}`);
     }
-    let layout = titleOnlySection ? "section-title" : authoredLayout;
-    const rawBlocks = lexMarkdownBlocks(slide.lines);
-    if (
-      rawBlocks.length > 0
-      && rawBlocks.every((block) => block?.type === "object-chart")
-    ) {
-      layout = "chart";
-    }
+    let layout = layoutPlan.layout;
     // Wire timeline presentation attr from the slide heading onto every timeline block:
     //   {timeline=rail|columns|compact|horizontal|spine|pills}  → presentation mode (else auto)
     for (const b of rawBlocks) {
@@ -952,9 +817,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
       // token resolved a list style, so {numbered}{iconlist=list} stays numbers (the variant is
       // still recorded) and {iconlist=list} alone still becomes icons. Token order cannot
       // resurrect the override: attrs are a map, resolved before this runs.
-      if (slide.attrs.liststyle == null || slide.attrs.liststyle === true) {
-        slide.attrs.liststyle = "icons";
-      }
+      // (the assignment itself is authored-layout.mjs impliedListStyle, below)
     }
     // ADR-0028 §6: {numbered=square|plain|styled} picks how a numbered list draws its number
     // (square is the default and needs no class). Like {iconlist=…}, the value form is still a
@@ -965,9 +828,12 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
       const variant = slide.attrs.numbered === true ? "" : String(slide.attrs.numbered).trim().toLowerCase();
       if (variant === "plain" || variant === "styled") numberStyle = variant;
       else if (variant && variant !== "square") warnings.push(`numbered-unknown:${variant}`);
-      if (slide.attrs.liststyle == null || slide.attrs.liststyle === true) {
-        slide.attrs.liststyle = "numbers";
-      }
+    }
+    // {iconlist=…} first, then {numbered=…}: the list style either implies when the author wrote
+    // none (authored-layout.mjs impliedListStyle, which the editor runs too).
+    {
+      const implied = impliedListStyle(slide.attrs);
+      if (implied !== slide.attrs.liststyle) slide.attrs.liststyle = implied;
     }
     // ADR-0028 §10, ticket 02 (29 Sep): a statement's options are separate choices — sidebar,
     // background, alignment, bar and sidebar colour — and the older one-word options
@@ -1111,7 +977,6 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
         if (b && b.type === "feature-list") b.sublist = "aside";
       }
     }
-    const LIST_STYLES = new Set(["numbers", "icons", "logos", "plain"]);
     if (slide.attrs.liststyle != null && slide.attrs.liststyle !== true) {
       if (LIST_STYLES.has(slide.attrs.liststyle)) {
         for (const b of blocks) {
@@ -1139,28 +1004,19 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     //   • {cards=grid} → the static cards grid.
     // The auto stepped MEDIA gallery is removed (ADR-0022): 2+ images with no ####/{carousel} now
     // fall through to the normal media/copy-visual layout (a grid on one slide + the lightbox).
-    const wantCarouselTrigger = slide.attrs.carousel === true;
-    // {compare} (ADR-0005 "50/50 comparison"): the slide's first two #### groups become two
-    // equal halves side by side. Needs exactly two
-    // groups; a compare slide with <2 groups warns and renders nothing meaningful.
-    const isCompare = layout === "compare" && fromHashCards && slide.cards.length >= 2;
-    const isImageGridHash = fromHashCards && layout === "image-grid";
-    const isStaticCompare = fromHashCards && layout === "contrast"
-      && slide.cards.length >= 2 && slide.cards.length <= 3;
-    const isCardsGridForced = slide.attrs.cards === "grid" || slide.attrs.cards === "rows";
+    // Which of the card treatments the slide gets, and the layout it is then drawn in:
+    // authored-layout.mjs cardsLayoutDecision (the editor runs it too; slide-containers.mjs
+    // slideContainerKind is the same decision for the app's check before a quote write). In its
+    // order of precedence:
+    //   compare        {compare} with 2+ #### groups: the first two are the halves;
+    //   image-grid     {image-grid} + #### cards: static grid cells;
+    //   static-compare {contrast} + 2-3 #### groups: a static side-by-side comparison;
+    //   carousel       #### cards on the cards default, {carousel}, or {cards=stepped} over a flat list;
+    //   static-cards   {cards=grid|rows} on #### cards, or an adaptive flat-list {cards}.
+    const cardsDecision = cardsLayoutDecision({ layout, attrs: slide.attrs, cardCount: slide.cards.length });
     const isCardsRows = slide.attrs.cards === "rows";
-    // A #### carousel only when the slide's layout is the cards DEFAULT (bare #### or {cards}). An
-    // explicit non-cards layout ({columns}, {smartart}, …) uses #### for ITS OWN structure, not a
-    // carousel. ({image-grid}/{contrast} are the named static #### exceptions above.)
-    const hashCarousel = fromHashCards && layout === "cards" && !isCardsGridForced;
-    // {cards=stepped} over a FLAT list is the legacy "step these cards" intent → a carousel too.
-    const flatStepped = !fromHashCards && layout === "cards" && slide.attrs.cards === "stepped";
-    // STATIC cards GRID (ADR-0021, unchanged): an adaptive flat-list {cards} (no ####, not stepped)
-    // OR {cards=grid} on #### cards → all cards visible at once. NOT a carousel.
-    const flatStaticCards = !fromHashCards && layout === "cards" && slide.attrs.cards !== "stepped";
-    const hashStaticCards = fromHashCards && isCardsGridForced;
 
-    if (isCompare) {
+    if (cardsDecision.kind === "compare") {
       // {compare} (ADR-0005): the first two #### groups become the two equal halves. Each half's
       // heading is its small-caps mono label; its lines become the half's content (statements
       // or lists). The slide's own title is nav-only (assembly hides it, like {quote}); half B
@@ -1169,26 +1025,26 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
         label: c.title || "",
         blocks: featurizeCardBlocks(quotifyCardBlocks(lexMarkdownBlocks(c.lines))),
       }));
-      layout = "compare";
+      layout = cardsDecision.layout;
       blocks = [{ type: "compare", halves }];
-    } else if (isImageGridHash) {
+    } else if (cardsDecision.kind === "image-grid") {
       // {image-grid} + #### cards: the cards become the GRID CELLS (image on top, the card's
       // title + text as the note beneath) — a static all-visible grid, NOT a carousel.
       const galleryCards = slide.cards.flatMap((c) => splitQuoteCards(c.title, featurizeCardBlocks(quotifyCardBlocks(lexMarkdownBlocks(c.lines)))));
       blocks = [...blocks.filter((b) => !(b && b.type === "image-grid")), { type: "image-grid", cells: galleryCards }];
       const igDims = slide.attrs.blocks != null && slide.attrs.blocks !== true ? parseGridDims(slide.attrs.blocks) : null;
       if (igDims) blocks[blocks.length - 1].dims = igDims;
-    } else if (isStaticCompare) {
+    } else if (cardsDecision.kind === "static-compare") {
       // {contrast} + 2-3 #### groups = a STATIC side-by-side comparison (both columns visible).
       const galleryCards = slide.cards.flatMap((c) => splitQuoteCards(c.title, featurizeCardBlocks(quotifyCardBlocks(lexMarkdownBlocks(c.lines)))));
-      layout = "contrast";
+      layout = cardsDecision.layout;
       blocks = [{ type: "cards", title: slide.title, kicker: autoKicker(slide), cards: galleryCards, stepped: false, staticCompare: true }];
-    } else if (hashCarousel || wantCarouselTrigger || flatStepped) {
+    } else if (cardsDecision.kind === "carousel") {
       // CAROUSEL. Build one full-bleed sub-slide per #### card (each card's content run through the
       // sub-slide layout pipeline), or — for {carousel}/{cards=stepped} with no #### — one sub-slide
       // per top-level block. Stash on the record as `carousel`; renderSlideContent wraps each in the
       // existing data-exclusive stepping container as a full-bleed `.card.carousel-subslide`.
-      layout = "carousel";
+      layout = cardsDecision.layout;
       // The parent carousel head owns the shared context (section eyebrow · parent title), so a
       // sub-slide draws ITS OWN title only — no repeated section kicker (ADR-0022).
       const subKicker = "";
@@ -1222,7 +1078,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
           slide.attrs = { ...slide.attrs, notitle: false };
         }
       }
-    } else if (hashStaticCards || flatStaticCards) {
+    } else if (cardsDecision.kind === "static-cards") {
       // STATIC cards GRID — all cards visible at once (ADR-0021), NOT a carousel. #### cards forced
       // static via {cards=grid}, or an adaptive flat-list {cards}. Source-paragraph extraction
       // happens in the assembly (cards layout).
@@ -1233,7 +1089,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
         const sourceList = !fromHashCards
           ? rawBlocks.find((block) => block && block.type === "list" && Array.isArray(block.items) && block.items.length)
           : null;
-        layout = "cards";
+        layout = cardsDecision.layout;
         blocks = fromHashCards ? blocks : [];
         blocks = [...blocks, {
           type: "cards",
@@ -1302,7 +1158,9 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     // ADR-0023 §5 rule 2: a quote with no attribution is attributed to the slide's own title,
     // recorded on the block (`citeFromTitle`) so every consumer — markup, corpus census,
     // projections, handout — sees the same attribution.
-    applyQuoteTitleAttribution(blocks, slide.title);
+    // Quote forms: decide the form first; a quote that draws as a form is never split, and a form
+    // that refuses re-enters annotateQuoteLayout and the splitter as the Plain quote it is.
+    annotateQuoteSlide(blocks, layout, slide.attrs, slide.title, baseId, (warning) => warnings.push(warning));
     annotateQuoteLayout(blocks, layout, baseId, (warning) => warnings.push(warning));
     annotateCodeLayout(blocks, layout, baseId, (warning) => warnings.push(warning));
     // AI chat / terminal simulations: parse the fence the layout tag names (chat, chat-lanes, terminal, terminal-agent).
@@ -1341,6 +1199,11 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
       statementOptions,
       backgroundTint,
       sourceLine: slide.sourceLine, // 1-based line of this slide's heading (cursor↔strip sync)
+      // Quote forms, ticket 10: the slide's `form` names a form (its own token or the talk's `triggers:`). Only then
+      // does the phone text read a quoted paragraph and its source as a quote and its attribution (slide-script.mjs).
+      // Absent on every other slide, so a slide with no form has the record it always had. It paints nothing, so it
+      // is left out of the picture key (pictureKeyForSlide, 10-projections.mjs): a slide keeps its thumbnail.
+      ...(layout === "quote" && quoteFormIsSet(slide.attrs.form) ? { quoteFormSet: true } : {}),
       sourceMarkdown: Array.isArray(slide.sourceLines) ? slide.sourceLines.join("\n").trimEnd() : "",
       // Folded layouts only: the source the phone text view parses (slide-script.mjs), covering
       // the folded children. Absent elsewhere, so the script reads sourceMarkdown.
@@ -1352,6 +1215,14 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
       kicker: titleOnlySection && slide.nodeLevel > 2 ? slide.sectionTitle : autoKicker(slide),
       navTitle: slide.title,
       title: slide.title,
+      // Plain view ticket 07 (spec T14): `{icon=NAME}` written on the heading line itself, in an
+      // authored group, is the title's icon (the tree's node.titleIcon; titleIconOfNode resolves
+      // it as a list item's explicit icon is resolved). Nothing else puts an icon in a title: not
+      // the slide's Trigger line, not the front matter's `triggers:` default (both land in
+      // slide.attrs, which is deliberately NOT read here), not braces glued to the heading's text.
+      // `{title-icon=above}` stacks the icon over the title; it only places an icon the heading
+      // has, so it may come from any level (heading, Trigger line, deck default).
+      ...(titleIconOfNode(slide.treeNode) ? { titleIcon: titleIconOfNode(slide.treeNode), ...(slide.attrs["title-icon"] === "above" ? { titleIconAt: "above" } : {}) } : {}),
       ...(authoredPoll ? { poll: authoredPoll } : {}),
       // Ticket 04: what the audience bar and the presenter chip offer on this slide — stored ids
       // (`agree`, `custom:Too fast`), [] for off. Absent is the standard three.
@@ -1454,11 +1325,11 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
       })(),
       // {sidebar}: the left title rail renders as a solid dark panel (PPT "Sidebar title" look).
       titleStyle: slide.attrs.titlestyle === "sidebar" ? "sidebar" : "",
-      // 0.37 ticket 04: the top title's look (kicker | label | tab) and the kicker's placement —
+      // 0.37 ticket 04: the top title's look (kicker | label | tab) and the Tab's tone (soft) —
       // slide > section > deck (title-look.mjs). Named apart from `title_style` (poster variant).
       ...(() => {
-        const { look, place } = resolveTitleLook(slide.attrs || {}, sectionDefaultsMap[slide.sectionTitle] || {}, deckDefaults, meta);
-        return { titleLook: look, titleLookPlace: place };
+        const { look, tone } = resolveTitleLook(slide.attrs || {}, sectionDefaultsMap[slide.sectionTitle] || {}, deckDefaults, meta);
+        return { titleLook: look, titleLookTone: tone };
       })(),
       split: slide.attrs.split != null && slide.attrs.split !== true ? String(slide.attrs.split).trim() : "",
       // Ticket 13: {page-60|70|80} (key embedsplit) — raw text here, validated against a fixed set
@@ -1571,65 +1442,22 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
   // `authoredKeys`, when supplied, collects every attribute key this node set ITSELF via a stray
   // trigger line — the caller seeds it with the heading's own trigger group. It is how the divider
   // decision tells an author's token from a deck-wide `triggers:` default (both land in `attrs`).
-  function contentLinesAndAttrs(node, attrs, { emitWarnings = true, authoredKeys = null } = {}) {
-    const linesOut = [];
-    let fenceOpening = null;
-    const contentLines = node.contentLines || [];
-    for (let index = 0; index < contentLines.length; index += 1) {
-      const line = contentLines[index];
-      if (fenceOpening) {
-        linesOut.push(line);
-        if (isMarkdownFenceClosingLine(line, fenceOpening)) fenceOpening = null;
-        continue;
-      }
-      const open = parseMarkdownFenceOpeningLine(line);
-      if (open) {
-        linesOut.push(line);
-        fenceOpening = open;
-        continue;
-      }
-      const stray = chartObjectTokenAt(contentLines, index) ? null : parseTriggerLine(line);
-      if (stray) {
-        if (emitWarnings) {
-          for (const w of stray.warnings || []) warnings.push(w);
-        }
-        Object.assign(attrs, stray.attrs);
-        if (authoredKeys) for (const key of Object.keys(stray.attrs || {})) authoredKeys.add(key);
-      } else {
-        linesOut.push(line);
-      }
-    }
-    return linesOut;
-  }
+  // Trigger-shaped content lines fold into the slide's attrs (authored-layout.mjs, which the editor
+  // runs too; slide-attrs.mjs foldContentTriggerLines is the same fold for the app's quote checks).
+  const contentLinesAndAttrs = (node, attrs, { emitWarnings = true, authoredKeys = null } = {}) =>
+    nodeContentLinesAndAttrs(node, attrs, { warnings: emitWarnings ? warnings : null, authoredKeys });
 
   // How many slides a tree node will emit, and the id separator for its continuations: `-N` for
   // a spine/pills/horizontal timeline over its stop cap, `--N` for a quote split across panels (ADR-0023 §9).
   function continuationSplitForNode(node) {
     if (!node || node._sequenceOnly) return { count: 1, separator: "-" };
-    const attrs = { ...deckTriggerDefaults, ...(node.attrs || {}) };
-    const authoredKeys = new Set(Object.keys(node.attrs || {}));
-    const lines = contentLinesAndAttrs(node, attrs, { emitWarnings: false, authoredKeys });
-    const probe = {
-      attrs,
-      lines,
-      cards: [],
-      isSection: (node.children || []).length > 0,
-      authoredAttrKeys: [...authoredKeys]
-    };
-    const authoredLayout = inferLayout(probe);
-    const layout = sectionDividerDecision(probe, authoredKeys, authoredLayout).divider
-      ? "section-title"
-      : authoredLayout;
-    const rawBlocks = lexMarkdownBlocks(lines);
-    for (const b of rawBlocks) {
-      if (b && b.type === "timeline" && attrs.timeline) b.mode = attrs.timeline;
-    }
-    const blocks = mapBlocksToLayout(layout, rawBlocks);
+    // The node read up to its mapped blocks, by the function the app's check before a quote write uses too.
+    const { attrs, layout, blocks } = probeNodeSlide(node, deckTriggerDefaults, mapBlocksToLayout);
     const timelineParts = timelineContinuationParts(blocks, timelineBlockFieldsFromStops);
     if (timelineParts) return { count: timelineParts.length, separator: "-" };
     // The quote's cite decides the last part's budget; the title fills a missing cite (§5 rule 2)
     // exactly as flushSlide will, so the probe and the emitted split agree.
-    applyQuoteTitleAttribution(blocks, node.title);
+    annotateQuoteSlide(blocks, layout, attrs, node.title, "", () => {});
     return { count: quoteSplitCountForBlocks(blocks, layout), separator: "--" };
   }
 
@@ -1728,7 +1556,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     for (const node of nodes || []) {
       if (node._sequenceOnly) continue;
       const isSection = (node.children || []).length > 0;
-      const attrs = { ...deckTriggerDefaults, ...(node.attrs || {}) };
+      const attrs = slideAttrsFromNode(node, deckTriggerDefaults);
       const current = { ...context };
 
       if (node.level !== 2) {
@@ -1800,157 +1628,9 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
   // sequencer emits a single beat and emitNodeSlides emits a single slide (cards = the two halves).
   // Deliberately scans raw contentLines, including trigger-shaped text in code fences: this is the
   // established container-fold contract, distinct from the fence-aware content lexer below.
-  const resolvedNodeAttrs = (node) => {
-    const attrs = { ...deckTriggerDefaults, ...(node.attrs || {}) };
-    const contentLines = node.contentLines || [];
-    const chartBlockLines = new Set();
-    let inFence = false;
-    let fenceMark = "";
-    for (let index = 0; index < contentLines.length; index += 1) {
-      const t = String(contentLines[index]).trim();
-      if (inFence) {
-        const close = t.match(/^(`{3,})\s*$/);
-        if (close && close[1].length >= fenceMark.length) { inFence = false; fenceMark = ""; }
-        continue;
-      }
-      const open = t.match(/^(`{3,})/);
-      if (open) { inFence = true; fenceMark = open[1]; continue; }
-      if (chartObjectTokenAt(contentLines, index)) chartBlockLines.add(index);
-    }
-    for (let index = 0; index < contentLines.length; index += 1) {
-      const line = contentLines[index];
-      if (chartBlockLines.has(index)) continue;
-      const stray = parseTriggerLine(line);
-      if (stray) Object.assign(attrs, stray.attrs);
-    }
-    return attrs;
-  };
-  const nodeResolvesToCompare = (node) => resolvedNodeAttrs(node).layout === "compare";
-  // {columns}/{2col}/{3col} likewise ABSORB their `####` children — each child folds back into
-  // the parent's content as a subheading + its lines, so the columns layout deals them into
-  // side-by-side columns of ONE slide (a column is never a slide of its own; 2026-07-11).
-  const nodeResolvesToColumns = (node) => {
-    const attrs = resolvedNodeAttrs(node);
-    return attrs.layout === "columns" || (attrs.cols != null && attrs.cols !== true);
-  };
-  const nodeResolvesToCarousel = (node) => resolvedNodeAttrs(node).carousel === true;
-  // A fold keeps each child's visible lines; it must keep the rest of what the child authored
-  // too (notes-in-folded-layouts, 2026-09-28). Before this, a folded child's `:::notes` reached
-  // no output, not even the presenter, and the slide's source slice (the phone text view's input,
-  // slide-script.mjs) stopped at the first child. absorbFoldedChildren runs on every fold path:
-  //   - notes: each consumed child's notes (and any deeper unfolded descendant's) are appended to
-  //     the parent's notesLines in source order, each group led by a bold paragraph naming its
-  //     child (`**Child title**`, plain Markdown the notes renderer already draws). A child with
-  //     no notes adds nothing. The parent's own notes come first, as they do in the source.
-  //   - source ranges: `_scriptSourceRanges` lists the source line ranges of what the slide DRAWS
-  //     -- the parent's own block, then each rendered child's content ranges (`visibleCount`:
-  //     compare renders only its first two groups) -- read by buildFoldedScriptSourceLines so the
-  //     phone text view and the Links slide show exactly the children the slide shows. A child's
-  //     content is its own block only (heading to its first descendant): a fold draws a child's
-  //     contentLines, so a `#####` under it is not drawn, nor are the children of a fold container
-  //     nested in it (cards, compare and the rest keep those apart as `_foldedCards` /
-  //     `_compareHalves`). {columns} is the exception: it merges its children into its own
-  //     contentLines, so a columns node's content ranges include its drawn children's.
-  const hasText = (lines) => (lines || []).some((line) => String(line).trim());
-  const trimBlankEdges = (lines) => {
-    let start = 0;
-    let end = lines.length;
-    while (start < end && !String(lines[start]).trim()) start += 1;
-    while (end > start && !String(lines[end - 1]).trim()) end -= 1;
-    return lines.slice(start, end);
-  };
-  // The source line ranges ([first, last], 1-based, inclusive) that hold a node's contentLines.
-  const contentSourceRanges = (node) => {
-    if (Array.isArray(node._contentSourceRanges)) return node._contentSourceRanges;
-    if (!node.sourceLine) return [];
-    return [[node.sourceLine, nodeSourceEndLines.get(node) || node.sourceLine]];
-  };
-  const absorbFoldedChildren = (node, children, visibleCount = children.length) => {
-    const notes = [...(node.notesLines || [])];
-    const visit = (child) => {
-      if (hasText(child.notesLines)) {
-        if (hasText(notes)) notes.push("");
-        notes.push(`**${child.title}**`, "", ...trimBlankEdges(child.notesLines));
-      }
-      for (const grandchild of child.children || []) visit(grandchild);
-    };
-    for (const child of children) visit(child);
-    node.notesLines = notes;
-    if (node.sourceLine) {
-      node._scriptSourceRanges = [
-        ...contentSourceRanges(node),
-        ...children.slice(0, visibleCount).flatMap(contentSourceRanges)
-      ];
-    }
-  };
-  const foldChildrenToCards = (node, children) => {
-    node._foldedCards = children.map((child) => {
-      const childAttrs = { ...deckTriggerDefaults, ...(child.attrs || {}) };
-      const childLines = contentLinesAndAttrs(child, childAttrs, { emitWarnings: false });
-      return { title: child.title, lines: childLines };
-    });
-    absorbFoldedChildren(node, children);
-    node.children = [];
-  };
-  const foldChildLayoutNodes = (nodes) => {
-    for (const node of nodes || []) {
-      foldChildLayoutNodes(node.children || []);
-      const children = node.children || [];
-      if (nodeResolvesToCarousel(node) && children.length) {
-        // Preserve the leaf identities for sequencing before folding their content into the
-        // parent's single DOM slide. The sequencer attaches carousel index/count context.
-        node._sequenceCarouselChildren = children.map((child) => ({
-          id: child.id,
-          title: child.title,
-          attrs: { ...(child.attrs || {}) },
-          children: []
-        }));
-        foldChildrenToCards(node, children);
-        continue;
-      }
-      // ADR-0021 static containers absorb #### groups into one all-visible slide. Carousel stays
-      // first so a node carrying both {carousel} and {cards=grid} keeps its established behaviour.
-      const attrs = resolvedNodeAttrs(node);
-      const staticCards = (attrs.cards === "grid" || attrs.cards === "rows") && children.length >= 1;
-      const imageGrid = attrs.layout === "image-grid" && children.length >= 1;
-      const contrast = attrs.layout === "contrast";
-      if (staticCards || imageGrid || (contrast && children.length >= 2 && children.length <= 3)) {
-        foldChildrenToCards(node, children);
-        continue;
-      }
-      // The static compare renderer accepts only 2–3 groups; folding any other non-empty count
-      // would consume child slides without a renderable representation.
-      if (contrast && children.length && (children.length === 1 || children.length >= 4)) {
-        warnings.push(`contrast-groups-count:${node.id}`);
-      }
-      if (nodeResolvesToColumns(node) && children.length >= 2) {
-        for (const child of children) {
-          const childAttrs = { ...deckTriggerDefaults, ...(child.attrs || {}) };
-          const childLines = contentLinesAndAttrs(child, childAttrs, { emitWarnings: false });
-          node.contentLines = [...(node.contentLines || []), "", `#### ${child.title}`, "", ...childLines];
-        }
-        absorbFoldedChildren(node, children);
-        // The children are now part of this node's contentLines: a parent that folds this node
-        // draws them too, so its script source takes them with this node's own block.
-        if (node._scriptSourceRanges) node._contentSourceRanges = node._scriptSourceRanges;
-        node.children = [];
-        continue;
-      }
-      if (nodeResolvesToCompare(node) && children.length >= 2) {
-        node._compareHalves = children.slice(0, 2).map((child) => {
-          const childAttrs = { ...deckTriggerDefaults, ...(child.attrs || {}) };
-          const childLines = contentLinesAndAttrs(child, childAttrs, { emitWarnings: false });
-          return { title: child.title, lines: childLines };
-        });
-        if (children.length > 2) warnings.push(`compare-extra-groups:${node.title}`);
-        // Extra groups are not drawn (warned above), but their notes are the author's and still
-        // reach the presenter; the phone shows only the two drawn halves.
-        absorbFoldedChildren(node, children, 2);
-        node.children = [];
-      }
-    }
-  };
-  foldChildLayoutNodes(root.children);
+  // The fold itself is authored-layout.mjs foldChildLayoutNodes: the editor runs it too, to know
+  // which headings are slides and what each slide holds.
+  foldChildLayoutNodes(root.children, { deckTriggerDefaults, warnings, nodeSourceEndLines });
 
   dedupeTreeIdsAndInsertSequenceSplits();
   emitNodeSlides(root.children);
@@ -2049,8 +1729,10 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     // `title_style: split|banner` picks the other locked variants. ADR-0023 §6: the poster block
     // is built by the ONE emitter an authored {title} slide also goes through (title-poster.mjs).
     const titleAccent = posterAccentFor(meta);
+    // Plain view ticket 07: an icon written on the `#` line is drawn in the poster's title.
+    const deckTitleIcon = titleIconOfNode({ titleIcon: tree.deckTitleIcon?.icon });
     const titleBlocks = [posterBlockFor(
-      { meta, title, subtitle: meta.subtitle || "" },
+      { meta, title, subtitle: meta.subtitle || "", titleIcon: deckTitleIcon, titleIconAt: tree.deckTitleIcon?.at },
       { role: "opening" }
     )];
     slides.unshift({

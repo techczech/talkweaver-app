@@ -256,13 +256,13 @@ const EFFECTS = {
     expect: { '': '', default: '', kicker: 'kicker', label: 'label', tab: 'tab' },
     unknown: { value: 'sparkle', warning: 'title-look-unknown' }
   },
-  title_look_at: {
-    effect: 'a Kicker title sits near the top edge',
-    meta: ['title_look: kicker'],
+  title_look_tone: {
+    effect: 'a Tab title is drawn soft (a light shade, ink text) or strong (the full section colour, the default)',
+    meta: ['title_look: tab'],
     body: ['## First section', '', '### A content slide', '{titletop}', '', '- One', '- Two'],
-    probe: ({ document }) => document.querySelector('section.slide[data-role="content"]')?.getAttribute('data-title-look-at') ?? '',
-    expect: { '': '', normal: '', edge: 'edge' },
-    unknown: { value: 'high', warning: 'title-look-at-unknown' }
+    probe: ({ document }) => document.querySelector('section.slide[data-role="content"]')?.getAttribute('data-title-look-tone') ?? '',
+    expect: { '': '', strong: '', soft: 'soft' },
+    unknown: { value: 'loud', warning: 'title-look-tone-unknown' }
   },
   palette: {
     effect: 'the section accent cycle switches to the green palette',

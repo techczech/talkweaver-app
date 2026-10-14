@@ -326,7 +326,7 @@ function sectionsFor(layoutName, triggerLine, extra = {}) {
 }
 assert.deepEqual(sectionsFor('list', '{list}{iconlist}'), [
   ['Layout', ['list-style', 'list-style>iconlist-variant', 'icon-level']],
-  ['Title', ['title-placement', 'title-display', 'font-title']],
+  ['Title', ['title-placement', 'title-display', 'title-icon', 'font-title']],
   ['Slide', ['background', 'font-body', 'media-placement', 'section-label', 'claim-style', 'narrow-columns']],
   ['Steps', ['arrival-mode', 'stepping', 'image-steps', 'emphasis-steps']],
   ['Poll', ['poll-type']],
@@ -355,7 +355,7 @@ assert.deepEqual(
   ]),
   [
     ['Layout', ['Style', 'Icon treatment', 'Icons on']],
-    ['Title', ['Placement', 'Display', 'Size']],
+    ['Title', ['Placement', 'Display', 'Icon', 'Size']],
     ['Slide', ['Background', 'Body size', 'Media', 'Section label', 'Claim style', 'Narrow columns']],
     ['Steps', ['Arrival', 'Stepping', 'Step through images', 'Emphasis appears on Next']],
     ['Poll', ['Type']],

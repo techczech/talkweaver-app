@@ -13,6 +13,11 @@
       { "name": "RUN_PREWORK", "class_name": "RunPrework" }
     ]
   },
+  // BARRED: never add a migration that deletes or renames SessionRegistry (`deleted_classes`,
+  // `renamed_classes`, `transferred_classes`), and never clear that object's storage. It keeps the
+  // signing key of every live service that has no SESSION_SIGNING_SECRET (worker/signing-key.ts);
+  // losing it ends every presenter and owner token of that service. See worker/README.md,
+  // "Secrets and the signing key".
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["LiveSession", "SessionRegistry"] },
     { "tag": "v2", "new_sqlite_classes": ["SharedTalk"] },

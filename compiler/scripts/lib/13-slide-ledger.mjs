@@ -39,14 +39,8 @@ export function triggerLineBlock(lines, headingIdx, endIdx = lines.length) {
   return { start, end };
 }
 
-export function lineHasUnclosedBrace(line) {
-  let depth = 0;
-  for (const char of String(line)) {
-    if (char === "{") depth += 1;
-    else if (char === "}" && depth > 0) depth -= 1;
-  }
-  return depth > 0;
-}
+// Lives in slide-blocks.mjs (a module the editor can load too); re-exported for this file's importers.
+export { lineHasUnclosedBrace } from "./slide-blocks.mjs";
 
 // 5-char base36 id, identical recipe to the editor's {-autocomplete
 // (triggerComplete.ts). `taken` guards against the (rare) same-outline collision.

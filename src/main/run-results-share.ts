@@ -19,6 +19,7 @@
 // link's own row is still there, and a link made here whose row is not registered is closed again.
 import { isShareId } from '../shared/share-id.ts'
 import { createKeyedQueue, openOwnerTokenRegistry, ownerFetch, validOwnerToken, type OwnerTokens } from './owner-tokens.ts'
+import { LIVE_ACCESS_REMOVED, sendAsAdmin, type AdminEndpoint } from './live-admin-request.ts'
 import {
   DEFAULT_RUN_SHARE_INCLUDE, runResultsLink, runShareExpiresAt, runSharePayload,
   type RunLike, type RunShareInclude, type RunShareLifetime,
@@ -53,7 +54,7 @@ export interface RunResultsShareDeps {
   /** Where the links' owner tokens are kept (the secrets store). */
   ownerTokens: OwnerTokens
   /** The live Worker and its admin credential. Used to CREATE links only. */
-  endpoint(): Promise<{ baseUrl: string; adminSecret: string }>
+  endpoint(): Promise<AdminEndpoint>
   /** The share-link domain (Settings), or empty for the Worker's own address. */
   linkBase(): string | null | undefined
   fetch: typeof fetch
@@ -182,10 +183,12 @@ export function createRunResultsShares(deps: RunResultsShareDeps) {
         // A link whose owner token could not be kept is never made: it could not be stopped afterwards.
         registryFile.assertCanStore()
         const endpoint = await deps.endpoint()
-        const response = await deps.fetch(`${endpoint.baseUrl}/results`, {
-          method: 'POST', headers: { authorization: `Bearer ${endpoint.adminSecret}`, 'content-type': 'application/json' },
+        // Each key held for the live service is tried, as Go live does (live-admin-request.ts).
+        const { response, refused } = await sendAsAdmin(deps.fetch, endpoint, `${endpoint.baseUrl}/results`, () => ({
+          method: 'POST', headers: { 'content-type': 'application/json' },
           body: '{}', signal: AbortSignal.timeout(15_000),
-        })
+        }))
+        if (refused) throw new Error(LIVE_ACCESS_REMOVED)
         if (!response.ok) throw new Error(await errorText(response, `The link could not be created (HTTP ${response.status}).`))
         const created = await response.json() as { shareId?: unknown; ownerToken?: unknown }
         const origin = new URL(endpoint.baseUrl).origin

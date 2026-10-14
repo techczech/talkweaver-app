@@ -26,8 +26,8 @@
 //      resources/worker-dist is checked against its manifest (the bundle's SHA-256 and size, the
 //      Worker build the shipped sources name, and that it was compiled from exactly those sources);
 //      then the set-up sequence runs ON THE PACKAGED EXECUTABLE as Node, uploads that bundle to the
-//      fake API (bytes equal to the manifest's hash, every migration, workers.dev on, the two keys),
-//      runs once more as an update (no migration, the same keys), and starts no process;
+//      fake API (bytes equal to the manifest's hash, every migration, workers.dev on, this computer's key alone),
+//      runs once more as an update (no migration, no secret re-sent, no domain touched), and starts no process;
 //   8. checks once more that the build is unchanged;
 //   9. searches the main-process code inside the build for the Bitwarden and Keychain-command route
 //      to a Cloudflare token (spec D1): it is not there.
@@ -325,9 +325,18 @@ try {
     }
     assert.deepEqual([uploadedOf(uploads[0]).metadata.migrations?.steps.length, 'migrations' in uploadedOf(uploads[1]).metadata], [4, false], 'every migration first; none on the update')
     const deployedWorker = api.model.workers.get(account).get('talkweaver-live-sessions')
-    assert.deepEqual([deployedWorker.migrationTag, deployedWorker.workersDev, deployedWorker.secrets.sort()], ['v4', true, ['ADMIN_SECRET', 'SESSION_SIGNING_SECRET']])
+    // The model decided after the review of ticket 02 (spec, R1, R2, R8): set-up's one secrets request
+    // names this computer's key and nothing else; the app sends no signing secret and no `ADMIN_SECRET`;
+    // the update is the script and its workers.dev switch, re-sends no secret, and neither run asks
+    // about, attaches or removes a custom domain or a route.
+    const ownSecret = 'ADMIN_SECRET_aaaa0000bbbb1111' // the computer id the test driver's key port makes (scripts/lib/live-service-setup.mjs)
+    assert.deepEqual([deployedWorker.migrationTag, deployedWorker.workersDev, deployedWorker.secrets], ['v4', true, [ownSecret]], 'the one secret at Cloudflare is this computer\'s key')
     const patches = api.requests.slice(before).filter((request) => request.method === 'PATCH')
-    assert.equal(new Set(patches.map((request) => JSON.parse(request.body.toString()).secrets.ADMIN_SECRET.text)).size, 1, 'the update set the same keys again')
+    assert.deepEqual(patches.map((request) => [request.path, Object.keys(JSON.parse(request.body.toString()).secrets)]), [[`/accounts/${account}/workers/scripts/talkweaver-live-sessions/secrets-bulk`, [ownSecret]]], 'one secrets request in the two runs: the first set-up\'s, naming this computer\'s key alone; the update re-sent nothing')
+    assert.ok(api.requests.indexOf(patches[0]) < api.requests.indexOf(uploads[1]), 'and it belongs to the first set-up, before the update\'s upload')
+    assert.deepEqual(api.namingSigningSecret(), [], 'no request names a signing secret')
+    assert.deepEqual(api.requests.slice(before).filter((request) => request.method === 'DELETE' || /\/domains|\/routes|\/zones|\/secrets(?:$|\?)/.test(request.path)).map((request) => `${request.method} ${request.path}`), [], 'no DELETE, no custom domain or route, and the Worker\'s secrets are never listed')
+    assert.deepEqual(api.requests.slice(before).filter((request) => request.method !== 'GET').map((request) => `${request.method} ${request.path.replace(`/accounts/${account}/workers/scripts/talkweaver-live-sessions`, '<script>')}`), ['PUT <script>', 'POST <script>/subdomain', 'PATCH <script>/secrets-bulk', 'PUT <script>', 'POST <script>/subdomain'], 'every write of the two runs: the script, its workers.dev switch and one key; then the script and its switch')
     reached = api.reached()
     assert.ok(api.requests.every((request) => !request.authorization || request.authorization === `Bearer ${token}` || /^Bearer ey/.test(request.authorization)), 'only the call\'s own token (or the upload token the API issued) was sent')
     assert.deepEqual(api.unknown, [], 'nothing was asked that the fake API does not model')

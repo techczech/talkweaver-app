@@ -45,6 +45,7 @@ import { mergeRunPrework, preworkWindowMs, publicPreworkForm } from '../src/shar
 import { PREWORK_PURGED_MESSAGE, createRunPrework, registerRunPreworkIpc } from '../src/main/run-prework.ts'
 import { sheetTimeZone, zoneToSend } from '../src/shared/plan-run.ts'
 import { memoryOwnerTokens } from './lib/memory-secrets.mjs'
+import { heldKeysCases, heldKeysDouble } from './lib/held-keys-cases.mjs'
 
 // Owner tokens live in the secrets store (an in-memory one here), never in a registry file.
 const testOwnerTokens = memoryOwnerTokens()
@@ -769,6 +770,28 @@ assert.equal(survived[0].id, 'survivor')
   const ok = await handlers.get('history:board-put-back')(null, { talkSlug: 'share-talk', runId: 'run-share', boardId: 'poll-board', sessionId: 's-1', cardId: 'card-2', putBack: false })
   assert.equal(ok.ok, true)
   assert.equal('warning' in ok, false, 'no warning when the link was updated')
+}
+
+// Going live from several Macs: a Run's results link is made with whichever key held for the live
+// service it accepts, as Go live does.
+{
+  const heldRoot = mkdtempSync(join(tmpdir(), 'talkweaver-share-held-'))
+  const posts = []
+  const inner = async (url, init = {}) => {
+    if (String(url).endsWith('/results') && init.method === 'POST') { posts.push(init.body); return new Response(JSON.stringify({ shareId: `sh00000${posts.length}`, ownerToken: `owner-token-0123456789-${posts.length}` }), { status: 201 }) }
+    return new Response(JSON.stringify({ ok: true }), { status: 200 })
+  }
+  const double = heldKeysDouble({ baseUrl: 'https://live.example.test', route: '/results', inner })
+  const shares = createRunResultsShares({ ownerTokens: memoryOwnerTokens(), registryPath: join(heldRoot, 'registry.json'), endpoint: double.endpoint, linkBase: () => null, fetch: double.fetch })
+  const ended = Date.UTC(2026, 8, 28, 14)
+  const run = normaliseRun({ id: 'run-held', talkSlug: 'held-talk', talkTitle: 'T', startedAt: new Date(ended - 3_600_000).toISOString(),
+    boards: [{ id: 'poll-board', sessionId: 's-1', question: 'Q', columns: [{ id: 'keep', label: 'Keep' }], groups: [], liveEndedAt: ended, cards: [{ id: 'card-1', column: 'keep', text: 'Shown', acceptedAt: ended - 5 }] }] })
+  const made = await heldKeysCases(double, (n) => shares.share('held-talk', `run-held-${n}`, run, { lifetime: '7', include: { board: true, polls: false } }), 'a results link')
+  assert.equal(made.url, 'https://live.example.test/results/sh000001', 'the link made with the 0.38.2 key is the Run\'s link')
+  assert.equal(posts.length, 1, 'refused and unanswered requests made nothing: one link exists')
+  await shares.share('held-talk', 'run-held-own', run, { lifetime: '7', include: { board: true, polls: false } })
+  assert.deepEqual(double.sent(), ['own'], 'its own key accepted: one request')
+  assert.equal(readFileSync(join(heldRoot, 'registry.json'), 'utf8').includes(double.ownKey) || readFileSync(join(heldRoot, 'registry.json'), 'utf8').includes(double.legacyKey), false, 'no key in the registry')
 }
 
 // Feedback-boards ticket 09: pre-work answers mirrored onto the Run — merged by id, validated on

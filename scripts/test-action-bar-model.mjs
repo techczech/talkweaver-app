@@ -56,8 +56,8 @@ assert.deepEqual(
 )
 assert.deepEqual(
   defaultSections[1].items.map((item) => item.commandId),
-  ['undo', 'redo', 'new-slide', 'delete-slide', 'promote-heading', 'demote-heading', 'bulleted-list', 'numbered-list'],
-  'section two carries all eight everyday editing commands'
+  ['undo', 'redo', 'format-bold', 'format-italic', 'format-link', 'new-slide', 'delete-slide', 'promote-heading', 'demote-heading', 'bulleted-list', 'numbered-list'],
+  'section two carries the eight everyday editing commands, with Bold, Italic and Link after undo and redo'
 )
 assert.deepEqual(
   DEFAULT_ACTION_BAR_ITEMS.filter((item) => isActionBarSeparator(item)),

@@ -16,7 +16,7 @@ import {
   headingLineForSlideId,
   stepModelForSlide
 } from '../src/renderer/src/components/inspectorModel.ts'
-import { deckListStyleForSlide, deckStatementTokenForOutline } from '../src/shared/deck-frame.ts'
+import { deckListStyleForSlide, deckStatementTokenForOutline, inheritedTitleLookForSlide, inheritedTitleToneForSlide, deckCommitContext } from '../src/shared/deck-frame.ts'
 import { commitOptionSelection } from '../src/shared/trigger-line.ts'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { buildDeckHtmlFromModel } from '../compiler/scripts/lib/07-assembly.mjs'
@@ -578,7 +578,7 @@ assert.equal(sectionIdAtScrollTop(jumpTops, 900), 'slide', 'the last section is 
 assert.equal(sectionIdAtScrollTop([], 0), null, 'no sections, no lit pill')
 
 // ADR-0028 §10, ticket 02 (Dominik, 29 Sep): a statement's options are separate choices — Sidebar,
-// Background, Alignment, Bar and Sidebar colour. Each lights what the compiled slide renders: its own
+// Background, Alignment and Sidebar colour (the Bar choice was retired with the box, 13 Oct 2026). Each lights what the compiled slide renders: its own
 // token, the older one-word option it is part of, the deck's claim_style, and (Sidebar) the
 // compiler's own title placement on the row.
 {
@@ -595,7 +595,7 @@ assert.equal(sectionIdAtScrollTop([], 0), null, 'no sections, no lit pill')
   const at = (id) => statementRows.findIndex((row) => row.slide_id === id)
   assert.equal(statementRows[at('untitled')].title_layout, 'hidden', 'a heading-only statement compiles without a title')
   assert.equal(statementRows[at('titled')].title_layout, 'left', 'a statement with a body sits beside the rail')
-  const KEYS = ['statement-sidebar', 'statement-bg', 'statement-align', 'statement-bar', 'statement-colour']
+  const KEYS = ['statement-sidebar', 'statement-bg', 'statement-align', 'statement-colour']
   const bindingsOf = (index, line, rowsIn = statementRows, deckStatement = '') =>
     inspectorModel(rowsIn, index, 3, line, LAYOUTS, undefined, false, [], '', deckStatement).sections.flatMap((section) => section.bindings)
   const lit = (id, line, deckStatement = '', rowsIn = statementRows) => Object.fromEntries(bindingsOf(at(id), line, rowsIn, deckStatement)
@@ -603,11 +603,11 @@ assert.equal(sectionIdAtScrollTop([], 0), null, 'no sections, no lit pill')
     .map((binding) => [binding.group.key.replace('statement-', ''), binding.values.find((value) => value.token === binding.selectedToken)?.label ?? '—']))
   const layoutSection = inspectorModel(statementRows, at('untitled'), 3, '{id=untitled}{statement}', LAYOUTS).sections[0]
   assert.equal(layoutSection.heading, 'Layout', 'the layout section comes first, headed Layout')
-  assert.deepEqual(layoutSection.bindings.map((binding) => binding.group.key), KEYS, 'the Statement section holds the five choices, in order')
+  assert.deepEqual(layoutSection.bindings.map((binding) => binding.group.key), KEYS, 'the Statement section holds the four choices, in order')
   assert.deepEqual(layoutSection.bindings.map((binding) => binding.group.sectionLabel ?? binding.group.label),
-    ['Sidebar', 'Background', 'Alignment', 'Bar', 'Sidebar colour'], 'each choice carries its short label')
+    ['Sidebar', 'Background', 'Alignment', 'Sidebar colour'], 'each choice carries its short label')
   assert.deepEqual(layoutSection.bindings.map((binding) => binding.values.map(({ label }) => label)), [
-    ['With sidebar', 'No sidebar'], ['Halo', 'Full', 'None'], ['Aligned', 'Centred'], ['None', 'Left', 'Top', 'Bottom'],
+    ['With sidebar', 'No sidebar'], ['Tinted', 'Rule', 'Strong colour', 'Lower third'], ['Aligned', 'Centred'],
     ['Section', 'Cobalt', 'Emerald', 'Vermilion', 'Forest']
   ], 'the Inspector offers the ticket\'s values (Sidebar without its Auto)')
   const titledValues = bindingsOf(at('titled'), '{id=titled}{statement=poster}').filter((binding) => KEYS.includes(binding.group.key))
@@ -616,22 +616,27 @@ assert.equal(sectionIdAtScrollTop([], 0), null, 'no sections, no lit pill')
   assert.equal(bindingsOf(at('untitled'), '{id=untitled}{statement}').some((binding) => binding.group.key === 'claim-style'), false,
     'a statement slide does not offer the older Claim style row')
 
-  const DEFAULTS = { sidebar: 'No sidebar', bg: 'Halo', align: 'Aligned', bar: 'None', colour: 'Section' }
-  assert.deepEqual(lit('untitled', '{id=untitled}{statement}'), DEFAULTS, 'an untokened statement without a title: no sidebar, Halo, Aligned, no bar, section colour')
+  const DEFAULTS = { sidebar: 'No sidebar', bg: 'Tinted', align: 'Aligned', colour: 'Section' }
+  assert.deepEqual(lit('untitled', '{id=untitled}{statement}'), DEFAULTS, 'an untokened statement without a title: no sidebar, Tinted, Aligned, section colour')
   assert.deepEqual(lit('titled', '{id=titled}{statement=poster}'), { ...DEFAULTS, sidebar: 'With sidebar' }, 'beside a title the sidebar is lit; a former Poster is the Default')
   // The five older options light their mapped values (untitled slide).
   const PRESETS = {
     '{statement}{statement=default}': DEFAULTS,
     '{statement=centred}': { ...DEFAULTS, align: 'Centred' },
-    '{statement=tint}': { ...DEFAULTS, bar: 'Left' },
-    '{statement=bar}': { ...DEFAULTS, bg: 'None', bar: 'Left' },
-    '{statement=full}': { ...DEFAULTS, bg: 'Full' },
-    '{statement}{claim=bar}{bg=emerald}': { ...DEFAULTS, bg: 'None', bar: 'Left' },
+    '{statement=tint}': DEFAULTS,
+    '{statement=bar}': { ...DEFAULTS, bg: 'Rule' },
+    '{statement=full}': DEFAULTS,
+    '{statement}{claim=bar}{bg=emerald}': { ...DEFAULTS, bg: 'Rule' },
     '{statement}{claim=plain}{bg=emerald}': DEFAULTS,
-    '{statement}{statement=bar}{claim=plain}': { ...DEFAULTS, bg: 'None', bar: 'Left' },
-    '{statement}{statement=tint}{claim=bar}': { ...DEFAULTS, bar: 'Left' },
-    '{statement=tint}{statement-bar=top}': { ...DEFAULTS, bar: 'Top' },
-    '{statement}{statement-bg=full}{statement-bar=bottom}{statement-align=centred}{accent=vermilion}': { ...DEFAULTS, bg: 'Full', bar: 'Bottom', align: 'Centred', colour: 'Vermilion' },
+    '{statement}{statement=bar}{claim=plain}': { ...DEFAULTS, bg: 'Rule' },
+    '{statement}{statement=tint}{claim=bar}': DEFAULTS,
+    // The retired bar choice and background values are accepted and light their mapped value.
+    '{statement=tint}{statement-bar=top}': DEFAULTS,
+    '{statement}{statement-bg=halo}': DEFAULTS,
+    '{statement}{statement-bg=full}': DEFAULTS,
+    '{statement}{statement-bg=none}': { ...DEFAULTS, bg: 'Rule' },
+    '{statement}{statement-bg=strong}{statement-align=centred}{accent=vermilion}': { ...DEFAULTS, bg: 'Strong colour', align: 'Centred', colour: 'Vermilion' },
+    '{statement}{statement-bg=lower-third}': { ...DEFAULTS, bg: 'Lower third' },
     '{statement}{statement-sidebar=on}': { ...DEFAULTS, sidebar: 'With sidebar' }
   }
   for (const [tokens, want] of Object.entries(PRESETS)) {
@@ -640,17 +645,21 @@ assert.equal(sectionIdAtScrollTop([], 0), null, 'no sections, no lit pill')
   // The older Centred rendered as the Default beside a title (preview.11), and lights so.
   assert.equal(lit('titled', '{id=titled}{statement=centred}').align, 'Aligned', 'the older {statement=centred} beside a title lights Aligned')
   assert.equal(lit('titled', '{id=titled}{statement}{statement-align=centred}').align, 'Centred', 'the Alignment choice centres beside a title')
-  // The deck's claim_style: bar decides an untokened statement (no colour, left bar); a slide token wins.
-  assert.deepEqual(lit('untitled', '{id=untitled}{statement}', 'statement=bar'), { ...DEFAULTS, bg: 'None', bar: 'Left' }, 'a Bar deck lights None + Left')
+  // The deck's claim_style: bar decides an untokened statement (Rule); a slide token wins.
+  assert.deepEqual(lit('untitled', '{id=untitled}{statement}', 'statement=bar'), { ...DEFAULTS, bg: 'Rule' }, 'a Bar deck lights Rule')
   assert.deepEqual(lit('untitled', '{id=untitled}{statement}{claim=plain}', 'statement=bar'), DEFAULTS, 'a slide {claim=plain} wins over the deck')
-  assert.deepEqual(lit('untitled', '{id=untitled}{statement}{statement-bar=top}', 'statement=bar'), { ...DEFAULTS, bar: 'Top' }, 'a choice of its own ends following the deck')
+  assert.deepEqual(lit('untitled', '{id=untitled}{statement}{statement-bg=strong}', 'statement=bar'), { ...DEFAULTS, bg: 'Strong colour' }, 'a choice of its own ends following the deck')
+  // Lower third is not offered beside a title panel; it is offered on a slide that paints none.
+  const lowerThirdOffered = (id) => bindingsOf(at(id), `{id=${id}}{statement}`).find((binding) => binding.group.key === 'statement-bg').values.some(({ label }) => label === 'Lower third')
+  assert.equal(lowerThirdOffered('untitled'), true, 'Lower third is offered on a statement without a title')
+  assert.equal(lowerThirdOffered('titled'), false, 'Lower third is not offered beside a title panel')
   const statementBindings = bindingsOf(at('untitled'), '{id=untitled}{statement}', statementRows, 'statement=bar').filter((binding) => KEYS.includes(binding.group.key))
   assert.equal(statementBindings.some((binding) => binding.deckToken !== undefined), false, 'the statement choices carry no deck mark')
   for (const binding of statementBindings) assert.equal(inspectorCommitToken(binding, ''), '', `${binding.group.key}: a click writes its own token`)
   // A row without the compiled title regime (an old cache) lights no Sidebar button rather than guess.
   const oldRows = statementRows.map(({ title_layout: _dropped, ...row }) => row)
   assert.equal(lit('untitled', '{id=untitled}{statement}', '', oldRows).sidebar, '—', 'an old cache row lights no Sidebar choice')
-  for (const line of ['{id=titled}{statement=poster}', '{id=titled}{statement}{statement-bg=none}{statement-bar=bottom}{accent=forest}{statement-sidebar=off}']) {
+  for (const line of ['{id=titled}{statement=poster}', '{id=titled}{statement}{statement-bg=rule}{statement-bar=bottom}{accent=forest}{statement-sidebar=off}']) {
     assert.equal(inspectorModel(statementRows, at('titled'), 3, line, LAYOUTS).unresolved, false, `${line}: registry vocabulary, no unresolved-trigger panel`)
   }
 
@@ -663,19 +672,19 @@ assert.equal(sectionIdAtScrollTop([], 0), null, 'no sections, no lit pill')
     return next.split('\n')[heading]
   }
   const legacy = statementOutline.replace('{id=untitled}{statement}', '{id=untitled}{statement=centred}').replace('{id=titled}{statement=poster}', '{id=titled}{statement=centred}')
-  assert.equal(lineAfter(legacy, 'untitled', 'statement-bar', 'statement-bar=top'), '{id=untitled}{statement}{statement-bar=top}{statement-align=centred}',
-    'Bar Top on the older Centred without a title: the lines stay centred')
-  assert.equal(lineAfter(legacy, 'titled', 'statement-bar', 'statement-bar=top'), '{id=titled}{statement}{statement-bar=top}',
-    'Bar Top on the older Centred beside a title (rendered Aligned): stays aligned')
+  assert.equal(lineAfter(legacy, 'untitled', 'statement-bg', 'statement-bg=rule'), '{id=untitled}{statement}{statement-bg=rule}{statement-align=centred}',
+    'Rule on the older Centred without a title: the lines stay centred')
+  assert.equal(lineAfter(legacy, 'titled', 'statement-bg', 'statement-bg=rule'), '{id=titled}{statement}{statement-bg=rule}',
+    'Rule on the older Centred beside a title (rendered Aligned): stays aligned')
   const barDeck = statementOutline.replace('auto_thanks_slide: false', 'auto_thanks_slide: false\nclaim_style: bar')
-  assert.equal(lineAfter(barDeck, 'untitled', 'statement-bg', ''), '{id=untitled}{statement}{statement-bar=left}',
-    'Halo on a Bar deck keeps the deck\'s left bar as a token of its own')
-  assert.equal(lineAfter(barDeck, 'untitled', 'statement-colour', 'accent=emerald'), '{id=untitled}{statement}{accent=emerald}{statement-bg=none}{statement-bar=left}',
+  assert.equal(lineAfter(barDeck, 'untitled', 'statement-bg', ''), '{id=untitled}{statement}{statement-bg=tinted}',
+    'Tinted on a Bar deck is written out so the slide stops following the deck\'s Rule')
+  assert.equal(lineAfter(barDeck, 'untitled', 'statement-colour', 'accent=emerald'), '{id=untitled}{statement}{accent=emerald}{statement-bg=rule}',
     'the colour on a Bar deck: the deck\'s look is written out so it stays')
-  assert.equal(deckStatementTokenForOutline(barDeck), 'statement=bar', 'a deck claim_style: bar decides Bar')
+  assert.equal(deckStatementTokenForOutline(barDeck), 'statement=bar', 'a deck claim_style: bar decides Rule')
   assert.equal(deckStatementTokenForOutline(statementOutline), '', 'no claim_style decides nothing')
   const groupKeys = (index, line, rowsIn) => bindingsOf(index, line, rowsIn).map((binding) => binding.group.key)
-  console.log('PASS statement choices: five rows, lit from the compiled look (older options, claim tokens, deck claim_style, title placement); writes change one dimension')
+  console.log('PASS statement choices: four rows, lit from the compiled look (older options, claim tokens, deck claim_style, title placement); writes change one dimension')
 
   // {stmt-list}: its statement column is the slide's claim, not an ADR-0028 §10 statement slide —
   // the statement options are not offered there; Claim style (Plain / Bar) is, and applies.
@@ -1147,6 +1156,89 @@ assert.equal(sectionIdAtScrollTop([], 0), null, 'no sections, no lit pill')
   assert.equal(pageGroupOf('### Page\n{id=a}\n\n[Embed: page.html]\n', ''), undefined, 'title + page + one trigger group: not offered')
   assert.ok(pageGroupOf('### Page\n{id=a}{page-80}\n\n- Words\n\n[Embed: page.html]\n', ''), 'adjacent groups plus body text and a local page: offered')
   console.log('PASS page width: offered on embed + body text only; 60/70/80 with 70 the unwritten default')
+}
+
+// Lower third is offered on a statement with a top title (no left panel), hidden beside a left panel.
+{
+  const bgLabels = (titleLayout) => {
+    const model = inspectorModel([{ layout: 'statement', title_layout: titleLayout }], 0, 3, '{statement}', LAYOUTS)
+    const binding = model.sections.flatMap((section) => section.bindings).find((b) => b.group.key === 'statement-bg')
+    return binding.values.map(({ label }) => label)
+  }
+  assert.ok(bgLabels('top').includes('Lower third'), 'a top-title statement is offered Lower third')
+  assert.ok(bgLabels('hidden').includes('Lower third'), 'a title-less statement is offered Lower third')
+  assert.ok(!bgLabels('left').includes('Lower third'), 'a left title panel is not offered Lower third')
+}
+
+// Tab tone: Strong pins itself against an inherited soft tone and stores nothing otherwise.
+{
+  const toneGroup = GLOBAL_OPTION_GROUPS.find((g) => g.key === 'title-look-tone')
+  assert.ok(toneGroup, 'the Tab tone group exists')
+  const softDeck = (extra = '') => `---\ntitle: T\ndefaults:\n  titlelook: tab\n  titlelook-tone: soft\n${extra}---\n\n## S\n\n### A\n{titletop}{titlelook-tone=soft}\n\nBody\n`
+  const lineOf = (outline) => outline.split('\n')[outline.split('\n').findIndex((l) => l.startsWith('### ')) + 1].replace(/\}\s+\{/g, '}{')
+  const plainSoftDeck = '---\ntitle: T\ndefaults:\n  titlelook: tab\n  titlelook-tone: soft\n---\n\n## S\n\n### A\n{titletop}\n\nBody\n'
+  const headingLine = plainSoftDeck.split('\n').findIndex((l) => l.startsWith('### ')) + 1
+  assert.equal(inheritedTitleToneForSlide(plainSoftDeck, headingLine), 'soft', 'defaults: tone soft is inherited')
+  assert.equal(inheritedTitleToneForSlide(plainSoftDeck.replace('defaults:\n  titlelook: tab\n  titlelook-tone: soft', 'title_look: tab\ntitle_look_tone: soft'), headingLine - 1), 'soft', 'title_look_tone: soft is inherited')
+  assert.equal(inheritedTitleToneForSlide('---\ntitle: T\n---\n\n## S\n\n### A\n{titletop}\n', 7), '', 'nothing inherited, nothing to pin')
+  // Strong over an inherited soft writes the explicit token; the slide's own soft token is replaced.
+  const written = inspectorModule.applyInspectorOptionToOutline(softDeck(), headingLine, toneGroup, '')
+  assert.equal(lineOf(written), '{titletop}{titlelook-tone=strong}', 'Strong writes {titlelook-tone=strong} over an inherited soft')
+  // Choosing Strong again keeps it (no flip-flop), and Soft over it replaces the pin.
+  const again = inspectorModule.applyInspectorOptionToOutline(written, headingLine, toneGroup, '')
+  assert.equal(lineOf(again), '{titletop}{titlelook-tone=strong}', 'Strong again keeps the explicit token')
+  assert.equal(lineOf(inspectorModule.applyInspectorOptionToOutline(written, headingLine, toneGroup, 'titlelook-tone=soft')), '{titletop}{titlelook-tone=soft}', 'Soft replaces the pin')
+  // Without an inherited soft, Strong stores nothing (and removes an explicit strong).
+  const bare = '---\ntitle: T\n---\n\n## S\n\n### A\n{titletop}{titlelook-tone=soft}\n\nBody\n'
+  assert.equal(lineOf(inspectorModule.applyInspectorOptionToOutline(bare, 7, toneGroup, '')), '{titletop}', 'Strong without an inherited soft stores nothing')
+  assert.equal(lineOf(inspectorModule.applyInspectorOptionToOutline(bare.replace('{titlelook-tone=soft}', '{titlelook-tone=strong}'), 7, toneGroup, '')), '{titletop}', 'an explicit strong with nothing to pin against is removed')
+  // The lit button: inherited soft lights Soft; the explicit strong lights Strong; a soft token lights Soft.
+  const litFor = (line, inherited) => {
+    const topLayout = LAYOUTS.find((e) => e.kind === 'layout' && e.titleRegime === 'top').name
+    const model = inspectorModel([{ layout: topLayout, title_layout: 'top' }], 0, 3, line, LAYOUTS, undefined, false, [], '', '', null, inherited)
+    return model.selectedTokens['title-look-tone']
+  }
+  assert.equal(litFor('{titletop}{titlelook=tab}', 'soft'), 'titlelook-tone=soft', 'inherited soft lights Soft')
+  assert.equal(litFor('{titletop}{titlelook=tab}{titlelook-tone=strong}', 'soft'), '', 'an explicit strong lights Strong over an inherited soft')
+  assert.equal(litFor('{titletop}{titlelook=tab}', ''), '', 'no inheritance lights Strong')
+  assert.equal(litFor('{titletop}{titlelook=tab}{titlelook-tone=soft}', ''), 'titlelook-tone=soft', 'a soft token lights Soft')
+}
+
+// Tab tone offered on an inherited Tab look (defaults:, sections:, frontmatter title_look:).
+{
+  const toneKey = 'title-look-tone'
+  const topLayout = LAYOUTS.find((e) => e.kind === 'layout' && e.titleRegime === 'top').name
+  const toneGroup = GLOBAL_OPTION_GROUPS.find((g) => g.key === toneKey)
+  const decks = {
+    defaults: '---\ntitle: T\ndefaults:\n  titlelook: tab\n  titlelook-tone: soft\n---\n\n## S\n\n### A\n{titletop}\n\nBody\n',
+    sections: '---\ntitle: T\nsections:\n  S: { titlelook: tab, titlelook-tone: soft }\n---\n\n## S\n\n### A\n{titletop}\n\nBody\n',
+    frontmatter: '---\ntitle: T\ntitle_look: tab\ntitle_look_tone: soft\n---\n\n## S\n\n### A\n{titletop}\n\nBody\n'
+  }
+  const none = '---\ntitle: T\n---\n\n## S\n\n### A\n{titletop}\n\nBody\n'
+  const lineNo = (o) => o.split('\n').findIndex((l) => l.startsWith('### ')) + 1
+  const keysFor = (look, line = '{titletop}') => inspectorModel([{ layout: topLayout, title_layout: 'top' }], 0, 3, line, LAYOUTS, undefined, false, [], '', '', null, '', look)
+    .sections.flatMap((section) => section.bindings.map((b) => b.group.key))
+  assert.ok(!keysFor('').includes(toneKey), 'no Tab look anywhere: no tone group')
+  assert.ok(keysFor('tab').includes(toneKey), 'an inherited Tab look offers the Tab tone group')
+  assert.ok(!keysFor('kicker').includes(toneKey), 'an inherited Kicker look does not')
+  assert.equal(inspectorModel([{ layout: topLayout, title_layout: 'top' }], 0, 3, '{titletop}', LAYOUTS, undefined, false, [], '', '', null, '', 'tab').selectedTokens['title-look'], 'titlelook=tab', 'the Look button lights the inherited Tab')
+  assert.equal(inspectorModel([{ layout: topLayout, title_layout: 'top' }], 0, 3, '{titletop}{titlelook=label}', LAYOUTS, undefined, false, [], '', '', null, '', 'tab').selectedTokens['title-look'], 'titlelook=label', 'a slide look outranks the inherited one')
+  for (const [name, deck] of Object.entries(decks)) {
+    assert.equal(inheritedTitleLookForSlide(deck, lineNo(deck)), 'tab', `${name}: Tab look inherited`)
+    const ctx = deckCommitContext(deck, lineNo(deck))
+    assert.equal(ctx.inheritedTitleLook, 'tab', `${name}: commit context carries the look`)
+    // Strong over an inherited soft Tab pins the tone with no {titlelook=tab} on the slide, and a later
+    // commit of another group does not sweep the pin.
+    const pinned = inspectorModule.applyInspectorOptionToOutline(deck, lineNo(deck), toneGroup, '')
+    assert.ok(pinned.includes('{titlelook-tone=strong}'), `${name}: Strong pins over inherited soft`)
+    const other = GLOBAL_OPTION_GROUPS.find((g) => g.key === 'title-icon')
+    const later = inspectorModule.applyInspectorOptionToOutline(pinned, lineNo(pinned), other, 'title-icon=above')
+    assert.ok(later.includes('{titlelook-tone=strong}'), `${name}: a later commit keeps the pinned tone (sweep reads the inherited look)`)
+  }
+  assert.equal(inheritedTitleLookForSlide(none, lineNo(none)), '', 'nothing inherited')
+  const noLookPin = '---\ntitle: T\n---\n\n## S\n\n### A\n{titletop}{titlelook-tone=soft}\n\nBody\n'
+  const swept = inspectorModule.applyInspectorOptionToOutline(noLookPin, lineNo(noLookPin), GLOBAL_OPTION_GROUPS.find((g) => g.key === 'title-icon'), 'title-icon=above')
+  assert.ok(!swept.includes('titlelook-tone'), 'with no Tab look anywhere the orphan tone is still swept')
 }
 
 console.log('inspector model: pane migration, navigation, applicable groups and step derivation pass')

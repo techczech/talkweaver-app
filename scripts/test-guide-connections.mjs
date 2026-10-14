@@ -118,7 +118,11 @@ await test('Cloudflare live service follows the Going live and sharing row: not 
   const ready = live('ready', { address: 'https://x.workers.dev', build: 'build-1' })
   assert.deepEqual([ready.state, ready.stateText, ready.action], ['on', edgeText(goingLiveRowEdge(goingLive('ready'))), null])
   assert.equal(ready.stateText, 'Ready')
-  for (const state of ['setting-up', 'updating', 'no-permission', 'failed', 'keys-lost']) {
+  for (const [state, words] of [['set-up-elsewhere', 'Set up on another computer'], ['access-removed', 'This computer\'s access was removed']]) {
+    const r = live(state)
+    assert.deepEqual([r.stateText, r.state, r.action.id], [words, 'part', 'open-cloudflare'], state)
+  }
+  for (const state of ['setting-up', 'updating', 'no-permission', 'failed']) {
     const r = live(state)
     assert.equal(r.stateText, edgeText(goingLiveRowEdge(goingLive(state))), state)
     assert.equal(r.state, 'part', state)

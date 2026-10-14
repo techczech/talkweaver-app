@@ -156,7 +156,9 @@ function slideIdsInOutline(doc: string): Set<string> {
   )
 }
 
-function mintEditorSlideId(rng: () => number, taken: Set<string>): string {
+// The one slide-id recipe of the renderer (the same as the compiler's mintId, 13-slide-ledger.mjs, which the
+// duplicate verb uses and which cannot be loaded here: it reads the file system). Adds the id to `taken`.
+export function mintEditorSlideId(rng: () => number, taken: Set<string>): string {
   for (;;) {
     const id = rng().toString(36).slice(2, 7)
     if (id.length === 5 && !taken.has(id)) {

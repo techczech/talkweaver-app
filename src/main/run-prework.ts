@@ -24,6 +24,7 @@
 // an object made here whose row is not registered is closed again.
 import { isShareId } from '../shared/share-id.ts'
 import { createKeyedQueue, openOwnerTokenRegistry, ownerFetch, validOwnerToken, type OwnerTokens } from './owner-tokens.ts'
+import { LIVE_ACCESS_REMOVED, sendAsAdmin, type AdminEndpoint } from './live-admin-request.ts'
 import { applyPickChange, type PickChange } from '../shared/run-prework-results.ts'
 import { RUN_PREWORK_MAX_SLIDE_ID } from '../shared/run-prework.ts'
 import type { PreworkForm } from '../shared/run-prework.ts'
@@ -51,7 +52,7 @@ export interface RunPreworkDeps {
   /** Where the objects' owner tokens are kept (the secrets store). */
   ownerTokens: OwnerTokens
   /** The live Worker and its admin credential. Used to CREATE objects only. */
-  endpoint(): Promise<{ baseUrl: string; adminSecret: string }>
+  endpoint(): Promise<AdminEndpoint>
   vaultRoot(): string | null
   fetch: typeof fetch
   now?(): number
@@ -238,10 +239,12 @@ export function createRunPrework(deps: RunPreworkDeps) {
         registryFile.assertCanStore()
         const endpoint = await deps.endpoint()
         const origin = new URL(endpoint.baseUrl).origin
-        const response = await deps.fetch(`${origin}/prework`, {
-          method: 'POST', headers: { authorization: `Bearer ${endpoint.adminSecret}`, 'content-type': 'application/json' },
+        // Each key held for the live service is tried, as Go live does (live-admin-request.ts).
+        const { response, refused } = await sendAsAdmin(deps.fetch, endpoint, `${origin}/prework`, () => ({
+          method: 'POST', headers: { 'content-type': 'application/json' },
           body: '{}', signal: AbortSignal.timeout(15_000),
-        })
+        }))
+        if (refused) throw new Error(LIVE_ACCESS_REMOVED)
         if (!response.ok) throw new Error(await errorText(response, `Pre-work could not be set up (HTTP ${response.status}).`))
         const created = await response.json() as { preworkId?: unknown; ownerToken?: unknown }
         const candidate = { key, preworkId: created.preworkId, ownerToken: created.ownerToken, workerBaseUrl: origin,

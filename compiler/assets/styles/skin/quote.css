@@ -1,0 +1,132 @@
+/* @order 1952 */
+/* QUOTE FORMS: colour and type (geometry: layouts/quote.css). The interface face inside a drawn
+   interface is the system stack, as on the X post card, and quoted words are weight 400 in every
+   form (never bold). The card is X's light theme; there is no dark skin yet. The small chrome inside
+   it (24 to 42 px) sits outside the type floor like .sim (ADR-0038). */
+  .qf {
+    --qf-ui: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .qf-words { font-weight: 400; font-style: normal; background: none; border: 0; box-shadow: none; }
+  /* Bold typed inside the words is bold only (the left side panel keeps today's accent chip, spec 2.6): neither the accent chip of the plain quote nor the
+     accent colour of slide text (those selectors in base.css and skin/base.css are less specific). */
+  .slide .qf:not(.qf-side) .qf-words strong { font-weight: 700; background: none; color: inherit; padding: 0; border-radius: 0; }
+  /* The decorative quotation mark of every other blockquote (base.css G1) is not part of the card. */
+  .qf-words::before { content: none; display: none; }
+  .qf-avatar { color: #fff; font: 700 1.9792cqw/1 var(--qf-ui); }
+
+  .qf-x-card { background: #fff; border-color: #cfd9de; box-shadow: 0 0.5208cqw 2.0833cqw rgba(16,20,24,.08); font-family: var(--qf-ui); color: #0f1419; --qf-x-muted: #536471; --qf-x-rule: #eff3f4; }
+  .qf-x-name { font-size: 1.9792cqw; font-weight: 700; }
+  .qf-x-handle { font-size: 1.5625cqw; color: var(--qf-x-muted); }
+  .qf-tweet .qf-words { line-height: 1.33; font-weight: 400; letter-spacing: -.005em; }
+  .qf-x-time { font-size: 1.4583cqw; color: var(--qf-x-muted); }
+  .qf-x-actions { border-top-color: var(--qf-x-rule); color: var(--qf-x-muted); }
+
+  .qf-ph { border-color: #7d8a93; color: #536471; font-family: var(--qf-ui); font-weight: 400; }
+  .qf-ph-who { font-size: 1.5625cqw; }
+  .qf-avatar-empty { border-color: #7d8a93; }
+  .qf-x-card .qf-ph-words { font-size: var(--qf-step-2); }
+
+  /* Video: the YouTube player (spec 6.3) */
+  .qf-yt { font-family: var(--qf-ui); color: #0f0f0f; }
+  .qf-yt-player { background: linear-gradient(160deg, #2b333d 0%, #14181d 55%, #0b0d10 100%); }
+  .qf-yt-captions span { font-family: Roboto, Arial, var(--qf-ui); font-weight: 500; color: #fff; background: rgba(8,8,8,.78); }
+  .qf-yt-controls { background: linear-gradient(to top, rgba(0,0,0,.55), rgba(0,0,0,0)); color: #fff; }
+  .qf-yt-track { background: rgba(255,255,255,.35); }
+  .qf-yt-played, .qf-yt-knob { background: #f00; }
+  .qf-yt-time { font: 500 1.4583cqw/1 var(--qf-ui); }
+  .qf-yt-title { font: 700 2.1875cqw/1.25 var(--qf-ui); }
+  .qf-yt-channel b { font-size: 1.6667cqw; }
+  .qf-yt-subscribe { background: #0f0f0f; color: #fff; font-size: 1.4063cqw; font-weight: 600; }
+  .qf-yt-likes { background: #f2f2f2; }
+  .qf-yt-sep { background: #cfcfcf; }
+  .qf-yt-captions.qf-ph-words { color: #d5dbe0; border-color: rgba(255,255,255,.6); font-size: var(--qf-step-3); }
+
+  /* The left side panel (spec 6.6): shared by video, book, paper and web */
+  .qf-panel::after { background: rgba(16,20,24,.14); }
+  .qf-side .qf-words { font-family: var(--sans); font-weight: 400; line-height: 1.42; letter-spacing: -.01em; text-wrap: balance; color: var(--ink); }
+  .qf-source { border-left-color: var(--accent); }
+  .qf-source-who { font-size: max(var(--qf-floor), calc(var(--qf-words) * .58)); font-weight: 600; letter-spacing: .01em; color: var(--ink); }
+  .qf-source-where { font-size: var(--qf-floor); color: var(--muted); font-weight: 400; }
+  .qf-pill { background: var(--ink); color: var(--paper); font-size: var(--qf-floor); font-weight: 700; }
+  .qf-source-id { font-size: var(--qf-floor); color: var(--muted); }
+  .qf-side .qf-ph-words { font-family: var(--sans); font-size: var(--qf-step-1); }
+  /* Book: the made cover is paper and stays light in every skin; the sand under it follows the skin (spec 8). */
+  .qf-source-title { font-weight: 700; }
+  .qf { --qf-sand: #efe6d3; --qf-cover-shadow: rgba(60,40,10,.35); }
+  .book-generated .qf-panel, .qf-cover-whole .qf-panel { background: var(--qf-sand); }
+  .qf-cover { background: #f6f1e4; color: #101418; border-color: #cdbf9c; font-family: var(--sans); }
+  .qf-cover-spine { background: #cdbf9c; }
+  .qf-cover-title { font-weight: 700; }
+  .qf-cover-authors { font-weight: 400; }
+  .qf-cover-pub { font-weight: 400; color: #3b434c; }
+  .is-dark .book-generated .qf-panel, .is-dark .qf-cover-whole .qf-panel { --qf-sand: #3a3327; }
+  .is-dark .qf-cover-pub { color: #e6dcc6; }
+  /* Paper (spec 6.5, 8): the journal page depicts paper and stays light in every skin; the words on it are 400
+     (never bold) with the sentence highlighted. The panel's page picture casts a shadow to the right. */
+  .qf { --qf-highlight: #f6dc6a; }
+  .qf-page { background: #fff; color: #101418; border-color: #d6d6d0; box-shadow: 0 0.7292cqw 2.0833cqw rgba(16,20,24,.14); font-family: var(--sans); }
+  .qf-page-head { color: #5c6570; border-bottom-color: #101418; }
+  .qf-page-head b { color: #101418; font-weight: 700; }
+  .qf-page-title { font-weight: 700; color: #101418; }
+  .qf-page-authors { font-weight: 400; color: #3b434c; }
+  .qf-page-filler span { background: #dedfe0; }
+  .qf-page .qf-words { font-family: var(--sans); font-weight: 400; color: #101418; letter-spacing: 0; }
+  .qf-words mark { background: linear-gradient(to bottom, transparent 8%, var(--qf-highlight) 8%, var(--qf-highlight) 94%, transparent 94%); color: inherit; font-weight: inherit; }
+  .qf-page-foot { color: #5c6570; border-top-color: #e3e2dc; }
+  .qf-page-number { font-weight: 700; color: #101418; }
+  .qf-page .qf-ph-words { color: #5c6570; border-color: #7d8a93; font-size: var(--qf-step-3); }
+  .qf-paper.qf-side .qf-panel { box-shadow: 0.9375cqw 0 2.2917cqw rgba(16,20,24,.18); }
+  .is-dark .qf-page, .is-dark .qf-paper.qf-side .qf-panel { box-shadow: none; }
+  /* Web (spec 17.2, 8): the browser window depicts a page whose colours are not known, so it stays light in every skin.
+     The headline is smaller than the words (38 against 44.16 at the smallest step); the quoted words are 400. */
+  .qf-web-win { background: #fff; color: #101418; border-color: #c9cdd2; box-shadow: 0 0.7292cqw 2.0833cqw rgba(16,20,24,.14); font-family: var(--sans); }
+  .qf-web-bar { background: #e9ecef; border-bottom-color: #c9cdd2; }
+  .qf-web-pill { background: #fff; border-color: #d3d7dc; font: 500 1.4583cqw/1.25 var(--qf-ui); color: #2b323a; }
+  .qf-web-pill .qf-ic { color: #5c6570; }
+  .qf-web-mast { background: var(--qf-web-tint, #ebeced); font-family: var(--qf-ui); }
+  .qf-web-mark { background: var(--qf-web-mark, #3b434c); color: #fff; font: 700 1.4583cqw/1 var(--qf-ui); }
+  .qf-web-site { font-size: 1.6667cqw; font-weight: 700; color: #101418; }
+  .qf-web-nav span { background: rgba(16,20,24,.16); }
+  .qf-web-headline { font: 700 1.9792cqw/1.25 var(--sans); color: #101418; }
+  .qf-web-by { font-size: 1.4583cqw; color: #5c6570; }
+  .qf-web-by b { font-weight: 600; color: #101418; }
+  .qf-avatar-xs { font-size: 1.25cqw; }
+  .qf-web.qf-full .qf-words { font-family: var(--sans); font-weight: 400; letter-spacing: -.01em; color: #101418; }
+  .qf-web-domain { font: 500 1.4583cqw/1.25 var(--qf-ui); color: #5c6570; }
+  .qf-web-body .qf-ph-words { font-size: var(--qf-step-2); font-family: var(--sans); color: #536471; }
+  .qf-web.qf-side .qf-panel { background: #fff; box-shadow: 0.9375cqw 0 2.2917cqw rgba(16,20,24,.18); }
+  .is-dark .qf-web-win, .is-dark .qf-web.qf-side .qf-panel { box-shadow: none; }
+  .qf-yt-base { background: linear-gradient(to top, rgba(0,0,0,.6), rgba(0,0,0,0)); }
+  .qf-yt-timepill { background: rgba(0,0,0,.8); color: #fff; font: 700 1.6667cqw/1 var(--sans); }
+  .qf-avatar-s { font-size: 1.5625cqw; }
+
+  /* One static rendering for the handout, a shared talk, the venue page and print (spec 9): the slide
+     carries .qf-static (quote-forms-static.mjs). The link is the only underline in the design. */
+  .qf-source-link { color: inherit; text-decoration: none; }
+  .qf-static .qf-source-link { color: var(--accent); text-decoration: underline; text-decoration-thickness: .07em; text-underline-offset: .16em; overflow-wrap: anywhere; }
+  .qf-static .qf-doi { min-width: 0; overflow-wrap: anywhere; }
+  .qf-static .qf-x-card, .qf-static .qf-page, .qf-static .qf-web-win, .qf-static .qf-paper.qf-side .qf-panel, .qf-static .qf-web.qf-side .qf-panel { box-shadow: none; }
+  .qf-static .qf-placeholder { display: none !important; }
+  /* The address pill holds the link: it widens to its text (at least 620, at most the bar) and wraps when the address is longer. */
+  .qf-static .qf-web.qf-full .qf-web-pill { width: auto; min-width: 32.2917cqw; }
+  .qf-static .qf-web.qf-full .qf-web-host { white-space: normal; overflow: visible; }
+  @media print {
+    /* Backgrounds are the picture here (highlight, caption boxes, avatars, panel tints): print them. */
+    .qf-static .qf, .qf-static .qf * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    /* Video player: no dark surface. White, a 3 ink outline, captions ink on light boxes, controls in ink; the red played part stays. */
+    .qf-static .qf-yt-player { background: #fff; box-shadow: inset 0 0 0 0.157cqw #101418; }
+    .qf-static .qf-yt-captions span { color: #101418; background: #eceef1; }
+    .qf-static .qf-yt-controls { background: none; color: #101418; }
+    .qf-static .qf-yt-controls .qf-ic { stroke: #101418; }
+    .qf-static .qf-yt-track { background: #d5d8dd; }
+    /* Dark skin prints light. */
+    .qf-static.is-dark, .is-dark .qf-static { --paper: #fdfdfb; --ink: #101418; --muted: #5c6570; --hairline: #e3e2dc; --accent: var(--sec-accent, #0f4bd8); --tint: var(--sec-tint, #e8eefc); background: #fdfdfb; color: #101418; }
+    .qf-static.is-dark .qf-x-card, .is-dark .qf-static .qf-x-card { background: #fff; border-color: #cfd9de; color: #0f1419; --qf-x-muted: #536471; --qf-x-rule: #eff3f4; }
+    .qf-static.is-dark .qf-yt, .is-dark .qf-static .qf-yt { color: #0f0f0f; }
+    .qf-static.is-dark .qf-yt-subscribe, .is-dark .qf-static .qf-yt-subscribe { background: #0f0f0f; color: #fff; }
+    .qf-static.is-dark .qf-yt-likes, .is-dark .qf-static .qf-yt-likes { background: #f2f2f2; }
+    .qf-static.is-dark .qf-yt-sep, .is-dark .qf-static .qf-yt-sep { background: #cfcfcf; }
+    .qf-static.is-dark, .is-dark .qf-static { --qf-sand: #efe6d3; }
+    .qf-static.is-dark .book-generated .qf-panel, .is-dark .qf-static .book-generated .qf-panel, .qf-static.is-dark .qf-cover-whole .qf-panel, .is-dark .qf-static .qf-cover-whole .qf-panel { background: #efe6d3; }
+    .qf-static.is-dark .qf-cover-pub, .is-dark .qf-static .qf-cover-pub { color: #3b434c; }
+  }

@@ -14,8 +14,9 @@
 //   - nothing is set up on a use (D9: on purpose): a use with nothing deployed sends no write;
 //   - a newer app build triggers exactly ONE update before the next use, with the stored keys; the
 //     person is told "Updating the live service…";
-//   - lost keys with a deployed service: the stop state, what resetting breaks, and nothing sent to
-//     Cloudflare; only an explicit reset (the Worker deleted, then Check again) leads to new keys;
+//   - a second computer on the same account reads "Set up on another computer", adds its own key
+//     in ONE request naming one secret (a double press included), and both computers then go live;
+//     a computer whose key was removed reads "This computer's access was removed" and can be set up again;
 //   - Go live and Share for comments with nothing set up offer the spec's prompt, and the presenter
 //     keeps presenting while it shows and while it sets up;
 //   - a token lacking the live-service permission shows the row naming the permission;
@@ -28,15 +29,17 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { JSDOM, VirtualConsole } from 'jsdom'
 import { LOOK_INTERVAL_MS, askedFromTopFrame, createLiveService, ensureLiveService, outcomeOf, setUpAllowedFrom } from '../src/main/live-service.ts'
-import { LIVE_KEYS_LOST, LIVE_NOT_SET_UP, LIVE_SETUP_FAILED, LIVE_SETUP_REFUSED, LiveServiceError, deployLiveService, lookUpLiveService } from '../src/main/live-service-deploy.ts'
+import { LIVE_ACCESS_REMOVED, LIVE_KEY_UNREADABLE, LIVE_NOT_SET_UP, LIVE_SETUP_FAILED, LIVE_SETUP_REFUSED, LIVE_UPDATE_PENDING, LiveServiceError, deployLiveService, lookUpLiveService, surveyLiveService } from '../src/main/live-service-deploy.ts'
 import { DEPLOY_NOT_CONNECTED_ERROR, DEPLOY_SUPERSEDED_ERROR, TOKEN_REMOVED } from '../src/main/cloudflare-connection.ts'
 import {
-  GOING_LIVE_IDLE_DETAIL, GOING_LIVE_NOT_FOUND_DETAIL, GOING_LIVE_OTHER_ACCOUNT_DETAIL, LIVE_KEYS_LOST_EXPLAINED, LIVE_KEYS_LOST_STATE, LIVE_SETTING_UP_NOTICE,
+  GOING_LIVE_IDLE_DETAIL, GOING_LIVE_NOT_FOUND_DETAIL, GOING_LIVE_OTHER_ACCOUNT_DETAIL, GOING_LIVE_ELSEWHERE_DETAIL, GOING_LIVE_REMOVED_DETAIL, LIVE_SETTING_UP_NOTICE,
   LIVE_UPDATING_NOTICE, LIVE_WORKER_NAME, GOING_LIVE_READY_DETAIL, goingLiveRowDetail, goingLiveRowEdge, goingLiveRowRetries, liveSetupPromptCopy,
 } from '../src/shared/live-service-status.ts'
 import { initialShareSheet, shareSheetReducer, shareSheetView } from '../src/shared/shared-talk.ts'
 import { showLiveSetupPrompt, LIVE_SETUP_PROMPT_ID } from '../src/preload/present-live-setup.ts'
 import { buildDeckHtmlFromModel } from '../compiler/scripts/lib/07-assembly.mjs'
+import { instantClock, keyProfile, liveWorkerDouble } from './lib/live-worker-double.mjs'
+import { KeyStoreUnreadable } from '../src/main/live-service-key.ts'
 import { WORKERS_SUBDOMAIN, createFakeCloudflare, fakeCloudflareFetch } from './lib/cloudflare-api-stub.mjs'
 import { workerDistFiles } from './lib/worker-dist.mjs'
 import { readSource } from './lib/read-source.mjs'
@@ -55,6 +58,8 @@ const TOKEN = ['made', 'up', 'golive', 'token', '0123456789abcdef'].join('-') //
 const READER = ['made', 'up', 'golive', 'reader', '0123456789abcdef'].join('-') // gitleaks:allow (made-up test value)
 const NEW_KEYS = { adminSecret: ['made-up-golive-admin', 'secret', 'abcdef0123456789'].join('-'), signingSecret: ['made-up-golive-signing', 'secret', 'abcdef0123456789'].join('-') } // gitleaks:allow (made-up test value)
 const SECOND_KEYS = { adminSecret: ['made-up-golive-admin2', 'secret', 'abcdef0123456789'].join('-'), signingSecret: ['made-up-golive-signing2', 'secret', 'abcdef0123456789'].join('-') } // gitleaks:allow (made-up test value)
+/** Every computer's key slot: the keys the journeys generate are looked for at the end. */
+const profiles = []
 const SECRETS = [TOKEN, READER, NEW_KEYS.adminSecret, NEW_KEYS.signingSecret, SECOND_KEYS.adminSecret, SECOND_KEYS.signingSecret]
 const ACCOUNT = 'acc0golive'
 const OTHER = 'acc0other'
@@ -65,9 +70,10 @@ const see = (value) => { observed.push(value); return value }
 
 // ── 1. The pure decision: every state of the row ────────────────────────────────────────────────
 const facts = (over = {}) => ({
-  connection: 'connected', permission: 'not-refused', accountId: ACCOUNT, keysStored: true,
-  deployed: { baseUrl: null, version: null, accountId: null }, appBuild: BUILD, underway: null, last: null, ...over,
+  connection: 'connected', permission: 'not-refused', accountId: ACCOUNT, key: 'own',
+  deployed: { baseUrl: null, version: null, accountId: null }, appBuild: BUILD, underway: null, last: null, seen: null, ...over,
 })
+const seenHere = (over = {}) => ({ accountId: ACCOUNT, worker: 'present', build: BUILD, key: 'unknown', others: null, ...over })
 const deployedHere = (over = {}) => ({ baseUrl: ADDRESS, version: BUILD, accountId: ACCOUNT, ...over })
 const edgeText = (row) => { const edge = goingLiveRowEdge(row); return edge.kind === 'state' ? edge.text : edge.kind === 'action' ? `[${edge.label}]` : '' }
 {
@@ -102,9 +108,18 @@ const edgeText = (row) => { const edge = goingLiveRowEdge(row); return edge.kind
     ['an update failed: looked up (and must be found) before each use, until Try again', facts({ deployed: deployedHere({ version: '18-older' }), last: { outcome: 'failed', reason: LIVE_SETUP_FAILED, details: null } }), 'failed', 'Set-up failed', LIVE_SETUP_FAILED, { kind: 'look-up', strict: true }, { kind: 'update' }],
     ['an update failed and there is no account to look it up for: no address', facts({ deployed: deployedHere({ version: '18-older', accountId: null }), last: { outcome: 'failed', reason: LIVE_SETUP_FAILED, details: null } }), 'failed', 'Set-up failed', LIVE_SETUP_FAILED,
       { kind: 'not-set-up', message: LIVE_SETUP_FAILED, prompt: 'open-settings', reason: 'failed' }, { kind: 'update' }],
-    ['lost keys, a service recorded', facts({ keysStored: false, deployed: deployedHere() }), 'keys-lost', LIVE_KEYS_LOST_STATE, LIVE_KEYS_LOST_EXPLAINED, { kind: 'stop', message: LIVE_KEYS_LOST }, { kind: 'stop', message: LIVE_KEYS_LOST }],
-    ['lost keys, even with no connection', facts({ connection: 'not-connected', accountId: null, keysStored: false, deployed: deployedHere() }), 'keys-lost', LIVE_KEYS_LOST_STATE, LIVE_KEYS_LOST_EXPLAINED, { kind: 'stop', message: LIVE_KEYS_LOST }, { kind: 'stop', message: LIVE_KEYS_LOST }],
-    ['lost keys, found by a set-up (Cloudflare has the Worker)', facts({ keysStored: false, last: { outcome: 'keys-lost' } }), 'keys-lost', LIVE_KEYS_LOST_STATE, LIVE_KEYS_LOST_EXPLAINED, { kind: 'stop', message: LIVE_KEYS_LOST }, { kind: 'stop', message: LIVE_KEYS_LOST }],
+    ['Cloudflare has the Worker, no key here (S3)', facts({ key: 'none', seen: seenHere() }), 'set-up-elsewhere', '[Set up going live on this computer]', GOING_LIVE_ELSEWHERE_DETAIL,
+      { kind: 'not-set-up', message: LIVE_NOT_SET_UP, prompt: 'open-settings', reason: 'not-set-up' }, { kind: 'set-up' }],
+    ['the same, and the Worker is an older build (S6)', facts({ key: 'none', seen: seenHere({ build: '18-older' }) }), 'set-up-elsewhere', '[Set up going live on this computer]', /^Set up on another computer · setting up here updates the live service first$/,
+      { kind: 'not-set-up', message: LIVE_NOT_SET_UP, prompt: 'open-settings', reason: 'not-set-up' }, { kind: 'set-up' }],
+    ['a service recorded here and no key (a 0.38.2 computer whose slot is gone)', facts({ key: 'none', deployed: deployedHere() }), 'set-up-elsewhere', '[Set up going live on this computer]', GOING_LIVE_ELSEWHERE_DETAIL,
+      { kind: 'not-set-up', message: LIVE_NOT_SET_UP, prompt: 'open-settings', reason: 'not-set-up' }, { kind: 'set-up' }],
+    ['no key and no connection: nothing to say', facts({ connection: 'not-connected', accountId: null, key: 'none', deployed: deployedHere() }), 'unknown', '', GOING_LIVE_IDLE_DETAIL,
+      { kind: 'not-set-up', message: LIVE_NOT_SET_UP, prompt: 'open-settings', reason: 'not-set-up' }, { kind: 'stop', message: DEPLOY_NOT_CONNECTED_ERROR }],
+    ['the live service refuses this computer\'s key (S5)', facts({ deployed: deployedHere(), seen: seenHere({ key: 'refused' }) }), 'access-removed', '[Set up going live on this computer]', GOING_LIVE_REMOVED_DETAIL,
+      { kind: 'not-set-up', message: LIVE_ACCESS_REMOVED, prompt: 'open-settings', reason: 'failed' }, { kind: 'set-up' }],
+    ['its own key, accepted, two other computers (S4)', facts({ deployed: deployedHere(), seen: seenHere({ key: 'accepted', others: 2 }) }), 'ready', 'Ready · this computer and 2 others', GOING_LIVE_READY_DETAIL, { kind: 'look-up' }, { kind: 'look-up' }],
+    ['the 0.38.2 key, accepted (S2)', facts({ key: 'legacy', deployed: deployedHere(), seen: seenHere({ key: 'accepted', others: 1 }) }), 'ready', 'Ready', GOING_LIVE_READY_DETAIL, { kind: 'look-up' }, { kind: 'look-up' }],
   ]
   const seenStates = new Set()
   for (const [what, input, state, edge, detail, use, setUp] of CASES) {
@@ -120,22 +135,20 @@ const edgeText = (row) => { const edge = goingLiveRowEdge(row); return edge.kind
     seenStates.add(state)
   }
   // Every state the spec's cell lists, and only those (plus "nothing to say yet").
-  assert.deepEqual([...seenStates].sort(), ['failed', 'keys-lost', 'no-permission', 'not-set-up', 'ready', 'setting-up', 'unknown', 'updating'])
+  assert.deepEqual([...seenStates].sort(), ['access-removed', 'failed', 'no-permission', 'not-set-up', 'ready', 'set-up-elsewhere', 'setting-up', 'unknown', 'updating'])
   // Nothing is ever set up on a use (D9): no input answers a use with a set-up.
   for (const [what, input] of CASES) assert.notEqual(ensureLiveService(input, 'use').action.kind, 'set-up', `${what}: never set up on a use`)
   // The build is in Details; Try again only beside "Set-up failed".
   assert.equal(ensureLiveService(facts({ deployed: deployedHere() }), 'use').row.details, `Live service build ${BUILD} at ${ADDRESS}`)
   assert.match(ensureLiveService(facts({ deployed: deployedHere({ version: '18-older' }) }), 'use').row.details, new RegExp(`build 18-older .* this TalkWeaver carries build ${BUILD}`))
   for (const [what, input, state] of CASES) assert.equal(goingLiveRowRetries(ensureLiveService(input, 'use').row), state === 'failed', `${what}: Try again only for a failed set-up`)
-  // The keys-lost words: what resetting breaks, and how (there is no reset button).
-  assert.match(LIVE_KEYS_LOST_EXPLAINED, /every live session, shared talk and Run link made with the old ones stops working/)
-  assert.ok(LIVE_KEYS_LOST_EXPLAINED.includes(LIVE_WORKER_NAME) && LIVE_KEYS_LOST.startsWith(LIVE_KEYS_LOST_STATE))
-  // The Worker named in those words is the one that is deployed.
+  // No row, sentence or button offers a reset or says to delete anything.
+  for (const [what, input] of CASES) assert.ok(!/reset|delete/i.test(JSON.stringify(ensureLiveService(input, 'use'))), `${what}: no reset wording`)
+  // The Worker's name here is the one that is deployed.
   assert.equal(JSON.parse(readFileSync(join(repo, 'worker', 'wrangler.jsonc'), 'utf8').replace(/^\s*\/\/.*$/gm, '')).name, LIVE_WORKER_NAME)
   // What a finished set-up leaves.
-  assert.equal(outcomeOf({ ok: true, baseUrl: ADDRESS, adminSecret: 'x' }), null)
+  assert.equal(outcomeOf({ ok: true, baseUrl: ADDRESS, adminSecret: 'x', others: null }), null)
   assert.equal(outcomeOf({ ok: false, error: DEPLOY_SUPERSEDED_ERROR }), null, 'a superseded set-up leaves nothing')
-  assert.deepEqual(outcomeOf({ ok: false, error: LIVE_KEYS_LOST }), { outcome: 'keys-lost' })
   assert.deepEqual(outcomeOf({ ok: false, error: LIVE_SETUP_REFUSED, details: 'd' }), { outcome: 'refused', details: 'd' })
   assert.deepEqual(outcomeOf({ ok: false, error: LIVE_SETUP_FAILED, details: 'd' }), { outcome: 'failed', reason: LIVE_SETUP_FAILED, details: 'd' })
   console.log(`PASS 1: ${CASES.length} inputs to ensureLiveService produce every state of the Going live row, in the spec's words, with the action for a use and for "Set up going live"; nothing is set up on a use`)
@@ -153,11 +166,24 @@ const worlds = []
  * run the live service).
  */
 function computer(options = {}) {
-  const fake = createFakeCloudflare({ tokens: { [TOKEN]: { accounts: [ACCOUNT, OTHER] }, [READER]: { accounts: [ACCOUNT], workers: 'read' } }, accounts: [{ id: ACCOUNT, name: 'Ada' }] })
-  worlds.push(fake)
+  // `shared`: another computer on the same Cloudflare account: the same API and live service, its own Settings and key.
+  const fake = options.shared?.fake ?? createFakeCloudflare({ tokens: { [TOKEN]: { accounts: [ACCOUNT, OTHER] }, [READER]: { accounts: [ACCOUNT], workers: 'read' } }, accounts: [{ id: ACCOUNT, name: 'Ada' }] })
+  if (!options.shared) worlds.push(fake)
+  const live = options.shared?.live ?? liveWorkerDouble(fake, { account: ACCOUNT, name: LIVE_WORKER_NAME, address: ADDRESS, build: BUILD })
+  // The real key store over a plain slot (lib/live-worker-double.mjs), reading the recorded live service from this computer's Settings.
+  const keys = keyProfile()
+  profiles.push(keys)
   const pc = {
-    fake, config: {}, keys: options.keys ?? null, made: 0, deploys: 0, lookUps: 0, rows: [], told: [],
+    fake, live, config: keys.config, keys, deploys: 0, lookUps: 0, rows: [], told: [],
     connection: { connection: 'connected', permission: 'not-refused', accountId: ACCOUNT, token: TOKEN },
+  }
+  /** As the main process: the key for the recorded live service; with none recorded, for the account in use. */
+  const held = () => keys.store.keysFor({ accountId: pc.config.liveWorkerAccountId ?? pc.connection.accountId, workerName: LIVE_WORKER_NAME, baseUrl: pc.config.liveWorkerBaseUrl ?? null })[0] ?? null
+  pc.store = {
+    /** This computer's key as `{ computerId, adminSecret, kind }`, or null. Throws when the slot cannot be read. */
+    get stored() { const key = held(); return key ? { computerId: key.computerId, adminSecret: key.key, kind: key.kind } : null },
+    /** How many times the slot was written: once per key made. */
+    get made() { return keys.slot.writes.length },
   }
   const fetch = fakeCloudflareFetch(fake)
   const authorise = async () => {
@@ -179,18 +205,19 @@ function computer(options = {}) {
   pc.service = createLiveService({
     facts: () => ({
       connection: pc.connection.connection, permission: pc.connection.permission, accountId: pc.connection.connection === 'connected' ? pc.connection.accountId : null,
-      keysStored: pc.keys !== null,
+      // A slot that cannot be read is said so, never "none" (decision R4).
+      key: (() => { try { return pc.store.stored?.kind ?? 'none' } catch (error) { if (error instanceof KeyStoreUnreadable) return 'unreadable'; throw error } })(),
       deployed: { baseUrl: pc.config.liveWorkerBaseUrl ?? null, version: pc.config.liveWorkerVersion ?? null, accountId: pc.config.liveWorkerAccountId ?? null },
       appBuild: BUILD,
     }),
-    adminSecret: () => pc.keys?.adminSecret ?? null,
+    adminSecret: () => { try { return pc.store.stored?.adminSecret ?? null } catch { return null } },
     deploy: (progress) => {
       pc.deploys += 1
       return deployLiveService({
         shipped: files, expectedBuild: BUILD, authorise,
-        storedKeys: () => pc.keys,
-        makeKeys: () => { pc.made += 1; pc.keys = pc.made === 1 ? NEW_KEYS : SECOND_KEYS; return pc.keys },
-        shareHostname: () => null, shareDomainAttachedBefore: () => false, recordShareDomain: () => {},
+        keys: keys.store,
+        computerName: () => options.name ?? 'First Mac',
+        liveFetch: live.fetch, live: instantClock().live,
         fetch, apiBase: () => 'http://127.0.0.1:9/client/v4',
         save: ({ baseUrl, accountId }) => Object.assign(pc.config, { liveWorkerBaseUrl: baseUrl, liveWorkerVersion: BUILD, liveWorkerAccountId: accountId }),
         timeoutMs: { upload: 2000, request: 2000 }, progress,
@@ -198,7 +225,12 @@ function computer(options = {}) {
     },
     lookUp: async (accountId) => {
       pc.lookUps += 1
-      const answer = await lookUpLiveService({ shipped: files, expectedBuild: BUILD, authorise, fetch, apiBase: () => 'http://127.0.0.1:9/client/v4', accountId, timeoutMs: { upload: 2000, request: 2000 } })
+      return lookUpLiveService({ shipped: files, expectedBuild: BUILD, authorise, fetch, apiBase: () => 'http://127.0.0.1:9/client/v4', accountId, timeoutMs: { upload: 2000, request: 2000 } })
+    },
+    // Settings opened, or Check again: Cloudflare and the live service are asked.
+    survey: async () => {
+      pc.lookUps += 1
+      const answer = await surveyLiveService({ shipped: files, expectedBuild: BUILD, authorise, fetch, liveFetch: live.fetch, apiBase: () => 'http://127.0.0.1:9/client/v4', keys: keys.store, live: instantClock().live, timeoutMs: { upload: 2000, request: 2000 } })
       // A test may hold the answer back (a slow reply), to let something else happen first.
       const held = pc.hold
       if (held) { pc.hold = null; held.asked(); await held.released }
@@ -211,32 +243,28 @@ function computer(options = {}) {
   })
   return pc
 }
+/**
+ * This computer was set up by the previous version: Settings record the older build, and the live
+ * service itself answers as it until code is uploaded again. What is uploaded over is decided from
+ * the build READ at the live service, never from what Settings record (decision R3).
+ */
+function outdated(pc) {
+  pc.config.liveWorkerVersion = '18-older'
+  const was = pc.fake.model.workers.get(ACCOUNT)?.get(LIVE_WORKER_NAME)
+  const uploadsThen = was?.uploads ?? 0
+  pc.live.state.build = (worker) => (worker === was && worker.uploads <= uploadsThen ? '18-older' : BUILD)
+}
 const writes = (pc, from = 0) => pc.fake.requests.slice(from).filter((request) => request.method !== 'GET').map((request) => `${request.method} ${request.path}`)
 const uploads = (pc) => pc.fake.requests.filter((request) => request.method === 'PUT' && request.path === `/accounts/${ACCOUNT}/workers/scripts/${LIVE_WORKER_NAME}`).length
-const secretsSet = (pc) => pc.fake.requests.filter((request) => request.method === 'PATCH').map((request) => JSON.parse(request.body.toString()).secrets.ADMIN_SECRET.text)
+/** The admin key each secrets request carried, in order (a request names exactly one admin key). */
+const secretsSet = (pc) => pc.fake.requests.filter((request) => request.method === 'PATCH').map((request) => Object.entries(JSON.parse(request.body.toString()).secrets).filter(([name]) => name.startsWith('ADMIN_SECRET')).map(([, entry]) => entry.text)).flat()
 async function thrown(promise) {
   try { await promise } catch (error) { observed.push({ message: error.message, details: error.details, prompt: error.prompt }); return error }
   assert.fail('expected a throw')
 }
 
-/**
- * The deployed Worker, as Go live meets it: GET /capabilities, and POST /sessions with the admin
- * secret it was given (the value the fake API received in secrets-bulk).
- */
-function deployedWorker(pc) {
-  return async (address, init = {}) => {
-    const url = new URL(address)
-    const worker = pc.fake.model.workers.get(ACCOUNT)?.get(LIVE_WORKER_NAME)
-    if (url.origin !== ADDRESS || !worker) return new Response('no such Worker', { status: 404 })
-    if (url.pathname === '/capabilities') return Response.json({ protocol: 2, build: BUILD })
-    const given = secretsSet(pc).at(-1)
-    if (url.pathname === '/sessions' && init.method === 'POST') {
-      if (new Headers(init.headers).get('authorization') !== `Bearer ${given}`) return Response.json({ error: { message: 'unauthorised' } }, { status: 401 })
-      return Response.json({ sessionId: 's1', presenterToken: 'p1', shortId: 'k1', expiresAt: Date.now() + 60_000 }, { status: 201 })
-    }
-    return new Response('not found', { status: 404 })
-  }
-}
+/** The deployed Worker, as Go live meets it: the stand-in over the fake API's secrets (lib/live-worker-double.mjs). */
+const deployedWorker = (pc) => pc.live.fetch
 /** live:go's own steps once it has an endpoint (src/main/index.ts): the capabilities, then a session. */
 async function goLive(pc) {
   const endpoint = await pc.service.endpoint()
@@ -258,9 +286,9 @@ async function goLive(pc) {
   assert.equal(pc.fake.requests.length, 0, 'nothing is set up on a use')
   const reply = see(await pc.service.setUp())
   assert.deepEqual([reply.ok, reply.row.state, reply.row.address, reply.row.build], [true, 'ready', ADDRESS, BUILD])
-  assert.deepEqual(pc.rows.map((row) => `${row.state}${row.phase ? `/${row.phase}` : ''}`), ['setting-up/upload', 'setting-up/secrets', 'ready'], 'Setting up… (deploy, then secrets), then Ready')
+  assert.deepEqual(pc.rows.map((row) => `${row.state}${row.phase ? `/${row.phase}` : ''}`), ['setting-up/checking', 'setting-up/upload', 'setting-up/secrets', 'ready'], 'Setting up… (checking, the upload, then the keys), then Ready')
   assert.deepEqual(pc.told, [LIVE_SETTING_UP_NOTICE])
-  assert.deepEqual([pc.config.liveWorkerBaseUrl, pc.config.liveWorkerVersion, pc.config.liveWorkerAccountId, pc.made], [ADDRESS, BUILD, ACCOUNT, 1], 'the address kept with this build and its account; keys made once')
+  assert.deepEqual([pc.config.liveWorkerBaseUrl, pc.config.liveWorkerVersion, pc.config.liveWorkerAccountId, pc.store.made], [ADDRESS, BUILD, ACCOUNT, 1], 'the address kept with this build and its account; keys made once')
   const went = await goLive(pc)
   assert.equal(went.status, 201, 'Go live makes a session with the keys the set-up gave the Worker')
   assert.equal(pc.lookUps, 1, 'and the address was looked up at Cloudflare first')
@@ -272,7 +300,7 @@ async function goLive(pc) {
   // A newer app build: exactly one update before the next use, with the stored keys; the person is told.
   const pc = computer()
   await pc.service.setUp()
-  pc.config.liveWorkerVersion = '18-older' // as an install of the previous version left it
+  outdated(pc) // as an install of the previous version left it
   pc.rows.length = 0
   pc.told.length = 0
   assert.match(goingLiveRowDetail(pc.service.row()), /updated before the next use$/)
@@ -283,43 +311,53 @@ async function goLive(pc) {
   assert.equal(pc.deploys, 2)
   assert.deepEqual(pc.told, [LIVE_UPDATING_NOTICE], 'the person is told once: "Updating the live service…"')
   assert.ok(pc.rows.some((row) => row.state === 'updating'), 'the row read Updating… while it ran')
-  assert.deepEqual([pc.made, secretsSet(pc)], [1, [NEW_KEYS.adminSecret, NEW_KEYS.adminSecret]], 'no new keys: the stored ones were set again')
+  assert.deepEqual([pc.store.made, secretsSet(pc)], [1, [pc.store.stored.adminSecret]], 'no new key, and the update sent no secret: the only secrets request is the first set-up\'s')
   assert.equal(pc.config.liveWorkerVersion, BUILD)
+  // Settings say an update is due and the live service already answers as this build (another computer
+  // updated it): the next use uploads nothing and sends no secret; Settings are brought up to date.
+  pc.config.liveWorkerVersion = '18-older'
+  const sentBefore = pc.fake.requests.length
+  assert.deepEqual([(await goLive(pc)).status, writes(pc, sentBefore), pc.config.liveWorkerVersion, uploads(pc)], [201, [], BUILD, 2])
   console.log('PASS 3: a newer app build updates the live service once before the next use (two uses at once share it), with the stored keys, saying "Updating the live service…"')
 }
 
 {
-  // Lost keys with a deployed service: the stop, and nothing at all sent; only an explicit reset makes new keys.
-  const pc = computer()
-  await pc.service.setUp()
-  pc.keys = null // the slot is gone (a new computer with the old settings)
-  pc.service.refresh()
-  const sent = pc.fake.requests.length
-  assert.equal(pc.service.row().state, 'keys-lost')
-  assert.equal(goingLiveRowDetail(pc.service.row()), LIVE_KEYS_LOST_EXPLAINED)
-  const used = await thrown(pc.service.endpoint())
-  assert.deepEqual([used.message, used.prompt], [LIVE_KEYS_LOST, null])
-  pc.config.liveWorkerVersion = '18-older' // not even a newer build redeploys
-  const asked = see(await pc.service.setUp())
-  assert.deepEqual([asked.ok, asked.error, asked.row.state], [false, LIVE_KEYS_LOST, 'keys-lost'])
-  assert.deepEqual([pc.fake.requests.length - sent, pc.made, pc.deploys], [0, 1, 1], 'nothing sent to Cloudflare, no keys made, nothing redeployed')
-  // Check again while the Worker is still there: still the stop (a lookup is a read).
-  await pc.service.look('asked')
-  assert.deepEqual([pc.service.row().state, writes(pc, sent)], ['keys-lost', []])
-  // The reset, done on purpose: the Worker deleted in the dashboard, then Check again.
-  pc.fake.model.workers.get(ACCOUNT).delete(LIVE_WORKER_NAME)
-  await pc.service.look('asked')
-  assert.deepEqual([pc.service.row().state, pc.service.row().note, pc.config.liveWorkerBaseUrl], ['not-set-up', 'not-found', undefined])
-  const again = await pc.service.setUp()
-  assert.deepEqual([again.ok, again.row.state, pc.made, secretsSet(pc).at(-1)], [true, 'ready', 2, SECOND_KEYS.adminSecret], 'only then are new keys made')
-  // The sequence's own stop: no address in Settings, the Worker at Cloudflare, no keys here.
-  const fresh = computer()
-  fresh.fake.model.workers.set(ACCOUNT, new Map([[LIVE_WORKER_NAME, { uploads: 1, secrets: ['ADMIN_SECRET', 'SESSION_SIGNING_SECRET'], migrationTag: 'v4', module: null, metadata: null, workersDev: true }]]))
-  const stopped = await fresh.service.setUp()
-  assert.deepEqual([stopped.ok, stopped.error, stopped.row.state, fresh.made, writes(fresh)], [false, LIVE_KEYS_LOST, 'keys-lost', 0, []])
-  const stillStopped = await fresh.service.setUp()
-  assert.deepEqual([stillStopped.error, fresh.deploys], [LIVE_KEYS_LOST, 1], 'asked again: the stop, without asking Cloudflare again')
-  console.log('PASS 4: lost keys with a deployed service stop with what resetting breaks; nothing is sent or redeployed; only the Worker deleted, then Check again, leads to new keys')
+  // A second computer on the same account: it adds its own key, both go live, and one can be removed without the other.
+  const first = computer()
+  await first.service.setUp()
+  const second = computer({ shared: first, name: 'Second Mac' })
+  assert.equal(second.service.row().state, 'not-set-up', 'before Cloudflare is asked, nothing is known')
+  const found = see(await second.service.look('asked'))
+  assert.deepEqual([found.state, edgeText(found), goingLiveRowDetail(found)], ['set-up-elsewhere', '[Set up going live on this computer]', GOING_LIVE_ELSEWHERE_DETAIL])
+  const sent = first.fake.requests.length
+  const before = await thrown(second.service.endpoint())
+  assert.deepEqual([before.kind, before.message, before.prompt, writes(second, sent)], ['not-set-up', LIVE_NOT_SET_UP, 'open-settings', []], 'a use adds nothing: the computer is added on purpose')
+  // Pressed twice at once (two windows, a double click): one set-up, one request.
+  const [a, b] = await Promise.all([second.service.setUp(), second.service.setUp()])
+  assert.deepEqual([a.ok, b.ok, second.deploys, second.store.made], [true, true, 1, 1])
+  const added = second.fake.requests.slice(sent).filter((request) => request.method !== 'GET')
+  assert.deepEqual(added.map((request) => `${request.method} ${request.path}`), [`PATCH /accounts/${ACCOUNT}/workers/scripts/${LIVE_WORKER_NAME}/secrets-bulk`], 'exactly one write: no upload, nothing of the first computer\'s touched')
+  assert.deepEqual(Object.keys(JSON.parse(added[0].body.toString()).secrets), [`ADMIN_SECRET_${second.store.stored.computerId}`], 'naming only this computer\'s secret')
+  assert.deepEqual([second.service.row().state, edgeText(second.service.row())], ['ready', 'Ready · this computer and 1 other'])
+  assert.deepEqual(first.live.state.computers.map((line) => `${line.id}:${line.name}`), [`${first.store.stored.computerId}:First Mac`, `${second.store.stored.computerId}:Second Mac`], 'both are on the live service\'s list, each under the id its key belongs to')
+  assert.deepEqual([(await goLive(second)).status, (await goLive(first)).status], [201, 201], 'both computers then make a live session')
+  // The second computer's key is removed (from another computer): it reads so, the first is untouched, and it can be set up again with the SAME key.
+  const worker = first.fake.model.workers.get(ACCOUNT).get(LIVE_WORKER_NAME)
+  const SECOND = second.store.stored
+  worker.values.delete(`ADMIN_SECRET_${SECOND.computerId}`)
+  worker.secrets = worker.secrets.filter((name) => name !== `ADMIN_SECRET_${SECOND.computerId}`)
+  const removed = see(await second.service.look('asked'))
+  assert.deepEqual([removed.state, goingLiveRowDetail(removed), edgeText(removed)], ['access-removed', GOING_LIVE_REMOVED_DETAIL, '[Set up going live on this computer]'])
+  const refusedUse = await thrown(second.service.endpoint())
+  assert.deepEqual([refusedUse.message, refusedUse.prompt], [LIVE_ACCESS_REMOVED, 'open-settings'])
+  assert.equal((await goLive(first)).status, 201, 'the first computer still goes live')
+  const again = await second.service.setUp()
+  assert.deepEqual([again.ok, again.row.state, second.store.made, secretsSet(second).at(-1)], [true, 'ready', 1, SECOND.adminSecret], 'set up again: the stored key is sent again, none is made')
+  // A live service that does not answer is not a removal: the row stays as it was.
+  first.live.state.unreachable = true
+  assert.equal((await second.service.look('asked')).state, 'ready', 'unreachable is not "access was removed"')
+  first.live.state.unreachable = false
+  console.log('PASS 4: a second computer reads "Set up on another computer", adds its own key in one request (a double press included), and both go live; a removed computer reads so and is set up again with the same key')
 }
 
 {
@@ -502,7 +540,7 @@ async function goLive(pc) {
   assert.ok(/return liveService\(\)\.endpoint\(\)/.test(ensure))
   assert.ok(/setup: cause\.prompt/.test(main) && /function sharedTalkError[\s\S]{0,400}error\.prompt/.test(main), 'Go live and Share for comments carry the prompt')
   assert.ok(/ipcMain\.handle\('live-service:set-up'/.test(main) && /ipcMain\.handle\('live-service:status'/.test(main))
-  assert.ok(/deploy: \(progress\) => deployLiveWorker\(progress\)/.test(main) && /lookUp: \(accountId\) => lookUpLiveService\(/.test(main))
+  assert.ok(/deploy: \(progress\) => setUpLiveWorker\(progress\)/.test(main) && /const result = await deployLiveWorker\(progress\)/.test(main) && /lookUp: \(accountId\) => lookUpLiveService\(/.test(main))
   const settingsRow = readSource(join(repo, 'src/renderer/src/components/CloudflareSettings.tsx'))
   assert.ok(/data-cloudflare="live-service"/.test(settingsRow) && /goingLiveRowEdge\(live\)/.test(settingsRow) && /window\.tw\.liveService\.setUp\(\)/.test(settingsRow))
   console.log('PASS 9: the app uses the service: ensureLiveWorker sets nothing up, Go live and Share for comments carry the prompt, the row has its own IPC')
@@ -520,7 +558,7 @@ async function goLive(pc) {
   const lookAsked = new Promise((resolve) => { asked = resolve })
   const looking = pc.service.look('asked')
   await lookAsked // …and its answer is held
-  pc.config.liveWorkerVersion = '18-older' // a newer app build: the next use updates, recreating the Worker
+  outdated(pc) // a newer app build: the next use updates, recreating the Worker
   const used = await pc.service.endpoint()
   assert.equal(used.baseUrl, ADDRESS)
   assert.ok(pc.fake.model.workers.get(ACCOUNT).has(LIVE_WORKER_NAME), 'the update recreated the Worker')
@@ -557,7 +595,7 @@ async function goLive(pc) {
   const gone = computer()
   await gone.service.setUp()
   gone.fake.model.workers.get(ACCOUNT).delete(LIVE_WORKER_NAME)
-  gone.config.liveWorkerVersion = '18-older'
+  outdated(gone)
   failUpload(gone)
   const refusedAddress = await thrown(gone.service.endpoint())
   assert.deepEqual([refusedAddress.kind, refusedAddress.prompt], ['not-set-up', 'open-settings'], 'the dead address is not handed out (a publish goes up without it)')
@@ -565,7 +603,7 @@ async function goLive(pc) {
   // b. The Worker still there, the update fails: looked up, found, used; and looked up again on the next use.
   const kept = computer()
   await kept.service.setUp()
-  kept.config.liveWorkerVersion = '18-older'
+  outdated(kept)
   failUpload(kept)
   const lookUpsBefore = kept.lookUps
   const after = await kept.service.endpoint()
@@ -577,7 +615,7 @@ async function goLive(pc) {
   // c. The update fails and the lookup gets no answer: no address either.
   const silent = computer()
   await silent.service.setUp()
-  silent.config.liveWorkerVersion = '18-older'
+  outdated(silent)
   silent.fake.model.answer = (request) => (request.method === 'PUT' && request.path.endsWith(`/scripts/${LIVE_WORKER_NAME}`) ? { status: 400, body: { success: false, errors: [{ code: 10021, message: 'no' }], messages: [], result: null } } : null)
   let failedOnce = false
   const inner = silent.fake.model.answer
@@ -620,8 +658,51 @@ async function goLive(pc) {
   console.log('PASS 13 (fix 3, round 2): a set-up is accepted only from an editor window\'s top frame, never a presenter window; the presenter prompt cannot set anything up (PASS 8)')
 }
 
+// ── A key slot that cannot be read, and what is never sent ──────────────────────────────────────
+{
+  // R4, at the row: a computer that is set up, whose slot then cannot be decrypted. The row says so
+  // (it is not "Not set up" and not "Set up on another computer"); a use, a look and a press of the
+  // button all stop with the fixed sentence; no key is made, nothing is written, nothing is sent.
+  const pc = computer()
+  assert.equal((await pc.service.setUp()).ok, true)
+  const [text, sent, shown, asked] = [pc.keys.slot.text, pc.fake.requests.length, pc.live.requests.length, pc.keys.slot.writes.length]
+  pc.keys.slot.failRead = true
+  const row = see(pc.service.row())
+  assert.deepEqual([row.state, row.reason, row.address, row.details], ['failed', LIVE_KEY_UNREADABLE, null, null])
+  const use = await thrown(pc.service.endpoint())
+  assert.deepEqual([use.message, use.prompt], [LIVE_KEY_UNREADABLE, 'open-settings'])
+  const pressed = see(await pc.service.setUp())
+  assert.deepEqual([pressed.ok, pressed.error, pressed.row.state, pressed.row.reason], [false, LIVE_KEY_UNREADABLE, 'failed', LIVE_KEY_UNREADABLE])
+  assert.equal(see(await pc.service.look('asked')).state, 'failed')
+  assert.deepEqual([pc.fake.requests.length - sent, pc.live.requests.length - shown, pc.keys.slot.writes.length - asked, pc.keys.slot.text], [0, 0, 0, text], 'not one request to Cloudflare or the live service, and the slot is as it was')
+  // Readable again: the row is Ready at once (nothing of the failure is kept), with the same key, and Go live works.
+  pc.keys.slot.failRead = false
+  assert.deepEqual([pc.service.row().state, pc.service.row().reason ?? null, writes(pc, sent), (await goLive(pc)).status, pc.keys.slot.writes.length - asked], ['ready', null, [], 201, 0])
+  assert.equal(outcomeOf({ ok: false, error: LIVE_KEY_UNREADABLE }), null, 'an unreadable slot is said from the slot, not remembered')
+
+  // R1: across every journey of this suite, no request names a signing secret, and every secrets request names one computer's key.
+  let secretsRequests = 0
+  for (const fake of worlds) {
+    assert.deepEqual(fake.namingSigningSecret(), [], 'no request names SESSION_SIGNING_SECRET')
+    for (const request of fake.requests.filter((entry) => entry.method === 'PATCH')) {
+      secretsRequests += 1
+      const names = Object.keys(JSON.parse(request.body.toString()).secrets)
+      assert.ok(names.length === 1 && /^ADMIN_SECRET_[0-9a-f]{16}$/.test(names[0]))
+    }
+    // R2: and none is a DELETE, or touches a domain or a route.
+    assert.deepEqual(fake.requests.filter((request) => request.method === 'DELETE' || /\/domains|\/routes|\/zones/.test(request.path)).map((request) => `${request.method} ${request.path}`), [])
+  }
+  assert.ok(secretsRequests >= 5)
+  console.log(`PASS 14: a key slot that cannot be read: the row, a use and the button say so and nothing is asked, made, written or sent; across the suite's ${worlds.length} accounts no request names a signing secret, deletes anything or touches a domain`)
+}
+
 // ── Nothing secret anywhere ─────────────────────────────────────────────────────────────────────
 {
+  // The keys the journeys generated, as the slots hold them, with the made-up values.
+  const generated = [...new Set(profiles.flatMap((held) => held.entries().map((entry) => entry.key)))]
+  assert.ok(generated.length >= 8, `generated keys were collected (${generated.length})`)
+  SECRETS.push(...generated)
+  for (const secret of generated) assert.ok(!JSON.stringify(profiles.map((held) => held.config)).includes(secret), 'no key in config.json')
   const seen = JSON.stringify(observed)
   assert.ok(observed.length > 20, `plenty looked at (${observed.length})`)
   for (const secret of SECRETS) assert.ok(!seen.includes(secret), 'no token or key in any row, reply, error or notice')
@@ -629,6 +710,59 @@ async function goLive(pc) {
   for (const request of requests) for (const secret of SECRETS) assert.ok(!`${request.path}${request.search ?? ''}`.includes(secret), 'no secret in a request address')
   console.log(`PASS 10: no token or key in ${observed.length} rows, replies, errors and notices, nor in any of ${requests.length} request addresses`)
 }
+{
+  // R10 as amended: an update whose upload Cloudflare has not switched to yet is a success with something to say.
+  // The reply carries the fixed sentence; the row is the working one; nothing is kept as a failure.
+  const PENDING = 'TalkWeaver uploaded the update. Cloudflare has not switched to it yet. Check again in a few minutes.'
+  assert.equal(LIVE_UPDATE_PENDING, PENDING)
+  for (const pending of [{ notice: LIVE_UPDATE_PENDING, build: '20-before-the-upload' }, null]) {
+    const config = { baseUrl: 'https://talkweaver-live-sessions.ada.workers.dev', version: '20-before-the-upload', accountId: 'acc0pending' }
+    let deploys = 0
+    const service = createLiveService({
+      facts: () => ({ connection: 'connected', permission: 'not-refused', accountId: 'acc0pending', key: 'own', deployed: { ...config }, appBuild: BUILD }),
+      adminSecret: () => 'k'.repeat(43),
+      // As the sequence does for a finished update: the record is saved, then the result says what was read back.
+      deploy: async () => { deploys += 1; config.version = BUILD; return { ok: true, baseUrl: config.baseUrl, adminSecret: 'k'.repeat(43), others: 0, created: false, ...(pending ? { pending } : {}) } },
+      lookUp: async () => 'exists', survey: async () => null, forget: () => {},
+    })
+    const reply = await service.setUp()
+    assert.deepEqual([reply.ok, reply.notice, reply.row.state, deploys, outcomeOf({ ok: true, baseUrl: '', adminSecret: '', others: null, created: false, ...(pending ? { pending } : {}) })], [true, pending ? PENDING : undefined, 'ready', 1, null], pending ? 'uploaded, not switched to yet: success, with the sentence' : 'a plain success says nothing more')
+    // Pressed again, or used: nothing is uploaded again because of it.
+    await service.setUp()
+    assert.equal(deploys, 1, 'no second upload follows from a pending update')
+  }
+  // The same update when it is part of going live or sharing (a use): the person is told the sentence once, on the path the
+  // "Updating the live service…" line took, and what they asked for goes on with the address and key of the update.
+  for (const pending of [{ notice: LIVE_UPDATE_PENDING, build: '20-before-the-upload' }, null]) {
+    for (const how of ['one use', 'two uses at once', 'a use joined by Settings', 'Settings joined by a use']) {
+      const config = { baseUrl: 'https://talkweaver-live-sessions.ada.workers.dev', version: '20-before-the-upload', accountId: 'acc0pending' }
+      let deploys = 0
+      const told = []
+      let release
+      const held = new Promise((resolve) => { release = resolve })
+      const service = createLiveService({
+        facts: () => ({ connection: 'connected', permission: 'not-refused', accountId: 'acc0pending', key: 'own', deployed: { ...config }, appBuild: BUILD }),
+        adminSecret: () => 'k'.repeat(43),
+        deploy: async () => { deploys += 1; await held; config.version = BUILD; return { ok: true, baseUrl: config.baseUrl, adminSecret: 'k'.repeat(43), others: 0, created: false, ...(pending ? { pending } : {}) } },
+        lookUp: async () => 'exists', survey: async () => null, forget: () => {},
+        tell: (message) => told.push(message),
+      })
+      const asked = how === 'one use' ? [service.endpoint()] : how === 'two uses at once' ? [service.endpoint(), service.endpoint()] : how === 'a use joined by Settings' ? [service.endpoint(), service.setUp()] : [service.setUp(), service.endpoint()]
+      release()
+      const answers = await Promise.all(asked)
+      const uses = answers.filter((answer) => 'baseUrl' in answer)
+      const replies = answers.filter((answer) => 'row' in answer)
+      assert.deepEqual([deploys, uses.every((use) => use.baseUrl === config.baseUrl && use.adminSecret === 'k'.repeat(43)), replies.map((reply) => [reply.ok, reply.notice])], [1, true, replies.map(() => [true, pending ? PENDING : undefined])], `${how}: one update, the use goes on, and Settings' reply carries the sentence`)
+      assert.deepEqual([told.filter((message) => message === LIVE_UPDATING_NOTICE).length, told.filter((message) => message === PENDING).length], [1, pending && how !== 'Settings joined by a use' ? 1 : 0], `${how}: "Updating the live service…" once, and the pending sentence ${pending ? 'once' : 'never'}`)
+      if (pending && told.includes(PENDING)) assert.ok(told.indexOf(LIVE_UPDATING_NOTICE) < told.indexOf(PENDING), 'after the progress line')
+      // A later use: nothing more is uploaded or said.
+      await service.endpoint()
+      assert.deepEqual([deploys, told.filter((message) => message === PENDING).length <= 1], [1, true])
+    }
+  }
+  console.log('PASS 14 (R10): an update Cloudflare has not switched to yet is a success whose reply says so; the row is ready and nothing is uploaded again; as part of going live or sharing the person is told the sentence once and the use goes on')
+}
+
 process.stdout.write = write
 process.stderr.write = writeErr
 const output = printed.join('')

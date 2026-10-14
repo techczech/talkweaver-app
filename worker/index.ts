@@ -56,6 +56,8 @@ import { createShare, forwardToShare, parseShareRoute } from './shared-talk'
 import { createRunShare, forwardToRunShare, parseRunShareRoute } from './run-share'
 import { createRunPrework, forwardToPrework, parsePreworkRoute } from './prework'
 import { generateShortId } from './short-id'
+import { ComputersTable, computersRoute } from './computers'
+import { SigningKeyTable, signingKey } from './signing-key'
 
 export { SharedTalk } from './shared-talk'
 export { RunShare } from './run-share'
@@ -102,6 +104,8 @@ async function createLiveSession(request: Request, env: Env): Promise<Response> 
   if (!await adminAuthorised(request, env)) return errorResponse('admin_auth_required', 'Admin authentication is required.', 401)
   const body = await request.json().catch(() => ({})) as CreateSessionBody
   if (!validTalkSlug(body.talkSlug)) return errorResponse('invalid_talk_slug', 'Use a lower-case talk slug containing letters, numbers, or hyphens.', 400)
+  // Before anything is made: a session whose token could not be signed is never left behind.
+  const key = await signingKey(env)
 
   const now = Date.now()
   const sessionId = crypto.randomUUID()
@@ -129,7 +133,7 @@ async function createLiveSession(request: Request, env: Env): Promise<Response> 
   }))
   if (!registration.ok) return registration
 
-  const presenterToken = await createSignedToken({ role: 'presenter', sessionId, exp: expiresAt }, env.SESSION_SIGNING_SECRET)
+  const presenterToken = await createSignedToken({ role: 'presenter', sessionId, exp: expiresAt }, key)
   return jsonResponse({ sessionId, presenterToken, shortId, expiresAt }, 201)
 }
 
@@ -139,7 +143,11 @@ export default {
     const url = new URL(request.url)
     let response: Response
 
-    if (url.pathname === '/capabilities' && request.method === 'GET') {
+    // The computers that can go live (admin only): null when the request is not one of its routes.
+    const computers = await computersRoute(request, env, url)
+    if (computers) {
+      response = computers
+    } else if (url.pathname === '/capabilities' && request.method === 'GET') {
       response = jsonResponse({ protocol: LIVE_PROTOCOL_VERSION, build: LIVE_WORKER_BUILD })
     } else if (url.pathname === '/sessions' && request.method === 'POST') {
       response = await createLiveSession(request, env)
@@ -167,7 +175,11 @@ export default {
       const shareLookup = url.pathname.match(/^\/shares\/by-talk\/([^/]+)$/)
       const shareRoute = parseShareRoute(url.pathname)
       if (discovery && request.method === 'GET') {
-        response = await registryStub(env).fetch(request)
+        // The ONLY public request that reaches the registry object, which also keeps the signing key
+        // (signing-key.ts). It goes as a request built here: method GET, no headers, no body, and a
+        // path that is `/session/` plus one segment with no slash in it, so it can never read as one
+        // of the object's `/internal/…` routes.
+        response = await registryStub(env).fetch(new Request(`https://internal/session/${discovery[1]}`))
       } else if (sessionRoute && (request.method === 'GET' || request.method === 'POST' || request.headers.get('upgrade') === 'websocket')) {
         response = await liveSessionStub(env, sessionRoute[1]).fetch(request)
       } else if (shareLookup && request.method === 'GET') {
@@ -189,9 +201,13 @@ export default {
 
 export class SessionRegistry {
   private readonly ctx: DurableObjectState
+  private readonly computers: ComputersTable
+  private readonly signingKeyTable: SigningKeyTable
 
   constructor(state: DurableObjectState) {
     this.ctx = state
+    this.computers = new ComputersTable(state.storage.sql)
+    this.signingKeyTable = new SigningKeyTable(state.storage.sql)
     state.storage.sql.exec('CREATE TABLE IF NOT EXISTS active_sessions (talk_slug TEXT PRIMARY KEY, session_id TEXT NOT NULL, expires_at INTEGER NOT NULL)')
     state.storage.sql.exec('CREATE TABLE IF NOT EXISTS active_shares (talk_slug TEXT PRIMARY KEY, share_id TEXT NOT NULL)')
   }
@@ -251,8 +267,13 @@ export class SessionRegistry {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url)
+    // First, and with no `await` before or inside it: two first requests get the same key.
+    const signing = this.signingKeyTable.route(request, url)
+    if (signing) return signing
     const internalShare = url.pathname.match(/^\/internal\/share\/([^/]+)$/)
     if (internalShare) return this.shareRoute(request, url, decodeURIComponent(internalShare[1]))
+    const computers = await this.computers.route(request, url)
+    if (computers) return computers
     const internal = url.pathname.match(/^\/internal\/session\/([^/]+)$/)
     const discovery = url.pathname.match(/^\/session\/([^/]+)$/)
     const entries = this.entries()
@@ -403,15 +424,17 @@ export class LiveSession {
    * 12-hour live window.
    */
   private async presenterCapability(request: Request): Promise<boolean> {
-    if (!this.session) return false
-    const token = await verifySignedToken(this.presenterToken(request), this.env.SESSION_SIGNING_SECRET, this.session.createdAt)
-    return token?.sessionId === this.session.sessionId && token.exp === this.session.expiresAt
+    const session = this.session
+    if (!session) return false
+    const token = await verifySignedToken(this.presenterToken(request), await signingKey(this.env), session.createdAt)
+    return token?.sessionId === session.sessionId && token.exp === session.expiresAt
   }
 
   private async presenterAuthorised(request: Request): Promise<boolean> {
-    if (!this.session) return false
-    const payload = await verifySignedToken(this.presenterToken(request), this.env.SESSION_SIGNING_SECRET)
-    return payload?.sessionId === this.session.sessionId
+    const session = this.session
+    if (!session) return false
+    const payload = await verifySignedToken(this.presenterToken(request), await signingKey(this.env))
+    return payload?.sessionId === session.sessionId
   }
 
   private acceptSocket(role: LiveSocketAttachment['role'], request: Request): Response {
@@ -593,8 +616,9 @@ export class LiveSession {
     if (route[2] === 'recovery' && request.method === 'GET') {
       // Read-only history remains recoverable after expiry. Verify the original capability
       // at its issuance time, and require its exact session and expiration claims.
-      const token = await verifySignedToken(this.presenterToken(request), this.env.SESSION_SIGNING_SECRET, this.session.createdAt)
-      if (token?.sessionId !== this.session.sessionId || token.exp !== this.session.expiresAt) {
+      const session = this.session
+      const token = await verifySignedToken(this.presenterToken(request), await signingKey(this.env), session.createdAt)
+      if (token?.sessionId !== session.sessionId || token.exp !== session.expiresAt) {
         return errorResponse('presenter_auth_required', 'Presenter authentication is required.', 401)
       }
       const after = Number(url.searchParams.get('afterSequence') || 0)

@@ -1,7 +1,7 @@
 // Layout Doctor — the home of 'doctor'-surfaced warnings (ADR-0020 Consequences;
 // ADR-0011 chrome: application panel, hairlines, paper/oxford palette).
 import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, X } from 'lucide-react'
 import type { LayoutDoctorTalk, ProjectionRow, TalkInfo } from '../../../preload/index'
 import {
@@ -9,7 +9,9 @@ import {
   type DoctorFindingKind,
   type LayoutDoctorFinding
 } from '../../../shared/layout-doctor'
+import { STRANDED_TITLE_ICON_ACTION } from '../../../shared/title-icon-restore'
 import { warningsForSurface } from '../../../../compiler/scripts/lib/warning-registry.mjs'
+import { usePausedScan } from '../lib/pausedScan'
 
 interface Props {
   isOpen: boolean
@@ -18,6 +20,13 @@ interface Props {
   outlineText: string
   slideRows: ProjectionRow[] | null
   onJumpToLine: (line: number) => void
+  /**
+   * The one fix the doctor makes itself (plain view ticket 15): move a title's icon from its layout
+   * line to the title, in the open talk's buffer. Resolves to null when it was moved, or to the
+   * words to show when it was not. `scan`: the talk and the exact outline text the finding was read
+   * from; the move is refused unless the editor still holds that text.
+   */
+  onRestoreTitleIcon?: (finding: LayoutDoctorFinding, scan: { outlinePath: string; text: string }) => Promise<string | null>
 }
 
 type CompilerNote = {
@@ -33,7 +42,8 @@ const KIND_ORDER: DoctorFindingKind[] = [
   'unregistered-value',
   'trigger-conflict',
   'duplicate-layout',
-  'duplicate-slide-id'
+  'duplicate-slide-id',
+  'stranded-title-icon'
 ]
 
 const KIND_LABELS: Record<DoctorFindingKind, string> = {
@@ -42,7 +52,8 @@ const KIND_LABELS: Record<DoctorFindingKind, string> = {
   'unregistered-value': 'Unregistered value',
   'trigger-conflict': 'Trigger conflict',
   'duplicate-layout': 'Duplicate layout',
-  'duplicate-slide-id': 'Duplicate slide id'
+  'duplicate-slide-id': 'Duplicate slide id',
+  'stranded-title-icon': 'Icon not on the title'
 }
 
 function isErrorFinding(kind: DoctorFindingKind): boolean {
@@ -84,14 +95,64 @@ function compilerNotesFor(rows: ProjectionRow[] | null): CompilerNote[] {
   return [...notes.values()]
 }
 
+/** The titles whose icon is on their layout line: the one reading here that costs (usePausedScan). */
+function strandedTitleIconFindings(text: string): LayoutDoctorFinding[] {
+  return scanOutlineTriggers(text, undefined, { strandedTitleIcons: true }).filter((finding) => finding.kind === 'stranded-title-icon')
+}
+
+const TABBABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
 function FindingRow({
   finding,
-  onJump
+  onJump,
+  onFix,
+  fixWaiting = false
 }: {
   finding: LayoutDoctorFinding
   onJump?: () => void
+  onFix?: () => Promise<string | null>
+  /** The talk has changed since this row was read and is waiting to be read again: no fix from it. */
+  fixWaiting?: boolean
 }) {
   const error = isErrorFinding(finding.kind)
+  const [fixing, setFixing] = useState(false)
+  const [notFixed, setNotFixed] = useState<string | null>(null)
+  if (finding.kind === 'stranded-title-icon' && onFix) {
+    // A row with a button of its own: the line number is what jumps.
+    const fix = (): void => {
+      setFixing(true)
+      setNotFixed(null)
+      onFix()
+        .then((refusal) => setNotFixed(refusal))
+        .catch(() => setNotFixed('The icon could not be moved, so nothing was changed.'))
+        .finally(() => setFixing(false))
+    }
+    return (
+      <div style={{ ...S.findingRow, ...S.warningRow }}>
+        <span style={{ ...S.kindChip, ...S.kindChipWarning }}>{KIND_LABELS[finding.kind]}</span>
+        <code style={S.token}>{finding.token}</code>
+        <span style={S.rowMain}>
+          <span style={S.slideTitle}>{finding.slideTitle || '(untitled slide)'}</span>
+          {finding.detail ? <span style={S.detail}>{finding.detail}</span> : null}
+          {notFixed ? <span style={S.notFixed} role="alert">Could not fix. {notFixed}</span> : null}
+        </span>
+        <button
+          type="button"
+          style={{ ...S.fixAction, ...(fixWaiting ? S.fixActionWaiting : null) }}
+          onClick={fix}
+          disabled={fixing || fixWaiting}
+          title={fixWaiting ? 'The talk has changed. This is available again once it has been read.' : undefined}
+        >
+          {STRANDED_TITLE_ICON_ACTION}
+        </button>
+        {onJump ? (
+          <button type="button" style={{ ...S.line, ...S.lineJump }} onClick={onJump} title={`Jump to line ${finding.line}`}>
+            line {finding.line}
+          </button>
+        ) : <span style={S.line}>line {finding.line}</span>}
+      </div>
+    )
+  }
   const content = (
     <>
       <span style={{ ...S.kindChip, ...(error ? S.kindChipError : S.kindChipWarning) }}>
@@ -172,15 +233,34 @@ export default function LayoutDoctorPanel({
   talk,
   outlineText,
   slideRows,
-  onJumpToLine
+  onJumpToLine,
+  onRestoreTitleIcon
 }: Props) {
   const [vaultReport, setVaultReport] = useState<LayoutDoctorTalk[] | null>(null)
   const [vaultError, setVaultError] = useState<string | null>(null)
   const [expandedTalks, setExpandedTalks] = useState<Set<string>>(() => new Set())
 
-  const talkFindings = useMemo(
+  const modalRef = useRef<HTMLDivElement>(null)
+  // The trigger findings are read at once, as they always were. The titles whose icon is on the
+  // layout line are read with the compiler's facts (tens of milliseconds on a long talk), so that
+  // reading waits until the outline has been unchanged for the workspace's compile pause and runs
+  // from a timer, never during a render (lib/pausedScan.ts). Until the newer text has been read, the
+  // rows of the older reading stay listed with their button off.
+  const triggerFindings = useMemo(
     () => (isOpen ? scanOutlineTriggers(outlineText) : []),
     [isOpen, outlineText]
+  )
+  const stranded = usePausedScan(isOpen ? outlineText : null, strandedTitleIconFindings, talk.outlinePath)
+  const strandedFindings = stranded.scanned?.result
+  const talkFindings = useMemo(
+    () => (strandedFindings?.length ? [...triggerFindings, ...strandedFindings] : triggerFindings),
+    [triggerFindings, strandedFindings]
+  )
+  // The text the stranded-icon rows were read from, kept with them: a fix is bound to it (title-icon-restore.ts).
+  const strandedText = stranded.scanned?.text
+  const talkScan = useMemo(
+    () => (strandedText === undefined ? null : { outlinePath: talk.outlinePath, text: strandedText }),
+    [talk.outlinePath, strandedText]
   )
   const talkGroups = useMemo(() => groupedFindings(talkFindings), [talkFindings])
   const compilerNotes = useMemo(
@@ -208,9 +288,33 @@ export default function LayoutDoctorPanel({
     return () => { cancelled = true }
   }, [isOpen, talk.outlinePath])
 
+  // The panel takes the keyboard while it is open, so that typing never reaches the editor behind it
+  // (the keyboard sheet focuses the editor before it runs the command that opens this), and hands it
+  // back to where it was when it closes. As MergeConfirm does; there is no shared helper.
+  useEffect(() => {
+    if (!isOpen) return
+    const before = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    modalRef.current?.focus()
+    return () => { if (before?.isConnected) before.focus() }
+  }, [isOpen])
+
   useEffect(() => {
     if (!isOpen) return
     function onKey(event: globalThis.KeyboardEvent) {
+      if (event.key === 'Tab') {
+        // Tab stays among the panel's own controls.
+        const modal = modalRef.current
+        if (!modal) return
+        const stops = [...modal.querySelectorAll<HTMLElement>(TABBABLE)].filter((stop) => stop.offsetParent !== null)
+        const at = document.activeElement
+        const inside = at instanceof HTMLElement && modal.contains(at) && at !== modal
+        if (!stops.length) { event.preventDefault(); modal.focus(); return }
+        const first = stops[0]
+        const last = stops[stops.length - 1]
+        if (event.shiftKey && (!inside || at === first)) { event.preventDefault(); last.focus() }
+        else if (!event.shiftKey && (!inside || at === last)) { event.preventDefault(); first.focus() }
+        return
+      }
       if (event.key !== 'Escape') return
       event.preventDefault()
       onClose()
@@ -236,7 +340,7 @@ export default function LayoutDoctorPanel({
 
   return (
     <div style={S.backdrop} onClick={(event) => { if (event.target === event.currentTarget) onClose() }}>
-      <div style={S.modal} role="dialog" aria-modal="true" aria-label={`Layout Doctor — ${talk.title}`}>
+      <div ref={modalRef} tabIndex={-1} style={S.modal} role="dialog" aria-modal="true" aria-label={`Layout Doctor — ${talk.title}`}>
         <div style={S.header}>
           <div style={{ minWidth: 0 }}>
             <span style={S.title}>{talk.title}</span>
@@ -257,7 +361,10 @@ export default function LayoutDoctorPanel({
               <span style={S.sectionTitle}>This talk</span>
               <span style={S.sectionCount}>{talkFindings.length}</span>
             </div>
-            {talkFindings.length === 0 ? (
+            {talkFindings.length === 0 && stranded.pending ? (
+              // Nothing found so far, and the title icons are still to be read: not yet "all clear".
+              <div style={S.loading}>Checking where this talk’s title icons are written…</div>
+            ) : talkFindings.length === 0 ? (
               <EmptyState scope="talk" detail="0 trigger findings in the live outline buffer." />
             ) : (
               <>
@@ -274,6 +381,8 @@ export default function LayoutDoctorPanel({
                         key={`${finding.headingLine}:${finding.line}:${finding.kind}:${finding.token}:${index}`}
                         finding={finding}
                         onJump={() => jump(finding.line)}
+                        onFix={onRestoreTitleIcon && talkScan ? () => onRestoreTitleIcon(finding, talkScan) : undefined}
+                        fixWaiting={stranded.pending}
                       />
                     ))}
                   </div>
@@ -363,7 +472,11 @@ export default function LayoutDoctorPanel({
         </div>
 
         <div style={S.footer}>
-          <span style={S.footerNote}>Report only — fixes remain authored in the outline.</span>
+          <span style={S.footerNote}>
+            {onRestoreTitleIcon && talkFindings.some((finding) => finding.kind === 'stranded-title-icon')
+              ? 'An icon can be moved to its title from here. Every other fix is made in the outline.'
+              : 'Report only — fixes remain authored in the outline.'}
+          </span>
           <button type="button" onClick={onClose} style={S.closeAction}>Close</button>
         </div>
       </div>
@@ -392,7 +505,7 @@ const S: Record<string, React.CSSProperties> = {
     width: 760, maxWidth: '94vw', maxHeight: '88vh',
     background: PANEL, border: `1px solid ${LINE}`, borderRadius: 6,
     overflow: 'hidden', display: 'flex', flexDirection: 'column',
-    boxShadow: '0 8px 32px rgba(0,0,0,0.22)'
+    boxShadow: '0 8px 32px rgba(0,0,0,0.22)', outline: 'none'
   },
   header: {
     display: 'flex', alignItems: 'baseline', gap: 10,
@@ -468,6 +581,13 @@ const S: Record<string, React.CSSProperties> = {
   slideTitle: { fontSize: '0.76rem', fontWeight: 650, color: INK },
   detail: { fontSize: '0.68rem', color: MUTED, lineHeight: 1.35 },
   line: { fontFamily: MONO, color: FAINT, fontSize: '0.64rem', flexShrink: 0 },
+  lineJump: { border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', textDecoration: 'underline' },
+  notFixed: { fontSize: '0.68rem', color: ERROR, lineHeight: 1.35 },
+  fixAction: {
+    flexShrink: 0, border: `1px solid ${LINE}`, borderRadius: 5, background: PAPER,
+    color: OXFORD, padding: '3px 9px', fontSize: '0.7rem', fontWeight: 650, cursor: 'pointer'
+  },
+  fixActionWaiting: { color: FAINT, cursor: 'default' },
   loading: { color: FAINT, fontSize: '0.78rem', padding: '10px 11px' },
   errorBox: {
     color: ERROR, fontSize: '0.78rem', padding: '9px 11px',

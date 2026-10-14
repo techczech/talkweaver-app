@@ -222,7 +222,7 @@ export const PRESENTER_CONTROLS: PresenterControl[] = [
   // Edit pencil (src/preload/present-edit-bridge.ts)
   { id: 'twedit-btn', name: 'Edit this slide in TalkWeaver', icon: 'pencil', iconOnly: true, shortcut: 'presenter.edit', preload: 'edit' },
   // Guide chip in the top bar (src/preload/present-guide.ts; onboarding 0.38.1 ticket 10)
-  { id: 'twguide-chip', name: 'Guide: Present chapter', icon: 'graduation-cap', preload: 'guide' }
+  { id: 'twguide-chip', name: 'Guide: Present chapter', icon: 'graduation-cap', shortcut: 'presenter.guide', preload: 'guide' }
 ]
 
 /** Icons a control switches to at runtime (Retry save, the refreshed hint, media play/pause). */

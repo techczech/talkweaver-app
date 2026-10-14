@@ -30,8 +30,8 @@
 //     bytes and `metadata`), the migration tag is kept and reported by the services lookup, and a
 //     migration that does not follow from the deployed tag is refused as Cloudflare refuses it;
 //     custom domains are attached (`PUT …/scripts/<name>/domains/records`, replacing the Worker's
-//     own) and removed (`DELETE /accounts/<id>/workers/domains/<id>`), and the list can be filtered
-//     by `?service=`.
+//     own only when `override_scope` is set) and removed (`DELETE /accounts/<id>/workers/domains/<id>`),
+//     and the list can be filtered by `?service=`, `?environment=` and `?hostname=`.
 // Anything else is answered 404 (no such route) and listed in `api.unknown`: a caller cannot pass
 // by asking for something the fake does not model.
 //
@@ -190,8 +190,9 @@ export function createFakeCloudflare(options = {}) {
         const query = new URLSearchParams(request.search ?? '')
         const service = query.get('service')
         const environment = query.get('environment')
+        const hostname = query.get('hostname')
         // An entry kept without an environment is listed without one (and matches no environment filter).
-        return ok((model.workerDomains.get(account) ?? []).filter((domain) => (!service || domain.service === service) && (!environment || domain.environment === environment))
+        return ok((model.workerDomains.get(account) ?? []).filter((domain) => (!service || domain.service === service) && (!environment || domain.environment === environment) && (!hostname || domain.hostname === hostname))
           .map(({ id, hostname, service: owner, environment: env }) => ({ id, hostname, service: owner, ...(env ? { environment: env } : {}) })))
       }
       const domainRecord = /^\/workers\/domains\/([^/]+)$/.exec(rest)
@@ -251,10 +252,18 @@ export function createFakeCloudflare(options = {}) {
         if (tail === '/secrets-bulk' || tail === '/secrets') {
           if (grant.workers !== true) return failure(403, 10000, 'Authentication error')
           const worker = made()
-          let names = []
-          try { const sent = JSON.parse(body.toString()); names = Object.keys(sent.secrets ?? { [sent.name]: true }) } catch { /* nothing named */ }
-          worker.secrets = [...new Set([...worker.secrets, ...names])]
-          return ok({})
+          // As Cloudflare (proof-cloudflare-secrets-2026-10-11.md): a named secret is set, one named
+          // with null is removed, the others are left; the reply is the secrets after the change, by
+          // name and type. `values` is what the stand-in for the live service checks a bearer against.
+          let sent = {}
+          try { const parsed = JSON.parse(body.toString()); sent = parsed.secrets ?? { [parsed.name]: parsed } } catch { /* nothing named */ }
+          worker.values ??= new Map()
+          for (const [name, entry] of Object.entries(sent)) {
+            if (entry === null) { worker.secrets = worker.secrets.filter((held) => held !== name); worker.values.delete(name); continue }
+            worker.secrets = [...new Set([...worker.secrets, name])]
+            worker.values.set(name, entry?.text)
+          }
+          return ok(Object.fromEntries(worker.secrets.map((name) => [name, { name, type: 'secret_text' }])))
         }
         if (!existing) return failure(404, 10007, 'This Worker does not exist on your account')
         if (method !== 'GET' && grant.workers !== true) return denied()
@@ -300,7 +309,21 @@ export function createFakeCloudflare(options = {}) {
     const wait = model.delay?.(recorded)
     return wait ? { ...reply, wait } : reply
   }
-  return { requests, unknown, model, handle, reached: () => requests.map((request) => `${request.method} ${request.path}`) }
+  /**
+   * Decision R1, for every test that drives a journey: the requests that name the signing secret
+   * anywhere (address, headers, body), as `METHOD path`. A journey ends by asserting this is empty.
+   * The compiled Worker's own text (the main module of a script upload) is not looked at: the Worker
+   * reads that name from its environment itself. Everything else of an upload is.
+   */
+  const namingSigningSecret = () => requests.filter((request) => {
+    const NAME = 'SESSION_SIGNING_SECRET'
+    if (`${request.path}${request.search ?? ''}${JSON.stringify(request.headers ?? {})}`.includes(NAME)) return true
+    if (!request.parts?.length) return Buffer.from(request.body ?? '').toString('latin1').includes(NAME)
+    let mainModule = null
+    try { mainModule = JSON.parse(request.parts.find((part) => part.name === 'metadata').bytes.toString('utf8')).main_module } catch { /* every part is looked at */ }
+    return request.parts.some((part) => part.name !== mainModule && `${part.name}${part.filename ?? ''}${part.bytes.toString('latin1')}`.includes(NAME))
+  }).map((request) => `${request.method} ${request.path}`)
+  return { requests, unknown, model, handle, namingSigningSecret, reached: () => requests.map((request) => `${request.method} ${request.path}`) }
 }
 
 /** The parts of a multipart/form-data body: [{ name, filename, type, bytes }]. Empty when it is not one. */

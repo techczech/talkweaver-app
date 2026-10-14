@@ -111,7 +111,7 @@ export function isValidShareDomain(value: unknown): value is string {
   return labels.length >= 2 && labels.every((label) => HOSTNAME_LABEL.test(label))
 }
 
-/** The link colleagues open. `linkBase` (config `sharedTalkLinkBase`, e.g. https://drafts.handouts.fyi)
+/** The link colleagues open. `linkBase` (the attached share-link address, e.g. https://drafts.handouts.fyi)
  *  serves shares at /<id> once ticket 07's route exists; without it, or when its hostname fails
  *  isValidShareDomain, the Worker origin serves them at /shares/<id>. */
 export function sharedTalkLink(workerBaseUrl: string, shareId: string, linkBase?: string | null): string {

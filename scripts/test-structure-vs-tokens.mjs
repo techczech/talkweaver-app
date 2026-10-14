@@ -190,9 +190,9 @@ try {
         panelWidthPx: Number(statementRect.width.toFixed(2)),
         coverage: Number((statementRect.width / slideRect.width).toFixed(4)),
         lines: lines.map((line) => line.words),
-        horizontalGapDeltaPx: Number(Math.abs(
-          (statementRect.left - contentRect.left) - (contentRect.right - statementRect.right)
-        ).toFixed(2)),
+        // Slide redesign (13 Oct 2026): a statement without a title panel starts 20% of the slide's
+        // width from the slide's left edge; it is no longer centred in a box.
+        leftEdgeShare: Number(((statementRect.left - slideRect.left) / slideRect.width).toFixed(4)),
         verticalGapDeltaPx: Number(Math.abs(
           (statementRect.top - contentRect.top) - (contentRect.bottom - statementRect.bottom)
         ).toFixed(2))
@@ -206,7 +206,7 @@ try {
     // ("Dresden"?"); every line that wrapped must still hold more than one word.
     assert(measured.lines.slice(0, -1).every((line) => line.length > 1), `${viewport.width}x${viewport.height}: no wrapped line contains one word (${JSON.stringify(measured.lines)})`)
     assert(measured.coverage >= 0.5, `${viewport.width}x${viewport.height}: the statement covers at least half the stage width; got ${measured.coverage}`)
-    assert(measured.horizontalGapDeltaPx <= 2, `${viewport.width}x${viewport.height}: horizontal whitespace is balanced; gap delta ${measured.horizontalGapDeltaPx}px`)
+    assert(Math.abs(measured.leftEdgeShare - 0.2) <= 0.003, `${viewport.width}x${viewport.height}: the statement starts 20% of the slide's width from the left edge; got ${measured.leftEdgeShare}`)
     assert(measured.verticalGapDeltaPx <= 2, `${viewport.width}x${viewport.height}: vertical whitespace is balanced; gap delta ${measured.verticalGapDeltaPx}px`)
     await page.close()
   }

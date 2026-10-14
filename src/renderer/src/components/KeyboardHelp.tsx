@@ -21,6 +21,8 @@ interface Props {
   /** Where the caret or the selected row is; null with no talk open (the sheet has no Here then). */
   place?: Place | null
   placeRow?: PlaceRow
+  /** The slide at the caret is a quote slide: Here then lists the Quote form rows, like Actions here. */
+  quoteSlide?: boolean
   vault?: VaultState
   /** Run a row from the sheet (the shared route); the sheet closes first. */
   onRun?: (row: SheetRow) => void
@@ -65,7 +67,7 @@ function RowView({ row, onRun }: { row: SheetRow; onRun: (row: SheetRow) => void
   )
 }
 
-export default function KeyboardHelp({ isOpen, onClose, place = null, placeRow = null, vault, onRun, canRunCarried }: Props) {
+export default function KeyboardHelp({ isOpen, onClose, place = null, placeRow = null, quoteSlide = false, vault, onRun, canRunCarried }: Props) {
   const [revision, setRevision] = useState(0)
   useEffect(() => onKeymapChanged(() => setRevision((value) => value + 1)), [])
   const [query, setQuery] = useState('')
@@ -75,7 +77,7 @@ export default function KeyboardHelp({ isOpen, onClose, place = null, placeRow =
   const data = useMemo(
     () => keyboardSheet({
       place,
-      context: { row: placeRow, vault },
+      context: { row: placeRow, vault, quoteSlide },
       chordOf: liveShortcutLabel,
       defaultChordOf,
       canRun: (id) => runnable.has(id),
@@ -83,7 +85,7 @@ export default function KeyboardHelp({ isOpen, onClose, place = null, placeRow =
     }),
     // revision: a rebound chord redraws the sheet.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [place, placeRow, vault, revision, runnable, canRunCarried]
+    [place, placeRow, quoteSlide, vault, revision, runnable, canRunCarried]
   )
 
   const [section, setSection] = useState<Section>(() =>

@@ -1,0 +1,42 @@
+{
+  "garden-notes": {
+    "slides": 14,
+    "sha256": "956a53bcc51852cd60d3dd4dcef23c279e7ca87d7b9c3fae782aabd4d0df6ffc"
+  },
+  "harvest-supper-draft": {
+    "slides": 10,
+    "sha256": "83c0bfec7192ddde4f6c9112691bd144ce33e194a1c372f5e175df75100b473e"
+  },
+  "lightning-round": {
+    "slides": 8,
+    "sha256": "b7bf0fe92f92a69dd9f7d1cade174254276d8c804239a188ceffc0c1cf8fe0c0"
+  },
+  "the-saturday-market": {
+    "slides": 22,
+    "sha256": "70584dc2add1f07635f1ab3ec146675b28009f1b7af95d9cef814093cb0d8ddc"
+  },
+  "walking-the-old-town": {
+    "slides": 30,
+    "sha256": "6e49f9c90dd3c8acab969e2ea183c6557eea850186eac8f0b4005e522afa0e2f"
+  },
+  "braces-that-are-not-icons": {
+    "slides": 7,
+    "sha256": "8551428144a0c47d888bb6de422210d3384ea611d4d31961bc8a0dbe0318053c"
+  },
+  "deck-default-icon": {
+    "slides": 9,
+    "sha256": "effeddd1182205af76941a9604edb488fb0dc432c31951105587ba76743e3124"
+  },
+  "deck-default-title-icon-above": {
+    "slides": 9,
+    "sha256": "fd6cdc3980d4451c09dfe10db7980590f78a8f8fa8fab1d6129d602bda137192"
+  },
+  "deck-default-icon-with-title-icon-above": {
+    "slides": 9,
+    "sha256": "29988bcfc308ac6eaedfdd2dc445f2dbb48b1264fbcac2cfe12a9704f25260a5"
+  },
+  "deck-default-list-icon-style": {
+    "slides": 9,
+    "sha256": "9263c9d4e143ea845eb51303934790e362e4095e5e6ebd0dd523c53df7f321ac"
+  }
+}

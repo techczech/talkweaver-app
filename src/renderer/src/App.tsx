@@ -384,7 +384,8 @@ function MainApp() {
   // identical commands from scheduling renders at all.
   const registerOutlineOps = useCallback((ops: OutlineOps) => {
     setOutlineOps((prev) =>
-      prev && prev.move === ops.move && prev.reLevel === ops.reLevel && prev.moveTo === ops.moveTo
+      prev && prev.move === ops.move && prev.reLevel === ops.reLevel && prev.moveTo === ops.moveTo &&
+        prev.moveToEnd === ops.moveToEnd && prev.moveInto === ops.moveInto && prev.slides === ops.slides
         ? prev
         : ops
     )
@@ -1017,7 +1018,7 @@ function MainApp() {
           )}
           {sidebarMode === 'slides' && (
             <div className="sidebar-nav-body">
-              <SlidesOrganizer content={outlineContent} onJump={(line) => jumpRef.current?.(line)} ops={outlineOps} currentLine={activeOutlineLine} />
+              <SlidesOrganizer content={outlineContent} onJump={(line) => jumpRef.current?.(line)} ops={outlineOps} currentLine={activeOutlineLine} talkKey={activeTalk?.outlinePath ?? null} />
             </div>
           )}
 

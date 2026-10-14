@@ -1,4 +1,4 @@
-import { constantTimeEqual, hashSecret } from './auth'
+import { adminBearer, matchAdminKey } from './admin-keys'
 
 export interface Env {
   LIVE_SESSIONS: DurableObjectNamespace
@@ -6,8 +6,17 @@ export interface Env {
   SHARED_TALKS: DurableObjectNamespace
   RUN_SHARES: DurableObjectNamespace
   RUN_PREWORK: DurableObjectNamespace
-  ADMIN_SECRET: string
-  SESSION_SIGNING_SECRET: string
+  /**
+   * The first computer's admin key (0.38.2 and earlier). Every other computer has its own, a secret
+   * named `ADMIN_SECRET_<computer id>`; `admin-keys.ts` says which names count. Absent once that
+   * computer's access has been removed.
+   */
+  ADMIN_SECRET?: string
+  /**
+   * The signing key of a live service set up by 0.38.2 or earlier. Absent on one set up since: the
+   * registry object keeps the key then. Never read directly: `signingKey(env)` (`signing-key.ts`).
+   */
+  SESSION_SIGNING_SECRET?: string
   /** Local test Workers only: a shorter idle purge for pre-work (ms). Unset in every deployment. */
   PREWORK_IDLE_PURGE_MS?: string
   /**
@@ -59,9 +68,13 @@ export function bearerToken(request: Request): string | null {
   return request.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ?? null
 }
 
-export async function adminAuthorised(request: Request, env: Env): Promise<boolean> {
-  const bearer = bearerToken(request)
-  return Boolean(bearer) && constantTimeEqual(await hashSecret(bearer!), await hashSecret(env.ADMIN_SECRET))
+/**
+ * The computer whose admin key the request carries (`legacy` for `ADMIN_SECRET`), or null when it
+ * carries none that this live service accepts. Truthy exactly when the request is an admin's.
+ * The id is for recording who did something; it never goes in a refusal.
+ */
+export async function adminAuthorised(request: Request, env: Env): Promise<string | null> {
+  return matchAdminKey(adminBearer(request), env)
 }
 
 export function validTalkSlug(value: unknown): value is string {

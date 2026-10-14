@@ -29,6 +29,8 @@ import { createHash } from 'node:crypto'
 import { LIVE_SETUP_REFUSED } from '../src/main/live-service-deploy.ts'
 import { buildWorkerDist } from './lib/worker-dist.mjs'
 import { setUpLiveService, uploadedOf } from './lib/live-service-setup.mjs'
+import { acceptingLive } from './lib/live-worker-double.mjs'
+import { SHARE_DOMAIN_IN_USE, changeShareAddress } from '../src/main/live-service-share-domain.ts'
 
 const repo = dirname(dirname(fileURLToPath(import.meta.url)))
 const scratch = mkdtempSync(join(tmpdir(), 'tw-cloudflare-api-'))
@@ -267,7 +269,22 @@ try {
     const NAME = 'talkweaver-live-sessions'
     const ADDRESS = `https://${NAME}.${WORKERS_SUBDOMAIN}.workers.dev`
     const keys = { stored: null }
-    const run = (over = {}) => setUpLiveService({ distDir, expectedBuild: manifest.build, authorise: () => (over.connection ?? t.connection).authoriseLiveDeploy(), apiBase: api.baseUrl, keys: over.keys ?? keys, shareHostname: over.shareHostname ?? null })
+    // `older`: the live service answers as an earlier build, so this run is a code update (decision R3:
+    // code is uploaded only over a build that was read and is older).
+    const run = (over = {}) => setUpLiveService({
+      distDir, expectedBuild: manifest.build, authorise: () => (over.connection ?? t.connection).authoriseLiveDeploy(), apiBase: api.baseUrl, keys: over.keys ?? keys,
+      ...(over.older ? { liveFetch: acceptingLive({ build: '1-earlier', updatedTo: manifest.build, self: () => (over.keys ?? keys).stored?.computerId }) } : {}),
+    })
+    // The share-address action as the main process runs it (index.ts applyShareAddress): the one thing
+    // that attaches or removes a custom domain (decision R2). `settings.recorded` is config.json's
+    // `liveWorkerShareDomains`: the list of hostnames this computer asked Cloudflare to attach;
+    // `shareSettings.recorded` is the one of them in use.
+    const shareSettings = { liveWorkerShareDomains: [], get recorded() { return this.liveWorkerShareDomains.find((entry) => entry.wanted)?.hostname ?? '' } }
+    const setShareAddress = (wanted, connection = t.connection) => changeShareAddress({
+      authorise: () => connection.authoriseLiveDeploy(), fetch: globalThis.fetch, apiBase: () => api.baseUrl, workerName: NAME,
+      records: { read: () => ({ liveWorkerShareDomains: shareSettings.liveWorkerShareDomains }), write: (entries) => { shareSettings.liveWorkerShareDomains = entries } },
+    }, { wanted })
+    const domainRequests = (from) => api.requests.slice(from).filter((request) => request.method === 'DELETE' || /\/domains|\/routes/.test(request.path)).map((request) => `${request.method} ${request.path}`)
     const worker = () => api.model.workers.get(ADA.id).get(NAME)
     const uploads = (from) => api.requests.slice(from).filter((request) => request.method === 'PUT' && request.path === `/accounts/${ADA.id}/workers/scripts/${NAME}`)
 
@@ -280,28 +297,43 @@ try {
     assert.equal(createHash('sha256').update(module.bytes).digest('hex'), manifest.files['index.js'].sha256, 'over the wire, the uploaded bytes are the shipped bundle by its manifest hash')
     assert.ok(module.bytes.equals(readFileSync(join(distDir, 'index.js'))))
     assert.deepEqual([metadata.migrations.new_tag, metadata.migrations.steps.length, 'old_tag' in metadata.migrations], ['v4', 4, false], 'every migration')
-    assert.deepEqual([worker().migrationTag, worker().workersDev, worker().secrets.sort()], ['v4', true, ['ADMIN_SECRET', 'SESSION_SIGNING_SECRET']])
+    assert.deepEqual([worker().migrationTag, worker().workersDev, worker().secrets.sort()], ['v4', true, ['ADMIN_SECRET_aaaa0000bbbb1111']], 'first set-up: this computer\'s own key, and no signing secret')
+    assert.deepEqual(api.requests.slice(before).filter((request) => request.method === 'PATCH').map((request) => Object.keys(JSON.parse(request.body.toString()).secrets)), [['ADMIN_SECRET_aaaa0000bbbb1111']], 'one secrets request, naming that key alone')
+    assert.deepEqual(domainRequests(before), [], 'a first set-up asks about no domain and attaches none')
     const firstKeys = keys.stored
 
-    // An update, with the share-link domain set, then cleared.
-    const update = api.requests.length
-    const second = await run({ shareHostname: 'talks.handouts.example' })
-    assert.equal(second.result.ok, true)
-    assert.equal(keys.stored, firstKeys, 'the stored keys are reused')
-    assert.ok(!('migrations' in uploadedOf(uploads(update)[0]).metadata), 'nothing new: no migration sent')
-    const patch = api.requests.slice(update).find((request) => request.method === 'PATCH')
-    assert.equal(JSON.parse(patch.body.toString()).secrets.ADMIN_SECRET.text, firstKeys.adminSecret, 'the same admin secret is set again')
-    const ours = () => api.model.workerDomains.get(ADA.id).filter((domain) => domain.service === NAME).map((domain) => domain.hostname)
-    assert.deepEqual(ours(), ['talks.handouts.example'], 'the share-link domain is attached')
+    // A press with the same build deployed sends nothing; a code update is the script and its workers.dev switch.
+    const same = api.requests.length
     assert.equal((await run()).result.ok, true)
-    assert.deepEqual(ours(), [], 'and removed when it is cleared')
-    assert.ok(api.model.workerDomains.get(ADA.id).some((domain) => domain.hostname === 'drafts.handouts.example'), 'another Worker\'s domain is left alone')
+    assert.deepEqual(api.requests.slice(same).filter((request) => request.method !== 'GET').length, 0, 'the same build: nothing written')
+    const update = api.requests.length
+    const second = await run({ older: true })
+    assert.equal(second.result.ok, true)
+    assert.equal(keys.stored, firstKeys, 'the stored key is reused')
+    assert.ok(!('migrations' in uploadedOf(uploads(update)[0]).metadata), 'nothing new: no migration sent')
+    assert.deepEqual(api.requests.slice(update).filter((request) => request.method !== 'GET').map((request) => `${request.method} ${request.path}`), [`PUT /accounts/${ADA.id}/workers/scripts/${NAME}`, `POST /accounts/${ADA.id}/workers/scripts/${NAME}/subdomain`], 'an update is two writes: no secrets request (the keys at Cloudflare stay as they are)')
+    assert.deepEqual([domainRequests(update), worker().secrets], [[], ['ADMIN_SECRET_aaaa0000bbbb1111']], 'and no domain or route is asked about or changed')
+    assert.deepEqual(api.namingSigningSecret(), [], 'no request so far names a signing secret')
+
+    // The share-link address: attached and removed by the share-address action, one hostname at a time.
+    const ours = () => api.model.workerDomains.get(ADA.id).filter((domain) => domain.service === NAME).map((domain) => domain.hostname)
+    // One that another Worker holds is refused, and stays where it is.
+    const takenAt = api.requests.length
+    assert.deepEqual([await setShareAddress('drafts.handouts.example'), api.requests.slice(takenAt).filter((request) => request.method !== 'GET').length, shareSettings.recorded], [{ ok: false, error: SHARE_DOMAIN_IN_USE }, 0, ''])
+    assert.ok(api.model.workerDomains.get(ADA.id).some((domain) => domain.hostname === 'drafts.handouts.example' && domain.service !== NAME), 'another Worker\'s domain is left alone')
+    const attach = api.requests.length
+    assert.deepEqual([await setShareAddress('talks.handouts.example'), ours(), shareSettings.recorded], [{ ok: true, changed: true }, ['talks.handouts.example'], 'talks.handouts.example'], 'the share-link domain is attached')
+    const sentAttach = api.requests.slice(attach).filter((request) => request.method === 'PUT')
+    assert.deepEqual(sentAttach.map((request) => JSON.parse(request.body.toString())), [{ override_scope: false, override_existing_origin: false, override_existing_dns_record: false, origins: [{ hostname: 'talks.handouts.example' }] }], 'over the wire: one hostname, no override')
+    assert.equal((await setShareAddress(null)).ok, true)
+    assert.deepEqual([ours(), shareSettings.recorded], [[], ''], 'and removed when it is cleared')
+    assert.ok(api.model.workerDomains.get(ADA.id).some((domain) => domain.hostname === 'drafts.handouts.example'), 'the other Worker\'s domain is still there')
 
     // A token that can read Workers but not deploy them: refused at the upload, which changes nothing.
     const reader = app()
     await reader.connect(READS_ALL)
     const uploadsBefore = worker().uploads
-    const refused = await run({ connection: reader.connection, keys })
+    const refused = await run({ connection: reader.connection, keys, older: true })
     assert.deepEqual([refused.result.ok, refused.result.error, refused.result.details], [false, LIVE_SETUP_REFUSED, 'Uploading the live service: Cloudflare answered 403 (error 10000).'])
     assert.equal(worker().uploads, uploadsBefore)
     // A token without the Workers permission is not given leave at all.
@@ -312,7 +344,7 @@ try {
     assert.equal(api.model.workers.get(GRACE.id)?.size ?? 0, 0, 'nothing reached its account')
     for (const result of [first, second, refused, notLet].map((done) => done.result)) observed.push(result.ok ? { ...result, adminSecret: '[handed to the caller]' } : result)
     // 4b. The suggested share-link address, as the row's "Use …" button does it (index.ts
-    // useSuggestedShareDomain): saved, checked again, then attached by updating the live service.
+    // useSuggestedShareDomain): saved, checked again, then attached by the share-address action.
     {
       const site = api.model.sites.get(ADA.id).get('talkweaver-handouts')
       site.domains = [{ id: 'domain-one', name: 'handouts.example', status: 'active' }]
@@ -324,9 +356,9 @@ try {
       u.settings.shareDomain = status.shareLink.suggested.host
       status = (await u.connection.settingsChanged()).status
       assert.equal(status.shareLink.state, 'not-attached')
-      const attachedNow = await run({ connection: u.connection, shareHostname: 'share.handouts.example' })
-      assert.equal(attachedNow.result.ok, true)
-      assert.ok(ours().includes('share.handouts.example'), 'attached by the update')
+      const attachedNow = await setShareAddress('share.handouts.example', u.connection)
+      assert.deepEqual(attachedNow, { ok: true, changed: true })
+      assert.ok(ours().includes('share.handouts.example'), 'attached by the action')
       status = (await u.connection.check()).status
       assert.deepEqual([status.shareLink.state, status.shareLink.host], ['attached', 'share.handouts.example'])
       // A token that may not touch the zone's Workers routes: the row says what to add; nothing is attached.
@@ -340,9 +372,10 @@ try {
       assert.ok(!api.requests.some((request) => request.authorization === `Bearer ${NO_ROUTES}` && request.method !== 'GET'), 'that token wrote nothing')
       site.domains = []
       // Leave the account as section 4 found it for what follows.
-      assert.equal((await run()).result.ok, true)
+      assert.equal((await setShareAddress(null, u.connection)).ok, true)
+      assert.deepEqual(ours(), [])
     }
-    console.log('PASS 4: the live service is set up and updated over HTTP from the shipped bundle, by its manifest hash; migrations, keys, workers.dev and the share-link domain as planned; a reading token is refused')
+    console.log('PASS 4: the live service is set up and updated over HTTP from the shipped bundle, by its manifest hash; migrations, this computer\'s key alone and workers.dev as planned; the share-link domain attached and removed by the share-address action only; a reading token is refused')
   }
 
   // ── 5. Where the token went ──────────────────────────────────────────────────────────────────
@@ -357,6 +390,7 @@ try {
     }
     assert.ok(api.requests.filter((request) => request.authorization === `Bearer ${TOKEN}`).length > 10, 'the token travelled in the Authorization header')
     assert.deepEqual(api.unknown, [], 'and nothing was asked that the fake API does not model')
+    assert.deepEqual(api.namingSigningSecret(), [], 'no request of the whole run names a signing secret')
     // The fake is strict: a route it does not model is "no such route", never a quiet success.
     const stray = await fetch(`${api.baseUrl}/accounts/${ADA.id}/not-modelled`, { headers: { authorization: `Bearer ${TOKEN}` } })
     assert.equal(stray.status, 404)

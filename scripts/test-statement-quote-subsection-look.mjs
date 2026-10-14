@@ -172,15 +172,15 @@ try {
     const quietText = quiet.p.width - px(quiet.p['padding-left']) - px(quiet.p['padding-right'])
     assert(quietText <= 0.68 * quiet.stage.width + 0.5, `${key}: the statement text column stays inside 68cqw (got ${quietText}px)`)
     assert(quietText > 0.64 * quiet.stage.width, `${key}: a long statement uses the measure (text column ${quietText}px)`)
-    assert(close(quiet.p.left - quiet.stage.left, quiet.stage.width - (quiet.p.left - quiet.stage.left) - quiet.p.width, 1), `${key}: the statement panel is centred on the stage`)
-    assert.notEqual(quiet.p['background-color'], 'rgba(0, 0, 0, 0)', `${key}: the default statement sits on a panel`)
+    assert(close(quiet.p.left - quiet.stage.left, 0.2 * quiet.stage.width, 1), `${key}: the statement starts 20% of the stage width from the left edge (slide redesign, 13 Oct 2026)`)
+    assert.equal(quiet.p['background-color'], 'rgba(0, 0, 0, 0)', `${key}: the statement has no box round it`)
     const railStatement = await probe('stmt-rail')
     const railSize = px(railStatement.p['font-size'])
     assert(close(railSize, 0.032 * railStatement.stage.width, 0.05), `${key}: a rail statement keeps its body type (got ${railSize}px)`)
     assert(close(px(railStatement.p['line-height']), 1.5 * railSize, 0.05), `${key}: a rail statement also takes line-height 1.5 (got ${railStatement.p['line-height']})`)
     const railText = railStatement.p.width - px(railStatement.p['padding-left']) - px(railStatement.p['padding-right'])
     assert(railText <= 14 * railSize + 0.5, `${key}: beside the rail the statement measure stays 14em (got ${railText}px)`)
-    console.log(`PASS ${key}: statement line-height 1.5×, type unchanged, §10 measure (68cqw without a title, 14em beside the rail) on a panel`)
+    console.log(`PASS ${key}: statement line-height 1.5×, type unchanged, §10 measure (68cqw without a title, 14em beside the rail), no box`)
 
     // 2. Quote beside the rail: no panel, hanging mark in the gutter, type unchanged.
     for (const id of ['rail-quote', 'rail-quote-bg']) {

@@ -51,7 +51,12 @@ const THRESHOLDS = Object.freeze({
     // decision 2026-10-08, simulation spec "Decisions after lock"); size=large lifts the running
     // text to the floor and scales the interface chrome in proportion, so it stays exempt too.
     '.sim',
-    '.sim *'
+    '.sim *',
+    // Quote forms (ADR-0038): drawings of an X post card (and, later, a player, a page, a browser
+    // window) with chrome at 24 to 42 px, as .sim is. The quoted words keep their own step ladder
+    // (44 px at the smallest) and the compiler refuses a form that would go below it.
+    '.qf',
+    '.qf *'
   ]),
   oneWordLineBlockMinimumWords: 4,
   geometryTolerancePx: 1,

@@ -1,0 +1,36 @@
+/* Title in a left panel (data-title-layout="left") on a slide that also shows the section's
+   contents rail (.ct-rail-host, painted by the deck runtime): the rail owns the leftmost strip,
+   so the title column starts where the rail ends: rail, title column, body.
+
+   The title column keeps its own tint but the tint no longer starts at the slide edge, so there
+   is no second band behind the rail. Column widths are the Placement values (30, 35, 40, 50)
+   measured on the space to the right of the rail: --ct-title-w = share * (100cqw - --ct-rail-w).
+   Measured on the whole slide the 50 column would leave the body about 330px at 1280 wide.
+   Every selector is scoped to .ct-rail-host, so slides outside a contents section are untouched.
+
+   Specificity beats stage.css without !important, except grid-template-columns, which
+   stage.css sets with !important.
+
+   Not in print: base.css hides the rail there and removes the content padding, so the print
+   page keeps the plain title panel. */
+@media not print {
+  .slide.ct-rail-host[data-title-layout="left"] { --ct-title-w: calc((100cqw - var(--ct-rail-w)) * .26); }
+  .slide.ct-rail-host[data-title-layout="left"][data-split="30"] { --ct-title-w: calc((100cqw - var(--ct-rail-w)) * .30); }
+  .slide.ct-rail-host[data-title-layout="left"][data-split="35"] { --ct-title-w: calc((100cqw - var(--ct-rail-w)) * .35); }
+  .slide.ct-rail-host[data-title-layout="left"][data-split="35"]:has(> .slide-content > .fl-annotated) { --ct-title-w: calc((100cqw - var(--ct-rail-w)) * .26); }
+  .slide.ct-rail-host[data-title-layout="left"][data-split="40"] { --ct-title-w: calc((100cqw - var(--ct-rail-w)) * .40); }
+  .slide.ct-rail-host[data-title-layout="left"][data-split="50"] { --ct-title-w: calc((100cqw - var(--ct-rail-w)) * .50); }
+
+  .slide.ct-rail-host[data-title-layout="left"]:has(> .slide-content > .slide-head:not(.slide-head-quiet)) {
+    background: linear-gradient(to right, transparent 0, transparent var(--ct-rail-w), var(--tint) var(--ct-rail-w), var(--tint) calc(var(--ct-rail-w) + var(--ct-title-w)), transparent calc(var(--ct-rail-w) + var(--ct-title-w)));
+  }
+  .slide.ct-rail-host[data-title-layout="left"]:has(> .slide-content > .slide-head:not(.slide-head-quiet)) > .slide-content {
+    grid-template-columns: var(--ct-title-w) 1fr !important;
+  }
+  /* The head is positioned against the slide-content padding box, which starts at the slide edge:
+     move it right by the rail width so it sits in the first grid column. */
+  .slide.ct-rail-host[data-title-layout="left"] > .slide-content:has(> *:not(.slide-head)) > .slide-head:not(.slide-head-quiet) {
+    left: var(--ct-rail-w);
+    width: var(--ct-title-w);
+  }
+}

@@ -7,7 +7,7 @@ import { commitLayoutSelection, selectionFromTriggerLine, toggleLayoutSelection 
 // The selection read/toggle/write lives in src/shared so the headless layout verbs use the same code.
 export { commitLayoutSelection, selectionFromTriggerLine, toggleLayoutSelection }
 import { readOutlineSlides } from '../../../shared/feedback-accept.ts'
-import type { SlideRef } from '../../../shared/layout-verbs.ts'
+import { LayoutVerbError, setQuoteForm, type QuoteFormChoice, type SlideRef } from '../../../shared/layout-verbs.ts'
 import {
   commitOptionSelection,
   headingHasChildSlides,
@@ -97,7 +97,7 @@ export function optionGroupsForPickerEntry(
     .map(({ group }) => ({
       group,
       // Ticket 02: a statement's choices light what the line means, the older one-word options
-      // ({statement=tint} → Halo + Left bar) included.
+      // ({statement=bar} → Rule) included.
       selectedToken: isStatementOptionGroup(group.key) ? statementSelections(triggerLine)[group.key] ?? '' : selectionForGroup(triggerLine, group)
     }))
 }
@@ -165,6 +165,29 @@ export function commitSlideOption(
     ? commitLayoutSelection(triggerLine, initial, toggleLayoutSelection(initial, entry), layoutTokenOverride, context)
     : triggerLine
   return commitPickerOption(withEntry, group, token, context)
+}
+
+/**
+ * The Inspector's quote form group goes through the `setQuoteForm` verb (as the palette command does),
+ * not through `commitSlideOption`: on a quote slide whose layout was inferred (no `{quote}` token),
+ * selecting the entry first would write `{quote}`. `compiledLayout` is the layout the compiler gave
+ * the compiled slide. Returns the rewritten outline and the Trigger line, or null when the verb
+ * does not apply (not a quote slide, unknown token), so the caller falls back to `commitSlideOption`.
+ */
+export function commitQuoteFormOption(
+  doc: string,
+  headingLine: number,
+  token: string,
+  compiledLayout?: string
+): { outline: string; triggerLine: string } | null {
+  const form = (token.startsWith('form=') ? token.slice('form='.length) : token === '' ? 'auto' : token) as QuoteFormChoice
+  try {
+    const written = setQuoteForm(doc, { headingLine }, form, compiledLayout)
+    return { outline: written.outline, triggerLine: written.triggerLine }
+  } catch (error) {
+    if (error instanceof LayoutVerbError) return null
+    throw error
+  }
 }
 
 export function layoutSubmenuEntries(items: LayoutDef[]): LayoutDef[] {

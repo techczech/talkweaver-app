@@ -63,7 +63,7 @@ for (const text of [sampler, drawn]) {
   assert.ok(read.slides.length > 5)
   for (const slide of read.slides) assert.equal(slide.text, byLine.get(slide.line), `slide at line ${slide.line} reads as the push reads it`)
 }
-assert.equal(readOutlineSlides(sampler).slides.filter((s) => s.id).length, 69, 'every stamped id in the sampler is found')
+assert.equal(readOutlineSlides(sampler).slides.filter((s) => s.id).length, 78, 'every stamped id in the sampler is found')
 assert.equal(pushed(drawn, 'rubric').includes('Pause here'), false, 'notes are not in the pushed text')
 console.log('PASS slide text: read exactly as the share push reads it, on the layout sampler (226 headings) and the drawn talk')
 

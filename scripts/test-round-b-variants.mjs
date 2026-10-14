@@ -91,26 +91,52 @@ assert.doesNotMatch(iconUnknownMarkup, /fl-iconlist-list/, 'unknown iconlist val
 const statementDefault = await compile('Statement default', '{statement}')
 assert.match(statementDefault.html, /class="slide-content layout-statement"/, 'bare statement markup stays unchanged')
 
-// Ticket 02: the older one-word options are presets over the separate choices, and stamp each
-// choice's own hook (Halo, Aligned, no bar stamp nothing).
-const statementTint = await compile('Statement tint', '{statement=tint}')
-assert.match(statementTint.html, /class="slide-content layout-statement statement-bar-left"/, 'Tint is Halo + the left bar')
+// Slide redesign (13 Oct 2026): no box, four Backgrounds. The older one-word options are presets over
+// the separate choices and stamp each choice's own hook (Tinted, Aligned stamp nothing).
+for (const [name, tokens] of [['tint', '{statement=tint}'], ['full', '{statement=full}'], ['halo', '{statement}{statement-bg=halo}'],
+  ['panel', '{statement}{statement-bg=panel}'], ['tinted', '{statement}{statement-bg=tinted}'], ['bar none', '{statement}{statement-bar=none}']]) {
+  const compiled = await compile(`Statement ${name}`, tokens)
+  assert.match(compiled.html, /class="slide-content layout-statement"/, `${tokens} is Tinted, which stamps nothing`)
+  assert.equal(compiled.model.warnings.some((warning) => warning.startsWith('statement-unknown')), false, `${tokens} does not warn`)
+}
 
 const statementBar = await compile('Statement bar', '{statement=bar}')
-assert.match(statementBar.html, /class="slide-content layout-statement statement-bg-none statement-bar-left"/, 'Bar is no colour + the left bar')
+assert.match(statementBar.html, /class="slide-content layout-statement statement-bg-rule"/, 'Bar is Rule (the colourless look; the bar it carried is gone)')
+const statementClaimBar = await compile('Statement claim bar', '{statement}{claim=bar}')
+assert.match(statementClaimBar.html, /class="slide-content layout-statement statement-bg-rule"/, '{claim=bar} is Rule')
+const statementNone = await compile('Statement none', '{statement}{statement-bg=none}')
+assert.match(statementNone.html, /class="slide-content layout-statement statement-bg-rule"/, 'the retired statement-bg=none is Rule')
 
-const statementFull = await compile('Statement full', '{statement=full}')
-assert.match(statementFull.html, /class="slide-content layout-statement statement-bg-full"/, 'Full colour is the Full background')
+// The four new Backgrounds stamp their own hook; bar tokens of any value stamp nothing and do not warn.
+for (const value of ['rule', 'strong', 'lower-third']) {
+  const compiled = await compile(`Statement ${value}`, `{statement}{statement-bg=${value}}`)
+  assert.match(compiled.html, new RegExp(`class="slide-content layout-statement statement-bg-${value}"`), `${value} stamps statement-bg-${value}`)
+  assert.equal(compiled.model.warnings.some((warning) => warning.startsWith('statement-unknown')), false, `${value} is a registered value`)
+}
+for (const bar of ['none', 'off', 'left', 'top', 'above', 'bottom', 'below']) {
+  const compiled = await compile(`Statement bar ${bar}`, `{statement}{statement-bar=${bar}}`)
+  assert.match(compiled.html, /class="slide-content layout-statement"/, `statement-bar=${bar} is accepted and stamps nothing`)
+  assert.doesNotMatch(compiled.html.match(/class="slide-content layout-statement[^"]*"/)?.[0] ?? '', /statement-bar/, `statement-bar=${bar} stamps no bar hook`)
+  assert.equal(compiled.model.warnings.some((warning) => warning.startsWith('statement-unknown')), false, `statement-bar=${bar} does not warn`)
+}
+const strongBg = await compile('Statement strong with authored colour', '{statement}{statement-bg=strong}{bg=cobalt}')
+const strongSection = strongBg.html.match(/<section[^>]*data-layout="statement"[^>]*>/)?.[0] ?? ''
+assert.doesNotMatch(strongSection, /background: var\(--slide-bg\)/, 'Strong paints the slide in CSS, so no inline authored background on the slide')
+assert.match(strongSection, /--slide-bg: #e8eefc/, 'the authored colour is still carried as --slide-bg')
+const ruleBg = await compile('Statement rule with authored colour', '{statement}{statement-bg=rule}{bg=cobalt}')
+assert.match(ruleBg.html.match(/<section[^>]*data-layout="statement"[^>]*>/)?.[0] ?? '', /background: var\(--slide-bg\)/, 'Rule is the normal page: an authored colour paints the slide as on any other slide')
 
-const statementChoices = await compile('Statement choices', '{statement}{statement-bg=none}{statement-align=centred}{statement-bar=bottom}{statement-sidebar=off}')
-assert.match(statementChoices.html, /class="slide-content layout-statement statement-bg-none statement-centred statement-bar-bottom statement-no-sidebar"/,
+const statementChoices = await compile('Statement choices', '{statement}{statement-bg=rule}{statement-align=centred}{statement-bar=bottom}{statement-sidebar=off}')
+assert.match(statementChoices.html, /class="slide-content layout-statement statement-bg-rule statement-centred statement-no-sidebar"/,
   'each choice stamps its own hook; No sidebar beside a title puts the title on top')
 assert.match(statementChoices.html, /data-title-layout="top"/, 'No sidebar beside a title: the title goes to the top')
 const statementDimensionsOnly = await compile('Statement dimensions only', '{statement-bar=top}')
-assert.match(statementDimensionsOnly.html, /class="slide-content layout-statement statement-bar-top"/, 'a statement choice alone implies the statement layout')
+assert.match(statementDimensionsOnly.html, /class="slide-content layout-statement"/, 'a statement choice alone implies the statement layout')
 const statementBadValue = await compile('Statement bad value', '{statement}{statement-bar=middle}')
 assert(statementBadValue.model.warnings.includes('statement-unknown:statement-bar=middle'), 'an unknown choice value warns')
 assert.match(statementBadValue.html, /class="slide-content layout-statement"/, 'an unknown choice value falls back to the default')
+const statementBadBg = await compile('Statement bad background', '{statement}{statement-bg=glow}')
+assert(statementBadBg.model.warnings.includes('statement-unknown:statement-bg=glow'), 'an unknown background value warns')
 
 // ADR-0028 §10: Centred only without a title — beside the rail it renders as the Default.
 const statementCentredTitled = await compile('Statement centred titled', '{statement=centred}')

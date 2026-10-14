@@ -9,13 +9,24 @@
 // without live features (D9: the live service is set up on purpose) → Set up going live (Setting
 // up…, then Ready, its build in Details) → publish with the live address → a token without the
 // live-service permission still publishes and redeploys nothing → rejected → could not check → a
-// newer build is updated once before the next publish, with the same keys → the keys lost: the stop
+// changed share-link address uploads no code before the next publish → the keys lost: the stop
 // → the Worker deleted in the dashboard: Not set up, then set up again → several accounts → disconnect.
 //
 // The Recording storage row (ticket 06) rides the same journey: an install that took its recording
 // keys from Bitwarden is told once to type them in and loses the two old config keys; then Not set
 // up → keys typed → Keys saved, not checked → Check → Ready → Bucket not found → Keys rejected,
 // against an S3 stand-in on loopback with made-up keys.
+//
+// NOT RUN since the several-Macs change (ticket 02 and its fix rounds). Set-up now asks the live
+// service itself which build it is and whether it accepts this computer's key, at the workers.dev
+// address the fake API reports. This script gives the app no stand-in for that address, so from step
+// 5 on the app would send those requests to a real hostname on the internet and set-up would not
+// finish. Do not run it until the app can be pointed at a live-service stand-in. The expectations of
+// `keysGiven()` and steps 18 to 20 are written to the new model (one secrets request per set-up,
+// naming this computer's own key; none on an update; no signing secret) but have not been run. Steps
+// 7 and 18 are written to the current model too (a changed share-link address marks nothing out of
+// date: it sends only its own lookup, attach and removal requests, and no script upload; decisions
+// R2, R3 and R11), and have not been run either.
 //
 // TW_SHOTS_DIR=<dir> saves a picture of the Cloudflare screen in each state.
 import { _electron as electron } from 'playwright'
@@ -73,7 +84,7 @@ const CHECKS = [
   'a former Bitwarden recording set-up is told "Recording storage: enter your access keys" once, and its two config keys are dropped',
   'the Recording storage row: Not set up (with "Set up recording storage") → keys typed → "Keys saved, not checked" → Check → Ready → "Bucket not found" → "Keys rejected"; each check is one list request',
   'before Set up going live the row offers "Set up going live", and a handout publishes without live features ("Published. Going live is not set up: Settings → Cloudflare"); the publish sets nothing up',
-  'a newer app build: the next publish updates the live service once first, with the stored keys, saying "Updating the live service…"; the publish after it updates nothing',
+  'a changed share-link address marks nothing out of date: the next publish uploads no code, sends no secret and says nothing about an update; the only writes about the Worker are the share-address action\'s own',
   'the keys gone from this computer with the service deployed: the row says "The live service exists but this computer has lost its keys" with what resetting breaks; a publish goes up without live features and nothing is redeployed',
   'the Worker deleted in Cloudflare\'s dashboard: Check again finds it gone and the row reads Not set up; Set up going live then makes new keys and ends Ready',
   'a custom domain on the site: the Publishing handouts row shows it ("Site talkweaver-handouts · handouts.example", a link); the Share-link domain row suggests share.handouts.example (also in the empty field) with "Use share.handouts.example"; nothing is attached before the press; pressing it saves it and attaches it to the live service now (Attached); the live address stays the Worker\'s own',
@@ -333,8 +344,16 @@ try {
   const workersWrites = () => api.requests.filter((request) => request.method !== 'GET' && request.path.includes('/workers/')).length
   const LIVE_UPLOAD = `PUT /accounts/${ADA.id}/workers/scripts/talkweaver-live-sessions`
   const liveUploads = () => api.reached().filter((line) => line === LIVE_UPLOAD).length
-  // The admin secrets the app gave the Worker, as the fake API received them (compared here, never printed).
-  const keysGiven = () => api.requests.filter((request) => request.method === 'PATCH' && request.path.endsWith('/secrets-bulk')).map((request) => JSON.parse(request.body.toString()).secrets.ADMIN_SECRET.text)
+  // Each secrets request the app sent, as the fake API received it: the names it carries and the first
+  // one's value (compared here, never printed). In the model decided after the review of several-Macs
+  // ticket 02 (spec R1, R5, R6) a set-up sends ONE such request, naming this computer's own key
+  // `ADMIN_SECRET_<id>` and nothing else; a code update sends none; no request names a signing secret.
+  const keysGiven = () => api.requests.filter((request) => request.method === 'PATCH' && request.path.endsWith('/secrets-bulk')).map((request) => {
+    const secrets = JSON.parse(request.body.toString()).secrets
+    const names = Object.keys(secrets)
+    return { names, text: secrets[names[0]]?.text }
+  })
+  const oneOwnKeyEach = (given) => given.every(({ names, text }) => names.length === 1 && /^ADMIN_SECRET_[a-z0-9]{1,64}$/.test(names[0]) && typeof text === 'string' && text.length >= 40)
   const D7 = 'Published. Going live is not set up: Settings → Cloudflare'
   await openSettings()
   await liveIs('not-set-up')
@@ -393,21 +412,27 @@ try {
     JSON.stringify({ border: layoutTwoRows.border, radius: layoutTwoRows.radius, list: layoutTwoRows.list, rows: layoutTwoRows.rows.map((row) => ({ name: row.name.left, edge: row.edge?.right })), header: layoutTwoRows.header.right, buttons: layoutTwoRows.headerButtonsRight }))
   await shot('5-token-cannot-run-the-live-service')
 
-  // 7. The deployed service is marked out of date (a share-link domain is set); publishing goes on.
-  const uploadsBefore = api.reached().filter((line) => line.startsWith('PUT ') && line.includes('/workers/scripts/')).length
+  // 7. A share-link domain is set. That changes nothing about the deployed code: the recorded build
+  // stays as it was (decision R3: an update depends on the build the live service answers as, not on
+  // anything recorded here), no script is uploaded, and publishing goes on. The share-address action
+  // sends only its own lookup, attach and removal requests (decisions R2 and R11).
+  const isScriptUpload = (line) => /^PUT \S+\/workers\/scripts\/[a-z0-9_-]+$/.test(line)
+  const uploadsBefore = api.reached().filter(isScriptUpload).length
+  const shareChangedAt = api.requests.length
   const marked = await page.evaluate(async () => {
     const current = await window.tw.publish.getConfig()
     return window.tw.publish.setConfig({ accountId: current.accountId, project: current.project, baseUrl: current.baseUrl, workerBaseUrl: current.workerBaseUrl, useShortIds: current.useShortIds, shareDomain: 'drafts.example.test' })
   })
   await closeSettings()
-  const stale = config().liveWorkerVersion === undefined
+  const versionKept = config().liveWorkerVersion === BUILD
   const requestsBefore = api.requests.length
   const second = await publish()
-  const uploadsAfter = api.reached().filter((line) => line.startsWith('PUT ') && line.includes('/workers/scripts/')).length
+  const uploadsAfter = api.reached().filter(isScriptUpload).length
   // Not even tried: the publishing tool asks nothing about the live service (its first question is the service's own address).
-  const askedOfLive = api.reached().slice(requestsBefore).filter((line) => line.includes('/workers/'))
+  // (The share-address action's own requests, which may still be on their way, are not the publishing tool's.)
+  const askedOfLive = api.reached().slice(requestsBefore).filter((line) => line.includes('/workers/') && !line.includes('/domains'))
   const pagesAgain = api.reached().slice(requestsBefore).includes(`POST /accounts/${ADA.id}/pages/projects/talkweaver-handouts/deployments`)
-  record(7, marked.success && stale && second?.success === true && pagesAgain && uploadsAfter === uploadsBefore && askedOfLive.length === 0 && config().liveWorkerBaseUrl === liveAddress,
+  record(7, marked.success && versionKept && second?.success === true && pagesAgain && uploadsAfter === uploadsBefore && askedOfLive.length === 0 && config().liveWorkerBaseUrl === liveAddress,
     second?.success ? `published; live service uploads ${uploadsBefore} → ${uploadsAfter}; asked about the live service: ${askedOfLive.length}` : `not published: ${String(second?.error).slice(0, 200)}`)
 
   // 8. Rejected.
@@ -438,35 +463,40 @@ try {
   await headerIs('Connected · Ada Lovelace')
   await settled()
 
-  // 18. A newer app build: step 7 changed the share-link address, which marks the deployed service out
-  // of date as an older build does. The next publish updates it first, once, with the stored keys.
-  const markedStale = config().liveWorkerVersion === undefined
+  // 18. Step 7 changed the share-link address. That marks nothing out of date: the recorded build is
+  // still there, the next publish uploads no code, sends no secret and says nothing about an update;
+  // and since step 7 the only writes about the Worker are the share-address action's own (the attach
+  // of that one hostname, and removals of hostnames this computer listed). No script upload.
+  const versionStillRecorded = config().liveWorkerVersion === BUILD
   await closeSettings()
   await page.evaluate(() => { window.__liveNotices = []; window.tw.liveService.onNotice((message) => window.__liveNotices.push(message)) })
   const uploadsBefore18 = liveUploads()
+  const keysBefore18 = keysGiven().length
   const updated = await publish()
   const afterUpdate = liveUploads()
   const again18 = await publish()
   const notices = await page.evaluate(() => window.__liveNotices)
   const keys18 = keysGiven()
-  record(18, markedStale && updated?.success === true && updated.liveNotice === undefined && afterUpdate === uploadsBefore18 + 1 && again18?.success === true && liveUploads() === afterUpdate
-    && keys18.length === 2 && keys18[0] === keys18[1] && JSON.stringify(notices) === JSON.stringify(['Updating the live service…']) && config().liveWorkerVersion === BUILD,
-  `uploads ${uploadsBefore18} → ${afterUpdate} → ${liveUploads()}; keys set ${keys18.length} times, ${new Set(keys18).size} distinct; told: ${JSON.stringify(notices)}; ${updated?.success ? 'published' : String(updated?.error).slice(0, 160)}`)
+  const workerWritesSinceShareChange = api.reached().slice(shareChangedAt).filter((line) => !line.startsWith('GET ') && line.includes('/workers/'))
+  const onlyShareAddressWrites = workerWritesSinceShareChange.every((line) => /^PUT \S+\/workers\/scripts\/[a-z0-9_-]+\/domains\/records$/.test(line) || /^DELETE \S+\/workers\/domains\/[0-9a-f]{32}$/.test(line))
+  record(18, versionStillRecorded && updated?.success === true && updated.liveNotice === undefined && afterUpdate === uploadsBefore18 && again18?.success === true && liveUploads() === uploadsBefore18
+    && keys18.length === keysBefore18 && oneOwnKeyEach(keys18) && notices.length === 0 && onlyShareAddressWrites && !workerWritesSinceShareChange.some(isScriptUpload) && config().liveWorkerVersion === BUILD,
+  `uploads ${uploadsBefore18} → ${afterUpdate} → ${liveUploads()} (none expected); secrets requests ${keysBefore18} → ${keys18.length}; told: ${JSON.stringify(notices)}; writes about the Worker since the share address changed: ${JSON.stringify(workerWritesSinceShareChange)}; ${updated?.success ? 'published' : String(updated?.error).slice(0, 160)}`)
 
   // 19. The keys gone from this computer (the slot removed) with the service deployed: the stop.
   rmSync(join(userData, 'live-worker-credentials.bin'))
   await openSettings()
   await settings.getByRole('button', { name: 'Check again' }).click()
   await settled()
-  await liveIs('keys-lost')
+  await liveIs('set-up-elsewhere') // no key here and a service recorded: "Set up on another computer", with its button; nothing is offered to reset
   const lostText = await liveText()
-  await shot('23-going-live-keys-lost')
+  await shot('23-going-live-set-up-elsewhere')
   await closeSettings()
   const writesBefore19 = workersWrites()
   const withoutKeys = await publish()
-  record(19, lostText.startsWith('Going live and sharing Resetting makes new keys, and every live session, shared talk and Run link made with the old ones stops working.')
-    && lostText.endsWith('The live service exists but this computer has lost its keys') && withoutKeys?.success === true
-    && withoutKeys.liveNotice === `${D7}. The live service exists but this computer has lost its keys.` && workersWrites() === writesBefore19 && keysGiven().length === 2,
+  // Nothing was sent for it: the one secrets request is still the first set-up's.
+  record(19, lostText.includes('Set up on another computer') && lostText.includes('Set up going live on this computer') && !/reset|delete/i.test(lostText) && withoutKeys?.success === true
+    && withoutKeys.liveNotice === D7 && workersWrites() === writesBefore19 && keysGiven().length === 1,
   `${lostText} · ${withoutKeys?.liveNotice ?? withoutKeys?.error}`)
 
   // 20. The reset, done on purpose: the Worker deleted in Cloudflare's dashboard, then Check again; then set up again.
@@ -480,10 +510,14 @@ try {
   await shot('24-going-live-not-found')
   await part('live-service-label').click()
   await liveIs('ready')
+  // The slot was removed in step 19, so this set-up makes a new key under a new id (R5) and sends it in
+  // one request of its own: two secrets requests in the whole journey, each naming one own key, the
+  // two differing in id and in value; and no request of the journey names a signing secret (R1).
   const keys20 = keysGiven()
   record(20, goneText === 'Going live and sharing The live service was not found at Cloudflare: it may have been deleted there Set up going live' && forgotten
-    && keys20.length === 3 && keys20[2] !== keys20[0] && existsSync(join(userData, 'live-worker-credentials.bin')) && config().liveWorkerBaseUrl === liveAddress,
-  `${goneText} · keys set ${keys20.length} times`)
+    && keys20.length === 2 && oneOwnKeyEach(keys20) && keys20[1].names[0] !== keys20[0].names[0] && keys20[1].text !== keys20[0].text && api.namingSigningSecret().length === 0
+    && existsSync(join(userData, 'live-worker-credentials.bin')) && config().liveWorkerBaseUrl === liveAddress,
+  `${goneText} · secrets requests ${keys20.length}, each naming one own key: ${oneOwnKeyEach(keys20)}; requests naming a signing secret: ${api.namingSigningSecret().length}`)
 
   // 21. A custom domain on the site (a site with its own web address): the handout address on the row, and share.<it> suggested.
   const shareText = async () => (await part('share-link').innerText()).replace(/\s+/g, ' ').trim()

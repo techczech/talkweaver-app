@@ -1,5 +1,6 @@
 import type { InkStroke } from '../../worker/protocol'
 import type { RunAudioFields } from '../shared/run-audio'
+import type { ImageSearchResult, ImageSearchStatus, ImportedImage, MatchMode } from '../shared/image-search'
 import type { VariantThumbnail } from '../shared/variant-thumbnail-result'
 import type { EditorDocumentReply, EditorDocumentRequest } from '../shared/editor-document'
 import type { RunQuestion, RunReaction } from '../shared/run-feedback'
@@ -48,6 +49,12 @@ export type { RecordingStorageRow } from '../shared/recording-storage-status'
 export type { GoingLiveRow, LiveSetupPrompt } from '../shared/live-service-status'
 export type { TranscriptionRow } from '../shared/transcription-status'
 export type { PublishNotReady } from '../shared/publish-status'
+export type { ImageSearchHit, ImageSearchResult, ImageSearchStatus, ImageSource, ImageUse, ImportedImage, MatchMode } from '../shared/image-search'
+
+/** What outline.setHeadingIcon and outline.setParagraphIcon answer (compiler/scripts/lib/12-outline-edit.mjs). */
+export type IconVerbResult =
+  | { ok: true; text: string; changed: boolean }
+  | { ok: false; text: string; reason: 'slide-not-found' | 'not-a-paragraph' | 'unknown-icon' | 'icon-set-elsewhere' | 'title-not-shown' | 'cannot-place-here' }
 
 /**
  * What a publish that could not start, or that went up without live features, adds to its reply
@@ -70,7 +77,7 @@ export type PublishReplyExtras = {
 // TalkSearchResult are; the reply that carries it over IPC is typed here.
 export type CloudflareReply = { ok: true; status: CloudflareStatus } | { ok: false; error: string; status: CloudflareStatus }
 /** What "Set up going live" (and Try again, and "Set up going live now") answers: the row, and on failure a fixed sentence with its Details (numbers only). */
-export type LiveSetUpReply = { ok: true; row: GoingLiveRow } | { ok: false; error: string; details: string | null; row: GoingLiveRow }
+export type LiveSetUpReply = { ok: true; row: GoingLiveRow; notice?: string } | { ok: false; error: string; details: string | null; row: GoingLiveRow }
 export type {
   ImportPackRequest,
   ImportProgress,
@@ -722,6 +729,24 @@ const api = {
       ipcRenderer.invoke('settings:get-action-bar'),
     setActionBarVisible: (visible: boolean): Promise<boolean> =>
       ipcRenderer.invoke('settings:set-action-bar-visible', visible),
+    getEditorViewMode: (): Promise<'plain' | 'markdown'> =>
+      ipcRenderer.invoke('settings:get-editor-view-mode'),
+    setEditorViewMode: (mode: 'plain' | 'markdown'): Promise<'plain' | 'markdown'> =>
+      ipcRenderer.invoke('settings:set-editor-view-mode', mode),
+    onEditorViewModeChanged: (cb: (mode: 'plain' | 'markdown') => void): (() => void) => {
+      const listener = (_e: unknown, mode: 'plain' | 'markdown'): void => cb(mode)
+      ipcRenderer.on('editor-view-mode:changed', listener)
+      return () => ipcRenderer.removeListener('editor-view-mode:changed', listener)
+    },
+    getPlainLook: (): Promise<{ font: 'sans' | 'serif'; size: number }> =>
+      ipcRenderer.invoke('settings:get-plain-look'),
+    setPlainLook: (change: { font?: 'sans' | 'serif'; size?: number }): Promise<{ font: 'sans' | 'serif'; size: number }> =>
+      ipcRenderer.invoke('settings:set-plain-look', change),
+    onPlainLookChanged: (cb: (look: { font: 'sans' | 'serif'; size: number }) => void): (() => void) => {
+      const listener = (_e: unknown, look: { font: 'sans' | 'serif'; size: number }): void => cb(look)
+      ipcRenderer.on('plain-look:changed', listener)
+      return () => ipcRenderer.removeListener('plain-look:changed', listener)
+    },
     onActionBarChanged: (cb: (state: { visible: boolean; items: unknown }) => void): (() => void) => {
       const listener = (_e: unknown, state: { visible: boolean; items: unknown }): void => cb(state)
       ipcRenderer.on('action-bar:changed', listener)
@@ -1157,20 +1182,42 @@ const api = {
       ipcRenderer.invoke('talk:outline-identity', outlinePath),
     // The outline with grid block `fromIndex` moved to `toIndex`, worked out on `content` (the open
     // editor's buffer) or, without it, on the file. Writes nothing. null when the move is not possible.
-    reorder: (outlinePath: string, fromIndex: number, toIndex: number, content?: string): Promise<string | null> =>
-      ipcRenderer.invoke('outline:reorder', outlinePath, fromIndex, toIndex, content),
+    reorder: (outlinePath: string, fromIndex: number, toIndex: number, content?: string, placement?: 'before' | 'after'): Promise<string | null> =>
+      ipcRenderer.invoke('outline:reorder', outlinePath, fromIndex, toIndex, content, placement),
     // Pin (or clear, iconKey=null) the icon on ONE top-level list item of a slide, by writing the
-    // canonical `{icon=KEY}` token at the end of that bullet's line. The item is addressed by its
-    // 0-based position among the slide block's top-level list-item lines (the same indexing the
-    // engine's setListItemIcon uses). Returns the rewritten outline text or null on error.
+    // canonical `{icon=KEY}` token at the end of that bullet's line. The item is addressed by
+    // `itemLine`, its 1-based line in `content`, under the slide whose heading line is
+    // `slideHeading`. The line is the only address. Returns the rewritten outline text, or null on
+    // error, without a line, and when the engine's setListItemIcon refuses (the line is not a list
+    // item of a slide's content, or the finished slide would not show the icon there).
     setItemIcon: (
       content: string,
       slideHeading: string,
-      slideOccurrence: number,
-      itemIndex: number,
-      iconKey: string | null
+      iconKey: string | null,
+      itemLine: number
     ): Promise<string | null> =>
-      ipcRenderer.invoke('outline:set-item-icon', content, slideHeading, slideOccurrence, itemIndex, iconKey),
+      ipcRenderer.invoke('outline:set-item-icon', content, slideHeading, iconKey, itemLine),
+    // Set (or remove, iconKey=null) the `{icon=KEY}` token on a slide's heading line: the icon on
+    // the slide's title. Only that token changes. The verb checks its edit by compiling: the answer
+    // is { ok: true, text, changed } or a refusal { ok: false, text (as given), reason } to show
+    // (`slide-not-found`, `unknown-icon`, `icon-set-elsewhere`, `cannot-place-here`). null on error.
+    setHeadingIcon: (
+      content: string,
+      slideHeading: string,
+      slideOccurrence: number,
+      iconKey: string | null
+    ): Promise<IconVerbResult | null> =>
+      ipcRenderer.invoke('outline:set-heading-icon', content, slideHeading, slideOccurrence, iconKey),
+    // Set (or remove, iconKey=null) the `{icon=KEY}` token at the end of one paragraph: the icon
+    // beside it. `line` is the 1-based number of any line of the paragraph (the caret's line).
+    // Same answer as setHeadingIcon; a line that is not in a visible paragraph is refused with
+    // `not-a-paragraph`.
+    setParagraphIcon: (
+      content: string,
+      line: number,
+      iconKey: string | null
+    ): Promise<IconVerbResult | null> =>
+      ipcRenderer.invoke('outline:set-paragraph-icon', content, line, iconKey),
     // Merge a picker-chosen trigger onto the slide under the caret line: same-key tokens
     // replaced (Trigger Dictionary), {id=…} and every other token kept verbatim (ADR-0032).
     mergeTrigger: (content: string, lineNumber: number, trigger: string): Promise<string | null> =>
@@ -1212,6 +1259,14 @@ const api = {
     importImage: (thumbUrlOrPath: string): Promise<{ id: string; ext: string; path: string } | null> =>
       ipcRenderer.invoke('archive:import-image', thumbUrlOrPath)
   },
+  // The image search seam (ticket 10): SlideWell's shared store when present, else the archive.
+  // search() returns words hits first, then picture matches (match 'both' by default).
+  images: {
+    status: (): Promise<ImageSearchStatus> => ipcRenderer.invoke('images:status'),
+    search: (query: string, opts?: { match?: MatchMode }): Promise<ImageSearchResult | null> =>
+      ipcRenderer.invoke('images:search', query, opts),
+    importImage: (thumbUrl: string): Promise<ImportedImage | null> => ipcRenderer.invoke('images:import', thumbUrl)
+  },
   shell: {
     openPath: (path: string): Promise<boolean> => ipcRenderer.invoke('shell:open-path', path),
     openExternal: (url: string): Promise<boolean> => ipcRenderer.invoke('shell:open-external', url),
@@ -1242,7 +1297,10 @@ const api = {
       ipcRenderer.invoke('icons:search', query),
     // Render one icon key to its SVG markup (currentColor / brand fill), via 05-icons.mjs iconSvg.
     // Returns null when the key resolves to no drawable glyph.
-    svg: (key: string): Promise<string | null> => ipcRenderer.invoke('icons:svg', key)
+    svg: (key: string): Promise<string | null> => ipcRenderer.invoke('icons:svg', key),
+    // Every name of the Lucide set as a key (`lucide:name`), in the set's order: what the Plain
+    // view's Command-I picker lists before a search is typed. Empty when the set cannot be read.
+    names: (): Promise<string[]> => ipcRenderer.invoke('icons:names')
   },
   // TalkWeaver History (ADR-0035). The renderer joins these handout records with recorded
   // Sessions; live checks are cached in main and can be forced by the user's explicit re-check.

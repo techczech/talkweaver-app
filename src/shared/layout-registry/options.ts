@@ -29,6 +29,8 @@ export interface OptionContext {
   titleRegime?: TitleRegime
   /** Whether the compiled slide paints its title (ADR-0028 §10). Absent = not known. */
   titlePainted?: boolean
+  /** Whether the slide has a left title panel (data-title-layout="left"). Absent = not known. */
+  titlePanel?: boolean
   /**
    * Ticket 08: the slide's kind as a step of the talk's pre-work section, or null when it is not a
    * step. Absent = not known, which (unlike every other fact) offers no pre-work group.
@@ -73,6 +75,7 @@ function clauseHolds(clause: OptionApplicability, context: OptionContext, entry?
   if (clause.headingLevels && !clause.headingLevels.includes(context.headingLevel)) return false
   if (clause.requiresChildren && !context.hasChildren) return false
   if (clause.titlePainted !== undefined && context.titlePainted !== undefined && clause.titlePainted !== context.titlePainted) return false
+  if (clause.titlePanel !== undefined && context.titlePanel !== undefined && clause.titlePanel !== context.titlePanel) return false
   if (clause.requiresTokens && context.selectedTokens) {
     for (const [key, accepted] of Object.entries(clause.requiresTokens)) {
       if (!accepted.includes(context.selectedTokens[key] ?? '')) return false

@@ -51,9 +51,12 @@ function sha256Hex(value) {
 }
 
 // The source adapter records these before full compilation replaces media paths with data URIs.
+// `quoteFormSet` (quote forms, ticket 10) is left out with the source and notes: it is read only by the phone text
+// (slide-script.mjs) and paints nothing (the form the slide is drawn in is already in its blocks), so a quote slide
+// that had a form before that ticket keeps the picture key, and the thumbnail, it had.
 export function pictureKeyForSlide(slide, mediaDigests = []) {
   const renderKey = JSON.stringify(slide, (k, v) =>
-    k === "id" || k === "sourceMarkdown" || k === "scriptSourceMarkdown" || k === "notes" || k === "tags" ? undefined : v
+    k === "id" || k === "sourceMarkdown" || k === "scriptSourceMarkdown" || k === "notes" || k === "tags" || k === "quoteFormSet" ? undefined : v
   );
   return `sha256-${sha256Hex(mediaDigests.length ? JSON.stringify([renderKey, mediaDigests]) : renderKey)}`;
 }

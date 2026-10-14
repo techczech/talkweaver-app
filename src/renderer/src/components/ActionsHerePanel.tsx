@@ -8,11 +8,11 @@
 // All commands…, and Return opens the palette with the text kept.
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  AlignLeft, AppWindow, ArrowDown, ArrowUp, ArrowUpDown, Bold, ChartColumn, ChevronsLeft, ChevronsRight, ChevronsUpDown,
-  CircleHelp, CircleX, ClipboardCopy, Code, CodeXml, Copy, Eye, FilePlus, FilePlus2, FileText, FolderInput, FolderMinus,
+  AlignLeft, AppWindow, ArrowDown, ArrowUp, ArrowUpDown, Bold, ChartColumn, ChevronsDownUp, ChevronsLeft, ChevronsRight, ChevronsUpDown,
+  CircleHelp, CircleX, ClipboardCopy, ClipboardPaste, Code, CodeXml, Copy, Eye, FilePlus, FilePlus2, FileText, FolderInput, FolderMinus,
   FolderOpen, FolderPlus, FolderSearch, Focus, Globe, HardDrive, Heading, Heading2, Highlighter, IndentDecrease,
   IndentIncrease, Image, Italic, Layers, LayoutDashboard, LayoutList, LayoutTemplate, Link, List, ListFilter, ListOrdered,
-  MousePointerClick, Network, Palette, PanelRight, Pencil, PenTool, Presentation, QrCode, RefreshCw, Search, Settings2,
+  MousePointerClick, Network, Palette, PanelRight, Pencil, PenTool, Presentation, QrCode, RefreshCw, Scissors, Search, Settings2,
   Shapes, Share2, Sparkles, SquareArrowOutUpRight, Stethoscope, Strikethrough, Table, Tag, Timer, Trash2, Type, Underline,
   Workflow, Wrench, type LucideIcon
 } from 'lucide-react'
@@ -25,11 +25,11 @@ import { actionIconName, type ActionIconName } from '../../../shared/actions-her
 
 /** Every icon name shared/actions-here-icons.ts can return; the Record type makes a missing one a type error. */
 const ICON_COMPONENTS: Record<ActionIconName, LucideIcon> = {
-  AlignLeft, AppWindow, ArrowDown, ArrowUp, ArrowUpDown, Bold, ChartColumn, ChevronsLeft, ChevronsRight, ChevronsUpDown,
-  CircleHelp, CircleX, ClipboardCopy, Code, CodeXml, Copy, Eye, FilePlus, FilePlus2, FileText, FolderInput, FolderMinus,
+  AlignLeft, AppWindow, ArrowDown, ArrowUp, ArrowUpDown, Bold, ChartColumn, ChevronsDownUp, ChevronsLeft, ChevronsRight, ChevronsUpDown,
+  CircleHelp, CircleX, ClipboardCopy, ClipboardPaste, Code, CodeXml, Copy, Eye, FilePlus, FilePlus2, FileText, FolderInput, FolderMinus,
   FolderOpen, FolderPlus, FolderSearch, Focus, Globe, HardDrive, Heading, Heading2, Highlighter, IndentDecrease,
   IndentIncrease, Image, Italic, Layers, LayoutDashboard, LayoutList, LayoutTemplate, Link, List, ListFilter, ListOrdered,
-  MousePointerClick, Network, Palette, PanelRight, Pencil, PenTool, Presentation, QrCode, RefreshCw, Search, Settings2,
+  MousePointerClick, Network, Palette, PanelRight, Pencil, PenTool, Presentation, QrCode, RefreshCw, Scissors, Search, Settings2,
   Shapes, Share2, Sparkles, SquareArrowOutUpRight, Stethoscope, Strikethrough, Table, Tag, Timer, Trash2, Type, Underline,
   Workflow, Wrench
 }
@@ -97,10 +97,11 @@ export default function ActionsHerePanel({ x, y, rows, chordOf, paletteChord, on
       className="actions-here"
       style={{ left, top }}
       role="dialog"
-      aria-label="Actions here"
+      aria-labelledby="actions-here-title"
       data-actions-here
       onClick={(event) => event.stopPropagation()}
     >
+      <div className="actions-here-title" id="actions-here-title" data-actions-here-title>Actions here</div>
       <div className="actions-here-filter">
         <Search size={13} aria-hidden="true" />
         <input

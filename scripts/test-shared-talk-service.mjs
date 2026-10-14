@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import { createSharedTalks, readRevisionSlides, readRevisionSnapshot, revisionSnapshotPath, SHARE_UNVERIFIED, workerTalkSlug } from '../src/main/shared-talk.ts'
 import { isShareId } from '../src/shared/share-id.ts'
 import { memoryOwnerTokens } from './lib/memory-secrets.mjs'
+import { heldKeysCases, heldKeysDouble } from './lib/held-keys-cases.mjs'
 import { createSingleFlight } from '../src/main/single-flight.ts'
 import { buildInGate } from '../src/main/shared-talk-build.ts'
 import { isShareId as workerIsShareId } from '../worker/shared-talk-route.ts'
@@ -93,7 +94,7 @@ function fakeWorker() {
   return { fetch: fetchImpl, shares, calls, knobs }
 }
 
-function harness({ baseUrl = 'http://worker.test/', worker = fakeWorker(), root = mkdtempSync(join(tmpdir(), 'tw-shared-talk-')), identityOf = (path) => ({ key: `id:${path}`, realPath: path }) } = {}) {
+function harness({ baseUrl = 'http://worker.test/', worker = fakeWorker(), root = mkdtempSync(join(tmpdir(), 'tw-shared-talk-')), identityOf = (path) => ({ key: `id:${path}`, realPath: path }), endpoint = null, fetch = worker.fetch } = {}) {
   const disks = new Map()
   // The outline as the talk writer holds it: share_url is changed only through the module's decide.
   const outlines = new Map()
@@ -115,7 +116,7 @@ function harness({ baseUrl = 'http://worker.test/', worker = fakeWorker(), root 
   const ownerTokens = memoryOwnerTokens()
   const make = () => createSharedTalks({
     registryPath, ownerTokens,
-    endpoint: async () => { endpointCalls += 1; return { baseUrl, adminSecret: ADMIN } },
+    endpoint: async () => { endpointCalls += 1; return endpoint ? endpoint() : { baseUrl, adminSecret: ADMIN } },
     linkBase: () => config.linkBase,
     identityOf,
     slugOf: (path) => path.split('/').pop().replace('-outline.md', ''),
@@ -131,7 +132,7 @@ function harness({ baseUrl = 'http://worker.test/', worker = fakeWorker(), root 
       stamps.push({ path, url: shareUrlIn(text) })
     },
     qrSvg: async (url) => `<svg data-url="${url}"></svg>`,
-    fetch: worker.fetch,
+    fetch,
     onChange: (key, state, previousKey) => changes.push(previousKey ? { key, state, previousKey } : { key, state }),
     saveDebounceMs: 20,
   })
@@ -539,6 +540,28 @@ function harness({ baseUrl = 'http://worker.test/', worker = fakeWorker(), root 
   assert.equal(shareSheetView(m).statusTone, 'error')
   assert.equal(sharedStatusLabel(share), 'Shared for comments · drafts.handouts.fyi/k7m2abcd')
   console.log('PASS sheet model: creating → ready, Update only with switch 1 off, stop, errors')
+}
+
+// ── A share is made with whichever key held for the live service it accepts (several Macs) ──────
+{
+  const worker = fakeWorker()
+  const double = heldKeysDouble({ baseUrl: 'http://worker.test/', route: '/shares', inner: worker.fetch, legacyKey: ADMIN })
+  const h = harness({ worker, endpoint: double.endpoint, fetch: double.fetch })
+  const made = await heldKeysCases(double, (n) => h.talks.share(h.talk(`held-${n}`), 'T'), 'a share')
+  assert.ok(isShareId(made.shareId) && made.revision === 1, 'the share made with the 0.38.2 key is a working share')
+  // What was refused or unanswered made no share on the service; the one made is the only one.
+  assert.deepEqual([...worker.shares.keys()], [made.shareId])
+  assert.deepEqual(h.talks.list().map((share) => share.shareId), [made.shareId])
+  // The key it was given accepted (every other section of this suite): one request.
+  const before = worker.calls.length
+  const single = harness({ worker })
+  await single.talks.share(single.talk('held-single'), 'T')
+  assert.deepEqual(worker.calls.slice(before).filter((call) => call.route === '/shares').map((call) => call.auth), [`Bearer ${ADMIN}`])
+  single.cleanup()
+  // The key travels in the request's header only: never in a body, the registry or a window's state.
+  assert.equal([readFileSync(h.registryPath, 'utf8'), JSON.stringify(h.changes), JSON.stringify(worker.calls.map((call) => call.body))].some((text) => text.includes(double.ownKey) || text.includes(ADMIN)), false)
+  h.cleanup()
+  console.log('PASS held keys: a share is made with the 0.38.2 key when this computer\'s own is refused; "access was removed" only when both are; no answer or another status is never that')
 }
 
 // ── One frontmatter stamp for handout_url and share_url ─────────────────────────────────────────

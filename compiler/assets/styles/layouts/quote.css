@@ -84,6 +84,9 @@
     height: 2px;
     background: var(--accent);
   }/* @order 1950 */
+  /* A source line with italics, bold or a link keeps its text in ONE flex item (the quote renderer wraps it),
+     so it reads as a flowing line that wraps beside the bar. */
+  .slide-content.layout-quote > blockquote cite > .cite-text { min-width: 0; overflow-wrap: anywhere; }/* @order 1402 */
   /* ADR-0023 §9 continuation mark: parts 1..n−1 of a split quote say "n / N" in small mono chrome
      at the panel's bottom-right, inside the padding so the text block keeps its budget. The doctor
      lists .quote-continuation as small chrome. */
@@ -121,3 +124,183 @@
     left: -.68em;
     top: -.12em;
   }
+/* QUOTE FORMS (docs/design/2026-10-11-source-styled-quote-slides, ADR-0038). A quote whose source
+   line names a post on X, a video, a book, a paper or a web page draws as that source: <figure
+   class="qf …"> built by compiler/scripts/lib/quote-forms.mjs. The form is full-bleed over the
+   slide (it ignores --slide-pad-*) and centres its content on both axes. GEOMETRY lives here, colour
+   and type in skin/quote.css. Sizes were drawn at 1920 × 1080 and are emitted as cqw (px ÷ 19.2).
+   The words take the largest step that fits (data-step 1 to 4, the compiler's estimate; the presenter
+   runtime checks the real box); below step 4 the form refuses and the slide is a Plain quote. */
+  .qf {
+    --qf-step-1: 3.4cqw;
+    --qf-step-2: 3cqw;
+    --qf-step-3: 2.6cqw;
+    --qf-step-4: 2.3cqw;
+    position: absolute; inset: 0; margin: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  /* stage.css @order 1355 and 1360 put every direct child of a title-less slide into grid column 1 or 2
+     (!important), which would also make that grid area the form's containing block. The form is over the
+     whole slide: take it out of the grid. The repeated class outweighs the :has() rules there. */
+  .slide .slide-content.layout-quote > figure.qf.qf.qf {
+    grid-column: auto !important;
+    grid-row: auto !important;
+    place-self: stretch;
+    max-width: none;
+    margin: 0 !important;
+  }
+  .qf[data-step="1"] { --qf-words: var(--qf-step-1); }
+  .qf[data-step="2"] { --qf-words: var(--qf-step-2); }
+  .qf[data-step="3"] { --qf-words: var(--qf-step-3); }
+  .qf[data-step="4"] { --qf-words: var(--qf-step-4); }
+  .qf *, .qf *::before, .qf *::after { box-sizing: border-box; }
+  /* The fit estimate (wrappedLinesByWidth) breaks a token longer than a line across lines, so the box must too. */
+  .qf-words { margin: 0; padding: 0; font-size: var(--qf-words); overflow-wrap: anywhere; min-width: 0; }
+  .qf-words p { margin: 0; }
+  .qf-words p + p { margin-top: .6em; }
+  .qf-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .qf-ic { flex: none; display: block; }
+  .qf-avatar { width: 5cqw; height: 5cqw; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex: none; }
+
+  /* Tweet: the X post card (spec 6.2) */
+  /* Borders are 3px at 1920 = 0.15625cqw; a computed width just under 2 canvas px is floored to 1, so they carry 0.157cqw. */
+  .qf-x-card { width: 71.875cqw; border-width: 0.157cqw; border-style: solid; border-radius: 2.0833cqw; padding: 2.9167cqw 3.75cqw 2.0833cqw; }
+  .qf-x-head { display: flex; align-items: center; gap: 1.25cqw; }
+  .qf-x-who { display: flex; flex-direction: column; flex: 1; min-width: 0; line-height: 1.25; }
+  .qf-x-mark { flex: none; width: 2.9167cqw; height: 2.9167cqw; }
+  /* The icons carry their size in cqw: an <svg width> attribute is canvas px and would scale with the stage. */
+  .qf-x-actions .qf-ic { width: 2.3958cqw; height: 2.3958cqw; }
+  .qf-x-head > .qf-x-mark:only-child { margin-left: auto; }
+  .qf-tweet .qf-words { margin-top: 2.0833cqw; }
+  .qf-x-time { margin-top: 1.7708cqw; line-height: 1.3; }
+  .qf-x-actions { margin-top: 1.5625cqw; border-top-width: 0.157cqw; border-top-style: solid; padding-top: 1.4583cqw; display: flex; justify-content: space-between; align-items: center; }
+  .qf-x-actions > span { display: flex; }
+  .qf-x-right { gap: 2.9167cqw; }
+
+  /* Awaiting words: dashed boxes marking what is missing. Emitted hidden; only the app's own
+     editing previews (a .qf-authoring ancestor, or the body of a preview document, markSlidePreviewHtml's data-tw-preview) show them, so presenting, the handout and print never do. */
+  .qf-placeholder { display: none; }
+  .qf-authoring .qf-placeholder, [data-tw-preview] .qf-placeholder { display: flex; }
+  .qf-ph { align-items: center; border-width: 0.157cqw; border-style: dashed; border-radius: 0.9375cqw; }
+  .qf-ph-who { flex: none; padding: 0.7292cqw 1.5625cqw; line-height: 1.25; }
+  .qf-avatar-empty { background: none; border-width: 0.157cqw; border-style: dashed; }
+  .qf-awaiting .qf-x-mark { margin-left: auto; }
+  .qf-x-card .qf-ph-words { margin-top: 2.0833cqw; min-height: 13.0208cqw; padding: 0 2.0833cqw; line-height: 1.33; }
+
+  /* Video, no picture: the YouTube player (spec 6.3). 1320 wide, centred; the words are the captions. */
+  .qf { --qf-floor: 1.9375cqw; }
+  .qf-yt { width: 68.75cqw; }
+  .qf-yt-player { position: relative; width: 68.75cqw; height: 38.6979cqw; border-radius: 1.3542cqw; overflow: hidden; }
+  .qf-yt-captions { position: absolute; left: 5.7292cqw; right: 5.7292cqw; bottom: 9.8958cqw; text-align: center; text-wrap: balance; }
+  .qf-yt-captions span { line-height: 1.62; padding: 0.3125cqw 0.8333cqw; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+  .qf-yt-controls { position: absolute; left: 0; right: 0; bottom: 0; padding: 0 1.875cqw 1.25cqw; }
+  .qf-yt-track { position: relative; height: 0.4167cqw; border-radius: 0.2083cqw; margin-bottom: 1.0417cqw; }
+  .qf-yt-played { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 0.2083cqw; }
+  .qf-yt-knob { position: absolute; top: 50%; width: 1.5625cqw; height: 1.5625cqw; margin: -0.7812cqw 0 0 -0.7812cqw; border-radius: 50%; }
+  .qf-yt-row { display: flex; justify-content: space-between; align-items: center; }
+  .qf-yt-left, .qf-yt-right { display: flex; align-items: center; gap: 1.5625cqw; }
+  .qf-yt-time { line-height: 1; margin-left: 0.3125cqw; }
+  .qf-yt-controls .qf-ic { width: 2.0833cqw; height: 2.0833cqw; }
+  .qf-yt-title { margin: 1.25cqw 0 0; line-height: 1.25; }
+  .qf-yt-channel { display: flex; align-items: center; gap: 1.0417cqw; margin-top: 0.8333cqw; }
+  .qf-avatar-s { width: 3.75cqw; height: 3.75cqw; }
+  .qf-yt-subscribe { padding: 0.625cqw 1.4583cqw; border-radius: 2.0833cqw; }
+  .qf-yt-likes { margin-left: auto; display: flex; align-items: center; gap: 1.1458cqw; border-radius: 2.0833cqw; padding: 0.625cqw 1.5625cqw; }
+  .qf-yt-likes .qf-ic { width: 1.875cqw; height: 1.875cqw; }
+  .qf-yt-sep { width: 0.1042cqw; height: 1.7708cqw; }
+
+  /* The left side panel (spec 6.6). SHARED by video, book, paper and web (sidePanelFigure in
+     quote-forms.mjs): a 653 wide panel at the left edge, full height; the words column beside it. */
+  .qf-side { align-items: stretch; justify-content: flex-start; }
+  .qf-panel { width: 34.0104cqw; flex: none; position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+  .qf-panel::after { content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 0.157cqw; z-index: 3; }
+  .qf-picture { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; }
+  .qf-body { flex: 1; min-width: 0; display: flex; align-items: center; padding: 5.625cqw 3.75cqw 5.625cqw 3.9583cqw; }
+  .qf-body-in { width: 100%; }
+  .qf-source { margin-top: 2.7083cqw; padding-left: 1.25cqw; border-left: 0.4167cqw solid; }
+  .qf-source-who { line-height: 1.3; }
+  .qf-source-where { line-height: 1.3; margin-top: 0.3125cqw; }
+  .qf-pill-row { margin-top: 1.0417cqw; }
+  .qf-pill { display: inline-block; border-radius: 52.0312cqw; padding: 0.2083cqw 1.3542cqw 0.2604cqw; line-height: 1.3; }
+  .qf-source-id { line-height: 1.3; margin-top: 0.8333cqw; overflow-wrap: anywhere; }
+  .qf-side .qf-ph-words { margin-bottom: 2.7083cqw; min-height: 13.0208cqw; padding: 0 2.0833cqw; line-height: 1.4; }
+  .qf-side .qf-body-in > .qf-ph-words + .qf-source { margin-top: 0; }
+
+  /* Book (spec 6.6): a cover picture fills the panel; a cover far from the panel's shape is shown whole on sand. */
+  .qf-source-title { font-weight: 700; }
+  .qf-cover-whole .qf-picture { object-fit: contain; }
+  /* Book with no picture: a cover made from the title and the authors, on sand (400 x 560 at 1920). */
+  .book-generated .qf-panel::after { display: none; }
+  .qf-cover-wrap { display: flex; flex-direction: column; align-items: center; gap: 1.3542cqw; }
+  .qf-cover { position: relative; width: 20.8333cqw; height: 29.1667cqw; border-width: 0.1042cqw; border-style: solid; border-radius: 0.2083cqw 0.5208cqw 0.5208cqw 0.2083cqw; box-shadow: 0.625cqw 0.8333cqw 1.5625cqw var(--qf-cover-shadow); padding: 2.9167cqw 2.0833cqw 2.2917cqw 3.75cqw; display: flex; flex-direction: column; }
+  .qf-cover-spine { position: absolute; left: 0; top: 0; bottom: 0; width: 1.6667cqw; border-radius: 0.2083cqw 0 0 0.2083cqw; }
+  .qf-cover-title { line-height: 1.15; margin: auto 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6; overflow: hidden; }
+  .qf-cover-title-l { font-size: 2.8125cqw; }
+  .qf-cover-title-m { font-size: 2.2917cqw; }
+  .qf-cover-title-s { font-size: 1.875cqw; }
+  .qf-cover-authors { font-size: 1.6667cqw; line-height: 1.35; margin-top: auto; }
+  .qf-cover-title + .qf-cover-authors { margin-top: 0; }
+  .qf-cover-pub { font-size: 1.5625cqw; line-height: 1.3; text-align: center; padding: 0 1.5625cqw; }
+
+  /* Paper (spec 6.5): no picture, a journal page 900 x 980 with the sentence highlighted; a picture, the left panel
+     with the page's top showing (object-position: top). */
+  .qf-paper .qf-picture { object-position: top center; }
+  .qf-page { width: 46.875cqw; height: 51.0417cqw; flex: none; border-width: 0.1563cqw; border-style: solid; padding: 2.6042cqw 3.6458cqw 2.0833cqw; display: flex; flex-direction: column; gap: 1.3542cqw; text-align: left; line-height: 1.3; }
+  .qf-page > figcaption { display: flex; flex-direction: column; gap: 1.3542cqw; }
+  .qf-page-head { display: flex; flex-direction: column; gap: 0.1042cqw; font-size: 1.3542cqw; line-height: 1.3; padding-bottom: 0.8333cqw; border-bottom-width: 0.2083cqw; border-bottom-style: solid; }
+  .qf-page-head b { font-size: 1.7708cqw; letter-spacing: 0.04em; text-transform: uppercase; }
+  .qf-page-title { margin: 0; font-size: 2.1875cqw; line-height: 1.2; }
+  .qf-page-authors { margin: -0.5208cqw 0 0; font-size: 1.4583cqw; line-height: 1.35; }
+  .qf-page-filler { display: flex; flex-direction: column; gap: 1.0417cqw; }
+  .qf-page-filler span { display: block; height: 0.8333cqw; border-radius: 0.4167cqw; }
+  .qf-page .qf-words { line-height: 1.36; }
+  .qf-words mark { padding: 0 0.12em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+  .qf-page-foot { margin-top: auto; display: flex; justify-content: space-between; align-items: baseline; gap: 1.25cqw; font-size: 1.3542cqw; border-top-width: 0.1563cqw; border-top-style: solid; padding-top: 0.7292cqw; }
+  .qf-page-number { font-size: 1.7708cqw; margin-left: auto; }
+  .qf-page .qf-ph-words { min-height: 9.8958cqw; padding: 0 1.0417cqw; line-height: 1.3; }
+  .qf-paper.qf-side .qf-panel { z-index: 2; }
+
+  /* Web (spec 17): no picture, a browser window 1560 wide with the page's words as its text; a picture, the left
+     panel under an address bar. Built from the mockup's "Web: a page in a browser window" block (px / 19.2). */
+  .qf-web-win { width: 81.25cqw; flex: none; text-align: left; border-width: 0.157cqw; border-style: solid; border-radius: 1.4583cqw; overflow: hidden; }
+  .qf-web-bar { flex: none; min-height: 4.7917cqw; display: flex; align-items: center; justify-content: center; padding: 0.8333cqw 1.875cqw; border-bottom-width: 0.157cqw; border-bottom-style: solid; }
+  .qf-web-pill { display: flex; align-items: center; justify-content: center; gap: 0.7292cqw; width: 32.2917cqw; max-width: 100%; min-height: 2.9167cqw; padding: 0.4167cqw 1.4583cqw; border-width: 0.1042cqw; border-style: solid; border-radius: 1.4583cqw; line-height: 1.25; }
+  .qf-web-pill .qf-ic, .qf-web-domain .qf-ic { width: 1.5625cqw; height: 1.5625cqw; }
+  .qf-web-host { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: anywhere; }
+  .qf-web-mast { display: flex; align-items: center; gap: 0.9375cqw; height: 4.7917cqw; padding: 0 4.1667cqw; }
+  .qf-web-mark { flex: none; width: 2.5cqw; height: 2.5cqw; border-radius: 0.625cqw; display: flex; align-items: center; justify-content: center; line-height: 1; }
+  .qf-web-site { min-width: 0; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .qf-web-nav { flex: none; margin-left: auto; padding-left: 2.0833cqw; display: flex; gap: 0.8333cqw; }
+  .qf-web-nav span { width: 4.6875cqw; height: 0.7292cqw; border-radius: 0.3646cqw; }
+  .qf-web-post { padding: 2.7083cqw 4.1667cqw 0; }
+  .qf-web-headline { margin: 0; line-height: 1.25; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+  .qf-web-by { display: flex; align-items: center; gap: 0.8333cqw; margin-top: 1.0417cqw; line-height: 1.2; min-width: 0; }
+  .qf-web-by:first-child { margin-top: 0; }
+  .qf-web-by > span, .qf-web-by > b { min-width: 0; overflow-wrap: anywhere; }
+  .qf-avatar-xs { width: 2.5cqw; height: 2.5cqw; }
+  .qf-web-body { padding: 2.2917cqw 4.1667cqw 3.125cqw; }
+  .qf-web-bar + .qf-web-body, .qf-web-win > .qf-web-body:first-child { padding-top: 3.3333cqw; }
+  .qf-web.qf-full .qf-words { line-height: 1.4; }
+  .qf-web-domain { display: flex; align-items: center; gap: 0.7292cqw; margin-top: 2.0833cqw; line-height: 1.25; }
+  .qf-web-domain > span { min-width: 0; overflow-wrap: anywhere; }
+  .qf-web-body .qf-ph-words { justify-content: flex-start; min-height: 13.0208cqw; padding: 0 2.0833cqw; line-height: 1.4; }
+  /* With a picture: the address bar tops the left panel and the picture fills the rest of it. */
+  .qf-web.qf-side .qf-panel { flex-direction: column; align-items: stretch; justify-content: flex-start; z-index: 2; }
+  .qf-web.qf-side .qf-web-bar { height: 4.7917cqw; padding: 0 1.4583cqw; }
+  .qf-web.qf-side .qf-web-pill { width: 100%; }
+  .qf-web.qf-side .qf-picture { position: relative; inset: auto; flex: 1 1 auto; min-height: 0; height: auto; object-position: top center; }
+
+  /* Over a video's picture: the YouTube base, lozenge, time pill and progress bar (spec 6.3). */
+  .qf-yt-base { position: absolute; left: 0; right: 0; bottom: 0; height: 13.5417cqw; z-index: 1; }
+  .qf-yt-base .qf-yt-mark { position: absolute; left: 1.875cqw; bottom: 3.9583cqw; width: 5.4167cqw; height: 3.8542cqw; }
+  .qf-yt-timepill { position: absolute; right: 1.875cqw; bottom: 4.7917cqw; line-height: 1; padding: 0.5208cqw 0.9375cqw; border-radius: 0.5208cqw; }
+  .qf-yt-base .qf-yt-track { position: absolute; left: 0; right: 0; bottom: 0; height: 0.5208cqw; margin: 0; border-radius: 0; }
+  .qf-yt-base .qf-yt-played { border-radius: 0; }
+  .qf-yt-base .qf-yt-knob { width: 1.4583cqw; height: 1.4583cqw; margin: -0.7292cqw 0 0 -0.7292cqw; }
+  .qf-yt-captions.qf-ph-words { justify-content: center; min-height: 9.8958cqw; padding: 0 2.0833cqw; line-height: 1.3; }
+
+  /* Handout, share, venue and print: the written-out source link (spec 9). The stage never carries it.
+     The video player's link takes the channel row's right end, where the Subscribe and like pills were. */
+  .qf-source-link { overflow-wrap: anywhere; }
+  .qf-yt-link { margin-left: auto; font-size: 1.4583cqw; text-align: right; }
+  .qf-yt-channel > .qf-yt-link:first-child { margin-left: 0; }

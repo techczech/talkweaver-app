@@ -344,6 +344,7 @@ function walk(dir) {
 const BINDING_MAP = new Map([
   ['src/main/index.ts', ['app.toggle-inspector', 'presenter.refresh', 'presenter.audience']],
   ['src/preload/present-edit-bridge.ts', ['presenter.edit']],
+  ['src/preload/present-guide.ts', ['presenter.guide']],
   ['src/preload/present-live-bridge.ts', ['presenter.live', 'presenter.close']],
   ['src/preload/present-rec-ui.ts', ['presenter.record', 'presenter.record-pause', 'presenter.save-run-as', 'presenter.save-run', 'presenter.close', 'presenter.next', 'presenter.previous']],
   ['src/renderer/src/App.tsx', ['app.sidebar-talks', 'app.sidebar-outline', 'app.sidebar-toggle', 'app.settings']],
@@ -365,7 +366,9 @@ const BINDING_MAP = new Map([
   ['src/renderer/src/components/MergeConfirm.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
   ['src/renderer/src/components/MetadataPanel.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
   ['src/renderer/src/components/Pathways.tsx', ['pathway.move', 'pathway.toggle', 'pathway.grid', 'pathway.list', 'pathway.matrix', 'pathway.previews', 'pathway.reorder', 'pathway.move-item', 'pathway.present', 'pathway.new', 'pathway.rename', 'pathway.delete', 'pathway.drop-missing', 'pathway.help']],
-  ['src/renderer/src/components/PropagationChecklist.tsx', ['picker.navigate', 'picker.choose', 'picker.close', 'picker.toggle']],
+  // The Plain view's Command-I icon picker (ticket 13): ←↑↓→ move, ↵ inserts, esc closes; Tab is held in the field (no move out).
+  ['src/renderer/src/components/PlainIconPicker.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
+  ['src/renderer/src/components/PropagationChecklist.tsx',['picker.navigate', 'picker.choose', 'picker.close', 'picker.toggle']],
   ['src/renderer/src/components/SearchPalette.tsx', ['browser.move', 'browser.insert', 'browser.preview', 'browser.toggle-selection', 'browser.close']],
   ['src/renderer/src/components/SettingsPanel.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
   // The ⌘S slide picker: its own scope; the key-truth check below holds it to exactly these keys.
@@ -383,6 +386,8 @@ const BINDING_MAP = new Map([
   // and ⌫ in the empty box removes the last chip (talk search 08).
   ['src/renderer/src/components/browser-rail/FindTalk.tsx', ['picker.navigate', 'picker.choose', 'picker.close', 'slide-picker.add-beside', 'slide-picker.remove-chip']],
   ['src/renderer/src/components/talklist/menus.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
+  // Plain margin menus (plain view ticket 04): Esc closes the menu and puts the caret back on the heading.
+  ['src/renderer/src/components/MarginMenu.tsx', ['picker.close']],
   ['src/renderer/src/components/talklist/modals.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
   ['src/renderer/src/components/talklist/useKeyboard.ts', ['browser.move', 'browser.open', 'browser.close', 'browser.talk-view', 'browser.talk-names', 'browser.filter', 'browser.sort', 'browser.open-talk', 'browser.up-level', 'browser.fold-all', 'browser.rename', 'browser.duplicate', 'browser.move-talk', 'browser.delete-talk']],
   ['src/renderer/src/extensions/triggerComplete.ts', ['picker.navigate', 'picker.choose', 'picker.close', 'picker.back', 'picker.digit']],
@@ -395,6 +400,7 @@ const BINDING_MAP = new Map([
 // Generic handlers are deliberately not shortcut commands. Each ignored file must still produce a
 // scan hit, so deleting the handler makes this list fail as stale.
 const SCAN_IGNORE = new Map([
+  ['src/renderer/src/components/EditorTabs.tsx', 'Arrow keys, Home and End move between the two editor tabs (WAI-ARIA tablist) while a tab has focus; the commands are view-plain and view-markdown and have no shortcut'],
   ['src/renderer/src/components/actionBar/ActionBar.tsx', 'Escape only dismisses the visible tooltip or overflow menu; no shortcut is bound'],
   ['src/renderer/src/components/AbstractPanel.tsx', 'Escape-only modal dismissal and Enter on a native form control'],
   ['src/renderer/src/components/DeckDesignPanel.tsx', 'Escape-only modal dismissal'],
@@ -403,11 +409,16 @@ const SCAN_IGNORE = new Map([
   ['src/renderer/src/components/ReactionsControl.tsx', 'Enter on the native custom-labels field commits it (ticket 04); no shortcut is bound'],
   ['src/renderer/src/components/EmbedCheckPanel.tsx', 'Escape-only panel dismissal'],
   ['src/renderer/src/components/ExplainPanel.tsx', 'Escape-only panel dismissal'],
+  ['src/renderer/src/extensions/plainView/hiddenLines.ts', 'In the Plain view ArrowRight and Shift-ArrowRight at the end of a heading step over its hidden tokens and layout lines instead of stopping inside them; plain caret movement, not a command, no shortcut is bound'],
+  ['src/renderer/src/extensions/plainView/iconPictures.ts', 'In the Plain view End (and its macOS forms) on a paragraph or list item that ends in an icon token goes to the end of the visible text, before the token, as it does on a title; plain caret movement, not a command, no shortcut is bound'],
+  ['src/renderer/src/extensions/plainView/guardKeys.ts', 'In the Plain view Backspace and Delete (also with Alt, and Mod-Delete) do nothing when the one character they would delete lies in text the view hides (a heading\'s tokens, a layout line, the front matter); elsewhere they are the ordinary keys; no shortcut is bound'],
+  ['src/renderer/src/extensions/plainView/talkDetails.ts', 'Escape inside the Talk details panel returns focus to the editor; Enter and Space on its buttons are the native button behaviour; no shortcut is bound'],
   ['src/renderer/src/extensions/imageFullScreenPreview.ts', 'Escape-only dismissal of the full-screen image view; no shortcut is bound'],
   ['src/renderer/src/components/ImageMetaPanel.tsx', 'Escape-only panel dismissal'],
   ['src/renderer/src/components/KeyboardHelp.tsx', 'Escape only closes the shortcut dialog; the opening command is app.help'],
+  ['src/renderer/src/components/SlideRowMenus.tsx', '↑ ↓ Enter inside the open Move slide to… / Move section to… destination list (modal, local list keys, as Actions here); the opening commands are move-slide-to and move-section-to, which have no shortcut'],
   ['src/renderer/src/components/ActionsHerePanel.tsx', '↑ ↓ Enter and Escape inside the open Actions here panel (modal, local menu keys, as the row menus); the opening command is app.context-menu'],
-  ['src/renderer/src/components/LayoutDoctorPanel.tsx', 'Escape-only panel dismissal'],
+  ['src/renderer/src/components/LayoutDoctorPanel.tsx', 'Escape-only panel dismissal and a Tab focus trap inside the open panel (modal, local); no shortcut is bound'],
   ['src/renderer/src/components/NewTalkDialog.tsx', 'Escape dismissal and native form Enter submission'],
   ['src/renderer/src/components/OutlineDiskChangeBar.tsx', 'Escape-only dismissal of the changed-on-disk sheet (answers Stay here); no shortcut is bound'],
   ['src/preload/present-close-flow.ts', 'Escape-only dismissal and a Tab focus trap inside the close-presentation dialog; no app shortcut is bound'],
@@ -550,6 +561,7 @@ const PRESENTER_KEY_REGIONS = [
   ['present-rec-ui', readFileSync(join(root, 'src/preload/present-rec-ui.ts'), 'utf8'), "window.addEventListener('keydown', (e: KeyboardEvent) => {", '}, true)'],
   ['present-live-bridge', readFileSync(join(root, 'src/preload/present-live-bridge.ts'), 'utf8'), "window.addEventListener('keydown', (event) => {", '}, true)'],
   ['present-edit-bridge', readFileSync(join(root, 'src/preload/present-edit-bridge.ts'), 'utf8'), "'keydown',", 'true\n  )'],
+  ['present-guide', readFileSync(join(root, 'src/preload/present-guide.ts'), 'utf8'), "window.addEventListener('keydown', (event: KeyboardEvent) => {", '}, true)'],
   ['deck-window-keys', readFileSync(join(root, 'src/main/deck-window-keys.ts'), 'utf8'), 'export function', '\n}'],
   // The board panel (feedback-boards ticket 05): inlined into the presenter template, so its keys are
   // the template's own (no preload needed).
@@ -634,7 +646,7 @@ const PRESENTER_KEY_CLAIMS = [
   ['present-live-bridge', /event\.key === 'Escape' && !panel\.hidden/, ['presenter.close']],
   ['present-live-bridge', /event\.key === 'g' \|\| event\.key === 'G'/, ['presenter.live']],
   ['present-edit-bridge', /e\.key !== 'e' && e\.key !== 'E'/, ['presenter.edit']],
-  // The Guide column has no key (owner check 10 Oct): its button in the bottom bar and the palette entry open it.
+  ['present-guide', /event\.key !== 'c' && event\.key !== 'C'/, ['presenter.guide']],
   // F5 opens the audience view; ⇧F5 refreshes (the routes themselves: deckWindowKeyTruth below).
   // The board panel: ⌘Z undoes the last board change while it shows; ⌥↵ picks up and drops; Esc
   // closes its menu, puts a held card down or leaves full screen; ↵ / Space on a card open its menu
@@ -956,9 +968,8 @@ for (const [id, keys] of [['presenter.record', '⇧R'], ['presenter.record-pause
   assert.equal(presenterScope.find((entry) => entry.id === id)?.keys, keys, `${id} is registered in the presenter scope as ${keys}`)
 }
 assert.equal(presenterScope.some((entry) => entry.keys === 'N'), false, 'the presenter scope does not list N (it does nothing in the presenter)')
-assert.deepEqual(presenterScope.filter((entry) => entry.keys === 'C').map((entry) => entry.id), [], 'C is bound to nothing in the presenter (the Guide has no key since the owner check of 10 Oct)')
-assert.equal(presenterScope.some((entry) => entry.id === 'presenter.guide'), false, 'no presenter.guide key row')
-assert.equal(readFileSync(new URL('../src/preload/present-guide.ts', import.meta.url), 'utf8').includes("addEventListener('keydown'"), false, 'the Guide preload binds no key')
+assert.deepEqual(presenterScope.filter((entry) => entry.keys === 'C').map((entry) => entry.id), ['presenter.guide'], 'C is bound to one thing in the presenter: the Guide column (0.38.2 release notes)')
+assert.equal(readFileSync(new URL('../src/preload/present-guide.ts', import.meta.url), 'utf8').includes("addEventListener('keydown'"), true, 'the Guide preload binds C')
 const { PRESENTER_CONTROLS: presenterControls } = await import(new URL('../src/shared/presenter-controls.ts', import.meta.url))
 assert.equal(presenterControls.some((control) => 'unregisteredKeys' in control), false, 'every presenter control takes its keys from the registry (no unregisteredKeys)')
 

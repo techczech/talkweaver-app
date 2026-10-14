@@ -6,8 +6,16 @@ import { createPortal } from 'react-dom'
 import type { TalkInfo, ProjectionRow, RecordingSession } from '../../../preload/index'
 import { textFitNotesFor } from '../../../shared/text-fit-notes.ts'
 import { computeSlideLines } from '../../../shared/slide-lines.ts'
+import { marginLabels, MARGIN_LAYOUT_NAMES } from '../../../shared/plain-view-margin.ts'
+import { levelMenuFor, setHeadingKind, type HeadingKind } from '../../../shared/heading-kind.ts'
 import { dismissToast, notify } from '../lib/notify'
-import Editor, { type ObjectInsertHandler } from './Editor'
+import Editor, { type HeadingTools, type ObjectInsertHandler, type PlainIconTools, type SlideBlockOps } from './Editor'
+import MarginMenu, { MORE_IN_INSPECTOR_KEY } from './MarginMenu'
+import SlideRowMenus, { writeSlideClipboard, type SlideMenuRequest } from './SlideRowMenus'
+import { slideRows } from '../extensions/slideOutline'
+import { moveSubject } from '../lib/moveDestinations'
+import { publishStripNumbers, stripNumbersToPublish } from '../lib/stripNumbers'
+import { getOutlineSelection } from '../lib/outlineSelection'
 import SlideFocus from './SlideFocus'
 import type { FocusRange } from '../extensions/focusScope'
 import { focusRangeForSlideLine, firstFocusableFrom, nextFocusableSlide, readableSectionLabel } from './slideFocusModel'
@@ -27,7 +35,7 @@ import type { SheetRow } from '../../../shared/keyboard-sheet.ts'
 import { useTalkFacts } from '../lib/talkFacts'
 import LayoutPickerColumn from './LayoutPickerColumn'
 import { reanchorPickerSlide, selectionFromTriggerLine, toggleLayoutSelection, type LayoutPickerContext } from './layoutPickerModel'
-import { LayoutVerbError, previewLayout, setLayout, type SlideRef } from '../../../shared/layout-verbs'
+import { LayoutVerbError, chooseLayout, clearLayout, isQuoteSlide, previewLayout, setLayout, type QuoteFormChoice, type SlideRef } from '../../../shared/layout-verbs'
 import { reportTriggerMergeWarnings } from '../../../shared/trigger-line'
 import { readOutlineSlides } from '../../../shared/feedback-accept'
 import { LAYOUTS, type LayoutDef, type OptionGroup } from '../data/layouts'
@@ -54,12 +62,16 @@ import { stampedIdOf, type MergeRequest } from './slideBrowserModel'
 import { tagsOfBlock } from '../../../shared/tags'
 import ArchiveImageSearch from './ArchiveImageSearch'
 import IconPicker from './IconPicker'
+import { usePlainIconPicker } from './usePlainIconPicker'
 import KeyboardHelp from './KeyboardHelp'
 import ToolbarMenu, { Icon, type MenuItem } from './ToolbarMenu'
+import { collapseAllSections, expandAllSections, publishOutline, revealLine } from '../lib/outlineCollapseStore'
+import { activeHeadingLine, createActiveLineReporter, lineOfOffset, slideIndexAtLine } from '../lib/activeOutlineLine'
 import ExplainPanel from './ExplainPanel'
 import WhereUsedPanel from './WhereUsedPanel'
 import EmbedCheckPanel from './EmbedCheckPanel'
 import LayoutDoctorPanel from './LayoutDoctorPanel'
+import { applyScannedTitleIconRestore } from '../../../shared/title-icon-restore'
 import ResizablePanes from './ResizablePanes'
 import ImageMetaPanel from './ImageMetaPanel'
 import AbstractPanel from './AbstractPanel'
@@ -81,6 +93,9 @@ import { shortcutById } from '../../../shared/shortcut-registry'
 import { surfaceKey } from '../keymap/surfaceKeys'
 import type { PickerCommandOutcome, SlidePickerCommands } from './slidePickerCommands'
 import ActionBar from './actionBar/ActionBar'
+import EditorTabs from './EditorTabs'
+import { PLAIN_LOOK_DEFAULT, type PlainLook } from '../../../shared/plain-view-look'
+import { EDITOR_VIEW_MODE_DEFAULT, type EditorViewMode } from '../../../shared/editor-view-mode'
 import OutlineDiskChangeBar, { OutlineDiskChangeSheet } from './OutlineDiskChangeBar'
 import { useOutlineDiskChange } from './useOutlineDiskChange'
 import { noteOutlineSaveReply } from '../lib/outlineDiskChange'
@@ -92,6 +107,7 @@ import {
 import { actionBarItemsFrom } from '../../../shared/action-bar-settings'
 import SlideContextMenu, { type SlideMenuAction } from './SlideContextMenu'
 import { outlineWritesSettled, queueOutlineWrite } from '../lib/saveQueue'
+import { OUTLINE_PAUSE_MS } from '../lib/pausedScan'
 import { createOutlineMutator, type OutlineMutate, type OutlineMutationOptions, type OutlineMutationResult, type OutlineMutator } from '../lib/outlineMutation'
 import { stampHandoutUrl } from '../../../shared/handout-stamp'
 import { commandRan, ran, reportingHandlers, setCommandRanContext } from '../commands/command-ran'
@@ -132,6 +148,12 @@ export type OutlineOps = {
   move: (line: number, dir: 'up' | 'down') => void
   reLevel: (line: number, dir: -1 | 1, withSubtree: boolean) => void
   moveTo: (fromLine: number, toLine: number) => void
+  /** Move the heading-block to the end of the talk (the organizer's drop zone after the last row). */
+  moveToEnd: (fromLine: number) => void
+  /** Move the heading-block into a section as its last slide (a drop on a collapsed section row). */
+  moveInto: (fromLine: number, sectionLine: number) => void
+  /** Whole slides and sections by heading line: cut, copy, paste, Move … to…, delete (Editor.tsx SlideBlockOps). */
+  slides?: SlideBlockOps
 }
 
 // What a queued outline save answers (window.tw.talk.writeOutline).
@@ -251,12 +273,34 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     setActionBarVisible(state.visible)
     setActionBarItemsStored(state.items)
   }), [])
+  // Plain / Markdown tab (plain editing view, spec T3): one per-user setting, Plain until chosen.
+  const [editorViewMode, setEditorViewModeState] = useState<EditorViewMode>(EDITOR_VIEW_MODE_DEFAULT)
+  useEffect(() => {
+    let cancelled = false
+    window.tw.settings.getEditorViewMode()
+      .then((mode) => { if (!cancelled) setEditorViewModeState(mode) })
+      .catch(() => { /* settings unavailable: keep Plain */ })
+    return () => { cancelled = true }
+  }, [])
+  useEffect(() => window.tw.settings.onEditorViewModeChanged(setEditorViewModeState), [])
+  const [plainLook, setPlainLook] = useState<PlainLook>(PLAIN_LOOK_DEFAULT)
+  useEffect(() => {
+    let cancelled = false
+    window.tw.settings.getPlainLook()
+      .then((look) => { if (!cancelled) setPlainLook(look) })
+      .catch(() => { /* keep the default */ })
+    const off = window.tw.settings.onPlainLookChanged(setPlainLook)
+    return () => { cancelled = true; off() }
+  }, [])
+  const chooseEditorViewMode = (mode: EditorViewMode): void => {
+    setEditorViewModeState(mode)
+    window.tw.settings.setEditorViewMode(mode).catch(() => { /* not saved: the tab still switches */ })
+  }
   // The place chip (onboarding ticket 02): the caret's place from the editor, combined with where
   // the keyboard is; the setting "Show where I am in the status bar" (on by default).
   const [editorPlace, setEditorPlace] = useState<Place>('slide-text')
   const { place, row: placeRow, activate: activatePlace } = usePlace(editorPlace)
   // The chip counts the list Actions here shows (shared/actions-here.ts), so the two always agree.
-  const placeCount = useMemo(() => actionRowsAt(place, { row: placeRow }).length, [place, placeRow])
   const editorPlaceRef = useRef<Place>(editorPlace)
   editorPlaceRef.current = editorPlace
   const [placeChipVisible, setPlaceChipVisible] = useState(true)
@@ -268,7 +312,6 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     return () => { cancelled = true }
   }, [])
   useEffect(() => window.tw.settings.onPlaceChipChanged((state) => setPlaceChipVisible(state.visible)), [])
-  const placeChip = { place, count: placeCount, chord: liveShortcutLabel('app.context-menu'), visible: placeChipVisible, onActivate: activatePlace }
   const runRegisteredCommand = useCallback((handlerId: PaletteCommandHandlerId): void => {
     commandHandlersRef.current?.[handlerId]()
   }, [])
@@ -376,6 +419,20 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // The editor's slide context menu (v0.15 stage 4): ⌘K with the editor focused, or right-click
   // inside .cm-content. startAtFirst mirrors the Talks-panel convention (⌘K highlights the first
   // row, right-click starts blank); withText adds the cut/copy/paste group on right-click only.
+  // The Plain margin's menus (spec T8, T9): which menu, for which heading line, drawn under which label.
+  const [marginMenu, setMarginMenu] = useState<{ kind: 'level' | 'layout'; line: number; anchor: { left: number; bottom: number } } | null>(null)
+  const headingToolsRef = useRef<HeadingTools | null>(null)
+  // Command-I. In the Plain and the Markdown tab it opens the small picker under the caret's line,
+  // which puts an icon on a title, a paragraph or a list item (usePlainIconPicker.tsx; in Markdown
+  // the token shows as text). Where there is no editor to open that picker in, it opens the icon
+  // search as before.
+  const plainIconToolsRef = useRef<PlainIconTools | null>(null)
+  const plainIcon = usePlainIconPicker(plainIconToolsRef)
+  const toggleIconPickerRef = useRef<() => void>(() => {})
+  toggleIconPickerRef.current = () => {
+    if (!iconPickerOpen && plainIcon.toggle()) return
+    setIconPickerOpen((prev) => !prev)
+  }
   const [slideMenu, setSlideMenu] = useState<{
     x: number
     y: number
@@ -454,17 +511,19 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // history kept, no remount); `{ save: true }` also supersedes the autosave and returns the text to
   // save now (Editor registerReplaceDoc). editorReadRef reads the buffer itself — the doc CodeMirror
   // holds — never the outlineContent mirror (one-writer spec D1).
-  const editorReplaceRef = useRef<((text: string, opts?: { save?: boolean }) => string | null) | null>(null)
+  const editorReplaceRef = useRef<((text: string, opts?: { save?: boolean; savedFrom?: string }) => string | null) | null>(null)
   const editorReadRef = useRef<(() => { path: string; text: string; caret: number } | null) | null>(null)
   const editorLayoutContextRef = useRef<(() => LayoutPickerContext | null) | null>(null)
   const editorApplyLayoutRef = useRef<((initial: LayoutDef[], selected: LayoutDef[]) => void) | null>(null)
-  const editorApplyOptionRef = useRef<((entry: LayoutDef | undefined, group: OptionGroup, token: string, headingLine?: number, slideId?: string | null) => string | null) | null>(null)
+  const editorApplyOptionRef = useRef<((entry: LayoutDef | undefined, group: OptionGroup, token: string, headingLine?: number, slideId?: string | null, compiledLayout?: string) => string | null) | null>(null)
   // Editor-only commands (fold/unfold all + line-targeted outline ops) exposed to the command palette and Slides organizer.
   const editorCmdsRef = useRef<{
     foldAll: () => void; unfoldAll: () => void
     move: (line: number, dir: 'up' | 'down') => void
     reLevel: (line: number, dir: -1 | 1, withSubtree: boolean) => void
     moveTo: (fromLine: number, toLine: number) => void
+    moveToEnd: (fromLine: number) => void
+    moveInto: (fromLine: number, sectionLine: number) => void
     undo: () => void
     redo: () => void
     newSlide: () => void
@@ -475,6 +534,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     bulletedList: () => void
     numberedList: () => void
     normalizeTriggers: () => void
+    setQuoteForm: (form: QuoteFormChoice, compiledLayoutAt?: (headingLine: number) => string | undefined) => void
     deleteSlide: () => void
     flushSave: () => Promise<void>
     scrollCursorIntoView: () => void
@@ -483,6 +543,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     cutSelection: () => void
     copySelection: () => void
     pasteClipboard: () => void
+    slides: SlideBlockOps
     runFormat: (id: 'bold' | 'italic' | 'inline-code' | 'highlight' | 'strikethrough' | 'underline' | 'link') => void
   } | null>(null)
   // Reads the caret's current top-level list-item context for the icon picker (ADR-0021).
@@ -535,6 +596,24 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     [compiledSlides, outlineContent]
   )
 
+  // The Plain view's margin: Talk / Section / Slide n with the layout name. Recomputed when the
+  // compiled rows change (or the outline first loads), not on every keystroke: between compiles the
+  // editor's margin rides the edits itself, as the slide-number gutter does.
+  const marginLabelList = useMemo(
+    () => marginLabels(compiledSlides, outlineContentRef.current),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [compiledSlides, activeTalk?.outlinePath, outlineContent === '']
+  )
+
+  // The Quote form commands are offered only while the slide at the caret is a quote slide.
+  const quoteSlideAtCaret = useMemo(() => {
+    const line = slideLines[activeSlide]
+    // A quote-only slide with no `{quote}` token is drawn with the quote layout too: the compiled row says so.
+    return line != null && isQuoteSlide(outlineContent, { headingLine: line }, compiledSlides?.[activeSlide]?.layout)
+  }, [outlineContent, slideLines, activeSlide, compiledSlides])
+  const placeCount = useMemo(() => actionRowsAt(place, { row: placeRow, quoteSlide: quoteSlideAtCaret }).length, [place, placeRow, quoteSlideAtCaret])
+  const placeChip = { place, count: placeCount, chord: liveShortcutLabel('app.context-menu'), visible: placeChipVisible, onActivate: activatePlace }
+
   // Mirror the strip's current-slide mapping into refs so the (deps-[]) global key handler can
   // resolve the ACTIVE slide for the where-used command — same pattern as activeTalkRef above.
   const activeSlideRef = useRef<number>(activeSlide)
@@ -545,6 +624,9 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   useEffect(() => { inspectedSlideIdRef.current = inspectedSlideId }, [inspectedSlideId])
   const inspectorCommitInProgressRef = useRef(false)
   const cursorLineRef = useRef<number | null>(null)
+  const onActiveLineChangeRef = useRef(onActiveLineChange)
+  onActiveLineChangeRef.current = onActiveLineChange
+  const [activeLineReporter] = useState(() => createActiveLineReporter(() => onActiveLineChangeRef.current))
   const cursorAwaitsCompileRef = useRef(false)
   // The heading line of a board slide just inserted, until the Inspector has opened on it.
   const insertedBoardLineRef = useRef<number | null>(null)
@@ -557,7 +639,124 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // ADR-0033 §1: heading lines the outline editor marks for text that cannot fit at the readable minimum.
   const textFitNotes = useMemo(() => textFitNotesFor(compiledSlides, slideLines), [compiledSlides, slideLines])
   const slideLinesRef = useRef<(number | null)[]>(slideLines)
+  // Nothing is published before the first compile of the open talk (compiledSlides is null on talk load), so numbers never carry from another talk.
+  useEffect(() => { publishStripNumbers(stripNumbersToPublish(compiledSlides, slideLines)) }, [compiledSlides, slideLines])
+  useEffect(() => () => publishStripNumbers(null), [])
   useEffect(() => { slideLinesRef.current = slideLines }, [slideLines])
+  // The layout the compiler gave the compiled slide whose heading is on `line` (the quote commands need it for a quote-only slide with no `{quote}` token).
+  const compiledLayoutAtLine = useCallback((line: number): string | undefined => {
+    const index = slideLinesRef.current.indexOf(line)
+    return index < 0 ? undefined : compiledSlidesRef.current?.[index]?.layout
+  }, [])
+
+  // ── Whole slides: cut, copy, paste, Move … to… (the grid, the two commands; the outline gets the same ops through App) ──
+  const [slideOps, setSlideOps] = useState<SlideBlockOps | null>(null)
+  const [moveRequest, setMoveRequest] = useState<SlideMenuRequest | null>(null)
+  // Which panel last had the keyboard: the command palette takes the focus before a command runs, so
+  // "the slide selected in the focused panel" is read from where the keyboard was before it.
+  const focusRegionRef = useRef<'editor' | 'outline' | 'slides'>('editor')
+  useEffect(() => {
+    const onFocusIn = (e: FocusEvent): void => {
+      const t = e.target
+      if (!(t instanceof HTMLElement)) return
+      if (t.closest('[data-slides-organizer]')) focusRegionRef.current = 'outline'
+      else if (t.closest('[data-place-region="strip"]')) focusRegionRef.current = 'slides'
+      else if (t.closest('.cm-content')) focusRegionRef.current = 'editor'
+    }
+    window.addEventListener('focusin', onFocusIn)
+    return () => window.removeEventListener('focusin', onFocusIn)
+  }, [])
+  // The heading line, in the editor's CURRENT text, of the slide a card shows. The line the compiled
+  // row is mapped to is used when the row's id is still on it; otherwise the id is looked up (the
+  // mapping lags the compile after an edit), so an operation never lands on a neighbouring slide.
+  const lineOfSlideIndex = useCallback((index: number): number | null => {
+    const text = editorReadRef.current?.()?.text ?? outlineContentRef.current
+    const mapped = slideLinesRef.current[index] ?? null
+    const id = compiledSlidesRef.current?.[index]?.slide_id ?? null
+    if (!id) return mapped
+    const lines = text.split('\n')
+    if (mapped != null) {
+      for (let i = mapped - 1; i < lines.length && (i === mapped - 1 || /^\s*(\{[^}]*\}\s*)+$/.test(lines[i])); i += 1) {
+        if (lines[i].includes(`{id=${id}}`)) return mapped
+      }
+    }
+    return headingLineForSlideId(text, id) ?? mapped
+  }, [])
+  // After a paste or a move made from the grid or a command: open the sections around the slide now,
+  // and select its card once the compile that carries the change arrives.
+  const slideLandingRef = useRef<{ line: number; compiled: ProjectionRow[] | null; at: number } | null>(null)
+  const slideLanded = useCallback((line: number): void => {
+    const talkKey = activeTalkRef.current?.outlinePath
+    if (talkKey) revealLine(talkKey, line, editorReadRef.current?.()?.text ?? outlineContentRef.current)
+    slideLandingRef.current = { line, compiled: compiledSlidesRef.current, at: Date.now() }
+  }, [])
+  useEffect(() => {
+    const landing = slideLandingRef.current
+    if (!landing || compiledSlides === landing.compiled) return
+    slideLandingRef.current = null
+    if (Date.now() - landing.at > 15000) return
+    const index = slideLines.indexOf(landing.line)
+    if (index >= 0) selectSlideRef.current(index)
+  }, [slideLines, compiledSlides])
+  // Move slide to… / Move section to…: the destination list for the slide or section at the caret, or
+  // selected in the panel that had the keyboard (the Slides outline, the strip, the grid).
+  // The line a whole-slide command acts on: the slide selected in the panel that had the keyboard
+  // (the Slides outline, the strip, the grid), else the line of the caret. `anchor` is where a list
+  // for it opens.
+  function commandSlideLine(doc: { text: string; caret: number }): { line: number; anchor: { x: number; y: number } | null } {
+    const region = gridModeRef.current ? 'slides' : focusRegionRef.current
+    let line: number | null = null
+    let box: DOMRect | undefined
+    if (region === 'slides') {
+      line = lineOfSlideIndex(activeSlideRef.current)
+      box = document.querySelector(`[data-place-region="strip"] [data-slide-index="${activeSlideRef.current}"]`)?.getBoundingClientRect()
+    } else if (region === 'outline' && getOutlineSelection() != null) {
+      line = getOutlineSelection()
+      box = document.querySelector(`[data-slides-organizer] [data-line="${line}"]`)?.getBoundingClientRect()
+    }
+    let anchor = box ? { x: box.left + 24, y: box.top + 24 } : null
+    if (line == null) {
+      line = doc.text.slice(0, doc.caret).split('\n').length
+      anchor = editorCmdsRef.current?.cursorCoords() ?? null
+    }
+    return { line, anchor }
+  }
+  // Cut slide, Copy slide, Paste slide after, run from Actions here: the same operations as the rows
+  // of the slide and section context menus (SlideRowMenus), on the slide commandSlideLine names.
+  function runSlideClipboardRow(action: 'cut' | 'copy' | 'paste'): void {
+    const doc = editorReadRef.current?.()
+    if (!doc || !activeTalkRef.current || !slideOps) return
+    const subject = moveSubject(slideRows(doc.text), commandSlideLine(doc).line, 'slide')
+    if (!subject) { notify('Put the cursor on a slide first.', 'info', 'slide-clipboard'); return }
+    if (action === 'paste') {
+      navigator.clipboard.readText()
+        .then((text) => {
+          const landed = slideOps.paste(text, subject.line)
+          if (landed != null) slideLanded(landed)
+        })
+        .catch(() => notify('Couldn’t read the clipboard. Paste with ⌘V instead.', 'warning', 'slide-clipboard-failed'))
+      return
+    }
+    const clip = action === 'cut' ? slideOps.cut(subject.line) : slideOps.copy(subject.line)
+    if (clip != null) writeSlideClipboard(clip, action === 'cut')
+  }
+  function openMoveTo(want: 'slide' | 'section'): void {
+    const doc = editorReadRef.current?.()
+    if (!doc || !activeTalkRef.current) return
+    const at = commandSlideLine(doc)
+    const line = at.line
+    let anchor = at.anchor
+    const subject = moveSubject(slideRows(doc.text), line, want)
+    if (!subject) {
+      notify(want === 'section' ? 'Put the cursor in a section first: this slide is not in one.' : 'Put the cursor on a slide first.', 'info', 'slide-clipboard')
+      return
+    }
+    if (!anchor) {
+      const bar = document.querySelector('.workspace-toolbar')?.getBoundingClientRect()
+      anchor = bar ? { x: bar.left + 16, y: bar.bottom + 8 } : { x: 80, y: 80 }
+    }
+    setMoveRequest({ x: anchor.x, y: anchor.y, line: subject.line, mode: 'move' })
+  }
 
   // The Inspector owns its navigation while open. Recompiles may insert, remove, or reorder rows,
   // so its index is always recovered from the stable deep-link id. Only a vanished id falls back
@@ -733,12 +932,12 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // context menu (and lets ⌘K fall through untouched, per the no-swallow rule).
   useEffect(() => {
     overlayOpenRef.current =
-      browserOpen || searchOpen || archiveOpen || iconPickerOpen || helpOpen ||
+      browserOpen || searchOpen || archiveOpen || iconPickerOpen || plainIcon.isOpen || helpOpen ||
       cmdMenuOpen || abstractOpen || deckDesignOpen || embedCheckOpen || layoutDoctorOpen ||
       explainIndex != null || whereUsedId != null || imageMetaId != null ||
       adoptTarget != null || mergeRequest != null || tagSlide != null || slideMenu != null || actionsHere != null
   }, [
-    browserOpen, searchOpen, archiveOpen, iconPickerOpen, helpOpen, cmdMenuOpen,
+    browserOpen, searchOpen, archiveOpen, iconPickerOpen, plainIcon.isOpen, helpOpen, cmdMenuOpen,
     abstractOpen, deckDesignOpen, embedCheckOpen, layoutDoctorOpen, explainIndex, whereUsedId, imageMetaId,
     adoptTarget, mergeRequest, tagSlide, slideMenu, actionsHere
   ])
@@ -893,7 +1092,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
           // The save stamped ids: adopt them only while the buffer is still what was sent (never
           // over newer typing; the next save stamps it again).
           const doc = editorReadRef.current?.()
-          if (doc && doc.path === path && doc.text === sent) editorReplaceRef.current?.(saved)
+          if (doc && doc.path === path && doc.text === sent) editorReplaceRef.current?.(saved, { savedFrom: sent })
         },
         insertAtCaret: (path, block) => {
           // The editor's own insert channel: one change at the live caret, scrolled into view.
@@ -1011,12 +1210,34 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // (re)attaches, so switching to the Slides tab pushes the current content immediately.
   useEffect(() => { onOutlineChange?.(outlineContent) }, [outlineContent, onOutlineChange])
 
+  // The outline's collapsed sections are kept per talk, by section identity (lib/outlineCollapseStore.ts).
+  // The store is told the text on every change, whichever view is showing, so the sidebar outline and the
+  // grid agree and the state follows edits. Both read the talk's path, not its text.
+  const collapseKey = activeTalk?.outlinePath ?? ''
+  useEffect(() => { if (collapseKey) publishOutline(collapseKey, outlineContent) }, [collapseKey, outlineContent])
+  // An explicit jump to a slide (strip, grid, search, doctor) opens the sections it sits in; typing and
+  // arrow movement in the editor do not come through here.
+  const revealSlideLine = (line: number | undefined | null): void => {
+    if (collapseKey && line != null) revealLine(collapseKey, line, outlineContentRef.current)
+  }
+
   // Same for the cursor line: the other call sites are imperative (cursor moves), so a
   // freshly attached consumer would show no current-slide highlight until the next move.
   useEffect(() => {
-    onActiveLineChange?.(slideLines[activeSlideRef.current] ?? null)
+    activeLineReporter.forget()
+    activeLineReporter.report(slideLines[activeSlideRef.current] ?? null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onActiveLineChange])
+  // The text or the slides changed (a move, a paste, typing above the caret, a compile): the caret may
+  // be in another slide now, or its slide's heading on another line, with no caret movement to say so.
+  // Worked out from where the caret IS in the buffer (lib/activeOutlineLine.ts).
+  useEffect(() => {
+    if (!onActiveLineChange) return
+    const doc = editorReadRef.current?.()
+    const line = doc && doc.path === activeTalk?.outlinePath ? lineOfOffset(doc.text, doc.caret) : cursorLineRef.current
+    if (line != null) activeLineReporter.report(activeHeadingLine(slideLines, line))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slideLines])
 
   // Hand App a stable "flush the CURRENT editor's pending edit" fn. It always reaches the live editor
   // via editorCmdsRef (re-registered on each editor mount), so App can persist the outgoing talk's
@@ -1231,6 +1452,26 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
               commandRan('app.context-menu')
               return
             }
+            // The Slide outline: Actions here for its selected row (a slide or a section), opened at the
+            // row. The row's slide becomes the selected slide first, as a click on its card would make
+            // it, so every action in the panel acts on that row. (The outline's search box is a typing
+            // target and never gets here.)
+            if (activeTalkRef.current && !gridModeRef.current && active instanceof HTMLElement && active.closest('[data-slides-organizer]')) {
+              e.preventDefault()
+              e.stopPropagation()
+              const line = getOutlineSelection()
+              let at: { x: number; y: number } | undefined
+              if (line != null) {
+                const index = slideIndexAtLine(slideLinesRef.current, line)
+                if (index >= 0) { activeSlideRef.current = index; selectSlideRef.current(index) }
+                const box = document.querySelector(`[data-slides-organizer] [data-line="${line}"]`)?.getBoundingClientRect()
+                if (box) at = { x: box.left + 24, y: box.bottom }
+              }
+              if (!at) { const box = active.closest('[data-slides-organizer]')!.getBoundingClientRect(); at = { x: box.left + 24, y: box.top + 56 } }
+              openActionsHereRef.current({ region: 'strip', at })
+              commandRan('app.context-menu')
+              return
+            }
             // The strip or the grid: Actions here for the selected slide.
             if (activeTalkRef.current && (gridModeRef.current || (active instanceof HTMLElement && active.closest('[data-place-region="strip"]')))) {
               e.preventDefault()
@@ -1249,7 +1490,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === 'i' || e.key === 'I')) {
         e.preventDefault()
         e.stopPropagation()
-        setIconPickerOpen((prev) => !prev)
+        toggleIconPickerRef.current()
         commandRan('icon-picker')
         return
       }
@@ -1368,6 +1609,8 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         }
         return
       }
+      // The grid opens its own slide and section menus (GridView, SlideRowMenus); its More actions… row comes back here.
+      if (t.closest('[data-view="grid"]')) return
       const card = t.closest<HTMLElement>('[data-place-region="strip"] [data-slide-index]')
       if (card) {
         e.preventDefault()
@@ -1426,7 +1669,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     }
     runCarriedActionRowRef.current(row.key)
   }, [runListedCommand])
-  const sheetCanRunCarried = useCallback((key: string): boolean => key === 'explain-rendering' || key === 'present-from-here', [])
+  const sheetCanRunCarried = useCallback((key: string): boolean => key === 'explain-rendering' || key === 'present-from-here' || key === 'slide-cut' || key === 'slide-copy' || key === 'slide-paste-after', [])
   const openPaletteWith = useCallback((query: string): void => {
     setActionsHere(null)
     setCmdMenuQuery(query)
@@ -1489,6 +1732,9 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     switch (key) {
       case 'explain-rendering': handleSlideMenuAction('explain'); break
       case 'present-from-here': handleSlideMenuAction('present-here'); break
+      case 'slide-cut': runSlideClipboardRow('cut'); break
+      case 'slide-copy': runSlideClipboardRow('copy'); break
+      case 'slide-paste-after': runSlideClipboardRow('paste'); break
       case 'cut': handleSlideMenuAction('cut'); break
       case 'copy': handleSlideMenuAction('copy'); break
       case 'paste': handleSlideMenuAction('paste'); break
@@ -1569,7 +1815,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     setFocusRange(null)
     // Clear the outline sidebar's follow-cursor highlight so it doesn't linger on the previous
     // talk's line until the first cursor move in the new talk.
-    onActiveLineChange?.(null)
+    activeLineReporter.report(null)
   }, [activeTalk?.outlinePath])
 
   // Debounced compile: fires 900ms after the last content change.
@@ -1596,7 +1842,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       setCompiledSlides(slides)
       setTriggerFindings(slides === null
         ? []
-        : attributeOrphanedTriggerFindings(outlineContent, slides, scanOutlineTriggers(outlineContent)))
+        : attributeOrphanedTriggerFindings(outlineContent, slides, scanOutlineTriggers(outlineContent, undefined, { strandedTitleIcons: true })))
       setCompiling(false)
       // Thumbnails: do not block the strip. A null map = the render couldn't run at all.
       window.tw.talk
@@ -1612,7 +1858,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
           }
         })
         .catch(() => { if (cancelled) return; setThumbnails(null); notify('Slide previews failed to render.', 'warning', 'thumb-missing') })
-    }, 900)
+    }, OUTLINE_PAUSE_MS)
     return () => {
       cancelled = true
       if (compileTimer.current) clearTimeout(compileTimer.current)
@@ -1722,6 +1968,99 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     }
     closeLayoutPicker()
   }
+
+  // ── Plain margin menus (spec T8, T9) ──────────────────────────────────────────────────────────
+  // They act on the heading whose label was opened, not on the caret's. A choice is one undoable buffer
+  // change through the same replace path as the picker's ↵; the caret then sits at the end of that
+  // heading's visible text, which also points the preview and the Inspector at that slide.
+  function openMarginMenu(kind: 'level' | 'layout', line: number, anchor: { left: number; bottom: number }): void {
+    setMarginMenu({ kind, line, anchor: { left: anchor.left, bottom: anchor.bottom } })
+  }
+  function openMarginMenuAtCaret(kind: 'level' | 'layout'): void {
+    const target = headingToolsRef.current?.caretHeading()
+    const doc = editorReadRef.current?.()
+    if (!target || !doc) { notify('Put the cursor on a heading first.', 'info', 'margin-menu'); return }
+    if (kind === 'layout' && marginLabels(compiledSlidesRef.current, doc.text).find((l) => l.line === target.line)?.layoutLabel === undefined) {
+      notify('Put the cursor on a slide first: the layout belongs to a slide.', 'info', 'margin-menu')
+      return
+    }
+    openMarginMenu(kind, target.line, target.anchor)
+  }
+  function closeMarginMenu(): void { setMarginMenu(null) }
+  function marginMenuEscape(): void {
+    const line = marginMenu?.line
+    setMarginMenu(null)
+    if (line) headingToolsRef.current?.focusHeading(line)
+  }
+  function writeFromMargin(written: string, line: number): void {
+    const doc = editorReadRef.current?.()
+    if (!doc) return
+    inspectorCommitInProgressRef.current = true
+    try {
+      if (written !== doc.text) editorReplaceRef.current?.(written)
+    } finally {
+      queueMicrotask(() => { inspectorCommitInProgressRef.current = false })
+    }
+    setMarginMenu(null)
+    headingToolsRef.current?.focusHeading(line)
+  }
+  function chooseMarginLevel(kind: HeadingKind, line: number): void {
+    const doc = editorReadRef.current?.()
+    if (!doc) return
+    writeFromMargin(setHeadingKind(doc.text, line, kind), line)
+  }
+  function chooseMarginLayout(name: string | null, line: number): void {
+    const doc = editorReadRef.current?.()
+    if (!doc) return
+    // Auto removes the written layout; a layout is set as the picker's click sets it: no options, no starter text.
+    // The verb answers ok only for a result it has read back through the compiler; otherwise nothing is written.
+    let write: ReturnType<typeof chooseLayout>
+    try {
+      write = name == null ? clearLayout(doc.text, { headingLine: line }) : chooseLayout(doc.text, { headingLine: line }, name)
+    } catch (error) {
+      setMarginMenu(null)
+      notify(error instanceof LayoutVerbError ? error.detail : 'That layout could not be applied.', 'warning', 'margin-menu')
+      headingToolsRef.current?.focusHeading(line)
+      return
+    }
+    if (!write.ok) {
+      setMarginMenu(null)
+      notify(write.detail || 'That layout could not be applied.', 'warning', 'margin-menu')
+      headingToolsRef.current?.focusHeading(line)
+      return
+    }
+    reportTriggerMergeWarnings(write.warnings)
+    const written = write.text
+    writeFromMargin(written, line)
+  }
+  function moreInInspector(line: number): void {
+    setMarginMenu(null)
+    headingToolsRef.current?.focusHeading(line)
+    openLayoutPicker()
+  }
+  const marginMenuView = (() => {
+    if (!marginMenu) return null
+    const doc = editorReadRef.current?.()
+    if (!doc) return null
+    const { kind, line, anchor } = marginMenu
+    if (kind === 'level') {
+      const rows = levelMenuFor(doc.text, line).map((item) => ({ key: item.kind, label: item.label, note: item.note, current: item.current }))
+      if (!rows.length) return null
+      return <MarginMenu title="Level" ariaLabel="Heading level" rows={rows} anchor={anchor}
+        onChoose={(key) => chooseMarginLevel(key as HeadingKind, line)} onClose={closeMarginMenu} onEscape={marginMenuEscape} />
+    }
+    const current = marginLabels(compiledSlidesRef.current, doc.text).find((l) => l.line === line)?.layoutLabel
+    const rows = [
+      { key: 'auto', label: 'Auto', note: 'TalkWeaver picks the layout', current: current === 'Auto' },
+      ...MARGIN_LAYOUT_NAMES.map((name) => {
+        const label = LAYOUTS.find((entry) => entry.name === name)?.label ?? name
+        return { key: name, label, current: current === label }
+      })
+    ]
+    return <MarginMenu title="Layout" ariaLabel="Slide layout" rows={rows} separatorsAfter={['auto']} more="More in Inspector…" anchor={anchor}
+      onChoose={(key) => key === MORE_IN_INSPECTOR_KEY ? moreInInspector(line) : chooseMarginLayout(key === 'auto' ? null : key, line)}
+      onClose={closeMarginMenu} onEscape={marginMenuEscape} />
+  })()
 
   // An unstamped slide is named by its heading line, and the save that stamps ids inserts lines above it:
   // follow the slide through the change so the open picker keeps pointing at it (it used to close itself).
@@ -1923,19 +2262,11 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     cursorLineRef.current = line
     cursorAwaitsCompileRef.current = compiledSlidesRef.current == null
     closePickerIfCaretLeft()
-    let idx = -1
-    let best = -1
-    for (let i = 0; i < slideLines.length; i++) {
-      const ln = slideLines[i]
-      if (ln != null && ln <= line && ln > best) {
-        best = ln
-        idx = i
-      }
-    }
+    const idx = slideIndexAtLine(slideLines, line)
     if (idx >= 0) {
-      // Only notify the outline sidebar when the active SLIDE changes (not every keystroke).
-      // activeSlideRef still holds the pre-update value here, so this is a genuine "changed" check.
-      if (idx !== activeSlideRef.current) onActiveLineChange?.(slideLines[idx] ?? null)
+      // Tell the outline sidebar only when the LINE it should mark changes (not every keystroke). By
+      // line, not by slide index: after a move the same index is another slide on another line.
+      activeLineReporter.report(slideLines[idx] ?? null)
       setActiveSlide(idx)
       if (inspectorMode) {
         const nextInspectedId = inspectedSlideIdAfterCursorChange(
@@ -1979,11 +2310,13 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // recorded in CM history like ⌘⇧↑/↓ moves, caret kept, no remount — and that buffer is saved
   // through the queue. The old remount path re-read the file before the reorder's own write landed
   // and wiped the undo history.
-  async function handleReorder(from: number, to: number) {
+  // `placement` (grid only): land before or after the target block whatever the drag direction — a
+  // drop on a section header or after the last cell means "after this block" even when dragging up.
+  async function handleReorder(from: number, to: number, placement?: 'before' | 'after') {
     const talk = activeTalkRef.current
     if (!talk) return
     const result = await applyOutlineMutation(talk.outlinePath, async (text) =>
-      (await window.tw.outline.reorder(talk.outlinePath, from, to, text)) ?? text) // null: not a possible move
+      (await window.tw.outline.reorder(talk.outlinePath, from, to, text, placement)) ?? text) // null: not a possible move
     const moved = result.ok ? result.changed : result.applied
     if (moved && result.base != null) {
       // Snapshot the pre-reorder buffer for the GRID-mode ⌘Z stack (no editor focus there); a fresh
@@ -2070,8 +2403,8 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   }
 
   // Icon pick (ADR-0021). The IconPicker resolved a glyph key; we pin it to the caret's current
-  // top-level list bullet. The editor's registered reader gives us {heading, occurrence, itemIndex}
-  // for the live caret; main's setListItemIcon rewrites the BUFFER's text (the D1 seam reads it from
+  // top-level list bullet. The editor's registered reader gives us the bullet's line and its slide's
+  // heading line for the live caret; main's setListItemIcon rewrites the BUFFER's text (the D1 seam reads it from
   // the editor, and works it out again if the person typed during the round trip). The rewrite is a
   // tiny `{icon=…}` token, so it lands as one minimal change — caret and scroll kept, no remount —
   // and is saved at once through the queue. No-op with a hint when the caret is not in a bullet.
@@ -2085,7 +2418,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     }
     const NO_ITEM = 'icon-item-gone'
     const result = await applyOutlineMutation(talk.outlinePath, async (text) => {
-      const next = await window.tw.outline.setItemIcon(text, ctx.slideHeading, ctx.slideOccurrence, ctx.itemIndex, iconKey)
+      const next = await window.tw.outline.setItemIcon(text, ctx.slideHeading, iconKey, ctx.itemLine)
       if (next == null) throw new Error(NO_ITEM)
       return next
     })
@@ -2190,7 +2523,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     'talk-beside': () => runPickerCommand((picker) => picker.talkBeside(), 'talk-beside'),
     'close-talk-beside': () => runPickerCommand((picker) => picker.closeTalkBeside(), 'close-talk-beside'),
     'select-whole-section': () => runPickerCommand((picker) => picker.selectWholeSection(), 'select-whole-section'),
-    'icon-picker': () => setIconPickerOpen(true),
+    'icon-picker': () => toggleIconPickerRef.current(),
     'insert-object-table': () => editorInsertObjectRef.current?.('table'),
     'insert-object-mindmap': () => editorInsertObjectRef.current?.('mindmap'),
     'insert-object-chart': () => editorInsertObjectRef.current?.('chart'),
@@ -2214,13 +2547,28 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     metadata: () => window.dispatchEvent(new Event('tw-open-metadata')),
     'tag-slide': openTagCurrentSlide,
     abstract: () => setAbstractOpen(true),
+    'view-plain': () => chooseEditorViewMode('plain'),
+    'change-heading-level': () => openMarginMenuAtCaret('level'),
+    'change-slide-layout': () => openMarginMenuAtCaret('layout'),
+    'view-markdown': () => chooseEditorViewMode('markdown'),
     'view-editor': () => selectPane('editor'),
     'view-both': () => selectPane('both'),
     'view-strip': () => selectPane('strip'),
     'view-grid': selectGrid,
+    'outline-collapse-all': () => { if (collapseKey) { publishOutline(collapseKey, outlineContentRef.current); collapseAllSections(collapseKey) } },
+    'outline-expand-all': () => { if (collapseKey) { publishOutline(collapseKey, outlineContentRef.current); expandAllSections(collapseKey) } },
+    'move-slide-to': () => openMoveTo('slide'),
+    'move-section-to': () => openMoveTo('section'),
     'fold-all': () => editorCmdsRef.current?.foldAll(),
     'unfold-all': () => editorCmdsRef.current?.unfoldAll(),
     'normalize-triggers': () => editorCmdsRef.current?.normalizeTriggers(),
+    'quote-form-auto': () => editorCmdsRef.current?.setQuoteForm('auto', compiledLayoutAtLine),
+    'quote-form-plain': () => editorCmdsRef.current?.setQuoteForm('plain', compiledLayoutAtLine),
+    'quote-form-tweet': () => editorCmdsRef.current?.setQuoteForm('tweet', compiledLayoutAtLine),
+    'quote-form-video': () => editorCmdsRef.current?.setQuoteForm('video', compiledLayoutAtLine),
+    'quote-form-book': () => editorCmdsRef.current?.setQuoteForm('book', compiledLayoutAtLine),
+    'quote-form-paper': () => editorCmdsRef.current?.setQuoteForm('paper', compiledLayoutAtLine),
+    'quote-form-web': () => editorCmdsRef.current?.setQuoteForm('web', compiledLayoutAtLine),
     undo: () => runActionBarEditorCommand(editorCmdsRef.current, 'undo'),
     redo: () => runActionBarEditorCommand(editorCmdsRef.current, 'redo'),
     'new-slide': () => runActionBarEditorCommand(editorCmdsRef.current, 'new-slide'),
@@ -2272,7 +2620,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // old editor-less fallback changed only outlineContent: the buffer's next save — an "Add to talk"
   // made at once, or any later keystroke — wrote the older text and dropped the option.
   function applyOption(entry: LayoutDef | undefined, group: OptionGroup, token: string, targetHeadingLine?: number, targetSlideId?: string | null): string | null {
-    return editorApplyOptionRef.current?.(entry, group, token, targetHeadingLine, targetSlideId) ?? null
+    return editorApplyOptionRef.current?.(entry, group, token, targetHeadingLine, targetSlideId, targetHeadingLine == null ? undefined : compiledLayoutAtLine(targetHeadingLine)) ?? null
   }
 
   function applyInspectorOption(entry: LayoutDef | undefined, group: OptionGroup, token: string): string | null {
@@ -2332,7 +2680,27 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // setStates in MainApp (fresh ops object) — closing a render loop (see App.registerOutlineOps).
   const registerEditorCommands = useCallback((cmds: NonNullable<(typeof editorCmdsRef)['current']>) => {
     editorCmdsRef.current = cmds
-    registerOutlineOps?.({ move: cmds.move, reLevel: cmds.reLevel, moveTo: cmds.moveTo })
+    // The whole-slide operations as the panels get them. In grid mode ⌘Z walks the grid's own snapshot
+    // stack (see the global key handler), so a change made there is put on that stack too.
+    const viaGridUndo = <T,>(run: () => T): T => {
+      const before = editorReadRef.current?.()?.text
+      const result = run()
+      if (gridModeRef.current && before != null && editorReadRef.current?.()?.text !== before) {
+        reorderUndoRef.current.push(before)
+        if (reorderUndoRef.current.length > 50) reorderUndoRef.current.shift()
+        reorderRedoRef.current = []
+      }
+      return result
+    }
+    const slides: SlideBlockOps = {
+      cut: (line) => viaGridUndo(() => cmds.slides.cut(line)),
+      copy: (line) => cmds.slides.copy(line),
+      paste: (clip, afterLine) => viaGridUndo(() => cmds.slides.paste(clip, afterLine)),
+      moveTo: (fromLine, target) => viaGridUndo(() => cmds.slides.moveTo(fromLine, target)),
+      delete: (line) => viaGridUndo(() => cmds.slides.delete(line))
+    }
+    setSlideOps(slides)
+    registerOutlineOps?.({ move: cmds.move, reLevel: cmds.reLevel, moveTo: cmds.moveTo, moveToEnd: cmds.moveToEnd, moveInto: cmds.moveInto, slides })
   }, [registerOutlineOps])
 
 
@@ -2420,8 +2788,15 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       onDirty={setDirty}
       vaultRoot={vaultRoot}
       focusRange={focusRange}
+      viewMode={editorViewMode}
+      plainLook={plainLook}
+      onMarginLevelMenu={(line, anchor) => openMarginMenu('level', line, anchor)}
+      onMarginLayoutMenu={(line, anchor) => openMarginMenu('layout', line, anchor)}
+      registerHeadingTools={(tools) => { headingToolsRef.current = tools }}
+      registerPlainIconTools={(tools) => { plainIconToolsRef.current = tools }}
       textFitNotes={textFitNotes}
       slideLines={slideLines}
+      marginLabels={marginLabelList}
       placementRows={compiledSlides}
       registerLayoutContext={(fn) => { editorLayoutContextRef.current = fn }}
       registerApplyLayout={(fn) => { editorApplyLayoutRef.current = fn }}
@@ -2434,6 +2809,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       registerInsert={(fn) => { editorInsertRef.current = fn }}
       registerInsertObject={(fn) => { editorInsertObjectRef.current = fn }}
       onEditorEngaged={onEditorEngaged}
+      compiledLayoutAt={compiledLayoutAtLine}
       onOpenObjectLayoutFamily={(kind) => openLayoutPicker(kind === 'diagram' ? 'smartart' : kind)}
       onInsertObjectMenu={(coords) => openSlideMenu({
         startAtFirst: false,
@@ -2483,6 +2859,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   )
   const editorColumn = (
     <div className="editor-column">
+      <EditorTabs mode={editorViewMode} onChange={(mode) => { chooseEditorViewMode(mode); commandRan(mode === 'plain' ? 'view-plain' : 'view-markdown') }} />
       {actionBarVisible && <ActionBar sections={actionBarSections} />}
       <div className="pane pane--editor">
         <div className="editor-portal-slot" ref={attachEditorSlot} />
@@ -2492,11 +2869,10 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
 
   function handleSelectSlide(i: number): void {
     setActiveSlide(i)
-    // Keep the Slide-outline sidebar in sync with strip/grid picks. handleCursorLine's own notify is
-    // gated on the active slide CHANGING, but we've just set it to `i` here, so the cursor-sync that
-    // follows would see no change and skip the outline — notify directly instead.
-    onActiveLineChange?.(slideLines[i] ?? null)
+    // Keep the Slide-outline sidebar in sync with strip/grid picks (told once per line: lib/activeOutlineLine.ts).
+    activeLineReporter.report(slideLines[i] ?? null)
     const target = slideLines[i]
+    revealSlideLine(target)
     // Card click: aim the editor viewport but do NOT steal focus — the strip keeps keyboard nav.
     if (target != null) setFocusLine({ line: target, takeFocus: false })
   }
@@ -2519,9 +2895,10 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // pane it opens editor+slides, since editing needs the editor on screen.
   function handleEditSlide(i: number): void {
     setActiveSlide(i)
-    onActiveLineChange?.(slideLines[i] ?? null)
+    activeLineReporter.report(slideLines[i] ?? null)
     const target = slideLines[i]
     if (target == null) return
+    revealSlideLine(target)
     if (gridModeRef.current) {
       returnToGridRef.current = true
       setGridMode(false)
@@ -2536,7 +2913,19 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     if (gridModeRef.current) setGridMode(false)
     if (paneState === 'strip') setPaneState('both')
     if (focusSlideRef.current != null) exitFocus()
+    revealSlideLine(line)
     setFocusLine({ line, takeFocus: true })
+  }
+
+  // Layout Doctor's one fix (plain view ticket 15): a title's icon goes from its layout line to the
+  // title. Worked out on the buffer as it stands (D1 seam) by a verb that keeps the move only when
+  // it has read the result back (shared/title-icon-restore.ts); a refusal leaves the buffer as it is.
+  // The finding is bound to the talk and the exact text the Doctor read it from (`scan`): the move is
+  // made only while the editor still holds that text, compared at the moment of applying.
+  async function handleDoctorRestoreTitleIcon(finding: LayoutDoctorFinding, scan: { outlinePath: string; text: string }): Promise<string | null> {
+    const talk = activeTalkRef.current
+    if (!talk || talk.outlinePath !== scan.outlinePath) return 'This talk is not open in the editor, so nothing was changed.'
+    return applyScannedTitleIconRestore((mutate, options) => applyOutlineMutation(scan.outlinePath, mutate, options), scan.text, finding)
   }
 
   const inspectorPane = (
@@ -2711,6 +3100,10 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         onReorder={handleReorder}
         onExplain={(i) => setExplainIndex(i)}
         columns={gridColumns}
+        slideOps={slideOps}
+        lineOfSlide={lineOfSlideIndex}
+        onLanded={slideLanded}
+        onMoreActions={(i, at) => { activeSlideRef.current = i; openActionsHereRef.current({ region: 'strip', at }) }}
       />
     </div>
   )
@@ -3049,6 +3442,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         onClose={() => setHelpOpen(false)}
         place={place}
         placeRow={placeRow}
+        quoteSlide={quoteSlideAtCaret}
         onRun={runSheetRow}
         canRunCarried={sheetCanRunCarried}
       />
@@ -3101,6 +3495,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         outlineText={outlineContent}
         slideRows={compiledSlides}
         onJumpToLine={handleDoctorJumpToLine}
+        onRestoreTitleIcon={handleDoctorRestoreTitleIcon}
       />
       {unresolvedBlock && createPortal(
         <div
@@ -3145,11 +3540,19 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
           run: () => runListedCommand(command)
         }))}
       />
+      <SlideRowMenus
+        request={moveRequest}
+        rows={moveRequest ? slideRows(editorReadRef.current?.()?.text ?? outlineContent) : []}
+        ops={slideOps}
+        onClose={() => setMoveRequest(null)}
+        onActed={() => { if (!gridModeRef.current && focusRegionRef.current === 'editor') focusEditor() }}
+        onLanded={slideLanded}
+      />
       {actionsHere && (
         <ActionsHerePanel
           x={actionsHere.x}
           y={actionsHere.y}
-          rows={actionRowsAt(actionsHere.place)}
+          rows={actionRowsAt(actionsHere.place, { quoteSlide: quoteSlideAtCaret })}
           chordOf={liveShortcutLabel}
           paletteChord={paletteChordText(liveShortcutLabel('app.command-palette'))}
           onRun={runActionRow}
@@ -3157,6 +3560,8 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
           onClose={closeActionsHere}
         />
       )}
+      {marginMenuView}
+      {plainIcon.view}
       {slideMenu && (
         <SlideContextMenu
           x={slideMenu.x}

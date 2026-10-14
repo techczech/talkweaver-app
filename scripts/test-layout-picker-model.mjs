@@ -96,8 +96,8 @@ equal(contrastOptionRows.map(({ group, selectedToken }) => [group.key, selectedT
   'Command-L derives the highlighted entry option row and current selection from the registry')
 const statementOptionRows = optionGroupsForPickerEntry(statementEntry, optionLine)
 equal(statementOptionRows.map(({ group, selectedToken }) => [group.key, selectedToken]),
-  [['statement-sidebar', ''], ['statement-bg', ''], ['statement-align', ''], ['statement-bar', ''], ['statement-colour', '']],
-  'Command-L derives the five statement choice rows from the registry (ticket 02)')
+  [['statement-sidebar', ''], ['statement-bg', ''], ['statement-align', ''], ['statement-colour', '']],
+  'Command-L derives the four statement choice rows from the registry (ticket 02)')
 
 const chained = inlineOptionPickerStep(contrast, optionLine, '')
 check(chained != null, 'inline { choosing an entry with options creates a chained step')

@@ -18,12 +18,19 @@
 //   planLiveServiceUpload(input)           the write requests, in order, with their bodies.
 // The request bodies follow what wrangler 4.144 sends for `deploy` and `secret bulk` (its source is
 // node_modules/wrangler/wrangler-dist/cli.js: createWorkerUploadForm, getMigrationsToUpload,
-// subdomainDeploy, publishCustomDomains, putBulkSecrets). Removing a share-link domain that is no
-// longer set is not something wrangler does; it uses Cloudflare's documented
-// `DELETE /accounts/{account}/workers/domains/{id}`.
+// subdomainDeploy, putBulkSecrets).
 //
-// A plan holds no secret: the secrets request names the two secrets, and their values are put in
-// by the sequence that sends it (live-service-deploy.ts), at the moment it is sent.
+// The code upload sends NO secret, ever: the plan has no secrets step (going live from several Macs,
+// decision T1; proved as P2: an upload with `bindings_inherit=strict` keeps every secret). And it
+// touches NO custom domain or route (decision R2): the plan is the script and its workers.dev switch,
+// nothing else. A share-link domain is attached or removed only by live-service-share-domain.ts.
+// Secrets travel in two other requests, each one `PATCH …/secrets-bulk`, built by the functions at
+// the end of this file and nowhere else:
+//   addKeyBody          this computer's admin key, `ADMIN_SECRET_<computer id>`, and nothing else (P1);
+//   removeKeyBody       one admin key set to null (P3).
+// Neither can name any secret but an admin key: the app never sends, lists or stores a signing key
+// (decision R1; the live service keeps its own).
+// A request names its secrets; the values are put in by the sequence that sends it, as it is sent.
 //
 // No Electron import, erasable TypeScript only.
 import { createHash } from 'node:crypto'
@@ -37,7 +44,10 @@ export const WORKER_DIST_DIR = 'worker-dist'
 export const CODE_UPDATE_STRATEGY = { mode: 'deferred', max_delay: 300 } as const
 /** The header wrangler 4.144 sends with the workers.dev switch. */
 export const SCRIPT_API_DATE = '2025-08-01'
-export const SECRET_NAMES = ['ADMIN_SECRET', 'SESSION_SIGNING_SECRET'] as const
+/** The first computer's admin key as 0.38.2 set it. Never sent by this build; removable only on purpose. */
+export const LEGACY_ADMIN_SECRET_NAME = 'ADMIN_SECRET'
+export const ADMIN_SECRET_PREFIX = 'ADMIN_SECRET_'
+export const SECRETS_CONTENT_TYPE = 'application/merge-patch+json'
 
 export type WorkerDistManifest = {
   format: typeof MANIFEST_FORMAT
@@ -168,15 +178,17 @@ export function migrationsToApply(migrations: Migration[], deployedTag: string |
   return { old_tag: deployedTag, new_tag: newTag, steps: steps(migrations.slice(at + 1)) }
 }
 
-export type UploadStep = 'upload' | 'workers-dev' | 'attach-domain' | 'remove-domain' | 'secrets'
+export type UploadStep = 'upload' | 'workers-dev'
+/** The requests that carry secrets: never part of an upload plan. */
+export type SecretsStep = 'add-key' | 'remove-key'
 export type PlannedBody =
   | { kind: 'multipart'; metadata: Record<string, unknown>; module: { name: string; type: string; bytes: Uint8Array } }
   | { kind: 'json'; json: Record<string, unknown>; contentType?: string }
-  /** The two secrets, by name only: the sequence that sends it puts in the values. */
+  /** Secrets by name only: the sequence that sends it puts in the values. */
   | { kind: 'secrets'; names: readonly string[]; contentType: string }
-export type PlannedRequest = {
-  step: UploadStep
-  method: 'PUT' | 'POST' | 'PATCH' | 'DELETE'
+export type PlannedRequest<Step extends string = UploadStep> = {
+  step: Step
+  method: 'GET' | 'PUT' | 'POST' | 'PATCH' | 'DELETE'
   /** Under the API's base address, with its query when it has one. */
   path: string
   headers?: Record<string, string>
@@ -190,19 +202,16 @@ export type UploadInput = {
   accountId: string
   /** The migration tag of the script already deployed; null when there is none (first set-up). */
   deployedMigrationTag: string | null
-  /** The share-link domain to attach (already validated), or null when none is set. */
-  shareHostname: string | null
-  /** The custom domains Cloudflare lists for this Worker now. */
-  attachedDomains: { id: string; hostname: string }[]
 }
 
 /**
  * The write requests that put the shipped bundle at Cloudflare, in the order they are sent: the
- * script (bundle, settings, migrations still to apply), its workers.dev address switched on, the
- * share-link domain attached (or the ones no longer set removed), then the two secrets.
+ * script (bundle, settings, migrations still to apply) and its workers.dev address switched on.
+ * Exactly those two. No secret is named or sent (the secrets Cloudflare holds for the Worker stay
+ * as they are), and no custom domain or route is read, attached or removed (decision R2).
  */
 export function planLiveServiceUpload(input: UploadInput): PlannedRequest[] {
-  const { config, manifest, bundle, accountId, deployedMigrationTag, shareHostname, attachedDomains } = input
+  const { config, manifest, bundle, accountId, deployedMigrationTag } = input
   const script = `/accounts/${accountId}/workers/scripts/${config.name}`
   const migrations = migrationsToApply(config.migrations, deployedMigrationTag)
   // The metadata wrangler 4.144's createWorkerUploadForm builds for this Worker, in its order.
@@ -215,38 +224,88 @@ export function planLiveServiceUpload(input: UploadInput): PlannedRequest[] {
     code_update_strategy: { ...CODE_UPDATE_STRATEGY },
     ...(config.observability ? { observability: { ...config.observability } } : {}),
   }
-  const requests: PlannedRequest[] = [
+  return [
     {
       step: 'upload', method: 'PUT', path: `${script}?excludeScript=true&bindings_inherit=strict`,
       body: { kind: 'multipart', metadata, module: { name: manifest.mainModule, type: 'application/javascript+module', bytes: bundle } },
     },
-    {
-      step: 'workers-dev', method: 'POST', path: `${script}/subdomain`,
-      headers: { 'Cloudflare-Workers-Script-Api-Date': SCRIPT_API_DATE },
-      body: { kind: 'json', json: { enabled: true } },
-    },
+    workersDevRequest(accountId, config.name),
   ]
-  if (shareHostname) {
-    // publishCustomDomains, as wrangler runs it without a terminal: it takes the domain over.
-    requests.push({
-      step: 'attach-domain', method: 'PUT', path: `${script}/domains/records`,
-      body: { kind: 'json', json: { override_scope: true, override_existing_origin: true, override_existing_dns_record: true, origins: [{ hostname: shareHostname }] } },
-    })
-  }
-  for (const domain of attachedDomains) {
-    if (domain.hostname === shareHostname) continue
-    requests.push({ step: 'remove-domain', method: 'DELETE', path: `/accounts/${accountId}/workers/domains/${domain.id}` })
-  }
-  requests.push({
-    step: 'secrets', method: 'PATCH', path: `${script}/secrets-bulk`,
-    body: { kind: 'secrets', names: SECRET_NAMES, contentType: 'application/merge-patch+json' },
-  })
-  return requests
 }
 
-/** The secrets body wrangler's putBulkSecrets sends. Built only as the request is sent. */
-export function secretsBody(values: Record<(typeof SECRET_NAMES)[number], string>): string {
-  return JSON.stringify({ secrets: Object.fromEntries(SECRET_NAMES.map((name) => [name, { name, text: values[name], type: 'secret_text' }])) })
+/**
+ * The workers.dev switch on its own: the Worker's workers.dev address switched on. It changes no
+ * code, no secret and no domain, and sending it again changes nothing. Also sent alone, by a set-up
+ * that finds the script at Cloudflare and gets no answer at its address (a first set-up that stopped
+ * between its two requests): live-service-deploy.ts.
+ */
+export function workersDevRequest(accountId: string, scriptName: string): PlannedRequest<'workers-dev'> {
+  if (!validAccountSegment(accountId) || !SCRIPT_NAME.test(scriptName)) throw new TypeError('Not a live service.')
+  return {
+    step: 'workers-dev', method: 'POST', path: `${scriptPath(accountId, scriptName)}/subdomain`,
+    headers: { 'Cloudflare-Workers-Script-Api-Date': SCRIPT_API_DATE },
+    body: { kind: 'json', json: { enabled: true } },
+  }
+}
+
+// ── Secrets ─────────────────────────────────────────────────────────────────────────────────────
+// A computer id as worker/admin-keys.ts accepts one under `ADMIN_SECRET_<id>`: lower-case letters and
+// digits, never `legacy`, `self` or `join` (scripts/test-live-service-keys.mjs holds the two together).
+const COMPUTER_ID = /^[a-z0-9]{1,64}$/
+const RESERVED_COMPUTER_IDS: readonly string[] = ['legacy', 'self', 'join']
+export const validComputerId = (value: unknown): value is string => typeof value === 'string' && COMPUTER_ID.test(value) && !RESERVED_COMPUTER_IDS.includes(value)
+
+/** `ADMIN_SECRET_<id>`: the only name under which a computer's key is ever sent. Throws for anything that is not a computer's id. */
+export function computerSecretName(computerId: string): string {
+  if (!validComputerId(computerId)) throw new TypeError('Not a computer id.')
+  return ADMIN_SECRET_PREFIX + computerId
+}
+const scriptPath = (accountId: string, scriptName: string): string => {
+  if (!validAccountSegment(accountId) || !SCRIPT_NAME.test(scriptName)) throw new TypeError('Not an account or a Worker name.')
+  return `/accounts/${accountId}/workers/scripts/${scriptName}`
+}
+const secretValue = (value: unknown): string => {
+  if (typeof value !== 'string' || value.trim().length === 0) throw new TypeError('A secret needs a value.')
+  return value
+}
+const secretsRequest = <Step extends SecretsStep>(step: Step, accountId: string, scriptName: string, names: readonly string[]): PlannedRequest<Step> => ({
+  step, method: 'PATCH', path: `${scriptPath(accountId, scriptName)}/secrets-bulk`,
+  body: { kind: 'secrets', names, contentType: SECRETS_CONTENT_TYPE },
+})
+
+/** Add this computer's key: ONE request naming ONE secret, `ADMIN_SECRET_<id>` (proof P1). */
+export function addKeyRequest(accountId: string, scriptName: string, computerId: string): PlannedRequest<'add-key'> {
+  return secretsRequest('add-key', accountId, scriptName, [computerSecretName(computerId)])
+}
+/**
+ * The body of addKeyRequest, made only as it is sent. It holds exactly one entry, this computer's:
+ * `ADMIN_SECRET` and every other computer's key are not in it, so Cloudflare leaves them (and every
+ * other secret of the Worker) as they are.
+ */
+export function addKeyBody(computerId: string, key: string): string {
+  const name = computerSecretName(computerId)
+  return JSON.stringify({ secrets: { [name]: { name, text: secretValue(key), type: 'secret_text' } } })
+}
+
+/**
+ * Which secret a removal names. A computer's own (`{ computerId }`) is the ordinary case. The first
+ * computer's `ADMIN_SECRET` is removed only by a caller that says so in as many words
+ * (`{ legacy: true }`). No other secret can be named: no value of this type reaches one.
+ */
+export type KeyToRemove = { computerId: string } | { legacy: true }
+function removedName(target: KeyToRemove): string {
+  if ('legacy' in target) {
+    if (target.legacy !== true || 'computerId' in target) throw new TypeError('Not a key to remove.')
+    return LEGACY_ADMIN_SECRET_NAME
+  }
+  return computerSecretName(target.computerId)
+}
+/** Remove one admin key: ONE request naming ONE secret, set to null (proof P3). */
+export function removeKeyRequest(accountId: string, scriptName: string, target: KeyToRemove): PlannedRequest<'remove-key'> {
+  return secretsRequest('remove-key', accountId, scriptName, [removedName(target)])
+}
+export function removeKeyBody(target: KeyToRemove): string {
+  return JSON.stringify({ secrets: { [removedName(target)]: null } })
 }
 
 /** The Worker's workers.dev address, from the account's subdomain as Cloudflare reports it; null when that is not a plain label. */

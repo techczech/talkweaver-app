@@ -14,12 +14,14 @@
 // is runtime/sim-typing.js (the markup only carries data-stream="on" on a streaming chat).
 import { escapeHtml, slugify } from "./01-cli-utils.mjs";
 import { resolveAuthoredMode } from "./02-triggers-layout.mjs";
+import { SIM_FENCE_LANGS, simulationLayoutForFence } from "./simulation-fences.mjs";
 
 export const SIMULATION_LAYOUTS = Object.freeze(["chat", "chat-lanes", "terminal", "terminal-agent"]);
 /** Layout inferred from an untagged fence: ```chat -> chat, ```terminal -> terminal (same place `trace` is inferred). */
-export const simulationLayoutForFence = (lang) => (SIM_FENCE_LANGS.has(lang) ? lang : "");
+// The set and the function live in simulation-fences.mjs (pure: the editor reads the layout too, and the layout
+// inference reads it without this file's Node access). authored-layout.mjs re-exports the same ones.
+export { simulationLayoutForFence };
 export const isSimulationLayout = (layout) => SIMULATION_LAYOUTS.includes(layout);
-const SIM_FENCE_LANGS = new Set(["chat", "terminal"]);
 
 // Which layouts an option belongs to. An option given to another layout is ignored with a hint.
 const OPTION_APPLIES = Object.freeze({

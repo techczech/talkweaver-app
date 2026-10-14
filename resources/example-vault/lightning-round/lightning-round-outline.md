@@ -53,7 +53,7 @@ Point at one thing only. Clear the drawing before you move on.
 
 > **Try it.** <kbd>J</kbd> scrolls these notes. In the list (<kbd>⌘⇧P</kbd>), **Notes: bottom** moves them; **Notes scroll automatically**, **Notes scroll faster** and **Notes scroll slower** run them.
 
-> **Try it.** <kbd>?</kbd> shows the keys, <kbd>⌘⇧P</kbd> lists every command, <kbd>⌘⇧,</kbd> gives the highlighted one a new key, the **Guide: Present chapter** command, or the Guide button at the left of the bottom bar, shows this chapter beside the notes.
+> **Try it.** <kbd>?</kbd> shows the keys, <kbd>⌘⇧P</kbd> lists every command, <kbd>⌘⇧,</kbd> gives the highlighted one a new key, <kbd>C</kbd>, or the Guide button at the left of the bottom bar, shows this chapter beside the notes.
 
 :::notes
 These notes are only for you. The audience never sees them. Read the first line, look up, and say the rest in your own words.

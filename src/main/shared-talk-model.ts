@@ -6,6 +6,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { isShareId } from '../shared/share-id.ts'
 import { OwnerRequestError, validOwnerToken, type OwnerTokens } from './owner-tokens.ts'
+import type { AdminEndpoint } from './live-admin-request.ts'
 import type {
   SharedTalkEnded, SharedTalkInspection, SharedTalkSlide, SharedTalkState, SharedTalkStopped, SharedTalkStopResult,
 } from '../shared/shared-talk.ts'
@@ -48,8 +49,8 @@ export interface SharedTalkDeps {
   /** Where the shares' owner tokens are kept (the secrets store). */
   ownerTokens: OwnerTokens
   /** The live Worker and its admin credential (ensureLiveWorker). Used to CREATE shares only. */
-  endpoint(): Promise<{ baseUrl: string; adminSecret: string }>
-  /** Config `sharedTalkLinkBase` (ticket 07 sets it to the drafts host); empty = Worker origin. */
+  endpoint(): Promise<AdminEndpoint>
+  /** The share-link address that is attached and in use (live-service-share-domain.ts `shareLinkBase`, R13); empty = Worker origin. */
   linkBase(): string | null | undefined
   /** The outline writer's identity for a path (outline-identity.ts). */
   identityOf(outlinePath: string): OutlineIdentityLike

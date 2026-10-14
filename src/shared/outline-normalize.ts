@@ -1,4 +1,5 @@
-import { TRIGGER_LINE_RE } from '../../compiler/scripts/lib/trigger-tokenizer.mjs'
+import { TRIGGER_LINE_RE, tokenizeTriggerBody } from '../../compiler/scripts/lib/trigger-tokenizer.mjs'
+import { headingBraceGroups, headingIconGroups } from '../../compiler/scripts/lib/02-triggers-layout.mjs'
 import {
   scanFencedLines as compilerFenceLineScan,
   type MarkdownFenceOpening
@@ -55,6 +56,9 @@ export function fencedLineFlags(lines: string[]): boolean[] {
 //  - Every slide heading (`##`–`######`) is touched; the deck title (`# `) is left unchanged.
 //  - Only a TRAILING run of `{…}` groups is moved — text to the left of the first
 //    trailing brace group is the clean title and is left intact.
+//  - A group that holds the title's own icon (`### My title {icon=lucide:star}`) STAYS on the
+//    heading: the compiler draws a title's icon only from the heading line (headingIconGroups,
+//    02-triggers-layout.mjs), so moving it down would remove the icon. See headingTail below.
 //  - Idempotent (running twice changes nothing).
 //  - All other lines (blank, content, trigger-only) are preserved exactly.
 //  - Fenced/comment-hidden lines are never touched: a heading-shaped line inside a ``` fence is
@@ -62,6 +66,94 @@ export function fencedLineFlags(lines: string[]): boolean[] {
 
 // Regex: one or more `{…}` groups that form the ENTIRE tail of a line.
 const TRAILING_BRACES_RE = /\s*(\{[^}]*\}(?:\s*\{[^}]*\})*)\s*$/
+
+/**
+ * What the tidy-up does with the trailing `{…}` groups of one slide heading line.
+ *   null           no trailing groups: nothing to move
+ *   kind 'move'    `heading` is the line to leave (the title, plus any title-icon groups) and
+ *                  `moved` the groups that go to the Trigger line, as written
+ *   kind 'keep'    the line stays exactly as written
+ *
+ * The compiler reads a title's icon from the heading line only, from the groups its own
+ * headingIconGroups returns; those groups are never moved. Everything else on the heading is read
+ * the same from the Trigger line (parseHeadingAttrs folds both into one attrs map, heading first),
+ * so it moves as before. Two cases would change that map's last-wins order if only part of the
+ * line moved, and are left as written instead:
+ *   - an icon group that also holds another token (`{icon=lucide:star statement}`);
+ *   - an `icon=` token in a group that is not the title's icon (braces glued to the title's text).
+ */
+type HeadingTail =
+  | { kind: 'move'; heading: string; moved: string }
+  | { kind: 'keep' }
+
+function headingTail(line: string): HeadingTail | null {
+  const m = line.match(TRAILING_BRACES_RE)
+  if (!m) return null
+  const cleanTitle = line.slice(0, line.length - m[0].length)
+  const all: HeadingTail = { kind: 'move', heading: cleanTitle, moved: m[1] }
+
+  // The compiler's own reading of the heading: the text after the `#`s, without a carriage return.
+  const parts = line.replace(/\r$/, '').match(/^(#{2,6})(\s+)(.+)/)
+  if (!parts) return all
+  const offset = parts[1].length + parts[2].length
+  const iconGroups = headingIconGroups(parts[3]).groups
+  if (iconGroups.length === 0) return all
+
+  const runStart = line.length - m[0].length + m[0].indexOf(m[1])
+  const groups = headingBraceGroups(parts[3]).map((group) => ({
+    start: group.start + offset,
+    end: group.end + offset,
+    inner: group.inner,
+    icon: iconGroups.some((icon) => icon.start === group.start && icon.end === group.end)
+  }))
+  // The compiler's groups and this file's trailing run must be the same stretch of the line.
+  if (groups.length === 0 || groups[0].start !== runStart || groups[groups.length - 1].end !== runStart + m[1].length) {
+    return { kind: 'keep' }
+  }
+  const tokensOf = (inner: string): string[] => tokenizeTriggerBody(inner).map((token) => token.raw)
+  const reordering = groups.some((group) => {
+    const tokens = tokensOf(group.inner)
+    return group.icon
+      ? tokens.some((raw) => !raw.startsWith('icon='))
+      : tokens.some((raw) => raw.startsWith('icon='))
+  })
+  if (reordering) return { kind: 'keep' }
+  if (groups.every((group) => group.icon)) return { kind: 'keep' }
+
+  // Kept groups keep the spacing written before them; the first one always follows a space, so it
+  // is still a group the compiler reads as the title's icon once the groups before it have gone.
+  let heading = cleanTitle
+  let keptAny = false
+  const moved: string[] = []
+  groups.forEach((group, index) => {
+    const before = line.slice(index === 0 ? cleanTitle.length : groups[index - 1].end, group.start)
+    if (!group.icon) {
+      // Moved groups keep the spacing between them, as the whole run did before.
+      moved.push((moved.length > 0 && !groups[index - 1].icon ? before : '') + line.slice(group.start, group.end))
+      return
+    }
+    heading += (keptAny ? before : before || ' ') + line.slice(group.start, group.end)
+    keptAny = true
+  })
+  return { kind: 'move', heading, moved: moved.join('') }
+}
+
+/** Whether the tidy-up has nothing to move off this slide heading line. */
+function headingIsSettled(line: string): boolean {
+  const tail = headingTail(line)
+  return tail === null || (tail.kind === 'keep' && headingKeepsOnlyTitleIcons(line))
+}
+
+/** A heading whose trailing groups are all the title's own icon groups, each holding icon tokens only. */
+function headingKeepsOnlyTitleIcons(line: string): boolean {
+  const parts = line.replace(/\r$/, '').match(/^(#{2,6})(\s+)(.+)/)
+  if (!parts) return false
+  const groups = headingBraceGroups(parts[3])
+  const icons = headingIconGroups(parts[3]).groups
+  return groups.length > 0
+    && groups.length === icons.length
+    && groups.every((group) => tokenizeTriggerBody(group.inner).every((token) => token.raw.startsWith('icon=')))
+}
 
 export function normalizeTriggerLines(text: string): string {
   const lines = text.split('\n')
@@ -74,11 +166,11 @@ export function normalizeTriggerLines(text: string): string {
     // and anything inside a fence or HTML comment (heading-shaped code lines).
     const isSlideHeading = !fenced[i] && /^#{2,6} /.test(line)
     if (!isSlideHeading) { out.push(line); i += 1; continue }
-    const m = line.match(TRAILING_BRACES_RE)
-    if (!m) { out.push(line); i += 1; continue }
-    // Strip the trailing braces from the title.
-    const cleanTitle = line.slice(0, line.length - m[0].length)
-    const movedGroups = m[1] // e.g. `{statement}{title=side}`
+const tail = headingTail(line)
+    if (!tail || tail.kind === 'keep') { out.push(line); i += 1; continue }
+    // Strip the moved braces from the title; a title-icon group stays where the compiler reads it.
+    const cleanTitle = tail.heading
+    const movedGroups = tail.moved // e.g. `{statement}{title=side}`
     // Find the heading's existing Trigger line: the FIRST non-blank line below, if it is a
     // (non-fenced) {…}-only line — blank lines between the heading and it are TOLERATED (the shared
     // read rule, id-churn hotfix 2026-07-10). Merging must never create a duplicate Trigger line above
@@ -124,7 +216,7 @@ export function normalizePositions(text: string): string {
     const isCleanSlideHeading =
       !fenced[i]
       && /^#{2,6} /.test(line)
-      && !TRAILING_BRACES_RE.test(line)
+      && headingIsSettled(line)
     if (!isCleanSlideHeading) {
       out.push(line)
       i += 1

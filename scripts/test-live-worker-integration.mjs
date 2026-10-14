@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import { createHmac } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { nextMessage, nextMessages, notPresence, openSocket, startLiveWorker } from './lib/live-worker-harness.mjs'
+
+// The build the Worker's sources name: read, not written out here, so it cannot fall behind them.
+const LIVE_WORKER_BUILD = /export const LIVE_WORKER_BUILD\s*=\s*'([^']+)'/.exec(readFileSync(join(resolve(import.meta.dirname, '..'), 'worker', 'recovery-protocol.ts'), 'utf8'))[1]
 
 // Attach the inbox before the handshake so immediate v2 hello/snapshot messages cannot race a listener.
 async function openRecoverySocket(url) {
@@ -254,7 +259,7 @@ try {
 
 
   assert.deepEqual(await fetch(`${baseUrl}/capabilities`).then(response => response.json()), {
-    protocol: 2, build: '19-board-seed',
+    protocol: 2, build: LIVE_WORKER_BUILD,
   })
   const recoveryResponse = await fetch(`${baseUrl}/sessions`, {
     method: 'POST',

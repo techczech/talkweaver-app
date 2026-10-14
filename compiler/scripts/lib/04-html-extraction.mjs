@@ -1,5 +1,6 @@
 import { escapeHtml } from "./01-cli-utils.mjs";
 import { plainInlineText } from "./00-inline-render.mjs";
+import { extractQuoteSources } from "./quote-forms-static.mjs";
 
 // =============================================================================
 // 4. HTML extraction — extractStyles / extractSlides over self-generated HTML (strip <script> first — see handout regression)
@@ -84,6 +85,7 @@ export function extractSlideScript(html) {
 
 export function extractSlides(html) {
   const slideScript = extractSlideScript(html);
+  const quoteSources = extractQuoteSources(html);
   return findSlideSections(html)
     .map((match, index) => {
       const sectionHtml = match.html;
@@ -106,6 +108,7 @@ export function extractSlides(html) {
         html: visualHtml,
         notes,
         script: slideScript[id] || null,
+        quoteSource: quoteSources[id] || null,
       };
     });
 }

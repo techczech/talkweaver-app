@@ -10,7 +10,7 @@
 // Writes go through the shared byte-preserving `editFrontmatterText`, so comments and nested map
 // blocks (`defaults:`, `sections:`, `icons:`) survive an edit to an unrelated field.
 import { EditorView, Decoration, type DecorationSet, WidgetType } from '@codemirror/view'
-import { StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state'
+import { Facet, StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state'
 import { METADATA_REGISTRY } from '../../../shared/metadata-registry.ts'
 import {
   frontmatterSurfaceViewModel,
@@ -22,12 +22,12 @@ import { editFrontmatterText, parseFrontmatterPairs } from '../../../shared/fron
 import { metadataDefaultsSnapshot } from '../lib/metadata-defaults.ts'
 
 // ── frontmatter parse / serialize ─────────────────────────────────────────────
-interface Pair { key: string; value: string }
-interface Parsed { from: number; to: number; text: string; pairs: Pair[] }
+export interface Pair { key: string; value: string }
+export interface Parsed { from: number; to: number; text: string; pairs: Pair[] }
 
 // Locate the `--- … ---` block at the very top and parse it with the SHARED parser, so the table
 // and Deck settings never disagree about what a key holds.
-function parseFrontmatter(state: EditorState): Parsed | null {
+export function parseFrontmatter(state: Pick<EditorState, 'doc'>): Parsed | null {
   const doc = state.doc
   if (doc.lines < 2) return null
   if (doc.line(1).text.trim() !== '---') return null
@@ -43,13 +43,23 @@ function parseFrontmatter(state: EditorState): Parsed | null {
 }
 
 // ── raw ↔ table toggle (StateField) ───────────────────────────────────────────
-const toggleRawEffect = StateEffect.define<boolean>()
-const rawField = StateField.define<boolean>({
+export const toggleRawEffect = StateEffect.define<boolean>()
+export const rawField = StateField.define<boolean>({
   create: () => false, // table view by default
   update(value, tr) {
     for (const e of tr.effects) if (e.is(toggleRawEffect)) return e.value
     return value
   }
+})
+
+/**
+ * The Plain view's replacement for the table (spec T11): when a factory is provided, the block over
+ * the frontmatter (or, with no frontmatter, at the top of the document) is the widget it returns
+ * instead of the table. Markdown mode provides none and keeps the table exactly as it was.
+ */
+export type FrontmatterBlockFactory = (parsed: Parsed | null) => WidgetType
+export const frontmatterBlockFacet = Facet.define<FrontmatterBlockFactory, FrontmatterBlockFactory | null>({
+  combine: (values) => values[0] ?? null
 })
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
@@ -308,7 +318,11 @@ class RawToggleWidget extends WidgetType {
 // block replace over the frontmatter; raw mode → an inline "⊞ table" toggle on the opening ---.
 function buildDecorations(state: EditorState): DecorationSet {
   const parsed = parseFrontmatter(state)
-  if (!parsed) return Decoration.none
+  const factory = state.facet(frontmatterBlockFacet)
+  if (!parsed) {
+    if (!factory) return Decoration.none
+    return Decoration.set([Decoration.widget({ widget: factory(null), block: true, side: -1 }).range(0)])
+  }
   if (state.field(rawField)) {
     const line = state.doc.lineAt(parsed.from)
     return Decoration.set([
@@ -316,24 +330,15 @@ function buildDecorations(state: EditorState): DecorationSet {
     ])
   }
   return Decoration.set([
-    Decoration.replace({ widget: new FrontmatterWidget(parsed.pairs), block: true }).range(
+    Decoration.replace({ widget: factory ? factory(parsed) : new FrontmatterWidget(parsed.pairs), block: true }).range(
       parsed.from,
       parsed.to
     )
   ])
 }
 
-const frontmatterDecoField = StateField.define<DecorationSet>({
-  create: (state) => buildDecorations(state),
-  update(deco, tr) {
-    if (tr.docChanged || tr.effects.some((e) => e.is(toggleRawEffect))) {
-      return buildDecorations(tr.state)
-    }
-    return deco.map(tr.changes)
-  },
-  provide: (f) => EditorView.decorations.from(f)
-})
-
 export function frontmatterTableExtension(): Extension {
-  return [rawField, frontmatterDecoField]
+  // Derived from state (not a view plugin), so the block decorations are allowed; it re-reads the
+  // facet, so a Plain/Markdown switch swaps the table and the panel without a document change.
+  return [rawField, EditorView.decorations.compute([rawField, frontmatterBlockFacet, 'doc'], buildDecorations)]
 }

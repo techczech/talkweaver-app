@@ -13,7 +13,8 @@
   "quote": [
     "layout-quote",
     "slide-quote",
-    "quote-layout"
+    "quote-layout",
+    "qf"
   ],
   "media": [
     "slot",

@@ -174,7 +174,7 @@
      guard here means a statement paragraph (which is ALSO `.content-p`) takes ONLY the
      `.statement, .layout-statement > p` rule above — the two never fight. Card comments
      (`.content-p.card-comment`) take the card-scoped override (later in this sheet). */
-  .slide-content:not(.layout-statement) .content-p:not(.card-comment) {
+  .slide-content:not(.layout-statement) .content-p:not(.card-comment):not(:where(.layout-statement *)) {
     margin: 0 0 .6em;
     padding-left: 22px;
     border-left: 5px solid var(--accent);
@@ -187,8 +187,8 @@
        token never overflows the slide horizontally. (Titles keep overflow-wrap:normal.) */
     overflow-wrap: anywhere;
   }
-  .slide-content:not(.layout-statement) .content-p:not(.card-comment):last-child { margin-bottom: 0; }
-  .slide-content:not(.layout-statement) .content-p:not(.card-comment) strong { color: var(--accent); }
+  .slide-content:not(.layout-statement) .content-p:not(.card-comment):not(:where(.layout-statement *)):last-child { margin-bottom: 0; }
+  .slide-content:not(.layout-statement) .content-p:not(.card-comment):not(:where(.layout-statement *)) strong { color: var(--accent); }
   /* [data-fragment] now lives ONLY on card-gallery cards (subslide stepping). Feature lists,
      quotes, figures and timeline entries no longer emit it — they render fully visible by
      default and only step when reveal/focus mode is on (see mode CSS near the runtime). */
@@ -4533,7 +4533,7 @@
   .slide[data-title-layout="hidden"] .slide-content.layout-statement:has(> .slide-head-quiet) {
     display: grid !important;
     grid-template-columns: 1fr !important;
-    justify-items: center;
+    justify-items: start;
     align-content: center;
   }
   .slide[data-title-layout="left"] .slide-content.layout-statement:has(> .slide-head-quiet) > *:not(.slide-head),
@@ -4623,6 +4623,9 @@
     letter-spacing: -.025em;
     max-width: 12em;
   }
+  /* ADR-0023 §9 continuation mark: parts 1..n−1 of a split quote say "n / N" in small mono chrome
+     at the panel's bottom-right, inside the padding so the text block keeps its budget. The doctor
+     lists .quote-continuation as small chrome. */
   .slide-content.layout-quote > blockquote {
     background: var(--tint);
     border-left: .22em solid var(--accent);
@@ -6159,9 +6162,12 @@
   .slide-content:has(> .slot > .slot-copy > .feature-list[data-list-density="long"]) { --list-lh: 1.25; --list-gap: .82; }
   .slide-content:has(> .feature-list[data-list-density="dense"]),
   .slide-content:has(> .slot > .slot-copy > .feature-list[data-list-density="dense"]) { --list-lh: 1.18; --list-gap: .64; }
-  /* ADR-0023 §9 continuation mark: parts 1..n−1 of a split quote say "n / N" in small mono chrome
-     at the panel's bottom-right, inside the padding so the text block keeps its budget. The doctor
-     lists .quote-continuation as small chrome. */
+  /* A source line with italics, bold or a link keeps its text in ONE flex item (the quote renderer wraps it),
+     so it reads as a flowing line that wraps beside the bar. */
+/* QUOTE FORMS: colour and type (geometry: layouts/quote.css). The interface face inside a drawn
+   interface is the system stack, as on the X post card, and quoted words are weight 400 in every
+   form (never bold). The card is X's light theme; there is no dark skin yet. The small chrome inside
+   it (24 to 42 px) sits outside the type floor like .sim (ADR-0038). */
   /* === Ticket 21 — TABLE FILLS THE BAND (Dominik: "adjust table size to minimise vertical white
      space"). Row padding scales with the room the band leaves: --table-band is a conservative
      estimate of the title-to-footer band (stage minus the 6cqh title offset, the title bar, the
@@ -6589,6 +6595,42 @@
    swap); over a disclosure in the picture the pane shows a hand (the pane takes the click). */
 .preview > iframe.preview-incoming { visibility: hidden; }
 .preview.sim-pane-control { cursor: pointer; }
+/* Title in a left panel (data-title-layout="left") on a slide that also shows the section's
+   contents rail (.ct-rail-host, painted by the deck runtime): the rail owns the leftmost strip,
+   so the title column starts where the rail ends: rail, title column, body.
+
+   The title column keeps its own tint but the tint no longer starts at the slide edge, so there
+   is no second band behind the rail. Column widths are the Placement values (30, 35, 40, 50)
+   measured on the space to the right of the rail: --ct-title-w = share * (100cqw - --ct-rail-w).
+   Measured on the whole slide the 50 column would leave the body about 330px at 1280 wide.
+   Every selector is scoped to .ct-rail-host, so slides outside a contents section are untouched.
+
+   Specificity beats stage.css without !important, except grid-template-columns, which
+   stage.css sets with !important.
+
+   Not in print: base.css hides the rail there and removes the content padding, so the print
+   page keeps the plain title panel. */
+@media not print {
+  .slide.ct-rail-host[data-title-layout="left"] { --ct-title-w: calc((100cqw - var(--ct-rail-w)) * .26); }
+  .slide.ct-rail-host[data-title-layout="left"][data-split="30"] { --ct-title-w: calc((100cqw - var(--ct-rail-w)) * .30); }
+  .slide.ct-rail-host[data-title-layout="left"][data-split="35"] { --ct-title-w: calc((100cqw - var(--ct-rail-w)) * .35); }
+  .slide.ct-rail-host[data-title-layout="left"][data-split="35"]:has(> .slide-content > .fl-annotated) { --ct-title-w: calc((100cqw - var(--ct-rail-w)) * .26); }
+  .slide.ct-rail-host[data-title-layout="left"][data-split="40"] { --ct-title-w: calc((100cqw - var(--ct-rail-w)) * .40); }
+  .slide.ct-rail-host[data-title-layout="left"][data-split="50"] { --ct-title-w: calc((100cqw - var(--ct-rail-w)) * .50); }
+
+  .slide.ct-rail-host[data-title-layout="left"]:has(> .slide-content > .slide-head:not(.slide-head-quiet)) {
+    background: linear-gradient(to right, transparent 0, transparent var(--ct-rail-w), var(--tint) var(--ct-rail-w), var(--tint) calc(var(--ct-rail-w) + var(--ct-title-w)), transparent calc(var(--ct-rail-w) + var(--ct-title-w)));
+  }
+  .slide.ct-rail-host[data-title-layout="left"]:has(> .slide-content > .slide-head:not(.slide-head-quiet)) > .slide-content {
+    grid-template-columns: var(--ct-title-w) 1fr !important;
+  }
+  /* The head is positioned against the slide-content padding box, which starts at the slide edge:
+     move it right by the rail width so it sits in the first grid column. */
+  .slide.ct-rail-host[data-title-layout="left"] > .slide-content:has(> *:not(.slide-head)) > .slide-head:not(.slide-head-quiet) {
+    left: var(--ct-rail-w);
+    width: var(--ct-title-w);
+  }
+}
 /* Embedded local page (0.38 ticket 11): the labelled box shown wherever the page is not running.
    The compiler writes it into the figure beside an empty sandboxed frame (embed-frame.mjs); the
    deck runtime sets data-embed-state="live" on the figure only while its slide is being presented.
@@ -6880,6 +6922,31 @@ body:not(.audience-mode) figure.slide-embed[data-embed="local"][data-embed-stopp
     margin-bottom: 0 !important;
   }
 
+/* GitHub #127 — a carousel item shows its content as the same content shows on a slide of its
+   own. An item is a `.slide-content` nested in `.card.carousel-subslide` inside the parent's
+   `.slide-content.layout-carousel`, so rules written for a slide's own content miss it, or leak
+   into it through the outer wrapper (statement.css guards its paragraph rules with
+   `:not(:where(.layout-statement *))` for the leak). Two things remain here. */
+
+/* (a) The text-plus-picture slot takes the item's band, as media.css gives it on a slide's own
+   content (that rule matches only `.slide > .slide-content > .slot`). Without it the slot is as
+   tall as its copy and the media column (`height:100%; overflow:hidden`) clips the picture to
+   one text line. The slot centres its own two columns, so the auto margins are cleared. */
+.card-gallery.carousel .card.carousel-subslide > .slide-content > .slot {
+  flex: 1 1 0%;
+  min-height: 0;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+}
+
+/* (b) `.card strong` (base.css) makes bold a full-width block; an item is a `.card` only for the
+   stepping machinery, so bold inside it stays inline, like on a slide of its own. */
+.card-gallery.carousel .card.carousel-subslide strong {
+  display: inline;
+  margin-bottom: 0;
+  font-weight: bolder;
+}
+
  /* ADR-0030: 1180px of the 1280px canvas */
   .smartart-grid.count-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.6cqw; margin-top: 0; --sa-text: max(var(--type-floor), calc(var(--fs-body) * .75)); }
 
@@ -7122,6 +7189,7 @@ body:not(.audience-mode) figure.slide-embed[data-embed="local"][data-embed-stopp
     --quote-chrome-band: 59px;
     padding-bottom: calc(var(--slide-pad-y) + var(--quote-chrome-band));
   }
+  .slide-content.layout-quote > blockquote cite > .cite-text { min-width: 0; overflow-wrap: anywhere; }
   .slide-content.layout-quote > blockquote .quote-continuation {
     position: absolute;
     right: .6em;
@@ -7156,6 +7224,186 @@ body:not(.audience-mode) figure.slide-embed[data-embed="local"][data-embed-stopp
     left: -.68em;
     top: -.12em;
   }
+/* QUOTE FORMS (docs/design/2026-10-11-source-styled-quote-slides, ADR-0038). A quote whose source
+   line names a post on X, a video, a book, a paper or a web page draws as that source: <figure
+   class="qf …"> built by compiler/scripts/lib/quote-forms.mjs. The form is full-bleed over the
+   slide (it ignores --slide-pad-*) and centres its content on both axes. GEOMETRY lives here, colour
+   and type in skin/quote.css. Sizes were drawn at 1920 × 1080 and are emitted as cqw (px ÷ 19.2).
+   The words take the largest step that fits (data-step 1 to 4, the compiler's estimate; the presenter
+   runtime checks the real box); below step 4 the form refuses and the slide is a Plain quote. */
+  .qf {
+    --qf-step-1: 3.4cqw;
+    --qf-step-2: 3cqw;
+    --qf-step-3: 2.6cqw;
+    --qf-step-4: 2.3cqw;
+    position: absolute; inset: 0; margin: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  /* stage.css @order 1355 and 1360 put every direct child of a title-less slide into grid column 1 or 2
+     (!important), which would also make that grid area the form's containing block. The form is over the
+     whole slide: take it out of the grid. The repeated class outweighs the :has() rules there. */
+  .slide .slide-content.layout-quote > figure.qf.qf.qf {
+    grid-column: auto !important;
+    grid-row: auto !important;
+    place-self: stretch;
+    max-width: none;
+    margin: 0 !important;
+  }
+  .qf[data-step="1"] { --qf-words: var(--qf-step-1); }
+  .qf[data-step="2"] { --qf-words: var(--qf-step-2); }
+  .qf[data-step="3"] { --qf-words: var(--qf-step-3); }
+  .qf[data-step="4"] { --qf-words: var(--qf-step-4); }
+  .qf *, .qf *::before, .qf *::after { box-sizing: border-box; }
+  /* The fit estimate (wrappedLinesByWidth) breaks a token longer than a line across lines, so the box must too. */
+  .qf-words { margin: 0; padding: 0; font-size: var(--qf-words); overflow-wrap: anywhere; min-width: 0; }
+  .qf-words p { margin: 0; }
+  .qf-words p + p { margin-top: .6em; }
+  .qf-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .qf-ic { flex: none; display: block; }
+  .qf-avatar { width: 5cqw; height: 5cqw; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex: none; }
+
+  /* Tweet: the X post card (spec 6.2) */
+  /* Borders are 3px at 1920 = 0.15625cqw; a computed width just under 2 canvas px is floored to 1, so they carry 0.157cqw. */
+  .qf-x-card { width: 71.875cqw; border-width: 0.157cqw; border-style: solid; border-radius: 2.0833cqw; padding: 2.9167cqw 3.75cqw 2.0833cqw; }
+  .qf-x-head { display: flex; align-items: center; gap: 1.25cqw; }
+  .qf-x-who { display: flex; flex-direction: column; flex: 1; min-width: 0; line-height: 1.25; }
+  .qf-x-mark { flex: none; width: 2.9167cqw; height: 2.9167cqw; }
+  /* The icons carry their size in cqw: an <svg width> attribute is canvas px and would scale with the stage. */
+  .qf-x-actions .qf-ic { width: 2.3958cqw; height: 2.3958cqw; }
+  .qf-x-head > .qf-x-mark:only-child { margin-left: auto; }
+  .qf-tweet .qf-words { margin-top: 2.0833cqw; }
+  .qf-x-time { margin-top: 1.7708cqw; line-height: 1.3; }
+  .qf-x-actions { margin-top: 1.5625cqw; border-top-width: 0.157cqw; border-top-style: solid; padding-top: 1.4583cqw; display: flex; justify-content: space-between; align-items: center; }
+  .qf-x-actions > span { display: flex; }
+  .qf-x-right { gap: 2.9167cqw; }
+
+  /* Awaiting words: dashed boxes marking what is missing. Emitted hidden; only the app's own
+     editing previews (a .qf-authoring ancestor, or the body of a preview document, markSlidePreviewHtml's data-tw-preview) show them, so presenting, the handout and print never do. */
+  .qf-placeholder { display: none; }
+  .qf-authoring .qf-placeholder, [data-tw-preview] .qf-placeholder { display: flex; }
+  .qf-ph { align-items: center; border-width: 0.157cqw; border-style: dashed; border-radius: 0.9375cqw; }
+  .qf-ph-who { flex: none; padding: 0.7292cqw 1.5625cqw; line-height: 1.25; }
+  .qf-avatar-empty { background: none; border-width: 0.157cqw; border-style: dashed; }
+  .qf-awaiting .qf-x-mark { margin-left: auto; }
+  .qf-x-card .qf-ph-words { margin-top: 2.0833cqw; min-height: 13.0208cqw; padding: 0 2.0833cqw; line-height: 1.33; }
+
+  /* Video, no picture: the YouTube player (spec 6.3). 1320 wide, centred; the words are the captions. */
+  .qf { --qf-floor: 1.9375cqw; }
+  .qf-yt { width: 68.75cqw; }
+  .qf-yt-player { position: relative; width: 68.75cqw; height: 38.6979cqw; border-radius: 1.3542cqw; overflow: hidden; }
+  .qf-yt-captions { position: absolute; left: 5.7292cqw; right: 5.7292cqw; bottom: 9.8958cqw; text-align: center; text-wrap: balance; }
+  .qf-yt-captions span { line-height: 1.62; padding: 0.3125cqw 0.8333cqw; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+  .qf-yt-controls { position: absolute; left: 0; right: 0; bottom: 0; padding: 0 1.875cqw 1.25cqw; }
+  .qf-yt-track { position: relative; height: 0.4167cqw; border-radius: 0.2083cqw; margin-bottom: 1.0417cqw; }
+  .qf-yt-played { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 0.2083cqw; }
+  .qf-yt-knob { position: absolute; top: 50%; width: 1.5625cqw; height: 1.5625cqw; margin: -0.7812cqw 0 0 -0.7812cqw; border-radius: 50%; }
+  .qf-yt-row { display: flex; justify-content: space-between; align-items: center; }
+  .qf-yt-left, .qf-yt-right { display: flex; align-items: center; gap: 1.5625cqw; }
+  .qf-yt-time { line-height: 1; margin-left: 0.3125cqw; }
+  .qf-yt-controls .qf-ic { width: 2.0833cqw; height: 2.0833cqw; }
+  .qf-yt-title { margin: 1.25cqw 0 0; line-height: 1.25; }
+  .qf-yt-channel { display: flex; align-items: center; gap: 1.0417cqw; margin-top: 0.8333cqw; }
+  .qf-avatar-s { width: 3.75cqw; height: 3.75cqw; }
+  .qf-yt-subscribe { padding: 0.625cqw 1.4583cqw; border-radius: 2.0833cqw; }
+  .qf-yt-likes { margin-left: auto; display: flex; align-items: center; gap: 1.1458cqw; border-radius: 2.0833cqw; padding: 0.625cqw 1.5625cqw; }
+  .qf-yt-likes .qf-ic { width: 1.875cqw; height: 1.875cqw; }
+  .qf-yt-sep { width: 0.1042cqw; height: 1.7708cqw; }
+
+  /* The left side panel (spec 6.6). SHARED by video, book, paper and web (sidePanelFigure in
+     quote-forms.mjs): a 653 wide panel at the left edge, full height; the words column beside it. */
+  .qf-side { align-items: stretch; justify-content: flex-start; }
+  .qf-panel { width: 34.0104cqw; flex: none; position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+  .qf-panel::after { content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 0.157cqw; z-index: 3; }
+  .qf-picture { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; }
+  .qf-body { flex: 1; min-width: 0; display: flex; align-items: center; padding: 5.625cqw 3.75cqw 5.625cqw 3.9583cqw; }
+  .qf-body-in { width: 100%; }
+  .qf-source { margin-top: 2.7083cqw; padding-left: 1.25cqw; border-left: 0.4167cqw solid; }
+  .qf-source-who { line-height: 1.3; }
+  .qf-source-where { line-height: 1.3; margin-top: 0.3125cqw; }
+  .qf-pill-row { margin-top: 1.0417cqw; }
+  .qf-pill { display: inline-block; border-radius: 52.0312cqw; padding: 0.2083cqw 1.3542cqw 0.2604cqw; line-height: 1.3; }
+  .qf-source-id { line-height: 1.3; margin-top: 0.8333cqw; overflow-wrap: anywhere; }
+  .qf-side .qf-ph-words { margin-bottom: 2.7083cqw; min-height: 13.0208cqw; padding: 0 2.0833cqw; line-height: 1.4; }
+  .qf-side .qf-body-in > .qf-ph-words + .qf-source { margin-top: 0; }
+
+  /* Book (spec 6.6): a cover picture fills the panel; a cover far from the panel's shape is shown whole on sand. */
+  .qf-source-title { font-weight: 700; }
+  .qf-cover-whole .qf-picture { object-fit: contain; }
+  /* Book with no picture: a cover made from the title and the authors, on sand (400 x 560 at 1920). */
+  .book-generated .qf-panel::after { display: none; }
+  .qf-cover-wrap { display: flex; flex-direction: column; align-items: center; gap: 1.3542cqw; }
+  .qf-cover { position: relative; width: 20.8333cqw; height: 29.1667cqw; border-width: 0.1042cqw; border-style: solid; border-radius: 0.2083cqw 0.5208cqw 0.5208cqw 0.2083cqw; box-shadow: 0.625cqw 0.8333cqw 1.5625cqw var(--qf-cover-shadow); padding: 2.9167cqw 2.0833cqw 2.2917cqw 3.75cqw; display: flex; flex-direction: column; }
+  .qf-cover-spine { position: absolute; left: 0; top: 0; bottom: 0; width: 1.6667cqw; border-radius: 0.2083cqw 0 0 0.2083cqw; }
+  .qf-cover-title { line-height: 1.15; margin: auto 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6; overflow: hidden; }
+  .qf-cover-title-l { font-size: 2.8125cqw; }
+  .qf-cover-title-m { font-size: 2.2917cqw; }
+  .qf-cover-title-s { font-size: 1.875cqw; }
+  .qf-cover-authors { font-size: 1.6667cqw; line-height: 1.35; margin-top: auto; }
+  .qf-cover-title + .qf-cover-authors { margin-top: 0; }
+  .qf-cover-pub { font-size: 1.5625cqw; line-height: 1.3; text-align: center; padding: 0 1.5625cqw; }
+
+  /* Paper (spec 6.5): no picture, a journal page 900 x 980 with the sentence highlighted; a picture, the left panel
+     with the page's top showing (object-position: top). */
+  .qf-paper .qf-picture { object-position: top center; }
+  .qf-page { width: 46.875cqw; height: 51.0417cqw; flex: none; border-width: 0.1563cqw; border-style: solid; padding: 2.6042cqw 3.6458cqw 2.0833cqw; display: flex; flex-direction: column; gap: 1.3542cqw; text-align: left; line-height: 1.3; }
+  .qf-page > figcaption { display: flex; flex-direction: column; gap: 1.3542cqw; }
+  .qf-page-head { display: flex; flex-direction: column; gap: 0.1042cqw; font-size: 1.3542cqw; line-height: 1.3; padding-bottom: 0.8333cqw; border-bottom-width: 0.2083cqw; border-bottom-style: solid; }
+  .qf-page-head b { font-size: 1.7708cqw; letter-spacing: 0.04em; text-transform: uppercase; }
+  .qf-page-title { margin: 0; font-size: 2.1875cqw; line-height: 1.2; }
+  .qf-page-authors { margin: -0.5208cqw 0 0; font-size: 1.4583cqw; line-height: 1.35; }
+  .qf-page-filler { display: flex; flex-direction: column; gap: 1.0417cqw; }
+  .qf-page-filler span { display: block; height: 0.8333cqw; border-radius: 0.4167cqw; }
+  .qf-page .qf-words { line-height: 1.36; }
+  .qf-words mark { padding: 0 0.12em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+  .qf-page-foot { margin-top: auto; display: flex; justify-content: space-between; align-items: baseline; gap: 1.25cqw; font-size: 1.3542cqw; border-top-width: 0.1563cqw; border-top-style: solid; padding-top: 0.7292cqw; }
+  .qf-page-number { font-size: 1.7708cqw; margin-left: auto; }
+  .qf-page .qf-ph-words { min-height: 9.8958cqw; padding: 0 1.0417cqw; line-height: 1.3; }
+  .qf-paper.qf-side .qf-panel { z-index: 2; }
+
+  /* Web (spec 17): no picture, a browser window 1560 wide with the page's words as its text; a picture, the left
+     panel under an address bar. Built from the mockup's "Web: a page in a browser window" block (px / 19.2). */
+  .qf-web-win { width: 81.25cqw; flex: none; text-align: left; border-width: 0.157cqw; border-style: solid; border-radius: 1.4583cqw; overflow: hidden; }
+  .qf-web-bar { flex: none; min-height: 4.7917cqw; display: flex; align-items: center; justify-content: center; padding: 0.8333cqw 1.875cqw; border-bottom-width: 0.157cqw; border-bottom-style: solid; }
+  .qf-web-pill { display: flex; align-items: center; justify-content: center; gap: 0.7292cqw; width: 32.2917cqw; max-width: 100%; min-height: 2.9167cqw; padding: 0.4167cqw 1.4583cqw; border-width: 0.1042cqw; border-style: solid; border-radius: 1.4583cqw; line-height: 1.25; }
+  .qf-web-pill .qf-ic, .qf-web-domain .qf-ic { width: 1.5625cqw; height: 1.5625cqw; }
+  .qf-web-host { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: anywhere; }
+  .qf-web-mast { display: flex; align-items: center; gap: 0.9375cqw; height: 4.7917cqw; padding: 0 4.1667cqw; }
+  .qf-web-mark { flex: none; width: 2.5cqw; height: 2.5cqw; border-radius: 0.625cqw; display: flex; align-items: center; justify-content: center; line-height: 1; }
+  .qf-web-site { min-width: 0; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .qf-web-nav { flex: none; margin-left: auto; padding-left: 2.0833cqw; display: flex; gap: 0.8333cqw; }
+  .qf-web-nav span { width: 4.6875cqw; height: 0.7292cqw; border-radius: 0.3646cqw; }
+  .qf-web-post { padding: 2.7083cqw 4.1667cqw 0; }
+  .qf-web-headline { margin: 0; line-height: 1.25; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+  .qf-web-by { display: flex; align-items: center; gap: 0.8333cqw; margin-top: 1.0417cqw; line-height: 1.2; min-width: 0; }
+  .qf-web-by:first-child { margin-top: 0; }
+  .qf-web-by > span, .qf-web-by > b { min-width: 0; overflow-wrap: anywhere; }
+  .qf-avatar-xs { width: 2.5cqw; height: 2.5cqw; }
+  .qf-web-body { padding: 2.2917cqw 4.1667cqw 3.125cqw; }
+  .qf-web-bar + .qf-web-body, .qf-web-win > .qf-web-body:first-child { padding-top: 3.3333cqw; }
+  .qf-web.qf-full .qf-words { line-height: 1.4; }
+  .qf-web-domain { display: flex; align-items: center; gap: 0.7292cqw; margin-top: 2.0833cqw; line-height: 1.25; }
+  .qf-web-domain > span { min-width: 0; overflow-wrap: anywhere; }
+  .qf-web-body .qf-ph-words { justify-content: flex-start; min-height: 13.0208cqw; padding: 0 2.0833cqw; line-height: 1.4; }
+  /* With a picture: the address bar tops the left panel and the picture fills the rest of it. */
+  .qf-web.qf-side .qf-panel { flex-direction: column; align-items: stretch; justify-content: flex-start; z-index: 2; }
+  .qf-web.qf-side .qf-web-bar { height: 4.7917cqw; padding: 0 1.4583cqw; }
+  .qf-web.qf-side .qf-web-pill { width: 100%; }
+  .qf-web.qf-side .qf-picture { position: relative; inset: auto; flex: 1 1 auto; min-height: 0; height: auto; object-position: top center; }
+
+  /* Over a video's picture: the YouTube base, lozenge, time pill and progress bar (spec 6.3). */
+  .qf-yt-base { position: absolute; left: 0; right: 0; bottom: 0; height: 13.5417cqw; z-index: 1; }
+  .qf-yt-base .qf-yt-mark { position: absolute; left: 1.875cqw; bottom: 3.9583cqw; width: 5.4167cqw; height: 3.8542cqw; }
+  .qf-yt-timepill { position: absolute; right: 1.875cqw; bottom: 4.7917cqw; line-height: 1; padding: 0.5208cqw 0.9375cqw; border-radius: 0.5208cqw; }
+  .qf-yt-base .qf-yt-track { position: absolute; left: 0; right: 0; bottom: 0; height: 0.5208cqw; margin: 0; border-radius: 0; }
+  .qf-yt-base .qf-yt-played { border-radius: 0; }
+  .qf-yt-base .qf-yt-knob { width: 1.4583cqw; height: 1.4583cqw; margin: -0.7292cqw 0 0 -0.7292cqw; }
+  .qf-yt-captions.qf-ph-words { justify-content: center; min-height: 9.8958cqw; padding: 0 2.0833cqw; line-height: 1.3; }
+
+  /* Handout, share, venue and print: the written-out source link (spec 9). The stage never carries it.
+     The video player's link takes the channel row's right end, where the Subscribe and like pills were. */
+  .qf-source-link { overflow-wrap: anywhere; }
+  .qf-yt-link { margin-left: auto; font-size: 1.4583cqw; text-align: right; }
+  .qf-yt-channel > .qf-yt-link:first-child { margin-left: 0; }
 /* AI chat and terminal simulation slides: {chat}, {chat-lanes}, {terminal}, {terminal-agent}.
    Spec and drawings: docs/design/2026-10-08-ai-chat-and-terminal-simulation-designs/
    (ai-chat-and-terminal-simulation-locked-spec.md, ...-locked-mockup.html, locked-*.png).
@@ -7488,6 +7736,68 @@ body:not(.audience-mode) figure.slide-embed[data-embed="local"][data-embed-stopp
   .timeline .tl-spine-card ol.tl-spine-events > li { font-size: inherit; line-height: inherit; border: 0; padding: 0; }
   .timeline-dynamic[data-tl-stops] .tl-dyn-w { display: block; font-size: max(var(--type-floor), 2cqw); line-height: 1.25; }
   .timeline .tl-dyn-list ol.tl-dyn-entries > li { font-size: inherit; line-height: inherit; }
+/* Plain view ticket 07 (spec T14) - an icon on a slide title and an icon beside a paragraph.
+   Drawing: docs/plans/plain-editing-view/locked/icons-on-slides-locked.html.
+
+   Title. The compiler writes the icon INSIDE the painted h1 (07-assembly renderSlideHead):
+     h1 > .title-with-icon[data-title-icon="before|above"] > .fl-icon.title-icon + .title-text
+   (and the same span inside the statement paragraph that paints a bodyless heading, and inside
+   a poster's visible h2.tp-title: the opening slide and an authored {title} / {closing} slide)
+   so every title rule, in every title placement and look, still addresses one h1, and the runtime
+   title fit (slide-fit.js) measures the icon's width together with the words. Sizes are in em of
+   the title, taken from the drawing: before = a 76px icon and a 26px gap on a 72px title; above =
+   a 116px icon and a 30px gap on an 88px title. The icon keeps the .fl-icon colour (the accent).
+
+   Paragraph. A `.content-p` carrying data-para-icon (06-block-renderers) is two columns: the icon
+   in a column 15% of the paragraph's width (never wider than 4em of its text), the text beside it,
+   both starting at the first line. Where a slide sets its paragraphs at different sizes, the
+   runtime (slide-fit.js alignParagraphIcons) gives the later ones the first one's column through
+   --para-icon-col, --para-icon-inset and --para-icon-size, so the icon columns line up.
+
+   Unmarked block: sorts after every migrated rule. Every selector here names a class or attribute
+   that only the new syntax emits, so a slide without it is styled exactly as before. */
+.slide-content :is(h1, h2.tp-title, p) > .title-with-icon {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: .36em;
+  max-width: 100%;
+  vertical-align: top;
+}
+.slide-content :is(h1, h2.tp-title, p) > .title-with-icon > .title-text { min-width: 0; }
+.slide-content :is(h1, h2.tp-title, p) > .title-with-icon > .title-icon {
+  width: 1.06em;
+  height: 1.06em;
+  /* centred on the title's first line; the plain offset is for a browser without the lh unit */
+  margin-top: .03em;
+  margin-top: calc((1lh - 1.06em) / 2);
+}
+.slide-content :is(h1, h2.tp-title, p) > .title-with-icon[data-title-icon="above"] {
+  flex-direction: column;
+  gap: .34em;
+}
+.slide-content :is(h1, h2.tp-title, p) > .title-with-icon[data-title-icon="above"] > .title-icon {
+  width: 1.32em;
+  height: 1.32em;
+  margin-top: 0;
+}
+
+.slide-content p.content-p[data-para-icon] {
+  display: grid;
+  grid-template-columns: var(--para-icon-col, min(15%, 4em)) minmax(0, 1fr);
+  align-items: start;
+  text-align: left;
+}
+.slide-content p.content-p[data-para-icon] > .para-icon {
+  width: var(--para-icon-size, 83.4%);
+  height: auto;
+  aspect-ratio: 1;
+  margin-top: .2em;
+  margin-left: var(--para-icon-inset, 0px);
+}
+.slide-content p.content-p[data-para-icon] > .para-icon-text { min-width: 0; }
+
+/* The Tab title look paints the title on the accent: the icon takes the title's own colour there. */
+.slide[data-title-look="tab"] .slide-content h1 > .title-with-icon > .title-icon { color: inherit; }
 
   /* ADR-0028 §7: the head is ONE grid item, so the block (kicker + title) is centred on the stage
      while the kicker — the parent-section label on a subsection divider — shares the title's left
@@ -9905,95 +10215,322 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
 .slide-content > .feature-list.fl-narrow-cols > li > .fl-sublist > li:not(:last-child)::after { content: "·"; margin: 0 .55em; color: var(--muted); display: inline; }
 .slide-content > .feature-list.fl-narrow-cols > li > .fl-sublist > li > .fl-subtext { grid-column: auto; display: inline; }
 
+  .qf {
+    --qf-ui: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .qf-words { font-weight: 400; font-style: normal; background: none; border: 0; box-shadow: none; }
+  /* Bold typed inside the words is bold only (the left side panel keeps today's accent chip, spec 2.6): neither the accent chip of the plain quote nor the
+     accent colour of slide text (those selectors in base.css and skin/base.css are less specific). */
+  .slide .qf:not(.qf-side) .qf-words strong { font-weight: 700; background: none; color: inherit; padding: 0; border-radius: 0; }
+  /* The decorative quotation mark of every other blockquote (base.css G1) is not part of the card. */
+  .qf-words::before { content: none; display: none; }
+  .qf-avatar { color: #fff; font: 700 1.9792cqw/1 var(--qf-ui); }
 
-  /* ===== ADR-0028 §10: statement slides, revised (locked 2026-09-28) =====
+  .qf-x-card { background: #fff; border-color: #cfd9de; box-shadow: 0 0.5208cqw 2.0833cqw rgba(16,20,24,.08); font-family: var(--qf-ui); color: #0f1419; --qf-x-muted: #536471; --qf-x-rule: #eff3f4; }
+  .qf-x-name { font-size: 1.9792cqw; font-weight: 700; }
+  .qf-x-handle { font-size: 1.5625cqw; color: var(--qf-x-muted); }
+  .qf-tweet .qf-words { line-height: 1.33; font-weight: 400; letter-spacing: -.005em; }
+  .qf-x-time { font-size: 1.4583cqw; color: var(--qf-x-muted); }
+  .qf-x-actions { border-top-color: var(--qf-x-rule); color: var(--qf-x-muted); }
+
+  .qf-ph { border-color: #7d8a93; color: #536471; font-family: var(--qf-ui); font-weight: 400; }
+  .qf-ph-who { font-size: 1.5625cqw; }
+  .qf-avatar-empty { border-color: #7d8a93; }
+  .qf-x-card .qf-ph-words { font-size: var(--qf-step-2); }
+
+  /* Video: the YouTube player (spec 6.3) */
+  .qf-yt { font-family: var(--qf-ui); color: #0f0f0f; }
+  .qf-yt-player { background: linear-gradient(160deg, #2b333d 0%, #14181d 55%, #0b0d10 100%); }
+  .qf-yt-captions span { font-family: Roboto, Arial, var(--qf-ui); font-weight: 500; color: #fff; background: rgba(8,8,8,.78); }
+  .qf-yt-controls { background: linear-gradient(to top, rgba(0,0,0,.55), rgba(0,0,0,0)); color: #fff; }
+  .qf-yt-track { background: rgba(255,255,255,.35); }
+  .qf-yt-played, .qf-yt-knob { background: #f00; }
+  .qf-yt-time { font: 500 1.4583cqw/1 var(--qf-ui); }
+  .qf-yt-title { font: 700 2.1875cqw/1.25 var(--qf-ui); }
+  .qf-yt-channel b { font-size: 1.6667cqw; }
+  .qf-yt-subscribe { background: #0f0f0f; color: #fff; font-size: 1.4063cqw; font-weight: 600; }
+  .qf-yt-likes { background: #f2f2f2; }
+  .qf-yt-sep { background: #cfcfcf; }
+  .qf-yt-captions.qf-ph-words { color: #d5dbe0; border-color: rgba(255,255,255,.6); font-size: var(--qf-step-3); }
+
+  /* The left side panel (spec 6.6): shared by video, book, paper and web */
+  .qf-panel::after { background: rgba(16,20,24,.14); }
+  .qf-side .qf-words { font-family: var(--sans); font-weight: 400; line-height: 1.42; letter-spacing: -.01em; text-wrap: balance; color: var(--ink); }
+  .qf-source { border-left-color: var(--accent); }
+  .qf-source-who { font-size: max(var(--qf-floor), calc(var(--qf-words) * .58)); font-weight: 600; letter-spacing: .01em; color: var(--ink); }
+  .qf-source-where { font-size: var(--qf-floor); color: var(--muted); font-weight: 400; }
+  .qf-pill { background: var(--ink); color: var(--paper); font-size: var(--qf-floor); font-weight: 700; }
+  .qf-source-id { font-size: var(--qf-floor); color: var(--muted); }
+  .qf-side .qf-ph-words { font-family: var(--sans); font-size: var(--qf-step-1); }
+  /* Book: the made cover is paper and stays light in every skin; the sand under it follows the skin (spec 8). */
+  .qf-source-title { font-weight: 700; }
+  .qf { --qf-sand: #efe6d3; --qf-cover-shadow: rgba(60,40,10,.35); }
+  .book-generated .qf-panel, .qf-cover-whole .qf-panel { background: var(--qf-sand); }
+  .qf-cover { background: #f6f1e4; color: #101418; border-color: #cdbf9c; font-family: var(--sans); }
+  .qf-cover-spine { background: #cdbf9c; }
+  .qf-cover-title { font-weight: 700; }
+  .qf-cover-authors { font-weight: 400; }
+  .qf-cover-pub { font-weight: 400; color: #3b434c; }
+  .is-dark .book-generated .qf-panel, .is-dark .qf-cover-whole .qf-panel { --qf-sand: #3a3327; }
+  .is-dark .qf-cover-pub { color: #e6dcc6; }
+  /* Paper (spec 6.5, 8): the journal page depicts paper and stays light in every skin; the words on it are 400
+     (never bold) with the sentence highlighted. The panel's page picture casts a shadow to the right. */
+  .qf { --qf-highlight: #f6dc6a; }
+  .qf-page { background: #fff; color: #101418; border-color: #d6d6d0; box-shadow: 0 0.7292cqw 2.0833cqw rgba(16,20,24,.14); font-family: var(--sans); }
+  .qf-page-head { color: #5c6570; border-bottom-color: #101418; }
+  .qf-page-head b { color: #101418; font-weight: 700; }
+  .qf-page-title { font-weight: 700; color: #101418; }
+  .qf-page-authors { font-weight: 400; color: #3b434c; }
+  .qf-page-filler span { background: #dedfe0; }
+  .qf-page .qf-words { font-family: var(--sans); font-weight: 400; color: #101418; letter-spacing: 0; }
+  .qf-words mark { background: linear-gradient(to bottom, transparent 8%, var(--qf-highlight) 8%, var(--qf-highlight) 94%, transparent 94%); color: inherit; font-weight: inherit; }
+  .qf-page-foot { color: #5c6570; border-top-color: #e3e2dc; }
+  .qf-page-number { font-weight: 700; color: #101418; }
+  .qf-page .qf-ph-words { color: #5c6570; border-color: #7d8a93; font-size: var(--qf-step-3); }
+  .qf-paper.qf-side .qf-panel { box-shadow: 0.9375cqw 0 2.2917cqw rgba(16,20,24,.18); }
+  .is-dark .qf-page, .is-dark .qf-paper.qf-side .qf-panel { box-shadow: none; }
+  /* Web (spec 17.2, 8): the browser window depicts a page whose colours are not known, so it stays light in every skin.
+     The headline is smaller than the words (38 against 44.16 at the smallest step); the quoted words are 400. */
+  .qf-web-win { background: #fff; color: #101418; border-color: #c9cdd2; box-shadow: 0 0.7292cqw 2.0833cqw rgba(16,20,24,.14); font-family: var(--sans); }
+  .qf-web-bar { background: #e9ecef; border-bottom-color: #c9cdd2; }
+  .qf-web-pill { background: #fff; border-color: #d3d7dc; font: 500 1.4583cqw/1.25 var(--qf-ui); color: #2b323a; }
+  .qf-web-pill .qf-ic { color: #5c6570; }
+  .qf-web-mast { background: var(--qf-web-tint, #ebeced); font-family: var(--qf-ui); }
+  .qf-web-mark { background: var(--qf-web-mark, #3b434c); color: #fff; font: 700 1.4583cqw/1 var(--qf-ui); }
+  .qf-web-site { font-size: 1.6667cqw; font-weight: 700; color: #101418; }
+  .qf-web-nav span { background: rgba(16,20,24,.16); }
+  .qf-web-headline { font: 700 1.9792cqw/1.25 var(--sans); color: #101418; }
+  .qf-web-by { font-size: 1.4583cqw; color: #5c6570; }
+  .qf-web-by b { font-weight: 600; color: #101418; }
+  .qf-avatar-xs { font-size: 1.25cqw; }
+  .qf-web.qf-full .qf-words { font-family: var(--sans); font-weight: 400; letter-spacing: -.01em; color: #101418; }
+  .qf-web-domain { font: 500 1.4583cqw/1.25 var(--qf-ui); color: #5c6570; }
+  .qf-web-body .qf-ph-words { font-size: var(--qf-step-2); font-family: var(--sans); color: #536471; }
+  .qf-web.qf-side .qf-panel { background: #fff; box-shadow: 0.9375cqw 0 2.2917cqw rgba(16,20,24,.18); }
+  .is-dark .qf-web-win, .is-dark .qf-web.qf-side .qf-panel { box-shadow: none; }
+  .qf-yt-base { background: linear-gradient(to top, rgba(0,0,0,.6), rgba(0,0,0,0)); }
+  .qf-yt-timepill { background: rgba(0,0,0,.8); color: #fff; font: 700 1.6667cqw/1 var(--sans); }
+  .qf-avatar-s { font-size: 1.5625cqw; }
+
+  /* One static rendering for the handout, a shared talk, the venue page and print (spec 9): the slide
+     carries .qf-static (quote-forms-static.mjs). The link is the only underline in the design. */
+  .qf-source-link { color: inherit; text-decoration: none; }
+  .qf-static .qf-source-link { color: var(--accent); text-decoration: underline; text-decoration-thickness: .07em; text-underline-offset: .16em; overflow-wrap: anywhere; }
+  .qf-static .qf-doi { min-width: 0; overflow-wrap: anywhere; }
+  .qf-static .qf-x-card, .qf-static .qf-page, .qf-static .qf-web-win, .qf-static .qf-paper.qf-side .qf-panel, .qf-static .qf-web.qf-side .qf-panel { box-shadow: none; }
+  .qf-static .qf-placeholder { display: none !important; }
+  /* The address pill holds the link: it widens to its text (at least 620, at most the bar) and wraps when the address is longer. */
+  .qf-static .qf-web.qf-full .qf-web-pill { width: auto; min-width: 32.2917cqw; }
+  .qf-static .qf-web.qf-full .qf-web-host { white-space: normal; overflow: visible; }
+  @media print {
+    /* Backgrounds are the picture here (highlight, caption boxes, avatars, panel tints): print them. */
+    .qf-static .qf, .qf-static .qf * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    /* Video player: no dark surface. White, a 3 ink outline, captions ink on light boxes, controls in ink; the red played part stays. */
+    .qf-static .qf-yt-player { background: #fff; box-shadow: inset 0 0 0 0.157cqw #101418; }
+    .qf-static .qf-yt-captions span { color: #101418; background: #eceef1; }
+    .qf-static .qf-yt-controls { background: none; color: #101418; }
+    .qf-static .qf-yt-controls .qf-ic { stroke: #101418; }
+    .qf-static .qf-yt-track { background: #d5d8dd; }
+    /* Dark skin prints light. */
+    .qf-static.is-dark, .is-dark .qf-static { --paper: #fdfdfb; --ink: #101418; --muted: #5c6570; --hairline: #e3e2dc; --accent: var(--sec-accent, #0f4bd8); --tint: var(--sec-tint, #e8eefc); background: #fdfdfb; color: #101418; }
+    .qf-static.is-dark .qf-x-card, .is-dark .qf-static .qf-x-card { background: #fff; border-color: #cfd9de; color: #0f1419; --qf-x-muted: #536471; --qf-x-rule: #eff3f4; }
+    .qf-static.is-dark .qf-yt, .is-dark .qf-static .qf-yt { color: #0f0f0f; }
+    .qf-static.is-dark .qf-yt-subscribe, .is-dark .qf-static .qf-yt-subscribe { background: #0f0f0f; color: #fff; }
+    .qf-static.is-dark .qf-yt-likes, .is-dark .qf-static .qf-yt-likes { background: #f2f2f2; }
+    .qf-static.is-dark .qf-yt-sep, .is-dark .qf-static .qf-yt-sep { background: #cfcfcf; }
+    .qf-static.is-dark, .is-dark .qf-static { --qf-sand: #efe6d3; }
+    .qf-static.is-dark .book-generated .qf-panel, .is-dark .qf-static .book-generated .qf-panel, .qf-static.is-dark .qf-cover-whole .qf-panel, .is-dark .qf-static .qf-cover-whole .qf-panel { background: #efe6d3; }
+    .qf-static.is-dark .qf-cover-pub, .is-dark .qf-static .qf-cover-pub { color: #3b434c; }
+  }
+
+
+
+  /* ===== ADR-0028 §10 revised by the slide redesign (locked 13 Oct 2026) =====
      S = a statement paragraph: a direct <p> of the statement layout that is not the kicker or the
      source line. Unmarked, so these rules sort after every migrated block; the selectors carry
-     .slide[data-layout="statement"] so they also outrank the quiet-head repair (@order 1381),
-     whose max-width / border / padding reset used to strip Tint without a title.
+     .slide[data-layout="statement"] so they also outrank the quiet-head repair (@order 1381).
 
-     ONE type and ONE measure for every option (preview.9 follow-up, coordinator ruling): Default,
-     Centred, Tint and Bar all set the statement at the statement size (5.4cqw: 69px without a
-     title; the same rule gives the rail's column its size beside a title) with the same line
-     height, and the same text measure — without a title at most 68cqw, so each side margin is at
-     least 16cqw; beside the rail 14em, centred in the content column. The runtime (slide-fit.js
-     fitStatements) steps a long statement's type down to the quote size before any whole-slide
-     zoom, and shrink-wraps the box to its longest line, for every option alike. The options differ
-     ONLY in the box (ticket 02: separate choices, each with its own hook below): the Halo panel in
-     the slide's sidebar colour (var(--tint), the colour the rail paints), the slide in the colour
-     (Full) or no colour (None); an accent bar left, above or below; Centred also centres and
-     balances its lines. Padding .7em 1em sits OUTSIDE the measure (content-box), and the bar
-     outside the padding, so the text column is identical whatever is chosen.
+     No box round the text, ever: no background, padding or bar on S. The slide carries the colour
+     instead, in one of four Backgrounds (each a hook on .slide-content, 07-assembly):
+       Tinted (default, no hook)  the whole slide in var(--slide-bg, var(--tint)); beside a title
+                                  panel too, with no line at the panel edge
+       Rule (statement-bg-rule)   the normal page; one short accent rule above the first paragraph
+       Strong (statement-bg-strong) the whole slide in --accent, white text; beside a panel the
+                                  panel keeps its tint and only the body area is --accent
+       Lower third (statement-bg-lower-third) the normal page with the bottom 38cqh tinted, edge
+                                  to edge. Not offered beside a title panel, where it renders as Tinted.
+     "Beside a title panel" = a painted left title (data-title-layout="left" with a visible head)
+     or the empty sidebar (.statement-rail); the collapsed quiet head is not a panel.
 
-     An authored {bg=…} (07-assembly: --slide-bg on the section, the slide itself left white when
-     there is a panel) is the panel's colour in place of the section's. border-left 0 so a
-     leftover claim bar (base.css @order 1850) never draws on the Default. */
+     ONE type and ONE measure for every option: the statement size (5.4cqw without a title, the
+     body size beside the rail), the same line height, and the same text measure — without a panel
+     at most 68cqw, beside one 14em. The runtime (slide-fit.js fitStatements) steps a long
+     statement's type down before any whole-slide zoom and shrink-wraps each paragraph.
+
+     Left edge: 20cqw from the slide's left edge without a panel, 9cqw right of the panel edge
+     (--rail-w) with one; drawn as a margin on S, the slide padding / column gap already there taken off. */
+  .slide[data-layout="statement"]:has(> .slide-content.layout-statement) {
+    --stmt-left-x: 20cqw;
+    --stmt-panel-gap: 9cqw;
+    --stmt-col-gap: 5cqw;            /* the column gap beside the panel (stage.css, clamp(40px, 5cqw, 96px)) */
+    --stmt-single-ink: var(--ink);
+    --stmt-lead-ink: var(--ink);
+    --stmt-lead-weight: 600;
+    --stmt-quiet-ink: var(--muted);
+    --stmt-quiet-weight: 400;
+    --stmt-para-gap: .9em;
+    --stmt-bg: var(--slide-bg, var(--tint));
+    --stmt-rule-w: 6cqw; --stmt-rule-h: .4cqh; --stmt-rule-gap: 2.6cqh;
+    --stmt-low-h: 38cqh;
+    --stmt-low-gap: 3cqh;            /* the air kept between the text block and the Lower third band */
+  }
+  .slide[data-layout="statement"]:has(> .slide-content.layout-statement.statement-bg-strong) {
+    --stmt-bg: var(--accent);
+    --stmt-single-ink: #fff;
+    --stmt-lead-ink: #fff;
+    --stmt-quiet-ink: rgb(255 255 255 / .8);
+  }
   .slide[data-layout="statement"] > .slide-content.layout-statement > p:not(.kicker):not(.slide-source) {
-    background: var(--slide-bg, var(--tint));
-    border-left: 0;
+    background: none;
+    border: 0;
     box-sizing: content-box;
-    padding: .7em 1em;
+    padding: 0;
+    justify-self: start;
+    color: var(--stmt-single-ink);
   }
   .slide[data-layout="statement"]:not([data-title-layout="left"]) > .slide-content.layout-statement > p:not(.kicker):not(.slide-source) {
     max-width: min(68cqw, calc(100% - 2em));
   }
   .slide[data-layout="statement"][data-title-layout="left"] > .slide-content.layout-statement > p:not(.kicker):not(.slide-source) {
     max-width: min(14em, calc(100% - 2em));
+  }
+  /* Left edge. Aligned left: the margin below; Centred (statement-centred) has none. */
+  .slide[data-layout="statement"]:not(:is([data-title-layout="left"]:has(> .slide-content > .slide-head:not(.slide-head-quiet)), [data-title-layout="left"]:has(> .slide-content.layout-statement.statement-rail))) > .slide-content.layout-statement:not(.statement-centred) > :is(p:not(.kicker):not(.slide-source), p.kicker, .slide-source, .slide-actions) {
+    margin-left: calc(var(--stmt-left-x) - var(--slide-pad-x));
+  }
+  .slide[data-layout="statement"]:is([data-title-layout="left"]:has(> .slide-content > .slide-head:not(.slide-head-quiet)), [data-title-layout="left"]:has(> .slide-content.layout-statement.statement-rail)) > .slide-content.layout-statement:not(.statement-centred) > :is(p:not(.kicker):not(.slide-source), p.kicker, .slide-source, .slide-actions) {
+    margin-left: calc(var(--stmt-panel-gap) - var(--stmt-col-gap));
+  }
+  /* The [Action: …] row is a direct child too (06-block-renderers): it takes the same left edge as
+     the text above it (the two rules above), and a centred statement centres its buttons. */
+  .slide[data-layout="statement"] > .slide-content.layout-statement > .slide-actions {
+    justify-self: start;
+  }
+  .slide[data-layout="statement"] > .slide-content.layout-statement.statement-centred > .slide-actions {
     justify-self: center;
+    justify-content: center;
   }
-  /* The bar sits outside the padding, so a barred box keeps the same text measure and leaves the
-     bar's width for it inside the column. */
-  .slide[data-layout="statement"]:not([data-title-layout="left"]) > .slide-content.layout-statement.statement-bar-left > p:not(.kicker):not(.slide-source) {
-    max-width: min(68cqw, calc(100% - 2.22em));
-  }
-  .slide[data-layout="statement"][data-title-layout="left"] > .slide-content.layout-statement.statement-bar-left > p:not(.kicker):not(.slide-source) {
-    max-width: min(14em, calc(100% - 2.22em));
-  }
-  /* A multi-part statement reads as ONE box: the parts share it (the runtime gives them one
-     width), the gap between them is the box's own padding. */
+  /* Two or more paragraphs: the first leads, the rest are quieter and the same size. */
   .slide[data-layout="statement"] > .slide-content.layout-statement > p:not(.kicker):not(.slide-source):has(+ p:not(.kicker):not(.slide-source)) {
-    padding-bottom: 0;
+    color: var(--stmt-lead-ink);
+    font-weight: var(--stmt-lead-weight);
   }
   .slide[data-layout="statement"] > .slide-content.layout-statement > p:not(.kicker):not(.slide-source) + p:not(.kicker):not(.slide-source) {
-    margin-top: 0;
-    padding-top: .6em;
+    color: var(--stmt-quiet-ink);
+    font-weight: var(--stmt-quiet-weight);
+    margin-top: var(--stmt-para-gap);
   }
 
-  /* Ticket 02 (Dominik, 29 Sep): the options are separate choices, each with its own hook on
-     .slide-content (07-assembly), so any Background combines with any Alignment and any Bar.
-
-     Alignment — `statement-centred`: centred, balanced lines, with or without a title (beside the
-     rail the text centres in the content column; the older {statement=centred} still stamps it
-     only without a title, as preview.11 rendered it). The one sanctioned exception to "no centred
-     text". Chromium balances up to six lines and the compiler's no-break space covers the rest. */
+  /* Alignment — `statement-centred`: centred in its area (the slide, or the content column beside
+     the panel), centred and balanced lines, no left margin. The one sanctioned exception to "no
+     centred text". Chromium balances up to six lines and the compiler's no-break space covers the rest. */
   .slide[data-layout="statement"] > .slide-content.layout-statement.statement-centred > p:not(.kicker):not(.slide-source) {
+    justify-self: center;
     text-align: center;
     text-wrap: balance;
   }
+  .slide[data-layout="statement"] > .slide-content.layout-statement.statement-centred:has(> .slide-head-quiet) { justify-items: center; }
 
-  /* Background — Halo is the panel above (no hook). `statement-bg-none`: no panel, so no tint and
-     no authored background on the text either (with {bg=…} the authored colour paints the slide,
-     07-assembly). `statement-bg-full` (preview.10's Full colour): the WHOLE slide in the colour —
-     the authored {bg=…} or else the slide's sidebar colour, painted by 07-assembly — and no panel.
-     The text keeps the box's padding either way, so its measure and position are the Halo's. */
-  .slide[data-layout="statement"] > .slide-content.layout-statement.statement-bg-none > p:not(.kicker):not(.slide-source),
-  .slide[data-layout="statement"] > .slide-content.layout-statement.statement-bg-full > p:not(.kicker):not(.slide-source) {
-    background: none;
+  /* Background — Tinted is the default (no hook): the whole slide. Beside a title panel the slide is
+     one tint with no line at the panel edge (preview 9 check, 13 Oct: space alone divides them). */
+  .slide[data-layout="statement"]:not(:has(> .slide-content.layout-statement:is(.statement-bg-rule, .statement-bg-strong, .statement-bg-lower-third))) {
+    background: var(--stmt-bg);
+  }
+  .slide[data-layout="statement"]:is([data-title-layout="left"]:has(> .slide-content > .slide-head:not(.slide-head-quiet)), [data-title-layout="left"]:has(> .slide-content.layout-statement.statement-rail)):not(:has(> .slide-content.layout-statement:is(.statement-bg-rule, .statement-bg-strong))) {
+    background: var(--stmt-bg);
+  }
+  /* Rule — the normal page (stage.css paints the panel's tint); one rule above the first paragraph
+     only. It sits inside the paragraph's own box, so the fit pass counts it. */
+  .slide[data-layout="statement"] > .slide-content.layout-statement.statement-bg-rule > p:not(.kicker):not(.slide-source):first-of-type::before {
+    content: "";
+    display: block;
+    width: var(--stmt-rule-w);
+    height: var(--stmt-rule-h);
+    background: var(--accent);
+    margin: 0 0 var(--stmt-rule-gap);
+  }
+  .slide[data-layout="statement"] > .slide-content.layout-statement.statement-bg-rule.statement-centred > p:not(.kicker):not(.slide-source):first-of-type::before {
+    margin-left: auto;
+    margin-right: auto;
+  }
+  /* Strong colour — the whole slide in --accent; beside a panel the panel keeps its tint and only
+     the body area takes the colour. */
+  .slide[data-layout="statement"]:has(> .slide-content.layout-statement.statement-bg-strong) {
+    background: var(--stmt-bg);
+  }
+  .slide[data-layout="statement"]:is([data-title-layout="left"]:has(> .slide-content > .slide-head:not(.slide-head-quiet)), [data-title-layout="left"]:has(> .slide-content.layout-statement.statement-rail)):has(> .slide-content.layout-statement.statement-bg-strong) {
+    background: linear-gradient(to right, var(--tint) 0, var(--tint) var(--rail-w), var(--stmt-bg) var(--rail-w));
+  }
+  /* Strong colour under a TOP title: the head is drawn on the accent, so everything in it takes the
+     strong foreground. Plain title and Kicker title (text and its line): white. Label keeps its own
+     light note with ink text; its accent line would vanish into the accent, so the line is ink.
+     Tab: a white tab with accent text (a tab in the accent would vanish into the slide); a soft Tab
+     already reads (ink on a light tint) and is left alone. The shadow of a white tab is neutral. */
+  .slide[data-layout="statement"][data-title-layout="top"]:has(> .slide-content.layout-statement.statement-bg-strong) {
+    --kicker-line-ink: #fff;
+    --label-line-ink: var(--ink);
+  }
+  .slide[data-layout="statement"][data-title-layout="top"]:not([data-title-look]):has(> .slide-content.layout-statement.statement-bg-strong) > .slide-content > .slide-head:not(.slide-head-quiet) :is(h1, .kicker),
+  .slide[data-layout="statement"][data-title-layout="top"][data-title-look="kicker"]:has(> .slide-content.layout-statement.statement-bg-strong) {
+    color: #fff;
+    --titlelook-ink: #fff;
+  }
+  .slide[data-layout="statement"][data-title-layout="top"][data-title-look="tab"]:not([data-title-look-tone="soft"]):has(> .slide-content.layout-statement.statement-bg-strong) {
+    --titlelook-fill: #fff;
+    --titlelook-ink: var(--accent);
+    --tab-shadow: drop-shadow(0 .03em .05em rgb(0 0 0 / .3));
+  }
+  /* The kicker paragraph and the source line are quieter white; the action row's buttons are
+     accent-on-accent in the default skin (a button that vanishes), so they turn white with accent text. */
+  .slide[data-layout="statement"]:has(> .slide-content.layout-statement.statement-bg-strong) > .slide-content.layout-statement > :is(p.kicker, .slide-source),
+  .slide[data-layout="statement"]:has(> .slide-content.layout-statement.statement-bg-strong) > .slide-content.layout-statement > .slide-source a {
+    color: rgb(255 255 255 / .9);
+  }
+  .slide[data-layout="statement"]:has(> .slide-content.layout-statement.statement-bg-strong) > .slide-content.layout-statement > .slide-actions > .slide-action {
+    background: #fff;
+    border-color: #fff;
+    color: var(--accent);
   }
 
-  /* Bar — the accent bar (.22em, the sidebar colour's accent) on the box's edge, outside the
-     padding, so the text always clears it by the padding (1em beside, .7em above or below).
-     A multi-part statement is one box: a top bar sits over its first part, a bottom bar under its
-     last. Left is today's Tint (Halo + Left) and Bar (None + Left). */
-  .slide[data-layout="statement"] > .slide-content.layout-statement.statement-bar-left > p:not(.kicker):not(.slide-source) {
-    border-left: .22em solid var(--accent);
+  /* Tinted lower third — the normal page with the bottom 38cqh tinted, edge to edge. The text block
+     is centred on the middle of the SLIDE (as a Tinted statement's is), but never enters the band:
+     when it is too tall for that, its bottom stops --stmt-low-gap above the band.
+     Without a top title: the slide's bottom padding is the band plus that gap, so the content box (and
+     the fit pass, which reads the slide's padding) sees only the white area. The content box shrinks
+     to the block's own height and sits at the bottom of that area; a translate then lifts it by
+     max(0, (white-area bottom - slide middle) - half its own height), where the 50% is the block's
+     own height (a percentage inside translate). That puts the block's middle on the slide's middle,
+     and its bottom at the white area's bottom when it is tall. Under a top title the head shares the
+     content box, so the block keeps its centring in the space under the head (stage.css @order 1370). */
+  .slide[data-layout="statement"]:not(:is([data-title-layout="left"]:has(> .slide-content > .slide-head:not(.slide-head-quiet)), [data-title-layout="left"]:has(> .slide-content.layout-statement.statement-rail))):has(> .slide-content.layout-statement.statement-bg-lower-third) {
+    background-image: linear-gradient(to bottom, transparent calc(100% - var(--stmt-low-h)), var(--stmt-bg) calc(100% - var(--stmt-low-h)));
+    padding-bottom: var(--stmt-low-h);
   }
-  .slide[data-layout="statement"] > .slide-content.layout-statement.statement-bar-top > p:not(.kicker):not(.slide-source):not(p:not(.kicker):not(.slide-source) ~ p) {
-    border-top: .22em solid var(--accent);
+  .slide[data-layout="statement"]:not([data-title-layout="top"]):not(:is([data-title-layout="left"]:has(> .slide-content > .slide-head:not(.slide-head-quiet)), [data-title-layout="left"]:has(> .slide-content.layout-statement.statement-rail))):has(> .slide-content.layout-statement.statement-bg-lower-third) {
+    padding-top: 0;
+    padding-bottom: calc(var(--stmt-low-h) + var(--stmt-low-gap));
   }
-  .slide[data-layout="statement"] > .slide-content.layout-statement.statement-bar-bottom > p:not(.kicker):not(.slide-source):not(:has(~ p:not(.kicker):not(.slide-source))) {
-    border-bottom: .22em solid var(--accent);
+  .slide[data-layout="statement"]:not([data-title-layout="top"]):not(:is([data-title-layout="left"]:has(> .slide-content > .slide-head:not(.slide-head-quiet)), [data-title-layout="left"]:has(> .slide-content.layout-statement.statement-rail))) > .slide-content.layout-statement.statement-bg-lower-third {
+    min-height: 0;
+    height: auto;
+    align-self: end;
+    translate: 0 calc(-1 * max(0px, 100cqh - var(--stmt-low-h) - var(--stmt-low-gap) - 50cqh - 50%));
   }
+  .slide[data-layout="statement"][data-title-layout="top"]:has(> .slide-content.layout-statement.statement-bg-lower-third) > .slide-content.layout-statement {
+    min-height: 0;
+    height: 100%;
+  }
+
 
   /* Sidebar — `statement-rail`: With sidebar on a statement that paints no title (the heading is
      the statement, or {notitle}). The rail is painted as beside a title, in the slide's sidebar
@@ -10002,6 +10539,8 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
      nav-only rail into one full-width column. */
   .slide[data-layout="statement"][data-title-layout="left"]:has(> .slide-content.layout-statement.statement-rail) {
     padding: 0;
+  }
+  .slide[data-layout="statement"][data-title-layout="left"]:has(> .slide-content.layout-statement.statement-rail.statement-bg-rule) {
     background: linear-gradient(to right, var(--tint) 0, var(--tint) var(--rail-w), transparent var(--rail-w));
   }
   .slide[data-layout="statement"][data-title-layout="left"] > .slide-content.layout-statement.statement-rail {
@@ -10029,6 +10568,12 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
      without a title does. A {titletop} statement keeps its preview.11 look. */
   .slide[data-layout="statement"][data-title-layout="top"] > .slide-content.layout-statement.statement-no-sidebar > p:not(.kicker):not(.slide-source) {
     align-self: center;
+  }
+  /* Under a top title the content is a flex column, where align-self is the horizontal axis: an
+     aligned statement starts at its left edge (the margin above) instead of being centred as a
+     block, a centred one stays centred. */
+  .slide[data-layout="statement"][data-title-layout="top"] > .slide-content.layout-statement:not(.statement-centred) > :is(p:not(.kicker):not(.slide-source), p.kicker, .slide-source) {
+    align-self: flex-start;
   }
 
   /* The statement follows the slide's text-size step (preview.10, Dominik): {font-body=xs|s|m|l|xl}
@@ -10102,56 +10647,112 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
      migration, so the detail pane stayed on the first event. Group N is HOT while its row is the
      current unit; at the all-full last step the LAST stop is hot and its detail shows; a slide
      without reveal opens on the first event (mockup .tl-dyn opens on e1). */
-/* 0.37 ticket 04 - Title looks: Kicker, Label and Tab on the TOP title regime.
+/* Title looks: Kicker, Label and Tab on the TOP title regime, all sitting against the slide edge.
    The compiler stamps data-title-look="kicker|label|tab" beside data-title-layout="top" (07-assembly,
-   from title-look.mjs: slide > section > deck), plus data-title-look-at="edge" for a Kicker sitting
-   near the top edge. Not data-title-style: that is the retired sidebar stamp, and `title_style` is
-   the opening poster variant. Lifted from the round-2 drawings (overrides/7-title-*.css,
-   round-b/overrides/b4-kicker-*.css); the Kicker is the round-b revision (sentence case).
-   Unmarked block: sorts after every migrated rule, so it wins the shared top-title rules. */
+   from title-look.mjs: slide > section > deck), plus data-title-look-tone="soft" on a soft Tab (strong
+   stamps nothing). Not data-title-style: that is the retired sidebar stamp, and `title_style` is the
+   opening poster variant. Locked design 2026-10-13 (slide redesign, 0.39).
 
-/* shared: the corner title leaves the centred band; no hairline, the tab or line is the device */
-.slide[data-title-layout="top"][data-title-look="kicker"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) { margin: 0 0 1.6cqw !important; border: 0 !important; padding: 0 !important; box-shadow: none !important; align-self: flex-start !important; width: auto !important; }
-.slide[data-title-layout="top"][data-title-look="kicker"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet)::after,
-.slide[data-title-layout="top"][data-title-look="kicker"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet)::before { display: none !important; }
-.slide[data-title-layout="top"][data-title-look="kicker"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1 { max-width: none !important; border: 0 !important; padding-bottom: 0; line-height: 1.1; letter-spacing: -.01em; }
+   The title (the h1) is lifted out of the flow and placed against the slide; the slide's top padding
+   becomes top + style height + clear band (--titlelook-clear, 8cqh = 86px at 1080). The head stays in
+   the flow as a zero-height box, so the fit pass (slide-fit.js fitLists) does not count the style as
+   body and the body type is not shrunk. Unmarked block: sorts after every migrated rule, so it wins
+   the shared top-title rules. */
 
-/* shared: the corner title leaves the centred band; no hairline, the tab or line is the device */
-.slide[data-title-layout="top"][data-title-look="label"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) { margin: 0 0 1.6cqw !important; border: 0 !important; padding: 0 !important; box-shadow: none !important; align-self: flex-start !important; width: auto !important; }
-.slide[data-title-layout="top"][data-title-look="label"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet)::after,
-.slide[data-title-layout="top"][data-title-look="label"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet)::before { display: none !important; }
-.slide[data-title-layout="top"][data-title-look="label"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1 { max-width: none !important; border: 0 !important; padding-bottom: 0; line-height: 1.1; letter-spacing: -.01em; }
+/* shared values (each look overrides what differs) */
+.slide[data-title-layout="top"][data-title-look] {
+  --titlelook-size: 1.9cqw;            /* 36.5px at 1920 */
+  --titlelook-clear: 8cqh;             /* clear band between the style and the first body content */
+  --titlelook-left: 0px;               /* flush against the slide's left edge */
+  --titlelook-height: calc(var(--titlelook-size) * (var(--titlelook-line) + 2 * var(--titlelook-pad-y)));
+  --titlelook-spacing: 0;
+}
+/* shared mechanics */
+.slide[data-title-layout="top"][data-title-look] { padding-top: calc(var(--titlelook-top) + var(--titlelook-height) + var(--titlelook-clear)) !important; }
+.slide[data-title-layout="top"][data-title-look] > .slide-content:not(.layout-title):not(.layout-section-title) { min-height: 100% !important; padding-top: 0 !important; }
+.slide[data-title-layout="top"][data-title-look] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) {
+  /* zero-height in-flow box: the fit pass skips children with no height */
+  height: 0 !important; margin: 0 !important; padding: 0 !important; border: 0 !important; box-shadow: none !important; width: auto !important; align-self: flex-start !important;
+}
+.slide[data-title-layout="top"][data-title-look] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet)::before, .slide[data-title-layout="top"][data-title-look] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet)::after { display: none !important; content: none !important; }
+.slide[data-title-layout="top"][data-title-look] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1 {
+  position: absolute !important; top: var(--titlelook-top) !important; left: var(--titlelook-left) !important;
+  display: block !important; margin: 0 !important; width: max-content; box-sizing: border-box;
+  /* one line; a title too long for the slide is cut with an ellipsis one body margin short of the right edge */
+  max-width: calc(100cqw - var(--titlelook-left) - var(--slide-pad-x)) !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-family: var(--titlelook-font) !important; font-size: var(--titlelook-size) !important; font-weight: var(--titlelook-weight) !important;
+  line-height: var(--titlelook-line) !important; letter-spacing: var(--titlelook-spacing) !important; text-transform: none !important;
+  padding: calc(var(--titlelook-pad-y) * 1em) var(--titlelook-pad-right) calc(var(--titlelook-pad-y) * 1em) var(--titlelook-pad-left) !important;
+  border: 0 !important; border-radius: 0 !important; box-shadow: none !important;
+  color: var(--titlelook-ink) !important; background: var(--titlelook-fill) !important;
+}
+.slide[data-title-layout="top"][data-title-look] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1::before, .slide[data-title-layout="top"][data-title-look] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1::after { display: none !important; content: none !important; }
 
-/* shared: the corner title leaves the centred band; no hairline, the tab or line is the device */
-.slide[data-title-layout="top"][data-title-look="tab"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) { margin: 0 0 1.6cqw !important; border: 0 !important; padding: 0 !important; box-shadow: none !important; align-self: flex-start !important; width: auto !important; }
-.slide[data-title-layout="top"][data-title-look="tab"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet)::after,
-.slide[data-title-layout="top"][data-title-look="tab"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet)::before { display: none !important; }
-.slide[data-title-layout="top"][data-title-look="tab"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1 { max-width: none !important; border: 0 !important; padding-bottom: 0; line-height: 1.1; letter-spacing: -.01em; }
-
-/* Kicker: sentence case (never capitals), mono 600, 2.1cqw, section colour, led by a short accent rule */
+/* Kicker: typewriter face in the section colour, led by a long line that runs in from the left slide edge */
+.slide[data-title-layout="top"][data-title-look="kicker"] {
+  --titlelook-line: 1.25;
+  --titlelook-pad-y: 0;
+  --titlelook-weight: 600;
+  --titlelook-font: var(--mono);
+  --titlelook-spacing: .01em;
+  --titlelook-fill: transparent;
+  --titlelook-ink: var(--accent);
+  --titlelook-top: 2.2cqh;             /* 24px */
+  --titlelook-pad-left: 12cqw;         /* title starts 230px from the left edge, after the line */
+  --titlelook-pad-right: 0px;
+  --kicker-line-h: .294cqw;            /* 5.6px at 1920 */
+  --kicker-line-gap: 1cqw;             /* from the end of the line to the title (19px) */
+  --kicker-line-drop: .04em;           /* a little below the box centre, on the middle of the lower-case letters */
+}
 .slide[data-title-layout="top"][data-title-look="kicker"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1 {
-  display: flex; align-items: center; gap: .9em; color: var(--accent);
-  font-family: var(--mono); font-size: 2.1cqw !important; font-weight: 600; text-transform: none !important;
-  letter-spacing: .01em !important; line-height: 1.25 !important; padding-bottom: 0 !important;
-}
-.slide[data-title-layout="top"][data-title-look="kicker"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1::before { content: ""; flex: 0 0 auto; width: 2.6em; height: .14em; background: var(--accent); }
-/* Kicker near the top edge: no top padding, the head pulled up 1.4cqh (text about 46px from the edge at 1920) */
-.slide[data-title-layout="top"][data-title-look="kicker"][data-title-look-at="edge"] > .slide-content:not(.layout-title):not(.layout-section-title) { padding-top: 0 !important; }
-.slide[data-title-layout="top"][data-title-look="kicker"][data-title-look-at="edge"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) { margin-top: -1.4cqh !important; }
-
-/* Label: a tinted tab with a heavy accent bar on its left edge; ink title at the content margin */
-.slide[data-title-layout="top"][data-title-look="label"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1 {
-  display: inline-block; background: var(--tint); color: var(--ink);
-  font-size: 2.35cqw !important; font-weight: 700; padding: .38em .9em .38em .8em !important;
-  border-left: .3em solid var(--accent) !important; border-radius: 0 .35em .35em 0;
+  /* the line is a background stripe from x = 0 to just before the title (211px) */
+  background: linear-gradient(var(--kicker-line-ink, var(--accent)), var(--kicker-line-ink, var(--accent))) left calc(50% + var(--kicker-line-drop)) / calc(var(--titlelook-pad-left) - var(--kicker-line-gap)) var(--kicker-line-h) no-repeat !important;
 }
 
-/* Tab: a solid accent tab flush with the slide's left edge, white title, darker under-edge */
-.slide[data-title-layout="top"][data-title-look="tab"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) { margin-left: calc(-1 * var(--slide-pad-x)) !important; }
-.slide[data-title-layout="top"][data-title-look="tab"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1 {
-  display: inline-block; background: var(--accent); color: #fff;
-  font-size: 2.35cqw !important; font-weight: 700; padding: .42em 1.1em .42em var(--slide-pad-x) !important;
-  border-radius: 0 .5em .5em 0; box-shadow: 0 .12em 0 color-mix(in srgb, var(--accent) 70%, #000);
+/* Label: straight sticky note flush against the left slide edge, square corners, thick section-colour line on its left */
+.slide[data-title-layout="top"][data-title-look="label"] {
+  --titlelook-line: 1.1;
+  --titlelook-pad-y: .35;              /* em: note height = 1.8em (66px) */
+  --titlelook-weight: 700;
+  --titlelook-font: inherit;
+  --titlelook-fill: color-mix(in srgb, var(--accent) 28%, white);
+  --titlelook-ink: var(--ink);
+  --titlelook-top: 1.1cqh;             /* 12px */
+  --titlelook-pad-left: .8em;          /* from the line to the title (29px) */
+  --titlelook-pad-right: .9em;         /* 33px */
+}
+.slide[data-title-layout="top"][data-title-look="label"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1 { border-left: .35em solid var(--label-line-ink, var(--accent)) !important; box-shadow: 0 .25em .5em rgb(0 0 0 / .18) !important; }
+
+/* Tab: index tab hanging from the top edge, flush against the left slide edge. Straight left side, flat
+   bottom, bottom-right corner rounded at half the tab height, upright right side, a small concave fillet
+   into the top edge. The space right of the title, to the upright side, equals the space left of it. */
+.slide[data-title-layout="top"][data-title-look="tab"] {
+  --titlelook-line: 1.1;
+  --titlelook-pad-y: .45;              /* em: tab height = 2em (73px) */
+  --titlelook-weight: 700;
+  --titlelook-font: inherit;
+  --titlelook-fill: var(--accent);     /* strong (default): the full section colour, white text */
+  --titlelook-ink: #fff;
+  --titlelook-top: 0px;                /* hangs from the top edge */
+  --titlelook-pad-left: var(--slide-pad-x);   /* title starts at the body margin (5.6cqw, 108px) */
+  --tab-h: calc((var(--titlelook-line) + 2 * var(--titlelook-pad-y)) * 1em);
+  --tab-cap-w: calc(var(--tab-h) * .72);      /* width of the shaped right end (53px) */
+  --tab-fillet-w: calc(var(--tab-h) * .22);   /* the part of the shaped end right of the upright side (16px) */
+  --titlelook-pad-right: calc(var(--titlelook-pad-left) + var(--tab-fillet-w));   /* the fillet lies beyond the equal space */
+  --tab-cap-shape: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 72 100' preserveAspectRatio='none'%3E%3Cpath d='M0 0H72A22 22 0 0 0 50 22V50A50 50 0 0 1 0 100Z'/%3E%3C/svg%3E");
+  --tab-shadow: drop-shadow(0 .03em .05em color-mix(in oklab, var(--accent) 55%, transparent));   /* thin shadow in the section hue, following the curve */
+}
+/* soft: a deeper light shade of the section colour, ink text */
+.slide[data-title-layout="top"][data-title-look="tab"][data-title-look-tone="soft"] {
+  --titlelook-fill: color-mix(in oklab, var(--accent) 38%, white);
+  --titlelook-ink: var(--ink);
+}
+/* the fill sits on a masked layer behind the text, so the shadow can follow the shape */
+.slide[data-title-layout="top"][data-title-look="tab"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1 { background: none !important; isolation: isolate; filter: var(--tab-shadow); }
+.slide[data-title-layout="top"][data-title-look="tab"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1::after {
+  content: "" !important; display: block !important; position: absolute; inset: 0; z-index: -1; background: var(--titlelook-fill);
+  -webkit-mask: linear-gradient(#000 0 0) left top / calc(100% - var(--tab-cap-w) + 1px) 100% no-repeat, var(--tab-cap-shape) right top / var(--tab-cap-w) 100% no-repeat;
+  mask: linear-gradient(#000 0 0) left top / calc(100% - var(--tab-cap-w) + 1px) 100% no-repeat, var(--tab-cap-shape) right top / var(--tab-cap-w) 100% no-repeat;
 }
 
 /* =============================================================================
@@ -10200,6 +10801,30 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
 
   /* Inline code is running content. Fenced code panels own their separate layout scale. */
   .slide-content :not(pre) > code { font-size: max(var(--type-floor), 1em); }
+  /* Panel title: vertically centred on the SLIDE, whatever the body holds (slide redesign,
+     13 Oct 2026, spec section 3). The head is a grid item on rows 1 to 99, and a second body
+     child lands on row 100 (the trailing-sibling rule below), so a head left in the grid is
+     centred on the first body item only and its height inflates the gap between body items.
+     When the slide has a body, the head leaves the grid and fills the panel top to bottom.
+     grid-row/grid-column go back to auto: an absolutely positioned grid child with a placement
+     is confined to that grid area. The last thing in the head has no bottom margin, so a
+     statement's title margin (layouts/statement.css) is not counted in the centring. A head-only
+     slide keeps the single column below. Horizontal placement is unchanged. */
+  .slide[data-title-layout="left"]:has(> .slide-content > .slide-head:not(.slide-head-quiet)):has(> .slide-content > *:not(.slide-head)) > .slide-content { position: relative; }
+  .slide[data-title-layout="left"] > .slide-content:has(> *:not(.slide-head)) > .slide-head:not(.slide-head-quiet) {
+    position: absolute !important;
+    top: 0; bottom: 0; left: 0;
+    width: var(--rail-w);
+    box-sizing: border-box;
+    min-height: 0 !important;
+    grid-row: auto !important;
+    grid-column: auto !important;
+    align-self: auto !important;
+  }
+  .slide[data-title-layout="left"] > .slide-content:has(> *:not(.slide-head)) > .slide-head:not(.slide-head-quiet) > :last-child { margin-bottom: 0; }
+  /* Statement slides: the title block stays centred across the panel's width, as it was when the
+     statement layout's justify-items shrank and centred the head (layouts/statement.css). */
+  .slide[data-title-layout="left"] > .slide-content.layout-statement:has(> *:not(.slide-head)) > .slide-head:not(.slide-head-quiet) { justify-content: center !important; }
   .slide[data-title-layout="left"]:has(> .slide-content > .slide-head:not(.slide-head-quiet)):has(> .slide-content > .fl-annotated) > .slide-content {
     padding-top: max(3cqh, 40px);
     padding-bottom: max(3cqh, 40px);
@@ -17393,17 +18018,17 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
   // Controls a preload injects (recording, edit pencil) carry the same data-tip / data-key and are
   // shown by the same delegated tooltip.
   /*SHORTCUT_HELP*/
-  const PRESENTER_COMMAND_KEYS = [{"id":"presenter.next","label":"Next","codes":["ArrowRight","Space","ArrowDown","PageDown","Enter","MediaTrackNext"],"keys":"→ Space ↓ PgDn ↵"},{"id":"presenter.previous","label":"Previous","codes":["ArrowLeft","ArrowUp","PageUp","Backspace","MediaTrackPrevious"],"keys":"← ↑ PgUp Backspace"},{"id":"presenter.first","label":"First slide","codes":["Home"],"keys":"Home"},{"id":"presenter.last","label":"Last slide","codes":["End"],"keys":"End"},{"id":"presenter.grid-child","label":"Jump to grid child","codes":["Digit1-Digit9"],"keys":"1–9"},{"id":"presenter.skip","label":"Skip next slide","codes":["s"],"keys":"S"},{"id":"presenter.return","label":"Return from jump","codes":["b"],"keys":"B"},{"id":"presenter.overview","label":"Outline","codes":["o"],"keys":"O"},{"id":"presenter.timer","label":"Start or pause timer","codes":["p"],"keys":"P"},{"id":"presenter.duration","label":"Set duration","codes":["t"],"keys":"T"},{"id":"presenter.record","label":"Start, or stop and save, recording","codes":["Shift-r"],"keys":"⇧R"},{"id":"presenter.record-pause","label":"Pause or resume recording","codes":["Shift-p"],"keys":"⇧P"},{"id":"presenter.save-run-as","label":"Save run as…","codes":["l"],"keys":"L"},{"id":"presenter.save-run","label":"Save this run as a delivery","codes":["Enter"],"keys":"↵"},{"id":"presenter.reveal","label":"Reveal mode","codes":["r"],"keys":"R"},{"id":"presenter.focus","label":"Focus mode","codes":["f"],"keys":"F"},{"id":"presenter.rebind","label":"Rebind the highlighted command","codes":["Mod-Shift-,"],"keys":"⌘⇧,"},{"id":"presenter.pointer","label":"Pointer","codes":["i"],"keys":"I"},{"id":"presenter.pen","label":"Pen","codes":["d"],"keys":"D"},{"id":"presenter.pen-tool","label":"Next or previous pen tool","codes":["w","Shift-w"],"keys":"W / ⇧W"},{"id":"presenter.ink-undo","label":"Undo last stroke","codes":["Mod-z"],"keys":"⌘Z"},{"id":"presenter.ink-clear","label":"Clear drawing on this slide","codes":["x"],"keys":"X"},{"id":"presenter.ink-clear-all","label":"Clear all drawings","codes":["Shift-x"],"keys":"⇧X"},{"id":"presenter.highlight","label":"Highlight","codes":["h"],"keys":"H"},{"id":"presenter.preview-size","label":"Resize previews","codes":["BracketLeft","BracketRight"],"keys":"[ / ]"},{"id":"presenter.notes-scroll","label":"Scroll notes forward or back","codes":["j","Shift-j"],"keys":"J / ⇧J"},{"id":"presenter.media","label":"Play audience media","codes":["m"],"keys":"M"},{"id":"presenter.gallery","label":"Gallery or lightbox","codes":["z"],"keys":"Z"},{"id":"presenter.embed-fullscreen","label":"Embedded page: full screen","codes":["z"],"keys":"Z"},{"id":"presenter.video-fullscreen","label":"Video: Fullscreen","codes":["v"],"keys":"V"},{"id":"presenter.embed","label":"Interact with embed","codes":["e"],"keys":"E"},{"id":"presenter.font-larger","label":"Increase text size","codes":["+"],"keys":"+"},{"id":"presenter.font-smaller","label":"Decrease text size","codes":["-"],"keys":"−"},{"id":"presenter.audience","label":"Launch audience","codes":["F5"],"keys":"F5"},{"id":"presenter.live","label":"Go or end live","codes":["g"],"keys":"G"},{"id":"presenter.poll-primary","label":"Open or close current poll","codes":["q"],"keys":"Q"},{"id":"presenter.poll-reveal","label":"Reveal held poll results","codes":["Shift-q"],"keys":"⇧ Q"},{"id":"presenter.questions","label":"Open the questions tray","codes":["a"],"keys":"A"},{"id":"presenter.poll-compose","label":"Compose a Quick poll","codes":["k"],"keys":"K"},{"id":"presenter.instant-compose","label":"Compose an instant slide","codes":["Mod-Alt-i"],"keys":"⌥⌘I"},{"id":"presenter.instant-paste","label":"Preview clipboard as an instant slide","codes":["Mod-v"],"keys":"⌘V"},{"id":"presenter.instant-return","label":"Back to slide while instant slide is shown","codes":["ArrowRight"],"keys":"→"},{"id":"presenter.talk-qr","label":"Show the talk's QR code","codes":["u"],"keys":"U"},{"id":"presenter.board-pick","label":"Pick up or drop a board card","codes":["Alt-Enter"],"keys":"⌥↵"},{"id":"presenter.board-undo","label":"Undo the last board change","codes":["Mod-z"],"keys":"⌘Z"},{"id":"presenter.edit","label":"Edit this slide in TalkWeaver","codes":["Mod-e"],"keys":"⌘E"},{"id":"presenter.refresh","label":"Refresh with latest edits","codes":["Mod-r","Shift-F5"],"keys":"⌘R / ⇧F5"},{"id":"presenter.command-palette","label":"Command palette","codes":["Mod-Shift-p"],"keys":"⌘⇧P"},{"id":"presenter.help","label":"Show shortcuts","codes":["?"],"keys":"?"},{"id":"presenter.close","label":"Close overlay or mode","codes":["Escape"],"keys":"Esc"},{"id":"palette.reset-timer","label":"Reset timer","codes":[],"keys":""},{"id":"palette.join-link","label":"Show join link and venue screen","codes":[],"keys":""},{"id":"palette.copy-venue-link","label":"Copy venue-screen link","codes":[],"keys":""},{"id":"palette.allow-questions","label":"Allow slide questions","codes":[],"keys":""},{"id":"palette.allow-reactions","label":"Allow slide reactions","codes":[],"keys":""},{"id":"palette.poll-panel","label":"Show poll panel","codes":[],"keys":""},{"id":"palette.quick-poll-restore","label":"Show Quick poll on screens","codes":[],"keys":""},{"id":"palette.quick-poll-dismiss","label":"Dismiss Quick poll","codes":[],"keys":""},{"id":"palette.board-freeze","label":"Freeze or unfreeze the board","codes":[],"keys":""},{"id":"palette.board-panel","label":"Show board panel","codes":[],"keys":""},{"id":"palette.board-full","label":"Board full screen","codes":[],"keys":""},{"id":"palette.board-popout","label":"Pop out the board","codes":[],"keys":""},{"id":"palette.notes-off","label":"Notes: off","codes":[],"keys":""},{"id":"palette.notes-bottom","label":"Notes: bottom","codes":[],"keys":""},{"id":"palette.notes-sidebar","label":"Notes: sidebar","codes":[],"keys":""},{"id":"palette.notes-top-band","label":"Notes: top band","codes":[],"keys":""},{"id":"palette.notes-camera-column","label":"Notes: camera column","codes":[],"keys":""},{"id":"palette.notes-scroll-hand","label":"Notes scroll by hand","codes":[],"keys":""},{"id":"palette.notes-scroll-auto","label":"Notes scroll automatically","codes":[],"keys":""},{"id":"palette.notes-faster","label":"Notes scroll faster","codes":[],"keys":""},{"id":"palette.notes-slower","label":"Notes scroll slower","codes":[],"keys":""},{"id":"palette.pen-freehand","label":"Pen tool: Freehand","codes":[],"keys":""},{"id":"palette.pen-arrow","label":"Pen tool: Arrow","codes":[],"keys":""},{"id":"palette.pen-rectangle","label":"Pen tool: Rectangle","codes":[],"keys":""},{"id":"palette.highlight-clear","label":"Clear highlights","codes":[],"keys":""},{"id":"palette.guide","label":"Guide: Present chapter","codes":[],"keys":""}];
-  const PRESENTER_CONTROL_COMMANDS = {"twClockBtn":"presenter.timer","twStartTimerBtn":"presenter.timer","twDurationBtn":"presenter.duration","presenterGoLive":"presenter.live","presenterEndLive":"presenter.live","liveGoButton":"presenter.live","presenterAudienceApp":"presenter.audience","liveTalkQr":"presenter.talk-qr","presenterInstantButton":"presenter.instant-compose","liveInstantPaste":"presenter.instant-paste","liveInstantBack":"presenter.instant-return","presenterQuickPollButton":"presenter.poll-compose","pollMenuPrimary":"presenter.poll-primary","pollMenuReveal":"presenter.poll-reveal","pollMenuBoardClose":"presenter.poll-primary","pollMenuQuestions":"presenter.questions","viewOutline":"presenter.overview","viewFontDown":"presenter.font-smaller","viewFontUp":"presenter.font-larger","viewReveal":"presenter.reveal","viewFocus":"presenter.focus","viewHighlight":"presenter.highlight","viewShortcuts":"presenter.help","viewCommands":"presenter.command-palette","presenterInstantBack":"presenter.instant-return","presenterPollOpen":"presenter.poll-primary","presenterPollClose":"presenter.poll-primary","presenterPollReveal":"presenter.poll-reveal","presenterNotesMore":"presenter.notes-scroll","presenterOutlineClose":"presenter.overview","outlineBtn":"presenter.overview","presenterPrev":"presenter.previous","presenterNext":"presenter.next","skipNextBtn":"presenter.skip","returnBtn":"presenter.return","presenterMediaPlay":"presenter.media","presenterVideoFullscreen":"presenter.video-fullscreen","presenterGalleryBtn":"presenter.gallery","presenterEmbedFullscreen":"presenter.embed-fullscreen","navQuickPoll":"presenter.poll-compose","navInstant":"presenter.instant-compose","presenterFocus":"presenter.focus","presenterPointer":"presenter.pointer","viewPointer":"presenter.pointer","morePointer":"presenter.pointer","presenterPointerExit":"presenter.close","presenterPen":"presenter.pen","viewPen":"presenter.pen","morePen":"presenter.pen","presenterPenExit":"presenter.close","presenterInkClear":"presenter.ink-clear","viewInkClear":"presenter.ink-clear","moreInkClear":"presenter.ink-clear","viewInkClearAll":"presenter.ink-clear-all","moreInkClearAll":"presenter.ink-clear-all","penUndo":"presenter.ink-undo","penClear":"presenter.ink-clear","penStripUndo":"presenter.ink-undo","penStripClear":"presenter.ink-clear","penStripOff":"presenter.close","presenterHighlight":"presenter.highlight","presenterFirst":"presenter.first","presenterLast":"presenter.last","moreReturn":"presenter.return","moreGridCard":"presenter.grid-child","presenterReveal":"presenter.reveal","moreEmbed":"presenter.embed","fontDown":"presenter.font-smaller","fontUp":"presenter.font-larger","moreRefresh":"presenter.refresh","presenterModeExit":"presenter.close","presenterHighlightExit":"presenter.close","twrec-primary":"presenter.record","twrec-change-kind":"presenter.save-run-as","twrec-pause":"presenter.record-pause","twrec-resume":"presenter.record-pause","twrec-stop":"presenter.record","twrec-toast-yes":"presenter.record-pause","twrec-save-delivery":"presenter.save-run","twrec-save-as":"presenter.save-run-as","twrec-start-record":"presenter.record","twrec-saved-change":"presenter.save-run-as","twedit-btn":"presenter.edit"};
+  const PRESENTER_COMMAND_KEYS = [{"id":"presenter.next","label":"Next","codes":["ArrowRight","Space","ArrowDown","PageDown","Enter","MediaTrackNext"],"keys":"→ Space ↓ PgDn ↵"},{"id":"presenter.previous","label":"Previous","codes":["ArrowLeft","ArrowUp","PageUp","Backspace","MediaTrackPrevious"],"keys":"← ↑ PgUp Backspace"},{"id":"presenter.first","label":"First slide","codes":["Home"],"keys":"Home"},{"id":"presenter.last","label":"Last slide","codes":["End"],"keys":"End"},{"id":"presenter.grid-child","label":"Jump to grid child","codes":["Digit1-Digit9"],"keys":"1–9"},{"id":"presenter.skip","label":"Skip next slide","codes":["s"],"keys":"S"},{"id":"presenter.return","label":"Return from jump","codes":["b"],"keys":"B"},{"id":"presenter.overview","label":"Outline","codes":["o"],"keys":"O"},{"id":"presenter.timer","label":"Start or pause timer","codes":["p"],"keys":"P"},{"id":"presenter.duration","label":"Set duration","codes":["t"],"keys":"T"},{"id":"presenter.record","label":"Start, or stop and save, recording","codes":["Shift-r"],"keys":"⇧R"},{"id":"presenter.record-pause","label":"Pause or resume recording","codes":["Shift-p"],"keys":"⇧P"},{"id":"presenter.save-run-as","label":"Save run as…","codes":["l"],"keys":"L"},{"id":"presenter.save-run","label":"Save this run as a delivery","codes":["Enter"],"keys":"↵"},{"id":"presenter.reveal","label":"Reveal mode","codes":["r"],"keys":"R"},{"id":"presenter.focus","label":"Focus mode","codes":["f"],"keys":"F"},{"id":"presenter.rebind","label":"Rebind the highlighted command","codes":["Mod-Shift-,"],"keys":"⌘⇧,"},{"id":"presenter.pointer","label":"Pointer","codes":["i"],"keys":"I"},{"id":"presenter.pen","label":"Pen","codes":["d"],"keys":"D"},{"id":"presenter.pen-tool","label":"Next or previous pen tool","codes":["w","Shift-w"],"keys":"W / ⇧W"},{"id":"presenter.ink-undo","label":"Undo last stroke","codes":["Mod-z"],"keys":"⌘Z"},{"id":"presenter.ink-clear","label":"Clear drawing on this slide","codes":["x"],"keys":"X"},{"id":"presenter.ink-clear-all","label":"Clear all drawings","codes":["Shift-x"],"keys":"⇧X"},{"id":"presenter.highlight","label":"Highlight","codes":["h"],"keys":"H"},{"id":"presenter.preview-size","label":"Resize previews","codes":["BracketLeft","BracketRight"],"keys":"[ / ]"},{"id":"presenter.notes-scroll","label":"Scroll notes forward or back","codes":["j","Shift-j"],"keys":"J / ⇧J"},{"id":"presenter.media","label":"Play audience media","codes":["m"],"keys":"M"},{"id":"presenter.gallery","label":"Gallery or lightbox","codes":["z"],"keys":"Z"},{"id":"presenter.embed-fullscreen","label":"Embedded page: full screen","codes":["z"],"keys":"Z"},{"id":"presenter.video-fullscreen","label":"Video: Fullscreen","codes":["v"],"keys":"V"},{"id":"presenter.embed","label":"Interact with embed","codes":["e"],"keys":"E"},{"id":"presenter.font-larger","label":"Increase text size","codes":["+"],"keys":"+"},{"id":"presenter.font-smaller","label":"Decrease text size","codes":["-"],"keys":"−"},{"id":"presenter.audience","label":"Launch audience","codes":["F5"],"keys":"F5"},{"id":"presenter.live","label":"Go or end live","codes":["g"],"keys":"G"},{"id":"presenter.poll-primary","label":"Open or close current poll","codes":["q"],"keys":"Q"},{"id":"presenter.poll-reveal","label":"Reveal held poll results","codes":["Shift-q"],"keys":"⇧ Q"},{"id":"presenter.questions","label":"Open the questions tray","codes":["a"],"keys":"A"},{"id":"presenter.poll-compose","label":"Compose a Quick poll","codes":["k"],"keys":"K"},{"id":"presenter.instant-compose","label":"Compose an instant slide","codes":["Mod-Alt-i"],"keys":"⌥⌘I"},{"id":"presenter.instant-paste","label":"Preview clipboard as an instant slide","codes":["Mod-v"],"keys":"⌘V"},{"id":"presenter.instant-return","label":"Back to slide while instant slide is shown","codes":["ArrowRight"],"keys":"→"},{"id":"presenter.talk-qr","label":"Show the talk's QR code","codes":["u"],"keys":"U"},{"id":"presenter.board-pick","label":"Pick up or drop a board card","codes":["Alt-Enter"],"keys":"⌥↵"},{"id":"presenter.board-undo","label":"Undo the last board change","codes":["Mod-z"],"keys":"⌘Z"},{"id":"presenter.edit","label":"Edit this slide in TalkWeaver","codes":["Mod-e"],"keys":"⌘E"},{"id":"presenter.refresh","label":"Refresh with latest edits","codes":["Mod-r","Shift-F5"],"keys":"⌘R / ⇧F5"},{"id":"presenter.command-palette","label":"Command palette","codes":["Mod-Shift-p"],"keys":"⌘⇧P"},{"id":"presenter.help","label":"Show shortcuts","codes":["?"],"keys":"?"},{"id":"presenter.guide","label":"Guide","codes":["c"],"keys":"C"},{"id":"presenter.close","label":"Close overlay or mode","codes":["Escape"],"keys":"Esc"},{"id":"palette.reset-timer","label":"Reset timer","codes":[],"keys":""},{"id":"palette.join-link","label":"Show join link and venue screen","codes":[],"keys":""},{"id":"palette.copy-venue-link","label":"Copy venue-screen link","codes":[],"keys":""},{"id":"palette.allow-questions","label":"Allow slide questions","codes":[],"keys":""},{"id":"palette.allow-reactions","label":"Allow slide reactions","codes":[],"keys":""},{"id":"palette.poll-panel","label":"Show poll panel","codes":[],"keys":""},{"id":"palette.quick-poll-restore","label":"Show Quick poll on screens","codes":[],"keys":""},{"id":"palette.quick-poll-dismiss","label":"Dismiss Quick poll","codes":[],"keys":""},{"id":"palette.board-freeze","label":"Freeze or unfreeze the board","codes":[],"keys":""},{"id":"palette.board-panel","label":"Show board panel","codes":[],"keys":""},{"id":"palette.board-full","label":"Board full screen","codes":[],"keys":""},{"id":"palette.board-popout","label":"Pop out the board","codes":[],"keys":""},{"id":"palette.notes-off","label":"Notes: off","codes":[],"keys":""},{"id":"palette.notes-bottom","label":"Notes: bottom","codes":[],"keys":""},{"id":"palette.notes-sidebar","label":"Notes: sidebar","codes":[],"keys":""},{"id":"palette.notes-top-band","label":"Notes: top band","codes":[],"keys":""},{"id":"palette.notes-camera-column","label":"Notes: camera column","codes":[],"keys":""},{"id":"palette.notes-scroll-hand","label":"Notes scroll by hand","codes":[],"keys":""},{"id":"palette.notes-scroll-auto","label":"Notes scroll automatically","codes":[],"keys":""},{"id":"palette.notes-faster","label":"Notes scroll faster","codes":[],"keys":""},{"id":"palette.notes-slower","label":"Notes scroll slower","codes":[],"keys":""},{"id":"palette.pen-freehand","label":"Pen tool: Freehand","codes":[],"keys":""},{"id":"palette.pen-arrow","label":"Pen tool: Arrow","codes":[],"keys":""},{"id":"palette.pen-rectangle","label":"Pen tool: Rectangle","codes":[],"keys":""},{"id":"palette.highlight-clear","label":"Clear highlights","codes":[],"keys":""}];
+  const PRESENTER_CONTROL_COMMANDS = {"twClockBtn":"presenter.timer","twStartTimerBtn":"presenter.timer","twDurationBtn":"presenter.duration","presenterGoLive":"presenter.live","presenterEndLive":"presenter.live","liveGoButton":"presenter.live","presenterAudienceApp":"presenter.audience","liveTalkQr":"presenter.talk-qr","presenterInstantButton":"presenter.instant-compose","liveInstantPaste":"presenter.instant-paste","liveInstantBack":"presenter.instant-return","presenterQuickPollButton":"presenter.poll-compose","pollMenuPrimary":"presenter.poll-primary","pollMenuReveal":"presenter.poll-reveal","pollMenuBoardClose":"presenter.poll-primary","pollMenuQuestions":"presenter.questions","viewOutline":"presenter.overview","viewFontDown":"presenter.font-smaller","viewFontUp":"presenter.font-larger","viewReveal":"presenter.reveal","viewFocus":"presenter.focus","viewHighlight":"presenter.highlight","viewShortcuts":"presenter.help","viewCommands":"presenter.command-palette","presenterInstantBack":"presenter.instant-return","presenterPollOpen":"presenter.poll-primary","presenterPollClose":"presenter.poll-primary","presenterPollReveal":"presenter.poll-reveal","presenterNotesMore":"presenter.notes-scroll","presenterOutlineClose":"presenter.overview","outlineBtn":"presenter.overview","presenterPrev":"presenter.previous","presenterNext":"presenter.next","skipNextBtn":"presenter.skip","returnBtn":"presenter.return","presenterMediaPlay":"presenter.media","presenterVideoFullscreen":"presenter.video-fullscreen","presenterGalleryBtn":"presenter.gallery","presenterEmbedFullscreen":"presenter.embed-fullscreen","navQuickPoll":"presenter.poll-compose","navInstant":"presenter.instant-compose","presenterFocus":"presenter.focus","presenterPointer":"presenter.pointer","viewPointer":"presenter.pointer","morePointer":"presenter.pointer","presenterPointerExit":"presenter.close","presenterPen":"presenter.pen","viewPen":"presenter.pen","morePen":"presenter.pen","presenterPenExit":"presenter.close","presenterInkClear":"presenter.ink-clear","viewInkClear":"presenter.ink-clear","moreInkClear":"presenter.ink-clear","viewInkClearAll":"presenter.ink-clear-all","moreInkClearAll":"presenter.ink-clear-all","penUndo":"presenter.ink-undo","penClear":"presenter.ink-clear","penStripUndo":"presenter.ink-undo","penStripClear":"presenter.ink-clear","penStripOff":"presenter.close","presenterHighlight":"presenter.highlight","presenterFirst":"presenter.first","presenterLast":"presenter.last","moreReturn":"presenter.return","moreGridCard":"presenter.grid-child","presenterReveal":"presenter.reveal","moreEmbed":"presenter.embed","fontDown":"presenter.font-smaller","fontUp":"presenter.font-larger","moreRefresh":"presenter.refresh","presenterModeExit":"presenter.close","presenterHighlightExit":"presenter.close","twrec-primary":"presenter.record","twrec-change-kind":"presenter.save-run-as","twrec-pause":"presenter.record-pause","twrec-resume":"presenter.record-pause","twrec-stop":"presenter.record","twrec-toast-yes":"presenter.record-pause","twrec-save-delivery":"presenter.save-run","twrec-save-as":"presenter.save-run-as","twrec-start-record":"presenter.record","twrec-saved-change":"presenter.save-run-as","twedit-btn":"presenter.edit","twguide-chip":"presenter.guide"};
   const PRESENTER_TIPS = {"twClockBtn":["Start timer","P"],"twStartTimerBtn":["Start timer","P"],"twDurationBtn":["Talk length and reset","T"],"twResetBtn":["Reset timer",""],"twDurationMinus":["Talk length 5 minutes shorter",""],"twDurationPlus":["Talk length 5 minutes longer",""],"presenterGoLive":["Go live","G"],"presenterEndLive":["End live session","G"],"presenterMenuLive":["Live menu",""],"presenterMenuPoll":["Poll menu",""],"presenterMenuView":["View menu",""],"liveGoButton":["Go live","G"],"presenterAudienceApp":["Open audience window","F5"],"liveShowJoin":["Show join link and venue screen",""],"liveCopyVenueLink":["Copy venue-screen link",""],"liveAllowQuestions":["Allow slide questions",""],"liveAllowReactions":["Allow slide reactions",""],"liveTalkQr":["Show talk QR code","U"],"presenterInstantButton":["Compose instant slide","⌥⌘I"],"liveInstantPaste":["Instant slide from clipboard","⌘V"],"liveInstantBack":["Back to slide","→"],"presenterQuickPollButton":["Compose Quick poll","K"],"presenterQuickPollRestore":["Show Quick poll on screens",""],"pollMenuPrimary":["Open or close current poll","Q"],"pollMenuReveal":["Reveal results","⇧ Q"],"presenterPollPanelToggle":["Show poll panel",""],"pollMenuBoardClose":["Close board to new cards","Q"],"pollMenuBoardFreeze":["Freeze board",""],"pollMenuBoardPanel":["Show board panel",""],"pollMenuBoardFull":["Board full screen",""],"pollMenuBoardPopout":["Pop out the board",""],"pollMenuQuestions":["Open questions","A"],"notesPlacementBtn":["Notes placement and scrolling",""],"viewOutline":["Outline","O"],"viewFontDown":["Slide text smaller","−"],"viewFontUp":["Slide text larger","+"],"viewReveal":["Reveal mode","R"],"viewFocus":["Focus mode","F"],"viewHighlight":["Highlight text","H"],"viewHighlightClear":["Clear highlights",""],"viewShortcuts":["Keyboard shortcuts","?"],"viewCommands":["All commands","⌘⇧P"],"notesWpmSlower":["Notes scroll slower",""],"notesWpmFaster":["Notes scroll faster",""],"liveGoPanelClose":["Hide the join link",""],"liveVenueCopy":["Copy venue-screen link",""],"presenterInstantBack":["Back to slide","→"],"instantClose":["Close instant slide",""],"instantPasteClose":["Cancel clipboard preview",""],"quickPollClose":["Close Quick poll",""],"presenterPollDismiss":["Hide the poll panel",""],"presenterPollOpen":["Open poll","Q"],"presenterPollClose":["Stop accepting responses","Q"],"presenterPollReveal":["Reveal results","⇧ Q"],"presenterPollShowQuestion":["Show the question on screens",""],"presenterPollShowResults":["Show the results on screens",""],"presenterPollPreviousPage":["Previous page of the poll",""],"presenterPollNextPage":["Next page of the poll",""],"presenterQuickPollDismiss":["Dismiss Quick poll",""],"presenterNotesMore":["Step notes forward","J / ⇧J"],"presenterOutlineExpand":["Show previews in the outline",""],"presenterOutlineClose":["Close outline","O"],"outlineBtn":["Outline","O"],"presenterPrev":["Previous","← ↑ PgUp Backspace"],"presenterNext":["Next","→ Space ↓ PgDn ↵"],"skipNextBtn":["Skip next slide","S"],"returnBtn":["Return to where you jumped from","B"],"presenterMediaPlay":["Play media","M"],"presenterMediaPause":["Pause media",""],"presenterVideoFullscreen":["Video full screen","V"],"presenterGalleryBtn":["Image gallery","Z"],"presenterEmbedFullscreen":["Embedded page: full screen","Z"],"navQuickPoll":["Compose Quick poll","K"],"navInstant":["Compose instant slide","⌥⌘I"],"presenterFocus":["Focus mode","F"],"presenterPointer":["Pointer: show your mouse on every screen","I"],"viewPointer":["Pointer","I"],"morePointer":["Pointer","I"],"presenterPointerExit":["Turn off pointer","Esc"],"presenterPen":["Pen: draw on the slide on every screen","D"],"viewPen":["Pen","D"],"morePen":["Pen","D"],"presenterPenExit":["Turn off pen","Esc"],"presenterInkClear":["Clear the drawing on this slide","X"],"viewInkClear":["Clear drawing on this slide","X"],"moreInkClear":["Clear drawing on this slide","X"],"viewInkClearAll":["Clear all drawings","⇧X"],"moreInkClearAll":["Clear all drawings","⇧X"],"penToolFreehand":["Freehand: draw with the mouse",""],"penToolArrow":["Arrow: press on the point, drag to the tail",""],"penToolRectangle":["Rectangle: drag from one corner to the opposite",""],"penInkRed":["Red ink",""],"penInkYellow":["Yellow ink",""],"penInkGreen":["Green ink",""],"penInkBlue":["Blue ink",""],"penWidthThin":["Thin line",""],"penWidthThick":["Thick line",""],"penUndo":["Undo last stroke","⌘Z"],"penClear":["Clear this slide","X"],"penStripFreehand":["Freehand: draw with the mouse",""],"penStripArrow":["Arrow: press on the point, drag to the tail",""],"penStripRectangle":["Rectangle: drag from one corner to the opposite",""],"penStripInkRed":["Red ink",""],"penStripInkYellow":["Yellow ink",""],"penStripInkGreen":["Green ink",""],"penStripInkBlue":["Blue ink",""],"penStripWidthThin":["Thin line",""],"penStripWidthThick":["Thick line",""],"penStripUndo":["Undo last stroke","⌘Z"],"penStripClear":["Clear this slide","X"],"penStripOff":["Pen off","Esc"],"presenterHighlight":["Highlight text","H"],"presenterMore":["More",""],"presenterFirst":["First slide","Home"],"presenterLast":["Last slide","End"],"moreReturn":["Return to where you jumped from","B"],"moreGridCard":["Card on a grid slide","1–9"],"presenterReveal":["Reveal mode","R"],"presenterHighlightClear":["Clear highlights",""],"moreEmbed":["Interact with embedded page","E"],"fontDown":["Slide text smaller","−"],"fontUp":["Slide text larger","+"],"moreRefresh":["Refresh with latest edits","⌘R / ⇧F5"],"presenterModeExit":["Turn off focus mode","Esc"],"presenterHighlightExit":["Turn off highlighting","Esc"],"presenterHighlightChipClear":["Clear highlights on this slide",""]};
   const PRESENTER_ICON_OF = {"twStartTimerBtn":["timer",0,0],"twDurationBtn":["chevron-down",0,1],"twResetBtn":["timer-reset",0,0],"twDurationMinus":["minus",0,1],"twDurationPlus":["plus",0,1],"presenterGoLive":["radio",0,0],"presenterEndLive":["radio-off",0,0],"presenterMenuLive":["radio",0,0],"presenterMenuPoll":["vote",0,0],"presenterMenuView":["panels-top-left",0,0],"liveGoButton":["radio",0,0],"presenterAudienceApp":["monitor-up",0,0],"liveShowJoin":["scan-qr-code",0,0],"liveCopyVenueLink":["link",0,0],"liveAllowQuestions":["message-circle-question-mark",0,0],"liveAllowReactions":["smile-plus",0,0],"liveTalkQr":["qr-code",0,0],"presenterInstantButton":["zap",0,0],"liveInstantPaste":["clipboard",0,0],"liveInstantBack":["undo-2",0,0],"presenterQuickPollButton":["vote",0,0],"presenterQuickPollRestore":["monitor-play",0,0],"pollMenuPrimary":["lock-open",0,0],"pollMenuReveal":["eye",0,0],"presenterPollPanelToggle":["chart-bar",0,0],"pollMenuBoardClose":["lock",0,0],"pollMenuBoardFreeze":["snowflake",0,0],"pollMenuBoardPanel":["layout-grid",0,0],"pollMenuBoardFull":["maximize-2",0,0],"pollMenuBoardPopout":["picture-in-picture-2",0,0],"pollMenuQuestions":["message-circle-question-mark",0,0],"notesPlacementBtn":["notebook-text",0,0],"viewOutline":["list-tree",0,0],"viewFontDown":["a-arrow-down",0,0],"viewFontUp":["a-arrow-up",0,0],"viewReveal":["layers",0,0],"viewFocus":["focus",0,0],"viewHighlight":["highlighter",0,0],"viewHighlightClear":["eraser",0,0],"viewShortcuts":["keyboard",0,0],"viewCommands":["command",0,0],"notesWpmSlower":["minus",0,1],"notesWpmFaster":["plus",0,1],"liveGoPanelClose":["x",0,1],"liveVenueCopy":["copy",0,0],"presenterInstantBack":["undo-2",0,0],"instantClose":["x",0,1],"instantPasteClose":["x",0,1],"quickPollClose":["x",0,1],"presenterPollDismiss":["x",0,1],"presenterPollOpen":["lock-open",0,0],"presenterPollClose":["lock",0,0],"presenterPollReveal":["eye",0,0],"presenterPollShowQuestion":["message-square-text",0,0],"presenterPollShowResults":["chart-bar",0,0],"presenterPollPreviousPage":["chevron-left",0,0],"presenterPollNextPage":["chevron-right",0,0],"presenterQuickPollDismiss":["x",0,0],"presenterNotesMore":["chevrons-down",1,0],"presenterOutlineExpand":["layout-grid",0,0],"presenterOutlineClose":["x",0,1],"outlineBtn":["list-tree",0,0],"presenterPrev":["arrow-left",0,0],"presenterNext":["arrow-right",1,0],"skipNextBtn":["skip-forward",0,1],"returnBtn":["undo-2",0,0],"presenterMediaPlay":["play",0,0],"presenterMediaPause":["pause",0,0],"presenterVideoFullscreen":["fullscreen",0,0],"presenterGalleryBtn":["images",0,0],"presenterEmbedFullscreen":["maximize-2",0,1],"navQuickPoll":["vote",0,0],"navInstant":["zap",0,0],"presenterFocus":["focus",0,0],"presenterPointer":["mouse-pointer-2",0,0],"viewPointer":["mouse-pointer-2",0,0],"morePointer":["mouse-pointer-2",0,0],"presenterPointerExit":["x",0,1],"presenterPen":["pen-tool",0,0],"viewPen":["pen-tool",0,0],"morePen":["pen-tool",0,0],"presenterPenExit":["x",0,1],"presenterInkClear":["eraser",0,0],"viewInkClear":["eraser",0,0],"moreInkClear":["eraser",0,0],"viewInkClearAll":["eraser",0,0],"moreInkClearAll":["eraser",0,0],"penToolFreehand":["pen-line",0,0],"penToolArrow":["move-up-right",0,0],"penToolRectangle":["square",0,0],"penUndo":["undo-2",0,0],"penClear":["eraser",0,0],"penStripFreehand":["pen-line",0,0],"penStripArrow":["move-up-right",0,0],"penStripRectangle":["square",0,0],"penStripUndo":["undo-2",0,0],"penStripClear":["eraser",0,0],"penStripOff":["x",0,0],"presenterHighlight":["highlighter",0,0],"presenterMore":["ellipsis",0,1],"presenterFirst":["chevron-first",0,0],"presenterLast":["chevron-last",0,0],"moreReturn":["undo-2",0,0],"moreGridCard":["layout-grid",0,0],"presenterReveal":["layers",0,0],"presenterHighlightClear":["eraser",0,0],"moreEmbed":["mouse-pointer-click",0,0],"fontDown":["a-arrow-down",0,0],"fontUp":["a-arrow-up",0,0],"moreRefresh":["refresh-cw",0,0],"presenterModeExit":["x",0,1],"presenterHighlightExit":["x",0,1],"presenterHighlightChipClear":["eraser",0,0]};
   const TIMER_BUTTON = {"names":{"idle":"Start timer","running":"Pause timer","paused":"Resume timer"}};
   const MODE_CHIP = {"reveal":{"icon":"layers","word":"Reveal mode","exit":"Turn off reveal mode"},"focus":{"icon":"focus","word":"Focus mode","exit":"Turn off focus mode"},"highlight":{"icon":"highlighter","word":"Highlight on","exit":"Turn off highlighting"}};
   const OUTLINE_STATUS_ICONS = {"shown":"circle","skipped":"circle-slash","unseen":"circle-dashed"};
   const PRESENTER_ICONS = {"a-arrow-down":"<svg class=\"tw-ico tw-btn-ico lucide lucide-a-arrow-down\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m14 12 4 4 4-4\"/><path d=\"M18 16V7\"/><path d=\"m2 16 4.039-9.69a.5.5 0 0 1 .923 0L11 16\"/><path d=\"M3.304 13h6.392\"/></svg>","a-arrow-up":"<svg class=\"tw-ico tw-btn-ico lucide lucide-a-arrow-up\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m14 11 4-4 4 4\"/><path d=\"M18 16V7\"/><path d=\"m2 16 4.039-9.69a.5.5 0 0 1 .923 0L11 16\"/><path d=\"M3.304 13h6.392\"/></svg>","alarm-clock":"<svg class=\"tw-ico tw-btn-ico lucide lucide-alarm-clock\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"13\" r=\"8\"/><path d=\"M12 9v4l2 2\"/><path d=\"M5 3 2 6\"/><path d=\"m22 6-3-3\"/><path d=\"M6.38 18.7 4 21\"/><path d=\"M17.64 18.67 20 21\"/></svg>","arrow-left":"<svg class=\"tw-ico tw-btn-ico lucide lucide-arrow-left\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m12 19-7-7 7-7\"/><path d=\"M19 12H5\"/></svg>","arrow-right":"<svg class=\"tw-ico tw-btn-ico lucide lucide-arrow-right\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M5 12h14\"/><path d=\"m12 5 7 7-7 7\"/></svg>","bookmark":"<svg class=\"tw-ico tw-btn-ico lucide lucide-bookmark\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M17 3a2 2 0 0 1 2 2v15a1 1 0 0 1-1.496.868l-4.512-2.578a2 2 0 0 0-1.984 0l-4.512 2.578A1 1 0 0 1 5 20V5a2 2 0 0 1 2-2z\"/></svg>","chart-bar":"<svg class=\"tw-ico tw-btn-ico lucide lucide-chart-bar\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M3 3v16a2 2 0 0 0 2 2h16\"/><path d=\"M7 16h8\"/><path d=\"M7 11h12\"/><path d=\"M7 6h3\"/></svg>","check":"<svg class=\"tw-ico tw-btn-ico lucide lucide-check\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M20 6 9 17l-5-5\"/></svg>","chevron-down":"<svg class=\"tw-ico tw-btn-ico lucide lucide-chevron-down\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m6 9 6 6 6-6\"/></svg>","chevron-first":"<svg class=\"tw-ico tw-btn-ico lucide lucide-chevron-first\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m17 18-6-6 6-6\"/><path d=\"M7 6v12\"/></svg>","chevron-last":"<svg class=\"tw-ico tw-btn-ico lucide lucide-chevron-last\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m7 18 6-6-6-6\"/><path d=\"M17 6v12\"/></svg>","chevron-left":"<svg class=\"tw-ico tw-btn-ico lucide lucide-chevron-left\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m15 18-6-6 6-6\"/></svg>","chevron-right":"<svg class=\"tw-ico tw-btn-ico lucide lucide-chevron-right\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m9 18 6-6-6-6\"/></svg>","chevrons-down":"<svg class=\"tw-ico tw-btn-ico lucide lucide-chevrons-down\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m7 6 5 5 5-5\"/><path d=\"m7 13 5 5 5-5\"/></svg>","chevrons-up":"<svg class=\"tw-ico tw-btn-ico lucide lucide-chevrons-up\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m17 11-5-5-5 5\"/><path d=\"m17 18-5-5-5 5\"/></svg>","circle":"<svg class=\"tw-ico tw-btn-ico lucide lucide-circle\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"12\" r=\"10\"/></svg>","circle-alert":"<svg class=\"tw-ico tw-btn-ico lucide lucide-circle-alert\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"12\" x2=\"12\" y1=\"8\" y2=\"12\"/><line x1=\"12\" x2=\"12.01\" y1=\"16\" y2=\"16\"/></svg>","circle-check":"<svg class=\"tw-ico tw-btn-ico lucide lucide-circle-check\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"m9 12 2 2 4-4\"/></svg>","circle-dashed":"<svg class=\"tw-ico tw-btn-ico lucide lucide-circle-dashed\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M10.1 2.182a10 10 0 0 1 3.8 0\"/><path d=\"M13.9 21.818a10 10 0 0 1-3.8 0\"/><path d=\"M17.609 3.721a10 10 0 0 1 2.69 2.7\"/><path d=\"M2.182 13.9a10 10 0 0 1 0-3.8\"/><path d=\"M20.279 17.609a10 10 0 0 1-2.7 2.69\"/><path d=\"M21.818 10.1a10 10 0 0 1 0 3.8\"/><path d=\"M3.721 6.391a10 10 0 0 1 2.7-2.69\"/><path d=\"M6.391 20.279a10 10 0 0 1-2.69-2.7\"/></svg>","circle-dot":"<svg class=\"tw-ico tw-btn-ico lucide lucide-circle-dot\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><circle cx=\"12\" cy=\"12\" r=\"1\"/></svg>","circle-pause":"<svg class=\"tw-ico tw-btn-ico lucide lucide-circle-pause\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"10\" x2=\"10\" y1=\"15\" y2=\"9\"/><line x1=\"14\" x2=\"14\" y1=\"15\" y2=\"9\"/></svg>","circle-play":"<svg class=\"tw-ico tw-btn-ico lucide lucide-circle-play\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M9 9.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997A1 1 0 0 1 9 14.996z\"/><circle cx=\"12\" cy=\"12\" r=\"10\"/></svg>","circle-slash":"<svg class=\"tw-ico tw-btn-ico lucide lucide-circle-slash\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"9\" x2=\"15\" y1=\"15\" y2=\"9\"/></svg>","clipboard":"<svg class=\"tw-ico tw-btn-ico lucide lucide-clipboard\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"8\" height=\"4\" x=\"8\" y=\"2\" rx=\"1\" ry=\"1\"/><path d=\"M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2\"/></svg>","clock":"<svg class=\"tw-ico tw-btn-ico lucide lucide-clock\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M12 6v6l4 2\"/></svg>","command":"<svg class=\"tw-ico tw-btn-ico lucide lucide-command\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3\"/></svg>","copy":"<svg class=\"tw-ico tw-btn-ico lucide lucide-copy\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"14\" height=\"14\" x=\"8\" y=\"8\" rx=\"2\" ry=\"2\"/><path d=\"M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2\"/></svg>","ellipsis":"<svg class=\"tw-ico tw-btn-ico lucide lucide-ellipsis\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"12\" r=\"1\"/><circle cx=\"19\" cy=\"12\" r=\"1\"/><circle cx=\"5\" cy=\"12\" r=\"1\"/></svg>","eraser":"<svg class=\"tw-ico tw-btn-ico lucide lucide-eraser\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M21 21H8a2 2 0 0 1-1.42-.587l-3.994-3.999a2 2 0 0 1 0-2.828l10-10a2 2 0 0 1 2.829 0l5.999 6a2 2 0 0 1 0 2.828L12.834 21\"/><path d=\"m5.082 11.09 8.828 8.828\"/></svg>","eye":"<svg class=\"tw-ico tw-btn-ico lucide lucide-eye\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/></svg>","eye-off":"<svg class=\"tw-ico tw-btn-ico lucide lucide-eye-off\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49\"/><path d=\"M14.084 14.158a3 3 0 0 1-4.242-4.242\"/><path d=\"M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143\"/><path d=\"m2 2 20 20\"/></svg>","flag":"<svg class=\"tw-ico tw-btn-ico lucide lucide-flag\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528\"/></svg>","focus":"<svg class=\"tw-ico tw-btn-ico lucide lucide-focus\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M3 7V5a2 2 0 0 1 2-2h2\"/><path d=\"M17 3h2a2 2 0 0 1 2 2v2\"/><path d=\"M21 17v2a2 2 0 0 1-2 2h-2\"/><path d=\"M7 21H5a2 2 0 0 1-2-2v-2\"/></svg>","frown":"<svg class=\"tw-ico tw-btn-ico lucide lucide-frown\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M16 16s-1.5-2-4-2-4 2-4 2\"/><line x1=\"9\" x2=\"9.01\" y1=\"9\" y2=\"9\"/><line x1=\"15\" x2=\"15.01\" y1=\"9\" y2=\"9\"/></svg>","fullscreen":"<svg class=\"tw-ico tw-btn-ico lucide lucide-fullscreen\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M3 7V5a2 2 0 0 1 2-2h2\"/><path d=\"M17 3h2a2 2 0 0 1 2 2v2\"/><path d=\"M21 17v2a2 2 0 0 1-2 2h-2\"/><path d=\"M7 21H5a2 2 0 0 1-2-2v-2\"/><rect width=\"10\" height=\"8\" x=\"7\" y=\"8\" rx=\"1\"/></svg>","gallery-vertical-end":"<svg class=\"tw-ico tw-btn-ico lucide lucide-gallery-vertical-end\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M7 2h10\"/><path d=\"M5 6h14\"/><rect width=\"18\" height=\"12\" x=\"3\" y=\"10\" rx=\"2\"/></svg>","graduation-cap":"<svg class=\"tw-ico tw-btn-ico lucide lucide-graduation-cap\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z\"/><path d=\"M22 10v6\"/><path d=\"M6 12.5V16a6 3 0 0 0 12 0v-3.5\"/></svg>","grip-vertical":"<svg class=\"tw-ico tw-btn-ico lucide lucide-grip-vertical\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"9\" cy=\"12\" r=\"1\"/><circle cx=\"9\" cy=\"5\" r=\"1\"/><circle cx=\"9\" cy=\"19\" r=\"1\"/><circle cx=\"15\" cy=\"12\" r=\"1\"/><circle cx=\"15\" cy=\"5\" r=\"1\"/><circle cx=\"15\" cy=\"19\" r=\"1\"/></svg>","group":"<svg class=\"tw-ico tw-btn-ico lucide lucide-group\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M3 7V5c0-1.1.9-2 2-2h2\"/><path d=\"M17 3h2c1.1 0 2 .9 2 2v2\"/><path d=\"M21 17v2c0 1.1-.9 2-2 2h-2\"/><path d=\"M7 21H5c-1.1 0-2-.9-2-2v-2\"/><rect width=\"7\" height=\"5\" x=\"7\" y=\"7\" rx=\"1\"/><rect width=\"7\" height=\"5\" x=\"10\" y=\"12\" rx=\"1\"/></svg>","hand":"<svg class=\"tw-ico tw-btn-ico lucide lucide-hand\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2\"/><path d=\"M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2\"/><path d=\"M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8\"/><path d=\"M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15\"/></svg>","highlighter":"<svg class=\"tw-ico tw-btn-ico lucide lucide-highlighter\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m9 11-6 6v3h9l3-3\"/><path d=\"m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4\"/></svg>","image":"<svg class=\"tw-ico tw-btn-ico lucide lucide-image\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\"/><circle cx=\"9\" cy=\"9\" r=\"2\"/><path d=\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\"/></svg>","images":"<svg class=\"tw-ico tw-btn-ico lucide lucide-images\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m22 11-1.296-1.296a2.4 2.4 0 0 0-3.408 0L11 16\"/><path d=\"M4 8a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2\"/><circle cx=\"13\" cy=\"7\" r=\"1\" fill=\"currentColor\"/><rect x=\"8\" y=\"2\" width=\"14\" height=\"14\" rx=\"2\"/></svg>","inbox":"<svg class=\"tw-ico tw-btn-ico lucide lucide-inbox\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><polyline points=\"22 12 16 12 14 15 10 15 8 12 2 12\"/><path d=\"M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z\"/></svg>","keyboard":"<svg class=\"tw-ico tw-btn-ico lucide lucide-keyboard\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M10 8h.01\"/><path d=\"M12 12h.01\"/><path d=\"M14 8h.01\"/><path d=\"M16 12h.01\"/><path d=\"M18 8h.01\"/><path d=\"M6 8h.01\"/><path d=\"M7 16h10\"/><path d=\"M8 12h.01\"/><rect width=\"20\" height=\"16\" x=\"2\" y=\"4\" rx=\"2\"/></svg>","layers":"<svg class=\"tw-ico tw-btn-ico lucide lucide-layers\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z\"/><path d=\"M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12\"/><path d=\"M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17\"/></svg>","layout-grid":"<svg class=\"tw-ico tw-btn-ico lucide lucide-layout-grid\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"7\" height=\"7\" x=\"3\" y=\"3\" rx=\"1\"/><rect width=\"7\" height=\"7\" x=\"14\" y=\"3\" rx=\"1\"/><rect width=\"7\" height=\"7\" x=\"14\" y=\"14\" rx=\"1\"/><rect width=\"7\" height=\"7\" x=\"3\" y=\"14\" rx=\"1\"/></svg>","lightbulb":"<svg class=\"tw-ico tw-btn-ico lucide lucide-lightbulb\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5\"/><path d=\"M9 18h6\"/><path d=\"M10 22h4\"/></svg>","link":"<svg class=\"tw-ico tw-btn-ico lucide lucide-link\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71\"/><path d=\"M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71\"/></svg>","list-end":"<svg class=\"tw-ico tw-btn-ico lucide lucide-list-end\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M16 5H3\"/><path d=\"M16 12H3\"/><path d=\"M9 19H3\"/><path d=\"m16 16-3 3 3 3\"/><path d=\"M21 5v12a2 2 0 0 1-2 2h-6\"/></svg>","list-tree":"<svg class=\"tw-ico tw-btn-ico lucide lucide-list-tree\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M8 5h13\"/><path d=\"M13 12h8\"/><path d=\"M13 19h8\"/><path d=\"M3 10a2 2 0 0 0 2 2h3\"/><path d=\"M3 5v12a2 2 0 0 0 2 2h3\"/></svg>","loader-circle":"<svg class=\"tw-ico tw-btn-ico lucide lucide-loader-circle\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M21 12a9 9 0 1 1-6.219-8.56\"/></svg>","lock":"<svg class=\"tw-ico tw-btn-ico lucide lucide-lock\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"18\" height=\"11\" x=\"3\" y=\"11\" rx=\"2\" ry=\"2\"/><path d=\"M7 11V7a5 5 0 0 1 10 0v4\"/></svg>","lock-open":"<svg class=\"tw-ico tw-btn-ico lucide lucide-lock-open\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"18\" height=\"11\" x=\"3\" y=\"11\" rx=\"2\" ry=\"2\"/><path d=\"M7 11V7a5 5 0 0 1 9.9-1\"/></svg>","maximize-2":"<svg class=\"tw-ico tw-btn-ico lucide lucide-maximize-2\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M15 3h6v6\"/><path d=\"m21 3-7 7\"/><path d=\"m3 21 7-7\"/><path d=\"M9 21H3v-6\"/></svg>","message-circle-more":"<svg class=\"tw-ico tw-btn-ico lucide lucide-message-circle-more\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719\"/><path d=\"M8 12h.01\"/><path d=\"M12 12h.01\"/><path d=\"M16 12h.01\"/></svg>","message-circle-question-mark":"<svg class=\"tw-ico tw-btn-ico lucide lucide-message-circle-question-mark\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719\"/><path d=\"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3\"/><path d=\"M12 17h.01\"/></svg>","message-square-text":"<svg class=\"tw-ico tw-btn-ico lucide lucide-message-square-text\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z\"/><path d=\"M7 11h10\"/><path d=\"M7 15h6\"/><path d=\"M7 7h8\"/></svg>","minimize-2":"<svg class=\"tw-ico tw-btn-ico lucide lucide-minimize-2\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m14 10 7-7\"/><path d=\"M20 10h-6V4\"/><path d=\"m3 21 7-7\"/><path d=\"M4 14h6v6\"/></svg>","minus":"<svg class=\"tw-ico tw-btn-ico lucide lucide-minus\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M5 12h14\"/></svg>","monitor":"<svg class=\"tw-ico tw-btn-ico lucide lucide-monitor\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"20\" height=\"14\" x=\"2\" y=\"3\" rx=\"2\"/><line x1=\"8\" x2=\"16\" y1=\"21\" y2=\"21\"/><line x1=\"12\" x2=\"12\" y1=\"17\" y2=\"21\"/></svg>","monitor-check":"<svg class=\"tw-ico tw-btn-ico lucide lucide-monitor-check\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m9 10 2 2 4-4\"/><rect width=\"20\" height=\"14\" x=\"2\" y=\"3\" rx=\"2\"/><path d=\"M12 17v4\"/><path d=\"M8 21h8\"/></svg>","monitor-off":"<svg class=\"tw-ico tw-btn-ico lucide lucide-monitor-off\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M12 17v4\"/><path d=\"M17 17H4a2 2 0 0 1-2-2V5a2 2 0 0 1 1.184-1.826\"/><path d=\"m2 2 20 20\"/><path d=\"M8 21h8\"/><path d=\"M8.656 3H20a2 2 0 0 1 2 2v10a2 2 0 0 1-.293 1.042\"/></svg>","monitor-play":"<svg class=\"tw-ico tw-btn-ico lucide lucide-monitor-play\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M15.033 9.44a.647.647 0 0 1 0 1.12l-4.065 2.352a.645.645 0 0 1-.968-.56V7.648a.645.645 0 0 1 .967-.56z\"/><path d=\"M12 17v4\"/><path d=\"M8 21h8\"/><rect x=\"2\" y=\"3\" width=\"20\" height=\"14\" rx=\"2\"/></svg>","monitor-up":"<svg class=\"tw-ico tw-btn-ico lucide lucide-monitor-up\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m9 10 3-3 3 3\"/><path d=\"M12 13V7\"/><rect width=\"20\" height=\"14\" x=\"2\" y=\"3\" rx=\"2\"/><path d=\"M12 17v4\"/><path d=\"M8 21h8\"/></svg>","monitor-x":"<svg class=\"tw-ico tw-btn-ico lucide lucide-monitor-x\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m14.5 12.5-5-5\"/><path d=\"m9.5 12.5 5-5\"/><rect width=\"20\" height=\"14\" x=\"2\" y=\"3\" rx=\"2\"/><path d=\"M12 17v4\"/><path d=\"M8 21h8\"/></svg>","mouse-pointer-2":"<svg class=\"tw-ico tw-btn-ico lucide lucide-mouse-pointer-2\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z\"/></svg>","mouse-pointer-click":"<svg class=\"tw-ico tw-btn-ico lucide lucide-mouse-pointer-click\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M14 4.1 12 6\"/><path d=\"m5.1 8-2.9-.8\"/><path d=\"m6 12-1.9 2\"/><path d=\"M7.2 2.2 8 5.1\"/><path d=\"M9.037 9.69a.498.498 0 0 1 .653-.653l11 4.5a.5.5 0 0 1-.074.949l-4.349 1.041a1 1 0 0 0-.74.739l-1.04 4.35a.5.5 0 0 1-.95.074z\"/></svg>","move-up-right":"<svg class=\"tw-ico tw-btn-ico lucide lucide-move-up-right\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M13 5H19V11\"/><path d=\"M19 5L5 19\"/></svg>","notebook-text":"<svg class=\"tw-ico tw-btn-ico lucide lucide-notebook-text\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M2 6h4\"/><path d=\"M2 10h4\"/><path d=\"M2 14h4\"/><path d=\"M2 18h4\"/><rect width=\"16\" height=\"20\" x=\"4\" y=\"2\" rx=\"2\"/><path d=\"M9.5 8h5\"/><path d=\"M9.5 12H16\"/><path d=\"M9.5 16H14\"/></svg>","panel-bottom":"<svg class=\"tw-ico tw-btn-ico lucide lucide-panel-bottom\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/><path d=\"M3 15h18\"/></svg>","panel-right":"<svg class=\"tw-ico tw-btn-ico lucide lucide-panel-right\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/><path d=\"M15 3v18\"/></svg>","panel-top":"<svg class=\"tw-ico tw-btn-ico lucide lucide-panel-top\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/><path d=\"M3 9h18\"/></svg>","panels-top-left":"<svg class=\"tw-ico tw-btn-ico lucide lucide-panels-top-left\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/><path d=\"M3 9h18\"/><path d=\"M9 21V9\"/></svg>","pause":"<svg class=\"tw-ico tw-btn-ico lucide lucide-pause\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect x=\"14\" y=\"3\" width=\"5\" height=\"18\" rx=\"1\"/><rect x=\"5\" y=\"3\" width=\"5\" height=\"18\" rx=\"1\"/></svg>","pen-line":"<svg class=\"tw-ico tw-btn-ico lucide lucide-pen-line\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M13 21h8\"/><path d=\"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z\"/></svg>","pen-tool":"<svg class=\"tw-ico tw-btn-ico lucide lucide-pen-tool\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M15.707 21.293a1 1 0 0 1-1.414 0l-1.586-1.586a1 1 0 0 1 0-1.414l5.586-5.586a1 1 0 0 1 1.414 0l1.586 1.586a1 1 0 0 1 0 1.414z\"/><path d=\"m18 13-1.375-6.874a1 1 0 0 0-.746-.776L3.235 2.028a1 1 0 0 0-1.207 1.207L5.35 15.879a1 1 0 0 0 .776.746L13 18\"/><path d=\"m2.3 2.3 7.286 7.286\"/><circle cx=\"11\" cy=\"11\" r=\"2\"/></svg>","pencil":"<svg class=\"tw-ico tw-btn-ico lucide lucide-pencil\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z\"/><path d=\"m15 5 4 4\"/></svg>","picture-in-picture-2":"<svg class=\"tw-ico tw-btn-ico lucide lucide-picture-in-picture-2\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M21 9V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10c0 1.1.9 2 2 2h4\"/><rect width=\"10\" height=\"7\" x=\"12\" y=\"13\" rx=\"2\"/></svg>","play":"<svg class=\"tw-ico tw-btn-ico lucide lucide-play\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z\"/></svg>","plus":"<svg class=\"tw-ico tw-btn-ico lucide lucide-plus\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M5 12h14\"/><path d=\"M12 5v14\"/></svg>","presentation":"<svg class=\"tw-ico tw-btn-ico lucide lucide-presentation\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M2 3h20\"/><path d=\"M21 3v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3\"/><path d=\"m7 21 5-5 5 5\"/></svg>","qr-code":"<svg class=\"tw-ico tw-btn-ico lucide lucide-qr-code\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"5\" height=\"5\" x=\"3\" y=\"3\" rx=\"1\"/><rect width=\"5\" height=\"5\" x=\"16\" y=\"3\" rx=\"1\"/><rect width=\"5\" height=\"5\" x=\"3\" y=\"16\" rx=\"1\"/><path d=\"M21 16h-3a2 2 0 0 0-2 2v3\"/><path d=\"M21 21v.01\"/><path d=\"M12 7v3a2 2 0 0 1-2 2H7\"/><path d=\"M3 12h.01\"/><path d=\"M12 3h.01\"/><path d=\"M12 16v.01\"/><path d=\"M16 12h1\"/><path d=\"M21 12v.01\"/><path d=\"M12 21v-1\"/></svg>","radio":"<svg class=\"tw-ico tw-btn-ico lucide lucide-radio\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M16.247 7.761a6 6 0 0 1 0 8.478\"/><path d=\"M19.075 4.933a10 10 0 0 1 0 14.134\"/><path d=\"M4.925 19.067a10 10 0 0 1 0-14.134\"/><path d=\"M7.753 16.239a6 6 0 0 1 0-8.478\"/><circle cx=\"12\" cy=\"12\" r=\"2\"/></svg>","radio-off":"<svg class=\"tw-ico tw-btn-ico lucide lucide-radio-off\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M13.414 13.414a2 2 0 1 1-2.828-2.828\"/><path d=\"M16.247 7.761a6 6 0 0 1 1.744 4.572\"/><path d=\"M19.075 4.933a10 10 0 0 1 2.234 10.72\"/><path d=\"m2 2 20 20\"/><path d=\"M4.925 19.067a10 10 0 0 1 0-14.134\"/><path d=\"M7.753 16.239a6 6 0 0 1 0-8.478\"/></svg>","refresh-cw":"<svg class=\"tw-ico tw-btn-ico lucide lucide-refresh-cw\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8\"/><path d=\"M21 3v5h-5\"/><path d=\"M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16\"/><path d=\"M8 16H3v5\"/></svg>","scan-qr-code":"<svg class=\"tw-ico tw-btn-ico lucide lucide-scan-qr-code\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M17 12v4a1 1 0 0 1-1 1h-4\"/><path d=\"M17 3h2a2 2 0 0 1 2 2v2\"/><path d=\"M17 8V7\"/><path d=\"M21 17v2a2 2 0 0 1-2 2h-2\"/><path d=\"M3 7V5a2 2 0 0 1 2-2h2\"/><path d=\"M7 17h.01\"/><path d=\"M7 21H5a2 2 0 0 1-2-2v-2\"/><rect x=\"7\" y=\"7\" width=\"5\" height=\"5\" rx=\"1\"/></svg>","search":"<svg class=\"tw-ico tw-btn-ico lucide lucide-search\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m21 21-4.34-4.34\"/><circle cx=\"11\" cy=\"11\" r=\"8\"/></svg>","skip-forward":"<svg class=\"tw-ico tw-btn-ico lucide lucide-skip-forward\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M21 4v16\"/><path d=\"M6.029 4.285A2 2 0 0 0 3 6v12a2 2 0 0 0 3.029 1.715l9.997-5.998a2 2 0 0 0 .003-3.432z\"/></svg>","smile-plus":"<svg class=\"tw-ico tw-btn-ico lucide lucide-smile-plus\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M22 11v1a10 10 0 1 1-9-10\"/><path d=\"M8 14s1.5 2 4 2 4-2 4-2\"/><line x1=\"9\" x2=\"9.01\" y1=\"9\" y2=\"9\"/><line x1=\"15\" x2=\"15.01\" y1=\"9\" y2=\"9\"/><path d=\"M16 5h6\"/><path d=\"M19 2v6\"/></svg>","snail":"<svg class=\"tw-ico tw-btn-ico lucide lucide-snail\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M2 13a6 6 0 1 0 12 0 4 4 0 1 0-8 0 2 2 0 0 0 4 0\"/><circle cx=\"10\" cy=\"13\" r=\"8\"/><path d=\"M2 21h12c4.4 0 8-3.6 8-8V7a2 2 0 1 0-4 0v6\"/><path d=\"M18 3 19.1 5.2\"/><path d=\"M22 3 20.9 5.2\"/></svg>","snowflake":"<svg class=\"tw-ico tw-btn-ico lucide lucide-snowflake\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m10 20-1.25-2.5L6 18\"/><path d=\"M10 4 8.75 6.5 6 6\"/><path d=\"m14 20 1.25-2.5L18 18\"/><path d=\"m14 4 1.25 2.5L18 6\"/><path d=\"m17 21-3-6h-4\"/><path d=\"m17 3-3 6 1.5 3\"/><path d=\"M2 12h6.5L10 9\"/><path d=\"m20 10-1.5 2 1.5 2\"/><path d=\"M22 12h-6.5L14 15\"/><path d=\"m4 10 1.5 2L4 14\"/><path d=\"m7 21 3-6-1.5-3\"/><path d=\"m7 3 3 6h4\"/></svg>","square":"<svg class=\"tw-ico tw-btn-ico lucide lucide-square\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/></svg>","tags":"<svg class=\"tw-ico tw-btn-ico lucide lucide-tags\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M13.172 2a2 2 0 0 1 1.414.586l6.71 6.71a2.4 2.4 0 0 1 0 3.408l-4.592 4.592a2.4 2.4 0 0 1-3.408 0l-6.71-6.71A2 2 0 0 1 6 9.172V3a1 1 0 0 1 1-1z\"/><path d=\"M2 7v6.172a2 2 0 0 0 .586 1.414l6.71 6.71a2.4 2.4 0 0 0 3.191.193\"/><circle cx=\"10.5\" cy=\"6.5\" r=\".5\" fill=\"currentColor\"/></svg>","thumbs-down":"<svg class=\"tw-ico tw-btn-ico lucide lucide-thumbs-down\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z\"/><path d=\"M17 14V2\"/></svg>","thumbs-up":"<svg class=\"tw-ico tw-btn-ico lucide lucide-thumbs-up\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z\"/><path d=\"M7 10v12\"/></svg>","timer":"<svg class=\"tw-ico tw-btn-ico lucide lucide-timer\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><line x1=\"10\" x2=\"14\" y1=\"2\" y2=\"2\"/><line x1=\"12\" x2=\"15\" y1=\"14\" y2=\"11\"/><circle cx=\"12\" cy=\"14\" r=\"8\"/></svg>","timer-reset":"<svg class=\"tw-ico tw-btn-ico lucide lucide-timer-reset\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M10 2h4\"/><path d=\"M12 14v-4\"/><path d=\"M4 13a8 8 0 0 1 8-7 8 8 0 1 1-5.3 14L4 17.6\"/><path d=\"M9 17H4v5\"/></svg>","trash-2":"<svg class=\"tw-ico tw-btn-ico lucide lucide-trash-2\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M10 11v6\"/><path d=\"M14 11v6\"/><path d=\"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6\"/><path d=\"M3 6h18\"/><path d=\"M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\"/></svg>","type":"<svg class=\"tw-ico tw-btn-ico lucide lucide-type\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M12 4v16\"/><path d=\"M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2\"/><path d=\"M9 20h6\"/></svg>","undo-2":"<svg class=\"tw-ico tw-btn-ico lucide lucide-undo-2\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M9 14 4 9l5-5\"/><path d=\"M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11\"/></svg>","ungroup":"<svg class=\"tw-ico tw-btn-ico lucide lucide-ungroup\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"8\" height=\"6\" x=\"5\" y=\"4\" rx=\"1\"/><rect width=\"8\" height=\"6\" x=\"11\" y=\"14\" rx=\"1\"/></svg>","user-round":"<svg class=\"tw-ico tw-btn-ico lucide lucide-user-round\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"8\" r=\"5\"/><path d=\"M20 21a8 8 0 0 0-16 0\"/></svg>","vote":"<svg class=\"tw-ico tw-btn-ico lucide lucide-vote\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m9 12 2 2 4-4\"/><path d=\"M5 7c0-1.1.9-2 2-2h10a2 2 0 0 1 2 2v12H5V7Z\"/><path d=\"M22 19H2\"/></svg>","webcam":"<svg class=\"tw-ico tw-btn-ico lucide lucide-webcam\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"10\" r=\"8\"/><circle cx=\"12\" cy=\"10\" r=\"3\"/><path d=\"M7 22h10\"/><path d=\"M12 22v-4\"/></svg>","wifi-off":"<svg class=\"tw-ico tw-btn-ico lucide lucide-wifi-off\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M12 20h.01\"/><path d=\"M8.5 16.429a5 5 0 0 1 7 0\"/><path d=\"M5 12.859a10 10 0 0 1 5.17-2.69\"/><path d=\"M19 12.859a10 10 0 0 0-2.007-1.523\"/><path d=\"M2 8.82a15 15 0 0 1 4.177-2.643\"/><path d=\"M22 8.82a15 15 0 0 0-11.288-3.764\"/><path d=\"m2 2 20 20\"/></svg>","x":"<svg class=\"tw-ico tw-btn-ico lucide lucide-x\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M18 6 6 18\"/><path d=\"m6 6 12 12\"/></svg>","zap":"<svg class=\"tw-ico tw-btn-ico lucide lucide-zap\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z\"/></svg>"};
-  const SHORTCUTS_LIST = [["Navigation",[["→ Space ↓ PgDn ↵","Next",null,"presenter.next"],["← ↑ PgUp Backspace","Previous",null,"presenter.previous"],["Home","First slide",null,"presenter.first"],["End","Last slide",null,"presenter.last"],["1–9","Jump to grid child",null,"presenter.grid-child"],["S","Skip next slide",null,"presenter.skip"],["B","Return from jump",null,"presenter.return"]]],["Overview & timer",[["O","Outline",null,"presenter.overview"],["P","Start or pause timer",null,"presenter.timer"],["T","Set duration",null,"presenter.duration"]]],["Recording",[["⇧R","Start, or stop and save, recording","#twrec-module","presenter.record"],["⇧P","Pause or resume recording","#twrec-module","presenter.record-pause"],["L","Save run as…","#twrec-module","presenter.save-run-as"],["↵","Save this run as a delivery","#twrec-module","presenter.save-run"]]],["Modes & display",[["R","Reveal mode",null,"presenter.reveal"],["F","Focus mode",null,"presenter.focus"],["I","Pointer",null,"presenter.pointer"],["D","Pen",null,"presenter.pen"],["W / ⇧W","Next or previous pen tool",null,"presenter.pen-tool"],["⌘Z","Undo last stroke",null,"presenter.ink-undo"],["X","Clear drawing on this slide",null,"presenter.ink-clear"],["⇧X","Clear all drawings",null,"presenter.ink-clear-all"],["H","Highlight",null,"presenter.highlight"],["[ / ]","Resize previews",null,"presenter.preview-size"],["J / ⇧J","Scroll notes forward or back",null,"presenter.notes-scroll"],["M","Play audience media",null,"presenter.media"],["Z","Gallery or lightbox",null,"presenter.gallery"],["Z","Embedded page: full screen",null,"presenter.embed-fullscreen"],["V","Video: Fullscreen",null,"presenter.video-fullscreen"],["E","Interact with embed",null,"presenter.embed"],["+","Increase text size",null,"presenter.font-larger"],["−","Decrease text size",null,"presenter.font-smaller"]]],["Help",[["⌘⇧,","Rebind the highlighted command",null,"presenter.rebind"],["⌘⇧P","Command palette",null,"presenter.command-palette"],["?","Show shortcuts",null,"presenter.help"],["Esc","Close overlay or mode",null,"presenter.close"]]],["Audience",[["F5","Launch audience",null,"presenter.audience"],["G","Go or end live","[data-tw-live-bridge]","presenter.live"],["Q","Open or close current poll","[data-tw-live-bridge]","presenter.poll-primary"],["⇧ Q","Reveal held poll results","[data-tw-live-bridge]","presenter.poll-reveal"],["A","Open the questions tray","[data-tw-live-bridge]","presenter.questions"],["K","Compose a Quick poll","[data-tw-live-bridge]","presenter.poll-compose"],["⌥⌘I","Compose an instant slide",null,"presenter.instant-compose"],["⌘V","Preview clipboard as an instant slide",null,"presenter.instant-paste"],["→","Back to slide while instant slide is shown",null,"presenter.instant-return"],["U","Show the talk's QR code",null,"presenter.talk-qr"]]],["Board",[["⌥↵","Pick up or drop a board card",null,"presenter.board-pick"],["⌘Z","Undo the last board change",null,"presenter.board-undo"]]],["Editor",[["⌘E","Edit this slide in TalkWeaver","#twedit-btn","presenter.edit"],["⌘R / ⇧F5","Refresh with latest edits","#twedit-btn","presenter.refresh"]]]];
+  const SHORTCUTS_LIST = [["Navigation",[["→ Space ↓ PgDn ↵","Next",null,"presenter.next"],["← ↑ PgUp Backspace","Previous",null,"presenter.previous"],["Home","First slide",null,"presenter.first"],["End","Last slide",null,"presenter.last"],["1–9","Jump to grid child",null,"presenter.grid-child"],["S","Skip next slide",null,"presenter.skip"],["B","Return from jump",null,"presenter.return"]]],["Overview & timer",[["O","Outline",null,"presenter.overview"],["P","Start or pause timer",null,"presenter.timer"],["T","Set duration",null,"presenter.duration"]]],["Recording",[["⇧R","Start, or stop and save, recording","#twrec-module","presenter.record"],["⇧P","Pause or resume recording","#twrec-module","presenter.record-pause"],["L","Save run as…","#twrec-module","presenter.save-run-as"],["↵","Save this run as a delivery","#twrec-module","presenter.save-run"]]],["Modes & display",[["R","Reveal mode",null,"presenter.reveal"],["F","Focus mode",null,"presenter.focus"],["I","Pointer",null,"presenter.pointer"],["D","Pen",null,"presenter.pen"],["W / ⇧W","Next or previous pen tool",null,"presenter.pen-tool"],["⌘Z","Undo last stroke",null,"presenter.ink-undo"],["X","Clear drawing on this slide",null,"presenter.ink-clear"],["⇧X","Clear all drawings",null,"presenter.ink-clear-all"],["H","Highlight",null,"presenter.highlight"],["[ / ]","Resize previews",null,"presenter.preview-size"],["J / ⇧J","Scroll notes forward or back",null,"presenter.notes-scroll"],["M","Play audience media",null,"presenter.media"],["Z","Gallery or lightbox",null,"presenter.gallery"],["Z","Embedded page: full screen",null,"presenter.embed-fullscreen"],["V","Video: Fullscreen",null,"presenter.video-fullscreen"],["E","Interact with embed",null,"presenter.embed"],["+","Increase text size",null,"presenter.font-larger"],["−","Decrease text size",null,"presenter.font-smaller"]]],["Help",[["⌘⇧,","Rebind the highlighted command",null,"presenter.rebind"],["⌘⇧P","Command palette",null,"presenter.command-palette"],["?","Show shortcuts",null,"presenter.help"],["C","Guide","#twguide-chip","presenter.guide"],["Esc","Close overlay or mode",null,"presenter.close"]]],["Audience",[["F5","Launch audience",null,"presenter.audience"],["G","Go or end live","[data-tw-live-bridge]","presenter.live"],["Q","Open or close current poll","[data-tw-live-bridge]","presenter.poll-primary"],["⇧ Q","Reveal held poll results","[data-tw-live-bridge]","presenter.poll-reveal"],["A","Open the questions tray","[data-tw-live-bridge]","presenter.questions"],["K","Compose a Quick poll","[data-tw-live-bridge]","presenter.poll-compose"],["⌥⌘I","Compose an instant slide",null,"presenter.instant-compose"],["⌘V","Preview clipboard as an instant slide",null,"presenter.instant-paste"],["→","Back to slide while instant slide is shown",null,"presenter.instant-return"],["U","Show the talk's QR code",null,"presenter.talk-qr"]]],["Board",[["⌥↵","Pick up or drop a board card",null,"presenter.board-pick"],["⌘Z","Undo the last board change",null,"presenter.board-undo"]]],["Editor",[["⌘E","Edit this slide in TalkWeaver","#twedit-btn","presenter.edit"],["⌘R / ⇧F5","Refresh with latest edits","#twedit-btn","presenter.refresh"]]]];
   const AUDIENCE_REACTION_NAMES = {"puzzled":["frown","Puzzled by this","Puzzled by this"],"helped":["lightbulb","Helped me understand","Helped me understand"],"bookmark":["bookmark","Bookmark","Bookmark: I need to return to this"],"agree":["thumbs-up","Agree","Agree"],"disagree":["thumbs-down","Disagree","Disagree"],"yes":["check","Yes","Yes"],"no":["x","No","No"],"more":["message-circle-more","Tell me more","Tell me more"],"slower":["snail","Slower, please","Slower, please"]};
-  const PRESENTER_PALETTE = [["Slides",[{"id":"next","shortcut":"presenter.next","name":"Next","icon":"arrow-right","keys":"→","controls":["#presenterNext"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"previous","shortcut":"presenter.previous","name":"Previous","icon":"arrow-left","keys":"←","controls":["#presenterPrev"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"skip","shortcut":"presenter.skip","name":"Skip next slide","icon":"skip-forward","keys":"S","controls":["#skipNextBtn"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"return","shortcut":"presenter.return","name":"Return to where you jumped from","icon":"undo-2","keys":"B","controls":["#returnBtn","#moreReturn"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"first","shortcut":"presenter.first","name":"First slide","icon":"chevron-first","keys":"Home","controls":["#presenterFirst"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"last","shortcut":"presenter.last","name":"Last slide","icon":"chevron-last","keys":"End","controls":["#presenterLast"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"outline","shortcut":"presenter.overview","name":"Outline","icon":"list-tree","keys":"O","controls":["#outlineBtn","#viewOutline"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"grid-card","shortcut":"presenter.grid-child","name":"Go to card on a grid slide","icon":"layout-grid","keys":"1–9","controls":["#moreGridCard"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"embed","shortcut":"presenter.embed","name":"Interact with embedded page","icon":"mouse-pointer-click","keys":"E","controls":["#moreEmbed"],"code":null,"needs":null,"words":[],"task":"Present"}]],["Timer",[{"id":"timer","shortcut":"presenter.timer","name":"Start, pause or resume timer","icon":"timer","keys":"P","controls":["#twClockBtn","#twStartTimerBtn"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"duration","shortcut":"presenter.duration","name":"Talk length and reminders…","icon":"alarm-clock","keys":"T","controls":["#twDurationBtn"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"reset-timer","shortcut":null,"name":"Reset timer","icon":"timer-reset","keys":"","controls":["#twResetBtn"],"code":null,"needs":null,"words":[],"task":"Present"}]],["Recording",[{"id":"record-start","shortcut":"presenter.record","name":"Start recording","icon":"circle-dot","keys":"⇧R","controls":["#twrec-primary"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"record-pause","shortcut":"presenter.record-pause","name":"Pause or resume recording","icon":"circle-pause","keys":"⇧P","controls":["#twrec-pause","#twrec-resume"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"record-stop","shortcut":"presenter.record","name":"Stop and save recording","icon":"square","keys":"⇧R","controls":["#twrec-stop"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"save-run-as","shortcut":"presenter.save-run-as","name":"Save run as…","icon":"tags","keys":"L","controls":["#twrec-change-kind"],"code":"l","needs":"#twrec-module","words":["run kind","history","change"],"task":"Present"}]],["Live",[{"id":"live","shortcut":"presenter.live","name":"Go live or end live session","icon":"radio","keys":"G","controls":["#liveGoButton","#presenterEndLive","#presenterGoLive"],"code":null,"needs":"[data-tw-live-bridge]","words":[],"task":"Present"},{"id":"audience","shortcut":"presenter.audience","name":"Open audience window","icon":"monitor-up","keys":"F5","controls":["#presenterAudienceApp"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"join-link","shortcut":null,"name":"Show join link and venue screen","icon":"scan-qr-code","keys":"","controls":["#liveShowJoin"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"copy-venue-link","shortcut":null,"name":"Copy venue-screen link","icon":"link","keys":"","controls":["#liveCopyVenueLink"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"allow-questions","shortcut":null,"name":"Allow slide questions","icon":"message-circle-question-mark","keys":"","controls":["#liveAllowQuestions"],"code":null,"needs":"[data-tw-live-bridge]","words":["pause","phones","audience"],"task":"Present"},{"id":"allow-reactions","shortcut":null,"name":"Allow slide reactions","icon":"smile-plus","keys":"","controls":["#liveAllowReactions"],"code":null,"needs":"[data-tw-live-bridge]","words":["pause","phones","audience"],"task":"Present"},{"id":"talk-qr","shortcut":"presenter.talk-qr","name":"Show talk QR code","icon":"qr-code","keys":"U","controls":["#liveTalkQr"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"instant-compose","shortcut":"presenter.instant-compose","name":"Compose instant slide…","icon":"zap","keys":"⌥⌘I","controls":["#presenterInstantButton","#navInstant"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"instant-paste","shortcut":"presenter.instant-paste","name":"Instant slide from clipboard","icon":"clipboard","keys":"⌘V","controls":["#liveInstantPaste"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"instant-back","shortcut":"presenter.instant-return","name":"Back to slide","icon":"undo-2","keys":"→","controls":["#liveInstantBack","#presenterInstantBack"],"code":null,"needs":null,"words":[],"task":"Present"}]],["Poll and questions",[{"id":"quick-poll","shortcut":"presenter.poll-compose","name":"Compose Quick poll…","icon":"vote","keys":"K","controls":["#presenterQuickPollButton","#navQuickPoll"],"code":null,"needs":"[data-tw-live-bridge]","words":[],"task":"Present"},{"id":"poll-primary","shortcut":"presenter.poll-primary","name":"Open or close current poll","icon":"lock-open","keys":"Q","controls":["#pollMenuPrimary","#presenterPollOpen","#presenterPollClose"],"code":null,"needs":"[data-tw-live-bridge]","words":[],"task":"Present"},{"id":"poll-reveal","shortcut":"presenter.poll-reveal","name":"Reveal results","icon":"eye","keys":"⇧ Q","controls":["#pollMenuReveal","#presenterPollReveal"],"code":null,"needs":"[data-tw-live-bridge]","words":[],"task":"Present"},{"id":"poll-panel","shortcut":null,"name":"Show poll panel","icon":"chart-bar","keys":"","controls":["#presenterPollPanelToggle"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"quick-poll-restore","shortcut":null,"name":"Show Quick poll on screens","icon":"monitor-play","keys":"","controls":["#presenterQuickPollRestore"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"quick-poll-dismiss","shortcut":null,"name":"Dismiss Quick poll","icon":"x","keys":"","controls":["#presenterQuickPollDismiss"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"board-close","shortcut":"presenter.poll-primary","name":"Close board to new cards or reopen it","icon":"lock","keys":"Q","controls":["#pollMenuBoardClose"],"code":null,"needs":"[data-tw-live-bridge]","words":["board","cards"],"task":"Present"},{"id":"board-freeze","shortcut":null,"name":"Freeze or unfreeze the board","icon":"snowflake","keys":"","controls":["#pollMenuBoardFreeze"],"code":null,"needs":"[data-tw-live-bridge]","words":["board","final"],"task":"Present"},{"id":"board-panel","shortcut":null,"name":"Show board panel","icon":"layout-grid","keys":"","controls":["#pollMenuBoardPanel"],"code":null,"needs":null,"words":["board","inbox"],"task":"Present"},{"id":"board-full","shortcut":null,"name":"Board full screen","icon":"maximize-2","keys":"","controls":["#pollMenuBoardFull"],"code":null,"needs":null,"words":["board"],"task":"Present"},{"id":"board-popout","shortcut":null,"name":"Pop out the board","icon":"picture-in-picture-2","keys":"","controls":["#pollMenuBoardPopout"],"code":null,"needs":null,"words":["board","window","screen"],"task":"Present"},{"id":"questions","shortcut":"presenter.questions","name":"Open questions","icon":"message-circle-question-mark","keys":"A","controls":["#pollMenuQuestions"],"code":null,"needs":"[data-tw-live-bridge]","words":[],"task":"Present"}]],["View",[{"id":"previews-larger","shortcut":"presenter.preview-size","name":"Larger previews","icon":"gallery-vertical-end","keys":"]","controls":[],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"previews-smaller","shortcut":"presenter.preview-size","name":"Smaller previews","icon":"gallery-vertical-end","keys":"[","controls":[],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"notes-off","shortcut":null,"name":"Notes: off","icon":"eye-off","keys":"","controls":["[data-notes-placement-option=\"off\"]"],"code":null,"needs":null,"words":["placement"],"task":"Present"},{"id":"notes-bottom","shortcut":null,"name":"Notes: bottom","icon":"panel-bottom","keys":"","controls":["[data-notes-placement-option=\"bottom\"]"],"code":null,"needs":null,"words":["placement"],"task":"Present"},{"id":"notes-sidebar","shortcut":null,"name":"Notes: sidebar","icon":"panel-right","keys":"","controls":["[data-notes-placement-option=\"sidebar\"]"],"code":null,"needs":null,"words":["placement"],"task":"Present"},{"id":"notes-top-band","shortcut":null,"name":"Notes: top band","icon":"panel-top","keys":"","controls":["[data-notes-placement-option=\"top-band\"]"],"code":null,"needs":null,"words":["placement","teleprompter"],"task":"Present"},{"id":"notes-camera-column","shortcut":null,"name":"Notes: camera column","icon":"webcam","keys":"","controls":["[data-notes-placement-option=\"camera-column\"]"],"code":null,"needs":null,"words":["placement","teleprompter"],"task":"Present"},{"id":"notes-scroll-hand","shortcut":null,"name":"Notes scroll by hand","icon":"hand","keys":"","controls":["[data-notes-scroll-option=\"hand\"]"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"notes-scroll-auto","shortcut":null,"name":"Notes scroll automatically","icon":"play","keys":"","controls":["[data-notes-scroll-option=\"auto\"]"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"notes-forward","shortcut":"presenter.notes-scroll","name":"Step notes forward","icon":"chevrons-down","keys":"J","controls":[],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"notes-back","shortcut":"presenter.notes-scroll","name":"Step notes back","icon":"chevrons-up","keys":"⇧J","controls":[],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"notes-faster","shortcut":null,"name":"Notes scroll faster","icon":"plus","keys":"","controls":["#notesWpmFaster"],"code":null,"needs":null,"words":["speed"],"task":"Present"},{"id":"notes-slower","shortcut":null,"name":"Notes scroll slower","icon":"minus","keys":"","controls":["#notesWpmSlower"],"code":null,"needs":null,"words":["speed"],"task":"Present"}]],["Slide on every screen",[{"id":"reveal","shortcut":"presenter.reveal","name":"Reveal mode","icon":"layers","keys":"R","controls":["#viewReveal","#presenterReveal"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"focus","shortcut":"presenter.focus","name":"Focus mode","icon":"focus","keys":"F","controls":["#presenterFocus","#viewFocus"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"pointer","shortcut":"presenter.pointer","name":"Pointer","icon":"mouse-pointer-2","keys":"I","controls":["#presenterPointer","#viewPointer","#morePointer"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"pen","shortcut":"presenter.pen","name":"Pen","icon":"pen-tool","keys":"D","controls":["#presenterPen","#viewPen","#morePen"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"pen-freehand","shortcut":null,"name":"Pen tool: Freehand","icon":"pen-line","keys":"","controls":["#penToolFreehand","#penStripFreehand"],"code":null,"needs":null,"words":["draw"],"task":"Present"},{"id":"pen-arrow","shortcut":null,"name":"Pen tool: Arrow","icon":"move-up-right","keys":"","controls":["#penToolArrow","#penStripArrow"],"code":null,"needs":null,"words":["draw"],"task":"Present"},{"id":"pen-rectangle","shortcut":null,"name":"Pen tool: Rectangle","icon":"square","keys":"","controls":["#penToolRectangle","#penStripRectangle"],"code":null,"needs":null,"words":["draw","box"],"task":"Present"},{"id":"pen-next-tool","shortcut":"presenter.pen-tool","name":"Pen: next tool","icon":"pen-tool","keys":"W","controls":[],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"ink-undo","shortcut":"presenter.ink-undo","name":"Undo last stroke","icon":"undo-2","keys":"⌘Z","controls":["#penUndo","#penStripUndo"],"code":null,"needs":null,"words":["pen","drawing"],"task":"Present"},{"id":"ink-clear","shortcut":"presenter.ink-clear","name":"Clear drawing on this slide","icon":"eraser","keys":"X","controls":["#presenterInkClear","#viewInkClear","#moreInkClear"],"code":null,"needs":null,"words":["pen"],"task":"Present"},{"id":"ink-clear-all","shortcut":"presenter.ink-clear-all","name":"Clear all drawings","icon":"eraser","keys":"⇧X","controls":["#viewInkClearAll","#moreInkClearAll"],"code":null,"needs":null,"words":["pen"],"task":"Present"},{"id":"highlight","shortcut":"presenter.highlight","name":"Highlight text","icon":"highlighter","keys":"H","controls":["#presenterHighlight","#viewHighlight"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"highlight-clear","shortcut":null,"name":"Clear highlights","icon":"eraser","keys":"","controls":["#presenterHighlightClear","#viewHighlightClear","#presenterHighlightChipClear"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"font-smaller","shortcut":"presenter.font-smaller","name":"Slide text smaller","icon":"a-arrow-down","keys":"−","controls":["#fontDown","#viewFontDown"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"font-larger","shortcut":"presenter.font-larger","name":"Slide text larger","icon":"a-arrow-up","keys":"+","controls":["#fontUp","#viewFontUp"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"media","shortcut":"presenter.media","name":"Play or pause media","icon":"play","keys":"M","controls":["#presenterMediaPlay","#presenterMediaPause"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"video-fullscreen","shortcut":"presenter.video-fullscreen","name":"Video full screen","icon":"fullscreen","keys":"V","controls":["#presenterVideoFullscreen"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"embed-fullscreen","shortcut":"presenter.embed-fullscreen","name":"Embedded page: full screen","icon":"maximize-2","keys":"Z","controls":["#presenterEmbedFullscreen"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"gallery","shortcut":"presenter.gallery","name":"Image gallery","icon":"images","keys":"Z","controls":["#presenterGalleryBtn"],"code":null,"needs":null,"words":[],"task":"Present"}]],["Editor and help",[{"id":"edit","shortcut":"presenter.edit","name":"Edit this slide in TalkWeaver","icon":"pencil","keys":"⌘E","controls":["#twedit-btn"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"refresh","shortcut":"presenter.refresh","name":"Refresh with latest edits","icon":"refresh-cw","keys":"⌘R / ⇧F5","controls":["#moreRefresh"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"shortcuts","shortcut":"presenter.help","name":"Keyboard shortcuts","icon":"keyboard","keys":"?","controls":["#viewShortcuts"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"guide","shortcut":null,"name":"Guide: Present chapter","icon":"graduation-cap","keys":"","controls":["#twguide-chip"],"code":null,"needs":"#twguide-chip","words":["learn","onboarding","chapter","tried"],"task":"Present"}]]];
+  const PRESENTER_PALETTE = [["Slides",[{"id":"next","shortcut":"presenter.next","name":"Next","icon":"arrow-right","keys":"→","controls":["#presenterNext"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"previous","shortcut":"presenter.previous","name":"Previous","icon":"arrow-left","keys":"←","controls":["#presenterPrev"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"skip","shortcut":"presenter.skip","name":"Skip next slide","icon":"skip-forward","keys":"S","controls":["#skipNextBtn"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"return","shortcut":"presenter.return","name":"Return to where you jumped from","icon":"undo-2","keys":"B","controls":["#returnBtn","#moreReturn"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"first","shortcut":"presenter.first","name":"First slide","icon":"chevron-first","keys":"Home","controls":["#presenterFirst"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"last","shortcut":"presenter.last","name":"Last slide","icon":"chevron-last","keys":"End","controls":["#presenterLast"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"outline","shortcut":"presenter.overview","name":"Outline","icon":"list-tree","keys":"O","controls":["#outlineBtn","#viewOutline"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"grid-card","shortcut":"presenter.grid-child","name":"Go to card on a grid slide","icon":"layout-grid","keys":"1–9","controls":["#moreGridCard"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"embed","shortcut":"presenter.embed","name":"Interact with embedded page","icon":"mouse-pointer-click","keys":"E","controls":["#moreEmbed"],"code":null,"needs":null,"words":[],"task":"Present"}]],["Timer",[{"id":"timer","shortcut":"presenter.timer","name":"Start, pause or resume timer","icon":"timer","keys":"P","controls":["#twClockBtn","#twStartTimerBtn"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"duration","shortcut":"presenter.duration","name":"Talk length and reminders…","icon":"alarm-clock","keys":"T","controls":["#twDurationBtn"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"reset-timer","shortcut":null,"name":"Reset timer","icon":"timer-reset","keys":"","controls":["#twResetBtn"],"code":null,"needs":null,"words":[],"task":"Present"}]],["Recording",[{"id":"record-start","shortcut":"presenter.record","name":"Start recording","icon":"circle-dot","keys":"⇧R","controls":["#twrec-primary"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"record-pause","shortcut":"presenter.record-pause","name":"Pause or resume recording","icon":"circle-pause","keys":"⇧P","controls":["#twrec-pause","#twrec-resume"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"record-stop","shortcut":"presenter.record","name":"Stop and save recording","icon":"square","keys":"⇧R","controls":["#twrec-stop"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"save-run-as","shortcut":"presenter.save-run-as","name":"Save run as…","icon":"tags","keys":"L","controls":["#twrec-change-kind"],"code":"l","needs":"#twrec-module","words":["run kind","history","change"],"task":"Present"}]],["Live",[{"id":"live","shortcut":"presenter.live","name":"Go live or end live session","icon":"radio","keys":"G","controls":["#liveGoButton","#presenterEndLive","#presenterGoLive"],"code":null,"needs":"[data-tw-live-bridge]","words":[],"task":"Present"},{"id":"audience","shortcut":"presenter.audience","name":"Open audience window","icon":"monitor-up","keys":"F5","controls":["#presenterAudienceApp"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"join-link","shortcut":null,"name":"Show join link and venue screen","icon":"scan-qr-code","keys":"","controls":["#liveShowJoin"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"copy-venue-link","shortcut":null,"name":"Copy venue-screen link","icon":"link","keys":"","controls":["#liveCopyVenueLink"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"allow-questions","shortcut":null,"name":"Allow slide questions","icon":"message-circle-question-mark","keys":"","controls":["#liveAllowQuestions"],"code":null,"needs":"[data-tw-live-bridge]","words":["pause","phones","audience"],"task":"Present"},{"id":"allow-reactions","shortcut":null,"name":"Allow slide reactions","icon":"smile-plus","keys":"","controls":["#liveAllowReactions"],"code":null,"needs":"[data-tw-live-bridge]","words":["pause","phones","audience"],"task":"Present"},{"id":"talk-qr","shortcut":"presenter.talk-qr","name":"Show talk QR code","icon":"qr-code","keys":"U","controls":["#liveTalkQr"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"instant-compose","shortcut":"presenter.instant-compose","name":"Compose instant slide…","icon":"zap","keys":"⌥⌘I","controls":["#presenterInstantButton","#navInstant"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"instant-paste","shortcut":"presenter.instant-paste","name":"Instant slide from clipboard","icon":"clipboard","keys":"⌘V","controls":["#liveInstantPaste"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"instant-back","shortcut":"presenter.instant-return","name":"Back to slide","icon":"undo-2","keys":"→","controls":["#liveInstantBack","#presenterInstantBack"],"code":null,"needs":null,"words":[],"task":"Present"}]],["Poll and questions",[{"id":"quick-poll","shortcut":"presenter.poll-compose","name":"Compose Quick poll…","icon":"vote","keys":"K","controls":["#presenterQuickPollButton","#navQuickPoll"],"code":null,"needs":"[data-tw-live-bridge]","words":[],"task":"Present"},{"id":"poll-primary","shortcut":"presenter.poll-primary","name":"Open or close current poll","icon":"lock-open","keys":"Q","controls":["#pollMenuPrimary","#presenterPollOpen","#presenterPollClose"],"code":null,"needs":"[data-tw-live-bridge]","words":[],"task":"Present"},{"id":"poll-reveal","shortcut":"presenter.poll-reveal","name":"Reveal results","icon":"eye","keys":"⇧ Q","controls":["#pollMenuReveal","#presenterPollReveal"],"code":null,"needs":"[data-tw-live-bridge]","words":[],"task":"Present"},{"id":"poll-panel","shortcut":null,"name":"Show poll panel","icon":"chart-bar","keys":"","controls":["#presenterPollPanelToggle"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"quick-poll-restore","shortcut":null,"name":"Show Quick poll on screens","icon":"monitor-play","keys":"","controls":["#presenterQuickPollRestore"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"quick-poll-dismiss","shortcut":null,"name":"Dismiss Quick poll","icon":"x","keys":"","controls":["#presenterQuickPollDismiss"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"board-close","shortcut":"presenter.poll-primary","name":"Close board to new cards or reopen it","icon":"lock","keys":"Q","controls":["#pollMenuBoardClose"],"code":null,"needs":"[data-tw-live-bridge]","words":["board","cards"],"task":"Present"},{"id":"board-freeze","shortcut":null,"name":"Freeze or unfreeze the board","icon":"snowflake","keys":"","controls":["#pollMenuBoardFreeze"],"code":null,"needs":"[data-tw-live-bridge]","words":["board","final"],"task":"Present"},{"id":"board-panel","shortcut":null,"name":"Show board panel","icon":"layout-grid","keys":"","controls":["#pollMenuBoardPanel"],"code":null,"needs":null,"words":["board","inbox"],"task":"Present"},{"id":"board-full","shortcut":null,"name":"Board full screen","icon":"maximize-2","keys":"","controls":["#pollMenuBoardFull"],"code":null,"needs":null,"words":["board"],"task":"Present"},{"id":"board-popout","shortcut":null,"name":"Pop out the board","icon":"picture-in-picture-2","keys":"","controls":["#pollMenuBoardPopout"],"code":null,"needs":null,"words":["board","window","screen"],"task":"Present"},{"id":"questions","shortcut":"presenter.questions","name":"Open questions","icon":"message-circle-question-mark","keys":"A","controls":["#pollMenuQuestions"],"code":null,"needs":"[data-tw-live-bridge]","words":[],"task":"Present"}]],["View",[{"id":"previews-larger","shortcut":"presenter.preview-size","name":"Larger previews","icon":"gallery-vertical-end","keys":"]","controls":[],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"previews-smaller","shortcut":"presenter.preview-size","name":"Smaller previews","icon":"gallery-vertical-end","keys":"[","controls":[],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"notes-off","shortcut":null,"name":"Notes: off","icon":"eye-off","keys":"","controls":["[data-notes-placement-option=\"off\"]"],"code":null,"needs":null,"words":["placement"],"task":"Present"},{"id":"notes-bottom","shortcut":null,"name":"Notes: bottom","icon":"panel-bottom","keys":"","controls":["[data-notes-placement-option=\"bottom\"]"],"code":null,"needs":null,"words":["placement"],"task":"Present"},{"id":"notes-sidebar","shortcut":null,"name":"Notes: sidebar","icon":"panel-right","keys":"","controls":["[data-notes-placement-option=\"sidebar\"]"],"code":null,"needs":null,"words":["placement"],"task":"Present"},{"id":"notes-top-band","shortcut":null,"name":"Notes: top band","icon":"panel-top","keys":"","controls":["[data-notes-placement-option=\"top-band\"]"],"code":null,"needs":null,"words":["placement","teleprompter"],"task":"Present"},{"id":"notes-camera-column","shortcut":null,"name":"Notes: camera column","icon":"webcam","keys":"","controls":["[data-notes-placement-option=\"camera-column\"]"],"code":null,"needs":null,"words":["placement","teleprompter"],"task":"Present"},{"id":"notes-scroll-hand","shortcut":null,"name":"Notes scroll by hand","icon":"hand","keys":"","controls":["[data-notes-scroll-option=\"hand\"]"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"notes-scroll-auto","shortcut":null,"name":"Notes scroll automatically","icon":"play","keys":"","controls":["[data-notes-scroll-option=\"auto\"]"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"notes-forward","shortcut":"presenter.notes-scroll","name":"Step notes forward","icon":"chevrons-down","keys":"J","controls":[],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"notes-back","shortcut":"presenter.notes-scroll","name":"Step notes back","icon":"chevrons-up","keys":"⇧J","controls":[],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"notes-faster","shortcut":null,"name":"Notes scroll faster","icon":"plus","keys":"","controls":["#notesWpmFaster"],"code":null,"needs":null,"words":["speed"],"task":"Present"},{"id":"notes-slower","shortcut":null,"name":"Notes scroll slower","icon":"minus","keys":"","controls":["#notesWpmSlower"],"code":null,"needs":null,"words":["speed"],"task":"Present"}]],["Slide on every screen",[{"id":"reveal","shortcut":"presenter.reveal","name":"Reveal mode","icon":"layers","keys":"R","controls":["#viewReveal","#presenterReveal"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"focus","shortcut":"presenter.focus","name":"Focus mode","icon":"focus","keys":"F","controls":["#presenterFocus","#viewFocus"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"pointer","shortcut":"presenter.pointer","name":"Pointer","icon":"mouse-pointer-2","keys":"I","controls":["#presenterPointer","#viewPointer","#morePointer"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"pen","shortcut":"presenter.pen","name":"Pen","icon":"pen-tool","keys":"D","controls":["#presenterPen","#viewPen","#morePen"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"pen-freehand","shortcut":null,"name":"Pen tool: Freehand","icon":"pen-line","keys":"","controls":["#penToolFreehand","#penStripFreehand"],"code":null,"needs":null,"words":["draw"],"task":"Present"},{"id":"pen-arrow","shortcut":null,"name":"Pen tool: Arrow","icon":"move-up-right","keys":"","controls":["#penToolArrow","#penStripArrow"],"code":null,"needs":null,"words":["draw"],"task":"Present"},{"id":"pen-rectangle","shortcut":null,"name":"Pen tool: Rectangle","icon":"square","keys":"","controls":["#penToolRectangle","#penStripRectangle"],"code":null,"needs":null,"words":["draw","box"],"task":"Present"},{"id":"pen-next-tool","shortcut":"presenter.pen-tool","name":"Pen: next tool","icon":"pen-tool","keys":"W","controls":[],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"ink-undo","shortcut":"presenter.ink-undo","name":"Undo last stroke","icon":"undo-2","keys":"⌘Z","controls":["#penUndo","#penStripUndo"],"code":null,"needs":null,"words":["pen","drawing"],"task":"Present"},{"id":"ink-clear","shortcut":"presenter.ink-clear","name":"Clear drawing on this slide","icon":"eraser","keys":"X","controls":["#presenterInkClear","#viewInkClear","#moreInkClear"],"code":null,"needs":null,"words":["pen"],"task":"Present"},{"id":"ink-clear-all","shortcut":"presenter.ink-clear-all","name":"Clear all drawings","icon":"eraser","keys":"⇧X","controls":["#viewInkClearAll","#moreInkClearAll"],"code":null,"needs":null,"words":["pen"],"task":"Present"},{"id":"highlight","shortcut":"presenter.highlight","name":"Highlight text","icon":"highlighter","keys":"H","controls":["#presenterHighlight","#viewHighlight"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"highlight-clear","shortcut":null,"name":"Clear highlights","icon":"eraser","keys":"","controls":["#presenterHighlightClear","#viewHighlightClear","#presenterHighlightChipClear"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"font-smaller","shortcut":"presenter.font-smaller","name":"Slide text smaller","icon":"a-arrow-down","keys":"−","controls":["#fontDown","#viewFontDown"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"font-larger","shortcut":"presenter.font-larger","name":"Slide text larger","icon":"a-arrow-up","keys":"+","controls":["#fontUp","#viewFontUp"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"media","shortcut":"presenter.media","name":"Play or pause media","icon":"play","keys":"M","controls":["#presenterMediaPlay","#presenterMediaPause"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"video-fullscreen","shortcut":"presenter.video-fullscreen","name":"Video full screen","icon":"fullscreen","keys":"V","controls":["#presenterVideoFullscreen"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"embed-fullscreen","shortcut":"presenter.embed-fullscreen","name":"Embedded page: full screen","icon":"maximize-2","keys":"Z","controls":["#presenterEmbedFullscreen"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"gallery","shortcut":"presenter.gallery","name":"Image gallery","icon":"images","keys":"Z","controls":["#presenterGalleryBtn"],"code":null,"needs":null,"words":[],"task":"Present"}]],["Editor and help",[{"id":"edit","shortcut":"presenter.edit","name":"Edit this slide in TalkWeaver","icon":"pencil","keys":"⌘E","controls":["#twedit-btn"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"refresh","shortcut":"presenter.refresh","name":"Refresh with latest edits","icon":"refresh-cw","keys":"⌘R / ⇧F5","controls":["#moreRefresh"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"shortcuts","shortcut":"presenter.help","name":"Keyboard shortcuts","icon":"keyboard","keys":"?","controls":["#viewShortcuts"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"guide","shortcut":"presenter.guide","name":"Guide: Present chapter","icon":"graduation-cap","keys":"C","controls":["#twguide-chip"],"code":null,"needs":"#twguide-chip","words":["learn","onboarding","chapter","tried"],"task":"Present"}]]];
   /*END_SHORTCUT_HELP*/
 
   // ── The Guide's tick reports (onboarding 0.38.1 ticket 10) ──────────────────────────────────

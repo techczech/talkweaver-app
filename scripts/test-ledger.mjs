@@ -276,7 +276,9 @@ check("listSlideBlocks addresses any-depth headings; # is never a block", () => 
   const sub = blocks[1];
   assert.equal(src.split("\n")[sub.end], "#### card");
   // item indexing + icon write inside a #### block: c2 is item index 1 of "#### card"
-  const stamped = setListItemIcon(src, { heading: "#### card", occurrence: 1 }, 1, "star");
+  const pinned = setListItemIcon(src, { heading: "#### card", occurrence: 1 }, 1, "star");
+  assert.equal(pinned.ok, true, pinned.reason);
+  const stamped = pinned.text;
   assert.ok(stamped.includes("- c2 {icon=star}"));
   assert.ok(stamped.includes("- c1\n"), "other items untouched");
 });

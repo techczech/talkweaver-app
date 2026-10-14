@@ -11,8 +11,8 @@
 //   account <id>             the account picker (after a check lists the accounts in this process)
 //   create-site [name]       the site name in Settings (Save), then "Create <site>"
 //   live                     "Set up going live" / Try again
-//   share-domain <host>      the share-link address in Settings (Save); attached by the live service's
-//                            update, run here at once when a live service is set up
+//   share-domain <host>      the share-link address in Settings (Save), which attaches or removes
+//                            that one address when a live service is set up from this computer
 //   disconnect               Disconnect
 //   recording                Recording storage: endpoint and bucket (Save), keys, Check
 //   transcription            Settings → Transcription: Save
@@ -41,6 +41,8 @@ export interface SetupOperationPorts {
   publishSettings: { read(): PublishSettings; apply(next: PublishSettings): { success: true; checked?: Promise<unknown> } | { success: false; error: string } }
   /** The window's Recording storage fields: read, and Save (which tells recording storage itself). */
   recordingSettings: { read(): RecordingSettings; apply(next: RecordingSettings): void }
+  /** The share-address action as Settings' Save runs it: remove the address this computer attached and no longer has set, attach the one set. Null: nothing to attach to. */
+  applyShareAddress(): Promise<{ ok: true } | { ok: false; error: string } | null>
   /** Every new Going live row while a set-up runs. Answers a function that stops listening. */
   watchLiveRow(listener: (row: GoingLiveRow) => void): () => void
 }
@@ -71,6 +73,8 @@ export function createSetupOperations(ports: SetupOperationPorts): SetupOperatio
     const stop = progressOfLive(progress)
     try {
       const reply = await liveService.setUp()
+      // A success with something to say (the update is uploaded and not switched to yet) says it as its last line.
+      if (reply.ok && reply.notice) progress(reply.notice)
       return reply.ok ? { ok: true } : failed(reply.error)
     } finally {
       stop()
@@ -144,8 +148,9 @@ export function createSetupOperations(ports: SetupOperationPorts): SetupOperatio
         if (saved.checked) await saved.checked
       }
       await checkCloudflare()
-      // The address is attached to (or removed from) the live service by its set-up. With a live
-      // service set up, that update runs now; without one, it runs when going live is set up.
+      // The address is attached to (or removed from) the live service by this command and by
+      // nothing else (the live service's code is not touched). With no live service set up from this
+      // computer there is nothing to attach to: it is attached at the end of the first set-up.
       const row = liveService.row()
       const deployed = row.address !== null && (row.state === 'ready' || row.state === 'failed' || row.state === 'no-permission')
       if (!deployed) {
@@ -153,9 +158,10 @@ export function createSetupOperations(ports: SetupOperationPorts): SetupOperatio
           ? { ok: true }
           : failed('The address is attached when going live is set up: run "setup cloudflare live".')
       }
-      const live = await setUpLive(progress)
+      progress(host === null ? 'Removing the share-link address…' : 'Attaching the share-link address…')
+      const changed = await ports.applyShareAddress()
       await checkCloudflare()
-      return live
+      return !changed || changed.ok ? { ok: true } : failed(changed.error)
     },
 
     async disconnect() {

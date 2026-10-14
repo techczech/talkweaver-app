@@ -17,6 +17,8 @@ import {
   enterFromHeading,
   enterFromProtectedLine,
   continueList,
+  leaveQuotation,
+  newQuotationParagraph,
   indentList,
   outdentList,
   setHeadingFromPrevious,
@@ -323,7 +325,7 @@ function surfaceCommand(id: string, registryId: string): EditorCommand {
 // shortcut-id: editor.move-up editor.move-down editor.promote editor.demote
 // shortcut-id: editor.promote-subtree editor.demote-subtree editor.heading-same editor.heading-sub
 // shortcut-id: editor.jump-prev editor.jump-next editor.delete-slide editor.object-edit editor.object-raw editor.object-finish editor.object-leave editor.title-continue editor.protected-line-continue editor.list-continue
-// shortcut-id: editor.list-indent editor.list-outdent editor.bold
+// shortcut-id: editor.quote-paragraph editor.list-indent editor.list-outdent editor.bold
 // shortcut-id: editor.italic editor.inline-code editor.highlight editor.link
 export const EDITOR_COMMANDS: EditorCommand[] = [
   command('sidebar.talks', () => false, 'app.sidebar-talks'),
@@ -351,7 +353,8 @@ export const EDITOR_COMMANDS: EditorCommand[] = [
   command('object-leave', (view) => closeOpenObject(view)),
   command('title-continue', (view) => enterFromHeading(view)),
   command('protected-line-continue', (view) => enterFromProtectedLine(view)),
-  command('list-continue', (view) => continueList(view)),
+  command('list-continue', (view) => continueList(view) || leaveQuotation(view)),
+  command('quote-paragraph', (view) => newQuotationParagraph(view)),
   command('list-indent', (view) => indentList(view)),
   command('list-outdent', (view) => outdentList(view)),
   command('bold', toggleBold),
@@ -374,7 +377,8 @@ export const NON_CONSUMING = new Set([
   'object-leave',
   'title-continue',
   'protected-line-continue',
-  'list-continue'
+  'list-continue',
+  'quote-paragraph'
 ])
 
 const GLYPH: Record<string, string> = {

@@ -209,9 +209,11 @@ function blocksIdEdit(startState: EditorState, fromA: number, toA: number): bool
   const lastLine = doc.lineAt(Math.min(toA + 1, doc.length))
   for (let n = firstLine.number; n <= lastLine.number; n += 1) {
     const line = doc.line(n)
-    const hasId = ID_RE.test(line.text)
-    ID_RE.lastIndex = 0
-    if (!hasId) continue
+    // A pattern of its own for each line: ID_RE is global, so a `return` from inside the scan below used to leave
+    // its lastIndex mid-line and the next call's first test started there and missed an id.
+    const idRe = new RegExp(ID_RE.source, 'g')
+    if (!idRe.test(line.text)) continue
+    idRe.lastIndex = 0
     const isProtectedTriggerLine = TRIGGER_ONLY_LINE_RE.test(line.text)
     // Whole-slide exemption: the change swallows the nearest heading above AND this line.
     const headingFrom = nearestHeadingFromAbove(doc, line.number)
@@ -219,8 +221,7 @@ function blocksIdEdit(startState: EditorState, fromA: number, toA: number): bool
     if (wholeSlideGoes) continue
     // Guard 1: the id token itself.
     let m: RegExpExecArray | null
-    ID_RE.lastIndex = 0
-    while ((m = ID_RE.exec(line.text)) !== null) {
+    while ((m = idRe.exec(line.text)) !== null) {
       const s = line.from + m.index
       const e = s + m[0].length
       if (s < toA && e > fromA) return true
@@ -315,7 +316,10 @@ const idChangeGuard = EditorState.changeFilter.of((tr) => {
   // delete.slide is the sanctioned whole-slide removal — never heading-guarded (isUserEvent is
   // hierarchical, so this is also matched by the 'delete' test above; that's fine, blocksIdEdit
   // still exempts it via its own whole-slide check).
-  const isSlideDelete = tr.isUserEvent('delete.slide')
+  // delete.cut.slide is the whole-slide CUT (slideCutPaste.ts cutSlideAt): the same removal, with the
+  // block on the clipboard. Only that exact event is exempted; every other cut (delete.cut) is judged
+  // like Backspace.
+  const isSlideDelete = tr.isUserEvent('delete.slide') || tr.isUserEvent('delete.cut.slide')
   let blocked = false
   let headingDestroyed = false
   tr.changes.iterChangedRanges((fromA, toA) => {

@@ -8,11 +8,10 @@
 
 /** The looks a slide can carry besides the default. */
 export const TITLE_LOOKS = ["kicker", "label", "tab"];
-/** Kicker placement: `normal` keeps the top padding, `edge` sits the kicker near the top edge. */
-export const TITLE_LOOK_PLACES = ["normal", "edge"];
+/** Tab tone: `strong` is the full section colour with white text (the default), `soft` a deeper light shade with ink text. */
+export const TITLE_LOOK_TONES = ["strong", "soft"];
 
 const LOOK_ALIASES = { default: "default", none: "default", plain: "default", off: "default" };
-const PLACE_ALIASES = { normal: "normal", edge: "edge", "top-edge": "edge", top: "edge" };
 
 function readLook(raw) {
   if (raw == null || raw === true || raw === false) return null;
@@ -20,9 +19,10 @@ function readLook(raw) {
   if (TITLE_LOOKS.includes(text)) return text;
   return LOOK_ALIASES[text] ?? null;
 }
-function readPlace(raw) {
+function readTone(raw) {
   if (raw == null || raw === true || raw === false) return null;
-  return PLACE_ALIASES[String(raw).trim().toLowerCase()] ?? null;
+  const text = String(raw).trim().toLowerCase();
+  return TITLE_LOOK_TONES.includes(text) ? text : null;
 }
 function pick(sources, keys, read) {
   for (const src of sources) {
@@ -36,18 +36,19 @@ function pick(sources, keys, read) {
 }
 
 /**
+ * `titlelook-at` (where a Kicker sits) is accepted and ignored: every look now sits at the slide edge.
  * @param {Record<string, unknown>} slideAttrs parsed heading/trigger attrs of the slide
  * @param {Record<string, unknown>} sectionDefaults the slide's section entry in `sections:`
  * @param {Record<string, unknown>} deckDefaults the frontmatter `defaults:` map
- * @param {Record<string, unknown>} meta the frontmatter (`title_look:`, `title_look_at:`)
- * @returns {{look: string, place: string}} look is "" (default), kicker, label or tab; place is
- *          "" (normal) or "edge" and only ever set with the kicker
+ * @param {Record<string, unknown>} meta the frontmatter (`title_look:`, `title_look_tone:`)
+ * @returns {{look: string, tone: string}} look is "" (default), kicker, label or tab; tone is "soft"
+ *          only for a Tab set to soft, otherwise "" (strong stamps nothing)
  */
 export function resolveTitleLook(slideAttrs = {}, sectionDefaults = {}, deckDefaults = {}, meta = {}) {
-  const deckMeta = { titlelook: meta?.title_look ?? meta?.["title-look"], "titlelook-at": meta?.title_look_at ?? meta?.["title-look-at"] };
+  const deckMeta = { titlelook: meta?.title_look ?? meta?.["title-look"], "titlelook-tone": meta?.title_look_tone ?? meta?.["title-look-tone"] };
   const sources = [slideAttrs, sectionDefaults, deckDefaults, deckMeta];
   const look = pick(sources, ["titlelook"], readLook);
-  const place = pick(sources, ["titlelook-at"], readPlace);
+  const tone = pick(sources, ["titlelook-tone"], readTone);
   const resolved = TITLE_LOOKS.includes(look) ? look : "";
-  return { look: resolved, place: resolved === "kicker" && place === "edge" ? "edge" : "" };
+  return { look: resolved, tone: resolved === "tab" && tone === "soft" ? "soft" : "" };
 }

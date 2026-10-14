@@ -12,7 +12,7 @@
 //   6. the service's setPick / markQuestion go through the atomic writer and refuse a Run that is not in the vault.
 // Usage: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-run-prework-results.mjs
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { preworkFromOutline } from '../compiler/scripts/lib/prework.mjs'
@@ -312,6 +312,30 @@ const pass = (name) => { results.push(name); console.log(`PASS  ${name}`) }
   const marked = { ...run.prework, entries: run.prework.entries.map((candidate, index) => index === run.prework.entries.findIndex((item) => item.kind === 'question') ? { ...candidate, answered: true } : candidate) }
   assert.deepEqual(questionCounts(definition, marked), { all: 3, 'to-answer': 2, answered: 1, 'in-talk': 0 })
   pass('questions: grouped by step in form order, newest last, filters count')
+}
+
+// Pre-work is set up with whichever key held for the live service it accepts (several Macs) ------
+{
+  const root = mkdtempSync(join(tmpdir(), 'tw-prework-held-'))
+  try {
+    const { heldKeysCases, heldKeysDouble } = await import('./lib/held-keys-cases.mjs')
+    const made = []
+    const reply = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+    const inner = async (url, init = {}) => {
+      if (new URL(url).pathname !== '/prework') return reply({ ok: true })
+      made.push(init.body)
+      return reply({ preworkId: `pw00000${made.length}`, ownerToken: `owner-token-0123456789-${made.length}` }, 201)
+    }
+    const double = heldKeysDouble({ baseUrl: 'https://live.example.test', route: '/prework', inner })
+    const service = createRunPrework({ ownerTokens: testOwnerTokens, registryPath: join(root, 'registry.json'), endpoint: double.endpoint, vaultRoot: () => root, fetch: double.fetch })
+    const window = { opensAt: Date.UTC(2026, 9, 1, 9), closesAt: Date.UTC(2026, 9, 6, 10) }
+    const published = await heldKeysCases(double, (n) => service.publish(SLUG, `${RUN_ID}-held-${n}`, definition, window), 'pre-work')
+    assert.deepEqual([published.preworkId, published.workerBaseUrl, made.length], ['pw000001', 'https://live.example.test', 1], 'set up with the 0.38.2 key; the refused and unanswered requests made nothing')
+    await service.publish(SLUG, `${RUN_ID}-held-own`, definition, window)
+    assert.deepEqual(double.sent(), ['own'], 'its own key accepted: one request')
+    assert.equal(readFileSync(join(root, 'registry.json'), 'utf8').includes(double.ownKey), false, 'no key in the registry')
+    pass('held keys: pre-work is set up with the 0.38.2 key when this computer\'s own is refused; "access was removed" only when both are; no answer or another status is never that')
+  } finally { rmSync(root, { recursive: true, force: true }) }
 }
 
 rmSync(scratch, { recursive: true, force: true })

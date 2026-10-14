@@ -1,42 +1,17 @@
-// Verifies the pure slide-outline logic. The functions below MUST match
-// src/renderer/src/extensions/slideOutline.ts exactly (same algorithm) — this is a logic guard, since
-// the renderer has no TS test runner. (Same convention as scripts/test-selector-logic.mjs.)
-
-function slideRows(content) {
-  const raw = []
-  content.split('\n').forEach((t, i) => {
-    const m = t.match(/^(#{1,6})\s+(.*)$/)
-    if (!m) return
-    const text = m[2].replace(/\{[^}]*\}/g, '').trim() || '(untitled)'
-    raw.push({ line: i + 1, level: m[1].length, text })
-  })
-  let slideNo = 0
-  return raw.map((r, idx) => {
-    const isSection = idx + 1 < raw.length && raw[idx + 1].level > r.level
-    if (isSection || r.level === 1) return { ...r, slideNo: null }
-    slideNo += 1
-    return { ...r, slideNo }
-  })
-}
-
-function relocateBlock(text, fromLine, toLine) {
-  const lines = text.split('\n')
-  const levelAt = (idx) => { const m = lines[idx] != null ? lines[idx].match(/^(#{1,6})\s/) : null; return m ? m[1].length : 0 }
-  const from0 = fromLine - 1, to0 = toLine - 1
-  if (from0 < 0 || from0 >= lines.length || to0 < 0 || to0 >= lines.length) return text
-  if (levelAt(from0) === 0 || levelAt(to0) === 0) return text
-  const lvl = levelAt(from0)
-  let fEnd = from0 + 1
-  while (fEnd < lines.length) { const l = levelAt(fEnd); if (l > 0 && l <= lvl) break; fEnd += 1 }
-  if (to0 >= from0 && to0 < fEnd) return text // dropping into self
-  const block = lines.slice(from0, fEnd)
-  const without = [...lines.slice(0, from0), ...lines.slice(fEnd)]
-  const insertAt = to0 < from0 ? to0 : to0 - (fEnd - from0)
-  return [...without.slice(0, insertAt), ...block, ...without.slice(insertAt)].join('\n')
-}
+// Verifies the pure slide-outline logic in src/renderer/src/extensions/slideOutline.ts — the real
+// functions, imported directly (Node strips the types). The move variants for the organizer's other
+// drop targets (end of talk, into a section) are in scripts/test-slide-outline-moves.mjs.
+import { relocateBlock as realRelocateBlock, slideRows } from '../src/renderer/src/extensions/slideOutline.ts'
 
 let fail = 0
 const ck = (c, m) => { if (!c) { console.error('FAIL:', m); fail++ } }
+// Every move must leave the same multiset of lines: only block order may differ.
+const sortedLines = (t) => t.split('\n').sort().join('\n')
+const relocateBlock = (text, fromLine, toLine) => {
+  const out = realRelocateBlock(text, fromLine, toLine)
+  ck(sortedLines(out) === sortedLines(text), `same lines after relocateBlock(${fromLine}, ${toLine})`)
+  return out
+}
 
 // slideRows
 const doc = '## Intro\n\n### Welcome {reveal}\n\nbody\n\n### Who\n\n## Body\n\n### Demo'

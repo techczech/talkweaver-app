@@ -9,7 +9,10 @@ import {
   moveNode,
   reLevel,
   moveBlockTo,
+  moveBlockToEnd,
+  moveBlockInto,
   normalizeTriggersCommand,
+  setQuoteFormAtCursor,
   deleteSlideAtCursor,
   type CursorListItemContext
 } from '../extensions/outliner'
@@ -31,17 +34,22 @@ import {
 } from '../extensions/objectBlocks/field'
 import { EditorView, keymap, highlightActiveLine } from '@codemirror/view'
 import { EditorState, EditorSelection, Prec, Compartment } from '@codemirror/state'
-import { defaultKeymap, history, historyKeymap, undo, redo } from '@codemirror/commands'
-import { search, searchKeymap, highlightSelectionMatches, openSearchPanel } from '@codemirror/search'
+import { history, undo, redo } from '@codemirror/commands'
+import { editorBaseKeymap } from '../extensions/editorBaseKeymap'
+import { search, highlightSelectionMatches, openSearchPanel } from '@codemirror/search'
 import { commandRan } from '../commands/command-ran'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { languages } from '@codemirror/language-data'
+import { viewModeExtension, type PlainViewOptions } from '../extensions/plainView'
+import { plainTypeExtension } from '../extensions/plainView/theme'
+import { plainIconTools, type PlainIconTools } from '../extensions/plainView/iconTools'
+import { PLAIN_LOOK_DEFAULT, type PlainLook } from '../../../shared/plain-view-look'
+import { setMarginLabels, caretHeadingTarget, focusHeading, type MarginMenuHandlers } from '../extensions/plainView/margin'
+import type { MarginLabel } from '../../../shared/plain-view-margin'
+import type { EditorViewMode } from '../../../shared/editor-view-mode'
 import {
-  syntaxHighlighting,
-  defaultHighlightStyle,
   foldGutter,
   codeFolding,
-  foldKeymap,
   foldAll,
   unfoldAll
 } from '@codemirror/language'
@@ -50,15 +58,25 @@ import { notify } from '../lib/notify'
 import { queueOutlineWrite } from '../lib/saveQueue'
 import { lookForRecovery, noteOutlineSaveReply, outlineDiskChanges } from '../lib/outlineDiskChange'
 import { applyMinimalChange } from '../lib/minimalChange'
+import { adoptSavedText, resetAdoptedIds, savedTextAdoption } from '../extensions/savedTextAdoption'
+import { saveTidyUp, textForSave } from '../extensions/saveTidyUp'
 import { triggerCompleteExtension } from '../extensions/triggerComplete'
 import { tokenProtectExtension } from '../extensions/idProtect'
+import {
+  copySlideAt, cutSlideAt, deleteSlideAt, moveSlideTo, pasteSlideTextAtCaret, pasteSlidesAfter, slideCutCopyExtension, wouldPasteAsSlides
+} from '../extensions/slideCutPaste'
+import { blockAnchorAfterLine, insertAtCaretLine, insertBlockAfterLine, pasteAtHeadingEnd, pasteBlockAtSelection, pasteTextAtSelection } from '../extensions/headingEndInsert'
+import type { MoveTarget } from '../extensions/slideBlockOps'
+import { quoteLinkFormExtension } from '../extensions/quoteLinkForm'
 import { setSlideNumberLines, slideNumberGutterExtension } from '../extensions/slideNumberGutter'
 import { setTextFitNotes, textFitWarningExtension } from '../extensions/textFitWarning'
 import type { TextFitNote } from '../../../shared/text-fit-notes.ts'
+import type { QuoteFormChoice } from '../../../shared/layout-verbs'
 import { flashTriggerEchoAt, triggerEchoChange } from '../extensions/triggerEcho'
 import {
   commitLayoutSelection,
   commitSlideOption,
+  commitQuoteFormOption,
   provisionalTriggerAtCursor,
   selectionFromTriggerLine,
   toggleLayoutSelection,
@@ -67,7 +85,6 @@ import {
 import { LAYOUTS, type LayoutDef, type OptionGroup } from '../data/layouts'
 import { headingHasChildSlides, logicalTriggerBlockAfterHeading, reportTriggerMergeWarnings } from '../../../shared/trigger-line'
 import { deckCommitContext } from '../../../shared/deck-frame'
-import { normalizePositions } from '../../../shared/outline-normalize'
 import {
   planEditorTriggerCommit,
   prepareObjectInsertDocument
@@ -123,11 +140,18 @@ function insertMediaResult(view: EditorView | null, res: AddVideoResult | null |
   const md = mediaMarkdown(res)
   if (!md || !view) return
   const at = pos === 'caret' ? view.state.selection.main.head : pos
-  const line = view.state.doc.lineAt(at)
-  view.dispatch({
-    changes: { from: line.to, insert: '\n' + md + '\n' },
-    selection: { anchor: line.to + ('\n' + md).length }
-  })
+  // After the line, or under a heading's id and layout lines (headingEndInsert.ts).
+  insertBlockAfterLine(view, at, '\n' + md + '\n', { caret: ('\n' + md).length })
+}
+
+/** Whole-slide operations by heading line (1-based), run in the editor's buffer. */
+export interface SlideBlockOps {
+  cut: (line: number) => string | null
+  copy: (line: number) => string | null
+  /** After the slide or section on `afterLine`; at the end of the talk when null. */
+  paste: (clip: string, afterLine: number | null) => number | null
+  moveTo: (fromLine: number, target: MoveTarget) => number | null
+  delete: (line: number) => void
 }
 
 interface Props {
@@ -151,6 +175,8 @@ interface Props {
   textFitNotes?: readonly TextFitNote[]
   /** Heading line of each compiled slide (strip order): the gutter numbers those lines, nothing else. */
   slideLines?: ReadonlyArray<number | null>
+  /** Plain view's margin: what each heading line is called (Talk, Section, Slide n) and its layout name. */
+  marginLabels?: readonly MarginLabel[]
   /** Compiled slide rows: each carries the compiler's image placements for the editor's image labels. */
   placementRows?: readonly PlacementRow[] | null
   onCursorLine?: (line: number) => void
@@ -182,6 +208,8 @@ interface Props {
     move: (line: number, dir: 'up' | 'down') => void
     reLevel: (line: number, dir: -1 | 1, withSubtree: boolean) => void
     moveTo: (fromLine: number, toLine: number) => void
+    moveToEnd: (fromLine: number) => void
+    moveInto: (fromLine: number, sectionLine: number) => void
     undo: () => void
     redo: () => void
     newSlide: () => void
@@ -191,6 +219,7 @@ interface Props {
     bulletedList: () => void
     numberedList: () => void
     normalizeTriggers: () => void
+    setQuoteForm: (form: QuoteFormChoice, compiledLayoutAt?: (headingLine: number) => string | undefined) => void
     deleteSlide: () => void
     // Flush any pending debounced autosave to disk NOW and resolve once written. Slide Focus's
     // detach awaits this before calling ledger.detach so the engine reads the just-typed text, not
@@ -212,11 +241,15 @@ interface Props {
     cutSelection: () => void
     copySelection: () => void
     pasteClipboard: () => void
+    // Whole slides and sections, addressed by heading line (the Slides outline, the grid, the Move … to…
+    // commands): extensions/slideCutPaste.ts. Each is one undo step and says what it did in a toast.
+    // cut/copy return the Markdown for the clipboard; paste/moveTo return the heading's new line.
+    slides: SlideBlockOps
     runFormat: (id: 'bold' | 'italic' | 'inline-code' | 'highlight' | 'strikethrough' | 'underline' | 'link') => void
   }) => void
   // Icon picker (ADR-0021): on mount Editor registers a reader that returns the CURRENT caret's
-  // top-level list-item context ({heading, occurrence, itemIndex}) — or null when the caret is not
-  // in a list bullet. The picker calls it when opened to know which bullet a chosen glyph pins to.
+  // list-row context ({slideHeading, itemLine}) — or null when the caret is not
+  // on a list row. The picker calls it when opened to know which bullet a chosen glyph pins to.
   registerIconContext?: (fn: () => CursorListItemContext | null) => void
   // Put programmatically-rewritten text into the buffer WITHOUT remounting, as one minimal change
   // (lib/minimalChange): the caret is mapped through it, the scroll anchor holds and the change is
@@ -224,7 +257,9 @@ interface Props {
   // the caller saves the whole buffer at once, so the debounced autosave is superseded and the text
   // to save — position-normalised like every save boundary — is returned; null while no talk is
   // loaded. Without it the result is the buffer text and the normal autosave follows.
-  registerReplaceDoc?: (fn: (text: string, opts?: { save?: boolean }) => string | null) => void
+  // With `savedFrom` the text is what a save wrote for that sent text (ids stamped): it is adopted
+  // outside the undo history, and only while the buffer is still the sent text.
+  registerReplaceDoc?: (fn: (text: string, opts?: { save?: boolean; savedFrom?: string }) => string | null) => void
   // The buffer's live text, the talk it belongs to and the caret (selection head offset), or null
   // while that talk's text is not loaded (one-writer spec D1: a mutation of the open talk reads THIS,
   // never the React mirror of it; the section insert places itself from the caret).
@@ -233,7 +268,7 @@ interface Props {
   // clean up). The parent opens the picker and calls this with the chosen trigger.
   registerLayoutContext?: (fn: () => LayoutPickerContext | null) => void
   registerApplyLayout?: (fn: (initial: LayoutDef[], selected: LayoutDef[]) => void) => void
-  registerApplyOption?: (fn: (entry: LayoutDef | undefined, group: OptionGroup, token: string, headingLine?: number, slideId?: string | null) => string | null) => void
+  registerApplyOption?: (fn: (entry: LayoutDef | undefined, group: OptionGroup, token: string, headingLine?: number, slideId?: string | null, compiledLayout?: string) => string | null) => void
   // Protected-token click (2026-07-03): clicking a `{…}` chip reports the token instead of
   // placing a cursor inside it — the parent routes id → where-used panel, trigger → ⌘L picker.
   onProtectedTokenClick?: (token: string, kind: 'id' | 'trigger') => void
@@ -246,6 +281,19 @@ interface Props {
   // Fired AT MOST as often as the parent cares: it is a plain notification, it never consumes the
   // underlying event, and per-mount dedup is the parent's business (it consumes on first hit).
   onEditorEngaged?: () => void
+  /** Plain editing view (spec T1): Plain or Markdown. Reconfigures `viewCompartment`; never remounts. */
+  viewMode: EditorViewMode
+  /** Plain tab font and text size (spec T13). Reconfigures `plainTypeCompartment`; never remounts. */
+  plainLook?: PlainLook
+  /** Plain margin (spec T8, T9): the margin word and the layout name were opened; `line` is the heading's 1-based line. */
+  onMarginLevelMenu?: (line: number, anchor: DOMRect) => void
+  onMarginLayoutMenu?: (line: number, anchor: DOMRect) => void
+  registerHeadingTools?: (tools: HeadingTools) => void
+  // The layout the compiler gave the compiled slide whose heading is on a line: the web form's link-edit rule (spec 3.1) needs it
+  // for a quote-only slide with no `{quote}` token.
+  compiledLayoutAt?: (headingLine: number) => string | undefined
+  /** Plain view, Command-I: where the caret is, and the one write of a verified icon change. */
+  registerPlainIconTools?: (tools: PlainIconTools) => void
 }
 
 // Outliner keyboard extension (ADR-0019). Built from the single-source-of-truth registry (+ any
@@ -254,6 +302,20 @@ interface Props {
 // precedence so the chords override CodeMirror's default selection-extension bindings. The registry
 // documents WHY these chords were chosen (no Ctrl+Arrow — macOS reserves it for Mission Control).
 const keymapCompartment = new Compartment()
+
+// What the Plain view needs from the app: where icon pictures come from (the same bridge the icon picker uses).
+function plainViewOptions(menus: MarginMenuHandlers): PlainViewOptions {
+  const icons = (window as unknown as { tw?: { icons?: { svg?: (key: string) => Promise<string | null> } } }).tw?.icons
+  return { ...menus, ...(icons?.svg ? { iconSvg: (key: string) => icons.svg!(key) } : {}) }
+}
+
+export type { PlainIconTools }
+
+/** The editor's handle on a heading, for the margin menus: where the caret's heading is, and putting the caret back on one. */
+export interface HeadingTools {
+  caretHeading: () => { line: number; anchor: DOMRect } | null
+  focusHeading: (line: number) => void
+}
 
 // history() lives in a Compartment so a talk switch can RESET the undo stack: detaching and
 // re-attaching the extension discards its state. Without this, the load's content-replacing
@@ -266,32 +328,11 @@ function outlinerKeymapExtension() {
   return keymapCompartment.of(Prec.highest(keymap.of(buildEditorKeyBindings())))
 }
 
-// Warm paper theme — matches the slide palette from html-presentations
-const twTheme = EditorView.theme({
-  '&': {
-    height: '100%',
-    fontSize: '14px',
-    fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
-    background: '#f7f3ea'
-  },
-  '.cm-content': {
-    padding: '16px 20px',
-    caretColor: '#0b3a6b'
-  },
-  '.cm-line': { lineHeight: '1.7', color: '#17202a' },
-  '.cm-gutters': {
-    backgroundColor: '#f0ebe0',
-    borderRight: '1px solid #d9d0c1',
-    color: '#8a9099'
-  },
-  '.cm-activeLineGutter': { backgroundColor: '#e4ddd0' },
-  '.cm-activeLine': { backgroundColor: '#e8e3d6' },
-  '&.cm-focused .cm-cursor': { borderLeftColor: '#0b3a6b', borderLeftWidth: '2px' },
-  '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': {
-    backgroundColor: '#0b3a6b22'
-  },
-  '.cm-matchingBracket': { backgroundColor: '#0b3a6b15', outline: '1px solid #0b3a6b30' }
-}, { dark: false })
+// The view compartment holds what Plain replaces: the theme and the highlight (extensions/plainView).
+// Markdown mode puts today's warm-paper code-font theme and default highlight back, unchanged.
+const viewCompartment = new Compartment()
+// The Plain tab's font and text size. Empty in Markdown mode, so that tab stays exactly as it was.
+const plainTypeCompartment = new Compartment()
 
 export default function Editor({
   talk,
@@ -303,6 +344,7 @@ export default function Editor({
   focusRange,
   textFitNotes,
   slideLines,
+  marginLabels,
   placementRows,
   onCursorLine,
   onPlace,
@@ -320,10 +362,27 @@ export default function Editor({
   registerApplyLayout,
   registerApplyOption,
   onProtectedTokenClick,
-  onEditorEngaged
+  onEditorEngaged,
+  viewMode,
+  plainLook = PLAIN_LOOK_DEFAULT,
+  onMarginLevelMenu,
+  onMarginLayoutMenu,
+  registerHeadingTools,
+  compiledLayoutAt,
+  registerPlainIconTools
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
+  const viewModeRef = useRef<EditorViewMode>(viewMode)
+  const plainLookRef = useRef<PlainLook>(plainLook)
+  plainLookRef.current = plainLook
+  // The margin's menu callbacks read the latest props at click time, so a render never rebuilds the extension.
+  const marginMenusRef = useRef({ onMarginLevelMenu, onMarginLayoutMenu })
+  marginMenusRef.current = { onMarginLevelMenu, onMarginLayoutMenu }
+  const marginMenuHandlers = useRef<MarginMenuHandlers>({
+    onLevelMenu: (line, anchor) => marginMenusRef.current.onMarginLevelMenu?.(line, anchor),
+    onLayoutMenu: (line, anchor) => marginMenusRef.current.onMarginLayoutMenu?.(line, anchor)
+  }).current
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Every outline write this editor sends goes through the outline's shared queue (lib/saveQueue):
   // one write in flight at a time per file, in the order made, shared with the workspace's writes
@@ -368,6 +427,8 @@ export default function Editor({
   // updateListener below), so a prop re-render must be visible there without re-creating the view.
   const onEditorEngagedRef = useRef(onEditorEngaged)
   useEffect(() => { onEditorEngagedRef.current = onEditorEngaged }, [onEditorEngaged])
+  const compiledLayoutAtRef = useRef(compiledLayoutAt)
+  useEffect(() => { compiledLayoutAtRef.current = compiledLayoutAt }, [compiledLayoutAt])
 
   // Heading-is-slide (Task 8): a save may come back with `content` — the STAMPED text the main
   // process actually wrote ({id=…} minted for id-less headings). Adopt it into the buffer so the
@@ -375,20 +436,18 @@ export default function Editor({
   // buffer (id churn is then only held off by the main process's id-reuse fallback). Adoption is
   // dropped when the doc moved on during the IPC round-trip — a minimalChange computed against
   // stale text could clobber what the user just typed; convergence then relies on id reuse until
-  // a quieter save lands. The dispatch preserves caret + scroll (minimalChange, same pattern as
-  // registerReplaceDoc / mergeTrigger below) and DOES re-enter the updateListener → one follow-up
-  // autosave of the stamped text — a fixpoint (stamping stamped text is a no-op), never a loop.
+  // a quieter save lands. The dispatch preserves caret + scroll and DOES re-enter the updateListener
+  // → one follow-up autosave of the stamped text — a fixpoint (stamping stamped text is a no-op),
+  // never a loop.
   const adoptStampedContent = useCallback((sentText: string, res: { ok: boolean; content?: string } | false) => {
     if (!res || res.ok !== true || typeof res.content !== 'string' || res.content === sentText) return
     const view = viewRef.current
     if (!view) return
     if (view.state.doc.toString() !== sentText) return // doc moved on while saving: drop, don't clobber
-    const ch = minimalChange(sentText, res.content)
-    view.dispatch({
-      // Let CodeMirror map the live selection through the insertion. Restoring the old absolute
-      // offset moved the caret backwards whenever ID stamping inserted bytes before it.
-      changes: { from: ch.from, to: ch.to, insert: ch.insert }
-    })
+    // Outside the undo history, one small change per id (extensions/savedTextAdoption.ts): the
+    // adoption is never an undo step, and the user's own last change stays one ⌘Z away. CodeMirror
+    // maps the live selection through the insertions.
+    adoptSavedText(view, sentText, res.content)
   }, [])
 
   // Writes `text` to `outlinePath` through the save queue and reports the outcome to the person as
@@ -440,8 +499,9 @@ export default function Editor({
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
       saveTimerRef.current = setTimeout(async () => {
         saveTimerRef.current = null
-        const normalized = normalizePositions(content)
         const view = viewRef.current
+        // Not tidied straight after an undo or a redo (extensions/saveTidyUp.ts), here and at the two saves below.
+        const normalized = textForSave(view?.state, content)
         if (normalized !== content && view?.state.doc.toString() === content) {
           const ch = minimalChange(content, normalized)
           view.dispatch({ changes: { from: ch.from, to: ch.to, insert: ch.insert } })
@@ -516,11 +576,9 @@ export default function Editor({
                     const result = await window.tw.asset.pasteImage(arrayBuffer, ext, currentTalkRef.current ?? undefined)
                     if (result && viewRef.current) {
                       const pos = viewRef.current.state.selection.main.head
-                      const line = viewRef.current.state.doc.lineAt(pos)
                       const id = result.id  // already "img-XXXXXXX"
-                      viewRef.current.dispatch({
-                        changes: { from: line.to, insert: '\n![](' + id + ')\n' }
-                      })
+                      // On a heading line the picture goes under the heading's id and layout lines, not between them.
+                      insertBlockAfterLine(viewRef.current, pos, '\n![](' + id + ')\n')
                     } else if (!result) {
                       // Same never-fail-silently rule as clips (ADR-0023) — a paste that inserts
                       // nothing with no feedback reads as "the paste didn't register".
@@ -531,7 +589,9 @@ export default function Editor({
                 }
               }
               const text = event.clipboardData?.getData('text/plain') ?? ''
-              if (text && isSvgText(text)) {
+              // Whole slides going in as slides are not read as an SVG or a table to convert.
+              const asSlides = Boolean(text && viewRef.current && wouldPasteAsSlides(viewRef.current, text))
+              if (text && !asSlides && isSvgText(text)) {
                 event.preventDefault()
                 const result = sanitiseSvg(text.trim())
                 if ('error' in result) {
@@ -540,11 +600,11 @@ export default function Editor({
                 }
                 const v = viewRef.current
                 if (!v) return true
-                v.dispatch(v.state.replaceSelection('```svg\n' + result.svg + '\n```\n'))
+                pasteBlockAtSelection(v, '```svg\n' + result.svg + '\n```\n')
                 return true
               }
               const carriesPastedAssets = /!\[[^\]]*\]\(assets\/[^)]+\.(?:png|jpe?g|gif|webp)\)/i.test(text)
-              const pasteTableKind = carriesPastedAssets ? null : tablePasteKind(text)
+              const pasteTableKind = carriesPastedAssets || asSlides ? null : tablePasteKind(text)
               if (text && pasteTableKind) {
                 event.preventDefault()
                 const cells = parseTablePaste(text)
@@ -554,7 +614,7 @@ export default function Editor({
                 }
                 const v = viewRef.current
                 if (!v) return true
-                v.dispatch(v.state.replaceSelection(serialiseTable(model) + '\n'))
+                pasteBlockAtSelection(v, serialiseTable(model) + '\n')
                 return true
               }
               // Text paste of slide markdown: relative image refs (assets/X.png) come from the
@@ -564,16 +624,34 @@ export default function Editor({
               const pastedText = event.clipboardData?.getData('text/plain')
               if (pastedText && carriesPastedAssets) {
                 event.preventDefault()
+                // Whole slides pasted on a heading line or between slides go in as whole slides
+                // (slideCutPaste.ts); anywhere else the text replaces the selection as before.
+                const put = (markdown: string): void => {
+                  const v = viewRef.current
+                  if (v && !pasteSlideTextAtCaret(v, markdown, pastedText)) pasteTextAtSelection(v, markdown)
+                }
                 window.tw.talk
                   .materializePastedAssets(pastedText)
-                  .then((res) => {
-                    const v = viewRef.current
-                    if (v) v.dispatch(v.state.replaceSelection(res?.markdown ?? pastedText))
-                  })
-                  .catch(() => {
-                    const v = viewRef.current
-                    if (v) v.dispatch(v.state.replaceSelection(pastedText))
-                  })
+                  .then((res) => put(res?.markdown ?? pastedText))
+                  .catch(() => put(pastedText))
+                return true
+              }
+              if (pastedText && asSlides && viewRef.current) {
+                event.preventDefault()
+                pasteSlideTextAtCaret(viewRef.current, pastedText)
+                return true
+              }
+              // Text with a line break pasted with the caret at the end of a slide title: its first line
+              // stays on the title, the rest goes under the title's id and layout lines. Text whose first
+              // line is a block goes under them whole (headingEndInsert.ts startsWithBlockLine). A block
+              // is: a code fence opener (backticks or tildes), a table row followed by its separator row,
+              // a line that is only a picture or clip, a line that is only a component ([Embed: …],
+              // [Simulation: …], [Video: …], [QR: …], [Action: …], a URL alone), an HTML block opener.
+              // Not a block (so prose, first line on the title): a line that merely starts with `|` or
+              // with inline code, a picture or component inside a sentence, a heading, a list, a
+              // quotation. Anything else is CodeMirror's own paste.
+              if (pastedText && viewRef.current && pasteAtHeadingEnd(viewRef.current, pastedText)) {
+                event.preventDefault()
                 return true
               }
               return false
@@ -612,18 +690,8 @@ export default function Editor({
                   }
                   const current = viewRef.current
                   if (!current) return
-                  const line = current.state.doc.lineAt(dropPos)
                   const insert = '\n\n```svg\n' + result.svg + '\n```\n'
-                  current.dispatch({
-                    changes: {
-                      from: line.to,
-                      to: line.to,
-                      insert
-                    },
-                    selection: {
-                      anchor: line.to + insert.length
-                    }
-                  })
+                  insertBlockAfterLine(current, dropPos, insert, { caret: insert.length })
                 }).catch((error) => {
                   console.error(error)
                   notify('Dropped SVG was rejected: the file could not be read', 'error', 'objects')
@@ -636,12 +704,8 @@ export default function Editor({
                 imageFile.arrayBuffer().then(async (buf) => {
                   const result = await window.tw.asset.pasteImage(buf, ext, currentTalkRef.current ?? undefined)
                   if (result && viewRef.current) {
-                    const view = viewRef.current
-                    const line = view.state.doc.lineAt(dropPos)
-                    view.dispatch({
-                      changes: { from: line.to, insert: '\n![](' + result.id + ')\n' },
-                      selection: { anchor: line.to + ('\n![](' + result.id + ')').length }
-                    })
+                    const picture = '\n![](' + result.id + ')'
+                    insertBlockAfterLine(viewRef.current, dropPos, picture + '\n', { caret: picture.length })
                   } else if (!result) {
                     notify('Could not add the dropped image — it was not added to the outline.', 'error', 'addmedia')
                   }
@@ -653,8 +717,9 @@ export default function Editor({
           }),
           slideNumberGutterExtension,
           historyCompartment.of(history()),
+          // A web link pasted or typed into a quote slide's source line makes the slide a web page in the same undo step (spec 3.1).
+          quoteLinkFormExtension(() => compiledLayoutAtRef.current),
           highlightActiveLine(),
-          syntaxHighlighting(defaultHighlightStyle),
           markdown({ base: markdownLanguage, codeLanguages: languages, extensions: [imageParagraphNoFold] }),
           // Folding: collapse any heading section or list subtree (gutter arrows + Ctrl-Shift-[/]).
           codeFolding(),
@@ -689,6 +754,9 @@ export default function Editor({
           // skips them, delete removes a whole token, ids can't be nibbled at all, and clicking a
           // chip opens the right editor surface (where-used / ⌘L picker) instead of a caret.
           tokenProtectExtension(() => onProtectedTokenClickRef.current ?? null),
+          // ⌘X / ⌘C with the caret on a slide's heading take the whole slide; a selection holding a
+          // whole title takes its slide with it (extensions/slideCutPaste.ts).
+          slideCutCopyExtension(),
           // Slide Focus scoped view (ADR-0032, Task 8). Inert until a range is set (via the
           // focusRange prop / setFocusRange effect); then hides every line outside the focused
           // block, guards edits from touching outside it, and keeps the caret inside — composing
@@ -719,9 +787,11 @@ export default function Editor({
           highlightSelectionMatches(),
           // ⌘F opens CodeMirror's find panel (Find in outline, app.find); the Guide counts it when it opened.
           keymap.of([{ key: 'Mod-f', run: (view) => { const opened = openSearchPanel(view); if (opened) commandRan('app.find'); return opened }, scope: 'editor search-panel' }]),
-          keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap, ...searchKeymap]),
+          // One list (extensions/editorBaseKeymap.ts): the Plain view's guard is built from the same one.
+          keymap.of([...editorBaseKeymap]),
           outlinerKeymapExtension(),
-          twTheme,
+          viewCompartment.of(viewModeExtension(viewModeRef.current, plainViewOptions(marginMenuHandlers))),
+          plainTypeCompartment.of(viewModeRef.current === 'plain' ? plainTypeExtension(plainLookRef.current) : []),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {
               // T29b engagement trigger 2: a document change made BY THE USER — typing into an
@@ -805,6 +875,11 @@ export default function Editor({
               }
             }
           }),
+          // Remembers the ids adopted from saves and settles them after an undo or redo. AFTER the
+          // update listener above on purpose: that listener must see the undo before the settled text
+          // (savedTextAdoption.ts, ordering note).
+          savedTextAdoption(),
+          saveTidyUp(),
           imageWidgetExtension({
             vaultRoot: vaultRoot ?? null,
             // currentTalkRef holds the active outline path; derive its dir (reused across talks).
@@ -854,6 +929,30 @@ export default function Editor({
   // Slide Focus (ADR-0032, Task 8): push the focusRange prop into the editor's focus-scope field via
   // an effect — no remount, no compartment churn. undefined/null exits focus (the extension is then
   // fully inert). Task 9 supplies this prop from the Slide Focus surface; today nothing sets it.
+  // Plain / Markdown tab: swap the compartment's contents. The document, selection, scroll and
+  // history are untouched (reconfigure changes extensions only).
+  useEffect(() => {
+    viewModeRef.current = viewMode
+    viewRef.current?.dispatch({ effects: [
+      viewCompartment.reconfigure(viewModeExtension(viewMode, plainViewOptions(marginMenuHandlers))),
+      plainTypeCompartment.reconfigure(viewMode === 'plain' ? plainTypeExtension(plainLookRef.current) : [])
+    ] })
+  }, [viewMode])
+
+  // A change of font or size in Settings: only the type compartment is swapped; the caret stays.
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: plainTypeCompartment.reconfigure(viewModeRef.current === 'plain' ? plainTypeExtension(plainLook) : []) })
+  }, [plainLook.font, plainLook.size])
+
+  // The Plain margin's labels. Pushed again after a tab switch, because the margin's state lives in
+  // the view compartment and starts empty when Plain comes back.
+  const marginLabelsKey = JSON.stringify(marginLabels ?? [])
+  useEffect(() => {
+    const v = viewRef.current
+    if (v && viewMode === 'plain') setMarginLabels(v, marginLabels ?? [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [marginLabelsKey, talk.outlinePath, viewMode])
+
   useEffect(() => {
     const v = viewRef.current
     if (v) setFocusRange(v, focusRange ?? null)
@@ -916,8 +1015,11 @@ export default function Editor({
       // otherwise). The content-replacing dispatch runs while loadedPathRef is null, so its docChanged
       // never triggers autosave; we mark the path loaded ONLY after that dispatch lands.
       if (viewRef.current && content !== null && currentTalkRef.current === pathAtLoad) {
+        // The ids adopted from the previous talk's saves go with its text and its history
+        // (savedTextAdoption.ts): one parked there must not land under a look-alike heading here.
         viewRef.current.dispatch({
-          changes: { from: 0, to: viewRef.current.state.doc.length, insert: content }
+          changes: { from: 0, to: viewRef.current.state.doc.length, insert: content },
+          effects: resetAdoptedIds.of(null)
         })
         // RESET the undo stack across the talk boundary: detach + re-attach history() so the
         // load dispatch above (and every edit belonging to the PREVIOUS talk) is not undoable
@@ -941,24 +1043,18 @@ export default function Editor({
 
   // Register the imperative insert-at-cursor channel (ADR-0013). We read the live
   // view from viewRef at call time so the splice always lands at the CURRENT caret,
-  // however long after registration the parent invokes it. Inserting at the end of
-  // the caret's line (with surrounding blank lines) keeps the imported slide as its
-  // own block; the resulting docChanged drives onContentChange + autosave.
+  // however long after registration the parent invokes it. The text goes in after
+  // the caret's line (with surrounding blank lines) as its own block; where exactly is
+  // caretLineInsertion (headingEndInsert.ts). The resulting docChanged drives
+  // onContentChange + autosave.
   useEffect(() => {
     if (!registerInsert) return
     registerInsert((text: string) => {
       const view = viewRef.current
       if (!view) return
-      const head = view.state.selection.main.head
-      const line = view.state.doc.lineAt(head)
-      const block = text.replace(/^\n+/, '').replace(/\n+$/, '')
-      const insert = '\n\n' + block + '\n'
-      const at = line.to
-      view.dispatch({
-        changes: { from: at, insert },
-        selection: { anchor: at + insert.length },
-        scrollIntoView: true
-      })
+      // On a heading line a component goes under the heading's id and layout lines; whole slides go
+      // after the heading's whole block, so its body stays its own (headingEndInsert.ts).
+      insertAtCaretLine(view, text)
       view.focus()
     })
   }, [registerInsert])
@@ -1013,17 +1109,12 @@ export default function Editor({
         })
       }
       const head = view.state.selection.main.head
-      let line = view.state.doc.lineAt(head)
       // A caret inside the heading does not map past a Trigger-line insertion at heading.to.
-      // Keep trigger-owned compatibility objects and chart blocks below the canonical Trigger line.
-      if ((ownsTrigger || kind === 'chart') && /^(#{1,6})\s/.test(line.text)) {
-        const sourceLines = view.state.doc.toString().split('\n')
-        const trigger = logicalTriggerBlockAfterHeading(sourceLines, line.number - 1)
-        if (trigger) line = view.state.doc.line(trigger.end)
-      }
+      // Every object block goes below the heading's id and layout lines (headingEndInsert.ts), so
+      // the id line stays directly under its heading.
       const splice = planObjectBlockSplice(
         view.state.doc.toString(),
-        line.to,
+        blockAnchorAfterLine(view.state.doc.toString(), head),
         block,
         openOffset
       )
@@ -1060,6 +1151,8 @@ export default function Editor({
         reLevel(v, dir, withSubtree)
       },
       moveTo: (fromLine, toLine) => { const v = viewRef.current; if (v) moveBlockTo(v, fromLine, toLine) },
+      moveToEnd: (fromLine) => { const v = viewRef.current; if (v) moveBlockToEnd(v, fromLine) },
+      moveInto: (fromLine, sectionLine) => { const v = viewRef.current; if (v) moveBlockInto(v, fromLine, sectionLine) },
       // Undo/redo the editor's history — lets the grid/slides views route ⌘Z to a reorder they made
       // without the editor being focused. No view.focus() so the caller (e.g. grid) keeps focus.
       undo: () => { const v = viewRef.current; if (v) undo(v) },
@@ -1085,6 +1178,7 @@ export default function Editor({
       bulletedList: () => { const v = viewRef.current; if (v) runActionBarEditing(v, 'bulleted-list') },
       numberedList: () => { const v = viewRef.current; if (v) runActionBarEditing(v, 'numbered-list') },
       normalizeTriggers: () => { const v = viewRef.current; if (v) normalizeTriggersCommand(v) },
+      setQuoteForm: (form, compiledLayoutAt) => { const v = viewRef.current; if (v) { setQuoteFormAtCursor(v, form, compiledLayoutAt); v.focus() } },
       deleteSlide: () => { const v = viewRef.current; if (v) { deleteSlideAtCursor(v); v.focus() } },
       // Cancel the pending debounce and write the CURRENT doc immediately, so a caller that reads the
       // file straight after (detach) never races the 1.5s autosave. No-op-safe when nothing is pending.
@@ -1099,7 +1193,7 @@ export default function Editor({
         const v = viewRef.current
         if (!v) return
         const current = v.state.doc.toString()
-        const text = normalizePositions(current)
+        const text = textForSave(v.state, current)
         if (text !== current) {
           const ch = minimalChange(current, text)
           v.dispatch({ changes: { from: ch.from, to: ch.to, insert: ch.insert } })
@@ -1145,6 +1239,7 @@ export default function Editor({
         v.focus()
         navigator.clipboard.readText().then(async (text) => {
           if (!text) return
+          const clipboardText = text
           // Same source-talk asset rule as the DOM paste handler: relative image refs are
           // materialised into the vault pool so a pasted slide's images resolve here too.
           if (/!\[[^\]]*\]\(assets\/[^)]+\.(?:png|jpe?g|gif|webp)\)/i.test(text)) {
@@ -1154,8 +1249,15 @@ export default function Editor({
             } catch { /* fall back to the raw text */ }
           }
           const view = viewRef.current
-          if (view) view.dispatch(view.state.replaceSelection(text))
+          if (view && !pasteSlideTextAtCaret(view, text, clipboardText)) pasteTextAtSelection(view, text)
         }).catch(() => notify('Couldn’t read the clipboard — paste with ⌘V instead.', 'warning'))
+      },
+      slides: {
+        cut: (line) => { const v = viewRef.current; return v ? cutSlideAt(v, line) : null },
+        copy: (line) => { const v = viewRef.current; return v ? copySlideAt(v, line) : null },
+        paste: (clip, afterLine) => { const v = viewRef.current; return v ? pasteSlidesAfter(v, clip, afterLine) : null },
+        moveTo: (fromLine, target) => { const v = viewRef.current; return v ? moveSlideTo(v, fromLine, target) : null },
+        delete: (line) => { const v = viewRef.current; if (v) deleteSlideAt(v, line) }
       },
       runFormat: (id) => {
         const v = viewRef.current
@@ -1248,7 +1350,7 @@ export default function Editor({
     }
     applyLayoutRef.current = applyLayout
     registerApplyLayout?.(applyLayout)
-    registerApplyOption?.((entry, group, token, headingLine, slideId) => {
+    registerApplyOption?.((entry, group, token, headingLine, slideId, compiledLayout) => {
       const v = viewRef.current
       if (!v) return null
       // Until this talk's text is loaded the doc is a transient the load will replace (and autosave
@@ -1266,6 +1368,18 @@ export default function Editor({
       const current = target(ownHeadingLine ?? undefined)
       if (!current) return null
       const original = current.trigger?.text ?? ''
+      // Quote form: the verb, so an inferred quote slide never gains a `{quote}` token (see commitQuoteFormOption).
+      if (group.key === 'quote-form') {
+        const doc = v.state.doc.toString()
+        const written = commitQuoteFormOption(doc, current.headingLine, token, compiledLayout)
+        if (written) {
+          if (written.outline !== doc) {
+            const ch = minimalChange(doc, written.outline)
+            v.dispatch({ changes: { from: ch.from, to: ch.to, insert: ch.insert } })
+          }
+          return written.triggerLine
+        }
+      }
       // T32: the ⌘L picker and the Inspector (editor mounted) sweep against the deck's choice.
       const next = commitSlideOption(v.state.doc.toString(), current.headingLine, original, entry, group, token)
       if (!next || (next === original && !current.needsMerge)) return original
@@ -1302,6 +1416,12 @@ export default function Editor({
       // A save-bound change needs the talk's real text in the doc: before the load lands the doc is a
       // transient the load will replace, so the change (and its save) would be lost or wrong.
       if (opts?.save && !loaded) return null
+      // The text a save wrote for `savedFrom`: adopted outside the undo history, and only while the
+      // buffer is still what was sent (savedTextAdoption.ts).
+      if (typeof opts?.savedFrom === 'string') {
+        adoptSavedText(view, opts.savedFrom, text)
+        return view.state.doc.toString()
+      }
       const change = applyMinimalChange(view.state.doc.toString(), text)
       if (change) view.dispatch({ changes: change })
       if (!opts?.save) return view.state.doc.toString()
@@ -1309,7 +1429,7 @@ export default function Editor({
       // keystroke) scheduled is superseded. Same position-only normalisation as flushSave.
       if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null }
       const current = view.state.doc.toString()
-      const normalized = normalizePositions(current)
+      const normalized = textForSave(view.state, current)
       if (normalized !== current) {
         const norm = minimalChange(current, normalized)
         view.dispatch({ changes: { from: norm.from, to: norm.to, insert: norm.insert } })
@@ -1318,6 +1438,17 @@ export default function Editor({
       return normalized
     })
   }, [registerReplaceDoc])
+
+  useEffect(() => {
+    registerHeadingTools?.({
+      caretHeading: () => (viewRef.current ? caretHeadingTarget(viewRef.current) : null),
+      focusHeading: (line) => { if (viewRef.current) focusHeading(viewRef.current, line) }
+    })
+  }, [registerHeadingTools])
+
+  useEffect(() => {
+    registerPlainIconTools?.(plainIconTools(() => (loadedPathRef.current && loadedPathRef.current === currentTalkRef.current ? viewRef.current : null)))
+  }, [registerPlainIconTools])
 
   useEffect(() => {
     if (!registerReadDoc) return

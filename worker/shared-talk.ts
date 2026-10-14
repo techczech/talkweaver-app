@@ -12,6 +12,7 @@ import {
   type Env,
   type SocketAttachment,
 } from './http'
+import { signingKey } from './signing-key'
 import {
   SHARED_TALK_LIMITS,
   parseItemStatusPatch,
@@ -102,6 +103,8 @@ export async function createShare(request: Request, env: Env): Promise<Response>
   }
   const talkSlug = body.talkSlug
   const title = body.title.trim() || talkSlug
+  // Before anything is stopped or made: a share whose token could not be signed is never left behind.
+  const key = await signingKey(env)
 
   const lookup = await registryStub(env).fetch(new Request(registryShareUrl(talkSlug)))
   if (!lookup.ok) return lookup
@@ -128,7 +131,7 @@ export async function createShare(request: Request, env: Env): Promise<Response>
     return errorResponse('registration_failed', 'The share could not be registered. Try again.', 503)
   }
 
-  const ownerToken = await createOwnerToken({ role: 'owner', shareId, iat: Date.now() }, env.SESSION_SIGNING_SECRET)
+  const ownerToken = await createOwnerToken({ role: 'owner', shareId, iat: Date.now() }, key)
   return jsonResponse({ shareId, ownerToken }, 201)
 }
 
@@ -150,7 +153,7 @@ export async function forwardToShare(request: Request, env: Env, route: ShareRou
   const canonicalHref = canonicalUrl.toString()
   if (request.headers.get('upgrade') === 'websocket') return stub.fetch(new Request(canonicalHref, request))
   if (shareRouteNeedsOwner(route, request.method)
-    && !await verifyOwnerToken(bearerToken(request), env.SESSION_SIGNING_SECRET, route.shareId)) {
+    && !await verifyOwnerToken(bearerToken(request), await signingKey(env), route.shareId)) {
     return errorResponse('owner_auth_required', 'Owner authentication is required.', 401)
   }
   const headers = new Headers(request.headers)
@@ -358,8 +361,9 @@ export class SharedTalk {
   }
 
   private async ownerAuthorised(request: Request, allowQueryToken: boolean): Promise<boolean> {
-    if (!this.share) return false
-    return Boolean(await verifyOwnerToken(this.ownerToken(request, allowQueryToken), this.env.SESSION_SIGNING_SECRET, this.share.shareId))
+    const share = this.share
+    if (!share) return false
+    return Boolean(await verifyOwnerToken(this.ownerToken(request, allowQueryToken), await signingKey(this.env), share.shareId))
   }
 
   // ── routes ────────────────────────────────────────────────────────────────────────────────

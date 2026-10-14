@@ -28,6 +28,12 @@ const test = (name, fn) => { try { fn(); results.push([true, name]) } catch (err
 // Commands the map leaves out, or marks "Did not fit": placed by the builder from the map's
 // neighbours, reported to the owner. Id -> [task, subgroup].
 const BUILDER_PLACED = {
+  // Plain editing view ticket 01: the two editor tabs sit with the other views.
+  'view-plain': ['See the talk', 'Views (editor, strip, grid)'],
+  'view-markdown': ['See the talk', 'Views (editor, strip, grid)'],
+  // Plain editing view ticket 04: the margin menus' palette entries.
+  'change-heading-level': ['Write the outline', 'Headings and levels'],
+  'change-slide-layout': ['Build a slide', 'Layouts'],
   'undo': ['Write the outline', 'Undo and redo'],
   'redo': ['Write the outline', 'Undo and redo'],
   'format-strikethrough': ['Write the outline', 'Format text'],
@@ -39,8 +45,8 @@ const BUILDER_PLACED = {
   'presenter.command-palette': ['Present', 'Help and commands'],
   'presenter.help': ['Present', 'Help and commands'],
   'presenter.rebind': ['Present', 'Help and commands'],
-  // Ticket 10: the Guide column's command in the presenter; no key since the owner check of 10 Oct.
-  'presenter-palette.guide': ['Present', 'Help and commands'],
+  // Ticket 10: the Guide column's command in the presenter, on C.
+  'presenter.guide': ['Present', 'Help and commands'],
   'presenter.pointer': ['Present', 'Display modes'],
   'presenter.pen': ['Present', 'Display modes'],
   'presenter.pen-tool': ['Present', 'Display modes'],
@@ -50,11 +56,29 @@ const BUILDER_PLACED = {
   'presenter.embed-fullscreen': ['Present', 'Display modes'],
   'presenter-palette.pen-freehand': ['Present', 'Display modes'],
   'presenter-palette.pen-arrow': ['Present', 'Display modes'],
-  'presenter-palette.pen-rectangle': ['Present', 'Display modes']
+  'presenter-palette.pen-rectangle': ['Present', 'Display modes'],
+  // Collapse all / Expand all sections (the Slides outline and the grid): not in the map, placed with the views.
+  'outline-collapse-all': ['See the talk', 'Views (editor, strip, grid)'],
+  'outline-expand-all': ['See the talk', 'Views (editor, strip, grid)'],
+  // Move slide to… / Move section to… (slide and section context menus, the palette): not in the map, placed with reordering.
+  'move-slide-to': ['Write the outline', 'Reorder slides and items'],
+  'move-section-to': ['Write the outline', 'Reorder slides and items'],
+  // Shift-Enter in a quotation: a key added after the map was drawn, placed with the list keys.
+  'editor.quote-paragraph': ['Write the outline', 'Lists'],
+  // Quote forms (ADR-0038): "Quote form: Tweet" and its six siblings, the palette's way to set a quote slide's form.
+  'quote-form-auto': ['Build a slide', 'Layouts'],
+  'quote-form-plain': ['Build a slide', 'Layouts'],
+  'quote-form-tweet': ['Build a slide', 'Layouts'],
+  'quote-form-video': ['Build a slide', 'Layouts'],
+  'quote-form-book': ['Build a slide', 'Layouts'],
+  'quote-form-paper': ['Build a slide', 'Layouts'],
+  'quote-form-web': ['Build a slide', 'Layouts']
 }
 // Map records whose label differs from the registry's (value = the registry's label). Ticket 03: ⌘K is
 // Actions here, so the map's "Context menu" reads "Actions here" in the registry.
-const KNOWN_LABEL_DIFFERENCES = { 'app.context-menu': 'Actions here' }
+// 'icon-picker': the palette names it "Insert icon…" since plain view ticket 13 (Command-I puts an
+// icon on the caret's line); the Insert menu still shows the map's "Icon…" (its toolbar menuLabel).
+const KNOWN_LABEL_DIFFERENCES = { 'app.context-menu': 'Actions here', 'icon-picker': 'Insert icon…' }
 
 const presenterNoKey = presenterPaletteEntries().filter((entry) => !entry.shortcut)
 const registryLabels = new Map([
@@ -153,7 +177,7 @@ test('the count per task group is derived and equals the map plus the builder\'s
   for (const record of map.records.filter((r) => r.class === 'command' && !BUILDER_PLACED[r.id])) expected[record.task] += 1
   for (const [, [task]] of Object.entries(BUILDER_PLACED)) expected[task] += 1
   assert.deepEqual(counts, expected)
-  assert.equal(Object.values(counts).reduce((a, b) => a + b, 0), 216) // ticket 12 adds get-started-show-example
+  assert.equal(Object.values(counts).reduce((a, b) => a + b, 0), 232) // ticket 12 adds get-started-show-example; plain view adds view-plain, view-markdown and the two margin-menu commands; quote forms add seven; collapse all and expand all add two; Move slide to… and Move section to… add two (merged: base 225 + plain view 4 + Move-to 2); Shift-Enter in a quotation adds one
 })
 
 test('a chord becomes the key event that matches it', () => {

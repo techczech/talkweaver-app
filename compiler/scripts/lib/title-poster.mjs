@@ -71,6 +71,12 @@ export function posterBlockFor(source, { role } = {}) {
   };
   const body = Array.isArray(source?.body) ? source.body.filter(Boolean) : [];
   if (body.length) block.data.body = body;
+  // Plain view ticket 07: the icon written on the heading, drawn in the poster's visible title.
+  // Absent when there is none, so a poster without an icon is the block it always was.
+  if (source?.titleIcon) {
+    block.data.titleIcon = source.titleIcon;
+    if (source.titleIconAt === "above") block.data.titleIconAt = "above";
+  }
   return block;
 }
 
@@ -133,7 +139,9 @@ export function applyAuthoredPosters(slides, meta) {
       meta,
       title: slide.title ?? "",
       subtitle: subtitle || deckSubtitleFor(meta, role),
-      body
+      body,
+      titleIcon: slide.titleIcon,
+      titleIconAt: slide.titleIconAt
     }, { role })];
     converted.push(slide.id);
   }

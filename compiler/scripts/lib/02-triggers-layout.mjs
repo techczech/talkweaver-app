@@ -51,6 +51,66 @@ function validateExplicitToken(key, value, form, warnings) {
   warnings.push(`unresolved-trigger:${key}=${value}`);
 }
 
+// The trailing `{…}` groups of a heading, as parseHeadingAttrs peels them (right to left, each
+// group from the first `{` after the previous `}`), with their positions in `raw` and whether each
+// is AUTHORED: reached from whitespace (or the start of `raw`), directly or through the groups
+// written right before it (`Title {a}{b}`). A group written straight after a text character
+// (`https://example.org/{icon=x}`, an escaped `\{icon=x}`) is not authored. parseHeadingAttrs
+// itself peels every group, as it always has; the icon on a title (plain view ticket 07) and the
+// outline verbs that write it read only authored groups, so text that merely ends in braces
+// never becomes, or is edited as, an icon. Returns [{ start, end, inner, authored }] in line order;
+// `end` is the index after the group's `}`.
+export function headingBraceGroups(raw) {
+  const s = String(raw ?? "");
+  let end = s.trimEnd().length;
+  const groups = [];
+  while (end > 0 && s[end - 1] === "}") {
+    const prevClose = end >= 2 ? s.lastIndexOf("}", end - 2) : -1;
+    const start = s.indexOf("{", prevClose + 1);
+    if (start < 0 || start >= end) break; // no `{` of its own: a stray `}` is text
+    groups.unshift({ start, end, inner: s.slice(start + 1, end - 1), authored: false });
+    end = start;
+    while (end > 0 && /\s/.test(s[end - 1])) end -= 1;
+  }
+  groups.forEach((group, index) => {
+    const spaced = group.start === 0 || /\s/.test(s[group.start - 1]);
+    const joined = index > 0 && groups[index - 1].end === group.start;
+    group.authored = spaced || (joined && groups[index - 1].authored);
+  });
+  return groups;
+}
+
+// The `icon=VALUE` tokens of one group body, as the tokeniser reads them ({ raw, source, start, end }).
+export function iconTokensInGroup(inner) {
+  return tokenizeTriggerBody(inner).filter((token) => token.raw.startsWith("icon="));
+}
+
+// A heading's own icon (plain view ticket 07): { key, groups }. `groups` are the authored groups
+// that hold an `icon=` token ({ start, end } in `raw`), in line order; `key` is the value of the
+// LAST such token as written (quotes unwrapped by the tokeniser), or null when there is none or it
+// is empty. This is the one reading of "the icon on this heading": the outline tree takes a title's
+// icon from it (14-outline-tree.mjs), and the Plain editor's reader (src/shared/
+// plain-view-icon-tokens.ts) must return the same for every line (test:plain-view-icon-token-parity).
+export function headingIconGroups(raw) {
+  const groups = [];
+  let key = null;
+  for (const group of headingBraceGroups(raw)) {
+    if (!group.authored) continue;
+    const tokens = iconTokensInGroup(group.inner);
+    if (!tokens.length) continue;
+    groups.push({ start: group.start, end: group.end });
+    key = tokens[tokens.length - 1].raw.slice(5).trim() || null;
+  }
+  return { key, groups };
+}
+
+// Whether the icon a heading's attrs carry was written in an authored group. null: the heading
+// has no `icon=` token. The LAST icon token decides, as the last one sets attrs.icon.
+export function headingIconIsAuthored(rawTitle) {
+  const withIcon = headingBraceGroups(rawTitle).filter((group) => iconTokensInGroup(group.inner).length > 0);
+  return withIcon.length ? withIcon[withIcon.length - 1].authored : null;
+}
+
 export function parseHeadingAttrs(rawTitle) {
   // Peel trailing `{…}` groups off the end of the heading, right-to-left, so any number of
   // adjacent or whitespace-separated brace groups concatenate. Stop at the first non-brace
@@ -641,6 +701,10 @@ export function autoTimelineMode(groups) {
   if (realGroups.length >= 2 && realGroups.length <= 4 && rows > 8) return "columns";
   return "rail";
 }
+
+// The line starts that end a paragraph in the lexer. The outline reader in quote-forms.mjs uses the
+// same pattern to find the paragraph that quoteFromQuotedParagraph promotes.
+export const PARAGRAPH_STOP_RE = /^([>|!#]|[-*]\s|\d+[.)]\s|\[(Embed|Simulation|Video):|\*\*Timeline)/i;
 
 // G1 — straight-/curly-quote promotion. Dominik styles quotes with `>`, but sometimes a
 // quotation is written as a plain paragraph that simply BEGINS with a double quote. Such a

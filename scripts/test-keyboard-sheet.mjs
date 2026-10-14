@@ -13,7 +13,7 @@ import { build } from 'esbuild'
 import { keyboardSheet, searchSheet, hereHeading } from '../src/shared/keyboard-sheet.ts'
 import { actionRowsAt } from '../src/shared/actions-here.ts'
 import { PLACES } from '../src/shared/command-places.ts'
-import { COMMAND_REGISTRY, listedPaletteCommands } from '../src/shared/command-registry.ts'
+import { COMMAND_REGISTRY, QUOTE_FORM_COMMAND_IDS, listedPaletteCommands } from '../src/shared/command-registry.ts'
 import { SHORTCUT_REGISTRY } from '../src/shared/shortcut-registry.ts'
 import { TASK_GROUPS, SURFACE_KEYS } from '../src/shared/task-groups.ts'
 
@@ -35,6 +35,17 @@ test('the first section is Here, and it is the list Actions here shows for the s
     assert.equal(sheet.opensOn, 'here', place)
     assert.deepEqual(sheet.here.rows.map((row) => row.key), actionRowsAt(place, context).map((row) => row.key), place)
     assert.equal(sheet.here.count, sheet.here.rows.length, place)
+  }
+})
+
+test('on a quote slide Here lists the seven Quote form rows, as Actions here does', () => {
+  for (const place of ['slide-heading', 'layout-line', 'slide-text', 'strip-slide']) {
+    const context = { quoteSlide: true }
+    const here = keyboardSheet(input({ place, context })).here.rows.map((row) => row.key)
+    assert.deepEqual(here, actionRowsAt(place, context).map((row) => row.key), place)
+    assert.deepEqual(QUOTE_FORM_COMMAND_IDS.filter((id) => !here.includes(id)), [], `${place}: all seven`)
+    const off = keyboardSheet(input({ place })).here.rows.map((row) => row.key)
+    assert.deepEqual(QUOTE_FORM_COMMAND_IDS.filter((id) => off.includes(id)), [], `${place}: none off a quote slide`)
   }
 })
 
@@ -175,6 +186,15 @@ try {
     for (const group of data.groups) assert.match(html, new RegExp(`data-sheet-count="${group.taskGroup}">${group.count}<`), group.taskGroup)
     assert.ok(html.indexOf('data-sheet-section="here"') < html.indexOf('data-sheet-section="Write the outline"'), 'Here comes first')
     assert.equal((html.match(/data-sheet-row="/g) ?? []).length, data.here.count, 'the pane lists exactly the Here rows')
+  })
+
+  test('the drawn sheet lists the Quote form rows in Here only when told the caret is on a quote slide', () => {
+    const on = sheet({ place: 'slide-heading', quoteSlide: true })
+    const off = sheet({ place: 'slide-heading' })
+    const count = (html) => (html.match(/data-sheet-row="quote-form-/g) ?? []).length
+    assert.equal(count(on), 7)
+    assert.equal(count(off), 0)
+    assert.equal((on.match(/data-sheet-row="/g) ?? []).length - (off.match(/data-sheet-row="/g) ?? []).length, 7)
   })
 
   test('with no talk open the sheet has no Here item and opens on the first task group', () => {

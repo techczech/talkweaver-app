@@ -10,7 +10,7 @@ export type IconName =
   | 'file' | 'folder' | 'folder-open' | 'enter'
   | 'file-plus' | 'folder-plus' | 'collapse' | 'swap'
   | 'pane-editor' | 'pane-both' | 'pane-strip' | 'pane-grid'
-  | 'design' | 'trash' | 'sort' | 'strip' | 'command' | 'undo' | 'redo' | 'newslide' | 'promote' | 'demote' | 'bullets' | 'numbered' | 'more'
+  | 'design' | 'trash' | 'sort' | 'strip' | 'command' | 'undo' | 'redo' | 'newslide' | 'promote' | 'demote' | 'bullets' | 'numbered' | 'bold' | 'italic' | 'link' | 'more'
   | 'table' | 'mindmap' | 'chart' | 'mermaid' | 'diagram' | 'svg' | 'code' | 'qr' | 'action' | 'embed' | 'countdown' | 'comment' | 'inbox' | 'calendar'
 
 const PATHS: Record<IconName, string> = {
@@ -63,6 +63,10 @@ const PATHS: Record<IconName, string> = {
   demote: 'M3 5v14 M11 5v14 M3 12h8 M15 14l3.5 3.5L22 14 M18.5 6v11.5',
   bullets: 'M9 6h12 M9 12h12 M9 18h12 M4 6h.01 M4 12h.01 M4 18h.01',
   numbered: 'M10 6h11 M10 12h11 M10 18h11 M4 4h1v5 M3.5 9h3 M6 20H3.5c0-1.2 2.5-2 2.5-3.3 0-.9-1.5-1.3-2.5-.4',
+  // Lucide bold, italic and link (Action bar entries of the Plain view).
+  bold: 'M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8',
+  italic: 'M19 4h-9 M14 20H5 M15 4 9 20',
+  link: 'M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71 M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71',
   more: 'M5 12h.01 M12 12h.01 M19 12h.01',
   // The six object inserts (T27) — minimal Lucide-style glyphs in the same 24×24 stroke language:
   // table = gridded sheet; mindmap = two branches into one node; chart = axis + bars; mermaid =

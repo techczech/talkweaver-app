@@ -94,7 +94,9 @@ export default function CloudflareSettings({ look, record, onStatus, onSetUpReco
     void window.tw.liveService.setUp().then((reply: LiveSetUpReply) => {
       setLive(reply.row)
       // The row says what happened; a refusal that is not the row's own words is shown too.
-      if (!reply.ok && reply.row.state !== 'failed' && reply.row.state !== 'keys-lost' && reply.row.state !== 'no-permission') notify(reply.error, 'error')
+      if (!reply.ok && reply.row.state !== 'failed' && reply.row.state !== 'no-permission') notify(reply.error, 'error')
+      // A success with something to say: the update was uploaded and Cloudflare has not switched to it yet.
+      if (reply.ok && reply.notice) notify(reply.notice, 'info')
     }).catch(() => {})
   }
 

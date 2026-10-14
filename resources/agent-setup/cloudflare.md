@@ -102,7 +102,8 @@ alone.
 | `goingLive.state` = `not-set-up` | Set up going live | Step 5 |
 | `goingLive.state` = `no-permission` | The token cannot run the live service | New token with `Account · Workers Scripts · Edit` (step 2), then step 5 |
 | `goingLive.state` = `failed` | Set-up failed | Read `reason`, fix it, run step 5 again |
-| `goingLive.state` = `keys-lost` | The live service exists but this computer has lost its keys | Do not repeat step 5. Resetting ends every live session, shared talk and Run link made with the old keys, so ask the person first. To reset, they delete the Worker `talkweaver-live-sessions` in the Cloudflare dashboard (Workers & Pages); then run status and step 5 |
+| `goingLive.state` = `set-up-elsewhere` | Set up on another computer | Step 5: it adds this computer with a key of its own. Nothing made on the other computer changes |
+| `goingLive.state` = `access-removed` | This computer's access was removed | Ask the person whether this computer should go live again; if so, step 5 |
 | `shareLink.state` = `not-on-account` | This domain is not on this Cloudflare account | Add the domain to Cloudflare as a zone, or correct the hostname |
 | `shareLink.state` = `no-permission` | The token cannot attach a domain | New token that also has `Zone · Workers Routes · Edit` for that zone |
 | `shareLink.state` = `not-attached` | Not attached yet | Run step 5 again (`setup cloudflare live` attaches the address) |

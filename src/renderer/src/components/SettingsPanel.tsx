@@ -1,4 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import PlainLookRows from './PlainLookRows'
+import { PLAIN_LOOK_DEFAULT, type PlainLook } from '../../../shared/plain-view-look'
 import { History, RotateCcw, Search } from 'lucide-react'
 import type { BackupSettings, SettingsChangeEntry, TimerSettings, TranscriptionSettings } from '../../../preload/index'
 import { EDITOR_COMMANDS, displayKeys } from '../keymap/registry'
@@ -118,6 +120,8 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
   // Action bar (ADR-0025) visibility — one app-wide setting; null while loading.
   const [actionBar, setActionBar] = useState<boolean | null>(null)
   // The place chip (onboarding ticket 02): "Show where I am in the status bar".
+  // Plain tab font and text size (plain editing view, spec T13); one app-wide pair.
+  const [plainLook, setPlainLook] = useState<PlainLook>(PLAIN_LOOK_DEFAULT)
   const [placeChip, setPlaceChip] = useState<boolean | null>(null)
   // The Guide button in the sidebar (onboarding ticket 07): Settings → Get started.
   const [guideButton, setGuideButton] = useState<boolean | null>(null)
@@ -270,6 +274,12 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
       .then((state) => setActionBar(state.visible))
       .catch(() => setActionBar(null))
   }
+  const refreshPlainLook = (): void => {
+    window.tw.settings
+      .getPlainLook()
+      .then(setPlainLook)
+      .catch(() => { /* keep what is shown */ })
+  }
   const refreshPlaceChip = (): void => {
     window.tw.settings
       .getPlaceChip()
@@ -296,6 +306,7 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
     refreshTimer()
     refreshActionBar()
     refreshPlaceChip()
+    refreshPlainLook()
     refreshGuideButton()
     refreshPub()
     refreshRec()
@@ -305,6 +316,7 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
     const unsub = window.tw.backup.onStatus((run) => setBackup((b) => (b ? { ...b, lastRun: run } : b)))
     // Another window toggled the action bar — keep this panel's row in step.
     const unsubActionBar = window.tw.settings.onActionBarChanged((state) => setActionBar(state.visible))
+    const unsubPlainLook = window.tw.settings.onPlainLookChanged(setPlainLook)
     const unsubPlaceChip = window.tw.settings.onPlaceChipChanged((state) => setPlaceChip(state.visible))
     const unsubGuideButton = window.tw.settings.onGuideButtonChanged((state) => setGuideButton(state.visible))
     const onChanged = (): void => setTick((t) => t + 1)
@@ -314,6 +326,7 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
       unsub()
       unsubActionBar()
       unsubPlaceChip()
+      unsubPlainLook()
       unsubGuideButton()
     }
   }, [isOpen])
@@ -673,6 +686,17 @@ export default function SettingsPanel({ isOpen, onClose, vaultRoot, onChangeVaul
               {actionBar ? 'Turn off' : 'Turn on'}
             </button>
           </div>
+          <PlainLookRows
+            look={plainLook}
+            onChange={(change) => {
+              const old = plainLook
+              window.tw.settings.setPlainLook(change).then((next) => {
+                setPlainLook(next)
+                if (next.font !== old.font) record('workspace.plainFont', 'Plain view font', old.font, next.font)
+                if (next.size !== old.size) record('workspace.plainTextSize', 'Text size', `${old.size} px`, `${next.size} px`)
+              }).catch(() => { /* not saved: the rows keep the old values */ })
+            }}
+          />
           </>)}
 
           {show('backup') && (<>

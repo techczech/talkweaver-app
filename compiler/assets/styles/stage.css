@@ -166,6 +166,30 @@
     justify-content: start;
     justify-items: start;
   }
+  /* Panel title: vertically centred on the SLIDE, whatever the body holds (slide redesign,
+     13 Oct 2026, spec section 3). The head is a grid item on rows 1 to 99, and a second body
+     child lands on row 100 (the trailing-sibling rule below), so a head left in the grid is
+     centred on the first body item only and its height inflates the gap between body items.
+     When the slide has a body, the head leaves the grid and fills the panel top to bottom.
+     grid-row/grid-column go back to auto: an absolutely positioned grid child with a placement
+     is confined to that grid area. The last thing in the head has no bottom margin, so a
+     statement's title margin (layouts/statement.css) is not counted in the centring. A head-only
+     slide keeps the single column below. Horizontal placement is unchanged. */
+  .slide[data-title-layout="left"]:has(> .slide-content > .slide-head:not(.slide-head-quiet)):has(> .slide-content > *:not(.slide-head)) > .slide-content { position: relative; }
+  .slide[data-title-layout="left"] > .slide-content:has(> *:not(.slide-head)) > .slide-head:not(.slide-head-quiet) {
+    position: absolute !important;
+    top: 0; bottom: 0; left: 0;
+    width: var(--rail-w);
+    box-sizing: border-box;
+    min-height: 0 !important;
+    grid-row: auto !important;
+    grid-column: auto !important;
+    align-self: auto !important;
+  }
+  .slide[data-title-layout="left"] > .slide-content:has(> *:not(.slide-head)) > .slide-head:not(.slide-head-quiet) > :last-child { margin-bottom: 0; }
+  /* Statement slides: the title block stays centred across the panel's width, as it was when the
+     statement layout's justify-items shrank and centred the head (layouts/statement.css). */
+  .slide[data-title-layout="left"] > .slide-content.layout-statement:has(> *:not(.slide-head)) > .slide-head:not(.slide-head-quiet) { justify-content: center !important; }
   /* @order 1350 */
   .slide:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content > .slide-head > h1 { max-width: 14ch; }
   /* @order 1351 */

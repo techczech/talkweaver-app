@@ -25,6 +25,8 @@ export const IcFilePlus = make('M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v4|
 export const IcFolderPlus = make('M12 10v6|M9 13h6|M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z')
 export const IcSort = make('m21 16-4 4-4-4|M17 20V4|m3 8 4-4 4 4|M7 4v16')
 export const IcCollapse = make('m7 20 5-5 5 5|m7 4 5 5 5-5')
+// Expand all: the same two chevrons unfolding away from the centre.
+export const IcExpand = make('m7 15 5 5 5-5|m7 9 5-5 5 5')
 export const IcRefresh = make('M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8|M21 3v5h-5|M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16|M8 16H3v5')
 export const IcSwap = make('M16 3l4 4-4 4|M20 7H8|M8 21l-4-4 4-4|M4 17h12')
 

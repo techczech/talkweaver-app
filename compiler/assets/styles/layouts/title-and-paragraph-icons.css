@@ -1,0 +1,62 @@
+/* Plain view ticket 07 (spec T14) - an icon on a slide title and an icon beside a paragraph.
+   Drawing: docs/plans/plain-editing-view/locked/icons-on-slides-locked.html.
+
+   Title. The compiler writes the icon INSIDE the painted h1 (07-assembly renderSlideHead):
+     h1 > .title-with-icon[data-title-icon="before|above"] > .fl-icon.title-icon + .title-text
+   (and the same span inside the statement paragraph that paints a bodyless heading, and inside
+   a poster's visible h2.tp-title: the opening slide and an authored {title} / {closing} slide)
+   so every title rule, in every title placement and look, still addresses one h1, and the runtime
+   title fit (slide-fit.js) measures the icon's width together with the words. Sizes are in em of
+   the title, taken from the drawing: before = a 76px icon and a 26px gap on a 72px title; above =
+   a 116px icon and a 30px gap on an 88px title. The icon keeps the .fl-icon colour (the accent).
+
+   Paragraph. A `.content-p` carrying data-para-icon (06-block-renderers) is two columns: the icon
+   in a column 15% of the paragraph's width (never wider than 4em of its text), the text beside it,
+   both starting at the first line. Where a slide sets its paragraphs at different sizes, the
+   runtime (slide-fit.js alignParagraphIcons) gives the later ones the first one's column through
+   --para-icon-col, --para-icon-inset and --para-icon-size, so the icon columns line up.
+
+   Unmarked block: sorts after every migrated rule. Every selector here names a class or attribute
+   that only the new syntax emits, so a slide without it is styled exactly as before. */
+.slide-content :is(h1, h2.tp-title, p) > .title-with-icon {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: .36em;
+  max-width: 100%;
+  vertical-align: top;
+}
+.slide-content :is(h1, h2.tp-title, p) > .title-with-icon > .title-text { min-width: 0; }
+.slide-content :is(h1, h2.tp-title, p) > .title-with-icon > .title-icon {
+  width: 1.06em;
+  height: 1.06em;
+  /* centred on the title's first line; the plain offset is for a browser without the lh unit */
+  margin-top: .03em;
+  margin-top: calc((1lh - 1.06em) / 2);
+}
+.slide-content :is(h1, h2.tp-title, p) > .title-with-icon[data-title-icon="above"] {
+  flex-direction: column;
+  gap: .34em;
+}
+.slide-content :is(h1, h2.tp-title, p) > .title-with-icon[data-title-icon="above"] > .title-icon {
+  width: 1.32em;
+  height: 1.32em;
+  margin-top: 0;
+}
+
+.slide-content p.content-p[data-para-icon] {
+  display: grid;
+  grid-template-columns: var(--para-icon-col, min(15%, 4em)) minmax(0, 1fr);
+  align-items: start;
+  text-align: left;
+}
+.slide-content p.content-p[data-para-icon] > .para-icon {
+  width: var(--para-icon-size, 83.4%);
+  height: auto;
+  aspect-ratio: 1;
+  margin-top: .2em;
+  margin-left: var(--para-icon-inset, 0px);
+}
+.slide-content p.content-p[data-para-icon] > .para-icon-text { min-width: 0; }
+
+/* The Tab title look paints the title on the accent: the icon takes the title's own colour there. */
+.slide[data-title-look="tab"] .slide-content h1 > .title-with-icon > .title-icon { color: inherit; }

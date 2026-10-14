@@ -163,6 +163,12 @@ import {
   thumbCacheDir
 } from './vault-paths'
 import { pathStaysInside } from './path-containment'
+import { createArchiveProvider } from './image-search/archive-provider'
+import { createImageSearch, type PaletteHit } from './image-search/image-search'
+import { createSlideWellProvider, locateSlideWell } from './image-search/slidewell-provider'
+import { detectSqlite3 } from './image-search/sqlite-read'
+import { fromBase64Url, isInsideRoot } from './image-search/thumb-url'
+import type { ImageSearchResult, ImageSearchStatus, ImportedImage, MatchMode } from '../shared/image-search'
 import { decideShellPath } from './shell-path-policy'
 import { resolveImageRefs } from './image-refs'
 import { assetRootsForTalk, talkVaultRoot } from './asset-roots'
@@ -200,6 +206,7 @@ import { createTalkActivity } from './talk-activity'
 import { createConflictCompare } from './conflict-compare'
 import { createTalkSearch, handleTalkSearchRequest } from './talk-search'
 import { emptyTalkSearchResult, mergeTalkSearchResults } from '../shared/talk-search'
+import { reorderGridBlocks, type OutlineSlideBlock } from '../shared/grid-reorder'
 import { createTalkFolderStateStore, type StoredFolderStates } from './talk-folder-state'
 import { createVaultRegistry, resolveInVaults, type Vault, type VaultPersonal } from './vault-registry'
 import { viewVaults, refusalMessage, serviceFor, type AddVaultOutcome, type VaultService } from './vault-view'
@@ -255,6 +262,8 @@ import { editFrontmatterText, parseFrontmatterPairs } from '../shared/frontmatte
 import { extractSection, type SectionLocation } from '../shared/insert-section'
 import { commandElectronAccelerator, menuCommands } from '../shared/command-registry'
 import { actionBarVisibleFrom } from '../shared/action-bar-settings'
+import { EDITOR_VIEW_MODE_KEY, editorViewModeFrom, type EditorViewMode } from '../shared/editor-view-mode'
+import { PLAIN_FONT_KEY, PLAIN_TEXT_SIZE_KEY, plainFontFrom, plainTextSizeFrom, plainLookFrom, type PlainLook } from '../shared/plain-view-look'
 import { placeChipVisibleFrom } from '../shared/place-chip-settings'
 import { guideButtonVisibleFrom, guideProgressFrom } from '../shared/guide'
 import { GuideLearnStore } from './guide-learn-store'
@@ -325,9 +334,12 @@ import { createLiveSessionStore, type SessionRecoveryRecord } from './live-sessi
 import { secretsSlot, type SecretSlot, type SecretsStore } from './secrets-store'
 import { openSecretsStore } from './secrets-store-electron'
 import { cloudflareApiBase, createCloudflareConnection, standInApiBase, type CloudflareConnectionService, type ConnectionReply as CloudflareReply } from './cloudflare-connection'
-import { LIVE_NOT_SET_UP, LiveServiceError, deployLiveService, lookUpLiveService, type LiveDeployResult } from './live-service-deploy'
+import { LIVE_ACCESS_REMOVED, LIVE_NOT_SET_UP, LiveServiceError, deployLiveService, lookUpLiveService, surveyLiveService, type DeployPhase, type LiveDeployResult } from './live-service-deploy'
+import { KeyStoreUnreadable, computerNameOrNull, createComputerKeyStore, defaultComputerName, keyKind, keyToPresent, sendWithHeldKeys, type ComputerKeyStore, type KeyKind, type StoredKey } from './live-service-key'
+import { changeShareAddress, shareDomainEntries, shareLinkBase, type ShareDomainEntry, type ShareDomainPorts, type ShareDomainRecords, type ShareDomainResult } from './live-service-share-domain'
+import type { AdminEndpoint } from './live-admin-request'
 import { createLiveService, setUpAllowedFrom, type LiveService } from './live-service'
-import type { GoingLiveRow, LiveSetupPrompt } from '../shared/live-service-status'
+import { LIVE_WORKER_NAME, type GoingLiveRow, type LiveSetupPrompt } from '../shared/live-service-status'
 import { WORKER_DIST_DIR, readShippedFiles, type ShippedFiles } from './live-service-upload'
 import { addressKind, createHandoutPublishing, liveAddressForPages, localLiveAllowed, publishedFolders, removeSiteFolder, writableSiteFolder, type HandoutPublishing } from './handout-publishing'
 import { slimHandoutHtml } from './handout-slimming'
@@ -407,7 +419,11 @@ type Config = {
   liveWorkerBaseUrl?: string // deployed Worker origin; empty means auto-deploy or local wrangler dev
   liveWorkerVersion?: string // LIVE_WORKER_VERSION last deployed to liveWorkerBaseUrl; mismatch → re-deploy
   liveWorkerAccountId?: string // the Cloudflare account liveWorkerBaseUrl was deployed for (unset on installs from before it was recorded)
-  liveWorkerShareDomain?: string // a share-link domain the live service's set-up may have attached ('' once none of ours is verified attached); written only by deployLiveWorker
+  computerName?: string // the name this computer is listed under; default: the host name without .local. (The computer's id is NOT here: it is made with its key and kept with it in the secrets store.)
+  liveComputerRecordedFor?: string // the Cloudflare account whose live service has this computer on its list, under the name recorded with it
+  liveWorkerShareDomains?: { hostname: string; wanted: boolean }[] // every hostname THIS computer asked Cloudflare to attach to the live service and has not been shown detached; `wanted`: the share-link address in use (at most one); written only by live-service-share-domain.ts through applyShareAddress
+  liveWorkerShareDomain?: string // before the list above: the one hostname recorded. Read once as its `wanted` entry, and removed by the list's first write
+  liveWorkerShareDomainPrevious?: string // before the list above: the address whose removal had failed. Read once as an entry of the list, and removed by its first write
   // Share for comments: the host colleagues' links use (ticket 07 sets https://drafts.handouts.fyi once
   // the Worker has that route). Empty = the Worker origin serves shares at /shares/<id>.
   sharedTalkLinkBase?: string
@@ -453,6 +469,10 @@ type Config = {
   // the renderer side (src/shared/action-bar-settings.ts); a malformed list falls back to the
   // default rather than breaking the bar.
   actionBarVisible?: boolean
+  editorViewMode?: EditorViewMode
+  // Plain tab font and text size (spec T13); read tolerantly through src/shared/plain-view-look.ts.
+  plainViewFont?: string
+  plainViewTextSize?: number
   actionBarItems?: string[]
   // The example vault was removed (onboarding ticket 12): Settings → Get started offers it again.
   // Beside the vault registry, outside every vault; progress is kept under its own keys.
@@ -814,10 +834,6 @@ function applyPublishSettings(cfg: { accountId?: string; project?: string; baseU
       liveWorkerBaseUrl: (cfg.workerBaseUrl || '').trim().replace(/\/+$/, '') || undefined,
       publishUseShortIds: !!cfg.useShortIds,
       sharedTalkLinkBase: nextLinkBase,
-      // A domain set, changed or cleared means the deployed Worker's route no longer matches
-      // Settings — mark the deploy stale so ensureLiveWorker redeploys before the next share link
-      // is issued, rather than a colleague's link 404ing until some unrelated redeploy catches up.
-      ...(nextLinkBase !== previousLinkBase ? { liveWorkerVersion: undefined } : {}),
       // A Live Worker URL typed by hand is not known to be any account's deploy.
       ...(((cfg.workerBaseUrl || '').trim().replace(/\/+$/, '') || undefined) !== previousWorkerBaseUrl ? { liveWorkerAccountId: undefined } : {})
     })
@@ -827,7 +843,12 @@ function applyPublishSettings(cfg: { accountId?: string; project?: string; baseU
     const connectionAfter = [getConfig('cfAccountId', undefined), getConfig('cfPagesProject', undefined), getConfig('publishBaseUrl', undefined), getConfig('sharedTalkLinkBase', undefined)].join('\n')
     // An event of the connection, not a refresh of it: what was being checked or offered for the earlier
     // values is cancelled (a site is never made in an account Settings no longer names).
-    if (connectionAfter !== connectionBefore) return { success: true, checked: cloudflareConnection().settingsChanged() }
+    // The share-link address is attached or removed HERE, by this Save, and nowhere else (decision R2:
+    // a set-up or a code update of the live service never touches a domain). Then the rows are asked again.
+    const shareAddress = nextLinkBase !== previousLinkBase || shareAddressDue() ? applyShareAddress() : null
+    if (connectionAfter !== connectionBefore || shareAddress) {
+      return { success: true, checked: (shareAddress ?? Promise.resolve()).then(() => cloudflareConnection().settingsChanged()) }
+    }
     return { success: true }
 }
 
@@ -858,12 +879,17 @@ ipcMain.handle('live:go', async (event) => {
     if (!compilerDir) throw new Error('Compiler not found.')
     const { makeQrSvg } = await import(pathToFileURL(join(compilerDir, 'lib/01-cli-utils.mjs')).href)
     const qrSvg = String(makeQrSvg(joinUrl) || '')
-    const response = await fetch(`${endpoint.baseUrl}/sessions`, {
+    // With two keys held for this live service (this computer's own and the 0.38.2 one), a 401 for the
+    // one presented is followed by one more try with the other (live-service-key.ts `sendWithHeldKeys`).
+    const { response, refused } = await sendWithHeldKeys(recordedLiveService(), liveKeysHeldFor(endpoint.baseUrl), endpoint.adminSecret, (secret) => fetch(`${endpoint.baseUrl}/sessions`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${endpoint.adminSecret}`, 'content-type': 'application/json' },
+      headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
       body: JSON.stringify({ talkSlug: context.talkSlug }),
       signal: AbortSignal.timeout(15_000),
-    })
+    }))
+    // The live service refuses every key this computer holds for it (its access was removed from another
+    // computer): the same fixed sentence as the Settings row's, with Open Settings, never the reply's own text.
+    if (refused) throw new LiveServiceError('failed', LIVE_ACCESS_REMOVED, null, 'open-settings')
     if (!response.ok) throw new Error(await liveHttpError(response, 'Could not create a live session.'))
     const created = await response.json() as { sessionId: string; presenterToken: string; shortId: string; expiresAt: number }
     if (!created.sessionId || !created.presenterToken || !created.shortId || !Number.isFinite(created.expiresAt)) throw new Error('The live service returned an incomplete session.')
@@ -2160,6 +2186,39 @@ ipcMain.handle('settings:set-action-bar-visible', (_event, visible: boolean) => 
   return actionBarState().visible
 })
 
+// ── Editor view (plain editing view): Plain or Markdown, one app-wide setting, broadcast to every window ──
+function editorViewMode(): EditorViewMode {
+  return editorViewModeFrom(readConfig()[EDITOR_VIEW_MODE_KEY])
+}
+ipcMain.handle('settings:get-editor-view-mode', () => editorViewMode())
+ipcMain.handle('settings:set-editor-view-mode', (_event, mode: unknown) => {
+  writeConfig({ [EDITOR_VIEW_MODE_KEY]: editorViewModeFrom(mode) })
+  const next = editorViewMode()
+  for (const win of BrowserWindow.getAllWindows()) {
+    try { if (!win.isDestroyed()) win.webContents.send('editor-view-mode:changed', next) } catch { /* window closing */ }
+  }
+  return next
+})
+
+// ── Plain view look (plain editing view, spec T13): font and text size, app-wide, broadcast to every window ──
+function plainLook(): PlainLook {
+  return plainLookFrom(readConfig() as Record<string, unknown>)
+}
+ipcMain.handle('settings:get-plain-look', () => plainLook())
+ipcMain.handle('settings:set-plain-look', (_event, change: unknown) => {
+  const c = (change && typeof change === 'object' ? change : {}) as { font?: unknown; size?: unknown }
+  const current = plainLook()
+  writeConfig({
+    [PLAIN_FONT_KEY]: c.font === undefined ? current.font : plainFontFrom(c.font),
+    [PLAIN_TEXT_SIZE_KEY]: c.size === undefined ? current.size : plainTextSizeFrom(c.size)
+  })
+  const next = plainLook()
+  for (const win of BrowserWindow.getAllWindows()) {
+    try { if (!win.isDestroyed()) win.webContents.send('plain-look:changed', next) } catch { /* window closing */ }
+  }
+  return next
+})
+
 // ── Place chip (onboarding ticket 02): one app-wide visibility setting, broadcast like the bar ──
 function placeChipVisible(): boolean {
   return placeChipVisibleFrom(readConfig().placeChipVisible)
@@ -3117,6 +3176,24 @@ ipcMain.handle('icons:svg', async (_event, key: string) => {
   } catch (e) {
     console.error('[icons:svg]', e)
     return null
+  }
+})
+
+// The names of the vendored Lucide set, as keys (`lucide:name`), in the set's own order: what the
+// Plain view's Command-I picker lists before a search is typed, and the set its verb accepts
+// names from. Read from the file the compiler's 05-icons.mjs reads; the search stays icons:search.
+let lucideNamesCache: { dir: string; names: string[] } | null = null
+ipcMain.handle('icons:names', async () => {
+  try {
+    const compilerDir = getCompilerPath()
+    if (lucideNamesCache && lucideNamesCache.dir === compilerDir) return lucideNamesCache.names
+    const set = JSON.parse(await readFileAsync(join(compilerDir, '..', 'assets/icons/lucide.json'), 'utf8')) as Record<string, unknown>
+    const names = Object.keys(set).filter((name) => /^[a-z0-9][a-z0-9-]*$/.test(name)).map((name) => `lucide:${name}`)
+    lucideNamesCache = { dir: compilerDir, names }
+    return names
+  } catch (e) {
+    console.error('[icons:names]', e)
+    return []
   }
 })
 
@@ -4477,7 +4554,7 @@ function layoutScan(root: string): LayoutDoctorTalk[] {
   for (const talk of findTalks(root)) {
     let text = ''
     try { text = readFileSync(talk.outlinePath, 'utf8') } catch { continue }
-    const findings = scanOutlineTriggers(text, LAYOUT_DOCTOR_VOCABULARY)
+    const findings = scanOutlineTriggers(text, LAYOUT_DOCTOR_VOCABULARY, { strandedTitleIcons: true })
     if (findings.length > 0) report.push({ talk: talk.title, slug: talk.slug, outlinePath: talk.outlinePath, findings })
   }
   layoutScanCache = { root, at: Date.now(), report }
@@ -5826,34 +5903,46 @@ ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, conte
   }
 })
 
-type LiveWorkerCredentials = { adminSecret: string; signingSecret: string }
 let localLiveWorker: { process: ChildProcessByStdio<null, Readable, Readable>; baseUrl: string; adminSecret: string } | null = null
 
 function liveWorkerDir(): string {
   return app.isPackaged ? join(process.resourcesPath, 'worker') : join(process.cwd(), 'worker')
 }
-// The live service's admin and signing secrets: slot `live-worker-credentials` of the secrets store.
-function readLiveWorkerCredentials(): LiveWorkerCredentials | null {
-  try {
-    const stored = secretOrNull('live-worker-credentials')
-    if (stored === null) return null
-    const value = JSON.parse(stored) as Partial<LiveWorkerCredentials>
-    return value.adminSecret && value.signingSecret
-      ? { adminSecret: value.adminSecret, signingSecret: value.signingSecret }
-      : null
-  } catch { return null }
+// This computer's admin keys for the live service: slot `live-worker-credentials` of the secrets store
+// (live-service-key.ts reads and writes it: one entry per Cloudflare account and Worker, each with
+// the computer id made with it; a 0.38.2 blob is read as the `legacy` key of the account Settings
+// records). config.json holds only the computer's name: no id, and never a key.
+let computerKeyStore: ComputerKeyStore | null = null
+function computerKeys(): ComputerKeyStore {
+  if (computerKeyStore) return computerKeyStore
+  computerKeyStore = createComputerKeyStore({
+    // Null only when the slot's file is not there; a file that cannot be read or decrypted throws (SecretsError).
+    read: () => secrets().read('live-worker-credentials'),
+    // Atomic (secrets-store.ts); refused when the operating system's encryption is unavailable.
+    write: (text) => secrets().write('live-worker-credentials', text),
+    recorded: () => ({ accountId: getConfig('liveWorkerAccountId', undefined) ?? null, baseUrl: getConfig('liveWorkerBaseUrl', undefined) ?? null, workerName: LIVE_WORKER_NAME }),
+    // An unreleased build kept the computer's id in config.json: the store takes that field out when it is made (R5).
+    settings: { fields: () => Object.keys(readConfig()), remove: (field) => writeConfig({ [field]: undefined } as Partial<Config>) },
+  })
+  // A 0.38.2 blob is bound to the account Settings records NOW, before anything can change that record.
+  // If this rewrite fails, the store gives no key at all (every read throws) until a rewrite is taken (R9).
+  computerKeyStore.migrate()
+  return computerKeyStore
 }
-function getOrCreateLiveWorkerCredentials(): LiveWorkerCredentials {
-  const existing = readLiveWorkerCredentials()
-  if (existing) return existing
-  const credentials = {
-    adminSecret: randomBytes(32).toString('base64url'),
-    signingSecret: randomBytes(32).toString('base64url'),
-  }
-  // Refused (SecretsError, a fixed sentence) when the operating system's encryption is unavailable.
-  secrets().write('live-worker-credentials', JSON.stringify(credentials))
-  return credentials
+/** The live service Settings records as set up from here: the only one a stored key is used on outside a set-up. */
+function recordedLiveService(): { accountId: string | null; workerName: string; baseUrl: string | null } {
+  return { accountId: getConfig('liveWorkerAccountId', undefined) ?? null, workerName: LIVE_WORKER_NAME, baseUrl: getConfig('liveWorkerBaseUrl', undefined)?.replace(/\/+$/, '') || null }
 }
+/** This computer's key for the recorded live service (its own first), or null. Throws KeyStoreUnreadable. */
+function recordedLiveKey(): StoredKey | null {
+  return computerKeys().keysFor(recordedLiveService())[0] ?? null
+}
+/** The name this computer is listed under: the one in Settings, or the host name without `.local`. */
+function computerName(): string {
+  return computerNameOrNull(getConfig('computerName', undefined)) ?? defaultComputerName(hostname())
+}
+/** `<account>\n<name>`: what `liveComputerRecordedFor` holds once this computer is on that account's list under that name. */
+const computerRecordMark = (accountId: string): string => `${accountId}\n${computerName()}`
 
 // The config `wrangler dev` is given (the local live service, tests and the unpackaged app only) is
 // ALWAYS a generated copy in the wrangler-runs folder, never the shipped file: wrangler keeps its
@@ -5878,13 +5967,76 @@ function shippedLiveWorker(): ShippedFiles {
   return readShippedFiles((name) => { try { return readFileSync(join(dir, name)) } catch { return null } })
 }
 // The share-link domain (ticket 07) is per person (each deploys the live service to their own
-// account): attached to the Worker when Settings has a valid one, and removed when it is cleared.
-// A stored value that no longer passes isValidShareDomain (edited by hand, or saved before that rule
-// existed) counts as none, as sharedTalkLink falls back to the Worker origin for the same reason.
+// account). A stored value that no longer passes isValidShareDomain (edited by hand, or saved before
+// that rule existed) counts as none, as sharedTalkLink falls back to the Worker origin for the same reason.
+// This is the address the person ASKED for (what Settings' field shows, and what the share-address
+// action is asked to attach). No link is built from it: see attachedShareLinkBase (R13).
 function liveShareHostname(): string | null {
   const linkBase = getConfig('sharedTalkLinkBase', undefined)
   const hostname = (() => { try { return linkBase ? new URL(linkBase).hostname : null } catch { return null } })()
   return hostname && isValidShareDomain(hostname) ? hostname : null
+}
+/** Every hostname this computer asked Cloudflare to attach and has not been shown detached (`liveWorkerShareDomains`; live-service-share-domain.ts keeps it). */
+function listedShareDomains(): ShareDomainEntry[] {
+  return shareDomainEntries(shareDomainRecords()).entries
+}
+/** config.json's fields for that list: the list itself, and the two fields kept before there was one. */
+function shareDomainRecords(): ShareDomainRecords {
+  return { liveWorkerShareDomains: getConfig('liveWorkerShareDomains', undefined), liveWorkerShareDomain: getConfig('liveWorkerShareDomain', undefined), liveWorkerShareDomainPrevious: getConfig('liveWorkerShareDomainPrevious', undefined) }
+}
+/**
+ * THE link base of every share link and Run results link (R13): the address this computer's list
+ * holds as attached and in use (`shareLinkBase`), or undefined (links then use the live service's
+ * workers.dev address). Never the address typed in Settings, which may not be attached.
+ */
+function attachedShareLinkBase(): string | undefined {
+  return shareLinkBase(shareDomainRecords())
+}
+/** Something for the share-address action to do: an address set, or a hostname this computer asked for that has not been shown detached. */
+const shareAddressDue = (): boolean => liveShareHostname() !== null || listedShareDomains().length > 0
+function shareDomainPorts(): ShareDomainPorts {
+  return {
+    authorise: () => cloudflareConnection().authoriseLiveDeploy(),
+    fetch: (input, init) => fetch(input, init),
+    apiBase: () => cloudflareApiBase(cloudflareTestContext()),
+    workerName: LIVE_WORKER_NAME,
+    // The list is written before an attach is sent, and an entry leaves it only once it is shown not attached (R11). The two earlier fields go with the first write.
+    records: {
+      read: () => shareDomainRecords(),
+      write: (entries) => writeConfig({ liveWorkerShareDomains: entries, liveWorkerShareDomain: undefined, liveWorkerShareDomainPrevious: undefined }),
+    },
+  }
+}
+/**
+ * THE share-address action (decision R2), run only because a person set or cleared the share-link
+ * address (Settings' Save, the "Use share.<domain>" button, `setup cloudflare share-domain`), or as
+ * the tail of a first set-up that made the Worker. It attaches the ONE address set, without
+ * displacing anything; and removes the hostnames this computer's own list holds (those it asked
+ * Cloudflare to attach before), only once the address set is attached (a new address that is
+ * refused leaves the old one in place). One at a time. With no live service set up from this
+ * computer for the account in use there is nothing to attach to: nothing is sent.
+ */
+let shareAddressRun: Promise<ShareDomainResult | null> = Promise.resolve(null)
+function applyShareAddress(): Promise<ShareDomainResult | null> {
+  const next = shareAddressRun.catch(() => null).then(async (): Promise<ShareDomainResult | null> => {
+    const wanted = liveShareHostname()
+    const at = cloudflareConnection().status().connection
+    const account = at.state === 'connected' ? at.account?.id ?? null : null
+    if (!account || !getConfig('liveWorkerBaseUrl', undefined) || getConfig('liveWorkerAccountId', undefined) !== account) return null
+    return changeShareAddress(shareDomainPorts(), { wanted })
+  })
+  shareAddressRun = next
+  return next
+}
+
+// A set-up or update as the Going live row runs it: the sequence (deployLiveWorker), and then the
+// tail of a FIRST set-up (that run made the Worker): a share-link address already set on this
+// computer is attached now, if nothing holds it (applyShareAddress). Its failure does not undo the
+// set-up: the Share-link domain row says "Not attached yet", and Save tries again.
+async function setUpLiveWorker(progress?: (phase: DeployPhase) => void): Promise<LiveDeployResult> {
+  const result = await deployLiveWorker(progress)
+  if (result.ok && result.created && liveShareHostname()) { try { await applyShareAddress() } catch { /* the row says so */ } }
+  return result
 }
 
 // The sequence, and every point at which a set-up stops because the token, the account or the site
@@ -5893,22 +6045,22 @@ function liveShareHostname(): string | null {
 // not to run the live service is refused there (nothing is redeployed until a sufficient token is
 // entered; a service already deployed keeps working with its stored keys, ensureLiveWorker falls
 // back to it). No program is started: the shipped bundle is uploaded with Cloudflare's API.
-function deployLiveWorker(progress?: (phase: 'upload' | 'secrets') => void): Promise<LiveDeployResult> {
+function deployLiveWorker(progress?: (phase: DeployPhase) => void): Promise<LiveDeployResult> {
   return deployLiveService({
     ...(progress ? { progress } : {}),
     shipped: () => shippedLiveWorker(),
     expectedBuild: LIVE_WORKER_VERSION,
     authorise: () => cloudflareConnection().authoriseLiveDeploy(),
-    storedKeys: () => readLiveWorkerCredentials(),
-    makeKeys: () => getOrCreateLiveWorkerCredentials(),
-    shareHostname: () => liveShareHostname(),
-    shareDomainAttachedBefore: () => Boolean(getConfig('liveWorkerShareDomain', undefined)),
-    // Written before an attach is sent, cleared only after a verified removal (live-service-deploy.ts).
-    recordShareDomain: (hostname) => writeConfig({ liveWorkerShareDomain: hostname ?? '' }),
+    keys: computerKeys(),
+    computerName: () => computerName(),
     fetch: (input, init) => fetch(input, init),
+    liveFetch: (input, init) => fetch(input, init),
     apiBase: () => cloudflareApiBase(cloudflareTestContext()),
     // With the address, the account it was deployed for: a publish by another account does not publish this address.
-    save: ({ baseUrl, accountId }) => writeConfig({ liveWorkerBaseUrl: baseUrl, liveWorkerVersion: LIVE_WORKER_VERSION, liveWorkerAccountId: accountId }),
+    save: ({ baseUrl, accountId, recorded }) => writeConfig({
+      liveWorkerBaseUrl: baseUrl, liveWorkerVersion: LIVE_WORKER_VERSION, liveWorkerAccountId: accountId,
+      liveComputerRecordedFor: recorded ? computerRecordMark(accountId) : undefined,
+    }),
   })
 }
 
@@ -5976,10 +6128,29 @@ function liveLocalAllowed(): boolean {
 // The live service's admin secret for the address in Settings: the stored one, or (an unpackaged
 // test run only, decision D1) the one handed over in TALKWEAVER_LIVE_ADMIN_SECRET.
 function liveAdminSecret(): string | null {
-  const stored = readLiveWorkerCredentials()?.adminSecret
+  // Only the key stored FOR the recorded live service (its account, or with none recorded its address).
+  const stored = (() => { try { return recordedLiveKey()?.key ?? null } catch { return null } })()
   if (stored) return stored
   const handed = app.isPackaged ? '' : process.env.TALKWEAVER_LIVE_ADMIN_SECRET?.trim()
   return handed || null
+}
+// The secret a use presents (Go live, a share). With one key held for the recorded live service:
+// that one, nothing asked. With two (this computer's own and the 0.38.2 one): the one the live
+// service accepts, so a 0.38.2 key that still works is used while this computer's own is not
+// registered; "access was removed" is said only when it refuses both.
+async function liveAdminSecretToPresent(): Promise<string | null> {
+  let held: StoredKey[] = []
+  const at = recordedLiveService()
+  try { held = computerKeys().keysFor(at) } catch { return liveAdminSecret() }
+  if (held.length < 2) return liveAdminSecret()
+  return (await keyToPresent({ fetch: (input, init) => fetch(input, init) }, at, held))?.key ?? null
+}
+// The keys held for the recorded live service, for a request going to ITS address; none for any other
+// address (a live service on this computer in a test run), and none when the slot cannot be read.
+function liveKeysHeldFor(baseUrl: string): StoredKey[] {
+  const at = recordedLiveService()
+  if (!at.baseUrl || at.baseUrl !== baseUrl.replace(/\/+$/, '')) return []
+  try { return computerKeys().keysFor(at) } catch { return [] }
 }
 function broadcast(channel: string, value: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -5988,7 +6159,7 @@ function broadcast(channel: string, value: unknown): void {
 }
 // Going live and sharing (live-service.ts): whether there is a live service, what to do before
 // using it, and its Settings row. This supplies what only the app has: the connection's state, the
-// keys' presence, what Settings records as deployed, the set-up sequence and the lookup.
+// key held here, what Settings records as deployed, the set-up sequence, the lookup and the survey.
 let liveServiceInstance: LiveService | null = null
 function liveService(): LiveService {
   liveServiceInstance ??= createLiveService({
@@ -6001,13 +6172,23 @@ function liveService(): LiveService {
         connection,
         permission: status.liveService.state === 'no-permission' ? 'no-permission' : status.liveService.state === 'not-refused' ? 'not-refused' : 'unknown',
         accountId: at.state === 'connected' ? at.account?.id ?? null : null,
-        keysStored: liveAdminSecret() !== null,
+        // The key stored for the recorded live service; with none recorded, for the account in use. A slot
+        // that cannot be read is said so, never "none". An unpackaged test run's handed-over secret stands for the first computer's.
+        key: ((): KeyKind | 'unreadable' => {
+          try {
+            const held = configured ? recordedLiveKey() : computerKeys().keysFor({ accountId: at.state === 'connected' ? at.account?.id ?? null : null, workerName: LIVE_WORKER_NAME, baseUrl: null })[0] ?? null
+            return held ? keyKind(held) : liveAdminSecret() !== null ? 'legacy' : 'none'
+          } catch (error) {
+            if (error instanceof KeyStoreUnreadable) return 'unreadable'
+            throw error
+          }
+        })(),
         deployed: { baseUrl: configured, version: getConfig('liveWorkerVersion', undefined) ?? null, accountId: getConfig('liveWorkerAccountId', undefined) ?? null },
         appBuild: LIVE_WORKER_VERSION,
       }
     },
-    adminSecret: () => liveAdminSecret(),
-    deploy: (progress) => deployLiveWorker(progress),
+    adminSecret: () => liveAdminSecretToPresent(),
+    deploy: (progress) => setUpLiveWorker(progress),
     lookUp: (accountId) => lookUpLiveService({
       shipped: () => shippedLiveWorker(),
       expectedBuild: LIVE_WORKER_VERSION,
@@ -6016,8 +6197,23 @@ function liveService(): LiveService {
       apiBase: () => cloudflareApiBase(cloudflareTestContext()),
       accountId,
     }),
-    // A Worker deleted in the dashboard: its address, build and account are dropped. The keys stay.
-    forget: () => writeConfig({ liveWorkerBaseUrl: undefined, liveWorkerVersion: undefined, liveWorkerAccountId: undefined }),
+    survey: () => surveyLiveService({
+      shipped: () => shippedLiveWorker(),
+      expectedBuild: LIVE_WORKER_VERSION,
+      authorise: () => cloudflareConnection().authoriseLiveDeploy(),
+      fetch: (input, init) => fetch(input, init),
+      liveFetch: (input, init) => fetch(input, init),
+      apiBase: () => cloudflareApiBase(cloudflareTestContext()),
+      keys: computerKeys(),
+      // On the list once, under its current name: a 0.38.2 computer is recorded (as `legacy`) the first time this build asks.
+      record: {
+        due: (accountId) => getConfig('liveWorkerAccountId', undefined) === accountId && getConfig('liveComputerRecordedFor', undefined) !== computerRecordMark(accountId),
+        name: () => computerName(),
+        done: (accountId) => writeConfig({ liveComputerRecordedFor: computerRecordMark(accountId) }),
+      },
+    }),
+    // A Worker deleted in the dashboard: its address, build and account are dropped. The key stays.
+    forget: () => writeConfig({ liveWorkerBaseUrl: undefined, liveWorkerVersion: undefined, liveWorkerAccountId: undefined, liveComputerRecordedFor: undefined }),
     onChange: (row: GoingLiveRow) => {
       broadcast('live-service:status', row)
       // `setup cloudflare live` prints its progress from the same rows the window is sent.
@@ -6042,24 +6238,23 @@ ipcMain.handle('live-service:set-up', (event) => {
 // (Dominik, 10 Oct: "definitely want share.handouts.fyi"). The address is the one the row suggests,
 // read here from the connection's own status, never taken from the window. Pressing it is the only
 // way the suggestion is used: it saves it as the share-link address (`sharedTalkLinkBase`, as
-// typing it in Settings does, so the deployed service is marked out of date), checks the row again,
-// and when the token was not refused the zone's Workers routes and the live service is set up,
-// attaches it now by updating the live service (the ticket-06 path: live-service-deploy.ts). A live
-// service not set up yet attaches it when it is set up. Refused routes: saved, nothing attached, and
-// the row says which permission to add.
+// typing it in Settings does), checks the row again, and when the token was not refused the zone's
+// Workers routes and the live service is set up, attaches that one address now (applyShareAddress:
+// the live service's code is not touched). A live service not set up yet attaches it at the end of
+// its first set-up. Refused routes: saved, nothing attached, and the row says which permission to add.
 let shareUse: Promise<CloudflareReply> | null = null
 async function useSuggestedShareDomain(): Promise<CloudflareReply> {
   const before = cloudflareConnection().status()
   const offered = before.shareLink
   const host = offered.state === 'none' && !offered.stale ? offered.suggested?.host ?? '' : ''
   if (before.connection.state !== 'connected' || !isValidShareDomain(host)) return { ok: false, error: SHARE_LINK_NOT_NOW, status: before }
-  writeConfig({ sharedTalkLinkBase: `https://${host}`, liveWorkerVersion: undefined })
+  writeConfig({ sharedTalkLinkBase: `https://${host}` })
   liveServiceInstance?.refresh()
   const checked = await cloudflareConnection().settingsChanged()
   if (checked.status.shareLink.state !== 'not-attached' || checked.status.shareLink.host !== host || liveService().row().state !== 'ready') return { ok: true, status: checked.status }
-  const setUp = await liveService().setUp()
+  const attached = await applyShareAddress()
   const after = await cloudflareConnection().check('asked')
-  return setUp.ok ? { ok: true, status: after.status } : { ok: false, error: setUp.error, status: after.status }
+  return !attached || attached.ok ? { ok: true, status: after.status } : { ok: false, error: attached.error, status: after.status }
 }
 ipcMain.handle('cloudflare:use-share-domain', (event): Promise<CloudflareReply> | CloudflareReply => {
   // As Set up going live: only from an editor window's own top frame, where the Settings row is.
@@ -6094,6 +6289,15 @@ async function ensureLiveWorker(): Promise<{ baseUrl: string; adminSecret: strin
   // No address on this computer is ever started as a fallback (D8).
   return liveService().endpoint()
 }
+/**
+ * The live service as a request that carries this computer's key needs it (a share, a Run's results
+ * link, pre-work; live-admin-request.ts): the key to present, and the keys held for the recorded live
+ * service, which are tried in turn only on a request to its recorded address, as Go live does.
+ */
+async function liveAdminEndpoint(): Promise<AdminEndpoint> {
+  const endpoint = await ensureLiveWorker()
+  return { baseUrl: endpoint.baseUrl, adminSecret: endpoint.adminSecret, held: { at: recordedLiveService(), keys: liveKeysHeldFor(endpoint.baseUrl) } }
+}
 
 // ── Pre-work for a planned Run (feedback-boards ticket 09) ─────────────────────────────────────
 // Built lazily (app.getPath needs a ready app); the timer starts once the app is ready.
@@ -6102,7 +6306,7 @@ function runPrework(): RunPreworkService {
   runPreworkService ??= createRunPrework({
     registryPath: join(app.getPath('userData'), 'run-prework-registry.json'),
     ownerTokens: ownerTokens(),
-    endpoint: () => ensureLiveWorker(),
+    endpoint: () => liveAdminEndpoint(),
     vaultRoot: () => writableVaultRoot() ?? null, // writes: only a vault folder that is there (ticket 07)
     fetch,
   })
@@ -6122,8 +6326,8 @@ function sharedTalks(): SharedTalks {
   sharedTalkService = createSharedTalks({
     registryPath: join(app.getPath('userData'), 'shared-talk-registry.json'),
     ownerTokens: ownerTokens(),
-    endpoint: () => ensureLiveWorker(),
-    linkBase: () => getConfig('sharedTalkLinkBase', undefined),
+    endpoint: () => liveAdminEndpoint(),
+    linkBase: () => attachedShareLinkBase(),
     identityOf: (outlinePath) => outlineIdentity(outlinePath),
     slugOf: sharedTalkSlug,
     peekOutline: (outlinePath) => readFileSync(outlinePath, 'utf8'),
@@ -7273,7 +7477,9 @@ ipcMain.handle('abstract:write', (_event, talkPath: string, raw: string): boolea
 // which is the only structurally sound move under heading-is-slide. Returns new text;
 // does NOT write the file. `content` is the text to reorder — the open editor's buffer (one-writer
 // spec D1: the renderer mutates its buffer, then saves it); without it the file is read.
-ipcMain.handle('outline:reorder', async (_event, outlinePath: string, fromIndex: number, toIndex: number, content?: unknown) => {
+// `placement` ('before' | 'after', optional) fixes the side of the target block the moved block lands
+// on; without it the drag direction decides, as it always has. Same `###` blocks, same indices.
+ipcMain.handle('outline:reorder', async (_event, outlinePath: string, fromIndex: number, toIndex: number, content?: unknown, placement?: unknown) => {
   const compilerDir = getCompilerPath()
   if (!compilerDir) return null
   try {
@@ -7281,41 +7487,15 @@ ipcMain.handle('outline:reorder', async (_event, outlinePath: string, fromIndex:
     const { listSlideBlocks } = await import(
       pathToFileURL(join(compilerDir, 'lib/12-outline-edit.mjs')).href
     )
-    const blocks = listSlideBlocks(text) as Array<{ heading: string; start: number; end: number }>
-    const depthOf = (heading: string): number => (heading.match(/^(#{1,6})\s/) ?? ['', ''])[1].length
-    // RULING (Task 9, deliberate stopgap — do not extend): the depth-3 filter below exists
-    // ONLY to mirror GridView/SlideStrip's ###-only block counters (isOutlineBlock), so the
-    // renderer's numeric block indices land on the same blocks here. Under heading-is-slide
-    // every ##–###### heading is a slide, so the model-consistent fix is identity-addressed
-    // moves ({heading, occurrence} read from the row's source_markdown, not a counter) plus
-    // a subtree-aware reorderSlide with per-depth legality rules. See
-    // .superpowers/sdd/task-9-report.md for the full spec of that follow-up.
-    // Depth-3 blocks, each spanning through its deeper-heading children ([start, end) lines).
-    const gridBlocks: Array<{ start: number; end: number }> = []
-    for (let i = 0; i < blocks.length; i += 1) {
-      if (depthOf(blocks[i].heading) !== 3) continue
-      let end = blocks[i].end
-      for (let j = i + 1; j < blocks.length && depthOf(blocks[j].heading) > 3; j += 1) end = blocks[j].end
-      gridBlocks.push({ start: blocks[i].start, end })
-    }
-    if (
-      fromIndex < 0 ||
-      toIndex < 0 ||
-      fromIndex >= gridBlocks.length ||
-      toIndex >= gridBlocks.length ||
-      fromIndex === toIndex
-    ) {
-      return null
-    }
-    const from = gridBlocks[fromIndex]
-    const target = gridBlocks[toIndex]
-    // Dragging down: land AFTER the target subtree; dragging up: land BEFORE it.
-    const lines = text.split('\n')
-    const moved = lines.splice(from.start, from.end - from.start)
-    let at = toIndex > fromIndex ? target.end : target.start
-    if (from.start < at) at -= moved.length // indices shifted by the removal above
-    lines.splice(at, 0, ...moved)
-    return lines.join('\n')
+    // The move itself is src/shared/grid-reorder.ts (`###` blocks only — the deliberate stopgap
+    // documented there; do not extend it here either).
+    return reorderGridBlocks(
+      text,
+      listSlideBlocks(text) as OutlineSlideBlock[],
+      fromIndex,
+      toIndex,
+      placement === 'before' || placement === 'after' ? placement : undefined
+    )
   } catch (e) {
     console.error('[outline:reorder]', e)
     return null
@@ -7326,28 +7506,89 @@ ipcMain.handle('outline:reorder', async (_event, outlinePath: string, fromIndex:
 // Pin (or clear, iconKey=null) the icon on ONE top-level list item of a slide, by writing the
 // canonical `{icon=KEY}` token at the end of that bullet's line. Operates on the renderer's LIVE
 // in-memory `content` (not the on-disk file, which lags behind a debounced autosave) and returns
-// the rewritten text; the renderer then drives onContentChange → autosave so the file syncs. Item
-// is addressed by {heading, occurrence} + 0-based item index, exactly as setListItemIcon expects.
+// the rewritten text; the renderer then drives onContentChange → autosave so the file syncs. The
+// item is addressed by its 1-based line (`itemLine`, what the editor knows) and the heading line of
+// its slide, which the verb checks against the slide that holds the line. There is no other
+// address on this route: a call without a whole-number line or without a heading line is answered
+// as null and nothing is read (an item number counted by the editor can name another row than the
+// caret's, so the route does not take one). The verb finds the
+// item on the compiler's own reading, checks its edit by compiling and refuses otherwise
+// (compiler/scripts/lib/outline-list-item-icon.mjs, issue #120): a refusal is logged with its
+// reason and answered as null, and the renderer leaves its buffer alone.
 ipcMain.handle(
   'outline:set-item-icon',
   async (
     _event,
     content: string,
-    slideHeading: string,
-    slideOccurrence: number,
-    itemIndex: number,
-    iconKey: string | null
+    slideHeading: unknown,
+    iconKey: string | null,
+    itemLine: unknown
   ) => {
+    if (typeof itemLine !== 'number' || !Number.isInteger(itemLine) || typeof slideHeading !== 'string') return null
     const compilerDir = getCompilerPath()
     if (!compilerDir) return null
     try {
       const { setListItemIcon } = await import(
         pathToFileURL(join(compilerDir, 'lib/12-outline-edit.mjs')).href
       )
-      const ref = { heading: slideHeading, occurrence: slideOccurrence || 1 }
-      return setListItemIcon(content, ref, itemIndex, iconKey)
+      const result = setListItemIcon(content, { heading: slideHeading }, { line: itemLine }, iconKey)
+      if (!result.ok) {
+        console.error('[outline:set-item-icon] refused:', result.reason)
+        return null
+      }
+      return result.text
     } catch (e) {
       console.error('[outline:set-item-icon]', e)
+      return null
+    }
+  }
+)
+
+// ── Title icon and paragraph icon (plain view ticket 07) ─────────────────────
+// The renderer's LIVE buffer in, the verb's own result out, unaltered: { ok: true, text, changed }
+// or a refusal { ok: false, text (the buffer as given), reason } the renderer can show (null only
+// when the compiler is missing or the verb threw). The verbs check their edit by compiling and
+// refuse otherwise (12-outline-edit.mjs setHeadingIcon / setParagraphIcon). Nothing is written
+// here: the renderer applies `text` to its buffer when `ok && changed`, and autosave writes the file.
+ipcMain.handle(
+  'outline:set-heading-icon',
+  async (_event, content: string, slideHeading: string, slideOccurrence: number, iconKey: string | null) => {
+    const compilerDir = getCompilerPath()
+    if (!compilerDir) return null
+    try {
+      const { setHeadingIcon } = await import(
+        pathToFileURL(join(compilerDir, 'lib/12-outline-edit.mjs')).href
+      )
+      // The verb renders the target slide to see whether its title is painted. A slide that holds
+      // an SVG fence needs the compiler's sanitiser, which loads asynchronously; the verb is not.
+      const { loadCompilerSvgSanitiser } = await import(
+        pathToFileURL(join(compilerDir, 'lib/06-block-renderers.mjs')).href
+      )
+      await loadCompilerSvgSanitiser()
+      return setHeadingIcon(content, { heading: slideHeading, occurrence: slideOccurrence || 1 }, iconKey)
+    } catch (e) {
+      console.error('[outline:set-heading-icon]', e)
+      return null
+    }
+  }
+)
+ipcMain.handle(
+  'outline:set-paragraph-icon',
+  async (
+    _event,
+    content: string,
+    line: number,
+    iconKey: string | null
+  ) => {
+    const compilerDir = getCompilerPath()
+    if (!compilerDir) return null
+    try {
+      const { setParagraphIcon } = await import(
+        pathToFileURL(join(compilerDir, 'lib/12-outline-edit.mjs')).href
+      )
+      return setParagraphIcon(content, line, iconKey)
+    } catch (e) {
+      console.error('[outline:set-paragraph-icon]', e)
       return null
     }
   }
@@ -8116,37 +8357,14 @@ ipcMain.handle('shell:open-external', async (_event, url: string): Promise<boole
   }
 })
 
-// ── Old-PowerPoint archive image search + import (read-only, ADR-0019) ────────
-// The archive is a content-addressed store of slides extracted from old decks, with
-// SQLite registries at {archiveRoot}/registry/{slides,media,images}.db. We never bundle a
-// native SQLite module — instead we shell out to the system sqlite3 binary READ-ONLY, porting
-// the proven query + path-resolution logic from raycast-slide-search (do not import it).
-//
-// The on-disk image files served back to the renderer go through the twarchive:// scheme
-// (registered below in whenReady) with a path-traversal guard, so only files inside the
-// archive root can be read. Importing an image copies its bytes into the CURRENT vault's
-// _assets, content-addressed exactly like asset:paste-image, with a ppt-archive provenance
-// sidecar.
-
-const SQLITE3_CANDIDATES = ['/usr/bin/sqlite3', 'sqlite3', '/opt/homebrew/bin/sqlite3', '/opt/anaconda3/bin/sqlite3']
-
-let cachedSqlite3: string | null | undefined
-function detectSqlite3(): string | null {
-  if (cachedSqlite3 !== undefined) return cachedSqlite3
-  // Bare 'sqlite3' resolves on PATH at exec time; for the others verify the file exists.
-  for (const cand of SQLITE3_CANDIDATES) {
-    if (cand === 'sqlite3') {
-      cachedSqlite3 = cand
-      return cand
-    }
-    if (existsSync(cand)) {
-      cachedSqlite3 = cand
-      return cand
-    }
-  }
-  cachedSqlite3 = null
-  return null
-}
+// ── Image search + import (read-only, ADR-0019 / ADR-0026; one seam, ticket 10) ──────────
+// src/main/image-search/ holds the seam: SlideWell's shared store when it is on disk (screenshots,
+// added images, talk images and old-PowerPoint images, picture matches while SlideWell runs), else
+// the old-PowerPoint archive alone, exactly as before. Both are read through the system sqlite3
+// binary, read-only. Thumbnails go through the twarchive:// scheme (registered below in whenReady),
+// which serves only files the seam vouches for. Importing copies the bytes into the CURRENT
+// vault's _assets, content-addressed exactly like asset:paste-image, with a provenance sidecar.
+// Under E2E the SlideWell store is never read (tests must not see this Mac's own SlideWell).
 
 function detectArchiveRoot(): string | null {
   const root = getConfig('archiveRoot', undefined) ?? null
@@ -8154,285 +8372,110 @@ function detectArchiveRoot(): string | null {
   return existsSync(join(root, 'registry', 'media.db')) ? root : null
 }
 
-class SqliteError extends Error {}
-
-// Run sqlite3 with the SQL script on stdin, no shell. Mirrors raycast runSqlite3.
-function runSqlite3(binary: string, args: string[], script: string, timeoutMs: number): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = execFile(
-      binary,
-      args,
-      { timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024 },
-      (err, stdout, stderr) => {
-        if (err) {
-          reject(new SqliteError((stderr || '').toString().trim() || err.message))
-          return
-        }
-        resolve((stdout || '').toString())
-      }
-    )
-    child.stdin?.end(script)
-  })
-}
-
-function shellQuoteSqlString(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`
-}
-function toParamLiteral(value: string | number | null): string {
-  if (value === null) return 'NULL'
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new SqliteError('Non-finite numeric param: ' + value)
-    return String(value)
-  }
-  return shellQuoteSqlString(value)
-}
-
-// Parameterised read-only query. The sqlite3 CLI cannot take out-of-band bind values, so each
-// ? is replaced by a hardened SQL literal (numbers verified finite; strings single-quote
-// escaped by doubling every quote → user input is always data, never syntax).
-async function sqliteQuery<T = Record<string, string>>(opts: {
-  binary: string
-  dbPath: string
-  sql: string
-  params?: Array<string | number | null>
-  attach?: Record<string, string>
-  timeoutMs?: number
-}): Promise<T[]> {
-  const params = opts.params ?? []
-  let i = 0
-  const inlined = opts.sql.replace(/\?/g, () => {
-    if (i >= params.length) throw new SqliteError('More ? placeholders than params')
-    return toParamLiteral(params[i++])
-  })
-  if (i !== params.length) throw new SqliteError(`Placeholder count (${i}) != params length (${params.length})`)
-
-  const lines: string[] = []
-  for (const [schema, path] of Object.entries(opts.attach ?? {})) {
-    lines.push(`ATTACH DATABASE ${shellQuoteSqlString('file:' + path + '?mode=ro')} AS ${schema};`)
-  }
-  lines.push(inlined.trim().endsWith(';') ? inlined : inlined + ';')
-  const script = lines.join('\n')
-
-  const dbUri = 'file:' + opts.dbPath + '?mode=ro'
-  const stdout = await runSqlite3(opts.binary, ['-json', '-readonly', dbUri], script, opts.timeoutMs ?? 8000)
-  const trimmed = stdout.trim()
-  if (!trimmed) return []
-  try {
-    return JSON.parse(trimmed) as T[]
-  } catch {
-    throw new SqliteError('sqlite3 returned non-JSON output: ' + trimmed.slice(0, 200))
-  }
-}
-
-// ── archive image file path resolution (ported from raycast paths.ts) ─────────
-// Prefer a content-addressed media-store entry (survives source pruning); fall back to the
-// per-deck extracted copy. Returns an absolute path or null when nothing is on disk.
-const MEDIA_STORE_DIRS = ['media-store', 'media_store']
-function archiveImagePath(archiveRoot: string, presentationId: string, relPath: string, sha256: string): string | null {
-  const ext = (relPath.split('.').pop() || '').toLowerCase()
-  for (const storeName of MEDIA_STORE_DIRS) {
-    if (!ext) break
-    const flat = join(archiveRoot, storeName, sha256 + '.' + ext)
-    if (existsSync(flat)) return flat
-    const sharded = join(archiveRoot, storeName, sha256.slice(0, 2), sha256 + '.' + ext)
-    if (existsSync(sharded)) return sharded
-  }
-  const perDeck = join(archiveRoot, 'extracted', presentationId, relPath)
-  if (existsSync(perDeck)) return perDeck
-  return null
-}
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-// The registry has no separate human title column; presentation_id IS the deck name for
-// readable decks ("01 MondAI Roundup - 11 Nov 24") and a UUID for the rest. Surface the
-// readable ones as deckTitle; leave UUID-only decks without one.
-function deckTitleFor(presentationId: string): string | undefined {
-  if (!presentationId || UUID_RE.test(presentationId)) return undefined
-  return presentationId
-}
-
-// base64url helpers for the twarchive:// scheme (RFC 4648 §5, no padding).
-function toBase64Url(s: string): string {
-  return Buffer.from(s, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
-function fromBase64Url(s: string): string {
-  const b64 = s.replace(/-/g, '+').replace(/_/g, '/')
-  return Buffer.from(b64, 'base64').toString('utf8')
-}
-
-// twarchive:// is registered as a STANDARD scheme, so Chromium canonicalises the URL host to
-// lowercase — which would corrupt the case-sensitive base64url payload. Keep the payload in the
-// URL PATH (case-preserved) behind a fixed throwaway host. The thumbUrl value still carries the
-// base64url of the absolute file path, per contract; decoding tolerates both shapes.
-const TWARCHIVE_HOST = 'f'
-function twarchiveUrl(absPath: string): string {
-  return 'twarchive://' + TWARCHIVE_HOST + '/' + toBase64Url(absPath)
-}
-// Pull the base64url payload out of any twarchive:// URL shape (path-first, or legacy host).
-function twarchivePayload(url: string): string {
-  const rest = url.slice('twarchive://'.length)
-  const slash = rest.indexOf('/')
-  // Path form twarchive://<host>/<payload>: take everything after the first slash.
-  if (slash >= 0) return rest.slice(slash + 1).replace(/\/+$/, '')
-  // Bare form twarchive://<payload> (legacy / raw): the whole remainder.
-  return rest.replace(/\/+$/, '')
-}
-
-// Guard: resolve symlinks where possible and require the path to sit inside the archive root.
+// Guard: resolve symlinks where possible and require the path to sit inside the root.
 function isInsideArchive(absPath: string, archiveRoot: string): boolean {
-  let resolvedRoot: string
-  let resolvedPath: string
-  try {
-    resolvedRoot = realpathSync(archiveRoot)
-  } catch {
-    resolvedRoot = resolvePath(archiveRoot)
-  }
-  try {
-    resolvedPath = realpathSync(absPath)
-  } catch {
-    resolvedPath = resolvePath(absPath)
-  }
-  const rootWithSep = resolvedRoot.endsWith(pathSep) ? resolvedRoot : resolvedRoot + pathSep
-  return resolvedPath === resolvedRoot || resolvedPath.startsWith(rootWithSep)
+  return isInsideRoot(absPath, archiveRoot)
 }
 
-ipcMain.handle('archive:available', async (): Promise<boolean> => {
-  return detectArchiveRoot() !== null && detectSqlite3() !== null
+const archiveImageProvider = createArchiveProvider({ archiveRoot: detectArchiveRoot, sqlite3: detectSqlite3 })
+const imageSearch = createImageSearch({
+  archive: archiveImageProvider,
+  slidewell: E2E
+    ? null
+    : createSlideWellProvider({
+        location: () => locateSlideWell(),
+        archive: archiveImageProvider,
+        sqlite3: detectSqlite3,
+        vaultRoots: () => [...new Set([currentVaultRoot(), ...openVaultRoots()].filter((r): r is string => Boolean(r)))]
+      })
 })
 
-interface ArchiveImageHit {
-  assetKey: string
-  presentationId: string
-  relPath: string
-  sha256?: string
-  ocrText: string
-  thumbUrl: string
-  deckTitle?: string
-}
+ipcMain.handle('archive:available', async (): Promise<boolean> => {
+  return (await imageSearch.status()).provider !== null
+})
 
-interface OcrAssetRow {
-  asset_key: string
-  presentation_id: string | null
-  rel_path: string | null
-  text: string | null
-}
-
-ipcMain.handle('archive:search-images', async (_event, query: string): Promise<ArchiveImageHit[] | null> => {
-  const archiveRoot = detectArchiveRoot()
-  const sqlite3Path = detectSqlite3()
-  if (!archiveRoot || !sqlite3Path) return null
+ipcMain.handle('archive:search-images', async (_event, query: string): Promise<PaletteHit[] | null> => {
   try {
-    // media.db has no FTS; ocr_assets.text holds the OCR. LIKE on each bare token (escaped to a
-    // literal), AND across tokens — mirrors raycast searchImages.
-    const tokens = (query || '')
-      .trim()
-      .split(/\s+/)
-      .map((t) => t.replace(/[%_]/g, (m) => '\\' + m))
-      .filter(Boolean)
-    if (tokens.length === 0) return []
-
-    const whereLikes = tokens.map(() => `o.text LIKE ? ESCAPE '\\'`).join(' AND ')
-    const params: Array<string | number> = tokens.map((t) => '%' + t + '%')
-    params.push(60)
-
-    const rows = await sqliteQuery<OcrAssetRow>({
-      binary: sqlite3Path,
-      dbPath: join(archiveRoot, 'registry', 'media.db'),
-      sql: `SELECT o.asset_key, o.presentation_id, o.rel_path, o.text
-            FROM ocr_assets o
-            WHERE o.kind = 'image'
-              AND o.text IS NOT NULL
-              AND ${whereLikes}
-            ORDER BY length(o.text) DESC
-            LIMIT ?`,
-      params
-    })
-
-    const hits: ArchiveImageHit[] = []
-    for (const r of rows) {
-      const sha = r.asset_key
-      const pid = r.presentation_id || ''
-      const relPath = r.rel_path || ''
-      const filePath = archiveImagePath(archiveRoot, pid, relPath, sha)
-      if (!filePath) continue // skip hits with no file on disk
-      hits.push({
-        assetKey: sha,
-        presentationId: pid,
-        relPath,
-        sha256: sha,
-        ocrText: r.text || '',
-        thumbUrl: twarchiveUrl(filePath),
-        deckTitle: deckTitleFor(pid)
-      })
-    }
-    return hits
+    return await imageSearch.paletteSearch(typeof query === 'string' ? query : '')
   } catch (e) {
     console.error('[archive:search-images]', e)
     return null
   }
 })
 
-ipcMain.handle(
-  'archive:import-image',
-  async (_event, thumbUrlOrPath: string): Promise<{ id: string; ext: string; path: string } | null> => {
-    const vaultRoot = writableVaultRoot()
-    const archiveRoot = detectArchiveRoot()
-    if (!vaultRoot || !archiveRoot) return null
-    try {
-      // Decode the source path: either a twarchive:// URL (b64url of an absolute path, carried in
-      // the URL path so its case survives Chromium canonicalisation) or a raw absolute path.
-      let absPath: string
-      if (thumbUrlOrPath.startsWith('twarchive://')) {
-        absPath = fromBase64Url(twarchivePayload(thumbUrlOrPath))
-      } else {
-        absPath = thumbUrlOrPath
-      }
-      absPath = resolvePath(absPath)
+ipcMain.handle('images:status', async (): Promise<ImageSearchStatus> => imageSearch.status())
 
-      // Verify the file is inside the read-only archive before reading it.
-      if (!isInsideArchive(absPath, archiveRoot)) {
-        console.warn('[archive:import-image] refused path outside archive:', absPath)
-        return null
-      }
-      if (!existsSync(absPath)) return null
+ipcMain.handle('images:search', async (_event, query: string, opts?: { match?: MatchMode }): Promise<ImageSearchResult | null> => {
+  const match = opts?.match === 'words' || opts?.match === 'meaning' ? opts.match : 'both'
+  try {
+    return await imageSearch.search(typeof query === 'string' ? query : '', { match })
+  } catch (e) {
+    console.error('[images:search]', e)
+    return null
+  }
+})
 
-      const origBuf = readFileSync(absPath)
-      const ext = (absPath.split('.').pop() || 'png').toLowerCase()
-
-      // Content-address the bytes exactly like asset:paste-image (img-{7hex sha256}.{ext}).
-      const hash = createHash('sha256').update(origBuf).digest('hex').slice(0, 7)
-      const id = 'img-' + hash
-      const assetsDir = join(vaultRoot, '_assets')
-      mkdirInVault(vaultRoot, assetsDir)
-      const assetPath = join(assetsDir, id + '.' + ext)
-      if (!existsSync(assetPath)) {
-        writeFileSync(assetPath, origBuf)
-        const sidecarPath = join(assetsDir, id + '.yml')
-        if (!existsSync(sidecarPath)) {
-          // Provenance: source ppt-archive, with the originating archive path noted.
-          const note = 'imported from ppt-archive: ' + absPath
-          writeFileSync(
-            sidecarPath,
-            [
-              'id: ' + id,
-              'created: ' + new Date().toISOString().slice(0, 10),
-              'original_format: ' + ext,
-              'note: ' + JSON.stringify(note),
-              'alt: ""',
-              'caption: ""',
-              'source: "ppt-archive"',
-              'tags: []'
-            ].join('\n') + '\n',
-            'utf8'
-          )
-        }
-      }
-      return { id, ext, path: assetPath }
-    } catch (e) {
-      console.error('[archive:import-image]', e)
+/** Copy a search hit's file into the current vault's _assets (or find it already there). */
+async function importSearchImage(thumbUrlOrPath: string): Promise<ImportedImage | null> {
+  const vaultRoot = writableVaultRoot()
+  if (!vaultRoot) return null
+  try {
+    // The seam decides which files may be imported, at request time (same rule as twarchive://).
+    const file = await imageSearch.fileFor(thumbUrlOrPath)
+    if (!file) {
+      console.warn('[image-search:import] refused path:', String(thumbUrlOrPath).slice(0, 300))
       return null
     }
+    const absPath = file.absPath
+    const assetsDir = join(vaultRoot, '_assets')
+
+    // A talk image already in this vault's pool: insert it as it is, copy nothing.
+    const pooled = /^(img-[0-9a-f]{7,})\.([a-z0-9]+)$/i.exec(basename(absPath))
+    if (pooled && existsSync(assetsDir) && isInsideRoot(absPath, assetsDir) && realpathSync(dirname(absPath)) === realpathSync(assetsDir)) {
+      return { id: pooled[1], ext: pooled[2].toLowerCase(), path: absPath }
+    }
+
+    const origBuf = readFileSync(absPath)
+    const ext = (absPath.split('.').pop() || 'png').toLowerCase()
+
+    // Content-address the bytes exactly like asset:paste-image (img-{7hex sha256}.{ext}).
+    const hash = createHash('sha256').update(origBuf).digest('hex').slice(0, 7)
+    const id = 'img-' + hash
+    mkdirInVault(vaultRoot, assetsDir)
+    const assetPath = join(assetsDir, id + '.' + ext)
+    if (!existsSync(assetPath)) {
+      writeFileSync(assetPath, origBuf)
+      const sidecarPath = join(assetsDir, id + '.yml')
+      if (!existsSync(sidecarPath)) {
+        // Provenance: where the image came from, with the originating path noted.
+        writeFileSync(
+          sidecarPath,
+          [
+            'id: ' + id,
+            'created: ' + new Date().toISOString().slice(0, 10),
+            'original_format: ' + ext,
+            'note: ' + JSON.stringify(file.provenance.note),
+            'alt: ""',
+            'caption: ""',
+            'source: ' + JSON.stringify(file.provenance.source),
+            'tags: []'
+          ].join('\n') + '\n',
+          'utf8'
+        )
+      }
+    }
+    return { id, ext, path: assetPath }
+  } catch (e) {
+    console.error('[image-search:import]', e)
+    return null
   }
+}
+
+ipcMain.handle('archive:import-image', async (_event, thumbUrlOrPath: string): Promise<ImportedImage | null> =>
+  importSearchImage(typeof thumbUrlOrPath === 'string' ? thumbUrlOrPath : '')
+)
+ipcMain.handle('images:import', async (_event, thumbUrl: string): Promise<ImportedImage | null> =>
+  importSearchImage(typeof thumbUrl === 'string' ? thumbUrl : '')
 )
 
 // ── `setup` (ticket 07, spec D14): the same operations as the window, with no window ─────────────
@@ -8466,6 +8509,7 @@ async function runSetupCommand(args: string[]): Promise<void> {
       publishSettings: { read: publishSettings, apply: applyPublishSettings },
       recordingSettings: { read: recordingSettings, apply: applyRecordingSettings },
       watchLiveRow: (listener) => { liveRowListeners.add(listener); return () => { liveRowListeners.delete(listener) } },
+      applyShareAddress: () => applyShareAddress(),
     })
     code = await runSetup(args, {
       out: (line) => write(process.stdout, line),
@@ -8523,8 +8567,8 @@ app.whenReady().then(async () => {
     shares: createRunResultsShares({
       registryPath: join(app.getPath('userData'), 'run-results-share-registry.json'),
       ownerTokens: ownerTokens(),
-      endpoint: () => ensureLiveWorker(),
-      linkBase: () => getConfig('sharedTalkLinkBase', undefined),
+      endpoint: () => liveAdminEndpoint(),
+      linkBase: () => attachedShareLinkBase(),
       fetch,
     }),
   })
@@ -8699,21 +8743,15 @@ app.whenReady().then(async () => {
     } catch { /* fall through */ }
     return new Response('Not found', { status: 404 })
   })
-  // Serve read-only old-PowerPoint archive image files: twarchive://<b64url> where b64url is
-  // the base64url of an absolute file path. Decode, then serve ONLY if the resolved real path
-  // sits inside the archive root (path-traversal guard via realpath/resolve + startsWith).
+  // Serve read-only search thumbnails: twarchive://f/<b64url> where b64url is the base64url of an
+  // absolute file path. Served ONLY when the image search seam vouches for the file (fileFor).
   protocol.registerFileProtocol('twarchive', (request, callback) => {
-    try {
-      const archiveRoot = detectArchiveRoot()
-      if (!archiveRoot) { callback({ error: -2 }); return }
-      // Payload is the case-preserved base64url in the URL path (twarchive://f/<b64url>).
-      const b64 = decodeURIComponent(twarchivePayload(request.url))
-      const decoded = fromBase64Url(b64)
-      const absPath = resolvePath(decoded)
-      if (!isInsideArchive(absPath, archiveRoot)) { callback({ error: -2 }); return }
-      if (existsSync(absPath)) { callback({ path: absPath }); return }
-    } catch { /* fall through */ }
-    callback({ error: -2 })
+    // The image search seam decides, at request time: an archive image the registry lists or a
+    // search returned, or a SlideWell item a search returned and SlideWell still lists.
+    imageSearch.fileFor(request.url).then(
+      (file) => callback(file ? { path: file.absPath } : { error: -2 }),
+      () => callback({ error: -2 })
+    )
   })
   // Serve local image files referenced by path in an outline: twfile://f/<b64url> where b64url
   // is the base64url of an absolute path. Served ONLY if the resolved real path sits inside the

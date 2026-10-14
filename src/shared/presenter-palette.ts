@@ -161,7 +161,7 @@ export const PRESENTER_PALETTE: Group[] = [
     { id: 'edit', name: 'Edit this slide in TalkWeaver', icon: 'pencil', shortcut: 'presenter.edit', controls: ['#twedit-btn'] },
     { id: 'refresh', name: 'Refresh with latest edits', icon: 'refresh-cw', shortcut: 'presenter.refresh', controls: ['#moreRefresh'] },
     { id: 'shortcuts', name: 'Keyboard shortcuts', icon: 'keyboard', shortcut: 'presenter.help', controls: ['#viewShortcuts'] },
-    { id: 'guide', name: 'Guide: Present chapter', icon: 'graduation-cap', controls: [GUIDE_CHIP], needs: GUIDE_CHIP, words: ['learn', 'onboarding', 'chapter', 'tried'] }
+    { id: 'guide', name: 'Guide: Present chapter', icon: 'graduation-cap', shortcut: 'presenter.guide', controls: [GUIDE_CHIP], needs: GUIDE_CHIP, words: ['learn', 'onboarding', 'chapter', 'tried'] }
   ]]
 ]
 
@@ -186,7 +186,8 @@ export const PRESENTER_KEY_NEEDS: Record<string, string> = {
   'presenter.poll-compose': LIVE_BRIDGE,
   'presenter.questions': LIVE_BRIDGE,
   'presenter.edit': EDIT_BRIDGE,
-  'presenter.refresh': EDIT_BRIDGE
+  'presenter.refresh': EDIT_BRIDGE,
+  'presenter.guide': GUIDE_CHIP
 }
 
 interface RegistryEntry { id: string; keys: string; codes: string[] }

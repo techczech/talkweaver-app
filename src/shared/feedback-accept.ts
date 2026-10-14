@@ -34,6 +34,7 @@
 
 import { parseOutlineTree, type OutlineTreeNode } from '../../compiler/scripts/lib/14-outline-tree.mjs'
 import { parseTriggerLine } from '../../compiler/scripts/lib/02-triggers-layout.mjs'
+import { deckTriggerDefaultsFromMeta, effectiveSlideAttrs, outlineFrontmatterMeta } from '../../compiler/scripts/lib/slide-attrs.mjs'
 import { outlineCompilerBody, slideVisibleText } from './slide-source-text.ts'
 import { readOutline } from './insert-section.ts'
 import { reLevelHeadingLines } from './heading-relevel.ts'
@@ -180,6 +181,29 @@ function foldsChildren(node: OutlineTreeNode, defaults: Record<string, unknown>)
   return false
 }
 
+/** What `slideEffectiveAttrs` needs of a read outline, kept beside it rather than on it: the tree node of each slide,
+ *  and the text the read was made from (its frontmatter is parsed only when a slide's attributes are asked for). */
+const SLIDE_NODES = new WeakMap<OutlineSlide, OutlineTreeNode>()
+const READ_SOURCE = new WeakMap<OutlineSlides, string>()
+const READ_DECK_DEFAULTS = new WeakMap<OutlineSlides, Record<string, unknown>>()
+
+/**
+ * A slide's attributes as the compiler resolves them, by the compiler's own code (slide-attrs.mjs): the talk's
+ * frontmatter `triggers:`, then the heading and its Trigger line, then any Trigger-shaped line in the slide's content.
+ * `read` is the `readOutlineSlides` result `slide` came from; `{}` for a slide of another read. The frontmatter is
+ * parsed once per read, on the first call.
+ */
+export function slideEffectiveAttrs(read: OutlineSlides, slide: OutlineSlide): Record<string, unknown> {
+  const node = SLIDE_NODES.get(slide)
+  if (!node) return {}
+  let defaults = READ_DECK_DEFAULTS.get(read)
+  if (!defaults) {
+    defaults = deckTriggerDefaultsFromMeta(outlineFrontmatterMeta(READ_SOURCE.get(read) ?? '')).attrs
+    READ_DECK_DEFAULTS.set(read, defaults)
+  }
+  return effectiveSlideAttrs(node, defaults)
+}
+
 export function readOutlineSlides(text: string): OutlineSlides {
   const src = String(text ?? '')
   const lines = src.split('\n')
@@ -200,6 +224,7 @@ export function readOutlineSlides(text: string): OutlineSlides {
       while (end < lines.length && !levels[end]) end += 1
       own = { id: node.id || '', line: node.sourceLine, level: node.level, start, end, blockEnd: end, container, folded, opensSection: false, text: slideVisibleText(node) }
       slides.push(own)
+      SLIDE_NODES.set(own, node)
       subtreeEnd = end
     }
     for (const child of node.children) subtreeEnd = Math.max(subtreeEnd, visit(child, folded || container))
@@ -211,7 +236,9 @@ export function readOutlineSlides(text: string): OutlineSlides {
   }
   visit(tree.root, false)
   slides.sort((a, b) => a.start - b.start)
-  return { slides, lines, blanked, notes: new Set(tree.notesLineIndexes ?? []) }
+  const read: OutlineSlides = { slides, lines, blanked, notes: new Set(tree.notesLineIndexes ?? []) }
+  READ_SOURCE.set(read, src)
+  return read
 }
 
 /** The slide an item names: by `{id=…}` (the first, as the compiler keeps the first of a collision),

@@ -3,6 +3,7 @@ import { withoutScripts } from "./04-html-extraction.mjs";
 import { plainInlineText } from "./00-inline-render.mjs";
 import { renderLicenseBody } from "./08-source-adapters.mjs";
 import { simulationStatic } from "./simulation-layout.mjs";
+import { quoteFormScriptBlocks, quoteFormStatic } from "./quote-forms-static.mjs";
 import { liveFollowRuntimeSource } from "../../assets/runtime/live-follow.js";
 import { instantSlideStyles } from "../../assets/runtime/instant-slide.js";
 import { emphasisStepsRuntimeSource } from "../../assets/runtime/emphasis-steps.js";
@@ -116,7 +117,7 @@ export function buildShareHtml({ title, slides, styles, includeNotes, slug, lice
     const notes = includeNotes && slide.notes
       ? `<aside class="notes">${withoutScripts(slide.notes)}</aside>`
       : "";
-    return simulationStatic(stripAudioElements(slide.html, { keepPlayOnNext: venue }))
+    return quoteFormStatic(simulationStatic(stripAudioElements(slide.html, { keepPlayOnNext: venue })), slide.quoteSource)
       .replace(/<section\b([^>]*)>/i, `<section$1 data-share-index="${index}">`)
       .replace(/<\/section>\s*$/i, `${notes}</section>`);
   }).join("\n\n");
@@ -353,10 +354,45 @@ ${audienceMyNotesStyles}
 .nav-search { width: 100%; box-sizing: border-box; padding: 8px 12px 8px 32px; border: 1px solid #17202a22; border-radius: 8px; background: #fff; color: #17202a; font: 14px/1.3 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 .nav-search:focus-visible { outline: 2px solid #2563eb55; outline-offset: 1px; }
 .section-head[hidden], .subsection-head[hidden], .slide-link[hidden] { display: none !important; }
+/* Carousel controls (found 2026-10-12: the in-slide dots were 11px and shrank with the scaled stage, so a
+   reader took a carousel for one item). The bar sits OUTSIDE the scaled stage, at the foot of the stage box,
+   in real pixels; fitStage() keeps the slide above it. */
+.carousel-bar { position: absolute; left: 0; right: 0; bottom: 0; z-index: 6; box-sizing: border-box; min-height: 48px; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 4px 12px; background: #fdfdfb; border-top: 1px solid #0001; --car-accent: #0f4bd8; }
+.carousel-bar[hidden] { display: none !important; }
+.carousel-bar .btn { display: inline-flex; align-items: center; justify-content: center; min-width: 36px; min-height: 36px; padding: 0 10px; font-size: 18px; line-height: 1; }
+.carousel-bar .btn[aria-disabled="true"] { opacity: .4; cursor: default; }
+.carousel-bar button:focus-visible { outline: 2px solid #0f4bd8; outline-offset: 2px; }
+.car-dots { display: inline-flex; align-items: center; gap: 0; }
+.car-dot { position: relative; width: 32px; height: 32px; padding: 0; border: 0; background: transparent; cursor: pointer; touch-action: manipulation; }
+.car-dot::before { content: ""; position: absolute; left: 50%; top: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px; box-sizing: border-box; border: 2px solid var(--car-accent); border-radius: 999px; background: transparent; transition: background 140ms ease; }
+.car-dot.active::before { background: var(--car-accent); }
+.car-count { min-width: 3.4em; text-align: center; color: #384452; font-size: 14px; font-weight: 700; letter-spacing: .03em; white-space: nowrap; }
+@media (pointer: coarse) { .car-dot { width: 44px; height: 44px; } .carousel-bar .btn { min-width: 44px; min-height: 44px; } .car-count { font-size: 15px; } }
+@media (max-width: 699px) { body.phone-detail-mode .stage-fit.has-carousel-bar { aspect-ratio: auto; height: calc(100vw * 9 / 16 + var(--car-bar-h, 56px)); max-height: calc(52dvh + var(--car-bar-h, 56px)); } }
+.carousel-print-count { display: none; }
 @media print {
   .share-footer, .nav-panel, .notes-panel, .mynotes-panel, .help-fab, .help-overlay, .note-pop, .audience-poll-surface, .rx-dock { display: none !important; }
-  .slide { display: grid !important; break-after: page; min-height: 100vh; }
-  .slide .notes { display: block; margin-top: 24px; border-top: 1px solid #0002; padding-top: 12px; }
+  /* One slide per landscape page, every slide, each scaled uniformly to the page width (ADR-0018:
+     slides scale, they do not reflow). The slide itself becomes the 16:9 size container, so the deck's
+     cqw/cqh sizes resolve against the page-wide slide exactly as they do against the 1280x720 canvas
+     on screen; the safe-area padding moves to the content, where it resolves against the same box. */
+  @page { size: landscape; margin: 8mm; }
+  html, body { background: #fff; height: auto; overflow: visible; }
+  .share-shell { display: block; min-height: 0; height: auto; }
+  .phone-bar, .phone-list, .phone-script, .focus-banner, .fs-overlay, .gallery-nav, .now-live-badge, .live-follow-status, .lightbox { display: none !important; }
+  .stage-fit { display: block !important; position: static; width: auto; height: auto; overflow: visible; }
+  .stage { position: static; display: block; width: auto; height: auto; overflow: visible; transform: none !important; container-type: normal; }
+  .slide { display: grid !important; position: relative; inset: auto; box-sizing: border-box; width: 100%; height: auto; min-height: 0 !important; aspect-ratio: 16 / 9; padding: 0 !important; overflow: hidden; container-type: size; break-after: page; break-inside: avoid; }
+  .slide:last-of-type { break-after: auto; }
+  .slide > .slide-content { box-sizing: border-box; width: 100%; height: 100%; padding: var(--slide-pad-y) var(--slide-pad-x); }
+  .slide .notes { display: none !important; }
+  .slide.mode-active .mode-el { opacity: 1 !important; visibility: visible !important; filter: none !important; }
+  [data-fragment].hidden-fragment { opacity: 1; transform: none; }
+  /* A carousel prints one item per page: beforeprint swaps each carousel slide for one copy of the slide per
+     item (the title and layout repeat on every page); afterprint puts the slide back. */
+  .carousel-print-src { display: none !important; }
+  .carousel-bar { display: none !important; }
+  .carousel-print-count { display: block; position: absolute; right: 2.2cqw; bottom: 1.4cqw; font: 600 1.15cqw/1 system-ui, -apple-system, "Segoe UI", sans-serif; letter-spacing: .04em; color: #5b6572; }
 }
 ${venue ? `
 /* The venue keeps the share slide renderer and live poll surface, but none of its reading chrome. */
@@ -794,6 +830,9 @@ ${hasMermaid ? mermaidVendorSource : ""}
     if (!fit || !stage) return;
     var availW = fit.clientWidth;
     var availH = fit.clientHeight || Math.round(availW * SLIDE_H / SLIDE_W);
+    // A carousel's control bar takes the foot of the stage box; the slide scales into what is left above it.
+    var carBar = document.getElementById("carouselBar");
+    if (carBar && !carBar.hidden) availH = Math.max(1, availH - carBar.offsetHeight);
     var scale = Math.min(availW / SLIDE_W, availH / SLIDE_H);
     if (!(scale > 0)) return;
     var left = Math.max(0, Math.round((availW - SLIDE_W * scale) / 2));
@@ -847,7 +886,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
   // compiled deck, so the handout ships data rather than a markdown parser. Its outline text is
   // rendered to inline HTML here, at build time, by the compiler's renderer (slide-script-render.mjs)
   // so authoring syntax (**bold**, {icon=…}, [QR: …]) never reaches the phone as raw text.
-  var SLIDE_SCRIPT = ${JSON.stringify(slides.map((slide) => renderScriptBlocks(slide.script))).replace(/</g, "\\u003c")};
+  var SLIDE_SCRIPT = ${JSON.stringify(slides.map((slide) => quoteFormScriptBlocks(renderScriptBlocks(slide.script), slide.quoteSource))).replace(/</g, "\\u003c")};
   // Titles keep their formatting but never a link: the slide's own heading links nothing, and an
   // anchor in a tappable row or the bar would swallow the tap meant for the row. The renderer
   // builds them without links, so innerHTML only ever receives HTML the renderer made.
@@ -1026,7 +1065,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
       } else if (block.type === "attrib") {
         var a = document.createElement("p");
         a.className = "ps-attrib";
-        a.innerHTML = "— " + (block.html || "");
+        a.innerHTML = (block.noDash ? "" : "— ") + (block.html || "");
         host.appendChild(a);
       } else if (block.type === "qr") {
         var qr = document.createElement("div");
@@ -1715,14 +1754,92 @@ ${hasMermaid ? mermaidVendorSource : ""}
     const counter = nav.querySelector(".gallery-counter");
     if (counter) counter.textContent = (visible + 1) + " / " + count;
   }
+  // Carousel control bar (handouts only, not the venue screen): previous / dots / "2 / 3" / next, outside the
+  // scaled stage. Built on the first carousel the reader reaches, so a talk without one carries no markup.
+  let carouselBar = null;
+  function carouselBarEl() {
+    if (VENUE_MODE) return null;
+    if (carouselBar) return carouselBar;
+    const fit = document.getElementById("stageFit");
+    if (!fit) return null;
+    const bar = document.createElement("div");
+    bar.className = "carousel-bar";
+    bar.id = "carouselBar";
+    bar.setAttribute("role", "group");
+    bar.setAttribute("aria-label", "Carousel controls");
+    bar.hidden = true;
+    const arrow = (cls, label, path) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn " + cls;
+      btn.setAttribute("aria-label", label);
+      btn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' + path + '"></path></svg>';
+      return btn;
+    };
+    const prev = arrow("car-prev", "Previous item", "M15 5l-7 7 7 7");
+    const next = arrow("car-next", "Next item", "M9 5l7 7-7 7");
+    const dots = document.createElement("div");
+    dots.className = "car-dots";
+    const counter = document.createElement("span");
+    counter.className = "car-count";
+    counter.setAttribute("aria-live", "polite");
+    prev.addEventListener("click", () => { if (prev.getAttribute("aria-disabled") !== "true") stepGallery(-1); });
+    next.addEventListener("click", () => { if (next.getAttribute("aria-disabled") !== "true") stepGallery(1); });
+    bar.append(prev, dots, counter, next);
+    fit.appendChild(bar);
+    carouselBar = bar;
+    return bar;
+  }
+  function hideCarouselBar() {
+    if (!carouselBar || carouselBar.hidden) return;
+    carouselBar.hidden = true;
+    document.getElementById("stageFit")?.classList.remove("has-carousel-bar");
+    fitStage();
+  }
+  // Show / update the bar for the active slide's gallery; false = not a carousel (or no bar here), so the
+  // caller falls back to the in-slide dots.
+  function syncCarouselBar(gallery, count, visible) {
+    if (!gallery.classList.contains("carousel") || count < 2) { hideCarouselBar(); return false; }
+    const bar = carouselBarEl();
+    if (!bar) return false;
+    const dots = bar.querySelector(".car-dots");
+    if (dots.children.length !== count || bar.dataset.slide !== (slides[index]?.dataset.id || "")) {
+      dots.textContent = "";
+      for (let i = 0; i < count; i++) {
+        const dot = document.createElement("button");
+        dot.type = "button";
+        dot.className = "car-dot";
+        dot.setAttribute("aria-label", "Item " + (i + 1) + " of " + count);
+        dot.addEventListener("click", () => { galleryStep = i; applyGallery(); liveNavigationObserver?.("", false); });
+        dots.appendChild(dot);
+      }
+      bar.dataset.slide = slides[index]?.dataset.id || "";
+    }
+    Array.from(dots.children).forEach((dot, i) => {
+      dot.classList.toggle("active", i === visible);
+      if (i === visible) dot.setAttribute("aria-current", "true"); else dot.removeAttribute("aria-current");
+    });
+    bar.querySelector(".car-count").textContent = (visible + 1) + " / " + count;
+    bar.querySelector(".car-prev").setAttribute("aria-disabled", visible === 0 ? "true" : "false");
+    bar.querySelector(".car-next").setAttribute("aria-disabled", visible === count - 1 ? "true" : "false");
+    const accent = slides[index] ? getComputedStyle(slides[index]).getPropertyValue("--accent").trim() : "";
+    if (accent) bar.style.setProperty("--car-accent", accent);
+    const wasHidden = bar.hidden;
+    bar.hidden = false;
+    const fit = document.getElementById("stageFit");
+    fit.classList.add("has-carousel-bar");
+    fit.style.setProperty("--car-bar-h", bar.offsetHeight + "px");
+    if (wasHidden) fitStage();
+    return true;
+  }
   function applyGallery() {
     const gallery = activeGallery();
-    if (!gallery) return;
+    if (!gallery) { hideCarouselBar(); return; }
     const cards = galleryCards(gallery);
     if (cards.length === 0) return;
     const visible = Math.max(0, Math.min(cards.length - 1, galleryStep));
     cards.forEach((card, i) => card.classList.toggle("active-card", i === visible));
-    ensureGalleryNav(gallery, cards.length, visible);
+    if (!syncCarouselBar(gallery, cards.length, visible)) ensureGalleryNav(gallery, cards.length, visible);
     densifyActiveCards();
     scheduleSlideFit();
   }
@@ -1991,16 +2108,111 @@ ${hasMermaid ? mermaidVendorSource : ""}
   });
   // Unified stepping: the Next/Prev buttons and the arrow keys run the SAME logic, so they step
   // Reveal/Focus and card galleries identically instead of the buttons always jumping a slide.
+  // A slide with a card gallery or carousel steps its items first, in every mode (Reveal and Focus used to skip
+  // them, so only the dots reached items 2 to n); at the last (first) item, or on any other slide, the mode's
+  // own step or the slide change follows.
   function goNext() {
-    if (modeKind) { if (activeGallery()) { go(index + 1); return; } stepMode(1); return; }
-    if (!stepGallery(1)) go(index + 1);
+    if (activeGallery() && stepGallery(1)) return;
+    if (modeKind && !activeGallery()) { stepMode(1); return; }
+    go(index + 1);
   }
   function goPrev() {
-    if (modeKind) { if (activeGallery()) { go(index - 1); return; } stepMode(-1); return; }
-    if (!stepGallery(-1)) go(index - 1);
+    if (activeGallery() && stepGallery(-1)) return;
+    if (modeKind && !activeGallery()) { stepMode(-1); return; }
+    go(index - 1);
   }
   document.getElementById("prevBtn").addEventListener("click", () => goPrev());
   document.getElementById("nextBtn").addEventListener("click", () => goNext());
+  // A horizontal swipe on the stage steps a carousel (the phone shows the stage above the text).
+  (function () {
+    const fit = document.getElementById("stageFit");
+    if (!fit) return;
+    let x0 = 0, y0 = 0, tracking = false;
+    fit.addEventListener("touchstart", (event) => {
+      tracking = event.touches.length === 1 && activeGallery()?.classList.contains("carousel") === true;
+      if (tracking) { x0 = event.touches[0].clientX; y0 = event.touches[0].clientY; }
+    }, { passive: true });
+    fit.addEventListener("touchend", (event) => {
+      if (!tracking) return;
+      tracking = false;
+      const t = event.changedTouches[0];
+      const dx = t.clientX - x0, dy = t.clientY - y0;
+      if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) stepGallery(dx < 0 ? 1 : -1);
+    }, { passive: true });
+  })();
+  // Printing: a carousel slide prints one page per item. On beforeprint each such slide is hidden and replaced
+  // by one copy of the slide per item (title, layout and styles repeat; the item's number sits in a corner);
+  // afterprint puts the original back. An item taller than its page is shrunk to fit, measured on a copy laid
+  // out on the 1280x720 canvas (the ratio is the same at any page size).
+  let carouselPrintPages = [];
+  function removeCarouselPrintPages() {
+    carouselPrintPages.forEach((page) => page.remove());
+    carouselPrintPages = [];
+    document.querySelectorAll(".carousel-print-src").forEach((el) => el.classList.remove("carousel-print-src"));
+  }
+  // The content is laid out in a box 1/s times as large, then scaled by s from its top-left corner.
+  function shrinkItemContent(inner, s) {
+    if (s >= 1) { inner.style.cssText = ""; return; }
+    inner.style.cssText = "width:" + (100 / s) + "%;max-width:none;height:" + (100 / s) + "%;min-height:0;margin:0;transform:scale(" + s + ");transform-origin:0 0";
+  }
+  function itemShrink(slide, itemIndex) {
+    const stage = document.getElementById("stage");
+    if (!stage) return 1;
+    const probe = slide.cloneNode(true);
+    probe.removeAttribute("data-id");
+    probe.classList.add("active");
+    probe.querySelectorAll(":scope > .slide-content").forEach((el) => { el.style.zoom = ""; });
+    probe.style.cssText += ";visibility:hidden;pointer-events:none;position:absolute;inset:0;display:grid";
+    const cards = Array.from(probe.querySelectorAll(".card-gallery.carousel > .card"));
+    cards.forEach((card, i) => { if (i !== itemIndex) card.remove(); else { card.classList.add("active-card"); card.classList.remove("is-scrollable", "card-dense"); } });
+    stage.appendChild(probe);
+    let shrink = 1;
+    const card = probe.querySelector(".card-gallery.carousel > .card");
+    const inner = card && card.querySelector(":scope > .slide-content");
+    // Scale the item's content down until it fits its page, re-measuring after each step (the text reflows).
+    for (let step = 0; inner && step < 8; step++) {
+      shrinkItemContent(inner, shrink);
+      const ratio = inner.scrollHeight > 0 ? inner.clientHeight / inner.scrollHeight : 1;
+      if (ratio >= 0.995 || shrink <= 0.45) break;
+      shrink = Math.max(0.45, shrink * ratio * 0.97);
+    }
+    probe.remove();
+    return shrink;
+  }
+  function prepareCarouselPrint() {
+    removeCarouselPrintPages();
+    slides.forEach((slide) => {
+      const gallery = slide.querySelector(".card-gallery.carousel[data-exclusive]");
+      if (!gallery) return;
+      const count = gallery.querySelectorAll(":scope > .card").length;
+      if (count < 2) return;
+      const pages = [];
+      for (let i = 0; i < count; i++) {
+        const shrink = itemShrink(slide, i);
+        const page = slide.cloneNode(true);
+        page.removeAttribute("data-id");
+        page.classList.remove("active");
+        page.classList.add("carousel-print-page");
+        page.querySelectorAll(":scope > .slide-content").forEach((el) => { el.style.zoom = ""; });
+        const cards = Array.from(page.querySelectorAll(".card-gallery.carousel > .card"));
+        cards.forEach((card, k) => { if (k !== i) card.remove(); else { card.classList.add("active-card"); card.classList.remove("is-scrollable", "card-dense"); } });
+        const keep = cards[i];
+        const inner = keep && keep.querySelector(":scope > .slide-content");
+        if (inner) shrinkItemContent(inner, shrink);
+        const mark = document.createElement("div");
+        mark.className = "carousel-print-count";
+        mark.setAttribute("aria-hidden", "true");
+        mark.textContent = (i + 1) + " / " + count;
+        page.appendChild(mark);
+        pages.push(page);
+      }
+      slide.classList.add("carousel-print-src");
+      pages.reduce((after, page) => { after.after(page); return page; }, slide);
+      carouselPrintPages.push(...pages);
+    });
+  }
+  window.addEventListener("beforeprint", prepareCarouselPrint);
+  window.addEventListener("afterprint", removeCarouselPrintPages);
   document.getElementById("revealBtn").addEventListener("click", () => toggleMode("reveal"));
   document.getElementById("overviewBtn").addEventListener("click", () => overview.open());
   document.getElementById("closeOverview").addEventListener("click", () => overview.close());

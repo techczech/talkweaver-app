@@ -140,65 +140,71 @@ assert.equal(
   '{icons=off} overrides nothing, so there is no icon list to treat'
 )
 
-// Ticket 02 (Dominik, 29 Sep): the statement's options are separate choices — Sidebar, Background,
-// Alignment, Bar and Sidebar colour — each a small segmented control.
+// Ticket 02 (Dominik, 29 Sep), reworked by the 13 Oct 2026 slide redesign: the statement's options
+// are separate choices — Sidebar, Background, Alignment and Sidebar colour — each a small segmented
+// control. The Bar choice is retired with the box: its tokens are accepted vocabulary, no button.
 const statementGroups = optionGroupsForSlide({ layoutName: 'statement', headingLevel: 3, hasChildren: false })
   .filter(({ source }) => source === 'entry').map(({ group }) => group)
 assert.deepEqual(statementGroups.map((group) => [group.key, group.sectionLabel ?? group.label, group.preview]), [
   ['statement-sidebar', 'Sidebar', 'segmented'],
   ['statement-bg', 'Background', 'segmented'],
   ['statement-align', 'Alignment', 'segmented'],
-  ['statement-bar', 'Bar', 'segmented'],
   ['statement-colour', 'Sidebar colour', 'segmented']
-], 'ticket 02: five separate statement choices, each a segmented control')
+], 'four separate statement choices, each a segmented control')
 const statementGroup = (key) => statementGroups.find((group) => group.key === key)
 assert.deepEqual(statementGroups.map((group) => group.values.map(({ token, label }) => `${label}${token ? `=${token}` : ''}`)), [
   ['Auto', 'With sidebar=statement-sidebar=on', 'No sidebar=statement-sidebar=off'],
-  ['Halo', 'Full=statement-bg=full', 'None=statement-bg=none'],
+  ['Tinted', 'Rule=statement-bg=rule', 'Strong colour=statement-bg=strong', 'Lower third=statement-bg=lower-third'],
   ['Aligned', 'Centred=statement-align=centred'],
-  ['None', 'Left=statement-bar=left', 'Top=statement-bar=top', 'Bottom=statement-bar=bottom'],
   ['Section', 'Cobalt=accent=cobalt', 'Emerald=accent=emerald', 'Vermilion=accent=vermilion', 'Forest=accent=forest']
-], 'each choice offers exactly the values the ticket names')
+], 'each choice offers exactly the values the design names')
 assert.deepEqual(statementGroups.flatMap((group) => group.dictionaryTokens ?? []).sort(), [
-  'statement-align=left', 'statement-bar=none', 'statement-bg=halo',
+  'statement-align=left',
+  'statement-bar=bottom', 'statement-bar=left', 'statement-bar=none', 'statement-bar=top',
+  'statement-bg=full', 'statement-bg=halo', 'statement-bg=none', 'statement-bg=tinted',
   'statement=bar', 'statement=centred', 'statement=default', 'statement=full', 'statement=poster', 'statement=tint'
-], 'the older one-word options and the explicit defaults stay accepted vocabulary without being buttons')
+], 'the older one-word options, the retired background and bar values and the explicit defaults stay accepted vocabulary without being buttons')
 const statementContext = { layoutName: 'statement', headingLevel: 3, hasChildren: false }
 for (const titlePainted of [true, false, undefined]) {
   assert.deepEqual(valuesForGroup(statementGroup('statement-align'), { ...statementContext, titlePainted }).map(({ label }) => label),
     ['Aligned', 'Centred'], `Centred is offered with or without a title (titlePainted ${titlePainted})`)
 }
+// Lower third is not offered beside a LEFT title panel; a top title is panel-free; an unknown fact never excludes it.
+const backgroundLabels = (titlePanel) => valuesForGroup(statementGroup('statement-bg'), { ...statementContext, titlePainted: titlePanel === false ? undefined : true, titlePanel }).map(({ label }) => label)
+assert.deepEqual(backgroundLabels(true), ['Tinted', 'Rule', 'Strong colour'], 'no Lower third beside a left title panel')
+assert.deepEqual(backgroundLabels(false), ['Tinted', 'Rule', 'Strong colour', 'Lower third'], 'Lower third without a panel (top title painted, or none)')
+assert.deepEqual(backgroundLabels(undefined), ['Tinted', 'Rule', 'Strong colour', 'Lower third'], 'an unknown panel fact offers every value')
 
 // The write path: a statement control changes only its own dimension. The older one-word options
 // are rewritten as the per-dimension tokens they mean before the click lands.
 const commitStatement = (line, key, token, statement = {}) => commitOptionSelection(line, statementGroup(key), token, { statement })
-assert.equal(commitStatement('{id=a}{statement}{font-body=xl}', 'statement-bar', 'statement-bar=top'),
-  '{id=a}{statement}{statement-bar=top}{font-body=xl}', 'a new choice goes after the layout token')
-assert.equal(commitStatement('{id=a}{statement}{statement-bar=top}{statement-bg=full}', 'statement-bar', 'statement-bar=bottom'),
-  '{id=a}{statement}{statement-bar=bottom}{statement-bg=full}', 'a per-dimension line changes only its own token')
-assert.equal(commitStatement('{id=a}{statement}{statement-bar=top}', 'statement-bar', ''),
+assert.equal(commitStatement('{id=a}{statement}{font-body=xl}', 'statement-bg', 'statement-bg=rule'),
+  '{id=a}{statement}{statement-bg=rule}{font-body=xl}', 'a new choice goes after the layout token')
+assert.equal(commitStatement('{id=a}{statement}{statement-bg=rule}{statement-align=centred}', 'statement-bg', 'statement-bg=strong'),
+  '{id=a}{statement}{statement-bg=strong}{statement-align=centred}', 'a per-dimension line changes only its own token')
+assert.equal(commitStatement('{id=a}{statement}{statement-bg=rule}', 'statement-bg', ''),
   '{id=a}{statement}', 'the default removes the token')
-assert.equal(commitStatement('{id=a}{statement=tint}', 'statement-bar', 'statement-bar=top'),
-  '{id=a}{statement}{statement-bar=top}', 'Tint (Halo + Left) → Top bar: the halo stays, the bar moves; {statement} stays the layout')
-assert.equal(commitStatement('{id=a}{statement}{statement=bar}', 'statement-bg', 'statement-bg=full'),
-  '{id=a}{statement}{statement-bg=full}{statement-bar=left}', 'Bar (None + Left) → Full: the bar stays')
+assert.equal(commitStatement('{id=a}{statement=tint}', 'statement-bg', 'statement-bg=rule'),
+  '{id=a}{statement}{statement-bg=rule}', 'Tint is Tinted: choosing Rule replaces it; {statement} stays the layout')
+assert.equal(commitStatement('{id=a}{statement}{statement=bar}', 'statement-align', 'statement-align=centred'),
+  '{id=a}{statement}{statement-align=centred}{statement-bg=rule}', 'Bar is the Rule preset: it is written out, the alignment click lands after it')
 assert.equal(commitStatement('{id=a}{statement}{claim=bar}', 'statement-align', 'statement-align=centred'),
-  '{id=a}{statement}{statement-align=centred}{statement-bg=none}{statement-bar=left}', '{claim=bar} is the Bar preset; the click lands after the layout token')
+  '{id=a}{statement}{statement-align=centred}{statement-bg=rule}', '{claim=bar} is the Rule preset; the click lands after the layout token')
 assert.equal(commitStatement('{id=a}{statement=full}', 'statement-colour', 'accent=vermilion'),
-  '{id=a}{statement}{accent=vermilion}{statement-bg=full}', 'the colour choice rewrites the older option too, then adds its token')
-assert.equal(commitStatement('{id=a}{statement=centred}', 'statement-bar', 'statement-bar=left', { titleHidden: true }),
-  '{id=a}{statement}{statement-bar=left}{statement-align=centred}', 'the older Centred without a title stays centred')
-assert.equal(commitStatement('{id=a}{statement=centred}', 'statement-bar', 'statement-bar=left', { titleHidden: false }),
-  '{id=a}{statement}{statement-bar=left}', 'the older Centred beside a title rendered as the Default, and stays so')
+  '{id=a}{statement}{accent=vermilion}', 'Full is Tinted, the default: the colour choice rewrites the older option away and adds its token')
+assert.equal(commitStatement('{id=a}{statement}{statement-bar=top}', 'statement-bg', 'statement-bg=strong'),
+  '{id=a}{statement}{statement-bg=strong}{statement-bar=top}', 'a retired bar token is left as written: it is accepted and has no effect')
+assert.equal(commitStatement('{id=a}{statement=centred}', 'statement-bg', 'statement-bg=rule', { titleHidden: true }),
+  '{id=a}{statement}{statement-bg=rule}{statement-align=centred}', 'the older Centred without a title stays centred')
+assert.equal(commitStatement('{id=a}{statement=centred}', 'statement-bg', 'statement-bg=rule', { titleHidden: false }),
+  '{id=a}{statement}{statement-bg=rule}', 'the older Centred beside a title rendered as the Default, and stays so')
 assert.equal(commitStatement('{id=a}{statement}{statement=poster}', 'statement-sidebar', 'statement-sidebar=on'),
   '{id=a}{statement}{statement-sidebar=on}', 'Poster is the Default: nothing to rewrite but the word itself')
-// A deck `claim_style: bar` decides a statement with no token of its own (None + Left).
-assert.equal(commitStatement('{id=a}{statement}', 'statement-bar', '', { deckClaimStyle: 'bar' }),
-  '{id=a}{statement}{statement-bg=none}', 'no bar on a Bar deck: the colourless look stays as a token of its own, so the slide stops following the deck')
-assert.equal(commitStatement('{id=a}{statement}{statement-bar=left}', 'statement-bar', '', { deckClaimStyle: 'bar' }),
-  '{id=a}{statement}{statement-bar=none}', 'the last token removed on a Bar deck is kept as its explicit default')
-assert.equal(commitStatement('{id=a}{statement}', 'statement-bg', 'statement-bg=full', { deckClaimStyle: 'bar' }),
-  '{id=a}{statement}{statement-bg=full}{statement-bar=left}', 'Full on a Bar deck keeps the deck\'s bar')
+// A deck `claim_style: bar` decides a statement with no token of its own (Rule).
+assert.equal(commitStatement('{id=a}{statement}', 'statement-bg', '', { deckClaimStyle: 'bar' }),
+  '{id=a}{statement}{statement-bg=tinted}', 'Tinted on a Bar deck is written out, so the slide stops following the deck')
+assert.equal(commitStatement('{id=a}{statement}', 'statement-bg', 'statement-bg=strong', { deckClaimStyle: 'bar' }),
+  '{id=a}{statement}{statement-bg=strong}', 'a choice on a Bar deck replaces what the deck decided')
 
 const backgroundGroup = GLOBAL_OPTION_GROUPS.find((group) => group.key === 'background')
 assert.ok(backgroundGroup, 'global Background option exists')

@@ -24,9 +24,11 @@ regexes = ['''^curve=sigmoid$''']
 # carrying `paths` suppresses EVERY finding in those files regardless of `condition = "AND"`,
 # which would blind the scanner to a real secret committed there. Match only the two
 # reviewed baseline fixture names; a different key field remains visible to the scanner.
+# No closing quote and a 200-character floor: gitleaks hands the "line" target a copy of the line
+# truncated near 1050 characters, so a trailing quote or a 1000-character run never matched t18-list-keyvalue.
 [[allowlists]]
 regexTarget = "line"
-regexes = ['''"(?:type-floor-key-value|t18-list-keyvalue)": "[A-Za-z0-9+/=]{1000,}"''']
+regexes = ['''"(?:type-floor-key-value|t18-list-keyvalue)": "[A-Za-z0-9+/=]{200,}''']
 
 # The NAME of a retired config key (it held a Bitwarden secret's id, never a secret). The
 # recording storage migration reads the key once and drops it, so the name appears as a string.

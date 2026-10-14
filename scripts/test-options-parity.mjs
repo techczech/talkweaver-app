@@ -22,8 +22,8 @@ function attributeReads() {
   const keys = new Set()
   for (const file of compilerFiles) {
     const source = readFileSync(file, 'utf8')
-    for (const match of source.matchAll(/\b(?:slide\.)?attrs(?:\?\.)?\.([A-Za-z_$][\w$]*)/g)) keys.add(match[1])
-    for (const match of source.matchAll(/\b(?:slide\.)?attrs(?:\?\.)?\[['"]([^'"]+)['"]\]/g)) keys.add(match[1])
+    for (const match of source.matchAll(/(?<![\w-])(?:slide\.)?attrs(?:\?\.)?\.([A-Za-z_$][\w$]*)/g)) keys.add(match[1])
+    for (const match of source.matchAll(/(?<![\w-])(?:slide\.)?attrs(?:\?\.)?\[['"]([^'"]+)['"]\]/g)) keys.add(match[1])
   }
   // Hand-curated indirect reads in 08-source-adapters (`rawAttrs` / `a` aliases).
   for (const key of ['image', 'media', 'title', 'grid-linear', 'grid-zoom', 'contents']) keys.add(key)

@@ -16,7 +16,7 @@ import {
   DEFAULT_PAGES_PROJECT, connectionLabel, publishingRowEdge, shareLinkRowEdge, unknownPublishing, unknownShareLink, UNKNOWN_LIVE_SERVICE,
   type CloudflareStatus, type RowEdge
 } from './cloudflare-status.ts'
-import { goingLiveRowEdge, unknownGoingLive, type GoingLiveRow } from './live-service-status.ts'
+import { GOING_LIVE_ELSEWHERE_DETAIL, GOING_LIVE_REMOVED_DETAIL, goingLiveRowEdge, unknownGoingLive, type GoingLiveRow } from './live-service-status.ts'
 import { recordingRowEdge, recordingStorageRow, type RecordingStorageRow } from './recording-storage-status.ts'
 import { transcriptionRowEdge, type TranscriptionRow } from './transcription-status.ts'
 
@@ -138,7 +138,12 @@ export function connectionRows(sources: ConnectionSources): ConnectionRow[] {
     'Going live, polls, questions, reactions, boards, venue screen, share for comments',
     'Presenting works; nothing is lost if the connection drops')
   const liveEdge = goingLiveRowEdge(sources.goingLive)
-  follow(live, liveEdge.kind === 'action' ? { kind: 'none' } : liveEdge)
+  // A row whose edge is a button reads Not set up here, except a computer that is not (or no longer)
+  // one the live service accepts: that says which, as Settings does.
+  const liveState = sources.goingLive.state
+  follow(live, liveState === 'set-up-elsewhere' ? { kind: 'state', text: GOING_LIVE_ELSEWHERE_DETAIL, tone: 'warn' }
+    : liveState === 'access-removed' ? { kind: 'state', text: GOING_LIVE_REMOVED_DETAIL, tone: 'warn' }
+      : liveEdge.kind === 'action' ? { kind: 'none' } : liveEdge)
 
   // 3. The share address: Settings' Share-link domain row.
   const share = base('share', 'link', 'Share-link address', 'Shared talk and Share for comments links on your own address', 'Links use the live service’s own address')

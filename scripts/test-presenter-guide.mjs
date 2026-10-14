@@ -2,9 +2,9 @@
 // state 07). The compiled presenter window in headless Chromium (Playwright's chrome-headless-shell),
 // with the recording preload (and through it the edit bridge, the live bridge and the Guide) bundled
 // against a stub of electron, injected as the app injects it. Seams:
-//  1. the button: "Guide · Present N of M" in the bottom bar beside Outline, with no key and a small ×
+//  1. the button: "Guide · Present N of M" in the bottom bar beside Outline, with the key C and a small ×
 //     that asks main to turn the switch off; not there while main sends no view (the Guide button off);
-//  2. the column: the button and the palette's row each toggle it (C does nothing); opening adds one column and no
+//  2. the column: the button, C and the palette's row each toggle it; opening adds one column and no
 //     overlay (no element of the column overlaps the stage, Next, Then, Notes, the top bar or the
 //     bottom bar), in the bottom, sidebar, off and camera-column placements at 1024, 1280 and 1512 px;
 //     main is told open once and closed once;
@@ -14,7 +14,7 @@
 //  4. the column's content: sub-groups with counts, tried and untried rows, the practice line, the
 //     live commands listed apart; a pushed tick ticks and flashes the row and updates the chip;
 //  5. the tick reports: a key, a rebound key, the palette and a bar button each report their command
-//     once through the bridge (one guide:command-ran per id per page), the Guide button reports presenter-palette.guide;
+//     once through the bridge (one guide:command-ran per id per page), the Guide button reports presenter.guide;
 //  6. outputs: the compiled deck, the handout, the share page and the venue page carry no Guide column
 //     markup or styles.
 // Every check is collected and all failures are reported together.
@@ -178,18 +178,14 @@ export const clipboard = { writeText() {}, readText() { return '' }, readImage()
     })
     check(!!chip, 'the Guide button is there')
     if (chip) {
-      check(chip.text === `Guide · Present${VIEW.tried} of ${VIEW.total}` || chip.text === `Guide · Present ${VIEW.tried} of ${VIEW.total}`, `the button reads "Guide · Present ${VIEW.tried} of ${VIEW.total}" and carries no key (${chip.text})`)
+      check(chip.text === `Guide · Present${VIEW.tried} of ${VIEW.total}` || chip.text === `Guide · Present ${VIEW.tried} of ${VIEW.total}`, `the button reads "Guide · Present ${VIEW.tried} of ${VIEW.total}" and the key is not in its text (${chip.text})`)
       check(chip.besideOutline && !chip.inTop, 'the button is in the bottom bar, at the left, next to Outline (owner check 10 Oct)')
       check(chip.hide, 'a small × sits beside it (hides the button)')
       check(chip.pressed === 'false', 'the chip is not pressed while the column is closed')
       check(chip.icon, 'the chip carries lucide graduation-cap')
-      check(chip.tip === 'Guide: Present chapter' && !chip.key, `the tooltip names the command and shows no key (${chip.tip} ${chip.key})`)
+      check(chip.tip === 'Guide: Present chapter' && chip.key === 'C', `the tooltip names the command and its key, C (${chip.tip} ${chip.key})`)
     }
     check(!(await page.$('#twguide-col')), 'the column is not rendered until it is opened (lazy)')
-    await page.keyboard.press('c')
-    await page.keyboard.press('C')
-    await settle(page)
-    check(!(await page.$('#twguide-col')) && (await calls(page, 'guide:present-column')).length === 0, 'C does nothing: the Guide has no key')
     // The bottom bar keeps its items clear of each other with the button in it.
     const bottomOverlap = await page.evaluate(() => {
       const items = [...document.querySelectorAll('#presenterBottomBar button, #twguide-chipwrap')].filter((el) => el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden')
@@ -241,6 +237,40 @@ export const clipboard = { writeText() {}, readText() { return '' }, readImage()
     await off.context.close()
   })
 
+  await guard('C key', async () => {
+    const { page, context } = await open()
+    // C does what the chip does (same toggle): nothing with a modifier, in a text field, on a repeat or in the palette.
+    const state = async () => ({ col: !!(await page.$('#twguide-col')), pressed: await page.getAttribute('#twguide-chip', 'aria-pressed'), record: JSON.stringify(await calls(page, 'guide:present-column')) })
+    await page.keyboard.press('Meta+c')
+    await page.keyboard.press('Control+c')
+    await page.keyboard.press('Alt+c')
+    await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', repeat: true, bubbles: true, cancelable: true })))
+    await page.evaluate(() => { const i = document.createElement('input'); i.id = 'tw-test-field'; document.body.append(i); i.focus() })
+    await page.keyboard.press('c')
+    await page.evaluate(() => { const t = document.createElement('div'); t.id = 'tw-test-edit'; t.contentEditable = 'true'; t.tabIndex = 0; document.body.append(t); t.focus() })
+    await page.keyboard.press('C')
+    await settle(page)
+    const idle = await state()
+    check(!idle.col && idle.pressed === 'false' && idle.record === '[]', `⌘C, ⌃C, ⌥C, a repeated C, C in a text field and in an editable do nothing (${JSON.stringify(idle)})`)
+    await page.evaluate(() => { document.getElementById('tw-test-field').blur(); document.getElementById('tw-test-edit').blur() })
+    await page.keyboard.press('c')
+    await settle(page, 400)
+    const byKey = await state()
+    check(byKey.col && byKey.pressed === 'true' && byKey.record === '[true]', `C opens the column and tells main once (${JSON.stringify(byKey)})`)
+    await page.keyboard.press('C')
+    await settle(page, 400)
+    const byKeyClosed = await state()
+    check(!byKeyClosed.col && byKeyClosed.pressed === 'false' && byKeyClosed.record === '[true,false]', `C again closes it (${JSON.stringify(byKeyClosed)})`)
+    await page.click('#twguide-chip')
+    await settle(page, 400)
+    const byClick = await state()
+    check(byClick.col === byKey.col && byClick.pressed === byKey.pressed && byClick.record === '[true,false,true]', `a chip click lands in the same state as C did (${JSON.stringify(byClick)})`)
+    await page.keyboard.press('c')
+    await settle(page, 400)
+    check(!(await state()).col, 'C closes what the chip opened')
+    check(page.errors.length === 0, `C key: no page errors (${page.errors.join('; ')})`)
+    await context.close()
+  })
   // ── 2, 3. the column: toggles, no overlay, the open record, geometry ──────────────────────
   // The column never resizes or moves the window (review round 1): it takes clamp(320px, 24vw, 400px)
   // inside the page, the stage, Next and Notes reflow into what is left, and the bars extend over it.
@@ -295,7 +325,7 @@ export const clipboard = { writeText() {}, readText() { return '' }, readImage()
     await settle(page)
     const row = await page.evaluate(() => [...document.querySelectorAll('.tw-pal-row')].filter((r) => r.getClientRects().length).map((r) => ({ id: r.dataset.paletteId, text: r.textContent, disabled: r.disabled })))
     const guideRow = row.find((r) => r.id === 'guide')
-    check(guideRow && !guideRow.disabled && /Guide: Present chapter/.test(guideRow.text) && !/\bC\b/.test(guideRow.text.replace('Guide: Present chapter', '')), `the palette lists "Guide: Present chapter" with no key (${JSON.stringify(guideRow)})`)
+    check(guideRow && !guideRow.disabled && /Guide: Present chapter/.test(guideRow.text) && /C$/.test(guideRow.text.replace('Guide: Present chapter', '')), `the palette lists "Guide: Present chapter" with its key, C (${JSON.stringify(guideRow)})`)
     await page.keyboard.press('Enter')
     await settle(page)
     check(!!(await page.$('#twguide-col')), 'the palette row opens the column')
@@ -390,7 +420,7 @@ export const clipboard = { writeText() {}, readText() { return '' }, readImage()
     await page.keyboard.press('Escape'); await settle(page)
     check((await reported()).includes('presenter.help'), '? reports presenter.help')
     await page.click('#twguide-chip'); await settle(page)
-    check((await reported()).includes('presenter-palette.guide'), 'the Guide button reports presenter-palette.guide')
+    check((await reported()).includes('presenter.guide'), 'the Guide button reports presenter.guide')
     await page.click('#twguide-chip'); await settle(page)
     // The palette: a key-less entry reports itself; one with a key reports its key's command.
     await page.keyboard.press('Meta+Shift+p'); await settle(page)
@@ -447,6 +477,20 @@ export const clipboard = { writeText() {}, readText() { return '' }, readImage()
     check(sent.includes('presenter.overview') && sent.filter((id) => id === 'presenter.overview').length === 1, `a rebound O (Y) reports presenter.overview once (${sent.join(', ')})`)
     await context.close()
   })
+  // A rebound Guide key: the new key toggles the column, the old C does nothing (the presenter's own rebind store, read at run time).
+  await guard('a rebound Guide key', async () => {
+    const { page, context } = await open()
+    await page.evaluate(() => localStorage.setItem('talkweaver:presenter:shortcuts', JSON.stringify({ 'presenter.guide': { chord: 'Y', entryId: 'guide' } })))
+    await page.reload({ waitUntil: 'load', timeout: 120000 })
+    await page.waitForFunction(() => /scale\(([\d.]+)\)/.test(document.querySelector('#currentPreview iframe')?.style.transform || ''), null, { timeout: 30000 })
+    await settle(page, 300)
+    await page.keyboard.press('c'); await settle(page)
+    const afterC = !!(await page.$('#twguide-col'))
+    await page.keyboard.press('y'); await settle(page)
+    const afterY = !!(await page.$('#twguide-col'))
+    check(!afterC && afterY && (await calls(page, 'guide:command-ran')).filter((id) => id === 'presenter.guide').length === 1, `a rebound Guide key (Y) opens the column once and C does nothing (C open ${afterC}, Y open ${afterY})`)
+    await context.close()
+  })
   // A deck opened on its own (no preload): no chip, no column, C does nothing, nothing breaks.
   await guard('a deck opened on its own', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
@@ -473,4 +517,4 @@ if (failures.length) {
   for (const f of failures) console.error(`  ✗ ${f}`)
   process.exit(1)
 }
-console.log(`presenter Guide: the button ("Guide · Present ${VIEW.tried} of ${VIEW.total}", bottom bar, no key, with a × to hide it) shows while the Guide button is on; the button and the palette toggle a clamp(${GUIDE_COLUMN_MIN_WIDTH}px, 24vw, ${GUIDE_COLUMN_WIDTH}px) column beside Next and Notes with no overlay in four placements at 1024, 1280 and 1512 px; the window never changes size; main told open and closed once each; the Present chapter's rows, counts, practice line and live note; pushed ticks tick and flash; every route reports its command once; no Guide markup in the deck, handout, share or venue outputs`)
+console.log(`presenter Guide: the button ("Guide · Present ${VIEW.tried} of ${VIEW.total}", bottom bar, key C, with a × to hide it) shows while the Guide button is on; the button, C and the palette toggle a clamp(${GUIDE_COLUMN_MIN_WIDTH}px, 24vw, ${GUIDE_COLUMN_WIDTH}px) column beside Next and Notes with no overlay in four placements at 1024, 1280 and 1512 px; the window never changes size; main told open and closed once each; the Present chapter's rows, counts, practice line and live note; pushed ticks tick and flash; every route reports its command once; no Guide markup in the deck, handout, share or venue outputs`)

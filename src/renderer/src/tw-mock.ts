@@ -189,6 +189,8 @@ function mockLineDiff(a: string, b: string): Array<{ kind: 'same' | 'del' | 'add
 // In-memory action-bar state for the plain-browser dev preview (ADR-0025): the flag flips in
 // memory and listeners hear it, so the toggle behaves in the dev preview too.
 const mockActionBar = { visible: false, listeners: new Set<(state: { visible: boolean; items: unknown }) => void>() }
+const mockEditorView = { mode: 'plain' as 'plain' | 'markdown', listeners: new Set<(mode: 'plain' | 'markdown') => void>() }
+const mockPlainLook = { look: { font: 'sans' as 'sans' | 'serif', size: 16 }, listeners: new Set<(look: { font: 'sans' | 'serif'; size: number }) => void>() }
 const mockGuideButton = { visible: true, listeners: new Set<(state: { visible: boolean }) => void>() }
 const mockGuideProgress = { exampleTalkOpened: false, listeners: new Set<(progress: { exampleTalkOpened: boolean }) => void>() }
 /** The browser mock's machine for What it connects to: nothing found, until a test sets `sources`. */
@@ -299,6 +301,26 @@ export function installMock() {
       onActionBarChanged: (cb: (state: { visible: boolean; items: unknown }) => void) => {
         mockActionBar.listeners.add(cb)
         return () => mockActionBar.listeners.delete(cb)
+      },
+      getEditorViewMode: async () => mockEditorView.mode,
+      setEditorViewMode: async (mode: 'plain' | 'markdown') => {
+        mockEditorView.mode = mode
+        for (const listener of mockEditorView.listeners) listener(mode)
+        return mode
+      },
+      onEditorViewModeChanged: (cb: (mode: 'plain' | 'markdown') => void) => {
+        mockEditorView.listeners.add(cb)
+        return () => mockEditorView.listeners.delete(cb)
+      },
+      getPlainLook: async () => ({ ...mockPlainLook.look }),
+      setPlainLook: async (change: { font?: 'sans' | 'serif'; size?: number }) => {
+        mockPlainLook.look = { ...mockPlainLook.look, ...change }
+        for (const listener of mockPlainLook.listeners) listener({ ...mockPlainLook.look })
+        return { ...mockPlainLook.look }
+      },
+      onPlainLookChanged: (cb: (look: { font: 'sans' | 'serif'; size: number }) => void) => {
+        mockPlainLook.listeners.add(cb)
+        return () => mockPlainLook.listeners.delete(cb)
       },
       getPlaceChip: async () => ({ visible: mockPlaceChip.visible }),
       setPlaceChipVisible: async (visible: boolean) => {

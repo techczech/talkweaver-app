@@ -15,32 +15,105 @@ Worker" below). `wrangler dev` is only for tests and the unpackaged app.
 - `SessionRegistry` stores the active session for each talk slug. `GET /session/<slug>` returns
   `{live:true,sessionId}` while the entry is active and `{live:false}` otherwise. SQLite records and
   alarms enforce the 12-hour TTL. It also maps each talk slug to its active shared talk (no TTL;
-  the share removes its own entry when it is stopped or retired).
+  the share removes its own entry when it is stopped or retired), holds the list of computers
+  that can go live (table `computers`; see "Admin keys and the list of computers" below), and keeps
+  the signing key of a service that has no env signing secret (table `signing_key`; see "Secrets and
+  the signing key" below). It must never be deleted or renamed by a migration.
 - `SharedTalk` stores one shared talk (share for comments): the handout HTML the owner last
   pushed (in 512K-character chunks), its per-slide source text and revision, and the colleague's
   items. It accepts hibernating owner and audience WebSockets. An alarm retires a share after 60
   days with no push, item or status change.
 - `RunShare` and `RunPrework`: a Run's read-only share link and a planned Run's pre-work (below).
 
-## Required secrets
+## Secrets and the signing key
 
-The Worker needs two secrets. **TalkWeaver sets both when it sets up going live** (Settings →
-Cloudflare → Set up going live, or `TalkWeaver setup cloudflare live`): it makes them, uploads
-them with the Worker, and keeps them in the computer's secure storage. A person using the app never
-types them. Never put their values in `wrangler.jsonc`.
+**Admin keys: one secret per computer.** Each computer that can go live has its own admin key, a
+Worker secret that TalkWeaver makes and adds when that computer sets up going live (Settings →
+Cloudflare → Set up going live, or `TalkWeaver setup cloudflare live`) and keeps in the computer's
+secure storage. A person using the app never types one. Never put a value in `wrangler.jsonc`.
 
-- `ADMIN_SECRET`: bearer secret required by `POST /sessions`, `POST /shares`, `POST /results` and
-  `POST /prework`. The app holds it.
-- `SESSION_SIGNING_SECRET`: high-entropy HMAC key used to mint and verify presenter tokens and
-  shared-talk owner tokens. The token's role keeps the two from standing in for each other.
+- `ADMIN_SECRET`: the first computer's admin key on a service set up by 0.38.2 or earlier.
+- `ADMIN_SECRET_<computer id>`: every other computer's (next section).
 
-Only for a Worker you run yourself outside the app (tests, or your own deployment), set them with
-the repository's wrangler, without literal values in the command:
+An admin key is the bearer required by `POST /sessions`, `POST /shares`, `POST /results`,
+`POST /prework` and the computers routes. Wherever this file says `Bearer <ADMIN_SECRET>` or "the
+admin secret", any computer's admin key is meant.
+
+**The signing key: the Worker's own.** It is the HMAC key that presenter tokens and the three kinds
+of owner token (shared talk, Run link, pre-work) are signed and verified with; the token's role keeps
+them from standing in for each other. No computer holds it, and nothing needs to set it.
+`signingKey(env)` (`signing-key.ts`) is the only way the code gets it:
+
+- `SESSION_SIGNING_SECRET`, when that secret is bound and is a string with something in it besides
+  white space. That is every service set up by 0.38.2 or earlier. The value is used exactly as
+  bound, so tokens made before build `22-signing-key` verify as before, and the registry is then
+  neither asked for a key nor made to create one.
+- Otherwise, a key the singleton `SessionRegistry` object makes on the first request (32 random
+  bytes, base64url) and keeps in its `signing_key` table (one row, never replaced). The read and the
+  insert are one synchronous stretch, so two first requests get the same key. Each isolate asks the
+  registry once and remembers the answer; env is still looked at on every call.
+
+What follows from that:
+
+- If someone deletes `SESSION_SIGNING_SECRET` by hand, every token issued under it stops working
+  (live sessions, shares, Run links and pre-work made before then lose their owner) and the
+  registry's key takes over for new ones. The env value is never copied into storage. Binding the
+  same value again restores the old tokens.
+- **A Durable Object migration that deletes or renames `SessionRegistry` is barred**: it would
+  destroy the key, and with it every token of a service that has no env secret. The same goes for
+  anything that clears that object's storage (`wrangler.jsonc` carries the same warning).
+- A storage error is never "no key": a failed read, or a stored value that is not a key, fails the
+  request (`SigningKeyUnavailable`; nothing is created while the key cannot be read). Only an empty
+  table makes a key.
+- The key leaves the registry object on one internal route, `POST /internal/signing-key`, that only
+  `signing-key.ts` builds a request for. No public request reaches it: the only public request the
+  entry Worker passes to the registry is `GET /session/<slug>`, sent as a request the Worker builds
+  itself (GET, no headers, no body, a path of `/session/` plus one segment). The key is never in a
+  reply, a log line or an error's text (`signing-key.test.ts`,
+  `scripts/test-signing-key-worker-integration.mjs`).
+
+Only for a Worker you run yourself outside the app (tests, or your own deployment), set an admin key
+with the repository's wrangler, without a literal value in the command. A signing secret is optional:
+set one only if you want the key to come from env.
 
 ```sh
 npx wrangler secret put ADMIN_SECRET --config worker/wrangler.jsonc
-npx wrangler secret put SESSION_SIGNING_SECRET --config worker/wrangler.jsonc
 ```
+
+## Admin keys and the list of computers
+
+Each computer that can go live has its own admin key (`admin-keys.ts`). The Worker accepts a bearer
+equal to the value of:
+
+- `ADMIN_SECRET`: the first computer, set up by 0.38.2 or earlier. Its computer id is `legacy`.
+- `ADMIN_SECRET_<computer id>`: that computer. A computer id is 1 to 64 lower-case ASCII letters and
+  digits (`[a-z0-9]{1,64}`), and is never `legacy`, `self` or `join`.
+
+No other name counts (`ADMIN_SECRETS`, `XADMIN_SECRET_a`, `ADMIN_SECRET_Mac`, `ADMIN_SECRET_a_b`,
+`SESSION_SIGNING_SECRET`), and neither does a secret that is empty or only white space, or a
+binding that is not a string. The header must be `Authorization: Bearer <key>`. The SHA-256 digest of
+the bearer is compared with the digest of every admin key in constant time, with no exit at a match.
+`adminAuthorised` (`http.ts`) returns the matching computer's id, or null; a refusal is the same
+`401 admin_auth_required` whichever keys exist.
+
+The Worker cannot tell a secret from a plain-text var, so any string bound under one of these names
+is trusted as an admin key; only the holder of the account's Cloudflare token can bind one, and what
+TalkWeaver ships never does (`wrangler.jsonc` declares no `vars`; the upload binds Durable Object
+namespaces only and sends keys as `secret_text`).
+
+The list of computers (`computers.ts`; table `computers` in `SessionRegistry`) holds one line per
+computer: `{id, name, joinedAt, joinedWithCode}`. It never holds a key. All three routes need an
+admin key:
+
+- `GET /computers` → `{"computers":[…],"self":"<the caller's computer id>"}`.
+- `POST /computers/self` with `{"name":"Studio Mac"}` records the calling computer, or renames it
+  (the joined date and how it joined are kept) → `{"computer":{…}}`. The id is the one the caller's
+  key belongs to; a name is 1 to 64 characters on one line with no control or invisible formatting
+  characters (`400 invalid_computer_name` otherwise). The first computer appears as `legacy` once it
+  has called this.
+- `DELETE /computers/<id>` removes that line → `{"ok":true}`, also when there was none. It removes
+  the line only: the computer's key keeps working until its secret is removed through Cloudflare,
+  which is the app's job.
 
 ## HTTP and WebSocket routes
 
@@ -406,6 +479,8 @@ npm run test:live-worker:integration
 npm run test:shared-talk-worker:integration
 npm run test:run-boards-worker:integration
 npm run test:prework-worker:integration
+npm run test:computer-keys-worker && npm run test:computer-keys-worker:integration
+npm run test:signing-key-worker && npm run test:signing-key-worker:integration
 ```
 
 ### A board that opens with pre-work answers (feedback-boards ticket 11)

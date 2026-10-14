@@ -79,14 +79,30 @@ export const COMMAND_PLACES: Readonly<Record<string, PlaceDeclaration>> = {
   'redo': NOT_BY_PLACE,
   'fold-all': NOT_BY_PLACE,
   'unfold-all': NOT_BY_PLACE,
+  'outline-collapse-all': NOT_BY_PLACE,
+  'outline-expand-all': NOT_BY_PLACE,
+  // Not rows of the drawn place table (state 12): Actions here adds them on a slide itself (actions-here.ts MOVE_TO_PLACES).
+  'move-slide-to': NOT_BY_PLACE,
+  'move-section-to': NOT_BY_PLACE,
   'editor.title-continue': NOT_BY_PLACE,
   'editor.protect-heading-delete': NOT_BY_PLACE,
   'editor.list-continue': NOT_BY_PLACE,
+  'editor.quote-paragraph': NOT_BY_PLACE,
   'editor.list-indent': NOT_BY_PLACE,
   'editor.list-outdent': NOT_BY_PLACE,
 
   // ── Build a slide ──
   'layout': ['slide-heading', 'layout-line', 'strip-slide'],
+  // Quote forms (ADR-0038): the seven "Quote form: …" commands are not a place's rows: the 14 rows of a slide heading
+  // are the drawing's, and a place is read from one line, so it cannot say "only on a quote slide". actions-here.ts
+  // adds them to the slide-wide places (SLIDE_MENU_PLACES and the strip) when ActionsContext.quoteSlide is true.
+  'quote-form-auto': NOT_BY_PLACE,
+  'quote-form-plain': NOT_BY_PLACE,
+  'quote-form-tweet': NOT_BY_PLACE,
+  'quote-form-video': NOT_BY_PLACE,
+  'quote-form-book': NOT_BY_PLACE,
+  'quote-form-paper': NOT_BY_PLACE,
+  'quote-form-web': NOT_BY_PLACE,
   'image': ['slide-heading', 'slide-text', 'list'],
   'icon-picker': ['slide-heading', 'list'],
   'toggle-inspector': ['slide-heading', 'layout-line', 'strip-slide'],
@@ -126,6 +142,10 @@ export const COMMAND_PLACES: Readonly<Record<string, PlaceDeclaration>> = {
   'refresh': NOT_BY_PLACE,
   'view-editor': NOT_BY_PLACE,
   'view-both': NOT_BY_PLACE,
+  'view-plain': NOT_BY_PLACE,
+  'change-heading-level': NOT_BY_PLACE,
+  'change-slide-layout': NOT_BY_PLACE,
+  'view-markdown': NOT_BY_PLACE,
   'view-strip': NOT_BY_PLACE,
   'view-grid': NOT_BY_PLACE,
   'app.find': NOT_BY_PLACE,

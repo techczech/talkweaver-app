@@ -93,6 +93,11 @@ export interface OptionApplicability {
    */
   titlePainted?: boolean
   /**
+   * Whether the slide has a LEFT title panel (`data-title-layout="left"`: a painted title or the
+   * empty statement sidebar). A top title or a hidden one is panel-free. Judged only when known.
+   */
+  titlePanel?: boolean
+  /**
    * Another group's selection must already be one of the listed tokens — checked only when the
    * caller supplies `selectedTokens`, so a candidate listing never loses the group.
    */
@@ -404,9 +409,10 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
   },
   {
     // 0.37 ticket 04: the look of a TOP title. Named `titlelook`, never `title_style` (the opening
-    // poster variant) or `titlestyle` (the retired sidebar stamp). The Kicker is sentence case, mono,
-    // led by a short accent rule; Label is a tinted tab with an accent left edge; Tab is a solid
-    // accent tab flush with the slide edge. A talk-wide default is the deck's `title_look:` setting,
+    // poster variant) or `titlestyle` (the retired sidebar stamp). Slide redesign (0.39): the three looks
+    // sit at the slide edge. The Kicker is a sentence-case typewriter line led by a long line from the
+    // edge; Label is a straight sticky note with a thick accent line; Tab is an index tab hanging from
+    // the top edge (soft or strong, see `title-look-tone`). A talk-wide default is the deck's `title_look:` setting,
     // a section's is `sections:` → `titlelook:`; a slide's own token wins over both.
     key: 'title-look',
     label: 'Title look',
@@ -418,23 +424,44 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     dictionaryTokens: ['titlelook=default'],
     values: [
       { token: '', label: 'Default', description: 'The plain centred top title' },
-      { token: 'titlelook=kicker', label: 'Kicker', description: 'A small mono line in the section colour, led by a short rule' },
-      { token: 'titlelook=label', label: 'Label', description: 'A tinted tab with a coloured left edge' },
-      { token: 'titlelook=tab', label: 'Tab', description: 'A solid accent tab flush with the slide edge' }
+      { token: 'titlelook=kicker', label: 'Kicker', description: 'A typewriter line in the section colour, led by a long line from the slide edge' },
+      { token: 'titlelook=label', label: 'Label', description: 'A straight sticky note flush with the slide edge, with a thick coloured line on its left' },
+      { token: 'titlelook=tab', label: 'Tab', description: 'An index tab hanging from the top edge, flush with the left slide edge' }
     ]
   },
   {
-    key: 'title-look-at',
-    label: 'Kicker placement',
-    sectionLabel: 'Kicker at',
+    // The colour of a Tab. Strong (the full section colour, white text) is the default and stores no
+    // token; soft is a deeper light shade with dark text. Only a Tab has a tone; nests under Look.
+    // `titlelook-at` (the old Kicker placement) is accepted and ignored: the Kicker always sits at the
+    // slide edge now, so it has no button, only dictionary vocabulary.
+    key: 'title-look-tone',
+    label: 'Tab tone',
+    sectionLabel: 'Tab tone',
     preview: 'segmented',
     section: 'title',
-    // Only a Kicker has a placement; nests under Look.
-    appliesTo: { ...TOP_TITLE_LOOK, requiresTokens: { 'title-look': ['titlelook=kicker'] } },
-    dictionaryTokens: ['titlelook-at=normal'],
+    appliesTo: { ...TOP_TITLE_LOOK, requiresTokens: { 'title-look': ['titlelook=tab'] } },
+    dictionaryTokens: ['titlelook-tone=strong', 'titlelook-at=normal', 'titlelook-at=edge', 'titlelook-at=top-edge', 'titlelook-at=top'],
     values: [
-      { token: '', label: 'Normal', description: 'Keep the usual top margin' },
-      { token: 'titlelook-at=edge', label: 'Near top edge', description: 'Sit the kicker near the top edge and give the body the height' }
+      // An explicit {titlelook-tone=strong} is the same button: written only to pin a slide against
+      // a soft tone set by its section, `defaults:` or `title_look_tone:` (OptionCommitContext.inheritedTitleTone).
+      { token: '', label: 'Strong', description: 'The full section colour with white text', altTokens: ['titlelook-tone=strong'] },
+      { token: 'titlelook-tone=soft', label: 'Soft', description: 'A light shade of the section colour with dark text' }
+    ]
+  },
+  {
+    // Plain view ticket 07 (spec T14): where a title's icon sits. The icon itself is the open
+    // `{icon=…}` token on the heading; with no icon written this option draws nothing. Before is
+    // the default and stores no token; any other written value reads as Before and warns as an
+    // unresolved trigger. A structural poster composes its own stage, so it is not offered there.
+    key: 'title-icon',
+    label: 'Title icon',
+    sectionLabel: 'Icon',
+    preview: 'segmented',
+    section: 'title',
+    appliesTo: { titleRegimes: TITLED_REGIMES },
+    values: [
+      { token: '', label: 'Before', description: 'The icon sits before the title, on its first line' },
+      { token: 'title-icon=above', label: 'Above', description: 'The icon sits above the title' }
     ]
   },
   {
@@ -939,16 +966,21 @@ The registry is the product contract.`,
         label: 'Statement background',
         sectionLabel: 'Background',
         preview: 'segmented',
-        // The older one-word options stay registered vocabulary (old talks must not start
-        // warning); they are presets the Inspector reads, never buttons of their own.
+        // The older one-word options and the retired background and bar values stay registered
+        // vocabulary (old talks must not start warning); they map onto the four choices
+        // (statement-options.mjs) and are never buttons of their own.
         dictionaryTokens: [
-          'statement-bg=halo', 'statement=default', 'statement=poster', 'statement=centred',
+          'statement-bg=tinted', 'statement-bg=halo', 'statement-bg=full', 'statement-bg=none',
+          'statement-bar=none', 'statement-bar=left', 'statement-bar=top', 'statement-bar=bottom',
+          'statement=default', 'statement=poster', 'statement=centred',
           'statement=tint', 'statement=bar', 'statement=full'
         ],
         values: [
-          { token: '', label: 'Halo', description: 'A panel in the sidebar colour round the text', altTokens: ['statement-bg=halo'] },
-          { token: 'statement-bg=full', label: 'Full', description: 'The whole slide in the sidebar colour (or the Background you set)' },
-          { token: 'statement-bg=none', label: 'None', description: 'No colour behind the text' }
+          { token: '', label: 'Tinted', description: 'The whole slide in the sidebar colour (or the Background you set)', altTokens: ['statement-bg=tinted'] },
+          { token: 'statement-bg=rule', label: 'Rule', description: 'The normal page, with a short accent rule above the text' },
+          { token: 'statement-bg=strong', label: 'Strong colour', description: 'The whole slide in the sidebar colour at full strength, with white text' },
+          // Beside a title panel the lower third is not offered: such a slide renders as Tinted.
+          { token: 'statement-bg=lower-third', label: 'Lower third', description: 'The normal page with the bottom third tinted (not offered beside a left title panel)', appliesTo: { titlePanel: false } }
         ]
       },
       {
@@ -963,21 +995,8 @@ The registry is the product contract.`,
         ]
       },
       {
-        key: 'statement-bar',
-        label: 'Statement bar',
-        sectionLabel: 'Bar',
-        preview: 'segmented',
-        dictionaryTokens: ['statement-bar=none'],
-        values: [
-          { token: '', label: 'None', description: 'No accent bar', altTokens: ['statement-bar=none'] },
-          { token: 'statement-bar=left', label: 'Left', description: 'The accent bar beside the text' },
-          { token: 'statement-bar=top', label: 'Top', description: 'The accent bar above the text' },
-          { token: 'statement-bar=bottom', label: 'Bottom', description: 'The accent bar below the text' }
-        ]
-      },
-      {
-        // The section-accent vocabulary pinned on this one slide: its rail, halo, full colour and
-        // bar take the named palette colour. Swatches as the Section accent choice draws them.
+        // The section-accent vocabulary pinned on this one slide: its rail, tint, strong colour and
+        // rule take the named palette colour. Swatches as the Section accent choice draws them.
         key: 'statement-colour',
         label: 'Sidebar colour',
         preview: 'segmented',
@@ -1114,11 +1133,30 @@ The registry is the product contract.`,
 > Capability is not the same as judgement.
 
 - Source`,
-    description: 'Full-bleed pull quote; no title by default',
+    description: 'Full-bleed pull quote; no title by default. A source line that links to a post on X, a YouTube video, a paper or a book can show the quote in the source\'s own look.',
     category: 'everyday',
     purpose: 'Everyday',
-    whenItFits: 'Someone else\'s words, quoted exactly, with who said them.',
-    cssModule: 'quote'
+    whenItFits: 'Someone else\'s words, quoted exactly, with who said them: a plain quote, or one styled as a tweet, a video, a book, a paper or a web page.',
+    cssModule: 'quote',
+    // Quote forms (docs/design/2026-10-11-source-styled-quote-slides, ADR-0038). The key is
+    // `quote-form`; the token key is `form`, the word an author types: {quote form=tweet}.
+    options: [
+      {
+        key: 'quote-form',
+        label: 'Quote form',
+        preview: 'segmented',
+        dictionaryTokens: ['form=auto'],
+        values: [
+          { token: '', label: 'Automatic', altTokens: ['form=auto'], description: 'The source line decides: a link to X or YouTube, an ISBN or a book reference. Anything else is a plain quote (a web link or a DOI sets Web or Paper when you add it)' },
+          { token: 'form=plain', label: 'Plain', description: 'Always the plain quote, whatever the source line holds' },
+          { token: 'form=tweet', label: 'Tweet', description: 'Always an X post card' },
+          { token: 'form=video', label: 'Video', description: 'Always the video form' },
+          { token: 'form=book', label: 'Book', description: 'Always the book form' },
+          { token: 'form=paper', label: 'Paper', description: 'Always the paper form' },
+          { token: 'form=web', label: 'Web', description: 'Always a web page in a browser window' }
+        ]
+      }
+    ]
   },
   {
     name: 'annotated',

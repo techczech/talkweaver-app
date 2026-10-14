@@ -29,7 +29,7 @@ export type ToolbarIconToken =
   | 'present' | 'settings' | 'keyboard' | 'window' | 'presenter' | 'audience'
   | 'table' | 'mindmap' | 'chart' | 'mermaid' | 'diagram' | 'svg'
   | 'code' | 'qr' | 'action' | 'embed' | 'countdown'
-  | 'strip' | 'publish' | 'calendar' | 'command' | 'undo' | 'redo' | 'newslide' | 'promote' | 'demote' | 'bullets' | 'numbered' | 'more'
+  | 'strip' | 'publish' | 'calendar' | 'command' | 'undo' | 'redo' | 'newslide' | 'promote' | 'demote' | 'bullets' | 'numbered' | 'bold' | 'italic' | 'link' | 'more'
 
 export interface CommandToolbarPlacement {
   menu: ToolbarMenuName
@@ -209,6 +209,44 @@ export function componentInsertCommands(layouts?: readonly LayoutDef[]) {
 
 const COMPONENT_INSERT_COMMANDS = componentInsertCommands()
 
+// Quote form commands, one per choice of the quote layout's `quote-form` group (the registry's values are
+// the source of the words). The handler writes the form through `set-quote-form` on the slide at the caret.
+export const QUOTE_FORM_COMMAND_IDS = [
+  'quote-form-auto',
+  'quote-form-plain',
+  'quote-form-tweet',
+  'quote-form-video',
+  'quote-form-book',
+  'quote-form-paper',
+  'quote-form-web'
+] as const
+
+/** Move slide to… and Move section to…: offered by Actions here on every place of a slide and on its card in the strip. */
+export const MOVE_TO_COMMAND_IDS = ['move-slide-to', 'move-section-to'] as const
+
+export type QuoteFormCommandId = (typeof QUOTE_FORM_COMMAND_IDS)[number]
+
+// Each form has its own words besides the shared ones, so typing a form's name ranks that command first
+// while the shared words ("quote form") still list all seven.
+const QUOTE_FORM_OWN_KEYWORDS: Record<QuoteFormCommandId, string[]> = {
+  'quote-form-auto': ['automatic', 'auto'],
+  'quote-form-plain': ['plain'],
+  'quote-form-tweet': ['tweet', 'x post'],
+  'quote-form-video': ['video'],
+  'quote-form-book': ['book'],
+  'quote-form-paper': ['paper'],
+  'quote-form-web': ['web', 'web page']
+}
+
+const QUOTE_FORM_COMMANDS = QUOTE_FORM_COMMAND_IDS.map((id) => command({
+  id,
+  label: `Quote form: ${id === 'quote-form-auto' ? 'Automatic' : id.slice('quote-form-'.length).replace(/^./, (letter) => letter.toUpperCase())}`,
+  scope: 'editor' as const,
+  menu: null,
+  palette: { visible: true as const, keywords: ['quote', 'form', 'source', ...QUOTE_FORM_OWN_KEYWORDS[id]] },
+  handlerId: id
+}))
+
 // Application commands are declared once here. The palette and native custom menus retain their
 // existing order, but now render this data instead of maintaining parallel title/shortcut lists.
 const PALETTE_COMMANDS = [
@@ -252,30 +290,46 @@ const PALETTE_COMMANDS = [
   command({ id: 'share-for-comments', label: 'Share: for comments…', scope: 'deck', menu: null, palette: { visible: true, keywords: ['share', 'comments', 'feedback', 'colleague', 'review', 'link'] }, handlerId: 'share-for-comments' }),
   command({ id: 'copy-venue-screen-link', label: 'Copy venue-screen link', scope: 'deck', menu: null, palette: { visible: true, keywords: ['venue', 'screen', 'projector', 'copy', 'link'] }, handlerId: 'copy-venue-screen-link' }),
   command({ id: 'layout', label: 'Layout…', scope: 'app', shortcutId: 'app.layout-picker', menu: null, toolbar: { menu: 'insert', order: 10, icon: 'layout' }, palette: { visible: true, keywords: ['insert', 'layout'] }, handlerId: 'layout' }),
+  // Quote forms (ADR-0038): choose how the quote on the current slide is drawn, from the palette.
+  // One command per choice, so each is reachable by name ("Quote form: Tweet") and, while the caret is on a quote slide, in Actions here (command-places.ts, actions-here.ts).
+  ...QUOTE_FORM_COMMANDS,
   command({ id: 'image', label: 'Image…', scope: 'app', shortcutId: 'app.image-search', menu: null, toolbar: { menu: 'insert', order: 20, icon: 'image' }, palette: { visible: true, keywords: ['insert', 'image', 'powerpoint', 'archive'] }, handlerId: 'image' }),
   command({ id: 'search', label: 'Slides from other talks…', scope: 'app', shortcutId: 'app.slide-search', menu: null, toolbar: { menu: 'insert', order: 30, icon: 'slides' }, palette: { visible: true, keywords: ['insert', 'slides', 'search', 'talks'] }, handlerId: 'search' }),
   // ADR-0032 (round-3 A1): Insert › Board slide writes the starter board after the current slide.
   command({ id: 'insert-board-slide', label: 'Board slide', scope: 'editor', menu: null, toolbar: { menu: 'insert', order: 35, icon: 'board' }, palette: { visible: true, keywords: ['insert', 'board', 'feedback', 'cards', 'columns', 'poll', 'keep', 'change', 'try'] }, handlerId: 'insert-board-slide' }),
-  command({ id: 'icon-picker', label: 'Icon…', scope: 'app', shortcutId: 'app.icon-picker', menu: null, toolbar: { menu: 'insert', order: 40, icon: 'sparkles' }, palette: { visible: true, keywords: ['insert', 'icon', 'bullet'] }, handlerId: 'icon-picker' }),
+  command({ id: 'icon-picker', label: 'Insert icon…', scope: 'app', shortcutId: 'app.icon-picker', menu: null, toolbar: { menu: 'insert', order: 40, icon: 'sparkles', menuLabel: 'Icon…' }, palette: { visible: true, keywords: ['insert', 'icon', 'bullet', 'title', 'paragraph', 'list item', 'picture'] }, handlerId: 'icon-picker' }),
   ...OBJECT_PALETTE_COMMANDS,
   ...COMPONENT_INSERT_COMMANDS,
-  command({ id: 'format-bold', label: 'Bold', scope: 'editor', shortcutId: 'editor.bold', menu: null, palette: { visible: true, keywords: ['format', 'bold', 'strong', 'markdown'] }, handlerId: 'format-bold' }),
-  command({ id: 'format-italic', label: 'Italic', scope: 'editor', shortcutId: 'editor.italic', menu: null, palette: { visible: true, keywords: ['format', 'italic', 'emphasis', 'markdown'] }, handlerId: 'format-italic' }),
+  command({ id: 'format-bold', label: 'Bold', scope: 'editor', shortcutId: 'editor.bold', menu: null, toolbar: { menu: 'deck', order: 170, icon: 'bold', actionBarOnly: true }, palette: { visible: true, keywords: ['format', 'bold', 'strong', 'markdown'] }, handlerId: 'format-bold' }),
+  command({ id: 'format-italic', label: 'Italic', scope: 'editor', shortcutId: 'editor.italic', menu: null, toolbar: { menu: 'deck', order: 180, icon: 'italic', actionBarOnly: true }, palette: { visible: true, keywords: ['format', 'italic', 'emphasis', 'markdown'] }, handlerId: 'format-italic' }),
   command({ id: 'format-inline-code', label: 'Inline code', scope: 'editor', shortcutId: 'editor.inline-code', menu: null, palette: { visible: true, keywords: ['format', 'inline', 'code', 'backtick', 'markdown'] }, handlerId: 'format-inline-code' }),
   command({ id: 'format-highlight', label: 'Highlight', scope: 'editor', shortcutId: 'editor.highlight', menu: null, palette: { visible: true, keywords: ['format', 'highlight', 'marker', 'yellow', 'markdown'] }, handlerId: 'format-highlight' }),
   command({ id: 'format-strikethrough', label: 'Strikethrough', scope: 'editor', shortcutId: 'editor.strikethrough', menu: null, palette: { visible: true, keywords: ['format', 'strikethrough', 'strike', 'cross out', 'delete', 'markdown'] }, handlerId: 'format-strikethrough' }),
   command({ id: 'format-underline', label: 'Underline', scope: 'editor', shortcutId: 'editor.underline', menu: null, palette: { visible: true, keywords: ['format', 'underline', 'emphasis', 'markdown'] }, handlerId: 'format-underline' }),
-  command({ id: 'format-link', label: 'Insert link (clipboard-aware)', scope: 'editor', shortcutId: 'editor.link', menu: null, palette: { visible: true, keywords: ['format', 'link', 'url', 'clipboard', 'markdown'] }, handlerId: 'format-link' }),
+  command({ id: 'format-link', label: 'Insert link (clipboard-aware)', scope: 'editor', shortcutId: 'editor.link', menu: null, toolbar: { menu: 'deck', order: 190, icon: 'link', actionBarOnly: true }, palette: { visible: true, keywords: ['format', 'link', 'url', 'clipboard', 'markdown'] }, handlerId: 'format-link' }),
   command({ id: 'deck-design', label: 'Deck design…', scope: 'deck', menu: null, toolbar: { menu: 'deck', order: 10, icon: 'design' }, palette: { visible: true, keywords: ['deck', 'design', 'theme'] }, handlerId: 'deck-design' }),
   command({ id: 'metadata', label: 'Metadata…', scope: 'deck', menu: null, toolbar: { menu: 'deck', order: 30, icon: 'handout' }, palette: { visible: true, keywords: ['metadata', 'frontmatter', 'talk'] }, handlerId: 'metadata' }),
   command({ id: 'tag-slide', label: 'Tag current slide… (curated labels, shared vault-wide)', scope: 'deck', menu: null, palette: { visible: true, keywords: ['tag', 'slide', 'labels', 'vault'] }, handlerId: 'tag-slide' }),
   command({ id: 'abstract', label: 'Edit abstract', scope: 'deck', menu: null, toolbar: { menu: 'deck', order: 40, icon: 'abstract' }, palette: { visible: true, keywords: ['edit', 'abstract'] }, handlerId: 'abstract' }),
   command({ id: 'view-editor', label: 'View: Editor only', scope: 'app', shortcutId: 'app.view-editor', menu: null, palette: { visible: true, keywords: ['view', 'editor'] }, handlerId: 'view-editor' }),
   command({ id: 'view-both', label: 'View: Editor + slides', scope: 'app', shortcutId: 'app.view-split', menu: null, palette: { visible: true, keywords: ['view', 'editor', 'slides', 'split'] }, handlerId: 'view-both' }),
+  command({ id: 'view-plain', label: 'Show the plain view', scope: 'editor', menu: null, palette: { visible: true, keywords: ['plain', 'view', 'editor', 'tab', 'markdown'] }, handlerId: 'view-plain' }),
+  command({ id: 'view-markdown', label: 'Show the Markdown view', scope: 'editor', menu: null, palette: { visible: true, keywords: ['markdown', 'view', 'editor', 'tab', 'plain', 'source'] }, handlerId: 'view-markdown' }),
+  command({ id: 'change-heading-level', label: "Change this heading's level…", scope: 'editor', menu: null, palette: { visible: true, keywords: ['heading', 'level', 'section', 'slide', 'talk', 'title', 'promote', 'demote'] }, handlerId: 'change-heading-level' }),
+  command({ id: 'change-slide-layout', label: "Change this slide's layout…", scope: 'editor', menu: null, palette: { visible: true, keywords: ['slide', 'layout', 'cards', 'list', 'compare', 'auto', 'margin'] }, handlerId: 'change-slide-layout' }),
   command({ id: 'view-strip', label: 'View: Slide strip', scope: 'app', shortcutId: 'app.view-strip', menu: null, toolbar: { menu: 'deck', order: 75, icon: 'strip', actionBarOnly: true }, palette: { visible: true, keywords: ['view', 'slide', 'strip'] }, handlerId: 'view-strip' }),
   command({ id: 'view-grid', label: 'View: Grid', scope: 'app', shortcutId: 'app.view-grid', menu: null, palette: { visible: true, keywords: ['view', 'grid'] }, handlerId: 'view-grid' }),
   command({ id: 'fold-all', label: 'Fold all sections', scope: 'editor', menu: null, palette: { visible: true, keywords: ['fold', 'collapse', 'sections'] }, handlerId: 'fold-all' }),
   command({ id: 'unfold-all', label: 'Unfold all sections', scope: 'editor', menu: null, palette: { visible: true, keywords: ['unfold', 'expand', 'sections'] }, handlerId: 'unfold-all' }),
+  // The Slides outline and the grid share one set of collapsed sections (renderer lib/outlineCollapseStore.ts).
+  // Keyless on purpose: the palette and the two header buttons are the way in.
+  command({ id: 'outline-collapse-all', label: 'Collapse all sections', scope: 'app', menu: null, palette: { visible: true, keywords: ['collapse', 'fold', 'sections', 'outline', 'slides', 'grid'] }, handlerId: 'outline-collapse-all' }),
+  command({ id: 'outline-expand-all', label: 'Expand all sections', scope: 'app', menu: null, palette: { visible: true, keywords: ['expand', 'unfold', 'open', 'sections', 'outline', 'slides', 'grid'] }, handlerId: 'outline-expand-all' }),
+  // Move slide to… / Move section to…: a destination list for the slide or section at the caret or selected
+  // in the Slides outline or the grid (renderer components/SlideRowMenus.tsx). Keyless: the keyboard document
+  // assigns them no chord; the palette, Actions here and the slide and section context menus are the way in.
+  command({ id: 'move-slide-to', label: 'Move slide to…', scope: 'app', menu: null, palette: { visible: true, keywords: ['move', 'slide', 'reorder', 'section', 'start', 'end', 'before', 'after'] }, handlerId: 'move-slide-to' }),
+  command({ id: 'move-section-to', label: 'Move section to…', scope: 'app', menu: null, palette: { visible: true, keywords: ['move', 'section', 'reorder', 'start', 'end', 'before', 'after'] }, handlerId: 'move-section-to' }),
   command({ id: 'normalize-triggers', label: 'Normalize trigger lines', scope: 'editor', menu: null, toolbar: { menu: 'deck', order: 60, icon: 'tools' }, palette: { visible: true, keywords: ['normalise', 'trigger', 'lines'] }, handlerId: 'normalize-triggers' }),
   command({ id: 'undo', label: 'Undo', scope: 'editor', shortcutId: 'editor.undo', menu: null, toolbar: { menu: 'deck', order: 100, icon: 'undo', actionBarOnly: true }, palette: { visible: true, keywords: ['undo', 'history'] }, handlerId: 'undo' }),
   command({ id: 'redo', label: 'Redo', scope: 'editor', shortcutId: 'editor.redo', menu: null, toolbar: { menu: 'deck', order: 110, icon: 'redo', actionBarOnly: true }, palette: { visible: true, keywords: ['redo', 'history'] }, handlerId: 'redo' }),
@@ -343,6 +397,7 @@ export const PALETTE_EXCLUSIONS: Readonly<Record<string, string>> = {
   'editor.title-continue': 'the Enter key from a title: acts on the key press itself',
   'editor.protected-line-continue': 'the Enter key from a protected line: acts on the key press itself',
   'editor.list-continue': 'the Enter key in a list: acts on the key press itself',
+  'editor.quote-paragraph': 'the Shift-Enter key in a quotation: acts on the key press itself',
   'editor.list-indent': 'the Tab key in a list: acts on the key press itself',
   'editor.list-outdent': 'the ⇧Tab key in a list: acts on the key press itself',
   'editor.protect-heading-delete': 'the Delete key on a heading: acts on the key press itself',

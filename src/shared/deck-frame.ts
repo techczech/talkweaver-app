@@ -13,6 +13,7 @@
 import { parseSimpleYaml } from '../../compiler/scripts/lib/simple-yaml.mjs'
 import { parseOutlineTree, type OutlineTreeNode } from '../../compiler/scripts/lib/14-outline-tree.mjs'
 import { plainListForcedIcons, resolveSlideFrame } from '../../compiler/scripts/lib/11-frame.mjs'
+import { resolveTitleLook } from '../../compiler/scripts/lib/title-look.mjs'
 import { parseHeadingAttrs, parseTriggerLine } from '../../compiler/scripts/lib/02-triggers-layout.mjs'
 import type { OptionCommitContext } from './trigger-line.ts'
 
@@ -90,10 +91,46 @@ export const DECK_DECIDED_GROUP = 'list-style'
  */
 export function deckCommitContext(outline: string, headingLine: number | null): OptionCommitContext {
   const deckListStyleFor = deckListStyleResolver(outline, headingLine)
+  const inheritedTitleLook = inheritedTitleLookForSlide(outline, headingLine)
   return {
-    unwrittenSelections: (line) => ({ [DECK_DECIDED_GROUP]: deckListStyleFor(line) }),
-    statement: { deckClaimStyle: deckClaimStyleForOutline(outline), titleHidden: statementTitleHidden(outline, headingLine) }
+    // The Title look the slide inherits is what renders when its line writes none, so the orphan
+    // sweep must judge the Tab tone against it (a pinned Strong tone survives a later commit).
+    unwrittenSelections: (line) => ({
+      [DECK_DECIDED_GROUP]: deckListStyleFor(line),
+      ...(inheritedTitleLook ? { 'title-look': `titlelook=${inheritedTitleLook}` } : {})
+    }),
+    statement: { deckClaimStyle: deckClaimStyleForOutline(outline), titleHidden: statementTitleHidden(outline, headingLine) },
+    inheritedTitleTone: inheritedTitleToneForSlide(outline, headingLine),
+    inheritedTitleLook
   }
+}
+
+/**
+ * The Title look (tab, kicker, label or '') the slide inherits from its section's entry in
+ * `sections:`, `defaults:` or frontmatter `title_look:`, resolved by the compiler's own
+ * resolveTitleLook with no slide-level look. The slide's own {titlelook=…} is read from its line.
+ */
+export function inheritedTitleLookForSlide(outline: string, headingLine: number | null): string {
+  if (headingLine == null) return ''
+  const { meta, body } = splitFrontmatter(outline)
+  const slide = findSlide(parseOutlineTree(body).root, headingLine)
+  if (!slide) return ''
+  const sectionDefaults = asMap(slide.section ? asMap(meta.sections)[slide.section.title] : undefined)
+  return resolveTitleLook({}, sectionDefaults, asMap(meta.defaults), meta).look
+}
+
+/**
+ * The Tab tone the slide inherits when it carries no `{titlelook-tone=…}` of its own: the owning
+ * section's entry in `sections:`, then `defaults:`, then `title_look_tone:`, resolved by the
+ * compiler's own resolveTitleLook (the slide's look is pinned to Tab so the tone is judged alone).
+ */
+export function inheritedTitleToneForSlide(outline: string, headingLine: number | null): 'soft' | '' {
+  if (headingLine == null) return ''
+  const { meta, body } = splitFrontmatter(outline)
+  const slide = findSlide(parseOutlineTree(body).root, headingLine)
+  if (!slide) return ''
+  const sectionDefaults = asMap(slide.section ? asMap(meta.sections)[slide.section.title] : undefined)
+  return resolveTitleLook({ titlelook: 'tab' }, sectionDefaults, asMap(meta.defaults), meta).tone === 'soft' ? 'soft' : ''
 }
 
 /**

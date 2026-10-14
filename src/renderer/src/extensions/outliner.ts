@@ -12,7 +12,8 @@
 // All ops rewrite the whole doc in one transaction and restore the caret to the same
 // logical line/column, so onContentChange + autosave stay in sync (ADR-0001 canonical).
 import { EditorView } from '@codemirror/view'
-import { EditorSelection } from '@codemirror/state'
+import { EditorSelection, Facet, StateEffect, type Transaction } from '@codemirror/state'
+import { syntaxTree } from '@codemirror/language'
 import {
   collapseDuplicateKeys,
   collapseDuplicateLayouts,
@@ -29,14 +30,48 @@ import { chartObjectTokenAt } from '../../../../compiler/scripts/lib/03-object-t
 import { notify } from '../lib/notify'
 import { minimalChange } from '../lib/minimalChange'
 import { hasOpenObjectBlock } from './objectBlocks/field'
-import { relocateBlock } from './slideOutline'
+import { currentFocusRange } from './focusScope'
+import { insertAtHeadingEnd } from './headingEndInsert'
+import { relocateBlock, relocateBlockInto, relocateBlockToEnd } from './slideOutline'
 import { reLevelHeadingLines } from '../../../shared/heading-relevel'
+import { headingLevels, headingMarkLevel } from '../../../shared/heading-lines'
+import { LayoutVerbError, setQuoteForm, type QuoteFormChoice } from '../../../shared/layout-verbs'
 
 const INDENT = '  ' // one list level = two spaces
 
+/**
+ * Marks a change one of the key commands below made as the direct result of a key press that types text (Enter on a
+ * heading, a protected line or a list item; Shift-Enter in a quotation; Tab on a line that is no list item; Tab or
+ * Shift-Tab that indents or outdents the caret's line and no other line): the user's own edit at the keyboard, by
+ * another route
+ * than CodeMirror's own commands. The web form's link watch (quoteLinkForm.ts) reads it as typing (`isKeyTyped`).
+ * It is not a user event on purpose. `userEvent: 'input'` (what CodeMirror's insertNewline carries)
+ * starts a new undo step (history joins only `input.type` and `delete`, or a change with no user event), so the list
+ * Enter would no longer be undone with the typing before it; and any `input` event sends the change through the
+ * protected-token guard (idProtect.ts) and the Slide Focus range guard (focusScope.ts), and counts as the editor being
+ * engaged (Editor.tsx), none of which these commands' changes do today. The mark changes none of that.
+ * It is a state effect and not an annotation (quote forms ticket 14). In Slide Focus the caret guard (focusScope.ts)
+ * rebuilds a transaction whose caret it moves back into the focused slide, from its changes, its effects and its user
+ * event: an annotation is lost there, and the second Enter under a source line that ends the slide was then read as a
+ * program's change. An effect goes through with the changes it was dispatched with. No field or plugin acts on it, it
+ * is not put into the undo history (no `invertedEffects`), so an undo or a redo never carries it.
+ * The effect type stays inside this file: only the dispatches below can attach it (`typedByKey`).
+ * Any edit of the user's counts (decided 13 October 2026, quote forms ticket 14): the mark goes on these commands'
+ * changes wherever the caret is on its line, with text after it or not. A Shift-Enter, an Enter or a Tab that moves
+ * text already on the line is the user's edit as much as a character typed, and a link it makes the slide's source
+ * gives the slide its form. Only a program's change (no user event and no mark) never does.
+ */
+const keyTyped = StateEffect.define<null>()
+/** The part of a transaction spec that marks it as typed by a key (see `keyTyped`); a new effect for each dispatch. */
+const typedByKey = (): { effects: StateEffect<null> } => ({ effects: keyTyped.of(null) })
+/** The change is one of this file's key commands' own, made for a key press that types (see `keyTyped`). */
+export const isKeyTyped = (tr: Transaction): boolean => tr.effects.some((effect) => effect.is(keyTyped))
+
+// The level a line's heading marker gives it. Whether the line IS a heading also depends on the
+// lines above it (a `# comment` in a code fence is not one): the functions below ask the fence mask
+// (levelAt) or the whole heading map (headingLevels, src/shared/heading-lines.ts), once per call.
 export function headingLevel(s: string): number {
-  const m = s.match(/^(#{1,6})\s/)
-  return m ? m[1].length : 0
+  return headingMarkLevel(s)
 }
 export function leadingWidth(s: string): number {
   const m = s.match(/^[ \t]*/)
@@ -67,9 +102,10 @@ export function placeLayoutTrigger(view: EditorView, slashLineNum: number, trigg
   const doc = view.state.doc
   if (slashLineNum < 1 || slashLineNum > doc.lines) return false
   // Nearest heading at or above the slash line (any level). None → not on a slide; fall back.
+  const levels = headingLevels(doc.toString().split('\n'))
   let headingNum = -1
   for (let n = slashLineNum; n >= 1; n -= 1) {
-    if (headingLevel(doc.line(n).text) >= 1) { headingNum = n; break }
+    if (levels[n - 1] >= 1) { headingNum = n; break }
   }
   if (headingNum < 0) return false
   const slashLine = doc.line(slashLineNum)
@@ -109,9 +145,10 @@ export function placeLayoutTriggerAtCursor(view: EditorView, trigger: string): b
   if (trigger.includes('\n')) return false
   const doc = view.state.doc
   const caretLineNum = doc.lineAt(view.state.selection.main.head).number
+  const levels = headingLevels(doc.toString().split('\n'))
   let headingNum = -1
   for (let n = caretLineNum; n >= 1; n -= 1) {
-    if (headingLevel(doc.line(n).text) >= 1) { headingNum = n; break }
+    if (levels[n - 1] >= 1) { headingNum = n; break }
   }
   if (headingNum < 0) return false
   // Existing Trigger line: the line right after the heading, if it is trigger-only.
@@ -148,6 +185,28 @@ function cursorInFrontmatter(view: EditorView): boolean {
   const lines = view.state.doc.toString().split('\n')
   const i = view.state.doc.lineAt(view.state.selection.main.head).number - 1
   return i <= frontmatterEnd(lines) // the --- lines and everything between them
+}
+
+// A slide's HEAD: its heading line and the lines directly under it that belong to it (its `{id=…}`
+// and layout lines), as the app's one reader of that block reads them
+// (logicalTriggerBlockAfterHeading, src/shared/trigger-line.ts: blank lines before the block are
+// part of it, a chart token that owns the list under it ends it). The same block headingEndInsert.ts
+// keeps under its heading for a paste and for Enter. Answers the head that holds line `i` as
+// [start, end) with `start` the heading line, or null when line `i` is a body line (or front matter).
+// The moves below never put a line inside a head and never move part of one (issue 121).
+function headAt(lines: string[], i: number, bs: number, fenced: boolean[]): { start: number; end: number } | null {
+  const near = headAbove(lines, i, bs, fenced)
+  return near && i < near.end ? near : null
+}
+// The head of the nearest heading at or above line `i` in the body, whether or not it holds line `i`
+// (null: no heading there). One scan back to that heading. A caller that asks about a run of lines
+// with no heading among them asks once and compares each line with `end` (headAt for each line would
+// scan back again for each: a long run then costs its length squared).
+function headAbove(lines: string[], i: number, bs: number, fenced: boolean[]): { start: number; end: number } | null {
+  let h = i
+  while (h >= bs && levelAt(lines, h, fenced) === 0) h -= 1
+  if (h < bs) return null
+  return { start: h, end: logicalTriggerBlockAfterHeading(lines, h)?.end ?? h + 1 }
 }
 
 type NodeKind = 'heading' | 'list' | 'para'
@@ -305,11 +364,9 @@ export function moveHeadingBlock(
     )
     const rest = [...lines.slice(0, block.start), ...lines.slice(block.end)]
     // The boundary heading, once the block is spliced out, sits at index block.start in `rest`.
-    let insertAt = block.start + 1 // right after the boundary heading = its first child
-    // Keep a heading's Trigger line glued to it: never wedge the moved block between them.
-    if (insertAt < rest.length && rest[insertAt].trim() !== '' && TRIGGER_LINE_RE.test(rest[insertAt])) {
-      insertAt += 1
-    }
+    // Right after the boundary heading's head = its first child. The head is the heading and every
+    // id and layout line under it (headAt): the moved block is never wedged between them.
+    const insertAt = logicalTriggerBlockAfterHeading(rest, block.start)?.end ?? block.start + 1
     const out = [...rest.slice(0, insertAt), ...moved, ...rest.slice(insertAt)]
     return { lines: out, caret: insertAt + (i - block.start) }
   }
@@ -354,16 +411,39 @@ function offsetOfLine(lines: string[], lineIdx: number, col: number): number {
 // One implementation, shared with the workspace's buffer-first mutations (lib/minimalChange.ts).
 export { minimalChange }
 
-function applyDoc(view: EditorView, lines: string[], caretLine: number, caretCol: number): boolean {
+// `typed`: the change is the direct result of a key press that types (see `keyTyped`).
+function applyDoc(view: EditorView, lines: string[], caretLine: number, caretCol: number, typed = false): boolean {
   const newText = lines.join('\n')
   const pos = offsetOfLine(lines, Math.max(0, Math.min(caretLine, lines.length - 1)), caretCol)
   const ch = minimalChange(view.state.doc.toString(), newText)
   view.dispatch({
     changes: { from: ch.from, to: ch.to, insert: ch.insert },
     selection: EditorSelection.cursor(pos),
-    scrollIntoView: true
+    scrollIntoView: true,
+    ...(typed ? typedByKey() : {})
   })
   return true
+}
+
+// A move's dispatch. In Slide Focus the move is declined (nothing changes, like a move with nowhere
+// to go) when a line outside the focused band would change, or the band's first line (the focused
+// slide's heading) or a line put above it: the band is set when the slide is focused and is not
+// read again from the text, so a slide or a line moved across its edge left it on the wrong lines.
+function applyMove(view: EditorView, lines: string[], newLines: string[], caretLine: number, caretCol: number): boolean {
+  const focus = currentFocusRange(view.state)
+  if (focus && newLines.length === lines.length) {
+    let lo = 0
+    while (lo < lines.length && lines[lo] === newLines[lo]) lo += 1
+    let hi = lines.length - 1
+    while (hi > lo && lines[hi] === newLines[hi]) hi -= 1
+    if (lo < lines.length) {
+      const doc = view.state.doc
+      const first = doc.lineAt(focus.from).number - 1
+      const last = (focus.to > focus.from ? doc.lineAt(focus.to - 1) : doc.lineAt(focus.from)).number - 1
+      if (lo <= first || hi > last) return false
+    }
+  }
+  return applyDoc(view, newLines, caretLine, caretCol)
 }
 
 export function moveNode(view: EditorView, dir: 'up' | 'down'): boolean {
@@ -382,13 +462,25 @@ export function moveNode(view: EditorView, dir: 'up' | 'down'): boolean {
   const headLine = view.state.doc.lineAt(sel.from).number - 1
   const tailLine = view.state.doc.lineAt(sel.to).number - 1
   const multi = headLine !== tailLine
-  const isStructural = levelAt(lines, i, fenced) > 0 || listMatch(lines[i]) !== null
+  // The caret on a line of a slide's head (its heading, or an id or layout line under it) moves the
+  // slide: `root` is the heading. Anywhere else `root` is the caret's own line.
+  const head = (x: number): { start: number; end: number } | null => headAt(lines, x, bs, fenced)
+  const root = head(i)?.start ?? i
+  const isStructural = levelAt(lines, root, fenced) > 0 || listMatch(lines[i]) !== null
 
   let block: NodeBlock
   if (multi && !isStructural) {
     block = { start: headLine, end: tailLine + 1, kind: 'para', level: 0 }
+    // Selected lines move as plain lines, and a head line is never moved as one: with the caret in
+    // the body and a head line in the selection nothing moves.
+    // One pass: a selected line is a head line when the first selected line is one, or when a
+    // heading is among the lines after it (a line under no new heading is in the head the first
+    // line's heading has, and that head would then hold the first line too).
+    if (head(block.start)) return false
+    // (Front matter lines are never head lines, whatever they look like: the scan starts in the body.)
+    for (let x = Math.max(block.start + 1, bs); x < block.end; x += 1) if (levelAt(lines, x, fenced) > 0) return false
   } else {
-    block = nodeBlock(lines, i, fenced)
+    block = nodeBlock(lines, root, fenced)
   }
 
   let sib = siblingBlock(lines, block, dir, fenced)
@@ -396,9 +488,16 @@ export function moveNode(view: EditorView, dir: 'up' | 'down'): boolean {
     // No same-level sibling and the blocker is a heading boundary: cross INTO the adjacent
     // container with uniform re-levelling (spec Q5). Sections travel with their subtree. A true
     // edge (document end / above the first section) returns null → consume the key, no-op.
-    const crossed = moveHeadingBlock(lines, i, dir, bs)
-    if (crossed) return applyDoc(view, crossed.lines, crossed.caret, col)
+    const crossed = moveHeadingBlock(lines, root, dir, bs)
+    if (crossed) return applyMove(view, lines, crossed.lines, crossed.caret + (i - root), col)
     return false
+  }
+  if (sib && block.kind === 'para') {
+    // A paragraph swaps with the line next to it. When that line is part of a head, it swaps with
+    // the whole head: the paragraph lands above the heading (moving up) or under the head's last
+    // line (moving down), where it lands for a heading with no id or layout line.
+    const beside = head(sib.start)
+    if (beside) sib = { start: beside.start, end: beside.end, kind: 'para', level: 0 }
   }
   if (!sib) {
     // No same-level sibling (e.g. the FIRST item of a list, or a top section): fall back to
@@ -407,17 +506,21 @@ export function moveNode(view: EditorView, dir: 'up' | 'down'): boolean {
     if (dir === 'up') {
       let j = block.start - 1
       while (j >= bs && isBlank(lines[j])) j -= 1
-      if (j >= bs && headingLevel(lines[j]) === 0 && !listMatch(lines[j])) {
+      // A head is a heading boundary as a whole: its id and layout lines are no prose to move past.
+      // The run of prose above has no heading in it, so one heading is the nearest for every line of
+      // it: the lines from `proseFrom` on are under its head (asked once, not once for each line).
+      const proseFrom = j >= bs && levelAt(lines, j, fenced) === 0 && !listMatch(lines[j]) ? (headAbove(lines, j, bs, fenced)?.end ?? bs) : -1
+      if (proseFrom >= 0 && j >= proseFrom) {
         let s = j
-        while (s > bs && !isBlank(lines[s - 1]) && headingLevel(lines[s - 1]) === 0 && !listMatch(lines[s - 1])) s -= 1
+        while (s > bs && !isBlank(lines[s - 1]) && levelAt(lines, s - 1, fenced) === 0 && !listMatch(lines[s - 1]) && s - 1 >= proseFrom) s -= 1
         sib = { start: s, end: j + 1, kind: 'para', level: 0 }
       }
     } else {
       let j = block.end
       while (j < lines.length && isBlank(lines[j])) j += 1
-      if (j < lines.length && headingLevel(lines[j]) === 0 && !listMatch(lines[j])) {
+      if (j < lines.length && levelAt(lines, j, fenced) === 0 && !listMatch(lines[j])) {
         let e = j
-        while (e + 1 < lines.length && !isBlank(lines[e + 1]) && headingLevel(lines[e + 1]) === 0 && !listMatch(lines[e + 1])) e += 1
+        while (e + 1 < lines.length && !isBlank(lines[e + 1]) && levelAt(lines, e + 1, fenced) === 0 && !listMatch(lines[e + 1])) e += 1
         sib = { start: j, end: e + 1, kind: 'para', level: 0 }
       }
     }
@@ -457,14 +560,18 @@ export function moveNode(view: EditorView, dir: 'up' | 'down'): boolean {
     newBlockStart = block.start + (sib.end - sib.start) + gap.length
   }
   const caretLine = newBlockStart + (i - block.start)
-  return applyDoc(view, newLines, caretLine, col)
+  return applyMove(view, lines, newLines, caretLine, col)
 }
 
 // delta: -1 = promote (heading: fewer #, list: outdent), +1 = demote.
+// `byKey`: reached from the Tab or Shift-Tab key (indentList, outdentList). The change then carries `keyTyped`, but
+// only when the caret's line is the one line it changed: an item moved with the lines under it is no typing on a line.
+// Every other caller (the promote and demote commands, the menu, the action bar) leaves it out.
 export function reLevel(
   view: EditorView,
   delta: -1 | 1,
-  withSubtree: boolean
+  withSubtree: boolean,
+  byKey = false
 ): boolean {
   if (cursorInFrontmatter(view)) return true // protected metadata — consume, no-op
   const lines = view.state.doc.toString().split('\n')
@@ -473,12 +580,15 @@ export function reLevel(
   const i = curLine.number - 1
   const col = sel.head - curLine.from
 
-  const hl = headingLevel(lines[i])
+  // Fence/comment mask: a `# comment` in a code fence is code, never a heading to re-level and
+  // never the end of the subtree.
+  const fenced = fencedLineFlags(lines)
+  const hl = levelAt(lines, i, fenced)
   if (hl > 0) {
-    const range = withSubtree ? nodeBlock(lines, i) : { start: i, end: i + 1 }
+    const range = withSubtree ? nodeBlock(lines, i, fenced) : { start: i, end: i + 1 }
     let changed = false
     for (let j = range.start; j < range.end; j++) {
-      const m = lines[j].match(/^(#{1,6})(\s.*)$/)
+      const m = fenced[j] ? null : lines[j].match(/^(#{1,6})(\s.*)$/)
       if (!m) continue
       const n = Math.max(1, Math.min(6, m[1].length + delta))
       if (n !== m[1].length) {
@@ -491,37 +601,40 @@ export function reLevel(
 
   // Non-heading lines (list item, > quote, plain paragraph, empty) promote/demote by
   // INDENTATION — so the shortcut works on any line, not just list items.
-  const range = withSubtree ? nodeBlock(lines, i) : { start: i, end: i + 1 }
+  const range = withSubtree ? nodeBlock(lines, i, fenced) : { start: i, end: i + 1 }
   let changed = false
+  let others = false // a line other than the caret's was changed
   let caretCol = col
   for (let j = range.start; j < range.end; j++) {
+    const was = lines[j]
     if (delta > 0) {
       // Don't indent a truly empty line into trailing whitespace unless it's the caret line.
       if (isBlank(lines[j]) && j !== i) continue
       lines[j] = INDENT + lines[j]
       if (j === i) caretCol = col + INDENT.length
-      changed = true
     } else if (lines[j].startsWith(INDENT)) {
       lines[j] = lines[j].slice(INDENT.length)
       if (j === i) caretCol = Math.max(0, col - INDENT.length)
-      changed = true
     } else if (/^[ \t]/.test(lines[j])) {
       lines[j] = lines[j].replace(/^[ \t]/, '')
       if (j === i) caretCol = Math.max(0, col - 1)
-      changed = true
     }
+    if (lines[j] === was) continue
+    changed = true
+    if (j !== i) others = true
   }
-  return changed ? applyDoc(view, lines, i, caretCol) : false
+  return changed ? applyDoc(view, lines, i, caretCol, byKey && !others) : false
 }
 
 // Jump the caret to the previous / next heading (slide). Consumes the key either way.
 export function jumpHeading(view: EditorView, dir: 'up' | 'down'): boolean {
   const lines = view.state.doc.toString().split('\n')
   const i = view.state.doc.lineAt(view.state.selection.main.head).number - 1
+  const levels = headingLevels(lines)
   const found =
     dir === 'down'
-      ? (() => { for (let j = i + 1; j < lines.length; j += 1) if (headingLevel(lines[j]) > 0) return j; return -1 })()
-      : (() => { for (let j = i - 1; j >= 0; j -= 1) if (headingLevel(lines[j]) > 0) return j; return -1 })()
+      ? (() => { for (let j = i + 1; j < lines.length; j += 1) if (levels[j] > 0) return j; return -1 })()
+      : (() => { for (let j = i - 1; j >= 0; j -= 1) if (levels[j] > 0) return j; return -1 })()
   if (found >= 0) {
     const line = view.state.doc.line(found + 1)
     view.dispatch({ selection: EditorSelection.cursor(line.from), scrollIntoView: true })
@@ -531,70 +644,52 @@ export function jumpHeading(view: EditorView, dir: 'up' | 'down'): boolean {
 
 // ── Icon-picker caret context (ADR-0021) ─────────────────────────────────────
 //
-// The icon picker writes a `{icon=KEY}` token onto whatever top-level list bullet the caret is
-// in. The engine's setListItemIcon addresses that bullet by {heading, occurrence} + 0-based item
-// index, where the index counts TOP-LEVEL (indent-0) list-item lines in document order across the
-// whole `###` slide block. This mirrors that addressing so the index lines up exactly.
+// The icon picker writes a `{icon=KEY}` token onto the list row the caret is ON. The engine's
+// setListItemIcon is given the caret's own LINE (`itemLine`) and the heading line of its slide:
+// which lines are list items of a slide is the compiler's reading, not this file's (issue #120),
+// so the engine refuses a line that is in speaker notes, in code, in a chart or under another row.
+// `itemLine` is never another line than the caret's: this file does not look for a bullet above
+// (it used to, and so addressed the bullet before a code fence or a notes block, or a nested
+// row's parent). The line is the only address this file gives: it used to count the block's
+// indent-0 list lines as well (an item number), and that count takes in rows the compiler does not
+// read as items (in code, in notes, in a comment), so by number another row could be named.
 //
-// Returns null when the caret is not inside a top-level list item of a `###` slide (so the caller
-// can disable the picker / show a hint rather than guessing a target).
+// Returns null when the caret's own line does not look like a list row, or is under no heading (so
+// the caller shows a hint rather than guessing a target).
 
-// A top-level list-item line: indent-0 marker followed by a non-space. Mirrors the engine's
-// TOP_LEVEL_ITEM_RE in 12-outline-edit.mjs exactly so item indices agree.
-const TOP_LEVEL_ITEM_RE = /^(?:[-*]\s+|\d+[.)]\s+)\S/
+// A line that looks like a list row at any indent. Whether it is one is the engine's to say.
+const LIST_ROW_RE = /^[ \t]*(?:[-*+]|\d+[.)])\s+\S/
 
 export interface CursorListItemContext {
   slideHeading: string // the verbatim heading line (any level ##–######)
-  slideOccurrence: number // 1-based among identical heading lines
-  itemIndex: number // 0-based position among the block's top-level list items
+  itemLine: number // 1-based line of the caret, a list row: the address the engine writes by
 }
 
 export function getCursorListItemContext(view: EditorView): CursorListItemContext | null {
   const lines = view.state.doc.toString().split('\n')
   const caret = view.state.doc.lineAt(view.state.selection.main.head).number - 1
+  // The structural headings, as the engine's listSlideBlocks reads them (outside fences and comments).
+  const levels = headingLevels(lines)
 
   // Heading-is-slide model: the nearest heading of ANY level (##–######) at or above the caret is
-  // the enclosing slide. The engine addresses the block by its VERBATIM heading line + occurrence
-  // (12-outline-edit.mjs findBlock), so the whole line — `#`-prefix included — is the identity.
+  // the enclosing slide. The engine checks the VERBATIM heading line against the slide that holds
+  // the caret's line, so the whole line — `#`-prefix included — is sent.
   let headingIdx = -1
   for (let j = caret; j >= 0; j -= 1) {
-    if (headingLevel(lines[j]) > 0) { headingIdx = j; break }
+    if (levels[j] > 0) { headingIdx = j; break }
   }
   if (headingIdx < 0) return null
 
   // Block end: the next structural heading (any level) after the slide heading, or EOF.
   let blockEnd = lines.length
   for (let j = headingIdx + 1; j < lines.length; j += 1) {
-    if (headingLevel(lines[j]) > 0) { blockEnd = j; break }
+    if (levels[j] > 0) { blockEnd = j; break }
   }
   if (caret >= blockEnd) return null
 
-  // The caret's own top-level item: walk up to the nearest indent-0 list-item line, stopping at
-  // the heading or a blank line (a blank ends the item's region just like the engine's scan).
-  let itemLine = -1
-  for (let j = caret; j > headingIdx; j -= 1) {
-    if (TOP_LEVEL_ITEM_RE.test(lines[j])) { itemLine = j; break }
-    if (isBlank(lines[j])) break
-    if (headingLevel(lines[j]) > 0) break
-  }
-  if (itemLine < 0) return null
-
-  // 0-based index of itemLine among the block's top-level item lines (document order).
-  let itemIndex = -1
-  for (let j = headingIdx + 1; j <= itemLine; j += 1) {
-    if (TOP_LEVEL_ITEM_RE.test(lines[j])) itemIndex += 1
-  }
-
-  // Occurrence: 1-based count of identical heading lines at/before this one. The line includes its
-  // `#`-prefix, so headings at different levels never collide — this matches listSlideBlocks, which
-  // counts occurrence on the verbatim heading text.
-  const headingText = lines[headingIdx]
-  let slideOccurrence = 0
-  for (let j = 0; j <= headingIdx; j += 1) {
-    if (headingLevel(lines[j]) > 0 && lines[j] === headingText) slideOccurrence += 1
-  }
-
-  return { slideHeading: headingText, slideOccurrence, itemIndex }
+  // The caret's own line, and only that line: a list row, or there is no context.
+  if (caret <= headingIdx || !LIST_ROW_RE.test(lines[caret])) return null
+  return { slideHeading: lines[headingIdx], itemLine: caret + 1 }
 }
 
 // ── List editing: Enter continues, Tab/Shift-Tab indent/outdent ───────────────
@@ -617,7 +712,8 @@ function landAfterTriggerBlock(
       : view.state.doc.line(target.insertBlankAt + 1).from // doc.line is 1-based
     view.dispatch({
       changes: { from: at, insert: '\n' },
-      selection: EditorSelection.cursor(atDocEnd ? at + 1 : at)
+      selection: EditorSelection.cursor(atDocEnd ? at + 1 : at),
+      ...typedByKey()
     })
     return true
   }
@@ -635,15 +731,17 @@ function landAfterUnstampedHeading(
     const at = view.state.doc.length
     view.dispatch({
       changes: { from: at, insert: '\n' },
-      selection: EditorSelection.cursor(at + 1)
+      selection: EditorSelection.cursor(at + 1),
+      ...typedByKey()
     })
     return true
   }
   const at = view.state.doc.line(next + 1).from
-  if (/^(#{1,6})\s/.test(lines[next])) {
+  if (headingLevel(lines[next]) > 0) {
     view.dispatch({
       changes: { from: at, insert: '\n' },
-      selection: EditorSelection.cursor(at)
+      selection: EditorSelection.cursor(at),
+      ...typedByKey()
     })
     return true
   }
@@ -653,18 +751,33 @@ function landAfterUnstampedHeading(
 
 // Enter anywhere in a canonical slide heading: skip over the protected Trigger block onto the
 // first body line. A newly typed heading without a Trigger block lands on or creates its body line.
-export function enterFromHeading(view: EditorView): boolean {
+// `headings` says which lines the rule covers: the app binds it for `##`–`######` followed by a
+// space. The Plain view calls it with its own answer to "is this line a heading"
+// (shared/plain-view-heading-line.ts: every level, any whitespace after the marks) for a title that
+// has hidden text (a hidden tail, or a hidden layout line under it; plainView/guardKeys.ts), so the
+// two share one rule.
+// A line `headings` does not cover (as the app binds it: the talk's title, level 1) gets the
+// ordinary Enter, with one exception: at the END of a title that has id or layout lines under it,
+// the new empty line and the caret go after those lines, so they stay directly under the title
+// (headingEndInsert.ts). The Plain view is asked first (headingEnterOwners): on a title it hides
+// text of, its own rule above is the one that holds (the caret onto the body line, a blank line
+// made only when there is none), and this command runs before the Plain view's own Enter binding.
+export const headingEnterOwners = Facet.define<(view: EditorView) => boolean>()
+
+export function enterFromHeading(view: EditorView, headings: { test(line: string): boolean } = PROTECTED_HEADING_RE): boolean {
   const sel = view.state.selection.main
   if (hasOpenObjectBlock(view.state)) return false
   const lines = view.state.doc.toString().split('\n')
   const fenced = fencedLineFlags(lines)
   if (!sel.empty) {
     return selectionIntersectsLines(view, sel.from, sel.to, (index) =>
-      !fenced[index] && PROTECTED_HEADING_RE.test(lines[index])
+      !fenced[index] && headings.test(lines[index])
     )
   }
   const line = view.state.doc.lineAt(sel.head)
-  if (!PROTECTED_HEADING_RE.test(line.text)) return false
+  if (!headings.test(line.text)) {
+    return view.state.facet(headingEnterOwners).some((own) => own(view)) || insertAtHeadingEnd(view, '\n', 'input')
+  }
   if (fenced[line.number - 1]) return false
   return landAfterTriggerBlock(view, lines, line.number - 1)
     || landAfterUnstampedHeading(view, lines, line.number - 1)
@@ -678,7 +791,7 @@ function canonicalTriggerHeading(
   if (!TRIGGER_LINE_RE.test(lines[triggerIndex].trim())) return null
   for (let index = triggerIndex - 1; index >= 0; index -= 1) {
     if (fenced[index]) continue
-    if (!/^(#{1,6})\s/.test(lines[index])) continue
+    if (headingLevel(lines[index]) === 0) continue
     if (!PROTECTED_HEADING_RE.test(lines[index])) return null
     const block = logicalTriggerBlockAfterHeading(lines, index)
     return block?.start === triggerIndex ? index : null
@@ -746,7 +859,8 @@ export function continueList(view: EditorView): boolean {
     const insert = indent.length >= INDENT.length ? indent.slice(INDENT.length) : ''
     view.dispatch({
       changes: { from: line.from, to: line.to, insert },
-      selection: EditorSelection.cursor(line.from + insert.length)
+      selection: EditorSelection.cursor(line.from + insert.length),
+      ...typedByKey()
     })
     return true
   }
@@ -756,7 +870,90 @@ export function continueList(view: EditorView): boolean {
   const insert = '\n' + indent + nextMarker + space
   view.dispatch({
     changes: { from: sel.head, insert },
-    selection: EditorSelection.cursor(sel.head + insert.length)
+    selection: EditorSelection.cursor(sel.head + insert.length),
+    ...typedByKey()
+  })
+  return true
+}
+
+// Enter on a quotation line that holds only its marker (`>`, `> `, `> > `, trailing spaces): the second Enter leaves the
+// quotation. The marker line becomes an empty line and the caret goes to an empty line below it, so text typed next is not
+// read as a continuation of the quotation paragraph. A blank line already below stands as that line when another blank line or the document's end follows it (no blank is piled on).
+// What the markdown language's own Enter would do here takes three presses (it leaves `>` and opens another `> ` first).
+// In Slide Focus, on the last line of the focused slide, it is declined (the caret would land outside the band).
+// A quotation inside a list item and a `>` line in a code block are left to what handles them today (declined here).
+const QUOTE_MARKER_ONLY_RE = /^ {0,3}(?:>[ \t]*)+$/
+function inQuotation(view: EditorView, pos: number): boolean {
+  let quoted = false
+  for (let node: { name: string; parent: unknown } | null = syntaxTree(view.state).resolveInner(pos, -1); node; node = node.parent as typeof node) {
+    if (node.name === 'Blockquote') quoted = true
+    else if (node.name === 'ListItem' || node.name === 'FencedCode' || node.name === 'CodeBlock') return false
+  }
+  return quoted
+}
+
+export function leaveQuotation(view: EditorView): boolean {
+  const sel = view.state.selection.main
+  if (!sel.empty) return false
+  const line = view.state.doc.lineAt(sel.head)
+  if (!QUOTE_MARKER_ONLY_RE.test(line.text)) return false
+  if (!inQuotation(view, line.to)) return false
+  // Slide Focus: when no line of the focused range lies below this one, the line the caret would be left on is outside the
+  // focused band (the band ends at the slide's last line with text), so the key is declined and the markdown Enter runs.
+  const focus = currentFocusRange(view.state)
+  if (focus && focus.to <= line.to) return false
+  const below = line.number < view.state.doc.lines ? view.state.doc.line(line.number + 1) : null
+  // The blank below is reused only when another blank line or the end of the document follows it. Otherwise the caret's
+  // line would sit directly above the next content with no blank between.
+  const afterBelow = below && below.number < view.state.doc.lines ? view.state.doc.line(below.number + 1) : null
+  if (below && isBlank(below.text) && (!afterBelow || isBlank(afterBelow.text))) {
+    view.dispatch({
+      changes: { from: line.from, to: line.to },
+      selection: EditorSelection.cursor(below.from - line.length),
+      ...typedByKey()
+    })
+    return true
+  }
+  view.dispatch({
+    changes: { from: line.from, to: line.to, insert: '\n' },
+    selection: EditorSelection.cursor(line.from + 1),
+    ...typedByKey()
+  })
+  return true
+}
+
+// Shift-Enter on a quotation line: a new paragraph inside the quotation. The text after the caret moves to a new line and a
+// bare marker line (the markers without a trailing space) goes between: `> First.` becomes `> First.`, `>`, `> |`. On a
+// marker-only line (after one Enter) that line becomes the bare marker and the new `> ` line goes below it. Anywhere else
+// (not a quotation line, a list item, a code block) it declines and Shift-Enter does what it does today.
+const QUOTE_LINE_RE = /^( {0,3})((?:>[ \t]*)+)/
+export function newQuotationParagraph(view: EditorView): boolean {
+  const sel = view.state.selection.main
+  if (!sel.empty) return false
+  const line = view.state.doc.lineAt(sel.head)
+  const m = line.text.match(QUOTE_LINE_RE)
+  if (!m || sel.head - line.from < m[0].trimEnd().length) return false
+  if (!inQuotation(view, line.to)) return false
+  const bare = m[1] + m[2].trimEnd()
+  const insert = bare + '\n' + bare + ' '
+  if (line.text.length === m[0].length) {
+    // marker-only line: it becomes the bare marker, the new `> ` line goes below it
+    view.dispatch({
+      changes: { from: line.from, to: line.to, insert },
+      selection: EditorSelection.cursor(line.from + insert.length),
+      ...typedByKey()
+    })
+    return true
+  }
+  // the break goes at the caret; spaces either side of it go, so the tail starts right after the marker and its space
+  let from = sel.head
+  while (from > line.from + m[0].trimEnd().length && /[ \t]/.test(line.text[from - line.from - 1])) from -= 1
+  let to = sel.head
+  while (to < line.to && /[ \t]/.test(line.text[to - line.from])) to += 1
+  view.dispatch({
+    changes: { from, to, insert: '\n' + insert },
+    selection: EditorSelection.cursor(from + 1 + insert.length),
+    ...typedByKey()
   })
   return true
 }
@@ -765,16 +962,16 @@ export function continueList(view: EditorView): boolean {
 // never escapes the editor.
 export function indentList(view: EditorView): boolean {
   const line = view.state.doc.lineAt(view.state.selection.main.head)
-  if (listMatch(line.text)) return reLevel(view, 1, true)
+  if (listMatch(line.text)) return reLevel(view, 1, true, true)
   const at = view.state.selection.main.head
-  view.dispatch({ changes: { from: at, insert: INDENT }, selection: EditorSelection.cursor(at + INDENT.length) })
+  view.dispatch({ changes: { from: at, insert: INDENT }, selection: EditorSelection.cursor(at + INDENT.length), ...typedByKey() })
   return true
 }
 
 // Shift-Tab: outdent the list item (+ subtree), or strip one leading indent on any line.
 export function outdentList(view: EditorView): boolean {
   const line = view.state.doc.lineAt(view.state.selection.main.head)
-  if (listMatch(line.text) || /^[ \t]/.test(line.text)) return reLevel(view, -1, true)
+  if (listMatch(line.text) || /^[ \t]/.test(line.text)) return reLevel(view, -1, true, true)
   return false
 }
 
@@ -790,6 +987,24 @@ export function moveBlockTo(view: EditorView, fromLine: number, toLine: number):
   return true
 }
 
+// The organizer's other two drop targets, same single minimal change (one undo step) as moveBlockTo.
+function dispatchRelocated(view: EditorView, text: string, next: string): boolean {
+  if (next === text) return false
+  const ch = minimalChange(text, next)
+  view.dispatch({ changes: { from: ch.from, to: ch.to, insert: ch.insert } })
+  return true
+}
+// Move the heading-block at `fromLine` to the end of the talk.
+export function moveBlockToEnd(view: EditorView, fromLine: number): boolean {
+  const text = view.state.doc.toString()
+  return dispatchRelocated(view, text, relocateBlockToEnd(text, fromLine))
+}
+// Move the heading-block at `fromLine` into the section headed at `sectionLine`, as its last slide.
+export function moveBlockInto(view: EditorView, fromLine: number, sectionLine: number): boolean {
+  const text = view.state.doc.toString()
+  return dispatchRelocated(view, text, relocateBlockInto(text, fromLine, sectionLine))
+}
+
 // Delete the slide under the caret: the nearest heading at/above plus everything until the
 // next heading of the same-or-shallower level. This is THE sanctioned way to remove a slide —
 // the Trigger line (with its {id=…}) is protected against direct deletion (idProtect
@@ -801,11 +1016,14 @@ export function deleteSlideAtCursor(view: EditorView): boolean {
   const bs = bodyStart(lines)
   const caret = view.state.doc.lineAt(view.state.selection.main.head).number - 1
   let headingIdx = -1
+  // Fence/comment mask: a `# comment` in the slide's fenced code is not its heading and does not
+  // end its block, so the whole slide goes, its fences closed.
+  const fenced = fencedLineFlags(lines)
   for (let i = caret; i >= bs; i -= 1) {
-    if (headingLevel(lines[i]) > 0) { headingIdx = i; break }
+    if (levelAt(lines, i, fenced) > 0) { headingIdx = i; break }
   }
   if (headingIdx < 0) return true // not on a slide — consume, no-op
-  const block = nodeBlock(lines, headingIdx)
+  const block = nodeBlock(lines, headingIdx, fenced)
   const from = view.state.doc.line(block.start + 1).from
   // Take the trailing newline too (unless the block ends the doc), so no blank residue is left.
   const to = block.end >= view.state.doc.lines ? view.state.doc.length : view.state.doc.line(block.end + 1).from
@@ -815,6 +1033,37 @@ export function deleteSlideAtCursor(view: EditorView): boolean {
     userEvent: 'delete.slide',
     scrollIntoView: true
   })
+  return true
+}
+
+// Command: set the quote form of the quote slide under the caret (palette: "Quote form: Tweet"). The write is
+// `set-quote-form` (layout-verbs), applied as one minimal change so it is one undo step and the caret stays.
+export function setQuoteFormAtCursor(view: EditorView, form: QuoteFormChoice, compiledLayoutAt?: (headingLine: number) => string | undefined): boolean {
+  if (cursorInFrontmatter(view)) return true // protected metadata: consume, no-op
+  const text = view.state.doc.toString()
+  const lines = text.split('\n')
+  const bs = bodyStart(lines)
+  const caret = view.state.doc.lineAt(view.state.selection.main.head).number - 1
+  let headingIdx = -1
+  const levels = headingLevels(lines)
+  for (let i = caret; i >= bs; i -= 1) {
+    if (levels[i] > 0) { headingIdx = i; break }
+  }
+  if (headingIdx < 0) {
+    notify('Put the cursor on a quote slide to set its quote form.', 'info', 'quote-form')
+    return true
+  }
+  try {
+    const next = setQuoteForm(text, { headingLine: headingIdx + 1 }, form, compiledLayoutAt?.(headingIdx + 1)).outline
+    if (next === text) return true
+    const ch = minimalChange(text, next)
+    // No userEvent, like the Inspector's option commit: a programmatic write is not typing, and an `input.*`
+    // event sends it through the protected-token guard, which refused any span that reached the `{id=…}` token.
+    view.dispatch({ changes: { from: ch.from, to: ch.to, insert: ch.insert } })
+  } catch (error) {
+    if (!(error instanceof LayoutVerbError)) throw error
+    notify('The quote form applies to a quote slide. This slide is not a quote.', 'info', 'quote-form')
+  }
   return true
 }
 
@@ -848,8 +1097,9 @@ export function setHeadingFromPrevious(view: EditorView, mode: 'same' | 'sub'): 
   const sel = view.state.selection.main
   const i = view.state.doc.lineAt(sel.head).number - 1
   let prevLevel = 0
+  const levels = headingLevels(lines)
   for (let j = i - 1; j >= 0; j--) {
-    const hl = headingLevel(lines[j])
+    const hl = levels[j]
     if (hl > 0) { prevLevel = hl; break }
   }
   let newLevel = mode === 'same' ? prevLevel || 1 : prevLevel ? prevLevel + 1 : 2

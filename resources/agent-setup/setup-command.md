@@ -98,7 +98,7 @@ Every row has `state`, `label` (the words at the row's right-hand edge in Settin
 |---|---|
 | `cloudflare.connection.state` | `no-token`, `checking`, `connected`, `choose-account` (see `accounts`), `rejected`, `unreachable`, `storage-unavailable` |
 | `rows.publishing.state` | `unknown`, `ready`, `no-permission` (see `permission`), `no-site`, `creating` |
-| `rows.goingLive.state` | `unknown`, `not-set-up`, `setting-up`, `ready`, `updating`, `no-permission`, `failed` (see `reason`), `keys-lost` |
+| `rows.goingLive.state` | `unknown`, `not-set-up`, `setting-up`, `ready`, `updating`, `no-permission`, `failed` (see `reason`), `set-up-elsewhere` (the account has a live service and this computer has not been added to it; `updatesFirst` says whether adding it updates the live service first), `access-removed` (the live service refuses this computer's key). `otherComputers`: how many other computers it lists, or null |
 | `rows.shareLink.state` | `unknown`, `none`, `attached`, `not-on-account`, `no-permission`, `not-attached` |
 | `rows.recording.state` | `not-set-up` (see `missing`), `not-checked`, `ready`, `bucket-not-found`, `keys-rejected` |
 | `rows.transcription.state` | `not-set-up`, `python-not-set`, `python-not-found`, `script-not-set`, `script-not-found`, `ffmpeg-not-found`, `ready`, `unknown` |

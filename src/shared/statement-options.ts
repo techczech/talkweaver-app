@@ -29,9 +29,8 @@ export function statementSelections(line: string, context: StatementSelectionCon
   const centred = look.align === 'centred' && (!look.centredNeedsNoTitle || !known || context.titleLayout === 'hidden')
   return {
     'statement-sidebar': sidebar ? `statement-sidebar=${sidebar}` : '',
-    'statement-bg': look.bg === 'halo' ? '' : `statement-bg=${look.bg}`,
+    'statement-bg': look.bg === 'tinted' ? '' : `statement-bg=${look.bg}`,
     'statement-align': centred ? 'statement-align=centred' : '',
-    'statement-bar': look.bar === 'none' ? '' : `statement-bar=${look.bar}`,
     'statement-colour': look.accent ? `accent=${look.accent}` : ''
   }
 }

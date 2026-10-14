@@ -15,6 +15,7 @@
 // With no push and no submission for 60 days the object deletes everything and keeps a tombstone.
 import { createPreworkOwnerToken, verifyPreworkOwnerToken } from './auth'
 import { adminAuthorised, bearerToken, errorResponse, jsonResponse, readBoundedBytes, readJsonBody, type Env } from './http'
+import { signingKey } from './signing-key'
 import {
   PREWORK_IDLE_PURGE_MS, PREWORK_LIMITS, parsePreworkFormPush, preworkSourceKey, parsePreworkRoute, parsePreworkSubmission, preworkBodyLimit,
   preworkRouteIsPublic, preworkRouteMethod, validParticipantId, type PreworkEntry, type PreworkRoute,
@@ -43,6 +44,8 @@ function idleMs(env: Env): number {
 /** `POST /prework` (admin bearer) → `201 {preworkId, ownerToken}`. Nothing is served until the first push. */
 export async function createRunPrework(request: Request, env: Env): Promise<Response> {
   if (!await adminAuthorised(request, env)) return errorResponse('admin_auth_required', 'Admin authentication is required.', 401)
+  // Before anything is made: pre-work whose token could not be signed is never left behind.
+  const key = await signingKey(env)
   let preworkId = ''
   for (let attempt = 0; attempt < 5 && !preworkId; attempt += 1) {
     const candidate = generateShortId(undefined, SHARE_ID_LENGTH)
@@ -55,7 +58,7 @@ export async function createRunPrework(request: Request, env: Env): Promise<Resp
     else if (init.status !== 409) return init
   }
   if (!preworkId) return errorResponse('id_exhausted', 'Could not allocate pre-work. Try again.', 503)
-  const ownerToken = await createPreworkOwnerToken({ role: 'prework-owner', preworkId, iat: Date.now() }, env.SESSION_SIGNING_SECRET)
+  const ownerToken = await createPreworkOwnerToken({ role: 'prework-owner', preworkId, iat: Date.now() }, key)
   return jsonResponse({ preworkId, ownerToken }, 201)
 }
 
@@ -72,7 +75,7 @@ export async function forwardToPrework(request: Request, env: Env, route: Prewor
       return errorResponse('credentials_not_allowed', 'This route is public and takes no credentials.', 400)
     }
   } else {
-    const owner = await verifyPreworkOwnerToken(bearerToken(request), env.SESSION_SIGNING_SECRET, route.preworkId)
+    const owner = await verifyPreworkOwnerToken(bearerToken(request), await signingKey(env), route.preworkId)
     if (!owner && !(route.action === 'close' && await adminAuthorised(request, env))) {
       return errorResponse('owner_auth_required', 'Owner authentication is required.', 401)
     }
@@ -280,7 +283,7 @@ export class RunPrework {
 
     // Owner routes: checked again here (the entry Worker checked first).
     if (!preworkRouteIsPublic(route)) {
-      const owner = await verifyPreworkOwnerToken(bearerToken(request), this.env.SESSION_SIGNING_SECRET, prework.preworkId)
+      const owner = await verifyPreworkOwnerToken(bearerToken(request), await signingKey(this.env), prework.preworkId)
       if (!owner && !(route.action === 'close' && await adminAuthorised(request, this.env))) {
         return errorResponse('owner_auth_required', 'Owner authentication is required.', 401)
       }

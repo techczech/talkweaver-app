@@ -87,7 +87,22 @@ export const MERGED_ROWS: readonly MergedRow[] = [
  * and Audience view are editor-side launches that Launch audience (F5) covers (owner check 10 Oct:
  * "not a command in here and duplicates audience launch").
  */
-export const CHAPTER_EXCLUDED: ReadonlySet<string> = new Set(['present-window', 'present-audience'])
+export const CHAPTER_EXCLUDED: ReadonlySet<string> = new Set([
+  'present-window', 'present-audience',
+  // Plain editing view ticket 01: the two tabs are named in the Guide by ticket 10, not by a practice row yet.
+  'view-plain', 'view-markdown',
+  // Plain editing view ticket 04: the margin menus' palette entries; ticket 10 writes them into the Guide.
+  'change-heading-level', 'change-slide-layout',
+  // Quote forms (ADR-0038): "Quote form: …" are palette commands for one layout's option; the Inspector's
+  // control is the way a person meets them, so the practice talks do not count seven rows for them.
+  'quote-form-auto', 'quote-form-plain', 'quote-form-tweet', 'quote-form-video', 'quote-form-book', 'quote-form-paper', 'quote-form-web',
+  // Collapse all / Expand all sections: two buttons on the Slides outline and the grid, also in the palette.
+  // The buttons are how a person meets them; no row of See the talk until the practice talk has a Try it for them.
+  'outline-collapse-all', 'outline-expand-all',
+  // Move slide to… / Move section to…: rows of the slide and section context menus (Slides outline, grid), also in
+  // the palette and Actions here. No row of Write the outline until the practice talk has a Try it for them.
+  'move-slide-to', 'move-section-to'
+])
 
 /** A command this module reads. The registry's `CommandDefinition` satisfies it (with `taskGroup` set). */
 export interface ChapterCommand {
