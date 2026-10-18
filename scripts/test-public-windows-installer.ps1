@@ -21,17 +21,38 @@ $install = Join-Path $scratch 'installed'
 $installer = Join-Path $scratch 'TalkWeaver-windows-x64-setup.exe'
 $demo = Join-Path $scratch 'TalkWeaver-demo-vault.zip'
 $failures = @()
-function Invoke-BoundedProbe([string]$Executable, [string[]]$Arguments, [string]$Name, [int]$TimeoutSeconds) {
+$startedAt = Get-Date
+Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber, OSArchitecture | ConvertTo-Json | Set-Content (Join-Path $evidence 'windows-version.json')
+function Save-InstallerCrashEvidence {
+  try {
+    # Text events only, limited to this application's installer. Never collect dumps or environment.
+    Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Id = 1000,1001; StartTime = $startedAt } -ErrorAction SilentlyContinue |
+      Where-Object { $_.Message -match 'TalkWeaver-windows-x64-setup|TalkWeaver.exe' } |
+      Select-Object TimeCreated, Id, ProviderName, Message | ConvertTo-Json -Depth 3 |
+      Set-Content (Join-Path $evidence 'installer-crash-events.json')
+  } catch { $_.Exception.Message | Set-Content (Join-Path $evidence 'event-query-error.txt') }
+}
+
+function Invoke-BoundedProbe([string]$Executable, [string[]]$Arguments, [string]$Name, [int]$TimeoutSeconds, [bool]$RedirectOutput = $true) {
   Write-Host "START $Name; limit $TimeoutSeconds seconds"
-  $probe = Start-Process -FilePath $Executable -ArgumentList $Arguments -PassThru -RedirectStandardOutput (Join-Path $evidence "$Name.stdout.log") -RedirectStandardError (Join-Path $evidence "$Name.stderr.log")
+  $options = @{ FilePath = $Executable; ArgumentList = $Arguments; PassThru = $true }
+  if ($RedirectOutput) {
+    $options.RedirectStandardOutput = Join-Path $evidence "$Name.stdout.log"
+    $options.RedirectStandardError = Join-Path $evidence "$Name.stderr.log"
+  }
+  # Controlled repeat: NSIS has no console output. Do not redirect its GUI process handles.
+  $probe = Start-Process @options
   if (-not $probe.WaitForExit($TimeoutSeconds * 1000)) {
     & taskkill.exe /PID $probe.Id /T /F | Out-Null
     throw "$Name exceeded its $TimeoutSeconds second limit"
   }
-  Get-Content (Join-Path $evidence "$Name.stdout.log") | ForEach-Object { Write-Host $_ }
-  Get-Content (Join-Path $evidence "$Name.stderr.log") | ForEach-Object { Write-Host $_ }
+  if ($RedirectOutput) {
+    Get-Content (Join-Path $evidence "$Name.stdout.log") | ForEach-Object { Write-Host $_ }
+    Get-Content (Join-Path $evidence "$Name.stderr.log") | ForEach-Object { Write-Host $_ }
+  }
+  [pscustomobject]@{ name = $Name; exitCode = $probe.ExitCode; redirected = $RedirectOutput; arguments = $Arguments } | ConvertTo-Json | Set-Content (Join-Path $evidence "$Name-process.json")
   Write-Host "END $Name; exit $($probe.ExitCode)"
-  if ($probe.ExitCode -ne 0) { throw "$Name exited with $($probe.ExitCode); retained stdout and stderr contain the failure" }
+  if ($probe.ExitCode -ne 0) { throw "$Name exited with $($probe.ExitCode); see retained process and diagnostic evidence" }
 }
 try {
   $files = @(
@@ -55,10 +76,11 @@ try {
   $env:TW_NSIS_VAULT = Join-Path $scratch 'demo\TalkWeaver demo vault'
   $env:TW_NSIS_INSTALL = $install
   $env:TW_NSIS_EXE = Join-Path $install 'TalkWeaver.exe'
-  Invoke-BoundedProbe $installer @('/S', '/currentuser', "/D=$install") 'install' 180
+  Invoke-BoundedProbe $installer @('/S', '/currentuser', "/D=$install") 'install' 180 $false
   if (-not (Test-Path $env:TW_NSIS_EXE)) { throw 'Silent installer did not create the expected executable in the isolated directory' }
   Invoke-BoundedProbe 'node' @('e2e/diagnose-public-windows-installer.mjs') 'installed-app' 180
 } catch {
+  Save-InstallerCrashEvidence
   $_ | Out-String | Set-Content (Join-Path $evidence 'failure.txt')
   $failures += $_.Exception.Message
 } finally {
