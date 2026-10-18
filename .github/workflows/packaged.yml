@@ -11,6 +11,10 @@ on:
     branches: [main, 'next/**']
   workflow_dispatch:
     inputs:
+      public_installer:
+        description: 'Only verify the existing public v0.39.0 NSIS installer on a disposable Windows runner'
+        type: boolean
+        default: false
       hosted:
         description: 'Run the macOS job on a GitHub-hosted runner instead of the self-hosted Studio (emergency switch; uses paid minutes)'
         type: boolean
@@ -26,7 +30,7 @@ concurrency:
 jobs:
   windows:
     # The Windows half of D13: the launcher, the secrets module and the connection check.
-    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name != 'pull_request'
+    if: (github.event.pull_request.head.repo.full_name == github.repository || github.event_name != 'pull_request') && !inputs.public_installer
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -110,7 +114,7 @@ jobs:
         run: npm run smoke:packaged-wrangler
 
   macos:
-    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name != 'pull_request'
+    if: (github.event.pull_request.head.repo.full_name == github.repository || github.event_name != 'pull_request') && !inputs.public_installer
     runs-on: ${{ inputs.hosted && 'macos-14' || fromJSON('["self-hosted","macOS","ARM64"]') }}
     timeout-minutes: 30
     steps:
@@ -170,3 +174,27 @@ jobs:
       # resources/ffmpeg/ffmpeg chosen with no path set and making transcription's WAV (ticket 08).
       - name: Bundled wrangler runs, publishes and deploys from the packaged build
         run: npm run smoke:packaged-wrangler
+
+  public-nsis-install:
+    if: github.event_name == 'workflow_dispatch' && inputs.public_installer
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Verify official downloads, install, launch synthetic content, and uninstall
+        shell: pwsh
+        run: ./scripts/test-public-windows-installer.ps1
+      - name: Retain assertions, logs and synthetic screenshots only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: talkweaver-public-nsis-validation
+          path: nsis-evidence/
+          if-no-files-found: error
