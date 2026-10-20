@@ -28,11 +28,7 @@ A heading whose braces end a link.
 
 A heading whose brace is escaped.
 
-### Before and after {contrast} {id=n-panels}
+### A list after the headings {id=n-list}
 
-- Before · on paper · slow / After · on one screen · quick
-- Paper forms / One screen
-- Three visits / One visit
-- A week to hear back / An answer the same day
-- No record kept / A record for each rider
-- Cash only / Card and cash
+- Paper forms
+- One screen

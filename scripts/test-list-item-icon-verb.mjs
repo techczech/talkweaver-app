@@ -74,6 +74,8 @@ const ICON_FIELDS = /^\/slides\/(\d+)\/.*\/(iconOverrides(\/\d+)?|cards\/\d+\/ic
 const iconOf = (key) => (key ? `lucide:${key.replace(/^lucide:/, '')}` : '')
 // The model without the copies of the source: two outlines that differ by a token the compiler
 // does not draw have the same one.
+// The slides as rendered (the HTML the talk shows).
+const renderedSlides = (text) => renderSlideSections(modelOf(text)).map(String).join('\n')
 const drawnModel = (text) => JSON.stringify(modelOf(text).slides.map(({ sourceMarkdown, sourceLines, scriptSource, scriptSourceLines, scriptSourceMarkdown, ...rest }) => rest))
 // Every icon the model holds beside an item: `has(text)` picks the items. For each, the icon ('' for none).
 function itemIcons(value, has, out = []) {
@@ -81,6 +83,8 @@ function itemIcons(value, has, out = []) {
   if (!Array.isArray(value)) {
     const rows = Array.isArray(value.items) ? value.items : Array.isArray(value.nodes) ? value.nodes.map((node) => node?.text) : null
     if (rows) rows.forEach((entry, i) => { if (typeof entry === 'string' && has(entry)) out.push([entry, value.iconOverrides?.[i] || '']) })
+    // A contrast block holds its rows as [left, right] pairs; `iconOverrides` is by pair.
+    if (Array.isArray(value.pairs)) value.pairs.forEach((pair, i) => { const joined = Array.isArray(pair) ? pair.filter(Boolean).join(' / ') : ''; if (joined && has(joined)) out.push([joined, value.iconOverrides?.[i] || '']) })
     if (typeof value.title === 'string' && Array.isArray(value.blocks) && !('sourceLine' in value) && has(value.title)) out.push([value.title, value.icon || ''])
   }
   for (const child of Object.values(value)) itemIcons(child, has, out)
@@ -186,6 +190,9 @@ function assertModelShowsWrite(beforeText, afterText, text, key, where) {
 
   const EXPECTED = {
     // layout the compiler gives the slide: [what the verb does, drawn when the list style is icons]
+    // contrast: a row is a [left, right] pair and the row's icon sits on the right side; these rows have no
+    // " / ", so the right side is empty and draws no icon, and the verb refuses (the model still holds the
+    // token by pair, so the check is the rendered slide; the pair cases are checked below the table).
     list: ['allowed', true], 'list-visual': ['allowed', true], 'copy-visual': ['allowed', true], 'timeline-visual': ['allowed', true],
     columns: ['allowed', true], compare: ['allowed', true], cards: ['allowed', true], iconrow: ['allowed', true],
     'stmt-list': ['allowed', true], statement: ['allowed', true], quote: ['allowed', true], links: ['allowed', true],
@@ -195,7 +202,7 @@ function assertModelShowsWrite(beforeText, afterText, text, key, where) {
     carousel: ['allowed', false],
     chart: ['refused'], timeline: ['refused'], timetable: ['refused'], table: ['refused'], stats: ['refused'], sigmoid: ['refused'],
     pyramid: ['refused'], orgchart: ['refused'], mindmap: ['refused'], conceptmap: ['refused'], smartart: ['refused'], 'system-map': ['refused'],
-    process: ['refused'], steps: ['refused'], flow: ['refused'], cycle: ['refused'], equation: ['refused'],
+    process: ['allowed', true], steps: ['refused'], flow: ['refused'], cycle: ['refused'], equation: ['refused'],
     contrast: ['refused'], grid: ['refused'], 'cta-screenshots': ['refused']
   }
   // The same rows under an image (round 3). Some layouts make something else of their rows only
@@ -205,6 +212,59 @@ function assertModelShowsWrite(beforeText, afterText, text, key, where) {
   // compiler both ways (a refusal: the model is the same with the token; a write: the model shows it).
   const WITH_IMAGE = { 'image-claim': 'refused' }
   const rendered = (text) => renderSlideSections(modelOf(text)).map(String).join('\n')
+  {
+    // A contrast row with a right side: the icon is the right side's, the model holds it by pair, and it is drawn.
+    const heading = '### Sales {contrast}'
+    const pairs = `${heading}\n\n- Apples / Pears\n- Plums / Figs\n`
+    const written = pairs.replace('Pears', 'Pears {icon=star}')
+    eq(set(pairs, { heading }, { line: 3 }, 'star'), written, 'contrast pair: set')
+    assertModelShowsWrite(pairs, written, 'Apples / Pears', 'star', 'contrast pair: set')
+    eq(set(written, { heading }, { line: 3 }, null), pairs, 'contrast pair: remove')
+    ok(rendered(written) !== rendered(pairs), 'contrast pair: the icon is drawn')
+    // By item number, replace, already there, and the second row.
+    eq(set(pairs, { heading }, 0, 'star'), written, 'contrast pair: set, by item number')
+    const pinned = written.replace('star', 'zap')
+    eq(set(written, { heading }, { line: 3 }, 'zap'), pinned, 'contrast pair: replace')
+    assertModelShowsWrite(written, pinned, 'Apples / Pears', 'zap', 'contrast pair: replace')
+    same(call(pinned, { heading }, { line: 3 }, 'zap'), { ok: true, text: pinned, changed: false }, 'contrast pair: already there')
+    const second = pairs.replace('Figs', 'Figs {icon=star}')
+    eq(set(pairs, { heading }, { line: 4 }, 'star'), second, 'contrast pair: the second row')
+    assertModelShowsWrite(pairs, second, 'Plums / Figs', 'star', 'contrast pair: the second row')
+    ok(rendered(second) !== rendered(pairs), 'contrast pair: the second row\'s icon is drawn')
+  }
+  {
+    // Contrast rows whose icon the slide does NOT draw: the model holds the token by pair, but the
+    // rendered slide is the same, so every write is refused and the outline comes back as given.
+    const cases = []
+    for (const variant of ['ledger', 'rows', 'tint', 'flip']) {
+      cases.push([`{contrast=${variant}}`, `### Sales {contrast=${variant}}`, ['Apples / Pears', 'Plums / Figs'], 0])
+    }
+    // 4 and 5 pairs: pair 0 is the panel heads, which take an icon only from a brand name.
+    cases.push(['head row, 4 pairs', '### Sales {contrast}', ['Old / New', 'Apples / Pears', 'Plums / Figs', 'Dates / Limes'], 0])
+    cases.push(['head row, 5 pairs', '### Sales {contrast}', ['Old / New', 'Apples / Pears', 'Plums / Figs', 'Dates / Limes', 'Kiwis / Grapes'], 0])
+    // An empty right side: nothing is drawn on the row.
+    cases.push(['empty right side', '### Sales {contrast}', ['Apples', 'Plums / Figs'], 0])
+    for (const [label, heading, rows, item] of cases) {
+      const input = `${heading}\n\n${rows.map((row) => `- ${row}`).join('\n')}\n`
+      const line = 3 + item
+      const written = input.split('\n').map((text, i) => (i === line - 1 ? `${text} {icon=star}` : text)).join('\n')
+      const pinned = written.replace('star', 'zap')
+      const where = `contrast, ${label}`
+      eq(rendered(written), rendered(input), `${where}: the slide is drawn the same with the token`)
+      eq(refused(input, { heading }, { line }, 'star'), 'icon-not-drawn-here', `${where}: set`)
+      eq(refused(input, { heading }, item, 'star'), 'icon-not-drawn-here', `${where}: set, by item number`)
+      eq(refused(pinned, { heading }, { line }, 'star'), 'icon-not-drawn-here', `${where}: replace`)
+      eq(refused(pinned, { heading }, { line }, null), 'icon-not-drawn-here', `${where}: remove`)
+      eq(refused(pinned, { heading }, { line }, 'zap'), 'icon-not-drawn-here', `${where}: already there`)
+    }
+    // With 4 pairs, a body row is drawn and takes the icon.
+    const heading = '### Sales {contrast}'
+    const headed = `${heading}\n\n- Old / New\n- Apples / Pears\n- Plums / Figs\n- Dates / Limes\n`
+    const written = headed.replace('Pears', 'Pears {icon=star}')
+    eq(set(headed, { heading }, { line: 4 }, 'star'), written, 'contrast, 4 pairs: a body row')
+    assertModelShowsWrite(headed, written, 'Apples / Pears', 'star', 'contrast, 4 pairs: a body row')
+    ok(rendered(written) !== rendered(headed), 'contrast, 4 pairs: the body row\'s icon is drawn')
+  }
   const seen = {}
   const seenWithImage = {}
   for (const token of ['', ...Object.keys(TRIGGER_DICTIONARY), 'chart=bar', 'chart=pie', 'cards=grid']) {
@@ -220,7 +280,8 @@ function assertModelShowsWrite(beforeText, afterText, text, key, where) {
     const written = `${heading}\n\n- Apples: 5 {icon=star}\n- Pears: 3\n- Plums: 4\n`
     const pinned = written.replace('star', 'zap')
     if (expected[0] === 'refused') {
-      eq(drawnModel(written), drawnModel(input), `${where}: the compiler draws the same with the token`)
+      if (layout === 'contrast') eq(rendered(written), rendered(input), `${where}: the slide is drawn the same with the token`)
+      else eq(drawnModel(written), drawnModel(input), `${where}: the compiler draws the same with the token`)
       eq(refused(input, { heading }, { line: 3 }, 'star'), 'icon-not-drawn-here', `${where}: set`)
       eq(refused(input, { heading }, 1, 'star'), 'icon-not-drawn-here', `${where}: set, by item number`)
       eq(refused(pinned, { heading }, { line: 3 }, 'star'), 'icon-not-drawn-here', `${where}: replace`)
@@ -259,7 +320,8 @@ function assertModelShowsWrite(beforeText, afterText, text, key, where) {
     const written = input.replace('- Apples: 5', '- Apples: 5 {icon=star}')
     const pinned = written.replace('star', 'zap')
     if (verdict === 'refused') {
-      eq(drawnModel(written), drawnModel(input), `${where}: the compiler draws the same with the token`)
+      if (layout === 'contrast') eq(rendered(written), rendered(input), `${where}: the slide is drawn the same with the token`)
+      else eq(drawnModel(written), drawnModel(input), `${where}: the compiler draws the same with the token`)
       eq(refused(input, { heading }, { line: 5 }, 'star'), 'icon-not-drawn-here', `${where}: set`)
       eq(refused(pinned, { heading }, { line: 5 }, 'star'), 'icon-not-drawn-here', `${where}: replace`)
       eq(refused(pinned, { heading }, { line: 5 }, null), 'icon-not-drawn-here', `${where}: remove`)
@@ -780,7 +842,12 @@ function checkDocument(doc) {
       const already = TOKEN.test(row) && key && iconOf(key) === iconOf(TOKEN.exec(row)[0].replace(/[{}]|icon=/g, ''))
       a[expect.line] = ownSplice(row, already ? null : key)
       before ??= drawnModel(text)
-      assert.equal(drawnModel(a.join(eol)), before, `${where}: refused as not drawn, but the compiler draws line ${expect.line + 1} differently with the token ${already ? 'taken out' : 'changed'}`)
+      const other = a.join(eol)
+      // A contrast block holds every row's icon by pair, drawn or not (a variant, the panel heads, an
+      // empty right side draw none): there the model differs, so the rendered slides are compared.
+      if (drawnModel(other) !== before) {
+        assert.equal(renderedSlides(other), renderedSlides(text), `${where}: refused as not drawn, but the compiler draws line ${expect.line + 1} differently with the token ${already ? 'taken out' : 'changed'}`)
+      }
       tally.notDrawnChecked += 1
       return
     }

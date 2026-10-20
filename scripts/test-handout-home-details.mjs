@@ -2,7 +2,7 @@
 // navy band, the planned start that keeps the page on its "before the talk" layout, the "Before the
 // session" steps and the links mentioned.
 import assert from 'node:assert/strict'
-import { handoutDayLabel, handoutHomeDetails, handoutHomePrework, handoutLookAhead, LOOK_AHEAD_OFF_WORDS } from '../src/shared/handout-home.ts'
+import { handoutDayLabel, handoutHomeDetails, handoutHomePostwork, handoutHomePrework, handoutLookAhead, LOOK_AHEAD_OFF_WORDS } from '../src/shared/handout-home.ts'
 import { collectTalkLinks, handoutHomeMarkup } from '../compiler/scripts/lib/handout-home.mjs'
 import { DECK_FLAG_OFF } from '../compiler/scripts/lib/deck-settings.mjs'
 import { buildShareHtml } from '../compiler/scripts/lib/09-output-builders.mjs'
@@ -89,4 +89,43 @@ assert.ok(withHome.includes('<a class="btn share-home" id="shareHome" href="./">
 assert.ok(!buildShareHtml(shareArgs).includes('id="shareHome"'), 'the download file and other exports have no home link')
 assert.ok(!buildShareHtml({ ...shareArgs, homeHref: '"><script>' }).includes('"><script>'), 'the link target is escaped')
 assert.ok(!buildShareHtml({ ...shareArgs, homeHref: './', home: { slidesHref: 'agents.html' } }).includes('id="shareHome"'), 'the home page itself has no link to itself')
-console.log('PASS handout home details: band parts, planned start, look-ahead setting, pre-work steps, links mentioned, escaping, nothing drawn without data, slides view link home')
+// Work-files ticket 16: the pre-work rows and "Start the pre-work" go to the Run's pre-work page; post-work has its own card.
+{
+  assert.equal(handoutHomePrework({ title: 'Intake', steps: [{ title: 'Watch', kind: 'video' }] }, 'pre-work/').href, 'pre-work/')
+  assert.deepEqual(handoutHomePostwork({ title: 'After the session' }, 'post-work/'), { href: 'post-work/', label: 'After the session' })
+  assert.equal(handoutHomePostwork({ title: 'x' }, ''), null)
+  assert.equal(handoutHomePostwork(null, 'post-work/'), null)
+  const both = handoutHomeMarkup({ ...home, prework: { label: 'Intake', detail: '1 step', href: 'pre-work/', steps: [{ label: 'Watch', minutes: null, kind: 'video' }] }, postwork: { label: 'After the session', href: 'post-work/' } }, { title: 'Agents', slideCount: 1 })
+  assert.match(both, /id="hhPrework"[^]*?<a class="hh-row" href="pre-work\/">/)
+  assert.match(both, /id="hhStartPrework" href="pre-work\/"/)
+  assert.match(both, /id="hhPostwork" data-hh-for="handout"[^]*?<h2>After the session<\/h2>[^]*?href="post-work\/"/)
+  for (const bad of ['javascript:alert(1)', '"><script>', '//evil.test/', '../../x/y', 'file:///etc']) {
+    const html = handoutHomeMarkup({ ...home, postwork: { label: 'P', href: bad } }, { title: 'Agents', slideCount: 1 })
+    assert.equal(html.includes('id="hhPostwork"'), false, `a post-work link ${bad} is not drawn`)
+  }
+  assert.ok(!handoutHomeMarkup({ ...home }, { title: 'Agents', slideCount: 1 }).includes('hhPostwork'), 'no post-work, no card')
+}
+
+// Work-files ticket 24: a Run's extras card. Without extras the markup is exactly what it was (the talk's
+// home page never has them); with them, every value is escaped and only http(s) links are drawn.
+{
+  const plain = handoutHomeMarkup({ ...home }, { title: 'Agents', slideCount: 1 })
+  for (const none of [null, undefined, {}, 'note', { intro: '  ', links: [] }, { links: [{ url: 'javascript:alert(1)' }] }]) {
+    assert.equal(handoutHomeMarkup({ ...home, extras: none }, { title: 'Agents', slideCount: 1 }), plain, `no card, the same markup: ${JSON.stringify(none)}`)
+  }
+  const html = handoutHomeMarkup({ ...home, extras: { intro: 'A & B <b>\nnext', links: [
+    { url: 'https://example.org/?q=1&r=2', label: '<i>Read</i>' }, { url: 'https://www.example.net/x' },
+    { url: 'javascript:alert(1)', label: 'js' }, { url: 'data:text/html,x', label: 'data' }, { url: 'https://x.test/"onmouseover=alert(1)', label: 'quote' }, { url: '//evil.test/', label: 'rel' },
+  ] } }, { title: 'Agents', slideCount: 1 })
+  const card = /<section class="hh-card hh-list" id="hhExtras" data-hh-for="before handout"><h2>For this session<\/h2>[^]*?<\/section>/.exec(html)?.[0]
+  assert.ok(card)
+  assert.ok(card.includes('<p class="hh-note">A &amp; B &lt;b&gt;<br>next</p>'))
+  assert.ok(card.includes('href="https://example.org/?q=1&amp;r=2"') && card.includes('&lt;i&gt;Read&lt;/i&gt;'))
+  assert.ok(card.includes('<span class="hh-row-text">example.net</span>'), 'no name: the host')
+  assert.equal((card.match(/class="hh-row"/g) || []).length, 2, 'only the two http(s) links are drawn')
+  assert.equal(/javascript:|data:|onmouseover|evil\.test/.test(card), false)
+  const introOnly = handoutHomeMarkup({ ...home, extras: { intro: 'Hi' } }, { title: 'Agents', slideCount: 1 })
+  assert.match(introOnly, /<section class="hh-card" id="hhExtras" data-hh-for="before handout"><h2>For this session<\/h2><p class="hh-note">Hi<\/p><\/section>/)
+}
+
+console.log('PASS handout home details: band parts, planned start, look-ahead setting, pre-work steps, links mentioned, escaping, nothing drawn without data, slides view link home, Run extras card')

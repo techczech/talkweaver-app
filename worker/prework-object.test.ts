@@ -61,7 +61,7 @@ async function setUp(transactions: boolean) {
     Promise<{ seq: number; people: number; entries: unknown[] }>
   const stored = () => JSON.parse((db.prepare('SELECT value FROM kv WHERE key = ?').get('prework') as { value: string }).value) as { seq: number; participants: number }
   const close = () => object.fetch(new Request('https://w.test/prework/ab12cd34/close', { method: 'POST', headers: { authorization: `Bearer ${token}` } }))
-  return { control, submit, results, stored, db, close }
+  return { control, submit, results, stored, db, close, object, token, state }
 }
 
 describe('a storage write that fails mid-submission', () => {
@@ -147,5 +147,123 @@ describe('the network source the entry Worker passes on', () => {
     const statusRoute = parsePreworkRoute('/prework/ab12cd34')!
     const status = await forwardToPrework(new Request('https://w.test/prework/ab12cd34'), env(), statusRoute)
     expect(status.status).toBe(201)
+  })
+})
+
+describe('withdraw and the phase, through the object', () => {
+  const env = { SESSION_SIGNING_SECRET: SECRET, ADMIN_SECRET: 'admin' } as never
+  const json = async (response: Response) => ({ status: response.status, body: await response.json() as Record<string, unknown> & { error?: { code: string } } })
+
+  test('withdrawn: every public route answers 404 not_available; the owner still pages every answer; putting it back serves it', async () => {
+    const { object, token, submit } = await setUp(true)
+    expect((await submit('device-0123456789abcdef', 'w-1')).status).toBe(201)
+    const owner = (path: string, init: RequestInit = {}) => object.fetch(new Request(`https://w.test/prework/ab12cd34/${path}`, { ...init, headers: { authorization: `Bearer ${token}` } }))
+    // Only the owner token withdraws; the admin secret does not.
+    expect((await object.fetch(new Request('https://w.test/prework/ab12cd34/withdraw', { method: 'POST' }))).status).toBe(401)
+    expect((await object.fetch(new Request('https://w.test/prework/ab12cd34/withdraw', { method: 'POST', headers: { authorization: 'Bearer admin' } }))).status).toBe(401)
+    expect((await owner('withdraw', { method: 'POST', body: '{"withdrawn":"yes"}' })).status).toBe(400)
+    const withdrawn = await json(await owner('withdraw', { method: 'POST' }))
+    expect(withdrawn).toMatchObject({ status: 200, body: { ok: true, withdrawn: true } })
+    const publics = [
+      await object.fetch(new Request('https://w.test/prework/ab12cd34')),
+      await submit('device-0123456789abcdef', 'w-2'),
+      await object.fetch(new Request('https://w.test/prework/ab12cd34/mine', { method: 'POST', body: JSON.stringify({ participantId: 'device-0123456789abcdef' }) })),
+      await object.fetch(new Request('https://w.test/prework/ab12cd34/mine', { method: 'POST', body: 'not json' })),
+    ]
+    for (const response of publics) {
+      // Never cached, like the status it stands in for: published again, it is seen again at once.
+      expect(response.headers.get('cache-control')).toBe('no-store')
+      expect(await json(response)).toMatchObject({ status: 404, body: { error: { code: 'not_available' } } })
+    }
+    const page = await json(await owner('results?after=0'))
+    expect(page).toMatchObject({ status: 200, body: { withdrawn: true, state: 'open', phase: 'pre', people: 1 } })
+    expect((page.body.entries as unknown[]).length).toBe(1)
+    expect(await json(await owner('withdraw', { method: 'POST', body: '{"withdrawn":false}' }))).toMatchObject({ status: 200, body: { withdrawn: false } })
+    expect(await json(await object.fetch(new Request('https://w.test/prework/ab12cd34')))).toMatchObject({ status: 200, body: { state: 'open', phase: 'pre' } })
+    expect((await submit('device-0123456789abcdef', 'w-3')).status).toBe(200)
+  })
+
+  test('an object stored by 0.37 (no phase in storage) answers as pre-work after a restart and refuses post-work', async () => {
+    const { db, state, token } = await setUp(true)
+    const row = db.prepare('SELECT value FROM kv WHERE key = ?').get('prework') as { value: string }
+    const old = JSON.parse(row.value) as Record<string, unknown>
+    delete old.phase
+    delete old.withdrawnAt
+    db.prepare('UPDATE kv SET value = ? WHERE key = ?').run(JSON.stringify(old), 'prework')
+    const restarted = new RunPrework(state as never, env)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(await json(await restarted.fetch(new Request('https://w.test/prework/ab12cd34')))).toMatchObject({ status: 200, body: { phase: 'pre' } })
+    const push = (phase: string) => restarted.fetch(new Request('https://w.test/prework/ab12cd34/form', {
+      method: 'PUT', headers: { authorization: `Bearer ${token}` },
+      body: JSON.stringify({ phase, opensAt: Date.now() - 1_000, closesAt: Date.now() + 3_600_000, form }),
+    }))
+    expect(await json(await push('post'))).toMatchObject({ status: 409, body: { error: { code: 'phase_mismatch' } } })
+    expect(await json(await push('pre'))).toMatchObject({ status: 200, body: { status: { phase: 'pre' } } })
+  })
+
+  test('close: an early close by the owner is lifted by a later closing time; one by the admin is not', async () => {
+    const { object, token } = await setUp(true)
+    const owner = (path: string, init: RequestInit = {}) => object.fetch(new Request(`https://w.test/prework/ab12cd34/${path}`, { ...init, headers: { authorization: `Bearer ${token}` } }))
+    const push = (closesAt: number, withForm = true) => owner('form', { method: 'PUT', body: JSON.stringify({ phase: 'pre', opensAt: Date.now() - 1_000, closesAt, ...(withForm ? { form } : {}) }) })
+    const state = async () => (await json(await object.fetch(new Request('https://w.test/prework/ab12cd34')))).body.state
+    expect((await owner('close', { method: 'POST' })).status).toBe(200)
+    expect(await state()).toBe('closed')
+    // A window-only push with a later closing time: the owner's close is lifted.
+    expect((await push(Date.now() + 7_200_000, false)).status).toBe(200)
+    expect(await state()).toBe('open')
+    const admin = await object.fetch(new Request('https://w.test/prework/ab12cd34/close', { method: 'POST', headers: { authorization: 'Bearer admin' } }))
+    expect(admin.status).toBe(200)
+    expect((await push(Date.now() + 9_000_000)).status).toBe(200)
+    expect(await state()).toBe('closed')
+  })
+})
+
+describe('Local only steps and the count of responses waiting (2026-10-19 prework-responses design)', () => {
+  const mixed = {
+    title: 'Before the session', intro: '',
+    steps: [
+      { id: 'pwwelcome', n: 1, title: 'Welcome', kind: 'slide', questions: true },
+      { id: 'want', n: 2, title: 'What do you want?', kind: 'question', questions: true, poll: { type: 'open', question: '', options: [] } },
+      { id: 'try', n: 3, title: 'Try a prompt', kind: 'task', questions: true, done: true, local: true },
+    ],
+  }
+  async function mixedSetUp() {
+    const { object, token } = await setUp(true)
+    const owner = (path: string, init: RequestInit = {}) => object.fetch(new Request(`https://w.test/prework/ab12cd34/${path}`, { ...init, headers: { authorization: `Bearer ${token}` } }))
+    expect((await owner('form', { method: 'PUT', body: JSON.stringify({ phase: 'pre', opensAt: Date.now() - 1_000, closesAt: Date.now() + 3_600_000, form: mixed }) })).status).toBe(200)
+    const submit = (body: Record<string, unknown>) => object.fetch(new Request('https://w.test/prework/ab12cd34/submit', {
+      method: 'POST', headers: { 'x-tw-prework-source': '203.0.113.7' }, body: JSON.stringify({ participantId: 'device-0123456789abcdef', ...body }),
+    }))
+    const waiting = async (after: number) => (await owner(`waiting?after=${after}`)).json() as Promise<{ seq: number; waiting: number }>
+    return { object, owner, submit, waiting }
+  }
+
+  test('the Worker refuses a read, an answer or a done mark for a Local only step; a question about it still goes', async () => {
+    const { submit } = await mixedSetUp()
+    for (const [id, body] of [['l1', { kind: 'done', done: true }], ['l2', { kind: 'read' }]] as const) {
+      const refused = await submit({ submissionId: id, stepId: 'try', ...body })
+      expect(refused.status).toBe(400)
+      expect(((await refused.json()) as { error: { code: string } }).error.code).toBe('step_local')
+    }
+    expect((await submit({ submissionId: 'q1', stepId: 'try', kind: 'question', text: 'Which paper?' })).status).toBe(201)
+  })
+
+  test('waiting counts answers and questions after the cursor, never reads, and reads nothing out', async () => {
+    const { submit, waiting, object } = await mixedSetUp()
+    expect(await waiting(0)).toEqual({ seq: 0, waiting: 0 })
+    expect((await submit({ submissionId: 'r1', stepId: 'pwwelcome', kind: 'read' })).status).toBe(201)
+    expect((await submit({ submissionId: 'a1', stepId: 'want', kind: 'answer', text: 'Checking citations.' })).status).toBe(201)
+    expect((await submit({ submissionId: 'q1', stepId: 'want', kind: 'question', text: 'Is it safe?' })).status).toBe(201)
+    const all = await waiting(0)
+    expect(all).toEqual({ seq: 3, waiting: 2 })
+    expect(Object.keys(all).sort()).toEqual(['seq', 'waiting'])
+    expect(await waiting(2)).toEqual({ seq: 3, waiting: 1 })
+    expect(await waiting(3)).toEqual({ seq: 3, waiting: 0 })
+    // The owner's route: no token, no count.
+    expect((await object.fetch(new Request('https://w.test/prework/ab12cd34/waiting?after=0'))).status).toBe(401)
+  })
+
+  test('the entry Worker takes waiting as an owner GET and keeps only ?after=', () => {
+    expect(parsePreworkRoute('/prework/ab12cd34/waiting')).toEqual({ preworkId: 'ab12cd34', action: 'waiting' })
   })
 })

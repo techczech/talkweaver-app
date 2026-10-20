@@ -17,12 +17,14 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { execFile, execFileSync, spawn } from 'node:child_process'
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { symlinkSync, utimesSync, chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createArchiveProvider } from '../src/main/image-search/archive-provider.ts'
 import { imageMagic } from '../src/main/image-search/image-file.ts'
-import { createImageSearch, toPaletteHit } from '../src/main/image-search/image-search.ts'
+import { importImageForTalk } from '../src/main/image-search/image-import.ts'
+import { createVaultPictureSearch, gatherVaultImages, parseVaultPictureUrl, scanVaultPool, twassetFileFor, vaultPictureUrl } from '../src/main/image-search/vault-pictures.ts'
+import { createImageSearch } from '../src/main/image-search/image-search.ts'
 import { createSlideWellProvider, fileNameWhere, ftsQuery, locateSlideWell, READ_BUSY_MS, READ_LIMIT_MS } from '../src/main/image-search/slidewell-provider.ts'
 import { detectSqlite3, sqliteQuery } from '../src/main/image-search/sqlite-read.ts'
 import { twarchiveUrl } from '../src/main/image-search/thumb-url.ts'
@@ -190,38 +192,40 @@ for (const [name, provider, absent] of [
 }
 
 // ── archive: the palette sees exactly what it always saw ─────────────────────────────────────
-const legacyHit = (sha, pid, rel, text, path, title) => ({
-  assetKey: sha, presentationId: pid, relPath: rel, sha256: sha, ocrText: text, thumbUrl: 'twarchive://f/' + Buffer.from(path).toString('base64url'), deckTitle: title
-})
-const expectedPalette = [
-  legacyHit(SHA_A, 'Harbour Talk 2019', 'media/image1.png', 'Harbour lights map with long caption text', fileA, 'Harbour Talk 2019'),
-  legacyHit(SHA_C, PID_UUID, 'media/image3.png', 'harbour lights 50% off_sale', fileC, undefined),
-  legacyHit(SHA_B, 'Harbour Talk 2019', 'media/image2.jpg', 'Harbour lights', fileB, 'Harbour Talk 2019')
+// The picture hits of a search, without old slides (the picture list the palette used to show).
+const pictureHit = (sha, text, path) => ({ key: 'archive:' + sha, ocrText: text, thumbUrl: 'twarchive://f/' + Buffer.from(path).toString('base64url') })
+const expectedPictures = [
+  pictureHit(SHA_A, 'Harbour lights map with long caption text', fileA),
+  pictureHit(SHA_C, 'harbour lights 50% off_sale', fileC),
+  pictureHit(SHA_B, 'Harbour lights', fileB)
 ]
-await test('archive: palette results without SlideWell are today\'s, in today\'s order', async () => {
+const pictures = async (s, q) => ((await s.search(q))?.hits ?? [])
+  .filter((h) => h.source !== 'old-slide')
+  .map(({ key, ocrText, thumbUrl }) => ({ key, ocrText, thumbUrl }))
+await test('archive: picture results without SlideWell are today\'s, in today\'s order', async () => {
   for (const search of [
     createImageSearch({ slidewell: null, archive }),
     createImageSearch({ slidewell: slidewellProvider({ location: () => null }), archive })
   ]) {
-    assert.deepEqual(await search.status(), { provider: 'archive' })
-    assert.deepEqual(await search.paletteSearch('harbour lights'), expectedPalette)
-    assert.deepEqual(await search.paletteSearch(''), [])
+    assert.deepEqual(await search.status(), { provider: 'archive', archive: true })
+    assert.deepEqual(await pictures(search, 'harbour lights'), expectedPictures)
+    assert.deepEqual(await pictures(search, ''), [])
   }
 })
 await test('archive: LIKE wildcards are literal, words are ANDed, slides and missing files skipped', async () => {
   const search = createImageSearch({ slidewell: null, archive })
-  assert.deepEqual((await search.paletteSearch('50%')).map((h) => h.assetKey), [SHA_C])
-  assert.deepEqual((await search.paletteSearch('off_sale')).map((h) => h.assetKey), [SHA_C])
-  assert.deepEqual(await search.paletteSearch('harbour zebra'), [])
-  assert.deepEqual((await search.paletteSearch('slide')).length, 0)
+  assert.deepEqual((await pictures(search, '50%')).map((h) => h.key), ['archive:' + SHA_C])
+  assert.deepEqual((await pictures(search, 'off_sale')).map((h) => h.key), ['archive:' + SHA_C])
+  assert.deepEqual(await pictures(search, 'harbour zebra'), [])
+  assert.deepEqual((await pictures(search, 'slide')).length, 0)
 })
 await test('archive: import provenance is unchanged; nothing at all without an archive', async () => {
   const f = await archive.fileFor(twarchiveUrl(fileB))
   assert.deepEqual(f, { absPath: fileB, provenance: { source: 'ppt-archive', note: 'imported from ppt-archive: ' + fileB } })
   assert.equal((await archive.fileFor(fileB))?.absPath, fileB, 'a raw absolute path still works, as before')
   const none = createImageSearch({ slidewell: null, archive: createArchiveProvider({ archiveRoot: () => null, sqlite3: () => sqlite3 }) })
-  assert.deepEqual(await none.status(), { provider: null })
-  assert.equal(await none.paletteSearch('harbour'), null)
+  assert.deepEqual(await none.status(), { provider: null, archive: false })
+  assert.equal(await none.search('harbour'), null)
 })
 
 // ── SlideWell ─────────────────────────────────────────────────────────────────────────────
@@ -242,10 +246,9 @@ await test('slidewell: a screenshot is found by its window title, with app and d
   assert.equal(hit.score, 1)
   assert.equal((await search.fileFor(hit.thumbUrl)).absPath, shotFile)
   assert.equal((await search.fileFor(hit.thumbUrl)).provenance.source, 'screenshot')
-  // prefix match while typing, and the palette's shape carries the caption
+  // prefix match while typing, and the caption is title · detail
   assert.ok((await search.search('Showc', { match: 'words' })).hits.some((h) => h.key === hit.key))
-  const palette = await search.paletteSearch('Layout Showcase')
-  assert.ok(palette.some((p) => p.assetKey === 'triage:aaaa11112222' && p.deckTitle === 'Harbour Lights Layout Showcase · Google Chrome · 2026-10-08'))
+  assert.equal([hit.title, hit.detail].filter(Boolean).join(' · '), 'Harbour Lights Layout Showcase · Google Chrome · 2026-10-08')
 })
 await test('slidewell: emptied, Bin and online-only screenshots stay hidden; a fresh throwaway is listed', async () => {
   const titles = (await search.search('Harbour Lights', { match: 'words' })).hits.map((h) => h.title)
@@ -329,12 +332,17 @@ await test('slidewell: the store is never written', async () => {
   assert.equal(digest(join(wellRoot, 'triage.db')), before.triage)
   assert.deepEqual(readdirSync(wellRoot).sort(), before.files)
 })
+await test('status: says which sources exist, so the drawer can name where pictures come from', async () => {
+  const noArchive = createArchiveProvider({ archiveRoot: () => null, sqlite3: () => sqlite3 })
+  assert.deepEqual(await createImageSearch({ slidewell: slidewellProvider(), archive }).status(), { provider: 'slidewell', archive: true })
+  assert.deepEqual(await createImageSearch({ slidewell: slidewellProvider(), archive: noArchive }).status(), { provider: 'slidewell', archive: false })
+})
 await test('fallback: a failing SlideWell provider hands the search to the archive', async () => {
   const broken = { name: 'slidewell', available: async () => true, search: async () => { throw new Error('store locked') }, fileFor: async () => null }
   const s = createImageSearch({ slidewell: broken, archive })
   const res = await s.search('harbour lights')
   assert.equal(res.provider, 'archive')
-  assert.deepEqual(res.hits.map(toPaletteHit), expectedPalette)
+  assert.deepEqual(res.hits.map(({ key, ocrText, thumbUrl }) => ({ key, ocrText, thumbUrl })), expectedPictures)
 })
 await test('fts query: user text is always quoted words, never syntax', () => {
   assert.equal(ftsQuery(['Layout', 'Show"case', 'OR', 'NEAR(x']), '"Layout"* "Showcase"* "OR"* "NEAR(x"*')
@@ -591,6 +599,227 @@ await test('round 2: a PNG needs all eight signature bytes', async () => {
   assert.equal(await unsearched.fileFor(twarchiveUrl(join(archiveRoot, 'media-store', '2'.repeat(64) + '.png'))), null)
   assert.equal(await unsearched.fileFor(twarchiveUrl(bad)), null, 'registered, but not a PNG')
 })
+
+// ── In your talks: the pictures already in the open vaults (vault-pictures.ts) ─────────────────
+const vaultA = dir('vaults', 'a')
+const vaultB = dir('vaults', 'b')
+const outside = dir('vaults', 'outside')
+const poolA = dir('vaults', 'a', '_assets')
+const poolB = dir('vaults', 'b', '_assets')
+const picA = file(join(poolA, 'img-aaaaaaa.png'))
+const picA2 = file(join(poolA, 'img-bbbbbbb.jpg'))
+const picB = file(join(poolB, 'img-ccccccc.png'))
+utimesSync(picA, 1_700_000_000, 1_700_000_000) // older
+utimesSync(picA2, 1_800_000_000, 1_800_000_000) // newer
+utimesSync(picB, 1_750_000_000, 1_750_000_000)
+writeFileSync(join(poolA, 'notes.txt'), 'not a picture')
+writeFileSync(join(poolA, 'img-ddddddd.png'), 'named like a picture, but not one')
+file(join(outside, 'secret.png'))
+symlinkSync(join(outside, 'secret.png'), join(poolA, 'img-eeeeeee.png')) // a link out of the vault
+symlinkSync(picA, join(poolA, 'img-fffffff.png')) // a link inside the vault is a link too
+const sidecars = {
+  [vaultA + ':img-aaaaaaa']: { alt: 'a quay at night', caption: 'Harbour lights at dusk', source: '', tags: ['estuary', 'Evening'] },
+  [vaultA + ':img-bbbbbbb']: { alt: 'Whiteboard photo', caption: '', source: '', tags: [] },
+  [vaultB + ':img-ccccccc']: null
+}
+const talksOf = {
+  [vaultA]: [{ title: 'Staff briefing', outlinePath: join(vaultA, 'staff', 'staff-outline.md') }, { title: 'Oxford AI Day', outlinePath: join(vaultA, 'day', 'day-outline.md') }],
+  [vaultB]: [{ title: 'Other vault talk', outlinePath: join(vaultB, 't', 't-outline.md') }]
+}
+dir('vaults', 'a', 'staff'); dir('vaults', 'a', 'day'); dir('vaults', 'b', 't')
+writeFileSync(talksOf[vaultA][0].outlinePath, '# One\n\n![](img-aaaaaaa)\n\n# Two\n\n![](img-aaaaaaa)\n![](img-bbbbbbb)\n')
+writeFileSync(talksOf[vaultA][1].outlinePath, '# Day\n\n![alt](img-aaaaaaa)\n')
+writeFileSync(talksOf[vaultB][0].outlinePath, '# T\n\n![](img-aaaaaaa)\n![](img-ccccccc)\n') // B's img-aaaaaaa is a name in B's own pool: not A's picture
+let vaultList = [{ id: 'va', root: vaultA, name: 'A' }, { id: 'vb', root: vaultB, name: 'B' }]
+let clock = 1000
+let sidecarReads = 0
+const vp = createVaultPictureSearch({
+  vaults: () => vaultList,
+  readSidecar: (root, id) => { sidecarReads++; return sidecars[root + ':' + id] ?? null },
+  talks: (root) => talksOf[root] ?? [],
+  now: () => clock
+})
+
+await test('In your talks: the scan lists plain pictures of the pool, newest first, and nothing else', () => {
+  assert.deepEqual(scanVaultPool(vaultA).map((p) => p.id), ['img-bbbbbbb', 'img-aaaaaaa'], 'text files, fake pictures and links are left out')
+  assert.deepEqual(scanVaultPool(vaultB).map((p) => p.id), ['img-ccccccc'])
+  assert.deepEqual(scanVaultPool(join(base, 'nowhere')), [])
+})
+
+await test('In your talks: the scan stays inside the vault; a link on the folder, or on a file, is refused', () => {
+  // _assets itself a link to a folder of pictures elsewhere
+  const vaultC = dir('vaults', 'c')
+  symlinkSync(join(base, 'vaults', 'a', '_assets'), join(vaultC, '_assets'))
+  assert.deepEqual(scanVaultPool(vaultC), [], '_assets as a link is not this vault’s pool')
+  assert.deepEqual(gatherVaultImages(vaultC, []), [])
+  // a talk folder whose assets/ is a link out
+  const vaultD = dir('vaults', 'd')
+  dir('vaults', 'd', 'talk')
+  symlinkSync(outside, join(vaultD, 'talk', 'assets'))
+  assert.deepEqual(gatherVaultImages(vaultD, [join(vaultD, 'talk', 'x-outline.md')]), [])
+  // the contained gather (the OCR pass's) still finds the plain files and refuses links
+  const found = gatherVaultImages(vaultA, []).map((p) => p.split('/').pop()).sort()
+  assert.deepEqual(found, ['img-aaaaaaa.png', 'img-bbbbbbb.jpg', 'img-ddddddd.png'].sort(), 'plain files by extension; links out')
+  assert.ok(!found.includes('img-eeeeeee.png') && !found.includes('img-fffffff.png'))
+})
+
+await test('In your talks: an empty query lists the newest pictures of every open vault first', () => {
+  const r = vp.search('')
+  assert.equal(r.vaults, 2)
+  assert.deepEqual(r.hits.map((h) => h.key), ['vault:va:img-bbbbbbb', 'vault:vb:img-ccccccc', 'vault:va:img-aaaaaaa'])
+  const hit = r.hits[2]
+  assert.equal(hit.source, 'vault-image')
+  assert.equal(hit.title, 'Harbour lights at dusk', 'the caption is the title')
+  assert.equal(hit.thumbUrl, 'twasset://img-aaaaaaa?vault=va', 'thumbnails go through twasset://')
+  assert.equal(hit.vault, undefined, 'the hit carries no vault root: an insert always goes through the import')
+  assert.equal(r.hits[0].title, 'Whiteboard photo', 'no caption: the alt text')
+  assert.equal(r.hits[1].title, 'img-ccccccc.png', 'no sidecar: the file name')
+})
+
+await test('In your talks: words match the sidecar caption, alt text, tags and file name, case-insensitively', () => {
+  const keys = (q) => vp.search(q).hits.map((h) => h.key)
+  assert.deepEqual(keys('HARBOUR'), ['vault:va:img-aaaaaaa'], 'caption')
+  assert.deepEqual(keys('quay'), ['vault:va:img-aaaaaaa'], 'alt text')
+  assert.deepEqual(keys('evening estuary'), ['vault:va:img-aaaaaaa'], 'tags, every word must match')
+  assert.deepEqual(keys('harbour whiteboard'), [], 'every word must match')
+  assert.deepEqual(keys('whiteboard'), ['vault:va:img-bbbbbbb'])
+  assert.deepEqual(keys('img-ccccccc'), ['vault:vb:img-ccccccc'], 'file name')
+  assert.deepEqual(keys('ccccccc.png'), ['vault:vb:img-ccccccc'])
+  assert.deepEqual(keys('zzz'), [])
+  assert.deepEqual(keys('a'.repeat(5000)), [], 'a long query is cut, not trusted')
+  assert.equal(vp.search(42).hits.length, 3, 'not a string: treated as empty')
+})
+
+await test('In your talks: used-in counts the talks of the picture’s own vault', () => {
+  const byKey = Object.fromEntries(vp.search('').hits.map((h) => [h.key, h]))
+  const a = byKey['vault:va:img-aaaaaaa']
+  assert.deepEqual(a.usedIn.map((u) => u.talkTitle).sort(), ['Oxford AI Day', 'Staff briefing'], 'two slides of one talk count as one talk')
+  assert.equal(a.usedIn.length, 2)
+  assert.deepEqual(byKey['vault:va:img-bbbbbbb'].usedIn.map((u) => u.talkTitle), ['Staff briefing'])
+  assert.deepEqual(byKey['vault:vb:img-ccccccc'].usedIn.map((u) => u.talkTitle), ['Other vault talk'])
+})
+
+await test('In your talks: nothing is stored; the answer is kept for a few seconds, then read again; no vault open answers zero', () => {
+  const before = sidecarReads
+  vp.search('harbour'); vp.search('quay')
+  assert.equal(sidecarReads, before, 'typing does not walk the vaults again')
+  clock += 20_000
+  vp.search('harbour')
+  assert.ok(sidecarReads > before, 'after the memory runs out, it reads again')
+  vaultList = []
+  const none = vp.search('')
+  assert.deepEqual(none, { vaults: 0, hits: [] }, 'no vault open')
+  vaultList = [{ id: 'va', root: vaultA, name: 'A' }]
+  assert.deepEqual(vp.search('').hits.map((h) => h.key), ['vault:va:img-bbbbbbb', 'vault:va:img-aaaaaaa'], 'a different set of vaults is read afresh')
+  vaultList = [{ id: 'va', root: vaultA, name: 'A' }, { id: 'vb', root: vaultB, name: 'B' }]
+  assert.ok(!readdirSync(base).some((n) => /index|cache/i.test(n)), 'no index or cache file')
+})
+
+await test('In your talks: the thumbnail address names one open vault’s picture, nothing else', async () => {
+  assert.equal(vaultPictureUrl('img-aaaaaaa', 'va'), 'twasset://img-aaaaaaa?vault=va')
+  assert.deepEqual(parseVaultPictureUrl('twasset://img-aaaaaaa?vault=va'), { id: 'img-aaaaaaa', vaultId: 'va' })
+  assert.equal(parseVaultPictureUrl('twasset://img-aaaaaaa'), null)
+  assert.equal(parseVaultPictureUrl('twasset://..%2fsecret?vault=va'), null)
+  assert.equal(parseVaultPictureUrl('twarchive://img-aaaaaaa?vault=va'), null)
+  assert.equal((await vp.fileFor('twasset://img-aaaaaaa?vault=va')).absPath, picA)
+  assert.equal(await vp.fileFor('twasset://img-aaaaaaa?vault=nope'), null, 'not an open vault')
+  assert.equal(await vp.fileFor('twasset://img-eeeeeee?vault=va'), null, 'a link is refused')
+  assert.equal(await vp.fileFor('twasset://img-ddddddd?vault=va'), null, 'not picture bytes')
+  assert.equal(await vp.fileFor(picA), null, 'a path is not an address')
+})
+
+await test('twasset://: only a plain pool file reached through plain folders is served, with or without ?vault', () => {
+  const open = [{ id: 'va', root: vaultA }, { id: 'vb', root: vaultB }]
+  // ordinary pool files, as before
+  assert.equal(twassetFileFor('twasset://img-aaaaaaa', vaultA, open), picA, 'the current vault')
+  assert.equal(twassetFileFor('twasset://img-img-aaaaaaa', vaultA, open), picA, 'the legacy double prefix')
+  assert.equal(twassetFileFor('twasset://img-bbbbbbb?vault=va', vaultB, open), picA2, '?vault reads that vault')
+  assert.equal(twassetFileFor('twasset://img-ccccccc', vaultA, open), null, 'not in the current vault')
+  assert.equal(twassetFileFor('twasset://img-aaaaaaa?vault=nope', vaultA, open), null, 'not an open vault')
+  assert.equal(twassetFileFor('twasset://img-aaaaaaa', undefined, open), null, 'no current vault')
+  const poster = file(join(poolB, 'vid-1234567.jpg'), MAGIC.jpg)
+  assert.equal(twassetFileFor('twasset://vid-1234567', vaultB, open), poster, 'a clip serves its poster')
+  // a linked file in the pool: out of the vault, and to another file inside it
+  for (const q of ['', '?vault=va']) {
+    assert.equal(twassetFileFor('twasset://img-eeeeeee' + q, vaultA, open), null, 'a link out of the vault ' + q)
+    assert.equal(twassetFileFor('twasset://img-fffffff' + q, vaultA, open), null, 'a link inside the vault ' + q)
+  }
+  symlinkSync(poster, join(poolA, 'vid-7654321.jpg'))
+  assert.equal(twassetFileFor('twasset://vid-7654321', vaultA, open), null, 'a linked poster')
+  // _assets itself a link (vault C's _assets points at vault A's pool)
+  const vaultC = join(base, 'vaults', 'c')
+  const withC = [...open, { id: 'vc', root: vaultC }]
+  assert.equal(twassetFileFor('twasset://img-aaaaaaa', vaultC, withC), null, '_assets as a link, current vault')
+  assert.equal(twassetFileFor('twasset://img-aaaaaaa?vault=vc', vaultA, withC), null, '_assets as a link, ?vault')
+  // names that are not pool names
+  for (const bad of ['twasset://secret', 'twasset://img-aaaaaaa.png', 'twasset://img-xyz', 'twasset://notes']) assert.equal(twassetFileFor(bad, vaultA, open), null, bad)
+  assert.equal(twassetFileFor('not a url', vaultA, open), null)
+  // index.ts serves only what this answers
+  const index = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const handler = index.slice(index.indexOf("registerFileProtocol('twasset'"), index.indexOf("registerFileProtocol('twthumb'"))
+  assert.match(handler, /twassetFileFor\(request\.url, currentVaultRoot\(\), availableVaults\(\)\)/)
+  assert.ok(!/existsSync|join\(/.test(handler), 'no second path resolution in the handler')
+})
+
+await test('In your talks: a picture from another vault goes through the import into the talk’s vault; one already there is not copied', async () => {
+  const warns = []
+  const deps = (talkVault) => ({
+    fileFor: (u) => vp.fileFor(u),
+    vaultRootForTalk: (talkPath) => (typeof talkPath === 'string' && talkPath.startsWith(talkVault + '/') ? talkVault : undefined),
+    today: () => '2026-10-19',
+    warn: (m) => warns.push(m)
+  })
+  // vault B's talk takes vault A's picture: copied into B's pool with a sidecar, content-addressed
+  const done = await importImageForTalk(deps(vaultB), 'twasset://img-aaaaaaa?vault=va', talksOf[vaultB][0].outlinePath)
+  assert.ok(done && /^img-[0-9a-f]{7}$/.test(done.id) && done.ext === 'png', JSON.stringify(done))
+  assert.equal(done.path, join(poolB, done.id + '.png'), 'the copy lives in the talk’s own vault')
+  assert.deepEqual(readFileSync(done.path), readFileSync(picA))
+  assert.match(readFileSync(join(poolB, done.id + '.yml'), 'utf8'), /source: "vault-pictures"/)
+  assert.ok(!existsSync(join(poolA, done.id + '.png')) || done.id === 'img-aaaaaaa', 'vault A is untouched')
+  // vault A's talk takes vault A's picture: its own id, nothing copied
+  const before = readdirSync(poolA).sort()
+  const same = await importImageForTalk(deps(vaultA), 'twasset://img-aaaaaaa?vault=va', talksOf[vaultA][0].outlinePath)
+  assert.equal(same.id, 'img-aaaaaaa')
+  assert.deepEqual(readdirSync(poolA).sort(), before, 'nothing written')
+  // a link is refused at the import too
+  assert.equal(await importImageForTalk(deps(vaultB), 'twasset://img-eeeeeee?vault=va', talksOf[vaultB][0].outlinePath), null)
+  // a talk in no open vault gets nothing
+  assert.equal(await importImageForTalk(deps(vaultB), 'twasset://img-aaaaaaa?vault=va', join(outside, 'x.md')), null)
+})
+
+await test('In your talks: a talk in a vault nested inside the picture’s vault gets the picture copied into its own pool', async () => {
+  // The outer vault holds the picture; the talk sits in an inner vault inside it. The talk's path is below the
+  // outer root, but the registry gives the inner vault, whose pool does not have the id: the import copies it.
+  const outer = dir('vaults', 'n')
+  const inner = dir('vaults', 'n', 'inner')
+  const outerPic = file(join(dir('vaults', 'n', '_assets'), 'img-9999999.png'))
+  const innerPool = join(inner, '_assets')
+  dir('vaults', 'n', 'inner', 'talk')
+  const talkPath = join(inner, 'talk', 'talk-outline.md')
+  writeFileSync(talkPath, '# Talk\n')
+  const nested = createVaultPictureSearch({ vaults: () => [{ id: 'vo', root: outer }, { id: 'vi', root: inner }], readSidecar: () => null, talks: () => [] })
+  const deepest = (talkPath) => [inner, outer].find((root) => typeof talkPath === 'string' && talkPath.startsWith(root + '/'))
+  const done = await importImageForTalk({ fileFor: (u) => nested.fileFor(u), vaultRootForTalk: deepest, today: () => '2026-10-19', warn: () => {} }, 'twasset://img-9999999?vault=vo', talkPath)
+  assert.ok(done && /^img-[0-9a-f]{7}$/.test(done.id), JSON.stringify(done))
+  assert.equal(done.path, join(innerPool, done.id + '.png'), 'the copy lives in the inner vault’s pool')
+  assert.deepEqual(readFileSync(done.path), readFileSync(outerPic))
+  // and the renderer has no direct-insert shortcut left: every In your talks insert takes images:import
+  const ws = readFileSync(new URL('../src/renderer/src/components/WorkspaceLayout.tsx', import.meta.url), 'utf8')
+  const insert = ws.slice(ws.indexOf('async function insertDrawerImage('), ws.indexOf('async function insertOldSlideAfterCurrent('))
+  assert.match(insert, /window\.tw\.images\.importImage\(thumbUrl, talk\.outlinePath\)/)
+  assert.ok(!/vaultInsertPlan|imageId|\.vault\b/.test(insert), 'no direct insert by the picture’s own id')
+  assert.match(ws, /insertDrawerImage\(hit\.thumbUrl\)/, '⌘⏎ inserts through the import')
+  assert.match(ws, /void insertDrawerImage\(thumbUrl\)/, 'a drop inserts through the import')
+})
+
+await test('In your talks: index.ts reads sidecars through the one reader, and the app has no second parser', () => {
+  const index = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  assert.match(index, /readSidecar: \(vaultRoot, id\) => readSidecarIn\(vaultRoot, id\)/)
+  assert.match(index, /function readAssetSidecar\(id: string\): AssetSidecar \| null \{\s*return readSidecarIn\(currentVaultRoot\(\), id\)/, 'asset:read-sidecar and the tab share readSidecarIn')
+  assert.equal(index.match(/function parseSidecar\(/g).length, 1)
+  assert.ok(!/parseSidecar|\.yml/.test(readFileSync(new URL('../src/main/image-search/vault-pictures.ts', import.meta.url), 'utf8').replace(/\/\/.*$/gm, '')), 'the module parses nothing itself')
+})
+
 
 rmSync(base, { recursive: true, force: true })
 console.log(`image search seam: ${passed} passed`)

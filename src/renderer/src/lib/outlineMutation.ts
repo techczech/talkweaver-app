@@ -33,7 +33,8 @@ export interface OutlineEditorBuffer {
    *  caller saves the whole buffer at once) and returns the buffer text to save, or null when the
    *  editor is not ready. */
   apply(outlinePath: string, next: string): string | null
-  /** After a save: adopts `saved` (the text with stamped ids) only while the buffer is still `sent`. */
+  /** After a save of `sent`: adopts `saved` (what was written: tidied, ids stamped) only while the buffer
+   *  is still the text `sent` was made from. */
   adopt(outlinePath: string, sent: string, saved: string): void
   /** Inserts `block` at the live caret as one change (the editor's insert channel, Editor.tsx
    *  registerInsert). False when the editor does not hold that talk's loaded text. */
@@ -144,7 +145,9 @@ export function createOutlineMutator<R extends OutlineSaveReply>(deps: OutlineMu
         deps.onSaveFailed?.(outlinePath, saved)
         return { ok: false, reason: 'save-failed', error: SAVE_FAILED, applied: true, base, saved }
       }
-      if (typeof saved.content === 'string' && saved.content !== text) buffer.adopt(outlinePath, text, saved.content)
+      // What the save wrote: the stamped text, else the text sent. Adopted even when that is the text
+      // sent: the buffer holds it untidied (the save's tidy-up comes back with the adoption).
+      buffer.adopt(outlinePath, text, typeof saved.content === 'string' ? saved.content : text)
       deps.onSaved?.(outlinePath, saved)
       return { ok: true, changed: true, base, text, saved }
     }

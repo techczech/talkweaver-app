@@ -197,13 +197,11 @@ for (const id of parcelIds) {
 }
 
 const compareRecord = parcelResult.slides.find((candidate) => candidate.id === 'type-floor-compare')
-// ADR-0030: every window shows the 1280×720 canvas, where the .58em labels (of a clamp(…, 3.4cqw,
-// 3rem) statement) compute to 25.2px against a 24.8px floor. On the old 1600px-wide stage the 3rem
-// cap put them below the floor, where the small-chrome allowlist caught them; now they never reach
-// it. What must hold either way: a compare label is never reported as sub-floor running text.
+// ADR-0039: the compare panels' heads and rows are running text at or above the floor; only the "vs" disc is
+// small chrome (layout-doctor-render.mjs allowlists .vs-disc).
 for (const viewport of ['1600x900', '1280x720']) {
-  assert(!compareRecord.viewports[viewport].subFloorText.some((finding) => finding.element === 'div.compare-label'),
-    `${viewport}: the mockup .t-half .lab labels are never sub-floor running text`)
+  assert(!compareRecord.viewports[viewport].subFloorText.some((finding) => /vs-(head|row|text)/.test(finding.element)),
+    `${viewport}: the compare heads and rows are never sub-floor running text`)
 }
 
 for (const viewport of ['1600x900', '1280x720']) {
@@ -342,7 +340,10 @@ try {
         const panelStyle = style(panel)
         const codeStyle = style(code)
         const chromeBand = 59
-        const bandTop = headRect.bottom
+        // ADR-0039 band rule: the band starts at the lower edge of the title block. Under a title look
+        // the head is a zero-height box below the look's clear band, so the edge is the painted title.
+        const slide = document.querySelector('.slide.active')
+        const bandTop = slide.dataset.titleLook && !head.classList.contains('slide-head-quiet') ? C(head.querySelector('h1')).bottom : headRect.bottom
         const bandBottom = stageRect.bottom - chromeBand
         const lineHeight = Number.parseFloat(panelStyle.lineHeight)
         return {
@@ -352,6 +353,8 @@ try {
           markerVisible: Boolean(marker && C(marker).width > 0),
           panel: { x: panelRect.x, y: panelRect.y, width: panelRect.width, height: panelRect.height },
           topAir: panelRect.top - bandTop,
+          // from the top of the content area: under a look that is below the clear band, the least air
+          topStart: panelRect.top - headRect.bottom,
           bottomAir: bandBottom - panelRect.bottom,
           bandHeight: bandBottom - bandTop,
           horizontalOverflow: code.scrollWidth - code.clientWidth,
@@ -385,8 +388,8 @@ try {
       const contentRect = C(portrait.closest('.slide-content'))
       activate('type-floor-compare')
       const compareHalves = [...document.querySelectorAll('.slide.active .compare-half')]
-      const compareCopy = [...document.querySelectorAll('.slide.active .compare-inner .content-p')]
-      const compareLabels = [...document.querySelectorAll('.slide.active .compare-label')]
+      const compareCopy = [...document.querySelectorAll('.slide.active .vs-row .vs-text')]
+      const compareLabels = [...document.querySelectorAll('.slide.active .vs-head-text')]
       const stageRect = C(document.querySelector('.stage'))
       return {
         canvasWidth: stageEl.offsetWidth,
@@ -411,17 +414,12 @@ try {
           heights: compareHalves.map((half) => C(half).height),
           stageWidth: stageRect.width,
           stageHeight: stageRect.height,
-          backgrounds: compareHalves.map((half) => style(half).backgroundColor),
-          paper: style(document.body).backgroundColor,
+          lefts: compareHalves.map((half) => C(half).left),
+          tops: compareHalves.map((half) => C(half).top),
           copyFonts: compareCopy.map((paragraph) => Number.parseFloat(style(paragraph).fontSize)),
           copyWeights: compareCopy.map((paragraph) => style(paragraph).fontWeight),
-          copyMaxWidths: compareCopy.map((paragraph) => Number.parseFloat(style(paragraph).maxWidth)),
           labelFonts: compareLabels.map((label) => Number.parseFloat(style(label).fontSize)),
-          centreOffsets: compareHalves.map((half) => {
-            const halfRect = C(half)
-            const innerRect = C(half.querySelector('.compare-inner'))
-            return Math.abs((halfRect.top + halfRect.bottom - innerRect.top - innerRect.bottom) / 2)
-          })
+          disc: C(document.querySelector('.slide.active .vs-disc'))
         }
       }
     })
@@ -444,7 +442,7 @@ try {
     assert(metrics.longCode.px + 0.01 >= floor, `${viewport.width}x${viewport.height}: overlong code never shrinks below the floor`)
     assert.equal(metrics.longCode.fit, 'too-long', `${viewport.width}x${viewport.height}: overlong code is marked too-long after fitting reaches the floor`)
     assert(metrics.longCode.markerVisible && metrics.longCode.marker === 'Code too long', `${viewport.width}x${viewport.height}: overlong code has a visible marker`)
-    assert(Math.abs(metrics.longCode.topAir) <= 4, `${viewport.width}x${viewport.height}: code taller than the band starts at the top`)
+    assert(Math.abs(metrics.longCode.topStart) <= 4, `${viewport.width}x${viewport.height}: code taller than the band starts at the top`)
     console.log(JSON.stringify({ viewport, wrappedCode: metrics.wrappedCode, longCode: metrics.longCode }))
 
     await page.addStyleTag({ content: '.slide-code code { white-space: pre !important; }' })
@@ -460,17 +458,16 @@ try {
     assert.equal(metrics.portrait.objectFit, 'contain', `${viewport.width}x${viewport.height}: portrait media uses object-fit contain`)
     assert(Math.abs(metrics.portrait.renderedAspect - metrics.portrait.naturalAspect) <= 0.01, `${viewport.width}x${viewport.height}: portrait aspect ratio is preserved`)
     assert(metrics.portrait.top >= metrics.portrait.contentTop - 1 && metrics.portrait.bottom <= metrics.portrait.contentBottom + 1, `${viewport.width}x${viewport.height}: portrait stays inside its content band`)
-    const expectedCompareCopyPx = Math.min(48, metrics.canvasWidth * 0.034)
-    assert(metrics.compare.copyFonts.every((px) => Math.abs(px - expectedCompareCopyPx) <= 0.1), `${viewport.width}x${viewport.height}: compare copy follows clamp(1.7rem, 3.4vw, 3rem)`)
-    assert.deepEqual(metrics.compare.copyWeights, ['500', '500'], `${viewport.width}x${viewport.height}: compare copy uses weight 500`)
-    assert(metrics.compare.copyMaxWidths.every((px) => Math.abs(px - expectedCompareCopyPx * 12) <= 0.1), `${viewport.width}x${viewport.height}: compare copy uses the 12em measure`)
-    assert(metrics.compare.labelFonts.every((px) => Math.abs(px - expectedCompareCopyPx * 0.58) <= 0.1), `${viewport.width}x${viewport.height}: compare labels use the mockup .58em scale`)
-    assert(Math.abs(metrics.compare.widths[0] - metrics.compare.widths[1]) <= 1, `${viewport.width}x${viewport.height}: compare columns are equal width`)
-    assert(metrics.compare.widths.every((width) => Math.abs(width - metrics.compare.stageWidth / 2) <= 1), `${viewport.width}x${viewport.height}: each compare column occupies half the stage`)
-    assert(metrics.compare.heights.every((height) => Math.abs(height - metrics.compare.stageHeight) <= 1), `${viewport.width}x${viewport.height}: compare backgrounds fill the stage height`)
-    assert.notEqual(metrics.compare.backgrounds[0], metrics.compare.backgrounds[1], `${viewport.width}x${viewport.height}: only the left compare column carries tint`)
-    assert.equal(metrics.compare.backgrounds[1], metrics.compare.paper, `${viewport.width}x${viewport.height}: the right compare column stays on paper`)
-    assert(metrics.compare.centreOffsets.every((offset) => offset <= 1), `${viewport.width}x${viewport.height}: both compare columns are vertically centred`)
+    // ADR-0039 / 0.41 ticket 08: compare is two subtle panels with the "vs" disc between them (the old full-bleed
+    // halves are gone); body rows are regular and at least the type floor, heads too.
+    assert.equal(metrics.compare.widths.length, 2, `${viewport.width}x${viewport.height}: compare draws two panels`)
+    assert(Math.abs(metrics.compare.widths[0] - metrics.compare.widths[1]) <= 1, `${viewport.width}x${viewport.height}: compare panels are equal width`)
+    assert(Math.abs(metrics.compare.heights[0] - metrics.compare.heights[1]) <= 1 && Math.abs(metrics.compare.tops[0] - metrics.compare.tops[1]) <= 1, `${viewport.width}x${viewport.height}: compare panels share top and height`)
+    assert(metrics.compare.heights.every((height) => height < metrics.compare.stageHeight), `${viewport.width}x${viewport.height}: compare panels are sized to their content, not the stage`)
+    assert(metrics.compare.copyFonts.length >= 2 && metrics.compare.copyFonts.every((px) => px + 0.01 >= floor), `${viewport.width}x${viewport.height}: compare rows meet the ${floor}px floor`)
+    assert(metrics.compare.labelFonts.every((px) => px + 0.01 >= floor), `${viewport.width}x${viewport.height}: compare heads meet the ${floor}px floor`)
+    assert(metrics.compare.copyWeights.every((weight) => weight === '400'), `${viewport.width}x${viewport.height}: compare rows are regular weight`)
+    assert(Math.abs((metrics.compare.disc.left + metrics.compare.disc.right) / 2 - metrics.compare.stageWidth / 2) <= 2, `${viewport.width}x${viewport.height}: the vs disc is centred on the stage`)
     await page.close()
   }
 } finally {
@@ -589,7 +586,8 @@ try {
   assert.deepEqual(iconList.variants, { three: 'boxes', four: 'list', boxesFour: 'boxes' },
     '(c)+(d): bare {iconlist} flips to the vertical rows only over three items; {iconlist=boxes} pins the card grid')
   for (const [variant, contents] of Object.entries(iconList.counterContent)) {
-    assert(contents.every((content) => content === 'none'),
+    // 0.41 ticket 05: an icon-list row paints its hairline on li::after (an empty string); a counter would be a digit.
+    assert(contents.every((content) => content === 'none' || content === '""'),
       `(b): no li::after counter content on the ${variant} icon-list variant`)
   }
   assert(iconList.subIcons.length >= 4, '(a): the {icons=all} fixture resolves nested sub-icons to measure')

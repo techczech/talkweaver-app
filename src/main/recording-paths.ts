@@ -7,6 +7,7 @@
 // `<vault>/_PRESENTATIONS/`, symlinks resolved). Local files under `<userData>/recordings/` are
 // named by the session id alone, which must be a safe Run id.
 
+import { randomBytes } from 'crypto'
 import { lstatSync, readdirSync, realpathSync } from 'fs'
 import { readdir, stat } from 'fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'path'
@@ -53,12 +54,71 @@ export function localSegmentPath(userDataDir: string, sessionId: unknown, index:
   return dirname(path) === recDir ? { ok: true, path } : refuse('unsafe-path')
 }
 
+/** How many replacement names a segment may take (`.r1` … `.r9`); see `localSegmentAltPath`. */
+export const SEGMENT_ALT_MAX = 9
+
+/**
+ * A segment's replacement file, `<sessionId>.seg-<n+1>.r<k>.webm` (k = 1 … SEGMENT_ALT_MAX): used
+ * by the stream writer when the segment's own name is held by a file the recording did not
+ * create, so the recording's audio goes to a fresh file and the other one is never touched.
+ */
+export function localSegmentAltPath(userDataDir: string, sessionId: unknown, index: unknown, k: unknown): RecordingPath {
+  if (typeof k !== 'number' || !Number.isInteger(k) || k < 1 || k > SEGMENT_ALT_MAX) return refuse('unsafe-path')
+  const own = localSegmentPath(userDataDir, sessionId, index)
+  if (!own.ok) return own
+  const recDir = resolve(userDataDir, 'recordings')
+  const path = join(recDir, `${sessionId as string}.seg-${(index as number) + 1}.r${k}.webm`)
+  return dirname(path) === recDir ? { ok: true, path } : refuse('unsafe-path')
+}
+
+/**
+ * The path of a segment file named in an in-progress marker: the segment's own name or one of its
+ * replacement names, nothing else. Without a name, the segment's own name (markers before 0.41).
+ */
+export function segmentFilePath(userDataDir: string, sessionId: unknown, index: unknown, file?: unknown): RecordingPath {
+  const own = localSegmentPath(userDataDir, sessionId, index)
+  if (!own.ok || file === undefined) return own
+  if (typeof file !== 'string') return refuse('unsafe-path')
+  if (join(dirname(own.path), file) === own.path) return own
+  for (let k = 1; k <= SEGMENT_ALT_MAX; k++) {
+    const alt = localSegmentAltPath(userDataDir, sessionId, index, k)
+    if (alt.ok && join(dirname(alt.path), file) === alt.path) return alt
+  }
+  return refuse('unsafe-path')
+}
+
 /** `<userData>/recordings/<sessionId>.recording.json` — present while a recording streams to disk. */
 export function streamMarkerPath(userDataDir: string, sessionId: unknown): RecordingPath {
   if (!isSafeRunId(sessionId)) return refuse('unsafe-session-id')
   const recDir = resolve(userDataDir, 'recordings')
   const path = join(recDir, `${sessionId}.recording.json`)
   return dirname(path) === recDir ? { ok: true, path } : refuse('unsafe-path')
+}
+
+/**
+ * A [0,1) random source for new session ids (lib/16-presentation-ledger newSessionId), from the
+ * operating system's crypto generator rather than Math.random: 48 bits per draw.
+ */
+export function sessionIdRandom(): number {
+  return randomBytes(6).readUIntBE(0, 6) / 2 ** 48
+}
+
+/**
+ * Whether a session id is already in use, so a new recording must not take it: the Run file in the
+ * vault (when one is named) or any local file named for it — the audio, its segments, the
+ * no-vault Run, the in-progress marker, a temporary file. A name that merely starts with the id
+ * (an old one-char id is a prefix of no new one, as the file names carry a dot after the id) is
+ * not counted. An unsafe id or slug counts as taken: it can never be used.
+ */
+export function sessionIdTaken(vaultRoot: string | null, userDataDir: string, talkSlug: unknown, sessionId: unknown): boolean {
+  if (!isSafeRunId(sessionId)) return true
+  if (vaultRoot) {
+    const run = vaultSessionPath(vaultRoot, talkSlug, sessionId)
+    if (!run.ok || lexists(run.path)) return true
+  }
+  let names: string[]
+  try { names = readdirSync(resolve(userDataDir, 'recordings')) } catch { return false }
+  return names.some((name) => name.startsWith(`${sessionId}.`))
 }
 
 /**
@@ -85,9 +145,12 @@ export function existingSegmentPaths(userDataDir: string, sessionId: unknown): s
   return found.sort((a, b) => a.index - b.index).map((f) => f.path)
 }
 
-/** The segment index a segment file name stands for (`<id>.webm` → 0, `<id>.seg-3.webm` → 2). */
+/**
+ * The segment index a segment file name stands for (`<id>.webm` → 0, `<id>.seg-3.webm` → 2, the
+ * replacement `<id>.seg-3.r1.webm` → 2).
+ */
 export function segmentIndexOfFile(file: string): number | null {
-  if (/^[^/\\]+\.seg-\d{1,4}\.webm$/.test(file)) return Number(/\.seg-(\d{1,4})\.webm$/.exec(file)![1]) - 1
+  if (/^[^/\\]+\.seg-\d{1,4}(?:\.r\d)?\.webm$/.test(file)) return Number(/\.seg-(\d{1,4})(?:\.r\d)?\.webm$/.exec(file)![1]) - 1
   if (/^[^/\\.]+\.webm$/.test(file)) return 0
   return null
 }

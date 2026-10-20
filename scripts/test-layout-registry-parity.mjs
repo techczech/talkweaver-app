@@ -88,7 +88,7 @@ for (const entry of entries) {
   assert(Array.isArray(entry.triggerWords), `${entry.name}: triggerWords must be an array`);
 }
 
-const PREWORK_STEP_TOKENS = ["prework", "task", "readonly", "check", "right", "noask"];
+const PREWORK_STEP_TOKENS = ["prework", "task", "readonly", "check", "right", "noask", "local"];
 // ADR-0032 §4-§5: every picker-eligible entry carries a purpose and a when-it-fits line.
 const PURPOSES = ["Everyday", "Structure", "Diagrams", "Modes", "Specialised"];
 const eligible = entries.filter((entry) => entry.kind !== "component" && entry.pickerEligible !== false);

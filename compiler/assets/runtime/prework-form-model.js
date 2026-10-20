@@ -5,7 +5,7 @@
 //
 // What a person's own entries say about each step, where "Carry on" goes, what is counted as done, what
 // each refusal says, the saved answer a poll accepts (the Worker's own rule, validPreworkAnswer), and the
-// icons. The page seam (screens, saving, "Ask about this") is prework-form.js.
+// icons. The page seam (screens, saving, "Ask about this") is work-page.js.
 //
 // An entry is what POST /prework/<id>/mine returns and what a submission's answer carries:
 //   { ref, stepId, kind: read | answer | done | question, choice?, text?, name?, done?, at }
@@ -189,7 +189,7 @@ export function preworkPollHint(step) {
   if (!poll) return ''
   if (poll.type === 'single') text = 'Pick one.'
   else if (poll.type === 'multiple') text = poll.maxSelections ? 'Pick up to ' + poll.maxSelections + '.' : 'Pick any that fit.'
-  else if (poll.type === 'open') text = 'A sentence is plenty.'
+  else if (poll.type === 'open') text = 'One or two sentences is plenty.'
   else if (poll.type === 'ranking') text = 'Tap in order, best first' + (poll.rankCount ? ', ' + poll.rankCount + ' of them' : '') + '.'
   else text = poll.allowSkip ? 'Choose a label for any of these.' : 'Choose a label for each one.'
   if (step.kind === 'check') text += ' There is no mark: the room\u2019s answers are on a slide in the session.'
@@ -277,17 +277,19 @@ export function preworkEntryFromSubmission(body, at) {
 
 /**
  * What a refused or failed submission says. `closed` means pre-work is over (the page shows the closed
- * state); `retry` means the same body may be sent again.
- * @param {number} status @param {string} [code] @param {number} [retryAfterMs]
+ * state); `retry` means the same body may be sent again. `phase` 'post' names post-work instead.
+ * @param {number} status @param {string} [code] @param {number} [retryAfterMs] @param {'pre'|'post'} [phase]
  * @returns {{ text: string, retry: boolean, closed: boolean, waitMs: number }}
  */
-export function preworkRefusal(status, code, retryAfterMs) {
+export function preworkRefusal(status, code, retryAfterMs, phase) {
   const wait = Number.isFinite(retryAfterMs) && retryAfterMs > 0 ? Math.min(retryAfterMs, 3600000) : 0
-  if (code === 'prework_closed' || status === 410) return { text: 'Pre-work has closed, so this could not be saved.', retry: false, closed: true, waitMs: 0 }
-  if (code === 'prework_not_open') return { text: 'Pre-work has not opened yet.', retry: true, closed: false, waitMs: 30000 }
+  const name = phase === 'post' ? 'Post-work' : 'Pre-work'
+  if (code === 'prework_closed' || status === 410) return { text: name + ' has closed, so this could not be saved.', retry: false, closed: true, waitMs: 0 }
+  if (code === 'prework_not_open') return { text: name + ' has not opened yet.', retry: true, closed: false, waitMs: 30000 }
   if (code === 'question_limit') return { text: 'You have asked as many questions as this page allows.', retry: false, closed: false, waitMs: 0 }
   if (code === 'participant_limit') return { text: 'You have sent as many changes as this page allows.', retry: false, closed: false, waitMs: 0 }
-  if (code === 'prework_full') return { text: 'This pre-work has no room for more answers.', retry: false, closed: false, waitMs: 0 }
+  if (code === 'prework_full') return { text: 'This ' + name.toLowerCase() + ' has no room for more answers.', retry: false, closed: false, waitMs: 0 }
+  if (code === 'not_available' || status === 404) return { text: 'This page is not available.', retry: false, closed: true, waitMs: 0 }
   if (code === 'questions_off') return { text: 'The speaker has switched questions off for this step.', retry: false, closed: false, waitMs: 0 }
   if (status === 429 || code === 'rate_limited' || code === 'source_limit') return { text: 'Too many answers at once. Trying again shortly.', retry: true, closed: false, waitMs: wait || 8000 }
   if (status >= 500 || status === 0) return { text: 'Not saved yet: no connection to the speaker\u2019s page. Trying again.', retry: true, closed: false, waitMs: wait || 8000 }

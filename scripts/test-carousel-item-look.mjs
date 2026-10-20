@@ -36,7 +36,8 @@ const wide = join(dir, 'wide.png'); writeFileSync(wide, png(1500, 844))
 const shot = join(dir, 'shot.png'); writeFileSync(shot, png(1147, 523))
 
 const outline = [
-  '---', 'title: Carousel item probe', 'auto_title_slide: false', 'auto_thanks_slide: false', '---', '',
+  // 0.41 ticket 02: the index tab is the default title look; the recorded numbers below are under the plain title.
+  '---', 'title: Carousel item probe', 'auto_title_slide: false', 'auto_thanks_slide: false', 'title_look: full', '---', '',
   '# Probe', '', '## Section', '',
   '### About me', '{id=car} {carousel}', '',
   '#### My work', '', '**Alexis Rivera**', '[rivera-works.org](https://rivera-works.org)', '', 'Riverside Learning Hub', 'Northfield Colleges', '',
@@ -123,7 +124,8 @@ const expected = {
   'ord-pic': { '.slot': [[72, 155, 1137, 504]], '.slot-media': [[72, 155, 432, 504]], '.slot-copy': [[549, 352, 659, 110]], img: [[72, 286, 432, 243]] },
   'ord-link': { '.slot': [[72, 155, 1137, 504]], '.slot-media': [[72, 155, 432, 504]], '.slot-copy': [[549, 380, 659, 55]], img: [[72, 309, 432, 197]] },
   'ord-only': { img: [[178, 140, 923, 519]] },
-  'ord-bold': { '.content-p': [[563, 249, 568, 61], [563, 348, 568, 123]] }
+  // 0.41 ticket 04 (ADR-0039): an ordinary statement carries the accent bar and its gap, so its paragraphs are wider and the second wraps to more lines.
+  'ord-bold': { '.content-p': [[563, 249, 599, 61], [563, 311, 599, 160]] }
 }
 for (const [id, checks] of Object.entries(expected)) {
   await show(id)

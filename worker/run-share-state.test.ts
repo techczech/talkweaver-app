@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { onlineContentGuidelinesHtml, ONLINE_CONTENT_REPORT_URL } from '../compiler/scripts/lib/online-content-guidelines.mjs'
 import {
   DAY_MS, parseRunSharePush, parseRunShareRoute, renderRunSharePage, runShareAlarmAt, runShareExpired, runShareRouteMethod,
   type StoredRunShare,
@@ -49,6 +50,18 @@ describe('what a push may carry', () => {
 })
 
 describe('the page', () => {
+  test('shared board cards and free-text poll responses carry the same static guidelines and privacy-safe report link', () => {
+    const parsed = parseRunSharePush(push(), NOW)
+    if ('error' in parsed) throw new Error(parsed.error.code)
+    const html = renderRunSharePage(parsed.value)
+    expect(html).toContain('More time for hands-on')
+    expect(html).toContain('A safe way to use agents')
+    expect(html).toContain(onlineContentGuidelinesHtml())
+    expect(html).toContain(`href="${ONLINE_CONTENT_REPORT_URL}"`)
+    expect(html).toContain('Nothing is attached automatically')
+    expect(html).toContain('referrerpolicy="no-referrer"')
+    expect(html).not.toMatch(/<script|<form|Implementation notes/i)
+  })
   test('writes every string as text: markup in a card, a title or an answer is escaped', () => {
     const hostile = '<img src=x onerror=alert(1)>'
     const parsed = parseRunSharePush(push({ title: hostile, boards: [{ ...push().boards[0], question: hostile,

@@ -3429,6 +3429,66 @@
    "subgroup": null,
    "surface": "Importer",
    "class": "key-inside-a-surface"
+  },
+  {
+   "id": "image-drawer.move",
+   "label": "Move through images",
+   "chord": "↑ ↓ ← →",
+   "scope": "image-drawer",
+   "currentGroup": "Image drawer",
+   "paletteToday": false,
+   "task": null,
+   "subgroup": null,
+   "surface": "Image drawer",
+   "class": "key-inside-a-surface"
+  },
+  {
+   "id": "image-drawer.insert",
+   "label": "Insert at caret",
+   "chord": "⌘↵",
+   "scope": "image-drawer",
+   "currentGroup": "Image drawer",
+   "paletteToday": false,
+   "task": null,
+   "subgroup": null,
+   "surface": "Image drawer",
+   "class": "key-inside-a-surface"
+  },
+  {
+   "id": "image-drawer.choose-editable",
+   "label": "Editable slide",
+   "chord": "↵",
+   "scope": "image-drawer",
+   "currentGroup": "PowerPoint Imports",
+   "paletteToday": false,
+   "task": null,
+   "subgroup": null,
+   "surface": "Image drawer",
+   "class": "key-inside-a-surface"
+  },
+  {
+   "id": "image-drawer.choose-picture",
+   "label": "Picture of the slide",
+   "chord": "P",
+   "scope": "image-drawer",
+   "currentGroup": "PowerPoint Imports",
+   "paletteToday": false,
+   "task": null,
+   "subgroup": null,
+   "surface": "Image drawer",
+   "class": "key-inside-a-surface"
+  },
+  {
+   "id": "image-drawer.close",
+   "label": "Close the drawer",
+   "chord": "Esc",
+   "scope": "image-drawer",
+   "currentGroup": "Image drawer",
+   "paletteToday": false,
+   "task": null,
+   "subgroup": null,
+   "surface": "Image drawer",
+   "class": "key-inside-a-surface"
   }
  ]
 }

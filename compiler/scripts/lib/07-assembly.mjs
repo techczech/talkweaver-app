@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { boardPanelModelSource } from "../../assets/runtime/board-panel-model.js";
 import { boardPanelRuntimeSource } from "../../assets/runtime/board-panel.js";
 import { scriptDir, slugify, escapeHtml, makeQrSvg, timerRuntimeSource, overviewRuntimeSource, slideFitRuntimeSource, stageFitRuntimeSource, pollDisplayRuntimeSource, pollExtendedSource, markmapVendorSource, mermaidVendorSource } from "./01-cli-utils.mjs";
-import { accentForSectionIndex, accentForSectionName, accentForDeckColour, titlePlacementFor, titleRegimeForLayout, renderInline, withRenderedClaims, quoteCiteEqualsTitle } from "./02-triggers-layout.mjs";
+import { accentForSectionIndex, accentForSectionName, accentForDeckColour, extraHuesForAccent, titlePlacementFor, titleRegimeForLayout, renderInline, withRenderedClaims, quoteCiteEqualsTitle } from "./02-triggers-layout.mjs";
 import { findSlideSections, updateDeckTitle, withoutScripts } from "./04-html-extraction.mjs";
 import { createIconVocabulary, buildDeckIconMap, applySlideMonochrome } from "./05-icons.mjs";
 import { withScreenshotStyle, sizeScreenshotRows, screenshotBand, isLoneScreenshot } from "./screenshot-row.mjs";
@@ -22,6 +22,7 @@ import { penInkRuntimeSource } from '../../assets/runtime/pen-ink.js';
 import { audioChipRuntimeSource } from '../../assets/runtime/audio-chip.js';
 import { imageStepsRuntimeSource } from '../../assets/runtime/image-steps.js';
 import { emphasisStepsRuntimeSource } from '../../assets/runtime/emphasis-steps.js';
+import { traceWindowRuntimeSource } from '../../assets/runtime/trace-window.js';
 import { markEmphasisSteps } from './emphasis-steps.mjs';
 import { mediaStepsRuntimeSource } from '../../assets/runtime/media-steps.js';
 import { embedChannelSource } from '../../assets/runtime/embed-channel.js';
@@ -78,8 +79,32 @@ function modelHasCodeBlock(value, language, seen = new Set()) {
 // title carries no icon; where a bodyless heading is painted as the slide's statement instead, that
 // paragraph carries the same markup. A title with no icon is emitted exactly as before. The emitter
 // is withTitleIcon (06-block-renderers.mjs), which a poster's visible title uses too.
-function renderSlideHead({ title, kicker, showTitle, hidden, icon = "", iconAt = "" }) {
-  const safeTitle = renderInline(String(title ?? ""));
+// 0.41 ticket 03 (ADR-0039) title look tab-strip: the pills of the slide's section, current one
+// filled (title-look.mjs sectionStrip worked them out over the deck). Drawn beside the h1, which
+// stays the slide's title for navigation and screen readers and is hidden by title-look.css; the
+// strip itself is decoration, so aria-hidden. Pill text is plain: inline markup is dropped (a link keeps
+// its label) and the text escaped, so no pill can hold a focusable element. A pill whose slide is a Run's
+// extra slide (strip.plain[i], work-files ticket 25) is its title as typed, escaped, with no markup dropped.
+function renderTitleStrip(strip) {
+  if (!strip || !Array.isArray(strip.titles) || !strip.titles.length) return "";
+  const plain = Array.isArray(strip.plain) ? strip.plain : [];
+  const pills = strip.titles.map((title, i) => `<span class="title-strip-pill${i === strip.current ? " is-current" : ""}">${escapeHtml(plain[i] === true ? String(title ?? "") : plainInlineText(title))}</span>`).join("");
+  return `<div class="title-strip" aria-hidden="true"${strip.cutBefore ? " data-cut-before" : ""}${strip.cutAfter ? " data-cut-after" : ""}>${pills}</div>`;
+}
+
+// tab-strip pills for a top-title slide (ordinary and carousel heads share this so they cannot drift).
+// A slide added after the deck-wide pass (the generated links slide) has no pills worked out and
+// shows its own title alone. `plain` flags (Run extra slides) stay literal; renderTitleStrip escapes.
+function tabStripFor(slide, titlePlacement, slideTitle) {
+  if (titlePlacement.mode !== "top" || slide.titleLook !== "tab-strip") return null;
+  return slide.titleStrip ?? { titles: [slideTitle], ...(slide.runExtra === true ? { plain: [true] } : {}), current: 0, cutBefore: false, cutAfter: false };
+}
+
+// `slide` is the slide record the head belongs to: a Run's extra slide (work-files ticket 25, slide.runExtra)
+// has a plain-text title as typed, escaped here and never read as inline markdown, so no caller can forget it.
+function renderSlideHead(slide, { title, kicker, showTitle, hidden, icon = "", iconAt = "", strip = null }) {
+  const plain = slide?.runExtra === true;
+  const safeTitle = plain ? escapeHtml(String(title ?? "")) : renderInline(String(title ?? ""));
   if (hidden) {
     return `<header class="slide-head slide-head-quiet"><h1 class="sr-only">${safeTitle}</h1></header>\n`;
   }
@@ -89,7 +114,7 @@ function renderSlideHead({ title, kicker, showTitle, hidden, icon = "", iconAt =
   // `text-wrap: pretty` is the other half. ADR-0033 §7: short words (a, the, of ...) are bound to the
   // next word as well (tieShortWords). The nav-only (sr-only) title above is left verbatim.
   const titleText = tieShortWords(keepLastTwoWordsTogether(safeTitle));
-  const titleHtml = showTitle ? `<h1>${withTitleIcon(titleText, icon, iconAt)}</h1>` : "";
+  const titleHtml = showTitle ? `<h1>${withTitleIcon(titleText, icon, iconAt)}</h1>${renderTitleStrip(strip)}` : "";
   return (kickerHtml || titleHtml) ? `<header class="slide-head">${kickerHtml}${titleHtml}</header>\n` : "";
 }
 
@@ -288,7 +313,7 @@ function renderSlideContent(slide, deckUsed, brandLogoColour = "unified") {
       && (bodyHtml.trim() === "" || bodyHtml === "<p></p>")
       && !authorForcesRail && !authorForcesTop && slide.titleMode !== "show";
     // Plain view ticket 07: the promoted heading keeps its icon, in the title's own icon markup.
-    if (statementFromTitle) bodyHtml = `<p>${withTitleIcon(renderInline(slideTitle), slide.titleIcon, slide.titleIconAt)}</p>`;
+    if (statementFromTitle) bodyHtml = `<p>${withTitleIcon(slide.runExtra === true ? escapeHtml(slideTitle) : renderInline(slideTitle), slide.titleIcon, slide.titleIconAt)}</p>`;
     // `{titletop}` is a placement override, not authored body content: keep the promoted statement
     // paragraph, but draw its title at the requested top position instead of making it nav-only.
     const hidePromotedStatementTitle = statementFromTitle && slide.titleTop !== true;
@@ -323,20 +348,27 @@ function renderSlideContent(slide, deckUsed, brandLogoColour = "unified") {
     // PLAIN left rail (data-title-layout="left" only). Legacy {titlestyle=sidebar} still stamps
     // the attr, but no CSS paints it.
     const effectiveTitleStyle = slide.titleStyle || "";
-    const headHtml = renderSlideHead({
+    // 0.41 (ADR-0039) title look intro-then-none: a slide after its section's card keeps the top
+    // regime but paints no title; its head is nav-only, so the content block owns the whole slide
+    // and centres on it (slide-foundations.css). 08-source-adapters decides which slides these are.
+    const lookHidesTitle = slide.titleLookHidden === true && titlePlacement.mode === "top" && showTitle && !hideTitleByLayout;
+    const headHtml = renderSlideHead(slide, {
       title: slideTitle,
       kicker: slide.kicker,
       showTitle,
-      hidden: hideTitleByLayout,
+      hidden: hideTitleByLayout || lookHidesTitle,
       icon: slide.titleIcon,
       iconAt: slide.titleIconAt,
+      // tab-strip: a slide added after the deck-wide pass (the generated links slide) has no pills
+      // worked out and shows its own title alone.
+      strip: tabStripFor(slide, titlePlacement, slideTitle),
     });
     if (showTitle && !hideTitleByLayout && bodyHtml === "<p></p>") bodyHtml = "";
     if (hideTitleByLayout && bodyHtml === "<p></p>") bodyHtml = "";
     // ADR-0033 §4: size any marked screenshot row from the band this slide leaves it.
     bodyHtml = sizeScreenshotRows(bodyHtml, screenshotBand({
       titleMode: titlePlacement.mode, split: titlePlacement.split, title: slideTitle,
-      titleShown: showTitle && !hideTitleByLayout
+      titleShown: showTitle && !hideTitleByLayout && !lookHidesTitle
     }));
     // QR overhaul (refinement 6, 2026-06-09): a corner QR is pinned to the BOTTOM-LEFT of the
     // SLIDE, not placed in the content flow. Pull any `.slide-qr-corner` figures OUT of the body and
@@ -368,6 +400,13 @@ function renderSlideContent(slide, deckUsed, brandLogoColour = "unified") {
       if (statementLook.align === "centred" && (!statementLook.centredNeedsNoTitle || titlePlacement.mode === "hidden")) statementHooks.push("statement-centred");
       if (titlePlacement.mode === "left" && hideTitleByLayout) statementHooks.push("statement-rail");
       if (statementLook.sidebar === "off" && titlePlacement.mode === "top") statementHooks.push("statement-no-sidebar");
+    }
+    // 0.41 ticket 04 (ADR-0039): a statement that carries a picture draws the picture beside the text
+    // block when the statement is the heading itself (no statement paragraph) or is a paragraph under the
+    // quiet nav-only head. A painted title AND a statement paragraph keep the title-panel arrangement.
+    if (layout === "statement" && /<figure class="slide-figure/.test(bodyHtml)
+      && (!/<p(?![^>]*\bslide-source\b)[\s>]/.test(bodyHtml.replace(/<figure[\s\S]*?<\/figure>/g, "")) || /class="slide-head slide-head-quiet"/.test(headHtml))) {
+      statementHooks.push("statement-picture");
     }
     const statementVariantClass = statementHooks.length ? ` ${statementHooks.join(" ")}` : "";
     // ADR-0028 §10: no statement ends on one word alone (the compile-time half; CSS carries the rest).
@@ -442,8 +481,15 @@ function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = n
       ? accentForDeckColour(slide.statementOptions.accent, palette)
       : null;
     const sectionSkin = titleSkin || statementSkin || accentBySection.get(slide.section || "") || null;
+    // ADR-0039: beside the accent, the next two hues of the deck's section cycle (--sec-hue-2/3 and
+    // their tints), read by the skin as --hue-2/--hue-3 (skin/slide-foundations.css).
+    const extraHues = sectionSkin ? extraHuesForAccent(sectionSkin, palette) : [];
     const styleDeclarations = sectionSkin
-      ? [`--accent: ${sectionSkin.accent}`, `--sec-accent: ${sectionSkin.accent}`, `--sec-tint: ${sectionSkin.tint}`]
+      ? [
+          `--accent: ${sectionSkin.accent}`, `--sec-accent: ${sectionSkin.accent}`, `--sec-tint: ${sectionSkin.tint}`,
+          `--sec-hue-2: ${extraHues[0].accent}`, `--sec-hue-2-tint: ${extraHues[0].tint}`,
+          `--sec-hue-3: ${extraHues[1].accent}`, `--sec-hue-3-tint: ${extraHues[1].tint}`,
+        ]
       : [];
     if (slide.backgroundTint) {
       styleDeclarations.push(`--slide-bg: ${slide.backgroundTint}`, "background: var(--slide-bg)");
@@ -453,8 +499,12 @@ function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = n
     // data-nav-title keeps the outline heading as written (the phone text view renders its inline
     // formatting). Where that heading carries inline markers, data-nav-label carries it as plain
     // text for the places that show a title as text (presenter outline and Next label, overview).
-    const navLabel = plainInlineText(title);
-    const navLabelAttr = navLabel !== String(title).replace(/\s+/g, " ").trim() ? ` data-nav-label="${escapeHtml(navLabel)}"` : "";
+    // A Run's extra slide (work-files ticket 25) has a plain-text title: data-nav-plain tells the phone text view
+    // to show it as text (slide-script-render.mjs renderSlideNavTitle), and it is its own label.
+    const plainTitle = slide.runExtra === true;
+    const navLabel = plainTitle ? String(title).replace(/\s+/g, " ").trim() : plainInlineText(title);
+    const navLabelAttr = (navLabel !== String(title).replace(/\s+/g, " ").trim() ? ` data-nav-label="${escapeHtml(navLabel)}"` : "")
+      + (plainTitle ? " data-nav-plain" : "");
     const section = slide.section || "";
     const subsection = slide.subsection || "";
     const role = slide.role || "content";
@@ -498,20 +548,28 @@ function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = n
       // ADR-0023 §2: the carousel parent's title is a real title in the `top` regime — the old
       // "SECTION · Title" eyebrow duplicated it on the kicker line. Same emitter as every
       // other slide.
-      const headHtml = renderSlideHead({
-        title: slideTitle,
-        kicker: slide.kicker,
-        showTitle: showHead,
-        hidden: false,
-        icon: slide.titleIcon,
-        iconAt: slide.titleIconAt,
-      });
       const titlePlacement = titlePlacementFor({
         layout,
         attrs: { titletop: slide.titleTop === true, split: slide.split || "" },
         frameTitle: slide.frame?.title ?? "top",
         frameTitleExplicit: slide.frameTitleExplicit === true,
         titleHidden: false,
+      });
+      // 0.41 (ADR-0039): a top title follows the title look like every other top-title slide: the
+      // resolved look is stamped below, and intro-then-none after the section card leaves the head
+      // nav-only (08-source-adapters decides titleLookHidden).
+      const lookHidesTitle = slide.titleLookHidden === true && titlePlacement.mode === "top" && showHead;
+      const titleLookAttrs = titlePlacement.mode === "top" && slide.titleLook && !lookHidesTitle
+        ? ` data-title-look="${slide.titleLook}"${slide.titleLookTone ? ` data-title-look-tone="${slide.titleLookTone}"` : ""}`
+        : "";
+      const headHtml = renderSlideHead(slide, {
+        title: slideTitle,
+        kicker: slide.kicker,
+        showTitle: showHead,
+        hidden: lookHidesTitle,
+        icon: slide.titleIcon,
+        iconAt: slide.titleIconAt,
+        strip: tabStripFor(slide, titlePlacement, slideTitle),
       });
       // Leading prose paragraph(s) before the first #### are the carousel's shared source/citation
       // line — re-emitted as a quiet .slide-source BELOW the stepped frames (the cards-source pass).
@@ -529,7 +587,7 @@ function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = n
       const contentHtml = `<div class="slide-content layout-carousel">
 ${headHtml}${emphasis ? emphasis.html : galleryHtml}${sourceHtml}
   </div>`;
-      return `<section class="slide" data-id="${escapeHtml(id)}" data-section="${escapeHtml(section)}" data-subsection="${escapeHtml(subsection)}" data-role="${escapeHtml(role)}" data-layout="${escapeHtml(layout)}" data-carousel data-nav-title="${escapeHtml(title)}"${navLabelAttr}${titlePlacement.mode ? ` data-title-layout="${titlePlacement.mode}"` : ""}${titlePlacement.split ? ` data-split="${titlePlacement.split}"` : ""}${pollAttr}${reactionsAttr}${authoredMode ? ` data-mode="${escapeHtml(authoredMode)}"` : ""}${preparesFor ? ` data-prepares-for="${escapeHtml(preparesFor)}"` : ""}${slide.noStep ? " data-nostep" : ""}${slide.imageSteps ? " data-image-steps" : ""}${emphasis?.count ? " data-emphasis-steps" : ""}${!slide.noStep && hasMediaSteps(contentHtml) ? " data-media-steps" : ""}${slide.noValues ? " data-novalues" : ""}${slide.fontBody ? ` data-font-body="${slide.fontBody}"` : ""}${slide.fontTitle ? ` data-font-title="${slide.fontTitle}"` : ""}${accentStyle}>
+      return `<section class="slide" data-id="${escapeHtml(id)}" data-section="${escapeHtml(section)}" data-subsection="${escapeHtml(subsection)}" data-role="${escapeHtml(role)}" data-layout="${escapeHtml(layout)}" data-carousel data-nav-title="${escapeHtml(title)}"${navLabelAttr}${titlePlacement.mode ? ` data-title-layout="${titlePlacement.mode}"` : ""}${titleLookAttrs}${titlePlacement.split ? ` data-split="${titlePlacement.split}"` : ""}${pollAttr}${reactionsAttr}${authoredMode ? ` data-mode="${escapeHtml(authoredMode)}"` : ""}${preparesFor ? ` data-prepares-for="${escapeHtml(preparesFor)}"` : ""}${slide.noStep ? " data-nostep" : ""}${slide.imageSteps ? " data-image-steps" : ""}${emphasis?.count ? " data-emphasis-steps" : ""}${!slide.noStep && hasMediaSteps(contentHtml) ? " data-media-steps" : ""}${slide.noValues ? " data-novalues" : ""}${slide.fontBody ? ` data-font-body="${slide.fontBody}"` : ""}${slide.fontTitle ? ` data-font-title="${slide.fontTitle}"` : ""}${accentStyle}>
   ${contentHtml}
   ${notes ? `<aside class="notes">${notes}</aside>` : ""}
 </section>`;
@@ -616,6 +674,9 @@ export async function buildDeckHtmlFromModel(model) {
   // The emphasis-step order and count (0.38 ticket 02): the same source the handout / venue page
   // inlines and scripts/test-emphasis-steps.mjs asserts.
   html = html.replace("<!--EMPHASIS_STEPS_RUNTIME-->", () => emphasisStepsRuntimeSource());
+  // The trace window (0.41 ticket 11): whole-turn scrolling from the step, the same source the
+  // handout / venue page inlines and scripts/test-trace-window-dom.mjs drives.
+  html = html.replace("<!--TRACE_WINDOW_RUNTIME-->", () => traceWindowRuntimeSource());
   // Typing and streaming on the chat and terminal simulation slides (0.38.2): the same source
   // scripts/sim-typing.test.mjs asserts with an injected clock.
   html = html.replace("<!--SIM_TYPING_RUNTIME-->", () => simTypingRuntimeSource());

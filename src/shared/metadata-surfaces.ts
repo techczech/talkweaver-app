@@ -233,7 +233,9 @@ export function deckSettingsViewModel(
   const pairs = currentFrontmatter ?? []
   const order: string[] = []
   const grouped = new Map<string, SurfaceFieldModel[]>()
-  for (const entry of surfaceEntries(registry)) {
+  // A key that is not a deck setting (outsideDeck) is not shown here; it is still claimed below, so it
+  // never lands among the unknown keys either.
+  for (const entry of surfaceEntries(registry).filter((candidate) => !candidate.outsideDeck)) {
     const { value, present } = valueFor(entry, pairs)
     const field = frontmatterFieldViewModel(entry, value, present)
     if (!grouped.has(field.group)) {

@@ -47,7 +47,7 @@ export type RecState = 'idle' | 'recording' | 'paused' | 'confirm' | 'saving' | 
 // ink = the Pen's strokes on the layer being shown changed (ticket 08): only while recording, into
 // the recording file only (owner, 9 Oct 2026). The slide's own layer, or a zoomed image's (`space:
 // 'image'` and the image's index, in the image's own 0–1 units, as the projector and venue use).
-type RawEvent = 'enter' | 'reveal' | 'highlight' | 'ink' | 'pause' | 'resume' | 'stop'
+type RawEvent = 'enter' | 'reveal' | 'highlight' | 'ink' | 'clip' | 'pause' | 'resume' | 'stop'
 type HighlightRange = { block: number; start: number; end: number }
 export interface RawMark {
   event: RawEvent
@@ -59,6 +59,7 @@ export interface RawMark {
   ink?: InkStroke[] // ink: the layer's strokes after the change (checked by recorder-ink.ts, caps and bytes)
   space?: 'image' // ink: a zoomed image's layer (absent: the slide's own)
   image?: number // ink: which image of the slide (its zoom index)
+  clip?: { src: string; atS: number } // clip: a slide video started playing: the clip as authored in the talk, and its position (s)
 }
 
 export interface RecContext {
@@ -81,6 +82,10 @@ export interface SaveResult {
   kind?: RunKind
   discarded?: boolean
   error?: string
+  /** Set when the Run was kept beside its audio in TalkWeaver's own folder (the talk's vault is not open). */
+  kept?: 'app-data'
+  /** What main says to the presenter about this save, in one sentence. */
+  message?: string
 }
 
 type PlannedRunChoice = {
@@ -181,6 +186,18 @@ function syntheticStream(): MediaStream {
   osc.connect(dest)
   osc.start()
   return dest.stream
+}
+
+// What a clip mark names: the authored reference when the deck has one (the local file as written in
+// the talk), else the video's own address with any query string and fragment cut off, so a signed
+// URL's token never reaches a Run file. An inlined video's data: URI is never stored.
+export function clipSource(ref: unknown, src: unknown): string {
+  const authored = typeof ref === 'string' && ref ? ref : ''
+  const text = authored || (typeof src === 'string' ? src : '')
+  if (/^data:/i.test(text)) return ''
+  const isUrl = /^https?:\/\//i.test(text)
+  const kept = authored && !isUrl ? text : text.replace(/[?#][\s\S]*$/, '')
+  return kept.slice(0, 2000)
 }
 
 // ── Controller ───────────────────────────────────────────────────────────────
@@ -354,6 +371,30 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     lastInk = signature
     if (strokes.length || sameSlide) rawMarks.push({ event: 'ink', slideId, tMs, ...layer, ink: strokes })
   }
+
+  // A slide video started playing. It plays in the audience window, which reports it to this
+  // presenter deck over the peer channel; the deck finds the video in its own copy and publishes
+  // `{ seq, slideId, ref, src, atS }` on the root's data-tw-clip-play with a plain tw-clip-play
+  // event (this preload is a separate JS world, the DOM is the bridge, as with data-tw-live-ink).
+  // Logged only while recording: a paused or stopped recorder logs nothing. A resume after a pause
+  // also starts playing, so it is logged too (it gives the position).
+  // `seq` is the play's own id; the recent ones are kept so a repeat of any of them is dropped.
+  const recentClipSeqs = new Set<string>()
+  function noteClipPlay(): void {
+    const raw = document.documentElement.dataset.twClipPlay
+    if (!raw) return
+    let play: { seq?: unknown; slideId?: unknown; ref?: unknown; src?: unknown; atS?: unknown }
+    try { play = JSON.parse(raw) } catch { return }
+    if (typeof play.seq !== 'string' || !play.seq || recentClipSeqs.has(play.seq)) return
+    recentClipSeqs.add(play.seq)
+    if (recentClipSeqs.size > 64) recentClipSeqs.delete(recentClipSeqs.values().next().value as string)
+    if (state !== 'recording') return
+    if (typeof play.slideId !== 'string' || !play.slideId) return
+    if (typeof play.atS !== 'number' || !Number.isFinite(play.atS) || play.atS < 0 || play.atS > 86400) return
+    const atS = play.atS
+    rawMarks.push({ event: 'clip', slideId: play.slideId, tMs: rawNow(), clip: { src: clipSource(play.ref, play.src), atS } })
+  }
+  document.addEventListener('tw-clip-play', noteClipPlay)
 
   function pushRunState(): void {
     void ipcRenderer.invoke('recording:run-state', {
@@ -551,9 +592,10 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     }
     if (!result.ok) {
       state = 'error'
-      emitError('Recording could not be saved. Keep this presentation open and try saving again after checking disk space.')
+      emitError(result.message ?? 'Recording could not be saved. Keep this presentation open and try saving again after checking disk space.')
     } else {
       state = 'saved'
+      if (result.kept && result.message) emitError(result.message)
     }
     pushRunState()
     emitChange()
@@ -629,12 +671,13 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     saveResult = result
     if (!result.ok) {
       state = 'error'
-      emitError('Run could not be saved to History. Check disk space and try again.')
+      emitError(result.message ?? 'Run could not be saved to History. Check disk space and try again.')
     } else if (!result.discarded && result.sessionId) {
       savedRunSessionId = result.sessionId
       savedRunKind = normaliseKind(result.kind ?? kind)
       savedRunCanFinalise = true
       state = 'saved'
+      if (result.kept && result.message) emitError(result.message)
       scheduleFinalise()
     } else {
       state = 'idle'

@@ -313,6 +313,24 @@ export function accentForSectionIndex(index, palette = "") {
   return cycle[((index % cycle.length) + cycle.length) % cycle.length];
 }
 
+/**
+ * The second and third hue a slide may use beside its section accent (ADR-0039, amending ADR-0005's
+ * one-accent rule): the next two entries of the deck palette's section cycle after the accent, so a
+ * cobalt section continues emerald then vermilion, a vermilion section cobalt then emerald, and a
+ * forest section (green palette) vermilion then cobalt. An accent that is not in the deck's cycle (a
+ * deck `colour:` or a statement's pinned accent from the other palette) takes the first two cycle
+ * entries that differ from it. Returns two `{ name, accent, tint }` entries. Green and red keep their
+ * right/wrong meaning through the fixed --green/--red tokens, not through these hues.
+ */
+export function extraHuesForAccent(skin, palette = "") {
+  const cycle = sectionAccentsForPalette(palette);
+  const name = String(skin?.name ?? "").trim().toLowerCase();
+  const at = cycle.findIndex((entry) => entry.name === name && entry.accent === skin?.accent);
+  if (at >= 0) return [1, 2].map((step) => cycle[(at + step) % cycle.length]);
+  const others = cycle.filter((entry) => entry.accent !== skin?.accent);
+  return [others[0], others[1] ?? others[0]];
+}
+
 // === Title placement (ADR-0023 §2, Dominik's pick A3; replaces the 2026-06-09 title spec) ===
 // ONE rule decides where a slide's title goes, and it is registry data, not code:
 //
@@ -325,13 +343,14 @@ export function accentForSectionIndex(index, palette = "") {
 //
 //   sidebar → mode "left"   tint rail (~35vw), title vertically centred, content column centred.
 //                           Text layouts: list/plainlist/numbered/iconlist/annotated, stmt-list,
-//                           links, statement, contrast (all variants).
+//                           links, statement.
 //   top     → mode "top"    title at the top with the hairline rule, the content band centred in
 //                           the remaining stage. Every full-band structure: tables, charts,
 //                           timelines (ALL modes), flows/processes/steps/cycles, diagrams, code,
 //                           traces, equations, grids, cards, columns, icon rows, stats, media,
+//                           compare and contrast (the two "vs" panels need the full width, ADR-0039),
 //                           copy-visual, list-visual, carousel, embeds.
-//   hidden  → mode "hidden" the title is not painted; the navigation h1 stays (quote, compare,
+//   hidden  → mode "hidden" the title is not painted; the navigation h1 stays (quote,
 //                           image-quote — and any slide whose title is hidden by {notitle},
 //                           {title=off} or the bodyless-statement promotion).
 //   own     → mode ""       structural slides that compose their whole stage (title, section,

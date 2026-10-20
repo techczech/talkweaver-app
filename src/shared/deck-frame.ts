@@ -106,9 +106,9 @@ export function deckCommitContext(outline: string, headingLine: number | null): 
 }
 
 /**
- * The Title look (tab, kicker, label or '') the slide inherits from its section's entry in
- * `sections:`, `defaults:` or frontmatter `title_look:`, resolved by the compiler's own
- * resolveTitleLook with no slide-level look. The slide's own {titlelook=…} is read from its line.
+ * The Title look (tab, kicker, label, tab-strip, intro-then-none, or '' for the plain title) the slide inherits
+ * from its section's entry in `sections:`, `defaults:` or frontmatter `title_look:`, resolved by the
+ * compiler's own resolveTitleLook with no slide-level look: tab when none of them names one (0.41). The slide's own {titlelook=…} is read from its line.
  */
 export function inheritedTitleLookForSlide(outline: string, headingLine: number | null): string {
   if (headingLine == null) return ''

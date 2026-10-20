@@ -1,34 +1,35 @@
 // The save's layout-line tidy-up and the undo history (issue 131: ⌘Z could not get past the
 // tidy-up, because the save after each ⌘Z made it again).
 //
-// The rule held here (extensions/saveTidyUp.ts): a save whose most recent document change was an
-// undo or a redo does not tidy; every other save tidies as before, as an ordinary undo step.
+// The rules held here. The save's tidy-up comes back into the editor with the save's ids as one undo
+// step, which ⌘Z takes back together with the user's change below it (extensions/savedTextAdoption.ts,
+// issue 201). A save whose most recent document change was an undo or a redo does not tidy and is not
+// adopted (extensions/saveTidyUp.ts); every other save tidies.
 //
 // A real CodeMirror editor in a browser (Playwright's chromium headless shell), in the Markdown
-// view and in the Plain view, with the app's keys, the id adoption (savedTextAdoption.ts) and the
+// view and in the Plain view, with the app's keys, the save's step (savedTextAdoption.ts) and the
 // state the save reads (saveTidyUp()). The save is the app's: the text to write comes from
-// textForSave, the function Editor.tsx's three saves call; the editor is tidied to it as flushSave
-// does it; the text is stamped as the main process stamps it (stampMissingIds, ids on "disk"
-// preferred); what was written is adopted. A save is followed by the saves its own changes
-// schedule, until one changes nothing. After every save the file is the editor's text.
+// textForSave, the function Editor.tsx's three saves call; the editor is not tidied first; the text
+// is stamped as the main process stamps it (stampMissingIds, ids on "disk" preferred); what was
+// written is adopted from the text the save was made from. A save is followed by the saves its own
+// changes schedule, until one changes nothing. After every adopted save the file is the editor's text.
 //
 //   1. the issue's document (`### A`, blank, `{pyramid}`, blank, bullets), with and without ids:
-//      type, save, ⌘Z, save, ⌘Z gives the first text; redo gives the tidied text;
+//      type, save, ONE ⌘Z gives the first text; a save after it changes nothing in the editor and
+//      the file keeps the slide's id; redo gives the tidied text;
 //   2. a layout chosen in the picker (its write, then the autosave) and in the margin menu (the
 //      replace seam, saved at once): the same;
 //   3. three changes with saves between: every one is reached by ⌘Z, and redo gives the last text;
-//   4. undo, save, type, save: the tidy-up runs again;
+//   4. type, save, ⌘Z, save, type, save: the tidy-up runs again; a layout chosen after a redo is tidied;
 //   5. a document that needs no tidy-up: the same texts and undo depths, step for step, as with a
 //      save that always tidies (the save before this rule);
 //   6. a save with nothing changed;
 //   7. generated runs (fixed seeds): typing, layout changes, layout lines put out of place, saves,
 //      undo and redo; then ⌘Z with a save after every press ends within a bound at the first text,
-//      and redo with saves between gives the last text. No typed marker is ever cut or doubled.
-//      The two end texts are asserted for talks opened with their ids. For talks whose ids the
-//      run's own saves stamped they are counted and printed (NOTE line; --strict asserts them): see
-//      the comment at that place.
+//      byte for byte, and redo with saves between gives the last text, byte for byte. No typed
+//      marker is ever cut or doubled.
 //
-//   node scripts/test-save-tidy-up-after-undo-dom.mjs [--print] [--strict] [--only=N]
+//   node scripts/test-save-tidy-up-after-undo-dom.mjs [--print] [--only=N]
 import { strict as assert } from 'node:assert'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
@@ -40,7 +41,6 @@ import { preferredIdsFromText, stampMissingIds } from '../compiler/scripts/lib/1
 import { normalizePositions } from '../src/shared/outline-normalize.ts'
 
 const PRINT = process.argv.includes('--print')
-const STRICT = process.argv.includes('--strict')
 // --only=3 runs one numbered group of cases (to see each group fail on its own without the rule).
 const ONLY = Number(process.argv.find((a) => a.startsWith('--only='))?.slice(7) ?? 0)
 const wants = (n) => !ONLY || ONLY === n
@@ -62,8 +62,8 @@ import { frontmatterTableExtension } from './src/renderer/src/extensions/frontma
 import { editorBaseKeymap } from './src/renderer/src/extensions/editorBaseKeymap.ts'
 import { buildEditorKeyBindings } from './src/renderer/src/keymap/store.ts'
 import { adoptSavedText, savedTextAdoption } from './src/renderer/src/extensions/savedTextAdoption.ts'
-import { saveTidyUp, textForSave } from './src/renderer/src/extensions/saveTidyUp.ts'
-import { applyMinimalChange, minimalChange } from './src/renderer/src/lib/minimalChange.ts'
+import { saveFollowsUndoOrRedo, saveTidyUp, textForSave } from './src/renderer/src/extensions/saveTidyUp.ts'
+import { applyMinimalChange } from './src/renderer/src/lib/minimalChange.ts'
 import { normalizePositions } from './src/shared/outline-normalize.ts'
 import { chooseLayout, setLayout } from './src/shared/layout-verbs.ts'
 import { appKeyState, failOnCaughtExceptions } from './scripts/lib/plain-view-test-mount.mjs'
@@ -92,18 +92,14 @@ window.mount = (doc, mode) => {
 const text = () => view.state.doc.toString()
 window.docText = text
 window.depths = () => ({ undo: undoDepth(view.state), redo: redoDepth(view.state) })
-window.adopt = (sent, saved) => adoptSavedText(view, sent, saved)
+window.adopt = (source, saved) => adoptSavedText(view, source, saved)
+window.followsUndo = () => saveFollowsUndoOrRedo(view.state)
 window.refocus = () => view.focus()
-// The save's tidy-up, as Editor.tsx flushSave makes it: the text the save writes, the editor tidied
-// to it first when it differs. \`always\`: the save before issue 131's rule, which tidied every time.
+// The save's text, as Editor.tsx's saves make it: the text the save writes, and the editor's text it is
+// made from (the editor is not tidied first). \`always\`: a save that tidies every time, after an undo too.
 const tidy = (always) => {
-  const current = text()
-  const next = always ? normalizePositions(current) : textForSave(view.state, current)
-  if (next !== current) {
-    const ch = minimalChange(current, next)
-    view.dispatch({ changes: { from: ch.from, to: ch.to, insert: ch.insert } })
-  }
-  return next
+  const source = text()
+  return { source, sent: always ? normalizePositions(source) : textForSave(view.state, source) }
 }
 window.textForSave = (always) => tidy(always)
 const lineNumberOf = (lineText) => text().split('\\n').indexOf(lineText) + 1
@@ -123,7 +119,7 @@ window.pickerWrite = (headingLine, layout) => {
   return true
 }
 // The margin menu's write, through Editor.tsx's replace seam with \`save: true\`: the new text as one
-// change, then the save's tidy-up at once. The text to write, or null when the menu wrote nothing.
+// change, then the save's text at once. The texts of the save, or null when the menu wrote nothing.
 window.menuWrite = (headingLine, layout, always) => {
   const write = chooseLayout(text(), { headingLine }, layout)
   if (!write.ok) return null
@@ -197,14 +193,16 @@ try {
   /** Every save always tidies: the save as it was before issue 131's rule (case 5's reference). */
   let alwaysTidy = false
   /** The main process's part: stamp (ids on disk preferred), write, and the editor adopts what was written. */
-  const write = async (sent) => {
-    assert.equal(await doc(), sent, 'the text sent to the file is the text the editor holds')
+  const write = async ({ source, sent }) => {
+    assert.equal(await doc(), source, 'the save is made from the text the editor holds')
+    const followsUndo = await page.evaluate(() => window.followsUndo())
     let preferred = null
     try { preferred = preferredIdsFromText(disk) } catch { /* nothing readable on disk */ }
     const stamped = stampMissingIds(sent, undefined, { preferred })
     disk = stamped.text
-    if (stamped.stamped.length > 0) await page.evaluate(([a, b]) => window.adopt(a, b), [sent, stamped.text])
-    assert.equal(await doc(), disk, 'after the save the file is exactly the editor\'s text')
+    await page.evaluate(([a, b]) => window.adopt(a, b), [source, stamped.text])
+    if (followsUndo) assert.equal(await doc(), source, 'a save straight after an undo or a redo is not adopted')
+    else assert.equal(await doc(), disk, 'after the save the file is exactly the editor\'s text')
   }
   /** The saves one change leads to: each change a save makes to the text schedules the next, until one makes none. */
   const settleSaves = async (first) => {
@@ -230,9 +228,9 @@ try {
   }
   /** The margin menu: the write and its save at once (the replace seam). False when the menu wrote nothing. */
   const menuWrite = async (headingLine, layout) => {
-    const sent = await page.evaluate(([l, name, always]) => window.menuWrite(l, name, always), [headingLine, layout, alwaysTidy])
-    if (sent == null) return false
-    await write(sent)
+    const texts = await page.evaluate(([l, name, always]) => window.menuWrite(l, name, always), [headingLine, layout, alwaysTidy])
+    if (texts == null) return false
+    await write(texts)
     await settleSaves(await doc())
     return true
   }
@@ -250,7 +248,7 @@ try {
       seen.push(await doc())
       await save()
       assert.equal(await doc(), seen.at(-1), 'the save after a ⌘Z leaves the text as the ⌘Z left it')
-      assert.equal((await depths()).undo, depthBefore - 1, 'and each ⌘Z takes exactly one step off the history')
+      assert.ok((await depths()).undo < depthBefore, 'and each ⌘Z takes a step off the history (a save\'s step with the change below it)')
     }
     return seen
   }
@@ -264,7 +262,7 @@ try {
       seen.push(await doc())
       await save()
       assert.equal(await doc(), seen.at(-1), 'the save after a redo leaves the text as the redo left it')
-      assert.equal((await depths()).redo, depthBefore - 1, 'and each redo takes exactly one step')
+      assert.ok((await depths()).redo < depthBefore, 'and each redo takes a step (the change with the save\'s step above it)')
     }
     return seen
   }
@@ -282,28 +280,20 @@ try {
       assert.equal(withoutIds(tidied), J('### A', '{pyramid}', '', '- one more', '- two', '- three', ''), 'the save tidies: the layout line is under its heading')
       assert.equal(idsOf(tidied).length, 1, 'and the slide has its id')
       const id = idsOf(tidied)[0]
-      assert.equal((await depths()).undo, 2, 'two undo steps: the typing and the tidy-up')
+      assert.equal((await depths()).undo, 2, 'two undo steps: the typing, and the save\'s tidy-up and ids')
       await undoKey()
-      assert.equal(withoutIds(await doc()), withoutIds(typed), '⌘Z puts the layout line back where it was')
-      const untidied = await doc()
-      await save()
-      assert.equal(await doc(), untidied, 'the save after the ⌘Z does not tidy again')
-      assert.deepEqual(await depths(), { undo: 1, redo: 1 })
-      await undoKey()
-      assert.equal(withoutIds(await doc()), withoutIds(first), 'the second ⌘Z undoes the typing: the first text')
+      assert.equal(await doc(), first, 'ONE ⌘Z undoes the typing and the save\'s step: the first text exactly')
       const back = await doc()
       await save()
-      assert.equal(await doc(), back, 'and the save after it leaves it so')
+      assert.equal(await doc(), back, 'the save after the ⌘Z leaves it so')
       assert.deepEqual(await depths(), { undo: 0, redo: 2 })
-      assert.deepEqual(idsOf(await doc()), [id], 'the id the save stamped is kept, once')
+      assert.deepEqual(idsOf(disk), [id], 'the file keeps the id the save stamped, once')
       await undoKey(); await save()
       assert.equal(await doc(), back, 'a further ⌘Z does nothing')
       await redoKey(); await save()
-      assert.equal(await doc(), untidied, 'redo: the typing again, not tidied by the save')
-      await redoKey(); await save()
-      assert.equal(await doc(), tidied, 'redo again: exactly the tidied text the first save left')
+      assert.equal(await doc(), tidied, 'redo: exactly the tidied text the first save left')
       assert.deepEqual(await depths(), { undo: 2, redo: 0 })
-      pass(`${mode}, ${name}: type, save (tidies), ⌘Z, save, ⌘Z gives the first text; redo twice gives the tidied text`)
+      pass(`${mode}, ${name}: type, save (tidies), one ⌘Z gives the first text; redo gives the tidied text`)
     }
 
     // ── 2. A layout chosen: the picker's write and the margin menu's ──
@@ -320,11 +310,11 @@ try {
         const tidied = await doc()
         assert.equal(withoutIds(tidied), J('### A', '{cards}', '', '- one', '- two', '- three', ''), 'the layout is changed and its line tidied')
         const seen = await undoAll(4)
-        assert.ok(seen.length >= 1 && seen.length <= 2, `the change and its tidy-up are one or two steps (${seen.length})`)
-        assert.equal(withoutIds(await doc()), withoutIds(first), 'after them the first text is back: {pyramid}, where it was')
-        assert.deepEqual(idsOf(await doc()), idsOf(tidied), 'the slide keeps its id')
+        assert.equal(seen.length, 1, 'the change and the save\'s step are undone by one ⌘Z')
+        assert.equal(await doc(), first, 'after it the first text is back exactly: {pyramid}, where it was')
+        assert.deepEqual(idsOf(disk), idsOf(tidied), 'the file keeps the slide\'s id')
         await redoAll(4)
-        sameText(await doc(), tidied, 'redo gives the tidied text with the new layout', first === ISSUE_IDS)
+        sameText(await doc(), tidied, 'redo gives the tidied text with the new layout', true)
         assert.equal(normalizePositions(await doc()), await doc(), 'which is tidy')
         pass(`${mode}, ${name}: a layout chosen in the ${how} is undone by ⌘Z across the saves (${seen.length} press${seen.length > 1 ? 'es' : ''}), and redone`)
       }
@@ -350,7 +340,7 @@ try {
       assert.equal(withoutIds(await doc()), withoutIds(first), 'at the end the first text')
       const forward = await redoAll(10)
       assert.equal(forward.length, seen.length, 'redo walks the same number of steps forward')
-      sameText(await doc(), after[2], 'and ends at the last tidied text', first === ISSUE_IDS)
+      sameText(await doc(), after[2], 'and ends at the last tidied text', true)
       assert.equal(normalizePositions(await doc()), await doc(), 'which is tidy')
       pass(`${mode}, ${name}: three changes with saves between are each undone (${seen.length} ⌘Z), then redone to the last text`)
     }
@@ -360,20 +350,21 @@ try {
       await open(ISSUE_IDS, mode)
       await typeAfter('- one', ' more'); await pause(); await save()
       await undoKey(); await save()
-      assert.equal(await doc(), ISSUE_IDS.replace('- one', '- one more'), 'after ⌘Z and its save the layout line is where it was')
+      assert.equal(await doc(), ISSUE_IDS, 'after ⌘Z and its save: the typing and its tidy-up are gone, the layout line where it was')
+      assert.equal(disk, ISSUE_IDS, 'the file too: the save after the ⌘Z does not tidy')
       await pause()
       await typeAfter('- two', ' too')
       await pause(); await save()
-      assert.equal(await doc(), TIDY.replace('- one', '- one more').replace('- two', '- two too'), 'the save after new typing tidies again')
-      await undoKey(); await save(); await undoKey(); await save()
-      assert.equal(await doc(), ISSUE_IDS.replace('- one', '- one more'), 'and both the tidy-up and that typing are undone by ⌘Z')
+      const tidiedToo = TIDY.replace('- two', '- two too')
+      assert.equal(await doc(), tidiedToo, 'the save after new typing tidies again')
       await undoKey(); await save()
-      assert.equal(await doc(), ISSUE_IDS, 'then the first typing')
-      // A redo is not typing either: the save after it does not tidy. A layout choice after it does.
+      assert.equal(await doc(), ISSUE_IDS, 'and the tidy-up and that typing are undone by one ⌘Z')
+      // A redo is not typing either: the save after it writes the text as the redo left it. A layout choice after it is tidied.
       await redoKey(); await save()
-      assert.equal(await doc(), ISSUE_IDS.replace('- one', '- one more'))
+      assert.equal(await doc(), tidiedToo, 'redo gives the typing with its tidy-up')
+      await undoKey(); await save()
       assert.equal(await menuWrite(1, 'cards'), true)
-      assert.equal(await doc(), TIDY.replace('- one', '- one more').replace('{pyramid}', '{cards}'), 'a layout chosen after a redo is saved tidied')
+      assert.equal(await doc(), TIDY.replace('{pyramid}', '{cards}'), 'a layout chosen after a ⌘Z is saved tidied')
       pass(`${mode}: after undo and its save, the next save after typing (or a layout choice) tidies again`)
     }
 
@@ -437,9 +428,6 @@ try {
     for (const mode of MODES) for (const ids of [false, true]) for (const seed of (ids ? [20261014, 131, 7, 42] : [20261014, 131])) runs.push({ mode, ids, seed })
     let totalUndo = 0
     let totalTidy = 0
-    const unstamped = []
-    // A text's lines, ids aside, without blank lines and without spaces at a line's ends.
-    const written = (t) => withoutIds(t).split('\n').map((l) => l.trim()).filter(Boolean)
     for (const { mode, ids, seed } of runs) {
       let s = seed + (ids ? 7 : 0) + (mode === 'plain' ? 13 : 0)
       const rnd = (n) => { s = (Math.imul(s, 1103515245) + 12345) & 0x7fffffff; return (s >>> 8) % n }
@@ -507,8 +495,8 @@ try {
       }
       const atStart = await doc()
       for (const m of markers) assert.ok(!atStart.includes(m.slice(0, 3)), `run ${mode}/${ids}/${seed}: ⌘Z to the end leaves nothing typed in the text [${log.join(' ')}]`)
-      // A talk opened with its ids: the first text, byte for byte.
-      if (ids) assert.equal(atStart, first, `run ${mode}/${ids}/${seed}: ⌘Z to the end gives the first text [${log.join(' ')}]`)
+      // The first text, byte for byte (in a talk opened without ids, the ids the run's saves stamped went with the changes).
+      assert.equal(atStart, first, `run ${mode}/${ids}/${seed}: ⌘Z to the end gives the first text [${log.join(' ')}]`)
       // Forward, with a save after each press.
       const forward = []
       {
@@ -523,36 +511,14 @@ try {
         }
       }
       const atEnd = await doc()
-      if (ids) {
-        // The last text, and on the way the texts ⌘Z went through, in the other order.
-        sameText(atEnd, last, `run ${mode}/${ids}/${seed}: redo to the end gives the last text [${log.join(' ')}]`, true)
-        assert.deepEqual(forward.slice(0, -1), back.slice(0, -1).reverse(), `run ${mode}/${ids}/${seed}: redo goes back through the texts ⌘Z went through [${log.join(' ')}]`)
-      } else {
-        // A talk whose ids these saves stamped. What is held above for it: every ⌘Z takes a step, the
-        // save after it changes nothing but ids, the presses end, nothing typed is left at the start,
-        // no marker is ever cut or doubled. What is NOT held, only counted (--strict asserts it): that
-        // the texts at the two ends are the first and the last text. The ids such a talk's saves put
-        // in are settled by savedTextAdoption.ts on every undo and redo, and across a tidy-up (one
-        // replacement spanning every slide it tidied) or a layout choice that settling can leave the
-        // space or line break an id went in with, move an id to another line of its slide, or (seen
-        // once, Plain, seed 20261014) leave a token without its closing brace. Reported with issue 131.
-        const outcome = {
-          first: withoutIds(atStart) === withoutIds(first),
-          firstLines: JSON.stringify(written(atStart)) === JSON.stringify(written(first)),
-          last: withoutIds(atEnd) === withoutIds(last),
-          braces: [...back, ...forward, atStart, atEnd].every((t) => t.split('\n').every((l) => l.split('{').length === l.split('}').length))
-        }
-        unstamped.push({ run: `${mode}/${seed}`, ...outcome })
-        if (STRICT) assert.deepEqual(outcome, { first: true, firstLines: true, last: true, braces: true }, `run ${mode}/${ids}/${seed} [${log.join(' ')}]`)
-      }
+      // The last text, and on the way the texts ⌘Z went through, in the other order.
+      sameText(atEnd, last, `run ${mode}/${ids}/${seed}: redo to the end gives the last text [${log.join(' ')}]`, true)
+      assert.deepEqual(forward.slice(0, -1), back.slice(0, -1).reverse(), `run ${mode}/${ids}/${seed}: redo goes back through the texts ⌘Z went through [${log.join(' ')}]`)
       totalUndo += back.length
       if (PRINT) console.log(`  ${mode} ids=${ids} seed=${seed}: ${back.length} ⌘Z · ${log.join(' ')}`)
     }
     assert.ok(totalTidy >= runs.length, `the runs made tidy-up steps (${totalTidy})`)
-    const stamped = runs.filter((r) => r.ids).length
-    const count = (key) => unstamped.filter((r) => r[key]).length
-    pass(`${runs.length} generated runs of ${OPS} steps (typing, layout choices, layout lines put out of place, saves, undo, redo; ${totalTidy} tidy-ups, ${totalUndo} ⌘Z): with a save after every press ⌘Z always ends, each press takes a step, no save after one changes the text, no typed marker is cut or doubled. ${stamped} runs on a talk opened with ids: the first text byte for byte, redo to exactly the last text`)
-    console.log(`NOTE ${unstamped.length} runs on a talk stamped during the run (not asserted; --strict asserts): first text back ${count('first')}/${unstamped.length}, its lines ${count('firstLines')}/${unstamped.length}, last text back ${count('last')}/${unstamped.length}, every brace closed ${count('braces')}/${unstamped.length} · ${unstamped.map((r) => `${r.run}:${r.first ? 'F' : 'f'}${r.firstLines ? 'L' : 'l'}${r.last ? 'E' : 'e'}${r.braces ? 'B' : 'b'}`).join(' ')}`)
+    pass(`${runs.length} generated runs of ${OPS} steps (typing, layout choices, layout lines put out of place, saves, undo, redo; ${totalTidy} save steps, ${totalUndo} ⌘Z): with a save after every press ⌘Z always ends, each press takes a step, no save after one changes the text, no typed marker is cut or doubled; ⌘Z to the end gives the first text and redo exactly the last, with and without ids at the start`)
   }
 
   const caught = await page.evaluate(() => window.__caught)

@@ -1,3 +1,5 @@
+import { onlineContentGuidelinesHtml } from './online-content-guidelines.ts'
+
 // A Run's read-only share link (ADR-0032 point 7; feedback-boards ticket 06, drawings R6 and R7).
 //
 // The app pushes what the link shows — the Run's boards and poll results, never a hidden card, a
@@ -286,7 +288,7 @@ export function renderRunSharePage(push: RunSharePush): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">`
     + `<meta name="robots" content="noindex"><title>${escapeHtml(push.title)}</title><style>${PAGE_STYLE}</style></head><body>`
     + `<header><h1>${escapeHtml(push.title)}</h1>${push.subtitle ? `<p>${escapeHtml(push.subtitle)}</p>` : ''}</header>`
-    + `<main>${boards}${polls}</main><footer>A read-only copy shared by the speaker.</footer></body></html>`
+    + `<main>${boards}${polls}</main><footer>A read-only copy shared by the speaker.${onlineContentGuidelinesHtml()}</footer></body></html>`
 }
 
 export function runShareUnavailablePage(reason: 'not_found' | 'stopped' | 'expired'): string {

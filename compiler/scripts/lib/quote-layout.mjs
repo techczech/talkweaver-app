@@ -6,24 +6,25 @@
 // never a width change).
 //
 // GEOMETRY (mirrors layouts/quote.css, base.css and tokens.css — change them together):
-//   panel width      min(84cqw, 100%) of the 1180px-capped content column  → 1180px at 1600, 84cqw below
-//   panel type       max(31px, 3.4cqw)                                         → 54.4px at 1600
-//   panel padding    1.4em 1.6em 1.2em 2.4em, accent rule .22em                → inner width = panel − 4.22em
-//   line-height      1.42; paragraph gap .3em (base.css `.slide-content > blockquote p`)
-//   cite             margin-top 1.2em, type max(31px, .58em), same line-height
+//   panel width      min(71.875cqw, 100%)                                      → 1150px at 1600 (1380px at 1920)
+//   panel type       max(31px, 4.1667cqw)                                      → 66.7px at 1600 (80px at 1920)
+//   panel box        no padding, no rule (0.41 ticket 04, ADR-0039); the pale quotation mark is a block
+//                    1.5em tall over the words                                  → inner width = panel width
+//   line-height      1.24; paragraph gap .3em (base.css `.slide-content > blockquote p`)
+//   cite             margin-top .6em, type max(31px, .35em), same line-height
 //   fit box          stage − 59px footer band − 2 × 5cqh slide padding (T13b, quote.css @order 0718)
 //
 // CHARACTERS PER LINE: measured in headless Chromium (T20b, 2026-09-13) with canvas measureText
-// in the panel's computed font (400 54.4px "Trebuchet MS") over the five sampler quotations: the
+// in the panel's computed font (400 "Trebuchet MS") over the five sampler quotations: the
 // average glyph is 0.4497em (0.444–0.454 across the fixtures). 0.45em is used, so cpl = floor(inner
-// ÷ 0.45em) = 38 at 1600×900 (inner 951px) and 45 at 1280×720 (inner 892px). Lines are counted by
+// ÷ 0.45em) = 38 at 1600×900 (inner 1150px) and 38 at 1280×720 (inner 920px). Lines are counted by
 // simulating greedy word wrap rather than dividing characters by cpl, because the wrap wastes part
 // of every line.
 //
-// LINES PER PANEL: measured the same way by filling a live panel with N single-word lines and
-// reading scrollHeight against the fit box (751px at 1600×900, 589px at 1280×720): 6 lines with
-// the cite, 7 without (the continuation mark sits in the padding and costs nothing) — at BOTH
-// stages, since padding, cite and line-height all scale with the type. The model below reproduces
+// LINES PER PANEL: measured by filling a live panel with N single-word lines and reading
+// scrollHeight against the fit box (751px at 1600×900, 589px at 1280×720) — at BOTH stages, since
+// the mark block, cite and line-height all scale with the type. (The 2026-09-13 panel held 6 lines
+// with the cite; the open drawing, with larger words and a tighter line, holds about the same.) The model below reproduces
 // those figures from the CSS constants; the estimate is taken at both stages and the tighter wins.
 //
 // Runtime metrics that differ from this model are absorbed by the presenter's soft-fit fallback.
@@ -31,18 +32,18 @@
 // on ONE slide for that fallback to absorb (type steps down, never below 31px) instead of splitting;
 // a one-sentence quote of ~250 characters stays whole that way.
 
-const QUOTE_TYPE_CQW = 3.4
+const QUOTE_TYPE_CQW = 4.1667
 const QUOTE_TYPE_FLOOR_PX = 31
-const QUOTE_PANEL_CQW = 84
+const QUOTE_PANEL_CQW = 71.875
 const CONTENT_COLUMN_MAX_PX = 1180
-const QUOTE_LINE_HEIGHT = 1.42
-const PANEL_PAD_TOP_EM = 1.4
-const PANEL_PAD_BOTTOM_EM = 1.2
-const PANEL_PAD_X_EM = 1.6 + 2.4
-const PANEL_RULE_EM = 0.22
+const QUOTE_LINE_HEIGHT = 1.24
+const PANEL_PAD_TOP_EM = 1.5
+const PANEL_PAD_BOTTOM_EM = 0
+const PANEL_PAD_X_EM = 0
+const PANEL_RULE_EM = 0
 const PARAGRAPH_GAP_EM = 0.3
-const CITE_MARGIN_EM = 1.2
-const CITE_TYPE_EM = 0.58
+const CITE_MARGIN_EM = 0.6
+const CITE_TYPE_EM = 0.35
 const CHROME_BAND_PX = 59
 const SLIDE_PAD_Y_VH = 0.05
 const GLYPH_WIDTH_EM = 0.45

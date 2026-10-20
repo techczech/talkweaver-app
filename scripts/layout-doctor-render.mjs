@@ -29,6 +29,8 @@ const THRESHOLDS = Object.freeze({
     '.kicker *',
     // Locked mockup .t-half .half .lab: the .58em compare label is presentation chrome.
     '.compare-label',
+    // ADR-0039: the dark "vs" disc between the compare and contrast panels (drawn at 30px on the 1920 stage).
+    '.vs-disc',
     // ADR-0023 §9: the "n / N" continuation mark on a split quote's panel.
     '.quote-continuation',
     '.code-lang',
@@ -56,7 +58,16 @@ const THRESHOLDS = Object.freeze({
     // window) with chrome at 24 to 42 px, as .sim is. The quoted words keep their own step ladder
     // (44 px at the smallest) and the compiler refuses a form that would go below it.
     '.qf',
-    '.qf *'
+    '.qf *',
+    // Title looks (Kicker, Label, Index tab; 0.37 ticket 04, ADR-0039): the compact top title at the
+    // locked 1.9cqw, a deliberate corner treatment and not running text. The index tab is the
+    // default look since 0.41, so without this every top title of an untouched talk was sub-floor.
+    '.slide[data-title-look] > .slide-content > .slide-head > h1',
+    '.slide[data-title-look] > .slide-content > .slide-head > h1 *',
+    // Tab strip (0.41 ticket 03): the pills naming the section's slides, 1.25cqw from the locked
+    // drawing; navigation chrome, not running text.
+    '.slide[data-title-look] > .slide-content > .slide-head > .title-strip',
+    '.slide[data-title-look] > .slide-content > .slide-head > .title-strip *'
   ]),
   oneWordLineBlockMinimumWords: 4,
   geometryTolerancePx: 1,

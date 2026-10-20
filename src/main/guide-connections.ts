@@ -17,6 +17,7 @@ import type { TranscriptionRow } from '../shared/transcription-status.ts'
 
 /** The fixed place a row action opens. The renderer names it by id; the URL is held here, never passed in. */
 export const GUIDE_LINKS = {
+  'online-content-report': 'https://github.com/techczech/talkweaver-app/issues',
   'slidewell-download': 'https://github.com/techczech/slidewell/releases/latest'
 } as const
 export type GuideLinkId = keyof typeof GUIDE_LINKS

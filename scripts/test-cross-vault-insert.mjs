@@ -9,6 +9,10 @@ import * as path from 'node:path'
 import { tmpdir } from 'node:os'
 import { prepareCrossVaultInsert, assignTargetIds, cutUntravelledRefs, scrubSourceRoot } from '../src/main/cross-vault-insert.ts'
 import { createProvenanceStore, originHintsFor } from '../src/main/provenance-store.ts'
+import { importImageForTalk, talkVaultWriteRoot } from '../src/main/image-search/image-import.ts'
+import { createHash } from 'node:crypto'
+import { resolveInVaults } from '../src/main/vault-registry.ts'
+import { writableRoot } from '../src/main/vault-availability.ts'
 import * as edit from '../compiler/scripts/lib/12-outline-edit.mjs'
 import * as ledger from '../compiler/scripts/lib/13-slide-ledger.mjs'
 
@@ -301,6 +305,170 @@ try {
     assert.deepEqual(store.get('dst', 'n3w01'), rec)
     assert.equal(store.get('other', 'n3w01'), null)
     assert.ok(JSON.parse(fs.readFileSync(path.join(tmp, 'userData', 'provenance.json'), 'utf8')).entries['dst/n3w01'])
+  })
+
+  // The image drawer's import (review P1 on ticket 041): a picture for a talk in a second vault is copied into
+  // THAT vault's _assets, since the `img-…` id written into the talk is a name in its own vault's pool. Main
+  // works the vault out from the talk path through the registry; a path in no open vault imports nothing.
+  // Sol re-review: the vault the path names, no link between the vault root and the talk or the pool, the vault asked again
+  // after the lookup and before each write, and no relative talk path.
+  const rootFs = { isDirectory: (p) => { try { return fs.statSync(p).isDirectory() } catch { return false } }, mkdir: (p) => fs.mkdirSync(p, { recursive: true }) }
+  function importFixture(tag) {
+    const v = makeVaults(tag)
+    const closed = path.join(tmp, `${tag}-Closed vault`)
+    const closedOutline = path.join(closed, 'talks', 'old-talk', 'old-talk-outline.md')
+    fs.mkdirSync(path.dirname(closedOutline), { recursive: true })
+    fs.mkdirSync(path.join(closed, '_assets'))
+    fs.writeFileSync(closedOutline, '### Old\n')
+    fs.mkdirSync(path.join(v.dst, '_assets'))
+    // The first open vault is the source (the "current" vault); the talk being edited is in the target.
+    const vaults = [
+      { id: v.source.id, root: v.src, open: true, order: 0 },
+      { id: v.target.id, root: v.dst, open: true, order: 1 },
+      { id: `closed-${tag}`, root: closed, open: false, order: 2 }
+    ]
+    const archive = path.join(tmp, `${tag}-archive`)
+    fs.mkdirSync(archive, { recursive: true })
+    const picture = path.join(archive, 'diagram.png')
+    fs.writeFileSync(picture, Buffer.from(`\x89PNG fake picture bytes ${tag}`))
+    const served = []
+    const deps = {
+      fileFor: async (url) => { served.push(url); return url === 'twarchive://pic' ? { absPath: picture, provenance: { source: 'archive', note: 'from the archive' } } : null },
+      vaultRootForTalk: (talkPath) => talkVaultWriteRoot({ resolve: (p) => resolveInVaults(vaults, p) }, talkPath, (vault) => writableRoot(vault.root, rootFs) ?? undefined),
+      today: () => '2026-10-18'
+    }
+    return { v, vaults, closed, closedOutline, picture, served, deps }
+  }
+  const listing = (dir) => fs.existsSync(dir) ? walk(dir).sort() : []
+
+  await test('image drawer import: the picture lands in the target talk’s own vault, never the first', async () => {
+    const { v, closed, closedOutline, served, deps } = importFixture('img')
+    const imported = await importImageForTalk(deps, 'twarchive://pic', v.dstOutline)
+    assert.ok(imported && /^img-[0-9a-f]{7}$/.test(imported.id), 'an img- id comes back')
+    assert.equal(imported.path, path.join(v.dst, '_assets', imported.id + '.png'), 'the file is in the target vault’s pool')
+    assert.ok(fs.existsSync(imported.path) && fs.existsSync(path.join(v.dst, '_assets', imported.id + '.yml')), 'picture and its provenance sidecar are written there')
+    assert.deepEqual(fs.readdirSync(path.join(v.src, '_assets')), [], 'nothing is written into the first (current) vault')
+    // The same picture again for the same talk: found, not copied twice.
+    assert.equal((await importImageForTalk(deps, 'twarchive://pic', v.dstOutline)).path, imported.path)
+    // A picture already in the target pool is used as it is.
+    const pooledDeps = { ...deps, fileFor: async () => ({ absPath: imported.path, provenance: { source: 'talk', note: '' } }) }
+    assert.equal((await importImageForTalk(pooledDeps, 'talk://x', v.dstOutline)).path, imported.path)
+
+    // Refused: no copy anywhere and the archive is not even asked for the file.
+    served.length = 0
+    const before = walk(tmp).length
+    for (const [talkPath, why] of [
+      [path.join(tmp, 'loose', 'loose-outline.md'), 'a talk in no vault'],
+      [closedOutline, 'a talk in a closed vault'],
+      [v.dst, 'a vault root itself, not a talk inside it'],
+      ['workshops/ai-assessment/ai-assessment-outline.md', 'a relative path'],
+      ['', 'an empty path'],
+      [undefined, 'no talk path at all (an older caller)'],
+      [{ root: v.dst }, 'a vault root sent from the renderer as an object']
+    ]) assert.equal(await importImageForTalk(deps, 'twarchive://pic', talkPath), null, why)
+    assert.deepEqual(served, [], 'a refused talk path never reaches the file lookup')
+    assert.equal(walk(tmp).length, before, 'nothing is written for a refused talk path')
+    // A vault whose folder has gone is refused, never re-targeted to the first vault.
+    const gone = { ...deps, vaultRootForTalk: (talkPath) => talkVaultWriteRoot({ resolve: () => null }, talkPath, () => undefined) }
+    assert.equal(await importImageForTalk(gone, 'twarchive://pic', v.dstOutline), null, 'an unavailable target vault imports nothing')
+    // A file the search seam does not serve is refused as before.
+    assert.equal(await importImageForTalk(deps, 'twarchive://other', v.dstOutline), null)
+    assert.deepEqual(listing(path.join(closed, '_assets')), [])
+  })
+
+  await test('image drawer import: a link never carries the picture out of the talk’s vault (re-review 1)', async () => {
+    const { v, deps } = importFixture('imglink')
+    const aAssets = path.join(v.src, '_assets')
+    const bAssets = path.join(v.dst, '_assets')
+    // B's _assets is a link to A's _assets.
+    fs.rmSync(bAssets, { recursive: true })
+    fs.symlinkSync(aAssets, bAssets)
+    assert.equal(await importImageForTalk(deps, 'twarchive://pic', v.dstOutline), null, 'a pool folder linked to another vault is refused')
+    assert.deepEqual(listing(aAssets), [], 'nothing lands in the other vault')
+    // B's _assets swapped for that link while the file lookup is awaited.
+    fs.rmSync(bAssets); fs.mkdirSync(bAssets)
+    const swap = { ...deps, fileFor: async (url) => { const f = await deps.fileFor(url); fs.rmSync(bAssets, { recursive: true }); fs.symlinkSync(aAssets, bAssets); return f } }
+    assert.equal(await importImageForTalk(swap, 'twarchive://pic', v.dstOutline), null, 'a pool swapped for a link during the lookup is refused')
+    assert.deepEqual(listing(aAssets), [], 'nothing lands in the other vault after a swap')
+    // A link planted at the picture's own name (pointing into A) is not followed or overwritten.
+    fs.rmSync(bAssets); fs.mkdirSync(bAssets)
+    const id = 'img-' + createHash('sha256').update(fs.readFileSync(path.join(tmp, 'imglink-archive', 'diagram.png'))).digest('hex').slice(0, 7)
+    const victim = path.join(aAssets, 'victim.png')
+    fs.writeFileSync(victim, 'A’s own picture')
+    fs.symlinkSync(victim, path.join(bAssets, id + '.png'))
+    assert.equal(await importImageForTalk(deps, 'twarchive://pic', v.dstOutline), null, 'a link at the picture’s name is refused')
+    assert.equal(fs.readFileSync(victim, 'utf8'), 'A’s own picture', 'the linked file is untouched')
+    // A link planted at the sidecar's name: the picture goes in, the link is not written through.
+    fs.rmSync(path.join(bAssets, id + '.png'))
+    fs.symlinkSync(victim, path.join(bAssets, id + '.yml'))
+    assert.equal(await importImageForTalk(deps, 'twarchive://pic', v.dstOutline), null, 'a link at the sidecar’s name is refused')
+    assert.equal(fs.readFileSync(victim, 'utf8'), 'A’s own picture', 'the file behind the sidecar link is untouched')
+    // Unlinked again, the import works.
+    fs.rmSync(path.join(bAssets, id + '.png')); fs.rmSync(path.join(bAssets, id + '.yml'))
+    assert.equal((await importImageForTalk(deps, 'twarchive://pic', v.dstOutline))?.path, path.join(bAssets, id + '.png'))
+  })
+
+  // Round 2 asked for real-path containment; round 3 for agreement with the compiler, which finds a talk's
+  // pool from the path text (asset-roots.ts). Both hold with one plain rule: the vault from the text, and no
+  // link anywhere between the vault root and the talk.
+  await test('image drawer import: the talk’s vault is the one its path names, with no link on the way (re-review 2, round 3)', async () => {
+    const { v, closed, deps } = importFixture('imgreal')
+    // A link inside open vault A leading into closed vault C: the talk is really in C.
+    fs.symlinkSync(closed, path.join(v.src, 'linked'))
+    const viaLink = path.join(v.src, 'linked', 'talks', 'old-talk', 'old-talk-outline.md')
+    assert.ok(fs.existsSync(viaLink))
+    assert.equal(await importImageForTalk(deps, 'twarchive://pic', viaLink), null, 'a talk reached through a link into a closed vault is refused')
+    assert.deepEqual(listing(path.join(closed, '_assets')), [])
+    assert.deepEqual(listing(path.join(v.src, '_assets')), [])
+    // A link back to A's own root is the root, not a talk inside it.
+    fs.symlinkSync(v.src, path.join(v.src, 'self'))
+    assert.equal(await importImageForTalk(deps, 'twarchive://pic', path.join(v.src, 'self')), null, 'a link to the vault root is refused as the root')
+    // A link from outside every vault into vault B: really B, but by its text in no vault (the compiler would
+    // not find the picture), so refused.
+    const outside = path.join(tmp, 'imgreal-outside')
+    fs.mkdirSync(outside)
+    fs.symlinkSync(path.dirname(v.dstOutline), path.join(outside, 'talk'))
+    assert.equal(await importImageForTalk(deps, 'twarchive://pic', path.join(outside, 'talk', path.basename(v.dstOutline))), null, 'a talk reached by a link from outside every vault is refused')
+    // A path whose vault root is written in other letter case (case-insensitive disk, the macOS default).
+    const upper = path.join(v.dst.toUpperCase(), path.relative(v.dst, v.dstOutline))
+    if (fs.existsSync(upper)) {
+      assert.equal(await importImageForTalk(deps, 'twarchive://pic', upper), null, 'a vault root in other letter case is refused')
+    } else console.log('    (case-sensitive disk: letter-case check skipped)')
+    assert.deepEqual(listing(path.join(v.dst, '_assets')), [], 'nothing written for a mismatch')
+    // The normal case: the talk path as the registry spells it is accepted.
+    assert.equal(path.dirname((await importImageForTalk(deps, 'twarchive://pic', v.dstOutline))?.path ?? ''), path.join(v.dst, '_assets'), 'the registry’s own spelling is accepted')
+  })
+
+  await test('image drawer import: a vault closed during the lookup or before a write gets nothing (re-review 3)', async () => {
+    const { v, vaults, deps } = importFixture('imgclose')
+    const bAssets = path.join(v.dst, '_assets')
+    const closing = { ...deps, fileFor: async (url) => { const f = await deps.fileFor(url); vaults[1].open = false; return f } }
+    assert.equal(await importImageForTalk(closing, 'twarchive://pic', v.dstOutline), null, 'closed while the file was looked up')
+    assert.deepEqual(listing(bAssets), [])
+    vaults[1].open = true
+    for (const step of ['image', 'sidecar']) {
+      fs.rmSync(bAssets, { recursive: true, force: true }); fs.mkdirSync(bAssets)
+      const late = { ...deps, beforeWrite: (s) => { if (s === step) vaults[1].open = false } }
+      assert.equal(await importImageForTalk(late, 'twarchive://pic', v.dstOutline), null, `closed just before the ${step} write`)
+      const written = listing(bAssets).map((f) => path.extname(f))
+      assert.deepEqual(written, step === 'image' ? [] : ['.png'], `nothing written after the vault closed (${step})`)
+      vaults[1].open = true
+    }
+    assert.deepEqual(listing(path.join(v.src, '_assets')), [], 'never re-targeted to the first vault')
+  })
+
+  await test('image drawer import: a relative talk path is refused whatever the working folder (re-review 4)', async () => {
+    const { v, served, deps } = importFixture('imgrel')
+    const cwd = process.cwd()
+    try {
+      process.chdir(v.dst)
+      const rel = path.relative(v.dst, v.dstOutline)
+      assert.ok(fs.existsSync(rel), 'the relative path does name the talk from here')
+      assert.equal(await importImageForTalk(deps, 'twarchive://pic', rel), null)
+      assert.equal(await importImageForTalk(deps, 'twarchive://pic', './' + rel), null)
+    } finally { process.chdir(cwd) }
+    assert.deepEqual(served, [])
+    assert.deepEqual(listing(path.join(v.dst, '_assets')), [])
   })
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true })

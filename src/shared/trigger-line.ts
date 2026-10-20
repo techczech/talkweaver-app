@@ -386,8 +386,9 @@ export interface OptionCommitContext {
    */
   inheritedTitleTone?: string
   /**
-   * The Title look the slide inherits from its section, `defaults:` or `title_look:` ('tab',
-   * 'kicker', 'label' or ''). deckCommitContext also hands it to the orphan sweep through
+   * The Title look the slide inherits from its section, `defaults:` or `title_look:` ('tab' — also
+   * when the talk names none —, 'kicker', 'label', 'tab-strip', 'intro-then-none' or '' for the plain title).
+   * Choosing Full on such a slide writes an explicit {titlelook=default}. deckCommitContext also hands it to the orphan sweep through
    * `unwrittenSelections`, so a Tab tone written on a slide that inherits Tab is not swept.
    */
   inheritedTitleLook?: string
@@ -471,6 +472,11 @@ export function commitOptionSelection(line: string, group: OptionGroup, token: s
   if (STATEMENT_OPTION_GROUPS[group.key]) return commitStatementOption(line, group, token, context)
   if (group.key === 'title-look-tone' && token === '' && context.inheritedTitleTone === 'soft') {
     return commitGroupToken(line, group, 'titlelook-tone=strong', context)
+  }
+  // 0.41: the plain title is the '' button, but a slide that inherits another look (the index tab
+  // when the talk names none) would only go back to it: pin the plain title explicitly.
+  if (group.key === 'title-look' && token === '' && context.inheritedTitleLook) {
+    return commitGroupToken(line, group, 'titlelook=default', context)
   }
   return commitGroupToken(line, group, token, context)
 }

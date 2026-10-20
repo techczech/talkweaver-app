@@ -13,6 +13,7 @@ import Editor, { type HeadingTools, type ObjectInsertHandler, type PlainIconTool
 import MarginMenu, { MORE_IN_INSPECTOR_KEY } from './MarginMenu'
 import SlideRowMenus, { writeSlideClipboard, type SlideMenuRequest } from './SlideRowMenus'
 import { slideRows } from '../extensions/slideOutline'
+import { pressAttachOnStrip } from '../extensions/workStrips'
 import { moveSubject } from '../lib/moveDestinations'
 import { publishStripNumbers, stripNumbersToPublish } from '../lib/stripNumbers'
 import { getOutlineSelection } from '../lib/outlineSelection'
@@ -21,7 +22,6 @@ import type { FocusRange } from '../extensions/focusScope'
 import { focusRangeForSlideLine, firstFocusableFrom, nextFocusableSlide, readableSectionLabel } from './slideFocusModel'
 import Inspector from './Inspector'
 import { applyBoardEditToOutline, type BoardEdit } from '../../../../compiler/scripts/lib/board-slide.mjs'
-import { applyRightAnswerToOutline } from '../../../../compiler/scripts/lib/prework.mjs'
 import SlideStrip from './SlideStrip'
 import RightColumnTabs from './RightColumnTabs'
 import type { RightColumnTab } from '../../../shared/guide'
@@ -45,6 +45,9 @@ import PropagationChecklist, { type AdoptVersion } from './PropagationChecklist'
 import MergeConfirm from './MergeConfirm'
 import ShareSheet from './ShareSheet'
 import PublishNotReadySheet from './PublishNotReadySheet'
+import PublishWorkNoticeSheet from './PublishWorkNoticeSheet'
+import { publishWorkNotice } from '../../../shared/publish-work-notice.ts'
+import { readTalkWorkNames } from '../../../shared/work-files-view.ts'
 import { earlierHandoutsToast, publishedWithoutLiveToast } from '../lib/publish-failure-toast'
 import type { PublishNotReady } from '../../../preload/index'
 import PlanRunSheet from './PlanRunSheet'
@@ -60,7 +63,9 @@ import { sharedStatusLabel } from '../../../shared/shared-talk'
 import TagPicker from './TagPicker'
 import { stampedIdOf, type MergeRequest } from './slideBrowserModel'
 import { tagsOfBlock } from '../../../shared/tags'
-import ArchiveImageSearch from './ArchiveImageSearch'
+import ImageDrawer, { DropHint, IMAGE_DRAG_TYPE, OLD_SLIDE_DRAG_TYPE, OLD_SLIDE_DROP_EVENT } from './ImageDrawer'
+import { insertSlideAfterCaret, OLD_SLIDE_REFUSED, oldSlideMarkdown } from '../../../shared/old-slide'
+import type { ImageSearchHit } from '../../../shared/image-search'
 import IconPicker from './IconPicker'
 import { usePlainIconPicker } from './usePlainIconPicker'
 import KeyboardHelp from './KeyboardHelp'
@@ -349,7 +354,9 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [guide?.nonce])
   useEffect(() => { if (!guideUp) setGuideActive(false) }, [guideUp])
-  const [archiveOpen, setArchiveOpen] = useState<boolean>(false)
+  // The image drawer docked beside the panes (ticket 11). Not an overlay: the editor stays usable.
+  const [imageDrawerOpen, setImageDrawerOpen] = useState<boolean>(false)
+  const [imageDropping, setImageDropping] = useState<'picture' | 'slide' | null>(null)
   const [iconPickerOpen, setIconPickerOpen] = useState<boolean>(false)
   const [outlineContent, setOutlineContent] = useState<string>('')
   const [compiledSlides, setCompiledSlides] = useState<ProjectionRow[] | null>(null)
@@ -370,6 +377,8 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // Publish handout could not start: what is missing, for the sheet (spec: the "not ready" table).
   const [publishNotReady, setPublishNotReady] = useState<PublishNotReady | null>(null)
   // The plan sheet (ADR-0032 point 5): a new Run (run null) or editing a planned one.
+  // Publish handout when the talk names work files: the notice that they go out with a Run (ticket 23).
+  const [publishWorkNoticeText, setPublishWorkNoticeText] = useState<string | null>(null)
   const [planSheet, setPlanSheet] = useState<{ run: RecordingSession | null } | null>(null)
   const sharedTalks = useSharedTalks()
   const [publishElapsed, setPublishElapsed] = useState<number>(0)
@@ -932,12 +941,12 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // context menu (and lets ⌘K fall through untouched, per the no-swallow rule).
   useEffect(() => {
     overlayOpenRef.current =
-      browserOpen || searchOpen || archiveOpen || iconPickerOpen || plainIcon.isOpen || helpOpen ||
+      browserOpen || searchOpen || iconPickerOpen || plainIcon.isOpen || helpOpen ||
       cmdMenuOpen || abstractOpen || deckDesignOpen || embedCheckOpen || layoutDoctorOpen ||
       explainIndex != null || whereUsedId != null || imageMetaId != null ||
       adoptTarget != null || mergeRequest != null || tagSlide != null || slideMenu != null || actionsHere != null
   }, [
-    browserOpen, searchOpen, archiveOpen, iconPickerOpen, plainIcon.isOpen, helpOpen, cmdMenuOpen,
+    browserOpen, searchOpen, iconPickerOpen, plainIcon.isOpen, helpOpen, cmdMenuOpen,
     abstractOpen, deckDesignOpen, embedCheckOpen, layoutDoctorOpen, explainIndex, whereUsedId, imageMetaId,
     adoptTarget, mergeRequest, tagSlide, slideMenu, actionsHere
   ])
@@ -1089,10 +1098,11 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
           return editorReplaceRef.current?.(next, { save: true }) ?? null
         },
         adopt: (path, sent, saved) => {
-          // The save stamped ids: adopt them only while the buffer is still what was sent (never
-          // over newer typing; the next save stamps it again).
+          // What the save wrote (tidied, ids stamped): the editor adopts it only while its buffer is
+          // still the text the save was made from (never over newer typing; the next save stamps it
+          // again). That text is `sent` before the save's tidy-up, which only the editor knows.
           const doc = editorReadRef.current?.()
-          if (doc && doc.path === path && doc.text === sent) editorReplaceRef.current?.(saved, { savedFrom: sent })
+          if (doc && doc.path === path) editorReplaceRef.current?.(saved, { savedFrom: sent })
         },
         insertAtCaret: (path, block) => {
           // The editor's own insert channel: one change at the live caret, scrolled into view.
@@ -1161,6 +1171,35 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
   // dismissing without choosing leaves focus nowhere and the user gets stuck (has to click in).
   const focusEditor = (): void => {
     requestAnimationFrame(() => (document.querySelector('.cm-content') as HTMLElement | null)?.focus())
+  }
+
+  // Menu / palette entry: open the drawer, or bring the cursor back to its search box when it is
+  // already open. (⌘⇧I itself toggles.)
+  function openImageDrawer(): void {
+    // Read from the page, not state: the command table that calls this can hold an older render.
+    const search = document.querySelector<HTMLInputElement>('[data-image-drawer] input')
+    if (search) search.focus()
+    else showImageDrawer()
+  }
+  // Opening the drawer closes the Inspector (the right column goes back to the slide strip). It is not
+  // reopened when the drawer closes: no panel in this app is remembered across another panel's opening
+  // (the grid is the only one with a return flag), so the person reopens it with the Inspector command.
+  function showImageDrawer(): void {
+    setInspectorMode(false)
+    setImageDrawerOpen(true)
+  }
+  // The one way the drawer closes (its own Esc / close button, and the closing half of ⌘⇧I): the
+  // keyboard goes back to the editor, never to the page.
+  function closeImageDrawer(): void {
+    setImageDrawerOpen(false)
+    setImageDropping(null)
+    focusEditor()
+  }
+  // ⌘⇧I (the keydown handler has deps [] and reads this ref): open the drawer, or close it as above.
+  const toggleImageDrawerRef = useRef<() => void>(() => {})
+  toggleImageDrawerRef.current = () => {
+    if (imageDrawerOpen) closeImageDrawer()
+    else showImageDrawer()
   }
 
   const activeShare = shareForTalk(sharedTalks, activeTalk?.outlinePath)
@@ -1484,8 +1523,8 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         }
         // fall through — not ours here
       }
-      // ⌘I opens the ICON picker (pins a glyph to the caret's bullet); ⌘⇧I opens the old-PowerPoint
-      // image search. Swapped 2026-06-23 (⌘⇧K was confusing for icons). Capture + stopPropagation so
+      // ⌘I opens the ICON picker (pins a glyph to the caret's bullet); ⌘⇧I opens or closes the image
+      // drawer. Swapped 2026-06-23 (⌘⇧K was confusing for icons). Capture + stopPropagation so
       // the editor never also sees the keystroke. (Neither is a CodeMirror default.)
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === 'i' || e.key === 'I')) {
         e.preventDefault()
@@ -1497,7 +1536,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'i' || e.key === 'I')) {
         e.preventDefault()
         e.stopPropagation()
-        setArchiveOpen((prev) => !prev)
+        toggleImageDrawerRef.current()
         commandRan('image')
         return
       }
@@ -1700,7 +1739,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     switch (action) {
       case 'layout': openLayoutPicker(); break
       case 'icon': setIconPickerOpen(true); break
-      case 'image': setArchiveOpen(true); break
+      case 'image': openImageDrawer(); break
       case 'tag': openTagCurrentSlide(); break
       case 'insert-table': editorInsertObjectRef.current?.('table'); break
       case 'insert-mindmap': editorInsertObjectRef.current?.('mindmap'); break
@@ -2120,6 +2159,21 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     }
   }
 
+  // Publish handout as the toolbar, menu and palette ask for it. A talk that names a pre-work or post-work file
+  // first shows the notice that work files go out with a Run (ticket 23); a talk naming neither publishes at once.
+  async function requestPublishHandout() {
+    if (publishingRef.current || !activeTalk || !outlineContent) return
+    const names = readTalkWorkNames(outlineContent)
+    if (!names.prework && !names.postwork) { void handlePublishHandout(); return }
+    if (blockedByUnresolved(outlineContent)) return
+    const listing = await window.tw.workFiles.list(activeTalk.vaultId).catch(() => null)
+    // No listing (no vault, or the work files could not be read): the strips draw nothing either, so the dialog is as in 0.39.
+    const notice = listing ? publishWorkNotice(names, listing.items) : null
+    // `true` / `false` (the 0.39 switch) name no file: nothing to say.
+    if (!notice) { void handlePublishHandout(); return }
+    setPublishWorkNoticeText(notice)
+  }
+
   // Publish the handout to the user's Cloudflare Pages site (Settings → Publishing). The publisher
   // STAMPS handout_url into the outline. For the talk open here main stamps this window's BUFFER
   // (talk-writer.ts routes it through the D1 seam), never the file behind it; the stamp is then
@@ -2391,15 +2445,91 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     }
   }
 
-  // Archive image insert (ADR-0019 archive reuse). ArchiveImageSearch already copied the chosen
-  // archive image into the current vault's _assets (content-addressed) and resolved its id; we
-  // splice `![](img-<id>)` at the live caret, like the cross-talk insert.
-  async function handleArchiveInsert(imgId: string) {
-    if (!activeTalkRef.current) return
+  // Image drawer insert (ADR-0019 archive reuse, ticket 11). The one import copies the chosen file into
+  // the active talk's own vault's _assets (content-addressed, with its provenance) and returns its `img-<hash>`
+  // id; we splice `![](img-<id>)` at the live caret, like the cross-talk insert. Both the drag and
+  // ⌘↵ come here, In your talks pictures too: main works out the talk's vault by the registry and answers the
+  // existing id without copying when the picture is already in that pool. Null from the import means nothing
+  // was copied, and nothing is inserted.
+  async function insertDrawerImage(thumbUrl: string): Promise<boolean> {
+    const talk = activeTalkRef.current
+    if (!talk) return false
+    let imported: Awaited<ReturnType<typeof window.tw.images.importImage>> = null
+    try { imported = await window.tw.images.importImage(thumbUrl, talk.outlinePath) } catch { imported = null }
+    if (!imported || !imported.id) {
+      notify('Couldn’t copy that image into the vault. Nothing was inserted.', 'warning', 'image-import')
+      return false
+    }
     // importImage already returns a full `img-<hash>` id — do NOT re-prefix (that produced
     // the `img-img-…` refs that the inline-image widget regex could not match).
-    const id = imgId.startsWith('img-') ? imgId : `img-${imgId}`
-    await insertAtCaretAndSave(`![](${id})`)
+    const id = imported.id.startsWith('img-') ? imported.id : `img-${imported.id}`
+    // The id names a file in THIS talk's vault: another talk opened meanwhile (perhaps in another vault) gets nothing.
+    if (activeTalkRef.current !== talk) return false
+    return insertAtCaretAndSave(`![](${id})`)
+  }
+
+  // An old slide as a new, editable slide after the current one (ticket 12). Its pictures go into the vault
+  // through the same import as any picture result (provenance kept), the old slide record is converted by
+  // the PowerPoint import's rules (shared/old-slide), and the slide is put in through the one-writer seam at
+  // the place worked out inside the mutation, against the buffer and caret as they stand. Nothing is
+  // inserted unless every step before the buffer change worked; a picture that could not be copied is left
+  // out of the slide and the person is told.
+  async function insertOldSlideAfterCurrent(hit: ImageSearchHit): Promise<boolean> {
+    const talk = activeTalkRef.current
+    const record = hit.oldSlide
+    if (!talk || !record) return false
+    const assets: Record<string, string> = {}
+    let missed = 0
+    for (const image of record.images) {
+      let imported: Awaited<ReturnType<typeof window.tw.images.importImage>> = null
+      try { imported = await window.tw.images.importImage(image.thumbUrl, talk.outlinePath) } catch { imported = null }
+      if (imported?.id) assets[image.key] = imported.id.startsWith('img-') ? imported.id : `img-${imported.id}`
+      else missed += 1
+    }
+    const slide = oldSlideMarkdown(record, assets)
+    if (activeTalkRef.current !== talk) return false
+    let placed = false
+    const result = await applyOutlineMutation(talk.outlinePath, (current) => {
+      const editor = editorReadRef.current?.()
+      if (!editor || editor.path !== talk.outlinePath || editor.text !== current) throw new Error('The talk changed while the slide was being placed. Nothing was inserted; try again.')
+      const r = insertSlideAfterCaret({ text: current, caret: editor.caret, slide })
+      if (!r.ok) throw new Error(r.error)
+      placed = true
+      return r.text
+    })
+    if (result.ok && placed) {
+      if (missed > 0) notify(`${missed === 1 ? 'One picture' : `${missed} pictures`} could not be copied into the vault and ${missed === 1 ? 'was' : 'were'} left out of the new slide.`, 'warning', 'image-import')
+      return true
+    }
+    if (result.ok) { notify('The slide could not be placed. Nothing was inserted.', 'warning', 'old-slide-insert'); return false }
+    if (result.applied) return true
+    // A slide that would not read as one slide of its own: the one sentence, which points at the picture.
+    if (result.reason !== 'not-open' && result.error === OLD_SLIDE_REFUSED) { notify(OLD_SLIDE_REFUSED, 'warning', 'old-slide-insert'); return false }
+    notify(result.reason === 'not-open' ? INSERT_NOT_READY : `Couldn’t add the slide — ${result.error} Nothing was inserted.`, 'warning', 'old-slide-insert')
+    return false
+  }
+
+  // The drawer's drag lands on the panes: only the drawer's own drag type counts, so files and text
+  // dropped on the editor behave as before.
+  const isDrawerDrag = (e: React.DragEvent): boolean => e.dataTransfer.types.includes(IMAGE_DRAG_TYPE)
+  function handleDrawerDragOver(e: React.DragEvent): void {
+    if (!isDrawerDrag(e)) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+    const kind = e.dataTransfer.types.includes(OLD_SLIDE_DRAG_TYPE) ? 'slide' : 'picture'
+    if (imageDropping !== kind) setImageDropping(kind)
+  }
+  function handleDrawerDrop(e: React.DragEvent): void {
+    if (!isDrawerDrag(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    setImageDropping(null)
+    try {
+      const { key, thumbUrl, oldSlide } = JSON.parse(e.dataTransfer.getData(IMAGE_DRAG_TYPE)) as { key?: string; thumbUrl?: string; oldSlide?: boolean }
+      // An old slide asks first (editable slide or picture); the drawer shows the choice.
+      if (oldSlide && key) window.dispatchEvent(new CustomEvent(OLD_SLIDE_DROP_EVENT, { detail: { key } }))
+      else if (thumbUrl) void insertDrawerImage(thumbUrl)
+    } catch { /* not our payload */ }
   }
 
   // Icon pick (ADR-0021). The IconPicker resolved a glyph key; we pin it to the caret's current
@@ -2479,11 +2609,14 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     studio: () => window.dispatchEvent(new Event('tw-open-studio')),
     history: () => window.dispatchEvent(new Event('tw-open-history')),
     importer: () => window.dispatchEvent(new Event('tw-open-importer')),
-    // With no talk open the sheet cannot name a talk: open History, whose sheet has the talk picker.
+    // With no talk open the sheet cannot name a talk: the Tools window opens the sheet, with its talk picker, over its Sessions view.
     'plan-run': () => {
       if (activeTalkRef.current) setPlanSheet({ run: null })
-      else void window.tw.tools.open('history', 'plan-run')
+      else void window.tw.tools.open('sessions', 'plan-run')
     },
+    // The strips under the Metadata table (work-files ticket 30): the command presses the strip's own Attach button.
+    'attach-prework': () => { const why = activeTalkRef.current ? pressAttachOnStrip(document, 'pre') : 'Open a talk first.'; if (why) notify(why, 'info', 'attach-work-file') },
+    'attach-postwork': () => { const why = activeTalkRef.current ? pressAttachOnStrip(document, 'post') : 'Open a talk first.'; if (why) notify(why, 'info', 'attach-work-file') },
     pathways: () => {
       const talk = activeTalkRef.current
       if (!talk) return
@@ -2509,11 +2642,11 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
     'present-audience': () => handlePresent('audience'),
     handout: () => { void handleExportHandout() },
     build: () => { void handleBuild() },
-    'publish-handout': () => { if (!publishingRef.current) void handlePublishHandout() },
+    'publish-handout': () => { if (!publishingRef.current) void requestPublishHandout() },
     'share-for-comments': () => handleShareForComments(),
     'copy-venue-screen-link': () => { void handleCopyVenueScreenLink() },
     layout: openLayoutPicker,
-    image: () => setArchiveOpen(true),
+    image: openImageDrawer,
     search: () => setBrowserOpen(true),
     'find-talk': () => {
       pickerCommandsRef.current?.focusFindTalk()
@@ -2658,23 +2791,6 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       queueMicrotask(() => { inspectorCommitInProgressRef.current = false })
     }
   }
-  // Ticket 08: the Quick check's right answer is a `{right}` marker on one option's list item — a
-  // body edit, made like a Board edit (the editor's own buffer, the slide found by its id, one
-  // undoable change).
-  function applyInspectorRightAnswer(optionIndex: number): boolean {
-    const doc = editorReadRef.current?.()
-    if (!doc) return false
-    const headingLine = headingLineForSlideId(doc.text, inspectedSlideIdRef.current)
-    if (headingLine == null) return false
-    const next = applyRightAnswerToOutline(doc.text, headingLine, optionIndex)
-    if (next === doc.text) return true
-    inspectorCommitInProgressRef.current = true
-    try {
-      return editorReplaceRef.current?.(next) != null
-    } finally {
-      queueMicrotask(() => { inspectorCommitInProgressRef.current = false })
-    }
-  }
   // Stable identity: this prop is a dep of the editor's registration effect — an inline
   // lambda here re-fired that effect every render, and the registerOutlineOps?.() call inside
   // setStates in MainApp (fresh ops object) — closing a render loop (see App.registerOutlineOps).
@@ -2794,6 +2910,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       onMarginLayoutMenu={(line, anchor) => openMarginMenu('layout', line, anchor)}
       registerHeadingTools={(tools) => { headingToolsRef.current = tools }}
       registerPlainIconTools={(tools) => { plainIconToolsRef.current = tools }}
+      onPlanRun={() => setPlanSheet({ run: null })}
       textFitNotes={textFitNotes}
       slideLines={slideLines}
       marginLabels={marginLabelList}
@@ -2960,12 +3077,6 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
             />
           )
         } : null}
-        onRightAnswer={applyInspectorRightAnswer}
-        onPlanRun={(run) => setPlanSheet({ run })}
-        onInspectSlideId={(slideId) => {
-          const index = compiledSlides?.findIndex((row) => row.slide_id === slideId) ?? -1
-          if (index >= 0) handleSelectInspectorSlide(index)
-        }}
       />
     </div>
   )
@@ -3150,6 +3261,8 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
           </div>
         </div>
       )}
+      <div className="workspace-row">
+      <div className="workspace-main">
       {focusSlide == null ? (
       <>
       <div className="workspace-toolbar">
@@ -3227,7 +3340,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
             items={[
               { icon: 'handout', label: 'Handout (reveal in Finder)', onClick: ran('handout', handleExportHandout) },
               { icon: 'html', label: 'HTML presentation (reveal in Finder)', onClick: ran('build', handleBuild) },
-              { icon: 'publish', label: publishing ? 'Publishing…' : 'Publish to Cloudflare', onClick: ran('publish-handout', handlePublishHandout), disabled: publishing },
+              { icon: 'publish', label: publishing ? 'Publishing…' : 'Publish to Cloudflare', onClick: ran('publish-handout', requestPublishHandout), disabled: publishing },
               { icon: 'comment', label: 'Share for comments…', onClick: ran('share-for-comments', handleShareForComments), separatorBefore: true }
             ]}
           />
@@ -3260,7 +3373,12 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       </div>
 
       {diskChangeBar}
-      <div className={`workspace-panes workspace-panes--${gridMode ? 'grid' : paneState}`}>
+      <div
+        className={`workspace-panes workspace-panes--${gridMode ? 'grid' : paneState}${imageDropping ? ' workspace-panes--dropping' : ''}`}
+        onDragOver={handleDrawerDragOver}
+        onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setImageDropping(null) }}
+        onDrop={handleDrawerDrop}
+      >
         {gridMode ? (
           gridPane
         ) : (
@@ -3278,6 +3396,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
             )}
           </>
         )}
+        <DropHint kind={imageDropping} />
       </div>
       <StatusBar
         placeChip={placeChip}
@@ -3289,12 +3408,10 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
         buildStatus={buildStatus}
         buildPath={buildPath}
         dates={talkDates}
-        runChips={activeTalk ? (
-          <>
-            {activeConflicts > 0 && <ConflictLine talk={{ ...activeTalk, conflicts: activeConflicts }} className="tw-status-conflict" />}
-            <RunStatusChips talk={activeTalk} outlineContent={outlineContent} onPlan={(run) => setPlanSheet({ run })} />
-          </>
+        runChips={activeTalk && activeConflicts > 0 ? (
+          <ConflictLine talk={{ ...activeTalk, conflicts: activeConflicts }} className="tw-status-conflict" />
         ) : null}
+        runChip={activeTalk ? <RunStatusChips talk={activeTalk} /> : null}
         shared={activeShare ? {
           label: shareEnded ? ENDED_LABEL : feedbackPaused ? PAUSED_LABEL : sharedStatusLabel(activeShare),
           title: shareEnded
@@ -3331,6 +3448,17 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
           suspendKeys={helpOpen || adoptTarget != null}
         />
       )}
+      </div>
+      {imageDrawerOpen && activeTalk && (
+        <ImageDrawer
+          currentTalkPath={activeTalk.outlinePath}
+          onInsert={(hit) => insertDrawerImage(hit.thumbUrl)}
+          onInsertOldSlide={insertOldSlideAfterCurrent}
+          currentSlide={activeSlide + 1}
+          onClose={closeImageDrawer}
+        />
+      )}
+      </div>
       {diskGuard.sheet && <OutlineDiskChangeSheet change={diskGuard.sheet} onAnswer={diskGuard.answerSheet} />}
       <SearchPalette
         isOpen={searchOpen}
@@ -3394,19 +3522,6 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
           suspendKeys={helpOpen}
         />
       )}
-      {archiveOpen && (
-        // Wrapper carries the class + data hook the e2e harness targets to find the
-        // archive palette and its input (the component itself styles inline). React
-        // portals the modal to document.body? No — it renders inline, so the wrapper
-        // contains it and selectors like `.archive-image-search input` resolve.
-        <div className="archive-image-search" data-archive-search>
-          <ArchiveImageSearch
-            isOpen={archiveOpen}
-            onClose={() => { setArchiveOpen(false); focusEditor() }}
-            onInsertImage={handleArchiveInsert}
-          />
-        </div>
-      )}
       {iconPickerOpen && (
         // Wrapper carries the class + data hook the e2e harness targets (the component styles
         // inline and renders inline, so `.icon-picker [data-icon-search]` resolves).
@@ -3462,6 +3577,15 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
           onRetry={() => { void handlePublishHandout() }}
         />
       )}
+      {publishWorkNoticeText && (
+        <PublishWorkNoticeSheet
+          talkTitle={activeTalk.title || activeTalk.slug}
+          notice={publishWorkNoticeText}
+          onCancel={() => setPublishWorkNoticeText(null)}
+          onPublish={() => { setPublishWorkNoticeText(null); void handlePublishHandout() }}
+          onPlanRun={() => { setPublishWorkNoticeText(null); setPlanSheet({ run: null }) }}
+        />
+      )}
       {shareSheetOpen && (
         <ShareSheet
           key={activeTalk.outlinePath}
@@ -3473,7 +3597,7 @@ export default function WorkspaceLayout({ activeTalk, vaultRoot, onOutlineChange
       {planSheet && (
         <PlanRunSheet
           key={`${activeTalk.outlinePath}:${planSheet.run?.id ?? 'new'}`}
-          talk={{ slug: activeTalk.slug, title: activeTalk.title || activeTalk.slug, outlinePath: activeTalk.outlinePath }}
+          talk={{ slug: activeTalk.slug, title: activeTalk.title || activeTalk.slug, outlinePath: activeTalk.outlinePath, vaultId: activeTalk.vaultId }}
           run={planSheet.run}
           onClose={() => setPlanSheet(null)}
           onSaved={() => setPlanSheet(null)}

@@ -1,6 +1,11 @@
 import { strict as assert } from 'node:assert'
 import { pathToFileURL } from 'node:url'
+import { mkdtempSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { chromium } from 'playwright'
+import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
+import { buildDeckHtmlFromModel } from '../compiler/scripts/lib/07-assembly.mjs'
 import { buildLayoutSampler } from './build-layout-sampler.mjs'
 
 // Ticket 18: the default type scale is the former XL and long lists spend leading and air before type.
@@ -121,6 +126,11 @@ try {
         itemPadTop: firstStyle ? parseFloat(firstStyle.paddingTop) : null,
         rowItemFonts: [...content.querySelectorAll('.icon-row .ir-desc > li')].map((item) => parseFloat(getComputedStyle(item).fontSize)),
         zoom: Number(getComputedStyle(content).zoom || 1),
+        // The title's painted box against the stage, in canvas px (negative = outside the stage).
+        titleInsidePx: h1 ? (() => {
+          const r = h1.getBoundingClientRect()
+          return Math.min(r.left - stageRect.left, stageRect.right - r.right, r.top - stageRect.top, stageRect.bottom - r.bottom) / k
+        })() : null,
         overflowPx: naturalHeight - availableHeight,
         topAirPx: listRect ? (listRect.top - stageRect.top) / k : null,
         bottomAirPx: listRect ? (stageRect.bottom - listRect.bottom) / k : null
@@ -220,6 +230,7 @@ try {
     console.log(JSON.stringify({ viewport, numberedCards }))
     assert(numberedCards.overflowPx <= 1, `numbered cards fit their band (${numberedCards.overflowPx.toFixed(1)}px)`)
     assert.equal(numberedCards.zoom, 1, `numbered cards are not zoomed (got ${numberedCards.zoom})`)
+    assert(numberedCards.titleInsidePx >= -0.5, `the numbered slide's title lies within the stage (${numberedCards.titleInsidePx?.toFixed(1)}px of margin)`)
     if (numberedCards.listFit === 'type') assert(Math.abs(numberedCards.listGap - SPACED_GAP_MIN) < 0.001, `numbered cards stepped type only after spacing reached the floor (--list-gap ${numberedCards.listGap})`)
     assert(numberedCards.itemFonts.every((px) => px >= floor - 0.01), 'numbered cards never fall below the floor')
 
@@ -297,6 +308,9 @@ try {
         const content = slide.querySelector('.slide-content')
         const table = content.querySelector('.slide-table')
         const head = slide.querySelector('.slide-head')
+        // ADR-0039 band rule: air is measured from the lower edge of the title block. Under a title look
+        // the head is a zero-height box below the look's clear band, so the edge is the painted title.
+        const titleEdge = slide.dataset.titleLook && !head.classList.contains('slide-head-quiet') ? head.querySelector('h1') : head
         const footer = document.querySelector('.footer')
         const px = (el, prop) => (el ? parseFloat(getComputedStyle(el)[prop]) : null)
         const cells = [...table.querySelectorAll('td, th')]
@@ -312,7 +326,7 @@ try {
           hasThead: !!table.querySelector('thead'),
           rows: table.querySelectorAll('tr').length,
           tableWidth: tableRect.width, contentWidth: content.getBoundingClientRect().width,
-          topAir: tableRect.top - head.getBoundingClientRect().bottom,
+          topAir: tableRect.top - titleEdge.getBoundingClientRect().bottom,
           bottomAir: footer.getBoundingClientRect().top - tableRect.bottom
         }
       }, id)
@@ -348,6 +362,46 @@ try {
 
     await page.close()
   }
+  // A title with one unbreakable word wider than the left title column (a long identifier or compound)
+  // on a numbered slide: the title shrinks to its floor and then breaks inside the word, so its box
+  // stays inside the column and the stage instead of running into the list.
+  const longTitleDir = mkdtempSync(join(tmpdir(), 'list-sizing-long-title-'))
+  const longTitleSource = ['# Long title', '## S', '',
+    '### Reinterpretationofextraordinarilylongunbreakableidentifiers (numbered)', '{id=long-numbered-title}{numbered}', '',
+    '- Describe the outcome, not the steps', '- Give it the context a new colleague would need', '- Let it work, then verify the result end to end', '',
+    '### Next slide', '{id=after}', '', '- one', ''].join('\n')
+  const longTitlePath = join(longTitleDir, 'long-title-outline.md')
+  writeFileSync(longTitlePath, longTitleSource, 'utf8')
+  const longTitleModel = await prepareSource(longTitlePath, longTitleSource, 'long-title', statSync(longTitlePath))
+  const longTitleHtml = join(longTitleDir, 'long-title.html')
+  writeFileSync(longTitleHtml, await buildDeckHtmlFromModel(longTitleModel), 'utf8')
+  const longPage = await browser.newPage({ viewport: { width: 1280, height: 720 } })
+  await longPage.goto(`file://${longTitleHtml}?audience=1`, { waitUntil: 'load' })
+  await longPage.evaluate(() => document.fonts?.ready)
+  await longPage.evaluate(() => { location.hash = 'long-numbered-title' })
+  await longPage.waitForFunction(() => document.querySelector('.stage > .slide.active')?.dataset.id === 'long-numbered-title')
+  await longPage.waitForTimeout(300)
+  const longTitle = await longPage.evaluate(() => {
+    const slide = document.querySelector('.stage > .slide.active')
+    const h1 = slide.querySelector('h1:not(.sr-only)')
+    const head = h1.closest('.slide-head')
+    const stage = slide.parentElement.getBoundingClientRect()
+    const box = h1.getBoundingClientRect()
+    const headBox = head.getBoundingClientRect()
+    const k = stage.width / slide.parentElement.offsetWidth
+    return {
+      layout: slide.dataset.titleLayout,
+      stageMarginPx: Math.min(box.left - stage.left, stage.right - box.right, box.top - stage.top, stage.bottom - box.bottom) / k,
+      railOverrunPx: (box.right - headBox.right) / k,
+      contentOverrunPx: h1.scrollWidth - h1.clientWidth
+    }
+  })
+  console.log(JSON.stringify({ longTitle }))
+  assert.equal(longTitle.layout, 'left', 'the long-title fixture takes the left title column')
+  assert(longTitle.stageMarginPx >= -0.5, `a long unbreakable title box lies within the stage (${longTitle.stageMarginPx.toFixed(1)}px)`)
+  assert(longTitle.railOverrunPx <= 0.5, `a long unbreakable title box stays inside the title column (${longTitle.railOverrunPx.toFixed(1)}px past it)`)
+  assert(longTitle.contentOverrunPx <= 1, `a long unbreakable title's words stay inside its box (${longTitle.contentOverrunPx}px of overflow)`)
+  await longPage.close()
 } finally {
   await browser.close()
 }

@@ -213,7 +213,9 @@ try {
       const C = (el) => { const r = el.getBoundingClientRect(); return { top: (r.top - stageRect.top) / k, bottom: (r.bottom - stageRect.top) / k, width: r.width / k, height: r.height / k } }
       const rowRect = C(row)
       const videoRect = C(video)
-      const headRect = C(head)
+      // ADR-0039 band rule: air is measured from the lower edge of the title block. Under a title look
+      // the head is a zero-height box below the look's clear band, so the edge is the painted title.
+      const headRect = C(slide.dataset.titleLook && !head.classList.contains('slide-head-quiet') ? head.querySelector('h1') : head)
       const footerRect = C(footer)
       return {
         scale: k,
@@ -276,14 +278,19 @@ try {
     const card = slide?.querySelector('.card')
     const heading = card?.querySelector('h4')
     if (!content || !head || !gallery || !card || !heading) return null
-    const contentRect = content.getBoundingClientRect()
-    const headRect = head.getBoundingClientRect()
+    // ADR-0039 band rule: the cards centre between the lower edge of the title block (under a title
+    // look the painted title; the head is a zero-height box below the clear band) and the top of the
+    // footer band the slide reserves, 61 canvas px above the stage bottom (skin/slide-foundations.css).
+    const headRect = (slide.dataset.titleLook && !head.classList.contains('slide-head-quiet') ? head.querySelector('h1') : head).getBoundingClientRect()
     const galleryRect = gallery.getBoundingClientRect()
+    const stage = slide.parentElement
+    const k = stage.getBoundingClientRect().width / stage.offsetWidth
+    const bandBottom = stage.getBoundingClientRect().top + (stage.offsetHeight - 61) * k
     return {
       ordinal: getComputedStyle(card, '::after').content,
       headingFont: parseFloat(getComputedStyle(heading).fontSize),
       topAir: galleryRect.top - headRect.bottom,
-      bottomAir: contentRect.bottom - galleryRect.bottom,
+      bottomAir: bandBottom - galleryRect.bottom,
     }
   })
   assert(cardGeometry, 'body-less cards expose rendered geometry')
@@ -299,64 +306,39 @@ try {
   assert.notEqual(numberedOrdinal, 'none', 'ordered card source paints its requested ordinal')
 
   await activate('t19-compare-body')
+  // ADR-0039 / 0.41 ticket 08: compare is two subtle panels with a "vs" disc between them. Each fixture half is
+  // one paragraph, so each panel has a head and one regular-weight row at body size.
   const compareGeometry = await geometryPage.evaluate(() => {
     const halves = [...document.querySelectorAll('.slide.active .compare-half')]
-    const copy = [...document.querySelectorAll('.slide.active .compare-inner .content-p')]
-    const labels = [...document.querySelectorAll('.slide.active .compare-label')]
-    const bodyBackground = getComputedStyle(document.body).backgroundColor
+    const copy = [...document.querySelectorAll('.slide.active .vs-row .vs-text')]
+    const labels = [...document.querySelectorAll('.slide.active .vs-head-text')]
     const stageRect = document.querySelector('.stage').getBoundingClientRect()
+    const disc = document.querySelector('.slide.active .vs-disc').getBoundingClientRect()
     return {
       canvasWidth: document.querySelector('.stage').offsetWidth,
       widths: halves.map((half) => half.getBoundingClientRect().width),
       heights: halves.map((half) => half.getBoundingClientRect().height),
       stageWidth: stageRect.width,
       stageHeight: stageRect.height,
-      backgrounds: halves.map((half) => getComputedStyle(half).backgroundColor),
       copyFonts: copy.map((paragraph) => parseFloat(getComputedStyle(paragraph).fontSize)),
       copyWeights: copy.map((paragraph) => getComputedStyle(paragraph).fontWeight),
-      copyMaxWidths: copy.map((paragraph) => parseFloat(getComputedStyle(paragraph).maxWidth)),
       labelFonts: labels.map((label) => parseFloat(getComputedStyle(label).fontSize)),
-      labelFamilies: labels.map((label) => getComputedStyle(label).fontFamily),
-      labelLetterSpacing: labels.map((label) => parseFloat(getComputedStyle(label).letterSpacing)),
-      labelTransforms: labels.map((label) => getComputedStyle(label).textTransform),
-      centreOffsets: halves.map((half) => {
-        const halfRect = half.getBoundingClientRect()
-        const innerRect = half.querySelector('.compare-inner').getBoundingClientRect()
-        return Math.abs((halfRect.top + halfRect.bottom - innerRect.top - innerRect.bottom) / 2)
-      }),
-      bodyBackground,
+      discMid: (disc.left + disc.right) / 2 - stageRect.left,
     }
   })
-  assert.equal(compareGeometry.widths.length, 2, 'compare fixture renders two columns')
+  assert.equal(compareGeometry.widths.length, 2, 'compare fixture renders two panels')
   assert(Math.abs(compareGeometry.widths[0] - compareGeometry.widths[1]) <= 1,
-    `compare columns have equal widths (${compareGeometry.widths[0].toFixed(1)}px vs ${compareGeometry.widths[1].toFixed(1)}px)`)
-  assert(compareGeometry.widths.every((width) => Math.abs(width - compareGeometry.stageWidth / 2) <= 1),
-    'each compare column occupies half the stage')
-  assert(compareGeometry.heights.every((height) => Math.abs(height - compareGeometry.stageHeight) <= 1),
-    'the compare columns carry their backgrounds for the full stage height')
-  // The mockup's rule is .t-half .half p { font-size: clamp(1.7rem, 3.4vw, 3rem) }: 48px only where
-  // the width reaches 1412px. Since ADR-0030 (749b9e7) the rule is evaluated on the fixed
-  // 1280×720 canvas (cqw of the stage), whatever the window, so it gives 3.4% of 1280 = 43.52px
-  // and the 3rem cap no longer engages at this 1600×900 window.
-  const compareCopyPx = Math.min(48, Math.max(27.2, 0.034 * compareGeometry.canvasWidth))
-  assert(compareGeometry.copyFonts.every((px) => Math.abs(px - compareCopyPx) <= 0.1),
-    `compare copy follows the mockup's clamp(1.7rem, 3.4cqw, 3rem) on the ${compareGeometry.canvasWidth}px canvas: ${compareCopyPx.toFixed(2)}px (${compareGeometry.copyFonts.join('/')}px)`)
-  assert.deepEqual(compareGeometry.copyWeights, ['500', '500'], 'compare copy uses the mockup weight 500')
-  assert(compareGeometry.copyMaxWidths.every((px) => Math.abs(px - 12 * compareCopyPx) <= 0.1),
-    `compare copy keeps the mockup's 12em measure: ${(12 * compareCopyPx).toFixed(2)}px (${compareGeometry.copyMaxWidths.join('/')}px)`)
-  assert(compareGeometry.labelFonts.every((px) => px < 31),
-    `compare labels remain deliberate sub-floor chrome (${compareGeometry.labelFonts.join('/')}px)`)
-  assert(compareGeometry.labelFonts.every((px, index) => Math.abs(px - compareGeometry.copyFonts[index] * 0.58) <= 0.1),
-    'compare labels use the mockup .58em scale')
-  assert(compareGeometry.labelFamilies.every((family) => family.includes('monospace')),
-    'compare labels use the deck mono face')
-  assert(compareGeometry.labelLetterSpacing.every((px, index) => Math.abs(px - compareGeometry.labelFonts[index] * 0.18) <= 0.1),
-    'compare labels use the mockup .18em tracking')
-  assert.deepEqual(compareGeometry.labelTransforms, ['uppercase', 'uppercase'], 'compare labels are uppercase')
-  assert.notEqual(compareGeometry.backgrounds[0], compareGeometry.backgrounds[1], 'the left compare column alone carries the section tint')
-  assert.equal(compareGeometry.backgrounds[1], compareGeometry.bodyBackground, 'the right compare column stays on paper')
-  assert(compareGeometry.centreOffsets.every((offset) => offset <= 1),
-    `both compare columns are vertically centred (${compareGeometry.centreOffsets.map((value) => value.toFixed(1)).join('/')}px offset)`)
+    `compare panels have equal widths (${compareGeometry.widths[0].toFixed(1)}px vs ${compareGeometry.widths[1].toFixed(1)}px)`)
+  assert(compareGeometry.heights.every((height) => height < compareGeometry.stageHeight),
+    'the compare panels are sized to their content, not the stage')
+  const compareFloor = 0.019375 * compareGeometry.canvasWidth
+  assert(compareGeometry.copyFonts.length === 2 && compareGeometry.copyFonts.every((px) => px + 0.01 >= compareFloor),
+    `compare rows meet the type floor ${compareFloor.toFixed(1)}px (${compareGeometry.copyFonts.join('/')}px)`)
+  assert(compareGeometry.labelFonts.every((px) => px + 0.01 >= compareFloor),
+    `compare heads meet the type floor (${compareGeometry.labelFonts.join('/')}px)`)
+  assert.deepEqual(compareGeometry.copyWeights, ['400', '400'], 'compare rows are regular weight')
+  assert(Math.abs(compareGeometry.discMid - compareGeometry.canvasWidth / 2) <= 2 || Math.abs(compareGeometry.discMid - compareGeometry.stageWidth / 2) <= 2,
+    'the vs disc is centred between the panels')
 
   await activate('t19-list-markers')
   const markerGaps = await geometryPage.evaluate(() => [...document.querySelectorAll('.slide.active .fl-sublist > li')].map((item) => ({

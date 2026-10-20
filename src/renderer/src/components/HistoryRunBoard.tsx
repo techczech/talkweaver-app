@@ -9,7 +9,6 @@ import type { RecordingSession, RunBoard, RunResultsShareState } from '../../../
 import { runBoardMarkdown, runBoardState, runBoardView, type RunBoardEntry } from '../../../shared/run-board'
 import { pollTypeWord, runPollSummaries, type RunPollSummary } from '../../../shared/run-poll-results'
 import { DEFAULT_RUN_SHARE_LIFETIME, runShareOptions, type RunShareLifetime } from '../../../shared/run-results-share'
-import { preworkEnabled } from '../../../shared/prework-flag'
 
 type Slide = { slideNumber: number; title: string } | null | undefined
 const ENTRIES_SHOWN = 7
@@ -325,12 +324,10 @@ export function RunShareDialog({ run, talkTitle, onClose, flash }: { run: Record
         <input type="checkbox" checked={polls} disabled={!options.polls.length || busy} onChange={(e) => setPolls(e.target.checked)} data-share-polls />
         <span><b>The poll results</b><small>{options.polls.length ? pollNames : 'No poll results on this Run'}</small></span>
       </label>
-      {preworkEnabled() && (
-        <label className="rs-opt off">
-          <input type="checkbox" checked={false} disabled data-share-prework />
-          <span><b>The pre-work answers</b><small>No pre-work answers on this Run</small></span>
-        </label>
-      )}
+      <label className="rs-opt off">
+        <input type="checkbox" checked={false} disabled data-share-prework />
+        <span><b>The pre-work answers</b><small data-share-prework-note>{options.preworkNote}</small></span>
+      </label>
       <div className="rs-url" data-share-url>{current ? current.url.replace(/^https?:\/\//, '') : current === undefined ? 'Checking…' : 'The link is made when you copy it'}</div>
       <div className="rs-life">
         <span>Open for</span>

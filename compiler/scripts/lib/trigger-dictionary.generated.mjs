@@ -348,6 +348,10 @@ export const TRIGGER_DICTIONARY = {
     "key": "noask",
     "value": true
   },
+  "local": {
+    "key": "local",
+    "value": true
+  },
   "names": {
     "key": "names",
     "value": true
@@ -481,6 +485,7 @@ export const VALUE_TRIGGER_DICTIONARY = {
     "plain"
   ],
   "numbered": [
+    "mono",
     "square",
     "plain",
     "styled"
@@ -589,6 +594,10 @@ export const VALUE_TRIGGER_DICTIONARY = {
     "on",
     "off"
   ],
+  "table-first-column": [
+    "on",
+    "off"
+  ],
   "chart": [
     "bar",
     "pie",
@@ -633,9 +642,15 @@ export const VALUE_TRIGGER_DICTIONARY = {
   ],
   "titlelook": [
     "default",
+    "full",
+    "plain",
+    "none",
+    "off",
     "kicker",
     "label",
-    "tab"
+    "tab",
+    "tab-strip",
+    "intro-then-none"
   ],
   "titlelook-tone": [
     "strong",
@@ -957,9 +972,9 @@ export const OPEN_PATTERN_TOKENS = [
   {
     "key": "results",
     "form": "equals",
-    "pattern": "[A-Za-z0-9-]+",
-    "description": "A talk slide that shows the answers of the named pre-work step (its slide id).",
-    "justification": "Names a step of the talk’s own pre-work section by its slide id; the Inspector’s Results section picks it from the steps (compiler/scripts/lib/prework.mjs)."
+    "pattern": "[A-Za-z0-9-]+(?:/[A-Za-z0-9-]+)?",
+    "description": "A talk slide that shows the answers of the named step: a pre-work step of the talk (its slide id), or a work-file step as <file id>/<step id>.",
+    "justification": "Names a step of the talk’s own pre-work section by its slide id, or a step of a work file as <file id>/<step id>; the Inspector’s Results section picks it from the steps (compiler/scripts/lib/prework.mjs parseResultsToken)."
   }
 ]
 
@@ -1001,9 +1016,9 @@ export const TITLE_REGIME_BY_LAYOUT = {
   "closing": "own",
   "code": "top",
   "columns": "top",
-  "compare": "hidden",
+  "compare": "top",
   "conceptmap": "top",
-  "contrast": "sidebar",
+  "contrast": "top",
   "copy-visual": "top",
   "cta-screenshots": "top",
   "cycle": "top",

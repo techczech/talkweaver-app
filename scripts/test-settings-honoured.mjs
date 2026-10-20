@@ -250,10 +250,14 @@ const EFFECTS = {
     unknown: { value: 'diagonal', warning: 'screenshot-list-unknown' }
   },
   title_look: {
-    effect: 'a top title is drawn in the named look',
+    effect: 'a top title is drawn in the named look (the index tab when none is named; none after the section card for intro-then-none)',
     body: ['## First section', '', '### A content slide', '{titletop}', '', '- One', '- Two'],
-    probe: ({ document }) => document.querySelector('section.slide[data-role="content"]')?.getAttribute('data-title-look') ?? '',
-    expect: { '': '', default: '', kicker: 'kicker', label: 'label', tab: 'tab' },
+    probe: ({ document }) => {
+      const slide = document.querySelector('section.slide[data-role="content"]')
+      if (slide?.querySelector(':scope > .slide-content > .slide-head.slide-head-quiet')) return 'none'
+      return slide?.getAttribute('data-title-look') ?? ''
+    },
+    expect: { '': 'tab', tab: 'tab', default: '', full: '', kicker: 'kicker', label: 'label', 'tab-strip': 'tab-strip', 'intro-then-none': 'none' },
     unknown: { value: 'sparkle', warning: 'title-look-unknown' }
   },
   title_look_tone: {
@@ -433,9 +437,15 @@ const EFFECTS = {
 // -----------------------------------------------------------------------------
 // 1. Registry coverage — the table is enumerated FROM the registry.
 // -----------------------------------------------------------------------------
+// Keys the deck never reads carry `outsideDeck` in the registry (work-files ticket 08: prework, postwork
+// name a work file for a Run to send), so there is no compiled deck to probe. The registry says where
+// their effect is tested instead.
 const userKeys = METADATA_REGISTRY.filter(
-  (entry) => entry.location === 'frontmatter' && entry.ownership === 'user' && !entry.since
+  (entry) => entry.location === 'frontmatter' && entry.ownership === 'user' && !entry.since && !entry.outsideDeck
 )
+for (const entry of METADATA_REGISTRY.filter((candidate) => candidate.outsideDeck)) {
+  assert(entry.location === 'frontmatter' && entry.ownership === 'user', `${entry.key}: outsideDeck is for a user front-matter key`)
+}
 const missing = userKeys.map((entry) => entry.key).filter((key) => !EFFECTS[key])
 assert.deepEqual(missing, [], `every user frontmatter key needs a proven compiler effect: ${missing.join(', ')}`)
 const stray = Object.keys(EFFECTS).filter((key) => !userKeys.some((entry) => entry.key === key))

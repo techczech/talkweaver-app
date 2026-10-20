@@ -6,7 +6,7 @@
 // changes the document, and is not a save's adoption or the rule's own write (both put into the "before", `carried`), is
 // not the user's, wherever it lies, and the "before" is given up. Giving up writes nothing; it is always safe.
 import { Annotation, type ChangeSet, type Text, type Transaction } from '@codemirror/state'
-import { isKeyTyped } from './outliner'
+import { isKeyTyped } from './keyTypedMark'
 
 /** Marks the rule's own write, so it is never read as typing. */
 export const ownWrite = Annotation.define<boolean>()

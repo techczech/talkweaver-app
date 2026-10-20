@@ -9,7 +9,15 @@ import { randomUUID } from 'node:crypto'
 import { dirname, join, relative, sep } from 'node:path'
 import {
   deleteTargets,
+  existingSegmentPaths,
   localRecordingPath,
+  localSegmentAltPath,
+  localSegmentPath,
+  segmentFilePath,
+  segmentIndexOfFile,
+  sessionIdRandom,
+  sessionIdTaken,
+  streamMarkerPath,
   saveTargets,
   sessionJsonPath,
   listSessionJsonFiles,
@@ -18,6 +26,8 @@ import {
   vaultSessionPath
 } from '../src/main/recording-paths.ts'
 import { createPlannedRun, deletePlannedRun, listRuns, normaliseRun, persistRun, readRun, updatePlannedRun } from '../src/main/runs.ts'
+import { resolveTalkTextPaths } from '../src/main/talkTextPathSafety.ts'
+import { newSessionId } from '../compiler/scripts/lib/16-presentation-ledger.mjs'
 import { createPathwaySummaryReader, pathwayManifestPath, readPathwayManifest } from '../src/main/pathways.ts'
 
 const scratch = mkdtempSync(join(tmpdir(), 'talkweaver-recording-paths-'))
@@ -321,6 +331,63 @@ for (const slug of GOOD_SLUGS) {
 // ── The pathway manifest survived every refused call unchanged ──
 assert.equal(readFileSync(join(presentations, 'age-of-the-claw', 'manifest.json'), 'utf8'), MANIFEST_TEXT, 'manifest.json untouched')
 checks++
+
+// ── Session ids: the old one-char form and the new eight-char form are both read everywhere ──
+{
+  const ids = ['sess-20260710-141204-u', newSessionId(Date.UTC(2026, 9, 20, 12), sessionIdRandom)]
+  assert.match(ids[1], /^sess-20261020-120000-[0-9a-z]{8}$/)
+  const idsDir = mkdtempSync(join(tmpdir(), 'talkweaver-session-ids-'))
+  const idsVault = join(idsDir, 'vault')
+  mkdirSync(join(idsVault, '_PRESENTATIONS', 'talk'), { recursive: true })
+  mkdirSync(join(idsDir, 'userData', 'recordings'), { recursive: true })
+  const rec = join(idsDir, 'userData', 'recordings')
+  for (const id of ids) {
+    assert.equal(localRecordingPath(join(idsDir, 'userData'), id, 'webm').path, join(rec, `${id}.webm`), id)
+    assert.equal(localSegmentPath(join(idsDir, 'userData'), id, 2).path, join(rec, `${id}.seg-3.webm`), id)
+    assert.equal(streamMarkerPath(join(idsDir, 'userData'), id).path, join(rec, `${id}.recording.json`), id)
+    assert.ok(vaultSessionPath(idsVault, 'talk', id).ok, id)
+    assert.equal(segmentIndexOfFile(`${id}.webm`), 0, id)
+    assert.equal(segmentIndexOfFile(`${id}.seg-2.webm`), 1, id)
+    // A replacement segment file (its own name was held by another file) keeps its segment index.
+    assert.equal(localSegmentAltPath(join(idsDir, 'userData'), id, 1, 1).path, join(rec, `${id}.seg-2.r1.webm`), id)
+    assert.equal(localSegmentAltPath(join(idsDir, 'userData'), id, 0, 9).path, join(rec, `${id}.seg-1.r9.webm`), id)
+    for (const k of [0, 10, 1.5, '1']) assert.equal(localSegmentAltPath(join(idsDir, 'userData'), id, 1, k).ok, false, `replacement ${k} refused`)
+    assert.equal(segmentIndexOfFile(`${id}.seg-2.r1.webm`), 1, id)
+    assert.equal(segmentIndexOfFile(`${id}.seg-1.r3.webm`), 0, id)
+    // A marker may name only the segment's own file or one of its replacements.
+    assert.equal(segmentFilePath(join(idsDir, 'userData'), id, 1).path, join(rec, `${id}.seg-2.webm`), id)
+    assert.equal(segmentFilePath(join(idsDir, 'userData'), id, 1, `${id}.seg-2.webm`).path, join(rec, `${id}.seg-2.webm`), id)
+    assert.equal(segmentFilePath(join(idsDir, 'userData'), id, 1, `${id}.seg-2.r4.webm`).path, join(rec, `${id}.seg-2.r4.webm`), id)
+    for (const bad of [`${id}.seg-3.r1.webm`, `${id}.webm`, '../x.webm', `other.seg-2.webm`, `${id}.seg-2.r10.webm`, 7]) {
+      assert.equal(segmentFilePath(join(idsDir, 'userData'), id, 1, bad).ok, false, `marker file ${bad} refused`)
+    }
+    assert.ok(resolveTalkTextPaths(idsVault, 'talk', id), id)
+    assert.equal(new URL(`twrec://${id}`).hostname, id, `${id} survives the twrec:// audio URL`)
+    checks++
+  }
+  // Taken: a Run in the vault or any local file named for the id; an old id is no prefix of a new one.
+  const [oldId, newId] = ids
+  assert.equal(sessionIdTaken(idsVault, join(idsDir, 'userData'), 'talk', newId), false)
+  writeFileSync(join(rec, `${oldId}.webm`), 'old')
+  writeFileSync(join(rec, `${oldId}.seg-2.webm`), 'old')
+  assert.deepEqual(existingSegmentPaths(join(idsDir, 'userData'), oldId).map((f) => f.split(sep).pop()), [`${oldId}.webm`, `${oldId}.seg-2.webm`])
+  assert.equal(sessionIdTaken(null, join(idsDir, 'userData'), 'talk', oldId), true, 'local audio takes the id')
+  const shortId = 'sess-20260710-141204-v'
+  writeFileSync(join(rec, `${shortId}abcdefg.webm`), 'longer')
+  assert.equal(sessionIdTaken(idsVault, join(idsDir, 'userData'), 'talk', shortId), false, 'a longer id\'s files do not take a shorter id it starts with')
+  assert.equal(sessionIdTaken(idsVault, join(idsDir, 'userData'), 'talk', `${oldId}abcdefg`), false, 'nor do a shorter id\'s files take a longer one')
+  writeFileSync(join(rec, `${newId}.recording.json`), '{}')
+  assert.equal(sessionIdTaken(null, join(idsDir, 'userData'), 'talk', newId), true, 'an in-progress marker takes the id')
+  rmSync(join(rec, `${newId}.recording.json`))
+  writeFileSync(join(idsVault, '_PRESENTATIONS', 'talk', `${newId}.json`), '{}')
+  assert.equal(sessionIdTaken(idsVault, join(idsDir, 'userData'), 'talk', newId), true, 'a Run in the vault takes the id')
+  assert.equal(sessionIdTaken(null, join(idsDir, 'userData'), 'talk', newId), false, 'with no vault named, only local files count')
+  assert.equal(sessionIdTaken(null, join(idsDir, 'userData'), 'talk', '../x'), true, 'an unsafe id is never free')
+  const draws = Array.from({ length: 1000 }, sessionIdRandom)
+  assert.ok(draws.every((r) => r >= 0 && r < 1) && new Set(draws).size === 1000, 'the crypto source gives [0,1) draws')
+  rmSync(idsDir, { recursive: true, force: true })
+  checks++
+}
 
 // ── Nothing was created outside the scratch vault / userData ──
 const after = treeOutside()

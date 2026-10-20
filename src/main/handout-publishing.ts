@@ -9,10 +9,19 @@
 //   -----------------------------|--------------------------------------|--------------------------------------|--------------------------
 //   talk                         | Publish handout (`talk:publish-      | writes the talk's pages              | yes, when the live service
 //                                | handout`)                            |                                      | is ready
-//   run                          | Publish handout for this Run         | writes the Run's pages               | yes, when the live service
-//                                | (`run:publish-handout`)              |                                      | is ready
-//   run-unpublish                | Unpublish Run handout                | removes the Run's pages              | none: it writes no page
-//                                | (`run:unpublish-handout`)            |                                      |
+//   run                          | Publish handout for this Run /       | writes the Run's pages: its handout, | yes, when the live service
+//                                | Publish for this run                 | and its `pre-work/` and `post-work/` | is ready (the work pages:
+//                                | (`run:publish-handout`)              | pages (work-files ticket 16)         | the Worker's own address)
+//   run-unpublish                | Unpublish (the Run checklist) /      | a Run with a sent phase (stamped on  | none: the one page it
+//                                | Unpublish Run handout                | the Run or in the work service's     | writes holds no address
+//                                | (`run:unpublish-handout`)            | record): every page of the Run's     |
+//                                |                                      | folder becomes "This page is not     |
+//                                |                                      | available", the rest of the folder   |
+//                                |                                      | goes (ticket 17); else removes the   |
+//                                |                                      | Run's pages                          |
+//   talk-unpublish               | Unpublish a talk handout (Published  | removes the talk's own folder, and   | none: it writes no page
+//                                | pages; `published:unpublish-talk`)   | its line of the redirect file        |
+//                                |                                      | (talk-unpublish.ts, ticket 22)       |
 //   live-short-link              | Go live, when the talk's short link  | rewrites `_redirects` only           | none: it writes no page
 //                                | is new (`live:go`)                   |                                      |
 //
@@ -21,6 +30,14 @@
 //   handout" / "Save as a file instead" and "Build Run handout" write a file on this computer and
 //   upload nothing; the live service's own deploy (live-service-deploy.ts) and Share for comments
 //   (shared-talk.ts) send to the live service, never to the site. They are outside this module.
+//
+//   The Run's folder for `run` and `run-unpublish` is decided from the Run's own facts (its recorded
+//   folder and its link), never from what the site's copy holds (run-unpublish.ts runSiteFolder,
+//   runPublishFolder): a recorded folder missing here is published back into by the same name.
+//   EVERY UPLOAD IS THE WHOLE SITE FOLDER (`uploadSite`): a deploy from an incomplete copy takes other
+//   pages down. So no refusal in this module or in run-unpublish.ts advises publishing again as the way
+//   out of a missing copy; an unpublish that cannot replace the Run's pages here says to unpublish from
+//   the computer that published it. (Guarding every deploy from an incomplete copy is a separate ticket.)
 //
 // WHAT MUST HOLD, for every row of that table. Each is a test in scripts/test-handout-publishing.mjs
 // (the sequence) or in scripts/test-handout-from-buffer.mjs and test-prework-publish.mjs (the real
@@ -62,13 +79,17 @@
 //         are file NAMES, made into relative, encoded links by the compiler (`pageLink`).
 //         What the check AFTER THE BUILD reads, in the pages this build wrote: the configuration
 //         lines the compiler wrote AND MARKED as its own
-//         (`const LIVE_CONFIG|VENUE_JOIN|PREWORK_CONFIG = {json}; /* talkweaver:app-config */`), and
+//         (`const LIVE_CONFIG|VENUE_JOIN|PREWORK_CONFIG = {json}; /* talkweaver:app-config */`), EVERY
+//         line that starts a Run's pre-work or post-work page (`startWorkPage(window, {json});`: its
+//         Worker address and handout link; work-files ticket 16), and
 //         the redirect file by the same rule as at entry. An unmarked line that reads the same is the
 //         author's and is not read; the same marked line twice means the author copied the mark too,
-//         and neither is read. The author always wins.
+//         and neither is read. The author always wins, except over a start line: every one is read,
+//         and one that cannot be read refuses the publish (a refusal, never a leak).
 //       Pages are built in the site folder itself, as before this ticket; publishing moves, renames
-//       and deletes nothing there. (Unpublish Run handout removes that Run's folder, as it always
-//       did: that is what it is for.) A build that simply FAILS (the compiler threw, a file could
+//       and deletes nothing there. (Unpublishing a Run removes that Run's folder, or replaces its pages
+//       with the not-available page and takes the rest of it away (run-unpublish.ts); unpublishing a talk
+//       handout removes that talk's own folder (talk-unpublish.ts): that is what they are for.) A build that simply FAILS (the compiler threw, a file could
 //       not be written) may leave its pages part-written in the site folder: that too is the
 //       behaviour before this ticket and is not changed here.
 //     Pages an EARLIER version left in the site folder with the dead live address are already
@@ -107,7 +128,7 @@
 //   is in cloudflare-connection.ts. It does not start a new generation.
 //
 // ORDER AND TIME. One site, one folder, one upload of the whole folder: so every publish that
-// writes or removes pages (talk, run, run-unpublish) runs ONE AT A TIME, in the order asked for (a
+// writes or removes pages (talk, run, run-unpublish, talk-unpublish) runs ONE AT A TIME, in the order asked for (a
 // keyed queue, the key being the site folder). A job that depends on what an earlier one recorded
 // reads it when its turn BEGINS (`begin`, `prepare`), never when it was asked for: an unpublish
 // asked for while the publish is still running finds the link that publish recorded.
@@ -135,13 +156,14 @@ import { createKeyedQueue } from './owner-tokens.ts'
 import { PUBLISH_FAILED, pagesDeployFailure, siteFolder } from './publishing-logic.ts'
 import { earlierHandoutsText, publishedWithoutLiveText, type PublishNotReady } from '../shared/publish-status.ts'
 
-export type PublishEntry = 'talk' | 'run' | 'run-unpublish' | 'live-short-link'
+export type PublishEntry = 'talk' | 'run' | 'run-unpublish' | 'talk-unpublish' | 'live-short-link'
 
 /** The table at the top, for the code and the tests. `live`: its pages may carry the live address. */
 export const PUBLISH_ENTRY_POINTS: Record<PublishEntry, { ipc: string; what: string; live: boolean }> = {
   talk: { ipc: 'talk:publish-handout', what: 'Publish handout', live: true },
   run: { ipc: 'run:publish-handout', what: 'Publish handout for this Run', live: true },
-  'run-unpublish': { ipc: 'run:unpublish-handout', what: 'Unpublish Run handout', live: false },
+  'run-unpublish': { ipc: 'run:unpublish-handout', what: 'Unpublish a Run', live: false },
+  'talk-unpublish': { ipc: 'published:unpublish-talk', what: 'Unpublish a talk handout', live: false },
   'live-short-link': { ipc: 'live:go', what: 'Go live, when the short link is new', live: false },
 }
 
@@ -260,10 +282,12 @@ export function redirectsRefusal(text: string): string | null {
 
 /**
  * PUBLISHED OUTPUT (after the build), for one file THIS publish built: the first position the app wrote that
- * holds an address it must not, as "<position>: <address>", or null. A page (`.html`): only the
- * configuration lines that carry the compiler's mark, and for each kind only when the page holds
- * exactly one (two marked lines of a kind means the author copied the mark: the author's, not
- * read). The address in such a line must be an http(s) address elsewhere, or empty. `_redirects`:
+ * holds an address it must not, as "<position>: <address>", or null. A page (`.html`): every
+ * `startWorkPage(window, {json});` line (its Worker address must be http(s) elsewhere; its handout
+ * link, when it has a scheme, elsewhere), and the configuration lines that carry the compiler's
+ * mark, for each kind only when the page holds exactly one (two marked lines of a kind means the
+ * author copied the mark: the author's, not read). The address in such a marked line must be an
+ * http(s) address elsewhere, or empty. `_redirects`:
  * every word of every line that is not a path of the site or a status number. Nothing else.
  */
 export function appWrittenLoopback(file: string, text: string): string | null {
@@ -273,6 +297,19 @@ export function appWrittenLoopback(file: string, text: string): string | null {
     return bad ? shown('a redirect', bad) : null
   }
   if (!/\.html?$/i.test(name)) return null
+  // A Run's pre-work or post-work page (work-files ticket 16, compiler/scripts/lib/work-page.mjs): the one
+  // line that starts it holds the Worker's address and the handout's link, both written by the app.
+  // Every such line is checked, and the first refusal is returned.
+  const starts = [...text.matchAll(/^startWorkPage\(window, (.*)\);[ \t]*\r?$/gm)]
+  for (const start of starts) {
+    let config: Record<string, unknown> | null = null
+    try { config = JSON.parse(start[1]) as Record<string, unknown> } catch { config = null }
+    if (!config || typeof config !== 'object') return shown('the work page\'s settings', start[1])
+    const worker = config.workerBaseUrl
+    if (typeof worker !== 'string' || addressKind(worker) !== 'elsewhere' || !/^https?:/i.test(worker.trim())) return shown('the work page\'s live address', worker)
+    const handout = config.handoutUrl
+    if (typeof handout === 'string' && /^[a-z][a-z0-9+.-]*:/i.test(handout.trim()) && addressKind(handout) !== 'elsewhere') return shown('the work page\'s handout link', handout)
+  }
   for (const config of Object.keys(CONFIG_ADDRESS) as ConfigName[]) {
     const [field, position] = CONFIG_ADDRESS[config]
     const lines = configLines(text, config, true)
@@ -416,8 +453,11 @@ export type PublishBuild = {
   link(url: string): string
 }
 
-/** `fail`: the job's own failure; `reply` is handed back untouched as `PublishFailure.reply` (the handler's own answer for it). */
-export type PublishBegin<Built> = { done: Built } | { fail: { error: string; reply?: unknown } } | null
+/**
+ * `fail`: the job's own failure, a fixed sentence; `details` (already cleaned by the job) is shown only
+ * under "Details"; `reply` is handed back untouched as `PublishFailure.reply` (the handler's own answer for it).
+ */
+export type PublishBegin<Built> = { done: Built } | { fail: { error: string; details?: string; reply?: unknown } } | null
 
 export interface PublishJob<Built> {
   entry: PublishEntry
@@ -595,7 +635,9 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
         throw error
       }
     }
-    if (begun && 'fail' in begun) return { ok: false, error: begun.fail.error, ...(begun.fail.reply !== undefined ? { reply: begun.fail.reply } : {}) }
+    if (begun && 'fail' in begun) {
+      return { ok: false, error: begun.fail.error, ...(begun.fail.details ? { details: begun.fail.details } : {}), ...(begun.fail.reply !== undefined ? { reply: begun.fail.reply } : {}) }
+    }
     if (begun) return { ok: true, built: begun.done, ...nothing }
     const rehearsal = ports.rehearsal?.() ?? null
     let authorisation: PublishAuthorisation

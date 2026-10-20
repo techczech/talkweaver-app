@@ -16,7 +16,7 @@
 //   4. The older options and the retired Background and Bar values render as the choices they map
 //      to ({statement=tint|full} and Halo are Tinted; {statement=bar}, {claim=bar} and None are Rule;
 //      a Bar value changes nothing).
-//   5. Two or more paragraphs: ink 600 then muted 400, same size, .9em apart.
+//   5. Two or more paragraphs: ink then muted, both regular weight (ticket 04), same size, .9em apart as padding.
 // =============================================================================
 
 import { strict as assert } from 'node:assert'
@@ -104,6 +104,10 @@ const check = (condition, message) => {
   console.error(`FAIL ${message}`)
 }
 const near = (a, b, tolerance = 0.5) => Math.abs(a - b) <= tolerance
+// 0.41 ticket 04 (ADR-0039): the accent bar (.625cqw) and its gap to the words (3.0208cqw), canvas px; none under Rule.
+const BAR = 0.00625 * W
+const BAR_GAP = 0.030208 * W
+const barOf = (shot) => (/\bstatement-bg-rule\b/.test(shot.className) ? 0 : BAR + BAR_GAP)
 
 const browser = await chromium.launch({ headless: true })
 const shots = {}
@@ -146,6 +150,7 @@ try {
           fontSize: parseFloat(cs.fontSize), lineHeight: cs.lineHeight, background: cs.backgroundColor, color: cs.color, weight: cs.fontWeight,
           textAlign: cs.textAlign, textWrap: cs.textWrapStyle || cs.textWrap, marginTop: parseFloat(cs.marginTop) || 0,
           border: (parseFloat(cs.borderLeftWidth) || 0) + (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0),
+          paddingTop: parseFloat(cs.paddingTop) || 0, borderLeft: parseFloat(cs.borderLeftWidth) || 0, paddingLeft: parseFloat(cs.paddingLeft) || 0,
           padding: (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0) + (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0),
           rule: before.content === 'none' ? null : { w: parseFloat(before.width) || 0, h: parseFloat(before.height) || 0, colour: before.backgroundColor, gap: parseFloat(before.marginBottom) || 0 }
         }
@@ -183,7 +188,7 @@ const hasPanel = (shot) => shot.titleLayout === 'left'
 // The text's left edge: 20% of the slide from its left edge without a panel, 9% right of the panel's edge with one.
 const leftEdgeOk = (shot, id) => {
   const want = hasPanel(shot) ? shot.column.panelEdge + 0.09 * W : 0.2 * W
-  check(near(shot.paras[0].text.left, want, 1.5), `${id}: the text starts ${hasPanel(shot) ? '9% right of the panel edge' : '20% from the left edge'} (${shot.paras[0].text.left.toFixed(1)} vs ${want.toFixed(1)})`)
+  check(near(shot.paras[0].text.left, want + barOf(shot), 1.5), `${id}: the text starts the bar and its gap right of the line: ${hasPanel(shot) ? '9% right of the panel edge' : '20% from the left edge'} (${shot.paras[0].text.left.toFixed(1)} vs ${want.toFixed(1)})`)
 }
 const accentLine = (shot) => shot.slideBgImage.includes(COBALT.accent)
 
@@ -194,7 +199,7 @@ for (const ctx of ['u', 't']) {
   // The base: Tinted in the section colour, aligned; the sidebar follows the title.
   check(base.titleLayout === (titled ? 'left' : 'hidden'), `${ctx}-base: title layout ${base.titleLayout}`)
   check(base.slideBg === COBALT.tint, `${ctx}-base: Tinted — the whole slide in the section colour (${base.slideBg})`)
-  check(baseP.background === CLEAR && baseP.border === 0 && baseP.padding === 0, `${ctx}-base: no box round the text`)
+  check(baseP.background === CLEAR && near(baseP.border, BAR, 0.1) && near(baseP.padding, BAR_GAP, 0.1), `${ctx}-base: no box round the text, only the accent bar and its gap`)
   check(base.className === 'slide-content layout-statement', `${ctx}-base: the defaults stamp nothing (${base.className})`)
   check(!accentLine(base), `${ctx}-base: no accent line at the panel edge (${base.slideBgImage.slice(0, 70)})`)
   check(baseP.textAlign === 'left' && baseP.color === 'rgb(16, 20, 24)', `${ctx}-base: aligned left, in ink (${baseP.color})`)
@@ -273,7 +278,7 @@ for (const ctx of ['u', 't']) {
   check(near(cp.fontSize, baseP.fontSize, 0.05) && near(cp.measure, baseP.measure, 1), `${ctx}-align-centred: type and measure unchanged`)
   const area = centred.column ? { left: centred.column.left, right: centred.column.right } : { left: 0, right: W }
   check(near((cp.box.left + cp.box.right) / 2, (area.left + area.right) / 2, 3), `${ctx}-align-centred: the block centres in its area (${((cp.box.left + cp.box.right) / 2).toFixed(0)} vs ${((area.left + area.right) / 2).toFixed(0)})`)
-  check(near((cp.text.left + cp.text.right) / 2, (area.left + area.right) / 2, 3), `${ctx}-align-centred: the lines centre in the same area`)
+  check(near((cp.text.left + cp.text.right) / 2, (area.left + area.right) / 2 + barOf(centred) / 2, 3), `${ctx}-align-centred: the lines centre in the same area, the bar and its gap to their left`)
   const centredSidebar = shots[`${ctx}-centred-sidebar`]
   check(centredSidebar.titleLayout === 'left' && centredSidebar.paras[0].textAlign === 'center', `${ctx}-centred-sidebar: centred beside the rail`)
   const csp = centredSidebar.paras[0]
@@ -331,11 +336,11 @@ for (const bg of ['tinted', 'rule', 'strong']) {
   const shot = shots[`two-${bg}`]
   check(shot.paras.length === 2, `two-${bg}: a two-part statement`)
   const [first, second] = shot.paras
-  check(first.weight === '600' && second.weight === '400', `two-${bg}: ink 600 then 400 (${first.weight}, ${second.weight})`)
+  check(first.weight === '400' && second.weight === '400', `two-${bg}: both parts regular weight, the lead told by ink (${first.weight}, ${second.weight})`)
   check(first.color === (bg === 'strong' ? WHITE : 'rgb(16, 20, 24)') && second.color === (bg === 'strong' ? 'rgba(255, 255, 255, 0.8)' : 'rgb(92, 101, 112)'),
     `two-${bg}: the lead is ink (white on Strong), the rest muted (80% white on Strong) (${first.color} / ${second.color})`)
-  check(near(second.marginTop, 0.9 * second.fontSize, 0.6), `two-${bg}: .9em between the parts (${second.marginTop}px at ${second.fontSize}px)`)
-  check(first.background === CLEAR && second.background === CLEAR && first.padding + second.padding === 0, `two-${bg}: one text block, no box`)
+  check(near(second.paddingTop, 0.9 * second.fontSize, 0.6) && second.marginTop === 0, `two-${bg}: .9em between the parts, as padding so the bar runs unbroken (${second.paddingTop}px at ${second.fontSize}px)`)
+  check(first.background === CLEAR && second.background === CLEAR && near(first.padding + second.padding - second.paddingTop, bg === 'rule' ? 0 : 2 * BAR_GAP, 0.2), `two-${bg}: one text block, no box (the bar's gap and the part gap only)`)
   check(bg !== 'rule' || (first.rule !== null && second.rule === null), `two-${bg}: the rule sits above the first part only`)
 }
 

@@ -1,5 +1,5 @@
 /* Title looks: Kicker, Label and Tab on the TOP title regime, all sitting against the slide edge.
-   The compiler stamps data-title-look="kicker|label|tab" beside data-title-layout="top" (07-assembly,
+   The compiler stamps data-title-look="kicker|label|tab|tab-strip" beside data-title-layout="top" (07-assembly,
    from title-look.mjs: slide > section > deck), plus data-title-look-tone="soft" on a soft Tab (strong
    stamps nothing). Not data-title-style: that is the retired sidebar stamp, and `title_style` is the
    opening poster variant. Locked design 2026-10-13 (slide redesign, 0.39).
@@ -8,7 +8,11 @@
    becomes top + style height + clear band (--titlelook-clear, 8cqh = 86px at 1080). The head stays in
    the flow as a zero-height box, so the fit pass (slide-fit.js fitLists) does not count the style as
    body and the body type is not shrunk. Unmarked block: sorts after every migrated rule, so it wins
-   the shared top-title rules. */
+   the shared top-title rules.
+
+   0.41 ticket 02 (ADR-0039): the index tab is the look of every talk that names none, so these rules
+   now reach most top-title slides. The compiler stamps intro-then-none as no look at all (the head is
+   nav-only after the section card), so nothing here applies to it. */
 
 /* shared values (each look overrides what differs) */
 .slide[data-title-layout="top"][data-title-look] {
@@ -21,6 +25,13 @@
 /* shared mechanics */
 .slide[data-title-layout="top"][data-title-look] { padding-top: calc(var(--titlelook-top) + var(--titlelook-height) + var(--titlelook-clear)) !important; }
 .slide[data-title-layout="top"][data-title-look] > .slide-content:not(.layout-title):not(.layout-section-title) { min-height: 100% !important; padding-top: 0 !important; }
+/* Media and code own a fixed band (86cqh, media.css / trace.css) measured from the plain title's
+   slide padding; under a look the slide's top padding is taller, so the band is the slide's own
+   content height instead, or it would run past the stage bottom (0.41 ticket 02, once the index tab
+   became the default). */
+.slide[data-title-layout="top"][data-title-look] > .slide-content:is(.layout-media, .layout-code) {
+  height: calc(100cqh - var(--titlelook-top) - var(--titlelook-height) - var(--titlelook-clear) - var(--slide-pad-y)) !important;
+}
 .slide[data-title-layout="top"][data-title-look] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) {
   /* zero-height in-flow box: the fit pass skips children with no height */
   height: 0 !important; margin: 0 !important; padding: 0 !important; border: 0 !important; box-shadow: none !important; width: auto !important; align-self: flex-start !important;
@@ -104,4 +115,54 @@
   content: "" !important; display: block !important; position: absolute; inset: 0; z-index: -1; background: var(--titlelook-fill);
   -webkit-mask: linear-gradient(#000 0 0) left top / calc(100% - var(--tab-cap-w) + 1px) 100% no-repeat, var(--tab-cap-shape) right top / var(--tab-cap-w) 100% no-repeat;
   mask: linear-gradient(#000 0 0) left top / calc(100% - var(--tab-cap-w) + 1px) 100% no-repeat, var(--tab-cap-shape) right top / var(--tab-cap-w) 100% no-repeat;
+}
+
+/* Tab strip (0.41 ticket 03, ADR-0039): across the top, a row of pills naming the slides of the
+   current section, the current slide's pill filled in the section colour and the rest outlined. The
+   compiler draws the pills (.title-strip, beside the h1 in the head; title-look.mjs sectionStrip cuts
+   a long section to the pills around the current one). The h1 stays the slide's title for navigation
+   and screen readers, hidden here. Values from the locked drawing (after/_slide.css, mode-tab) at
+   1920x1080: strip 44px below the top edge, pills 24px mono uppercase bold, .1em tracking, 10px x 24px
+   padding, 2px outline, 14px apart; here in em of the pill size so they scale with the stage.
+   One line always: the outlined pills shrink and cut their titles with an ellipsis before the
+   current pill gives way, and the row clips anything left over. */
+.slide[data-title-layout="top"][data-title-look="tab-strip"] {
+  --titlelook-size: 1.25cqw;           /* 24px at 1920 */
+  --titlelook-line: 1.2;
+  --titlelook-pad-y: .5;               /* em: 10px padding + 2px outline above and below; pill height 2.2em (53px) */
+  --titlelook-weight: 700;
+  --titlelook-font: var(--mono);
+  --titlelook-fill: transparent;
+  --titlelook-ink: var(--muted);
+  --titlelook-top: 4.07cqh;            /* 44px at 1080 */
+  --titlelook-pad-left: 0px;
+  --titlelook-pad-right: 0px;
+}
+.slide[data-title-layout="top"][data-title-look="tab-strip"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1 {
+  /* the pills name the slide; the h1 is kept for the outline and screen readers only */
+  width: 1px !important; height: 1px !important; max-width: none !important; padding: 0 !important; overflow: hidden !important;
+  clip-path: inset(50%) !important; white-space: nowrap !important;
+}
+.slide[data-title-layout="top"][data-title-look="tab-strip"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > .title-strip {
+  position: absolute; top: var(--titlelook-top); left: var(--slide-pad-x); right: var(--slide-pad-x);
+  display: flex; flex-wrap: nowrap; align-items: center; gap: .583em; overflow: hidden;
+  margin: 0; padding: 0; font-family: var(--mono); font-size: var(--titlelook-size); line-height: var(--titlelook-line);
+}
+.slide[data-title-look="tab-strip"] .title-strip-pill {
+  flex: 0 1 auto; min-width: 4em; box-sizing: border-box;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+  padding: .417em 1em; border: .083em solid rgb(16 20 24 / .18); border-radius: 999px;
+  color: var(--muted); background: transparent;
+}
+.slide[data-title-look="tab-strip"] .title-strip-pill.is-current {
+  flex-shrink: 0; max-width: 60%;
+  background: var(--accent); border-color: var(--accent); color: #fff;
+}
+
+/* Print: a CSS filter makes Chromium paint the element as a picture in a PDF, so the tab's shadow
+   would turn the title into an image with no text to select or search (the handout print test reads
+   each page's text). The printed tab keeps its shape and colour and drops the thin shadow. */
+@media print {
+  .slide[data-title-layout="top"][data-title-look="tab"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1 { filter: none; }
 }

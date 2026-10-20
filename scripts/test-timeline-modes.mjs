@@ -148,7 +148,9 @@ try {
         stopsWithText: stops.filter((el) => el.querySelector('[data-tl-text]')).length,
         minFont: Math.min(...textNodes.map((el) => parseFloat(getComputedStyle(el).fontSize))),
         floor,
-        topAir: trackRect.top - head.getBoundingClientRect().bottom,
+        // ADR-0039 band rule: air is measured from the lower edge of the title block. Under a title
+        // look the head is a zero-height box below the look's clear band, so the edge is the painted title.
+        topAir: trackRect.top - (slide.dataset.titleLook && !head.classList.contains('slide-head-quiet') ? head.querySelector('h1') : head).getBoundingClientRect().bottom,
         bottomAir: footerRect.top - trackRect.bottom,
         trackBottom: trackRect.bottom,
         footerTop: footerRect.top,

@@ -1,0 +1,154 @@
+/* The Sessions list (locked mockup: prework-sessions-mockup.html, S7). Tokens are the app's --lt-* set. */
+.tw-sess-sp { flex: 1; }
+.tw-tools-view .tw-sess-btn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border-radius: 6px; border: 1px solid #c9bda5; background: #fffdf8; font: 600 14px/1 var(--lt-sans); color: var(--lt-ink); cursor: pointer; white-space: nowrap; -webkit-app-region: no-drag; }
+.tw-tools-view .tw-sess-btn:hover { background: #f3ede0; }
+.tw-tools-view .tw-sess-btn.sm { height: 27px; padding: 0 9px; font-size: 13.5px; }
+.tw-tools-view .tw-sess-btn.pri { background: var(--lt-oxford); border-color: var(--lt-oxford); color: #fff; }
+.tw-tools-view .tw-sess-btn.pri:hover { background: #0d4580; }
+.tw-tools-view .tw-sess-btn svg { width: 15px; height: 15px; stroke-width: 1.9; flex: none; }
+.tw-tools-view .tw-sess-btn:focus-visible, .tw-tools-view .tw-sess-chip:focus-visible, .tw-sess-row:focus-visible { outline: 1.5px solid var(--lt-oxford-mid); outline-offset: -1.5px; }
+
+.tw-sess-filters { flex: none; padding: 7px 10px; border-bottom: 1px solid var(--lt-hair); display: flex; gap: 5px; flex-wrap: wrap; background: var(--lt-chrome); }
+.tw-tools-view .tw-sess-chip { height: 25px; padding: 0 10px; border-radius: 13px; border: 1px solid #cdbfa4; background: #fffdf8; font: 600 13.5px var(--lt-sans); color: var(--lt-ink-soft); cursor: pointer; display: inline-flex; align-items: center; gap: 5px; }
+.tw-tools-view .tw-sess-chip svg { width: 14px; height: 14px; stroke-width: 1.9; }
+.tw-tools-view .tw-sess-chip.on { background: var(--lt-oxford); border-color: var(--lt-oxford); color: #fff; }
+
+.tw-sess-body { flex: 1; min-height: 0; overflow: auto; }
+.tw-sess-none { margin: 0; padding: 22px 16px; color: var(--lt-ink-faint); font-size: 14px; text-align: center; }
+.tw-sess-group { position: sticky; top: 0; z-index: 2; font-size: 12px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; color: #6b6355; background: #e9e1cf; padding: 5px 14px; border-bottom: 1px solid var(--lt-hair); }
+.tw-tools-view .tw-sess-row { display: block; width: 100%; box-sizing: border-box; text-align: left; font: inherit; color: inherit; background: #fffdf8; border: 0; border-bottom: 1px solid var(--lt-hair-soft); border-left: 3px solid transparent; padding: 9px 12px 10px 11px; cursor: pointer; }
+.tw-tools-view .tw-sess-row:hover { background: #f8f3e8; }
+.tw-tools-view .tw-sess-row.on { background: var(--lt-oxford-soft); border-left-color: var(--lt-oxford); }
+.tw-tools-view .tw-sess-row.on .tw-sess-pill.blue { background: #fff; box-shadow: inset 0 0 0 1px #c2d0e3; }
+.tw-tools-view .tw-sess-row .l1 { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.tw-tools-view .tw-sess-row .nm { font-weight: 700; font-size: 15.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.tw-tools-view .tw-sess-row .l2 { display: flex; gap: 5px; align-items: center; min-width: 0; margin-top: 3px; font-size: 13.5px; color: var(--lt-ink-soft); white-space: nowrap; }
+.tw-tools-view .tw-sess-row .rt { margin-left: auto; white-space: nowrap; }
+.tw-tools-view .tw-sess-row .l3 { display: block; margin-top: 1px; font-size: 13.5px; color: var(--lt-ink-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.tw-sess-pill { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 9px; border-radius: 11px; font-size: 13px; font-weight: 700; white-space: nowrap; flex: none; }
+.tw-sess-pill.grey { background: #e6ded0; color: var(--lt-ink-soft); }
+.tw-sess-pill.green { background: var(--lt-green-soft); color: var(--lt-green); }
+.tw-sess-pill.amber { background: var(--lt-amber-soft); color: var(--lt-amber); }
+.tw-sess-pill.blue { background: var(--lt-oxford-soft); color: var(--lt-oxford); }
+.tw-sess-pill.red { background: var(--lt-red-soft); color: var(--lt-red); }
+.tw-sess-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block; flex: none; animation: tw-sess-pulse 1.4s infinite; }
+@keyframes tw-sess-pulse { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .tw-sess-dot { animation: none; } }
+
+.tw-tools-empty .tw-sess-btn { margin-top: 0; }
+.tw-sess-detail { align-self: stretch; flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.tw-sess-dhead { flex: none; background: var(--lt-print); border-bottom: 1px solid #cdbfa4; padding: 0 16px 0 18px; height: 64px; box-sizing: border-box; display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; }
+.tw-sess-dtitle { min-width: 0; display: flex; flex-direction: column; justify-content: center; }
+.tw-sess-dhead .tw-sess-btn svg { width: 15px; height: 15px; stroke-width: 1.9; }
+.tw-sess-dhead h1 { margin: 0; font: 600 23px/1.15 var(--lt-serif); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tw-sess-dhead .sub { color: var(--lt-ink-soft); font-size: 14.5px; display: flex; gap: 6px; align-items: center; margin-top: 2px; }
+.tw-sess-dhead .sub svg { width: 14px; height: 14px; stroke-width: 1.9; }
+
+/* The Run page (locked mockup S3): two columns under the Run header; the checklist is the right one. */
+.tw-run-cols { flex: 1; display: flex; min-height: 0; }
+.tw-run-main { flex: 1; min-width: 0; overflow: auto; padding: 14px 14px 20px 16px; display: flex; flex-direction: column; gap: 14px; }
+.tw-run-side { width: 318px; flex: none; overflow: auto; padding: 14px 14px 20px 0; }
+.tw-run-sec { background: var(--lt-print); border: 1px solid #cdbfa4; border-radius: 8px; overflow: hidden; flex: none; }
+.tw-run-sec > header { background: #ddd2bc; border-bottom: 1px solid #cdbfa4; padding: 0 8px 0 12px; height: 40px; display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 15px; white-space: nowrap; }
+.tw-run-sec > header svg { width: 16px; height: 16px; stroke-width: 1.9; flex: none; }
+.tw-run-sec > header .meta { font-weight: 500; color: var(--lt-ink-soft); font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.tw-run-main .tw-run-sec > header { border-bottom: 0; }
+.tw-run-check > header .meta { font-weight: 500; }
+.tw-run-notice { padding: 8px 12px; background: var(--lt-amber-soft); color: var(--lt-amber); font-size: 13.5px; font-weight: 600; border-bottom: 1px solid var(--lt-hair-soft); }
+.tw-sess-dhead .sub .tw-sess-pill { height: 20px; font-size: 12.5px; margin-left: 4px; }
+
+.tw-run-step { display: grid; grid-template-columns: 28px 1fr; gap: 8px; padding: 10px 12px 11px 10px; border-top: 1px solid var(--lt-hair-soft); background: #fffdf8; position: relative; }
+.tw-run-check > header + .tw-run-step, .tw-run-check > .tw-run-notice + .tw-run-step { border-top: 0; }
+.tw-run-step .body { min-width: 0; }
+.tw-run-step .node { width: 24px; height: 24px; box-sizing: border-box; border-radius: 50%; border: 2px solid #cbbfa6; background: #fff; display: flex; align-items: center; justify-content: center; color: #a99d86; position: relative; z-index: 1; }
+.tw-run-step .node svg { width: 14px; height: 14px; stroke-width: 2.4; }
+.tw-run-step:not(:last-child)::before { content: ""; position: absolute; left: 21px; top: 34px; bottom: -11px; width: 2px; background: #ddd3c0; }
+.tw-run-step.done:not(:last-child)::before { background: #9cbca2; }
+.tw-run-step.done .node { background: var(--lt-green); border-color: var(--lt-green); color: #fff; }
+.tw-run-step.cur { background: #eef3f9; }
+.tw-run-step.cur .node { border-color: var(--lt-oxford); color: var(--lt-oxford); box-shadow: 0 0 0 3px #d3dfee; }
+.tw-run-step.warn .node { border-color: var(--lt-amber); background: var(--lt-amber-soft); color: var(--lt-amber); }
+.tw-run-step.live { background: #fbeeea; }
+.tw-run-step.live .node { border-color: var(--lt-red); color: var(--lt-red); box-shadow: 0 0 0 3px #f1d6cf; }
+.tw-run-step .st { font-weight: 800; font-size: 15px; line-height: 1.25; display: flex; align-items: center; gap: 6px; }
+.tw-run-step.todo .st { color: var(--lt-ink-soft); font-weight: 700; }
+.tw-run-step .ss { color: var(--lt-ink-soft); font-size: 13.5px; margin-top: 1px; }
+.tw-run-step .act { margin-top: 7px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.tw-tools-view .tw-sess-btn.quiet { border-color: transparent; background: transparent; color: var(--lt-oxford); }
+.tw-tools-view .tw-sess-btn.quiet:hover { background: #e9eef6; }
+.tw-tools-view .tw-sess-btn[disabled] { opacity: .45; cursor: default; }
+.tw-run-step .linkrow { margin-top: 8px; border: 1px solid var(--lt-hair); background: #fff; border-radius: 6px; padding: 5px 8px; line-height: 1.35; display: flex; align-items: center; gap: 6px; }
+.tw-run-step .linkrow + .linkrow { margin-top: 5px; }
+.tw-run-step .linkrow .lt { flex: 1; min-width: 0; }
+.tw-run-step .linkrow .lk { display: block; font-size: 12px; font-weight: 800; color: var(--lt-ink-soft); letter-spacing: .02em; }
+.tw-run-step .linkrow .url { color: var(--lt-oxford); font: 500 11.5px var(--lt-mono); word-break: normal; overflow-wrap: anywhere; }
+.tw-run-step .linkrow .cp { width: 26px; height: 24px; flex: none; border: 1px solid transparent; border-radius: 5px; background: none; display: inline-flex; align-items: center; justify-content: center; color: var(--lt-ink-soft); cursor: pointer; }
+.tw-run-step .linkrow .cp:hover { background: #f1ead9; border-color: var(--lt-hair); }
+.tw-run-step .linkrow .cp svg { width: 14px; height: 14px; stroke-width: 1.9; }
+/* Publish for this run (work-files ticket 16; locked mockup S3 "published", "publishing") */
+/* The address wraps inside its box: no nowrap on its segments. The copy button sits beside it. */
+.tw-run-step .pubgrid { display: flex; gap: 10px; margin-top: 8px; align-items: flex-start; }
+.tw-run-step .pubgrid .col { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
+.tw-run-step .pubgrid .col .tw-sess-btn { justify-content: flex-start; }
+.tw-run-step .qrwrap { display: flex; flex-direction: column; align-items: center; gap: 3px; flex: none; }
+.tw-run-step .qrwrap .qr { width: 72px; height: 72px; flex: none; border: 1px solid var(--lt-hair); background: #fff; padding: 4px; border-radius: 5px; box-sizing: border-box; display: block; }
+.tw-run-step .qrwrap .qr img { display: block; width: 100%; height: 100%; }
+.tw-run-step .qrwrap .qcap { font-size: 11.5px; font-weight: 700; color: var(--lt-ink-soft); white-space: nowrap; }
+.tw-tools-view .tw-sess-btn.dng { color: #a3243f; border-color: #dfb3bf; }
+.tw-tools-view .tw-sess-btn.dng:hover { background: #fbeef1; }
+.tw-run-step .progrow { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; color: var(--lt-ink-soft); }
+.tw-run-step .progrow .bar { width: 150px; height: 6px; background: #e3dbc9; border-radius: 3px; overflow: hidden; flex: none; position: relative; }
+.tw-run-step .progrow .bar i { position: absolute; top: 0; bottom: 0; width: 40%; background: var(--lt-oxford); border-radius: 3px; animation: tw-run-progress 1.4s ease-in-out infinite; }
+@keyframes tw-run-progress { 0% { left: -40%; } 100% { left: 100%; } }
+.tw-tools-view .tw-spin { animation: tw-run-spin 1s linear infinite; }
+@keyframes tw-run-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .tw-run-step .progrow .bar i { animation: none; left: 0; width: 60%; } .tw-tools-view .tw-spin { animation: none; } }
+/* Unpublish confirmation (ticket 17; locked mockup state 12): a sheet hanging from the top of the window. */
+/* The layer has no box of its own: the scrim and the sheet are placed as before; it is what stays out of `inert`. */
+.tw-unpub-layer { display: contents; }
+.tw-unpub-sheet:focus { outline: none; }
+.tw-unpub-scrim { position: absolute; inset: 0; background: rgba(52, 44, 30, .26); z-index: 20; }
+.tw-unpub-sheet { position: absolute; top: 0; left: 50%; transform: translateX(-50%); z-index: 21; width: 440px; max-width: calc(100% - 32px); background: #fffdf8; border: 1px solid #b7aa8f; border-top: 0; border-radius: 0 0 12px 12px; box-shadow: 0 18px 44px rgba(40, 30, 10, .34); color: var(--lt-ink); font-family: var(--lt-sans); }
+.tw-unpub-sheet .shh { padding: 14px 18px 6px; display: flex; align-items: center; gap: 10px; }
+.tw-unpub-sheet .shh svg { width: 19px; height: 19px; stroke-width: 1.9; flex: none; }
+.tw-unpub-sheet .shh h2 { margin: 0; font: 600 19px var(--lt-serif); overflow-wrap: anywhere; }
+.tw-unpub-sheet .shb { padding: 8px 18px 14px; font-size: 15.5px; line-height: 1.5; }
+.tw-unpub-sheet .shf { padding: 11px 18px; border-top: 1px solid var(--lt-hair); background: var(--lt-chrome); display: flex; gap: 8px; align-items: center; border-radius: 0 0 12px 12px; }
+.tw-unpub-sheet .shf .sp { flex: 1; }
+.tw-unpub-sheet .tw-sess-btn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border-radius: 6px; border: 1px solid #c9bda5; background: #fffdf8; font: 600 14px/1 var(--lt-sans); color: var(--lt-ink); cursor: pointer; }
+.tw-unpub-sheet .tw-sess-btn svg { width: 15px; height: 15px; stroke-width: 1.9; flex: none; }
+.tw-unpub-sheet .tw-sess-btn.dng.solid { background: #a3243f; border-color: #a3243f; color: #fff; }
+.tw-unpub-sheet .tw-sess-btn.dng.solid:hover { background: #8e1f37; }
+.tw-unpub-sheet .tw-sess-btn[disabled] { opacity: .45; cursor: default; }
+.tw-unpub-sheet .tw-sess-btn:focus-visible { outline: 2px solid var(--lt-oxford-mid); outline-offset: 1px; }
+
+/* Extras for this run (ticket 24; locked mockup S5): rows, the Add bar and the inline edit box. */
+.tw-run-extras .r1 { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--lt-hair-soft); background: #fffdf8; min-height: 42px; }
+.tw-run-extras .r1 .ic { width: 16px; height: 16px; stroke-width: 1.9; flex: none; color: var(--lt-ink-soft); }
+.tw-run-extras .r1 .t { flex: 1; min-width: 0; }
+.tw-run-extras .r1 .t b { font-weight: 700; }
+.tw-run-extras .r1 .t small { display: block; color: var(--lt-ink-soft); font-size: 13.5px; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tw-run-extras .r1 .tw-sess-pill svg { width: 13px; height: 13px; }
+.tw-run-extras .r1.add { background: #f5f0e4; gap: 6px; flex-wrap: wrap; row-gap: 6px; }
+.tw-run-extras .r1.add .lab { font-size: 13.5px; color: var(--lt-ink-soft); font-weight: 700; margin-right: 2px; }
+.tw-extra-edit { padding: 12px 12px 12px 38px; background: #fff8e8; border-top: 1px solid var(--lt-hair); border-left: 3px solid var(--lt-oxford); display: flex; flex-direction: column; gap: 9px; }
+.tw-extra-edit .fld { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.tw-extra-edit .fld > label { font-size: 13px; font-weight: 700; color: var(--lt-ink-soft); }
+.tw-extra-edit .fld .opt { font-weight: 500; color: var(--lt-ink-faint); }
+.tw-extra-edit input, .tw-extra-edit textarea { border: 1px solid #c9bda5; border-radius: 6px; background: #fff; padding: 6px 9px; font: 15px var(--lt-sans); color: var(--lt-ink); min-width: 0; outline: 0; }
+.tw-extra-edit textarea { resize: vertical; min-height: 58px; }
+.tw-extra-edit input:focus, .tw-extra-edit textarea:focus { border-color: var(--lt-oxford); box-shadow: 0 0 0 3px #d3dfee; }
+.tw-extra-edit .tw-extra-acts { display: flex; gap: 8px; align-items: center; }
+.tw-extra-edit .tw-extra-acts .sp { flex: 1; }
+.tw-extra-err { color: #a3243f; font-size: 13.5px; font-weight: 600; }
+.tw-run-extras .r1 .thumb { width: 68px; height: 38px; border: 1px solid var(--lt-hair); border-radius: 4px; background: linear-gradient(#fff, #f1ebdd); flex: none; display: flex; flex-direction: column; justify-content: center; padding: 4px 6px; gap: 3px; }
+.tw-run-extras .r1 .thumb i { display: block; height: 3px; background: #cfc4ae; border-radius: 2px; }
+.tw-run-extras .r1 .thumb i:first-child { height: 5px; width: 70%; background: var(--lt-oxford-mid, #3d5f8c); }
+.tw-run-extras .r1 .t small[data-run-extra-placed="end"] { color: #8a5a00; }
+.tw-extra-edit .g2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.tw-extra-edit select { height: 32px; border: 1px solid #c9bda5; border-radius: 6px; background: linear-gradient(#fffdf8, #f6f0e4); padding: 0 8px 0 10px; font: 15px var(--lt-sans); color: var(--lt-ink); min-width: 0; width: 100%; outline: 0; }
+.tw-extra-edit select:focus { border-color: var(--lt-oxford); box-shadow: 0 0 0 3px #d3dfee; }
+.tw-run-extras .tw-extra-note { padding: 6px 12px; border-top: 1px solid var(--lt-hair-soft); color: var(--lt-ink-soft); font-size: 13.5px; }
+/* New responses on a Run (2026-10-19 prework-responses, mockup 05): "12 new" at the row's right. */
+.tw-tools-view .tw-sess-row .tw-sess-new { margin-left: auto; flex: none; padding: 1px 8px; border-radius: 10px; background: var(--lt-oxford); color: #fff; font: 700 12px var(--lt-sans); }

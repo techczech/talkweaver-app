@@ -611,6 +611,6 @@ describe('the key never leaves the live service', () => {
   })
 
   test('this build is named 22-signing-key', () => {
-    expect(LIVE_WORKER_BUILD).toBe('22-signing-key')
+    expect(LIVE_WORKER_BUILD).toBe('26-online-content-guidelines')
   })
 })

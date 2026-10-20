@@ -18,13 +18,22 @@ function utcStamp(ms) {
   );
 }
 
-// `sess-<utc>-<rand>`: a UTC wall-clock stamp plus one base36 char of entropy to
-// break ties within the same second. `rand()` is a [0,1) source (Math.random in
-// production); `(0.5).toString(36)` → "0.i", so slice(2,3) takes the char after the
-// dot. The `|| "0"` guards the rand()===0 edge, where toString(36) has no fraction.
+// `sess-<utc>-<rand>`: a UTC wall-clock stamp plus SESSION_ID_RAND_CHARS base36 chars of
+// entropy, so two saves in the same second do not share an id (one char gave a 1-in-36 clash;
+// eight give about 1 in 2.8 trillion). `rand()` is a [0,1) source — main passes a crypto-backed
+// one; each char is floor(rand()*36), clamped so a stray 1 or NaN still yields a valid char.
+// Ids made before this change carry one char (`sess-20260710-141204-u`); every reader treats an id
+// as an opaque safe token, so old and new ids both keep working.
+export const SESSION_ID_RAND_CHARS = 8;
+const BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz";
 export function newSessionId(now, rand) {
-  const randChar = rand().toString(36).slice(2, 3) || "0";
-  return `sess-${utcStamp(now)}-${randChar}`;
+  let tail = "";
+  for (let i = 0; i < SESSION_ID_RAND_CHARS; i++) {
+    const r = Number(rand());
+    const k = Number.isFinite(r) ? Math.floor(r * 36) : 0;
+    tail += BASE36[Math.min(35, Math.max(0, k))];
+  }
+  return `sess-${utcStamp(now)}-${tail}`;
 }
 
 // Pause-aware recorded length. `marks` are on the raw MediaRecorder clock; a `pause`
@@ -48,7 +57,7 @@ export function recordingMsFromMarks(marks) {
   return last - totalPaused;
 }
 
-// The stored slide-time index: enter/reveal/highlight/pause/resume marks re-based from the
+// The stored slide-time index: enter/reveal/highlight/ink/clip/pause/resume marks re-based from the
 // raw clock onto the recording clock (paused spans removed). A pause and its resume collapse
 // to the same recording-clock instant, since no recorded time passes while paused. `enter`
 // (slide change), `reveal` (an in-slide build step) and `highlight` (a live highlight change)
@@ -65,7 +74,7 @@ export function buildSlideTimeIndex(rawMarks) {
     } else if (m.event === "resume") {
       if (pauseStart !== null) { paused += m.tMs - pauseStart; pauseStart = null; }
       out.push({ event: "resume", tMs: m.tMs - paused });
-    } else if (m.event === "enter" || m.event === "reveal" || m.event === "highlight" || m.event === "ink") {
+    } else if (m.event === "enter" || m.event === "reveal" || m.event === "highlight" || m.event === "ink" || m.event === "clip") {
       // If a mark somehow lands inside an open pause, freeze it at the pause start.
       const openPaused = pauseStart !== null ? m.tMs - pauseStart : 0;
       const mark = { event: m.event, slideId: m.slideId, tMs: m.tMs - paused - openPaused };
@@ -75,6 +84,13 @@ export function buildSlideTimeIndex(rawMarks) {
       if (m.event === "highlight") {
         mark.marks = m.marks;
         if (Array.isArray(m.ranges)) mark.ranges = m.ranges;
+      }
+      // clip = a slide video started playing: the clip as authored and where in it (seconds). It
+      // changes no slide window, duration or text; a malformed one is dropped.
+      if (m.event === "clip") {
+        const c = m.clip;
+        if (typeof m.slideId !== "string" || m.slideId.length > 100 || !c || typeof c.src !== "string" || c.src.length > 2000 || typeof c.atS !== "number" || !Number.isFinite(c.atS) || c.atS < 0 || c.atS > 86400) continue;
+        mark.clip = { src: c.src, atS: c.atS };
       }
       // ink = the Pen's strokes on the layer shown (ticket 08): the slide's own, or a zoomed image's
       // (space "image" and its index, in the image's 0–1 units). Checked again, caps and bytes

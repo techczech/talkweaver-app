@@ -200,6 +200,10 @@
   .slide:has(> .slide-content.layout-timeline) > .slide-content.layout-timeline {
     min-height: 0;
     height: 100%;
+    /* The slide's own padding above reserves the footer band and the air under the track, so the
+       shared content band (skin/slide-foundations.css) adds nothing more. */
+    --band-footer: 0px;
+    --band-air: 0px;
   }/* @order 2022 */
   /* Timeline only: the gap under the title rule is at least 2.4cqw (ticket 09, ADR-0033 §8). The shared compact
      title spacing (stage.css @order 1368/1680, 2.2cqh) is unchanged for every other layout. */

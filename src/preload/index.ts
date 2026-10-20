@@ -1,6 +1,6 @@
 import type { InkStroke } from '../../worker/protocol'
 import type { RunAudioFields } from '../shared/run-audio'
-import type { ImageSearchResult, ImageSearchStatus, ImportedImage, MatchMode } from '../shared/image-search'
+import type { ImageSearchResult, ImageSearchStatus, ImportedImage, MatchMode, VaultPictureResult } from '../shared/image-search'
 import type { VariantThumbnail } from '../shared/variant-thumbnail-result'
 import type { EditorDocumentReply, EditorDocumentRequest } from '../shared/editor-document'
 import type { RunQuestion, RunReaction } from '../shared/run-feedback'
@@ -9,12 +9,24 @@ import type { ExampleVaultResult } from '../shared/example-vault'
 import type { ExampleRemovalPreview, ExampleRemovalState, ExampleRemoveResult, ExampleRestoreResult } from '../shared/example-vault-removal'
 import type { ConnectionRow } from '../shared/guide-connections'
 import type { RunPrework } from '../shared/run-prework'
+import type { RunWorkSet } from '../shared/run-work'
 import type { PickChange } from '../shared/run-prework-results'
 import type { PreworkFeed } from '../../compiler/scripts/lib/prework.mjs'
 import type { RunPollLike, RunPollResponseLike } from '../shared/run-poll-results'
 import type { RunShareInclude, RunShareLifetime } from '../shared/run-results-share'
 import type { OutlineChangedOnDiskRefusal, OutlineDiskAccept, OutlineDiskChange, OutlineRecoveryCopy } from '../shared/outline-disk-change'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import type { WorkFilesListing } from '../shared/work-files-view'
+import type { WorkFileAdd } from '../shared/work-file-write'
+
+type WorkFileWriteResult = { ok: true; fileName: string; relPath: string; id?: string } | { ok: false; error: string }
+import type { SessionSource } from '../shared/sessions-list'
+import type { RunExtras } from '../shared/run-extras'
+import type { RunExtraSlidesState } from '../shared/run-extra-slides'
+import type { PublishedPagesInput } from '../shared/published-pages'
+import type { PhaseSteps } from '../shared/run-answers'
+import type { WorkFileState } from '../shared/run-checklist'
+import { isToolsView, parseToolsRunRef, type ToolsRunRef, type ToolsView } from '../shared/tools-views'
 import type { PaletteCommandHandlerId } from '../shared/command-registry'
 import type { LayoutDoctorFinding } from '../shared/layout-doctor'
 import type { SharedTalkInspection, SharedTalkState } from '../shared/shared-talk'
@@ -49,7 +61,7 @@ export type { RecordingStorageRow } from '../shared/recording-storage-status'
 export type { GoingLiveRow, LiveSetupPrompt } from '../shared/live-service-status'
 export type { TranscriptionRow } from '../shared/transcription-status'
 export type { PublishNotReady } from '../shared/publish-status'
-export type { ImageSearchHit, ImageSearchResult, ImageSearchStatus, ImageSource, ImageUse, ImportedImage, MatchMode } from '../shared/image-search'
+export type { ImageSearchHit, ImageSearchResult, ImageSearchStatus, ImageSource, ImageUse, ImportedImage, MatchMode, VaultPictureResult } from '../shared/image-search'
 
 /** What outline.setHeadingIcon and outline.setParagraphIcon answer (compiler/scripts/lib/12-outline-edit.mjs). */
 export type IconVerbResult =
@@ -242,17 +254,6 @@ export type TimerSettings = {
   urgentAtMinutes: number
 }
 
-export type ArchiveImageHit = {
-  assetKey: string
-  presentationId: string
-  relPath: string
-  sha256?: string
-  ocrText: string
-  /** twarchive://<base64url of absolute file path> — renderable thumbnail URL. */
-  thumbUrl: string
-  deckTitle?: string
-}
-
 export type ProjectionRow = {
   slide_id: string
   deck_slug: string
@@ -374,8 +375,8 @@ export type PathwayWindowContext = { outlinePath: string; talkSlug: string; talk
 
 // Cached liveness probe for a published handout URL. Main treats any failure as offline.
 export type HistoryLiveCheck = { status: 'live' | 'offline'; checkedAt: string }
-export type ToolsView = 'studio' | 'history' | 'pathways' | 'talktext' | 'importer'
-type ToolsShowPayload = { view: ToolsView; sessionId?: string; pathway?: PathwayWindowContext }
+export type { ToolsView, ToolsRunRef }
+type ToolsShowPayload = { view: ToolsView; sessionId?: string; pathway?: PathwayWindowContext; run?: ToolsRunRef }
 export type RecordingKind = 'delivery' | 'rehearsal' | 'recording'
 export type HighlightRange = { block: number; start: number; end: number }
 export type TranscriptSegment = { start: number; end: number; text: string }
@@ -390,6 +391,9 @@ export type TranscriptionSettings = {
 }
 // One recorded settings change (Gate-5 settings changelog): old → new, when, per machine.
 export type SettingsChangeEntry = { at: number; key: string; label: string; from: string; to: string }
+
+/** A Run as the Sessions page names it to main: its vault, talk and Run id. */
+export type SessionRunRef = { vaultId: string; talkSlug: string; runId: string }
 
 let lastToolsShow: ToolsShowPayload | null = null
 const toolsShowSubscribers = new Set<(payload: ToolsShowPayload) => void>()
@@ -422,6 +426,8 @@ export type RecordingSession = {
   timeZone?: string
   slideSet?: RunSlideSet
   handoutUrl?: string
+  /** When Unpublish last made the Run's pages "not available" (ticket 17); absent once it is published again. */
+  unpublishedAt?: string
   startedAt: string
   endedAt: string
   recordingMs: number
@@ -436,7 +442,7 @@ export type RecordingSession = {
   // enter = slide change · reveal = in-slide build step (hidden = fragments still hidden) ·
   // highlight = live highlight change (marks = count; ranges = reconstructed text spans when available) ·
   // pause/resume. All on the recording clock.
-  slideTimeIndex: Array<{ event: string; slideId?: string; tMs: number; hidden?: number; marks?: number; ranges?: HighlightRange[]; ink?: InkStroke[]; space?: 'image'; image?: number }>
+  slideTimeIndex: Array<{ event: string; slideId?: string; tMs: number; hidden?: number; marks?: number; ranges?: HighlightRange[]; ink?: InkStroke[]; space?: 'image'; image?: number; clip?: { src: string; atS: number } }>
   /** Instant slides shown during a live session (ticket 07), oldest first. */
   instantSlides?: RunInstantSlide[]
   /** Reactions from phones (reactions ticket 06): taps and undos, times from the Run's start. */
@@ -447,16 +453,25 @@ export type RecordingSession = {
   boards?: RunBoard[]
   /** Pre-work answers mirrored from the handout (feedback-boards ticket 09): reads, answers, done marks, questions. */
   prework?: RunPrework
+  /** Post-work answers mirrored from the handout (work-files ticket 13), the same shape. */
+  postwork?: RunPrework
+  /** The work files attached to the Run, one per phase; an attachment may carry `problem: 'zone-mismatch'` (work-files ticket 03). */
+  work?: RunWorkSet
   /** Live polls and their answers, as the Run keeps them (H1). */
   polls?: RunPollLike[]
   pollResponses?: RunPollResponseLike[]
 }
 export type { RunBoard, RunQuestion, RunReaction }
 
+/** What planning sends for each phase: a work file and its window; `null` removes the phase from the Run (work-files ticket 03). */
+export type RunWorkPlan = { pre?: { fileId: string; opens?: string; closes?: string } | null; post?: { fileId: string; opens?: string; closes?: string } | null }
+
 /** A Run's read-only share link as a window sees it (never its owner token). */
 export type RunResultsShareState = { url: string; include: RunShareInclude; lifetime: RunShareLifetime; expiresAt: number | null; pushedAt: number }
-/** A Run's pre-work on its handout as a window sees it (never its owner token); times in ms. */
-export type RunPreworkState = { preworkId: string; opensAt: number; closesAt: number; closedAt?: number; purgedAt?: number }
+/** Which round of a Run's work: pre-work before the session, post-work after it (ADR-0040). */
+export type RunWorkPhase = 'pre' | 'post'
+/** A Run's pre-work or post-work as a window sees it (never its owner token); times in ms. */
+export type RunPreworkState = { preworkId: string; phase: RunWorkPhase; opensAt: number; closesAt: number; closedAt?: number; purgedAt?: number; withdrawnAt?: number; withdrawAskedAt?: number; /** Responses waiting on the live service, not pulled yet (the timer's count). */ waiting?: number; /** When the answers were last pulled onto the Run. */ pulledAt?: number }
 export type RunPreworkPullResult =
   | { ok: true; run: RecordingSession; added: number; changed: boolean }
   | { ok: false; error: string; run?: RecordingSession }
@@ -796,7 +811,7 @@ const api = {
     topicRead: (topic: string): Promise<boolean> => ipcRenderer.invoke('guide:topic-read', topic),
     // What it connects to (ticket 11): read-only probes of this Mac, run on ask; `openLink` names a link main holds.
     connections: (): Promise<ConnectionRow[]> => ipcRenderer.invoke('guide:connections'),
-    openLink: (id: 'slidewell-download'): Promise<boolean> => ipcRenderer.invoke('guide:open-link', id),
+    openLink: (id: 'slidewell-download' | 'online-content-report'): Promise<boolean> => ipcRenderer.invoke('guide:open-link', id),
     onLearnChanged: (cb: (record: unknown) => void): (() => void) => {
       const listener = (_e: unknown, record: unknown): void => cb(record)
       ipcRenderer.on('guide:learn-changed', listener)
@@ -1252,20 +1267,17 @@ const api = {
       Array<ProjectionRow & { vaultId?: string; talkSlug: string; talkTitle: string; outlinePath: string; titleHit?: boolean }> | null
     > => options === undefined ? ipcRenderer.invoke('search:all-slides', query) : ipcRenderer.invoke('search:all-slides', query, options)
   },
-  archive: {
-    available: (): Promise<boolean> => ipcRenderer.invoke('archive:available'),
-    searchImages: (query: string): Promise<ArchiveImageHit[] | null> =>
-      ipcRenderer.invoke('archive:search-images', query),
-    importImage: (thumbUrlOrPath: string): Promise<{ id: string; ext: string; path: string } | null> =>
-      ipcRenderer.invoke('archive:import-image', thumbUrlOrPath)
-  },
   // The image search seam (ticket 10): SlideWell's shared store when present, else the archive.
   // search() returns words hits first, then picture matches (match 'both' by default).
   images: {
     status: (): Promise<ImageSearchStatus> => ipcRenderer.invoke('images:status'),
     search: (query: string, opts?: { match?: MatchMode }): Promise<ImageSearchResult | null> =>
       ipcRenderer.invoke('images:search', query, opts),
-    importImage: (thumbUrl: string): Promise<ImportedImage | null> => ipcRenderer.invoke('images:import', thumbUrl)
+    // The pictures already in the open vaults' _assets (the In your talks tab). Null when the query is refused or the read fails.
+    searchVault: (query: string): Promise<VaultPictureResult | null> => ipcRenderer.invoke('images:search-vault', query),
+    // talkPath: the talk the picture is for. Main copies it into THAT talk's vault (worked out from the path),
+    // and imports nothing for a talk in no open vault.
+    importImage: (thumbUrl: string, talkPath: string): Promise<ImportedImage | null> => ipcRenderer.invoke('images:import', thumbUrl, talkPath)
   },
   shell: {
     openPath: (path: string): Promise<boolean> => ipcRenderer.invoke('shell:open-path', path),
@@ -1305,29 +1317,35 @@ const api = {
   // TalkWeaver History (ADR-0035). The renderer joins these handout records with recorded
   // Sessions; live checks are cached in main and can be forced by the user's explicit re-check.
   history: {
-    talkHandouts: (): Promise<TalkHandouts> => ipcRenderer.invoke('history:talk-handouts'),
+    talkHandouts: (vaultId?: string): Promise<TalkHandouts> => vaultId ? ipcRenderer.invoke('history:talk-handouts', vaultId) : ipcRenderer.invoke('history:talk-handouts'),
     checkLive: (url: string, force = false): Promise<HistoryLiveCheck> =>
       ipcRenderer.invoke('history:check-live', url, force),
-    listRuns: (talkSlug?: string): Promise<RecordingSession[]> => ipcRenderer.invoke('history:list-runs', talkSlug),
+    /** `vaultId`: that open vault's Runs (the Sessions view's selected Run); none: the current vault's. */
+    listRuns: (talkSlug?: string, vaultId?: string): Promise<RecordingSession[]> => vaultId ? ipcRenderer.invoke('history:list-runs', talkSlug, vaultId) : ipcRenderer.invoke('history:list-runs', talkSlug),
     createPlannedRun: (input: {
       talkSlug: string; talkTitle: string; plannedDate: string; eventTitle: string; audience: string; slideSet: RunSlideSet
       startTime?: string; expectedPeople?: number; preworkOpens?: string; preworkCloses?: string; timeZone?: string
+      work?: RunWorkPlan
+      /** The vault of the talk: the Run is written there (refused when it is not open). None: the current vault. */
+      vaultId?: string
     }): Promise<{ ok: boolean; run?: RecordingSession; error?: string }> => ipcRenderer.invoke('history:create-planned-run', input),
     updatePlannedRun: (talkSlug: string, runId: string, patch: Partial<{
       plannedDate: string; eventTitle: string; audience: string; slideSet: RunSlideSet
       startTime: string | null; expectedPeople: number | null; preworkOpens: string | null; preworkCloses: string | null; timeZone: string | null
-    }>): Promise<{ ok: boolean; run?: RecordingSession; error?: string }> =>
-      ipcRenderer.invoke('history:update-planned-run', { talkSlug, runId, patch }),
-    deletePlannedRun: (talkSlug: string, runId: string): Promise<{ ok: boolean; error?: string }> =>
-      ipcRenderer.invoke('history:delete-planned-run', { talkSlug, runId }),
+      work: RunWorkPlan
+    }>, vaultId?: string): Promise<{ ok: boolean; run?: RecordingSession; error?: string }> =>
+      ipcRenderer.invoke('history:update-planned-run', { talkSlug, runId, patch, ...(vaultId ? { vaultId } : {}) }),
+    deletePlannedRun: (talkSlug: string, runId: string, vaultId?: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('history:delete-planned-run', { talkSlug, runId, ...(vaultId ? { vaultId } : {}) }),
     buildRunHandout: (talkSlug: string, runId: string): Promise<{
       success: boolean; path?: string; slideIds?: string[]; missing?: string[]; error?: string
     }> => ipcRenderer.invoke('run:build-handout', { talkSlug, runId }),
-    publishRunHandout: (talkSlug: string, runId: string): Promise<{
+    // `vaultId`: the Run's own vault (the Sessions view sends it); main acts there only and refuses a vault that is not open.
+    publishRunHandout: (talkSlug: string, runId: string, vaultId?: string): Promise<{
       success: boolean; url?: string; path?: string; slideIds?: string[]; missing?: string[]; error?: string; details?: string; warning?: string
-    } & PublishReplyExtras> => ipcRenderer.invoke('run:publish-handout', { talkSlug, runId }),
-    unpublishRunHandout: (talkSlug: string, runId: string): Promise<{ success: boolean; error?: string; details?: string } & Pick<PublishReplyExtras, 'notReady'>> =>
-      ipcRenderer.invoke('run:unpublish-handout', { talkSlug, runId }),
+    } & PublishReplyExtras> => ipcRenderer.invoke('run:publish-handout', { talkSlug, runId, ...(vaultId ? { vaultId } : {}) }),
+    unpublishRunHandout: (talkSlug: string, runId: string, vaultId?: string): Promise<{ success: boolean; error?: string; details?: string } & Pick<PublishReplyExtras, 'notReady'>> =>
+      ipcRenderer.invoke('run:unpublish-handout', { talkSlug, runId, ...(vaultId ? { vaultId } : {}) }),
     // Live-presenting ticket 07 (L6): where each recorded instant slide's anchor sits in the talk NOW
     // (null = that slide is no longer in the talk), and "Add to talk" for one of them.
     instantAnchors: (talkSlug: string, runId: string): Promise<Record<string, { slideNumber: number; title: string } | null>> =>
@@ -1357,22 +1375,27 @@ const api = {
     > => ipcRenderer.invoke('history:results-share', { talkSlug, runId, include, lifetime, title }),
     resultsShareStop: (talkSlug: string, runId: string): Promise<{ ok: true } | { ok: false; error: string }> =>
       ipcRenderer.invoke('history:results-share-stop', { talkSlug, runId }),
-    // Feedback-boards ticket 09: a planned Run's pre-work on its handout — whether it has one, pull
-    // the answers onto the Run now, and Close pre-work now (then one last pull).
-    preworkStatus: (talkSlug: string, runId: string): Promise<RunPreworkState | null> =>
-      ipcRenderer.invoke('history:prework-status', { talkSlug, runId }),
-    preworkRefresh: (talkSlug: string, runId: string): Promise<RunPreworkPullResult> =>
-      ipcRenderer.invoke('history:prework-refresh', { talkSlug, runId }),
-    preworkClose: (talkSlug: string, runId: string): Promise<RunPreworkPullResult> =>
-      ipcRenderer.invoke('history:prework-close', { talkSlug, runId }),
+    // Feedback-boards ticket 09, work-files ticket 13: a Run's pre-work or post-work (`phase`, pre-work
+    // when left out) — whether it has one, pull the answers onto the Run now, and close it now (then
+    // one last pull).
+    // `vaultId` (the Run page sends the Run's own): the Run is read and written in that vault; none: the current vault.
+    preworkStatus: (talkSlug: string, runId: string, phase: RunWorkPhase = 'pre', vaultId?: string): Promise<RunPreworkState | null> =>
+      ipcRenderer.invoke('history:prework-status', { talkSlug, runId, phase, ...(vaultId ? { vaultId } : {}) }),
+    preworkRefresh: (talkSlug: string, runId: string, phase: RunWorkPhase = 'pre', vaultId?: string): Promise<RunPreworkPullResult> =>
+      ipcRenderer.invoke('history:prework-refresh', { talkSlug, runId, phase, ...(vaultId ? { vaultId } : {}) }),
+    preworkClose: (talkSlug: string, runId: string, phase: RunWorkPhase = 'pre', vaultId?: string): Promise<RunPreworkPullResult> =>
+      ipcRenderer.invoke('history:prework-close', { talkSlug, runId, phase, ...(vaultId ? { vaultId } : {}) }),
     /** One change to a step's picks, applied by main to the Run as it is then. */
-    preworkPick: (talkSlug: string, runId: string, stepId: string, change: PickChange): Promise<{ ok: true; run: RecordingSession } | { ok: false; error: string }> =>
-      ipcRenderer.invoke('history:prework-pick', { talkSlug, runId, stepId, change }),
+    preworkPick: (talkSlug: string, runId: string, stepId: string, change: PickChange, phase: RunWorkPhase = 'pre', vaultId?: string): Promise<{ ok: true; run: RecordingSession } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('history:prework-pick', { talkSlug, runId, stepId, change, phase, ...(vaultId ? { vaultId } : {}) }),
     /** The board slides each pre-work step feeds, with the compiler's slide ids; `ok: false` when the talk cannot be compiled. */
-    preworkFeeds: (talkSlug: string): Promise<{ ok: true; feeds: PreworkFeed[] } | { ok: false }> =>
-      ipcRenderer.invoke('history:prework-feeds', { talkSlug }),
-    preworkQuestion: (talkSlug: string, runId: string, entryId: string, patch: { answered?: boolean; inTalk?: { slideId: string | null } | null }): Promise<{ ok: true; run: RecordingSession } | { ok: false; error: string }> =>
-      ipcRenderer.invoke('history:prework-question', { talkSlug, runId, entryId, patch })
+    preworkFeeds: (talkSlug: string, vaultId?: string): Promise<{ ok: true; feeds: PreworkFeed[] } | { ok: false }> =>
+      ipcRenderer.invoke('history:prework-feeds', { talkSlug, ...(vaultId ? { vaultId } : {}) }),
+    preworkQuestion: (talkSlug: string, runId: string, entryId: string, patch: { answered?: boolean; inTalk?: { slideId: string | null } | null }, phase: RunWorkPhase = 'pre', vaultId?: string): Promise<{ ok: true; run: RecordingSession } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('history:prework-question', { talkSlug, runId, entryId, patch, phase, ...(vaultId ? { vaultId } : {}) }),
+    /** The Run page's read state: leaving the Run, Mark all read, or one response kept unread by its dot. */
+    preworkSeen: (talkSlug: string, runId: string, change: { type: 'leave' } | { type: 'all' } | { type: 'keep'; id: string; unread: boolean }, phase: RunWorkPhase = 'pre', vaultId?: string): Promise<{ ok: true; run: RecordingSession } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('history:prework-seen', { talkSlug, runId, change, phase, ...(vaultId ? { vaultId } : {}) })
   },
   replay: {
     // Build a fresh present HTML for this Talk and return a twpresent:// replay iframe URL.
@@ -1542,9 +1565,64 @@ const api = {
       return () => ipcRenderer.removeListener('importer:progress', listener)
     }
   },
+  // The Tools window's Work files view (work-files ticket 06). Read only; opening a file goes through shell.openPath.
+  workFiles: {
+    /** The work files of one open vault (vaultId); without it, every open vault's (each item carries its vaultId), as the Work files view lists them. */
+    list: (vaultId?: string): Promise<WorkFilesListing | null> =>
+      vaultId === undefined ? ipcRenderer.invoke('work-files:list') : ipcRenderer.invoke('work-files:list', vaultId),
+    // Work-files ticket 07: writes go only into the vault's `Work files/` folder.
+    create: (input: { title: string; presetId?: string | null; adds?: WorkFileAdd[]; vaultId?: string }): Promise<WorkFileWriteResult> => ipcRenderer.invoke('work-files:create', input),
+    addStep: (fileName: string, add: WorkFileAdd, vaultId?: string): Promise<WorkFileWriteResult> => ipcRenderer.invoke('work-files:add-step', { fileName, add, vaultId }),
+    /** Where a step's answer goes: `local` true writes `{local}` (Local only), false takes it out (Sent to you). In the named vault, or the current one. */
+    setStepLocal: (fileName: string, stepId: string, local: boolean, vaultId?: string): Promise<WorkFileWriteResult> => ipcRenderer.invoke('work-files:set-step-local', { fileName, stepId, local, vaultId }),
+    /** Work-files ticket 28: move a retired `{prework}` section of the talk into a work file, name it in the talk's `prework:` and remove the section. */
+    movePrework: (outlinePath: string): Promise<WorkFileWriteResult & { stepIds?: string[] }> => ipcRenderer.invoke('work-files:move-prework', { outlinePath })
+  },
+  sessions: {
+    /** Every planned and delivered Run of every open vault, plus the Runs a live session is bound to (`talkSlug/runId`). */
+    list: (): Promise<{ runs: SessionSource[]; live: string[] }> => ipcRenderer.invoke('sessions:list'),
+    /** How each work file attached to a Run reads: title, step count and its first blocking finding in words. */
+    runFiles: (run: SessionRunRef): Promise<{ ok: true; files: { pre?: WorkFileState; post?: WorkFileState } } | { ok: false; error: string }> => ipcRenderer.invoke('sessions:run-files', run),
+    /** Each attached phase's steps (from its work file, or the talk's `{prework}` section) and the Run's answers for the phase. */
+    runAnswers: (run: SessionRunRef): Promise<{ ok: true; pre?: PhaseSteps; post?: PhaseSteps; prework?: RunPrework; postwork?: RunPrework; writable: boolean; ownerUnknown?: RunWorkPhase[] } | { ok: false; error: string }> => ipcRenderer.invoke('sessions:run-answers', run),
+    /** A planned Run given without presenting from the app becomes delivered. */
+    markDelivered: (run: SessionRunRef): Promise<{ ok: true } | { ok: false; error: string }> => ipcRenderer.invoke('sessions:mark-delivered', run),
+    /** The Run's attached work file for one phase, opened in the OS's editor. */
+    openWorkFile: (run: SessionRunRef, phase: 'pre' | 'post'): Promise<{ ok: true; fileName: string; vaultId: string } | { ok: false; error: string }> => ipcRenderer.invoke('sessions:open-work-file', { ...run, phase }),
+    /** The presenter window of the Run's live session, brought forward. */
+    openLiveView: (run: SessionRunRef): Promise<{ ok: true } | { ok: false; error: string }> => ipcRenderer.invoke('sessions:open-live-view', run),
+    /** Preview page: the Run's participant page built on this computer and opened; nothing is uploaded. */
+    previewPage: (run: SessionRunRef): Promise<{ ok: true } | { ok: false; error: string }> => ipcRenderer.invoke('sessions:preview-page', run),
+    /** The QR code of one of the Run's published links, as SVG. */
+    runQr: (url: string): Promise<{ ok: true; svg: string } | { ok: false; error: string }> => ipcRenderer.invoke('sessions:run-qr', { url }),
+    /** Extras for this run: the intro note and links kept on the Run (null takes them away); shown on its handout from the next publish. */
+    setExtras: (run: SessionRunRef, extras: RunExtras | null): Promise<{ ok: true; extras: RunExtras | null } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('sessions:set-extras', { ...run, extras }),
+    /** Extra slides of the Run (ticket 25), kept on the Run record, and the Run's slides for "Place after". */
+    extraSlides: (run: SessionRunRef): Promise<({ ok: true } & RunExtraSlidesState) | { ok: false; error: string }> =>
+      ipcRenderer.invoke('sessions:extra-slides', run),
+    /** Adds an extra slide (no id: main makes it) or changes one (its id); kept on the Run, never in the talk's outline. */
+    saveExtraSlide: (run: SessionRunRef, slide: { id?: string; title: string; text: string; after: string }): Promise<({ ok: true } & RunExtraSlidesState) | { ok: false; error: string }> =>
+      ipcRenderer.invoke('sessions:save-extra-slide', { ...run, slide }),
+    /** Removes an extra slide from the Run. */
+    removeExtraSlide: (run: SessionRunRef, id: string): Promise<({ ok: true } & RunExtraSlidesState) | { ok: false; error: string }> =>
+      ipcRenderer.invoke('sessions:remove-extra-slide', { ...run, id })
+  },
+  published: {
+    /** Work-files ticket 22: every Run with a link and every talk with `handout_url`, in every open vault, each with its folder in the site, and this computer's copy of the site (shared/published-pages.ts makes the rows). */
+    list: (): Promise<PublishedPagesInput> => ipcRenderer.invoke('published:list'),
+    /** Unpublish a talk's evergreen handout: its folder leaves the site, then `handout_url` leaves the talk. Run handouts are not touched. The talk is named by its outline, relative to its vault's folder. */
+    unpublishTalk: (vaultId: string, outline: string): Promise<{ success: boolean; error?: string; details?: string; notReady?: PublishNotReady }> =>
+      ipcRenderer.invoke('published:unpublish-talk', { vaultId, outline })
+  },
   tools: {
-    open: (view: ToolsView, sessionId?: string): Promise<{ success: boolean; error?: string }> =>
-      ipcRenderer.invoke('tools:open', view, sessionId),
+    open: (view: ToolsView, sessionId?: string, run?: ToolsRunRef): Promise<{ success: boolean; error?: string }> =>
+      isToolsView(view) ? ipcRenderer.invoke('tools:open', view, sessionId, run) : Promise.resolve({ success: false, error: 'Unknown Tools view.' }),
+    /** Sessions on one Run; with vaultId, that vault's Run when two vaults hold the same talk and Run id. */
+    openRun: (talkSlug: string, runId: string, vaultId?: string): Promise<{ success: boolean; error?: string }> => {
+      const ref = parseToolsRunRef({ talkSlug, runId, ...(vaultId ? { vaultId } : {}) })
+      return ref ? ipcRenderer.invoke('tools:open', 'sessions', undefined, ref) : Promise.resolve({ success: false, error: 'Unknown Run.' })
+    },
     onShow: (cb: (payload: ToolsShowPayload) => void): (() => void) => {
       toolsShowSubscribers.add(cb)
       if (lastToolsShow) queueMicrotask(() => cb(lastToolsShow as ToolsShowPayload))

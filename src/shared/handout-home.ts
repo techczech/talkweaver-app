@@ -44,6 +44,14 @@ export interface HandoutHomePrework {
   /** The steps' minutes added up; 0 when none names any. */
   minutes: number
   steps: HandoutHomePreworkStep[]
+  /** The Run's pre-work page, relative to the home page (`pre-work/`, work-files ticket 16). */
+  href?: string
+}
+
+/** The home page's "After the session" card: the Run's post-work page (work-files ticket 16). */
+export interface HandoutHomePostwork {
+  href: string
+  label: string
 }
 
 // The compiler's flag words (compiler/scripts/lib/deck-settings.mjs DECK_FLAG_OFF); test-handout-home-details pins them equal.
@@ -91,8 +99,11 @@ export function handoutHomeDetails(opts: { outline: string; run?: HandoutHomeRun
   }
 }
 
-/** The home page's "Before the session" card for a Run's pre-work form; null without one. */
-export function handoutHomePrework(form: { title?: string; steps?: Array<{ title?: string; minutes?: number; kind?: string }> } | null | undefined): HandoutHomePrework | null {
+/**
+ * The home page's "Before the session" card for a Run's pre-work form; null without one. `href` is the
+ * Run's pre-work page (work-files ticket 16), which every row and "Start the pre-work" open.
+ */
+export function handoutHomePrework(form: { title?: string; steps?: Array<{ title?: string; minutes?: number; kind?: string }> } | null | undefined, href?: string): HandoutHomePrework | null {
   const steps = Array.isArray(form?.steps) ? form!.steps! : []
   if (!form || steps.length === 0) return null
   const minutesOf = (step: { minutes?: number }): number => (typeof step.minutes === 'number' && step.minutes > 0 ? step.minutes : 0)
@@ -107,5 +118,12 @@ export function handoutHomePrework(form: { title?: string; steps?: Array<{ title
       minutes: minutesOf(step) || null,
       kind: typeof step.kind === 'string' ? step.kind : '',
     })),
+    ...(href ? { href } : {}),
   }
+}
+
+/** The home page's "After the session" card for a Run's post-work page; null without one. */
+export function handoutHomePostwork(form: { title?: string } | null | undefined, href: string): HandoutHomePostwork | null {
+  if (!form || !href) return null
+  return { href, label: (form.title ?? '').trim() || 'Post-work' }
 }

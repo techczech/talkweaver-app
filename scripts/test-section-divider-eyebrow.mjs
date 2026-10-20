@@ -5,7 +5,9 @@
 // `h1::before { content: "Section" }` eyebrow is gone. What must still hold:
 //   1. a divider with no kicker renders no "Section" text (computed h1::before content is none)
 //   2. a kicker on a divider still shows, styled as before (mono, accent colour, visible)
-//   3. the subsection divider's parent-section eyebrow (a compiler-supplied kicker) still shows
+//   3. the subsection divider shows no parent-section name above its title (ADR-0039, 2026-10-16:
+//      no small line above a title unless the slide sets {kicker=…}; it was a compiler-supplied
+//      kicker under ADR-0028 §7)
 //
 // Compiles a real deck (prepareSource → model.fullHtml) and reads computed styles in Chromium.
 // =============================================================================
@@ -24,7 +26,7 @@ const source = [
   '## Plain Divider', '', '### Child one', '', 'Body one.', '',
   // A divider with an authored kicker.
   '## Kicked Divider', '{layout=section-title kicker="Part two"}', '', '### Child two', '', 'Body two.', '',
-  // A `###` with children: a subsection divider whose kicker is the parent section's title.
+  // A `###` with children: a subsection divider. It no longer borrows the parent section's title.
   '### Sub Divider', '', '#### Grandchild', '', 'Body three.'
 ].join('\n')
 const path = join(dir, 'divider-probe.md')
@@ -92,11 +94,11 @@ try {
 
   const sub = await probe('sub-divider')
   assert(sub, 'the deck carries the subsection divider')
-  assert.equal(sub.kicker?.text, 'Kicked Divider', 'the subsection divider keeps its parent-section eyebrow')
-  assert.equal(sub.kicker.visible, true, 'the parent-section eyebrow shows')
+  assert.equal(sub.kicker, null, 'the subsection divider shows no parent-section name above its title (ADR-0039)')
+  assert.doesNotMatch(sub.text, /Kicked Divider/, 'the parent section title is not printed on the subsection divider')
   assert(noEyebrow(sub.before), `no "Section" ::before on the subsection divider (got ${sub.before})`)
-  console.log('PASS: subsection divider keeps its parent-section eyebrow')
+  console.log('PASS: subsection divider shows no parent-section name above its title')
 } finally {
   await browser.close()
 }
-console.log('section divider eyebrow: no automatic "Section" label; authored and parent-section kickers still show passed')
+console.log('section divider eyebrow: no automatic "Section" label or parent-section name; authored kickers still show passed')

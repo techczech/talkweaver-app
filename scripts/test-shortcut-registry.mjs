@@ -348,7 +348,8 @@ const BINDING_MAP = new Map([
   ['src/preload/present-live-bridge.ts', ['presenter.live', 'presenter.close']],
   ['src/preload/present-rec-ui.ts', ['presenter.record', 'presenter.record-pause', 'presenter.save-run-as', 'presenter.save-run', 'presenter.close', 'presenter.next', 'presenter.previous']],
   ['src/renderer/src/App.tsx', ['app.sidebar-talks', 'app.sidebar-outline', 'app.sidebar-toggle', 'app.settings']],
-  ['src/renderer/src/components/ArchiveImageSearch.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
+  // The image drawer (ticket 11): docked beside the editor; keys act only while focus is inside it.
+  ['src/renderer/src/components/ImageDrawer.tsx', ['image-drawer.move', 'image-drawer.insert', 'image-drawer.close', 'image-drawer.choose-editable', 'image-drawer.choose-picture']],
   ['src/renderer/src/components/CommandMenu.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
   // The option controls the Inspector draws (the file no longer holds the ⌘L palette): ← → Space Enter within a group.
   ['src/renderer/src/components/CommandPalette.tsx', ['picker.navigate', 'picker.choose', 'picker.close', 'picker.toggle']],
@@ -376,6 +377,8 @@ const BINDING_MAP = new Map([
   ['src/renderer/src/components/SlideFocus.tsx', ['browser.move', 'browser.open', 'browser.close']],
   ['src/renderer/src/components/SlidesOrganizer.tsx', ['browser.move', 'browser.open', 'browser.close']],
   ['src/renderer/src/components/Studio.tsx', ['app.help', 'browser.move', 'browser.open', 'browser.close']],
+  // The Tools window's keys (work-files ticket 30): one handler runs every `tools.*` chord, and ⌘⇧P opens that window's palette.
+  ['src/renderer/src/components/ToolsPalette.tsx', ['app.command-palette', 'tools.view-sessions', 'tools.view-published', 'tools.view-workfiles', 'tools.plan-run', 'tools.edit-plan', 'tools.plan-like-this', 'tools.publish', 'tools.go-live', 'tools.open-run', 'tools.copy-link', 'tools.copy-invitation', 'tools.new-work-file']],
   ['src/renderer/src/components/TalkText.tsx', ['talktext.notes', 'talktext.script', 'talktext.rewrite', 'talktext.show-slide', 'talktext.previous-slide', 'talktext.next-slide', 'talktext.copy', 'talktext.help', 'talktext.close']],
   ['src/renderer/src/components/TagPicker.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
   ['src/renderer/src/components/WorkspaceLayout.tsx', ['app.slide-search', 'app.find-talk', 'app.context-menu', 'app.layout-picker', 'app.icon-picker', 'app.image-search', 'app.where-used', 'app.slide-focus', 'app.command-palette', 'app.new-window', 'app.help', 'app.toggle-inspector', 'app.view-editor', 'app.view-split', 'app.view-strip', 'app.view-grid', 'app.present', 'app.present-current']],
@@ -407,12 +410,14 @@ const SCAN_IGNORE = new Map([
   ['src/renderer/src/components/RemoveExampleConfirm.tsx', 'Escape-only dismissal of the Remove the example vault? confirmation (onboarding ticket 12, modal, local); no shortcut is bound'],
   ['src/renderer/src/components/InspectorBoard.tsx', 'The Board section’s fields keep their own typing (Enter stays in the one-line instructions; ↑ ↓ on a column’s handle moves that column, ADR-0032 round-3 A2); ⌥↑/⌥↓ still reach the Inspector’s slide navigation; no shortcut is bound'],
   ['src/renderer/src/components/ReactionsControl.tsx', 'Enter on the native custom-labels field commits it (ticket 04); no shortcut is bound'],
+  ['src/renderer/src/components/RunAnswers.tsx', 'Escape-only dismissal of the open Copy and Export menu on a Run’s answers; no shortcut is bound'],
   ['src/renderer/src/components/EmbedCheckPanel.tsx', 'Escape-only panel dismissal'],
   ['src/renderer/src/components/ExplainPanel.tsx', 'Escape-only panel dismissal'],
   ['src/renderer/src/extensions/plainView/hiddenLines.ts', 'In the Plain view ArrowRight and Shift-ArrowRight at the end of a heading step over its hidden tokens and layout lines instead of stopping inside them; plain caret movement, not a command, no shortcut is bound'],
   ['src/renderer/src/extensions/plainView/iconPictures.ts', 'In the Plain view End (and its macOS forms) on a paragraph or list item that ends in an icon token goes to the end of the visible text, before the token, as it does on a title; plain caret movement, not a command, no shortcut is bound'],
   ['src/renderer/src/extensions/plainView/guardKeys.ts', 'In the Plain view Backspace and Delete (also with Alt, and Mod-Delete) do nothing when the one character they would delete lies in text the view hides (a heading\'s tokens, a layout line, the front matter); elsewhere they are the ordinary keys; no shortcut is bound'],
   ['src/renderer/src/extensions/plainView/talkDetails.ts', 'Escape inside the Talk details panel returns focus to the editor; Enter and Space on its buttons are the native button behaviour; no shortcut is bound'],
+  ['src/renderer/src/extensions/workStrips.ts', 'Escape-only dismissal of the open Attach / Open run list under the Metadata table (ticket 08, local menu); no shortcut is bound'],
   ['src/renderer/src/extensions/imageFullScreenPreview.ts', 'Escape-only dismissal of the full-screen image view; no shortcut is bound'],
   ['src/renderer/src/components/ImageMetaPanel.tsx', 'Escape-only panel dismissal'],
   ['src/renderer/src/components/KeyboardHelp.tsx', 'Escape only closes the shortcut dialog; the opening command is app.help'],
@@ -428,12 +433,14 @@ const SCAN_IGNORE = new Map([
   ['src/renderer/src/components/ConflictCompare.tsx', 'Escape-only dismissal of the conflict compare screen (several-vaults ticket 10; same as Cancel, writes nothing); no shortcut is bound'],
   ['src/renderer/src/components/talklist/ShowFilter.tsx', 'Escape-only dismissal of the Show menu popover (several-vaults ticket 07); no shortcut is bound'],
   ['src/renderer/src/components/PlanRunSheet.tsx', 'Escape dismissal, Enter in the event field and Cmd+Enter to save in the plan sheet (modal, local)'],
-  ['src/renderer/src/components/RunStatusChips.tsx', 'Escape-only dismissal of the Run chip popover'],
+  ['src/renderer/src/components/RunExtras.tsx', 'Escape cancels and Cmd+Enter keeps the inline edit box of Extras for this run on the Run page (work-files ticket 24, the drawn Esc and ⌘↩ on its Cancel and Done, local to the box)'],
+  ['src/renderer/src/components/UnpublishRunConfirm.tsx', 'Escape cancels, Return confirms only on the focused Unpublish button, and Tab stays inside the Unpublish confirmation of the Run page (work-files ticket 17, modal, local, the drawn Esc and ↩ on its two buttons); no shortcut is bound'],
   ['src/renderer/src/components/HistoryRunBoard.tsx', 'Escape-only dismissal of the Copy as Markdown popover and the share-link dialog (feedback-boards ticket 06); no shortcut is bound'],
   ['src/preload/present-live-setup.ts', 'A key on the Going live prompt\'s button only blurs the button, so Space and Enter go on to the slides (ticket 05); no shortcut is bound'],
   ['src/preload/present-end-live-boards.ts', 'Escape cancels and Enter confirms the End live board question (D20, modal, local); no app shortcut is bound'],
   ['src/renderer/src/components/ShareSheet.tsx', 'Escape-only share-sheet dismissal (share for comments)'],
   ['src/renderer/src/components/PublishNotReadySheet.tsx', 'Escape-only dismissal of the publish "not ready" sheet'],
+  ['src/renderer/src/components/PublishWorkNoticeSheet.tsx', 'Escape-only dismissal of the publish dialog that says work files go out with a Run'],
   ['src/renderer/src/extensions/frontmatterTable.ts', 'Escape-only dismissal of the metadata row\'s "?" help block (T27); no shortcut is bound'],
   ['src/renderer/src/components/WhereUsedPanel.tsx', 'Escape-only panel dismissal'],
   ['src/renderer/src/keymap/store.ts', 'keymap.of appears only in an explanatory comment; bindings are created from EDITOR_COMMANDS'],
@@ -936,6 +943,23 @@ assert.deepEqual(
   [['browser', 'browser.sort'], ['slide-picker', 'slide-picker.select-section'], ['presenter', 'presenter.skip'], ['talktext', 'talktext.script']],
   'S is the file list’s sort and the slide picker’s select section, in their own scopes'
 )
+// Work files ticket 30: the Tools window's keys. Each is in the Tools scope, each has its reason in its
+// explanation, none repeats a chord of the Tools scope, and the unpublish and attach commands have no key.
+{
+  const tools = SHORTCUT_REGISTRY.filter((entry) => entry.scope === 'tools')
+  assert.deepEqual(
+    tools.map((entry) => [entry.id, entry.keys]),
+    [['tools.view-sessions', '⌘4'], ['tools.view-published', '⌘5'], ['tools.view-workfiles', '⌘6'], ['tools.plan-run', '⌘⌥N'], ['tools.edit-plan', '⌘⌥E'],
+      ['tools.plan-like-this', '⌘⇧D'], ['tools.publish', '⌘⌥U'], ['tools.go-live', '⌘⌥L'], ['tools.open-run', '⌘⌥O'], ['tools.copy-link', '⌘⇧C'],
+      ['tools.copy-invitation', '⌘⌥C'], ['tools.new-work-file', '⌘⇧N']],
+    'the Tools scope holds exactly the keys this sweep chose'
+  )
+  assert.equal(tools.every((entry) => entry.explanation.length > 40), true, 'every Tools key states its reason in its explanation')
+  assert.equal(new Set(tools.flatMap((entry) => entry.codes)).size, tools.flatMap((entry) => entry.codes).length, 'no chord is shared inside the Tools scope')
+  // The collisions the ticket names: none of these chords is a Tools key.
+  const taken = ['Mod-Shift-p', 'Mod-Shift-l', 'Mod-1', 'Mod-2', 'Mod-3', 'Mod-n', 'Mod-d', 'Mod-e', 'Mod-r']
+  assert.deepEqual(tools.flatMap((entry) => entry.codes).filter((code) => taken.includes(code)), [], 'no Tools key repeats ⌘⇧P, ⌘⇧L, ⌘1 to ⌘3, ⌘N, ⌘D, ⌘E or ⌘R')
+}
 // ADR-0011: the universal keymap's reserved chords. Only their reserved surface may hold them (a
 // reserved chord with no surface stays unbound); each holder below is that surface.
 const RESERVED_CHORDS = new Map([

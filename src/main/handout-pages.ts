@@ -33,6 +33,52 @@ import type { HandoutHomeDetails } from '../shared/handout-home.ts'
 import { injectPathwayRuntime, resolvePathways, type Pathway, type PathwaySlideRow } from './pathways.ts'
 import { injectRunCoverMetadata } from './runs.ts'
 import { requireAllowedAssetRoots } from './compile-roots.ts'
+import { withRunExtraIds, type PlacedRunExtra, type RunExtrasModel } from '../../compiler/scripts/lib/run-extras.mjs'
+import type { RunExtraSlide } from '../shared/run-extras.ts'
+
+export { withRunExtraIds, type PlacedRunExtra, type RunExtrasModel }
+
+/**
+ * A compile for a Run (work-files ticket 25, compiler run-extras.mjs): its id, its pathway's slides (null: the
+ * full talk) and its extra slides from the Run record, which the compiler makes into slides of their own.
+ */
+export type RunCompileOption = { id: string; slideIds: string[] | null; extraSlides: RunExtraSlide[] }
+
+/**
+ * The Run's extra slides as its compile placed them, with the deck's final slide order (model.runExtras), which
+ * withRunExtraIds takes their places from; none for a talk's own compile.
+ */
+export function placedRunExtras(model: Record<string, unknown>): RunExtrasModel {
+  const runExtras = model.runExtras as { slides?: unknown; order?: unknown } | undefined
+  const slides = Array.isArray(runExtras?.slides) ? runExtras.slides.filter((slide): slide is PlacedRunExtra => Boolean(slide) && typeof (slide as PlacedRunExtra).id === 'string') : []
+  const order = Array.isArray(runExtras?.order) ? runExtras.order.filter((id): id is string => typeof id === 'string') : undefined
+  return { slides, ...(order ? { order } : {}) }
+}
+
+/**
+ * What of a Run its handout's deck depends on: its cover, its id and extra slides (ticket 25) and, for a
+ * pathway Run, its pathway with the talk's pathways (`pathways`, as the talk's manifest holds them).
+ */
+export function runForHandoutOf(
+  run: { id: string; eventTitle?: string; talkTitle: string; plannedDate?: string; startedAt: string; slideSet: { kind: 'full' } | { kind: 'pathway'; pathwayId: string }; extraSlides?: RunExtraSlide[] },
+  pathways: () => Pathway[],
+): RunForHandout {
+  const base = {
+    eventTitle: run.eventTitle, talkTitle: run.talkTitle, plannedDate: run.plannedDate, startedAt: run.startedAt, runId: run.id,
+    ...(run.extraSlides?.length ? { extraSlides: run.extraSlides } : {}),
+  }
+  return run.slideSet.kind === 'pathway' ? { ...base, pathway: { id: run.slideSet.pathwayId, pathways: pathways() } } : base
+}
+
+/**
+ * The compile option for a Run's handout: the Run's extra slides, placed against its pathway's slides. None for
+ * a Run without extra slides, whose handout deck is then the talk's own compile (the same cache entry).
+ */
+export function runCompileOption(run: RunForHandout): RunCompileOption | undefined {
+  if (!run.runId || !run.extraSlides?.length) return undefined
+  const pathway = run.pathway ? run.pathway.pathways.find((item) => item.id === run.pathway?.id) : undefined
+  return { id: run.runId, slideIds: pathway ? [...pathway.slideIds] : null, extraSlides: run.extraSlides }
+}
 
 export type HandoutPage = { fileName: string; html: string; lazy?: boolean }
 
@@ -75,10 +121,16 @@ export type HandoutPagesJob = {
       /** The talk's slug: the live room the handout follows. */
       talkSlug: string
       run: RunForHandout
-      prework?: RunHandoutPrework
-      /** handoutHomeDetails({ outline, run }) and handoutHomePrework(form), made by the main process. */
+      /**
+       * handoutHomeDetails({ outline, run }), handoutHomePrework(form, 'pre-work/') and
+       * handoutHomePostwork(form, 'post-work/'), made by the main process: the home page links to the
+       * Run's work pages (work-files ticket 16); the handout itself carries no form.
+       */
       homeDetails: HandoutHomeDetails
       homePrework: unknown
+      homePostwork?: unknown
+      /** The Run's extras (ticket 24: intro note and links), as the Run record holds them; only a Run's home page shows them. */
+      homeExtras?: unknown
       /** The Run's handout as a file on this computer (talk folder/dist/<slug>-handout.html), written as Build Run handout writes it. */
       distPath: string
     }
@@ -109,12 +161,16 @@ export type RunForHandout = {
   startedAt: string
   /** The Run's pathway, with the talk's pathways as the manifest holds them; absent for the full talk. */
   pathway?: { id: string; pathways: Pathway[] }
+  /** The Run's id and its extra slides (ticket 25, from the Run record), compiled in. Absent: the talk's slides only. */
+  runId?: string
+  extraSlides?: RunExtraSlide[]
 }
 
 /**
  * A Run's deck from the talk's compiled model and its per-slide rows: the Run's pathway (its slides
  * only) and its cover (event and date) applied, and which slides it shows. A pathway that is no longer
- * in the manifest is refused.
+ * in the manifest is refused. A model compiled for the Run (runCompileOption) has the Run's extra slides
+ * in place; with a pathway they join its slides, each after its chosen slide or at the end (ticket 25).
  */
 export function runHandoutSourceFrom(
   model: Record<string, unknown>, rows: PathwaySlideRow[] | null, run: RunForHandout, slug: string, liveTalkSlug: string,
@@ -125,7 +181,7 @@ export function runHandoutSourceFrom(
   if (run.pathway) {
     const resolved = resolvePathways(run.pathway.pathways, rows ?? []).find((pathway) => pathway.id === run.pathway?.id)
     if (!resolved) throw new Error('The Run pathway no longer exists.')
-    slideIds = resolved.present.map((row) => row.slide_id)
+    slideIds = withRunExtraIds(resolved.present.map((row) => row.slide_id), placedRunExtras(model))
     missing = resolved.missing
     html = injectPathwayRuntime(html, slideIds, run.pathway.id)
   } else {
@@ -142,9 +198,6 @@ export function runHandoutSourceFrom(
   }
 }
 
-/** A Run handout's pre-work: the form the handout shows while pre-work is open (HandoutPreworkConfig). */
-export type RunHandoutPrework = { preworkId: string; workerBaseUrl: string; form: unknown }
-
 export type HandoutPagesResult = {
   warnings: string[]
   /** A Run's job: the slides its handout shows, and the pathway's slides that are no longer in the talk. */
@@ -158,12 +211,12 @@ const load = async <T>(compilerDir: string, file: string): Promise<T> => (await 
 
 /**
  * A Run's handout from its compiled deck: the self-contained page, and (`lazyAssets`) the page that
- * loads its slide media lazily. A Run handout never lists the pre-work steps as ordinary slides: they
- * travel only as the form's steps (an inert template the form shows while pre-work is open).
+ * loads its slide media lazily. A Run handout never lists a talk's `{prework}` steps as slides, and
+ * carries no pre-work form (work-files ticket 16: pre-work and post-work have pages of their own).
  */
 export async function buildRunHandoutHtml(
   compilerDir: string, source: RunHandoutSource,
-  options: { slug: string; workerBaseUrl: string; prework?: RunHandoutPrework; lazyAssets?: boolean },
+  options: { slug: string; workerBaseUrl: string; lazyAssets?: boolean },
 ): Promise<{ html: string; lazyHtml?: string; slides: Array<{ id: string; html: string; notes: string }>; styles: string }> {
   const { extractStyles, extractSlides } = await load<{ extractStyles: (html: string) => string; extractSlides: (html: string) => Array<{ id: string; html: string; notes: string }> }>(compilerDir, 'lib/04-html-extraction.mjs')
   const { buildShareHtml } = await load<{ buildShareHtml: (args: Record<string, unknown>) => string }>(compilerDir, 'lib/09-output-builders.mjs')
@@ -171,11 +224,9 @@ export async function buildRunHandoutHtml(
   const preworkIds = new Set(source.preworkSlideIds)
   const allSlides = extractSlides(source.html)
   const slides = allSlides.filter((slide) => !preworkIds.has(slide.id))
-  const preworkSlides = allSlides.filter((slide) => preworkIds.has(slide.id))
   const shareArgs = {
     title: source.title, slides, styles, includeNotes: false, slug: options.slug,
     workerBaseUrl: options.workerBaseUrl, liveTalkSlug: source.liveTalkSlug,
-    ...(options.prework ? { prework: { ...options.prework, steps: preworkSlides.map((slide) => ({ id: slide.id, html: slide.html })) } } : {}),
   }
   const html = buildShareHtml(shareArgs)
   // The published <slug>.html sits beside the home page (index.html): it links back to it.
@@ -229,11 +280,12 @@ export async function buildHandoutPages(job: HandoutPagesJob, slim: Slim): Promi
     const talkFileSlug = basename(job.outlinePath).replace('-outline.md', '')
     const { prepareSource } = await load<{ prepareSource: (...args: unknown[]) => Promise<Record<string, unknown>> }>(compilerDir, 'lib/08-source-adapters.mjs')
     const { buildPerSlideProjections } = await load<{ buildPerSlideProjections: (model: unknown, slug: string) => PathwaySlideRow[] | null }>(compilerDir, 'lib/10-projections.mjs')
-    const model = await prepareSource(job.outlinePath, job.text, talkFileSlug, statSync(job.outlinePath), job.defaults, { allowedAssetRoots: requireAllowedAssetRoots(job.assetRoots, 'The handout build') })
+    const run = runCompileOption(job.run)
+    const model = await prepareSource(job.outlinePath, job.text, talkFileSlug, statSync(job.outlinePath), job.defaults, { allowedAssetRoots: requireAllowedAssetRoots(job.assetRoots, 'The handout build'), ...(run ? { run } : {}) })
     const from = runHandoutSourceFrom(model, buildPerSlideProjections(model, talkFileSlug) ?? null, job.run, talkFileSlug, job.talkSlug)
     slideIds = from.slideIds
     missing = from.missing
-    const built = await buildRunHandoutHtml(compilerDir, from.source, { slug, workerBaseUrl: live, prework: job.prework, lazyAssets: true })
+    const built = await buildRunHandoutHtml(compilerDir, from.source, { slug, workerBaseUrl: live, lazyAssets: true })
     // The Run's handout as a file on this computer too, as Build Run handout writes it: only inside a
     // talk folder that is there (a vanished vault is never re-created).
     const distDir = dirname(job.distPath)
@@ -245,7 +297,7 @@ export async function buildHandoutPages(job: HandoutPagesJob, slim: Slim): Promi
     const { buildHandoutHomePageHtml } = await load<{ buildHandoutHomePageHtml: (args: Record<string, unknown>) => string }>(compilerDir, 'lib/handout-home-page.mjs')
     const homeHtml = buildHandoutHomePageHtml({
       ...venue, slug, workerBaseUrl: live, lazyAssets: true,
-      home: { url, qr, downloadFile, ...job.homeDetails, prework: job.homePrework },
+      home: { url, qr, downloadFile, ...job.homeDetails, prework: job.homePrework, postwork: job.homePostwork ?? null, extras: job.homeExtras ?? null },
     })
     pages = [
       { fileName: downloadFile, html: built.html, lazy: false },

@@ -1,6 +1,6 @@
 // The pre-work form's line to the Worker (feedback-boards ticket 10): the two public routes a participant
 // uses, `POST /prework/<id>/mine` ("coming back later") and `POST /prework/<id>/submit`. Self-contained
-// like every runtime function the page embeds by `.toString()` (see prework-form.js).
+// like every runtime function the page embeds by `.toString()` (see work-page.js).
 import { normalisePreworkEntries } from './prework-form-model.js'
 
 /**

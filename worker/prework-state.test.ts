@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 import {
   PREWORK_DAY_MS, PREWORK_IDLE_PURGE_MS, PREWORK_LIMITS, carriesRightAnswer, parsePreworkEntry, parsePreworkForm, parsePreworkFormPush,
-  parsePreworkRoute, parsePreworkStatus, parsePreworkSubmission, preworkBodyLimit, preworkRouteIsPublic, preworkRouteMethod, preworkSourceKey,
-  type PreworkForm, type PreworkSubmission,
+  parsePreworkRoute, parsePreworkStatus, parsePreworkSubmission, parsePreworkWithdraw, preworkBodyLimit, preworkRouteIsPublic, preworkRouteMethod, preworkSourceKey,
+  type PreworkForm, type PreworkSubmission, type WorkPhase,
 } from './prework-protocol'
 import {
-  PreworkError, closePrework, createMemoryPreworkStore, createPrework, participantState, preworkPhase, preworkStatus, purgeDueAt,
-  pushForm, resultsPage, shouldPurge, submitPrework, type StoredPrework,
+  PreworkError, closePrework, createMemoryPreworkStore, createPrework, isWithdrawn, participantState, preworkPhase, preworkStatus, purgeDueAt,
+  pushForm, resultsPage, shouldPurge, submitPrework, waitingCount, withdrawPrework, workPhase, type StoredPrework,
 } from './prework-state'
 
 const NOW = Date.UTC(2026, 8, 30, 9)
@@ -31,9 +31,9 @@ function form(extra: Partial<PreworkForm> = {}): PreworkForm {
   }
 }
 
-function openPrework(opensAt = NOW - PREWORK_DAY_MS, closesAt = NOW + 6 * PREWORK_DAY_MS): StoredPrework {
+function openPrework(opensAt = NOW - PREWORK_DAY_MS, closesAt = NOW + 6 * PREWORK_DAY_MS, phase: WorkPhase = 'pre'): StoredPrework {
   const prework = createPrework('ab12cd34', NOW - 2 * PREWORK_DAY_MS)
-  pushForm(prework, { opensAt, closesAt, form: form() }, NOW - 2 * PREWORK_DAY_MS)
+  pushForm(prework, { phase, opensAt, closesAt, form: form() }, NOW - 2 * PREWORK_DAY_MS)
   return prework
 }
 
@@ -70,6 +70,20 @@ describe('the form: no right answer, closed schema', () => {
     expect('value' in parsed && JSON.stringify(parsed.value).includes('junk')).toBe(false)
   })
 
+  test('Local only: a boolean on a task, check or question; absent (an older form) means sent; never on a slide', () => {
+    const steps = form().steps
+    const local = parsePreworkForm({ ...form(), steps: steps.map((step) => (step.id === 'pwtask1' || step.id === 'pwhope' ? { ...step, local: true } : step)) })
+    expect('value' in local && local.value.steps.filter((step) => step.local).map((step) => step.id)).toEqual(['pwhope', 'pwtask1'])
+    // A form published before Local only existed carries no flag: every step is sent, as before.
+    const older = parsePreworkForm(form())
+    expect('value' in older && older.value.steps.some((step) => 'local' in step)).toBe(false)
+    // false is the same as absent and is not kept.
+    const off = parsePreworkForm({ ...form(), steps: steps.map((step) => ({ ...step, local: false })) })
+    expect('value' in off && off.value.steps.some((step) => 'local' in step)).toBe(false)
+    expect('error' in parsePreworkForm({ ...form(), steps: [{ ...steps[0], local: true }] })).toBe(true)
+    expect('error' in parsePreworkForm({ ...form(), steps: [{ ...steps[4], local: 'yes' }] })).toBe(true)
+  })
+
   test('malformed steps are refused', () => {
     expect('error' in parsePreworkForm({ ...form(), steps: [] })).toBe(true)
     expect('error' in parsePreworkForm({ ...form(), steps: [form().steps[0], form().steps[0]] })).toBe(true)
@@ -104,6 +118,133 @@ describe('submissions: shape', () => {
   })
 })
 
+describe('one object per Run and phase', () => {
+  test('the push carries the phase; none is pre; anything else is refused', () => {
+    expect(parsePreworkFormPush({ phase: 'post', opensAt: NOW, closesAt: NOW + 1, form: form() }, NOW)).toMatchObject({ value: { phase: 'post' } })
+    expect(parsePreworkFormPush({ opensAt: NOW, closesAt: NOW + 1, form: form() }, NOW)).toMatchObject({ value: { phase: 'pre' } })
+    expect(parsePreworkFormPush({ phase: 'during', opensAt: NOW, closesAt: NOW + 1, form: form() }, NOW)).toEqual({ error: { code: 'invalid_phase', message: expect.any(String) } })
+    expect('error' in parsePreworkFormPush({ phase: null, opensAt: NOW, closesAt: NOW + 1, form: form() }, NOW)).toBe(true)
+  })
+
+  test('the status and the results say which phase; the first push fixes it and the other phase is refused', () => {
+    const post = openPrework(NOW - 10, NOW + 10, 'post')
+    expect(preworkStatus(post, NOW)).toEqual({ state: 'open', phase: 'post', opensAt: NOW - 10, closesAt: NOW + 10 })
+    const page = resultsPage(post, createMemoryPreworkStore(), 0, NOW)
+    // One pair of names for the window and the round of work, as the public status names them.
+    expect(page).toMatchObject({ state: 'open', phase: 'post', withdrawn: false })
+    expect('workPhase' in page).toBe(false)
+    const before = structuredClone(post)
+    const refused = refusal(() => pushForm(post, { phase: 'pre', opensAt: NOW, closesAt: NOW + 20, form: form() }, NOW))
+    expect(refused).toEqual({ code: 'phase_mismatch', status: 409 })
+    expect(post).toEqual(before)
+    pushForm(post, { phase: 'post', opensAt: NOW - 10, closesAt: NOW + 30, form: form() }, NOW)
+    expect(post.closesAt).toBe(NOW + 30)
+  })
+
+  test('an object stored by 0.37 (no phase, no withdrawn) reads as pre-work and keeps working', () => {
+    const old = openPrework() as unknown as Record<string, unknown>
+    delete old.phase
+    delete old.withdrawnAt
+    const prework = JSON.parse(JSON.stringify(old)) as StoredPrework
+    expect(workPhase(prework)).toBe('pre')
+    expect(isWithdrawn(prework)).toBe(false)
+    expect(preworkStatus(prework, NOW)).toMatchObject({ state: 'open', phase: 'pre' })
+    expect(submitPrework(prework, createMemoryPreworkStore(), P1, sub({ kind: 'read', stepId: 'pwwelcome' }), NOW).changed).toBe(true)
+    expect(refusal(() => pushForm(prework, { phase: 'post', opensAt: NOW, closesAt: NOW + 1, form: form() }, NOW)).code).toBe('phase_mismatch')
+    pushForm(prework, { phase: 'pre', opensAt: NOW - 10, closesAt: NOW + 10, form: form() }, NOW)
+    expect(prework.phase).toBe('pre')
+  })
+})
+
+describe('reopened by a later closing time', () => {
+  test('a form closed by its date takes answers again after a push that closes later', () => {
+    const store = createMemoryPreworkStore()
+    const prework = openPrework(NOW - 2_000, NOW - 1_000)
+    expect(preworkPhase(prework, NOW)).toBe('closed')
+    expect(refusal(() => submitPrework(prework, store, P1, sub({ kind: 'read', stepId: 'pwwelcome' }), NOW)).code).toBe('prework_closed')
+    pushForm(prework, { phase: 'pre', opensAt: NOW - 2_000, closesAt: NOW + PREWORK_DAY_MS, form: form() }, NOW)
+    expect(preworkStatus(prework, NOW)).toEqual({ state: 'open', phase: 'pre', opensAt: NOW - 2_000, closesAt: NOW + PREWORK_DAY_MS })
+    expect(submitPrework(prework, store, P1, sub({ kind: 'read', stepId: 'pwwelcome' }), NOW).changed).toBe(true)
+    // The reopened window moves the purge with it.
+    expect(purgeDueAt(prework)).toBe(NOW + PREWORK_DAY_MS + PREWORK_IDLE_PURGE_MS)
+  })
+
+  test('post-work closed by its date reopens the same way', () => {
+    const prework = openPrework(NOW - 2_000, NOW - 1_000, 'post')
+    pushForm(prework, { phase: 'post', opensAt: NOW - 2_000, closesAt: NOW + 5_000, form: form() }, NOW)
+    expect(submitPrework(prework, createMemoryPreworkStore(), P1, sub({ kind: 'answer', stepId: 'pwhope', text: 'Useful' }), NOW).changed).toBe(true)
+  })
+})
+
+describe('a push without a form changes only the window', () => {
+  test('the stored form is kept; before any form is stored it is refused and nothing changes', () => {
+    expect(parsePreworkFormPush({ phase: 'post', opensAt: NOW, closesAt: NOW + 1 }, NOW)).toEqual({ value: { phase: 'post', opensAt: NOW, closesAt: NOW + 1, form: null } })
+    expect('error' in parsePreworkFormPush({ phase: 'post', opensAt: NOW, closesAt: NOW + 1, form: null }, NOW)).toBe(true)
+    const prework = openPrework(NOW - 2_000, NOW - 1_000)
+    const stored = prework.form
+    pushForm(prework, { phase: 'pre', opensAt: NOW - 2_000, closesAt: NOW + PREWORK_DAY_MS, form: null }, NOW)
+    expect(prework.form).toEqual(stored)
+    expect(preworkStatus(prework, NOW)).toEqual({ state: 'open', phase: 'pre', opensAt: NOW - 2_000, closesAt: NOW + PREWORK_DAY_MS })
+    expect(refusal(() => pushForm(prework, { phase: 'post', opensAt: NOW, closesAt: NOW + 1, form: null }, NOW)).code).toBe('phase_mismatch')
+    const empty = createPrework('ab12cd35', NOW)
+    const before = structuredClone(empty)
+    expect(refusal(() => pushForm(empty, { phase: 'pre', opensAt: NOW, closesAt: NOW + 1, form: null }, NOW))).toEqual({ code: 'form_missing', status: 409 })
+    expect(empty).toEqual(before)
+  })
+})
+
+describe('withdrawn', () => {
+  test('nothing is taken, the answers stay for the owner, and putting it back serves it again', () => {
+    const store = createMemoryPreworkStore()
+    const prework = openPrework()
+    submitPrework(prework, store, P1, sub({ kind: 'answer', stepId: 'pwhope', text: 'Kept' }), NOW)
+    submitPrework(prework, store, P2, sub({ kind: 'question', stepId: 'pwquiz', text: 'Why?' }), NOW)
+    expect(withdrawPrework(prework, true, NOW + 10)).toBe(NOW + 10)
+    expect(withdrawPrework(prework, true, NOW + 20)).toBe(NOW + 10, 'idempotent: the first time is kept')
+    expect(isWithdrawn(prework)).toBe(true)
+    expect(refusal(() => submitPrework(prework, store, P1, sub({ kind: 'read', stepId: 'pwwelcome' }), NOW + 30))).toEqual({ code: 'not_available', status: 404 })
+    const page = resultsPage(prework, store, 0, NOW + 30)
+    expect(page).toMatchObject({ withdrawn: true, people: 2, seq: 2 })
+    expect(page.entries.map((entry) => entry.text)).toEqual(['Kept', 'Why?'])
+    // A push while withdrawn (a time changed on an unpublished Run) does not serve it again.
+    pushForm(prework, { phase: 'pre', opensAt: NOW - 10, closesAt: NOW + 2 * PREWORK_DAY_MS, form: form() }, NOW + 40)
+    expect(isWithdrawn(prework)).toBe(true)
+    expect(withdrawPrework(prework, false, NOW + 50)).toBeNull()
+    expect(submitPrework(prework, store, P1, sub({ kind: 'read', stepId: 'pwwelcome' }), NOW + 60).changed).toBe(true)
+    expect(resultsPage(prework, store, 0, NOW + 60).entries).toHaveLength(3)
+  })
+
+  test('closed and withdrawn: it says not available, not closed', () => {
+    const prework = openPrework(NOW - 2_000, NOW - 1_000)
+    withdrawPrework(prework, true, NOW)
+    expect(refusal(() => submitPrework(prework, createMemoryPreworkStore(), P1, sub({ kind: 'read', stepId: 'pwwelcome' }), NOW)).code).toBe('not_available')
+  })
+
+  test('the withdraw body: empty or {withdrawn}; nothing else', () => {
+    expect(parsePreworkWithdraw(undefined)).toBe(true)
+    expect(parsePreworkWithdraw({})).toBe(true)
+    expect(parsePreworkWithdraw({ withdrawn: true })).toBe(true)
+    expect(parsePreworkWithdraw({ withdrawn: false })).toBe(false)
+    expect(parsePreworkWithdraw({ withdrawn: 'no' })).toBeNull()
+    expect(parsePreworkWithdraw({ withdrawn: false, extra: 1 })).toBeNull()
+    expect(parsePreworkWithdraw([false])).toBeNull()
+  })
+})
+
+describe('what the owner reads', () => {
+  test('participants are random codes: no device id, and no name except one typed on a question', () => {
+    const store = createMemoryPreworkStore()
+    const prework = openPrework()
+    const device = 'device-id-SECRET-0123456789'
+    submitPrework(prework, store, P1, { participantId: device, submissionId: 'n-1', stepId: 'pwhope', kind: 'answer', text: 'Hi' }, NOW)
+    submitPrework(prework, store, P1, { participantId: device, submissionId: 'n-2', stepId: 'pwquiz', kind: 'question', text: 'Why?' }, NOW)
+    const page = resultsPage(prework, store, 0, NOW)
+    expect(JSON.stringify(page).includes(device)).toBe(false)
+    expect(page.entries.every((entry) => /^[0-9a-f]{16}$/.test(entry.participant))).toBe(true)
+    expect(page.entries.some((entry) => 'name' in entry)).toBe(false)
+  })
+})
+
 describe('open and closed by date', () => {
   test('nothing is accepted before it opens, after it closes, or before a form is pushed', () => {
     const store = createMemoryPreworkStore()
@@ -118,19 +259,57 @@ describe('open and closed by date', () => {
     expect(submitPrework(later, store, P1, sub({ kind: 'read', stepId: 'pwwelcome' }), NOW + 1000).changed).toBe(true)
     expect(preworkPhase(later, NOW + 2000)).toBe('closed')
     expect(refusal(() => submitPrework(later, store, P1, sub({ kind: 'read', stepId: 'pwquiz' }), NOW + 2000))).toEqual({ code: 'prework_closed', status: 410 })
-    expect(preworkStatus(later, NOW + 2000)).toEqual({ state: 'closed', opensAt: NOW + 1000, closesAt: NOW + 2000, people: 1 })
-    expect(preworkStatus(later, NOW + 1500)).toEqual({ state: 'open', opensAt: NOW + 1000, closesAt: NOW + 2000 })
+    expect(preworkStatus(later, NOW + 2000)).toEqual({ state: 'closed', phase: 'pre', opensAt: NOW + 1000, closesAt: NOW + 2000, people: 1 })
+    expect(preworkStatus(later, NOW + 1500)).toEqual({ state: 'open', phase: 'pre', opensAt: NOW + 1000, closesAt: NOW + 2000 })
   })
 
-  test('closing early wins over the window, and a later push does not reopen it', () => {
+  test('closing early wins over the window; a push that keeps or shortens the closing time does not reopen it', () => {
     const store = createMemoryPreworkStore()
     const prework = openPrework()
     expect(closePrework(prework, NOW)).toBe(NOW)
     expect(closePrework(prework, NOW + 50)).toBe(NOW)
+    expect(prework.closedBy).toBe('owner')
     expect(preworkPhase(prework, NOW)).toBe('closed')
-    pushForm(prework, { opensAt: NOW - 10, closesAt: NOW + 10 * PREWORK_DAY_MS, form: form() }, NOW + 60)
-    expect(preworkStatus(prework, NOW + 60)).toEqual({ state: 'closed', opensAt: NOW - 10, closesAt: NOW, people: 0 })
+    // The same closing time again (a republish for another reason) leaves the owner's close in place.
+    pushForm(prework, { phase: 'pre', opensAt: NOW - 10, closesAt: NOW + 6 * PREWORK_DAY_MS, form: form() }, NOW + 60)
+    expect(preworkStatus(prework, NOW + 60)).toEqual({ state: 'closed', phase: 'pre', opensAt: NOW - 10, closesAt: NOW, people: 0 })
+    pushForm(prework, { phase: 'pre', opensAt: NOW - 10, closesAt: NOW + 5 * PREWORK_DAY_MS, form: form() }, NOW + 60)
+    expect(preworkPhase(prework, NOW + 60)).toBe('closed')
     expect(refusal(() => submitPrework(prework, store, P1, sub({ kind: 'read', stepId: 'pwwelcome' }), NOW + 60)).code).toBe('prework_closed')
+  })
+
+  test('the owner closed early and then set a later closing time: it reopens (ADR-0040 decision 3)', () => {
+    const store = createMemoryPreworkStore()
+    const prework = openPrework()
+    closePrework(prework, NOW, 'owner')
+    pushForm(prework, { phase: 'pre', opensAt: NOW - 10, closesAt: NOW + 10 * PREWORK_DAY_MS, form: form() }, NOW + 60)
+    expect(prework.closedAt).toBe(null)
+    expect(prework.closedBy).toBe(undefined)
+    expect(preworkStatus(prework, NOW + 60)).toEqual({ state: 'open', phase: 'pre', opensAt: NOW - 10, closesAt: NOW + 10 * PREWORK_DAY_MS })
+    expect(submitPrework(prework, store, P1, sub({ kind: 'read', stepId: 'pwwelcome' }), NOW + 60).changed).toBe(true)
+  })
+
+  test('an admin close stays closed whatever the owner pushes; so does a close stored before who closed was kept', () => {
+    const prework = openPrework()
+    closePrework(prework, NOW, 'admin')
+    expect(prework.closedBy).toBe('admin')
+    pushForm(prework, { phase: 'pre', opensAt: NOW - 10, closesAt: NOW + 10 * PREWORK_DAY_MS, form: form() }, NOW + 60)
+    expect(preworkPhase(prework, NOW + 60)).toBe('closed')
+    // The owner closing too never turns the admin's close into the owner's.
+    closePrework(prework, NOW + 70, 'owner')
+    expect(prework.closedBy).toBe('admin')
+    // Owner first, admin after: the admin's close holds.
+    const both = openPrework()
+    closePrework(both, NOW, 'owner')
+    closePrework(both, NOW + 5, 'admin')
+    expect(both.closedBy).toBe('admin')
+    pushForm(both, { phase: 'pre', opensAt: NOW - 10, closesAt: NOW + 10 * PREWORK_DAY_MS, form: form() }, NOW + 60)
+    expect(preworkPhase(both, NOW + 60)).toBe('closed')
+    // Stored by ticket 12 (closedAt, no closedBy): never lifted.
+    const old = openPrework()
+    old.closedAt = NOW
+    pushForm(old, { phase: 'pre', opensAt: NOW - 10, closesAt: NOW + 10 * PREWORK_DAY_MS, form: form() }, NOW + 60)
+    expect(preworkPhase(old, NOW + 60)).toBe('closed')
   })
 })
 
@@ -233,7 +412,7 @@ describe('the reducer', () => {
     submitPrework(prework, store, P1, sub({ kind: 'done', stepId: 'pwtask1', done: true }), NOW)
     const page = resultsPage(prework, store, 1, NOW)
     expect(page.entries.map((entry) => entry.seq)).toEqual([2, 3])
-    expect(page).toMatchObject({ seq: 3, phase: 'open', people: 2, more: false })
+    expect(page).toMatchObject({ seq: 3, state: 'open', phase: 'pre', people: 2, more: false })
     expect(participantState(store, P1).map((entry) => entry.ref)).toEqual(['read:pwwelcome', 'done:pwtask1'])
     expect(JSON.stringify(participantState(store, P1)).includes(P1)).toBe(false)
     for (const entry of page.entries) expect(parsePreworkEntry(entry)).toEqual(entry)
@@ -259,7 +438,7 @@ describe('the reducer', () => {
   test('a form published 90 days before it opens is not purged before anyone can answer it', () => {
     const published = NOW
     const prework = createPrework('ab12cd34', published)
-    pushForm(prework, { opensAt: published + 90 * PREWORK_DAY_MS, closesAt: published + 97 * PREWORK_DAY_MS, form: form() }, published)
+    pushForm(prework, { phase: 'pre', opensAt: published + 90 * PREWORK_DAY_MS, closesAt: published + 97 * PREWORK_DAY_MS, form: form() }, published)
     expect(shouldPurge(prework, published + 61 * PREWORK_DAY_MS)).toBe(false)
     expect(shouldPurge(prework, published + 96 * PREWORK_DAY_MS)).toBe(false)
     const store = createMemoryPreworkStore()
@@ -292,6 +471,38 @@ describe('the reducer', () => {
   })
 })
 
+describe('Local only steps and the waiting count', () => {
+  test('nothing but a question is accepted for a Local only step, and nothing is stored for the refusals', () => {
+    const store = createMemoryPreworkStore()
+    const prework = createPrework('ab12cd34', NOW - 2 * PREWORK_DAY_MS)
+    const local = form({ steps: form().steps.map((step) => (step.id === 'pwtask1' || step.id === 'pwhope' ? { ...step, local: true as const } : step)) })
+    pushForm(prework, { phase: 'pre', opensAt: NOW - PREWORK_DAY_MS, closesAt: NOW + PREWORK_DAY_MS, form: local }, NOW - PREWORK_DAY_MS)
+    expect(refusal(() => submitPrework(prework, store, P1, sub({ kind: 'done', stepId: 'pwtask1', done: true }), NOW))).toEqual({ code: 'step_local', status: 400 })
+    expect(refusal(() => submitPrework(prework, store, P1, sub({ kind: 'read', stepId: 'pwtask1' }), NOW))).toEqual({ code: 'step_local', status: 400 })
+    expect(refusal(() => submitPrework(prework, store, P1, sub({ kind: 'answer', stepId: 'pwhope', text: 'Mine' }), NOW))).toEqual({ code: 'step_local', status: 400 })
+    expect(store.entries.size).toBe(0)
+    expect(prework.participants).toBe(0)
+    expect(submitPrework(prework, store, P1, sub({ kind: 'question', stepId: 'pwtask1', text: 'Which paper?' }), NOW).changed).toBe(true)
+    // A step without the flag is sent as before.
+    expect(submitPrework(prework, store, P1, sub({ kind: 'answer', stepId: 'pwquiz', choice: 'poll-pwquiz-option-1' }), NOW).changed).toBe(true)
+  })
+
+  test('waitingCount: answers and questions after the cursor; reads and done marks are not responses', () => {
+    const store = createMemoryPreworkStore()
+    const prework = openPrework()
+    submitPrework(prework, store, P1, sub({ kind: 'read', stepId: 'pwwelcome' }), NOW)
+    submitPrework(prework, store, P1, sub({ kind: 'done', stepId: 'pwtask1', done: true }), NOW)
+    submitPrework(prework, store, P1, sub({ kind: 'answer', stepId: 'pwhope', text: 'Save time' }), NOW)
+    submitPrework(prework, store, P2, sub({ kind: 'question', stepId: 'pwhope', text: 'How long?' }), NOW)
+    expect(waitingCount(prework, store, 0)).toEqual({ seq: 4, waiting: 2 })
+    expect(waitingCount(prework, store, 3)).toEqual({ seq: 4, waiting: 1 })
+    expect(waitingCount(prework, store, 4)).toEqual({ seq: 4, waiting: 0 })
+    // A changed answer moves past the cursor again: it is new to the owner.
+    submitPrework(prework, store, P1, sub({ kind: 'answer', stepId: 'pwhope', text: 'Save more time' }), NOW + 1)
+    expect(waitingCount(prework, store, 4)).toEqual({ seq: 5, waiting: 1 })
+  })
+})
+
 describe('entries as the Run keeps them', () => {
   test('hostile entries are dropped', () => {
     const good = { id: `${P1}:answer:pwhope`, seq: 3, participant: P1, stepId: 'pwhope', kind: 'answer', text: 'Hi', at: NOW }
@@ -309,7 +520,9 @@ describe('entries as the Run keeps them', () => {
   })
 
   test('status', () => {
-    expect(parsePreworkStatus({ state: 'open', opensAt: 1, closesAt: 2 })).toEqual({ state: 'open', opensAt: 1, closesAt: 2 })
+    expect(parsePreworkStatus({ state: 'open', phase: 'post', opensAt: 1, closesAt: 2 })).toEqual({ state: 'open', phase: 'post', opensAt: 1, closesAt: 2 })
+    expect(parsePreworkStatus({ state: 'open', opensAt: 1, closesAt: 2 })).toEqual({ state: 'open', phase: 'pre', opensAt: 1, closesAt: 2 }, 'a Worker from before phases')
+    expect(parsePreworkStatus({ state: 'open', phase: 'during', opensAt: 1, closesAt: 2 })).toBeNull()
     expect(parsePreworkStatus({ state: 'gone', opensAt: 1, closesAt: 2 })).toBeNull()
   })
 })
@@ -332,9 +545,12 @@ describe('routes', () => {
     expect(parsePreworkRoute('/prework/ab12cd34/other')).toBeNull()
     expect(parsePreworkRoute('/prework/AB12cd34')).toBeNull()
     const route = (action: string) => parsePreworkRoute(`/prework/ab12cd34${action ? `/${action}` : ''}`)!
-    expect(['', 'submit', 'mine', 'form', 'results', 'close'].map((action) => preworkRouteMethod(route(action)))).toEqual(['GET', 'POST', 'POST', 'PUT', 'GET', 'POST'])
-    expect(['', 'submit', 'mine', 'form', 'results', 'close'].map((action) => preworkRouteIsPublic(route(action)))).toEqual([true, true, true, false, false, false])
+    const actions = ['', 'submit', 'mine', 'form', 'results', 'waiting', 'close', 'withdraw']
+    expect(actions.map((action) => preworkRouteMethod(route(action)))).toEqual(['GET', 'POST', 'POST', 'PUT', 'GET', 'GET', 'POST', 'POST'])
+    expect(actions.map((action) => preworkRouteIsPublic(route(action)))).toEqual([true, true, true, false, false, false, false, false])
+    expect(preworkBodyLimit(route('waiting'))).toBeNull()
     expect(preworkBodyLimit(route('submit'))).toBe(PREWORK_LIMITS.submitBytes)
+    expect(preworkBodyLimit(route('withdraw'))).toBe(PREWORK_LIMITS.withdrawBytes)
     expect(preworkBodyLimit(route(''))).toBeNull()
   })
 })

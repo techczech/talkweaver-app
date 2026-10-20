@@ -20,6 +20,8 @@ interface Props {
   minimal?: boolean
   /** The talk's next planned Run and pre-work chips (round-3 P3, P5). */
   runChips?: ReactNode
+  /** The next Run's chip, at the right end of the bar (work-files ticket 21). */
+  runChip?: ReactNode
   /** Share for comments: "Shared for comments · <link>" while the talk is shared; click reopens the sheet. */
   shared?: { label: string; title?: string; error?: boolean; paused?: boolean; ended?: boolean; onClick?: () => void } | null
   /** The place chip (onboarding ticket 02): where the caret is and how many actions apply there. */
@@ -51,6 +53,7 @@ export default function StatusBar({
   minimal = false,
   shared = null,
   runChips = null,
+  runChip = null,
   placeChip = null,
 }: Props) {
   const [, tick] = useState(0)
@@ -167,8 +170,9 @@ export default function StatusBar({
         )}
       </div>
 
-      {(showBuild || (shared && !minimal)) && (
+      {(showBuild || (!minimal && (shared || runChip))) && (
         <div style={styles.right}>
+          {!minimal && runChip && <span style={{ marginRight: shared || showBuild ? '6px' : 0, display: 'inline-flex' }}>{runChip}</span>}
           {shared && !minimal && (
             <button
               type="button"

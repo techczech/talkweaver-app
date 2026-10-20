@@ -164,7 +164,8 @@ export function useTalkActions(deps: Deps) {
     else if (action === 'move') startMove(talk, at)
     else if (action === 'metadata') onOpenMetadata?.(talk)
     else if (action === 'reveal') void window.tw?.shell?.showInFolder?.(talk.outlinePath)
-    else if (action === 'open-file') void window.tw?.shell?.openPath?.(talk.outlinePath)
+    // The outline opens in TalkWeaver's own editor, never handed to whatever app the OS has for .md files.
+    else if (action === 'open-file') { onSelectTalk(talk); commandRan('browser.open-talk') }
     else if (action === 'copy-path') {
       void navigator.clipboard.writeText(talk.outlinePath)
         .then(() => notify('Path copied', 'success'))

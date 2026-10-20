@@ -69,7 +69,7 @@ try {
     const nodes = [...slide.querySelectorAll('.cycle-node')]
     if (nodes.length) {
       out.cycle = { content: rel(content), nodes: nodes.map((n) => {
-        const range = document.createRange(); range.selectNodeContents(n.querySelector('.cycle-stage'))
+        const range = document.createRange(); range.selectNodeContents(n.querySelector('.cycle-stage') || n.querySelector('.cycle-cap')) // ticket 07: a node without a caption has only .cycle-cap
         const lines = new Set([...range.getClientRects()].filter((r) => r.width > 1).map((r) => Math.round(r.top / 6))).size
         return { text: n.textContent.trim(), rect: rel(n), lines }
       }) }

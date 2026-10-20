@@ -1,9 +1,15 @@
-// Pre-work for a planned Run: the object's rules (feedback-boards ticket 09). Pure — the RunPrework
-// Durable Object (prework.ts) keeps the metadata in memory and gives these functions a narrow view of
-// its tables; the tests give them an in-memory one.
+// A Run's pre-work or post-work: the object's rules (feedback-boards ticket 09; work files ticket 12).
+// Pure — the RunPrework Durable Object (prework.ts) keeps the metadata in memory and gives these
+// functions a narrow view of its tables; the tests give them an in-memory one.
 //
-//   - The form opens and closes on the Run's dates; the owner can close it early (never reopen).
-//     Before it opens and after it closes, nothing is accepted.
+//   - One object holds one phase (`pre` or `post`) of one Run. The first push fixes it; a push of the
+//     other phase is refused. An object stored before phases (0.37) reads as `pre`.
+//   - The form opens and closes on the Run's dates. A push with a later closing time reopens a form
+//     that closed by its date, and one the owner closed early (ADR-0040 decision 3). An admin's close
+//     stays closed. Before it opens and after it closes, nothing is accepted.
+//   - A push may leave the form out: only the window changes (a Run's closing time moved).
+//   - Withdrawn (the Run unpublished, ADR-0040 decision 9): every public answer is "not available";
+//     the answers stay for the owner, and putting it back serves it as before.
 //   - Submissions are idempotent by submission id: the same one again returns what was stored and
 //     costs nothing; a different submission under a known id is a conflict.
 //   - A read, an answer and a done mark are one entry per participant and step (the latest wins); each
@@ -13,7 +19,7 @@
 //   - With no push and no submission for 60 days the object is purged (its alarm).
 import {
   PREWORK_IDLE_PURGE_MS, PREWORK_LIMITS, validPreworkAnswer,
-  type PreworkEntry, type PreworkForm, type PreworkFormPush, type PreworkPhase, type PreworkStatus, type PreworkSubmission,
+  type PreworkEntry, type PreworkForm, type PreworkFormPush, type PreworkPhase, type PreworkStatus, type PreworkSubmission, type WorkPhase,
 } from './prework-protocol.ts'
 
 export class PreworkError extends Error {
@@ -32,8 +38,17 @@ export interface StoredPrework {
   form: PreworkForm | null
   opensAt: number | null
   closesAt: number | null
-  /** Closed early by the owner ("Close pre-work now"). */
+  /** Closed early by the owner ("Close pre-work now") or the admin. */
   closedAt: number | null
+  /**
+   * Who closed it early. Only an owner's close is lifted by a later closing time; an admin's, and one
+   * stored before this was kept (absent), stays closed.
+   */
+  closedBy?: 'owner' | 'admin'
+  /** Which phase of the Run's work this is; absent before the first push and on 0.37 objects (read as `pre`). */
+  phase?: WorkPhase
+  /** Withdrawn by the owner (the Run unpublished): when; absent or null while it is served. */
+  withdrawnAt?: number | null
   seq: number
   participants: number
   entryBytes: number
@@ -72,6 +87,8 @@ export interface PreworkStore {
   entriesAfter(after: number, limit: number): PreworkEntry[]
   /** Every entry of one participant. */
   participantEntries(key: string): PreworkEntry[]
+  /** How many answers and questions have `seq > after`: the owner's count of responses waiting, no entry read out. */
+  responsesAfter(after: number): number
   source(key: string): SourceRow | null
   putSource(row: SourceRow): void
 }
@@ -81,6 +98,20 @@ export function createPrework(preworkId: string, now: number): StoredPrework {
     preworkId, createdAt: now, lastActivityAt: now, form: null, opensAt: null, closesAt: null, closedAt: null,
     seq: 0, participants: 0, entryBytes: 0, bucket: { tokens: PREWORK_LIMITS.burst, at: now },
   }
+}
+
+/** The object's phase: `pre` for an object stored before phases. */
+export function workPhase(prework: StoredPrework): WorkPhase {
+  return prework.phase ?? 'pre'
+}
+
+export function isWithdrawn(prework: StoredPrework): boolean {
+  return typeof prework.withdrawnAt === 'number'
+}
+
+/** What every public route answers while the work is withdrawn. */
+export function notAvailable(): PreworkError {
+  return new PreworkError('not_available', 'This page is not available.', 404)
 }
 
 /** When it stops taking answers: its closing time, or earlier if the owner closed it. */
@@ -97,25 +128,54 @@ export function preworkPhase(prework: StoredPrework, now: number): PreworkPhase 
   return now < prework.opensAt ? 'not_yet' : 'open'
 }
 
-/** The public status, or null when there is nothing to show (answered like an unknown id). */
+/** The public status, or null when there is nothing to show (answered like an unknown id). Withdrawn is the caller's to refuse. */
 export function preworkStatus(prework: StoredPrework, now: number): PreworkStatus | null {
   const state = preworkPhase(prework, now)
   if (!state) return null
-  return { state, opensAt: prework.opensAt!, closesAt: effectiveCloseAt(prework)!, ...(state === 'closed' ? { people: prework.participants } : {}) }
+  return { state, phase: workPhase(prework), opensAt: prework.opensAt!, closesAt: effectiveCloseAt(prework)!, ...(state === 'closed' ? { people: prework.participants } : {}) }
 }
 
-/** The owner's push: the form and its window. A form closed early stays closed. */
+/**
+ * The owner's push: the form and its window. The first push fixes the phase; a push of the other
+ * phase is refused (an object never holds a mix of pre- and post-work answers). A push without a form
+ * keeps the stored one and changes only the window; before any form is stored it is refused. A later
+ * closing time reopens a form that closed by its date, and lifts the owner's early close (ADR-0040
+ * decision 3); an admin's close stays. Withdrawn stays withdrawn. Every check is made before anything
+ * changes.
+ */
 export function pushForm(prework: StoredPrework, push: PreworkFormPush, now: number): void {
-  prework.form = push.form
+  if (prework.form && workPhase(prework) !== push.phase) {
+    throw new PreworkError('phase_mismatch', `This holds ${workPhase(prework)}-work; it cannot take ${push.phase}-work.`, 409, { phase: workPhase(prework) })
+  }
+  if (!push.form && !prework.form) throw new PreworkError('form_missing', 'There is no form yet to change the times of.', 409)
+  const later = prework.closesAt !== null && push.closesAt > prework.closesAt
+  if (later && prework.closedAt !== null && prework.closedBy === 'owner') {
+    prework.closedAt = null
+    delete prework.closedBy
+  }
+  prework.phase = push.phase
+  if (push.form) prework.form = push.form
   prework.opensAt = push.opensAt
   prework.closesAt = push.closesAt
   prework.lastActivityAt = now
 }
 
-/** "Close pre-work now": no more answers from `now`. Idempotent; the earliest close wins. */
-export function closePrework(prework: StoredPrework, now: number): number {
-  prework.closedAt = prework.closedAt === null ? now : Math.min(prework.closedAt, now)
+/**
+ * "Close now": no more answers from `now`. Idempotent; the earliest close wins. An admin's close is
+ * never turned back into the owner's.
+ */
+export function closePrework(prework: StoredPrework, now: number, by: 'owner' | 'admin' = 'owner'): number {
+  const first = prework.closedAt === null
+  prework.closedAt = first ? now : Math.min(prework.closedAt!, now)
+  // A close stored before `closedBy` was kept counts as the admin's: it is never lifted.
+  prework.closedBy = by === 'admin' || (!first && prework.closedBy !== 'owner') ? 'admin' : 'owner'
   return prework.closedAt
+}
+
+/** Withdraw the work (`true`) or put it back (`false`). Idempotent: the first withdrawal's time is kept. */
+export function withdrawPrework(prework: StoredPrework, withdrawn: boolean, now: number): number | null {
+  prework.withdrawnAt = withdrawn ? (isWithdrawn(prework) ? prework.withdrawnAt! : now) : null
+  return prework.withdrawnAt
 }
 
 /**
@@ -168,6 +228,8 @@ function sameValue(a: PreworkEntry, b: Omit<PreworkEntry, 'id' | 'seq' | 'at' | 
 function entryValue(prework: StoredPrework, submission: PreworkSubmission): Omit<PreworkEntry, 'id' | 'seq' | 'at' | 'participant'> {
   const step = prework.form!.steps.find((candidate) => candidate.id === submission.stepId)
   if (!step) throw new PreworkError('unknown_step', 'That step is not part of the pre-work.', 400)
+  // Local only: nothing about the step leaves the phone. A question about it still goes to the speaker.
+  if (step.local && submission.kind !== 'question') throw new PreworkError('step_local', 'This step stays on the participant\'s device; nothing about it is sent.', 400)
   const base = { stepId: step.id, kind: submission.kind }
   switch (submission.kind) {
     case 'read':
@@ -193,6 +255,7 @@ function entryValue(prework: StoredPrework, submission: PreworkSubmission): Omit
  */
 export function submitPrework(prework: StoredPrework, store: PreworkStore, participant: string, submission: PreworkSubmission, now: number, sourceKey = 'unknown'):
   { entry: PreworkEntry; changed: boolean } {
+  if (isWithdrawn(prework)) throw notAvailable()
   const phase = preworkPhase(prework, now)
   if (phase === null) throw new PreworkError('not_found', 'Pre-work not found.', 404)
   if (phase === 'not_yet') throw new PreworkError('prework_not_open', 'Pre-work has not opened yet.', 409, { opensAt: prework.opensAt })
@@ -282,12 +345,19 @@ export function participantState(store: PreworkStore, participant: string): OwnP
   return store.participantEntries(participant).sort((a, b) => a.seq - b.seq).map(ownEntry)
 }
 
-/** The owner's page of entries after `after`, with where the form stands. */
+/**
+ * The owner's page of entries after `after`, with where the form stands, named as the public status
+ * names them: `state` is its window (not_yet, open, closed), `phase` which round of work it is (pre or
+ * post), `withdrawn` whether participants are shown "not available". Entries are as stored: a
+ * participant is its hash, never a device id.
+ */
 export function resultsPage(prework: StoredPrework, store: PreworkStore, after: number, now: number) {
   const entries = store.entriesAfter(after, PREWORK_LIMITS.resultsPage)
   return {
     seq: prework.seq,
-    phase: preworkPhase(prework, now),
+    state: preworkPhase(prework, now),
+    phase: workPhase(prework),
+    withdrawn: isWithdrawn(prework),
     opensAt: prework.opensAt,
     closesAt: prework.closesAt,
     closedAt: prework.closedAt,
@@ -296,6 +366,15 @@ export function resultsPage(prework: StoredPrework, store: PreworkStore, after: 
     entries,
     more: entries.length === PREWORK_LIMITS.resultsPage && entries[entries.length - 1].seq < prework.seq,
   }
+}
+
+/**
+ * The owner's light check (2026-10-19 prework-responses design, decision 13): how many answers and
+ * questions changed after `after` (the app's cursor), and the sequence number now. Nothing a
+ * participant wrote is in it; reads and done marks are progress, not responses, and are not counted.
+ */
+export function waitingCount(prework: StoredPrework, store: PreworkStore, after: number) {
+  return { seq: prework.seq, waiting: after >= prework.seq ? 0 : store.responsesAfter(after) }
 }
 
 /** `?after=` as a non-negative integer; anything else means "from the start". */
@@ -320,6 +399,7 @@ export function createMemoryPreworkStore(): PreworkStore & { entries: Map<string
     putParticipant: (row) => { participants.set(row.key, clone(row)) },
     entriesAfter: (after, limit) => [...entries.values()].filter((entry) => entry.seq > after).sort((a, b) => a.seq - b.seq).slice(0, limit).map(clone),
     participantEntries: (key) => [...entries.values()].filter((entry) => entry.participant === key).map(clone),
+    responsesAfter: (after) => [...entries.values()].filter((entry) => entry.seq > after && (entry.kind === 'answer' || entry.kind === 'question')).length,
     source: (key) => sources.has(key) ? clone(sources.get(key)!) : null,
     putSource: (row) => { sources.set(row.key, clone(row)) },
   }

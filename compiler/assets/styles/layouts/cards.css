@@ -15,6 +15,9 @@
   .slide-content.layout-cards .card-gallery.card-grid { min-height: 0; margin-top: 8px; }/* @order 0793 */
   .card-gallery.card-grid .card { height: auto; max-height: none; align-content: start; }/* @order 0794 */
   .slide[data-title-layout="top"] > .slide-content.layout-cards > .slide-head { margin-bottom: 0 !important; }
+  /* Cards keep no gap under a plain top title; the shared content band (skin/slide-foundations.css)
+     mirrors that under the cards, so they centre between the title and the footer band. */
+  .slide[data-title-layout="top"]:not([data-title-look]) > .slide-content.layout-cards { --band-air: 0px; }
   /* Cards cap their height to the stage and scroll INTERNALLY when content still overflows
      after the dense step — so a long quote is always fully reachable, never silently clipped.
      A bottom gradient fade (the ::after, shown only while .is-scrollable) signals "more below". *//* @order 0795 */

@@ -1,5 +1,6 @@
 // Pre-work answers on the Run (ADR-0032 amendment point 4; feedback-boards ticket 09), and the public
-// form the app sends to the Worker and the handout (amendment points 2–3). Pure: no Electron, no fs.
+// form the app sends to the Worker for a work file's page (ADR-0040; the handout carries no form since
+// work-files ticket 16). Pure: no Electron, no fs.
 //
 // The Run keeps what the Worker holds for its pre-work: one entry per participant and step for a read,
 // an answer and a done mark (the latest wins), and one per question. Entries are merged by id, so a
@@ -42,6 +43,15 @@ export interface RunPrework {
   closedAt?: number
   /** Picked answers, per step id. They belong to the Run, not the outline, and no participant sees them. */
   picks?: Record<string, PreworkPick>
+  /**
+   * Read state (2026-10-19 prework-responses, decision 14): `through` is the latest response time (the
+   * Worker's `at`) the presenter has seen on this Run's page, moved when he leaves the Run or marks all
+   * read; `at` is when that happened (this machine's clock, for "arrived since …"). An answer or question
+   * whose time is later is new. Absent: nothing has been seen yet, so every response is new.
+   */
+  seen?: { through: number; at: number }
+  /** Responses the presenter kept unread by their dot (entry ids); they stay new until Mark all read. */
+  unread?: string[]
 }
 
 /** The longest slide id an entry's `inTalk` keeps. */
@@ -52,6 +62,23 @@ export const RUN_PREWORK_MAX_PICKS = BOARD_SEED_MAX
 
 /** The most entries a Run keeps (2 000 people × every step would exceed it; the Worker caps bytes first). */
 export const RUN_PREWORK_MAX_ENTRIES = 50_000
+
+/** The most entry ids a Run keeps as unread by hand. */
+export const RUN_PREWORK_MAX_UNREAD = 2_000
+
+function normaliseSeen(value: unknown): { through: number; at: number } | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const raw = value as Record<string, unknown>
+  const through = count(raw.through)
+  const at = count(raw.at)
+  return through !== undefined && at !== undefined ? { through, at } : undefined
+}
+
+function normaliseUnread(value: unknown, ids: Set<string>): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const kept = [...new Set(value.filter((id): id is string => typeof id === 'string' && ids.has(id)))].slice(0, RUN_PREWORK_MAX_UNREAD)
+  return kept.length ? kept : undefined
+}
 
 function count(value: unknown): number | undefined {
   return Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : undefined
@@ -100,22 +127,27 @@ export function normaliseRunPrework(value: unknown): RunPrework | null {
   const lastActivityAt = count(raw.lastActivityAt)
   const closedAt = count(raw.closedAt)
   const picks = normalisePicks(raw.picks)
-  if (!entries.length && people === undefined && lastActivityAt === undefined && closedAt === undefined && !picks) return null
+  const seenState = normaliseSeen(raw.seen)
+  const unread = normaliseUnread(raw.unread, seen)
+  if (!entries.length && people === undefined && lastActivityAt === undefined && closedAt === undefined && !picks && !seenState) return null
   return {
     entries,
     ...(people !== undefined ? { people } : {}),
     ...(lastActivityAt !== undefined ? { lastActivityAt } : {}),
     ...(closedAt !== undefined ? { closedAt } : {}),
     ...(picks ? { picks } : {}),
+    ...(seenState ? { seen: seenState } : {}),
+    ...(unread ? { unread } : {}),
   }
 }
 
 /**
- * Merge a pull into the Run's pre-work, by entry id. A fresh entry replaces the Run's entry with the
- * same id in place (keeping a question's `answered`); new entries are appended; none is removed.
- * Entries from the Worker that fail its parser are dropped.
+ * Merge a pull into the Run's pre-work (or post-work: the same shape), by entry id. A fresh entry
+ * replaces the Run's entry with the same id in place (keeping a question's `answered`); new entries
+ * are appended; none is removed. Entries from the Worker that fail its parser are dropped. A
+ * `closedAt` of null clears an early close the work no longer has.
  */
-export function mergeRunPrework(current: RunPrework | null | undefined, incoming: unknown[], meta: { people?: number; lastActivityAt?: number; closedAt?: number } = {}): RunPrework | null {
+export function mergeRunPrework(current: RunPrework | null | undefined, incoming: unknown[], meta: { people?: number; lastActivityAt?: number; closedAt?: number | null } = {}): RunPrework | null {
   const fresh = new Map<string, RunPreworkEntry>()
   for (const candidate of incoming) {
     const entry = normaliseEntry(candidate)
@@ -134,10 +166,13 @@ export function mergeRunPrework(current: RunPrework | null | undefined, incoming
   ]
   return normaliseRunPrework({
     picks: current?.picks,
+    seen: current?.seen,
+    unread: current?.unread,
     entries,
     people: meta.people ?? current?.people,
     lastActivityAt: meta.lastActivityAt ?? current?.lastActivityAt,
-    closedAt: meta.closedAt ?? current?.closedAt,
+    // null: the Worker says it is not closed early (a later closing time reopened it).
+    closedAt: meta.closedAt === null ? undefined : meta.closedAt ?? current?.closedAt,
   })
 }
 
@@ -190,12 +225,14 @@ export function publicPreworkForm(prework: CompiledPrework | null | undefined, s
     const raw = candidate as Record<string, unknown>
     if (typeof raw.id !== 'string') return []
     const base = { id: raw.id, n: index + 1, title: typeof raw.title === 'string' ? raw.title : '', questions: raw.questions !== false }
+    // Local only (`{local}`): carried only where the step has something to keep; a step sent as a slide never is.
+    const local = raw.local === true ? { local: true as const } : {}
     if (raw.kind === 'task') {
-      return [{ ...base, kind: 'task' as const, done: raw.done !== false, ...(typeof raw.minutes === 'number' ? { minutes: raw.minutes } : {}) }]
+      return [{ ...base, kind: 'task' as const, done: raw.done !== false, ...(typeof raw.minutes === 'number' ? { minutes: raw.minutes } : {}), ...local }]
     }
     if (raw.kind === 'check' || raw.kind === 'question') {
       const poll = stepPoll(polls.get(raw.id))
-      if (poll && (raw.kind === 'question' || poll.type === 'single')) return [{ ...base, kind: raw.kind, poll }]
+      if (poll && (raw.kind === 'question' || poll.type === 'single')) return [{ ...base, kind: raw.kind, poll, ...local }]
     }
     return [{ ...base, kind: 'slide' as const }]
   })
@@ -247,16 +284,10 @@ export function preworkWindowMs(window: { opens: string; closes: string } | null
 
 /**
  * The talk's slides without its pre-work steps (the section slide and every step): what every
- * handout lists. Pre-work is answered on the form of a planned Run's handout, never read as slides.
+ * handout lists. A leftover `{prework}` section is never published (work-files ticket 29): pre-work
+ * is a work file's page, and Layout Doctor offers "Move to a work file" for the section.
  */
 export function withoutPreworkSlides<T extends { id?: unknown }>(slides: T[], prework: CompiledPrework | null | undefined): T[] {
   const ids = new Set(Array.isArray(prework?.slideIds) ? prework!.slideIds.filter((id): id is string => typeof id === 'string') : [])
   return ids.size ? slides.filter((slide) => !(typeof slide.id === 'string' && ids.has(slide.id))) : slides
-}
-
-/** What the published handout carries to ask the Worker about its pre-work and show the form. */
-export interface HandoutPreworkConfig {
-  preworkId: string
-  workerBaseUrl: string
-  form: PreworkForm
 }

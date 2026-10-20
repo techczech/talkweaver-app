@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -29,14 +29,15 @@ import {
   runHandoutSlug,
   runInstantSlideFrom,
   setRunHandoutUrl,
+  stampRunUnpublished,
   preworkWindow,
   updatePlannedRun
 } from '../src/main/runs.ts'
 import { parseAudienceQuestion } from '../worker/protocol.ts'
-import { INK_READBACK_BYTES, inkMarkFileBytes, readbackInkMark, readbackSlideTimeIndex, sessionForList } from '../src/main/run-ink-readback.ts'
+import { INK_READBACK_BYTES, inkMarkFileBytes, readbackClipMark, readbackInkMark, readbackSlideTimeIndex, sessionForList } from '../src/main/run-ink-readback.ts'
 import { applyRunBoards } from '../src/main/runs.ts'
 import { isHiddenCard, runBoardFromPollState, runBoardMarkdown, runBoardState, runBoardView, setRunBoardCardPutBack } from '../src/shared/run-board.ts'
-import { runSharePayload } from '../src/shared/run-results-share.ts'
+import { runShareOptions, runSharePayload } from '../src/shared/run-results-share.ts'
 import { createRunResultsShares } from '../src/main/run-results-share.ts'
 import { LINK_NOT_UPDATED, registerRunBoardIpc } from '../src/main/run-board-ipc.ts'
 import { parseRunSharePush } from '../worker/run-share-state.ts'
@@ -177,6 +178,15 @@ assert.match(covered, /<h1>The Age of the Claw<\/h1>/)
 const withUrl = setRunHandoutUrl(attached, 'https://handouts.example/run')
 assert.equal(withUrl.handoutUrl, 'https://handouts.example/run')
 assert.equal(clearRunHandoutUrl(withUrl).handoutUrl, undefined)
+// Ticket 17 round 3 (D1): the Run's own "unpublished" stamp lives beside its link; a publish or a
+// cleared link takes it away; one that is not a time, or with no link, is not kept.
+const unpublishedRun = stampRunUnpublished(withUrl, '2026-10-16T09:00:00.000Z')
+assert.equal(unpublishedRun.unpublishedAt, '2026-10-16T09:00:00.000Z')
+assert.equal(normaliseRun(JSON.parse(JSON.stringify(unpublishedRun))).unpublishedAt, '2026-10-16T09:00:00.000Z', 'kept on re-read')
+assert.equal(setRunHandoutUrl(unpublishedRun, 'https://handouts.example/run').unpublishedAt, undefined, 'published again: gone')
+assert.equal(clearRunHandoutUrl(unpublishedRun).unpublishedAt, undefined)
+assert.equal(stampRunUnpublished(attached, '2026-10-16T09:00:00.000Z').unpublishedAt, undefined, 'no link, no stamp')
+assert.equal(normaliseRun({ ...unpublishedRun, unpublishedAt: 'soon' }).unpublishedAt, undefined)
 
 // Run URL bookkeeping never needs the outline, so its frontmatter remains byte-identical.
 const outline = '---\ntitle: The Age of the Claw\nhandout_url: https://evergreen.example/claw\n---\n\n### One\n'
@@ -543,6 +553,20 @@ assert.equal(survived[0].id, 'survivor')
   assert.equal(cleared.startTime, '10:00', 'fields the patch does not name are kept')
   assert.throws(() => updatePlannedRun(planRoot, 'plan-talk', 'plan-1', { preworkCloses: '2026-10-05T18:00' }), /prework-closes-without-opens/, 'naming a closing time with no opening is refused')
 
+  // Ticket 29: planning from the app (the IPC handlers pass refuseNewSectionPrework) attaches a talk's
+  // old {prework} section to no new Run and to no Run without it; a Run that has it keeps its times editable.
+  const app = { refuseNewSectionPrework: true }
+  assert.throws(() => createPlannedRun(planRoot, { ...baseInput, preworkOpens: '2026-07-20T09:00' }, () => 'sec-1', app), /^Error: prework-section-retired$/, 'a new Run with the old window fields is refused')
+  assert.throws(() => createPlannedRun(planRoot, { ...baseInput, preworkCloses: '2026-07-21T09:00' }, () => 'sec-2', app), /^Error: prework-section-retired$/)
+  assert.equal(existsSync(join(planRoot, '_PRESENTATIONS', baseInput.talkSlug, 'sec-1.json')), false, 'nothing is written')
+  assert.equal(createPlannedRun(planRoot, { ...baseInput, preworkOpens: null }, () => 'sec-3', app).id, 'sec-3', 'an empty window field is not an attachment')
+  assert.throws(() => updatePlannedRun(planRoot, 'plan-talk', 'plan-1', { preworkOpens: '2026-09-22T09:00' }, app), /^Error: prework-section-retired$/, 'a Run without the section cannot be given it')
+  const sectionRun = createPlannedRun(planRoot, { talkSlug: 'plan-talk', talkTitle: 'Plan talk', plannedDate: '2026-10-06', eventTitle: 'Section Run', audience: '', slideSet: { kind: 'full' }, startTime: '10:00', preworkOpens: '2026-09-22T09:00' }, () => 'sec-old')
+  const retimed = updatePlannedRun(planRoot, 'plan-talk', 'sec-old', { preworkOpens: '2026-09-23T09:00', preworkCloses: '2026-10-05T18:00' }, app)
+  assert.deepEqual(preworkWindow(retimed), { opens: '2026-09-23T09:00', closes: '2026-10-05T18:00' }, 'a Run planned with the section keeps its times editable')
+  assert.equal('preworkOpens' in updatePlannedRun(planRoot, 'plan-talk', 'sec-old', { preworkOpens: null }, app), false, 'and can drop it')
+  assert.ok(sectionRun.preworkOpens)
+
   // Delivering against a planned Run keeps the plan.
   const attachedPlan = attachDeliveryToPlanned(withPlan, normaliseRun({ id: 'delivery', talkSlug: 'plan-talk', talkTitle: 'Plan talk', kind: 'delivery', startedAt: '2026-10-06T10:02:00.000Z', endedAt: '2026-10-06T11:00:00.000Z' }))
   assert.equal(attachedPlan.status, 'delivered')
@@ -701,6 +725,12 @@ assert.equal(survived[0].id, 'survivor')
   const withPutBack = runSharePayload({ ...run, boards: putBack.boards }, { board: true, polls: false, prework: false }, null, now)
   assert.ok(JSON.stringify(withPutBack).includes('wifi'), 'a card put back is on the link')
   assert.deepEqual(runSharePayload(run, { board: false, polls: true, prework: false }, null, now).boards, [], 'the board can be left off')
+  // The dialog's pre-work line comes from the Run's own answers (review round 1, finding 3); sharing them stays off.
+  const withAnswers = runShareOptions({ ...run, prework: { entries: [{ id: 'e1', participant: 'p1', stepId: 's1', kind: 'answer', text: 'hope', at: 1 }] } })
+  assert.deepEqual([withAnswers.prework, withAnswers.preworkAnswers, withAnswers.preworkNote], [false, 1, 'Sharing pre-work answers is not available yet.'], 'a Run with answers says sharing them is not available yet')
+  const noAnswers = runShareOptions({ ...run, prework: { entries: [] } })
+  assert.deepEqual([noAnswers.prework, noAnswers.preworkAnswers, noAnswers.preworkNote], [false, 0, 'No pre-work answers on this Run'], 'only a Run without answers says it has none')
+  assert.equal(runShareOptions({ ...run, prework: undefined }).preworkNote, 'No pre-work answers on this Run')
 
   // A planned Run that took board flushes keeps them when the delivery is attached.
   const plannedWithBoard = normaliseRun({ ...legacy, id: 'planned-b', status: 'planned', plannedDate: '2026-09-28', eventTitle: 'ITSS Briefing', boards: [board(liveCards)] })
@@ -950,8 +980,8 @@ assert.equal(survived[0].id, 'survivor')
     vaultRoot: () => vault, fetch: fakeFetch, now: () => Date.UTC(2026, 9, 1, 12) })
   const form = { title: 'Before the session', intro: '', steps: [{ id: 'pwwelcome', n: 1, title: 'W', kind: 'slide', questions: true }] }
   const window = { opensAt: Date.UTC(2026, 8, 30, 8), closesAt: Date.UTC(2026, 9, 6, 9) }
-  assert.deepEqual(await service.publish('pw-talk', 'run-pw', form, window), { preworkId: 'pw123456', workerBaseUrl: 'https://live.example.test', open: true })
-  await service.publish('pw-talk', 'run-pw', form, { ...window, closesAt: window.closesAt + 60_000 })
+  assert.deepEqual(await service.publish('pw-talk', 'run-pw', form, window, 'pre', vault), { preworkId: 'pw123456', workerBaseUrl: 'https://live.example.test', open: true })
+  await service.publish('pw-talk', 'run-pw', form, { ...window, closesAt: window.closesAt + 60_000 }, 'pre', vault)
   assert.equal(worker.created, 1, 'the object is created once per Run')
   assert.equal(worker.forms.length, 2)
   assert.equal(service.status('pw-talk', 'run-pw').closesAt, window.closesAt + 60_000, 'the window pushed last is kept')
@@ -973,7 +1003,7 @@ assert.equal(survived[0].id, 'survivor')
   const offline = await service.pull('pw-talk', 'run-pw')
   assert.equal(offline.ok, false, 'a failed pull is reported, not swallowed')
   worker.fail = false
-  assert.deepEqual(service.due(), [{ talkSlug: 'pw-talk', runId: 'run-pw' }], 'open pre-work is due for the timer')
+  assert.deepEqual(service.due(), [{ talkSlug: 'pw-talk', runId: 'run-pw', phase: 'pre' }], 'open pre-work is due for the timer')
   const handlers = new Map()
   registerRunPreworkIpc({ handle: (channel, fn) => handlers.set(channel, fn) }, service)
   const closed = await handlers.get('history:prework-close')(null, { talkSlug: 'pw-talk', runId: 'run-pw' })
@@ -988,7 +1018,7 @@ assert.equal(survived[0].id, 'survivor')
   const later = createRunPrework({ ownerTokens: testOwnerTokens, registryPath: join(root, 'registry.json'), endpoint: async () => ({ baseUrl: 'https://live.example.test', adminSecret: 'admin' }),
     vaultRoot: () => vault, fetch: fakeFetch, now: () => Date.UTC(2026, 9, 3, 12) })
   worker.gone = true
-  const gone = await later.publish('pw-talk', 'run-pw', form, { ...window, closesAt: Date.UTC(2026, 9, 6, 9) })
+  const gone = await later.publish('pw-talk', 'run-pw', form, { ...window, closesAt: Date.UTC(2026, 9, 6, 9) }, 'pre', vault)
   assert.equal(gone.open, false, 'an object purged on the Worker is not silently replaced: the handout goes out without the form')
   assert.equal(gone.warning, PREWORK_PURGED_MESSAGE)
   assert.equal(worker.created, 1)
@@ -996,7 +1026,7 @@ assert.equal(survived[0].id, 'survivor')
   const callsBefore = calls.length
   const asked = await later.pull('pw-talk', 'run-pw')
   assert.deepEqual([asked.ok, asked.error], [false, PREWORK_PURGED_MESSAGE], 'History is told without a Worker call')
-  assert.equal((await later.publish('pw-talk', 'run-pw', form, window)).warning, PREWORK_PURGED_MESSAGE)
+  assert.equal((await later.publish('pw-talk', 'run-pw', form, window, 'pre', vault)).warning, PREWORK_PURGED_MESSAGE)
   assert.equal(calls.length, callsBefore, 'no Worker call once the purge is known')
   assert.deepEqual(later.due(), [], 'and the timer skips it')
   assert.equal(readRunForTalk(vault, 'pw-talk', 'run-pw').prework.entries.length, 5, 'the answers already pulled stay on the Run')
@@ -1025,6 +1055,16 @@ assert.equal(survived[0].id, 'survivor')
   assert.equal(zoneToSend(null, 'Europe/Prague', true), 'Europe/Prague')
   assert.equal(zoneToSend(prague, 'Europe/London', false), undefined, 'no pre-work, no zone')
   assert.equal(zoneToSend({ preworkOpens: '2026-10-01T09:00' }, 'Europe/London', true), 'Europe/London')
+}
+
+// A clip mark (a slide video started playing) is kept through a stored Run's read-back; a damaged one is dropped.
+{
+  const clip = { event: 'clip', slideId: 's1', tMs: 1500, clip: { src: 'demo/tour.mp4', atS: 12.5 } }
+  assert.deepEqual(readbackClipMark(clip), clip)
+  for (const bad of [{ ...clip, extra: 1 }, { ...clip, clip: { src: 'x', atS: -1 } }, { ...clip, clip: { src: 5, atS: 1 } }, { ...clip, clip: { src: 'x', atS: 1, y: 1 } }, { ...clip, slideId: 5 }, { ...clip, tMs: NaN }]) assert.equal(readbackClipMark(bad), null)
+  const run = normaliseRun({ id: 'sess-20261015-110000-a', talkSlug: 'clip', startedAt: '2026-10-15T11:00:00.000Z', slideTimeIndex: [{ event: 'enter', slideId: 's1', tMs: 0 }, clip, { ...clip, clip: { src: 'x', atS: -1 } }] })
+  assert.deepEqual(run.slideTimeIndex.map((m) => m.event), ['enter', 'clip'])
+  assert.deepEqual(run.slideTimeIndex[1], clip)
 }
 
 // The Pen's ink in a stored recording is checked and capped as it is read, before it goes anywhere;
@@ -1114,4 +1154,320 @@ assert.equal(survived[0].id, 'survivor')
   assert.deepEqual(listed[1].slideTimeIndex, [], 'its bad ink dropped')
 }
 
-console.log('runs: planned CRUD, legacy interpretation, attach, slide sets, cover and URLs, DS_Store tolerance, instant slides, image checks, reactions and questions, Run path boundary, plan fields, boards, pre-work passed')
+// Work-file attachments (work-files ticket 03): pre and post per Run, windows checked, 0.39 Runs migrated.
+{
+  const root = mkdtempSync(join(tmpdir(), 'talkweaver-work-'))
+  const base = { timeZone: 'Europe/London', talkSlug: 'work-talk', talkTitle: 'Work talk', plannedDate: '2026-10-06', startTime: '10:00', eventTitle: 'Briefing', audience: '', slideSet: { kind: 'full' } }
+  const pre = { fileId: 'intake', opens: '2026-09-22T09:00', closes: '2026-10-05T18:00', timeZone: 'Europe/London' }
+  const post = { fileId: 'after', closes: '2026-10-20T18:00', timeZone: 'Europe/London' }
+
+  // A Run without attachments carries no work or postwork key and re-persists byte for byte.
+  const plain = normaliseRun({ id: 'p', talkSlug: 't', talkTitle: 'T', kind: 'delivery', status: 'planned', plannedDate: '2026-10-06', eventTitle: 'E', slideSet: { kind: 'full' } })
+  assert.equal('work' in plain, false)
+  assert.equal('postwork' in plain, false)
+  assert.equal(JSON.stringify(normaliseRun(JSON.parse(JSON.stringify(plain)))), JSON.stringify(plain))
+
+  // Create with both phases; post opens defaults to session-end; the Run reads back unchanged.
+  const both = createPlannedRun(root, { ...base, work: { pre, post } }, () => 'w1')
+  assert.deepEqual(both.work.pre, pre)
+  assert.deepEqual(both.work.post, { fileId: 'after', opens: 'session-end', closes: '2026-10-20T18:00', timeZone: 'Europe/London' })
+  assert.deepEqual(readRun(root, 'work-talk', 'w1'), both)
+  assert.equal('preworkOpens' in both, false, 'the new attachment does not write the 0.39 fields')
+  // Pre closes default to the session start.
+  assert.equal(createPlannedRun(root, { ...base, work: { pre: { fileId: 'intake', opens: '2026-09-22T09:00' } } }, () => 'w2').work.pre.closes, '2026-10-06T10:00')
+
+  // Refusals carry reason codes.
+  const refuse = (work, code, id) => assert.throws(() => createPlannedRun(root, { ...base, work }, () => id), new RegExp(`^Error: ${code}$`))
+  refuse({ post: { fileId: 'after' } }, 'work-post-closes-required', 'x1')
+  refuse({ post: { fileId: 'after', closes: '2026-10-06T10:00' } }, 'work-post-closes-before-start', 'x2')
+  refuse({ post: { fileId: 'after', closes: '2026-10-06T09:00' } }, 'work-post-closes-before-start', 'x3')
+  refuse({ pre: { ...pre, closes: '2026-10-06T10:01' } }, 'work-pre-closes-after-start', 'x4')
+  refuse({ pre: { ...pre, closes: '2026-09-22T09:00' } }, 'work-closes-before-opens', 'x5')
+  refuse({ pre: { ...pre, closes: '2026-02-31T09:00' } }, 'work-pre-invalid', 'x6')
+  refuse({ pre: { ...pre, fileId: 'x'.repeat(81) } }, 'work-file-id-invalid', 'x7')
+  refuse({ pre: { ...pre, opens: undefined } }, 'work-pre-opens-required', 'x8')
+  refuse({ pre: { ...pre, opens: 'session-end' } }, 'work-pre-invalid', 'x9')
+  refuse({ later: pre }, 'work-phase-unknown', 'x10')
+  refuse({ post: { ...post, timeZone: 'Europe/Prague' } }, 'work-zone-mismatch', 'x11')
+  refuse({ pre: { ...pre, fileId: 'legacy-section' } }, 'work-file-id-reserved', 'x12')
+  for (const [n, bad] of ['Has Capitals', '-lead', 'a_b', 'a/b', '../x', ''].entries()) refuse({ pre: { ...pre, fileId: bad } }, 'work-file-id-invalid', `xi${n}`)
+  refuse({ post: { ...post, opens: '2026-10-06T09:59' } }, 'work-post-opens-before-start', 'x13')
+  assert.equal(createPlannedRun(root, { ...base, work: { post: { ...post, opens: '2026-10-06T10:00' } } }, () => 'x14').work.post.opens, '2026-10-06T10:00', 'post-work may open exactly at the start')
+  assert.equal(createPlannedRun(root, { ...base, work: { pre: { ...pre, closes: '2026-10-06T10:00' } } }, () => 'x15').work.pre.closes, '2026-10-06T10:00', 'pre-work may close exactly at the start')
+  assert.equal(listRuns(root).filter((run) => run.id.startsWith('x') && !['x14', 'x15'].includes(run.id)).length, 0, 'a refused plan writes nothing')
+
+  // Update: add, replace, drop; the pin stays with the same file, not with a swapped one.
+  const pinned = { fileId: 'intake', title: 'Intake', revision: 3, sha256: 'a'.repeat(64), copy: '_PRESENTATIONS/work-talk/w1-pre.md', pinnedAt: '2026-09-23T10:00:00.000Z' }
+  const stored = normaliseRun({ ...both, work: { ...both.work, pre: { ...both.work.pre, pinned, publishedAt: '2026-09-23T10:00:00.000Z' } } })
+  assert.deepEqual(stored.work.pre.pinned, pinned)
+  persistRunForTalk(root, 'work-talk', 'w1', stored)
+  const retimed = updatePlannedRun(root, 'work-talk', 'w1', { work: { pre: { fileId: 'intake', opens: '2026-09-22T09:00', closes: '2026-10-05T12:00' } } })
+  assert.equal(retimed.work.pre.closes, '2026-10-05T12:00')
+  assert.deepEqual(retimed.work.pre.pinned, pinned, 'the pin follows the same file')
+  assert.equal(retimed.work.pre.publishedAt, '2026-09-23T10:00:00.000Z')
+  const swapped = updatePlannedRun(root, 'work-talk', 'w1', { work: { pre: { fileId: 'other', opens: '2026-09-22T09:00' } } })
+  assert.equal('pinned' in swapped.work.pre, false, 'a swapped file starts unpinned')
+  assert.ok(swapped.work.post, 'the other phase is untouched')
+  assert.equal('pre' in updatePlannedRun(root, 'work-talk', 'w1', { work: { pre: null } }).work, false)
+  assert.equal('work' in updatePlannedRun(root, 'work-talk', 'w1', { work: { post: null } }), false)
+  assert.throws(() => updatePlannedRun(root, 'work-talk', 'w1', { work: { post: { fileId: 'after', closes: '2026-10-06T09:59' } } }), /work-post-closes-before-start/)
+  // Moving the session past a pre-work closing time is refused too.
+  updatePlannedRun(root, 'work-talk', 'w1', { work: { pre } })
+  assert.throws(() => updatePlannedRun(root, 'work-talk', 'w1', { plannedDate: '2026-10-04' }), /work-pre-closes-after-start/)
+
+  // Hostile stored values: the attachment goes, the rest of the Run stays.
+  const hostile = normaliseRun({ ...plain, work: { pre: { ...pre, closes: 'tomorrow' }, post: { ...post, fileId: 'y'.repeat(81) }, middle: pre }, postwork: 'junk' })
+  assert.equal('work' in hostile, false)
+  assert.equal('postwork' in hostile, false)
+  assert.equal(hostile.eventTitle, 'E')
+  const halfBad = normaliseRun({ ...plain, timeZone: 'Europe/London', work: { pre, post: { ...post, closes: '' } } })
+  assert.deepEqual(Object.keys(halfBad.work), ['pre'], 'one bad phase does not take the other')
+  const badPin = normaliseRun({ ...plain, timeZone: 'Europe/London', work: { pre: { ...pre, pinned: { ...pinned, sha256: 'zz' } } } })
+  assert.equal('pinned' in badPin.work.pre, false, 'a bad pin is dropped alone')
+  for (const copy of ['../../etc/passwd', '/abs/x.md', 'a/./b', 'a//b', 'a\\b', 'C:x', '~/x', 'a\0b', 'x'.repeat(401), 'a:b', 'a/.hidden', 'a/ b', 'a/b\nc'])
+    assert.equal('pinned' in normaliseRun({ ...plain, timeZone: 'Europe/London', work: { pre: { ...pre, pinned: { ...pinned, copy } } } }).work.pre, false, `copy ${JSON.stringify(copy)} is dropped`)
+  assert.ok(normaliseRun({ ...plain, timeZone: 'Europe/London', work: { pre: { ...pre, pinned: { ...pinned, copy: 'a/b_c-1.d/e.md' } } } }).work.pre.pinned, 'a plain relative path is kept')
+  assert.ok(normaliseRun({ ...plain, timeZone: 'Europe/London', work: { pre: { ...pre, pinned: { ...pinned, copy: '_PRESENTATIONS/Café talk/r1/work-pre.md' } } } }).work.pre.pinned, 'a talk folder with a space or an accent is kept (talk slugs allow them)')
+
+  // A 0.39 Run with pre-work fields and answers migrates and keeps every answer byte for byte.
+  // In the form 0.39 wrote (the pre-work normaliser's own key order).
+  const P = '0123456789abcdef'
+  const answers = { entries: [{ id: `${P}:q:s1`, participant: P, stepId: 's1', kind: 'question', at: 5, text: 'Why?' }, { id: `${P}:answer:s1`, participant: P, stepId: 's1', kind: 'answer', at: 6, text: 'Because' }], people: 1 }
+  const old = { id: 'o', talkSlug: 't', talkTitle: 'T', kind: 'delivery', status: 'planned', plannedDate: '2026-10-06', startTime: '10:00', eventTitle: 'E', slideSet: { kind: 'full' },
+    preworkOpens: '2026-09-22T09:00', timeZone: 'Europe/Prague', prework: answers }
+  const before = normaliseRun(old)
+  const migrated = normaliseRun(JSON.parse(JSON.stringify(before)))
+  assert.deepEqual(migrated.work.pre, { fileId: 'legacy-section', opens: '2026-09-22T09:00', closes: '2026-10-06T10:00', timeZone: 'Europe/Prague' })
+  assert.deepEqual(migrated.prework, before.prework, 'answers kept')
+  assert.equal(JSON.stringify(migrated.prework), JSON.stringify(normaliseRun({ ...old, work: undefined }).prework))
+  assert.equal(migrated.preworkOpens, '2026-09-22T09:00', 'the 0.39 fields stay for older readers')
+  assert.equal(JSON.stringify(normaliseRun(JSON.parse(JSON.stringify(migrated)))), JSON.stringify(migrated), 'migration is stable')
+  // Editing the old window replaces the migrated attachment.
+  persistRunForTalk(root, 't-old', 'o', normaliseRun({ ...old, talkSlug: 't-old' }))
+  const edited = updatePlannedRun(root, 't-old', 'o', { preworkCloses: '2026-10-05T18:00' })
+  assert.equal(edited.work.pre.closes, '2026-10-05T18:00')
+  assert.equal('work' in updatePlannedRun(root, 't-old', 'o', { preworkOpens: null }), false)
+
+  // A real 0.39 Run file (pre-work fields and answers) saved again with an unrelated edit differs on disk
+  // only by that edit: the migrated attachment is derived on read and never written.
+  {
+    const dir = join(root, '_PRESENTATIONS', 't-bytes')
+    _mkdirSync(dir, { recursive: true })
+    const file = join(dir, 'o39.json')
+    const run39 = { id: 'o39', talkSlug: 't-bytes', talkTitle: 'T', kind: 'delivery', status: 'planned', plannedDate: '2026-10-06', eventTitle: 'E', audience: 'Before', startTime: '10:00',
+      preworkOpens: '2026-09-22T09:00', preworkCloses: '2026-10-05T18:00', timeZone: 'Europe/Prague', slideSet: { kind: 'full' }, pathwayId: null, startedAt: '2026-10-06T00:00:00.000Z',
+      endedAt: '', recordingMs: 0, wallClockMs: 0, timerTargetMin: 0, context: null, audio: null, transcript: null, slideTimeIndex: [], polls: [], pollResponses: [], prework: answers }
+    writeFileSync(file, `${JSON.stringify(run39, null, 2)}\n`)
+    const read = readRun(root, 't-bytes', 'o39')
+    assert.equal(read.work.pre.fileId, 'legacy-section', 'derived in memory')
+    assert.deepEqual(read.prework, answers, 'every answer kept')
+    updatePlannedRun(root, 't-bytes', 'o39', { audience: 'After' })
+    assert.equal(readFileSync(file, 'utf8'), `${JSON.stringify({ ...run39, audience: 'After' }, null, 2)}\n`, 'byte-identical apart from the edit')
+    updatePlannedRun(root, 't-bytes', 'o39', {})
+    assert.equal(readFileSync(file, 'utf8'), `${JSON.stringify({ ...run39, audience: 'After' }, null, 2)}\n`, 'a no-op update changes no byte')
+    // The derived window follows the old fields and the plan on every read.
+    updatePlannedRun(root, 't-bytes', 'o39', { plannedDate: '2026-10-07', preworkCloses: null })
+    assert.equal(readRun(root, 't-bytes', 'o39').work.pre.closes, '2026-10-07T10:00', 'derived from the current date and start time')
+    assert.equal('work' in JSON.parse(readFileSync(file, 'utf8')), false, 'nothing derived is stored')
+    // Adding a post-work attachment to it writes only the real one, and a machine zone is not written.
+    updatePlannedRun(root, 't-bytes', 'o39', { work: { post: { fileId: 'after', closes: '2026-10-20T18:00' } } })
+    // (zone is the Run's own, Prague, so the attachment shares it)
+    const onDisk = JSON.parse(readFileSync(file, 'utf8'))
+    assert.deepEqual(Object.keys(onDisk.work), ['post'], 'the migrated pre-work is not stored beside a real post-work')
+    assert.equal(onDisk.work.post.timeZone, 'Europe/Prague')
+    assert.equal(onDisk.preworkOpens, '2026-09-22T09:00')
+
+    // {work:{pre:null}} on a Run with 0.39 fields clears them, and stays cleared after a reload.
+    const removed = updatePlannedRun(root, 't-bytes', 'o39', { work: { pre: null } })
+    assert.equal('pre' in removed.work, false)
+    const reloaded = JSON.parse(readFileSync(file, 'utf8'))
+    assert.equal('preworkOpens' in reloaded || 'preworkCloses' in reloaded, false, 'the old window fields are gone from disk')
+    assert.equal('pre' in readRun(root, 't-bytes', 'o39').work, false, 'removal sticks after reload')
+    // Replacing the old window with a real attachment drops the old fields too.
+    const noteRun = { ...run39, id: 'o40' }
+    writeFileSync(join(dir, 'o40.json'), `${JSON.stringify(noteRun, null, 2)}\n`)
+    const replaced = updatePlannedRun(root, 't-bytes', 'o40', { work: { pre: { fileId: 'intake', opens: '2026-09-22T09:00', timeZone: 'Europe/Prague' } } })
+    assert.equal(replaced.work.pre.fileId, 'intake')
+    assert.equal('preworkOpens' in JSON.parse(readFileSync(join(dir, 'o40.json'), 'utf8')), false)
+  }
+
+  // A zone must be the Run's own: refused on input, dropped on read, never compared across zones.
+  assert.throws(() => updatePlannedRun(root, 'work-talk', 'w1', { work: { pre: { ...pre, timeZone: 'Europe/Prague' } } }), /work-zone-mismatch/)
+  assert.throws(() => updatePlannedRun(root, 'work-talk', 'w1', { work: { post }, timeZone: 'Europe/Prague' }) && updatePlannedRun(root, 'work-talk', 'w1', { timeZone: 'Asia/Tokyo' }), /work-zone-mismatch/, 'a new Run zone cannot silently re-read kept attachments')
+  // An attachment in another zone than the Run's is kept and marked, never dropped (and never stored marked).
+  assert.equal(normaliseRun({ ...plain, timeZone: 'Europe/Prague', work: { pre } }).work.pre.problem, 'zone-mismatch')
+  assert.equal(normaliseRun({ ...plain, work: { pre } }).work.pre.problem, 'zone-mismatch', 'a Run whose own zone is unreadable keeps its attachments, marked')
+  assert.equal('problem' in normaliseRun({ ...plain, timeZone: 'Europe/London', work: { pre } }).work.pre, false)
+  {
+    const dir = join(root, '_PRESENTATIONS', 't-zone')
+    _mkdirSync(dir, { recursive: true })
+    const file = join(dir, 'z1.json')
+    const zonePin = { ...pinned, copy: 'z1-post.md' }
+    const run = { id: 'z1', talkSlug: 't-zone', talkTitle: 'T', kind: 'delivery', status: 'planned', plannedDate: '2026-10-06', eventTitle: 'E', audience: 'Before', startTime: '10:00', timeZone: 'Europe/London',
+      slideSet: { kind: 'full' }, pathwayId: null, startedAt: '2026-10-06T00:00:00.000Z', endedAt: '', recordingMs: 0, wallClockMs: 0, timerTargetMin: 0, context: null, audio: null, transcript: null, slideTimeIndex: [], polls: [], pollResponses: [],
+      work: { post: { fileId: 'after', opens: 'session-end', closes: '2026-10-20T18:00', timeZone: 'Europe/Prague', pinned: zonePin, publishedAt: '2026-10-07T09:00:00.000Z' } } }
+    const original = `${JSON.stringify(run, null, 2)}\n`
+    writeFileSync(file, original)
+    assert.equal(readRun(root, 't-zone', 'z1').work.post.problem, 'zone-mismatch')
+    assert.deepEqual(readRun(root, 't-zone', 'z1').work.post.pinned, zonePin)
+    updatePlannedRun(root, 't-zone', 'z1', {})
+    assert.equal(readFileSync(file, 'utf8'), original, 'a no-op write keeps it byte for byte, pin included')
+    updatePlannedRun(root, 't-zone', 'z1', { audience: 'After' })
+    updatePlannedRun(root, 't-zone', 'z1', { audience: 'Before' })
+    assert.equal(readFileSync(file, 'utf8'), original, 'two unrelated writes leave it byte-identical')
+    // Planning over that phase is refused until the zones agree; other phases are unaffected.
+    assert.throws(() => updatePlannedRun(root, 't-zone', 'z1', { work: { post: { fileId: 'after', closes: '2026-10-21T18:00' } } }), /work-zone-mismatch/)
+    assert.throws(() => updatePlannedRun(root, 't-zone', 'z1', { work: { post: null } }), /work-zone-mismatch/, 'removing it is planning over it too')
+    assert.equal(readFileSync(file, 'utf8'), original)
+    assert.equal(updatePlannedRun(root, 't-zone', 'z1', { work: { pre: { fileId: 'intake', opens: '2026-09-22T09:00' } } }).work.pre.fileId, 'intake', 'the other phase can be planned')
+    assert.equal(JSON.parse(readFileSync(file, 'utf8')).work.post.pinned.sha256, pinned.sha256)
+    assert.equal(readFileSync(file, 'utf8').includes('"problem"'), false, 'the mark is never stored')
+  }
+  // A zone of the right shape that this machine does not know is never deleted: Run, attachment and pin survive.
+  {
+    const dir = join(root, '_PRESENTATIONS', 't-nowhere')
+    _mkdirSync(dir, { recursive: true })
+    const file = join(dir, 'n1.json')
+    const nwPin = { ...pinned, copy: 'n1-pre.md' }
+    const run = { id: 'n1', talkSlug: 't-nowhere', talkTitle: 'T', kind: 'delivery', status: 'planned', plannedDate: '2026-10-06', eventTitle: 'E', audience: 'Before', startTime: '10:00', timeZone: 'Europe/Nowhere',
+      slideSet: { kind: 'full' }, pathwayId: null, startedAt: '2026-10-06T00:00:00.000Z', endedAt: '', recordingMs: 0, wallClockMs: 0, timerTargetMin: 0, context: null, audio: null, transcript: null, slideTimeIndex: [], polls: [], pollResponses: [],
+      work: { pre: { fileId: 'intake', opens: '2026-09-22T09:00', closes: '2026-10-05T18:00', timeZone: 'Europe/Nowhere', pinned: nwPin } } }
+    writeFileSync(file, `${JSON.stringify(run, null, 2)}\n`)
+    const read = readRun(root, 't-nowhere', 'n1')
+    assert.equal(read.timeZone, 'Europe/Nowhere')
+    assert.equal(read.work.pre.problem, 'zone-mismatch')
+    updatePlannedRun(root, 't-nowhere', 'n1', { audience: 'After' })
+    assert.equal(readFileSync(file, 'utf8'), `${JSON.stringify({ ...run, audience: 'After' }, null, 2)}\n`, 'zone and pin intact after an audience edit')
+    assert.throws(() => updatePlannedRun(root, 't-nowhere', 'n1', { work: { pre: { fileId: 'intake', opens: '2026-09-22T09:00' } } }), /work-zone-mismatch/, 'planning over that phase is refused')
+    assert.throws(() => updatePlannedRun(root, 't-nowhere', 'n1', { work: { post: { fileId: 'after', closes: '2026-10-20T18:00' } } }), /work-zone-mismatch/, 'nothing new is planned in a zone this machine cannot read')
+    assert.equal(JSON.parse(readFileSync(file, 'utf8')).work.pre.pinned.sha256, pinned.sha256)
+    // Only a zone failing the pattern itself is dropped.
+    assert.equal('timeZone' in normaliseRun({ ...run, timeZone: 'Not a zone!' }), false)
+    assert.equal(normaliseRun({ ...run, timeZone: 'Not a zone!' }).work.pre.problem, 'zone-mismatch')
+    assert.equal('work' in normaliseRun({ ...run, work: { pre: { ...run.work.pre, timeZone: 'bad zone' } } }), false)
+  }
+
+  // A Run's zone is kept only while a window or attachment uses it.
+  assert.equal('timeZone' in normaliseRun({ ...plain, timeZone: 'Europe/London' }), false)
+  // The reserved id is never read back from a file either: the migrated one comes only from the old fields.
+  assert.equal('work' in normaliseRun({ ...plain, timeZone: 'Europe/London', work: { pre: { ...pre, fileId: 'legacy-section' } } }), false)
+
+  // Post-work answers ride along, and delivering keeps attachments and answers.
+  const withPost = normaliseRun({ ...both, postwork: answers })
+  assert.deepEqual(withPost.postwork, normaliseRun({ ...old }).prework)
+  const delivered = attachDeliveryToPlanned(withPost, normaliseRun({ id: 'd', talkSlug: 'work-talk', talkTitle: 'Work talk', kind: 'delivery', startedAt: '2026-10-06T10:02:00.000Z', endedAt: '2026-10-06T11:00:00.000Z' }))
+  assert.deepEqual(delivered.work, withPost.work)
+  assert.deepEqual(delivered.postwork, withPost.postwork)
+}
+
+// Work-files ticket 16: stampRunWork marks the phases a publish sent, and unpublish only what went out.
+{
+  const { stampRunWork, normaliseRun: norm } = await import('../src/main/runs.ts')
+  const base = norm({ id: 'stamp', talkSlug: 'agents', talkTitle: 'T', kind: 'delivery', status: 'planned', plannedDate: '2099-10-06', startTime: '10:00', timeZone: 'Europe/London', slideSet: { kind: 'full' }, startedAt: '2099-10-06T00:00:00.000Z',
+    work: { pre: { fileId: 'intake', opens: '2099-10-01T09:00', closes: '2099-10-06T09:00', timeZone: 'Europe/London' }, post: { fileId: 'after', opens: 'session-end', closes: '2099-10-20T17:00', timeZone: 'Europe/London' } } })
+  const AT = '2099-10-02T10:00:00.000Z'
+  const up = stampRunWork(base, ['pre', 'post'], 'publishedAt', AT)
+  assert.deepEqual([up.work.pre.publishedAt, up.work.post.publishedAt], [AT, AT])
+  assert.equal(stampRunWork(base, [], 'publishedAt', AT), base, 'no phase sent: the Run is unchanged')
+  const preOnly = stampRunWork(base, ['pre'], 'publishedAt', AT)
+  const down = stampRunWork(preOnly, ['pre', 'post'], 'unpublishedAt', '2099-10-03T10:00:00.000Z')
+  assert.deepEqual([down.work.pre.unpublishedAt, down.work.post.unpublishedAt], ['2099-10-03T10:00:00.000Z', undefined], 'a phase that never went out is not stamped unpublished')
+  const legacy = norm({ ...base, work: undefined, preworkOpens: '2099-10-01T09:00' })
+  assert.equal(legacy.work.pre.fileId, 'legacy-section')
+  assert.equal(stampRunWork(legacy, ['pre'], 'publishedAt', AT), legacy, 'pre-work written in the talk is never stamped')
+}
+
+// Ticket 17 round 3, finding 3: saving the delivery onto a planned Run keeps the folder its link was
+// written to and its unpublished stamp, exactly as it keeps the link; the checklist still reads Unpublished.
+{
+  const { runChecklist } = await import('../src/shared/run-checklist.ts')
+  const { stampRunUnpublished, setRunHandoutUrl } = await import('../src/main/runs.ts')
+  const plain = normaliseRun({ id: 'unpub', talkSlug: 'unpub-talk', talkTitle: 'T', kind: 'delivery', status: 'planned', plannedDate: '2026-10-06', startTime: '10:00', timeZone: 'Europe/London', slideSet: { kind: 'full' }, startedAt: '2026-10-06T00:00:00.000Z' })
+  const before = stampRunUnpublished(setRunHandoutUrl(plain, 'https://talks.test/unpub-run-2/', 'unpub-run-2'), '2026-10-05T12:00:00.000Z')
+  const at = new Date('2026-10-06T12:00:00Z')
+  assert.deepEqual([before.handoutFolder, before.unpublishedAt, runChecklist(before, at).publication], ['unpub-run-2', '2026-10-05T12:00:00.000Z', 'unpublished'])
+  const after = attachDeliveryToPlanned(before, normaliseRun({ id: 'rec', talkSlug: 'unpub-talk', talkTitle: 'T', kind: 'delivery', startedAt: '2026-10-06T10:02:00.000Z', endedAt: '2026-10-06T11:00:00.000Z' }))
+  assert.deepEqual([after.status, after.handoutUrl, after.handoutFolder, after.unpublishedAt, runChecklist(after, at).publication],
+    ['delivered', 'https://talks.test/unpub-run-2/', 'unpub-run-2', '2026-10-05T12:00:00.000Z', 'unpublished'], 'folder and stamp kept; still Unpublished')
+  // A planned Run with neither keeps neither: a delivery's own copies never stand in for them.
+  const bare = attachDeliveryToPlanned(plain, normaliseRun({ id: 'rec', talkSlug: 'unpub-talk', talkTitle: 'T', kind: 'delivery', startedAt: '2026-10-06T10:02:00.000Z', handoutUrl: 'https://talks.test/x/', handoutFolder: 'x', unpublishedAt: '2026-10-05T12:00:00.000Z' }))
+  assert.deepEqual([bare.handoutUrl, bare.handoutFolder, bare.unpublishedAt], [undefined, undefined, undefined])
+}
+
+// Extras for this run (work-files ticket 24): the normaliser on read, the check on write, the one writer.
+{
+  const { normaliseRunExtras, checkRunExtrasInput, extraLinkUrl, extraLinkFromInput, runExtrasSummary, RUN_EXTRAS_LIMITS } = await import('../src/shared/run-extras.ts')
+  const { setRunExtras } = await import('../src/main/runs.ts')
+  const base = { id: 'ex', talkSlug: 'ex-talk', talkTitle: 'T', kind: 'delivery', status: 'planned', plannedDate: '2026-11-04', eventTitle: 'Medical Sciences', slideSet: { kind: 'full' }, startedAt: '2026-11-04T00:00:00.000Z' }
+
+  // Links: http(s) only, canonical, no user name or password; everything else is not a link.
+  assert.equal(extraLinkUrl('https://example.org/a b'), undefined, 'whitespace')
+  assert.equal(extraLinkUrl('https://Example.org/x?q="1"'), 'https://example.org/x?q=%221%22', 'canonical: a quote in the query is encoded, the host lower-cased')
+  assert.equal(extraLinkUrl('https://example.org/<x>'), 'https://example.org/%3Cx%3E', 'canonical form encodes markup in the path')
+  for (const bad of ['javascript:alert(1)', 'JAVASCRIPT:alert(1)', 'data:text/html,<b>x</b>', 'mailto:a@b.c', 'file:///etc/passwd', '//example.org', '/relative', 'https://user:pw@example.org/', 'https://exa\u0000mple.org', `https://example.org/${'a'.repeat(2100)}`, 42, null]) {
+    assert.equal(extraLinkUrl(bad), undefined, `not a link: ${String(bad).slice(0, 40)}`)
+  }
+  assert.equal(extraLinkFromInput('example.org/reading'), 'https://example.org/reading', 'no scheme: https')
+  assert.equal(extraLinkFromInput(' javascript:alert(1) '), undefined)
+  assert.equal(extraLinkFromInput('data:text/html,x'), undefined)
+
+  // Read: whitelisted, bounded, never throws, and never costs the Run its other fields.
+  for (const junk of [undefined, null, 'note', 7, [], { intro: 5, links: 'x' }, { links: [null, 3, 'https://a.test', { url: 'javascript:alert(1)' }] }]) {
+    const run = normaliseRun({ ...base, extras: junk })
+    assert.equal(run.extras, undefined, `junk extras dropped: ${JSON.stringify(junk)}`)
+    assert.deepEqual([run.eventTitle, run.plannedDate, run.status], ['Medical Sciences', '2026-11-04', 'planned'], 'the rest of the Run reads')
+  }
+  const many = Array.from({ length: 14 }, (_, i) => ({ url: `https://example.org/${i}`, label: `Link ${i}`, extra: 'dropped' }))
+  const read = normaliseRun({ ...base, extras: { intro: `  Bring a laptop\r\nand a paper.\u0007${'x'.repeat(1500)}`, links: [{ url: 'javascript:alert(1)', label: 'bad' }, ...many], other: 'dropped' } })
+  assert.equal(Array.from(read.extras.intro).length, RUN_EXTRAS_LIMITS.intro, 'intro capped')
+  assert.ok(read.extras.intro.startsWith('Bring a laptop\nand a paper.x'), 'trimmed, line breaks kept, control characters gone')
+  assert.equal(read.extras.links.length, RUN_EXTRAS_LIMITS.links, 'link count capped')
+  assert.deepEqual(read.extras.links[0], { url: 'https://example.org/0', label: 'Link 0' }, 'a bad link is dropped, unknown keys too')
+  assert.deepEqual(Object.keys(read.extras).sort(), ['intro', 'links'])
+  assert.deepEqual(normaliseRunExtras({ links: [{ url: 'https://example.org', label: ' A\n\tname ' }] }), { links: [{ url: 'https://example.org/', label: 'A name' }] })
+  assert.equal(normaliseRunExtras({ intro: '   ', links: [] }), null, 'empty is none')
+  // An emoji at the cap is never cut in half.
+  const capped = normaliseRunExtras({ intro: `${'a'.repeat(RUN_EXTRAS_LIMITS.intro - 1)}😀😀` })
+  assert.equal(Array.from(capped.intro).length, RUN_EXTRAS_LIMITS.intro)
+  assert.ok(capped.intro.endsWith('😀'))
+
+  // Write: refused in words, never silently dropped.
+  assert.deepEqual(checkRunExtrasInput(null), { ok: true, extras: null })
+  assert.deepEqual(checkRunExtrasInput({ intro: 'Hi', links: [{ url: 'example.org', label: '' }] }), { ok: true, extras: { intro: 'Hi', links: [{ url: 'https://example.org/' }] } })
+  for (const [input, words] of [
+    [{ links: [{ url: 'javascript:alert(1)' }] }, /web address/],
+    [{ links: [{ url: 'data:text/html,<script>' }] }, /web address/],
+    [{ links: [{ url: '' }] }, /web address/],
+    [{ intro: 'x'.repeat(RUN_EXTRAS_LIMITS.intro + 1) }, /too long/],
+    [{ links: [{ url: 'https://a.test', label: 'y'.repeat(RUN_EXTRAS_LIMITS.label + 1) }] }, /too long/],
+    [{ links: Array.from({ length: RUN_EXTRAS_LIMITS.links + 1 }, () => ({ url: 'https://a.test' })) }, /up to 10/],
+    [{ intro: 3 }, /could not be read/],
+    [{ links: 'https://a.test' }, /could not be read/],
+    ['note', /could not be read/],
+  ]) {
+    const checked = checkRunExtrasInput(input)
+    assert.equal(checked.ok, false, JSON.stringify(input).slice(0, 60))
+    assert.match(checked.error, words)
+  }
+  assert.deepEqual([runExtrasSummary(null), runExtrasSummary({ intro: 'x' }), runExtrasSummary({ links: [{ url: 'https://a.test/' }] }), runExtrasSummary({ intro: 'x', links: [{ url: 'https://a.test/' }, { url: 'https://b.test/' }] })],
+    ['none', 'intro note', '1 link', 'intro note · 2 links'])
+
+  // Kept on the Run through the checked writer; other fields untouched; null takes them away and the file
+  // is byte for byte what it was. An unsafe name or a Run that is not there writes nothing.
+  const vault = mkdtempSync(join(tmpdir(), 'tw-run-extras-'))
+  persistRunForTalk(vault, 'ex-talk', 'ex', normaliseRun({ ...base, expectedPeople: 24 }))
+  const file = runPathForTalk(vault, 'ex-talk', 'ex')
+  const before = readFileSync(file, 'utf8')
+  const kept = setRunExtras(vault, 'ex-talk', 'ex', { intro: 'Bring a laptop.', links: [{ url: 'https://example.org/reading', label: 'Reading list' }] })
+  assert.deepEqual(readRunForTalk(vault, 'ex-talk', 'ex').extras, kept.extras)
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).extras, { intro: 'Bring a laptop.', links: [{ url: 'https://example.org/reading', label: 'Reading list' }] })
+  assert.equal(readRunForTalk(vault, 'ex-talk', 'ex').expectedPeople, 24, 'other fields kept')
+  // Delivered from the plan: the extras go with it.
+  assert.deepEqual(attachDeliveryToPlanned(readRunForTalk(vault, 'ex-talk', 'ex'), normaliseRun({ id: 'rec', talkSlug: 'ex-talk', talkTitle: 'T', kind: 'delivery', startedAt: '2026-11-04T10:00:00.000Z' })).extras, kept.extras)
+  setRunExtras(vault, 'ex-talk', 'ex', null)
+  assert.equal(readFileSync(file, 'utf8'), before, 'taken away: the file is as it was')
+  assert.equal(setRunExtras(vault, 'ex-talk', 'missing', { intro: 'x' }), null)
+  assert.equal(setRunExtras(vault, '../ex-talk', 'ex', { intro: 'x' }), null, 'an unsafe talk slug reads no Run')
+}
+
+console.log('runs: planned CRUD, legacy interpretation, attach, slide sets, cover and URLs, DS_Store tolerance, instant slides, image checks, reactions and questions, Run path boundary, plan fields, boards, pre-work, work-file attachments, extras for this run passed')

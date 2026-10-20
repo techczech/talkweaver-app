@@ -72,8 +72,12 @@ const icon = (name, size = 18) => `<svg class="hh-ico" width="${size}" height="$
 const chevron = () => `<svg class="hh-ico hh-chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_PATHS.chevron}</svg>`;
 const STEP_ICONS = { task: "play", slide: "book", check: "question", question: "question" };
 
-/** "Before the session": the form's steps with their minutes, or its one-row summary when it lists none. */
-function preworkCard(prework, href) {
+/**
+ * "Before the session": the form's steps with their minutes, or its one-row summary when it lists none.
+ * Each row opens the Run's pre-work page (`prework.href`, work-files ticket 16), else `href`.
+ */
+function preworkCard(prework, fallbackHref) {
+  const href = workHref(prework.href) || fallbackHref;
   const steps = Array.isArray(prework.steps) ? prework.steps.filter((step) => step && step.label) : [];
   const total = Number(prework.minutes) > 0 ? `<span class="hh-tag">About ${Number(prework.minutes)} min</span>` : "";
   const rows = steps.length
@@ -82,11 +86,57 @@ function preworkCard(prework, href) {
   return `<section class="hh-card hh-list" id="hhPrework" data-hh-for="before"><div class="hh-card-head"><h2>Before the session</h2>${steps.length ? total : ""}</div><div class="hh-rows">${rows}</div></section>`;
 }
 
+/** A link to a Run's work page as the home page writes it: a path on the site or an http(s) address, escaped; '' for anything else. */
+function workHref(value) {
+  const text = String(value || "");
+  if (!text || text.length > 2000) return "";
+  if (!/^https?:\/\/[^\s"'<>\\]+$/i.test(text) && !/^(?:\.\.?\/)?[a-z0-9][a-z0-9-]*\/?$/i.test(text)) return "";
+  return escapeHtml(text);
+}
+
+/** "After the session": the Run's post-work page (work-files ticket 16), shown with the handout once the talk is given. */
+function postworkCard(postwork) {
+  const href = workHref(postwork.href);
+  if (!href) return "";
+  const label = String(postwork.label || "").trim() || "Post-work";
+  return `<section class="hh-card hh-list" id="hhPostwork" data-hh-for="handout"><div class="hh-card-head"><h2>After the session</h2></div><div class="hh-rows"><a class="hh-row" href="${href}">${icon("play")}<span class="hh-row-text">${escapeHtml(label)}</span>${chevron()}</a></div></section>`;
+}
+
+/** A Run's extra link as the home page writes it: an http(s) address, escaped; '' for anything else (javascript:, data:, a path). */
+function extraHref(value) {
+  const text = String(value || "");
+  if (!text || text.length > 2048 || !/^https?:\/\/[^\s"<>\\`\u0000-\u001f\u007f]+$/i.test(text)) return "";
+  return escapeHtml(text);
+}
+
+/**
+ * "For this session": a Run's extras (work-files ticket 24) — its intro note and extra links, shown before
+ * and after the talk. Only a Run's home page is given `extras`; without them nothing is drawn.
+ */
+function extrasCard(extras) {
+  if (!extras || typeof extras !== "object") return "";
+  const intro = typeof extras.intro === "string" ? extras.intro.trim().slice(0, 2000) : "";
+  const links = (Array.isArray(extras.links) ? extras.links : []).slice(0, 20).map((link) => {
+    const href = extraHref(link && link.url);
+    if (!href) return "";
+    let host = "";
+    try { host = new URL(link.url).host.replace(/^www\./, ""); } catch { return ""; }
+    const label = typeof link.label === "string" && link.label.trim() ? link.label.trim() : host;
+    return `<a class="hh-row" href="${href}" target="_blank" rel="noopener noreferrer">${icon("link")}<span class="hh-row-text">${escapeHtml(label)}</span>${chevron()}</a>`;
+  }).filter(Boolean);
+  if (!intro && !links.length) return "";
+  const note = intro ? `<p class="hh-note">${intro.split("\n").map((line) => escapeHtml(line)).join("<br>")}</p>` : "";
+  return `<section class="hh-card${links.length ? " hh-list" : ""}" id="hhExtras" data-hh-for="before handout"><h2>For this session</h2>${note}${links.length ? `<div class="hh-rows">${links.join("")}</div>` : ""}</section>`;
+}
+
 /**
  * home: { slidesHref, slidesFile?, downloadFile? (the NAME of the self-contained file Download saves, linked
  *   with pageLink; else downloadHref, a ready link; default slidesHref), url, qr,
  *   day?, date?, startTime?, event?, author?, subtitle?, affiliation? (handoutHomeDetails),
- *   prework?: { label, detail, minutes?, steps?: [{ label, minutes, kind }] } | null, links? }
+ *   prework?: { label, detail, minutes?, steps?: [{ label, minutes, kind }], href? } | null,
+ *   postwork?: { href, label? } | null (the Run's work pages, ticket 16: `href` a path on the site such as
+ *   `pre-work/`, or an http(s) address), links?,
+ *   extras?: { intro?, links?: [{ url, label? }] } | null (a Run's extras, ticket 24) }
  * One page, three layouts. Every element that belongs to some layouts only carries data-hh-for with their
  * names; the run-time module shows the ones for the layout the page is in. The page's live parts (stage,
  * poll card, board, reaction bar) are moved into #hhStageSlot / #hhCoverSlot and #hhLiveCol at run time.
@@ -126,7 +176,7 @@ export function handoutHomeMarkup(home, { title, slideCount, firstSlideId = "" }
     <p class="hh-chip hh-livenow" data-hh-for="live" hidden><span class="hh-dot" aria-hidden="true"></span>Live now</p>
     <div class="hh-band-actions" data-hh-for="before" hidden>
       ${prework ? `<p class="hh-label">Get ready</p>` : ""}
-      ${prework ? `<a class="hh-btn primary" id="hhStartPrework" href="${href}">${icon("play")}Start the pre-work</a>` : slidesButton}
+      ${prework ? `<a class="hh-btn primary" id="hhStartPrework" href="${workHref(prework.href) || href}">${icon("play")}Start the pre-work</a>` : slidesButton}
     </div>
     <div class="hh-band-actions" data-hh-for="handout">
       ${slidesButton}
@@ -155,12 +205,13 @@ export function handoutHomeMarkup(home, { title, slideCount, firstSlideId = "" }
 </section>
 <div class="hh-cols" id="hhPage">
   <div class="hh-col hh-main">
-    <section class="hh-card" id="hhAbout" data-hh-for="before" hidden><h2>About this talk</h2><p class="hh-facts"><span>${icon("slides", 16)}${slidesWords}</span></p></section>
+    ${extrasCard(home.extras)}
     <section class="hh-card hh-cover" id="hhCover" data-hh-for="handout" aria-label="The slides"><div class="hh-slide" id="hhCoverSlot"></div><div class="hh-cover-row"><span>${slidesWords}</span><a class="hh-pill" href="${startHref}">${icon("play", 16)}Start from slide 1</a></div></section>
     ${links.length ? `<section class="hh-card hh-list" id="hhLinks" data-hh-for="handout"><h2>Links mentioned</h2><div class="hh-rows">${links.map((link) => `<a class="hh-row" href="${escapeHtml(link.href)}" target="_blank" rel="noopener noreferrer">${icon("link")}<span class="hh-row-text">${link.labelHtml}</span>${chevron()}</a>`).join("")}</div></section>` : ""}
   </div>
   <div class="hh-col hh-side">
     ${prework ? preworkCard(prework, href) : ""}
+    ${home.postwork ? postworkCard(home.postwork) : ""}
     <section class="hh-card hh-list" id="hhSession" hidden><h2>From your session</h2><div class="hh-rows">${sessionRow("notes", "pencil", "Your notes")}${sessionRow("bookmarks", "bookmark", "Bookmarked slides")}${sessionRow("questions", "question", "Your questions")}</div></section>
     <a class="hh-btn" id="hhDownload" data-hh-for="handout" href="${escapeHtml((home.downloadFile ? pageLink(home.downloadFile) : home.downloadHref) || home.slidesHref || "")}" download="${escapeHtml(home.slidesFile || home.slidesHref || "")}">${icon("download")}Download slides</a>
     ${share}

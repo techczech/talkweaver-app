@@ -6245,6 +6245,10 @@
   .slide:has(> .slide-content.layout-timeline) > .slide-content.layout-timeline {
     min-height: 0;
     height: 100%;
+    /* The slide's own padding above reserves the footer band and the air under the track, so the
+       shared content band (skin/slide-foundations.css) adds nothing more. */
+    --band-footer: 0px;
+    --band-air: 0px;
   }
   /* Timeline only: the gap under the title rule is at least 2.4cqw (ticket 09, ADR-0033 §8). The shared compact
      title spacing (stage.css @order 1368/1680, 2.2cqh) is unchanged for every other layout. */
@@ -6889,6 +6893,9 @@ body:not(.audience-mode) figure.slide-embed[data-embed="local"][data-embed-stopp
   /* Plain bold in ink: not the accent colour of quote bold, not the statement layout's box. */
   .slide-content blockquote.practice-quote strong { color: inherit; font-weight: 700; background: none; padding: 0; border-radius: 0; }
 
+  /* Cards keep no gap under a plain top title; the shared content band (skin/slide-foundations.css)
+     mirrors that under the cards, so they centre between the title and the footer band. */
+  .slide[data-title-layout="top"]:not([data-title-look]) > .slide-content.layout-cards { --band-air: 0px; }
   /* Cards cap their height to the stage and scroll INTERNALLY when content still overflows
      after the dense step — so a long quote is always fully reachable, never silently clipped.
      A bottom gradient fade (the ::after, shown only while .is-scrollable) signals "more below". */
@@ -10211,9 +10218,17 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
   font-size: 2.3cqw !important; display: inline-block !important; border: 0 !important; padding: 0 !important; margin: 0 !important;
   grid-template-columns: none !important; white-space: nowrap;
 }
+/* The separator is the LEADING mark of every item after the first, never the trailing mark of the one before:
+   an item is nowrap, so its separator travels with it when the run wraps and can never end a line. */
+.slide-content > .feature-list.fl-narrow-cols > li > .fl-sublist > li::after { display: none !important; content: none !important; }
 .slide-content > .feature-list.fl-narrow-cols > li > .fl-sublist > li::before { display: none !important; content: none !important; }
-.slide-content > .feature-list.fl-narrow-cols > li > .fl-sublist > li:not(:last-child)::after { content: "·"; margin: 0 .55em; color: var(--muted); display: inline; }
+.slide-content > .feature-list.fl-narrow-cols > li > .fl-sublist > li:not(:first-child)::before { content: "·" !important; margin: 0 .55em; color: var(--muted); display: inline !important; position: static; }
 .slide-content > .feature-list.fl-narrow-cols > li > .fl-sublist > li > .fl-subtext { grid-column: auto; display: inline; }
+
+/* Members too long to share one line stack, one per line, with no separator (a separator can never end or start a line). */
+.slide-content > .feature-list.fl-narrow-cols.fl-subs-stack > li > .fl-sublist { flex-direction: column; flex-wrap: nowrap; }
+.slide-content > .feature-list.fl-narrow-cols.fl-subs-stack > li > .fl-sublist > li { white-space: normal; }
+.slide-content > .feature-list.fl-narrow-cols.fl-subs-stack > li > .fl-sublist > li:not(:first-child)::before { content: none !important; display: none !important; }
 
   .qf {
     --qf-ui: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -10342,6 +10357,110 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
     .qf-static.is-dark .book-generated .qf-panel, .is-dark .qf-static .book-generated .qf-panel, .qf-static.is-dark .qf-cover-whole .qf-panel, .is-dark .qf-static .qf-cover-whole .qf-panel { background: #efe6d3; }
     .qf-static.is-dark .qf-cover-pub, .is-dark .qf-static .qf-cover-pub { color: #3b434c; }
   }
+/* Shared slide-design foundations (ADR-0039, 0.41 ticket 01). Three things every layout builds on; the
+   layout tickets use them, no layout depends on them yet. Values carried over from the locked drawings
+   (docs/design/2026-10-16-slide-scene-formatting/after/_slide.css).
+
+   1. CONTENT BAND. The content block of a top-title slide is centred vertically in the space it owns:
+      between the lower edge of the title block and the top of the footer band (61px above the stage
+      bottom, the reservation table/media/code already make), with equal air above and below it.
+        --band-footer  what the slide's own bottom padding does not already clear of the footer band
+        --band-air     the least air between the title block and the content; mirrored under the
+                       content, so the free space splits evenly and the block sits mid-band.
+                       Plain top title: 2.2cqh (the shared head gap). Title looks (kicker, label, tab):
+                       their clear band, --titlelook-clear (8cqh), which title-look.css already puts
+                       under the title.
+      A top-regime slide with no painted title (a quiet nav-only head, or no head) owns the whole slide:
+      no title-look padding, no head gap, the same reserve top and bottom, so the block centres on the
+      slide. The left rail (stage.css) and the hidden regime already centre their column on the slide.
+      The block's own children keep `flex: 0 1 auto` (stage.css): panels and cards take their content
+      height, they are not stretched to fill the band. Layouts that already reserve the band their own
+      way (table, timeline, media, code, slot) keep their rules under the plain title: they are the
+      same equal-air rule with their own gap. Under a title look their bottom mirrors the clear band
+      (--band-footer + --band-air), as every other layout's does. Exception: a `{contents=strip}` host (`.ct-strip-host`) keeps base.css's 13cqh filmstrip reserve.
+
+   2. SUBTLE BOX. A box around text is never a heavy accent outline: 2px (at 1920) outline mixed 34%
+      accent into white, a 5% accent fill.
+        .subtle-box                 on any element; the hue is --box-hue, the section accent by default
+        .subtle-box.hue-2 / .hue-3  the box in the second or third hue (below)
+        .subtle-box.subtle-box-neutral   a grey box (2.5% ink fill) for a panel that carries no hue
+        --subtle-box-line, --subtle-box-border, --subtle-box-fill   the same values in the section
+                                    accent, for a layout that draws the box on its own element
+
+   3. EXTRA HUES. ADR-0039 amends ADR-0005's one-accent rule: a slide may colour its second and third
+      element in the next two hues of the deck palette's section cycle after its accent (cobalt ->
+      emerald, vermilion; emerald -> vermilion, cobalt; vermilion -> cobalt, emerald; green palette:
+      forest -> vermilion, cobalt). The compiler stamps them per slide as --sec-hue-2/--sec-hue-3 and
+      their tints (07-assembly.mjs, extraHuesForAccent in 02-triggers-layout.mjs); read them as
+        --hue-1 / --hue-1-tint      the section accent and tint (the same as --accent / --tint)
+        --hue-2 / --hue-2-tint      the second hue
+        --hue-3 / --hue-3-tint      the third hue
+      Green and red keep their right/wrong meaning through --green / --red; these hues never stand
+      for right or wrong.
+
+   Unmarked blocks: they sort after every migrated block (README.md), and before title-look.css, whose
+   rules win where both apply. Declared on .slide so they resolve against the slide's inline stamp
+   (the reason base.css re-declares --tint there). */
+
+.slide {
+  --hue-1: var(--accent);
+  --hue-1-tint: var(--tint);
+  --hue-2: var(--sec-hue-2, #0a7a5c);
+  --hue-2-tint: var(--sec-hue-2-tint, #e4f3ee);
+  --hue-3: var(--sec-hue-3, #c2410c);
+  --hue-3-tint: var(--sec-hue-3-tint, #fcece3);
+  --subtle-box-line: max(1px, .105cqw);
+  --subtle-box-border: color-mix(in srgb, var(--accent) 34%, #fff);
+  --subtle-box-fill: color-mix(in srgb, var(--accent) 5%, #fff);
+}
+
+/* ---- 2. Subtle box ---- */
+.slide .subtle-box {
+  border: var(--subtle-box-line) solid color-mix(in srgb, var(--box-hue, var(--accent)) 34%, #fff);
+  background: color-mix(in srgb, var(--box-hue, var(--accent)) 5%, #fff);
+}
+.slide .subtle-box.hue-2 { --box-hue: var(--hue-2); }
+.slide .subtle-box.hue-3 { --box-hue: var(--hue-3); }
+.slide .subtle-box.subtle-box-neutral {
+  border-color: rgb(16 20 24 / .26);
+  background: color-mix(in srgb, var(--ink) 2.5%, #fff);
+}
+
+/* ---- 1. Content band (top title regime) ---- */
+.slide[data-title-layout="top"] {
+  --band-footer: max(0px, calc(61px - var(--slide-pad-y)));
+  --band-air: 2.2cqh;
+}
+.slide[data-title-layout="top"][data-title-look] { --band-air: var(--titlelook-clear); }
+/* The air under the content mirrors the air over it, above the footer band. :where keeps this at the
+   specificity of the shared top-regime rules, so a layout's own reservation still wins. */
+.slide[data-title-layout="top"]:where(:not(.ct-strip-host)) > .slide-content:where(:not(.layout-title, .layout-section-title)) {
+  padding-bottom: calc(var(--band-footer) + var(--band-air));
+}
+/* :where keeps the head gap at the shared rule's specificity: a layout's own head gap (table, timeline,
+   media, code, cards) still wins. */
+.slide[data-title-layout="top"] > .slide-content > .slide-head:where(:not(.slide-head-quiet)) { margin-bottom: var(--band-air) !important; }
+
+/* Under a title look the gap over the content is always the look's clear band (title-look.css zeroes
+   every layout's own head gap), so the layouts that reserve their bottom their own way (table, media,
+   code, slot, timeline) mirror that band instead of their own gap: the footer band plus --band-air.
+   Under the plain title their own rules stand unchanged. */
+.slide[data-title-layout="top"][data-title-look] > .slide-content:is(:has(> .slide-table), .layout-media, .layout-code, :has(> .slot)) {
+  padding-bottom: calc(var(--band-footer) + var(--band-air));
+}
+/* The timeline reserves its band on the slide (layouts/timeline.css): the slide margin plus what it
+   does not clear of the footer band, plus the clear band. */
+.slide[data-title-layout="top"][data-title-look]:has(> .slide-content.layout-timeline) {
+  padding-bottom: calc(var(--slide-pad-y) + var(--band-footer) + var(--band-air));
+}
+
+/* No painted title: the block owns the whole slide and centres on it. */
+.slide[data-title-layout="top"]:not(:has(> .slide-content > .slide-head:not(.slide-head-quiet))) {
+  --band-air: 0px;
+  padding-top: calc(var(--slide-pad-y) + var(--band-footer)) !important;
+}
+.slide[data-title-layout="top"] > .slide-content > .slide-head.slide-head-quiet { margin-bottom: 0 !important; }
+.slide[data-title-layout="top"] > .slide-content > :first-child:not(.slide-head) { margin-top: auto; }
 
 
 
@@ -10648,7 +10767,7 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
      current unit; at the all-full last step the LAST stop is hot and its detail shows; a slide
      without reveal opens on the first event (mockup .tl-dyn opens on e1). */
 /* Title looks: Kicker, Label and Tab on the TOP title regime, all sitting against the slide edge.
-   The compiler stamps data-title-look="kicker|label|tab" beside data-title-layout="top" (07-assembly,
+   The compiler stamps data-title-look="kicker|label|tab|tab-strip" beside data-title-layout="top" (07-assembly,
    from title-look.mjs: slide > section > deck), plus data-title-look-tone="soft" on a soft Tab (strong
    stamps nothing). Not data-title-style: that is the retired sidebar stamp, and `title_style` is the
    opening poster variant. Locked design 2026-10-13 (slide redesign, 0.39).
@@ -10657,7 +10776,11 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
    becomes top + style height + clear band (--titlelook-clear, 8cqh = 86px at 1080). The head stays in
    the flow as a zero-height box, so the fit pass (slide-fit.js fitLists) does not count the style as
    body and the body type is not shrunk. Unmarked block: sorts after every migrated rule, so it wins
-   the shared top-title rules. */
+   the shared top-title rules.
+
+   0.41 ticket 02 (ADR-0039): the index tab is the look of every talk that names none, so these rules
+   now reach most top-title slides. The compiler stamps intro-then-none as no look at all (the head is
+   nav-only after the section card), so nothing here applies to it. */
 
 /* shared values (each look overrides what differs) */
 .slide[data-title-layout="top"][data-title-look] {
@@ -10670,6 +10793,13 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
 /* shared mechanics */
 .slide[data-title-layout="top"][data-title-look] { padding-top: calc(var(--titlelook-top) + var(--titlelook-height) + var(--titlelook-clear)) !important; }
 .slide[data-title-layout="top"][data-title-look] > .slide-content:not(.layout-title):not(.layout-section-title) { min-height: 100% !important; padding-top: 0 !important; }
+/* Media and code own a fixed band (86cqh, media.css / trace.css) measured from the plain title's
+   slide padding; under a look the slide's top padding is taller, so the band is the slide's own
+   content height instead, or it would run past the stage bottom (0.41 ticket 02, once the index tab
+   became the default). */
+.slide[data-title-layout="top"][data-title-look] > .slide-content:is(.layout-media, .layout-code) {
+  height: calc(100cqh - var(--titlelook-top) - var(--titlelook-height) - var(--titlelook-clear) - var(--slide-pad-y)) !important;
+}
 .slide[data-title-layout="top"][data-title-look] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) {
   /* zero-height in-flow box: the fit pass skips children with no height */
   height: 0 !important; margin: 0 !important; padding: 0 !important; border: 0 !important; box-shadow: none !important; width: auto !important; align-self: flex-start !important;
@@ -10755,6 +10885,1705 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
   mask: linear-gradient(#000 0 0) left top / calc(100% - var(--tab-cap-w) + 1px) 100% no-repeat, var(--tab-cap-shape) right top / var(--tab-cap-w) 100% no-repeat;
 }
 
+/* Tab strip (0.41 ticket 03, ADR-0039): across the top, a row of pills naming the slides of the
+   current section, the current slide's pill filled in the section colour and the rest outlined. The
+   compiler draws the pills (.title-strip, beside the h1 in the head; title-look.mjs sectionStrip cuts
+   a long section to the pills around the current one). The h1 stays the slide's title for navigation
+   and screen readers, hidden here. Values from the locked drawing (after/_slide.css, mode-tab) at
+   1920x1080: strip 44px below the top edge, pills 24px mono uppercase bold, .1em tracking, 10px x 24px
+   padding, 2px outline, 14px apart; here in em of the pill size so they scale with the stage.
+   One line always: the outlined pills shrink and cut their titles with an ellipsis before the
+   current pill gives way, and the row clips anything left over. */
+.slide[data-title-layout="top"][data-title-look="tab-strip"] {
+  --titlelook-size: 1.25cqw;           /* 24px at 1920 */
+  --titlelook-line: 1.2;
+  --titlelook-pad-y: .5;               /* em: 10px padding + 2px outline above and below; pill height 2.2em (53px) */
+  --titlelook-weight: 700;
+  --titlelook-font: var(--mono);
+  --titlelook-fill: transparent;
+  --titlelook-ink: var(--muted);
+  --titlelook-top: 4.07cqh;            /* 44px at 1080 */
+  --titlelook-pad-left: 0px;
+  --titlelook-pad-right: 0px;
+}
+.slide[data-title-layout="top"][data-title-look="tab-strip"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1 {
+  /* the pills name the slide; the h1 is kept for the outline and screen readers only */
+  width: 1px !important; height: 1px !important; max-width: none !important; padding: 0 !important; overflow: hidden !important;
+  clip-path: inset(50%) !important; white-space: nowrap !important;
+}
+.slide[data-title-layout="top"][data-title-look="tab-strip"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > .title-strip {
+  position: absolute; top: var(--titlelook-top); left: var(--slide-pad-x); right: var(--slide-pad-x);
+  display: flex; flex-wrap: nowrap; align-items: center; gap: .583em; overflow: hidden;
+  margin: 0; padding: 0; font-family: var(--mono); font-size: var(--titlelook-size); line-height: var(--titlelook-line);
+}
+.slide[data-title-look="tab-strip"] .title-strip-pill {
+  flex: 0 1 auto; min-width: 4em; box-sizing: border-box;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+  padding: .417em 1em; border: .083em solid rgb(16 20 24 / .18); border-radius: 999px;
+  color: var(--muted); background: transparent;
+}
+.slide[data-title-look="tab-strip"] .title-strip-pill.is-current {
+  flex-shrink: 0; max-width: 60%;
+  background: var(--accent); border-color: var(--accent); color: #fff;
+}
+
+/* Print: a CSS filter makes Chromium paint the element as a picture in a PDF, so the tab's shadow
+   would turn the title into an image with no text to select or search (the handout print test reads
+   each page's text). The printed tab keeps its shape and colour and drops the thin shadow. */
+@media print {
+  .slide[data-title-layout="top"][data-title-look="tab"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1 { filter: none; }
+}
+
+/* Cards adopt the animated-scene drawing (ADR-0039, 0.41 ticket 09).
+   Values from docs/design/2026-10-16-slide-scene-formatting/after/14-cards.html and 14-cards-long.html
+   (drawn at 1920 x 1080, written here in cqw = px / 19.2). Unmarked block: it sorts after every migrated block and,
+   by its `zz-` name, after layouts/cards.css, skin/cards.css and skin/list.css, so it wins where it meets their rules.
+
+   Each card is a subtle box in one hue. Its title row is a tinted icon chip and the title (regular weight, ink) over a
+   thin rule in the card's hue; under it the points are highlight rows (a tint of the hue, no bullets). The only icon is
+   the chip's. Card height follows the content; cards align at the top. Hues: the section accent, then the next two of the
+   deck palette (--hue-2, --hue-3), then the cycle again.
+
+   Two forms draw it, one look:
+     `{cards}`                          `.card-gallery.card-grid .card.card-points` (the compiler stamps card-points on a
+                                        card of plain points; a card with a picture, a quote, a paragraph, label groups
+                                        or no points at all (a claim) keeps its own look)
+     icon / numbered list, box form     `.feature-list.fl-cards > li`; `.fl-card-pts` marks a card with points
+   Reveal: a card arrives with its first point and each point is its own beat (MODE_SELECTOR leaves `.fl-card-pts` out
+   and steps `.fl-sublist > li`; a `{cards}` card's points are `.feature-list > li`). The newest point is tinted deeper.
+   Type rides --fs-body (title .619em, points .651em = 38px and 40px at 1920) so the runtime fit still steps spacing
+   before type; the type floor holds. */
+
+/* ---------- shared: the card box and its hue ---------- */
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points,
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li {
+  --c: var(--accent);
+  --card-pad-x: 1.5625cqw;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto;
+  align-content: start;
+  align-items: center;
+  justify-content: stretch;
+  column-gap: 1.1458cqw;
+  row-gap: 0;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+  margin: 0;
+  padding: 1.5625cqw var(--card-pad-x) 1.3542cqw;
+  border: var(--subtle-box-line) solid color-mix(in srgb, var(--c) 34%, #fff);
+  border-radius: 1.0417cqw;
+  background: color-mix(in srgb, var(--c) 5%, #fff);
+  box-shadow: none;
+  font-size: var(--fs-body);
+  font-weight: 400;
+  line-height: 1.2;
+  color: var(--ink);
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: none;
+}
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points:nth-child(3n + 2),
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li:nth-child(3n + 2) { --c: var(--hue-2); }
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points:nth-child(3n + 3),
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li:nth-child(3n + 3) { --c: var(--hue-3); }
+
+/* The card sits on the block's own height: no legacy filler, no scroll fade. */
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points::after { grid-column: 1 / -1; }
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points.is-scrollable::after { display: none; }
+
+/* ---------- shared: the title row (chip + title) over the rule ---------- */
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points > .card-icon,
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li > .fl-icon {
+  grid-column: 1;
+  grid-row: 1;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: 3.5417cqw;
+  height: 3.5417cqw;
+  margin: 0 0 1.0417cqw .2083cqw;
+  padding: 0;
+  border: 0;
+  border-radius: .9375cqw;
+  background: color-mix(in srgb, var(--c) 14%, #fff);
+  color: var(--c);
+}
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points > .card-icon > svg,
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li > .fl-icon > svg {
+  width: 1.9792cqw;
+  height: 1.9792cqw;
+  color: var(--c);
+  stroke-width: 1.5;
+}
+/* A numbered card puts its number in the chip: a mono numeral in the card's hue. */
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li > .fl-icon.fl-num {
+  font-family: var(--mono);
+  font-size: max(var(--type-floor), 1.9792cqw);
+  font-weight: 400;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points > h4,
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li > .fl-text {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+  margin: 0 0 1.0417cqw;
+  padding: 0 .2083cqw 0 0;
+  font-family: inherit;
+  font-size: max(var(--type-floor), .619em);
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: 0;
+  color: var(--ink);
+}
+/* No chip: the title takes the row. */
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points:not(:has(> .card-icon)) > h4 {
+  grid-column: 1 / -1;
+  padding-left: .2083cqw;
+}
+/* The rule under the title row, in the card's hue (a card with points only). */
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points:has(> .feature-list)::before,
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li.fl-card-pts::before {
+  content: "";
+  display: block;
+  grid-column: 1 / -1;
+  grid-row: 2;
+  height: max(1px, .1042cqw);
+  background: color-mix(in srgb, var(--c) 45%, #fff);
+}
+/* A box card with no points (the item itself is the title) has no rule to clear. */
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li:not(.fl-card-pts) > .fl-text,
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li:not(.fl-card-pts) > .fl-icon { margin-bottom: 0; }
+
+/* ---------- shared: the points (highlight rows, no bullets) ---------- */
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points > .feature-list,
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li > .fl-sublist {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: calc(.625cqw * var(--list-gap, 1));
+  margin: 1.0417cqw 0 0;
+  padding: 0;
+  width: auto;
+  max-width: none;
+  align-self: stretch;
+}
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points > .feature-list > li,
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li > .fl-sublist > li {
+  display: block;
+  margin: 0;
+  padding: calc(.8333cqw * var(--list-gap, 1)) 1.1458cqw;
+  border: 0;
+  border-radius: .5208cqw;
+  background: color-mix(in srgb, var(--c) 11%, #fff);
+  font-size: max(var(--type-floor), .651em);
+  font-weight: 400;
+  line-height: 1.2;
+  color: var(--ink);
+  min-height: 0;
+  transition: background-color 220ms ease;
+}
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points > .feature-list > li::before,
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points > .feature-list > li::after,
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li > .fl-sublist > li::before,
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li > .fl-sublist > li::after { content: none; display: none; }
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li > .fl-sublist > li > .fl-subtext { display: inline; grid-column: auto; }
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points > .feature-list > li > .fl-text { font-size: inherit; font-weight: 400; }
+/* A card's own text (box form without points): the item itself is the title. */
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li > .fl-sublist > li > .fl-icon,
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li > .fl-sublist > li > .fl-sub-icon { display: none; }
+
+/* ---------- the block: cards side by side, aligned at the top, sized to their content ---------- */
+.slide .card-gallery.card-grid:not(.cards-rows):has(> .card.card-points),
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22cqw), 1fr));
+  gap: 2.0833cqw;
+  align-items: start;
+  align-content: center;
+  width: 100%;
+  max-width: none;
+  min-height: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+.slide .slide-content.layout-cards .card-gallery.card-grid:not(.cards-rows):has(> .card.card-points) { min-height: 0; margin-top: 0; }
+/* Beside the title column the list has about 55cqw: three cards still sit in a row. */
+.slide[data-title-layout="left"] .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) { grid-template-columns: repeat(auto-fit, minmax(min(100%, 15cqw), 1fr)); gap: 1.4cqw; }
+
+/* ---------- reveal: a card arrives with its first point; the newest point is tinted deeper ---------- */
+.slide.mode-active .card-gallery.card-grid > .card.card-points,
+.slide.mode-active .feature-list.fl-cards > li.fl-card-pts { transition: opacity 220ms ease; }
+.slide.mode-reveal .card-gallery.card-grid > .card.card-points:has(> .feature-list > li:first-child[data-mode-state="hidden"]),
+.slide.mode-reveal .feature-list.fl-cards > li.fl-card-pts:has(> .fl-sublist > li:first-child[data-mode-state="hidden"]) {
+  opacity: 0;
+  visibility: hidden;
+}
+.slide.mode-active .card-gallery.card-grid > .card.card-points > .feature-list > li.mode-el[data-mode-state="current"],
+.slide.mode-active .feature-list.fl-cards > li > .fl-sublist > li.mode-el[data-mode-state="current"] {
+  background: color-mix(in srgb, var(--c) 24%, #fff);
+}
+/* Image with claims adopts the scene drawing; chat, code and the image grid keep TalkWeaver's own designs
+   (ADR-0039, 0.41 ticket 12). Values from docs/design/2026-10-16-slide-scene-formatting/after/21-image-claim.html
+   (drawn at 1920 x 1080, written here in cqw = px / 19.2). Unmarked block: it sorts after every migrated block, so
+   it wins where it meets layouts/media.css (@order 1995) and base.css.
+
+   Chat (the full chatbot mock of layouts/simulation.css), code (the dark panel and labelled transcript) and the
+   image grid (the screenshot row) take no rule here: they take the shared rules (skin/slide-foundations.css
+   centres the block in the band under the title; ticket 02's title look applies to code and the grid). The
+   cascade drawing for chat (renders/after/19-chat.png) is rejected and is not built.
+
+   Image with claims. The picture on the left (a rounded box with a hairline), the claims on the right as subtle
+   boxes with regular text, the block centred in the band. Each claim carries a link (.ic-link) from the box's
+   outer left border to the picture's outer right border: the link is an element whose width IS the gap between
+   the two, so its shaft starts on the box's border and the head's tip lands on the picture's border; the head
+   is whole. A claim level with the picture keeps this horizontal link. A claim whose mid-height lies above or
+   below the picture is angled by the slide fit pass (runtime/slide-fit.js linkClaims): it sets --ic-angle (a
+   rotation about the box-side end) and --ic-stretch (length over the gap), so the tip lands on the picture's
+   border at clamp(picture top + --ic-reach, box mid, picture bottom - --ic-reach). With no script the link stays
+   horizontal (three claims at this size are 452 of the picture's 548 at 1920, so the drawing needs no angle). */
+
+.slide .slide-content.layout-image-claim > .evidence-layout {
+  --ic-gap: 6.7708cqw;
+  --ic-reach: 1.25cqw;
+  display: flex;
+  align-items: center;
+  gap: var(--ic-gap);
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+/* The picture: at most 1000 of the band's 1680 at 1920, never larger than its own pixels (media.css's
+   never-upscale contract) and never taller than 56cqh. The figure shrinks to the picture, so its border box IS the
+   picture's edge, which is where the links end. */
+.slide .evidence-layout > figure.slide-figure {
+  flex: 0 1 auto;
+  width: fit-content;
+  min-width: 0;
+  box-sizing: border-box;
+  display: block;
+  overflow: hidden;
+  border: .1042cqw solid var(--hairline);
+  border-radius: .9375cqw;
+  background: #fff;
+}
+.slide .evidence-layout > figure.slide-figure img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 52.0833cqw;
+  max-height: 56cqh;
+  object-fit: contain;
+}
+.slide .evidence-layout > .callouts {
+  flex: 1 1 0;
+  min-width: 0;
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  gap: 2.3958cqw;
+}
+/* A claim: a subtle box, regular text. */
+.slide .evidence-layout > .callouts > li.subtle-box {
+  position: relative;
+  box-sizing: border-box;
+  min-height: 6.25cqw;
+  display: flex;
+  align-items: center;
+  padding: .8333cqw 1.6667cqw;
+  border-radius: .8333cqw;
+  font-size: max(var(--type-floor), 2.2917cqw);
+  line-height: 1.18;
+  font-weight: 400;
+}
+/* Four or more claims: tighter boxes and gaps, so the column stays inside the picture's height and every link
+   still meets the picture (the drawing has three). */
+.slide .evidence-layout > .callouts:has(> li:nth-child(4)) { gap: 1.25cqw; }
+.slide .evidence-layout > .callouts:has(> li:nth-child(4)) > li.subtle-box { min-height: 4.6875cqw; padding-block: .4167cqw; }
+/* The link: right edge on the box's outer left border, left edge (the head's tip) on the picture's outer right border.
+   --ic-angle and --ic-stretch (set per link by the runtime) turn it about its right end and lengthen it to reach. */
+.slide .evidence-layout > .callouts > li > .ic-link {
+  position: absolute;
+  top: 50%;
+  right: calc(100% + var(--subtle-box-line));
+  width: calc(var(--ic-gap) * var(--ic-stretch, 1));
+  height: .8333cqw;
+  transform: translateY(-50%) rotate(var(--ic-angle, 0deg));
+  transform-origin: 100% 50%;
+  pointer-events: none;
+  background: linear-gradient(var(--accent), var(--accent)) center / 100% .2083cqw no-repeat;
+}
+.slide .evidence-layout > .callouts > li > .ic-link > svg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1.0417cqw;
+  height: 100%;
+  overflow: visible;
+  fill: var(--accent);
+}
+/* A narrow slide (a phone) stacks the pair; a link has no meaning there. */
+@container (max-width: 950px) {
+  .slide .slide-content.layout-image-claim > .evidence-layout { flex-direction: column; gap: 18px; }
+  .slide .evidence-layout > figure.slide-figure { flex: none; width: auto; max-width: 100%; }
+  .slide .evidence-layout > figure.slide-figure img { max-width: 100%; }
+  .slide .evidence-layout > .callouts { flex: none; width: 100%; }
+  .slide .evidence-layout > .callouts > li > .ic-link { display: none; }
+}
+/* Compare and contrast adopt the animated-scene drawing (ADR-0039, 0.41 ticket 08).
+   Values from docs/design/2026-10-16-slide-scene-formatting/after/_vs.css, 12-compare*.html and 13-contrast*.html
+   (drawn at 1920 x 1080, written here in cqw = px / 19.2). Unmarked block: it sorts after every migrated block and,
+   by its `zz-` name, after layouts/contrast.css, so it wins where it meets that file's compare and contrast rules.
+
+   Two subtle panels side by side and a dark "vs" disc between them. Panel heads are regular, in the panel's hue
+   over a rule (the section accent on the left, the deck palette's next hue, --hue-2, on the right); a head that
+   names an app carries that app's logo. Rows are regular weight, each with one icon in the panel's hue, and the
+   rows of the two panels share heights: a row that wraps keeps its partner level.
+     compare   `.compare-grid.vs-grid`: one grid; each panel is a subgrid over the head and row tracks, so the
+               panel is sized to its content and half B stays the one reveal beat (.layout-compare .compare-half.half-b).
+     contrast  `.contrast-grid.contrast-vs`: one grid; the panels are two background boxes behind the rows; each
+               `.contrast-pair` is a subgrid row holding the left and right cell, so both sides of a row arrive
+               together (`.contrast-grid > .contrast-pair`) and share a height.
+   --vs-pad is the drawing's air inside the panel above its head and under its last row. A long state (five rows a
+   side, or a long row) steps the text down from 48px to 42px. */
+
+.slide .vs-grid {
+  --vs-pad: 1.3542cqw;
+  --vs-gap: 5.4167cqw;
+  --vs-type: max(var(--type-floor), 2.5cqw);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--vs-gap) minmax(0, 1fr);
+  grid-auto-rows: auto;
+  width: 100%;
+  max-width: none;
+  margin: 0 auto;
+  position: relative;
+  align-items: stretch;
+  align-content: start;
+}
+.slide .vs-grid.vs-long { --vs-type: max(var(--type-floor), 2.1875cqw); }
+.slide .vs-grid .L { --c: var(--accent); }
+.slide .vs-grid .R { --c: var(--hue-2); }
+
+/* The panel box: contrast draws it behind the rows, compare is the box itself (a subgrid). */
+.slide .vs-grid .vs-bg { grid-row: 1 / -1; border-radius: 1.1458cqw; z-index: 0; }
+.slide .vs-grid .vs-bg.L { grid-column: 1; }
+.slide .vs-grid .vs-bg.R { grid-column: 3; }
+.slide .vs-grid .vs-panel {
+  display: grid;
+  grid-template-rows: subgrid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-content: stretch;
+  align-content: stretch;
+  border-radius: 1.1458cqw;
+  padding: var(--vs-pad) 0;
+  min-width: 0;
+  background-color: color-mix(in srgb, var(--box-hue, var(--accent)) 5%, #fff);
+  z-index: 0;
+}
+.slide .vs-grid .vs-panel.L { grid-column: 1; }
+.slide .vs-grid .vs-panel.R { grid-column: 3; }
+
+/* Contrast: a pair is one row across the panels, a subgrid so its cells sit in the two panel columns.
+   skin/contrast.css and layouts/contrast.css give every .contrast-pair two equal columns (!important) and a
+   hairline frame; those are answered here at a higher specificity. */
+.slide .contrast-grid.contrast-vs {
+  border: 0;
+  background: none;
+  margin-top: 0;
+  gap: 0;
+}
+.slide .contrast-grid.contrast-vs .contrast-pair.vs-pair {
+  grid-column: 1 / -1;
+  display: grid !important;
+  grid-template-columns: subgrid !important;
+  grid-template-rows: none;
+  gap: 0 !important;
+  align-items: stretch;
+  align-content: stretch;
+  justify-items: stretch;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  text-align: left;
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+}
+.slide .contrast-grid.contrast-vs .contrast-pair.vs-pair::before,
+.slide .contrast-grid.contrast-vs .contrast-pair.vs-pair::after { display: none !important; content: none; }
+.slide .vs-grid .vs-pair > .vs-row.L { grid-column: 1; }
+.slide .vs-grid .vs-pair > .vs-row.R { grid-column: 3; }
+
+/* Head: regular, the panel hue, a rule under it. */
+.slide .vs-grid .vs-head {
+  margin: 0 1.4583cqw .7292cqw;
+  padding: .2083cqw 0 .7292cqw;
+  display: flex;
+  align-items: center;
+  gap: .8333cqw;
+  font-size: max(var(--type-floor), 1.7708cqw);
+  line-height: 1.2;
+  font-weight: 400;
+  color: var(--c);
+  border-bottom: max(1px, .1042cqw) solid color-mix(in srgb, var(--c) 40%, #fff);
+  min-width: 0;
+  z-index: 1;
+  position: relative;
+}
+.slide .vs-grid > .vs-head { grid-row: 2; }
+.slide .vs-grid > .vs-head.L { grid-column: 1; }
+.slide .vs-grid > .vs-head.R { grid-column: 3; }
+.slide .vs-grid .vs-head-ico { display: inline-flex; width: 2.0833cqw; height: 2.0833cqw; flex: none; }
+.slide .vs-grid .vs-head-ico svg { width: 100%; height: 100%; }
+.slide .vs-grid .vs-head-text strong { font-weight: 400; }
+
+/* Rows: regular weight, one icon each, a hairline between rows. */
+.slide .vs-grid .vs-row {
+  margin: 0 1.4583cqw;
+  padding: 1.3542cqw 1.25cqw;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 1.25cqw;
+  font-size: var(--vs-type);
+  line-height: 1.2;
+  font-weight: 400;
+  color: var(--ink);
+  border-radius: .5208cqw;
+  min-width: 0;
+  z-index: 1;
+}
+.slide .vs-grid.vs-long .vs-row { padding: .9375cqw 1.25cqw; }
+.slide .vs-grid .vs-row::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: -1px;
+  height: max(1px, .1042cqw);
+  background: rgb(16 20 24 / .08);
+}
+.slide .vs-grid .vs-row.last::after { content: none; }
+.slide .vs-grid .vs-row .vs-text { min-width: 0; overflow-wrap: break-word; }
+.slide .vs-grid .vs-row .vs-text strong { font-weight: 400; }
+.slide .vs-grid .vs-ico { display: inline-flex; flex: none; width: 1em; height: 1em; color: var(--c); }
+.slide .vs-grid .vs-ico svg { width: 100%; height: 100%; }
+/* A row with no icon keeps the text where the icon-bearing rows keep theirs. */
+.slide .vs-grid .vs-row.vs-bare { padding-left: calc(1.25cqw + 1em + 1.25cqw); }
+
+/* The disc: dark, centred between the panels over the full height. */
+.slide .vs-grid .vs-disc {
+  grid-column: 2;
+  grid-row: 1 / -1;
+  align-self: center;
+  justify-self: center;
+  width: 4.5833cqw;
+  height: 4.5833cqw;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 1.5625cqw;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+
+/* Compare: the old full-bleed halves are gone; the grid flows in the content band like the other layouts. */
+.slide .slide-content.layout-compare {
+  position: relative;
+  inset: auto;
+  align-content: center;
+  justify-content: center;
+}
+.slide .slide-content.layout-compare > .compare-grid { min-height: 0; }
+
+/* Contrast: the panels take the full width of the content block, as compare's do. */
+.slide .slide-content.layout-contrast {
+  width: 100%;
+  max-width: none;
+}
+/* Cycle, equation and timeline adopt the animated-scene drawings (ADR-0039, 0.41 ticket 07).
+   Values from docs/design/2026-10-16-slide-scene-formatting/after/09-cycle.html, 08-equation-circle.html and
+   10-timeline.html (drawn at 1920 x 1080, written here in cqw = px / 19.2). Unmarked block: it sorts after every
+   migrated block, so it wins where it meets skin/cycle.css, skin/equation.css and layouts/timeline.css.
+
+   Cycle. Subtle neutral boxes on a ring; each connector is an arc of that ring from the border where it leaves
+   one box to the border where it enters the next (the compiler works the ends out from the box rectangles,
+   06-block-renderers.mjs cycleGeometry), with a whole arrowhead whose tip lands on the border. The ring box is
+   the ring is drawn --cy-w wide (a stage-relative length, deliberately not a size container: base.css's
+   narrow-slide @container rule would then fire on it); every length inside is its drawing value times --cy-u
+   (the ring's width over --cy-vw, the drawing's own width), so box sizes and arc ends stay in step at any stage size.
+
+   Equation. Terms are circles in the section hue, then the next two hues of the palette (ADR-0039 amends
+   ADR-0005's one accent); the result is a filled disc in the section accent; operators are muted and regular.
+   --eq-n (terms plus result) sizes the circles so a longer equation still fits on one row.
+
+   Timeline (spine and pills, the track-and-pill drawings). One ink track; each dated stop is a pill on it in
+   its hue (accent, hue-2, hue-3), with a stem to its text, alternating above and below (spine) or all below
+   (pills). The text is regular; a stop's sub-points stay, in the scene's smaller muted lines under the text.
+   Stops are spread over the track with the first and last inset by half a text width, so no text leaves the
+   safe area. --tl-i (the stop's index, set by the compiler) places each stop. */
+
+/* ---- Cycle ---- */
+.slide .slide-content.layout-cycle .cycle-diagram {
+  --cy-w: calc(min(87.5cqw, 128cqh) * var(--cy-vw, 1680) / 1680);
+  --cy-u: calc(var(--cy-w) / var(--cy-vw, 1680));
+  width: var(--cy-w);
+  max-width: none;
+  aspect-ratio: var(--cy-vw, 1680) / var(--cy-vh, 760);
+  margin: 0 auto;
+}
+/* Beside a rail the ring is the content column at most, never wider (the right node ran off the slide; the old
+   ring capped itself at 100% for the same reason). Column = stage - rail - column gap (stage.css) - right inset. */
+.slide[data-title-layout="left"] .slide-content.layout-cycle .cycle-diagram {
+  --cy-w: min(
+    calc(min(87.5cqw, 128cqh) * var(--cy-vw, 1680) / 1680),
+    calc(100cqw - var(--rail-w, 0px) - clamp(40px, 5cqw, 96px) - var(--slide-pad-x, 48px))
+  );
+}
+.slide .cycle-diagram .cycle-node {
+  box-sizing: border-box;
+  width: calc(var(--cy-nw, 450) / var(--cy-vw, 1680) * 100%);
+  max-width: none;
+  min-height: calc(var(--cy-nh, 164) * var(--cy-u));
+  height: calc(var(--cy-nh, 164) * var(--cy-u));
+  padding: calc(18 * var(--cy-u)) calc(26 * var(--cy-u)) calc(20 * var(--cy-u));
+  border-radius: calc(18 * var(--cy-u));
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 0;
+  box-shadow: none;
+  text-align: left;
+  font-weight: 400;
+  font-size: calc(37.2 * var(--cy-u));
+  line-height: 1.15;
+  color: var(--ink);
+  white-space: normal;
+  z-index: 2;
+}
+.slide .cycle-diagram .cycle-node:last-of-type { border-color: rgb(16 20 24 / .26); color: var(--ink); }
+.slide .cycle-diagram .cycle-stage {
+  font-family: var(--mono);
+  font-size: calc(24 * var(--cy-u));
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  line-height: 1.25;
+  color: var(--accent);
+  margin-bottom: calc(8 * var(--cy-u));
+}
+.slide .cycle-diagram .cycle-cap { font-size: inherit; font-weight: 400; color: var(--ink); line-height: 1.15; }
+.slide .cycle-diagram .cycle-arc-svg { overflow: visible; z-index: 1; }
+.slide .cycle-diagram .cycle-arc { fill: none; stroke: var(--ink); stroke-width: 4; stroke-linecap: butt; vector-effect: none; }
+.slide .cycle-diagram .cycle-head { fill: var(--ink); stroke: none; }
+
+/* ---- Equation ---- */
+.slide .equation-row {
+  --eq-d: min(14.5833cqw, calc((87.5cqw - 7.3cqw * (var(--eq-n, 4) - 1)) / var(--eq-n, 4)));
+  --eq-gap: 2.0833cqw;
+  flex-wrap: wrap;
+  gap: 1.6cqw var(--eq-gap);
+  max-width: none;
+  width: 100%;
+  margin: 0 auto;
+}
+.slide .equation-row.equation-circle { flex-wrap: nowrap; }
+.slide .equation-row .eq-unit { gap: var(--eq-gap); }
+.slide .equation-row .eq-unit:nth-child(3n + 1) { --c: var(--accent); }
+.slide .equation-row .eq-unit:nth-child(3n + 2) { --c: var(--hue-2); }
+.slide .equation-row .eq-unit:nth-child(3n) { --c: var(--hue-3); }
+.slide .equation-row .eq-term {
+  box-sizing: border-box;
+  border: .3125cqw solid var(--c, var(--accent));
+  color: var(--c, var(--accent));
+  background: var(--paper);
+  font-weight: 700;
+  font-size: max(var(--type-floor), calc(var(--eq-d) * .1929));
+  line-height: 1.1;
+  white-space: normal;
+  text-align: center;
+  overflow-wrap: anywhere;
+  position: relative;
+}
+.slide .equation-row.equation-circle .eq-term {
+  width: var(--eq-d);
+  min-width: 0;
+  height: var(--eq-d);
+  aspect-ratio: auto;
+  padding: .6cqw;
+  border-radius: 50%;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.slide .equation-row.equation-circle .eq-term.eq-result { width: calc(var(--eq-d) * 1.1429); height: calc(var(--eq-d) * 1.1429); font-size: max(var(--type-floor), calc(var(--eq-d) * .2214)); }
+.slide .equation-row .eq-term.eq-result { background: var(--accent); border-color: var(--accent); color: #fff; }
+.slide .equation-row .eq-op {
+  font-weight: 400;
+  font-size: calc(var(--eq-d) * .3);
+  line-height: 1;
+  color: var(--muted);
+  width: 3.125cqw;
+  text-align: center;
+}
+
+/* ---- Timeline: spine and pills ---- */
+.slide .timeline-spine,
+.slide .timeline-pills {
+  --tl-w: min(25cqw, calc(166cqw / (var(--tl-spine-cols, 3) + 1.1)));
+  --tl-axis: calc((var(--tl-above, 8) + 5.4167) * 1cqw);
+  --tl-m: calc(var(--tl-w) / 2);
+  width: 87.5cqw;
+  max-width: 100%;
+  margin: 0 auto;
+}
+.slide .timeline-spine .tl-spine-track,
+.slide .timeline-pills .tl-spine-track {
+  display: block;
+  position: relative;
+  width: 100%;
+  height: calc((var(--tl-above, 8) + var(--tl-below, 8) + 10.8333) * 1cqw);
+  min-height: 0;
+  padding: 0;
+  align-items: initial;
+}
+.slide .timeline-spine .tl-spine-track::before,
+.slide .timeline-pills .tl-spine-track::before {
+  display: block;
+  content: "";
+  position: absolute;
+  left: 1.0417cqw;
+  right: 1.0417cqw;
+  top: var(--tl-axis);
+  transform: translateY(-50%);
+  height: .4167cqw;
+  border-radius: .2083cqw;
+  background: var(--ink);
+  z-index: 0;
+}
+.slide .timeline .tl-spine-stop {
+  --c: var(--accent);
+  position: absolute;
+  left: calc(var(--tl-m) + var(--tl-i, 0) * (100% - 2 * var(--tl-m)) / max(1, var(--tl-spine-cols, 3) - 1));
+  top: var(--tl-axis);
+  width: 0;
+  height: 0;
+  display: block;
+  min-width: 0;
+}
+.slide .timeline .tl-spine-stop:nth-child(3n + 2) { --c: var(--hue-2); }
+.slide .timeline .tl-spine-stop:nth-child(3n) { --c: var(--hue-3); }
+/* The pill on the track. */
+.slide .timeline .tl-spine-stop[data-side] .tl-spine-date,
+.slide .timeline .tl-spine-stop[data-side] .tl-spine-pill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: auto;
+  transform: translate(-50%, -50%);
+  box-sizing: border-box;
+  min-width: 9.8958cqw;
+  max-width: var(--tl-w);
+  min-height: 3.3333cqw;
+  margin: 0;
+  padding: .4cqw 1.4cqw;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: .2604cqw solid var(--c);
+  border-radius: 1.6667cqw;
+  background: var(--paper);
+  color: var(--c);
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: max(var(--type-floor), 1.4583cqw);
+  line-height: 1.1;
+  white-space: normal;
+  text-align: center;
+  overflow-wrap: anywhere;
+  z-index: 2;
+}
+/* The stem and the text. */
+.slide .timeline .tl-spine-dot { display: none; }
+.slide .timeline .tl-spine-leader {
+  display: block;
+  position: absolute;
+  left: 0;
+  transform: translateX(-50%);
+  width: .2083cqw;
+  height: 3.75cqw;
+  border: 0;
+  background: var(--c);
+  z-index: 1;
+}
+.slide .timeline .tl-spine-stop[data-side="above"] .tl-spine-leader { top: -5.4167cqw; }
+.slide .timeline .tl-spine-stop[data-side="below"] .tl-spine-leader { top: 1.6667cqw; }
+.slide .timeline .tl-spine-card {
+  position: absolute;
+  left: calc(var(--tl-w) / -2);
+  transform: none;
+  box-sizing: border-box;
+  width: var(--tl-w);
+  margin: 0;
+  padding: .5208cqw .8333cqw;
+  border: 0;
+  border-radius: .625cqw;
+  background: none;
+  box-shadow: none;
+  text-align: center;
+  font-size: max(var(--type-floor), calc(2.2917cqw * var(--tl-spine-scale, 1)));
+  line-height: 1.2;
+  color: var(--ink);
+}
+.slide .timeline .tl-spine-stop[data-side="above"] .tl-spine-card { top: auto; bottom: 5.4167cqw; }
+.slide .timeline .tl-spine-stop[data-side="below"] .tl-spine-card { bottom: auto; top: 5.4167cqw; }
+.slide .timeline .tl-spine-card .tl-spine-events { gap: .3em; }
+.slide .timeline .tl-spine-card ol.tl-spine-events > li { font-size: inherit; line-height: inherit; font-weight: 400; color: var(--ink); }
+.slide .timeline .tl-spine-card .tl-spine-events li::before { content: none; }
+/* Sub-points: the stop's detail lines, kept, smaller and muted under the event text. */
+.slide .timeline .tl-spine-card ol.tl-spine-events > li:not([data-tl-text]) {
+  font-size: max(var(--type-floor), .72em);
+  color: var(--muted);
+  line-height: 1.25;
+}
+.slide .timeline .tl-spine-card .tl-spine-events strong { color: var(--c); }
+/* Icon list and numbered list rows adopt the animated-scene list formatting (ADR-0039, 0.41 ticket 05).
+   Values from docs/design/2026-10-16-slide-scene-formatting/after/04-iconlist.html and 05-numbered.html
+   (drawn at 1920 x 1080, written here in cqw = px / 19.2). Unmarked block: it sorts after every migrated
+   block and after skin/list.css, so it wins where it meets the ADR-0028 row rules there. It styles the ROW
+   forms (`.fl-iconlist-list`: icon lists above three items or pinned {iconlist=list}, and the numbered
+   lists that take the same rows); cards (boxes, numbered cards) are the cards ticket's. Type size stays on
+   --fs-body, so the runtime fit (slide-fit.js) still steps spacing before type.
+
+   What changes:
+   - Rows are separated by solid hairlines above the first row, between rows and below the last (was a
+     dotted line between rows only). The lines are strokes on the list and its items (not borders), so a
+     rounded highlight never bends them.
+   - Each row carries 28px (1.4583cqw) of padding on both sides: the room a highlight needs.
+   - The icon or number is a box one text line tall, so it sits on the FIRST line of its item (was
+     centred on the whole item). The icon is 1.25em; the gap to the text .7em.
+   - The default number loses its outlined square: a mono numeral in the accent, 0.9em of the text.
+     {numbered=plain} and {numbered=styled} are explicit author choices and keep their own look.
+   - The same rows style a list beside a picture (`.slot-copy`), so a numbered list that keeps its image
+     reads the same way.
+   - The title stays in the left column beside the list (the existing left regime, no line above it).
+     Under a top title the list is one column, centred under it, 57-81cqw wide (the drawing's
+     1100-1560px), replacing the 0.37 two-column short-list form. */
+
+
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list:not(.fl-annotated) {
+  position: relative;
+  gap: 0;
+}
+/* Hairline above the first row. */
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list:not(.fl-annotated)::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: max(1px, .1563cqw);
+  background: var(--hairline);
+}
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list:not(.fl-annotated) > li,
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-wide.fl-iconlist-list:not(.fl-annotated) > li {
+  position: relative;
+  align-items: start;
+  column-gap: .7em;
+  row-gap: calc(8px * var(--list-gap, 1));
+  padding: calc(.55em * var(--list-gap, 1)) 1.4583cqw;
+  border-radius: .5208cqw;
+  border: 0;
+}
+/* Hairline below every row (between rows, and under the last). */
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list:not(.fl-annotated) > li::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: max(1px, .1563cqw);
+  background: var(--hairline);
+}
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list:not(.fl-annotated) > li + li,
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-wide.fl-iconlist-list:not(.fl-annotated) > li + li {
+  border-top: 0;
+}
+
+/* The icon: a box one text line tall, the glyph centred in it. */
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list:not(.fl-annotated) > li > .fl-icon {
+  display: grid;
+  place-items: center;
+  width: 1.25em;
+  height: calc(var(--list-lh, 1.35) * 1em);
+  color: var(--accent);
+}
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list:not(.fl-annotated) > li > .fl-icon > svg {
+  width: 1.25em;
+  height: 1.25em;
+  stroke-width: 1.5;
+}
+
+/* The default number: a mono numeral in the accent, centred in the same one-line box. */
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list.fl-numbered:not(.fl-annotated):not(.fl-numbered-plain):not(.fl-numbered-styled) > li > .fl-icon.fl-num {
+  border: 0;
+  border-radius: 0;
+  background: none;
+  font-family: var(--mono);
+  font-weight: 400;
+  line-height: 1;
+  width: calc(1.25em / .9);
+  height: calc(var(--list-lh, 1.35) * 1em / .9);
+  box-sizing: border-box;
+}
+/* The numeral is .9 of the item's text size; beside a picture that size is the slot's --copy-size. */
+.slide .slide-content > .feature-list.fl-iconlist-list.fl-numbered:not(.fl-annotated):not(.fl-numbered-plain):not(.fl-numbered-styled) > li > .fl-icon.fl-num {
+  font-size: .9em;
+}
+.slide .slot-copy > .feature-list.fl-iconlist-list.fl-numbered:not(.fl-annotated):not(.fl-numbered-plain):not(.fl-numbered-styled) > li > .fl-icon.fl-num {
+  font-size: calc(.9 * var(--copy-size));
+}
+/* The plain numeral keeps its text-size look; only its row and box line up with the new rows. */
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list.fl-numbered-plain:not(.fl-annotated) > li > .fl-icon.fl-num {
+  display: block;
+  height: auto;
+  width: 1.4em;
+}
+/* The styled numeral is two lines tall and stays centred on its item, as drawn for it in ADR-0028 §6. */
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list.fl-numbered-styled:not(.fl-annotated) > li,
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-wide.fl-iconlist-list.fl-numbered-styled:not(.fl-annotated) > li {
+  align-items: center;
+}
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list.fl-numbered-styled:not(.fl-annotated) > li > .fl-icon.fl-num {
+  display: block;
+  height: auto;
+}
+
+/* A warning row (the drawing's red row) is not an authoring form yet; nothing to style here. */
+
+/* Sub-items sit under the text, not the icon. */
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list:not(.fl-annotated) > li > .fl-sublist { grid-column: 2; }
+
+/* ---- Under a top title: one centred column, as drawn (replaces the 0.37 two-column short list) ---- */
+.slide[data-title-layout="top"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-annotated),
+.slide[data-title-layout="top"] > .slide-content > .feature-list.fl-iconlist-list.fl-short-lines:not(.fl-annotated) {
+  display: grid;
+  columns: auto;
+  width: fit-content;
+  min-width: min(57.3cqw, 100%);
+  max-width: min(81.25cqw, 100%);
+  margin-left: auto;
+  margin-right: auto;
+  align-self: center;
+}
+.slide[data-title-layout="top"] > .slide-content > .feature-list.fl-iconlist-list.fl-short-lines:not(.fl-annotated) > li {
+  break-inside: auto;
+  margin-bottom: 0;
+}
+.slide[data-title-layout="top"]:not([data-font-body]) > .slide-content:has(> .feature-list.fl-iconlist-list.fl-short-lines) {
+  --fs-body: max(var(--type-floor), 2.8125cqw);
+}
+
+/* Left title column: the list fills the space beside it. */
+.slide[data-title-layout="left"] > .slide-content.layout-list > .feature-list.fl-iconlist-list:not(.fl-annotated) {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+}
+/* Icon row, process and steps adopt the animated-scene drawings (ADR-0039, 0.41 ticket 06).
+   Values from docs/design/2026-10-16-slide-scene-formatting/after/06-iconrow.html and 11-process.html
+   (drawn at 1920 x 1080, written here in cqw = px / 19.2). Unmarked block: it sorts after every migrated
+   block and after skin/icon-row.css and skin/narrow-columns.css, so it wins where it meets their rules.
+   Class names the older rules and tests read (.ir-item, .ir-label, .ir-desc > li, .proc-step ...) stay.
+
+   Icon row. Each column is a mono head (icon, label) over an accent rule, then one subtle box per line,
+   one icon each. The columns share ONE grid (a head row and --ir-rows item rows, each column a subgrid
+   over them), so a box that wraps keeps its neighbour in the next column level. A link of the column's
+   hue joins each box to the next, from the outer bottom border to the outer top border (its height is
+   the row gap). Text is regular, as large as the boxes allow. Columns take the section accent, then the
+   deck palette's next two hues (hue-2, hue-3), not the drawing's literal colours (ADR-0039 amends ADR-0005).
+
+   Process. A row of subtle boxes, each with its number and icon, joined by arrows. The arrow is an element
+   in the row (.proc-arrow) whose width IS the gap, so its shaft starts on the left box's border and its
+   head tip lands on the right box's border; the head is whole (svg, overflow visible). Under a screenshot
+   row the boxes shrink to their content so the row of pictures keeps its band. Steps (stairs) take the
+   same boxes and arrows, the arrow as tall as the lower box and centred in it. */
+
+/* ---- Icon row ---- */
+.slide .icon-row {
+  --ir-gap: calc(1.3542cqw * var(--list-gap, 1));
+  --ir-type: var(--fs-body);
+  font-size: max(var(--type-floor), var(--ir-type)) !important;
+  grid-template-columns: repeat(var(--ir-cols, 2), minmax(0, 1fr));
+  grid-template-rows: auto repeat(var(--ir-rows, 4), auto);
+  column-gap: 4.1667cqw;
+  row-gap: var(--ir-gap);
+  width: 100%;
+  max-width: none;
+  margin: 0 auto;
+  align-items: start;
+}
+.slide .icon-row.count-1 { --ir-cols: 1; }
+.slide .icon-row.count-2 { --ir-cols: 2; }
+.slide .icon-row.count-3 { --ir-cols: 3; --ir-type: min(var(--fs-body), 2.6cqw); }
+.slide .icon-row.count-4 { --ir-cols: 4; --ir-type: min(var(--fs-body), 2.0833cqw); column-gap: 2.5cqw; }
+.slide .icon-row.count-3 { column-gap: 3cqw; }
+.slide .icon-row .ir-item {
+  --box-hue: var(--accent);
+  grid-row: span calc(var(--ir-rows, 4) + 1);
+  grid-template-rows: subgrid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 0;
+  row-gap: var(--ir-gap);
+  align-items: stretch;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+.slide .icon-row .ir-item.hue-2 { --box-hue: var(--hue-2); }
+.slide .icon-row .ir-item.hue-3 { --box-hue: var(--hue-3); }
+
+/* The head: icon and label share the rule under them. */
+.slide .icon-row .ir-item > .ir-icon,
+.slide .icon-row .ir-item > .ir-label {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  grid-row: 1;
+  grid-column: 1;
+  padding-bottom: calc(.625cqw + var(--subtle-box-line));
+  color: var(--box-hue);
+}
+/* The rule under the head runs across both cells. */
+.slide .icon-row .ir-item::before {
+  content: "";
+  display: block;
+  grid-row: 1;
+  grid-column: 1 / -1;
+  align-self: end;
+  height: var(--subtle-box-line);
+  background: var(--box-hue);
+}
+.slide .icon-row .ir-item > .ir-icon {
+  width: auto;
+  height: auto;
+  margin: 0;
+  gap: 0;
+  box-sizing: border-box;
+}
+.slide .icon-row .ir-item > .ir-icon > svg { width: 1.6667cqw; height: 1.6667cqw; flex: none; }
+.slide .icon-row .ir-item > .ir-icon.ir-num {
+  border-radius: 0;
+  background: none;
+  font-family: var(--mono);
+  font-weight: 400;
+  font-size: 1.3542cqw;
+  letter-spacing: .12em;
+}
+.slide .icon-row .ir-item > .ir-label {
+  grid-column: 2;
+  font-family: var(--mono);
+  font-size: 1.3542cqw;
+  font-weight: 400;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  line-height: 1.25;
+  padding-left: .7292cqw;
+  gap: 0;
+}
+.slide .icon-row .ir-item > .ir-icon.ir-num + .ir-label { padding-left: .7292cqw; }
+
+/* The boxes: direct rows of the shared grid (the list itself draws nothing). */
+.slide .icon-row .ir-item > .ir-desc { display: contents; }
+.slide .slide-content .icon-row .ir-item .ir-desc.ir-desc > li {
+  grid-column: 1 / -1;
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 1.3542cqw;
+  min-height: calc(6.4583cqw * var(--list-gap, 1));
+  margin: 0;
+  padding: calc(1.1458cqw * var(--list-gap, 1)) 1.7708cqw;
+  border-radius: .8333cqw;
+  font-size: max(var(--type-floor), var(--ir-type, var(--fs-body)));
+  font-weight: 400;
+  line-height: 1.2;
+  color: var(--ink);
+  text-align: left;
+}
+.slide .icon-row .ir-item .ir-desc > li > .ir-li-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 2.2917cqw;
+  height: 2.2917cqw;
+  color: var(--box-hue);
+}
+.slide .icon-row .ir-item .ir-desc > li > .ir-li-icon > svg { width: 100%; height: 100%; stroke-width: 1.5; }
+.slide .icon-row .ir-item .ir-desc > li > .ir-li-text { min-width: 0; overflow-wrap: break-word; }
+/* The chain link: from the box's outer bottom edge to the next box's outer top edge (the row gap). */
+.slide .icon-row .ir-item .ir-desc > li > .ir-link {
+  position: absolute;
+  left: 2.8125cqw;
+  top: 100%;
+  width: .1563cqw;
+  height: var(--ir-gap);
+  margin: 0;
+  background: color-mix(in srgb, var(--box-hue) 45%, #fff);
+  pointer-events: none;
+}
+
+/* Rows of columns (five or more, narrow-columns.mjs): no shared rows across the wrapped rows, each column
+   stacks its own boxes with the same gap. */
+.slide-content > .icon-row.ir-rows {
+  --ir-gap: calc(1.3542cqw * var(--list-gap, 1));
+  column-gap: 3cqw !important;
+  row-gap: 2.2cqw !important;
+}
+.slide-content > .icon-row.ir-rows .ir-item {
+  grid-row: auto;
+  grid-template-rows: none;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-content: start;
+}
+.slide-content > .icon-row.ir-rows .ir-item > .ir-desc {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ir-gap);
+  grid-column: 1 / -1;
+}
+.slide-content > .icon-row.ir-rows .ir-item .ir-desc > li { min-height: 0; }
+.slide-content > .icon-row.ir-rows .ir-item > .ir-label { white-space: normal; }
+@container (max-width: 950px) {
+  .slide-content > .icon-row:not(.ir-rows) { grid-auto-flow: column; grid-template-columns: repeat(var(--ir-cols, 2), minmax(0, 1fr)); }
+}
+
+/* ---- Process ---- */
+.slide .process-strip {
+  align-items: stretch;
+  justify-content: stretch;
+  flex-wrap: nowrap;
+  width: 100%;
+  max-width: none;
+  margin: 0 auto;
+  --proc-type: 2.3958cqw;
+}
+.slide .process-strip.count-5 { --proc-type: 2cqw; }
+.slide .process-strip.count-6 { --proc-type: 1.7cqw; }
+.slide .process-strip:is(.count-7, .count-8, .count-9, .count-10) { --proc-type: 1.5cqw; }
+.slide .process-strip .proc-step {
+  --box-hue: var(--accent);
+  flex: 1 1 0;
+  min-width: 0;
+  box-sizing: border-box;
+  min-height: calc(14.0625cqw * var(--list-gap, 1));
+  padding: 1.25cqw 1.3542cqw;
+  border-radius: .9375cqw;
+  align-items: flex-start;
+  justify-content: center;
+  text-align: left;
+  font-size: max(var(--type-floor), min(var(--fs-body), var(--proc-type)));
+  line-height: 1.16;
+  font-weight: 400;
+  color: var(--ink);
+}
+.slide .process-strip .proc-step.hue-2 { --box-hue: var(--hue-2); }
+.slide .process-strip .proc-step.hue-3 { --box-hue: var(--hue-3); }
+.slide .process-strip .proc-step::before { content: none; display: none; }
+.slide .process-strip .proc-head {
+  display: flex;
+  align-self: stretch;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: .6250cqw;
+}
+.slide .process-strip .proc-num {
+  width: auto;
+  height: auto;
+  display: block;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  font-family: var(--mono);
+  font-weight: 400;
+  font-size: 1.3542cqw;
+  letter-spacing: .1em;
+  color: var(--box-hue);
+}
+.slide .process-strip .proc-icon { display: grid; place-items: center; width: 2.0833cqw; height: 2.0833cqw; color: var(--box-hue); }
+.slide .process-strip .proc-icon > svg { width: 100%; height: 100%; stroke-width: 1.5; }
+.slide .process-strip .proc-label { margin: 0; font-weight: 400; font-size: 1em; line-height: 1.16; overflow-wrap: break-word; max-width: 100%; }
+.slide .process-strip .proc-time { font-size: max(var(--type-floor), 1.5cqw); font-weight: 400; color: var(--box-hue); margin-top: .5em; }
+.slide .process-strip .proc-details { margin-top: .5em; }
+.slide .slide-content.layout-process .process-strip .proc-details.proc-details > li { font-size: max(var(--type-floor), 1.5cqw); line-height: 1.25; color: var(--ink); }
+.slide .process-strip .proc-details li::before { color: var(--box-hue); }
+/* The arrow fills the gap exactly: its box is the gap, its shaft starts at the left edge, the head tip is at the right. */
+.slide .process-strip > .proc-arrow,
+.slide .steps-diagram > .step-arrow {
+  flex: none;
+  display: flex;
+  align-items: center;
+  width: 3.9583cqw;
+  color: var(--ink);
+  margin: 0;
+  padding: 0;
+}
+.slide .process-strip > .proc-arrow { align-self: center; height: .9375cqw; }
+.slide .process-strip > .proc-arrow > svg,
+.slide .steps-diagram > .step-arrow > svg { display: block; width: 100%; height: auto; overflow: visible; }
+/* Pictures above the steps: the steps take their content height. */
+.slide .slide-content:has(> .img-row, > .slide-figure, > .figure-row) > .process-strip .proc-step { min-height: 0; }
+.slide .slide-content:has(> .img-row, > .slide-figure, > .figure-row) > .process-strip { margin-top: 1.6cqw; }
+
+/* ---- Steps (stairs) ---- */
+.slide .steps-diagram {
+  gap: 0;
+  width: 100%;
+  max-width: none;
+  margin: 0 auto;
+}
+.slide .steps-diagram .step-col {
+  --box-hue: var(--accent);
+  flex: 1 1 0;
+  min-width: 0;
+  border-radius: .9375cqw;
+  padding: 1.25cqw 1.3542cqw;
+  align-items: flex-start;
+  justify-content: flex-start;
+  text-align: left;
+  color: var(--ink);
+}
+.slide .steps-diagram .step-col.hue-2 { --box-hue: var(--hue-2); }
+.slide .steps-diagram .step-col.hue-3 { --box-hue: var(--hue-3); }
+.slide .steps-diagram .step-col:is(:last-child, :nth-last-child(2), :nth-last-child(3)) { color: var(--ink); }
+.slide .steps-diagram .step-label { font-weight: 400; font-size: max(var(--type-floor), min(var(--fs-body), 2.3958cqw)); line-height: 1.16; }
+.slide .steps-diagram .step-cap { font-size: max(var(--type-floor), 1.5cqw); opacity: 1; color: var(--ink); }
+.slide .steps-diagram > .step-arrow { align-self: flex-end; }
+/* The older stair tint ramp (base.css, nth-last-child) is a heavier fill; the subtle box replaces it. */
+.slide .steps-diagram .step-col.subtle-box {
+  background: color-mix(in srgb, var(--box-hue) 5%, #fff);
+  border: var(--subtle-box-line) solid color-mix(in srgb, var(--box-hue) 34%, #fff);
+}
+
+/* A single screenshot on a process or steps slide keeps its place above the boxes at a size that leaves them
+   their band (it used to fill the whole content area and push the steps off the stage). */
+.slide .slide-content:is(.layout-process, .layout-steps) > .slide-figure {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 46cqh;
+  align-self: center;
+  margin: 0 auto 1.6cqw;
+}
+.slide .slide-content:is(.layout-process, .layout-steps) > .slide-figure img { max-height: 46cqh; width: auto; max-width: 100%; object-fit: contain; }
+/* Section, statement and quote slides adopt the animated-scene formatting (ADR-0039, 0.41 ticket 04).
+   Values from docs/design/2026-10-16-slide-scene-formatting/after/01-section.html, 02-statement.html and
+   03-quote.html, drawn at 1920 x 1080 and written here in cqw (px / 19.2). Unmarked block: it sorts after
+   every migrated block and, by its `zz-` name, after every other unmarked file (skin/statement.css among them), so
+   it wins where it meets the older rules in layouts/title.css, layouts/statement.css, skin/statement.css and
+   layouts/quote.css. The source-styled quote forms (ADR-0038, figure.qf) keep their own look: nothing
+   here reaches a figure.qf, and the quote rules name `blockquote` (the Plain form) alone. */
+
+/* ---- 1. Section card: the accent bar is the title block's own left edge ----
+   The block (an authored kicker, if any, and the title) is one column at 160px from the left edge; the
+   bar runs its full height, inset 6px top and bottom as drawn. No automatic line above the title. */
+.slide-content.layout-section-title {
+  justify-items: start;
+}
+.slide-content.layout-section-title > .slide-head {
+  position: relative;
+  margin-left: calc(8.3333cqw - var(--slide-pad-x));
+  padding-left: 3.3333cqw;
+}
+.slide-content.layout-section-title > .slide-head::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: .3125cqw;
+  bottom: .3125cqw;
+  width: .625cqw;
+  background: var(--accent);
+}
+.slide-content.layout-section-title h1 {
+  font-size: max(38px, 6.25cqw);
+  line-height: 1.12;
+  letter-spacing: -.02em;
+  max-width: 10.33em;
+}
+
+/* ---- 2. Quote: no box, pale mark, regular-weight words, coloured source line ---- */
+/* Never bold: the boxed emphasis (the accent chip) stays, at the quote's own weight. */
+.slide-content.layout-quote > blockquote strong { font-weight: 400; }
+/* The source line: mono caps in the accent, led by a short rule (shared by every placement). */
+.slide-content.layout-quote > blockquote cite,
+.slide-content.layout-quote > blockquote + cite {
+  font-family: var(--mono);
+  font-weight: 400;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: .1em;
+}
+.slide-content.layout-quote > blockquote cite::before { height: 2px; background: currentColor; }
+/* The mark is pale in every placement. */
+.slide-content.layout-quote > blockquote::before {
+  color: color-mix(in srgb, var(--accent) 30%, #fff);
+}
+
+/* Quote on its own (no painted title, no picture): the open drawing, centred on the slide. Beside a title
+   rail or a picture the older geometry stays (ADR-0028 §2) and only the finish above applies.
+   Geometry mirrored in compiler/scripts/lib/quote-layout.mjs: words 4.1667cqw (80px), width 71.875cqw
+   (1380px), line height 1.24, the mark's 1.5em block over the words, source .6em under them. */
+.slide-content.layout-quote:not(:has(> .slide-head:not(.slide-head-quiet), > .slide-figure)) > blockquote {
+  background: none;
+  border-left: 0;
+  padding: 0;
+  width: min(71.875cqw, 100%);
+  --quote-fitted-size: max(31px, 4.1667cqw);
+  line-height: 1.24;
+}
+.slide-content.layout-quote:not(:has(> .slide-head:not(.slide-head-quiet), > .slide-figure)) > blockquote::before {
+  position: static;
+  display: block;
+  font-size: 3.25em;
+  line-height: .7;
+  height: .4615em;      /* the drawing's 120px block, in this 260px mark's em */
+  margin-left: -.5em;   /* hangs 130px left of the words */
+}
+.slide-content.layout-quote:not(:has(> .slide-head:not(.slide-head-quiet), > .slide-figure)) > blockquote cite,
+.slide-content.layout-quote:not(:has(> .slide-head:not(.slide-head-quiet), > .slide-figure)) > blockquote + cite {
+  margin-top: calc(.6 * var(--quote-fitted-size));
+  font-size: max(var(--type-floor), .35em);
+  gap: .7857em;
+}
+.slide-content.layout-quote:not(:has(> .slide-head:not(.slide-head-quiet), > .slide-figure)) > blockquote cite::before {
+  width: 2.2857em;
+}
+
+/* ---- 3. Statement: the accent bar is the text block's own left edge ----
+   The bar is a left border on each statement paragraph; a following paragraph takes its gap as padding
+   (not margin), so the bar runs unbroken from the top of the first to the bottom of the last: exactly as
+   tall as the text block, and it moves with it. Regular weight everywhere: the lead paragraph is told
+   from the quieter ones by ink alone. Replaces ADR-0028 §10's "no bar on the statement". The Rule
+   background keeps its short rule above the text instead of the bar (one device, not two). */
+.slide[data-layout="statement"]:has(> .slide-content.layout-statement) {
+  --stmt-lead-weight: 400;
+  --stmt-bar-w: .625cqw;
+  --stmt-bar-gap: 3.0208cqw;
+  --stmt-bar-ink: var(--accent);
+}
+.slide[data-layout="statement"]:has(> .slide-content.layout-statement.statement-bg-strong) { --stmt-bar-ink: #fff; }
+.slide[data-layout="statement"] > .slide-content.layout-statement > p:not(.kicker):not(.slide-source) {
+  font-weight: 400;
+  border-left: var(--stmt-bar-w) solid var(--stmt-bar-ink);
+  padding-left: var(--stmt-bar-gap);
+}
+.slide[data-layout="statement"] > .slide-content.layout-statement > p:not(.kicker):not(.slide-source) + p:not(.kicker):not(.slide-source) {
+  margin-top: 0;
+  padding-top: var(--stmt-para-gap);
+}
+/* Rule keeps its short rule above the text instead of the bar: the bar and its gap are zero there. */
+.slide[data-layout="statement"]:has(> .slide-content.layout-statement.statement-bg-rule) {
+  --stmt-bar-w: 0px;
+  --stmt-bar-gap: 0px;
+}
+/* The [Action: …] buttons line up with the words, not the bar. */
+.slide[data-layout="statement"] > .slide-content.layout-statement:not(.statement-centred) > .slide-actions {
+  padding-left: calc(var(--stmt-bar-w) + var(--stmt-bar-gap));
+}
+
+/* Statement with its picture: the picture stays, beside a vertically centred text block (the drawing's
+   760px picture, 96px gap, 160px side margins). The compiler stamps `statement-picture` (07-assembly) on
+   the two authored shapes that carry a picture without a separate title: the heading IS the statement (a
+   visible head, no statement paragraph), or the head is the quiet nav-only one and the statement is the
+   paragraph (the picture may come before or after it in the source; it is always drawn on the right).
+   A statement with BOTH a painted title and a paragraph keeps its own title-panel arrangement. */
+.slide[data-layout="statement"]:has(> .slide-content.layout-statement.statement-picture) {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+.slide[data-layout="statement"] > .slide-content.layout-statement.statement-picture.statement-picture {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) 39.5833cqw !important;
+  grid-template-rows: minmax(0, 1fr) !important;
+  column-gap: 5cqw;
+  align-items: center;
+  align-content: center;
+  justify-items: stretch;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  padding-left: 8.3333cqw;
+  padding-right: 8.3333cqw;
+}
+.slide[data-layout="statement"] > .slide-content.layout-statement.statement-picture.statement-picture > :is(.slide-head:not(.slide-head-quiet), p:not(.kicker):not(.slide-source)) {
+  grid-column: 1 !important;
+  grid-row: 1 !important;
+  align-self: center !important;
+  justify-self: start;
+  height: auto !important;
+  min-width: 0;
+  margin: 0 !important;
+  max-width: 100%;
+}
+.slide[data-layout="statement"] > .slide-content.layout-statement.statement-picture.statement-picture > .slide-figure {
+  grid-column: 2 !important;
+  grid-row: 1 !important;
+  align-self: center;
+  justify-self: stretch;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+}
+.slide[data-layout="statement"] > .slide-content.layout-statement.statement-picture.statement-picture > .slide-figure img {
+  width: 100%;
+  max-width: none;
+  max-height: 100%;
+  border-radius: .9375cqw;
+  border: .105cqw solid var(--hairline, #e3e2dc);
+  background: #fff;
+}
+.slide[data-layout="statement"] > .slide-content.layout-statement.statement-picture.statement-picture > p:not(.kicker):not(.slide-source) { width: auto !important; }
+/* The statement is the heading: it takes the statement's look (regular weight, the bar as the block's edge). */
+.slide[data-layout="statement"] > .slide-content.layout-statement.statement-picture.statement-picture > .slide-head:not(.slide-head-quiet) {
+  display: block !important;
+  position: static !important;  /* the rail panel's absolute placement (stage.css) goes: the head is one grid cell here */
+  min-height: 0 !important;
+  width: 100% !important;       /* (the :is rule above sits at the same weight, hence the !important) a definite column, so the title fit can see when a line is too wide */
+  background: none;
+  border-left: var(--stmt-bar-w) solid var(--stmt-bar-ink);
+  padding: 0 0 0 var(--stmt-bar-gap);
+}
+.slide[data-layout="statement"] > .slide-content.layout-statement.statement-picture.statement-picture > .slide-head > h1 {
+  font-weight: 400;
+  font-size: calc(var(--fs-body) * 1.3672);
+  line-height: 1.14;
+  letter-spacing: -.01em;
+  max-width: none;
+  margin: 0;
+}
+/* With a picture beside it the paragraph is set at the drawing's 84px (4.375cqw), not the full-width 104px. */
+.slide[data-layout="statement"] > .slide-content.layout-statement.statement-picture.statement-picture > p:not(.kicker):not(.slide-source) {
+  font-size: calc(var(--fs-body) * 1.3672);
+  line-height: 1.14;
+}
+/* Stats, line chart and table adopt the animated-scene drawings (ADR-0039, 0.41 ticket 10).
+   Values from docs/design/2026-10-16-slide-scene-formatting/after/15-stats.html, 16-linechart.html, 20-table.html and
+   20-table-long.html (drawn at 1920 x 1080, written here in cqw = px / 19.2). Unmarked block: it sorts after every
+   migrated block, so it wins where it meets skin/stats.css, skin/table.css, layouts/charts.css and base.css.
+
+   Stats. A row of figures, centred in the band: each figure is a heavy accent number (the picture, not running text),
+   a short accent mark under it and the label under that, regular and larger. The figure steps down as the row gets
+   longer (one, two, three, four, five or more) so a long figure still fits its column. The caption stays, small and muted.
+
+   Line chart. One accent line with dots, the value over each dot and the label under the axis, all regular weight.
+   The compiler draws the chart as a 1000 x 430 picture; it is shown --lc-w wide, a stage-relative length (so the
+   picture's scale is fixed at --lc-s, 1.6 stage px to a picture unit) and every length inside is the drawing's value
+   divided by that scale. Linear scale from zero, as the scene; no gridlines.
+
+   Table. The scene's open table: a mono uppercase head over an ink rule, hairline rules between rows, every second row
+   banded in a light ink tint (a long table keeps the banding), the first column in the section accent at regular weight.
+   No cell is bold. The column head reads at the type floor (the drawing's 26px is under it). The row padding, the
+   density steps and the fitting seam of skin/table.css are unchanged. */
+
+/* ---------- Stats ---------- */
+.slide .stats-row {
+  --st-fig: 7.8125cqw;
+  --st-lab: 2.5cqw;
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: center;
+  align-items: flex-start;
+  --st-n: 2;
+  --st-gap: 5cqw;
+  gap: var(--st-gap);
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+.slide .stats-row.stats-1 { --st-fig: 11cqw; --st-lab: 3cqw; --st-n: 1; }
+.slide .stats-row.stats-3 { --st-fig: 6.4cqw; --st-lab: 2.2cqw; --st-n: 3; --st-gap: 3.5cqw; }
+.slide .stats-row.stats-4 { --st-fig: 5.2cqw; --st-lab: 2.1cqw; --st-n: 4; --st-gap: 3cqw; }
+.slide .stats-row:is(.stats-5, .stats-6, .stats-7, .stats-8, .stats-9) { --st-fig: 4.4cqw; --st-lab: 2.1cqw; --st-n: 5; --st-gap: 2.5cqw; }
+.slide .stats-row .stat {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center !important;
+  background: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  gap: 0;
+}
+.slide .stats-row .stat-value {
+  display: block;
+  max-width: 100%;
+  /* the drawn size, or less when the longest figure would not fit its column on one line (.6em a character) */
+  font-size: min(var(--st-fig), calc((88cqw - (var(--st-n, 2) - 1) * var(--st-gap, 5cqw)) / var(--st-n, 2) / (var(--st-len, 6) * .6)));
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -.03em;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* the short accent mark under a figure */
+.slide .stats-row .stat-value::after {
+  content: "";
+  display: block;
+  width: 2.2917cqw;
+  height: .4167cqw;
+  margin: 1.7708cqw auto 0;
+  background: var(--accent);
+}
+.slide .stats-row .stat-label {
+  display: block;
+  max-width: 100%;
+  margin-top: 1.25cqw;
+  font-size: max(var(--type-floor), var(--st-lab));
+  font-weight: 400;
+  line-height: 1.2;
+  color: var(--ink);
+}
+.slide .stats-row .stat-value:empty + .stat-label,
+.slide .stats-row .stat:not(:has(.stat-value)) .stat-label { margin-top: 0; }
+.slide .stats-row .stat-cap {
+  display: block;
+  max-width: 100%;
+  margin-top: .8cqw;
+  font-size: max(var(--type-floor), 1.9cqw);
+  font-weight: 400;
+  line-height: 1.25;
+  color: var(--muted);
+}
+
+/* ---------- Line chart ---------- */
+.slide .chart-line {
+  --lc-s: 1.6;
+  --lc-w: 83.3333cqw;
+  width: min(var(--lc-w), 100%);
+  min-width: 0;
+  max-width: 100%;
+  margin: 0 auto;
+}
+.slide .chart-line svg { display: block; width: 100%; height: auto; overflow: visible; }
+.slide .chart-line .chart-baseline { stroke: var(--ink); stroke-width: 2.5px; }
+.slide .chart-line .chart-poly { stroke: var(--accent); stroke-width: 4.4px; }
+.slide .chart-line .chart-dot { fill: var(--accent); stroke: none; r: 8.75px; }
+.slide .chart-line .chart-val-svg { font: 400 27.5px/1 var(--sans, system-ui); fill: var(--ink); }
+.slide .chart-line .chart-label-svg { font: 400 23.5px/1 var(--sans, system-ui); fill: var(--muted); }
+
+/* ---------- Table ---------- */
+.slide .slide-table {
+  border: 0;
+  border-collapse: collapse;
+}
+.slide .slide-table thead th {
+  background: none;
+  font-family: var(--mono);
+  font-size: max(var(--type-floor), 1.35cqw);
+  font-weight: 400;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: left;
+  border: 0;
+  border-bottom: .1563cqw solid var(--ink);
+  padding-top: 0;
+  padding-bottom: calc(.8333cqw * var(--list-gap, 1));   /* steps with the rows when the table is fitted */
+}
+.slide .slide-table tbody td,
+.slide .slide-table tbody th {
+  border: 0;
+  border-bottom: .1042cqw solid var(--hairline);
+  font-weight: 400;
+}
+.slide .slide-table tbody td:first-child,
+.slide .slide-table tbody th:first-child {
+  font-family: var(--sans);
+  font-size: max(var(--type-floor), 1em);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--accent);
+  font-weight: 400;
+}
+/* {table-first-column=off}: the first column reads like the others (ink, not the accent) */
+.slide .slide-table.table-plain-first tbody td:first-child,
+.slide .slide-table.table-plain-first tbody th:first-child { color: inherit; }
+.slide .slide-table tbody tr:nth-child(even) > * { background: color-mix(in srgb, var(--ink) 4.5%, transparent); }
+/* A long or dense table (the compiler stamps data-list-density from seven rows) gives up rule weight first: its rules are
+   1px and the head's rule 2px, so the rows keep the room (the fitting ladder in fitLists steps padding, then type). Its head stays on one line:
+   wrapped, a head would make the head row as tall as two body rows, which the ladder cannot take back. */
+.slide .slide-table[data-list-density] thead th { border-bottom-width: max(1px, .1042cqw); white-space: nowrap; }
+.slide .slide-table[data-list-density] tbody td,
+.slide .slide-table[data-list-density] tbody th { border-bottom-width: 1px; }
+/* {table-header=off}: the first row is a plain body row; rules and bands as for any other */
+.slide .slide-table.table-noheader tbody tr:first-child td { border-bottom: .1042cqw solid var(--hairline); }
+/* {table-columns=off} already carries no column rules; the scene's table never has any */
+.slide .slide-table.table-nocolumns,
+.slide .slide-table.table-nocolumns thead th,
+.slide .slide-table.table-nocolumns tbody td,
+.slide .slide-table.table-nocolumns tbody th { border-left: 0; border-right: 0; }
+/* A table that builds row by row (Reveal): the newest row shown is tinted in the section tint while the table builds
+   (20-table.html, tr.now). The runtimes already mark that row: data-mode-state="current" on its .mode-el (deck, presenter
+   preview clone and handout write the same states). The newest row is tinted at every build step, the last row included;
+   at the all-shown step after the last row ("full") no row is tinted, nor in a static view or handout (no mode, no state).
+   A banded row that is not the newest keeps its band. */
+.slide.mode-reveal .slide-table tbody tr.mode-el[data-mode-state="current"] > * { background: var(--tint); }
+/* Trace in the scene design (ADR-0039, 0.41 ticket 11: "TalkWeaver's trace design at the scene's larger text; scrolls by
+   whole turns, never truncates"). Values from docs/design/2026-10-16-slide-scene-formatting/after/18-trace.html (drawn at
+   1920 x 1080, written here in cqw = px / 19.2). Unmarked block: it sorts after every migrated block, so it wins where it
+   meets base.css, layouts/trace.css and skin/base.css.
+
+   The window. A dark panel (#0b0e13, 20px corners, a soft shadow) as wide as the content band, as tall as its turns and
+   never taller than the band under the title. The text is the scene's: mono 36px at line height 1.5. It is never shrunk to fit and nothing is cut:
+   the runtime (runtime/trace-window.js) sets the panel's scroll position by whole turns, so the newest turn is complete
+   and no turn shows half-way at the top. The vertical padding is a border in the panel colour: the scroll box ends
+   inside it, so a turn scrolled above the window never shows through the padding. On a slide the panel has no scrollbar (the drawing has
+   none) and scrolls by hand only when its turns do not all fit (the runtime marks it data-trace-overflow), so a turn
+   taller than the window, or the start of a long trace shown with no mode, is never out of reach. The handout keeps
+   its scroll box and thin scrollbar, as before, for a reader who scrolls by hand.
+
+   Screen only: print keeps the trace as it was before this design (ADR-0039 leaves handout and print alone).
+
+   The turns (TalkWeaver's terminal-agent look, layouts/simulation.css .sim-terminal-agent): a small route label in grey
+   capitals over each turn; the user's prompt in an outlined box led by a white ">"; a model's call with an orange dot
+   and its name in bold; a result in magenta under an elbow; the model's answer in teal with a teal dot; reasoning in
+   violet italic. A speaker that is not one of those roles keeps its own label colour (the speaker buckets of base.css)
+   over plain text. Under reveal the turns already shown stay at full strength (the drawing marks no newest turn). */
+
+@media screen {
+  .slide[data-title-layout] > .slide-content.layout-trace {
+    max-width: none;
+    width: 100%;
+    min-height: 0;
+  }
+  /* The band: the trace owns the content height under the title, as code and media do (layouts/trace.css under the plain
+     title; title-look.css and slide-foundations.css under a look). */
+  .slide[data-title-layout="top"] > .slide-content.layout-trace {
+    height: min(820px, 86cqh);
+    padding-bottom: max(0px, calc(59px - var(--slide-pad-y)));
+  }
+  .slide[data-title-layout="top"] > .slide-content.layout-trace > .slide-head { margin-bottom: 0 !important; }
+  .slide[data-title-layout="top"][data-title-look] > .slide-content.layout-trace {
+    height: calc(100cqh - var(--titlelook-top) - var(--titlelook-height) - var(--titlelook-clear) - var(--slide-pad-y)) !important;
+    padding-bottom: calc(var(--band-footer) + var(--band-air));
+  }
+
+  .slide .trace {
+    --trace-bg: #0b0e13;
+    position: relative;
+    box-sizing: border-box;
+    /* Sized to its content up to the band (ADR-0039: windows are sized to their content), centred in the band; a longer
+       trace is held at the band's height and scrolls. Turns still to come keep their space under reveal, so the window
+       does not change size as they arrive. */
+    flex: 0 1 auto;
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    margin: 0;
+    padding: 0 2.5cqw;
+    border: 1.7708cqw solid var(--trace-bg);
+    border-left-width: 0;
+    border-right-width: 0;
+    border-radius: 1.0417cqw;
+    background: var(--trace-bg);
+    box-shadow: 0 1.0417cqw 2.6042cqw #0004;
+    color: #d4dce6;
+    font: 400 1.875cqw/1.5 var(--mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+    letter-spacing: 0;
+    /* hidden, not auto, while the turns fit: the runtime still sets scrollTop, and a rounded scroll box leaves a hairline
+       seam at its lower edge on the scaled stage. auto when they do not all fit (data-trace-overflow), so nothing is out
+       of reach. The handout keeps auto (below). */
+    overflow-x: hidden;
+    overflow-y: hidden;
+    overflow-anchor: none;
+    scroll-behavior: auto;
+    scrollbar-width: none;
+  }
+  .slide .trace::-webkit-scrollbar { display: none; }
+  .slide .trace[data-trace-overflow] { overflow-y: auto; }
+  .share-shell .slide .trace { overflow-y: auto; scrollbar-width: thin; scrollbar-color: #3a4757 transparent; }
+  .share-shell .slide .trace::-webkit-scrollbar { display: block; width: 8px; }
+
+  .slide .trace .turn { margin: 0 0 1.3542cqw; }
+  .slide .trace .turn:last-child { margin-bottom: 0; }
+  .slide .trace .turn:not(.trace-speaker) .role { color: #7f8ea3; }
+  .slide .trace .role {
+    margin: 0;
+    font: 400 1.1458cqw/1.7708cqw var(--mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+  /* Any other speaker: the label keeps its speaker colour (base.css buckets), the text sits flush under it. */
+  .slide .trace .turn.trace-speaker .role { font-weight: 700; }
+  .slide .trace .turn.trace-speaker .body { padding-left: 0; }
+  .slide .trace .body {
+    position: relative;
+    padding-left: 1.6em;
+    font-size: 1em;
+    line-height: 1.5;
+    letter-spacing: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: normal;
+    color: #d4dce6;
+  }
+  /* The user's prompt: an outlined box led by a white ">" */
+  .slide .trace .trace-prompt .body {
+    display: flex;
+    gap: .6em;
+    padding: .5208cqw 1.1458cqw;
+    border: .1042cqw solid #5a6676;
+    border-radius: .7292cqw;
+    color: #7cc4f5;
+  }
+  .slide .trace .trace-prompt .body::before { content: ">"; flex: none; color: #fff; font-weight: 700; }
+  /* A model's call and its answer: a dot at the first line */
+  .slide .trace :is(.trace-call, .trace-answer) .body::before {
+    content: "";
+    position: absolute;
+    left: .35em;
+    top: .5em;
+    width: .5em;
+    height: .5em;
+    border-radius: 50%;
+    background: #fbbf64;
+  }
+  .slide .trace .trace-call .trace-fn { color: #fbbf64; font-weight: 700; }
+  .slide .trace .trace-answer .body { color: #5eead4; }
+  .slide .trace .trace-answer .body::before { background: #5eead4; }
+  /* A result: magenta under an elbow at its first line */
+  .slide .trace .trace-result .body { color: #f0abfc; }
+  .slide .trace .trace-result .body::before { content: "\23BF"; position: absolute; left: .35em; top: 0; color: #c78ccc; }
+  .slide .trace .trace-thinking .body { color: #c4b5fd; font-style: italic; }
+
+  /* Reveal: shown turns stay at full strength; only the turns still to come are hidden. */
+  .slide.mode-reveal .trace .turn.mode-el[data-mode-state="soft"] { opacity: 1; }
+}
 /* =============================================================================
    stage.css — ONE module owns the title regime (ADR-0023 §2, Dominik's pick A3)
 
@@ -11455,6 +13284,15 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
 (() => {
   const stage = document.getElementById("stage");
   const slides = Array.from(stage.querySelectorAll(".slide"));
+  // Clip marks (a recording notes when a slide video starts): every slide <video> gets its slide
+  // and its place among that slide's videos, once, before anything is cloned or moved. The projector
+  // and the presenter load the same file, so the pair agree on what "video n of slide i" is.
+  slides.forEach((slide, slideIndex) => {
+    slide.querySelectorAll("video").forEach((video, videoIndex) => {
+      video.dataset.twVideoSlide = String(slideIndex);
+      video.dataset.twVideoIndex = String(videoIndex);
+    });
+  });
   // ADR-0030: every slide view scales ONE fixed canvas. The stage is the 1280×720 slide canvas
   // (CSS .stage); createStageFit (runtime/stage-fit.js, inlined below) scales it uniformly into the
   // deck's box, centres it and letterboxes in the slide background. Nothing inside the slide is
@@ -12275,7 +14113,7 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
     // A grouped list ({group}) is ONE unit — its bullets ride a single beat, so they are
     // excluded from individual stepping below via :not([data-reveal-group] *).
     ".feature-list[data-reveal-group]",   // {group}: the whole list reveals as one beat
-    ".feature-list > li:not(.image-grid *):not([data-reveal-group] *)", // top-level list items (image-grid cells own their lists; grouped lists step as one)
+    ".feature-list > li:not(.image-grid *):not([data-reveal-group] *):not(.fl-card-pts)", // top-level list items (image-grid cells own their lists; grouped lists step as one; a card with points steps by its points, ADR-0039)
     ".feature-list .fl-sublist > li:not([data-reveal-group] *)", // sub-bullets step one-by-one (2026-06-13; reverses the old sub-lists-never-step rule)
     ".timeline .tl-entries > li",         // structured timeline entries
     ".timeline .tl-dyn-entries > li",     // {timeline=dynamic}: each event drives the hot detail-card pairing
@@ -12506,7 +14344,20 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
   // skipped, so no transition restarts on units whose state did not change. Stale units (e.g. a
   // previous card's units now hidden) are the only ones cleared.
   let emphasisPainted = null;   // the slide whose emphasis spans carry a state now
+  // A {trace} window scrolls by whole turns from the painted step (runtime/trace-window.js, 0.41
+  // ticket 11). It is placed after the states are written; a step on the slide already shown eases
+  // the move, arriving places it at once. Once more a frame later, when the slide fit has run.
+  let traceSlide = null;
   function applyModeDimming() {
+    paintModeDimming();
+    const slide = currentSlide();
+    if (!slide) return;
+    const animate = traceSlide === slide;
+    traceSlide = slide;
+    placeTraceWindows(slide, { animate });
+    requestAnimationFrame(() => { if (currentSlide() === slide) placeTraceWindows(slide, { animate }); });
+  }
+  function paintModeDimming() {
     const slide = currentSlide();
     if (!slide) return;
     const kind = state.mode?.kind || null;
@@ -12586,6 +14437,8 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
     if (!el || typeof el.scrollIntoView !== "function") return;
     // Simulation steps never scroll into view: their scroll box is placed by anchorSimScroll.
     if (el.closest(".sim")) return;
+    // Nor do trace turns: the trace window moves by whole turns (placeTraceWindows).
+    if (el.closest(".trace")) return;
     // rAF: let the data-mode-state paint (which may change a unit's height as it un-fuzzes)
     // settle before measuring, so we scroll to the final position, not a transitional one.
     requestAnimationFrame(() => {
@@ -14552,6 +16405,10 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
           const shown = units.filter((el) => !["hidden", "fuzzy"].includes(el.getAttribute("data-mode-state"))).length;
           anchorSimScroll(previewSlide, units, shown);
         }
+        // A trace in the preview shows the window the audience sees (placeTraceWindows reads the
+        // baked data-mode-state on its turns).
+        const traceHost = iframe.contentDocument?.querySelector(".slide");
+        if (traceHost && traceHost.querySelector(".trace")) placeTraceWindows(traceHost, { animate: false });
       } catch {}
       // The Current pane's conversation: the published scroll, and any text still typing.
       if (isPresenter && target === els.currentPreview) { applySimScroll(); syncSimTyping(); }
@@ -16333,6 +18190,58 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
     } catch { /* the preview is mid-rebuild: the next paint reads the stored state */ }
   }
 
+  // Clip marks. The projector is where a slide video plays (the presenter's copy has nothing to
+  // play), so it reports each `play` (button, V full screen, autoplay, play-on-next, a resume) to the
+  // presenter over the command channel, with the slide, the video's place on it and its position.
+  // `play` does not bubble, hence the capture listener. A video enlarged in the lightbox has left
+  // its figure but keeps the attributes it was given at load.
+  function liveSlideVideo(slideIndex, videoIndex) {
+    const selector = `video[data-tw-video-slide="${slideIndex}"][data-tw-video-index="${videoIndex}"]`;
+    return Array.from(document.querySelectorAll(selector)).find((el) => stage.contains(el) || el === lightboxVideo?.el) || null;
+  }
+  document.addEventListener("play", (event) => {
+    if (!isAudience || document.body.hasAttribute("data-tw-preview")) return;
+    const video = event.target;
+    if (!(video instanceof HTMLVideoElement)) return;
+    const slideIndex = Number(video.dataset.twVideoSlide);
+    const videoIndex = Number(video.dataset.twVideoIndex);
+    if (!Number.isInteger(slideIndex) || !Number.isInteger(videoIndex) || liveSlideVideo(slideIndex, videoIndex) !== video) return;
+    const atS = Number.isFinite(video.currentTime) ? Math.max(0, video.currentTime) : 0;
+    const slideId = slides[slideIndex]?.dataset.id || "";
+    sendToPeer({ type: commandType, command: "clip-play", slideIndex, videoIndex, slideId, atS, nonce: createSessionId() });
+  }, true);
+  // Presenter side: the video is found in the presenter's own copy of the deck, so the authored
+  // reference is never taken from the peer. The recorder (its preload, another JS world) reads the
+  // root's data-tw-clip-play when the plain tw-clip-play event fires.
+  // Each play message arrives on both peer paths, and two videos can start in one tick, so the
+  // nonces seen are kept as a bounded set, not just the last one.
+  const CLIP_MAX_AT_S = 86400;
+  const recentClipNonces = new Set();
+  function applyClipPlay(message) {
+    if (!isPresenter || !message || !Number.isInteger(message.slideIndex) || !Number.isInteger(message.videoIndex)) return;
+    if (typeof message.nonce !== "string" || !message.nonce) return;
+    if (recentClipNonces.has(message.nonce)) return; // arrived on both paths: once
+    recentClipNonces.add(message.nonce);
+    if (recentClipNonces.size > 64) recentClipNonces.delete(recentClipNonces.values().next().value);
+    const slide = slides[message.slideIndex];
+    const video = liveSlideVideo(message.slideIndex, message.videoIndex);
+    if (!slide || !video) return;
+    // The index is only a position: a deck reloaded since (slides moved) must not name another slide.
+    const slideId = slide.dataset.id || "";
+    if (typeof message.slideId !== "string" || message.slideId !== slideId) return;
+    const atS = message.atS;
+    if (typeof atS !== "number" || !Number.isFinite(atS) || atS < 0 || atS > CLIP_MAX_AT_S) return;
+    if (Number.isFinite(video.duration) && atS > video.duration + 0.5) return;
+    document.documentElement.dataset.twClipPlay = JSON.stringify({
+      seq: message.nonce,
+      slideId,
+      ref: video.getAttribute("data-video-ref") || "",
+      src: video.getAttribute("src") || "",
+      atS
+    });
+    document.dispatchEvent(new Event("tw-clip-play"));
+  }
+
   let lastVideoNonce = "";
   function executeVideoCommand(message) {
     if (!isAudience) return;
@@ -17829,6 +19738,8 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
     // A stepped simulation's scroll position (anchorSimScroll) must not reach paper: print shows
     // every part, anchored like the static handout. applyModeDimming puts it back afterwards.
     document.querySelectorAll(".sim .sim-scroll").forEach((node) => { if (node.scrollTop !== 0) node.scrollTop = 0; });
+    // Print keeps the trace as it was (0.41 ticket 11 leaves print alone): from its top, no tail room.
+    resetTraceWindows(document);
   });
   window.addEventListener("afterprint", autofitActiveSlides);
   window.addEventListener("afterprint", () => applyModeDimming());
@@ -17854,6 +19765,7 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
       if (event.data?.type === commandType && event.data.command === "media") executeMediaCommand(event.data);
       if (event.data?.type === commandType && event.data.command === "video") executeVideoCommand(event.data);
       if (event.data?.type === commandType && event.data.command === "audio-state") applyAudioState(event.data);
+      if (event.data?.type === commandType && event.data.command === "clip-play") applyClipPlay(event.data);
       if (event.data?.type === commandType && event.data.command === "highlight") executeHighlightCommand(event.data);
       if (isAudience && event.data?.type === commandType && event.data.command === "pointer" && validPointer(event.data.pointer)) pointerOverlay?.show(event.data.pointer);
       if (isAudience && event.data?.type === commandType && event.data.command === "ink") receiveInk(event.data.ink);
@@ -17871,6 +19783,7 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
       if (event.data?.type === commandType && event.data.command === "media") executeMediaCommand(event.data);
       if (event.data?.type === commandType && event.data.command === "video") executeVideoCommand(event.data);
       if (event.data?.type === commandType && event.data.command === "audio-state") applyAudioState(event.data);
+      if (event.data?.type === commandType && event.data.command === "clip-play") applyClipPlay(event.data);
       if (event.data?.type === commandType && event.data.command === "highlight") executeHighlightCommand(event.data);
       if (isAudience && event.data?.type === commandType && event.data.command === "pointer" && validPointer(event.data.pointer)) pointerOverlay?.show(event.data.pointer);
       if (isAudience && event.data?.type === commandType && event.data.command === "ink") receiveInk(event.data.ink);
@@ -17904,6 +19817,7 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
 <!--POINTER_OVERLAY_RUNTIME-->
   <!--IMAGE_STEPS_RUNTIME-->
 <!--EMPHASIS_STEPS_RUNTIME-->
+<!--TRACE_WINDOW_RUNTIME-->
 <!--SIM_TYPING_RUNTIME-->
 <!--MEDIA_STEPS_RUNTIME-->
 <!--EMBED_CHANNEL_RUNTIME-->

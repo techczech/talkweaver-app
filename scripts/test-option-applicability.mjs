@@ -251,7 +251,7 @@ assert(
 // Ticket 21 — the table's two row/column groups and the cards Icons option are offered exactly
 // where their layout renders, and `{iconlist}` on a cards slide selects the Icons value.
 // -----------------------------------------------------------------------------
-for (const key of ['table-header', 'table-columns']) {
+for (const key of ['table-header', 'table-columns', 'table-first-column']) {
   assert(groupsFor('table').includes(key), `${key} is offered on a table slide`)
   assert.equal(groupsFor('list').includes(key), false, `${key} has nothing to switch on a list`)
 }
@@ -389,3 +389,32 @@ for (const entry of layoutEntries) {
   console.log(`  ${entry.name.padEnd(16)} ${resolved.get(entry.name).join(' ')}`)
 }
 console.log(`option applicability: ${GLOBAL_OPTION_GROUPS.length} global groups declared, ${layoutEntries.length} layouts resolved.`)
+
+// -----------------------------------------------------------------------------
+// 0.41 preview 2 — a grouped list ({iconlist}: group headings with nested bullets) already takes
+// icons through the list's own List style / List icons groups; the first-column option compiles.
+// -----------------------------------------------------------------------------
+{
+  const listGroups = groupsFor('list', { hasChildren: true })
+  assert(listGroups.includes('list-style') && listGroups.includes('icon-level'), 'a grouped list is offered List style (Icons) and List icons')
+  const { mkdtempSync, writeFileSync, statSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const compile = async (body) => {
+    const source = ['---', 'title: t', 'auto_title_slide: false', 'auto_thanks_slide: false', '---', '# D', '## S', '', body].join('\n')
+    const path = join(mkdtempSync(join(tmpdir(), 'tw-opt-')), 't.md')
+    writeFileSync(path, source)
+    return prepareSource(path, source, 't', statSync(path))
+  }
+  const grouped = await compile('### G\n{iconlist}{id=g}\n\n- Strengths {icon=lucide:thumbs-up}\n  - One\n  - Two\n- Dangers {icon=lucide:triangle-alert}\n  - Three\n')
+  const gStart = grouped.fullHtml.indexOf('<ul class="feature-list')
+  const gHtml = grouped.fullHtml.slice(gStart, grouped.fullHtml.indexOf('</section>', gStart))
+  assert.equal((gHtml.match(/<span class="fl-icon">/g) ?? []).length, 2, '{iconlist} on a grouped list puts an icon on each group heading')
+  assert(/fl-sublist/.test(gHtml), 'the grouped list keeps its nested bullets under the icon headings')
+  const plainFirst = await compile('### T\n{table}{table-first-column=off}{id=t}\n\n| A | B |\n| --- | --- |\n| x | y |\n')
+  assert(/<table class="slide-table table-plain-first"/.test(plainFirst.fullHtml), '{table-first-column=off} adds table-plain-first')
+  assert.equal(plainFirst.warnings.some((w) => w.startsWith('unresolved-trigger')), false, '{table-first-column=off} is a known token')
+  const dflt = await compile('### T\n{table}{id=t}\n\n| A | B |\n| --- | --- |\n| x | y |\n')
+  assert(!/table-plain-first/.test(dflt.fullHtml.replace(/<style[\s\S]*?<\/style>/g, '')), 'the default table keeps the accent first column')
+  console.log('PASS grouped-list icons and table-first-column')
+}

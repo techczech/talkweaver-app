@@ -78,7 +78,7 @@ export default function LedgerRow({
       {hit ? (
         <span className="tl-row-text">
           <span className={`tl-row-name ${fileMode ? 'tl-row-name--file' : ''}`}>
-            {fileMode ? label : <Marked text={label} ranges={hit.titleHighlights} />}
+            {fileMode || label !== talk.title ? label : <Marked text={label} ranges={hit.titleHighlights} />}
           </span>
           <SearchLine hit={hit} focusPath={focusPath} />
         </span>

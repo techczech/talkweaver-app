@@ -1,0 +1,193 @@
+/* Cards adopt the animated-scene drawing (ADR-0039, 0.41 ticket 09).
+   Values from docs/design/2026-10-16-slide-scene-formatting/after/14-cards.html and 14-cards-long.html
+   (drawn at 1920 x 1080, written here in cqw = px / 19.2). Unmarked block: it sorts after every migrated block and,
+   by its `zz-` name, after layouts/cards.css, skin/cards.css and skin/list.css, so it wins where it meets their rules.
+
+   Each card is a subtle box in one hue. Its title row is a tinted icon chip and the title (regular weight, ink) over a
+   thin rule in the card's hue; under it the points are highlight rows (a tint of the hue, no bullets). The only icon is
+   the chip's. Card height follows the content; cards align at the top. Hues: the section accent, then the next two of the
+   deck palette (--hue-2, --hue-3), then the cycle again.
+
+   Two forms draw it, one look:
+     `{cards}`                          `.card-gallery.card-grid .card.card-points` (the compiler stamps card-points on a
+                                        card of plain points; a card with a picture, a quote, a paragraph, label groups
+                                        or no points at all (a claim) keeps its own look)
+     icon / numbered list, box form     `.feature-list.fl-cards > li`; `.fl-card-pts` marks a card with points
+   Reveal: a card arrives with its first point and each point is its own beat (MODE_SELECTOR leaves `.fl-card-pts` out
+   and steps `.fl-sublist > li`; a `{cards}` card's points are `.feature-list > li`). The newest point is tinted deeper.
+   Type rides --fs-body (title .619em, points .651em = 38px and 40px at 1920) so the runtime fit still steps spacing
+   before type; the type floor holds. */
+
+/* ---------- shared: the card box and its hue ---------- */
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points,
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li {
+  --c: var(--accent);
+  --card-pad-x: 1.5625cqw;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto;
+  align-content: start;
+  align-items: center;
+  justify-content: stretch;
+  column-gap: 1.1458cqw;
+  row-gap: 0;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+  margin: 0;
+  padding: 1.5625cqw var(--card-pad-x) 1.3542cqw;
+  border: var(--subtle-box-line) solid color-mix(in srgb, var(--c) 34%, #fff);
+  border-radius: 1.0417cqw;
+  background: color-mix(in srgb, var(--c) 5%, #fff);
+  box-shadow: none;
+  font-size: var(--fs-body);
+  font-weight: 400;
+  line-height: 1.2;
+  color: var(--ink);
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: none;
+}
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points:nth-child(3n + 2),
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li:nth-child(3n + 2) { --c: var(--hue-2); }
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points:nth-child(3n + 3),
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li:nth-child(3n + 3) { --c: var(--hue-3); }
+
+/* The card sits on the block's own height: no legacy filler, no scroll fade. */
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points::after { grid-column: 1 / -1; }
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points.is-scrollable::after { display: none; }
+
+/* ---------- shared: the title row (chip + title) over the rule ---------- */
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points > .card-icon,
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li > .fl-icon {
+  grid-column: 1;
+  grid-row: 1;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: 3.5417cqw;
+  height: 3.5417cqw;
+  margin: 0 0 1.0417cqw .2083cqw;
+  padding: 0;
+  border: 0;
+  border-radius: .9375cqw;
+  background: color-mix(in srgb, var(--c) 14%, #fff);
+  color: var(--c);
+}
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points > .card-icon > svg,
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li > .fl-icon > svg {
+  width: 1.9792cqw;
+  height: 1.9792cqw;
+  color: var(--c);
+  stroke-width: 1.5;
+}
+/* A numbered card puts its number in the chip: a mono numeral in the card's hue. */
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li > .fl-icon.fl-num {
+  font-family: var(--mono);
+  font-size: max(var(--type-floor), 1.9792cqw);
+  font-weight: 400;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points > h4,
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li > .fl-text {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+  margin: 0 0 1.0417cqw;
+  padding: 0 .2083cqw 0 0;
+  font-family: inherit;
+  font-size: max(var(--type-floor), .619em);
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: 0;
+  color: var(--ink);
+}
+/* No chip: the title takes the row. */
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points:not(:has(> .card-icon)) > h4 {
+  grid-column: 1 / -1;
+  padding-left: .2083cqw;
+}
+/* The rule under the title row, in the card's hue (a card with points only). */
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points:has(> .feature-list)::before,
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li.fl-card-pts::before {
+  content: "";
+  display: block;
+  grid-column: 1 / -1;
+  grid-row: 2;
+  height: max(1px, .1042cqw);
+  background: color-mix(in srgb, var(--c) 45%, #fff);
+}
+/* A box card with no points (the item itself is the title) has no rule to clear. */
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li:not(.fl-card-pts) > .fl-text,
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li:not(.fl-card-pts) > .fl-icon { margin-bottom: 0; }
+
+/* ---------- shared: the points (highlight rows, no bullets) ---------- */
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points > .feature-list,
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li > .fl-sublist {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: calc(.625cqw * var(--list-gap, 1));
+  margin: 1.0417cqw 0 0;
+  padding: 0;
+  width: auto;
+  max-width: none;
+  align-self: stretch;
+}
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points > .feature-list > li,
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li > .fl-sublist > li {
+  display: block;
+  margin: 0;
+  padding: calc(.8333cqw * var(--list-gap, 1)) 1.1458cqw;
+  border: 0;
+  border-radius: .5208cqw;
+  background: color-mix(in srgb, var(--c) 11%, #fff);
+  font-size: max(var(--type-floor), .651em);
+  font-weight: 400;
+  line-height: 1.2;
+  color: var(--ink);
+  min-height: 0;
+  transition: background-color 220ms ease;
+}
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points > .feature-list > li::before,
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points > .feature-list > li::after,
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li > .fl-sublist > li::before,
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li > .fl-sublist > li::after { content: none; display: none; }
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li > .fl-sublist > li > .fl-subtext { display: inline; grid-column: auto; }
+.slide .card-gallery.card-grid:not(.cards-rows) > .card.card-points > .feature-list > li > .fl-text { font-size: inherit; font-weight: 400; }
+/* A card's own text (box form without points): the item itself is the title. */
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li > .fl-sublist > li > .fl-icon,
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) > li > .fl-sublist > li > .fl-sub-icon { display: none; }
+
+/* ---------- the block: cards side by side, aligned at the top, sized to their content ---------- */
+.slide .card-gallery.card-grid:not(.cards-rows):has(> .card.card-points),
+.slide .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22cqw), 1fr));
+  gap: 2.0833cqw;
+  align-items: start;
+  align-content: center;
+  width: 100%;
+  max-width: none;
+  min-height: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+.slide .slide-content.layout-cards .card-gallery.card-grid:not(.cards-rows):has(> .card.card-points) { min-height: 0; margin-top: 0; }
+/* Beside the title column the list has about 55cqw: three cards still sit in a row. */
+.slide[data-title-layout="left"] .slide-content > .feature-list.fl-cards:not(.fl-annotated):not(.fl-plain) { grid-template-columns: repeat(auto-fit, minmax(min(100%, 15cqw), 1fr)); gap: 1.4cqw; }
+
+/* ---------- reveal: a card arrives with its first point; the newest point is tinted deeper ---------- */
+.slide.mode-active .card-gallery.card-grid > .card.card-points,
+.slide.mode-active .feature-list.fl-cards > li.fl-card-pts { transition: opacity 220ms ease; }
+.slide.mode-reveal .card-gallery.card-grid > .card.card-points:has(> .feature-list > li:first-child[data-mode-state="hidden"]),
+.slide.mode-reveal .feature-list.fl-cards > li.fl-card-pts:has(> .fl-sublist > li:first-child[data-mode-state="hidden"]) {
+  opacity: 0;
+  visibility: hidden;
+}
+.slide.mode-active .card-gallery.card-grid > .card.card-points > .feature-list > li.mode-el[data-mode-state="current"],
+.slide.mode-active .feature-list.fl-cards > li > .fl-sublist > li.mode-el[data-mode-state="current"] {
+  background: color-mix(in srgb, var(--c) 24%, #fff);
+}

@@ -186,4 +186,24 @@ await test('index.ts applies the guard to ipcMain before the first registration,
   }
 })
 
+await test('images:search-vault is registered on the guarded ipcMain, checks its query, and is on the typed bridge', () => {
+  const index = readFileSync(join(mainDir, 'index.ts'), 'utf8')
+  const applied = index.indexOf('\napplyMainFrameOnly(ipcMain)')
+  const at = index.indexOf("ipcMain.handle('images:search-vault'")
+  assert.ok(applied > 0 && at > applied, 'registered with ipcMain.handle, after the main-frame guard is applied')
+  const body = index.slice(at, at + 600)
+  assert.match(body, /typeof query !== 'string' \|\| query\.length > MAX_VAULT_QUERY/, 'the query is a string with a length cap')
+  const preload = readFileSync(join(mainDir, '..', 'preload', 'index.ts'), 'utf8')
+  assert.match(preload, /searchVault: \(query: string\): Promise<VaultPictureResult \| null> => ipcRenderer\.invoke\('images:search-vault', query\)/)
+  // and it behaves as a guarded handler: a subframe is refused
+  const ipc = fakeIpcMain()
+  applyMainFrameOnly(ipc, { log: () => {} })
+  ipc.handle('images:search-vault', () => ({ vaults: 1, hits: [] }))
+  const w = fakeWindow()
+  return Promise.all([
+    ipc.invoke('images:search-vault', w.fromMain(), 'x').then((r) => assert.deepEqual(r, { vaults: 1, hits: [] })),
+    assert.rejects(ipc.invoke('images:search-vault', w.fromSubframe(), 'x'), /refused call on images:search-vault/)
+  ])
+})
+
 console.log(`ipc: main frame only: ${passed} passed`)

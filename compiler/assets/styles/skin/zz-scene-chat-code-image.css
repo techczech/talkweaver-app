@@ -1,0 +1,107 @@
+/* Image with claims adopts the scene drawing; chat, code and the image grid keep TalkWeaver's own designs
+   (ADR-0039, 0.41 ticket 12). Values from docs/design/2026-10-16-slide-scene-formatting/after/21-image-claim.html
+   (drawn at 1920 x 1080, written here in cqw = px / 19.2). Unmarked block: it sorts after every migrated block, so
+   it wins where it meets layouts/media.css (@order 1995) and base.css.
+
+   Chat (the full chatbot mock of layouts/simulation.css), code (the dark panel and labelled transcript) and the
+   image grid (the screenshot row) take no rule here: they take the shared rules (skin/slide-foundations.css
+   centres the block in the band under the title; ticket 02's title look applies to code and the grid). The
+   cascade drawing for chat (renders/after/19-chat.png) is rejected and is not built.
+
+   Image with claims. The picture on the left (a rounded box with a hairline), the claims on the right as subtle
+   boxes with regular text, the block centred in the band. Each claim carries a link (.ic-link) from the box's
+   outer left border to the picture's outer right border: the link is an element whose width IS the gap between
+   the two, so its shaft starts on the box's border and the head's tip lands on the picture's border; the head
+   is whole. A claim level with the picture keeps this horizontal link. A claim whose mid-height lies above or
+   below the picture is angled by the slide fit pass (runtime/slide-fit.js linkClaims): it sets --ic-angle (a
+   rotation about the box-side end) and --ic-stretch (length over the gap), so the tip lands on the picture's
+   border at clamp(picture top + --ic-reach, box mid, picture bottom - --ic-reach). With no script the link stays
+   horizontal (three claims at this size are 452 of the picture's 548 at 1920, so the drawing needs no angle). */
+
+.slide .slide-content.layout-image-claim > .evidence-layout {
+  --ic-gap: 6.7708cqw;
+  --ic-reach: 1.25cqw;
+  display: flex;
+  align-items: center;
+  gap: var(--ic-gap);
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+/* The picture: at most 1000 of the band's 1680 at 1920, never larger than its own pixels (media.css's
+   never-upscale contract) and never taller than 56cqh. The figure shrinks to the picture, so its border box IS the
+   picture's edge, which is where the links end. */
+.slide .evidence-layout > figure.slide-figure {
+  flex: 0 1 auto;
+  width: fit-content;
+  min-width: 0;
+  box-sizing: border-box;
+  display: block;
+  overflow: hidden;
+  border: .1042cqw solid var(--hairline);
+  border-radius: .9375cqw;
+  background: #fff;
+}
+.slide .evidence-layout > figure.slide-figure img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 52.0833cqw;
+  max-height: 56cqh;
+  object-fit: contain;
+}
+.slide .evidence-layout > .callouts {
+  flex: 1 1 0;
+  min-width: 0;
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  gap: 2.3958cqw;
+}
+/* A claim: a subtle box, regular text. */
+.slide .evidence-layout > .callouts > li.subtle-box {
+  position: relative;
+  box-sizing: border-box;
+  min-height: 6.25cqw;
+  display: flex;
+  align-items: center;
+  padding: .8333cqw 1.6667cqw;
+  border-radius: .8333cqw;
+  font-size: max(var(--type-floor), 2.2917cqw);
+  line-height: 1.18;
+  font-weight: 400;
+}
+/* Four or more claims: tighter boxes and gaps, so the column stays inside the picture's height and every link
+   still meets the picture (the drawing has three). */
+.slide .evidence-layout > .callouts:has(> li:nth-child(4)) { gap: 1.25cqw; }
+.slide .evidence-layout > .callouts:has(> li:nth-child(4)) > li.subtle-box { min-height: 4.6875cqw; padding-block: .4167cqw; }
+/* The link: right edge on the box's outer left border, left edge (the head's tip) on the picture's outer right border.
+   --ic-angle and --ic-stretch (set per link by the runtime) turn it about its right end and lengthen it to reach. */
+.slide .evidence-layout > .callouts > li > .ic-link {
+  position: absolute;
+  top: 50%;
+  right: calc(100% + var(--subtle-box-line));
+  width: calc(var(--ic-gap) * var(--ic-stretch, 1));
+  height: .8333cqw;
+  transform: translateY(-50%) rotate(var(--ic-angle, 0deg));
+  transform-origin: 100% 50%;
+  pointer-events: none;
+  background: linear-gradient(var(--accent), var(--accent)) center / 100% .2083cqw no-repeat;
+}
+.slide .evidence-layout > .callouts > li > .ic-link > svg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1.0417cqw;
+  height: 100%;
+  overflow: visible;
+  fill: var(--accent);
+}
+/* A narrow slide (a phone) stacks the pair; a link has no meaning there. */
+@container (max-width: 950px) {
+  .slide .slide-content.layout-image-claim > .evidence-layout { flex-direction: column; gap: 18px; }
+  .slide .evidence-layout > figure.slide-figure { flex: none; width: auto; max-width: 100%; }
+  .slide .evidence-layout > figure.slide-figure img { max-width: 100%; }
+  .slide .evidence-layout > .callouts { flex: none; width: 100%; }
+  .slide .evidence-layout > .callouts > li > .ic-link { display: none; }
+}

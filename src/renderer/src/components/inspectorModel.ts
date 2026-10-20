@@ -14,7 +14,7 @@ import { isStatementOptionGroup, statementSelections } from '../../../shared/sta
 import { selectionFromTriggerLine } from './layoutPickerModel.ts'
 import { inspectorBoardModel, type InspectorBoardModel } from './inspectorBoardModel.ts'
 import { slideBlockEnd } from '../../../../compiler/scripts/lib/board-slide.mjs'
-import { preworkKindOf, type InspectorPreworkModel } from './inspectorPreworkModel.ts'
+import type { InspectorPreworkModel } from './inspectorPreworkModel.ts'
 
 export type PaneState = 'both' | 'editor' | 'strip'
 
@@ -152,7 +152,7 @@ export interface InspectorModel {
   steps: InspectorStepModel
   /** ADR-0032: a `{poll=board}` slide's Board section (its Poll section, headed "Board"). */
   board?: InspectorBoardModel
-  /** Ticket 08: the slide's "Before the session" section (a pre-work step, the section, or a `{results=…}` slide). */
+  /** Ticket 27: a `{results=…}` slide's Results section (the 0.37 "Before the session" section is gone, ticket 29). */
   prework?: InspectorPreworkModel
 }
 
@@ -186,8 +186,9 @@ export function inspectorModel(
   const titleLayout = row?.title_layout
   const titlePainted = typeof titleLayout === 'string' ? titleLayout !== 'hidden' && titleLayout !== '' : undefined
   const titlePanel = typeof titleLayout === 'string' && titleLayout !== '' ? titleLayout === 'left' : undefined
-  // Ticket 08: a pre-work step's rows (prework-*) are offered only when the slide is a step.
-  const preworkKind = preworkKindOf(prework)
+  // The prework-* rows (a work-file step's settings) are never offered on a talk slide: a talk's own
+  // `{prework}` section is no longer written in the Inspector (work-files ticket 29).
+  const preworkKind = null
   // Ticket 13: the Page width group is offered only on a slide with an embedded page and body text.
   const embedBesideText = slideHasEmbedBesideText(sourceMarkdown ?? row?.source_markdown ?? '')
   const candidates = optionGroupsForSlide({ layoutName, headingLevel, hasChildren, preworkKind, embedBesideText })
@@ -268,8 +269,8 @@ export interface InspectorSectionModel extends Omit<InspectorOptionSection, 'bin
   chip?: string
 }
 
-/** Ticket 08: the "Before the session" section stands even when no registry row applies (the
- *  pre-work section itself, a `{results=…}` slide): its body is the Inspector's own. Last in the run. */
+/** Ticket 27: a `{results=…}` slide's Results section stands even when no registry row applies:
+ *  its body is the Inspector's own. Last in the run. */
 function withPreworkSection(sections: InspectorOptionSection[], prework: InspectorPreworkModel | null): InspectorOptionSection[] {
   if (!prework || sections.some((section) => section.id === 'prework')) return sections
   return [...sections, { id: 'prework', heading: prework.heading, bindings: [] }]

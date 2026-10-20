@@ -39,7 +39,8 @@ async function loadRegistry() {
 // line beneath the heading), with no auto title/closing slides — so the LAST slide is the probe.
 async function compileSlide(title, trigger, body = ['- One', '- Two']) {
   const source = [
-    '---', `title: ${title}`, 'auto_title_slide: false', 'auto_thanks_slide: false', '---', '',
+    // 0.41 ticket 02: the index tab is the default look; these probes measure the plain top title.
+    '---', `title: ${title}`, 'auto_title_slide: false', 'auto_thanks_slide: false', 'title_look: full', '---', '',
     '## Fixtures', '', `### ${title}`, ...(trigger ? [trigger] : []), '', ...body
   ].join('\n')
   const path = join(dir, `${++probe}.md`)
@@ -91,7 +92,7 @@ assert.equal(TITLE_REGIME_BY_LAYOUT['section-title'], 'own', 'the section-divide
 const CLASS_FIXTURES = [
   { trigger: '{list}', regime: 'sidebar', expect: 'left' },
   { trigger: '{statement}', regime: 'sidebar', expect: 'left', body: ['Judgement is not a capability.'] },
-  { trigger: '{contrast}', regime: 'sidebar', expect: 'left', body: ['- Old / New'] },
+  { trigger: '{contrast}', regime: 'top', expect: 'top', body: ['- Old / New'] },
   { trigger: '{stmt-list}', regime: 'top', expect: 'top', body: ['A claim worth dwelling on.', '', '- One', '- Two'] },
   { trigger: '{links}', regime: 'sidebar', expect: 'left', body: ['- [Deliberate practice](https://example.com)'] },
   { trigger: '{cards}', regime: 'top', expect: 'top', body: ['- One', '  - First card', '- Two', '  - Second card', '- Three', '  - Third card'] },
@@ -101,7 +102,7 @@ const CLASS_FIXTURES = [
   { trigger: '{flow}', regime: 'top', expect: 'top', body: ['- One', '- Two', '- Three'] },
   { trigger: '{columns}', regime: 'top', expect: 'top', body: ['One.', '', 'Two.'] },
   { trigger: '{quote}', regime: 'hidden', expect: 'hidden', body: ['> Capability is not judgement.', '', '- Source'] },
-  { trigger: '{compare}', regime: 'hidden', expect: 'hidden', body: ['#### Can', '', 'Draft.', '', '#### Cannot', '', 'Decide.'] },
+  { trigger: '{compare}', regime: 'top', expect: 'top', body: ['#### Can', '', 'Draft.', '', '#### Cannot', '', 'Decide.'] },
   { trigger: '{title}', regime: 'own', expect: '', body: ['A subtitle line.'] },
   { trigger: '{closing}', regime: 'own', expect: '', body: ['Thank you.'] }
 ]
@@ -174,6 +175,45 @@ assert.equal(samplerHtml.includes('kicker-title'), false, 'the kicker-title span
 assert.equal(samplerHtml.includes('kicker-compact'), false, 'the kicker-compact class is gone from the compiled deck')
 
 // -----------------------------------------------------------------------------
+// 4b. No section name above a title unless the slide sets {kicker=…} (ADR-0039). The subsection
+//     divider no longer carries its parent section's name; `section_labels: on` still adds the
+//     section name to every slide, because the author asked for it.
+// -----------------------------------------------------------------------------
+{
+  const kickerDeck = async (extraMeta) => {
+    const source = [
+      '---', 'title: Kicker probe', 'auto_title_slide: false', 'auto_thanks_slide: false', ...extraMeta, '---', '',
+      '## Part One', '', '### Plain content', '{id=k-plain}', '', '- One', '- Two', '',
+      '### Top content', '{titletop} {id=k-top}', '', '- One', '- Two', '',
+      '### Sub Divider', '{id=k-sub}', '', '#### Leaf', '{id=k-leaf}', '', 'Body.', '',
+      '## Part Two', '', '### Authored kicker', '{titletop} {kicker="Case study"} {id=k-authored}', '', '- One', '- Two'
+    ].join('\n')
+    const path = join(dir, `kicker-${++probe}.md`)
+    writeFileSync(path, source, 'utf8')
+    const model = await prepareSource(path, source, 'Kicker probe', statSync(path))
+    const doc = new JSDOM(await buildDeckHtmlFromModel(model)).window.document
+    const kickers = {}
+    for (const section of doc.querySelectorAll('section.slide')) {
+      const kicker = section.querySelector(':scope > .slide-content > header.slide-head > .kicker')
+      kickers[section.getAttribute('data-id')] = kicker ? kicker.textContent.trim() : null
+    }
+    return kickers
+  }
+  const plain = await kickerDeck([])
+  assert.equal(plain['k-sub'], null, 'the subsection divider shows no parent-section name above its title')
+  for (const id of ['k-plain', 'k-top', 'k-leaf']) assert.equal(plain[id], null, `${id}: no section name above the title by default`)
+  assert.equal(plain['k-authored'], 'Case study', 'an authored {kicker=…} still shows, unchanged')
+  const sectionNames = new Set(['part one', 'part two', 'sub divider'])
+  const leaked = Object.entries(plain).filter(([, text]) => text && sectionNames.has(norm(text)))
+  assert.deepEqual(leaked, [], 'no slide prints a section name above its title without section_labels')
+
+  const labelled = await kickerDeck(['section_labels: on'])
+  assert.equal(labelled['k-plain'], 'Part One', 'section_labels: on keeps the section name on content slides')
+  assert.equal(labelled['k-sub'], 'Part One', 'section_labels: on keeps the section name on the subsection divider')
+  assert.equal(labelled['k-authored'], 'Case study', 'an authored kicker wins over section_labels')
+}
+
+// -----------------------------------------------------------------------------
 // 5. One head emitter: auto deck-title ≡ authored {title}, auto closing ≡ authored {closing}.
 // -----------------------------------------------------------------------------
 {
@@ -217,7 +257,7 @@ assert.equal(samplerHtml.includes('kicker-compact'), false, 'the kicker-compact 
   const { chromium } = await import('playwright')
   const LONG = 'York expenses: from email to completed forms'
   const source = [
-    '---', 'title: Compact title probe', 'auto_title_slide: false', 'auto_thanks_slide: false', '---', '',
+    '---', 'title: Compact title probe', 'auto_title_slide: false', 'auto_thanks_slide: false', 'title_look: full', '---', '',
     '## Fixtures', '',
     `### ${LONG}`, '{titletop} {id=t-top}', '', '- One', '- Two', '',
     '### Rail title stays', '{sidebar} {id=t-rail}', '', '- One', '- Two', '',
@@ -281,6 +321,91 @@ assert.equal(samplerHtml.includes('kicker-compact'), false, 'the kicker-compact 
     const fit = await probe('t-fit')
     assert(fit.fontSize < 0.039 * 1280 - 1, `over-long top title is shrunk by fitTitle (got ${fit.fontSize})`)
     assert(fit.overflow <= 1, 'fitted title no longer overflows')
+  } finally {
+    await browser.close()
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 7. Content band (ADR-0039, skin/slide-foundations.css): under a top title the content block is
+//    centred between the title block's lower edge and the top of the footer band (61 canvas px
+//    above the stage bottom, or the slide's bottom padding if larger), in the plain top title and
+//    in each title look; with no painted title it is centred on the whole slide. Read at 1920×1080
+//    in headless Chromium, in screen px.
+// -----------------------------------------------------------------------------
+{
+  const { chromium } = await import('playwright')
+  const browser = await chromium.launch({ headless: true })
+  try {
+    // '' is the talk with no look: the index tab since 0.41; `full` is the plain top title.
+    for (const look of ['full', '', 'tab', 'kicker', 'label']) {
+      const source = [
+        '---', 'title: Band probe', 'auto_title_slide: false', 'auto_thanks_slide: false', ...(look ? [`title_look: ${look}`] : []), '---', '',
+        '## Fixtures', '',
+        '### A short list', '{titletop} {id=b-list}', '', '- Alpha', '- Beta', '- Gamma', '',
+        '### Short cards', '{cards} {id=b-cards}', '', '- One', '  - First card', '- Two', '  - Second card', '',
+        '### No title shown', '{titletop} {notitle} {id=b-none}', '', '- Alpha', '- Beta', '- Gamma'
+      ].join('\n')
+      const path = join(dir, `band-${look || 'unset'}.md`)
+      writeFileSync(path, source, 'utf8')
+      const model = await prepareSource(path, source, 'Band probe', statSync(path))
+      const htmlPath = join(dir, `band-${look || 'unset'}.html`)
+      writeFileSync(htmlPath, model.fullHtml, 'utf8')
+      const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } })
+      await page.goto(`file://${htmlPath}`, { waitUntil: 'load' })
+      await page.evaluate(() => document.fonts?.ready)
+      const measure = (id) => page.evaluate((slideId) => {
+        const slides = [...document.querySelectorAll('.stage > .slide')]
+        const slide = slides.find((node) => node.dataset.id === slideId)
+        if (!slide) return null
+        slides.forEach((node) => node.classList.toggle('active', node === slide))
+        window.__autofitForTest?.()
+        const rect = slide.getBoundingClientRect()
+        const k = rect.height / slide.offsetHeight
+        const content = slide.querySelector(':scope > .slide-content')
+        const head = content.querySelector(':scope > .slide-head')
+        const painted = head && !head.classList.contains('slide-head-quiet')
+        // The title block: the head in the flow, or the look's lifted h1 (the head is then zero-height).
+        const titleBox = painted ? (slide.dataset.titleLook ? head.querySelector('h1') : head).getBoundingClientRect() : null
+        // The visible block: the rows of a list, the body's own children otherwise.
+        const parts = [...content.children].filter((node) => node !== head)
+          .flatMap((node) => node.matches('ul, ol') ? [...node.children] : [node])
+          .map((node) => node.getBoundingClientRect()).filter((r) => r.height > 0)
+        const footerReserve = Math.max(parseFloat(getComputedStyle(slide).paddingBottom), 61) * k
+        return {
+          titleLayout: slide.dataset.titleLayout,
+          look: slide.dataset.titleLook || '',
+          slideTop: rect.top, slideBottom: rect.bottom,
+          titleBottom: titleBox ? titleBox.bottom : null,
+          bandBottom: rect.bottom - footerReserve,
+          blockTop: Math.min(...parts.map((r) => r.top)),
+          blockBottom: Math.max(...parts.map((r) => r.bottom))
+        }
+      }, id)
+      const label = look === 'full' ? 'plain top title' : look || 'no look named (index tab)'
+      const expectedLook = look === 'full' ? '' : look || 'tab'
+      for (const id of ['b-list', 'b-cards']) {
+        const m = await measure(id)
+        assert(m, `${label}: deck carries ${id}`)
+        assert.equal(m.titleLayout, 'top', `${label}: ${id} sits on the top regime`)
+        assert.equal(m.look, expectedLook, `${label}: ${id} carries the deck's title look`)
+        assert(m.titleBottom != null, `${label}: ${id} paints its title`)
+        const centre = (m.blockTop + m.blockBottom) / 2
+        const bandCentre = (m.titleBottom + m.bandBottom) / 2
+        assert(Math.abs(centre - bandCentre) <= 4,
+          `${label}: ${id} block centre ${centre.toFixed(1)} is the band centre ${bandCentre.toFixed(1)} (title ${m.titleBottom.toFixed(1)} to footer band ${m.bandBottom.toFixed(1)})`)
+        assert(m.blockTop > m.titleBottom, `${label}: ${id} block starts below the title`)
+        assert(m.blockBottom <= m.bandBottom + 1, `${label}: ${id} block ends above the footer band`)
+      }
+      const none = await measure('b-none')
+      assert(none, `${label}: deck carries the untitled slide`)
+      assert.equal(none.titleBottom, null, `${label}: the untitled slide paints no title`)
+      const noneCentre = (none.blockTop + none.blockBottom) / 2
+      const slideCentre = (none.slideTop + none.slideBottom) / 2
+      assert(Math.abs(noneCentre - slideCentre) <= 4,
+        `${label}: with no title the block centre ${noneCentre.toFixed(1)} is the slide centre ${slideCentre.toFixed(1)}`)
+      await page.close()
+    }
   } finally {
     await browser.close()
   }

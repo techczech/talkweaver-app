@@ -175,7 +175,8 @@ try {
     assert.equal(await page.locator('.hh-speaker').textContent(), 'Dominik Lukeš · University of Oxford')
     const buttons = await page.locator('.hh-band-actions:visible .hh-btn').evaluateAll((els) => els.map((el) => [el.textContent.trim(), el.getAttribute('href')]))
     assert.deepEqual(buttons, [['Open slides', 'agents-2026.html']], 'no pre-work: Open slides is the one band button')
-    assert.equal((await page.locator('#hhAbout .hh-facts').textContent()).trim(), '4 slides', 'About this talk carries the slide count')
+    assert.equal(await page.locator('#hhAbout').count(), 0, 'before the talk the slides are not out, so the page does not say how many there are')
+    assert.ok(!/\d+\s+slides?\b/i.test(await page.locator('#handoutHome :visible').evaluateAll((els) => els.map((el) => el.children.length ? '' : el.textContent).join(' '))), 'no slide count is visible before the talk')
     assert.equal(await page.locator('#hhPrework').count(), 0)
     assert.equal(await page.locator('#hhCover').isVisible(), false, 'no cover before the talk')
     assert.equal(await page.locator('#hhLinks').isVisible(), false)
@@ -199,9 +200,8 @@ try {
     // Laptop: the band's button and the pre-work card are in the right-hand column.
     const titleBox = await page.locator('#hhTitle').boundingBox()
     const buttonBox = await main.boundingBox()
-    const aboutBox = await page.locator('#hhAbout').boundingBox()
     const preworkBox = await page.locator('#hhPrework').boundingBox()
-    assert.ok(buttonBox.x > titleBox.x + titleBox.width - 1 && preworkBox.x > aboutBox.x + aboutBox.width, 'laptop: two columns ' + JSON.stringify([titleBox, buttonBox, aboutBox, preworkBox]))
+    assert.ok(buttonBox.x > titleBox.x + titleBox.width - 1 && preworkBox.x > titleBox.x, 'laptop: two columns ' + JSON.stringify([titleBox, buttonBox, preworkBox]))
     await page.close()
   }
 

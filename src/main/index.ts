@@ -164,11 +164,13 @@ import {
 } from './vault-paths'
 import { pathStaysInside } from './path-containment'
 import { createArchiveProvider } from './image-search/archive-provider'
-import { createImageSearch, type PaletteHit } from './image-search/image-search'
+import { createImageSearch } from './image-search/image-search'
 import { createSlideWellProvider, locateSlideWell } from './image-search/slidewell-provider'
 import { detectSqlite3 } from './image-search/sqlite-read'
 import { fromBase64Url, isInsideRoot } from './image-search/thumb-url'
-import type { ImageSearchResult, ImageSearchStatus, ImportedImage, MatchMode } from '../shared/image-search'
+import { createVaultPictureSearch, twassetFileFor, gatherVaultImages as gatherVaultImagesIn, MAX_VAULT_QUERY } from './image-search/vault-pictures'
+import { importImageForTalk, talkVaultWriteRoot, type ImageImportDeps } from './image-search/image-import'
+import type { ImageSearchResult, ImageSearchStatus, ImportedImage, MatchMode, VaultPictureResult } from '../shared/image-search'
 import { decideShellPath } from './shell-path-policy'
 import { resolveImageRefs } from './image-refs'
 import { assetRootsForTalk, talkVaultRoot } from './asset-roots'
@@ -244,6 +246,9 @@ import {
   recoverInterruptedRecordings
 } from './recording'
 import { registerHistoryIpc } from './history'
+import { listWorkFilesFor, listWorkFilesAcross, workFileWriteRoot } from './work-files'
+import { addWorkFileStep, setWorkFileStepLocal, createWorkFile } from './work-file-write'
+import { movePreworkToWorkFile } from './prework-move'
 import {
   DEFAULT_TRANSCRIPTION_PYTHON,
   DEFAULT_TRANSCRIPTION_SCRIPT,
@@ -301,16 +306,17 @@ import {
   type PathwaySlideRow
 } from './pathways'
 import {
-  clearRunHandoutUrl,
   injectRunCoverMetadata,
+  listRuns,
   persistRun,
-  preworkWindow,
   readRun,
   readRunForTalk,
   runHandoutSlug,
   setRunHandoutUrl,
+  stampRunWork,
   type RunRecord
 } from './runs'
+import { WORK_PAGE_FOLDER, type Phase } from '../shared/run-work'
 import {
   SITE_FOLDER_REFUSED,
   siteFolder,
@@ -329,7 +335,8 @@ import { endAllWranglerRuns, prepareWranglerRun, resolveWranglerLaunch, runWrang
 import { liveWorkerDeployConfig } from './live-worker-deploy-config'
 import { blockingFileText, brokenJsonFileInOutput } from './wrangler-failures'
 import { isTerminalLiveStatus, type LiveStatus } from './live-presenter-client'
-import { createLiveSessionManager } from './live-session-manager'
+import { createLiveSessionManager, livePresenterContext, type LivePresenterContext } from './live-session-manager'
+import { presentedTalkVault, type PresentedVaultDeps } from './presented-vault'
 import { createLiveSessionStore, type SessionRecoveryRecord } from './live-session-store'
 import { secretsSlot, type SecretSlot, type SecretsStore } from './secrets-store'
 import { openSecretsStore } from './secrets-store-electron'
@@ -341,12 +348,13 @@ import type { AdminEndpoint } from './live-admin-request'
 import { createLiveService, setUpAllowedFrom, type LiveService } from './live-service'
 import { LIVE_WORKER_NAME, type GoingLiveRow, type LiveSetupPrompt } from '../shared/live-service-status'
 import { WORKER_DIST_DIR, readShippedFiles, type ShippedFiles } from './live-service-upload'
-import { addressKind, createHandoutPublishing, liveAddressForPages, localLiveAllowed, publishedFolders, removeSiteFolder, writableSiteFolder, type HandoutPublishing } from './handout-publishing'
+import { addressKind, createHandoutPublishing, liveAddressForPages, localLiveAllowed, publishedFolders, writableSiteFolder, type HandoutPublishing } from './handout-publishing'
 import { slimHandoutHtml } from './handout-slimming'
-import { buildRunHandoutHtml, runHandoutSourceFrom, type HandoutPagesJob, type HandoutPagesResult, type RunForHandout, type RunHandoutSource } from './handout-pages'
+import { buildRunHandoutHtml, placedRunExtras, runCompileOption, runForHandoutOf, runHandoutSourceFrom, withRunExtraIds, type HandoutPagesJob, type HandoutPagesResult, type RunExtrasModel, type RunCompileOption, type RunForHandout, type RunHandoutSource } from './handout-pages'
 import { Worker } from 'node:worker_threads'
 import { createPrepareTalkOffThread } from './prepare-talk-off-thread'
 import { SHARE_LINK_NOT_NOW, type CloudflareStatus } from '../shared/cloudflare-status'
+import { LEGACY_OUTLINE_ADAPTER } from '../shared/run-extra-slides'
 import { createRecordingStorage, type RecordingStorage } from './recording-storage'
 import type { RecordingStorageRow } from '../shared/recording-storage-status'
 import { appOpenRefusal, runSetup, setupArguments, type ImporterRow } from './setup-cli'
@@ -357,13 +365,21 @@ import { PPT_EXTRACTOR_POINTER, PPT_EXTRACTOR_URL, rendererNotice } from '../sha
 import { createOwnerTokens, incompleteOwnerTokenRestores, migrateOwnerTokens, restorePlainOwnerTokens, RESTORE_PLAIN_OWNER_TOKENS_SWITCH, type OwnerTokens } from './owner-tokens'
 import { closeLiveBoardsLeftOpen, flushLiveSessionHistory, recoverFinalLiveHistory } from './live-session-history'
 import { registerRunBoardIpc } from './run-board-ipc'
+import { registerSessionsListIpc } from './sessions-list'
+import { openVaults, registerPublishedPagesIpc, siteClaims, type PublishedPagesDeps } from './published-pages'
+import { TALK_NOT_FOUND, talkByOutline, talkLinkNotCleared, talkUnpublishJob } from './talk-unpublish'
+import { registerRunPageIpc, runVaultRoot } from './run-page'
 import { createRunResultsShares } from './run-results-share'
 import { seedPollForRun, withoutSeed } from './run-prework-seed'
-import { answerPreworkTrayQuestion, isPreworkQuestionId, preworkTrayForSession } from './prework-tray'
+import { answerPreworkTrayForLiveSession, isPreworkQuestionId, preworkTrayForLiveSession } from './prework-tray'
 import type { PollDefinition } from '../../worker/protocol'
 import type { PreworkFeed } from '../../compiler/scripts/lib/prework.mjs'
 import { createRunPrework, registerRunPreworkIpc, startRunPreworkTimer, type RunPreworkService } from './run-prework'
-import { preworkWindowMs, publicPreworkForm, withoutPreworkSlides, type CompiledPrework, type HandoutPreworkConfig } from '../shared/run-prework'
+import { withoutPreworkSlides, type CompiledPrework } from '../shared/run-prework'
+import { buildRunWorkPreview, planRunWork, runLineFor, sendRunWork, writeRunWorkPages, type SentWork } from './run-work-publish'
+import { RUN_FOLDER_UNCLEAR, runPublishFolder, runSiteFolder, runUnpublishJob, sentPhases } from './run-unpublish'
+import { createPostWorkOpener, startPostWorkOpenTimer, type PostWorkOpener } from './post-work-open'
+import { buildNotAvailablePage } from './work-page'
 import { LIVE_WORKER_BUILD, supportsCurrentLiveWorker } from '../../worker/recovery-protocol'
 import { fitInstantImage } from './instant-image'
 import { decodeToWebp, storePastedImage } from './pasted-image-asset'
@@ -386,8 +402,8 @@ import { isSharedTalkStopped, isValidShareDomain } from '../shared/shared-talk'
 import { deckWindowKeyAction, deckWindowMode, OPEN_AUDIENCE_SCRIPT } from './deck-window-keys'
 import { appWindowOpenHandler, guardDeckWindowTree, isAppAudienceUrl } from './present-window-open'
 import { isPresenterBoardMessage, parsePresenterMessage, parseSlideLightbox } from '../../worker/protocol'
-import { handoutHomeDetails, handoutHomePrework } from '../shared/handout-home'
-import { preworkEnabled } from '../shared/prework-flag'
+import { handoutHomeDetails, handoutHomePostwork, handoutHomePrework } from '../shared/handout-home'
+import { historyResultsRefusal, isOpenableToolsView, parseToolsRunRef, type ToolsRunRef, type ToolsView } from '../shared/tools-views'
 
 const slidePreviewStore = createSlidePreviewStore(8)
 
@@ -588,6 +604,22 @@ function writableVaultRoot(): string | undefined {
   const first = vaultRegistry.primary()
   if (!first || vaultAvailability.isUnavailable(first.id)) return undefined
   return writableRoot(first.root, rootFs) ?? undefined
+}
+/** presented-vault.ts over the live registry: where a presenter window's writes go. */
+const presentedVaultDeps: PresentedVaultDeps = {
+  resolve: (absPath) => vaultRegistry.resolve(absPath),
+  available: (vault) => vaultAvailable(vault as Vault),
+  writable: (root) => writableRoot(root, rootFs) ?? undefined,
+  openVaults: () => vaultRegistry.list().filter((v) => v.open).length,
+  current: () => writableVaultRoot() ?? null,
+}
+/** The vault a Run publish or unpublish names (run-page.ts runVaultRoot): that open vault only, never another. */
+function runVaultFor(vaultId: unknown): { root: string | undefined } | { error: string } {
+  return runVaultRoot(availableVaults().map((v) => ({ id: v.id, root: v.root })), vaultId, writableVaultRoot, (root) => writableRoot(root, rootFs) ?? undefined)
+}
+/** A talk of one vault, by its slug. */
+function talkInVault(vaultRoot: string, slug: string): TalkInfo | null {
+  return findTalks(vaultRoot).find((talk) => talk.slug === slug) ?? null
 }
 /** The root of the vault holding absPath for a write (see vaultRootFor): only when it is there now. */
 function writableRootFor(absPath: string | null | undefined): string | undefined {
@@ -854,7 +886,8 @@ function applyPublishSettings(cfg: { accountId?: string; project?: string; baseU
 
 function attachLiveWindow(wcId: number) {
   const context = livePresenterContexts.get(wcId)
-  if (context) liveSessions?.attach(wcId, context.talkSlug, (currentVaultRoot() ?? null))
+  // The vault of the talk this presenter window shows (issue 256), never the current vault.
+  if (context) liveSessions?.attach(wcId, context.talkSlug, context.vaultRoot)
   liveSessions?.bindRun(wcId, recordingRunReference(wcId))
   return liveSessions?.record(wcId) ?? null
 }
@@ -868,7 +901,7 @@ ipcMain.handle('live:go', async (event) => {
     liveRecoveryStore.check()
     const existing = attachLiveWindow(wcId)
     if (existing && !isTerminalLiveStatus(existing.status)) return { success: true, ...liveSessions.snapshot(wcId) }
-    if (liveSessions.inUse(context.talkSlug, (currentVaultRoot() ?? null), wcId)) throw new Error('This talk is already live in another presenter window. Close that presentation and keep it live before reopening it here.')
+    if (liveSessions.inUse(context.talkSlug, context.vaultRoot, wcId)) throw new Error('This talk is already live in another presenter window. Close that presentation and keep it live before reopening it here.')
     if (!context.shortUrl) throw new Error('Publish or export this handout before going live.')
     const endpoint = await ensureLiveWorker()
     const capabilityResponse = await fetch(`${endpoint.baseUrl}/capabilities`, { signal: AbortSignal.timeout(10_000) })
@@ -895,7 +928,7 @@ ipcMain.handle('live:go', async (event) => {
     if (!created.sessionId || !created.presenterToken || !created.shortId || !Number.isFinite(created.expiresAt)) throw new Error('The live service returned an incomplete session.')
     const record: SessionRecoveryRecord = {
       ...created, baseUrl: endpoint.baseUrl, shortUrl: joinUrl, qrSvg,
-      talkSlug: context.talkSlug, vaultRoot: (currentVaultRoot() ?? null),
+      talkSlug: context.talkSlug, vaultRoot: context.vaultRoot,
       status: 'connecting', startedAtMs: Date.now(), endRequested: false,
       latest: null, pending: [], polls: [], voteRecords: [], cursor: 0,
     }
@@ -930,7 +963,8 @@ ipcMain.handle('live:snapshot', (event) => {
   const record = attachLiveWindow(event.sender.id)
   const snapshot = liveSessions?.snapshot(event.sender.id) ?? null
   // The Run's pre-work questions put in the talk's questions ride beside the phones' (never sent to the Worker).
-  return snapshot ? { ...snapshot, preworkQuestions: preworkEnabled() ? preworkTrayForSession(currentVaultRoot() ?? null, record) : [] } : null
+  // Read from the session's own vault (record.vaultRoot) only while it is open and there; never the current vault.
+  return snapshot ? { ...snapshot, preworkQuestions: preworkTrayForLiveSession(record, liveVaultReadable) } : null
 })
 ipcMain.handle('live:status', (event): LiveStatus => attachLiveWindow(event.sender.id)?.status ?? 'ended')
 ipcMain.on('live:pointer', (event, value: unknown) => {
@@ -957,12 +991,26 @@ ipcMain.on('live:publish-slide', (event, state: { slideId?: string; reveal?: num
 })
 // A board slide fed by a pre-work step opens with the Run's picked answers (feedback-boards ticket 11);
 // the glue is seedPollForRun. Only main adds a seed: a window's own is dropped in the live:poll-open handler.
+/** The board slides fed by a step (`model.resultsFeeds`, which also holds the work-file ones), or null when there is no model. */
+function feedsOfModel(model: unknown): PreworkFeed[] | null {
+  const m = model as { resultsFeeds?: PreworkFeed[]; prework?: { feeds?: PreworkFeed[] } } | null | undefined
+  return m ? (m.resultsFeeds ?? m.prework?.feeds ?? []) : null
+}
+/** A live session's own vault may be read: it is open and its folder answered the last check. */
+function liveVaultReadable(root: string): boolean {
+  return availableVaults().some((vault) => vault.root === root)
+}
 function seedFromRunPrework(wcId: number, poll: PollDefinition): Promise<PollDefinition> {
   const outlinePath = presentWindows.get(wcId)?.outlinePath ?? null
   return seedPollForRun(poll, liveSessions?.record(wcId) ?? null, {
-    vaultRoot: () => writableVaultRoot() ?? null, // writes: only a vault folder that is there (ticket 07)
+    // The session's own vault (record.vaultRoot), read only while it is open and its folder is there;
+    // never the current primary vault, which may be another vault with the same talk slug and Run id.
+    vaultReadable: liveVaultReadable,
     readOutline: () => (outlinePath ? readFileSync(outlinePath, 'utf8') : null),
-    feeds: async (outline) => (outlinePath ? ((await prepareTalk(outlinePath, outline))?.model?.prework as { feeds?: PreworkFeed[] } | undefined)?.feeds ?? null : null),
+    feeds: async (outline) => (outlinePath ? feedsOfModel((await prepareTalk(outlinePath, outline))?.model) : null),
+    onFinding: (finding) => console.warn('[board-seed]', finding.code, finding.slideId, finding.detail),
+    // The Run page's own pull (same queue and cursor), into the session's vault; offline, the board opens with what is on disk.
+    pull: (talkSlug, runId, phase, vaultRoot) => runPrework().pull(talkSlug, runId, phase, vaultRoot),
   })
 }
 type LivePollMessage = NonNullable<ReturnType<typeof parsePresenterMessage>>
@@ -1016,7 +1064,9 @@ ipcMain.handle('live:question-answer', (event, questionId: unknown, answered: un
     if (!livePresenterContexts.has(event.sender.id)) return { success: false, error: 'Questions are answered in the presenter window only.' }
     // A pre-work question in the tray belongs to the Run: the mark is written there and never reaches the Worker.
     if (isPreworkQuestionId(questionId)) {
-      const result = answerPreworkTrayQuestion(writableVaultRoot() ?? null, liveSessions?.record(event.sender.id) ?? null, questionId, answered !== false)
+      // Written to the session's own vault only (open, there and writable), never the current primary vault.
+      const result = answerPreworkTrayForLiveSession(liveSessions?.record(event.sender.id) ?? null, liveVaultReadable,
+        (root) => writableRoot(root, rootFs) ?? null, questionId, answered !== false)
       if (result.success) event.sender.send('live:prework-questions', result.questions)
       return result.success ? { success: true, status: 'confirmed' as const } : { success: false, status: 'rejected' as const, error: result.error }
     }
@@ -1410,8 +1460,8 @@ function installApplicationMenu(): void {
 
 // Live deck windows opened by talk:present, so ⌘R (refresh-in-place) can recompile the right talk
 // and reload the deck at its current slide. wcId → { outlinePath, mode }.
-const presentWindows = new Map<number, { outlinePath: string; mode: string; pathwayId?: string }>()
-const livePresenterContexts = new Map<number, { talkSlug: string; shortUrl: string | null }>()
+const presentWindows = new Map<number, { outlinePath: string; mode: string; pathwayId?: string; runId?: string }>()
+const livePresenterContexts = new Map<number, LivePresenterContext>()
 let liveSessions: ReturnType<typeof createLiveSessionManager> | null = null
 let liveRecoveryStore: ReturnType<typeof createLiveSessionStore> | null = null
 
@@ -1451,6 +1501,7 @@ function initialiseLiveSessions() {
       },
       flushHistory: flushLiveSessionHistory,
       diagnostic: (event) => console.info('[live-recovery]', JSON.stringify(event)),
+      onEnded: ({ talkSlug, runId, vaultRoot }) => openPostWorkFor(talkSlug, runId, vaultRoot),
     })
     liveSessions.restore()
     powerMonitor.on('resume', () => liveSessions?.reconnect())
@@ -1490,16 +1541,11 @@ async function refreshDeckFromEditor(win: BrowserWindow): Promise<void> {
   editor.webContents.send('present:refresh', { outlinePath: info.outlinePath, slideId: state.slideId, deckWcId: win.webContents.id })
 }
 
-type ToolsView = 'studio' | 'history' | 'pathways' | 'talktext' | 'importer'
 type PathwayWindowContext = { outlinePath: string; talkSlug: string; talkTitle: string }
 let toolsWindow: BrowserWindow | null = null
 let talkTextIpcController: ReturnType<typeof registerTalkTextIpc> | null = null
 let pathwayWindow: BrowserWindow | null = null
 let pathwayWindowContext: PathwayWindowContext | null = null
-
-function isToolsView(view: unknown): view is Exclude<ToolsView, 'pathways'> {
-  return view === 'studio' || view === 'history' || view === 'talktext' || view === 'importer'
-}
 
 function loadRenderer(win: BrowserWindow, view?: ToolsView): void {
   if (process.env['ELECTRON_RENDERER_URL']) {
@@ -1513,8 +1559,8 @@ function loadRenderer(win: BrowserWindow, view?: ToolsView): void {
   }
 }
 
-function sendToolsShow(win: BrowserWindow, view: ToolsView, sessionId?: string, pathway?: PathwayWindowContext): void {
-  const payload = { view, sessionId: sessionId || undefined, pathway }
+function sendToolsShow(win: BrowserWindow, view: ToolsView, sessionId?: string, pathway?: PathwayWindowContext, run?: ToolsRunRef): void {
+  const payload = { view, sessionId: sessionId || undefined, pathway, run }
   const send = (): void => {
     if (!win.isDestroyed()) win.webContents.send('tools:show', payload)
   }
@@ -1522,7 +1568,7 @@ function sendToolsShow(win: BrowserWindow, view: ToolsView, sessionId?: string, 
   else send()
 }
 
-function createToolsWindow(view: ToolsView, sessionId?: string): BrowserWindow {
+function createToolsWindow(view: ToolsView, sessionId?: string, run?: ToolsRunRef): BrowserWindow {
   const bounds = getConfig('toolsWindowBounds', { width: 1400, height: 900 })
   const win = new BrowserWindow({
     ...bounds,
@@ -1554,21 +1600,34 @@ function createToolsWindow(view: ToolsView, sessionId?: string): BrowserWindow {
   win.webContents.setWindowOpenHandler(appWindowOpenHandler(appWindowOpenOpts, () => pressLedger.pressedRecently(win.webContents.id)))
   registerAppWindowPermissions(win) // this window's own page may read the clipboard (recording-permissions.ts)
   loadRenderer(win, view)
-  sendToolsShow(win, view, sessionId)
+  sendToolsShow(win, view, sessionId, undefined, run)
   return win
 }
 
-function openToolsWindow(view: ToolsView, sessionId?: string): void {
+function openToolsWindow(view: ToolsView, sessionId?: string, run?: ToolsRunRef): void {
   const existing = toolsWindow && !toolsWindow.isDestroyed() ? toolsWindow : null
-  const win = existing ?? createToolsWindow(view, sessionId)
+  const win = existing ?? createToolsWindow(view, sessionId, run)
   if (win.isMinimized()) win.restore()
   win.focus()
-  if (existing) sendToolsShow(win, view, sessionId)
+  if (existing) sendToolsShow(win, view, sessionId, undefined, run)
 }
 
-ipcMain.handle('tools:open', (_event, view: unknown, sessionId?: string) => {
-  if (!isToolsView(view)) return { success: false, error: 'Unknown Tools view.' }
-  openToolsWindow(view, sessionId)
+// The one way into the Tools window: a view, and for Sessions optionally a Run by its talk and Run id.
+ipcMain.handle('tools:open', (_event, view: unknown, sessionId?: unknown, run?: unknown) => {
+  if (!isOpenableToolsView(view)) return { success: false, error: 'Unknown Tools view.' }
+  const runRef = run === undefined || run === null ? undefined : parseToolsRunRef(run)
+  if (runRef === null) return { success: false, error: 'Unknown Run.' }
+  // A reference without a vault comes from History, which lists the primary vault's Runs (writableVaultRoot):
+  // it names that vault, so Sessions never selects another open vault's Run with the same talk and Run id.
+  const historyVaultId = vaultRegistry.primary()?.id
+  // Open results (Sessions) names the Run's vault and History reads that vault's Runs, so any open vault's Run opens;
+  // a vault that is not open is refused (issue 256).
+  if (view === 'history' && typeof sessionId === 'string' && sessionId.startsWith('results:')) {
+    const refused = historyResultsRefusal(runRef, (id) => rootOfVault(id) !== undefined)
+    if (refused) return { success: false, error: refused }
+  }
+  const named = runRef && !runRef.vaultId && historyVaultId ? { ...runRef, vaultId: historyVaultId } : runRef
+  openToolsWindow(view, typeof sessionId === 'string' ? sessionId : undefined, named)
   return { success: true }
 })
 
@@ -3966,22 +4025,10 @@ async function ocrBatch(paths: string[]): Promise<void> {
   slideOcrMemo.clear()
   persistOcrCacheSoon()
 }
-const IMG_EXTS = new Set(['.webp', '.png', '.jpg', '.jpeg', '.gif'])
-// Gather every image file under the vault pool (_assets) + each talk's assets/ dir.
+// Gather every image file under the vault pool (_assets) + each talk's assets/ dir (contained, no links:
+// image-search/vault-pictures.ts).
 function gatherVaultImages(vaultRoot: string): string[] {
-  const out: string[] = []
-  const scanDir = (dir: string): void => {
-    let entries: string[]
-    try { entries = readdirSync(dir) } catch { return }
-    for (const name of entries) {
-      const full = join(dir, name)
-      // A picture that is a link out of the vault is not this vault's picture: never OCR'd (ADR-0036).
-      try { if (IMG_EXTS.has(extname(name).toLowerCase()) && pathStaysInside(vaultRoot, full) && statSync(full).isFile()) out.push(full) } catch { /* ignore */ }
-    }
-  }
-  scanDir(join(vaultRoot, '_assets'))
-  for (const talk of findTalks(vaultRoot)) scanDir(join(dirname(talk.outlinePath), 'assets'))
-  return out
+  return gatherVaultImagesIn(vaultRoot, findTalks(vaultRoot).map((talk) => talk.outlinePath))
 }
 // Background pass: OCR every vault image not already cached (or changed). Idempotent + cached.
 async function ocrAllVaultImages(): Promise<void> {
@@ -4983,12 +5030,33 @@ ipcMain.handle('ledger:version-thumbnails', async (_event, id: string) => {
 
 // ── Present ────────────────────────────────────────────────────────────────
 
-type PresentBuild = { slug: string; title: string; html: string; presentPath: string; preworkSlideIds?: string[]; slideOrder?: Array<{ id: string; title: string }>; startSlideId?: string }
+type PresentBuild = { slug: string; title: string; html: string; presentPath: string; preworkSlideIds?: string[]; slideOrder?: Array<{ id: string; title: string }>; startSlideId?: string; runExtras?: RunExtrasModel }
 
-async function compileTalkForPresent(outlinePath: string, content: string): Promise<Omit<PresentBuild, 'presentPath'>> {
+/**
+ * Presenting a planned Run (work-files ticket 25): the Run's extra slides (from its Run record) go in, after
+ * their chosen slides. The Run is looked up in the talk's own folder of the outline's vault (readRunForTalk):
+ * an id that names no Run of this talk, or a Run without extra slides, presents the talk as it is. With a
+ * pathway, its slides decide where an extra slide can go.
+ */
+function runCompileForPresent(outlinePath: string, runId: string | undefined, pathwayId: string | undefined): RunCompileOption | undefined {
+  if (!runId) return undefined
+  const vaultRoot = vaultRootFor(outlinePath)
+  if (!vaultRoot) return undefined
+  const slug = basename(outlinePath).replace('-outline.md', '')
+  try {
+    const extraSlides = readRunForTalk(vaultRoot, slug, runId)?.extraSlides
+    if (!extraSlides?.length) return undefined
+    const pathway = pathwayId ? readPathwayManifest(vaultRoot, slug).pathways.find((item) => item.id === pathwayId) : undefined
+    return { id: runId, slideIds: pathway ? [...pathway.slideIds] : null, extraSlides }
+  } catch { return undefined }
+}
+
+async function compileTalkForPresent(outlinePath: string, content: string, run?: RunCompileOption): Promise<Omit<PresentBuild, 'presentPath'>> {
   // Goes through the shared prepared-model memo: F5 right after an edit pause (same content the
   // strip just compiled with different defaults) still recompiles, but repeated F5s don't.
-  const prepared = await prepareTalk(outlinePath, content, timerSettings())
+  // presenterClipRefs: the presenter window's deck alone keeps each video's authored reference (so
+  // a recording can name the clip); every other compile has it stripped (compiler prepareSource).
+  const prepared = await prepareTalk(outlinePath, content, timerSettings(), { presenterClipRefs: true, ...(run ? { run } : {}) })
   if (!prepared) throw new Error('Compiler not found')
   // Ticket 08: the talk's pre-work section (compiler model.prework) — its slides are answered
   // before the session and never presented.
@@ -4999,14 +5067,16 @@ async function compileTalkForPresent(outlinePath: string, content: string): Prom
     title: String((prepared.model.title as string) ?? prepared.slug),
     html: String(prepared.model.fullHtml ?? ''),
     preworkSlideIds,
+    ...(run ? { runExtras: placedRunExtras(prepared.model) } : {}),
     slideOrder: (Array.isArray(prepared.model.slides) ? prepared.model.slides as Array<{ id?: unknown; title?: unknown }> : [])
       .map((slide) => ({ id: String(slide.id ?? ''), title: String(slide.title ?? '') }))
   }
 }
 
-function writeTalkPresentHtml(outlinePath: string, slug: string, html: string, allowTmpFallback: boolean, pathwayId?: string): string {
+function writeTalkPresentHtml(outlinePath: string, slug: string, html: string, allowTmpFallback: boolean, pathwayId?: string, runId?: string): string {
   const talkDir = dirname(outlinePath)
-  const pathwaySuffix = pathwayId ? '-pathway-' + pathwayId.replace(/[^a-zA-Z0-9_-]/g, '-') : ''
+  const pathwaySuffix = (pathwayId ? '-pathway-' + pathwayId.replace(/[^a-zA-Z0-9_-]/g, '-') : '')
+    + (runId ? '-run-' + runId.replace(/[^a-zA-Z0-9_-]/g, '-') : '')
   let presentPath = join(talkDir, slug + pathwaySuffix + '-present.html')
   try {
     writeFileSync(presentPath, html, 'utf8')
@@ -5019,8 +5089,9 @@ function writeTalkPresentHtml(outlinePath: string, slug: string, html: string, a
   return presentPath
 }
 
-async function buildTalkPresentFile(outlinePath: string, content: string, allowTmpFallback: boolean, pathwayId?: string, startSlideId?: string): Promise<PresentBuild> {
-  let compiled = await compileTalkForPresent(outlinePath, content)
+async function buildTalkPresentFile(outlinePath: string, content: string, allowTmpFallback: boolean, pathwayId?: string, startSlideId?: string, runId?: string): Promise<PresentBuild> {
+  const run = runCompileForPresent(outlinePath, runId, pathwayId)
+  let compiled = await compileTalkForPresent(outlinePath, content, run)
   // Fix round S4: present-from-here on a pre-work step starts at the first talk slide after the
   // section, and the presenter's status line says so.
   const start = presentStartOutsidePrework(compiled.slideOrder ?? [], compiled.preworkSlideIds ?? [], startSlideId)
@@ -5028,21 +5099,20 @@ async function buildTalkPresentFile(outlinePath: string, content: string, allowT
   if (pathwayId) {
     const vaultRoot = vaultRootFor(outlinePath)
     if (!vaultRoot) throw new Error('Choose a Vault before presenting a pathway.')
-    const prepared = await prepareTalk(outlinePath, content, timerSettings())
+    const prepared = await prepareTalk(outlinePath, content, timerSettings(), run ? { run } : undefined)
     const manifest = readPathwayManifest(vaultRoot, compiled.slug)
     const resolved = resolvePathways(manifest.pathways, (prepared?.rows ?? []) as PathwaySlideRow[])
       .find((pathway) => pathway.id === pathwayId)
     if (!resolved) throw new Error('That pathway no longer exists.')
     const preworkIds = new Set(compiled.preworkSlideIds ?? [])
-    compiled = {
-      ...compiled,
-      html: injectPathwayRuntime(compiled.html, resolved.present.map((row) => row.slide_id).filter((id) => !preworkIds.has(id)), pathwayId)
-    }
+    // A Run's extra slides (ticket 25) join the pathway's slides, each after its chosen slide or at the end.
+    const ids = withRunExtraIds(resolved.present.map((row) => row.slide_id).filter((id) => !preworkIds.has(id)), compiled.runExtras)
+    compiled = { ...compiled, html: injectPathwayRuntime(compiled.html, ids, pathwayId) }
   } else if (compiled.preworkSlideIds?.length) {
     // Ticket 08: presenting skips the pre-work steps (the talk's own slide sequence never has them).
     compiled = { ...compiled, html: withoutPresenterSlides(compiled.html, compiled.preworkSlideIds) }
   }
-  const presentPath = writeTalkPresentHtml(outlinePath, compiled.slug, compiled.html, allowTmpFallback, pathwayId)
+  const presentPath = writeTalkPresentHtml(outlinePath, compiled.slug, compiled.html, allowTmpFallback, pathwayId, run?.id)
   return { ...compiled, presentPath, startSlideId: start.slideId }
 }
 
@@ -5058,7 +5128,7 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
   const blocked = unresolvedOutboundFailure(content)
   if (blocked) return blocked
   try {
-    const build = await buildTalkPresentFile(outlinePath, content, true, pathwayId, startSlideId)
+    const build = await buildTalkPresentFile(outlinePath, content, true, pathwayId, startSlideId, typeof plannedRunId === 'string' ? plannedRunId : undefined)
     const { slug, title, presentPath } = build
     startSlideId = build.startSlideId
     const localHandoutPath = join(dirname(outlinePath), 'dist', `${slug}-handout.html`)
@@ -5090,7 +5160,7 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
           rec = s.r
         } catch { /* fall through: refresh from the top */ }
         if (existing.isMinimized()) existing.restore()
-        if (mode === 'presenter') livePresenterContexts.set(wcId, { talkSlug: slug, shortUrl: publishedUrl })
+        if (mode === 'presenter') livePresenterContexts.set(wcId, livePresenterContext(vaultRegistry, outlinePath, slug, publishedUrl))
         existing.setTitle(winTitle)
         existing.focus()
         const recordingArmed = rec && rec !== 'idle' && rec !== 'saved' && rec !== 'error'
@@ -5165,8 +5235,8 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
     // Track this deck for ⌘R refresh-in-place, and OWN ⌘R here: before-input-event preempts the
     // default menu's Reload accelerator (which would reload to slide 0 without recompiling).
     const deckWcId = win.webContents.id
-    presentWindows.set(deckWcId, { outlinePath, mode: mode ?? 'window', pathwayId })
-    if (mode === 'presenter') livePresenterContexts.set(deckWcId, { talkSlug: slug, shortUrl: publishedUrl })
+    presentWindows.set(deckWcId, { outlinePath, mode: mode ?? 'window', pathwayId, ...(typeof plannedRunId === 'string' && plannedRunId ? { runId: plannedRunId } : {}) })
+    if (mode === 'presenter') livePresenterContexts.set(deckWcId, livePresenterContext(vaultRegistry, outlinePath, slug, publishedUrl))
     win.on('close', (event) => {
       const record = attachLiveWindow(deckWcId)
       const live = !!record && !['ended', 'expired'].includes(record.status)
@@ -5341,7 +5411,7 @@ ipcMain.handle('present:rebuild', async (_event, deckWcId: number, outlinePath: 
     const deck = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === deckWcId)
     if (!deck) return { ok: false }
     const info = presentWindows.get(deckWcId)
-    const { presentPath } = await buildTalkPresentFile(outlinePath, content, true, info?.pathwayId)
+    const { presentPath } = await buildTalkPresentFile(outlinePath, content, true, info?.pathwayId, undefined, info?.runId)
     const mode = info?.mode
     // Cache-bust (_r) so this is a REAL navigation, not a same-URL no-op that skips the fresh file.
     const query: Record<string, string> = mode === 'presenter' ? { presenter: '1' } : mode === 'audience' ? { audience: '1' } : {}
@@ -5386,6 +5456,15 @@ registerRecordingIpc({
   compilerDir: () => getCompilerPath(),
   userDataDir: () => app.getPath('userData'),
   vaultRoot: () => writableVaultRoot() ?? null, // writes: only a vault folder that is there (ticket 07)
+  // A presenter window's recording, Run and stream marker go to the vault of the talk it presents (issue 256).
+  presenterVault: (wcId) => {
+    const info = presentWindows.get(wcId)
+    return info ? presentedTalkVault(presentedVaultDeps, info.outlinePath) : undefined
+  },
+  writableVault: (root) => {
+    const vault = availableVaults().find((v) => v.root === root)
+    return vault ? writableRoot(vault.root, rootFs) ?? undefined : undefined
+  },
   discardThresholdMs: () => Math.max(0, Number(getConfig('recordingDiscardMs', 20000)) || 20000),
   storage: () => recordingStorage(),
   testMode: () => process.env.TW_REC_TEST === '1',
@@ -5406,15 +5485,113 @@ registerRecordingIpc({
     // Reactions ticket 06: the Run file may exist only now; a live session bound to it writes its
     // history at once instead of waiting for its 30 s retry.
     liveSessions?.runSaved(saved.talkSlug, saved.runId)
+    // A delivery saved onto its Run: post-work that opens when the session ends opens now (ticket 19).
+    if (saved.kind === 'delivery') openPostWorkFor(saved.talkSlug, saved.runId, saved.vaultRoot ?? null)
   },
 })
 
 // TalkWeaver History IPC (handout URLs + cached live checks). Registered once; deps are lazy.
+// The Tools window's Work files view (work-files ticket 06): the `Work files/` folder, who names each file, which Runs carry it. Read only.
+// `work-files:list` (vaultId?) → { folder, items } | null (null: no vault is open). Never throws into the renderer.
+// With a vault id (the editor's strips, ticket 08): that open vault's files, null for an unknown, closed or
+// unavailable vault — never another vault's. Without one: the current vault, as the Work files view lists it.
+ipcMain.handle('work-files:list', async (_event, vaultId?: unknown) => {
+  try {
+    if (typeof vaultId === 'string' && vaultId !== '') {
+      const root = rootOfVault(vaultId) ?? null
+      return listWorkFilesFor(root, root ? await listIndexedTalks(root) : [])
+    }
+    // No vault named (the Tools window's Work files view): every open vault's files, each tagged with its vault.
+    const vaults = availableVaults()
+    const views = new Map(vaultViews().map((v) => [v.id, v.name]))
+    const talks = new Map<string, Awaited<ReturnType<typeof listIndexedTalks>>>()
+    for (const v of vaults) talks.set(v.root, await listIndexedTalks(v.root))
+    // A New work file goes to the vault of the talk open in the last-focused editor window, else the current vault.
+    const openTalk = mainWindow && !mainWindow.isDestroyed() ? editorWindows.get(mainWindow.webContents.id)?.outlinePath ?? null : null
+    const openTalkVault = vaults.find((v) => v.id === vaultIdOf(openTalk))
+    const newFileVaultId = openTalkVault?.id ?? (writableVaultRoot() ? vaultRegistry.primary()?.id : undefined) ?? vaults[0]?.id
+    return listWorkFilesAcross(vaults.map((v) => ({ id: v.id, name: views.get(v.id) ?? v.id, root: v.root })), (root) => talks.get(root) ?? [], newFileVaultId)
+  } catch (error) {
+    console.error('[work-files] list failed', error)
+    return null
+  }
+})
+// Work-files ticket 07: make a new work file / add a step to one. Writes only into the vault's `Work files/` folder.
+// `work-files:create` ({ title, presetId?, adds?, vaultId? }) and `work-files:add-step` ({ fileName, add, vaultId? }) → { ok, fileName, relPath } | { ok: false, error }.
+// A request naming a vault writes into that open vault only (writableRootOfVault: no fallback to the first vault);
+// without one it is the current vault, as before.
+ipcMain.handle('work-files:create', (_event, input) => {
+  const i = input && typeof input === 'object' ? input : {}
+  const root = workFileWriteRoot(i.vaultId, writableRootOfVault)
+  if (!root) return { ok: false, error: i.vaultId ? 'That vault is not open.' : 'No vault is open.' }
+  return createWorkFile(root, i)
+})
+ipcMain.handle('work-files:add-step', (_event, input) => {
+  const i = input && typeof input === 'object' ? input : {}
+  const root = workFileWriteRoot(i.vaultId, writableRootOfVault)
+  if (!root) return { ok: false, error: i.vaultId ? 'That vault is not open.' : 'No vault is open.' }
+  return addWorkFileStep(root, i.fileName, i.add)
+})
+// 2026-10-19 prework-responses design: `work-files:set-step-local` ({ fileName, stepId, local, vaultId? }) writes or takes out
+// the step's `{local}` (Local only / Sent to you). Every field is checked in setWorkFileStepLocal. The vault rule is add-step's:
+// a named vault must be open (no fallback to the first vault); without one it is the current vault.
+ipcMain.handle('work-files:set-step-local', (_event, input) => {
+  const i = input && typeof input === 'object' ? input : {}
+  const root = workFileWriteRoot(i.vaultId, writableRootOfVault)
+  if (!root) return { ok: false, error: i.vaultId ? 'That vault is not open.' : 'No vault is open.' }
+  return setWorkFileStepLocal(root, i.fileName, i.stepId, i.local)
+})
+// Work-files ticket 28: the Layout Doctor's "Move to a work file" for a retired `{prework}` section.
+// `work-files:move-prework` ({ outlinePath }) → { ok, fileName, relPath, id, stepIds } | { ok: false, error }. The work file is written into the
+// talk's own vault; the outline goes through the one outline writer (talk-writer.ts), so an open editor applies it to its own
+// buffer. Unstamped steps take the ids the compiler resolves for them (adaptMarkdownOutlineV2, the talk's own compile path).
+// If either write fails the section stays (see main/prework-move.ts).
+ipcMain.handle('work-files:move-prework', async (_event, input) => {
+  const outlinePath = input && typeof input === 'object' ? (input as { outlinePath?: unknown }).outlinePath : undefined
+  // In an open vault (so the work file goes to the talk's own vault), and through the outline-writing guard: an
+  // `*-outline.md` whose REAL path is inside that vault (a link to a file outside it is refused).
+  if (typeof outlinePath !== 'string' || !insideVault(outlinePath) || outlineRefused(outlinePath)) return { ok: false, error: 'That talk is not in an open vault.' }
+  const root = writableTalkRoot(outlinePath)
+  if (!root) return { ok: false, error: 'The talk’s vault is not available, so nothing was changed.' }
+  let adapters: { adaptMarkdownOutlineV2: (markdown: string, fallbackTitle: string, defaults?: unknown) => { prework?: { steps?: Array<{ id: string; sourceLine: number | null }> } | null } }
+  try {
+    adapters = await import(pathToFileURL(join(getCompilerPath(), 'lib/08-source-adapters.mjs')).href)
+  } catch {
+    return { ok: false, error: 'The talk could not be read, so nothing was changed.' }
+  }
+  const slug = basename(outlinePath).replace('-outline.md', '')
+  const moved = await movePreworkToWorkFile(root, outlinePath, writeTalkOutline, (text) => adapters.adaptMarkdownOutlineV2(text, slug, undefined)?.prework?.steps ?? null)
+  if (moved.ok || moved.keptFile) {
+    frontmatterCache.delete(outlinePath)
+    invalidateTalkCache(outlinePath)
+    invalidateMetadataCaches()
+    invalidateLayoutDoctorCache()
+    notifyTalkMetaUpdated()
+  }
+  if (!moved.ok) return { ok: false, error: moved.error }
+  return { ok: true, fileName: moved.fileName, relPath: moved.relPath, id: moved.id, stepIds: moved.stepIds }
+})
 registerHistoryIpc({
   userDataDir: () => app.getPath('userData'),
   vaultRoot: () => writableVaultRoot() ?? null, // writes: only a vault folder that is there (ticket 07)
+  // A planned Run lives in its talk's vault: a request naming a vault writes there, only while it is open and there.
+  runVault: (vaultId) => runVaultFor(vaultId),
+  hasTalk: (root, talkSlug) => talkInVault(root, talkSlug) !== null,
+  openVaults: () => vaultRegistry.list().filter((v) => v.open).length,
+  readVault: (vaultId) => rootOfVault(vaultId),
   listTalks: (root) => listIndexedTalks(root),
-  testMode: () => process.env.TW_REC_TEST === '1'
+  testMode: () => process.env.TW_REC_TEST === '1',
+  // Work-files ticket 13: a changed opening or closing time reaches the work already sent (a later
+  // closing time reopens it). In the background: the plan is saved whether or not the service answers.
+  // Then post-work owed now is opened (ticket 19 review round 2: a delivered Run's post-work changed from a
+  // set time to when the session ends opens now), in the vault the Run was saved in.
+  onPlannedRunUpdated: (talkSlug, runId, vaultRoot) => {
+    void runPrework().syncWindows(talkSlug, runId, vaultRoot).then((results) => {
+      for (const result of results) if (!result.ok) console.warn(`[prework] ${result.phase}-work times not sent: ${result.error}`)
+      if (results.some((result) => result.ok && !result.unchanged)) notifyTalkMetaUpdated()
+    }).catch(() => console.warn('[prework] work times not sent'))
+      .finally(() => openPostWorkFor(talkSlug, runId, vaultRoot))
+  }
 })
 
 // Transcription IPC (Parakeet bridge + transcript store). Registered once; deps are lazy.
@@ -5572,18 +5749,20 @@ type RunHandoutArtifact = {
 async function runHandoutSource(
   talk: TalkInfo, run: RunRecord, content: string,
 ): Promise<{ source: RunHandoutSource; slideIds: string[]; missing: string[] }> {
-  const prepared = await prepareTalk(talk.outlinePath, content, timerSettings())
+  const forRun = runForHandout(talk, run)
+  const compileRun = runCompileOption(forRun)
+  const prepared = await prepareTalk(talk.outlinePath, content, timerSettings(), compileRun ? { run: compileRun } : undefined)
   if (!prepared) throw new Error('Compiler not found')
-  return runHandoutSourceFrom(prepared.model, (prepared.rows ?? null) as PathwaySlideRow[] | null, runForHandout(talk, run), prepared.slug, talk.slug)
+  return runHandoutSourceFrom(prepared.model, (prepared.rows ?? null) as PathwaySlideRow[] | null, forRun, prepared.slug, talk.slug)
 }
 
 /** What of a Run its handout's deck depends on: its cover, and its pathway with the talk's pathways. */
 function runForHandout(talk: TalkInfo, run: RunRecord): RunForHandout {
-  const base = { eventTitle: run.eventTitle, talkTitle: run.talkTitle, plannedDate: run.plannedDate, startedAt: run.startedAt }
-  if (run.slideSet.kind !== 'pathway') return base
-  const vaultRoot = vaultRootFor(talk.outlinePath)
-  if (!vaultRoot) throw new Error('Choose a Vault before building a Run handout.')
-  return { ...base, pathway: { id: run.slideSet.pathwayId, pathways: readPathwayManifest(vaultRoot, talk.slug).pathways } }
+  return runForHandoutOf(run, () => {
+    const vaultRoot = vaultRootFor(talk.outlinePath)
+    if (!vaultRoot) throw new Error('Choose a Vault before building a Run handout.')
+    return readPathwayManifest(vaultRoot, talk.slug).pathways
+  })
 }
 
 /** Where a Run's handout is kept on this computer: the talk folder's dist/. */
@@ -5597,14 +5776,13 @@ async function buildRunHandoutArtifact(
   content: string,
   outputSlug?: string,
   workerBaseUrl?: string,
-  prework?: HandoutPreworkConfig,
   options: { lazyAssets?: boolean } = {}
 ): Promise<RunHandoutArtifact> {
   const compilerDir = getCompilerPath()
   if (!compilerDir) throw new Error('Compiler not found')
   const { source, slideIds, missing } = await runHandoutSource(talk, run, content)
   const slug = outputSlug ?? runHandoutSlug(talk.slug, run.eventTitle ?? 'run', run.plannedDate ?? run.startedAt.slice(0, 10), [])
-  const { html, lazyHtml, slides, styles } = await buildRunHandoutHtml(compilerDir, source, { slug, workerBaseUrl: workerBaseUrl ?? '', prework, lazyAssets: options.lazyAssets })
+  const { html, lazyHtml, slides, styles } = await buildRunHandoutHtml(compilerDir, source, { slug, workerBaseUrl: workerBaseUrl ?? '', lazyAssets: options.lazyAssets })
   const path = runHandoutDistPath(talk, slug)
   const distDir = dirname(path)
   if (!existsSync(distDir)) mkdirSync(distDir) // only inside a talk folder that is there (a vanished vault is never re-created)
@@ -6308,9 +6486,35 @@ function runPrework(): RunPreworkService {
     ownerTokens: ownerTokens(),
     endpoint: () => liveAdminEndpoint(),
     vaultRoot: () => writableVaultRoot() ?? null, // writes: only a vault folder that is there (ticket 07)
+    // The timer pulls a Run into the vault its last publish recorded, only while that vault is open and there.
+    writableVault: (root) => availableVaults().some((vault) => vault.root === root) ? writableRoot(root, rootFs) : null,
+    // Every pull fixes the id of the vault at its root and asks again before writing: a vault replaced at the
+    // same folder (removed, another added there) is never written.
+    vaultIdAt: (root) => availableVaults().find((vault) => vault.root === root)?.id ?? null,
     fetch,
   })
   return runPreworkService
+}
+
+// ── Post-work opens when the session ends (work-files ticket 19) ─────────────────────────────────
+// Asked when a live session bound to a Run ends, when a Run is marked or saved as delivered, after a Run
+// is published, at launch and every pull cycle. Behind the pre-work flag, as everything it opens.
+let postWorkOpenerInstance: PostWorkOpener | null = null
+function postWorkOpener(): PostWorkOpener {
+  postWorkOpenerInstance ??= createPostWorkOpener({
+    service: runPrework(),
+    // Each Run in its own vault, only while that vault is open (ticket 19 review): never the writable vault in its place.
+    vaults: () => availableVaults().map((vault) => vault.root),
+    liveEnded: (talkSlug, runId, vaultRoot) => liveSessions?.endedRun(talkSlug, runId, vaultRoot) ?? false,
+  })
+  return postWorkOpenerInstance
+}
+/** Open one Run's post-work, in the vault it belongs to, if it is owed now; in the background, never throws. */
+function openPostWorkFor(talkSlug: string, runId: string, vaultRoot: string | null): void {
+  void postWorkOpener().open(talkSlug, runId, vaultRoot).then((result) => {
+    if (!result.ok) console.warn(`[post-work] not opened: ${result.error}`)
+    else if (result.opened) notifyTalkMetaUpdated()
+  })
 }
 
 // ── Share for comments (ticket 03) ──────────────────────────────────────────────────────────────
@@ -6575,12 +6779,17 @@ ipcMain.handle('run:build-handout', async (_event, payload: { talkSlug: string; 
   }
 })
 
-ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string; runId: string }) => {
+ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string; runId: string; vaultId?: string }) => {
   try {
-    const vault = writableVaultRoot()
+    // The selected Run's own vault when the caller names it (the Sessions view does), refused when it is not
+    // open; never the first writable vault in its place. Its talk is read from that vault too.
+    const named = payload.vaultId !== undefined
+    const picked = named ? runVaultFor(payload.vaultId) : { root: writableVaultRoot() }
+    if ('error' in picked) return { success: false, error: picked.error }
+    const vault = picked.root
     if (!vault) return { success: false, error: 'no-vault' }
     const asked = readRun(vault, String(payload.talkSlug), String(payload.runId))
-    const talk = talkBySlug(String(payload.talkSlug))
+    const talk = named ? talkInVault(vault, String(payload.talkSlug)) : talkBySlug(String(payload.talkSlug))
     // Feedback-boards ticket 09 (ADR-0032 amendment point 3): a planned Run publishes its handout
     // before the day too, so the link participants get for pre-work is the one the talk will use.
     if (!asked || !talk) return { success: false, error: 'run-not-found' }
@@ -6589,8 +6798,13 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
     // the site's queue AT ONCE, before anything is awaited, so that an unpublish asked for after it
     // comes after it; what it needs it reads when its turn begins (`begin`), then supplies the Run's
     // pages: `live` is the only live address they may carry, '' when the live service is not ready.
+    // Publish for this run (work-files ticket 16): with pre-work and post-work files attached, the Run's
+    // folder holds three pages: the handout (linking to both), `pre-work/` and `post-work/`
+    // (run-work-publish.ts). A file that is not ready refuses the publish, with the finding, in `begin`;
+    // the pins and the pushes to the Worker happen in `prepare`, with leave to publish.
     let content = ''
-    let preworkMs: ReturnType<typeof preworkWindowMs> = null
+    let workPhases: Phase[] = []
+    let workWarning: string | undefined
     const outcome = await handoutPublishing().publish({
       entry: 'run',
       begin: async () => {
@@ -6600,13 +6814,11 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
         content = flushed.text
         const blocked = unresolvedOutboundFailure(content)
         if (blocked) return { fail: { error: blocked.error, reply: blocked } }
-        // Pre-work is hidden for 0.37: no form is pushed to the Worker and none goes into the handout, whatever
-        // pre-work times the Run still holds (they stay on disk).
-        preworkMs = preworkEnabled() && run.status === 'planned' ? preworkWindowMs(preworkWindow(run), run.timeZone) : null
-        // A window that closes before it opens would publish a handout with no form, silently.
-        if (preworkEnabled() && run.status === 'planned' && run.preworkOpens && !preworkMs) {
-          return { fail: { error: 'Pre-work closes before it opens; fix the dates in the plan.' } }
-        }
+        const current = readRun(vault, asked.talkSlug, asked.id) ?? asked
+        const plan = planRunWork(vault, current, (phase) => runPrework().status(talk.slug, current.id, phase, vault))
+        if (!plan.ok) return { fail: { error: plan.error } }
+        workPhases = plan.phases
+        workWarning = plan.warning
         return null
       },
       prepare: async ({ dir: siteDir, project, live: liveWorkerBaseUrl, link, redirects }) => {
@@ -6616,37 +6828,37 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
         const existing = publishedFolders(siteDir)
         // The Run as it stands now, at this publish's turn: an earlier publish or unpublish may have changed its link.
         const run = readRun(vault, asked.talkSlug, asked.id) ?? asked
-        let stableSlug: string | undefined
-        if (run.handoutUrl) {
-          try {
-            const pathPart = new URL(run.handoutUrl).pathname.split('/').filter(Boolean)[0]
-            // The link holds the folder's name as an encoded path segment (publishing-logic.ts pathSegment).
-            // It is used only to FIND the Run's folder among the site's own folders, never to make a path.
-            const named = decodeURIComponent(pathPart ?? '')
-            if (named && existing.includes(named)) stableSlug = named
-            if (!stableSlug) stableSlug = Object.entries(readHandoutRegistry()).find(([key, id]) => id === named && existing.includes(key))?.[0]
-          } catch { /* derive a fresh collision-safe slug below */ }
-        }
-        const slug = stableSlug ?? runHandoutSlug(talk.slug, run.eventTitle ?? 'run', run.plannedDate ?? run.startedAt.slice(0, 10), existing)
+        // The Run's folder, decided from the Run's own facts (run-unpublish.ts runSiteFolder, D2): the folder
+        // its last publish recorded, when its link names it too; for an older Run, the registry's folder when
+        // its link is a registered short id, otherwise the folder its link names. Never a path made from the
+        // link, never chosen by what this computer happens to hold. An
+        // unpublished Run's folder (its pages "not available", ticket 17) is written back at the same
+        // addresses. A recorded folder missing on this computer is written into by that same name, unless
+        // another Run recorded it or a publish would not make that name (runPublishFolder, D4). A link that
+        // does not name the recorded folder, or a short id given to two folders, refuses before anything is
+        // pushed, built or written; an older Run whose folder is not here gets a new one, as a first publish does.
+        const bound = runSiteFolder(run, existing, readHandoutRegistry())
+        const otherFolders = listRuns(vault).filter((other) => !(other.talkSlug === run.talkSlug && other.id === run.id) && other.handoutUrl && other.handoutFolder).map((other) => other.handoutFolder as string)
+        const target = runPublishFolder(siteDir, bound, otherFolders)
+        if (target.kind === 'unclear') return { ok: false, error: RUN_FOLDER_UNCLEAR }
+        const stableSlug = target.kind === 'same' ? target.name : undefined
+        const slug = stableSlug ?? runHandoutSlug(talk.slug, run.eventTitle ?? 'run', run.plannedDate ?? run.startedAt.slice(0, 10), [...existing, ...otherFolders])
         // The Run's folder in the site, by the one function that makes a name a folder there: refused before anything is built or sent.
         const talkOutDir = writableSiteFolder(siteDir, slug)
         if (!talkOutDir) return { ok: false, error: SITE_FOLDER_REFUSED }
-        // A planned Run with a pre-work window carries its form: pushed to the Worker first, then the
-        // handout is built with the pre-work object's id so it can ask whether pre-work is open.
-        let prework: HandoutPreworkConfig | undefined
-        let preworkWarning: string | undefined
-        if (preworkMs) {
-          const prepared = await prepareTalk(talk.outlinePath, content, timerSettings())
-          const form = publicPreworkForm(prepared?.model.prework as Parameters<typeof publicPreworkForm>[0],
-            (Array.isArray(prepared?.model.slides) ? prepared!.model.slides : []) as Parameters<typeof publicPreworkForm>[1])
-          if (form) {
-            const published = await runPrework().publish(talk.slug, run.id, form, preworkMs)
-            preworkWarning = published.warning
-            // The form's address is published too: one on this computer never is (handout-publishing.ts).
-            const preworkAddress = liveAddressForPages(published.workerBaseUrl)
-            if (published.open && preworkAddress) prework = { preworkId: published.preworkId, workerBaseUrl: preworkAddress, form }
-          }
+        const compilerDir = getCompilerPath()
+        if (!compilerDir) return { ok: false, error: 'Compiler not found' }
+        // Each attached phase: pinned (its copy is what every later publish uses), compiled and pushed to
+        // its object on the Worker, before any page is built. A refusal here writes no page.
+        let sentWork: SentWork[] = []
+        const warnings: string[] = workWarning ? [workWarning] : []
+        if (workPhases.length) {
+          const sent = await sendRunWork({ vaultRoot: vault, talkSlug: talk.slug, runId: run.id, phases: workPhases, compilerDir, service: runPrework() })
+          if (!sent.ok) return { ok: false, error: sent.error }
+          sentWork = sent.sent
+          warnings.push(...sent.warnings)
         }
+        let preworkWarning: string | undefined = warnings.length ? warnings.join(' ') : undefined
         // What of the Run its deck depends on (its pathway is read from the manifest now); the talk is compiled off this thread, below.
         const runSource = runForHandout(talk, run)
         const handoutFile = `${slug}.html`
@@ -6672,8 +6884,6 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
         // Checked (ENTRY FIRST): from here on things are written.
         if (registryToKeep) writeHandoutRegistry(registryToKeep)
         if (!existsSync(talkOutDir)) mkdirSync(talkOutDir, { recursive: true })
-        const compilerDir = getCompilerPath()
-        if (!compilerDir) return { ok: false, error: 'Compiler not found' }
         const { makeQrSvg } = await import(pathToFileURL(join(compilerDir, 'lib/01-cli-utils.mjs')).href)
         const qr = (makeQrSvg(url) as string) || ''
         // As talk:publish-handout, built and written OFF this thread (handout-pages.ts): the Run's
@@ -6684,16 +6894,26 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
         const pagesWritten = await buildHandoutPagesOffThread({
           kind: 'run', compilerDir, talkOutDir, siteDir, slug, live: liveWorkerBaseUrl, url, qr, downloadFile, handoutFile,
           outlinePath: talk.outlinePath, text: resolvePooledRefs(content, talk.outlinePath), defaults: timerSettings() as Record<string, unknown>,
-          assetRoots: assetRootsFor(talk.outlinePath), talkSlug: talk.slug, run: runSource,
-          ...(prework ? { prework } : {}), distPath: path,
-          homeDetails: handoutHomeDetails({ outline: content, run }), homePrework: handoutHomePrework(prework?.form),
+          assetRoots: assetRootsFor(talk.outlinePath), talkSlug: talk.slug, run: runSource, distPath: path,
+          // The home page links to the Run's work pages, beside it in its folder; the handout carries no form.
+          homeDetails: handoutHomeDetails({ outline: content, run }),
+          homePrework: handoutHomePrework(sentWork.find((work) => work.phase === 'pre')?.compiled.form, WORK_PAGE_FOLDER.pre + '/'),
+          homePostwork: handoutHomePostwork(sentWork.find((work) => work.phase === 'post')?.compiled.form, WORK_PAGE_FOLDER.post + '/'),
+          // Extras for this run (ticket 24): the intro note and links, as the Run reads now; escaped by the compiler.
+          homeExtras: run.extras ?? null,
         })
         if (pagesWritten.warnings.length) preworkWarning = [preworkWarning, ...pagesWritten.warnings].filter(Boolean).join(' ')
+        // The work pages, in the Run's own folder of the site (a phase the Run no longer has loses its page).
+        await writeRunWorkPages({ compilerDir, folder: talkOutDir, sent: sentWork, talkTitle: run.talkTitle || talk.slug, runLine: runLineFor(run), handoutUrl: url })
         if (redirectsText !== null) writeFileSync(join(siteDir, '_redirects'), redirectsText, 'utf8')
-        return { ok: true, built: { url, artifact: { path, slideIds: pagesWritten.slideIds ?? [], missing: pagesWritten.missing ?? [] }, preworkWarning } }
+        return { ok: true, built: { url, folder: slug, artifact: { path, slideIds: pagesWritten.slideIds ?? [], missing: pagesWritten.missing ?? [] }, preworkWarning, phases: sentWork.map((work) => work.phase) } }
       },
-      // The Run's link is kept once the pages are up.
-      record: ({ url }) => { persistRun(vault, setRunHandoutUrl(readRun(vault, asked.talkSlug, asked.id) ?? asked, url)) },
+      // The Run's link, the folder it was written to (bound to the Run from now on), and when each phase
+      // went out, are kept once the pages are up.
+      record: ({ url, folder, phases }) => {
+        const current = readRun(vault, asked.talkSlug, asked.id) ?? asked
+        persistRun(vault, stampRunWork(setRunHandoutUrl(current, url, folder), phases, 'publishedAt', new Date().toISOString()))
+      },
     })
     // A refusal of its first step (an unresolved trigger) is answered exactly as before.
     if (!outcome.ok && outcome.reply) return outcome.reply as { success: false; error: string }
@@ -6704,6 +6924,8 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
       }
     }
     const { url, artifact, preworkWarning } = outcome.built
+    // A Run published after its session (or published again): its post-work opens now if it is owed (ticket 19).
+    openPostWorkFor(asked.talkSlug, asked.id, vault)
     return {
       success: true, url, path: artifact.path, slideIds: artifact.slideIds, missing: artifact.missing, ...(preworkWarning ? { warning: preworkWarning } : {}),
       // Published without live features (spec D7): the sentence, and what lies behind it for "Details".
@@ -6716,54 +6938,41 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
   }
 })
 
-ipcMain.handle('run:unpublish-handout', async (_event, payload: { talkSlug: string; runId: string }) => {
+ipcMain.handle('run:unpublish-handout', async (_event, payload: { talkSlug: string; runId: string; vaultId?: string }) => {
   try {
-    const vault = writableVaultRoot()
+    // The selected Run's own vault when the caller names it (the Sessions view does), refused when it is not
+    // open; never the first writable vault in its place.
+    const picked = payload.vaultId !== undefined ? runVaultFor(payload.vaultId) : { root: writableVaultRoot() }
+    if ('error' in picked) return { success: false, error: picked.error }
+    const vault = picked.root
     if (!vault) return { success: false, error: 'no-vault' }
     const asked = readRun(vault, String(payload.talkSlug), String(payload.runId))
     if (!asked) return { success: false, error: 'run-not-found' }
-    // The pre-work object is NOT closed here: the missing handout is the closure for participants, and
-    // publishing again brings back the same open form with its answers. Only "Close pre-work now" or
-    // the Run's close date closes it (ticket 09 fix round).
-    /** The Run as it stands now (not as it was when Unpublish was pressed). */
-    const runNow = (): RunRecord => readRun(vault, asked.talkSlug, asked.id) ?? asked
-    const forget = (): void => { persistRun(vault, clearRunHandoutUrl(runNow())) }
-    // EVERY unpublish takes its turn in the site's queue, and reads the Run's link when its turn
-    // begins: asked for while a publish of the same Run is still going up, it finds the link that
-    // publish recorded, and the Run ends unpublished. (handout-publishing.ts: the pages are taken
-    // away only with leave to publish, and the Run forgets its link only once the site without them is up.)
+    // EVERY unpublish takes its turn in the site's queue, and reads the Run when its turn begins: asked
+    // for while a publish of the same Run is still going up, it finds the link (and the work phases) that
+    // publish recorded, and the Run ends unpublished. What it does is run-unpublish.ts: for a Run whose
+    // pre-work or post-work went out (work-files ticket 17), each phase is withdrawn on the Worker and
+    // every page of the Run's folder becomes "This page is not available" at the same address; for a
+    // Run with its handout only, the folder is taken out of the site, as Unpublish Run handout always
+    // did. Answers stay on the Run. (handout-publishing.ts: pages change only with leave to publish,
+    // and the Run is written only once the site without them is up.)
     const outcome = await handoutPublishing().publish({
       entry: 'run-unpublish',
-      // Nothing published (no link, or no site folder): the Run only forgets, and Cloudflare is not asked.
-      begin: () => {
-        if (runNow().handoutUrl && existsSync(publishSiteDir())) return null
-        forget()
-        return { done: null }
-      },
-      prepare: async ({ dir: siteDir, redirects }) => {
-        const run = runNow()
-        if (!run.handoutUrl) return { ok: true, built: null }
-        const pathPart = new URL(run.handoutUrl).pathname.split('/').filter(Boolean)[0]
-        // The link holds the folder's name as an encoded path segment (publishing-logic.ts pathSegment).
-        // Decoded, it is only ever LOOKED FOR among the site's own folders (their real names, read
-        // from the site folder's listing): a path is never made from it. A link that names nothing
-        // there (`../victim`, an absolute path, a name that is not a folder of the site) removes nothing.
-        let named = ''
-        try { named = decodeURIComponent(pathPart ?? '') } catch { /* not a name: nothing to find */ }
-        const published = publishedFolders(siteDir)
-        const registry = readHandoutRegistry()
-        const slug = published.includes(named) ? named : Object.entries(registry).find(([key, id]) => id === named && published.includes(key))?.[0]
-        if (slug) delete registry[slug]
-        // ENTRY FIRST: the redirect file as it will be without this Run, checked before anything is taken away.
-        const redirectsText = redirects(buildRedirects(registry, published.filter((name) => name !== slug)))
-        // Taking the Run's pages away is what unpublishing is, as it always was: only a folder found in
-        // the site's own listing, and a link is unlinked, never followed (handout-publishing.ts removeSiteFolder).
-        if (slug) removeSiteFolder(siteDir, slug)
-        if (slug) writeHandoutRegistry(registry)
-        writeFileSync(join(siteDir, '_redirects'), redirectsText, 'utf8')
-        return { ok: true, built: null }
-      },
-      record: forget,
+      ...runUnpublishJob({
+        run: () => readRun(vault, asked.talkSlug, asked.id) ?? asked,
+        siteExists: () => existsSync(publishSiteDir()),
+        readRegistry: readHandoutRegistry,
+        writeRegistry: writeHandoutRegistry,
+        notAvailablePage: async () => {
+          const compilerDir = getCompilerPath()
+          if (!compilerDir) throw new Error('Compiler not found')
+          return buildNotAvailablePage(compilerDir)
+        },
+        service: runPrework(),
+        // The Run's own vault's objects (issue 256): never the same talk and Run id in another vault.
+        vaultRoot: vault,
+        persist: (run) => { persistRun(vault, run) },
+      }),
     })
     if (!outcome.ok) {
       return {
@@ -6771,6 +6980,81 @@ ipcMain.handle('run:unpublish-handout', async (_event, payload: { talkSlug: stri
         ...(outcome.details ? { details: outcome.details } : {}), ...(outcome.notReady ? { notReady: outcome.notReady } : {}),
       }
     }
+    return { success: true }
+  } catch (cause) {
+    return { success: false, error: cause instanceof Error ? cause.message : String(cause) }
+  }
+})
+
+// Published pages (work-files ticket 22): what the list reads, and what the talk-handout unpublish checks
+// a talk's folder against (every Run's and every other talk's link, in every open vault).
+function publishedPagesDeps(): PublishedPagesDeps {
+  return {
+    // Every open vault: an unavailable one is not scanned but counted as unreadable (review round 3).
+    vaults: () => openVaults(vaultRegistry.list(), (id) => vaultAvailability.isUnavailable(id)),
+    // A fresh walk (scanTalks), not the cached list: the cache can come from the vault index, which leaves out an
+    // outline it cannot read, and an unreadable outline must be counted (review round 2), never missed.
+    talks: (root) => scanTalks(root).map((talk) => ({ slug: talk.slug, title: talk.title, outlinePath: talk.outlinePath })),
+    readOutline: (outlinePath) => { try { return readFileSync(outlinePath, 'utf8') } catch { return null } },
+    siteDir: () => publishSiteDir(),
+    readRegistry: readHandoutRegistry,
+    sentPhases: (run, root) => sentPhases(runPrework(), run, root),
+  }
+}
+
+ipcMain.handle('published:unpublish-talk', async (_event, payload: { vaultId: string; outline: string }) => {
+  try {
+    // The talk's own vault, named by the caller, refused when it is not open; never the first writable vault.
+    if (typeof payload?.vaultId !== 'string') return { success: false, error: TALK_NOT_FOUND }
+    const picked = runVaultFor(payload.vaultId)
+    if ('error' in picked) return { success: false, error: picked.error }
+    const vault = picked.root
+    if (!vault) return { success: false, error: TALK_NOT_FOUND }
+    const vaultId = payload.vaultId
+    // The talk is named by its OUTLINE, relative to the vault's folder (two outlines of one vault may share a
+    // slug): inside the vault (the outline guard: this writes the outline), one of its talks, its slug its own.
+    const located = talkByOutline(vault, payload?.outline, findTalks(vault), (outlinePath) => outlineRefusal(vault, outlinePath))
+    if (!located.ok) return { success: false, error: located.error }
+    const outlinePath = located.talk.outlinePath
+    const slug = located.talk.slug
+    // EVERY unpublish takes its turn in the site's queue and reads the talk when its turn begins (a publish
+    // of the same talk asked for before it has recorded its link by then). What it does is
+    // talk-unpublish.ts: the talk's own folder, decided from its slug and link and checked against every
+    // other page's, leaves the site; the site goes up without it; only then is `handout_url` taken out of
+    // the talk through the one outline writer. Run handouts are other folders and are not touched.
+    const outcome = await handoutPublishing().publish({
+      entry: 'talk-unpublish',
+      ...talkUnpublishJob({
+        talk: async () => {
+          // At the job's turn, against a fresh walk of the vault (not the cached list): the same outline, still
+          // inside the vault, and still the only outline of its slug (one added while this waited is refused).
+          const now = talkByOutline(vault, payload.outline, scanTalks(vault), (path) => outlineRefusal(vault, path))
+          if (!now.ok) return now.error === TALK_NOT_FOUND ? null : { error: now.error }
+          if (now.talk.outlinePath !== outlinePath) return null
+          return { slug, handoutUrl: readHandoutUrl(await readTalkOutline(outlinePath)) }
+        },
+        siteExists: () => existsSync(publishSiteDir()),
+        readRegistry: readHandoutRegistry,
+        writeRegistry: writeHandoutRegistry,
+        // Every other page's claim, read at the job's turn from a fresh walk of each vault; talks that cannot be read refuse it.
+        claims: () => siteClaims(publishedPagesDeps(), { vaultId, outlinePath }),
+        clearLink: async () => {
+          const written = await writeTalkOutline(outlinePath, (current) => editFrontmatterText(current, [{ key: 'handout_url', value: null }]), 'unpublish-handout')
+          if (!written.ok) return { ok: false, error: written.error }
+          // A spelling the editor does not take (`handout_url :`) would still be read as the link: said, not hidden.
+          if (readHandoutUrl(written.text)) return { ok: false, error: 'its handout_url line is not one this app can change' }
+          return { ok: true }
+        },
+      }),
+    })
+    if (!outcome.ok) {
+      return {
+        success: false, error: outcome.error,
+        ...(outcome.details ? { details: outcome.details } : {}), ...(outcome.notReady ? { notReady: outcome.notReady } : {}),
+      }
+    }
+    if (outcome.built.way === 'removed') notifyTalkMetaUpdated()
+    if (outcome.built.way === 'removed' && !outcome.built.linkCleared) return { success: false, error: talkLinkNotCleared(outcome.built.linkError ?? '') }
     return { success: true }
   } catch (cause) {
     return { success: false, error: cause instanceof Error ? cause.message : String(cause) }
@@ -7383,8 +7667,8 @@ function serializeSidecar(prev: { id: string; created?: string }, meta: { alt: s
   return lines.join('\n') + '\n'
 }
 
-function readAssetSidecar(id: string): AssetSidecar | null {
-  const target = assetSidecarPath(currentVaultRoot(), id)
+function readSidecarIn(vaultRoot: string | undefined, id: string): AssetSidecar | null {
+  const target = assetSidecarPath(vaultRoot, id)
   if (!target.ok) return null
   const path = target.path
   if (!existsSync(path)) return null
@@ -7395,6 +7679,9 @@ function readAssetSidecar(id: string): AssetSidecar | null {
     console.error('[asset:read-sidecar]', e)
     return null
   }
+}
+function readAssetSidecar(id: string): AssetSidecar | null {
+  return readSidecarIn(currentVaultRoot(), id)
 }
 
 ipcMain.handle('asset:read-sidecar', (_event, id: string): AssetSidecar | null => readAssetSidecar(id))
@@ -8390,19 +8677,6 @@ const imageSearch = createImageSearch({
       })
 })
 
-ipcMain.handle('archive:available', async (): Promise<boolean> => {
-  return (await imageSearch.status()).provider !== null
-})
-
-ipcMain.handle('archive:search-images', async (_event, query: string): Promise<PaletteHit[] | null> => {
-  try {
-    return await imageSearch.paletteSearch(typeof query === 'string' ? query : '')
-  } catch (e) {
-    console.error('[archive:search-images]', e)
-    return null
-  }
-})
-
 ipcMain.handle('images:status', async (): Promise<ImageSearchStatus> => imageSearch.status())
 
 ipcMain.handle('images:search', async (_event, query: string, opts?: { match?: MatchMode }): Promise<ImageSearchResult | null> => {
@@ -8415,67 +8689,39 @@ ipcMain.handle('images:search', async (_event, query: string, opts?: { match?: M
   }
 })
 
-/** Copy a search hit's file into the current vault's _assets (or find it already there). */
-async function importSearchImage(thumbUrlOrPath: string): Promise<ImportedImage | null> {
-  const vaultRoot = writableVaultRoot()
-  if (!vaultRoot) return null
+/** `images:search-vault` (query): the pictures in the `_assets` of every open vault (image-search/vault-pictures.ts).
+ *  Nothing is stored; the answer is kept in memory for a few seconds. The query is a string of at most
+ *  MAX_VAULT_QUERY characters, else nothing is searched. */
+const vaultPictures = createVaultPictureSearch({
+  vaults: () => availableVaults().map((v) => ({ id: v.id, root: v.root, name: basename(v.root) })),
+  readSidecar: (vaultRoot, id) => readSidecarIn(vaultRoot, id),
+  talks: (vaultRoot) => findTalks(vaultRoot).map((t) => ({ title: t.title, outlinePath: t.outlinePath }))
+})
+
+ipcMain.handle('images:search-vault', async (_event, query: unknown): Promise<VaultPictureResult | null> => {
+  if (typeof query !== 'string' || query.length > MAX_VAULT_QUERY) return null
   try {
-    // The seam decides which files may be imported, at request time (same rule as twarchive://).
-    const file = await imageSearch.fileFor(thumbUrlOrPath)
-    if (!file) {
-      console.warn('[image-search:import] refused path:', String(thumbUrlOrPath).slice(0, 300))
-      return null
-    }
-    const absPath = file.absPath
-    const assetsDir = join(vaultRoot, '_assets')
-
-    // A talk image already in this vault's pool: insert it as it is, copy nothing.
-    const pooled = /^(img-[0-9a-f]{7,})\.([a-z0-9]+)$/i.exec(basename(absPath))
-    if (pooled && existsSync(assetsDir) && isInsideRoot(absPath, assetsDir) && realpathSync(dirname(absPath)) === realpathSync(assetsDir)) {
-      return { id: pooled[1], ext: pooled[2].toLowerCase(), path: absPath }
-    }
-
-    const origBuf = readFileSync(absPath)
-    const ext = (absPath.split('.').pop() || 'png').toLowerCase()
-
-    // Content-address the bytes exactly like asset:paste-image (img-{7hex sha256}.{ext}).
-    const hash = createHash('sha256').update(origBuf).digest('hex').slice(0, 7)
-    const id = 'img-' + hash
-    mkdirInVault(vaultRoot, assetsDir)
-    const assetPath = join(assetsDir, id + '.' + ext)
-    if (!existsSync(assetPath)) {
-      writeFileSync(assetPath, origBuf)
-      const sidecarPath = join(assetsDir, id + '.yml')
-      if (!existsSync(sidecarPath)) {
-        // Provenance: where the image came from, with the originating path noted.
-        writeFileSync(
-          sidecarPath,
-          [
-            'id: ' + id,
-            'created: ' + new Date().toISOString().slice(0, 10),
-            'original_format: ' + ext,
-            'note: ' + JSON.stringify(file.provenance.note),
-            'alt: ""',
-            'caption: ""',
-            'source: ' + JSON.stringify(file.provenance.source),
-            'tags: []'
-          ].join('\n') + '\n',
-          'utf8'
-        )
-      }
-    }
-    return { id, ext, path: assetPath }
+    return vaultPictures.search(query)
   } catch (e) {
-    console.error('[image-search:import]', e)
+    console.error('[images:search-vault]', e)
     return null
   }
+})
+
+/** `images:import` (thumbUrl, talkPath): a search hit copied into the _assets of the vault holding the named
+ *  talk (image-search/image-import.ts). The vault is worked out here from the talk path through the vault
+ *  registry, as for a talk's other writes (writableTalkRoot), but a path in no open vault is refused, never
+ *  sent to the current vault. */
+const imageImportDeps: ImageImportDeps = {
+  // A picture of a vault (the In your talks tab) or one the search seam vouches for.
+  fileFor: async (thumbUrlOrPath) => (await vaultPictures.fileFor(thumbUrlOrPath)) ?? imageSearch.fileFor(thumbUrlOrPath),
+  vaultRootForTalk: (talkPath) => talkVaultWriteRoot(vaultRegistry, talkPath, (vault) =>
+    vaultAvailable(vaultRegistry.get(vault.id)) ? writableRoot(vault.root, rootFs) ?? undefined : undefined),
+  warn: (message) => console.warn(message)
 }
 
-ipcMain.handle('archive:import-image', async (_event, thumbUrlOrPath: string): Promise<ImportedImage | null> =>
-  importSearchImage(typeof thumbUrlOrPath === 'string' ? thumbUrlOrPath : '')
-)
-ipcMain.handle('images:import', async (_event, thumbUrl: string): Promise<ImportedImage | null> =>
-  importSearchImage(typeof thumbUrl === 'string' ? thumbUrl : '')
+ipcMain.handle('images:import', async (_event, thumbUrl: unknown, talkPath: unknown): Promise<ImportedImage | null> =>
+  importImageForTalk(imageImportDeps, thumbUrl, talkPath)
 )
 
 // ── `setup` (ticket 07, spec D14): the same operations as the window, with no window ─────────────
@@ -8559,6 +8805,70 @@ app.whenReady().then(async () => {
     console.info('[owner-tokens] moved into secure storage', JSON.stringify(movedOwnerTokens))
   }
   initialiseLiveSessions()
+  // Work-files ticket 09: the Sessions view's list, every Run of every open vault (read-only).
+  registerSessionsListIpc({
+    ipcMain: ipcMain as unknown as Parameters<typeof registerSessionsListIpc>[0]['ipcMain'],
+    vaults: () => availableVaults().map((v) => ({ id: v.id, root: v.root })),
+    liveRuns: () => liveSessions?.liveRuns() ?? [],
+    // The one sent set (ticket 17, D1): the Unpublish confirmation names exactly what the job withdraws.
+    sentPhases: (run, root) => sentPhases(runPrework(), run, root),
+    // Responses waiting on the live service (counted on the work timer, never pulled here), for the Run's own vault.
+    waitingOf: (run, root) => (['pre', 'post'] as const).reduce((sum, phase) => {
+      const state = runPrework().status(run.talkSlug, run.id, phase, root)
+      return sum + (state?.waiting && (!state.vaultRoot || state.vaultRoot === root) ? state.waiting : 0)
+    }, 0)
+  })
+  // Work-files ticket 22: the Published pages view's list, every live page of every open vault (read-only).
+  registerPublishedPagesIpc({
+    ipcMain: ipcMain as unknown as Parameters<typeof registerPublishedPagesIpc>[0]['ipcMain'],
+    ...publishedPagesDeps(),
+  })
+  // Work-files ticket 10: the Run page (how its files read, Mark as delivered, Open file, Open live view).
+  registerRunPageIpc({
+    ipcMain: ipcMain as unknown as Parameters<typeof registerRunPageIpc>[0]['ipcMain'],
+    vaults: () => availableVaults().map((v) => ({ id: v.id, root: v.root })),
+    openPath: (path) => E2E ? Promise.resolve('') : shell.openPath(path),
+    focusLive: (talkSlug, runId, vaultRoot) => {
+      const id = liveSessions?.windowFor(talkSlug, runId, vaultRoot)
+      const win = id == null ? undefined : BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === id)
+      if (!win) return false
+      if (win.isMinimized()) win.restore()
+      win.focus()
+      return true
+    },
+    // The Run's own vault, never the current one: a Run from another vault reads that vault's talk.
+    readOutline: (root, talkSlug) => {
+      try { const talk = findTalks(root).find((item) => item.slug === talkSlug); return talk ? readFileSync(talk.outlinePath, 'utf8') : null } catch { return null }
+    },
+    // Pulls, stars and marks write to the Run's own vault: any open vault whose folder is there.
+    writableVault: (vaultId) => { const picked = runVaultFor(vaultId); return !('error' in picked) && Boolean(picked.root) },
+    // Pre-work or post-work published before 0.41 by a vault nothing records (issue 256): the Run page says so.
+    ownerUnknown: (root, run) => (['pre', 'post'] as const).filter((phase) => runPrework().ownerUnknown(run.talkSlug, run.id, phase, root)),
+    // Extra slides (ticket 25): the talk of the Run's own vault, compiled as the strip compiles it ("Place after").
+    talkSlides: async (root, talkSlug) => {
+      const talk = talkInVault(root, talkSlug)
+      if (!talk || outlineRefused(talk.outlinePath)) return null
+      const prepared = await prepareTalk(talk.outlinePath, readFileSync(talk.outlinePath, 'utf8'), timerSettings())
+      if (!prepared) return null
+      const prework = prepared.model.prework as { slideIds?: unknown } | undefined
+      return {
+        slides: ((prepared.rows ?? []) as Array<{ slide_id?: unknown; title?: unknown }>)
+          .filter((row) => typeof row.slide_id === 'string' && row.slide_id)
+          .map((row) => ({ id: String(row.slide_id), title: typeof row.title === 'string' ? row.title : '' })),
+        preworkIds: Array.isArray(prework?.slideIds) ? prework.slideIds.filter((id): id is string => typeof id === 'string') : [],
+        // An outline in the older format never takes a Run's extra slides (compiler 08-source-adapters.mjs).
+        ...(prepared.model.adapter === LEGACY_OUTLINE_ADAPTER ? { legacy: true } : {}),
+      }
+    },
+    onDelivered: (talkSlug, runId, vaultRoot) => { notifyTalkMetaUpdated(); openPostWorkFor(talkSlug, runId, vaultRoot) },
+    // Preview page (ticket 16).
+    previewPage: async (root, run) => {
+      const compilerDir = getCompilerPath()
+      if (!compilerDir) return { ok: false, error: 'Compiler not found' }
+      return buildRunWorkPreview({ vaultRoot: root, run, compilerDir, talkTitle: run.talkTitle || run.talkSlug })
+    },
+    qrSvg: (url) => instantLinkQrSvg(url),
+  })
   // Feedback-boards ticket 06: History's board actions and the Run's read-only share link.
   registerRunBoardIpc({
     ipcMain: ipcMain as unknown as Parameters<typeof registerRunBoardIpc>[0]['ipcMain'],
@@ -8575,26 +8885,35 @@ app.whenReady().then(async () => {
   // Feedback-boards ticket 09: History's pre-work actions, and a pull every few minutes while any
   // Run's pre-work is open (answers reach the Run through the atomic Run writer).
   registerRunPreworkIpc(ipcMain as unknown as Parameters<typeof registerRunPreworkIpc>[0], runPrework(), {
+    // The Run page names the Run's vault: its pulls and marks go there, never to another vault.
+    vaultFor: (vaultId) => runVaultFor(vaultId),
     onQuestionMarked: (talkSlug, runId) => {
       for (const wcId of livePresenterContexts.keys()) {
         const record = liveSessions?.record(wcId)
         if (!record || record.talkSlug !== talkSlug || record.runId !== runId) continue
         const win = BrowserWindow.getAllWindows().find((item) => item.webContents.id === wcId)
-        if (win && !win.isDestroyed()) win.webContents.send('live:prework-questions', preworkTrayForSession(currentVaultRoot() ?? null, record))
+        if (win && !win.isDestroyed()) win.webContents.send('live:prework-questions', preworkTrayForLiveSession(record, liveVaultReadable))
       }
     },
   })
   // The Run page's board slides: which board slide each pre-work step feeds, with the compiler's own slide ids.
   ipcMain.handle('history:prework-feeds', async (_event, payload: unknown) => {
     try {
-      const talk = talkBySlug(String((payload as { talkSlug?: unknown } | null)?.talkSlug ?? ''))
+      const asked = (payload ?? {}) as { talkSlug?: unknown; vaultId?: unknown }
+      const slug = String(asked.talkSlug ?? '')
+      // The Run page names the Run's vault: its talk is read from there (read only: any open vault that is there).
+      // Only an absent vaultId means the current vault: null, '' or a non-text id reads nothing (rootOfVault would give the current vault).
+      const root = asked.vaultId === undefined ? undefined : typeof asked.vaultId === 'string' && asked.vaultId ? rootOfVault(asked.vaultId) : undefined
+      if (asked.vaultId !== undefined && !root) return { ok: false as const }
+      const talk = root ? talkInVault(root, slug) : talkBySlug(slug)
       if (!talk) return { ok: false as const }
       const prepared = await prepareTalk(talk.outlinePath, readFileSync(talk.outlinePath, 'utf8'))
-      const prework = prepared?.model?.prework as { feeds?: PreworkFeed[] } | undefined
-      return prepared ? { ok: true as const, feeds: prework?.feeds ?? [] } : { ok: false as const }
+      return prepared ? { ok: true as const, feeds: feedsOfModel(prepared.model) ?? [] } : { ok: false as const }
     } catch { return { ok: false as const } }
   })
   startRunPreworkTimer(runPrework(), () => notifyTalkMetaUpdated())
+  // Ticket 19: at launch (post-work whose session ended while the app was closed) and every pull cycle.
+  startPostWorkOpenTimer(postWorkOpener(), () => notifyTalkMetaUpdated())
   // A recording that never reached Stop last time (crash, power loss) becomes a Run marked partial
   // that references the audio already on disk. Never blocks launch; never deletes audio.
   void recoverInterruptedRecordings()
@@ -8663,25 +8982,12 @@ app.whenReady().then(async () => {
     }
   )
 
-  // Register twasset:// to serve vault asset files safely
+  // Register twasset:// to serve vault asset files safely: twasset://img-a3f9b2 reads the current vault's
+  // pool; ?vault=<id> that open vault's (the image drawer's In your talks tab). Only a plain pool file reached
+  // through plain folders is served, never through a link (twassetFileFor → containedPoolFile).
   protocol.registerFileProtocol('twasset', (request, callback) => {
-    const vaultRoot = currentVaultRoot()
-    if (!vaultRoot) { callback({ error: -2 }); return }
-    // twasset://img-a3f9b2 ; tolerate the legacy double prefix (img-img-…) from the old import bug.
-    const id = new URL(request.url).hostname.replace(/^img-img-/, 'img-')
-    const assetsDir = join(vaultRoot, '_assets')
-    // A clip (vid-…) serves its POSTER image — authoring previews never play (ADR-0028).
-    if (/^vid-[0-9a-f]{7}$/.test(id)) {
-      const poster = join(assetsDir, id + '.jpg')
-      if (existsSync(poster)) { callback({ path: poster }); return }
-      callback({ error: -2 }); return
-    }
-    // Try common image extensions in order
-    for (const ext of ['webp', 'png', 'jpg', 'jpeg', 'gif']) {
-      const p = join(assetsDir, id + '.' + ext)
-      if (existsSync(p)) { callback({ path: p }); return }
-    }
-    callback({ error: -2 })
+    const file = twassetFileFor(request.url, currentVaultRoot(), availableVaults())
+    callback(file ? { path: file } : { error: -2 })
   })
   // Serve rendered slide thumbnails: twthumb://thumb/<slug>/<key> -> {userData}/thumb-cache/<slug>/<key>.png
   // (slug and key percent-encoded, shared/thumb-url.ts). `?vault=<id>` reads that vault's folder only;

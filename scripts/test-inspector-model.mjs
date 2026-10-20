@@ -1020,13 +1020,14 @@ assert.equal(sectionIdAtScrollTop([], 0), null, 'no sections, no lit pill')
   console.log('PASS picture queue: leaving a slide frees its slots; a throwing fetch releases its slot')
 }
 
-// ── Ticket 08 (ADR-0032 amendment point 5): the pre-work tokens keep the Inspector, and its
-// "Before the session" section shows each step (round-2 E1–E4, round-3 P5) ──────────────────────
+// ── Ticket 08 (ADR-0032 amendment point 5): the pre-work tokens keep the Inspector. Work-files
+// ticket 29: a talk's own `{prework}` section is no longer written in the Inspector (no "Before the
+// session" section, no step rows, no right answer); a `{results=…}` talk slide keeps its Results
+// section (ticket 27) and is offered no step of the section as a choice ─────────────────────────
 // An unregistered {prework} blanked the Inspector and was a Layout Doctor error (ticket 07 review).
 {
   const { buildPerSlideProjections } = await import('../compiler/scripts/lib/10-projections.mjs')
-  const { inspectorPreworkModel, preworkRunLine, resultsGroup } = await import('../src/renderer/src/components/inspectorPreworkModel.ts')
-  const { preworkFromOutline } = await import('../compiler/scripts/lib/prework.mjs')
+  const { inspectorPreworkModel, resultsGroup } = await import('../src/renderer/src/components/inspectorPreworkModel.ts')
   const outline = [
     '---', 'title: Pre-work', 'auto_title_slide: false', 'auto_thanks_slide: false', '---', '',
     '## Before the session', '{id=pwform}{prework}', '', 'Four short steps.', '',
@@ -1036,102 +1037,64 @@ assert.equal(sectionIdAtScrollTop([], 0), null, 'no sections, no lit pill')
     '### Task 1: draft one real email with Copilot', '{id=pwtask1}{task}{minutes=20}', '', '- Pick an email', '',
     '## Your turn', '{id=turn}', '',
     '### What AI tools do you already use?', '{id=r1tools}{results=pwtools}', '', '- The room adds to them', '',
+    '### Answers from the intake file', '{id=r2file}{results=intake/what-you-want}', '', '- From the work file', '',
     '### A plain talk slide', '{id=plain}', '', '- Nothing to do with pre-work', ''
   ].join('\n')
   const model = await prepareSource(`/tmp/prework-inspector-${++compileProbe}.md`, outline, 'Pre-work')
   const rows = buildPerSlideProjections(model, 'prework')
   const findings = layoutDoctor.scanOutlineTriggers(outline)
   assert.deepEqual(findings, [], 'the Layout Doctor finds nothing wrong with any pre-work token')
-  const definition = preworkFromOutline(outline)
   const inspect = (slideId) => {
     const index = rows.findIndex((row) => row.slide_id === slideId)
     const headingLine = headingLineForSlideId(outline, slideId)
     const block = extractInspectorSlideBlock(outline, headingLine)
     const triggerLine = block.split('\n')[1]
     const level = block.match(/^(#+)/)[1].length
-    const prework = inspectorPreworkModel(outline, headingLine, triggerLine, definition)
+    const prework = inspectorPreworkModel(headingLine, triggerLine)
     return { prework, inspector: inspectorModel(rows, index, level, triggerLine, LAYOUTS, block, level === 2, findings, '', '', prework) }
   }
   const sectionOf = (inspector) => inspector.sections.find((section) => section.id === 'prework')
   const keysOf = (section) => section.bindings.map((binding) => binding.group.key)
+  const allKeys = (inspector) => inspector.sections.flatMap(keysOf)
 
-  // E1: a slide with instructions — this step, questions on or off, the form.
-  let { inspector, prework } = inspect('pwwelcome')
-  assert.equal(inspector.unresolved, false, 'a pre-work step never blanks the Inspector')
-  assert.equal(prework.mode, 'step')
-  assert.equal(prework.thisSlide, 'Step 1 of 4: a slide with instructions. Participants read it on the pre-work page. It is not presented in the talk.')
-  let section = sectionOf(inspector)
-  assert.deepEqual([section.chip, section.heading], ['Pre-work', 'Before the session'], 'E1/P5: the chip says Pre-work, the section Before the session')
-  assert.equal(inspector.sections.at(-1).id, 'prework', 'round 3 P5: the section comes last')
-  assert.deepEqual(keysOf(section), ['prework-ask'], 'a slide step offers Questions about it')
-  assert.equal(section.bindings[0].selectedToken, '', 'questions are on by default')
-  assert.deepEqual(inspector.prework.definition.steps.map((step) => step.kind), ['slide', 'check', 'question', 'task'], 'the form’s steps')
+  // The section and every step of it: no Before the session section, no pre-work rows, never blank.
+  for (const id of ['pwform', 'pwwelcome', 'pwquiz', 'pwtools', 'pwtask1']) {
+    const { inspector, prework } = inspect(id)
+    assert.equal(inspector.unresolved, false, `${id}: a pre-work token never blanks the Inspector`)
+    assert.equal(prework, null, `${id}: no pre-work model for the section or a step`)
+    assert.equal(sectionOf(inspector), undefined, `${id}: no Before the session section`)
+    assert.equal(allKeys(inspector).some((key) => key.startsWith('prework-')), false, `${id}: no pre-work step row (participants, time, questions)`)
+  }
+  assert.ok(inspect('pwquiz').inspector.sections.some((candidate) => candidate.id === 'poll'), 'the check is still a poll (Poll section kept)')
 
-  // E2: the quick check — right answer only Dominik sees.
-  ;({ inspector, prework } = inspect('pwquiz'))
-  section = sectionOf(inspector)
-  assert.deepEqual([section.chip, section.heading], ['Check', 'Quick check'])
-  assert.deepEqual(prework.step.options, ['It answers', 'It uses tools', 'Not sure'])
-  assert.deepEqual(prework.step.right, { index: 1, label: 'It uses tools' })
-  assert.ok(inspector.sections.some((candidate) => candidate.id === 'poll'), 'the check is still a poll (Poll section kept)')
-
-  // A question with questions off.
-  ;({ inspector } = inspect('pwtools'))
-  section = sectionOf(inspector)
-  assert.deepEqual(keysOf(section), ['prework-ask'])
-  assert.equal(section.bindings[0].selectedToken, 'noask', '{noask} lights Off')
-
-  // E3: a pre-task — Mark as done or read only, time it takes, questions.
-  ;({ inspector, prework } = inspect('pwtask1'))
-  section = sectionOf(inspector)
-  assert.deepEqual([section.chip, section.heading], ['Pre-task', 'Pre-task'])
-  assert.deepEqual(keysOf(section), ['prework-participants', 'prework-minutes', 'prework-ask'], 'E3’s rows, in its order')
-  assert.deepEqual(section.bindings.map((binding) => binding.selectedToken), ['', 'minutes=20', ''], 'E3: a bare {task} lights Mark as done')
-  // Writing them goes through the ordinary option path; defaults write nothing.
-  const groupOf = (key) => section.bindings.find((binding) => binding.group.key === key).group
-  const taskLine = '{id=pwtask1}{task}'
-  assert.equal(commitOptionSelection(taskLine, groupOf('prework-participants'), 'readonly'), '{id=pwtask1}{task}{readonly}', 'Read only goes after {task}')
-  assert.equal(commitOptionSelection('{id=pwtask1}{task}{readonly}', groupOf('prework-participants'), ''), '{id=pwtask1}{task}', 'Mark as done writes no token')
-  assert.equal(commitOptionSelection('{id=pwtask1}{task}{readonly}', groupOf('prework-minutes'), 'minutes=30'), '{id=pwtask1}{task}{readonly}{minutes=30}')
-  assert.equal(commitOptionSelection('{id=pwtask1}{task}{minutes=30}', groupOf('prework-minutes'), ''), '{id=pwtask1}{task}', '10 minutes is the default')
-  assert.equal(commitOptionSelection(taskLine, groupOf('prework-ask'), 'noask'), '{id=pwtask1}{task}{noask}')
-
-  // The section itself: its introduction and the form, no step rows.
-  ;({ inspector, prework } = inspect('pwform'))
-  assert.equal(prework.mode, 'section')
-  section = sectionOf(inspector)
-  assert.deepEqual(keysOf(section), [], 'the section slide has no step rows')
-  assert.equal(section.heading, 'Before the session')
-
-  // E4: a talk slide showing a step's answers.
-  ;({ inspector, prework } = inspect('r1tools'))
+  // A talk slide naming an old section step: Results, the value as written, no section step offered.
+  let { inspector, prework } = inspect('r1tools')
   assert.equal(inspector.unresolved, false, 'a {results=…} slide never blanks the Inspector')
-  section = sectionOf(inspector)
+  let section = sectionOf(inspector)
   assert.deepEqual([section.chip, section.heading], ['Results', 'Answers from pre-work'])
   assert.deepEqual(keysOf(section), [], 'a talk slide gets no step rows')
-  assert.equal(prework.results.step.id, 'pwtools')
-  assert.deepEqual(prework.results.group.values.map((value) => [value.token, value.label]), [
-    ['results=pwquiz', 'Before the session › 2 · Quick check: what makes something an agent?'],
-    ['results=pwtools', 'Before the session › 3 · What AI tools do you already use?'],
-    ['results=pwtask1', 'Before the session › 4 · Task 1: draft one real email with Copilot']
-  ], 'Shows offers every step whose answers a slide can show')
-  assert.equal(commitOptionSelection('{id=r1tools}{results=pwtools}', prework.results.group, 'results=pwquiz'), '{id=r1tools} {results=pwquiz}', 'choosing another step replaces the token')
-  const unknown = resultsGroup(definition, 'gone')
-  assert.equal(commitOptionSelection('{id=x}{results=gone}', unknown, 'results=pwtask1'), '{id=x} {results=pwtask1}', 'a token naming no step is replaced too')
+  assert.equal(prework.results.stepId, 'pwtools')
+  assert.equal(prework.results.workFile, false)
+  assert.deepEqual(prework.results.group.values.map((value) => [value.token, value.label]), [['results=pwtools', 'pwtools (old pre-work section step)']],
+    'Shows offers no step of the talk’s own section, only the value the slide carries')
+  assert.match(prework.thisSlide, /old pre-work section\. Move that section to a work file/)
+
+  // A talk slide naming a work-file step (ticket 27).
+  ;({ inspector, prework } = inspect('r2file'))
+  section = sectionOf(inspector)
+  assert.deepEqual([section.chip, section.heading], ['Results', 'Answers from pre-work'])
+  assert.equal(prework.results.workFile, true)
+  assert.deepEqual(prework.results.group.values.map((value) => value.label), ['intake/what-you-want (work file step)'])
+  assert.equal(commitOptionSelection('{id=r2file}{results=intake/what-you-want}', prework.results.group, 'results=intake/what-you-want'), '{id=r2file}{results=intake/what-you-want}', 'choosing the same step writes nothing new')
+  assert.deepEqual(resultsGroup('').values, [], 'no value, no choice')
 
   // Any other slide: no section, no pre-work rows.
   ;({ inspector, prework } = inspect('plain'))
   assert.equal(prework, null)
-  assert.equal(sectionOf(inspector), undefined, 'a plain talk slide has no Before the session section')
+  assert.equal(sectionOf(inspector), undefined, 'a plain talk slide has no pre-work section')
   assert.equal(optionGroupsForSlide({ layoutName: 'list', headingLevel: 3, hasChildren: false }).some(({ group }) => group.key.startsWith('prework-')), false,
-    'a surface that did not read the pre-work section is offered no pre-work row')
-
-  // The form's Run (E1, P5): the next Run's window, a Run without one, or the nudge.
-  assert.deepEqual(preworkRunLine(null), { kind: 'no-run' }, 'P5: no planned Run')
-  assert.deepEqual(preworkRunLine({ id: 'r1', talkSlug: 't', eventTitle: 'ITSS Briefing', plannedDate: '2026-10-06', startTime: '10:00', preworkOpens: '2026-09-29T09:00' }),
-    { kind: 'window', runId: 'r1', opens: 'Tue 29 Sep, 09:00', closes: 'Tue 6 Oct, 10:00', run: 'ITSS Briefing, 6 Oct', closesAtStart: true })
-  assert.deepEqual(preworkRunLine({ id: 'r2', talkSlug: 't', eventTitle: 'Later', plannedDate: '2026-11-01' }), { kind: 'no-window', runId: 'r2', run: 'Later, 1 Nov' })
-  console.log('PASS prework: every pre-work token resolves; the Before the session section shows each step kind, the section and a results slide')
+    'a surface that did not read a step is offered no pre-work row')
+  console.log('PASS prework: every pre-work token resolves; a {prework} section and its steps get no Inspector section; a results slide keeps Results')
 }
 
 // ── Ticket 13: the Page width group is offered only beside an embedded page with body text ──
@@ -1235,10 +1198,32 @@ assert.equal(sectionIdAtScrollTop([], 0), null, 'no sections, no lit pill')
     const later = inspectorModule.applyInspectorOptionToOutline(pinned, lineNo(pinned), other, 'title-icon=above')
     assert.ok(later.includes('{titlelook-tone=strong}'), `${name}: a later commit keeps the pinned tone (sweep reads the inherited look)`)
   }
-  assert.equal(inheritedTitleLookForSlide(none, lineNo(none)), '', 'nothing inherited')
-  const noLookPin = '---\ntitle: T\n---\n\n## S\n\n### A\n{titletop}{titlelook-tone=soft}\n\nBody\n'
+  // 0.41 (ADR-0039): a talk that names no look inherits the index tab; `full` is the plain title.
+  assert.equal(inheritedTitleLookForSlide(none, lineNo(none)), 'tab', 'a talk naming no look inherits the index tab')
+  const plainDeck = none.replace('title: T\n', 'title: T\ntitle_look: full\n')
+  assert.equal(inheritedTitleLookForSlide(plainDeck, lineNo(plainDeck)), '', 'title_look: full inherits the plain title')
+  const introDeck = none.replace('title: T\n', 'title: T\ntitle_look: intro-then-none\n')
+  assert.equal(inheritedTitleLookForSlide(introDeck, lineNo(introDeck)), 'intro-then-none', 'the mirror carries intro-then-none')
+  const lookGroup = GLOBAL_OPTION_GROUPS.find((g) => g.key === 'title-look')
+  const lookLine = (outline) => outline.split('\n')[lineNo(outline)].replace(/\}\s+\{/g, '}{')
+  // Full over an inherited look pins the plain title; over an inherited plain title it stores nothing.
+  const fullPinned = inspectorModule.applyInspectorOptionToOutline(none, lineNo(none), lookGroup, '')
+  assert.equal(lookLine(fullPinned), '{titletop}{titlelook=default}', 'Full writes {titlelook=default} over the inherited index tab')
+  assert.equal(lookLine(inspectorModule.applyInspectorOptionToOutline(fullPinned, lineNo(fullPinned), lookGroup, '')), '{titletop}{titlelook=default}', 'Full again keeps the pin')
+  assert.equal(lookLine(inspectorModule.applyInspectorOptionToOutline(introDeck, lineNo(introDeck), lookGroup, '')), '{titletop}{titlelook=default}', 'Full pins against intro-then-none')
+  assert.equal(lookLine(inspectorModule.applyInspectorOptionToOutline(plainDeck, lineNo(plainDeck), lookGroup, '')), '{titletop}', 'Full under a plain talk stores nothing')
+  const lookLit = (line, inherited) => inspectorModel([{ layout: topLayout, title_layout: 'top' }], 0, 3, line, LAYOUTS, undefined, false, [], '', '', null, '', inherited).selectedTokens['title-look']
+  assert.equal(lookLit('{titletop}{titlelook=default}', 'tab'), '', 'an explicit plain title lights Full')
+  assert.equal(lookLit('{titletop}{titlelook=full}', 'tab'), '', '{titlelook=full} lights Full')
+  assert.equal(lookLit('{titletop}', 'intro-then-none'), 'titlelook=intro-then-none', 'an inherited intro-then-none lights it')
+  // 0.41 ticket 03: the tab strip is mirrored like the other looks.
+  const stripDeck = none.replace('title: T\n', 'title: T\ntitle_look: tab-strip\n')
+  assert.equal(inheritedTitleLookForSlide(stripDeck, lineNo(stripDeck)), 'tab-strip', 'the mirror carries tab-strip')
+  assert.equal(lookLit('{titletop}', 'tab-strip'), 'titlelook=tab-strip', 'an inherited tab strip lights it')
+  assert.equal(lookLine(inspectorModule.applyInspectorOptionToOutline(stripDeck, lineNo(stripDeck), lookGroup, '')), '{titletop}{titlelook=default}', 'Full pins against an inherited tab strip')
+  const noLookPin = '---\ntitle: T\ntitle_look: default\n---\n\n## S\n\n### A\n{titletop}{titlelook-tone=soft}\n\nBody\n'
   const swept = inspectorModule.applyInspectorOptionToOutline(noLookPin, lineNo(noLookPin), GLOBAL_OPTION_GROUPS.find((g) => g.key === 'title-icon'), 'title-icon=above')
-  assert.ok(!swept.includes('titlelook-tone'), 'with no Tab look anywhere the orphan tone is still swept')
+  assert.ok(!swept.includes('titlelook-tone'), 'with no Tab look anywhere (a plain talk) the orphan tone is still swept')
 }
 
 console.log('inspector model: pane migration, navigation, applicable groups and step derivation pass')

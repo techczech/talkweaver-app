@@ -9,6 +9,7 @@ import { chartObjectTokenAt, parseMarkdownFenceOpeningLine, isMarkdownFenceClosi
 import { extractTitle, updateDeckTitle } from "./04-html-extraction.mjs";
 import { collectIconGapTerms, collectSemanticIconNeeds, collectIconSuggestions, collectIconlistNoIcons, titleIconOfNode } from "./05-icons.mjs";
 import { mapBlocksToLayout } from "./06-block-renderers.mjs";
+import { collectVsRowsWithoutIcon } from "./vs-panels.mjs";
 import { buildDeckHtmlFromModel, adaptCanonicalPptJson, adaptLearnWeaverExport } from "./07-assembly.mjs";
 import { annotateQuoteLayout, quoteSplitCountForBlocks, splitQuoteSlideBlocks } from "./quote-layout.mjs";
 import { quoteFormIsSet } from "./quote-forms.mjs";
@@ -21,7 +22,7 @@ import { annotateSimulationLayout, simulationMode, simulationLayoutForFence } fr
 import { annotateTextLayout } from "./text-layout.mjs";
 import { resolveSlideFrame, FRAME_BUILTINS } from "./11-frame.mjs";
 import { parseSimpleYaml } from "./simple-yaml.mjs";
-import { resolveTitleLook, TITLE_LOOKS, TITLE_LOOK_TONES } from "./title-look.mjs";
+import { followsSectionCard, PLAIN_TITLE_LOOKS, resolveTitleLook, sectionStrip, TITLE_LOOKS, TITLE_LOOK_TONES } from "./title-look.mjs";
 import { resolveScreenshotStyle, SCREENSHOT_STYLES } from "./screenshot-row.mjs";
 import { resolveShotList, SHOT_LIST_ARRANGEMENTS } from "./slot-composition.mjs";
 import { posterBlockFor, posterAccentFor, applyAuthoredPosters, TITLE_STYLES } from "./title-poster.mjs";
@@ -35,8 +36,9 @@ import { resolveImageSteps } from "./image-steps.mjs";
 import { resolveEmphasisSteps } from "./emphasis-steps.mjs";
 import { resolvePlayOnNext } from "./media-steps.mjs";
 import { pollDirectivesFor, rebasePollDefinition } from "./poll-authoring.mjs";
-import { preworkFeedsFromTree, preworkFindings, preworkFromTree, takeRightMarkers } from "./prework.mjs";
+import { preworkFeedsFromTree, preworkFindings, preworkFromTree, preworkRetiredFinding, takeRightMarkers } from "./prework.mjs";
 import { readReactionsValue, reactionWarnings } from "./reaction-sets.mjs";
+import { placeRunExtraNodes, runCompileOption, settleRunExtraTail } from "./run-extras.mjs";
 import { SECTION_ONLY_TRIGGER_KEYS } from "../triggers.mjs";
 import { resolveStatementOptions } from "./statement-options.mjs";
 import { LIST_STYLES, cardsLayoutDecision, deckTriggerDefaultsFrom, foldChildLayoutNodes, impliedListStyle, nodeContentLinesAndAttrs, sectionDividerDecision, slideLayoutPlan } from "./authored-layout.mjs";
@@ -381,7 +383,10 @@ export function renderLicenseBody(license) {
   return parts.join("");
 }
 
-export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
+// `run` (optional, work-files ticket 25): { id, slideIds, extraSlides } of the Run this compile is for, as
+// run-extras.mjs runCompileOption checked it; its extra slides are made from the Run record and placed in the
+// tree below. The outline text is the talk's own either way.
+export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = null) {
   let body = markdown;
   let meta = {};
   if (markdown.startsWith("---")) {
@@ -533,7 +538,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
   if (colourChoice.state === "unknown") warnings.push(`colour-unknown:${colourChoice.raw}`);
   const titleStyleChoice = readDeckChoice(meta.title_style, TITLE_STYLES);
   if (titleStyleChoice.state === "unknown") warnings.push(`title-style-unknown:${titleStyleChoice.raw}`);
-  const titleLookChoice = readDeckChoice(meta.title_look ?? meta["title-look"], ["default", ...TITLE_LOOKS]);
+  const titleLookChoice = readDeckChoice(meta.title_look ?? meta["title-look"], [...PLAIN_TITLE_LOOKS, ...TITLE_LOOKS]);
   if (titleLookChoice.state === "unknown") warnings.push(`title-look-unknown:${titleLookChoice.raw}`);
   const titleLookToneChoice = readDeckChoice(meta.title_look_tone ?? meta["title-look-tone"], TITLE_LOOK_TONES);
   if (titleLookToneChoice.state === "unknown") warnings.push(`title-look-tone-unknown:${titleLookToneChoice.raw}`);
@@ -784,9 +789,11 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     // the editor runs too): tokens, then content, then the divider default, then chart-only. Quote
     // forms, ticket 10: the address under the quotation is adopted as its source line there, as
     // slide-quote-reading.mjs readSlideBlocks does for the app's check before a quote write.
-    const layoutPlan = slideLayoutPlan(slide, lexMarkdownBlocks);
+    // A Run's extra slide (work-files ticket 25, run-extras.mjs) has no outline lines: its paragraphs are
+    // made from its text as typed, and are read here instead of lexing, so nothing in the text is structure.
+    const presetBlocks = slide.treeNode?._runExtraBlocks;
+    const layoutPlan = slideLayoutPlan(slide, Array.isArray(presetBlocks) ? () => presetBlocks.map((block) => ({ ...block })) : lexMarkdownBlocks);
     const { dividerDecision, rawBlocks } = layoutPlan;
-    const titleOnlySection = dividerDecision.divider;
     if (dividerDecision.structural && !dividerDecision.divider) {
       warnings.push(`divider-default-suppressed-by-tokens:${slide.id}:${dividerDecision.authorTokens.join(", ")}`);
     }
@@ -819,15 +826,15 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
       // resurrect the override: attrs are a map, resolved before this runs.
       // (the assignment itself is authored-layout.mjs impliedListStyle, below)
     }
-    // ADR-0028 §6: {numbered=square|plain|styled} picks how a numbered list draws its number
-    // (square is the default and needs no class). Like {iconlist=…}, the value form is still a
+    // ADR-0028 §6: {numbered=mono|plain|styled} picks how a numbered list draws its number
+    // (mono is the default and needs no class; square is the old name, still accepted silently). Like {iconlist=…}, the value form is still a
     // numbered list when no authored token resolved a list style; an authored style wins, and the
     // recorded style applies wherever the list does render numbers.
     let numberStyle = "";
     if (slide.attrs.numbered != null) {
       const variant = slide.attrs.numbered === true ? "" : String(slide.attrs.numbered).trim().toLowerCase();
       if (variant === "plain" || variant === "styled") numberStyle = variant;
-      else if (variant && variant !== "square") warnings.push(`numbered-unknown:${variant}`);
+      else if (variant && variant !== "mono" && variant !== "square") warnings.push(`numbered-unknown:${variant}`);
     }
     // {iconlist=…} first, then {numbered=…}: the list style either implies when the author wrote
     // none (authored-layout.mjs impliedListStyle, which the editor runs too).
@@ -873,11 +880,14 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     // Both ride onto every table block on the slide (pipe tables and the {table} outline alike).
     const tableHeaderOff = String(slide.attrs["table-header"] ?? "").trim().toLowerCase() === "off";
     const tableColumnsOff = String(slide.attrs["table-columns"] ?? "").trim().toLowerCase() === "off";
-    if (tableHeaderOff || tableColumnsOff) {
+    // {table-first-column=off}: the first column is not set in the accent (the 0.41 default).
+    const tableFirstOff = String(slide.attrs["table-first-column"] ?? "").trim().toLowerCase() === "off";
+    if (tableHeaderOff || tableColumnsOff || tableFirstOff) {
       for (const b of blocks) {
         if (b && b.type === "table") {
           if (tableHeaderOff) b.headerRow = false;
           if (tableColumnsOff) b.columnRules = false;
+          if (tableFirstOff) b.firstColumnAccent = false;
         }
       }
     }
@@ -897,7 +907,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
       }
     }
     if (layout === "equation") {
-      const shape = String(slide.attrs.equation || "pills").toLowerCase();
+      const shape = (slide.attrs.equation === true || !slide.attrs.equation) ? "circle" : String(slide.attrs.equation).toLowerCase();
       for (const b of blocks) {
         if (b && b.type === "equation") b.shape = shape;
       }
@@ -1132,8 +1142,10 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     // longer exists, so the token is accepted (old decks must not start erroring) and renders as
     // the layout's own regime — the hint is how the author learns it now does nothing.
     if (slide.attrs.title === "compact") warnings.push(`retired-title-compact:${slide.id}`);
-    const heuristicOpening = !parsedRole && !slide.isSection
-      && slides.filter((s) => s.role !== "section-title" && s.role !== "subsection-title").length === 0;
+    // A Run's extra slide (work-files ticket 25) is never the deck's opening by position, and does not take that
+    // place from the talk's first slide.
+    const heuristicOpening = !parsedRole && !slide.isSection && !presetBlocks
+      && slides.filter((s) => s.role !== "section-title" && s.role !== "subsection-title" && s.runExtra !== true).length === 0;
     const role = normalizeRole(parsedRole || derivedSectionRole || (heuristicOpening ? "opening" : "content"), warnings, slide.id);
 
     // Push one slide record, de-duplicating its id against slides already emitted.
@@ -1212,7 +1224,10 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
         : Array.isArray(slide.scriptSourceLines)
           ? { scriptSourceMarkdown: slide.scriptSourceLines.join("\n").trimEnd() }
           : {}),
-      kicker: titleOnlySection && slide.nodeLevel > 2 ? slide.sectionTitle : autoKicker(slide),
+      // ADR-0039: no small line above a title unless the slide supplies one ({kicker=…}) or the deck
+      // asks for section labels (`section_labels: on`). A subsection divider no longer prints its
+      // parent section's name there by default (it did under ADR-0028 §7).
+      kicker: autoKicker(slide),
       navTitle: slide.title,
       title: slide.title,
       // Plain view ticket 07 (spec T14): `{icon=NAME}` written on the heading line itself, in an
@@ -1354,7 +1369,10 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
       // 2026-07-08: whether title=/sidebar was explicitly authored (vs the builtin "top").
       // An explicit {title=top} must SHOW the title on layouts that hide it by default
       // (quote, statement); without this flag the resolved frame always reads "top".
-      frameTitleExplicit: frameTitleExplicitFor(slide)
+      frameTitleExplicit: frameTitleExplicitFor(slide),
+      // Work-files ticket 25: a Run's extra slide is plain text as typed (07-assembly.mjs renders its title and
+      // paragraphs escaped) and its phone text is its paragraphs as typed (slide-script.mjs).
+      ...(presetBlocks ? { runExtra: true, scriptBlocks: presetBlocks.map((block) => ({ type: "p", text: block.text, plain: true })) } : {})
     };
 
     // OVERFLOW = AUTO-SPLIT (the chosen default for spine/pills/horizontal timelines). A timeline
@@ -1556,7 +1574,9 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     for (const node of nodes || []) {
       if (node._sequenceOnly) continue;
       const isSection = (node.children || []).length > 0;
-      const attrs = slideAttrsFromNode(node, deckTriggerDefaults);
+      // A Run's extra slide (work-files ticket 25) takes none of the talk-wide `triggers:` defaults: it is always a
+      // `list` slide of plain paragraphs, so its text reaches only renderBlock and renderSlideHead, which escape it.
+      const attrs = slideAttrsFromNode(node, Array.isArray(node._runExtraBlocks) ? {} : deckTriggerDefaults);
       const current = { ...context };
 
       if (node.level !== 2) {
@@ -1633,6 +1653,9 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
   foldChildLayoutNodes(root.children, { deckTriggerDefaults, warnings, nodeSourceEndLines });
 
   dedupeTreeIdsAndInsertSequenceSplits();
+  // Work-files ticket 25: a compile for a Run puts that Run's extra slides (from its Run record, never from the
+  // outline) after their chosen slides.
+  const runExtras = run ? { runId: run.id, slides: placeRunExtraNodes(root, run) } : null;
   emitNodeSlides(root.children);
 
   // Ticket 08 (ADR-0032 amendment point 5): the talk's pre-work form, read from the id-resolved
@@ -1642,13 +1665,18 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
   for (const finding of preworkFindings(root, prework)) {
     warnings.push(`${finding.code}:${finding.slideId}${finding.detail ? `:${finding.detail}` : ""}`);
   }
+  const retired = preworkRetiredFinding(root);
+  if (retired) warnings.push(`${retired.code}:${retired.slideId}`);
+  // Board slides fed by a step, with the compiled deck's slide ids and positions (ticket 11). A feed that
+  // names a work file's step (`{results=<file id>/<step id>}`, 0.40 ticket 27) needs no pre-work section, so
+  // the list is also on the model by itself.
+  const resultsFeeds = preworkFeedsFromTree(root).map((feed) => {
+    const index = slides.findIndex((s) => s.id === feed.slideId);
+    return index >= 0 ? { ...feed, number: index + 1 } : feed;
+  });
   if (prework) {
     prework.slideIds = slides.filter((s) => s.section === prework.sectionId).map((s) => s.id);
-    // Board slides fed by a step, with the compiled deck's slide ids and positions (ticket 11).
-    prework.feeds = preworkFeedsFromTree(root).map((feed) => {
-      const index = slides.findIndex((s) => s.id === feed.slideId);
-      return index >= 0 ? { ...feed, number: index + 1 } : feed;
-    });
+    prework.feeds = resultsFeeds;
   }
 
   const syntheticNode = (id, nodeTitle, attrs = {}) => ({
@@ -1687,14 +1715,20 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
           const contentInSection = slides.filter(
             (s) => s.section === sectionId && s.role !== "section-title" && s.role !== "subsection-title"
           );
-          const [divider] = slides.splice(dividerIdx, 1);
-          // Indices after the splice shifted left by one; recompute the opening's position.
+          // A Run's extra slides placed right after the divider (work-files ticket 25: "after" the section) go with
+          // it, so they stay after the divider once the opening is in front. None in a talk's own compile.
+          let followerCount = 0;
+          while (dividerIdx + 1 + followerCount < openingIdx && slides[dividerIdx + 1 + followerCount].runExtra === true) followerCount += 1;
+          const [divider, ...followers] = slides.splice(dividerIdx, 1 + followerCount);
+          // Indices after the splice shifted left; recompute the opening's position.
           const newOpeningIdx = slides.findIndex((s) => s === opening);
           if (contentInSection.length > 1) {
             // Section also holds real content beyond the opening: keep the divider, but after it.
-            slides.splice(newOpeningIdx + 1, 0, divider);
-            openingBeatPatch = { dividerId: divider.id, openingId: opening.id, dropDivider: false };
+            slides.splice(newOpeningIdx + 1, 0, divider, ...followers);
+            openingBeatPatch = { dividerId: divider.id, openingId: opening.id, dropDivider: false, followerIds: followers.map((f) => f.id) };
           } else {
+            // (An extra slide is content of the section, so it keeps the divider; were one here, it stays.)
+            if (followers.length) slides.splice(newOpeningIdx + 1, 0, ...followers);
             openingBeatPatch = { dividerId: divider.id, openingId: opening.id, dropDivider: true };
           }
           // else: the opening was the section's only slide — divider dropped (suppressed).
@@ -1702,6 +1736,25 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
       }
     }
   }
+
+  // 0.41 (ADR-0039): intro-then-none. The section card introduces the topic; a slide after it in the
+  // same section paints no top title (07-assembly renders its head nav-only and stamps no look, so
+  // the content re-centres in the band, slide-foundations.css). A slide before any card keeps the
+  // plain top title. Decided here, after the slide order is final, because it reads the order.
+  slides.forEach((s, index) => {
+    if (s.titleLook !== "intro-then-none") return;
+    s.titleLook = "";
+    s.titleLookTone = "";
+    if (s.role !== "section-title" && s.role !== "subsection-title" && followsSectionCard(slides, index)) s.titleLookHidden = true;
+  });
+
+  // 0.41 ticket 03 (ADR-0039): tab-strip. The pills name the slide's section's slides in their final
+  // order, the current one filled; a long section is cut to the pills around the current one
+  // (sectionStrip). 07-assembly draws them; a slide added after this point (the generated links
+  // slide) gets its own pill alone there.
+  slides.forEach((s, index) => {
+    if (s.titleLook === "tab-strip") s.titleStrip = sectionStrip(slides, index);
+  });
 
   // E7 — AUTO BOOKENDS. Every deck gets an opening title slide and a closing thanks slide
   // unless the outline already supplies one or frontmatter opts out.
@@ -1813,10 +1866,22 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
       id: "deck-links", section: "", role: "content", layout: "links",
       kicker: "", navTitle: "Links", title: "Links",
       titleMode: "show", blocks: [], reuse: defaultReuseForRole("content"), notes: "",
-      frame: { ...FRAME_BUILTINS }
+      frame: { ...FRAME_BUILTINS },
+      // The talk's title look reaches the generated links slide too (no section: intro-then-none
+      // has no card to follow, so it keeps the plain title).
+      ...(() => {
+        const { look, tone } = resolveTitleLook({}, {}, deckDefaults, meta);
+        return look === "intro-then-none" ? { titleLook: "", titleLookTone: "" } : { titleLook: look, titleLookTone: tone };
+      })()
     });
     root.children.push(syntheticNode("deck-links", "Links"));
   }
+  // Work-files ticket 25: a Run's extra slides placed after the closing slide (and its end ones after them) go
+  // past the generated closing slides, to the very end (run-extras.mjs settleRunExtraTail).
+  if (runExtras) settleRunExtraTail(slides, root.children, runExtras.slides);
+  // The deck's final slide order, after the opening is put in front and the tail settled: the one order a pathway
+  // Run's slide list takes its extra slides' places from (run-extras.mjs withRunExtraIds).
+  if (runExtras) runExtras.order = slides.map((s) => s.id);
 
   // H2 — attach the subsection list to each section record so consumers can group section →
   // subsection without re-scanning slides. (Backward compatible: sections kept their existing
@@ -1834,14 +1899,20 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     if (dividerIdx < 0) return beatsOut;
     const [dividerBeat] = beatsOut.splice(dividerIdx, 1);
     if (openingBeatPatch.dropDivider) return beatsOut;
+    // The extra slides that moved with the divider (above): their beats move with its beat.
+    const followerIds = new Set(openingBeatPatch.followerIds || []);
+    const followerBeats = [];
+    for (let index = beatsOut.length - 1; index >= 0; index -= 1) {
+      if (followerIds.has(beatsOut[index].slideId)) followerBeats.unshift(...beatsOut.splice(index, 1));
+    }
     let openingLastIdx = -1;
     beatsOut.forEach((beat, index) => {
       if (beatRenderId(beat) === openingBeatPatch.openingId) openingLastIdx = index;
     });
     if (openingLastIdx < 0) {
-      beatsOut.splice(dividerIdx, 0, dividerBeat);
+      beatsOut.splice(dividerIdx, 0, dividerBeat, ...followerBeats);
     } else {
-      beatsOut.splice(openingLastIdx + 1, 0, dividerBeat);
+      beatsOut.splice(openingLastIdx + 1, 0, dividerBeat, ...followerBeats);
     }
     return beatsOut;
   };
@@ -1868,6 +1939,8 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults) {
     title, sourceType: "markdown-outline", adapter: "markdown-outline-v2",
     contentSchemaVersion: "markdown-outline-v2", warnings, sections, subsections, slides, beats,
     ...(prework ? { prework } : {}),
+    ...(runExtras ? { runExtras } : {}),
+    ...(resultsFeeds.length ? { resultsFeeds } : {}),
     ...(deckLinks.length ? { deckLinks } : {}),
     ...(durationSeconds ? { durationSeconds } : {}),
     ...(deckFont ? { deckFont } : {}),
@@ -2302,7 +2375,8 @@ async function inlineAndCollectAssets(model, sourceDir, budget = createMediaInli
       }
       const absolute = found.real;
       const info = await stat(absolute);
-      const out = { ...block, videoName: referenceFileName(block.src) };
+      // videoRef: the reference as authored, kept on the <video> (data-video-ref) so a recording can name the original file.
+      const out = { ...block, videoName: referenceFileName(block.src), videoRef: block.src };
       // Poster: a sibling image with the same stem (talk.mp4 → talk.png/.jpg/.jpeg/.webp),
       // inlined as a data URI — shown before play, and standing in for the video in share
       // exports when the file itself is too big to inline.
@@ -2519,6 +2593,35 @@ export function injectPerSlideNotes(markdown) {
 // config value; a frontmatter `warn-at:`/`urgent-at:` on the deck still wins over it. Every existing
 // call site omits this arg and gets the compiler's own 5/1 fallback, so this is purely additive.
 export async function prepareSource(sourcePath, sourceText, explicitTitle, sourceStat, defaults, options = {}) {
+  const model = await prepareSourceModel(sourcePath, sourceText, explicitTitle, sourceStat, defaults, options);
+  // The authored [Video:] reference (data-video-ref, block.videoRef) can be an absolute local path.
+  // It is for the local presenter window's recording only: every other compile (strip, share,
+  // handout, audience, publish, backup, export) is stripped here, at the one seam they all share.
+  return options?.presenterClipRefs === true ? model : withoutVideoRefs(model);
+}
+
+// Removes the authored video reference from a freshly built model, in place: the attribute in any
+// html string, and the videoRef field of any block. Buffers and other binary values are left alone.
+export function withoutVideoRefs(root) {
+  const attr = /\sdata-video-ref="[^"]*"/g;
+  const seen = new Set();
+  const walk = (value) => {
+    if (!value || typeof value !== "object" || seen.has(value) || ArrayBuffer.isView(value)) return;
+    seen.add(value);
+    const keys = Array.isArray(value) ? value.keys() : Object.keys(value);
+    for (const key of keys) {
+      if (key === "videoRef" && !Array.isArray(value)) { delete value[key]; continue; }
+      const item = value[key];
+      if (typeof item === "string") {
+        if (item.includes("data-video-ref")) value[key] = item.replace(attr, "");
+      } else walk(item);
+    }
+  };
+  walk(root);
+  return root;
+}
+
+async function prepareSourceModel(sourcePath, sourceText, explicitTitle, sourceStat, defaults, options = {}) {
   const fallbackTitle = explicitTitle || basename(sourcePath, extname(sourcePath));
   if (sourceStat?.isDirectory()) {
     const projectRoots = Array.isArray(options?.allowedAssetRoots) ? options.allowedAssetRoots : [resolve(sourcePath)];
@@ -2539,6 +2642,10 @@ export async function prepareSource(sourcePath, sourceText, explicitTitle, sourc
     };
   }
   if (extension === ".md" || extension === ".markdown") {
+    // Work-files ticket 25 (run-extras.mjs): a compile for a Run with extra slides (`options.run`). The outline
+    // text is not changed for it; the slides are put into the tree by the v2 adapter. An outline that compiles on
+    // the legacy path stays on it and never gets them (the Run page says so; the talk's compile is unchanged).
+    const run = runCompileOption(options?.run);
     // v2 markers: frontmatter, `####` cards, any heading trailer or Trigger line accepted by the
     // shared parser, or an `[Embed:]`/`[Simulation:]`/`[Video:]` directive. Do not re-state the
     // trigger grammar as a regex here: the old `[a-z]+=[^}]*` discriminator selected the legacy
@@ -2554,7 +2661,7 @@ export async function prepareSource(sourcePath, sourceText, explicitTitle, sourc
       || hasV2TriggerSyntax
       || /^\[(Embed|Simulation|Video):/mi.test(sourceText)
       || pollDirectivesFor(sourceText.split(/\r?\n/)).directives.length > 0;
-    const model = isV2 ? adaptMarkdownOutlineV2(sourceText, fallbackTitle, defaults) : adaptMarkdownOutline(sourceText, fallbackTitle);
+    const model = isV2 ? adaptMarkdownOutlineV2(sourceText, fallbackTitle, defaults, run) : adaptMarkdownOutline(sourceText, fallbackTitle);
     if (explicitTitle) model.title = explicitTitle;
     // v1 (legacy, no frontmatter support) never sets warnAtMinutes/urgentAtMinutes itself — but the
     // Settings global default should still apply to it, so apply defaults here rather than leaving
@@ -2587,6 +2694,11 @@ export async function prepareSource(sourcePath, sourceText, explicitTitle, sourc
       // ALL-FAIL: an author forced {iconlist}/{iconrow} but not one item resolved to a glyph —
       // the list silently rendered plain. High-signal, per-slide; TalkWeaver surfaces it as a badge.
       for (const warn of collectIconlistNoIcons(model.slides)) {
+        model.warnings.push(warn);
+      }
+      // ADR-0039 / 0.41 ticket 08: a compare or contrast row no icon could be found for still renders;
+      // `vs-row-no-icon:<slide-id>:<count>` tells the author which slide to give icons.
+      for (const warn of collectVsRowsWithoutIcon(model.slides)) {
         model.warnings.push(warn);
       }
     }

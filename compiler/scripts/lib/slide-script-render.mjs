@@ -234,6 +234,10 @@ export function renderScriptBlocks(blocks) {
       out.push({ type: 'diagram' })
     } else if (block.type === 'code') {
       out.push({ type: 'code', text: String(block.text ?? '') })
+    } else if (block.type === 'p' && block.plain === true) {
+      // A paragraph of a Run's extra slide (work-files ticket 25): plain text as typed, escaped.
+      const text = String(block.text ?? '')
+      if (text) out.push({ type: 'p', html: escapeHtml(text) })
     } else {
       const text = String(block.text ?? '')
       const qr = block.type === 'p' ? text.trim().match(QR_LINE_RE) : null
@@ -271,5 +275,7 @@ function decodeAttribute(value) {
 export function renderSlideNavTitle(slideHtml, { links = true } = {}) {
   const tag = String(slideHtml ?? '').match(/<section\b[^>]*>/i)?.[0] || ''
   const raw = tag.match(/\bdata-nav-title="([^"]*)"/i)?.[1] ?? tag.match(/\bdata-nav-title='([^']*)'/i)?.[1] ?? ''
+  // A Run's extra slide (work-files ticket 25, `data-nav-plain`): its title is plain text as typed.
+  if (/\sdata-nav-plain(?=[\s>])/i.test(tag)) return escapeHtml(decodeAttribute(raw))
   return renderLine(decodeAttribute(raw), { links })
 }

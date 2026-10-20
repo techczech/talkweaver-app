@@ -37,8 +37,11 @@
 //         stands beside this item's text (the item's place in a list's icons, or a card's icon)
 //         was the item's icon before and is the requested one now (none after a remove). The only
 //         other difference allowed is a copy of the outline's source that differs by the edited
-//         line, whole. No layout is named here: what the model shows decides. A write the model
-//         does not show is refused (`icon-not-drawn-here`); so is a remove or a replace of a
+//         line, whole. No layout is named here: what the model shows decides, with one exception.
+//         A contrast block holds every row's icon by pair whether or not it is drawn, so a
+//         contrast row's icon counts only where vs-panels.mjs (contrastRowDrawsIcon) says the
+//         panels draw it; anywhere else the write is refused (`icon-not-drawn-here`). A write the
+//         model does not show is refused (`icon-not-drawn-here`); so is a remove or a replace of a
 //         token the model does not show.
 //      Otherwise the verb REFUSES: the outline comes back unchanged.
 //
@@ -78,6 +81,7 @@
 import { listItemIconTokenSpanAt } from "./03-markdown-lexer-core.mjs";
 import { normalizeIconOverrideKey } from "./05-icons.mjs";
 import { adaptMarkdownOutlineV2 } from "./08-source-adapters.mjs";
+import { contrastRowDrawsIcon } from "./vs-panels.mjs";
 import {
   NO_EDIT, applyLineEdit, assertIconKey, compileView, countIconBraces, outsideOf, readSlide,
   resolvedIconKey, sameValue, splitCarriageReturn
@@ -211,17 +215,27 @@ function isSourceCopy(difference, linePairs) {
     && (was[at] === from || rtrim(was[at]) === rtrim(from)) && (now[at] === to || rtrim(now[at]) === rtrim(to)));
 }
 
-// A difference read as the icon of one item: { was, now } (each "" for none), when the value that
-// differs is an icon standing beside `text` in both models. Two shapes are read: one place in a
-// list of icons whose holder has, in a list of the same place, that text (a list's item); and a
-// value of an object that also holds that text (a card made of the item). null for anything else.
+// A difference read as the icon of one item: { was, now, drawn } (was and now "" for none), when
+// the value that differs is an icon standing beside `text` in both models. Two shapes are read: one
+// place in a list of icons whose holder has, in a list of the same place, that text (a list's item,
+// or a contrast block's [left, right] pair whose non-empty sides joined with " / " are that text);
+// and a value of an object that also holds that text (a card made of the item). null for anything
+// else. `drawn` is false only for a contrast pair whose icon the slide does not draw (vs-panels.mjs
+// contrastRowDrawsIcon: a contrast variant, the panel heads, an empty right side).
 function itemIconChange(difference, text) {
   const { a, b, trail } = difference;
   const frame = trail[trail.length - 1];
   if (!frame) return null;
   const icon = (value) => (value == null ? "" : typeof value === "string" && value ? value : null);
-  const besideAt = (holder, index) => !!holder && typeof holder === "object" && Object.values(holder)
-    .some((value) => Array.isArray(value) && (value[index] === text || (value[index] && typeof value[index] === "object" && value[index].text === text)));
+  // true: the text stands at that place; "undrawn": a contrast pair there is that text, but its
+  // icon is not drawn; false: neither.
+  const besideAt = (holder, index) => {
+    if (!holder || typeof holder !== "object") return false;
+    if (Object.values(holder).some((value) => Array.isArray(value) && (value[index] === text || (value[index] && typeof value[index] === "object" && value[index].text === text)))) return true;
+    const pair = holder.type === "contrast" && Array.isArray(holder.pairs) ? holder.pairs[index] : null;
+    if (!Array.isArray(pair) || pair.filter(Boolean).join(" / ") !== text) return false;
+    return contrastRowDrawsIcon(holder, index) ? true : "undrawn";
+  };
   const beside = (holder) => !!holder && typeof holder === "object" && !Array.isArray(holder)
     && Object.values(holder).some((value) => value === text);
   // A whole list of icons that is there in one model only: all of it empty but one place.
@@ -229,20 +243,22 @@ function itemIconChange(difference, text) {
     const list = a ?? b;
     const filled = list.flatMap((value, i) => (value == null ? [] : [i]));
     if (filled.length !== 1 || !icon(list[filled[0]])) return null;
-    if (!besideAt(frame.a, filled[0]) || !besideAt(frame.b, filled[0])) return null;
-    return { was: a ? list[filled[0]] : "", now: b ? list[filled[0]] : "" };
+    const holders = [besideAt(frame.a, filled[0]), besideAt(frame.b, filled[0])];
+    if (!holders[0] || !holders[1]) return null;
+    return { was: a ? list[filled[0]] : "", now: b ? list[filled[0]] : "", drawn: holders[0] === true && holders[1] === true };
   }
   if (icon(a) === null || icon(b) === null) return null;
   // One place in a list of icons.
   if (Array.isArray(frame.a) && Array.isArray(frame.b)) {
     const up = trail[trail.length - 2];
     const index = Number(frame.key);
-    if (!up || !Number.isInteger(index) || !besideAt(up.a, index) || !besideAt(up.b, index)) return null;
-    return { was: icon(a), now: icon(b) };
+    const holders = up && Number.isInteger(index) ? [besideAt(up.a, index), besideAt(up.b, index)] : [false, false];
+    if (!holders[0] || !holders[1]) return null;
+    return { was: icon(a), now: icon(b), drawn: holders[0] === true && holders[1] === true };
   }
   // The icon of an object that holds the item's text.
   if (!beside(frame.a) || !beside(frame.b)) return null;
-  return { was: icon(a), now: icon(b) };
+  return { was: icon(a), now: icon(b), drawn: true };
 }
 
 // 3b. Whether the full compiler shows the edit as this item's icon and as nothing else: null when
@@ -253,11 +269,14 @@ function refusedByFullModel(source, result, target, wanted, linePairs) {
   if (!before || !after) return "cannot-place-here";
   const differences = modelDifferences(before, after).filter((entry) => !isSourceCopy(entry, linePairs));
   if (!differences.length) return "icon-not-drawn-here";
+  let drawn = true;
   for (const entry of differences) {
     const change = itemIconChange(entry, target.text);
     if (!change || change.was !== target.icon || change.now !== wanted || change.was === change.now) return "cannot-place-here";
+    if (!change.drawn) drawn = false;
   }
-  return null;
+  // The model holds the token, but on a contrast row whose icon the slide does not draw.
+  return drawn ? null : "icon-not-drawn-here";
 }
 
 export function setListItemIcon(text, ref, item, iconKey) {

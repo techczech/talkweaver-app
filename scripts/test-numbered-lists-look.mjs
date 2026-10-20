@@ -2,16 +2,17 @@
 // test:numbered-lists-look — ADR-0028 decision 6 (slide design, 2026-09-25)
 //
 // What must hold:
-//   1. Registry: {numbered=square|plain|styled} are registered values (the generated trigger
+//   1. Registry: {numbered=mono|plain|styled} are registered values (square, the old name of mono,
+//      stays accepted as a silent alias) (the generated trigger
 //      dictionary carries them, they parse without an unresolved-trigger warning), an unknown
 //      value warns `numbered-unknown`, and the Inspector offers Number style nested under List
 //      style exactly when the slide's list style is Numbered.
 //   2. Compiler: a numbered list takes the icon-list treatment with the number in the icon's
 //      place (.fl-numbered; rows above three items or with {iconlist=list}, cards otherwise). A
 //      `1.` list tagged as an icon list with icons off keeps its numbers (was .fl-plain).
-//   3. Rows (default square): the number's box is the icon's box — 1.75em of the item, 1.1em from
+//   3. Rows (default mono numeral): the number's box is the icon's box — 1.75em of the item, 1.1em from
 //      the text, centred on its item — with a 2px accent outline and no fill.
-//   4. Cards: the number heads the card in the card icon's 1.9em box, above the heading.
+//   4. Cards: ADR-0039 (0.41 ticket 09): the number sits in the card's tinted chip beside the title, as an icon does.
 //   5. Plain: no outline, the numeral at the text size with a full stop, on the first line.
 //      Styled: no outline, a light (300) numeral 2.1× the text, centred on its item.
 //
@@ -33,9 +34,9 @@ import { groupApplies, optionGroupsForSlide, sectionedOptionGroups } from '../sr
 import { commitOptionSelection, selectionForGroup } from '../src/shared/trigger-line.ts'
 
 // ── 1. Registry and Inspector ────────────────────────────────────────────────
-assert.deepEqual([...(VALUE_TRIGGER_DICTIONARY.numbered ?? [])].sort(), ['plain', 'square', 'styled'],
-  'the generated trigger dictionary carries the three number styles')
-for (const value of ['square', 'plain', 'styled']) {
+assert.deepEqual([...(VALUE_TRIGGER_DICTIONARY.numbered ?? [])].sort(), ['mono', 'plain', 'square', 'styled'],
+  'the generated trigger dictionary carries the three number styles and the old name of the default')
+for (const value of ['mono', 'square', 'plain', 'styled']) {
   const parsed = parseHeadingAttrs(`Title {numbered=${value}}`)
   assert.equal(parsed.attrs.numbered, value, `{numbered=${value}} parses to the numbered attr`)
   assert.deepEqual(parsed.warnings, [], `{numbered=${value}} is registered vocabulary (no unresolved-trigger warning)`)
@@ -43,7 +44,10 @@ for (const value of ['square', 'plain', 'styled']) {
 const numberStyle = GLOBAL_OPTION_GROUPS.find((group) => group.key === 'number-style')
 assert.ok(numberStyle, 'Number style is a global option group')
 assert.deepEqual(numberStyle.values.map((value) => value.token), ['', 'numbered=plain', 'numbered=styled'],
-  'Number style offers Square (default), Plain and Styled')
+  'Number style offers Mono (default), Plain and Styled; the square alias is not a picker value')
+assert.deepEqual(numberStyle.values.map((value) => value.label), ['Mono', 'Plain', 'Styled'], 'the picker labels the default Mono')
+assert.ok(numberStyle.dictionaryTokens.includes('numbered=mono') && numberStyle.dictionaryTokens.includes('numbered=square'),
+  'mono and the square alias are both registry vocabulary')
 assert.ok(LAYOUTS.find((entry) => entry.name === 'numbered').options.includes(numberStyle),
   'the numbered entry adopts Number style, as the iconlist entry adopts its treatment')
 const listSection = (triggerLine) => {
@@ -64,7 +68,7 @@ assert.equal(commitOptionSelection('{list}{numbered}', numberStyle, 'numbered=pl
 const listStyleGroup = LAYOUTS.find((entry) => entry.name === 'list').options.find((group) => group.key === 'list-style')
 assert.equal(commitOptionSelection('{list}{numbered}{numbered=plain}', listStyleGroup, 'iconlist'), '{list}{iconlist}',
   'leaving Numbered drops the number style whose group no longer applies')
-console.log('PASS registry: {numbered=square|plain|styled} registered; Number style nests under List style on numbered lists only')
+console.log('PASS registry: {numbered=mono|plain|styled} registered (square an alias); Number style nests under List style on numbered lists only')
 
 // ── 2. Compiler output ───────────────────────────────────────────────────────
 const PROMPTS = [
@@ -89,6 +93,9 @@ const source = [
   '### Follow-up prompts', '{id=ypdgq}{list}{iconlist=list}{iconlist}{icons=off}', '', ...PROMPTS, '',
   '### Follow-up prompts', '{id=rows-plain}{list}{numbered}{numbered=plain}', '', ...PROMPTS, '',
   '### Follow-up prompts', '{id=rows-styled}{list}{numbered=styled}', '', ...PROMPTS.map((line) => line.replace(/^\d+\. /, '- ')), '',
+  '### Follow-up prompts', '{id=rows-bare}{list}{numbered}', '', ...PROMPTS, '',
+  '### Follow-up prompts', '{id=rows-mono}{list}{numbered=mono}', '', ...PROMPTS, '',
+  '### Follow-up prompts', '{id=rows-square}{list}{numbered=square}', '', ...PROMPTS, '',
   '### Parts', '{id=86l6l} {list}{numbered}', ...PARTS, '',
   '### Parts', '{id=cards-bogus} {list}{numbered=tiles}', ...PARTS, '',
   // The icon geometry the number must match.
@@ -119,8 +126,11 @@ assert.ok(classOf('rows-styled').includes('fl-numbered-styled') && classOf('rows
 assert.deepEqual(numbersOf('rows-styled'), [1, 2, 3, 4], '{numbered=styled} numbers a bullet list')
 assert.ok(classOf('86l6l').includes('fl-numbered') && !classOf('86l6l').includes('fl-iconlist-list'),
   'two numbered items with sub-items are numbered cards')
+assert.equal(listOf('rows-mono'), listOf('rows-bare'), '{numbered=mono} compiles exactly as a bare {numbered}')
+assert.equal(listOf('rows-square'), listOf('rows-bare'), '{numbered=square} (the old name) compiles exactly as a bare {numbered}')
+assert.ok(!model.warnings.some((warning) => /^numbered-unknown:(mono|square)$/.test(warning)), 'mono and square raise no warning')
 assert.ok(model.warnings.includes('numbered-unknown:tiles'), 'an unknown number style warns')
-assert.ok(!classOf('cards-bogus').some((c) => c.startsWith('fl-numbered-')), 'an unknown number style falls back to the square')
+assert.ok(!classOf('cards-bogus').some((c) => c.startsWith('fl-numbered-')), 'an unknown number style falls back to the default mono numeral')
 console.log('PASS compiler: numbered lists take the icon-list treatment; the icons-off `1.` list keeps its numbers')
 
 // ── 3–5. Computed styles ─────────────────────────────────────────────────────
@@ -162,6 +172,8 @@ try {
           const glyphs = [...range.getClientRects()].filter((r) => r.width > 0)
           return {
             fontSize: parseFloat(getComputedStyle(li).fontSize),
+            lineHeight: parseFloat(getComputedStyle(li).lineHeight),
+            fontFamily: iconStyle.fontFamily,
             icon: rect(icon),
             glyph: glyphs.length ? { top: (Math.min(...glyphs.map((r) => r.top)) - sr.top) / k, bottom: (Math.max(...glyphs.map((r) => r.bottom)) - sr.top) / k } : null,
             text: rect(text),
@@ -176,25 +188,25 @@ try {
       }
     }, id)
 
-    // 3. Rows, default square: the icon row's box, gap and centring.
+    // 3. Rows, default numeral (ADR-0039, 0.41 ticket 05): a mono accent numeral, no square, in a box
+    //    one text line tall, on the first line of its item.
     const iconRows = await probe('icon-rows')
     const rows = await probe('ypdgq')
-    const iconBoxEm = iconRows.items[0].icon.width / iconRows.items[0].fontSize
     for (const [i, item] of rows.items.entries()) {
       const label = `${key} numbered row ${i + 1}`
       const em = item.fontSize
-      assert(close(item.icon.width, 1.75 * em) && close(item.icon.height, 1.75 * em), `${label}: number box is 1.75em (${item.icon.width.toFixed(1)}×${item.icon.height.toFixed(1)} for ${em}px)`)
-      assert(close(item.icon.width / em, iconBoxEm, 0.02), `${label}: number box matches the icon row's box (${(item.icon.width / em).toFixed(3)}em vs ${iconBoxEm.toFixed(3)}em)`)
-      assert(close(item.text.left - item.icon.right, 1.1 * em), `${label}: text starts 1.1em after the number (got ${(item.text.left - item.icon.right).toFixed(1)}px)`)
+      assert(close(item.icon.width, 1.25 * em) && close(item.icon.height, item.lineHeight), `${label}: number box is 1.25em wide and one text line tall (${item.icon.width.toFixed(1)}×${item.icon.height.toFixed(1)} for ${em}px, line ${item.lineHeight}px)`)
+      assert(close(item.icon.width, iconRows.items[0].icon.width * em / iconRows.items[0].fontSize, 0.5), `${label}: number box matches the icon row's box`)
+      assert(close(item.text.left - item.icon.right, 0.7 * em), `${label}: text starts .7em after the number (got ${(item.text.left - item.icon.right).toFixed(1)}px)`)
       const boxCentre = (item.icon.top + item.icon.bottom) / 2
-      const textCentre = (item.text.top + item.text.bottom) / 2
-      assert(Math.abs(boxCentre - textCentre) <= 2, `${label}: number centre ${boxCentre.toFixed(1)} within 2px of text centre ${textCentre.toFixed(1)}`)
-      assert.equal(item.border.style, 'solid', `${label}: the square is outlined`)
-      assert(close(item.border.width, 2, 0.01), `${label}: the outline is 2px`)
-      assert.equal(item.border.color, rows.accentRgb, `${label}: the outline is the accent`)
+      const firstLineCentre = item.text.top + item.lineHeight / 2
+      assert(Math.abs(boxCentre - firstLineCentre) <= 2, `${label}: number centre ${boxCentre.toFixed(1)} within 2px of the first line's centre ${firstLineCentre.toFixed(1)}`)
+      assert.equal(item.border.style, 'none', `${label}: no outlined square`)
       assert.equal(item.color, rows.accentRgb, `${label}: the numeral is the accent`)
-      assert.match(item.background, /rgba\(0, 0, 0, 0\)|transparent/, `${label}: the square has no fill (got ${item.background})`)
-      assert(item.fontWeight >= 700, `${label}: the numeral is bold`)
+      assert.match(item.background, /rgba\(0, 0, 0, 0\)|transparent/, `${label}: the numeral has no fill (got ${item.background})`)
+      assert.match(item.fontFamily, /mono|Menlo|Consolas|Courier/i, `${label}: the numeral is mono (got ${item.fontFamily})`)
+      assert(close(item.iconFontSize, 0.9 * em, 0.2), `${label}: the numeral is .9 of the text (${item.iconFontSize} vs ${em})`)
+      assert(item.fontWeight < 700, `${label}: the numeral is regular weight, not bold`)
     }
     const fontSizes = new Set(rows.items.map((item) => item.fontSize))
     assert.equal(fontSizes.size, 1, `${key}: every numbered row reads at one size`)
@@ -203,23 +215,21 @@ try {
     assert(close(rows.items[0].fontSize, iconPrompts.items[0].fontSize), `${key}: numbered rows fit to the icon rows' size for the same items (${rows.items[0].fontSize} vs ${iconPrompts.items[0].fontSize})`)
     assert(close(rows.listGap, iconPrompts.listGap, 0.001), `${key}: numbered rows fit to the icon rows' spacing (--list-gap ${rows.listGap} vs ${iconPrompts.listGap})`)
     rows.items.forEach((item, i) => assert(close(item.icon.top, iconPrompts.items[i].icon.top, 1), `${key} numbered row ${i + 1}: number box sits where the icon does (${item.icon.top.toFixed(1)} vs ${iconPrompts.items[i].icon.top.toFixed(1)})`))
-    console.log(`PASS ${key}: numbered rows — 2px accent square in the 1.75em icon box, 1.1em from the text, centred, fitted as icon rows are (${rows.items[0].fontSize}px)`)
+    console.log(`PASS ${key}: numbered rows — mono accent numeral in a one-line box, .7em from the text, on the first line, fitted as icon rows are (${rows.items[0].fontSize}px)`)
 
-    // 4. Cards: the number heads the card in the card icon's box.
+    // 4. Cards (ADR-0039, 0.41 ticket 09): the number sits in the card's tinted chip, left of the title; the chip is as
+    //    wide as an icon card's chip and has no outline.
     const iconCards = await probe('icon-cards')
     const cards = await probe('86l6l')
-    const cardIconEm = iconCards.items[0].icon.width / iconCards.items[0].fontSize
     for (const [i, card] of cards.items.entries()) {
       const label = `${key} numbered card ${i + 1}`
-      const em = card.fontSize
-      assert(close(card.icon.width, 1.9 * em) && close(card.icon.height, 1.9 * em), `${label}: number box is 1.9em (${card.icon.width.toFixed(1)} for ${em}px)`)
-      assert(close(card.icon.width / em, cardIconEm, 0.02), `${label}: number box matches the card icon's box (${(card.icon.width / em).toFixed(3)}em vs ${cardIconEm.toFixed(3)}em)`)
-      assert(card.icon.bottom <= card.text.top + 0.5, `${label}: the number sits above the heading`)
-      assert(close(card.icon.left, card.text.left), `${label}: the number and the heading share a left edge`)
-      assert.equal(card.border.style, 'solid', `${label}: the square is outlined`)
+      assert(close(card.icon.width, card.icon.height, 0.6), `${label}: the chip is square (${card.icon.width.toFixed(1)} x ${card.icon.height.toFixed(1)})`)
+      assert(close(card.icon.width, iconCards.items[0].icon.width, 0.6), `${label}: the number chip matches the icon card's chip (${card.icon.width.toFixed(1)} vs ${iconCards.items[0].icon.width.toFixed(1)})`)
+      assert(card.icon.right <= card.text.left + 0.5, `${label}: the number sits beside the title, in the chip`)
+      assert.notEqual(card.border.style, 'solid', `${label}: the chip has no outline`)
     }
     assert(close(cards.items[0].icon.top, cards.items[1].icon.top), `${key}: the card numbers share one top edge`)
-    console.log(`PASS ${key}: numbered cards — the square heads each card in the 1.9em card-icon box`)
+    console.log(`PASS ${key}: numbered cards — the number sits in each card's chip beside the title`)
 
     // 5. Plain and styled rows.
     const plain = await probe('rows-plain')

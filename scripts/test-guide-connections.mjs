@@ -309,7 +309,7 @@ await test('read-only by construction: the probe module spawns nothing, uses no 
 })
 
 await test('the action names a link and main holds the URL; the probe runs on ask, never at startup', () => {
-  assert.deepEqual(Object.keys(GUIDE_LINKS), ['slidewell-download'])
+  assert.deepEqual(Object.keys(GUIDE_LINKS), ['online-content-report', 'slidewell-download'])
   assert.equal(isGuideLinkId('slidewell-download'), true)
   for (const bad of ['https://example.com', 'zotero-download', '', null, undefined, 3, { id: 'slidewell-download' }]) assert.equal(isGuideLinkId(bad), false)
   const main = read('src/main/index.ts')
@@ -326,7 +326,7 @@ await test('the action names a link and main holds the URL; the probe runs on as
   assert.equal((main.match(/readConnections\(\)/g) ?? []).length, 2, 'readConnections is declared once and called by the ask handler only')
   const preload = read('src/preload/index.ts')
   assert.ok(preload.includes("connections: (): Promise<ConnectionRow[]> => ipcRenderer.invoke('guide:connections')"))
-  assert.ok(preload.includes("openLink: (id: 'slidewell-download')"))
+  assert.ok(preload.includes("openLink: (id: 'slidewell-download' | 'online-content-report')"))
   // The renderer asks when the Features segment mounts (its connections section), and on the refresh button.
   const app = read('src/renderer/src/App.tsx')
   assert.equal((app.match(/guide\.connections\(\)/g) ?? []).length, 1)

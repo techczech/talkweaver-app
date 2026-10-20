@@ -1,59 +1,23 @@
-// The Inspector's "Before the session" section (ADR-0032 amendment point 5; round-2 E1–E4,
-// round-3 P5; ticket 08): what it shows for the inspected slide, read from the outline with the
-// compiler's own reader (prework.mjs), so the section and the compiled pre-work never disagree.
-// Trigger-line settings write through the ordinary option commit (the registry's prework-* groups
-// and the `{results=…}` group built here); the right answer writes the slide body through
-// `applyRightAnswerToOutline`.
-import {
-  PREWORK_KIND_LABELS, preworkFromOutline, resultsSteps,
-  type PreworkDefinition, type PreworkKind, type PreworkStep
-} from '../../../../compiler/scripts/lib/prework.mjs'
+// The Inspector's Results section for a talk slide carrying `{results=…}` (ADR-0040 Consequences:
+// results slides name a step as work file + step id; work-files ticket 27). The 0.37 "Before the
+// session" section (a talk's own `{prework}` section and its steps, written in the Inspector) is gone
+// (work-files ticket 29, ADR-0040 decision 6): pre-work is written in a work file, and a talk that
+// still has a `{prework}` section is offered "Move to a work file" by the Layout Doctor.
+// The token is written through the ordinary option commit with the group built here.
+import { parseResultsToken } from '../../../../compiler/scripts/lib/prework.mjs'
 import type { OptionGroup } from '../../../shared/layout-registry/entries.ts'
 import { parseTriggerLine } from '../../../shared/trigger-line.ts'
-import { preworkWindow, shortDate, dayAndTime, type PlanRunLike } from '../../../shared/plan-run.ts'
-
-export { PREWORK_KIND_LABELS }
-
-export type InspectorPreworkMode = 'section' | 'step' | 'results'
 
 export interface InspectorPreworkModel {
-  mode: InspectorPreworkMode
-  definition: PreworkDefinition
-  /** The inspected step (mode 'step'). */
-  step: PreworkStep | null
+  mode: 'results'
   /** The chip in the Inspector's jump row. */
   chip: string
   /** The section's heading. */
   heading: string
-  /** "This slide": what the slide is to participants. */
+  /** "This slide": what the slide shows. */
   thisSlide: string
-  /** Mode 'results': the step the slide names, the steps it may name, and the group that writes it. */
-  results: { stepId: string; step: PreworkStep | null; choices: PreworkStep[]; group: OptionGroup } | null
-}
-
-const POLL_TYPE_WORDS: Record<string, string> = {
-  single: 'single choice', multiple: 'multiple choice', open: 'open answer', ranking: 'ranking',
-  rating: 'rating', categorisation: 'categorisation', board: 'board'
-}
-
-function describeStep(step: PreworkStep, count: number): string {
-  const where = `Step ${step.n} of ${count}`
-  const notPresented = 'It is not presented in the talk.'
-  switch (step.kind) {
-    case 'check':
-      return `${where}: a quick knowledge check. Participants choose one answer on the pre-work page and get no marks. ${notPresented}`
-    case 'question':
-      return `${where}: a question (${POLL_TYPE_WORDS[step.pollType ?? ''] ?? step.pollType}). Participants answer it on the pre-work page. ${notPresented}`
-    case 'task':
-      return `${where}: a pre-task. Participants read its list as the instructions${step.done ? ' and mark it done' : ''}. ${notPresented}`
-    default:
-      return `${where}: a slide with instructions. Participants read it on the pre-work page. ${notPresented}`
-  }
-}
-
-/** "Before the session › 4 · What AI tools do you already use?" */
-export function stepChoiceLabel(definition: PreworkDefinition, step: PreworkStep): string {
-  return `${definition.title} › ${step.n} · ${step.title}`
+  /** The step the slide names (`<file id>/<step id>`, or an old section step id) and the group that writes it. */
+  results: { stepId: string; workFile: boolean; group: OptionGroup }
 }
 
 function resultsTokenOf(triggerLine: string): string {
@@ -62,77 +26,28 @@ function resultsTokenOf(triggerLine: string): string {
 }
 
 /**
- * The `{results=…}` choosing group for a talk slide: one value per step whose answers a slide can
- * show, plus the slide's own value when it names no such step (so re-choosing replaces it).
+ * The `{results=…}` group for a talk slide: the slide's own value, so the select shows it. No step
+ * of a talk's `{prework}` section is offered as a choice: that section is no longer an entry point.
  */
-export function resultsGroup(definition: PreworkDefinition, current: string): OptionGroup {
-  const values = resultsSteps(definition).map((step) => ({ token: `results=${step.id}`, label: stepChoiceLabel(definition, step) }))
-  if (current && !values.some((value) => value.token === `results=${current}`)) {
-    values.push({ token: `results=${current}`, label: `${current} (not a step)` })
-  }
+export function resultsGroup(current: string): OptionGroup {
+  const values = current
+    ? [{ token: `results=${current}`, label: parseResultsToken(current)?.fileId ? `${current} (work file step)` : `${current} (old pre-work section step)` }]
+    : []
   return { key: 'prework-results', label: 'Shows', values, appliesTo: {} }
 }
 
-/**
- * The section for the inspected slide: the pre-work section itself, one of its steps, or a talk
- * slide carrying `{results=…}`; null for any other slide (or a talk without pre-work, unless the
- * slide names a step anyway). `headingLine` is the slide's 1-based outline line.
- */
-export function inspectorPreworkModel(
-  outline: string,
-  headingLine: number | null,
-  triggerLine: string,
-  definition: PreworkDefinition | null = preworkFromOutline(outline)
-): InspectorPreworkModel | null {
+/** The Results section for a talk slide that carries `{results=…}`; null for any other slide. */
+export function inspectorPreworkModel(headingLine: number | null, triggerLine: string): InspectorPreworkModel | null {
   if (headingLine == null) return null
   const resultsId = resultsTokenOf(triggerLine)
-  if (definition && definition.sourceLine === headingLine) {
-    return {
-      mode: 'section', definition, step: null, chip: 'Pre-work', heading: 'Before the session',
-      thisSlide: `The pre-work form: its introduction and ${definition.steps.length} ${definition.steps.length === 1 ? 'step' : 'steps'}. Participants see it at the top of the pre-work page. It is not presented in the talk.`,
-      results: null
-    }
+  if (!resultsId) return null
+  const workToken = parseResultsToken(resultsId)
+  const workFile = Boolean(workToken?.fileId)
+  return {
+    mode: 'results', chip: 'Results', heading: 'Answers from pre-work',
+    thisSlide: workFile
+      ? `This talk slide shows the answers to step “${workToken!.stepId}” of the work file “${workToken!.fileId}”, from the Run it is presented for.`
+      : `This talk slide names “${resultsId}”, a step of the talk’s old pre-work section. Move that section to a work file (Layout Doctor) and name the step as work file/step.`,
+    results: { stepId: resultsId, workFile, group: resultsGroup(resultsId) }
   }
-  const step = definition?.steps.find((candidate) => candidate.sourceLine === headingLine) ?? null
-  if (definition && step) {
-    const chip = step.kind === 'check' ? 'Check' : step.kind === 'task' ? 'Pre-task' : 'Pre-work'
-    const heading = step.kind === 'check' ? 'Quick check' : step.kind === 'task' ? 'Pre-task' : 'Before the session'
-    return { mode: 'step', definition, step, chip, heading, thisSlide: describeStep(step, definition.steps.length), results: null }
-  }
-  if (resultsId) {
-    const form: PreworkDefinition = definition ?? { sectionId: '', title: 'Before the session', intro: '', sourceLine: null, steps: [] }
-    const target = form.steps.find((candidate) => candidate.id === resultsId && candidate.kind !== 'slide') ?? null
-    return {
-      mode: 'results', definition: form, step: null, chip: 'Results', heading: 'Answers from pre-work',
-      thisSlide: target
-        ? `This talk slide shows the answers to step ${target.n}, “${target.title}”, given before the session.`
-        : `This talk slide names “${resultsId}”, which is not a step of the talk’s pre-work.`,
-      results: { stepId: resultsId, step: target, choices: resultsSteps(form), group: resultsGroup(form, resultsId) }
-    }
-  }
-  return null
-}
-
-/** The step's kind for option applicability (prework-* groups); null when the slide is no step. */
-export function preworkKindOf(model: InspectorPreworkModel | null): PreworkKind | null {
-  return model?.mode === 'step' && model.step ? model.step.kind : null
-}
-
-// ── The form's Run (round-2 E1, round-3 P5) ─────────────────────────────────────────────────
-
-export type PreworkRunLine =
-  | { kind: 'window'; runId: string; opens: string; closes: string; run: string; closesAtStart: boolean }
-  | { kind: 'no-window'; runId: string; run: string }
-  | { kind: 'no-run' }
-
-/**
- * What the form says about its planned Run: the next Run's pre-work window, a next Run that has
- * none, or none planned (the round-3 P5 nudge: nobody can reach the form).
- */
-export function preworkRunLine(next: PlanRunLike | null): PreworkRunLine {
-  if (!next) return { kind: 'no-run' }
-  const run = `${next.eventTitle || 'Run'}, ${shortDate(next.plannedDate ?? '')}`
-  const window = preworkWindow(next)
-  if (!window) return { kind: 'no-window', runId: next.id, run }
-  return { kind: 'window', runId: next.id, opens: dayAndTime(window.opens), closes: dayAndTime(window.closes), run, closesAtStart: !next.preworkCloses }
 }

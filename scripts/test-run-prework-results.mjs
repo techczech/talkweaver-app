@@ -9,7 +9,12 @@
 //   4. the board slide a step feeds is found from the outline; a board with no `{results=}` is not fed;
 //   5. the seed: picked answers in pick order, or every answer; none when nothing is picked; only for
 //      a board whose slide is fed; never the quick check's right answer or anything but answer text;
-//   6. the service's setPick / markQuestion go through the atomic writer and refuse a Run that is not in the vault.
+//   6. the service's setPick / markQuestion go through the atomic writer and refuse a Run that is not in the vault;
+//   7. (ticket 18) the Run page's answer sections, both phases: header numbers, per-step blocks by poll type
+//      (count, spread with the quick check's right answer, text answers with stars), questions, folding;
+//   8. (2026-10-19 prework-responses) route per step, a Local only step, new count and unread, the read
+//      state through leaving / a dot / Mark all read, exports with no participant or entry id;
+//   9. the timer counts what waits (one owner-token request, nothing pulled); a pull clears it; markSeen.
 // Usage: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-run-prework-results.mjs
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -24,12 +29,14 @@ import {
 import { mergeRunPrework, normaliseRunPrework } from '../src/shared/run-prework.ts'
 import { normaliseRun, persistRunForTalk, readRunForTalk, applyRunPrework } from '../src/main/runs.ts'
 import { createRunPrework } from '../src/main/run-prework.ts'
+import { answerSection, answeredText, answersCsv, answersMarkdown, answersText, applySeenChange, isNewEntry, newResponseCount, starredCount, startsFolded, stepsFromOutline, stepsFromWorkFile } from '../src/shared/run-answers.ts'
+import { startRunPreworkTimer } from '../src/main/run-prework.ts'
 import { memoryOwnerTokens } from './lib/memory-secrets.mjs'
 
 // Owner tokens live in the secrets store (an in-memory one here), never in a registry file.
 const testOwnerTokens = memoryOwnerTokens()
 import { seedBoardFromPrework, seedPollForRun, withoutSeed } from '../src/main/run-prework-seed.ts'
-import { answerPreworkTrayQuestion, isPreworkQuestionId, preworkTrayForSession, preworkTrayQuestions } from '../src/main/prework-tray.ts'
+import { answerPreworkTrayForLiveSession, answerPreworkTrayQuestion, isPreworkQuestionId, preworkTrayForLiveSession, preworkTrayForSession, preworkTrayQuestions } from '../src/main/prework-tray.ts'
 import { parsePollDefinition } from '../worker/protocol.ts'
 import { DUP_TALK, OUTLINE, RUN_ID, SLUG, entries, entry, plannedRun } from './lib/prework-run-fixture.mjs'
 
@@ -100,6 +107,11 @@ const pass = (name) => { results.push(name); console.log(`PASS  ${name}`) }
   assert.deepEqual(pickedAnswers(two, 'pwhope').map((answer) => answer.text), ['Whether it is allowed with student data', 'Use an agent on my own files safely'])
   assert.deepEqual(preworkSeedTexts(two, 'pwhope'), ['Whether it is allowed with student data', 'Use an agent on my own files safely'])
   assert.deepEqual(togglePick(two, 'pwhope', rows[2].id).ids, [rows[0].id], 'starring again removes it')
+  // Unstarring the last star returns the step to every answer; the board is never seeded with nothing.
+  const lone = { ...run.prework, picks: { pwhope: togglePick(run.prework, 'pwhope', rows[2].id) } }
+  const unstarred = togglePick(lone, 'pwhope', rows[2].id)
+  assert.deepEqual(unstarred, { mode: 'all', ids: [] }, 'the last star removed returns the step to every answer')
+  assert.deepEqual(preworkSeedTexts({ ...run.prework, picks: { pwhope: unstarred } }, 'pwhope'), rows.map((row) => row.text), 'and the board seed holds every answer')
   assert.deepEqual(preworkSeedTexts({ ...run.prework, picks: { pwhope: { mode: 'picked', ids: [] } } }, 'pwhope'), [], 'only-picked with nothing picked seeds nothing')
   assert.deepEqual(preworkSeedTexts({ ...run.prework, picks: { pwhope: { mode: 'all', ids: [rows[0].id] } } }, 'pwhope').length, 6, 'every answer ignores the stars')
   assert.deepEqual(preworkSeedTexts(run.prework, 'pwquiz'), [], 'a quick check has no text answers to seed')
@@ -227,6 +239,83 @@ const pass = (name) => { results.push(name); console.log(`PASS  ${name}`) }
   } finally { rmSync(root, { recursive: true, force: true }) }
 }
 
+// 7. The Run page's answer sections (ticket 18) -----------------------------------------------
+{
+  // Pre-work, steps from the talk's own section: 9 of 12 started, as the locked "some in" shot counts them.
+  const preSteps = stepsFromOutline(OUTLINE)
+  assert.deepEqual(preSteps.map((candidate) => candidate.id), ['pwwelcome', 'pwquiz', 'pwhope', 'pwtask1'])
+  let section = answerSection(preSteps, run.prework, 12)
+  assert.equal(answeredText(section), '9/12 answered')
+  assert.equal(section.percent, 75)
+  assert.deepEqual(section.steps.map((block) => block.sum), ['read by 9 of 9', '8 completed', '6 answers', '4 marked done of 9'])
+  const quiz = section.steps[1].body
+  assert.equal(quiz.type, 'spread')
+  assert.deepEqual(quiz.rows.map((row) => [row.count, row.right]), [[2, false], [5, true], [0, false], [1, false]], 'the spread marks the right answer')
+  assert.equal(section.steps[2].body.type, 'answers')
+  assert.equal(section.steps[2].body.rows.length, 6)
+  assert.equal(section.steps[2].body.rows.some((row) => row.text === '<b>Bold hopes</b> & more'), true, 'markup stays text')
+  assert.equal(section.starred, 0)
+  assert.deepEqual(section.steps[3].questions.map((question) => question.name ?? null), [null, 'Sam'], 'a name only where one was typed')
+  assert.equal(section.toAnswer, 3)
+  // Stars: the Run's picks, in any mode, count.
+  const hopes = answerRows(run.prework, 'pwhope')
+  const starred = normaliseRunPrework({ ...run.prework, picks: { pwhope: { mode: 'picked', ids: [hopes[1].id, hopes[3].id] } } })
+  section = answerSection(preSteps, starred, 12)
+  assert.equal(section.starred, 2)
+  assert.deepEqual(section.steps[2].body.rows.map((row) => row.starred), [false, true, false, true, false, false])
+  // None in yet.
+  assert.deepEqual([answerSection(preSteps, null, 18).answered, answerSection(preSteps, null, 18).percent, answerSection(preSteps, null, 18).starred], [0, 0, 0])
+  assert.equal(answeredText(answerSection(preSteps, null, null)), '0 answered')
+
+  // Post-work, steps from a work file, each poll type the file uses: a rating, two open questions and a video.
+  const FILE = ['---', 'id: session-feedback', 'title: Session feedback', 'revision: 1', '---', '',
+    '### How useful was the session?', '{id=useful}{poll=rating}', '', '[scale: 1 - not useful, 2, 3, 4, 5 - very useful]', '', '- Usefulness', '',
+    '### One thing you will try', '{id=try}{poll=open}', '',
+    '### Anything unclear?', '{id=unclear}{poll=open}', ''].join('\n')
+  const postSteps = stepsFromWorkFile(FILE)
+  assert.deepEqual(postSteps.map((candidate) => [candidate.id, candidate.kind, candidate.pollType]), [['useful', 'question', 'rating'], ['try', 'question', 'open'], ['unclear', 'question', 'open']])
+  const person = (n) => n.toString(16).padStart(16, '0')
+  const answer = (n, stepId, extra, at = Date.UTC(2026, 9, 21, 16, n)) => ({ id: `${person(n)}:answer:${stepId}`, participant: person(n), stepId, kind: 'answer', at, ...extra })
+  const postwork = normaliseRunPrework({
+    people: 5, entries: [
+      answer(1, 'useful', { choice: { 'poll-useful-option-1': 'poll-useful-label-5' } }), answer(2, 'useful', { choice: { 'poll-useful-option-1': 'poll-useful-label-4' } }),
+      answer(3, 'useful', { choice: { 'poll-useful-option-1': 'poll-useful-label-5' } }),
+      answer(1, 'try', { text: 'A shared prompt file' }), answer(2, 'try', { text: 'Reviewer queries' }), answer(3, 'try', { text: 'Citation checks' }), answer(4, 'try', { text: 'Ask the library' }),
+      answer(2, 'unclear', { text: 'Licence for unpublished data' }),
+      { id: `${person(5)}:q:one`, participant: person(5), stepId: 'try', kind: 'question', text: 'Is there a template?', at: Date.UTC(2026, 9, 22, 9) }
+    ], picks: { try: { mode: 'picked', ids: [`${person(2)}:answer:try`] } }
+  })
+  const after = answerSection(postSteps, postwork, 18)
+  assert.equal(answeredText(after), '5/18 answered')
+  assert.equal(after.percent, 28)
+  assert.equal(after.starred, 1, 'post-work stars are counted per section')
+  assert.deepEqual(after.steps.map((block) => block.label), ['Rating', 'Open question', 'Open question'])
+  assert.equal(after.steps[0].body.type, 'spread', 'a rating shows its spread, not text rows')
+  assert.deepEqual(after.steps[0].body.rows.map((row) => [row.key, row.count]), [['poll-useful-label-4', 1], ['poll-useful-label-5', 2]])
+  assert.deepEqual(after.steps[0].body.rows.map((row) => row.label), ['Label 4', 'Label 5'])
+  assert.equal(after.steps[1].sum, '4 answers')
+  assert.equal(after.steps[1].questions.length, 1)
+  assert.equal(after.steps[2].body.rows[0].text, 'Licence for unpublished data')
+  // A step the file no longer has leaves its answers out; a file that cannot be read gives no steps.
+  assert.deepEqual(stepsFromWorkFile('not a work file'), [])
+  // A choice question in a work file lists its option labels on the Run page, as the quick check does (not "Option N").
+  const CHOICE_FILE = ['---', 'id: pick', 'title: Pick', 'revision: 1', '---', '',
+    '### Which tool?', '{id=tool}{poll=single}', '', '- Pencil', '- Pen', '- Brush', '',
+    '### Which would you use?', '{id=uses}{poll=multiple}', '', '- Ruler', '- Compass', ''].join('\n')
+  const choiceSteps = stepsFromWorkFile(CHOICE_FILE)
+  assert.deepEqual(choiceSteps.map((candidate) => candidate.options), [['Pencil', 'Pen', 'Brush'], ['Ruler', 'Compass']], 'the file\'s option labels reach the step')
+  const chosen = normaliseRunPrework({ people: 2, entries: [
+    answer(1, 'tool', { choice: 'poll-tool-option-2' }), answer(2, 'tool', { choice: 'poll-tool-option-3' }),
+    answer(1, 'uses', { choice: ['poll-uses-option-1', 'poll-uses-option-2'] })
+  ] })
+  const picked = answerSection(choiceSteps, chosen, 2)
+  assert.deepEqual(picked.steps[0].body.rows.map((row) => row.label), ['Pen', 'Brush'], 'a single choice shows its labels')
+  assert.deepEqual(picked.steps[1].body.rows.map((row) => row.label), ['Ruler', 'Compass'], 'a multiple choice shows its labels')
+  // Folding: while post-work is open, the pre-work section starts folded; the post section never does.
+  assert.deepEqual([startsFolded('pre', true, true), startsFolded('pre', true, false), startsFolded('pre', false, true), startsFolded('post', true, true)], [true, false, false, false])
+  pass('answer sections: header numbers, count / spread / text blocks by poll type for pre and post work, stars and questions, folding')
+}
+
 // The glue: poll.open -> Run -> compiled feeds -> seed ------------------------------------------
 {
   const root = mkdtempSync(join(tmpdir(), 'tw-prework-glue-'))
@@ -239,17 +328,17 @@ const pass = (name) => { results.push(name); console.log(`PASS  ${name}`) }
     const dupPlain = dupModel.slides.find((slide) => slide.id === 'hopes-for-today')
     assert.equal(dupBoard.type, 'board')
     assert.equal(dupPlain.poll, undefined)
-    const deps = (text) => ({ vaultRoot: () => root, readOutline: () => text, feeds: async (outline) => (await compile('glue', outline)).prework?.feeds ?? null })
+    const deps = (text) => ({ vaultReadable: (vault) => vault === root, readOutline: () => text, feeds: async (outline) => (await compile('glue', outline)).prework?.feeds ?? null })
     const open = { ...dupBoard, slideId: 'hopes-for-today-2' }
-    const seeded = await seedPollForRun(open, { talkSlug: SLUG, runId: RUN_ID }, deps(DUP_TALK))
+    const seeded = await seedPollForRun(open, { talkSlug: SLUG, runId: RUN_ID, vaultRoot: root }, deps(DUP_TALK))
     assert.equal(seeded.seed.length, 6, 'the second slide of a repeated title is seeded (a bare re-derived id would miss it)')
-    const other = await seedPollForRun({ ...open, slideId: 'hopes-for-today' }, { talkSlug: SLUG, runId: RUN_ID }, deps(DUP_TALK))
+    const other = await seedPollForRun({ ...open, slideId: 'hopes-for-today' }, { talkSlug: SLUG, runId: RUN_ID, vaultRoot: root }, deps(DUP_TALK))
     assert.equal(other.seed, undefined, 'the first slide of that title is not fed')
     assert.equal((await seedPollForRun(open, { talkSlug: SLUG }, deps(DUP_TALK))).seed, undefined, 'no Run bound: not seeded')
-    assert.equal((await seedPollForRun(open, { talkSlug: SLUG, runId: 'run-missing' }, deps(DUP_TALK))).seed, undefined, 'a Run that is gone: not seeded')
-    assert.equal((await seedPollForRun(open, { talkSlug: SLUG, runId: RUN_ID }, { ...deps(DUP_TALK), feeds: async () => { throw new Error('compile failed') } })).seed, undefined, 'a talk that cannot be compiled: opens empty')
+    assert.equal((await seedPollForRun(open, { talkSlug: SLUG, runId: 'run-missing', vaultRoot: root }, deps(DUP_TALK))).seed, undefined, 'a Run that is gone: not seeded')
+    assert.equal((await seedPollForRun(open, { talkSlug: SLUG, runId: RUN_ID, vaultRoot: root }, { ...deps(DUP_TALK), feeds: async () => { throw new Error('compile failed') } })).seed, undefined, 'a talk that cannot be compiled: opens empty')
     assert.equal((await seedPollForRun({ ...open, seed: [{ column: open.options[0].optionId, text: 'From a window' }] }, { talkSlug: SLUG }, deps(DUP_TALK))).seed, undefined, 'a window\'s own seed never survives')
-    assert.equal((await seedPollForRun({ ...open, type: 'open', options: [] }, { talkSlug: SLUG, runId: RUN_ID }, deps(DUP_TALK))).seed, undefined)
+    assert.equal((await seedPollForRun({ ...open, type: 'open', options: [] }, { talkSlug: SLUG, runId: RUN_ID, vaultRoot: root }, deps(DUP_TALK))).seed, undefined)
     // The app\'s handler calls the glue and drops a window\'s seed before it (source check on the real handler).
     const indexSource = (await import('node:fs')).readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
     assert.match(indexSource, /seedPollForRun\(poll, liveSessions\?\.record\(wcId\)/, 'index.ts seeds through seedPollForRun')
@@ -304,6 +393,41 @@ const pass = (name) => { results.push(name); console.log(`PASS  ${name}`) }
   } finally { rmSync(root, { recursive: true, force: true }) }
 }
 
+// The tray reads the live session's own vault ------------------------------------------------------
+// Two open vaults hold the same talk slug and Run id; the session recorded vault A. The tray, its updates
+// and Mark answered use A only while A is open and there, and never fall back to B (review round 1, finding 1).
+{
+  const a = mkdtempSync(join(tmpdir(), 'tw-prework-tray-a-'))
+  const b = mkdtempSync(join(tmpdir(), 'tw-prework-tray-b-'))
+  try {
+    const base = normaliseRun(plannedRun())
+    const questions = base.prework.entries.filter((candidate) => candidate.kind === 'question')
+    const markOnly = (index) => normaliseRun({ ...base, prework: { ...base.prework, entries: base.prework.entries.map((candidate) => candidate.id === questions[index].id ? { ...candidate, inTalk: { slideId: null } } : candidate) } })
+    for (const root of [a, b]) mkdirSync(join(root, '_PRESENTATIONS', SLUG), { recursive: true })
+    persistRunForTalk(a, SLUG, RUN_ID, markOnly(0))
+    persistRunForTalk(b, SLUG, RUN_ID, markOnly(1))
+    const session = { talkSlug: SLUG, runId: RUN_ID, vaultRoot: a }
+    const open = new Set([a, b])
+    const readable = (root) => open.has(root)
+    const writable = (root) => root
+    const fromA = preworkTrayForLiveSession(session, readable)
+    assert.deepEqual(fromA.map((item) => item.questionId), [`pw:${questions[0].id}`], 'the session\'s own vault A, not B\'s same-slug Run')
+    const done = answerPreworkTrayForLiveSession(session, readable, writable, fromA[0].questionId, true)
+    assert.equal(done.success, true)
+    assert.equal(readRunForTalk(a, SLUG, RUN_ID).prework.entries.find((candidate) => candidate.id === questions[0].id).answered, true, 'written to A')
+    assert.equal(readRunForTalk(b, SLUG, RUN_ID).prework.entries.some((candidate) => candidate.answered), false, 'B untouched')
+    open.delete(a)
+    assert.deepEqual(preworkTrayForLiveSession(session, readable), [], 'A closed or gone: no questions, never B\'s')
+    const refused = answerPreworkTrayForLiveSession(session, readable, writable, `pw:${questions[1].id}`, true)
+    assert.equal(refused.success, false, 'A closed: Mark answered is refused')
+    assert.equal(readRunForTalk(b, SLUG, RUN_ID).prework.entries.some((candidate) => candidate.answered), false, 'and nothing is written to B')
+    assert.deepEqual(preworkTrayForLiveSession({ talkSlug: SLUG, runId: RUN_ID, vaultRoot: null }, readable), [], 'a session with no vault: nothing')
+    open.add(a)
+    assert.equal(answerPreworkTrayForLiveSession(session, readable, () => null, fromA[0].questionId, false).success, false, 'A not writable: refused')
+    pass('the tray reads, updates and writes the live session\'s own vault only while it is open, never another vault with the same talk and Run')
+  } finally { for (const root of [a, b]) rmSync(root, { recursive: true, force: true }) }
+}
+
 // Questions ------------------------------------------------------------------------------------
 {
   const groups = questionGroups(definition, run.prework)
@@ -335,6 +459,132 @@ const pass = (name) => { results.push(name); console.log(`PASS  ${name}`) }
     assert.deepEqual(double.sent(), ['own'], 'its own key accepted: one request')
     assert.equal(readFileSync(join(root, 'registry.json'), 'utf8').includes(double.ownKey), false, 'no key in the registry')
     pass('held keys: pre-work is set up with the 0.38.2 key when this computer\'s own is refused; "access was removed" only when both are; no answer or another status is never that')
+  } finally { rmSync(root, { recursive: true, force: true }) }
+}
+
+// 8. Responses (2026-10-19 prework-responses): route per step, Local only, what is new, read state, exports
+{
+  const FILE = ['---', 'id: intake', 'title: Intake', 'revision: 1', '---', '',
+    '### Read this', '{id=watch}', '', 'A paragraph to read.', '',
+    '### What do you hope for?', '{id=hope}{poll=open}', '',
+    '### Try a prompt', '{id=try}{task}{local}', ''].join('\n')
+  const steps = stepsFromWorkFile(FILE)
+  assert.deepEqual(steps.map((step) => [step.id, step.kind, step.local === true]), [['watch', 'slide', false], ['hope', 'question', false], ['try', 'task', true]])
+  const person = (n) => n.toString(16).padStart(16, '0')
+  const at = (minute) => Date.UTC(2026, 9, 20, 18, minute)
+  const answer = (n, minute, text) => ({ id: `${person(n)}:answer:hope`, participant: person(n), stepId: 'hope', kind: 'answer', at: at(minute), text })
+  const question = (n, minute, text, name) => ({ id: `${person(n)}:q:sub${n}`, participant: person(n), stepId: 'hope', kind: 'question', at: at(minute), text, ...(name ? { name } : {}) })
+  const read = (n, minute) => ({ id: `${person(n)}:read:watch`, participant: person(n), stepId: 'watch', kind: 'read', at: at(minute) })
+  let prework = normaliseRunPrework({ entries: [answer(1, 1, 'Faster reviews'), answer(2, 2, '=HYPERLINK("x")'), read(1, 3), question(3, 4, 'Is it safe?', 'Alex')] })
+
+  // Nothing seen yet: every answer and question is new; a read mark is progress, never new.
+  assert.equal(newResponseCount(prework), 3)
+  assert.equal(isNewEntry(read(1, 3), prework), false)
+  let section = answerSection(steps, prework, 10)
+  assert.deepEqual(section.steps.map((block) => block.route), ['counts', 'sent', 'local'])
+  assert.deepEqual([section.localSteps, section.answerSteps, section.fresh], [1, 2, 3])
+  assert.deepEqual(section.steps[2].body, { type: 'local' }, 'a Local only step has nothing to show')
+  assert.equal(section.steps[2].sum, 'not collected')
+  assert.equal(section.steps[1].fresh, 3, 'the step counts its new answers and the new question about it')
+
+  // Leaving the Run: seen through the latest response; then one later answer arrives and is the only new one.
+  const left = applySeenChange(prework, { type: 'leave' }, Date.UTC(2026, 9, 20, 19, 0))
+  assert.deepEqual(left.seen, { through: at(4), at: Date.UTC(2026, 9, 20, 19, 0) })
+  assert.equal(newResponseCount(left), 0)
+  assert.equal(applySeenChange(left, { type: 'leave' }, Date.UTC(2026, 9, 20, 20, 0)), null, 'leaving again with nothing new changes nothing')
+  prework = mergeRunPrework(left, [{ ...answer(4, 30, 'Better abstracts'), seq: 9 }])
+  assert.deepEqual(prework.seen, left.seen, 'a pull keeps the read state')
+  assert.equal(newResponseCount(prework), 1)
+  section = answerSection(steps, prework, 10)
+  assert.deepEqual(section.steps[1].body.rows.map((row) => [row.text, row.isNew]), [['Faster reviews', false], ['=HYPERLINK("x")', false], ['Better abstracts', true]])
+
+  // A dot keeps a response unread through leaving; Mark all read clears it.
+  const oldId = `${person(1)}:answer:hope`
+  let kept = applySeenChange(prework, { type: 'keep', id: oldId, unread: true }, at(40))
+  assert.deepEqual(kept.unread, [oldId])
+  kept = applySeenChange(kept, { type: 'leave' }, at(41))
+  assert.equal(kept.seen.through, at(30))
+  assert.deepEqual([newResponseCount(kept), kept.unread], [1, [oldId]], 'kept unread survives leaving')
+  assert.equal(applySeenChange(kept, { type: 'keep', id: `${person(1)}:read:watch`, unread: true }, at(42)), null, 'a read mark cannot be kept unread')
+  const all = applySeenChange(kept, { type: 'all' }, at(43))
+  assert.deepEqual([newResponseCount(all), all.unread], [0, undefined])
+  assert.deepEqual(normaliseRunPrework(JSON.parse(JSON.stringify(kept))).unread, [oldId], 'the read state is kept on the Run as written')
+  assert.equal(normaliseRunPrework({ ...kept, unread: ['not-an-entry'] }).unread, undefined, 'an id that is not on the Run is dropped')
+
+  // Copy and Export: no entry or participant id, no name but a question's own; a spreadsheet formula is made inert.
+  section = answerSection(steps, normaliseRunPrework({ ...kept, picks: { hope: { mode: 'picked', ids: [oldId] } } }), 10)
+  const csv = answersCsv(section)
+  const md = answersMarkdown(section, 'Pre-work answers')
+  const text = answersText(section)
+  for (const out of [csv, md, text]) {
+    for (let n = 1; n <= 4; n += 1) assert.equal(out.includes(person(n)), false, 'no participant id in an export')
+    assert.equal(/:answer:|:q:/.test(out), false, 'no entry id in an export')
+  }
+  assert.equal(csv.split('\r\n')[0], 'step,kind,answer,time,starred,read,name')
+  assert.match(csv, /"2 · Open question: What do you hope for\?","answer","Faster reviews","2026-10-20T18:01:00.000Z","yes","no",""/)
+  assert.match(csv, /"'=HYPERLINK\(""x""\)"/, 'a leading = is made inert')
+  assert.match(csv, /"question","Is it safe\?","[^"]+","no","yes","Alex"/, 'a question keeps the name its person typed')
+  assert.match(md, /## 3 · Task: Try a prompt\n\nLocal only: nothing is collected for this step\./)
+  assert.match(md, /- ★ Faster reviews/)
+  assert.equal(answersText(section, true), '2 · Open question: What do you hope for?\nFaster reviews')
+  assert.equal(starredCount(section), 1)
+  pass('responses: route per step and a Local only step; new is later than the seen-through mark or kept unread; leaving, a dot and Mark all read; exports carry no participant or entry id')
+}
+
+// 9. The timer counts what waits and pulls nothing; the Run page writes its read state (2026-10-19 prework-responses)
+{
+  const root = mkdtempSync(join(tmpdir(), 'tw-responses-'))
+  try {
+    persistRunForTalk(root, SLUG, RUN_ID, normaliseRun(plannedRun()))
+    let clock = Date.UTC(2026, 9, 2, 12)
+    const asked = []
+    let waiting = 4
+    const reply = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+    const fetch = async (url, init = {}) => {
+      const path = new URL(url).pathname
+      asked.push(`${init.method ?? 'GET'} ${path}${new URL(url).search}`)
+      if (path === '/prework') return reply({ preworkId: 'pw00009a', ownerToken: 'owner-token-0123456789-count' }, 201)
+      if (path.endsWith('/waiting')) return reply({ seq: 12, waiting })
+      if (path.endsWith('/results')) return reply({ entries: [], more: false, seq: 12 })
+      return reply({ ok: true })
+    }
+    const service = createRunPrework({ ownerTokens: testOwnerTokens, registryPath: join(root, 'registry.json'), endpoint: async () => ({ baseUrl: 'https://live.example.test', adminSecret: 'unused' }), vaultRoot: () => root, fetch, now: () => clock })
+    await service.publish(SLUG, RUN_ID, definition, { opensAt: Date.UTC(2026, 9, 1, 9), closesAt: Date.UTC(2026, 9, 6, 10) }, 'pre', root)
+    asked.length = 0
+    const before = JSON.stringify(readRunForTalk(root, SLUG, RUN_ID))
+    assert.equal(await service.countDue(), 1)
+    assert.deepEqual(asked, ['GET /prework/pw00009a/waiting?after=0'], 'one light request with the owner token, after the cursor; no results downloaded')
+    assert.equal(service.status(SLUG, RUN_ID, 'pre').waiting, 4)
+    assert.equal(JSON.stringify(readRunForTalk(root, SLUG, RUN_ID)), before, 'the Run is not written by a count')
+    assert.equal(await service.countDue(), 0, 'the same count changes nothing')
+    // The timer asks for the count and tells main only when it changed.
+    let told = 0
+    waiting = 6
+    const stop = startRunPreworkTimer(service, () => { told += 1 }, 60_000)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    stop()
+    assert.deepEqual([told, service.status(SLUG, RUN_ID, 'pre').waiting], [1, 6])
+    assert.equal(asked.some((line) => line.includes('/results')), false, 'the timer pulls no answers')
+    // Opening the Run pulls: the count clears and the pull time is kept.
+    clock = Date.UTC(2026, 9, 2, 13)
+    assert.equal((await service.pull(SLUG, RUN_ID, 'pre')).ok, true)
+    assert.deepEqual([service.status(SLUG, RUN_ID, 'pre').waiting, service.status(SLUG, RUN_ID, 'pre').pulledAt], [undefined, clock])
+    // A service from before the count (404) leaves the row as it was.
+    const old = createRunPrework({ ownerTokens: testOwnerTokens, registryPath: join(root, 'registry.json'), endpoint: async () => ({ baseUrl: 'https://live.example.test', adminSecret: 'unused' }), vaultRoot: () => root, fetch: async () => reply({ error: { code: 'not_found' } }, 404), now: () => clock })
+    assert.equal(await old.countDue(), 0)
+
+    // The read state goes through the Run writer; bad changes are refused in words.
+    persistRunForTalk(root, SLUG, RUN_ID, applyRunPrework(readRunForTalk(root, SLUG, RUN_ID), entries()))
+    const latest = Math.max(...readRunForTalk(root, SLUG, RUN_ID).prework.entries.filter((candidate) => candidate.kind === 'answer' || candidate.kind === 'question').map((candidate) => candidate.at))
+    const left = service.markSeen(SLUG, RUN_ID, { type: 'leave' }, 'pre')
+    assert.equal(left.ok, true)
+    assert.deepEqual(readRunForTalk(root, SLUG, RUN_ID).prework.seen, { through: latest, at: clock })
+    assert.equal(newResponseCount(readRunForTalk(root, SLUG, RUN_ID).prework), 0)
+    assert.equal(service.markSeen(SLUG, RUN_ID, { type: 'keep', id: 'x', unread: 'yes' }).ok, false)
+    assert.equal(service.markSeen(SLUG, RUN_ID, { type: 'sideways' }).ok, false)
+    assert.equal(service.markSeen('../escape', RUN_ID, { type: 'all' }).ok, false)
+    assert.equal(service.markSeen(SLUG, 'run-missing', { type: 'all' }).ok, false)
+    pass('the timer asks the live service how many responses wait (owner token, after the cursor) and downloads none; a pull clears the count and keeps its time; the read state is written through the Run writer')
   } finally { rmSync(root, { recursive: true, force: true }) }
 }
 

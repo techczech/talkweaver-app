@@ -18,22 +18,26 @@ import {
   type SurfaceFieldModel,
   type SurfaceOptionModel
 } from '../../../shared/metadata-surfaces.ts'
-import { editFrontmatterText, parseFrontmatterPairs } from '../../../shared/frontmatter-editor.ts'
+import { editFrontmatterText, isFrontmatterDelimiter, parseFrontmatterPairs } from '../../../shared/frontmatter-editor.ts'
 import { metadataDefaultsSnapshot } from '../lib/metadata-defaults.ts'
+import type { StripFile, WorkStrips } from '../../../shared/work-strips.ts'
+import { drawWorkFileSelect, drawWorkStrips, isWorkKey, stripsFor, workStripHandlersFacet, workStripMenuPlugin, workStripsField, type WorkStripHandlers } from './workStrips.ts'
 
 // ── frontmatter parse / serialize ─────────────────────────────────────────────
 export interface Pair { key: string; value: string }
 export interface Parsed { from: number; to: number; text: string; pairs: Pair[] }
 
 // Locate the `--- … ---` block at the very top and parse it with the SHARED parser, so the table
-// and Deck settings never disagree about what a key holds.
+// and Deck settings never disagree about what a key holds. The delimiter rule is the shared writer's
+// (isFrontmatterDelimiter; locateFrontmatter walks the same lines), so the block the table shows is
+// the block a write edits — an empty block and a `--- ` with a trailing space included.
 export function parseFrontmatter(state: Pick<EditorState, 'doc'>): Parsed | null {
   const doc = state.doc
   if (doc.lines < 2) return null
-  if (doc.line(1).text.trim() !== '---') return null
+  if (!isFrontmatterDelimiter(doc.line(1).text)) return null
   let closing = -1
   for (let n = 2; n <= doc.lines; n += 1) {
-    if (doc.line(n).text.trim() === '---') { closing = n; break }
+    if (isFrontmatterDelimiter(doc.line(n).text)) { closing = n; break }
   }
   if (closing < 0) return null
   const from = doc.line(1).from
@@ -71,21 +75,27 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, t
 
 // Exported for the DOM gate (scripts/test-frontmatter-table-dom.mjs), which drives the "?"
 // disclosure directly. The widget is otherwise internal to this extension.
+/** What the table draws for the talk's work files (ticket 08): the strips, the files the picker offers, what the strip buttons do. */
+export interface WorkStripsView { strips: WorkStrips; files: StripFile[]; handlers: WorkStripHandlers | null }
+
 export class FrontmatterWidget extends WidgetType {
   readonly pairs: Pair[]
-  constructor(pairs: Pair[]) {
+  readonly work: WorkStripsView | null
+  constructor(pairs: Pair[], work: WorkStripsView | null = null) {
     super()
     this.pairs = pairs
+    this.work = work
   }
   eq(other: FrontmatterWidget): boolean {
     return JSON.stringify(other.pairs) === JSON.stringify(this.pairs)
+      && JSON.stringify(other.work && [other.work.strips, other.work.files]) === JSON.stringify(this.work && [this.work.strips, this.work.files])
   }
   // Declare the rendered height so CodeMirror maps click coordinates for the lines BELOW the
   // widget correctly (without this, clicks in the body land one line off). Rows are collapsed by
   // default — the explanation lives behind the row's "?" (T27) — so a collapsed row measures about
   // 40px; opening a help block calls view.requestMeasure(), which re-measures the real DOM height.
   get estimatedHeight(): number {
-    return 38 /* header */ + this.pairs.length * 40 /* collapsed rows */ + 34 /* add control + padding */
+    return 38 /* header */ + this.pairs.length * 40 /* collapsed rows */ + 34 /* add control + padding */ + (this.work ? 92 : 0) /* two strips */
   }
   ignoreEvent(): boolean {
     return true // let the inputs handle their own events
@@ -123,8 +133,10 @@ export class FrontmatterWidget extends WidgetType {
     const defaults = metadataDefaultsSnapshot()
 
     const grid = el('div', 'cm-fm-grid')
-    for (const row of model.rows) grid.appendChild(makeRow(row, setKey, defaults[row.key] ?? '', () => view.requestMeasure()))
+    for (const row of model.rows) grid.appendChild(makeRow(row, setKey, defaults[row.key] ?? '', () => view.requestMeasure(), this.work?.files ?? null))
     wrap.appendChild(grid)
+    // Pre-work and post-work strips (ticket 08): one per phase, under the rows.
+    if (this.work) wrap.appendChild(drawWorkStrips(view, this.work.strips, this.work.files, setKey, this.work.handlers))
 
     // "+ add field" — every registry key not yet written, grouped and ordered by the registry.
     if (model.addable.length > 0) {
@@ -215,7 +227,9 @@ function makePicker(field: SurfaceFieldModel, setKey: SetKey): HTMLElement {
   return group
 }
 
-function makeControl(field: SurfaceFieldModel, setKey: SetKey, appDefault: string): HTMLElement {
+function makeControl(field: SurfaceFieldModel, setKey: SetKey, appDefault: string, workFiles: StripFile[] | null = null): HTMLElement {
+  // The Pre-work and Post-work rows pick a work file by name once the files are known (ticket 08).
+  if (workFiles && isWorkKey(field.key)) return drawWorkFileSelect(field.key as 'prework' | 'postwork', field.value, workFiles, setKey)
   if (field.readOnly || field.control === 'map') {
     const value = el('div', 'cm-fm-ro', field.value.trim() ? field.value.trim() : '(not set)')
     return value
@@ -229,7 +243,7 @@ function makeControl(field: SurfaceFieldModel, setKey: SetKey, appDefault: strin
   return input
 }
 
-function makeRow(field: SurfaceFieldModel, setKey: SetKey, appDefault = '', requestMeasure: () => void = () => {}): HTMLElement {
+function makeRow(field: SurfaceFieldModel, setKey: SetKey, appDefault = '', requestMeasure: () => void = () => {}, workFiles: StripFile[] | null = null): HTMLElement {
   const row = el('div', 'cm-fm-row')
   row.dataset.fmKey = field.key
   if (field.readOnly) row.classList.add('is-readonly')
@@ -238,7 +252,7 @@ function makeRow(field: SurfaceFieldModel, setKey: SetKey, appDefault = '', requ
   const label = el('label', 'cm-fm-label', field.label)
   label.title = field.key
   main.appendChild(label)
-  main.appendChild(makeControl(field, setKey, appDefault))
+  main.appendChild(makeControl(field, setKey, appDefault, workFiles))
   if (field.unit) main.appendChild(el('span', 'cm-fm-unit', field.unit))
 
   if (!field.readOnly) {
@@ -329,8 +343,10 @@ function buildDecorations(state: EditorState): DecorationSet {
       Decoration.widget({ widget: new RawToggleWidget(), side: 1 }).range(line.to)
     ])
   }
+  const loaded = factory ? null : stripsFor(state, parsed.pairs)
+  const work: WorkStripsView | null = loaded ? { ...loaded, handlers: state.facet(workStripHandlersFacet) } : null
   return Decoration.set([
-    Decoration.replace({ widget: factory ? factory(parsed) : new FrontmatterWidget(parsed.pairs), block: true }).range(
+    Decoration.replace({ widget: factory ? factory(parsed) : new FrontmatterWidget(parsed.pairs, work), block: true }).range(
       parsed.from,
       parsed.to
     )
@@ -340,5 +356,5 @@ function buildDecorations(state: EditorState): DecorationSet {
 export function frontmatterTableExtension(): Extension {
   // Derived from state (not a view plugin), so the block decorations are allowed; it re-reads the
   // facet, so a Plain/Markdown switch swaps the table and the panel without a document change.
-  return [rawField, EditorView.decorations.compute([rawField, frontmatterBlockFacet, 'doc'], buildDecorations)]
+  return [rawField, workStripsField, workStripMenuPlugin, EditorView.decorations.compute([rawField, frontmatterBlockFacet, workStripsField, 'doc'], buildDecorations)]
 }

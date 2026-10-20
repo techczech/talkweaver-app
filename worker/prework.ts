@@ -1,28 +1,36 @@
-// Pre-work for a planned Run (ADR-0032 amendment point 2; feedback-boards ticket 09): the Durable
-// Object that holds one Run's form and its anonymous answers, and the entry Worker's routes into it.
+// Pre-work and post-work for a planned Run (ADR-0032 amendment point 2; feedback-boards ticket 09; ADR-0040,
+// work files ticket 12): the Durable Object that holds one phase of one Run's work (its form and its
+// anonymous answers), and the entry Worker's routes into it. The app makes one object per Run and phase.
 // Modelled on the shared talk and the Run's share link (run-share.ts): an admin-created id, an owner
 // token of its own role, the owner check and each route's body cap in the entry Worker before any
 // body is read, and the public routes refusing any credential.
 //
 //   POST /prework                      admin → 201 {preworkId, ownerToken}
-//   GET  /prework/<id>                 public: {state, opensAt, closesAt, people?} (404 until pushed)
+//   GET  /prework/<id>                 public: {state, phase, opensAt, closesAt, people?} (404 until pushed)
 //   POST /prework/<id>/submit          public: one read, answer, done mark or question
 //   POST /prework/<id>/mine            public: {participantId} → that device's own entries
-//   PUT  /prework/<id>/form            owner: the form and its window
-//   GET  /prework/<id>/results?after=  owner: entries after a sequence number, a page at a time
-//   POST /prework/<id>/close           owner (or admin): close now, never reopened
+//   PUT  /prework/<id>/form            owner: {phase, opensAt, closesAt, form?}; a later close reopens;
+//                                      no form: only the window changes
+//   GET  /prework/<id>/results?after=  owner: entries after a sequence number, a page at a time, with
+//                                      {state, phase} named as the status names them
+//   GET  /prework/<id>/waiting?after=  owner: {seq, waiting}: how many answers and questions changed
+//                                      after the sequence number; no entry is read out
+//   POST /prework/<id>/close           owner (or admin): close now; a later closing time pushed by the
+//                                      owner reopens the owner's close, never the admin's
+//   POST /prework/<id>/withdraw        owner: {withdrawn?} — public routes answer 404 not_available;
+//                                      {withdrawn: false} serves it again; answers stay for the owner
 //
 // With no push and no submission for 60 days the object deletes everything and keeps a tombstone.
 import { createPreworkOwnerToken, verifyPreworkOwnerToken } from './auth'
 import { adminAuthorised, bearerToken, errorResponse, jsonResponse, readBoundedBytes, readJsonBody, type Env } from './http'
 import { signingKey } from './signing-key'
 import {
-  PREWORK_IDLE_PURGE_MS, PREWORK_LIMITS, parsePreworkFormPush, preworkSourceKey, parsePreworkRoute, parsePreworkSubmission, preworkBodyLimit,
+  PREWORK_IDLE_PURGE_MS, PREWORK_LIMITS, parsePreworkFormPush, parsePreworkWithdraw, preworkSourceKey, parsePreworkRoute, parsePreworkSubmission, preworkBodyLimit,
   preworkRouteIsPublic, preworkRouteMethod, validParticipantId, type PreworkEntry, type PreworkRoute,
 } from './prework-protocol'
 import {
-  PreworkError, closePrework, createPrework, ownEntry, parseAfter, participantState, preworkStatus, purgeDueAt, pushForm, resultsPage,
-  shouldPurge, submitPrework, type ParticipantRow, type PreworkStore, type SourceRow, type StoredPrework,
+  PreworkError, closePrework, createPrework, isWithdrawn, notAvailable, ownEntry, parseAfter, participantState, preworkStatus, purgeDueAt, pushForm, resultsPage,
+  shouldPurge, submitPrework, waitingCount, withdrawPrework, type ParticipantRow, type PreworkStore, type SourceRow, type StoredPrework,
 } from './prework-state'
 import { isShareId, SHARE_ID_LENGTH } from './share-id'
 import { generateShortId } from './short-id'
@@ -92,7 +100,7 @@ export async function forwardToPrework(request: Request, env: Env, route: Prewor
   }
   const target = new URL(request.url)
   target.pathname = route.action === 'status' ? `/prework/${route.preworkId}` : `/prework/${route.preworkId}/${route.action}`
-  target.search = route.action === 'results' ? `?after=${parseAfter(url.searchParams.get('after'))}` : ''
+  target.search = route.action === 'results' || route.action === 'waiting' ? `?after=${parseAfter(url.searchParams.get('after'))}` : ''
   const headers = new Headers(request.headers)
   headers.set('x-tw-prework-source', connecting ? preworkSourceKey(connecting) : 'local')
   const limit = preworkBodyLimit(route)
@@ -158,6 +166,13 @@ class SqlPreworkStore implements PreworkStore {
 
   participantEntries(key: string): PreworkEntry[] {
     return [...this.sql.exec<{ value: string }>('SELECT value FROM entries WHERE participant = ?', key)].map((row) => JSON.parse(row.value) as PreworkEntry)
+  }
+
+  responsesAfter(after: number): number {
+    // An entry id is `<16 hex>:<kind>:…`: answers are `…:answer:<step>`, questions `…:q:<submission>`.
+    const row = [...this.sql.exec<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM entries WHERE seq > ? AND (entry_id LIKE '________________:answer:%' OR entry_id LIKE '________________:q:%')", after)][0]
+    return Number(row?.n ?? 0)
   }
 }
 
@@ -251,7 +266,9 @@ export class RunPrework {
     }
     const response = errorResponse(error.code, error.message, error.status, error.details)
     if (typeof error.details.retryAfterMs === 'number') response.headers.set('retry-after', String(Math.ceil(error.details.retryAfterMs / 1_000)))
-    return response
+    // "Not available" is never cached, like the status it stands in for: published again, the work is
+    // seen again at once.
+    return error.code === 'not_available' ? noStore(response) : response
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -281,15 +298,22 @@ export class RunPrework {
     if (!this.prework || this.prework.preworkId !== route.preworkId) return errorResponse('not_found', 'Pre-work not found.', 404)
     const prework = this.prework
 
-    // Owner routes: checked again here (the entry Worker checked first).
+    // Owner routes: checked again here (the entry Worker checked first). Close also takes the admin
+    // secret; who closed is kept, since only the owner's close is lifted by a later closing time.
+    let closedBy: 'owner' | 'admin' = 'owner'
     if (!preworkRouteIsPublic(route)) {
       const owner = await verifyPreworkOwnerToken(bearerToken(request), await signingKey(this.env), prework.preworkId)
-      if (!owner && !(route.action === 'close' && await adminAuthorised(request, this.env))) {
-        return errorResponse('owner_auth_required', 'Owner authentication is required.', 401)
+      if (!owner) {
+        if (!(route.action === 'close' && await adminAuthorised(request, this.env))) {
+          return errorResponse('owner_auth_required', 'Owner authentication is required.', 401)
+        }
+        closedBy = 'admin'
       }
     }
 
     try {
+      // Withdrawn: every public route says "not available", before any body is read; the owner's stay.
+      if (preworkRouteIsPublic(route) && isWithdrawn(prework)) throw notAvailable()
       switch (route.action) {
         case 'status': {
           const status = preworkStatus(prework, now)
@@ -329,6 +353,8 @@ export class RunPrework {
           if ('invalid' in body) return errorResponse('invalid_push', 'The form must be JSON.', 400)
           const parsed = parsePreworkFormPush(body.value, now)
           if ('error' in parsed) return errorResponse(parsed.error.code, parsed.error.message, 400)
+          // A refused push (another phase, or a window-only push before any form) changes nothing:
+          // pushForm checks before it writes.
           pushForm(this.prework ?? prework, parsed.value, now)
           this.save()
           await this.arm()
@@ -336,11 +362,26 @@ export class RunPrework {
         }
         case 'results':
           return noStore(jsonResponse(resultsPage(prework, this.store, parseAfter(url.searchParams.get('after')), now)))
+        case 'waiting':
+          return noStore(jsonResponse(waitingCount(prework, this.store, parseAfter(url.searchParams.get('after')))))
         case 'close': {
           // The metadata as it is NOW (after the owner check's await), as the form push does.
-          const closedAt = closePrework(this.prework ?? prework, now)
+          const closedAt = closePrework(this.prework ?? prework, now, closedBy)
           this.save()
           return jsonResponse({ ok: true, closedAt })
+        }
+        case 'withdraw': {
+          const bytes = await readBoundedBytes(request, PREWORK_LIMITS.withdrawBytes)
+          if (!bytes) return errorResponse('body_too_large', 'The request body is too large.', 413)
+          // An empty body withdraws; JSON that is not {withdrawn: boolean} is refused.
+          const raw = new TextDecoder().decode(bytes).trim()
+          let withdrawn: boolean | null = null
+          try { withdrawn = parsePreworkWithdraw(raw ? JSON.parse(raw) : undefined) } catch { withdrawn = null }
+          if (withdrawn === null) return errorResponse('invalid_withdraw', 'The body is empty or {"withdrawn": true|false}.', 400)
+          // The metadata as it is NOW (after the awaits above), as the form push does.
+          const withdrawnAt = withdrawPrework(this.prework ?? prework, withdrawn, now)
+          this.save()
+          return jsonResponse({ ok: true, withdrawn, ...(withdrawnAt !== null ? { withdrawnAt } : {}) })
         }
       }
     } catch (error) {

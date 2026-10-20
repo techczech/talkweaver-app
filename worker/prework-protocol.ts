@@ -8,7 +8,9 @@
 //   - the form carries no right answer: a `right` key anywhere in a pushed form is refused outright;
 //   - an answer names a step of the form and fits that step's kind and poll;
 //   - a participant is only ever a hash on the Worker and on the Run (counts, never names);
-//   - every text has a character cap and every list a length cap.
+//   - every text has a character cap and every list a length cap;
+//   - one object holds one phase of one Run's work: pre-work or post-work (ADR-0040). A push or a
+//     status from before phases (0.37) has none and reads as `pre`.
 // Pure: no Workers runtime.
 import { AUDIENCE_FEEDBACK_LIMITS, type PollChoice, type PollOption, type PollType } from './protocol.ts'
 import { validExtendedChoice } from './poll-ballots.ts'
@@ -24,6 +26,7 @@ export const PREWORK_LIMITS = {
   /** "My answers": a participant id and nothing else. */
   mineBytes: 1024,
   closeBytes: 1024,
+  withdrawBytes: 1024,
   titleChars: 300,
   introChars: 2_000,
   steps: 40,
@@ -74,6 +77,15 @@ export const PREWORK_LIMITS = {
 /** A pre-work object with no submission or push for this long is purged by its alarm. */
 export const PREWORK_IDLE_PURGE_MS = 60 * PREWORK_DAY_MS
 
+/** Which of a Run's two rounds of work an object holds (ADR-0040): before the session or after it. */
+export type WorkPhase = 'pre' | 'post'
+
+/** A phase as sent, or `pre` when none was sent (a 0.37 app, or an object stored before phases). */
+export function readWorkPhase(value: unknown): WorkPhase | null {
+  if (value === undefined) return 'pre'
+  return value === 'pre' || value === 'post' ? value : null
+}
+
 export type PreworkStepKind = 'slide' | 'check' | 'question' | 'task'
 export type PreworkEntryKind = 'read' | 'answer' | 'done' | 'question'
 
@@ -101,6 +113,12 @@ export interface PreworkFormStep {
   done?: boolean
   /** Pre-tasks only: minutes it takes. */
   minutes?: number
+  /**
+   * Local only (`{local}` on a task, quick check or question): nothing about the step is sent, and the
+   * Worker refuses a read, an answer or a done mark for it. Questions about the step still go to the
+   * speaker. Absent (every form pushed before this existed) means sent.
+   */
+  local?: true
 }
 
 export interface PreworkForm {
@@ -109,11 +127,12 @@ export interface PreworkForm {
   steps: PreworkFormStep[]
 }
 
-/** What the owner pushes: the form and when it opens and closes (ms). */
+/** What the owner pushes: which phase the form is, the form, and when it opens and closes (ms). A null form changes only the window. */
 export interface PreworkFormPush {
+  phase: WorkPhase
   opensAt: number
   closesAt: number
-  form: PreworkForm
+  form: PreworkForm | null
 }
 
 /** One participant's submission. `participantId` never leaves the Worker; it is stored as a hash. */
@@ -152,6 +171,7 @@ export type PreworkPhase = 'not_yet' | 'open' | 'closed'
 /** The public answer to "is pre-work open?" — no form, no answers. `people` only once it has closed. */
 export interface PreworkStatus {
   state: PreworkPhase
+  phase: WorkPhase
   opensAt: number
   closesAt: number
   people?: number
@@ -245,6 +265,11 @@ function parseStep(value: unknown, index: number): PreworkFormStep | null {
       step.minutes = Number(value.minutes)
     }
   } else if (value.done !== undefined || value.minutes !== undefined) return null
+  // Absent or false: sent (a form pushed before Local only existed has none). A slide has nothing to keep local.
+  if (value.local !== undefined) {
+    if (typeof value.local !== 'boolean' || (value.local && kind === 'slide')) return null
+    if (value.local) step.local = true
+  }
   return step
 }
 
@@ -265,16 +290,23 @@ export function parsePreworkForm(value: unknown): Parsed<PreworkForm> {
   return { value: { title, intro, steps: steps as PreworkFormStep[] } }
 }
 
-/** The owner's push: a form and a window that opens before it closes, closing within 400 days. */
+/**
+ * The owner's push: a phase (`pre` when none is sent), a form and a window that opens before it
+ * closes, closing within 400 days.
+ */
 export function parsePreworkFormPush(value: unknown, now: number): Parsed<PreworkFormPush> {
   if (!record(value)) return fail('invalid_push', 'The push must be an object.')
+  const phase = readWorkPhase(value.phase)
+  if (!phase) return fail('invalid_phase', 'phase is pre or post.')
   const { opensAt, closesAt } = value
   if (!Number.isSafeInteger(opensAt) || !Number.isSafeInteger(closesAt) || Number(opensAt) < 0) return fail('invalid_window', 'opensAt and closesAt are times in ms.')
   if (Number(closesAt) <= Number(opensAt)) return fail('invalid_window', 'Pre-work must close after it opens.')
   if (Number(closesAt) > now + PREWORK_LIMITS.maxWindowMs) return fail('invalid_window', 'Pre-work may close at most 400 days ahead.')
+  // No form: only the window changes (the stored form is kept; refused when there is none yet).
+  if (value.form === undefined) return { value: { phase, opensAt: Number(opensAt), closesAt: Number(closesAt), form: null } }
   const form = parsePreworkForm(value.form)
   if ('error' in form) return form
-  return { value: { opensAt: Number(opensAt), closesAt: Number(closesAt), form: form.value } }
+  return { value: { phase, opensAt: Number(opensAt), closesAt: Number(closesAt), form: form.value } }
 }
 
 export function validParticipantId(value: unknown): value is string {
@@ -399,12 +431,15 @@ export function parsePreworkEntry(value: unknown): PreworkEntry | null {
   return entry
 }
 
+/** A status as the Worker sent it; one from a Worker before phases has none and reads as `pre`. */
 export function parsePreworkStatus(value: unknown): PreworkStatus | null {
   if (!record(value)) return null
   if (value.state !== 'not_yet' && value.state !== 'open' && value.state !== 'closed') return null
+  const phase = readWorkPhase(value.phase)
+  if (!phase) return null
   if (!Number.isSafeInteger(value.opensAt) || !Number.isSafeInteger(value.closesAt)) return null
   if (value.people !== undefined && !(Number.isSafeInteger(value.people) && Number(value.people) >= 0)) return null
-  return { state: value.state, opensAt: Number(value.opensAt), closesAt: Number(value.closesAt), ...(value.people !== undefined ? { people: Number(value.people) } : {}) }
+  return { state: value.state, phase, opensAt: Number(value.opensAt), closesAt: Number(value.closesAt), ...(value.people !== undefined ? { people: Number(value.people) } : {}) }
 }
 
 /**
@@ -430,12 +465,12 @@ export function preworkSourceKey(address: string): string {
 
 // ── Routes ──────────────────────────────────────────────────────────────────────────────────
 
-export type PreworkAction = 'status' | 'submit' | 'mine' | 'form' | 'results' | 'close'
+export type PreworkAction = 'status' | 'submit' | 'mine' | 'form' | 'results' | 'waiting' | 'close' | 'withdraw'
 export interface PreworkRoute { preworkId: string; action: PreworkAction }
 
-const ROUTE = new RegExp(`^/prework/(${SHARE_ID_SOURCE})(?:/(submit|mine|form|results|close))?$`)
+const ROUTE = new RegExp(`^/prework/(${SHARE_ID_SOURCE})(?:/(submit|mine|form|results|waiting|close|withdraw))?$`)
 
-/** `/prework/<id>` (status), `/prework/<id>/submit|mine|form|results|close`; nothing else. */
+/** `/prework/<id>` (status), `/prework/<id>/submit|mine|form|results|waiting|close|withdraw`; nothing else. */
 export function parsePreworkRoute(pathname: string): PreworkRoute | null {
   const match = pathname.match(ROUTE)
   if (!match || !isShareId(match[1])) return null
@@ -445,7 +480,7 @@ export function parsePreworkRoute(pathname: string): PreworkRoute | null {
 /** The one method each route takes; anything else is refused before the object is reached. */
 export function preworkRouteMethod(route: PreworkRoute): 'GET' | 'POST' | 'PUT' {
   if (route.action === 'form') return 'PUT'
-  return route.action === 'status' || route.action === 'results' ? 'GET' : 'POST'
+  return route.action === 'status' || route.action === 'results' || route.action === 'waiting' ? 'GET' : 'POST'
 }
 
 /** Public routes take no credential; the rest are the owner's. */
@@ -460,6 +495,18 @@ export function preworkBodyLimit(route: PreworkRoute): number | null {
     case 'submit': return PREWORK_LIMITS.submitBytes
     case 'mine': return PREWORK_LIMITS.mineBytes
     case 'close': return PREWORK_LIMITS.closeBytes
+    case 'withdraw': return PREWORK_LIMITS.withdrawBytes
     default: return null
   }
+}
+
+/**
+ * The owner's withdraw body: `{withdrawn: false}` puts the work back; anything else that is empty or
+ * `{withdrawn: true}` withdraws it. Null when the body says something else.
+ */
+export function parsePreworkWithdraw(value: unknown): boolean | null {
+  if (value === undefined || value === null) return true
+  if (!record(value) || Object.keys(value).some((key) => key !== 'withdrawn')) return null
+  if (value.withdrawn === undefined) return true
+  return typeof value.withdrawn === 'boolean' ? value.withdrawn : null
 }

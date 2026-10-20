@@ -10,6 +10,7 @@ import {
   type LayoutDoctorFinding
 } from '../../../shared/layout-doctor'
 import { STRANDED_TITLE_ICON_ACTION } from '../../../shared/title-icon-restore'
+import { MOVE_PREWORK_ACTION } from '../../../shared/prework-move'
 import { warningsForSurface } from '../../../../compiler/scripts/lib/warning-registry.mjs'
 import { usePausedScan } from '../lib/pausedScan'
 
@@ -34,7 +35,10 @@ type CompilerNote = {
   message: string
   slideTitle: string
   line: number | null
+  /** The warning's registry code; the note for a retired `{prework}` section carries the move action. */
+  code: string
 }
+const RETIRED_PREWORK_CODE = 'prework-section-retired'
 
 const KIND_ORDER: DoctorFindingKind[] = [
   'unknown-word',
@@ -80,15 +84,19 @@ function compilerNotesFor(rows: ProjectionRow[] | null): CompilerNote[] {
   const notes = new Map<string, CompilerNote>()
   for (const [index, row] of (rows ?? []).entries()) {
     const slideTitle = plainInlineText(row.nav_title || row.title) || `Slide ${index + 1}`
-    for (const message of warningsForSurface(row.warnings, 'doctor')) {
-      const key = `${row.slide_id || index}:${message}`
-      if (!notes.has(key)) {
-        notes.set(key, {
-          key,
-          message,
-          slideTitle,
-          line: typeof row.source_line === 'number' ? row.source_line : null
-        })
+    for (const warning of row.warnings ?? []) {
+      const code = String(warning).split(':')[0]
+      for (const message of warningsForSurface([warning], 'doctor')) {
+        const key = `${row.slide_id || index}:${message}`
+        if (!notes.has(key)) {
+          notes.set(key, {
+            key,
+            message,
+            slideTitle,
+            line: typeof row.source_line === 'number' ? row.source_line : null,
+            code
+          })
+        }
       }
     }
   }
@@ -177,6 +185,38 @@ function FindingRow({
     >
       {content}
     </button>
+  )
+}
+
+/** The note for a retired `{prework}` section, with the one-step action that moves it into a work file. */
+function MovePreworkRow({ note, outlinePath, onJump }: { note: CompilerNote; outlinePath: string; onJump?: () => void }) {
+  const [moving, setMoving] = useState(false)
+  const [notMoved, setNotMoved] = useState<string | null>(null)
+  const [movedTo, setMovedTo] = useState<string | null>(null)
+  const move = (): void => {
+    setMoving(true)
+    setNotMoved(null)
+    window.tw.workFiles.movePrework(outlinePath)
+      .then((result) => { if (result.ok) setMovedTo(result.fileName); else setNotMoved(result.error) })
+      .catch(() => setNotMoved('The section could not be moved, so nothing was changed.'))
+      .finally(() => setMoving(false))
+  }
+  return (
+    <div style={{ ...S.compilerRow, ...S.warningRow }} data-doctor-prework-retired>
+      <AlertTriangle size={14} style={{ color: AMBER, flexShrink: 0 }} />
+      <span style={S.rowMain}>
+        <span style={S.slideTitle}>{note.slideTitle}</span>
+        <span style={S.detail}>{note.message}</span>
+        {movedTo ? <span style={S.detail} role="status">Moved to Work files/{movedTo}.</span> : null}
+        {notMoved ? <span style={S.notFixed} role="alert">Not moved. {notMoved}</span> : null}
+      </span>
+      <button type="button" style={S.fixAction} onClick={move} disabled={moving || movedTo !== null} data-doctor-move-prework>
+        {MOVE_PREWORK_ACTION}
+      </button>
+      {onJump ? (
+        <button type="button" style={{ ...S.line, ...S.lineJump }} onClick={onJump} title={`Jump to line ${note.line}`}>line {note.line}</button>
+      ) : <span style={S.line}>generated slide</span>}
+    </div>
   )
 }
 
@@ -400,6 +440,7 @@ export default function LayoutDoctorPanel({
               <EmptyState scope="compiler" detail="0 doctor-surfaced compiler notes in the current projection." />
             ) : (
               compilerNotes.map((note) => {
+                if (note.code === RETIRED_PREWORK_CODE) return <MovePreworkRow key={note.key} note={note} outlinePath={talk.outlinePath} onJump={note.line == null ? undefined : () => jump(note.line!)} />
                 const content = (
                   <>
                     <AlertTriangle size={14} style={{ color: AMBER, flexShrink: 0 }} />

@@ -53,7 +53,8 @@ function buildRedirects(registry, existingSlugs) {
   const lines = Object.entries(registry)
     .filter(([slug]) => exists.has(slug))
     .sort((a, b) => a[1].localeCompare(b[1]))
-    .flatMap(([slug, id]) => [`/${pathSegment(id)}  /${pathSegment(slug)}/  302`, `/${pathSegment(id)}/p  /${pathSegment(slug)}/p/  302`])
+    .flatMap(([slug, id]) => [`/${pathSegment(id)}  /${pathSegment(slug)}/  302`, `/${pathSegment(id)}/p  /${pathSegment(slug)}/p/  302`,
+      `/${pathSegment(id)}/pre-work  /${pathSegment(slug)}/pre-work/  302`, `/${pathSegment(id)}/post-work  /${pathSegment(slug)}/post-work/  302`])
   return lines.length ? lines.join('\n') + '\n' : ''
 }
 function stampHandoutUrl(outlineText, url) {
@@ -107,13 +108,13 @@ ck(pickShortId({ registry: {}, slug: 'z', recoveredId: 'dd44', gen: () => 'zz99'
 ck(pickShortId({ registry: { x: 'dd44' }, slug: 'z', recoveredId: 'dd44', gen: () => 'ee55' }).id === 'ee55', 'pickShortId ignores recovered id that collides')
 
 // buildRedirects
-ck(buildRedirects({ a: 'a1', b: 'b2', c: 'c3' }, ['a', 'b']) === '/a1  /a/  302\n/a1/p  /a/p/  302\n/b2  /b/  302\n/b2/p  /b/p/  302\n', 'buildRedirects only existing slugs, sorted by id')
-ck(buildRedirects({ a: 'a1', b: 'b2' }, ['a']) === '/a1  /a/  302\n/a1/p  /a/p/  302\n', 'buildRedirects publishes the venue short link only for a published talk')
+ck(buildRedirects({ a: 'a1', b: 'b2', c: 'c3' }, ['a', 'b']) === '/a1  /a/  302\n/a1/p  /a/p/  302\n/a1/pre-work  /a/pre-work/  302\n/a1/post-work  /a/post-work/  302\n/b2  /b/  302\n/b2/p  /b/p/  302\n/b2/pre-work  /b/pre-work/  302\n/b2/post-work  /b/post-work/  302\n', 'buildRedirects only existing slugs, sorted by id')
+ck(buildRedirects({ a: 'a1', b: 'b2' }, ['a']) === '/a1  /a/  302\n/a1/p  /a/p/  302\n/a1/pre-work  /a/pre-work/  302\n/a1/post-work  /a/post-work/  302\n', 'buildRedirects publishes the venue short link only for a published talk')
 ck(buildRedirects({}, []) === '', 'buildRedirects empty → empty string')
 // A name is one encoded path segment (ticket 04 round 3): never a second field, a fragment or another address.
 ck(publishUrl({ base: 'https://x.pages.dev', slug: 'two words', useShortIds: false }) === 'https://x.pages.dev/two%20words/', 'publishUrl encodes a space')
 ck(publishUrl({ base: 'https://x.pages.dev', slug: 'a#b?c%d/e*', useShortIds: false }) === 'https://x.pages.dev/a%23b%3Fc%25d%2Fe%2A/', 'publishUrl encodes # ? % / *')
-ck(buildRedirects({ 'two words': 'a1' }, ['two words']) === '/a1  /two%20words/  302\n/a1/p  /two%20words/p/  302\n', 'buildRedirects encodes a name with a space: still three fields a line')
+ck(buildRedirects({ 'two words': 'a1' }, ['two words']) === '/a1  /two%20words/  302\n/a1/p  /two%20words/p/  302\n/a1/pre-work  /two%20words/pre-work/  302\n/a1/post-work  /two%20words/post-work/  302\n', 'buildRedirects encodes a name with a space: still three fields a line')
 ck(['my-talk', 'agents-itss-2026-10-06', 'Talk_2.final~x'].every((name) => pathSegment(name) === name), 'an ordinary name is byte for byte itself')
 
 // stampHandoutUrl

@@ -3,6 +3,7 @@ import { IcCheck, IcTrash2 } from './talklist/icons'
 import { EXAMPLE_REMOVAL_TEXT } from '../../../shared/example-vault-removal'
 import GuideChapters, { type GuideChaptersProps } from './GuideChapters'
 import GuideHowItWorks, { type GuideHowProps } from './GuideHowItWorks'
+import OnlineContentGuidelines from './OnlineContentGuidelines'
 import GuideFeatures, { type GuideFeaturesProps } from './GuideFeatures'
 
 // The Guide (onboarding ticket 07; locked drawing states 02 and 03): three segments, and on the
@@ -63,6 +64,7 @@ export default function GuidePane({ segment, onSegment, steps, onStep, chapters,
         )}
         {segment === 'how' && <div data-guide-slot="how-it-works"><GuideHowItWorks {...how} /></div>}
         {segment === 'features' && <div data-guide-slot="features"><GuideFeatures {...features} /></div>}
+        <OnlineContentGuidelines />
       </div>
     </section>
   )

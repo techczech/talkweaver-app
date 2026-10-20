@@ -41,6 +41,7 @@ function compilerMetaReads() {
 }
 
 const options = DECK_OPTION_GROUPS.flatMap((group) => group.options)
+assert(!options.some((option) => option.key === 'prework' || option.key === 'postwork'), 'keys outside the deck (registry outsideDeck) are not Deck settings')
 const declared = new Set(options.flatMap((option) => [option.key, ...(option.aliases ?? [])]))
 const duplicateKeys = [...declared].filter((key) => options.filter((option) => [option.key, ...(option.aliases ?? [])].includes(key)).length > 1)
 assert.deepEqual(duplicateKeys, [], 'Deck option keys and aliases must be unique')

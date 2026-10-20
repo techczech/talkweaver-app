@@ -4,7 +4,7 @@
 
 export const preworkFormStyles = `
 body.pw-open{overflow:hidden}
-.pw-app{position:fixed;inset:0;z-index:950;background:#fdfdfb;color:#17202a;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;box-sizing:border-box;min-width:0}
+.pw-app{position:fixed;inset:0;z-index:950;background:#fff;color:#17202a;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;box-sizing:border-box;min-width:0}
 .pw-app[hidden]{display:none!important}
 .pw-app *{box-sizing:border-box}
 .pw-app svg{width:18px;height:18px;flex:none}

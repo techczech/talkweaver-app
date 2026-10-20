@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createLiveSessionManager } from '../src/main/live-session-manager'
+import { createLiveSessionManager, livePresenterContext } from '../src/main/live-session-manager'
 import { feedbackWallClock, flushLiveSessionHistory, LiveHistoryGoneError, recoverFinalLiveHistory } from '../src/main/live-session-history'
 import { attachDeliveryToPlanned, normaliseRun, persistRun, reactionCountsBySlide, readRun } from '../src/main/runs'
 import { createLiveSessionStore } from '../src/main/live-session-store'
@@ -145,6 +145,81 @@ describe('durable live session ownership', () => {
     expect(restored.clients).toHaveLength(0)
     expect(restored.saved()[0].status).toBe('ended')
     expect(calls).toBe(1)
+  })
+  test('the end of a session bound to a Run is announced once, also when a restart finishes it (work-files ticket 19)', async () => {
+    const ends: any[] = []
+    const h = harness([], async () => 'ended', { onEnded: (reference: any) => ends.push(reference) })
+    h.manager.create(record(), 10)
+    h.manager.bindRun(10, { talkSlug: 'talk-test', runId: 'run-original' })
+    expect(h.manager.endedRun('talk-test', 'run-original', '/test-vault')).toBe(false)
+    await h.manager.end(10)
+    await h.manager.end(10)
+    expect(ends).toEqual([{ talkSlug: 'talk-test', runId: 'run-original', vaultRoot: '/test-vault' }])
+    expect(h.manager.endedRun('talk-test', 'run-original', '/test-vault')).toBe(true)
+    expect(h.manager.endedRun('talk-test', 'another-run', '/test-vault')).toBe(false)
+    // The same talk slug and Run id in another vault is another Run: its session has not ended.
+    expect(h.manager.endedRun('talk-test', 'run-original', '/other-vault')).toBe(false)
+    // A session not bound to a Run announces nothing.
+    const unbound: any[] = []
+    const u = harness([], async () => 'ended', { onEnded: (reference: any) => unbound.push(reference) })
+    u.manager.create(record(), 11)
+    await u.manager.end(11)
+    expect(unbound).toEqual([])
+    // The app quit with End asked and not confirmed: the restart finishes it and announces it then.
+    const offline = harness([], async () => { throw new Error('unavailable') })
+    offline.manager.create(record(), 12)
+    offline.manager.bindRun(12, { talkSlug: 'talk-test', runId: 'run-original' })
+    await offline.manager.end(12)
+    const later: any[] = []
+    const restored = harness(offline.saved(), async () => 'ended', { onEnded: (reference: any) => later.push(reference) })
+    expect(restored.manager.endedRun('talk-test', 'run-original', '/test-vault')).toBe(false)
+    restored.manager.restore()
+    await Promise.resolve(); await Promise.resolve()
+    expect(later).toEqual([{ talkSlug: 'talk-test', runId: 'run-original', vaultRoot: '/test-vault' }])
+    expect(restored.manager.endedRun('talk-test', 'run-original', '/test-vault')).toBe(true)
+  })
+  test('two vaults with the same talk and Run id: Live now and Open live view name the vault (issue 256)', () => {
+    const h = harness()
+    h.manager.create({ ...record(), sessionId: 'session-a', vaultRoot: '/vault-a' }, 21)
+    h.manager.bindRun(21, { talkSlug: 'talk-test', runId: 'run-same' })
+    expect(h.manager.liveRuns()).toEqual([{ talkSlug: 'talk-test', runId: 'run-same', vaultRoot: '/vault-a' }])
+    expect(h.manager.windowFor('talk-test', 'run-same', '/vault-a')).toBe(21)
+    // Vault B's copy of the Run is not being presented: its Open live view finds no window, never vault A's.
+    expect(h.manager.windowFor('talk-test', 'run-same', '/vault-b')).toBe(null)
+    h.manager.create({ ...record(), sessionId: 'session-b', vaultRoot: '/vault-b' }, 22)
+    h.manager.bindRun(22, { talkSlug: 'talk-test', runId: 'run-same' })
+    expect(h.manager.windowFor('talk-test', 'run-same', '/vault-b')).toBe(22)
+    expect(h.manager.windowFor('talk-test', 'run-same', '/vault-a')).toBe(21)
+  })
+  test('vault A first, vault B\'s same-id Run presented: the session is B\'s, and A\'s session never joins B\'s presenter (issue 256)', () => {
+    // The vault registry with A registered first (the current vault); each outline resolves to the vault holding it.
+    const vaults = { resolve: (path: string) => path.startsWith('/vault-a/') ? { vault: { root: '/vault-a' } }
+      : path.startsWith('/vault-b/') ? { vault: { root: '/vault-b' } } : null }
+    const contextA = livePresenterContext(vaults, '/vault-a/talk-test/talk-test-outline.md', 'talk-test', 'https://example.test/join')
+    const contextB = livePresenterContext(vaults, '/vault-b/talk-test/talk-test-outline.md', 'talk-test', 'https://example.test/join')
+    expect(contextB.vaultRoot).toBe('/vault-b')
+    expect(livePresenterContext(vaults, '/elsewhere/talk-test-outline.md', 'talk-test', null).vaultRoot).toBe(null)
+
+    // B's Run presented and taken live, as live:go records it: B shows Live, A does not; A's Open live view finds nothing.
+    const h = harness()
+    expect(h.manager.attach(31, contextB.talkSlug, contextB.vaultRoot)).toBe(null)
+    h.manager.create({ ...record(), sessionId: 'session-b', talkSlug: contextB.talkSlug, vaultRoot: contextB.vaultRoot }, 31)
+    h.manager.bindRun(31, { talkSlug: 'talk-test', runId: 'run-same' })
+    expect(h.manager.liveRuns()).toEqual([{ talkSlug: 'talk-test', runId: 'run-same', vaultRoot: '/vault-b' }])
+    expect(h.manager.windowFor('talk-test', 'run-same', '/vault-b')).toBe(31)
+    expect(h.manager.windowFor('talk-test', 'run-same', '/vault-a')).toBe(null)
+
+    // A's session kept live with its presenter closed: B's presenter (re)attaching never takes it over, nor is it
+    // "in use" for B; A's own presenter reattaches to it.
+    const k = harness()
+    k.manager.create({ ...record(), sessionId: 'session-a', talkSlug: contextA.talkSlug, vaultRoot: contextA.vaultRoot }, 30)
+    k.manager.bindRun(30, { talkSlug: 'talk-test', runId: 'run-same' })
+    k.manager.detach(30)
+    expect(k.manager.attach(32, contextB.talkSlug, contextB.vaultRoot)).toBe(null)
+    expect(k.manager.record(32)).toBe(null)
+    expect(k.manager.attach(33, contextA.talkSlug, contextA.vaultRoot)?.sessionId).toBe('session-a')
+    expect(k.manager.inUse(contextB.talkSlug, contextB.vaultRoot, 32)).toBe(false)
+    expect(k.manager.inUse(contextA.talkSlug, contextA.vaultRoot, 32)).toBe(true)
   })
   test('an unavailable Run is retried after the remote session has safely ended', async () => {
     let available = false, writes = 0

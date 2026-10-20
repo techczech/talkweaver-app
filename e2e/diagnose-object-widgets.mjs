@@ -141,7 +141,7 @@ const outlinePath = join(talkDir, 'object-widget-dom-fixture-outline.md')
 mkdirSync(talkDir, { recursive: true })
 mkdirSync(userData, { recursive: true })
 writeFileSync(outlinePath, FIXTURE)
-writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault }, null, 2))
+writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault, editorViewMode: 'markdown' }, null, 2))
 
 let app = null
 let page = null
@@ -596,6 +596,10 @@ try {
     `failed=${JSON.stringify(failedSeen)}`
   )
 
+  // Park the caret at the top so no earlier widget stays selected and is credited to the wrong slide.
+  await page.locator('.cm-content').focus()
+  await page.keyboard.press('Meta+Home')
+  await page.waitForTimeout(300)
   const emptyTitles = ['Empty Mermaid', 'Empty SVG']
   const emptySeen = EXPECTED_WIDGET_TITLES.filter((title) => accumulated.get(title)?.empty)
   let emptyNeutral =

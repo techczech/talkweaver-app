@@ -899,9 +899,28 @@ await check('a slide\'s recognised-text lookup names only pictures really inside
   for (const ref of [secrets.image.path, `../../outside/${secrets.image.name}`, `%2e%2e/%2e%2e/outside/${secrets.image.name}`, `link-out-image.png`, `dir-out/${secrets.image.name}`, 'img-0000abc']) {
     assert.equal(resolveImageAbs(ref, talk, vault), null, ref)
   }
-  // …and the pass that fills the text cache skips a picture that is a link out of the vault.
-  const { text } = mainFunction('gatherVaultImages')
-  assert.match(text, /pathStaysInside\(vaultRoot, full\) && statSync\(full\)\.isFile\(\)/)
+  // …and the pass that fills the text cache skips a picture that is a link out of the vault. The pass
+  // moved to src/main/image-search/vault-pictures.ts (index.ts keeps a thin wrapper), so it is run there.
+  const { gatherVaultImages } = await import(pathToFileURL(join(process.cwd(), 'src/main/image-search/vault-pictures.ts')).href)
+  const gv = join(base, 'gather-vault')
+  const gvOutside = join(base, 'gather-outside')
+  await mkdir(join(gv, '_assets'), { recursive: true })
+  await mkdir(join(gv, 'own-talk', 'assets'), { recursive: true })
+  await mkdir(gvOutside, { recursive: true })
+  await writeFile(join(gvOutside, 'secret.png'), PNG_1X1)
+  await writeFile(join(gv, '_assets', 'img-aaaaaaa1.png'), PNG_1X1)
+  await writeFile(join(gv, 'own-talk', 'assets', 'own.png'), PNG_1X1)
+  await symlink(join(gvOutside, 'secret.png'), join(gv, '_assets', 'img-bbbbbbb2.png'))
+  await symlink(join(gvOutside, 'secret.png'), join(gv, 'own-talk', 'assets', 'link.png'))
+  await mkdir(join(gvOutside, 'folder'), { recursive: true })
+  await writeFile(join(gvOutside, 'folder', 'dir.png'), PNG_1X1)
+  await mkdir(join(gv, 'linked-talk'), { recursive: true })
+  await symlink(join(gvOutside, 'folder'), join(gv, 'linked-talk', 'assets'))
+  const named = gatherVaultImages(gv, [join(gv, 'own-talk', 'own-talk-outline.md'), join(gv, 'linked-talk', 'linked-talk-outline.md')])
+  assert.ok(named.includes(join(gv, '_assets', 'img-aaaaaaa1.png')), 'a plain pool picture is named')
+  assert.ok(named.includes(join(gv, 'own-talk', 'assets', 'own.png')), 'a plain talk picture is named')
+  assert.equal(named.length, 2, 'nothing else is named: ' + JSON.stringify(named))
+  assert.equal(named.some((p) => p.includes('gather-outside')), false, 'no picture outside the vault is named, through a file or a folder link')
 })
 
 await check('the instant-slide path opens no file a talk names: no allowed folder, so no picture digest', async () => {

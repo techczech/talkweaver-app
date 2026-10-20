@@ -15,6 +15,7 @@ import { iconRowPerRow, cardsTooNarrow } from "./narrow-columns.mjs";
 import { VALUE_TRIGGER_DICTIONARY } from "../triggers.mjs";
 import { renderSimulation } from "./simulation-layout.mjs";
 import { chartsFromObjectTokens, featurizeRemainingLists, mapQuoteSlideBlocks } from "./slide-quote-reading.mjs";
+import { compareModel, contrastModel, headIconKey, rowIconKey } from "./vs-panels.mjs";
 
 export { parseChartItems } from "./06-chart-renderer.mjs";
 
@@ -28,6 +29,155 @@ export async function loadCompilerSvgSanitiser() {
     sanitiseSvgForCompiler = vendor.sanitiseSvgForCompiler;
   }
   return sanitiseSvgForCompiler;
+}
+
+// The two-panel "vs" drawing (ADR-0039, 0.41 ticket 08), shared by compare and contrast. `model` is
+// vs-panels.mjs's compareModel / contrastModel. A panel is a head and its rows; every row carries one icon
+// (a row no icon was found for is drawn without one; the compiler warns, vs-panels.mjs). Rows of the two
+// panels share a grid, so a row that wraps keeps its partner level (CSS: skin/zz-scene-compare-contrast.css).
+function vsHeadHtml(panel, side) {
+  if (!panel.head) return "";
+  const key = headIconKey(panel.head);
+  const icon = key && iconSvg(key) ? `<div class="vs-head-ico">${iconSvg(key)}</div>` : "";
+  return `<div class="vs-head ${side}">${icon}<div class="vs-head-text">${renderInline(panel.head)}</div></div>`;
+}
+function vsRowHtml(row, side, last, vocab) {
+  const key = rowIconKey(row, vocab);
+  const svg = key ? iconSvg(key) : "";
+  const icon = svg ? `<div class="vs-ico">${svg}</div>` : "";
+  return `<div class="vs-row ${side}${last ? " last" : ""}${svg ? "" : " vs-bare"}">${icon}<div class="vs-text">${renderInline(row.text)}</div></div>`;
+}
+function vsRowTracks(model) {
+  return `${model.headed ? "auto " : ""}repeat(${model.rowCount}, auto)`;
+}
+function renderContrastPanels(model, deckUsed) {
+  const [left, right] = model.panels;
+  const headRow = model.headed ? 1 : 0;
+  const bg = '<div class="vs-bg L subtle-box"></div><div class="vs-bg R subtle-box hue-2"></div><div class="vs-disc" aria-hidden="true">vs</div>';
+  const heads = model.headed ? vsHeadHtml(left, "L") + vsHeadHtml(right, "R") : "";
+  const pairs = Array.from({ length: model.rowCount }, (_, i) => {
+    const last = i === model.rowCount - 1;
+    const l = left.rows[i] ? vsRowHtml(left.rows[i], "L", last, deckUsed) : "";
+    const r = right.rows[i] ? vsRowHtml(right.rows[i], "R", last, deckUsed) : "";
+    return `<div class="contrast-pair vs-pair" style="grid-row:${i + 2 + headRow}">${l}${r}</div>`;
+  }).join("");
+  return `<div class="contrast-grid contrast-vs vs-grid${model.long ? " vs-long" : ""}${model.headed ? " vs-headed" : ""}" style="--vs-rows:${model.rowCount};grid-template-rows:var(--vs-pad) ${vsRowTracks(model)} var(--vs-pad)">${bg}${heads}${pairs}</div>`;
+}
+function renderCompareHalves(model, deckUsed) {
+  const sides = [["L", "half-a", ""], ["R", "half-b", " hue-2"]];
+  const panels = model.panels.map((panel, i) => {
+    const [side, half, hue] = sides[i];
+    const rows = panel.rows.map((row, k) => vsRowHtml(row, side, k === panel.rows.length - 1, deckUsed)).join("");
+    return `<section class="compare-half ${half} vs-panel ${side} subtle-box${hue}" style="grid-row:1 / span ${model.rowCount + (model.headed ? 1 : 0)}">${vsHeadHtml(panel, side)}${rows}</section>`;
+  });
+  return `<div class="compare-grid vs-grid compare-vs${model.long ? " vs-long" : ""}" style="--vs-rows:${model.rowCount};grid-template-rows:${vsRowTracks(model)}">${panels[0]}<div class="vs-disc" aria-hidden="true">vs</div>${panels[1]}</div>`;
+}
+
+// Cycle ring geometry (ADR-0039), in the units of a 1680-wide drawing: nodes on an ellipse, clockwise from the
+// top; node boxes W wide and H tall (uniform; H grows with the longest text). bisect(i, dir) walks along the
+// ring from node i's centre to where it leaves (dir 1) or enters (dir -1) that node's rectangle.
+function cycleGeometry(nodes) {
+  const n = nodes.length;
+  const W = n <= 5 ? 450 : n === 6 ? 400 : 340;
+  const FS = n <= 5 ? 37.2 : n === 6 ? 34 : 30; // body size in drawing units (the type floor at full width)
+  const textW = W - 52;
+  const perLine = Math.max(6, Math.floor(textW / (FS * 0.56)));
+  const linesOf = (text) => {
+    let lines = 1;
+    let used = 0;
+    for (const word of String(text).replace(/<[^>]*>/g, "").split(/\s+/).filter(Boolean)) {
+      const len = word.length;
+      if (used === 0) used = len;
+      else if (used + 1 + len <= perLine) used += 1 + len;
+      else { lines += 1; used = len; }
+      while (used > perLine) { lines += 1; used -= perLine; }
+    }
+    return lines;
+  };
+  let H = 164;
+  for (const node of nodes) {
+    const stage = String(node.text).replace(/:\s*$/, "");
+    const body = node.cap ? node.cap : stage;
+    const label = node.cap ? 24 * 1.25 + 8 : 0;
+    H = Math.max(H, 38 + label + linesOf(body) * FS * 1.15);
+  }
+  H = Math.ceil(H);
+  const rx = 620;
+  const ry = 280;
+  const cx = 840;
+  const cy = 407;
+  const ang = (i) => ((-90 + (i * 360) / n) * Math.PI) / 180;
+  const point = (t) => [cx + rx * Math.cos(t), cy + ry * Math.sin(t)];
+  const centres = nodes.map((_, i) => point(ang(i)));
+  const top = Math.min(...centres.map((c) => c[1])) - H / 2;
+  const bottom = Math.max(...centres.map((c) => c[1])) + H / 2;
+  const left = Math.min(...centres.map((c) => c[0])) - W / 2;
+  const right = Math.max(...centres.map((c) => c[0])) + W / 2;
+  // Shift so the bounding box of the nodes starts at 0,0 (the ring box hugs the nodes).
+  const dx = -left;
+  const dy = -top;
+  const shifted = (t) => { const [x, y] = point(t); return [x + dx, y + dy]; };
+  const outside = (t, i) => {
+    const [x, y] = shifted(t);
+    return Math.abs(x - (centres[i][0] + dx)) > W / 2 || Math.abs(y - (centres[i][1] + dy)) > H / 2;
+  };
+  const bisect = (i, dir) => {
+    let lo = 0;
+    let hi = (dir * 2 * Math.PI) / n;
+    for (let q = 0; q < 50; q += 1) {
+      const mid = (lo + hi) / 2;
+      if (outside(ang(i) + mid, i)) hi = mid; else lo = mid;
+    }
+    return hi;
+  };
+  return {
+    n, W, H, rx, ry, ang, bisect,
+    point: shifted,
+    centre: (i) => [centres[i][0] + dx, centres[i][1] + dy],
+    vbW: Math.round((right - left) * 100) / 100,
+    vbH: Math.round((bottom - top) * 100) / 100
+  };
+}
+
+// Timeline (spine and pills) band, ADR-0039: the stops sit on one track; each stop's text hangs above or below
+// it. The track box is as tall as its tallest card above plus its tallest below (plus the pill and the stem), so the
+// block, top text to bottom text, is what the band centres. Heights are estimated here (cqw): lines from the
+// character count against the card width, at the sizes skin/zz-scene-cycle-equation-timeline.css sets.
+function timelineBand(stops, sides, cols) {
+  const scale = spineFontScale(cols);
+  const cardW = Math.min(25, 166 / (cols + 1.1)); // cqw, as --tl-w
+  const textW = cardW - 1.67;
+  const bodyFs = Math.max(1.9375, 2.2917 * scale);
+  const detailFs = Math.max(1.9375, bodyFs * 0.72);
+  const linesOf = (text, fs) => {
+    const perLine = Math.max(4, Math.floor(textW / (fs * 0.55)));
+    let lines = 1;
+    let used = 0;
+    for (const word of String(text).replace(/<[^>]*>/g, "").split(/\s+/).filter(Boolean)) {
+      if (used === 0) used = word.length;
+      else if (used + 1 + word.length <= perLine) used += 1 + word.length;
+      else { lines += 1; used = word.length; }
+      while (used > perLine) { lines += 1; used -= perLine; }
+    }
+    return lines;
+  };
+  const heightOf = (stop) => {
+    const lines = [stop.text, ...(stop.details || [])].filter(Boolean);
+    if (!lines.length) return 0;
+    let h = 1.04; // vertical padding of the card
+    lines.forEach((line, i) => {
+      const fs = i === 0 ? bodyFs : detailFs;
+      h += linesOf(line, fs) * fs * (i === 0 ? 1.2 : 1.25) + (i ? fs * 0.3 : 0);
+    });
+    return h;
+  };
+  let above = 0;
+  let below = 0;
+  stops.forEach((stop, i) => {
+    const h = heightOf(stop);
+    if (sides[i] === "above") above = Math.max(above, h); else below = Math.max(below, h);
+  });
+  return { above: Math.ceil(above * 100) / 100, below: Math.ceil(below * 100) / 100 };
 }
 
 // Snake-flow row distribution (2026-06-12): max 4 nodes per row, rows as EVEN as possible so
@@ -246,11 +396,19 @@ function lucideIconBody(name) {
   return iconSvg(`lucide:${name}`).replace(/^<svg[^>]*>/, "").replace(/<\/svg>\s*$/, "");
 }
 
+// The process / steps arrow (ADR-0039): the shaft starts at the svg's left edge and the head's tip is its right
+// edge, so an arrow that fills its gap runs from one box border to the next. Drawn at 76 x 18 and scaled.
+const PROCESS_ARROW_SVG = `<svg viewBox="0 0 76 18" aria-hidden="true" focusable="false"><path d="M0 9 H62" stroke="currentColor" stroke-width="4" fill="none"/><path d="M60 1 L76 9 L60 17 Z" fill="currentColor"/></svg>`;
+const PROCESS_ARROW_HTML = `<span class="proc-arrow" aria-hidden="true">${PROCESS_ARROW_SVG}</span>`;
+
 export function renderBlock(block, deckUsed = null, frameIcons = "off") {
   if (typeof block === "string") return `<p>${escapeHtml(block)}</p>`;
   if (!block || typeof block !== "object") return "";
   if (block.html) return withoutScripts(block.html);
   const text = block.text ?? block.content ?? block.body ?? "";
+  // Work-files ticket 25: a paragraph of a Run's extra slide (run-extras.mjs extraSlideBlocks) is plain text as
+  // typed: escaped, never read as inline markdown (no emphasis, no link, no auto-linked address).
+  if (block.type === "paragraph" && block.plain === true) return text ? `<p class="content-p">${escapeHtml(String(text))}</p>` : "";
   if (block.type === "heading" || block.type === "title") return `<h2>${escapeHtml(text)}</h2>`;
   if (block.type === "subheading") return `<h3>${renderInline(text)}</h3>`;
   if (block.type === "quote" && block.practice) {
@@ -347,6 +505,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     if (f.controls || !f.autoplay) attrs.push("controls"); // autoplay clips are chrome-less unless asked
     if (!f.autoplay) attrs.push('preload="metadata"');
     const attrStr = attrs.length ? " " + attrs.join(" ") : "";
+    const videoRef = typeof block.videoRef === "string" && block.videoRef ? ` data-video-ref="${escapeHtml(block.videoRef)}"` : "";
     const poster = block.poster ? ` poster="${escapeHtml(block.poster)}"` : "";
     const assetOnly = block.assetOnly ? ` data-video-asset-only data-video-name="${escapeHtml(block.videoName || referenceFileName(block.src))}"` : "";
     const caption = block.caption ? `<figcaption>${renderInline(block.caption)}</figcaption>` : "";
@@ -357,7 +516,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     const enlarge = `<button class="video-enlarge" type="button" title="Enlarge video (v)" aria-label="Enlarge video">\u2922</button>`;
     // 0.38 ticket 05: {play-on-next} — the figure is a step of its slide (lib/media-steps.mjs).
     const playOnNext = f.playOnNext ? " data-play-on-next" : "";
-    return `<figure class="slide-figure slide-video"${playOnNext}${mediaAspectAttrs(block)}${assetOnly}><video${attrStr}${poster} src="${escapeHtml(block.src)}"></video>${enlarge}${caption}</figure>`;
+    return `<figure class="slide-figure slide-video"${playOnNext}${mediaAspectAttrs(block)}${assetOnly}><video${attrStr}${poster} src="${escapeHtml(block.src)}"${videoRef}></video>${enlarge}${caption}</figure>`;
   }
   if (block.type === "audio") return renderAudioChip(block);
   if (block.type === "qr") {
@@ -486,16 +645,18 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
       if (mode === "pills") {
         // PILLS (D): the date PILL sits on the spine and IS the stop marker (no separate dot —
         // the pill covers it). One card hangs below each stop. Uniform — no alternation.
-        const inner = stops.map((s) => `<li class="tl-spine-stop" data-side="below" data-tl-stop>${dateNode("tl-spine-pill", s.date)}${lead}${cardOf(s)}</li>`).join("");
-        return `<div class="timeline timeline-pills" data-timeline-mode="pills" data-tl-stops="${stops.length}" style="--tl-spine-cols:${cols};--tl-spine-scale:${scale}"><ol class="tl-spine-track">${inner}</ol></div>`;
+        const inner = stops.map((s, idx) => `<li class="tl-spine-stop" data-side="below" data-tl-stop style="--tl-i:${stops.length === 1 ? 0.5 : idx}">${dateNode("tl-spine-pill", s.date)}${lead}${cardOf(s)}</li>`).join("");
+        const band = timelineBand(stops, stops.map(() => "below"), cols);
+        return `<div class="timeline timeline-pills" data-timeline-mode="pills" data-tl-stops="${stops.length}" style="--tl-spine-cols:${cols};--tl-spine-scale:${scale};--tl-above:${band.above};--tl-below:${band.below}"><ol class="tl-spine-track">${inner}</ol></div>`;
       }
       // SPINE (A): card alternates above/below by parity; date label sits on the spine.
       const inner = stops.map((s, idx) => {
         const side = idx % 2 === 0 ? "above" : "below"; // even index → card above the spine
         const label = s.date ? `<p class="tl-spine-date" data-tl-date>${renderInline(s.date)}</p>` : "";
-        return `<li class="tl-spine-stop" data-side="${side}" data-tl-stop>${cardOf(s)}${label}${dot}${lead}</li>`;
+        return `<li class="tl-spine-stop" data-side="${side}" data-tl-stop style="--tl-i:${stops.length === 1 ? 0.5 : idx}">${cardOf(s)}${label}${dot}${lead}</li>`;
       }).join("");
-      return `<div class="timeline timeline-spine" data-timeline-mode="spine" data-tl-stops="${stops.length}" style="--tl-spine-cols:${cols};--tl-spine-scale:${scale}"><ol class="tl-spine-track">${inner}</ol></div>`;
+      const band = timelineBand(stops, stops.map((_, idx) => (idx % 2 === 0 ? "above" : "below")), cols);
+      return `<div class="timeline timeline-spine" data-timeline-mode="spine" data-tl-stops="${stops.length}" style="--tl-spine-cols:${cols};--tl-spine-scale:${scale};--tl-above:${band.above};--tl-below:${band.below}"><ol class="tl-spine-track">${inner}</ol></div>`;
     }
     if (mode === "compact") {
       // COMPACT: dense date-led rows in a two-column flow; a stop's detail lines follow it as
@@ -611,6 +772,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     const classes = ["slide-table"];
     if (block.headerRow === false) classes.push("table-noheader");
     if (block.columnRules === false) classes.push("table-nocolumns");
+    if (block.firstColumnAccent === false) classes.push("table-plain-first");
     const renderRow = (cells, tag) => `<tr>${cells.map((c, i) => `<${tag}${numClass(i)}>${renderInline(c)}</${tag}>`).join("")}</tr>`;
     // {table-header=off}: the first row IS a plain row — it lives in tbody with the others (and
     // steps with them in reveal mode) rather than as a de-styled thead.
@@ -648,7 +810,34 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
         // bucket from the role string only if an old shape somehow lacks `cls`.
         const cls = tn.cls || (TRACE_ROLES[tn.role] ? TRACE_ROLES[tn.role].cls : autoSpeakerClass(tn.role || ""));
         const label = tn.label || (TRACE_ROLES[tn.role] ? TRACE_ROLES[tn.role].label : tn.role || "");
-        return `<div class="turn"><div class="role ${escapeHtml(cls)}">${escapeHtml(label)}</div><div class="body">${escapeHtml(tn.body || "")}</div></div>`;
+        // ADR-0039 / 0.41 ticket 11: each turn names its kind for the terminal look of the drawing
+        // (after/18-trace.html): the user's prompt box, a model's call (dot + bold name), a result
+        // under an elbow, the model's answer, reasoning; any other speaker keeps its own colour.
+        // Which model turns are calls (the drawing marks every `model → harness` turn as one):
+        //   - routed to the user (`model → user`): an answer, never a call, whatever it starts with;
+        //   - routed to the harness (`model → harness`): a call, whatever it says;
+        //   - otherwise a call when the body is one call expression: `name(...)` with no space before
+        //     the bracket and nothing after the closing one (so `Note(s): read the file.` is prose),
+        //     or a `<tool_call name="..." .../>` tag.
+        // The function name (the expression's name, or the tag's name attribute) is marked .trace-fn.
+        const body = String(tn.body || "");
+        const route = String(label);
+        const toUser = /(?:→|->)\s*user\b/i.test(route);
+        const toHarness = /(?:→|->)\s*harness\b/i.test(route);
+        const tag = /^(\s*<tool_call\b[^>]*?\bname\s*=\s*(["']))(.*?)\2/.exec(body);
+        const expr = /^(\s*)([A-Za-z_][\w.-]*)\(/.exec(body);
+        const fnMark = tag ? { before: tag[1], name: tag[3] }
+          : expr && /\)\s*;?\s*$/.test(body) ? { before: expr[1], name: expr[2] } : null;
+        const isCall = cls === "model" && !toUser && (toHarness || Boolean(fnMark));
+        const kind = cls === "user" ? "trace-prompt"
+          : cls === "reasoning" ? "trace-thinking"
+            : cls === "harness" || cls === "tool" ? "trace-result"
+              : cls === "model" ? (isCall ? "trace-call" : "trace-answer")
+                : "trace-speaker";
+        const bodyHtml = isCall && fnMark
+          ? `${escapeHtml(fnMark.before)}<span class="trace-fn">${escapeHtml(fnMark.name)}</span>${escapeHtml(body.slice(fnMark.before.length + fnMark.name.length))}`
+          : escapeHtml(body);
+        return `<div class="turn ${kind}"><div class="role ${escapeHtml(cls)}">${escapeHtml(label)}</div><div class="body">${bodyHtml}</div></div>`;
       }).join("");
       return `<div class="trace">${rows}</div>`;
     }
@@ -662,6 +851,11 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     return `<pre class="slide-code${langClass}" data-code-fit="base" data-code-lines="${Number(codeLayout.lines) || 0}" data-code-max-line="${Number(codeLayout.maxLineChars) || 0}">${tag}<code>${highlightCode(block.text || "", block.lang)}</code></pre>`;
   }
   if (block.type === "contrast") {
+    // ADR-0039 / 0.41 ticket 08: a bare {contrast} is two panels joined by a "vs" disc, rows paired
+    // (both sides of a row arrive together: each pair is still a `.contrast-grid > .contrast-pair`).
+    // An explicit variant ({contrast=ledger|rows|tint|flip|cards}) keeps its own device below.
+    const panelsModel = contrastModel(block);
+    if (panelsModel) return renderContrastPanels(panelsModel, deckUsed);
     // Opt-in contrast vocabulary from the 2026-07-13 design round. Explicit variants win at
     // every pair count, and all preserve `.contrast-grid > .contrast-pair` plus first/last
     // span ordering for stepping and projection.
@@ -931,7 +1125,10 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
       const cap = c.cap ? `<span class="stat-cap">${renderInline(c.cap)}</span>` : "";
       return `<div class="stat">${value}<span class="stat-label">${renderInline(c.label)}</span>${cap}</div>`;
     }).join("");
-    return `<div class="stats-row stats-${cells.length}">${cellHtml}</div>`;
+    // ADR-0039 / 0.41 ticket 10: --st-len is the longest figure's length in characters, so the stylesheet can step a
+    // long figure ("10,000,000") down until it fits its column on one line (skin/zz-scene-stats-chart-table.css).
+    const longest = Math.max(1, ...cells.map((c) => String(c.value || "").replace(/<[^>]*>/g, "").length));
+    return `<div class="stats-row stats-${cells.length}" style="--st-len:${longest}">${cellHtml}</div>`;
   }
   // ── Layout batch 2 (2026-06-12) — chart / cycle / equation. All build-time HTML/SVG:
   // positions and sizes computed here (deterministic, ADR-0014 clean), no runtime drawing,
@@ -991,35 +1188,52 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     return `<table class="timetable"${schedAttr}><tbody>${body}</tbody></table>`;
   }
   if (block.type === "cycle") {
-    // Circular arrow flow: node cards absolutely positioned on an ellipse with BUILD-TIME %
-    // coordinates. Arcs interleave with nodes in DOM order (SD-13): node0, arcSvg0, node1,
-    // arcSvg1, ..., nodeN-1, arcSvgN-1. Each arc is its own positioned SVG so MODE_SELECTOR
-    // can step nodes and arcs as separate beats (node reveals first, its outgoing arc second).
+    // Boxed nodes on a ring, joined by arcs OF THE RING (ADR-0039; drawing renders/after/09-cycle.png).
+    // Node boxes are a fixed width and a uniform minimum height worked out here from the text, so each
+    // arc's two ends are computed at build time by bisection on the node rectangles: an arc leaves the
+    // ring where it exits one box and ends where it enters the next, i.e. exactly on the two borders
+    // (test:cycle-equation-arcs). Arcs interleave with nodes in DOM order (SD-13): node0, arc0, node1,
+    // arc1 ... so MODE_SELECTOR steps a node first and its outgoing arc second. A node with a caption
+    // reads label (the stage) over body (the caption); a node without one is its stage as body.
     const nodes = (block.nodes || []).filter((n) => n && n.text);
     if (!nodes.length) return "";
     const n = nodes.length;
-    const RX = 380, RY = 230, CX = 500, CY = 310;
-    // Angular clearance around each node: enough that arcs never touch the cards, small
-    // enough that the arrows still read as a connected ring (stubby arcs look detached).
-    const gapDeg = Math.min(26, 8 + 56 / n);
-    const arcPath = (i) => {
-      const a0 = -90 + (360 / n) * i + gapDeg;
-      const a1 = -90 + (360 / n) * (i + 1) - gapDeg;
-      const pt = (a) => `${(CX + RX * Math.cos((a * Math.PI) / 180)).toFixed(1)} ${(CY + RY * Math.sin((a * Math.PI) / 180)).toFixed(1)}`;
-      return `M ${pt(a0)} A ${RX} ${RY} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${pt(a1)}`;
+    const G = cycleGeometry(nodes);
+    const f = (v) => v.toFixed(2);
+    const arcSvg = (i) => {
+      if (n < 2) return "";
+      const j = (i + 1) % n;
+      const t1 = G.ang(i) + G.bisect(i, 1);
+      const t2 = G.ang(i) + (2 * Math.PI) / n + G.bisect(j, -1);
+      const [x1, y1] = G.point(t1);
+      const [x2, y2] = G.point(t2);
+      // The arrowhead is drawn here, not as an SVG marker: a marker is found by id, and a hidden slide's copy of
+      // the same id would win. Its tip is the arc's end (on the border of the next box); the line stops at the
+      // head's base so no stub shows past the tip.
+      const HEAD = 16;
+      const HALF = 8;
+      const tx = -G.rx * Math.sin(t2);
+      const ty = G.ry * Math.cos(t2);
+      const tl = Math.hypot(tx, ty);
+      const ux = tx / tl;
+      const uy = ty / tl;
+      const bx = x2 - ux * HEAD;
+      const by = y2 - uy * HEAD;
+      const lineEnd = G.point(t2 - (HEAD - 2) / tl);
+      const path = `M${f(x1)} ${f(y1)} A${G.rx} ${G.ry} 0 0 1 ${f(lineEnd[0])} ${f(lineEnd[1])}`;
+      const head = `M${f(x2)} ${f(y2)} L${f(bx - uy * HALF)} ${f(by + ux * HALF)} L${f(bx + uy * HALF)} ${f(by - ux * HALF)} Z`;
+      return `<svg class="cycle-arc-svg" viewBox="0 0 ${G.vbW} ${G.vbH}" aria-hidden="true"><path class="cycle-arc" d="${path}"/><path class="cycle-head" d="${head}"/></svg>`;
     };
-    const DEFS = `<defs><marker id="cycleArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z"/></marker></defs>`;
-    const arcSvg = (i) => `<svg class="cycle-arc-svg" viewBox="0 0 1000 620" aria-hidden="true">${DEFS}<path class="cycle-arc" d="${arcPath(i)}" marker-end="url(#cycleArrow)"/></svg>`;
     const interleavedHtml = nodes.map((node, i) => {
-      const ang = (-90 + (360 / n) * i) * (Math.PI / 180);
-      const left = (50 + 38 * Math.cos(ang)).toFixed(2);
-      const top = (50 + 37 * Math.sin(ang)).toFixed(2);
-      const cap = node.cap ? `<span class="cycle-cap">${renderInline(node.cap)}</span>` : "";
+      const [x, y] = G.centre(i);
       const stage = String(node.text).replace(/:\s*$/, "");
-      const nodeDiv = `<div class="cycle-node" style="left:${left}%;top:${top}%"><span class="cycle-stage">${renderInline(stage)}</span>${cap}</div>`;
+      const inner = node.cap
+        ? `<span class="cycle-stage">${renderInline(stage)}</span><span class="cycle-cap">${renderInline(node.cap)}</span>`
+        : `<span class="cycle-cap">${renderInline(stage)}</span>`;
+      const nodeDiv = `<div class="cycle-node subtle-box subtle-box-neutral" style="left:${f((x / G.vbW) * 100)}%;top:${f((y / G.vbH) * 100)}%">${inner}</div>`;
       return nodeDiv + arcSvg(i);
     }).join("");
-    return `<div class="cycle-diagram">${interleavedHtml}</div>`;
+    return `<div class="cycle-diagram" style="--cy-vw:${G.vbW};--cy-vh:${G.vbH};--cy-nw:${G.W};--cy-nh:${G.H}">${interleavedHtml}</div>`;
   }
   if (block.type === "equation") {
     // Converging relationship: operand discs joined by accent + glyphs, an arrow into a
@@ -1031,8 +1245,8 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
         : `<span class="eq-op eq-arrow" aria-hidden="true">→</span>`;
       return `<span class="eq-unit"><span class="eq-term">${renderInline(o)}</span>${op}</span>`;
     }).join("");
-    const shape = ["pills", "circle", "square", "oval"].includes(block.shape) ? block.shape : "pills";
-    return `<div class="equation-row equation-${shape}">${terms}<span class="eq-term eq-result">${renderInline(block.result || "")}</span></div>`;
+    const shape = ["pills", "circle", "square", "oval"].includes(block.shape) ? block.shape : "circle";
+    return `<div class="equation-row equation-${shape}" style="--eq-n:${operands.length + 1}">${terms}<span class="eq-term eq-result">${renderInline(block.result || "")}</span></div>`;
   }
   if (block.type === "process") {
     // Numbered-circle agenda strip: accent discs on a connector line, label below, an optional
@@ -1040,18 +1254,29 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     // lines. The classic "Plan for the day" PPT shape.
     const nodes = (block.nodes || []).filter((n) => n && n.text);
     if (!nodes.length) return "";
-    const stepHtml = nodes.map((n, i) => {
+    // ADR-0039 / 0.41 ticket 06: each step is a subtle box (hues cycle accent, hue-2, hue-3) with its number
+    // and, when the icon decider resolves every step, an icon; an arrow element sits in the gap between
+    // two boxes and fills it (skin/zz-scene-icon-row-process.css), so its ends lie on the box borders.
+    const procParts = nodes.map((n) => {
       const t = String(n.text).trim();
       // `· time` tail — any space-surrounded dash works too (last occurrence wins).
       const procSeps = [...t.matchAll(/\s[·—–-]\s/g)];
       const sepMatch = procSeps.length ? procSeps[procSeps.length - 1] : null;
-      const label = sepMatch ? t.slice(0, sepMatch.index).trim() : t;
-      const time = sepMatch ? `<span class="proc-time">${renderInline(t.slice(sepMatch.index + sepMatch[0].length).trim())}</span>` : "";
+      return { label: sepMatch ? t.slice(0, sepMatch.index).trim() : t, time: sepMatch ? t.slice(sepMatch.index + sepMatch[0].length).trim() : "" };
+    });
+    const procOverrides = resolveIconOverrides(procParts.map((x) => x.label), block.iconOverrides, deckUsed && deckUsed.iconMap);
+    const { icons: procIcons } = decideFeatureListStyle(procParts.map((x) => x.label), false, deckUsed, "icons", procOverrides);
+    const stepHtml = nodes.map((n, i) => {
+      const { label, time: timeText } = procParts[i];
+      const time = timeText ? `<span class="proc-time">${renderInline(timeText)}</span>` : "";
       const kids = (n.children || []).filter((c) => c && c.text);
       const details = kids.length
         ? `<ul class="proc-details">${kids.map((c) => `<li>${renderInline(c.text)}</li>`).join("")}</ul>`
         : "";
-      return `<div class="proc-step"><span class="proc-num">${i + 1}</span><span class="proc-label">${renderInline(label)}</span>${time}${details}</div>`;
+      const icon = procIcons ? `<span class="proc-icon">${iconSvg(procIcons[i])}</span>` : "";
+      const hue = i % 3 === 1 ? " hue-2" : i % 3 === 2 ? " hue-3" : "";
+      const arrow = i < nodes.length - 1 ? PROCESS_ARROW_HTML : "";
+      return `<div class="proc-step subtle-box${hue}"><span class="proc-head"><span class="proc-num">${String(i + 1).padStart(2, "0")}</span>${icon}</span><span class="proc-label">${renderInline(label)}</span>${time}${details}</div>${arrow}`;
     }).join("");
     return `<div class="process-strip count-${nodes.length}">${stepHtml}</div>`;
   }
@@ -1066,7 +1291,11 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
       const pct = n === 1 ? 100 : Math.round(34 + (66 * i) / (n - 1));
       const cap = (node.children || []).filter((c) => c && c.text).map((c) => renderInline(c.text)).join(" · ");
       const capHtml = cap ? `<span class="step-cap">${cap}</span>` : "";
-      return `<div class="step-col" style="height:${pct}%"><span class="step-label">${renderInline(node.text)}</span>${capHtml}</div>`;
+      const hue = i % 3 === 1 ? " hue-2" : i % 3 === 2 ? " hue-3" : "";
+      // The arrow into this step is as tall as the step before it and centred in it, so both ends lie on borders.
+      const prevPct = i === 0 ? 0 : (n === 1 ? 100 : Math.round(34 + (66 * (i - 1)) / (n - 1)));
+      const arrow = i === 0 ? "" : `<span class="step-arrow" aria-hidden="true" style="height:${prevPct}%">${PROCESS_ARROW_SVG}</span>`;
+      return `${arrow}<div class="step-col subtle-box${hue}" style="height:${pct}%"><span class="step-label">${renderInline(node.text)}</span>${capHtml}</div>`;
     }).join("");
     return `<div class="steps-diagram count-${n}">${colHtml}</div>`;
   }
@@ -1082,21 +1311,42 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     // without icons falls back to NUMBERED DISCS so the row keeps its anchor device — same
     // icon-or-number contract feature-lists follow, never a blank slot.
     const { icons } = decideFeatureListStyle(items, false, deckUsed, "icons", overrides);
+    // ADR-0039 / 0.41 ticket 06: a column is a mono head over an accent rule, then one subtle box per line,
+    // one icon each (decided per column, never half-iconed), joined by a link from border to border.
+    const irRows = Math.max(1, ...nodes.map((n) => (n.children || []).filter((c) => c && c.text).length));
+    // One decision for every line on the slide: all boxes carry an icon or none does (never half-iconed).
+    const allLines = nodes.flatMap((n) => (n.children || []).filter((c) => c && c.text).map((c) => c.text));
+    const decidedLines = allLines.length
+      ? decideFeatureListStyle(allLines, false, deckUsed, "icons", resolveIconOverrides(allLines, null, deckUsed && deckUsed.iconMap)).icons
+      : null;
+    let lineAt = 0;
+    const lineIcons = nodes.map((n) => {
+      const count = (n.children || []).filter((c) => c && c.text).length;
+      const slice = decidedLines ? decidedLines.slice(lineAt, lineAt + count) : null;
+      lineAt += count;
+      return slice;
+    });
     const itemHtml = nodes.map((n, i) => {
       const kids = (n.children || []).filter((c) => c && c.text);
+      const kidIcons = lineIcons ? lineIcons[i] : null;
       const desc = kids.length
-        ? `<ul class="ir-desc">${kids.map((c) => `<li>${renderInline(c.text)}</li>`).join("")}</ul>`
+        ? `<ul class="ir-desc">${kids.map((c, k) => {
+            const kidIcon = kidIcons ? `<span class="ir-li-icon">${iconSvg(kidIcons[k])}</span>` : "";
+            const link = k < kids.length - 1 ? `<i class="ir-link" aria-hidden="true"></i>` : "";
+            return `<li class="subtle-box">${kidIcon}<span class="ir-li-text">${renderInline(c.text)}</span>${link}</li>`;
+          }).join("")}</ul>`
         : "";
       const anchor = icons
         ? `<span class="ir-icon">${iconSvg(icons[i])}</span>`
         : `<span class="ir-icon ir-num">${i + 1}</span>`;
-      return `<div class="ir-item">${anchor}<span class="ir-label">${renderInline(n.text)}</span>${desc}</div>`;
+      const hue = i % 3 === 1 ? " hue-2" : i % 3 === 2 ? " hue-3" : "";
+      return `<div class="ir-item${hue}">${anchor}<span class="ir-label">${renderInline(n.text)}</span>${desc}</div>`;
     }).join("");
     // ADR-0033 §5: five or more columns that would each fall under 22cqw reflow into rows (3 + 2);
     // `ir-rows-N` says how many per row (narrow-columns.mjs decides, skin/narrow-columns.css draws).
     const perRow = block.columnsUsableCqw != null ? iconRowPerRow(nodes.length, block.columnsUsableCqw) : 0;
     const rowsClass = perRow ? ` ir-rows ir-rows-${perRow}` : "";
-    return `<div class="icon-row count-${nodes.length}${rowsClass}">${itemHtml}</div>`;
+    return `<div class="icon-row count-${nodes.length}${rowsClass}" style="--ir-rows:${irRows}">${itemHtml}</div>`;
   }
   if (block.type === "image-quote") {
     // Quote beside image with the attribution as a full-width accent bar below — the classic
@@ -1154,7 +1404,10 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     return renderActionRow([block]);
   }
   if (block.type === "image-claim") {
-    return `<div class="evidence-layout">${renderBlock(block.image, deckUsed, frameIcons)}<ul class="callouts">${(block.callouts ?? []).map((c) => `<li>${renderInline(c)}</li>`).join("")}</ul></div>`;
+    // ADR-0039 / 0.41 ticket 12: each claim is a subtle box with a link (.ic-link) from its outer left border to the
+    // picture's outer right border, head on the picture (skin/zz-scene-chat-code-image.css). The link is an element,
+    // not a pseudo-element, so a test can measure where it starts and ends.
+    return `<div class="evidence-layout">${renderBlock(block.image, deckUsed, frameIcons)}<ul class="callouts">${(block.callouts ?? []).map((c) => `<li class="subtle-box">${renderInline(c)}<span class="ic-link" aria-hidden="true"><svg viewBox="0 0 20 16" preserveAspectRatio="none"><path d="M0 8L20 0V16z"/></svg></span></li>`).join("")}</ul></div>`;
   }
   if (block.type === "cta-screenshots") {
     // .cta-layout: a screenshots strip (left, ~1.45fr) beside a right column holding the
@@ -1176,6 +1429,10 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     // paper treatment and carry a small-caps mono label + vertically-centred
     // content. The slide's own title is nav-only (assembly emits the quiet head). Half B is one
     // reveal beat — the runtime steps it via MODE_SELECTOR (.layout-compare .compare-half.half-b).
+    // ADR-0039 / 0.41 ticket 08: halves of plain rows draw as the two "vs" panels; a half with a
+    // picture, code or nested bullets keeps the old halves below.
+    const vsModel = compareModel(block);
+    if (vsModel) return renderCompareHalves(vsModel, deckUsed);
     const sideClass = ["half-a", "half-b"];
     const halves = (block.halves ?? []).slice(0, 2).map((half, i) => {
       const label = half.label ? `<div class="compare-label">${renderInline(half.label)}</div>` : "";
@@ -1253,6 +1510,12 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
       const hasText = blocks.some((b) => b && CARD_TEXT_TYPES.has(b.type));
       const fragmentAttr = stepped && cardIndex + offset > 0 ? " data-fragment" : "";
       const claimClass = blocks.length === 0 && card.title ? " card-claim" : "";
+      // ADR-0039 / 0.41 ticket 09: a card of plain points draws as the scene's card: icon chip and title
+      // over a thin rule, the points as highlight rows. A card with a picture, a quote, a paragraph or label groups keeps
+      // its own look, and a bare claim keeps its claim-sized label (skin/zz-scene-cards.css styles `.card-points` only).
+      const pointsClass = !block.rows && !stepped && !hasMedia && blocks.length > 0 && blocks.every((b) => b && b.type === "feature-list"
+        && !(Array.isArray(b.items) && b.items.length && b.items.every((t) => /^([^:]{2,28}):\s+(.+)$/.test(String(t)))))
+        ? " card-points" : "";
       const iconSvgHtml = cardIcons ? iconSvg(cardIcons[cardIndex]) : "";
       const iconHtml = iconSvgHtml ? `<span class="card-icon">${iconSvgHtml}</span>` : "";
       const headHtml = `${iconHtml}${card.title ? `<h4>${renderInline(card.title)}</h4>` : ""}`;
@@ -1263,7 +1526,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
         return `<article class="card card-media-split${claimClass}"${fragmentAttr}>${headHtml}<div class="card-split-grid"><div class="card-media-col">${mediaHtml}</div><div class="card-text-col">${textHtml}</div></div></article>`;
       }
       // G5: a media-only / mixed card with consecutive images lays them side-by-side too.
-      return `<article class="card${claimClass}"${fragmentAttr}>${headHtml}${groupImageRows(blocks).map(renderCardBlock).join("\n")}</article>`;
+      return `<article class="card${claimClass}${pointsClass}"${fragmentAttr}>${headHtml}${groupImageRows(blocks).map(renderCardBlock).join("\n")}</article>`;
     }).join("");
     if (stepped) {
       return `<div class="card-gallery" data-exclusive>${titleCard}${contentCards}</div>`;
@@ -1350,6 +1613,11 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     const iconlistVariantClass = takesTreatment && (block.iconlistVariant === "list" || autoIconlistList || narrowCards)
       ? ` fl-iconlist-list${narrowCards ? " fl-narrow-cols" : ""}`
       : "";
+    // A narrow-columns row runs a family's members inline, separated by a middle dot. Members that cannot
+    // share one line (more than 40 characters with their separators) would wrap and strand a separator at
+    // a line edge, so such a list stacks them one per line with no separator instead (skin/narrow-columns.css).
+    const subsStack = narrowCards && children.some((c) => Array.isArray(c) && c.length > 1
+      && c.reduce((sum, n) => sum + String(n && n.text || "").length, 0) + 3 * (c.length - 1) > 40) ? " fl-subs-stack" : "";
     // Slide round 2 (0.37): an icon-list of five items or fewer whose every line is short flows into two
     // columns under a top title (skin/list.css), so it reads at 2.3cqw without a whole-slide zoom. Line
     // length is a layout fact (characters), not a meaning judgement; the CSS applies it to top-title slides only.
@@ -1359,9 +1627,14 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
       && [...block.items.map((it) => String(it && it.text !== undefined ? it.text : it)), ...children.flatMap((c) => lineTexts(c))]
         .every((t) => t.replace(/\s+/g, " ").trim().length <= SHORT_LINE_CHARS)
       ? " fl-short-lines" : "";
-    // The number style ({numbered=plain|styled}; the square is the default and carries no class).
+    // The number style ({numbered=plain|styled}; mono is the default and carries no class).
     const numberStyle = block.numberStyle === "plain" || block.numberStyle === "styled" ? block.numberStyle : "";
     const numberedClass = numbered && !annotated ? ` fl-numbered${numberStyle ? ` fl-numbered-${numberStyle}` : ""}` : "";
+    // ADR-0039 / 0.41 ticket 09: the BOX form of an icon or numbered list (cards: no row class, not annotated) draws as the
+    // scene's cards. `fl-cards` marks the list; `fl-card-pts` marks a card that has points, so a reveal beat is one point
+    // (the card arrives with its first) and not the card itself (MODE_SELECTOR excludes `.fl-card-pts`).
+    const boxCards = (style === "icons" || numbered) && !annotated && !iconlistVariantClass;
+    const cardsClass = boxCards ? " fl-cards" : "";
     // Feature lists NEVER emit data-fragment: items render fully visible by default. Stepping
     // is opt-in via reveal/focus mode (runtime walks .feature-list > li and .fl-sublist > li as
     // content units). The old always-on per-item fragment was removed in Dominik's redesign.
@@ -1434,7 +1707,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
         return `<li><span class="fl-lead">${iconHtml}<span class="fl-text">${renderInline(item)}</span></span>${annHtml}</li>`;
       }).join("")}</ul>`;
     }
-    return `<ul class="feature-list${wide}${plainClass}${hasKids}${annotatedClass}${iconlistVariantClass}${shortLines}${numberedClass}"${groupAttr}${densityAttr}>${block.items.map((item, itemIndex) => {
+    return `<ul class="feature-list${wide}${plainClass}${hasKids}${annotatedClass}${iconlistVariantClass}${shortLines}${numberedClass}${cardsClass}${subsStack}"${groupAttr}${densityAttr}>${block.items.map((item, itemIndex) => {
       let icon = "";
       if (style === "icons") {
         // Icon-or-number: a slot whose icon doesn't resolve (e.g. one invalid {icon=name} among
@@ -1445,7 +1718,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
           : `<span class="fl-icon fl-num">${itemIndex + 1}</span>`;
       } else if (style === "numbers") icon = `<span class="fl-icon fl-num">${itemIndex + 1}</span>`;
       const sub = renderSubList(children[itemIndex], 1, resolveSubIcons);
-      return `<li>${icon}<span class="fl-text">${renderInline(item)}</span>${sub}</li>`;
+      return `<li${boxCards && sub ? ' class="fl-card-pts"' : ""}>${icon}<span class="fl-text">${renderInline(item)}</span>${sub}</li>`;
     }).join("")}</ul>`;
   }
   if (block.type === "list" && Array.isArray(block.items)) {
@@ -1584,7 +1857,7 @@ export function mapBlocksToLayout(layout, blocks) {
       return idx >= 0 ? [item.slice(0, idx), item.slice(idx + 3)] : [item, ""];
     });
     // contrast consumes firstList; featurize any other lists that remain
-    return featurizeRemainingLists([...rest([firstList]), { type: "contrast", pairs }]);
+    return featurizeRemainingLists([...rest([firstList]), { type: "contrast", pairs, ...(firstList.iconOverrides ? { iconOverrides: firstList.iconOverrides } : {}) }]);
   }
   if (layout === "list" && firstList) {
     // Ticket 05: a practice quotation stays AFTER the list it refers to ("Four stalls … Try it:
@@ -1636,7 +1909,7 @@ export function mapBlocksToLayout(layout, blocks) {
       text,
       children: (Array.isArray(childTrees[i]) ? childTrees[i] : []).map(buildNode)
     }));
-    return featurizeRemainingLists([...rest([firstList]), { type: layout, nodes }]);
+    return featurizeRemainingLists([...rest([firstList]), { type: layout, nodes, ...(layout === "process" && firstList.iconOverrides ? { iconOverrides: firstList.iconOverrides } : {}) }]);
   }
   // flow: a list becomes a connected sequence of NODE cards joined by accent connectors. A node
   // is a top-level list item (its text is the node label); its nested children render as the
@@ -1684,7 +1957,7 @@ export function mapBlocksToLayout(layout, blocks) {
       text,
       children: (Array.isArray(childTrees[i]) ? childTrees[i] : []).map(buildNode)
     }));
-    return featurizeRemainingLists([...rest([firstList]), { type: layout, nodes }]);
+    return featurizeRemainingLists([...rest([firstList]), { type: layout, nodes, ...(layout === "process" && firstList.iconOverrides ? { iconOverrides: firstList.iconOverrides } : {}) }]);
   }
   // iconrow: the same node model plus the list's per-item {icon=…} overrides, so the renderer
   // can resolve icons through the SAME vocabulary feature-lists use (deck icons: map included).

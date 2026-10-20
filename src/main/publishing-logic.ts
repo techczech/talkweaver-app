@@ -173,8 +173,10 @@ export function buildRedirects(registry: Record<string, string>, existingSlugs: 
   const lines = Object.entries(registry)
     .filter(([slug]) => exists.has(slug))
     .sort((a, b) => a[1].localeCompare(b[1]))
-    // Each name is one encoded path segment: `two words` is `/two%20words/`, not a third field.
-    .flatMap(([slug, id]) => [`/${pathSegment(id)}  /${pathSegment(slug)}/  302`, `/${pathSegment(id)}/p  /${pathSegment(slug)}/p/  302`])
+    // Each name is one encoded path segment: `two words` is `/two%20words/`, not a third field. A Run's
+    // pre-work and post-work pages sit in its folder (work-files ticket 16): its short link leads there too.
+    .flatMap(([slug, id]) => [`/${pathSegment(id)}  /${pathSegment(slug)}/  302`, `/${pathSegment(id)}/p  /${pathSegment(slug)}/p/  302`,
+      `/${pathSegment(id)}/pre-work  /${pathSegment(slug)}/pre-work/  302`, `/${pathSegment(id)}/post-work  /${pathSegment(slug)}/post-work/  302`])
   return lines.length ? lines.join('\n') + '\n' : ''
 }
 

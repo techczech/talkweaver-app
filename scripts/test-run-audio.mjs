@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict'
 import { build } from 'esbuild'
 import { createRequire } from 'node:module'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -92,6 +92,12 @@ function launchMain() {
   })
   return { handlers, trashed, saved, recover: module.exports.recoverInterruptedRecordings }
 }
+// Occupy a segment's own name and every replacement name, so no file can be created for it.
+const blockSegment = (dir, id, n) => {
+  const paths = [join(dir, `${id}.seg-${n}.webm`), ...Array.from({ length: 9 }, (_, k) => join(dir, `${id}.seg-${n}.r${k + 1}.webm`))]
+  for (const p of paths) mkdirSync(p)
+  return () => { for (const p of paths) rmSync(p, { recursive: true }) }
+}
 // A webContents with the events main listens for.
 function sender(id) {
   const listeners = {}
@@ -148,8 +154,7 @@ await check('segment open refused once, then a failed save: no audio lost, the r
   await call('recording:stream-segment', wc, { sessionId: id, index: 0, startMs: 0 })
   await call('recording:stream-append', wc, { sessionId: id, index: 0, bytes: chunk(100) })
   await call('recording:stream-segment-end', wc, { sessionId: id, index: 0, endMs: 10_000 })
-  const blocker = join(userData, 'recordings', `${id}.seg-2.webm`)
-  mkdirSync(blocker)
+  const unblock = blockSegment(join(userData, 'recordings'), id, 2)
   assert.equal((await call('recording:stream-segment', wc, { sessionId: id, index: 1, startMs: 12_000 })).ok, false)
   const payload = {
     talkSlug: 'refused', mode: 'recording', kind: 'delivery', force: true, rawMarks: [{ event: 'stop', tMs: 30_000 }],
@@ -158,9 +163,9 @@ await check('segment open refused once, then a failed save: no audio lost, the r
     audioTimeline: { segments: [{ index: 0, startMs: 0, endMs: 10_000 }, { index: 1, startMs: 12_000, endMs: 30_000 }], gaps: [{ startMs: 10_000, endMs: 12_000, reason: 'track-ended' }] }
   }
   const failed = await call('recording:save', wc, payload)
-  assert.equal(failed.ok, false, 'the path is still blocked: the save says so instead of dropping the chunks')
+  assert.equal(failed.ok, false, 'every name is blocked: the save says so instead of dropping the chunks')
   assert.equal(existsSync(join(vault, '_PRESENTATIONS', 'refused', `${id}.json`)), false)
-  rmSync(blocker, { recursive: true })
+  unblock()
   const saved = await call('recording:save', wc, payload)
   assert.equal(saved.ok, true, JSON.stringify(saved))
   const run = runFile('refused', id)
@@ -174,13 +179,12 @@ await check('save fails at held chunk k, then "Save audio elsewhere": each chunk
   await call('recording:stream-segment', wc, { sessionId: id, index: 0, startMs: 0 })
   await call('recording:stream-append', wc, { sessionId: id, index: 0, bytes: Buffer.from('D0;') })
   await call('recording:stream-segment-end', wc, { sessionId: id, index: 0, endMs: 5000 })
-  const blocker = join(userData, 'recordings', `${id}.seg-2.webm`)
-  mkdirSync(blocker)
+  const unblock = blockSegment(join(userData, 'recordings'), id, 2)
   const parts = [{ index: 0, bytes: Buffer.from('A0;') }, { index: 1, bytes: Buffer.from('B1;') }, { index: 1, bytes: Buffer.from('C1;') }]
   const failed = await call('recording:save', wc, { talkSlug: 'export-talk', mode: 'recording', force: true, rawMarks: [{ event: 'stop', tMs: 9000 }], stream: { sessionId: id, tail: parts } })
   assert.equal(failed.ok, false, 'held chunk 1 cannot be written')
   assert.equal(readFileSync(join(userData, 'recordings', `${id}.webm`), 'utf8'), 'D0;A0;', 'chunk 0 already reached the disk')
-  rmSync(blocker, { recursive: true })
+  unblock()
   globalThis.__exportDir = join(scratch, 'exported')
   mkdirSync(globalThis.__exportDir)
   assert.deepEqual(await call('recording:export-held-audio', sender(25), { sessionId: id, talkSlug: 'export-talk', parts }), { ok: false, error: 'not-owner' }, 'another window cannot export it')
@@ -193,6 +197,28 @@ await check('save fails at held chunk k, then "Save audio elsewhere": each chunk
   const saved = await call('recording:save', wc, { talkSlug: 'export-talk', mode: 'recording', force: true, rawMarks: [{ event: 'stop', tMs: 9000 }], stream: { sessionId: id, tail: parts } })
   assert.equal(saved.ok, true)
   assert.equal(runFile('export-talk', id).audio.bytes, 12, 'D0;A0; + B1;C1;, nothing twice')
+})
+
+await check('"Save audio elsewhere" reads only the recording\'s own files, never another file under its names', async () => {
+  const wc = sender(26)
+  const { sessionId: id } = await call('recording:stream-open', wc, { talkSlug: 'planted-talk' })
+  await call('recording:stream-segment', wc, { sessionId: id, index: 0, startMs: 0 })
+  await call('recording:stream-append', wc, { sessionId: id, index: 0, bytes: Buffer.from('OURS;') })
+  await call('recording:stream-segment-end', wc, { sessionId: id, index: 0, endMs: 5000 })
+  writeFileSync(join(userData, 'recordings', `${id}.seg-2.webm`), 'PLANTED')
+  assert.equal((await call('recording:stream-segment', wc, { sessionId: id, index: 1, startMs: 6000 })).ok, false)
+  globalThis.__exportDir = join(scratch, 'exported-planted')
+  mkdirSync(globalThis.__exportDir)
+  const parts = [{ index: 1, bytes: Buffer.from('HELD;') }]
+  const res = await call('recording:export-held-audio', wc, { sessionId: id, talkSlug: 'planted-talk', parts })
+  assert.equal(res.ok, true, JSON.stringify(res))
+  const read = (n) => readFileSync(join(globalThis.__exportDir, `planted-talk audio part ${n}.webm`), 'utf8')
+  assert.equal(read(1), 'OURS;')
+  assert.equal(read(2), 'HELD;', 'the planted file is not part of the export')
+  const saved = await call('recording:save', wc, { talkSlug: 'planted-talk', mode: 'recording', force: true, rawMarks: [{ event: 'stop', tMs: 9000 }], stream: { sessionId: id, tail: parts } })
+  assert.equal(saved.ok, true, JSON.stringify(saved))
+  assert.deepEqual(runFile('planted-talk', id).audio.segments.map((seg) => [seg.file, seg.bytes]), [[`${id}.webm`, 5], [`${id}.seg-2.r1.webm`, 5]])
+  assert.equal(readFileSync(join(userData, 'recordings', `${id}.seg-2.webm`), 'utf8'), 'PLANTED', 'the planted file is untouched')
 })
 
 await check('Run segment times are matched by index: a segment with no file does not shift the next', async () => {
@@ -264,6 +290,30 @@ await check('crash: the next launch recovers the recording as a partial Run; the
   assert.equal(statSync(join(userData, 'recordings', `${sessionId}.webm`)).size, 1500)
   assert.equal(await next.recover(), 0, 'a recovered recording is not recovered twice')
   assert.deepEqual(next.trashed, [], 'recovery moves nothing to the Trash')
+})
+
+await check('recovery: an empty or unreadable file at the Run\'s path is not a saved Run — the marker and audio stay', async () => {
+  const wc = sender(17)
+  const { sessionId } = await call('recording:stream-open', wc, { talkSlug: 'reserved-talk' })
+  await call('recording:stream-segment', wc, { sessionId, index: 0, startMs: 0 })
+  await call('recording:stream-append', wc, { sessionId, index: 0, bytes: chunk(400) })
+  await call('recording:stream-checkpoint', wc, { sessionId, recordingMs: 4000, rawMarks: [] })
+  const runPath = join(vault, '_PRESENTATIONS', 'reserved-talk', `${sessionId}.json`)
+  const marker = join(userData, 'recordings', `${sessionId}.recording.json`)
+  mkdirSync(join(vault, '_PRESENTATIONS', 'reserved-talk'), { recursive: true })
+  const next = launchMain()
+  for (const content of ['', '{"id":', `{"id":"sess-someone-else"}`]) {
+    writeFileSync(runPath, content)
+    assert.equal(await next.recover(), 0, `nothing written over ${JSON.stringify(content)}`)
+    assert.equal(existsSync(marker), true, `the marker stays beside ${JSON.stringify(content)}`)
+    assert.equal(readFileSync(runPath, 'utf8'), content, 'the file is left as it is')
+  }
+  assert.equal(statSync(join(userData, 'recordings', `${sessionId}.webm`)).size, 400, 'the audio stays')
+  // Once the empty name is gone, the next recovery writes the Run and only then drops the marker.
+  rmSync(runPath)
+  assert.equal(await next.recover(), 1)
+  assert.equal(runFile('reserved-talk', sessionId).audio.bytes, 400)
+  assert.equal(existsSync(marker), false)
 })
 
 await check('discard: a kept-short recording the presenter discards goes to the Trash, not deleted', async () => {

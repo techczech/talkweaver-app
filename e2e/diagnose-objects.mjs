@@ -168,7 +168,7 @@ const outlinePath = join(talkDir, 'object-doors-fixture-outline.md')
 mkdirSync(talkDir, { recursive: true })
 mkdirSync(userData, { recursive: true })
 writeFileSync(outlinePath, fixture)
-writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault }, null, 2))
+writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault, editorViewMode: 'markdown' }, null, 2))
 
 let app = null
 let page = null
@@ -524,7 +524,6 @@ async function insertDefaultChart(title, nextTitle) {
     }
   } catch (error) {
     if (shell) await closeObjectEditor(shell)
-    if (await menu.isVisible().catch(() => false)) await closeFenceMenu(menu)
     throw error
   }
 }

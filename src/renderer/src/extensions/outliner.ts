@@ -30,6 +30,7 @@ import { chartObjectTokenAt } from '../../../../compiler/scripts/lib/03-object-t
 import { notify } from '../lib/notify'
 import { minimalChange } from '../lib/minimalChange'
 import { hasOpenObjectBlock } from './objectBlocks/field'
+import { typedByKey } from './keyTypedMark'
 import { currentFocusRange } from './focusScope'
 import { insertAtHeadingEnd } from './headingEndInsert'
 import { relocateBlock, relocateBlockInto, relocateBlockToEnd } from './slideOutline'
@@ -39,33 +40,8 @@ import { LayoutVerbError, setQuoteForm, type QuoteFormChoice } from '../../../sh
 
 const INDENT = '  ' // one list level = two spaces
 
-/**
- * Marks a change one of the key commands below made as the direct result of a key press that types text (Enter on a
- * heading, a protected line or a list item; Shift-Enter in a quotation; Tab on a line that is no list item; Tab or
- * Shift-Tab that indents or outdents the caret's line and no other line): the user's own edit at the keyboard, by
- * another route
- * than CodeMirror's own commands. The web form's link watch (quoteLinkForm.ts) reads it as typing (`isKeyTyped`).
- * It is not a user event on purpose. `userEvent: 'input'` (what CodeMirror's insertNewline carries)
- * starts a new undo step (history joins only `input.type` and `delete`, or a change with no user event), so the list
- * Enter would no longer be undone with the typing before it; and any `input` event sends the change through the
- * protected-token guard (idProtect.ts) and the Slide Focus range guard (focusScope.ts), and counts as the editor being
- * engaged (Editor.tsx), none of which these commands' changes do today. The mark changes none of that.
- * It is a state effect and not an annotation (quote forms ticket 14). In Slide Focus the caret guard (focusScope.ts)
- * rebuilds a transaction whose caret it moves back into the focused slide, from its changes, its effects and its user
- * event: an annotation is lost there, and the second Enter under a source line that ends the slide was then read as a
- * program's change. An effect goes through with the changes it was dispatched with. No field or plugin acts on it, it
- * is not put into the undo history (no `invertedEffects`), so an undo or a redo never carries it.
- * The effect type stays inside this file: only the dispatches below can attach it (`typedByKey`).
- * Any edit of the user's counts (decided 13 October 2026, quote forms ticket 14): the mark goes on these commands'
- * changes wherever the caret is on its line, with text after it or not. A Shift-Enter, an Enter or a Tab that moves
- * text already on the line is the user's edit as much as a character typed, and a link it makes the slide's source
- * gives the slide its form. Only a program's change (no user event and no mark) never does.
- */
-const keyTyped = StateEffect.define<null>()
-/** The part of a transaction spec that marks it as typed by a key (see `keyTyped`); a new effect for each dispatch. */
-const typedByKey = (): { effects: StateEffect<null> } => ({ effects: keyTyped.of(null) })
-/** The change is one of this file's key commands' own, made for a key press that types (see `keyTyped`). */
-export const isKeyTyped = (tr: Transaction): boolean => tr.effects.some((effect) => effect.is(keyTyped))
+// The mark these key commands put on a change made for a key press that types: `typedByKey` (keyTypedMark.ts).
+export { isKeyTyped } from './keyTypedMark'
 
 // The level a line's heading marker gives it. Whether the line IS a heading also depends on the
 // lines above it (a `# comment` in a code fence is not one): the functions below ask the fence mask
@@ -898,10 +874,6 @@ export function leaveQuotation(view: EditorView): boolean {
   const line = view.state.doc.lineAt(sel.head)
   if (!QUOTE_MARKER_ONLY_RE.test(line.text)) return false
   if (!inQuotation(view, line.to)) return false
-  // Slide Focus: when no line of the focused range lies below this one, the line the caret would be left on is outside the
-  // focused band (the band ends at the slide's last line with text), so the key is declined and the markdown Enter runs.
-  const focus = currentFocusRange(view.state)
-  if (focus && focus.to <= line.to) return false
   const below = line.number < view.state.doc.lines ? view.state.doc.line(line.number + 1) : null
   // The blank below is reused only when another blank line or the end of the document follows it. Otherwise the caret's
   // line would sit directly above the next content with no blank between.

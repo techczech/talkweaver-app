@@ -25,6 +25,8 @@ import { EDITOR_COMMANDS } from '../keymap/registry'
 import { placeOfLine, type Place } from '../../../shared/place.ts'
 import { imageParagraphNoFold, outlineFoldService } from '../extensions/outlineFold'
 import { frontmatterTableExtension } from '../extensions/frontmatterTable'
+import { setWorkStripsData, workStripHandlersFacet } from '../extensions/workStrips'
+import { loadWorkStripsData } from '../lib/workStripsData'
 import { inlineMarkExtension } from '../extensions/inlineMark'
 import { keyCapExtension } from '../extensions/keyCap'
 import {
@@ -34,7 +36,7 @@ import {
 } from '../extensions/objectBlocks/field'
 import { EditorView, keymap, highlightActiveLine } from '@codemirror/view'
 import { EditorState, EditorSelection, Prec, Compartment } from '@codemirror/state'
-import { history, undo, redo } from '@codemirror/commands'
+import { history } from '@codemirror/commands'
 import { editorBaseKeymap } from '../extensions/editorBaseKeymap'
 import { search, highlightSelectionMatches, openSearchPanel } from '@codemirror/search'
 import { commandRan } from '../commands/command-ran'
@@ -58,7 +60,7 @@ import { notify } from '../lib/notify'
 import { queueOutlineWrite } from '../lib/saveQueue'
 import { lookForRecovery, noteOutlineSaveReply, outlineDiskChanges } from '../lib/outlineDiskChange'
 import { applyMinimalChange } from '../lib/minimalChange'
-import { adoptSavedText, resetAdoptedIds, savedTextAdoption } from '../extensions/savedTextAdoption'
+import { adoptSavedText, redoWithSave, savedTextAdoption, undoWithSave } from '../extensions/savedTextAdoption'
 import { saveTidyUp, textForSave } from '../extensions/saveTidyUp'
 import { triggerCompleteExtension } from '../extensions/triggerComplete'
 import { tokenProtectExtension } from '../extensions/idProtect'
@@ -257,8 +259,9 @@ interface Props {
   // the caller saves the whole buffer at once, so the debounced autosave is superseded and the text
   // to save — position-normalised like every save boundary — is returned; null while no talk is
   // loaded. Without it the result is the buffer text and the normal autosave follows.
-  // With `savedFrom` the text is what a save wrote for that sent text (ids stamped): it is adopted
-  // outside the undo history, and only while the buffer is still the sent text.
+  // With `savedFrom` the text is what a save wrote for that sent text (tidied, ids stamped): it is
+  // adopted as the save's own undo step (extensions/savedTextAdoption.ts), and only while the buffer is
+  // still the text the save was made from.
   registerReplaceDoc?: (fn: (text: string, opts?: { save?: boolean; savedFrom?: string }) => string | null) => void
   // The buffer's live text, the talk it belongs to and the caret (selection head offset), or null
   // while that talk's text is not loaded (one-writer spec D1: a mutation of the open talk reads THIS,
@@ -294,6 +297,8 @@ interface Props {
   compiledLayoutAt?: (headingLine: number) => string | undefined
   /** Plain view, Command-I: where the caret is, and the one write of a verified icon change. */
   registerPlainIconTools?: (tools: PlainIconTools) => void
+  /** The pre-work and post-work strips' "Plan a run": opens the plan sheet for this talk. */
+  onPlanRun?: () => void
 }
 
 // Outliner keyboard extension (ADR-0019). Built from the single-source-of-truth registry (+ any
@@ -369,10 +374,13 @@ export default function Editor({
   onMarginLayoutMenu,
   registerHeadingTools,
   compiledLayoutAt,
-  registerPlainIconTools
+  registerPlainIconTools,
+  onPlanRun
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
+  const onPlanRunRef = useRef(onPlanRun)
+  onPlanRunRef.current = onPlanRun
   const viewModeRef = useRef<EditorViewMode>(viewMode)
   const plainLookRef = useRef<PlainLook>(plainLook)
   plainLookRef.current = plainLook
@@ -384,6 +392,9 @@ export default function Editor({
     onLayoutMenu: (line, anchor) => marginMenusRef.current.onMarginLayoutMenu?.(line, anchor)
   }).current
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // The replace seam's last save (`save: true`): the text it returned to be written, and the editor's
+  // text it was tidied from, so the adoption of what was written (`savedFrom`) replaces the latter.
+  const seamSaveRef = useRef<{ sent: string; source: string } | null>(null)
   // Every outline write this editor sends goes through the outline's shared queue (lib/saveQueue):
   // one write in flight at a time per file, in the order made, shared with the workspace's writes
   // (ticket 07 — a stale autosave or workspace write can never land after a newer save).
@@ -431,28 +442,32 @@ export default function Editor({
   useEffect(() => { compiledLayoutAtRef.current = compiledLayoutAt }, [compiledLayoutAt])
 
   // Heading-is-slide (Task 8): a save may come back with `content` — the STAMPED text the main
-  // process actually wrote ({id=…} minted for id-less headings). Adopt it into the buffer so the
-  // NEXT save sends already-stamped text; without adoption every save would re-send the unstamped
-  // buffer (id churn is then only held off by the main process's id-reuse fallback). Adoption is
-  // dropped when the doc moved on during the IPC round-trip — a minimalChange computed against
+  // process actually wrote ({id=…} minted for id-less headings); without it the save wrote the text
+  // sent, which is the editor's text tidied (textForSave). What was written is adopted into the buffer
+  // so the NEXT save sends already-stamped text; without adoption every save would re-send the
+  // unstamped buffer (id churn is then only held off by the main process's id-reuse fallback).
+  // Adoption is dropped when the doc moved on during the IPC round-trip — a change computed against
   // stale text could clobber what the user just typed; convergence then relies on id reuse until
   // a quieter save lands. The dispatch preserves caret + scroll and DOES re-enter the updateListener
   // → one follow-up autosave of the stamped text — a fixpoint (stamping stamped text is a no-op),
   // never a loop.
-  const adoptStampedContent = useCallback((sentText: string, res: { ok: boolean; content?: string } | false) => {
-    if (!res || res.ok !== true || typeof res.content !== 'string' || res.content === sentText) return
+  const adoptStampedContent = useCallback((sourceText: string, sentText: string, res: { ok: boolean; content?: string } | false) => {
+    if (!res || res.ok !== true) return
+    const savedText = typeof res.content === 'string' ? res.content : sentText
+    if (savedText === sourceText) return
     const view = viewRef.current
     if (!view) return
-    if (view.state.doc.toString() !== sentText) return // doc moved on while saving: drop, don't clobber
-    // Outside the undo history, one small change per id (extensions/savedTextAdoption.ts): the
-    // adoption is never an undo step, and the user's own last change stays one ⌘Z away. CodeMirror
-    // maps the live selection through the insertions.
-    adoptSavedText(view, sentText, res.content)
+    if (view.state.doc.toString() !== sourceText) return // doc moved on while saving: drop, don't clobber
+    // One undo step of its own, the tidy-up and the ids together (extensions/savedTextAdoption.ts):
+    // ⌘Z takes it back with the user's change below it. CodeMirror maps the live selection through it.
+    adoptSavedText(view, sourceText, savedText)
   }, [])
 
   // Writes `text` to `outlinePath` through the save queue and reports the outcome to the person as
   // every editor save does. Resolves true only when the main process confirms the bytes were written.
-  const writeQueued = useCallback(async (outlinePath: string, text: string): Promise<boolean> => {
+  // `source` is the editor's text the save was made from (`text` is it tidied, textForSave); what was
+  // written is adopted in its place while the editor still holds it.
+  const writeQueued = useCallback(async (outlinePath: string, text: string, source: string = text): Promise<boolean> => {
     // The person discarded this talk (removed on disk): it is never saved again from this editor.
     if (outlineDiskChanges.isDiscarded(outlinePath)) return false
     const res = await queueOutlineWrite(outlinePath, () => window.tw.talk.writeOutline(outlinePath, text))
@@ -464,7 +479,7 @@ export default function Editor({
       // Stamped-id adoption (see adoptStampedContent). On the talk-switch flush path the view may
       // already be torn down or repointed — the helper's viewRef/doc-unchanged guards make that a
       // safe no-op (disk is stamped either way; the reload will read the stamped file).
-      adoptStampedContent(text, res)
+      adoptStampedContent(source, text, res)
       return true
     }
     // External-change guard: the file differs from what this editor holds. The bar at the top of the
@@ -500,19 +515,10 @@ export default function Editor({
       saveTimerRef.current = setTimeout(async () => {
         saveTimerRef.current = null
         const view = viewRef.current
-        // Not tidied straight after an undo or a redo (extensions/saveTidyUp.ts), here and at the two saves below.
+        // Tidied, except straight after an undo or a redo (extensions/saveTidyUp.ts), here and at the
+        // two saves below. The editor is not tidied first: the tidy-up comes back with the save's ids.
         const normalized = textForSave(view?.state, content)
-        if (normalized !== content && view?.state.doc.toString() === content) {
-          const ch = minimalChange(content, normalized)
-          view.dispatch({ changes: { from: ch.from, to: ch.to, insert: ch.insert } })
-          // The normalising dispatch re-enters the update listener and schedules the same text again.
-          // This save owns the boundary, so cancel that redundant follow-up timer.
-          if (saveTimerRef.current) {
-            clearTimeout(saveTimerRef.current)
-            saveTimerRef.current = null
-          }
-        }
-        await writeQueued(outlinePath, normalized)
+        await writeQueued(outlinePath, normalized, content)
       }, 1500)
     },
     [writeQueued]
@@ -716,7 +722,7 @@ export default function Editor({
             }
           }),
           slideNumberGutterExtension,
-          historyCompartment.of(history()),
+          historyCompartment.of(history({ minDepth: 200 })),
           // A web link pasted or typed into a quote slide's source line makes the slide a web page in the same undo step (spec 3.1).
           quoteLinkFormExtension(() => compiledLayoutAtRef.current),
           highlightActiveLine(),
@@ -766,6 +772,11 @@ export default function Editor({
           textFitWarningExtension,
           // YAML frontmatter rendered as a typed table (raw ↔ table toggle).
           frontmatterTableExtension(),
+          // The strips' buttons (ticket 08): Plan a run opens the workspace's plan sheet; Open run goes to Sessions.
+          workStripHandlersFacet.of({
+            planRun: () => onPlanRunRef.current?.(),
+            openRun: (ref) => { void window.tw.tools.openRun(ref.talkSlug, ref.runId, ref.vaultId) }
+          }),
           // ==mark== stays visible while authoring without changing the outline's Markdown source.
           inlineMarkExtension,
           // <kbd>⌘K</kbd> shows as a key cap off the caret's line, as its source on it (ticket 05).
@@ -875,9 +886,8 @@ export default function Editor({
               }
             }
           }),
-          // Remembers the ids adopted from saves and settles them after an undo or redo. AFTER the
-          // update listener above on purpose: that listener must see the undo before the settled text
-          // (savedTextAdoption.ts, ordering note).
+          // Keeps a save's adopted text marked as the save's undo step, and sends the Edit menu's
+          // Undo and Redo through the undo that takes that step with the change below it.
           savedTextAdoption(),
           saveTidyUp(),
           imageWidgetExtension({
@@ -912,6 +922,30 @@ export default function Editor({
       viewRef.current = null
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The work files and Runs the strips under the Metadata table draw from (ticket 08), from the open talk's
+  // vault (every open vault's Runs and the current vault's files only when the talk does not say). Read again when a
+  // Run is saved, when the window regains focus and when a minute has passed (a window opens or closes).
+  useEffect(() => {
+    let cancelled = false
+    const load = (): void => {
+      void loadWorkStripsData(talk.slug, talk.vaultId).then((data) => {
+        if (!cancelled) viewRef.current?.dispatch({ effects: setWorkStripsData.of(data) })
+      })
+    }
+    load()
+    const offMeta = window.tw.vault.onTalkMetaUpdated(load)
+    window.addEventListener('tw-runs-changed', load)
+    window.addEventListener('focus', load)
+    const timer = window.setInterval(load, 60_000)
+    return () => {
+      cancelled = true
+      offMeta()
+      window.removeEventListener('tw-runs-changed', load)
+      window.removeEventListener('focus', load)
+      window.clearInterval(timer)
+    }
+  }, [talk.slug, talk.vaultId])
 
   // Re-bind the outliner keymap live when the user customises shortcuts in Settings.
   useEffect(() => {
@@ -1015,17 +1049,14 @@ export default function Editor({
       // otherwise). The content-replacing dispatch runs while loadedPathRef is null, so its docChanged
       // never triggers autosave; we mark the path loaded ONLY after that dispatch lands.
       if (viewRef.current && content !== null && currentTalkRef.current === pathAtLoad) {
-        // The ids adopted from the previous talk's saves go with its text and its history
-        // (savedTextAdoption.ts): one parked there must not land under a look-alike heading here.
         viewRef.current.dispatch({
-          changes: { from: 0, to: viewRef.current.state.doc.length, insert: content },
-          effects: resetAdoptedIds.of(null)
+          changes: { from: 0, to: viewRef.current.state.doc.length, insert: content }
         })
         // RESET the undo stack across the talk boundary: detach + re-attach history() so the
         // load dispatch above (and every edit belonging to the PREVIOUS talk) is not undoable
         // in this one. ⌘Z in a freshly opened talk must be a no-op, never a revert-to-empty.
         viewRef.current.dispatch({ effects: historyCompartment.reconfigure([]) })
-        viewRef.current.dispatch({ effects: historyCompartment.reconfigure(history()) })
+        viewRef.current.dispatch({ effects: historyCompartment.reconfigure(history({ minDepth: 200 })) })
         loadedPathRef.current = pathAtLoad
         // A fresh load: whatever the guard reported for this talk is settled by this text; then offer
         // any unsaved text a refused save kept (an earlier session ended before the person chose).
@@ -1155,8 +1186,9 @@ export default function Editor({
       moveInto: (fromLine, sectionLine) => { const v = viewRef.current; if (v) moveBlockInto(v, fromLine, sectionLine) },
       // Undo/redo the editor's history — lets the grid/slides views route ⌘Z to a reorder they made
       // without the editor being focused. No view.focus() so the caller (e.g. grid) keeps focus.
-      undo: () => { const v = viewRef.current; if (v) undo(v) },
-      redo: () => { const v = viewRef.current; if (v) redo(v) },
+      // The same undo and redo as ⌘Z and ⇧⌘Z (a save's step goes with the change it was made for).
+      undo: () => { const v = viewRef.current; if (v) undoWithSave(v) },
+      redo: () => { const v = viewRef.current; if (v) redoWithSave(v) },
       newSlide: () => { const v = viewRef.current; if (v) runActionBarEditing(v, 'new-slide') },
       // ADR-0032 (round-3 A1): the starter board after the current slide, its question selected.
       insertBoardSlide: () => {
@@ -1194,21 +1226,13 @@ export default function Editor({
         if (!v) return
         const current = v.state.doc.toString()
         const text = textForSave(v.state, current)
-        if (text !== current) {
-          const ch = minimalChange(current, text)
-          v.dispatch({ changes: { from: ch.from, to: ch.to, insert: ch.insert } })
-          // The dispatch schedules an autosave; this immediate flush supersedes it.
-          if (saveTimerRef.current) {
-            clearTimeout(saveTimerRef.current)
-            saveTimerRef.current = null
-          }
-        } else if (!hadPendingSave) {
-          return
-        }
+        // Nothing pending and nothing to tidy: nothing to write. (The tidy-up comes back into the
+        // editor with the save's ids, after the write: writeQueued.)
+        if (text === current && !hadPendingSave) return
         // Never flush an empty doc (a fresh-mount transient before load) or one whose content isn't the
         // loaded talk's yet — the caller (detach / switch) only needs the just-typed real text.
         if (text.trim() === '' || loadedPathRef.current !== currentTalkRef.current) return
-        await writeQueued(currentTalkRef.current, text)
+        await writeQueued(currentTalkRef.current, text, current)
       },
       scrollCursorIntoView: () => {
         const v = viewRef.current
@@ -1416,10 +1440,14 @@ export default function Editor({
       // A save-bound change needs the talk's real text in the doc: before the load lands the doc is a
       // transient the load will replace, so the change (and its save) would be lost or wrong.
       if (opts?.save && !loaded) return null
-      // The text a save wrote for `savedFrom`: adopted outside the undo history, and only while the
-      // buffer is still what was sent (savedTextAdoption.ts).
+      // The text a save wrote for `savedFrom`: adopted as the save's undo step, and only while the
+      // buffer is still the text that save was made from (savedTextAdoption.ts). When this seam's
+      // save branch below sent `savedFrom` tidied, that is the text before the tidy-up.
       if (typeof opts?.savedFrom === 'string') {
-        adoptSavedText(view, opts.savedFrom, text)
+        const pending = seamSaveRef.current
+        const source = pending && pending.sent === opts.savedFrom ? pending.source : opts.savedFrom
+        if (pending && pending.sent === opts.savedFrom) seamSaveRef.current = null
+        adoptSavedText(view, source, text)
         return view.state.doc.toString()
       }
       const change = applyMinimalChange(view.state.doc.toString(), text)
@@ -1428,13 +1456,11 @@ export default function Editor({
       // The caller saves the whole buffer now: the debounced autosave this dispatch (or an earlier
       // keystroke) scheduled is superseded. Same position-only normalisation as flushSave.
       if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null }
+      // The editor is not tidied here: the caller adopts what the save wrote (`savedFrom` above), and
+      // the tidy-up comes back with the save's ids as one undo step.
       const current = view.state.doc.toString()
       const normalized = textForSave(view.state, current)
-      if (normalized !== current) {
-        const norm = minimalChange(current, normalized)
-        view.dispatch({ changes: { from: norm.from, to: norm.to, insert: norm.insert } })
-        if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null }
-      }
+      seamSaveRef.current = { sent: normalized, source: current }
       return normalized
     })
   }, [registerReplaceDoc])

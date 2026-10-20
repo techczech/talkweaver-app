@@ -1,14 +1,10 @@
-// Real-Electron gate for ticket 08 (ADR-0032 amendment point 5; round-2 E1–E4, round-3 P5): a
-// talk's pre-work is written in the Inspector, and presenting leaves it out.
+// Real-Electron gate for a talk that still has a 0.37 `{prework}` section (ticket 08, reworked by
+// work-files ticket 29: pre-work is written in a work file; ADR-0040 decision 6).
 // HOST-RUN ONLY, one Electron run at a time: node e2e/diagnose-prework-authoring.mjs
 //
-//   1. The pre-work tokens never blank the Inspector; a step's "Before the session" section says
-//      what the slide is, lists the form's steps and, with no Run planned, nudges to plan one (P5).
-//   2. Plan a run… opens the plan sheet; once saved, the form shows its opening, closing and Run (E1).
-//   3. The quick check's right answer is chosen in the Inspector and lands on the option (E2).
-//   4. A pre-task's Mark as done and time, and questions off, write their tokens (E3).
-//   5. A talk slide's {results=…} names a step, chosen from the steps (E4).
-//   6. Presenting the talk shows no pre-work slide.
+//   1. The pre-work tokens never blank the Inspector, and a step of the section gets no "Before the
+//      session" section, no step rows and no right-answer select: nothing writes the section.
+//   2. Presenting the talk shows no pre-work slide; present from a step starts after the section.
 // TW_SHOTS_DIR=<dir> saves a screenshot of the window per state.
 import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
@@ -115,7 +111,6 @@ const rec = (name, ok, detail) => {
   if (!ok) failures += 1
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ' — ' + detail : ''}`)
 }
-const plusDays = (n) => { const d = new Date(Date.now() + n * 86_400_000); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
 try {
   const page = await app.firstWindow()
   page.on('pageerror', (e) => console.log('PAGEERROR:', e.message.slice(0, 150)))
@@ -126,17 +121,8 @@ try {
     await page.screenshot({ path: join(shotsDir, `${name}.png`) }).catch(() => {})
   }
   const onDisk = () => readFileSync(outlinePath, 'utf8')
-  const lineAfter = (heading) => {
-    const lines = onDisk().split('\n')
-    return lines[lines.findIndex((line) => line === heading) + 1] ?? ''
-  }
-  const settle = async (ms = 2600) => { await page.waitForTimeout(ms) }
   const title = async () => ((await page.locator('.tw-inspector-title').textContent()) ?? '').trim()
   const waitTitle = async (text) => { for (let wait = 0; wait < 25 && await title() !== text; wait += 1) await page.waitForTimeout(300) }
-  const openSection = async (chip) => {
-    await page.locator('.tw-inspector-jumplist button', { hasText: new RegExp(`^${chip}$`) }).click()
-    await page.waitForTimeout(500)
-  }
   const chips = async () => (await page.locator('.tw-inspector-jumplist button').allTextContents()).map((chip) => chip.trim())
 
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 900))
@@ -145,109 +131,20 @@ try {
   await page.keyboard.press('Meta+p') // Inspector mode
   await page.waitForTimeout(1500)
 
-  // ── 1. A slide step, no Run planned (E1, P5) ─────────────────────────────────────────────────
-  await page.locator('.cm-line', { hasText: 'Read two short slides' }).first().click()
-  await waitTitle('Welcome: three things before Monday')
-  rec('the Inspector follows the caret to the first step', await title() === 'Welcome: three things before Monday', await title())
-  rec('the Inspector does not blank on a pre-work step', await page.locator('.tw-inspector-unresolved').count() === 0)
-  rec('the Pre-work chip comes last', (await chips()).at(-1) === 'Pre-work', JSON.stringify(await chips()))
-  await openSection('Pre-work')
-  const section = page.locator('[data-testid="inspector-prework"]')
-  rec('This slide says what the step is', (await section.locator('[data-testid="prework-this-slide"]').innerText()).includes('Step 1 of 5: a slide with instructions'))
-  rec('the form lists its five steps with kinds', JSON.stringify(await section.locator('.tw-prework-steps small').allTextContents()) === JSON.stringify(['· Slide', '· Slide', '· Quick check', '· Question', '· Pre-task']))
-  rec('the current step is marked', (await section.locator('.tw-prework-steps [aria-current="step"]').innerText()).includes('Welcome'))
-  rec('P5: no Run planned — the nudge says so', (await section.locator('[data-testid="prework-nudge"]').innerText()).includes('Pre-work needs a planned Run.'))
-  rec('the status bar nudges too', await page.locator('[data-testid="status-run-nudge"]').count() === 1)
-  await shoot('P5-prework-needs-a-run')
-
-  // Questions about it: Off writes {noask}; On removes it.
-  await section.locator('[data-group="prework-ask"] button', { hasText: /^Off$/ }).click()
-  await settle()
-  rec('Questions Off writes {noask}', lineAfter('### Welcome: three things before Monday') === '{id=pwwelcome} {noask}', lineAfter('### Welcome: three things before Monday'))
-  await section.locator('[data-group="prework-ask"] button', { hasText: /^On$/ }).click()
-  await settle()
-  rec('Questions On writes nothing', lineAfter('### Welcome: three things before Monday') === '{id=pwwelcome}', lineAfter('### Welcome: three things before Monday'))
-
-  // ── 2. Plan a run… from the nudge ────────────────────────────────────────────────────────────
-  await section.locator('[data-testid="prework-plan-run"]').click()
-  const sheet = page.locator('[data-testid="plan-run-sheet"]')
-  await sheet.waitFor()
-  rec('Plan a run… opens the plan sheet with pre-work on', await sheet.locator('[data-field="prework-toggle"]').getAttribute('aria-checked') === 'true')
-  await sheet.locator('[data-field="event"]').fill('ITSS Briefing, October')
-  await sheet.locator('[data-field="date"]').fill(plusDays(6))
-  await sheet.locator('[data-testid="plan-run-save"]').click()
-  await sheet.waitFor({ state: 'detached' })
-  await page.locator('[data-testid="prework-window"]').waitFor({ timeout: 10_000 }).catch(() => {})
-  const windowText = await section.locator('[data-testid="prework-window"]').innerText().catch(() => '')
-  rec('E1: the form shows its opening, closing and Run', /Opens[\s\S]*Closes[\s\S]*when the talk starts[\s\S]*Run[\s\S]*ITSS Briefing, October/.test(windowText), JSON.stringify(windowText))
-  rec('the nudge is gone', await section.locator('[data-testid="prework-nudge"]').count() === 0)
-  await shoot('E1-prework-section-slide')
-
-  // ── 3. The quick check (E2) ─────────────────────────────────────────────────────────────────
-  await section.locator('.tw-prework-steps button', { hasText: 'Quick check' }).click()
-  await waitTitle('Quick check: what makes something an agent?')
-  rec('a step in the form opens that step', await title() === 'Quick check: what makes something an agent?', await title())
-  rec('the check’s chip is Check', (await chips()).includes('Check'), JSON.stringify(await chips()))
-  await openSection('Check')
-  const right = page.locator('[data-testid="prework-right-answer"]')
-  rec('no right answer yet: the select asks for one', (await right.inputValue()) === '-1')
-  const warningTitle = await page.locator('.tw-inspector-warning').first().getAttribute('title').catch(() => '')
-  rec('the Inspector warns the check has no right answer', (warningTitle ?? '').includes('has no right answer'), warningTitle)
-  await right.selectOption('1')
-  await settle()
-  rec('choosing the right answer marks that option in the file', onDisk().includes('- It uses tools to carry out steps for you {right}\n') && onDisk().split('{right}').length === 2)
-  await page.waitForTimeout(800)
-  rec('the Inspector reads it back', (await right.inputValue()) === '1')
-  await right.selectOption('3')
-  await settle()
-  rec('choosing another moves the marker', onDisk().includes('- Not sure yet {right}\n') && onDisk().split('{right}').length === 2)
-  await right.selectOption('1')
-  await settle()
-  await openSection('Check')
-  await shoot('E2-prework-quick-check')
-  // The room never sees the marker: the Inspector's own preview (the compiled deck) has none.
-  let markerInPreview = false
-  for (const frame of page.frames().filter((candidate) => candidate !== page.mainFrame())) {
-    if (await frame.evaluate(() => document.body?.innerHTML.includes('{right}')).catch(() => false)) markerInPreview = true
+  // ── 1. A leftover {prework} section is not written in the Inspector (work-files ticket 29) ──
+  for (const [line, heading] of [['Read two short slides', 'Welcome: three things before Monday'], ['It runs on a bigger model', 'Quick check: what makes something an agent?'], ['Pick an email you need to send this week', 'Task 1: draft one real email with Copilot']]) {
+    await page.locator('.cm-line', { hasText: line }).first().click()
+    await waitTitle(heading)
+    rec(`the Inspector follows the caret to “${heading}”`, await title() === heading, await title())
+    rec(`${heading}: the Inspector does not blank`, await page.locator('.tw-inspector-unresolved').count() === 0)
+    rec(`${heading}: no Pre-work, Check or Pre-task chip`, !(await chips()).some((chip) => ['Pre-work', 'Check', 'Pre-task'].includes(chip)), JSON.stringify(await chips()))
+    rec(`${heading}: no Before the session section`, await page.locator('[data-testid="inspector-prework"], [data-testid="prework-right-answer"], [data-testid="prework-nudge"], [data-group^="prework-"]').count() === 0)
   }
-  rec('the compiled preview never shows {right}', !markerInPreview)
-
-  // ── 4. The pre-task (E3) ────────────────────────────────────────────────────────────────────
-  await page.locator('.tw-prework-steps button', { hasText: 'Task 1' }).click()
-  await waitTitle('Task 1: draft one real email with Copilot')
-  await openSection('Pre-task')
-  const task = page.locator('[data-testid="inspector-prework"]')
-  const participants = task.locator('[data-group="prework-participants"] button')
-  rec('E3: a bare {task} lights Mark as done', /Mark as done/.test(await task.locator('[data-group="prework-participants"] button[aria-pressed="true"], [data-group="prework-participants"] button.is-selected, [data-group="prework-participants"] button[aria-checked="true"]').first().innerText().catch(() => '')))
-  await participants.filter({ hasText: 'Read only' }).click()
-  await settle()
-  rec('Read only writes {readonly} after {task}', lineAfter('### Task 1: draft one real email with Copilot') === '{id=pwtask1}{task}{readonly}', lineAfter('### Task 1: draft one real email with Copilot'))
-  await participants.filter({ hasText: 'Mark as done' }).click()
-  await settle()
-  await task.locator('[data-group="prework-minutes"] button', { hasText: '20 min' }).click()
-  await settle()
-  rec('Mark as done writes nothing; 20 min writes {minutes=20} after {task}', lineAfter('### Task 1: draft one real email with Copilot') === '{id=pwtask1}{task}{minutes=20}', lineAfter('### Task 1: draft one real email with Copilot'))
-  rec('In the talk names the results token', (await task.innerText()).includes('{results=pwtask1}'))
-  await openSection('Pre-task')
-  await shoot('E3-prework-task')
-
-  // ── 5. A talk slide showing a step's answers (E4) ─────────────────────────────────────────────
-  await page.locator('.cm-line', { hasText: 'The room adds to the answers' }).first().click()
-  await waitTitle('What AI tools do you already use?')
-  rec('the results slide’s chip is Results', (await chips()).at(-1) === 'Results', JSON.stringify(await chips()))
-  await openSection('Results')
-  const shows = page.locator('[data-testid="prework-results"]')
-  rec('Shows names the step', (await shows.locator('option:checked').textContent()) === 'Before the session › 4 · What AI tools do you already use?')
-  await shows.selectOption('results=pwquiz')
-  await settle()
-  rec('choosing another step rewrites {results=…}', lineAfter('### What AI tools do you already use?').includes('{results=pwquiz}') || onDisk().includes('{id=r1tools} {results=pwquiz}'), onDisk().match(/\{id=r1tools\}.*/)?.[0])
-  await shows.selectOption('results=pwtools')
-  await settle()
-  await openSection('Results')
-  await shoot('E4-talk-slide-shows-prework')
+  await shoot('1-section-step-no-prework-section')
+  rec('no {right} was written by opening a check', !onDisk().includes('{right}'))
   rec('no pre-work token is unresolved anywhere (Layout Doctor clean)', !/Unresolved trigger|Unknown trigger/.test(await page.locator('body').innerText()))
 
-  // ── 6. Presenting leaves the pre-work out ────────────────────────────────────────────────────
+  // ── 2. Presenting leaves the pre-work out ────────────────────────────────────────────────────
   const deckPromise = app.waitForEvent('window', { timeout: 30_000 })
   const presented = await page.evaluate(async ({ path, content }) => window.tw.talk.present(path, content, 'window'), { path: outlinePath, content: onDisk() })
   rec('the talk presents', presented?.success === true, JSON.stringify(presented))
@@ -276,7 +173,9 @@ try {
   await hereDeck.evaluate(() => window.close()).catch(() => {})
   await page.waitForTimeout(1500)
   for (const window_ of app.windows()) if (window_ !== page) await window_.close().catch(() => {})
-  rec('no stray Run file from a closed quick peek', readdirSync(join(vault, '_PRESENTATIONS', 'agents-now')).filter((name) => name.endsWith('.json') && name !== 'manifest.json').length === 1)
+  // No Run is planned in this test any more (ticket 29 took out the Inspector's Plan a run…), so there is none.
+  const runFiles = readdirSync(join(vault, '_PRESENTATIONS', 'agents-now')).filter((name) => name.endsWith('.json') && name !== 'manifest.json')
+  rec('no stray Run file from a closed quick peek', runFiles.length === 0, JSON.stringify(runFiles))
 } finally {
   await app.close().catch(() => {})
   rmSync(tempRoot, { recursive: true, force: true })

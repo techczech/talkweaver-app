@@ -1,0 +1,50 @@
+/* The image drawer (ImageDrawer.tsx), docked at the right of the workspace. Locked mockup:
+   locked-talkweaver-drawer.html. The editor and panes keep the remaining width. */
+.workspace-row { flex: 1; display: flex; min-height: 0; min-width: 0; }
+.workspace-main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.workspace-panes--dropping { outline: 3px solid var(--oxford); outline-offset: -3px; position: relative; }
+/* The slot of locked mockup 1: dashed, faint 13px centred text. Over the panes; the drop lands on the panes. */
+.image-drop-hint { position: absolute; right: 46px; top: 50%; transform: translateY(-50%); width: 300px; height: 210px; z-index: 5; pointer-events: none; border: 2px dashed #c9bfab; border-radius: 6px; background: rgba(255, 253, 248, .92); display: flex; align-items: center; justify-content: center; color: var(--faint); font-size: 13px; text-align: center; line-height: 1.5; }
+
+.image-drawer { width: 432px; flex: none; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); background: var(--panel); box-shadow: -8px 0 24px rgba(72, 58, 34, .08); font-family: var(--font-ui); color: var(--ink); }
+.image-drawer__head { height: 52px; flex: none; display: flex; align-items: center; gap: 10px; padding: 28px 16px 0; box-sizing: content-box; border-bottom: 1px solid var(--line); -webkit-app-region: drag; }
+.image-drawer__head b { font-weight: 600; font-size: 14.5px; }
+.image-drawer__shortcut { font: 11px var(--font-mono); color: var(--faint); }
+.image-drawer__close { -webkit-app-region: no-drag; margin-left: auto; width: 24px; height: 24px; border: 0; border-radius: 5px; background: none; color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer; }
+.image-drawer__close:hover { background: var(--hover); color: var(--ink); }
+.image-drawer__search { margin: 14px 16px 0; height: 40px; flex: none; border: 2px solid var(--oxford); border-radius: 7px; display: flex; align-items: center; padding: 0 10px; gap: 8px; background: #fff; font-size: 14.5px; }
+.image-drawer__search svg { color: var(--muted); flex: none; }
+.image-drawer__search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font: inherit; color: var(--ink); }
+.image-drawer__count { font-size: 12px; color: var(--faint); }
+.image-drawer__tabs { display: flex; margin: 12px 16px 0; border-bottom: 1px solid var(--line); flex: none; }
+.image-drawer__tabs button { flex: 1 1 0; min-width: 0; padding: 6px 6px; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; background: none; color: var(--muted); font: inherit; font-size: 12.5px; line-height: 1.25; text-align: center; white-space: normal; overflow-wrap: anywhere; cursor: pointer; }
+.image-drawer__tabs button.is-on { color: var(--oxford); font-weight: 600; border-color: var(--oxford); }
+.image-drawer__quiet { margin: 10px 16px 0; font-size: 12px; color: var(--faint); flex: none; }
+.image-drawer__quiet--note { font-size: 12.5px; color: var(--muted); display: flex; gap: 7px; align-items: center; margin-top: 12px; }
+.image-drawer__i { width: 15px; height: 15px; border-radius: 50%; border: 1px solid var(--faint); color: var(--faint); font: 600 10px/13px Georgia, serif; text-align: center; flex: none; }
+.image-drawer__grid { flex: 1; min-height: 0; padding: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-content: start; overflow-y: auto; }
+.image-drawer__message { grid-column: 1 / 3; margin: 24px 0; font-size: 13px; color: var(--muted); text-align: center; }
+.image-drawer__group { grid-column: 1 / 3; font: 700 10.5px var(--font-mono); letter-spacing: .12em; color: var(--faint); text-transform: uppercase; margin-top: 2px; }
+.image-drawer__card { border-radius: 6px; padding: 4px; margin: -4px; cursor: grab; min-width: 0; }
+.image-drawer__card.is-focus { background: var(--hover); box-shadow: 0 0 0 2px var(--oxford); }
+.image-drawer__card.is-dragging { opacity: .35; }
+.image-drawer__thumb { height: 106px; border-radius: 4px; border: 1px solid rgba(0, 0, 0, .1); overflow: hidden; background: var(--hover); display: flex; align-items: center; justify-content: center; color: var(--faint); font-size: 11px; }
+.image-drawer__thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.image-drawer__card b { display: block; font-size: 12.5px; font-weight: 600; line-height: 1.3; margin-top: 6px; overflow-wrap: anywhere; }
+.image-drawer__detail { display: block; font-size: 11.5px; color: var(--faint); margin-top: 2px; }
+.image-drawer__used { display: inline-block; font-size: 11px; color: var(--oxford); margin-top: 3px; margin-right: 8px; }
+.image-drawer__foot { flex: none; padding: 11px 16px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); display: flex; gap: 14px; }
+.image-drawer__foot kbd { font: 11px var(--font-mono); background: #fff; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 1px 5px; color: var(--ink); }
+
+/* The inline choice for an old slide (locked frame 2: Use this slide as). Opens beside the drawer, over the slides, at mid-height as in the frame; the highlighted answer on --active. */
+.image-drawer__choice { position: fixed; right: 448px; top: 50%; transform: translateY(-50%); width: 330px; z-index: 30; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; box-shadow: 0 14px 38px #17202a30, 0 3px 10px #17202a1c; }
+.image-drawer__choice:focus { outline: none; }
+.image-drawer__choice-title { font: 700 10.5px var(--font-mono); text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin: 2px 4px 8px; }
+.image-drawer__choice-note { margin: 0 4px 8px; font-size: 12.5px; color: var(--muted); }
+.image-drawer__opt { width: 100%; display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 7px; border: 1px solid transparent; background: none; font: inherit; color: var(--ink); text-align: left; cursor: pointer; }
+.image-drawer__opt.is-on { background: var(--active); border-color: var(--oxford); }
+.image-drawer__opt span { flex: 1; }
+.image-drawer__opt b { display: block; font-weight: 600; font-size: 14px; }
+.image-drawer__opt i { display: block; font-style: normal; font-size: 12px; color: var(--muted); margin-top: 1px; }
+.image-drawer__opt kbd, .image-drawer__choice-foot kbd { font: 11px var(--font-mono); background: #fff; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 1px 5px; color: var(--ink); }
+.image-drawer__choice-foot { font-size: 11.5px; color: var(--faint); margin: 6px 4px 0; text-align: right; }

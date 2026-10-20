@@ -980,7 +980,8 @@ const label = (t) => connectionLabel(t.connection.status().connection, NINE_FOUR
   assert.deepEqual(shown, [[`raw ${REPLY_TEXT_MARK}`, 'info', 'run-handout-publish-failed-details']])
   assert.equal(publishFailureToast('Could not publish Run handout', {}, 'k', () => {}).action, undefined, 'no Details button with nothing behind it')
   const history = readFileSync(join(repo, 'src/renderer/src/components/History.tsx'), 'utf8')
-  assert.ok(!/Details: \$\{result\.details\}/.test(history) && (history.match(/showPublishFailure\('Could not (?:un)?publish Run handout', result,/g) ?? []).length === 2, 'History shows both Run handout failures this way')
+  // Work-files ticket 29: History publishes no Run handout (Publish and Unpublish are in the Run checklist in Sessions).
+  assert.ok(!/Details: \$\{result\.details\}/.test(history) && !/Could not (?:un)?publish Run handout|publishRunHandout|unpublishRunHandout/.test(history), 'History has no Run handout publish to fail')
   console.log('PASS 4.12: a failed Run handout publish shows its sentence, with the tool\'s output behind Details')
 }
 

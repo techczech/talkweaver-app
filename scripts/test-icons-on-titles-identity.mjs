@@ -6,8 +6,14 @@
 //   - the five example talks (resources/example-vault), which carry none of the new syntax;
 //   - scripts/fixtures/icons-on-titles/braces-that-are-not-icons-outline.md: text that ends in
 //     braces without being an icon (a URL's tail, an escaped brace, braces inside a link, an
-//     autolink and a code span, on paragraphs and on headings), and a slide whose markup nests
-//     <section> panels inside the slide's own <section>;
+//     autolink and a code span, on paragraphs and on headings);
+//   - scripts/fixtures/icons-on-titles/nested-section-panels-outline.md: a {compare} slide whose markup
+//     nests <section> panels inside the slide's own <section>; checked structurally at the end of this file,
+//     not pinned to the old compiler (ticket 08 of 0.41 redrew compare on purpose);
+//   - scripts/fixtures/icons-on-titles/deck-default-list-icon-style-list-outline.md: the list slide of the
+//     list-icon-style deck default. Not pinned to the old compiler (ticket 09 of 0.41 redrew the box form of
+//     icon lists on purpose, `ul.feature-list.fl-cards`); checked structurally at the end of this file:
+//     the list still draws its item icons and its title still carries none;
 //   - scripts/fixtures/icons-on-titles/deck-default-*-outline.md (fix round 2): the same talk under
 //     four front-matter `triggers:` defaults: `icon=lucide:bike`, `title-icon=above`, both, and a
 //     list icon style (`liststyle=icons iconlist=boxes icons=all`). The talk has no icon on any
@@ -33,6 +39,7 @@ import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { talkNamesTitleLook, withoutLaterSlideStamps } from './lib/slide-markup-identity.mjs'
 
 const REPO = fileURLToPath(new URL('..', import.meta.url))
 const BUNDLE = join(REPO, 'resources', 'example-vault')
@@ -72,7 +79,8 @@ for (const { slug, path, example } of sources) {
     process.exit(1)
   }
   const model = await prepareSource(path, text, slug, statSync(path))
-  const sections = findSlideSections(model.fullHtml).map((span) => span.html)
+  // Stamps a later ticket added to every slide are left out (scripts/lib/slide-markup-identity.mjs).
+  const sections = findSlideSections(model.fullHtml).map((span) => withoutLaterSlideStamps(span.html, { talkNamesTitleLook: talkNamesTitleLook(text) }))
   sectionsOf[slug] = sections
   actual[slug] = {
     slides: sections.length,
@@ -99,11 +107,16 @@ for (const slug of Object.keys(expected)) {
 }
 for (const { slug } of sources) if (!expected[slug]) { console.error(`FAIL: ${slug} has no recorded reference`); failures += 1 }
 
-// The extractor takes a slide whole. The fixture's contrast slide nests two <section class="cpanel">
-// panels: its span must hold both and end with the slide's own close, and changing a word in the
-// SECOND panel must change the hash (a cut at the first inner </section> would hide that change).
+// The extractor takes a slide whole. A compare slide nests two <section class="compare-half vs-panel">
+// panels (the 5+-pair contrast used to; ticket 08 of 0.41 moved that to compare): its span must hold
+// both and end with the slide's own close, and changing a word in the SECOND panel must change the
+// hash (a cut at the first inner </section> would hide that change). This slide is not pinned to
+// the pre-ticket compiler (compare was redrawn on purpose); it is checked structurally, here.
 {
-  const nested = sectionsOf['braces-that-are-not-icons'].find((html) => html.includes('cpanel-right'))
+  const nestedPath = join(FIXTURES, 'nested-section-panels-outline.md')
+  const nestedText = readFileSync(nestedPath, 'utf8')
+  const nestedModel = await prepareSource(nestedPath, nestedText, 'nested-section-panels', statSync(nestedPath))
+  const nested = findSlideSections(nestedModel.fullHtml).map((span) => span.html).find((html) => html.includes('vs-panel'))
   const sha = (html) => createHash('sha256').update(html).digest('hex')
   if (!nested) { console.error('FAIL: the fixture has no slide with nested <section> panels'); failures += 1 }
   else {
@@ -112,6 +125,18 @@ for (const { slug } of sources) if (!expected[slug]) { console.error(`FAIL: ${sl
     if (opens !== 3 || closes !== 3) { console.error(`FAIL: the nested slide was not cut whole (${opens} <section>, ${closes} </section>)`); failures += 1 }
     if (!nested.includes('Card and cash')) { console.error('FAIL: the nested slide lost its second panel'); failures += 1 }
     if (sha(nested.replace('Card and cash', 'Card only')) === sha(nested)) { console.error('FAIL: a change in the second panel does not change the hash'); failures += 1 }
+  }
+}
+// The list slide under the list-icon-style deck default (not pinned; see the header): items keep
+// their icons, the title has none.
+{
+  const listPath = join(FIXTURES, 'deck-default-list-icon-style-list-outline.md')
+  const listModel = await prepareSource(listPath, readFileSync(listPath, 'utf8'), 'deck-default-list-icon-style-list', statSync(listPath))
+  const list = findSlideSections(listModel.fullHtml).map((span) => span.html).find((html) => html.includes('data-id="d-list"'))
+  if (!list) { console.error('FAIL: the list-icon-style list fixture has no list slide'); failures += 1 }
+  else {
+    if ((list.match(/class="fl-icon"/g) ?? []).length !== 3) { console.error('FAIL: the list slide does not draw an icon on each of its three items'); failures += 1 }
+    if (/title-with-icon|class="fl-icon title-icon"|data-para-icon/.test(list)) { console.error('FAIL: the list slide draws a title or paragraph icon nothing in the talk asks for'); failures += 1 }
   }
 }
 // Fix round 2: under a deck default, and under a Trigger line that names an icon, no title carries

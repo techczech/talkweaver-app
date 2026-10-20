@@ -82,7 +82,9 @@ for (const id of ['shot-statement', 'shot-notitle']) {
   assert.ok(img && caption, `${id}: image and caption are drawn`)
   inside(img, `${id} image`)
   inside(caption, `${id} caption`)
-  assert.ok(img.bottom <= caption.top + 1, `${id}: the caption sits below the image, not over it`)
+  // The caption never overlaps the image: below it, or (ADR-0039 / ticket 04, a statement that keeps its image
+  // draws the picture beside the text block) clear of it to the left.
+  assert.ok(img.bottom <= caption.top + 1 || caption.right <= img.left + 1, `${id}: the caption sits below or beside the image, not over it (img ${JSON.stringify(img)}, caption ${JSON.stringify(caption)})`)
   assert.ok(img.width > 300 && img.height > 300, `${id}: the image keeps a usable size, got ${img.width}x${img.height}`)
   const zoom = await page.evaluate(() => document.querySelector('#stage > .slide.active > .slide-content').style.zoom)
   assert.ok(zoom === '' || Number(zoom) === 1, `${id}: no whole-slide zoom is needed, got ${zoom}`)

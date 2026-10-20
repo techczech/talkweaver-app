@@ -13,7 +13,7 @@ import {
 } from './board-protocol'
 
 export const LIVE_PROTOCOL_VERSION = 2
-export const LIVE_WORKER_BUILD = '22-signing-key'
+export const LIVE_WORKER_BUILD = '26-online-content-guidelines'
 export interface SessionPresence {
   type: 'session.presence'
   presenterConnected: boolean

@@ -64,7 +64,13 @@ for (const entry of active) {
 const emptyDeck = deckSettingsViewModel(METADATA_REGISTRY, [])
 const deckFields = emptyDeck.groups.flatMap((group) => group.fields)
 const deckKeys = new Set(deckFields.map((field) => field.key))
-for (const entry of userEntries) {
+// A key that is not a deck setting (registry `outsideDeck`, ticket 08 review S4) is not in Deck settings,
+// is not reported there as unknown, and stays reachable in the Metadata table (section 6).
+const outsideDeck = userEntries.filter((entry) => entry.outsideDeck)
+assert.deepEqual(outsideDeck.map((entry) => entry.key), ['prework', 'postwork'])
+for (const entry of outsideDeck) assert(!deckKeys.has(entry.key), `${entry.key} is not a deck setting`)
+assert.deepEqual(deckSettingsViewModel(METADATA_REGISTRY, [{ key: 'prework', value: 'a-file' }]).unknown, [], 'a key outside the deck is not unknown')
+for (const entry of userEntries.filter((candidate) => !candidate.outsideDeck)) {
   assert(deckKeys.has(entry.key), `Deck settings must render ${entry.key}`)
   const field = deckFields.find((candidate) => candidate.key === entry.key)
   assert.equal(field.control, controlForEntry(entry), `${entry.key}: Deck settings control must be the one the vocabulary demands`)
@@ -85,7 +91,7 @@ for (const entry of userEntries) {
 }
 
 const userGroupOrder = []
-for (const entry of userEntries) {
+for (const entry of userEntries.filter((candidate) => !candidate.outsideDeck)) {
   const label = entry.group ?? 'Other'
   if (!userGroupOrder.includes(label)) userGroupOrder.push(label)
 }

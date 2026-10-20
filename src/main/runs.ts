@@ -1,10 +1,16 @@
 import type { RunAudioFields } from '../shared/run-audio.ts'
 import { AUDIENCE_FEEDBACK_LIMITS, parsePollDefinition, parsePollChoice, parseQuestionInput, parseReactionInput, type InstantSlide, type PollDefinition, type PollChoice } from '../../worker/protocol.ts'
 import { preworkWindow } from '../shared/plan-run.ts'
+import {
+  legacyPreWork, LEGACY_SECTION_FILE_ID, normaliseLocalDateTime, normaliseRunWork, normaliseRunWorkSet, normaliseTimeZone, zoneText, SESSION_END, WORK_FILE_ID, withoutLegacyWork, workClosingError,
+  type Phase, type RunWork, type RunWorkSet
+} from '../shared/run-work.ts'
 import { reactionCountsBySlide, type RunQuestion, type RunReaction, type SlideReactionCounts } from '../shared/run-feedback.ts'
 import { mergeRunBoards, normaliseRunBoards, type RunBoard } from '../shared/run-board.ts'
-import { mergeRunPrework, normaliseRunPrework, type PreworkPick, type RunPrework } from '../shared/run-prework.ts'
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'fs'
+import { mergeRunPrework, normaliseRunPrework, zonedLocalToMs, type PreworkPick, type RunPrework } from '../shared/run-prework.ts'
+import { applySeenChange, type SeenChange } from '../shared/run-answers.ts'
+import { normaliseRunExtraSlides, normaliseRunExtras, type RunExtraSlide, type RunExtras } from '../shared/run-extras.ts'
+import { closeSync, existsSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { resolvePathways, type Pathway, type PathwaySlideRow } from './pathways.ts'
 import { pathStaysInside } from './path-containment.ts'
@@ -16,7 +22,7 @@ export { reactionCountsBySlide, preworkWindow }
 export type RunStatus = 'planned' | 'delivered'
 export type RunSlideSet = { kind: 'full' } | { kind: 'pathway'; pathwayId: string }
 export type RunKind = 'delivery' | 'rehearsal' | 'recording'
-export type RunMark = { event: string; slideId?: string; tMs: number; hidden?: number; marks?: number; space?: 'image'; image?: number; ink?: unknown }
+export type RunMark = { event: string; slideId?: string; tMs: number; hidden?: number; marks?: number; space?: 'image'; image?: number; ink?: unknown; clip?: { src: string; atS: number } }
 export type RunPollType = PollDefinition['type']
 export type RunPollVisibility = 'live' | 'held'
 export interface RunPoll extends Omit<PollDefinition, 'pollId'> {
@@ -84,6 +90,20 @@ export interface RunRecord {
   timeZone?: string
   slideSet: RunSlideSet
   handoutUrl?: string
+  /**
+   * The name of the Run's own folder in the site, written with `handoutUrl` when a publish of the Run
+   * has gone up (ticket 17 fix round). It binds that folder to this Run: Unpublish and Publish again
+   * use it, checked against the link, rather than reading a folder from the link alone. Absent on Runs
+   * published before it and whenever `handoutUrl` is.
+   */
+  handoutFolder?: string
+  /**
+   * When the Run's pages were last made "not available" (ticket 17 round 3, D1): written by Unpublish
+   * whenever it REPLACES the Run's pages, so a Run whose sent phases are known only from the work
+   * service's record (its attachments no longer carry a `publishedAt`) still reads "Unpublished" on the
+   * checklist. Kept only beside `handoutUrl`; a publish of the Run takes it away.
+   */
+  unpublishedAt?: string
   startedAt: string
   endedAt: string
   recordingMs: number
@@ -107,12 +127,27 @@ export interface RunRecord {
   boards?: RunBoard[]
   /** Pre-work answers mirrored from the Worker (feedback-boards ticket 09): reads, answers, done marks, questions. */
   prework?: RunPrework
+  /** The work files attached to this Run, one per phase, with their windows and pinned revisions (work-files ticket 03). */
+  work?: RunWorkSet
+  /** Post-work answers, the same shape as the pre-work answers. */
+  postwork?: RunPrework
+  /** Extras for this run (work-files ticket 24): an intro note and links, shown on the Run's handout only. */
+  extras?: RunExtras
+  /**
+   * Extra slides for this run (work-files ticket 25): shown in this Run's presenting and handout only, after
+   * their chosen slides. Kept here, never in the talk's outline.
+   */
+  extraSlides?: RunExtraSlide[]
 }
 
+/** An attachment as planning sends it. Post-work `opens` defaults to `session-end`; pre-work `closes` to the session start. */
+export interface RunWorkInput { fileId: string; opens?: string; closes?: string; timeZone?: string }
+export type RunWorkPlan = { [K in Phase]?: RunWorkInput | null }
+
 type PlanFields = 'startTime' | 'expectedPeople' | 'preworkOpens' | 'preworkCloses' | 'timeZone'
-export type PlannedRunInput = Pick<RunRecord, 'talkSlug' | 'talkTitle' | 'plannedDate' | 'eventTitle' | 'audience' | 'slideSet'> & Partial<Pick<RunRecord, PlanFields>>
+export type PlannedRunInput = Pick<RunRecord, 'talkSlug' | 'talkTitle' | 'plannedDate' | 'eventTitle' | 'audience' | 'slideSet'> & Partial<Pick<RunRecord, PlanFields>> & { work?: RunWorkPlan }
 /** A patch clears an optional plan field with `null`. */
-export type PlannedRunPatch = Partial<Pick<RunRecord, 'plannedDate' | 'eventTitle' | 'audience' | 'slideSet'>> & { [K in PlanFields]?: RunRecord[K] | null }
+export type PlannedRunPatch = Partial<Pick<RunRecord, 'plannedDate' | 'eventTitle' | 'audience' | 'slideSet'>> & { [K in PlanFields]?: RunRecord[K] | null } & { work?: RunWorkPlan }
 
 function asText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
@@ -131,26 +166,12 @@ function normaliseStartTime(value: unknown): string {
   return match && Number(match[1]) < 24 && Number(match[2]) < 60 ? `${match[1]}:${match[2]}` : ''
 }
 
-function normaliseLocalDateTime(value: unknown): string {
-  const text = asText(value)
-  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})$/.exec(text)
-  if (!match || Number(match[2]) > 23 || Number(match[3]) > 59) return ''
-  // Impossible dates (2026-02-31) parse in some engines by rolling over; the components must round-trip.
-  const parsed = new Date(`${match[1]}T00:00:00Z`)
-  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === match[1] ? text : ''
-}
-
 /** The machine's own IANA time zone. */
 export function machineTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 }
 
-/** An IANA time zone name the platform knows, or ''. */
-export function normaliseTimeZone(value: unknown): string {
-  const text = asText(value)
-  if (!text || text.length > 64 || !/^[A-Za-z0-9_+\-/]+$/.test(text)) return ''
-  try { return new Intl.DateTimeFormat('en-GB', { timeZone: text }).resolvedOptions().timeZone ? text : '' } catch { return '' }
-}
+export { normaliseTimeZone }
 
 function normaliseExpectedPeople(value: unknown): number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 100000 ? value : 0
@@ -410,17 +431,26 @@ export function normaliseRun(value: unknown): RunRecord {
   const eventTitle = asText(raw.eventTitle)
   const audience = asText(raw.audience)
   const handoutUrl = asText(raw.handoutUrl)
+  const handoutFolder = handoutUrl && typeof raw.handoutFolder === 'string' && raw.handoutFolder ? raw.handoutFolder : ''
+  const unpublishedAt = handoutUrl && typeof raw.unpublishedAt === 'string' && Number.isFinite(Date.parse(raw.unpublishedAt)) ? raw.unpublishedAt : ''
   const startTime = normaliseStartTime(raw.startTime)
   const expectedPeople = normaliseExpectedPeople(raw.expectedPeople)
   const preworkOpens = normaliseLocalDateTime(raw.preworkOpens)
   const preworkCloses = preworkOpens ? normaliseLocalDateTime(raw.preworkCloses) : ''
-  const timeZone = preworkOpens ? normaliseTimeZone(raw.timeZone) : ''
+  // Attachments are read first: they need the Run's zone, and a zone is kept only while something uses it.
+  const readWork = withoutLegacyWork(normaliseRunWorkSet(raw.work))
+  // A zone of the right shape that this machine does not know is kept as written, not deleted.
+  const zoneRead = zoneText(raw.timeZone)
+  const timeZone = preworkOpens || readWork ? zoneRead : ''
   const kind: RunKind = raw.kind === 'rehearsal' || raw.kind === 'recording' ? raw.kind : 'delivery'
   const instantSlides = normaliseInstantSlides(raw.instantSlides)
   const reactions = normaliseRunReactions(raw.reactions)
   const questions = normaliseRunQuestions(raw.questions)
   const boards = normaliseRunBoards(raw.boards)
   const prework = normaliseRunPrework(raw.prework)
+  const postwork = normaliseRunPrework(raw.postwork)
+  const extras = normaliseRunExtras(raw.extras)
+  const extraSlides = normaliseRunExtraSlides(raw.extraSlides)
   const run: RunRecord = {
     ...(raw as Partial<RunRecord>),
     id: asText(raw.id),
@@ -447,6 +477,11 @@ export function normaliseRun(value: unknown): RunRecord {
     polls: normalisePolls(raw.polls),
     pollResponses: normalisePollResponses(raw.pollResponses)
   }
+  // The Run's folder in the site is kept only beside its link (a Run from before it re-persists byte for byte).
+  if (handoutFolder) run.handoutFolder = handoutFolder
+  else delete run.handoutFolder
+  if (unpublishedAt) run.unpublishedAt = unpublishedAt
+  else delete run.unpublishedAt
   // Omitted when empty so Runs without instant slides stay byte-stable on re-persist.
   if (instantSlides.length) run.instantSlides = instantSlides
   else delete run.instantSlides
@@ -461,6 +496,14 @@ export function normaliseRun(value: unknown): RunRecord {
   // Pre-work the same way: a Run from before it re-persists byte for byte.
   if (prework) run.prework = prework
   else delete run.prework
+  if (postwork) run.postwork = postwork
+  else delete run.postwork
+  // Extras the same way, whitelisted and bounded: a Run without them re-persists byte for byte.
+  if (extras) run.extras = extras
+  else delete run.extras
+  // Extra slides the same way (ticket 25): junk entries dropped, the rest kept; none, no field.
+  if (extraSlides) run.extraSlides = extraSlides
+  else delete run.extraSlides
   // Plan fields (ADR-0032 point 5) are whitelisted and omitted when empty, so Runs without them
   // re-persist byte for byte.
   if (startTime) run.startTime = startTime
@@ -473,6 +516,22 @@ export function normaliseRun(value: unknown): RunRecord {
   else delete run.preworkCloses
   if (timeZone) run.timeZone = timeZone
   else delete run.timeZone
+  // Work-file attachments (ticket 03). Local times are never compared across zones: an attachment
+  // whose zone is not the Run's is marked, not used. A 0.39 pre-work window with no attachment gets a `pre` attachment
+  // whose file is unknown, derived here from the old fields on every read and never written
+  // (writeRun strips it), so the old fields stay the one source of truth.
+  const work: RunWorkSet = {}
+  for (const phase of ['pre', 'post'] as const) {
+    const attachment = readWork?.[phase]
+    // Never erase what could not be accepted: a zone that disagrees marks the attachment, it does not drop it.
+    if (attachment) work[phase] = attachment.timeZone === timeZone && normaliseTimeZone(timeZone) ? attachment : { ...attachment, problem: 'zone-mismatch' }
+  }
+  if (!work.pre) {
+    const legacy = legacyPreWork(run, machineTimeZone())
+    if (legacy) work.pre = legacy
+  }
+  if (work.pre || work.post) run.work = work
+  else delete run.work
   return run
 }
 
@@ -585,10 +644,19 @@ export function applyRunBoards(run: RunRecord, boards: RunBoard[]): RunRecord {
  * the Run is removed, and History's "answered" on a question is kept. Hostile entries are dropped.
  * Returns `run` itself when nothing changes, so an unchanged pull writes nothing.
  */
-export function applyRunPrework(run: RunRecord, entries: unknown[], meta: { people?: number; lastActivityAt?: number; closedAt?: number } = {}): RunRecord {
-  const merged = mergeRunPrework(run.prework, entries, meta)
+export function applyRunPrework(run: RunRecord, entries: unknown[], meta: { people?: number; lastActivityAt?: number; closedAt?: number | null } = {}): RunRecord {
+  return applyRunWorkAnswers(run, 'pre', entries, meta)
+}
+
+/**
+ * The same merge for either phase (work-files ticket 13): pre-work answers land in `prework`,
+ * post-work answers in `postwork`, and neither section is touched by the other's pull.
+ */
+export function applyRunWorkAnswers(run: RunRecord, phase: Phase, entries: unknown[], meta: { people?: number; lastActivityAt?: number; closedAt?: number | null } = {}): RunRecord {
+  const field = phase === 'post' ? 'postwork' : 'prework'
+  const merged = mergeRunPrework(run[field], entries, meta)
   if (!merged) return run
-  const next = normaliseRun({ ...run, prework: merged })
+  const next = normaliseRun({ ...run, [field]: merged })
   return JSON.stringify(next) === JSON.stringify(run) ? run : next
 }
 
@@ -596,8 +664,9 @@ export function applyRunPrework(run: RunRecord, entries: unknown[], meta: { peop
  * Which answers a step's board slide opens with (Run page, R3). Kept on the Run's pre-work; a null
  * pick forgets the choice (back to every answer). Ids that are not answers of that step are dropped.
  */
-export function setRunPreworkPick(run: RunRecord, stepId: string, pick: PreworkPick | null): RunRecord {
-  const prework = run.prework
+export function setRunPreworkPick(run: RunRecord, stepId: string, pick: PreworkPick | null, phase: Phase = 'pre'): RunRecord {
+  const field = phase === 'post' ? 'postwork' : 'prework'
+  const prework = run[field]
   if (!prework) throw new Error('prework-not-found')
   const picks = { ...(prework.picks ?? {}) }
   if (!pick) delete picks[stepId]
@@ -605,12 +674,25 @@ export function setRunPreworkPick(run: RunRecord, stepId: string, pick: PreworkP
     const answers = new Set(prework.entries.filter((entry) => entry.kind === 'answer' && entry.stepId === stepId).map((entry) => entry.id))
     picks[stepId] = { mode: pick.mode, ids: pick.ids.filter((id) => answers.has(id)) }
   }
-  return normaliseRun({ ...run, prework: { ...prework, picks: Object.keys(picks).length ? picks : undefined } })
+  return normaliseRun({ ...run, [field]: { ...prework, picks: Object.keys(picks).length ? picks : undefined } })
+}
+
+/**
+ * The Run page's read state for a phase (2026-10-19 prework-responses, decision 14): leaving the Run, Mark
+ * all read, or a row kept unread by its dot. The same Run returned when nothing changes.
+ */
+export function setRunPreworkSeen(run: RunRecord, change: SeenChange, at: number, phase: Phase = 'pre'): RunRecord {
+  const field = phase === 'post' ? 'postwork' : 'prework'
+  const prework = run[field]
+  if (!prework) return run
+  const next = applySeenChange(prework, change, at)
+  return next ? normaliseRun({ ...run, [field]: next }) : run
 }
 
 /** History's marks on a question about a step: "Mark answered" and "Put in the talk's questions"; null clears one. */
-export function markRunPreworkQuestion(run: RunRecord, entryId: string, patch: { answered?: boolean; inTalk?: { slideId: string | null } | null }): RunRecord {
-  const prework = run.prework
+export function markRunPreworkQuestion(run: RunRecord, entryId: string, patch: { answered?: boolean; inTalk?: { slideId: string | null } | null }, phase: Phase = 'pre'): RunRecord {
+  const field = phase === 'post' ? 'postwork' : 'prework'
+  const prework = run[field]
   if (!prework?.entries.some((entry) => entry.id === entryId && entry.kind === 'question')) throw new Error('prework-question-not-found')
   const entries = prework.entries.map((entry) => {
     if (entry.id !== entryId) return entry
@@ -619,7 +701,7 @@ export function markRunPreworkQuestion(run: RunRecord, entryId: string, patch: {
     const inTalk = patch.inTalk === undefined ? entry.inTalk : patch.inTalk ?? undefined
     return { ...rest, ...(answered ? { answered: true as const } : {}), ...(inTalk ? { inTalk } : {}) }
   })
-  return normaliseRun({ ...run, prework: { ...prework, entries } })
+  return normaliseRun({ ...run, [field]: { ...prework, entries } })
 }
 
 export function markRunInstantSlideAdded(run: RunRecord, entryId: string, added: RunInstantSlideAdded): RunRecord {
@@ -641,11 +723,66 @@ export function writeRunFile(path: string, run: RunRecord): void {
   writeRun(path, run)
 }
 
+/**
+ * Write a Run file that must not exist yet (a new recording's first save). Atomic like every Run
+ * write — a reader never sees half a file — and exclusive: when a file is already at `path`, it is
+ * left as it is and this throws an error whose `code` is 'EEXIST'. The temporary file is hard-linked
+ * into place (fails if the name is taken); where the filesystem has no hard links, the name is
+ * reserved with an exclusive create and the temporary file renamed over that empty reservation.
+ */
+export function writeNewRunFile(path: string, run: RunRecord): void {
+  mkdirSync(dirname(path), { recursive: true })
+  const temp = writeRunTemp(path, run)
+  try {
+    try {
+      linkSync(temp, path)
+      return
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'EEXIST') throw e
+    }
+    // The reservation is removed again if the save fails after it — only while it is still the
+    // empty file made here (same inode, no bytes), so an empty Run name never poses as a save.
+    let reserved: { dev: number; ino: number }
+    const fd = openSync(path, 'wx')
+    try {
+      const st = fstatSync(fd)
+      reserved = { dev: st.dev, ino: st.ino }
+    } finally {
+      closeSync(fd)
+    }
+    try {
+      renameSync(temp, path)
+    } catch (e) {
+      try {
+        const st = lstatSync(path)
+        if (st.isFile() && st.size === 0 && st.dev === reserved.dev && st.ino === reserved.ino) unlinkSync(path)
+      } catch { /* gone already, or not ours: left alone */ }
+      throw e
+    }
+  } finally {
+    try { unlinkSync(temp) } catch { /* renamed into place */ }
+  }
+}
+
+function stripProblem(work: RunWork): RunWork {
+  const { problem: _problem, ...rest } = work
+  return rest
+}
+
+function writeRunTemp(path: string, run: RunRecord): string {
+  const temp = `${path}.${process.pid}.${Date.now()}.tmp`
+  // The migrated 0.39 attachment is derived on read, never stored.
+  const kept = withoutLegacyWork(run.work)
+  // `problem` marks a read, it is never stored.
+  const real = kept && { ...(kept.pre ? { pre: stripProblem(kept.pre) } : {}), ...(kept.post ? { post: stripProblem(kept.post) } : {}) }
+  const { work: _derived, ...rest } = run
+  writeFileSync(temp, `${JSON.stringify(real ? { ...rest, work: real } : rest, null, 2)}\n`, 'utf8')
+  return temp
+}
+
 function writeRun(path: string, run: RunRecord): void {
   mkdirSync(dirname(path), { recursive: true })
-  const temp = `${path}.${process.pid}.${Date.now()}.tmp`
-  writeFileSync(temp, `${JSON.stringify(run, null, 2)}\n`, 'utf8')
-  renameSync(temp, path)
+  renameSync(writeRunTemp(path, run), path)
 }
 
 export function readRun(vaultRoot: string, talkSlug: string, runId: string): RunRecord | null {
@@ -706,16 +843,97 @@ function assertPreworkOrder(run: RunRecord): void {
   if (window && window.closes <= window.opens) throw new Error('prework-closes-before-opens')
 }
 
-export function createPlannedRun(vaultRoot: string, input: PlannedRunInput, idFactory: () => string = () => `run-${Date.now().toString(36)}`): RunRecord {
+function sessionStart(run: Pick<RunRecord, 'plannedDate' | 'startTime'>): string {
+  return run.plannedDate ? `${run.plannedDate}T${run.startTime || '00:00'}` : ''
+}
+
+// Planning sends attachments; they are read, completed and refused with a reason code (ticket 11 shows it).
+function buildRunWork(phase: Phase, input: RunWorkInput, start: string, zone: string, current?: RunWork, options: { delivered?: boolean } = {}): RunWork {
+  const bad = new Error(`work-${phase}-invalid`)
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw bad
+  const fileId = asText(input.fileId)
+  if (fileId === LEGACY_SECTION_FILE_ID) throw new Error('work-file-id-reserved')
+  if (!WORK_FILE_ID.test(fileId)) throw new Error('work-file-id-invalid')
+  if (!normaliseTimeZone(zone) || (input.timeZone && input.timeZone !== zone)) throw new Error('work-zone-mismatch')
+  if (phase === 'post' && !asText(input.closes)) throw new Error('work-post-closes-required')
+  if (phase === 'pre' && !asText(input.opens)) throw new Error('work-pre-opens-required')
+  const candidate = normaliseRunWork({
+    fileId: input.fileId,
+    opens: phase === 'post' ? (asText(input.opens) || SESSION_END) : input.opens,
+    closes: asText(input.closes) || start,
+    timeZone: zone
+  }, phase)
+  if (!candidate) throw bad
+  const error = workClosingError(phase, candidate, start, options)
+  if (error) throw new Error(error)
+  // Re-planning the same file keeps what was already sent of it, and post-work that opens when the
+  // session ends keeps when it opened (ticket 19).
+  if (current && current.fileId === candidate.fileId) {
+    for (const key of ['pinned', 'publishedAt', 'unpublishedAt'] as const) if (current[key]) Object.assign(candidate, { [key]: current[key] })
+    if (current.openedAt && candidate.opens === SESSION_END) candidate.openedAt = current.openedAt
+  }
+  return candidate
+}
+
+function assertWorkPlan(plan: unknown): asserts plan is RunWorkPlan | undefined {
+  if (plan === undefined) return
+  if (!plan || typeof plan !== 'object' || Array.isArray(plan)) throw new Error('work-invalid')
+  if (Object.keys(plan).some((key) => key !== 'pre' && key !== 'post')) throw new Error('work-phase-unknown')
+}
+
+// Every attachment that planning set is checked again after any plan edit: moving the date or the
+// start time can put a closing time on the wrong side of the session. A migrated pre-work window
+// (`legacy-section`) is the 0.39 one and keeps its own rules.
+function assertWorkWindows(run: RunRecord, options: { delivered?: boolean } = {}): void {
+  const start = sessionStart(run)
+  if (!start) return
+  for (const phase of ['pre', 'post'] as const) {
+    const work = run.work?.[phase]
+    if (!work || work.fileId === LEGACY_SECTION_FILE_ID) continue
+    if (work.problem) continue
+    if (work.timeZone !== run.timeZone) throw new Error('work-zone-mismatch')
+    const error = workClosingError(phase, work, start, options)
+    if (error) throw new Error(error)
+  }
+}
+
+function plannedWork(plan: RunWorkPlan | undefined, base: { plannedDate?: string; startTime?: string }, zone: string, current?: RunWorkSet): RunWorkSet | undefined {
+  const start = sessionStart(base)
+  const out: RunWorkSet = { ...(withoutLegacyWork(current) ?? {}) }
+  for (const phase of ['pre', 'post'] as const) {
+    const input = plan?.[phase]
+    if (input === undefined) continue
+    if (input === null) delete out[phase]
+    else out[phase] = buildRunWork(phase, input, start, zone, out[phase])
+  }
+  return out.pre || out.post ? out : undefined
+}
+
+/**
+ * Planning from the app (work-files ticket 29): the 0.39 window fields (`preworkOpens`/`preworkCloses`)
+ * attach a talk's `{prework}` section, which publishes no pre-work page. The IPC handlers pass
+ * `refuseNewSectionPrework` so a renderer cannot attach it to a new Run or to a Run that does not
+ * already have it; a Run planned with it before work files keeps its times editable.
+ */
+export interface PlanSaveOptions { refuseNewSectionPrework?: boolean }
+
+const hasValue = (value: unknown): boolean => value !== undefined && value !== null && value !== ''
+
+export function createPlannedRun(vaultRoot: string, input: PlannedRunInput, idFactory: () => string = () => `run-${Date.now().toString(36)}`, options: PlanSaveOptions = {}): RunRecord {
   const plannedDate = validDate(input.plannedDate)
   const eventTitle = asText(input.eventTitle)
   if (!eventTitle) throw new Error('event-title-required')
+  if (options.refuseNewSectionPrework && (hasValue(input.preworkOpens) || hasValue(input.preworkCloses))) throw new Error('prework-section-retired')
   assertPlanFields(input)
   assertClosesHaveOpens(input.preworkCloses, input.preworkOpens)
+  assertWorkPlan(input.work)
   if (!isSafeTalkSlug(input.talkSlug)) throw new Error('run-path-unsafe')
   const id = asText(idFactory())
   if (!id || existsSync(runPath(vaultRoot, input.talkSlug, id))) throw new Error('run-id-collision')
   const slideSet = normaliseSlideSet(input.slideSet)
+  // The zone the times were entered in: the one sent, else this machine's. Attachments share it.
+  const zone = input.timeZone || machineTimeZone()
+  const work = plannedWork(input.work, { plannedDate, startTime: normaliseStartTime(input.startTime) }, zone)
   const run = normaliseRun({
     id,
     talkSlug: input.talkSlug,
@@ -730,48 +948,76 @@ export function createPlannedRun(vaultRoot: string, input: PlannedRunInput, idFa
     preworkOpens: input.preworkOpens,
     preworkCloses: input.preworkCloses,
     // The zone the pre-work times were entered in: the one sent, else this machine's.
-    timeZone: input.preworkOpens ? (input.timeZone || machineTimeZone()) : undefined,
+    timeZone: input.preworkOpens || work ? zone : undefined,
     slideSet,
     pathwayId: slideSet.kind === 'pathway' ? slideSet.pathwayId : null,
+    work,
     startedAt: `${plannedDate}T00:00:00.000Z`,
     endedAt: '', recordingMs: 0, wallClockMs: 0, timerTargetMin: 0,
     context: null, audio: null, transcript: null, slideTimeIndex: []
   })
   assertPreworkOrder(run)
+  assertWorkWindows(run)
   writeRun(runPath(vaultRoot, run.talkSlug, run.id), run)
   return run
 }
 
-export function updatePlannedRun(vaultRoot: string, talkSlug: string, runId: string, patch: PlannedRunPatch): RunRecord | null {
+export function updatePlannedRun(vaultRoot: string, talkSlug: string, runId: string, patch: PlannedRunPatch, options: PlanSaveOptions = {}): RunRecord | null {
   // Called only for its throw: an unsafe name is refused as run-path-unsafe, not reported as not found.
   runPath(vaultRoot, talkSlug, runId)
   const current = readRun(vaultRoot, talkSlug, runId)
   if (!current || current.status !== 'planned') return null
+  if (options.refuseNewSectionPrework && !current.preworkOpens && (hasValue(patch.preworkOpens) || hasValue(patch.preworkCloses))) throw new Error('prework-section-retired')
   assertPlanFields(patch)
+  assertWorkPlan(patch.work)
   // Switching pre-work off (opens: null) clears the closing time with it; naming a closing time
   // while there is no opening is refused.
   const opensAfter = patch.preworkOpens !== undefined ? patch.preworkOpens : current.preworkOpens
   if (patch.preworkOpens !== null) assertClosesHaveOpens(patch.preworkCloses !== undefined ? patch.preworkCloses : current.preworkCloses, opensAfter)
-  const next = normaliseRun({
+  // The 0.39 window fields are the one source of the migrated pre-work window. Naming a pre-work
+  // attachment (or removing it with null) replaces that window, so the old fields go with it and
+  // the removal sticks after a reload.
+  const dropLegacy = patch.preworkOpens === null || (patch.work?.pre !== undefined && patch.preworkOpens === undefined)
+  const realWork = withoutLegacyWork(current.work)
+  const attaching = Boolean(patch.work && Object.values(patch.work).some((input) => input))
+  const zoneChange = patch.timeZone ? { timeZone: patch.timeZone }
+    : (patch.preworkOpens || attaching) && !current.timeZone ? { timeZone: machineTimeZone() } : {}
+  // A different zone for the Run cannot silently re-read attachments kept from before.
+  if (patch.timeZone && current.timeZone && patch.timeZone !== current.timeZone) {
+    for (const phase of ['pre', 'post'] as const) if (realWork?.[phase] && !realWork[phase]!.problem && patch.work?.[phase] === undefined) throw new Error('work-zone-mismatch')
+  }
+  const interim = normaliseRun({
     ...current,
+    work: realWork,
     ...(patch.startTime !== undefined ? { startTime: patch.startTime ?? undefined } : {}),
     ...(patch.expectedPeople !== undefined ? { expectedPeople: patch.expectedPeople ?? undefined } : {}),
-    ...(patch.preworkOpens !== undefined ? { preworkOpens: patch.preworkOpens ?? undefined } : {}),
-    ...(patch.preworkOpens === null ? { preworkCloses: undefined } : patch.preworkCloses !== undefined ? { preworkCloses: patch.preworkCloses ?? undefined } : {}),
+    ...(dropLegacy ? { preworkOpens: undefined, preworkCloses: undefined }
+      : {
+        ...(patch.preworkOpens !== undefined ? { preworkOpens: patch.preworkOpens ?? undefined } : {}),
+        ...(patch.preworkCloses !== undefined ? { preworkCloses: patch.preworkCloses ?? undefined } : {})
+      }),
     // The zone is the Run's: kept on every edit unless the sheet sends a different one (a Run planned
-    // for Prague stays Prague when edited from Oxford). A window set for the first time without one
-    // takes this machine's; switching pre-work off drops it.
-    ...(patch.preworkOpens === null ? { timeZone: undefined }
-      : patch.timeZone ? { timeZone: patch.timeZone }
-        : patch.preworkOpens !== undefined && !current.preworkOpens ? { timeZone: machineTimeZone() } : {}),
+    // for Prague stays Prague when edited from Oxford). It is written only where the Run has a window
+    // or an attachment, and is set for the first time only when one is added.
+    ...zoneChange,
     ...(patch.plannedDate !== undefined ? { plannedDate: validDate(patch.plannedDate) } : {}),
     ...(patch.eventTitle !== undefined ? { eventTitle: asText(patch.eventTitle) } : {}),
     ...(patch.audience !== undefined ? { audience: asText(patch.audience) } : {}),
     ...(patch.slideSet !== undefined ? { slideSet: normaliseSlideSet(patch.slideSet) } : {})
   })
+  // Attachments are planned against the plan as edited (its date, start time and zone).
+  const zone = interim.timeZone || (zoneChange as { timeZone?: string }).timeZone || current.timeZone || machineTimeZone()
+  // An attachment kept with a zone problem cannot be planned over until the zones agree.
+  for (const phase of ['pre', 'post'] as const) {
+    const held = realWork?.[phase]
+    if (held?.problem && patch.work?.[phase] !== undefined && (held.timeZone !== zone || !normaliseTimeZone(zone))) throw new Error('work-zone-mismatch')
+  }
+  const nextWork = plannedWork(patch.work, interim, zone, realWork)
+  const next = normaliseRun({ ...interim, work: nextWork, ...(nextWork ? { timeZone: zone } : {}) })
   if (!next.eventTitle) throw new Error('event-title-required')
   next.startedAt = `${next.plannedDate}T00:00:00.000Z`
   assertPreworkOrder(next)
+  assertWorkWindows(next)
   writeRun(runPath(vaultRoot, talkSlug, runId), next)
   return next
 }
@@ -783,6 +1029,65 @@ export function deletePlannedRun(vaultRoot: string, talkSlug: string, runId: str
   if (!current || current.status !== 'planned') return false
   rmSync(runPath(vaultRoot, talkSlug, runId))
   return true
+}
+
+/**
+ * A planned Run given without presenting from the app, marked delivered by hand (work-files ticket 10).
+ * Written with the same atomic writer as every other Run change. The Run starts at its planned start
+ * and ends now (never before it started); everything else on it is kept. Null when the Run is not there
+ * or is not planned; an unsafe name throws run-path-unsafe.
+ */
+export function markRunDelivered(vaultRoot: string, talkSlug: string, runId: string, now: Date = new Date()): RunRecord | null {
+  const path = runPath(vaultRoot, talkSlug, runId)
+  const current = readRun(vaultRoot, talkSlug, runId)
+  if (!current || current.status !== 'planned') return null
+  const planned = current.plannedDate ? zonedLocalToMs(`${current.plannedDate}T${current.startTime || '00:00'}`, current.timeZone) : Number.NaN
+  const started = Number.isFinite(planned) ? planned : Date.parse(current.startedAt)
+  const ended = Math.max(now.getTime(), Number.isFinite(started) ? started : 0)
+  const next: RunRecord = { ...current, status: 'delivered', startedAt: Number.isFinite(started) ? new Date(started).toISOString() : current.startedAt, endedAt: new Date(ended).toISOString() }
+  writeRun(path, next)
+  return next
+}
+
+/**
+ * Change time on a delivered Run (work-files ticket 19): only the opening and closing times of the work
+ * already attached change; the file stays (a delivered Run's work was sent with it) and every other field
+ * of the Run is kept, its delivery included. Checked as planning checks them, against the Run's planned
+ * start, except that either phase may close after the session (pre-work) or before it (post-work):
+ * changing the time reopens work that has closed (review round 3). Null when the Run is not there or is not delivered; a refusal throws with planning's reason code,
+ * or `run-delivered-times-only` for a patch that would change anything else.
+ */
+export function changeDeliveredRunWork(vaultRoot: string, talkSlug: string, runId: string, patch: PlannedRunPatch): RunRecord | null {
+  runPath(vaultRoot, talkSlug, runId)
+  const current = readRun(vaultRoot, talkSlug, runId)
+  if (!current || current.status !== 'delivered') return null
+  if (!patch || typeof patch !== 'object' || Object.keys(patch).some((key) => key !== 'work')) throw new Error('run-delivered-times-only')
+  assertWorkPlan(patch.work)
+  const realWork = withoutLegacyWork(current.work)
+  const zone = current.timeZone || ''
+  const work: RunWorkSet = { ...(realWork ?? {}) }
+  for (const phase of ['pre', 'post'] as const) {
+    const input = patch.work?.[phase]
+    if (input === undefined) continue
+    const held = realWork?.[phase]
+    if (input === null || !held || asText(input.fileId) !== held.fileId) throw new Error('run-delivered-times-only')
+    if (held.problem) throw new Error('work-zone-mismatch')
+    work[phase] = buildRunWork(phase, input, sessionStart(current), zone, held, { delivered: true })
+  }
+  const next = normaliseRun({ ...current, work })
+  assertWorkWindows(next, { delivered: true })
+  writeRun(runPath(vaultRoot, talkSlug, runId), next)
+  return next
+}
+
+/**
+ * Post-work that opens when the session ends was pushed open at `at` (ticket 19): noted on the Run, so the
+ * checklist says when it opened. The Run as it was when it has no such post-work.
+ */
+export function noteRunPostOpened(run: RunRecord, at: string): RunRecord {
+  const post = run.work?.post
+  if (!post || post.opens !== SESSION_END || post.openedAt === at) return run
+  return normaliseRun({ ...run, work: { ...run.work, post: { ...post, openedAt: at } } })
 }
 
 export function attachDeliveryToPlanned(planned: RunRecord, delivery: RunRecord): RunRecord {
@@ -803,8 +1108,18 @@ export function attachDeliveryToPlanned(planned: RunRecord, delivery: RunRecord)
     slideSet: planned.slideSet,
     pathwayId: planned.slideSet.kind === 'pathway' ? planned.slideSet.pathwayId : null,
     handoutUrl: planned.handoutUrl,
+    // The folder the link was written to (D4 reuses it) and the Run's own unpublished stamp (ticket 17)
+    // belong to the link, so they are carried exactly as it is.
+    handoutFolder: planned.handoutFolder,
+    unpublishedAt: planned.unpublishedAt,
     // Pre-work answered before the day belongs to the Run it was planned as (with History's marks).
-    prework: planned.prework
+    prework: planned.prework,
+    work: planned.work,
+    postwork: planned.postwork,
+    // Extras for this run (ticket 24) were planned with the Run: its handout keeps showing them.
+    extras: planned.extras,
+    // Its extra slides (ticket 25) too: they were planned with the Run, for its presenting and handout.
+    extraSlides: planned.extraSlides
   })
   // A live session may already have flushed polls, answers, instant slides, reactions and questions
   // into the planned Run before the delivery is saved; they are kept (ticket 06 fix round).
@@ -864,13 +1179,44 @@ export function injectRunCoverMetadata(html: string, eventTitle: string, planned
   return firstSlide.test(html) ? html.replace(firstSlide, `$1${meta}`) : `${meta}${html}`
 }
 
-export function setRunHandoutUrl(run: RunRecord, url: string): RunRecord {
-  return normaliseRun({ ...run, handoutUrl: asText(url) })
+/** The Run's link once its publish is up, and (when given) the name of its folder in the site, bound to it. */
+export function setRunHandoutUrl(run: RunRecord, url: string, folder?: string): RunRecord {
+  const next: Record<string, unknown> = { ...run, handoutUrl: asText(url) }
+  if (folder !== undefined) next.handoutFolder = folder
+  // Published again: the Run is no longer unpublished, whatever its phases say.
+  delete next.unpublishedAt
+  return normaliseRun(next)
+}
+
+/** Unpublish REPLACED the Run's pages (ticket 17 D1): the Run itself reads "Unpublished" from `at`. */
+export function stampRunUnpublished(run: RunRecord, at: string): RunRecord {
+  return run.handoutUrl ? normaliseRun({ ...run, unpublishedAt: at }) : run
+}
+
+/**
+ * Publish for this run (ticket 16): the phases a publish sent get `publishedAt`; Unpublish stamps
+ * `unpublishedAt` on every phase that was published. The Run checklist reads the newer of the two. A
+ * phase not attached, or pre-work from the talk itself (never written), is left as it is.
+ */
+export function stampRunWork(run: RunRecord, phases: readonly Phase[], key: 'publishedAt' | 'unpublishedAt', at: string): RunRecord {
+  if (!run.work) return run
+  const work: RunWorkSet = { ...run.work }
+  let changed = false
+  for (const phase of phases) {
+    const current = work[phase]
+    if (!current || current.fileId === LEGACY_SECTION_FILE_ID) continue
+    if (key === 'unpublishedAt' && !current.publishedAt) continue
+    work[phase] = { ...current, [key]: at }
+    changed = true
+  }
+  return changed ? normaliseRun({ ...run, work }) : run
 }
 
 export function clearRunHandoutUrl(run: RunRecord): RunRecord {
   const next = { ...run }
   delete next.handoutUrl
+  delete next.handoutFolder
+  delete next.unpublishedAt
   return normaliseRun(next)
 }
 
@@ -987,6 +1333,40 @@ export function persistRunForTalk(vaultRoot: string, talkSlug: string, runId: st
   if (!realVault || !realFolder || !inside(realVault, realFolder)) throw new Error('run-path-unsafe')
   writeRun(path, normalised)
   return normalised
+}
+
+/**
+ * Extras for this run (ticket 24): kept on the Run, planned or delivered, through the checked writer
+ * (persistRunForTalk); null takes them away. The caller has checked them (checkRunExtrasInput); they are
+ * normalised again here. Null when the Run is not there.
+ */
+export function setRunExtras(vaultRoot: string, talkSlug: string, runId: string, extras: RunExtras | null): RunRecord | null {
+  const current = readRunForTalk(vaultRoot, talkSlug, runId)
+  if (!current) return null
+  const next: RunRecord = { ...current }
+  const kept = normaliseRunExtras(extras)
+  if (kept) next.extras = kept
+  else delete next.extras
+  return persistRunForTalk(vaultRoot, talkSlug, runId, next)
+}
+
+/**
+ * Extra slides for this run (ticket 25): `change` turns the Run's slides as its file holds them now (and the
+ * Run as read) into the ones to keep, or throws a refusal in words (nothing is written then). Read and written in one go, through
+ * the checked writer (persistRunForTalk), so nothing else written to the Run meanwhile is lost; an empty list
+ * takes the field away, so the file is byte for byte what it was before the first one. Null when the Run is
+ * not there.
+ */
+export function updateRunExtraSlides(
+  vaultRoot: string, talkSlug: string, runId: string, change: (current: RunExtraSlide[], run: RunRecord) => RunExtraSlide[],
+): RunRecord | null {
+  const current = readRunForTalk(vaultRoot, talkSlug, runId)
+  if (!current) return null
+  const next: RunRecord = { ...current }
+  const kept = normaliseRunExtraSlides(change(current.extraSlides ?? [], current))
+  if (kept) next.extraSlides = kept
+  else delete next.extraSlides
+  return persistRunForTalk(vaultRoot, talkSlug, runId, next)
 }
 
 export function persistRun(vaultRoot: string, run: RunRecord): RunRecord {

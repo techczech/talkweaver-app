@@ -19,7 +19,7 @@ export interface ImportDecisionContext {
   mediaAssets: Record<string, string>
 }
 
-function markdownText(value: string): string {
+export function markdownText(value: string): string {
   // Full stops and exclamation marks are ordinary prose inside TalkWeaver headings and blocks.
   // Escaping them makes imported email addresses and sentences visibly wrong in the editor.
   return value.replace(/([\\`*_{}<>#+|])/g, '\\$1')

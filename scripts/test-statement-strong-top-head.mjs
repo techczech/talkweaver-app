@@ -15,7 +15,7 @@ import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 
 const STATEMENT = 'Agents need a place to keep their work.'
 const slides = {
-  plain: '{titletop}', kicker: '{titletop}{titlelook=kicker}', label: '{titletop}{titlelook=label}',
+  plain: '{titletop}{titlelook=full}', kicker: '{titletop}{titlelook=kicker}', label: '{titletop}{titlelook=label}',
   tabstrong: '{titletop}{titlelook=tab}', tabsoft: '{titletop}{titlelook=tab}{titlelook-tone=soft}', nosidebar: '{statement-sidebar=off}'
 }
 const shotNames = { plain: 'strong-top-title', kicker: 'strong-top-kicker', tabstrong: 'strong-top-tab', label: 'strong-top-label' }

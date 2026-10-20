@@ -37,7 +37,7 @@ import { CHANGED_ON_DISK_MESSAGE, PARTIAL_WRITE_MESSAGE, REMOVED_ON_DISK_MESSAGE
 export type TalkWriteOrigin =
   | 'editor' | 'migration' | 'create-talk' | 'tags' | 'frontmatter' | 'ledger-detach' | 'ledger-adopt'
   | 'ledger-merge' | 'publish-handout' | 'publish-flush' | 'optimize-images' | 'retitle' | 'strip-published'
-  | 'share-for-comments' | 'conflict-merge'
+  | 'share-for-comments' | 'conflict-merge' | 'prework-move' | 'unpublish-handout'
 
 /** The whole new text, or a transformation of the talk's current text (the open buffer when an editor
  *  has the talk, else the file). A transformation that returns its input writes nothing. A thrown
@@ -46,8 +46,12 @@ export type TalkWriteNext = string | ((current: string) => string)
 
 export type TalkWriteResult =
   | { ok: true; via: 'disk' | 'editor'; changed: boolean; text: string }
-  /** `changedOnDisk`: refused by the external-change guard (the file changed since the app read it). */
-  | { ok: false; error: string; changedOnDisk?: OutlineDiskChange }
+  /** `changedOnDisk`: refused by the external-change guard (the file changed since the app read it).
+   *  `untouched`: set only when the writer knows nothing was applied anywhere: no editor buffer took the
+   *  change and no byte reached the file (a caller may then undo its own side effects, e.g. the move to a
+   *  work file removes the file it made). Absent: the change may be in the editor (its save failed or was
+   *  not confirmed) or partly on disk. */
+  | { ok: false; error: string; changedOnDisk?: OutlineDiskChange; untouched?: true }
 
 /** The external-change guard (outline-disk-guard.ts), as the writer sees it. Every call runs under the
  *  file's lock. */
@@ -65,6 +69,9 @@ export interface TalkDiskGuard {
 /** The error writeTalkFileInPlace throws when it failed after truncating the file: `partialTemp` is the
  *  temp file kept with the full text. */
 export type PartialWriteError = Error & { partialTemp: string }
+/** writeTalkFileInPlace's "replaced while writing" after the bytes went in: `landed` (they may be on an
+ *  inode the path no longer names, so the write is not "nothing written"). */
+export type LandedWriteError = Error & { landed: true }
 
 /** An editor window's buffer for one talk (index.ts editorOutlineDocument). `read` may throw with a
  *  message the person should see; `commit` applies `next` only while the buffer is still `base` and
@@ -286,7 +293,7 @@ export async function writeTalkFileInPlace(
   await hooks.afterCopy?.()
   let now = ''
   try { const st = await stat(realPath); now = `${st.dev}:${st.ino}` } catch { /* gone: replaced (or removed) */ }
-  if (now !== opened) throw replaced()
+  if (now !== opened) throw Object.assign(replaced(), { landed: true as const })
   if (!previous) {
     // A new file: make its directory entry durable too (best effort).
     try {
@@ -319,24 +326,26 @@ async function viaEditor(outlinePath: string, buffer: EditorBuffer, next: TalkWr
   const retries = typeof next === 'function' && !opts.beforeEditorApply ? ROUTED_RETRIES : 0
   for (let attempt = 0; ; attempt += 1) {
     let base: string
-    try { base = await buffer.read() } catch (error) { return { ok: false, error: opts.flushUnsaved ? PUBLISH_EDITOR_UNREADABLE : message(error) } }
+    try { base = await buffer.read() } catch (error) { return { ok: false, error: opts.flushUnsaved ? PUBLISH_EDITOR_UNREADABLE : message(error), untouched: true } }
     let text: string
-    try { text = typeof next === 'function' ? next(base) : next } catch (error) { return { ok: false, error: message(error) } }
+    try { text = typeof next === 'function' ? next(base) : next } catch (error) { return { ok: false, error: message(error), untouched: true } }
     if (typeof next === 'function' && text === base && opts.flushUnsaved) {
       if (base.trim() === '') return { ok: false, error: PUBLISH_EMPTY_TALK }
       let need: 'same' | 'save' | 'read-only'
-      try { need = await flushNeed(outlinePath, base) } catch (error) { return { ok: false, error: message(error) } }
+      try { need = await flushNeed(outlinePath, base) } catch (error) { return { ok: false, error: message(error), untouched: true } }
       if (need === 'same') return { ok: true, via: 'editor', changed: false, text: base }
-      if (need === 'read-only') return { ok: false, error: PUBLISH_READ_ONLY_UNSAVED }
+      if (need === 'read-only') return { ok: false, error: PUBLISH_READ_ONLY_UNSAVED, untouched: true }
     } else if (typeof next === 'function' && text === base && !opts.force) return { ok: true, via: 'editor', changed: false, text }
     const empty = emptyOverNonempty(outlinePath, origin, text, base)
-    if (empty) return { ok: false, error: empty }
-    try { await opts.beforeEditorApply?.(text) } catch (error) { return { ok: false, error: message(error) } }
+    if (empty) return { ok: false, error: empty, untouched: true }
+    try { await opts.beforeEditorApply?.(text) } catch (error) { return { ok: false, error: message(error), untouched: true } }
     const reply = await buffer.commit(base, text, origin)
     if (!reply.ok) {
       // The person typed between the read and the apply: work it out again against the buffer now.
       if (reply.moved && attempt < retries) { await retryPause(attempt); continue }
-      return { ok: false, error: reply.error }
+      // Only "the buffer moved" is known to have applied nothing; any other refusal (a failed or
+      // unconfirmed save, a window that did not answer) may have left the change in the editor.
+      return reply.moved ? { ok: false, error: reply.error, untouched: true } : { ok: false, error: reply.error }
     }
     // The exact text the editor's save wrote (`text` with any ids it stamped), as the window reports
     // it — never a read of the file afterwards, which a later save (truncate, then write) can tear.
@@ -359,8 +368,8 @@ async function viaDisk(outlinePath: string, next: TalkWriteNext, origin: TalkWri
   let current = ''
   let absent = false
   if (typeof next === 'function') {
-    try { current = await readFile(realPath, 'utf8') } catch (error) { return { ok: false, error: message(error) } }
-    try { text = next(current) } catch (error) { return { ok: false, error: message(error) } }
+    try { current = await readFile(realPath, 'utf8') } catch (error) { return { ok: false, error: message(error), untouched: true } }
+    try { text = next(current) } catch (error) { return { ok: false, error: message(error), untouched: true } }
     if (text === current && !opts.force) return { ok: true, via: 'disk', changed: false, text }
   } else {
     text = next
@@ -369,7 +378,7 @@ async function viaDisk(outlinePath: string, next: TalkWriteNext, origin: TalkWri
       // placeholder that cannot be fetched offline) refuses: nothing is written unchecked.
       try { current = await readFile(realPath, 'utf8') } catch (error) {
         if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') {
-          return { ok: false, error: `The talk’s file could not be read before saving (${(error as NodeJS.ErrnoException)?.code ?? 'error'}: ${message(error)}). Nothing was saved.` }
+          return { ok: false, error: `The talk’s file could not be read before saving (${(error as NodeJS.ErrnoException)?.code ?? 'error'}: ${message(error)}). Nothing was saved.`, untouched: true }
         }
         absent = true
       }
@@ -380,11 +389,11 @@ async function viaDisk(outlinePath: string, next: TalkWriteNext, origin: TalkWri
     try { change = await guard!.conflict(realPath, absent ? null : current, text) } catch { /* the guard never blocks on its own failure */ }
     if (change) {
       const error = change.kind === 'removed' ? REMOVED_ON_DISK_MESSAGE : change.kind === 'partial' ? PARTIAL_WRITE_MESSAGE : CHANGED_ON_DISK_MESSAGE
-      return { ok: false, error, changedOnDisk: change }
+      return { ok: false, error, changedOnDisk: change, untouched: true }
     }
   }
   const empty = emptyOverNonempty(outlinePath, origin, text, current)
-  if (empty) return { ok: false, error: empty }
+  if (empty) return { ok: false, error: empty, untouched: true }
   try {
     await writeTalkFileInPlace(realPath, text, {
       expectKey: held.key,
@@ -398,7 +407,10 @@ async function viaDisk(outlinePath: string, next: TalkWriteNext, origin: TalkWri
       try { change = guard!.failedHalfway(realPath, partialTemp) } catch { /* the guard never fails a write */ }
       if (change) return { ok: false, error: message(error), changedOnDisk: change }
     }
-    return { ok: false, error: message(error) }
+    // Failed before the file was truncated (refused, read-only, staging failed, replaced before the
+    // copy): no byte of the change reached the file.
+    const landed = Boolean(partialTemp) || (error as Partial<LandedWriteError>)?.landed === true
+    return landed ? { ok: false, error: message(error) } : { ok: false, error: message(error), untouched: true }
   }
   // Self-write: only the editor's own text moves the guard's baseline, recorded while this write holds
   // the lock, so the watcher event it causes finds the file unchanged. Any other writer's text is not in

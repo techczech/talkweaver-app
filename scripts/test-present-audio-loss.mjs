@@ -237,6 +237,23 @@ try {
     assert.ok(Math.abs(save.audioTimeline.segments[0].endMs - stopMark.tMs) <= 5, 'the audio clock ends where the marks end')
     await p5.close()
   })
+
+  await check('a clip mark names the authored reference, else the video address without query or fragment, never a data: URI', async () => {
+    const p6 = await browser.newPage()
+    await p6.setContent('<section class="slide active" data-id="a"></section>')
+    await p6.evaluate(FAKES)
+    await p6.addScriptTag({ content: bundled.outputFiles[0].text })
+    const names = await p6.evaluate(() => [
+      Recorder.clipSource('demo/tour.mp4?x=1', 'data:video/mp4;base64,AAAA'),
+      Recorder.clipSource('', 'https://cdn.example/v.mp4?token=SECRET#t=3'),
+      Recorder.clipSource('', 'assets/big.mp4'),
+      Recorder.clipSource('', 'data:video/mp4;base64,AAAA'),
+      Recorder.clipSource('https://cdn.example/v.mp4?token=SECRET', ''),
+      Recorder.clipSource(undefined, undefined)
+    ])
+    assert.deepEqual(names, ['demo/tour.mp4?x=1', 'https://cdn.example/v.mp4', 'assets/big.mp4', '', 'https://cdn.example/v.mp4', ''])
+    await p6.close()
+  })
 } finally {
   await browser.close()
 }

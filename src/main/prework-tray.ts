@@ -57,3 +57,28 @@ export function answerPreworkTrayQuestion(vaultRoot: string | null, bound: { tal
     return { success: true, questions: preworkTrayQuestions(saved) }
   } catch { return { success: false, error: 'Could not mark the question answered. Try again.' } }
 }
+
+/** A live session as the tray reads it: its talk, the Run it is bound to and the vault it recorded. */
+export interface PreworkTraySession { talkSlug: string; runId?: string; vaultRoot?: string | null }
+
+/** The session's own vault while it is open and its folder is there; otherwise null. Never another
+ *  vault: two open vaults may hold the same talk slug and Run id. */
+function sessionVault(session: PreworkTraySession | null, vaultReadable: (root: string) => boolean): string | null {
+  const root = session?.vaultRoot ?? null
+  return root && vaultReadable(root) ? root : null
+}
+
+/** The tray's list for a live session, read from the session's own vault only (empty when that vault is closed or gone). */
+export function preworkTrayForLiveSession(session: PreworkTraySession | null, vaultReadable: (root: string) => boolean): PreworkTrayQuestion[] {
+  return preworkTrayForSession(sessionVault(session, vaultReadable), session)
+}
+
+/** Mark answered from the tray, written to the session's own vault only: refused when that vault is
+ *  closed or gone, or has no writable folder (`writableRoot`), and never written to another vault. */
+export function answerPreworkTrayForLiveSession(session: PreworkTraySession | null, vaultReadable: (root: string) => boolean,
+  writableRoot: (root: string) => string | null, questionId: string, answered: boolean): PreworkTrayAnswer {
+  const readable = sessionVault(session, vaultReadable)
+  const root = readable ? writableRoot(readable) : null
+  if (!root) return { success: false, error: 'This Run’s vault is not open. Open it to mark the question answered.' }
+  return answerPreworkTrayQuestion(root, session, questionId, answered)
+}

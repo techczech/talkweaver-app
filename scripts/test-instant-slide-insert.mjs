@@ -1078,7 +1078,7 @@ const hostAfterAdopt = async (_ed, _path) => {} // WorkspaceLayout: no onAdopted
   } : null })
   try {
     const routed = await writeTalkOutline(path, (text) => tagSlide(text, 'cc33', 'demo'), 'tags')
-    assert.deepEqual(routed, { ok: false, error: 'The talk was edited while applying the tags. Nothing was changed; try again.' })
+    assert.deepEqual(routed, { ok: false, error: 'The talk was edited while applying the tags. Nothing was changed; try again.', untouched: true })
     assert.ok(!ed.doc.includes('tags=demo'), 'nothing applied')
   } finally {
     configureTalkWriter({ editorBufferFor: () => null })

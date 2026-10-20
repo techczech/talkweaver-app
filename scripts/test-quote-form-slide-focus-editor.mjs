@@ -3,9 +3,17 @@
 // Found in the packaged app (13 October): in Slide Focus, on a quote slide whose last line is the source line, the link
 // typed and the line left by Enter, Enter wrote no form, the caret came back onto the source line, and no later leaving
 // wrote one either. The second Enter empties the list item the first one made; the focused slide then ends at the
-// source line (focusScope.ts does not count a trailing empty line), so the Slide Focus caret guard moved the caret back
-// and rebuilt the Enter command's transaction from its changes, effects and user event. The mark that says "typed by a
-// key" was an annotation, lost in that rebuild, and the link watch read the Enter as a program's change.
+// source line (focusScope.ts did not count a trailing empty line then), so the Slide Focus caret guard moved the caret
+// back and rebuilt the Enter command's transaction from its changes, effects and user event. The mark that says "typed
+// by a key" was an annotation, lost in that rebuild, and the link watch read the Enter as a program's change.
+//
+// Quote forms ticket 15, found in the packaged app the same day: at the end of a focused slide whose last line is its
+// quotation, Enter, Enter put the caret on an empty line the focused editor did not draw, and what was typed next went
+// in front of the slide's last line (a paragraph slide and a list slide did the same). focusScope.ts now counts an
+// empty line begun at the end of the focused slide as a line of it (begunEmptyLine): it is drawn, the caret stands on
+// it, and typing stays on it, as out of focus. The blank line above the next slide's title stays hidden.
+// What a change that is not the user's can bring into the focused slide, and the random run, are in
+// test-slide-focus-range-containment.mjs (the review round of ticket 15).
 //
 // The real quoteLinkFormExtension in a real CodeMirror editor in chrome-headless-shell (never the real Chrome), mounted
 // as test-quote-form-typed-slide-editor.mjs mounts it, with focusScopeExtension() after the token guards as
@@ -16,14 +24,24 @@
 // The focused slide stands in three places: `last` (the last slide, the text ends with its last line), `middle`
 // (another slide follows) and `notes` (a `:::notes` block follows the source line inside the slide: the source line is
 // not the last line of the focused range).
-//   K.  what the Slide Focus guard keeps of the Enter whose caret it moves (the statement the fix stands on);
+//   K.  what the Slide Focus guard keeps of the Enter whose caret it moves (the statement ticket 14's fix stands on).
+//       Since ticket 15 the second Enter under the slide's last line is no such Enter (its caret stays where it is put);
+//       Enter in the title of a focused slide that has no line under its id line still is;
 //   F1. the author there, the link typed after it, Enter, Enter: the form is written at the second Enter;
 //   F2. the whole source line typed over the old one, Enter, Enter (the packaged app's sequence);
 //   F3. a bare address or a source line typed under the quotation, lines of the slide after it: ArrowUp, Enter;
 //   F4. the write itself in focus: the caret, the focused range, a slide with no id line (the layout line is made);
 //   F5. leaving Slide Focus with the link typed and the caret still on its line;
-//   Q.  Enter, Enter at the end of a quotation that ends the focused slide: the quotation continues (Q1 middle, Q2 last
-//       slide of the talk); with a paragraph of the slide below it the quotation is left as outside focus (Q3);
+//   Q.  Enter, Enter at the end of a quotation that ends the focused slide leaves it as outside focus, the caret on a
+//       drawn line that takes typing (Q1 middle, Q2 last slide of the talk); with a paragraph of the slide below it, too (Q3);
+//   G.  ticket 15: a line begun under the last line of the focused slide. G1 the quotation the last line: Enter,
+//       Enter, a source line typed (the two reproductions: a slide in the middle, the last slide; and the last slide of
+//       a file that ends with a line break), ArrowUp: the exact text, the form, one blank line above the next title,
+//       the same text out of focus. G2 Shift-Enter there. G3 a paragraph slide, G4 a list slide (Enter, Enter).
+//       G5 the caret cannot leave the begun line downwards and Delete there joins nothing. G6 the last line emptied;
+//       the range a begun line gives when it is set from outside; a slide with two blank lines above the next title.
+//       After every key (each letter typed is one) the lines drawn are the slide's own, the caret is on one of them,
+//       no other slide is drawn, and the stored range is those lines, from the start of the first to the end of the last;
 //   N1. a link put on the source line by a program in focus, then Enter, Enter by the user: no form;
 //   N2. the link typed by the user and the two Enters' very changes made by a program (no mark), in focus: no form;
 //   N3. the fourth review's reproduction (ticket 11, R10) in focus: no form;
@@ -40,12 +58,14 @@
 // Every written form asserts the final text (the text as typed plus the form, nothing else), that the full compiler
 // draws it with the quotation's words unchanged, and that no undo step leaves the form without its link. The cases
 // that write also assert the text is the one the same keys leave out of Slide Focus.
-// With the fix taken out (the mark an annotation again) K, F1 (last, middle), F2 and F4 (no id line) fail.
+// With ticket 14's fix taken out (the mark an annotation again) K fails. With ticket 15's taken out (focusScope.ts as
+// it was) every G case fails, and so do K (the second Enter), F1 (last, middle), F2, F4 (no id line) and N2, each on
+// where the caret is or on the lines drawn.
 //
 // QUOTE_FOCUS_REPORT=1 runs every case and lists the failures instead of stopping at the first (used to show which
 // cases fail with the fix taken out). QUOTE_FOCUS_ONLY=<prefix> runs only the cases whose name starts so.
 import { strict as assert } from 'node:assert'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -79,8 +99,13 @@ const ONLY = process.env.QUOTE_FOCUS_ONLY
   const order = ['quoteLinkFormExtension(', 'tokenProtectExtension(', 'focusScopeExtension()'].map((name) => mounted.indexOf(name))
   assert(order.every((at) => at >= 0) && order[0] < order[1] && order[1] < order[2], 'Editor.tsx mounts history, the link watch, the token guards, Slide Focus and the adoption in that order')
   // The fix adds or changes no transaction filter: there are three in the editor's extensions, as before.
-  const filters = ['focusScope.ts', 'quoteLinkForm.ts', 'outliner.ts', 'quoteLinkFormSnapshots.ts'].map((name) => (source(`src/renderer/src/extensions/${name}`).match(/EditorState\.(transactionFilter|changeFilter|transactionExtender)\.of\(/g) ?? []).length)
-  assert.deepEqual(filters, [1, 1, 0, 0], 'one filter in focusScope.ts, the paste filter in quoteLinkForm.ts, none in outliner.ts or the snapshots')
+  const filters = ['focusScope.ts', 'quoteLinkForm.ts', 'outliner.ts', 'quoteLinkFormSnapshots.ts', 'keyTypedMark.ts'].map((name) => (source(`src/renderer/src/extensions/${name}`).match(/EditorState\.(transactionFilter|changeFilter|transactionExtender)\.of\(/g) ?? []).length)
+  // The mark has a file of its own (Slide Focus reads it too). Only outliner.ts's key commands attach it: no other file
+  // of the app names `typedByKey`, and the effect type is not exported.
+  const naming = readdirSync(join(root, 'src'), { recursive: true }).map(String).filter((path) => /\.(ts|tsx|mjs|js)$/.test(path) && source(join('src', path)).includes('typedByKey')).sort()
+  assert.deepEqual(naming, ['renderer/src/extensions/keyTypedMark.ts', 'renderer/src/extensions/outliner.ts'], 'typedByKey is named in keyTypedMark.ts and outliner.ts alone')
+  assert(!/export\s+(const|let|var)\s+keyTyped\b/.test(source('src/renderer/src/extensions/keyTypedMark.ts')), 'the effect type is not exported')
+  assert.deepEqual(filters, [1, 1, 0, 0, 0], 'one filter in focusScope.ts, the paste filter in quoteLinkForm.ts, none in outliner.ts, the snapshots or the mark')
 }
 
 const entry = `
@@ -93,10 +118,10 @@ import { tokenProtectExtension } from './src/renderer/src/extensions/idProtect.t
 import { savedTextAdoption } from './src/renderer/src/extensions/savedTextAdoption.ts'
 import { focusScopeExtension, setFocusRange, currentFocusRange } from './src/renderer/src/extensions/focusScope.ts'
 import { focusRangeForSlideLine } from './src/renderer/src/components/slideFocusModel.ts'
-import * as outliner from './src/renderer/src/extensions/outliner.ts'
-const { continueList, leaveQuotation, newQuotationParagraph, enterFromHeading, enterFromProtectedLine, indentList, outdentList } = outliner
+import { continueList, leaveQuotation, newQuotationParagraph, enterFromHeading, enterFromProtectedLine, indentList, outdentList } from './src/renderer/src/extensions/outliner.ts'
+import * as mark from './src/renderer/src/extensions/keyTypedMark.ts'
 // The mark of the app's key commands as the link watch reads it (with the fix taken out: the annotation it was).
-const isKeyTyped = outliner.isKeyTyped ?? ((tr) => tr.annotation(outliner.keyTyped) === true)
+const isKeyTyped = mark.isKeyTyped ?? ((tr) => tr.annotation(mark.keyTyped) === true)
 import { compiledQuoteAt } from './src/shared/quote-write-check.ts'
 import { COMMAND_REGISTRY } from './src/shared/command-registry.ts'
 import { shortcutById } from './src/shared/shortcut-registry.ts'
@@ -168,13 +193,25 @@ window.enterFocus = (n) => {
 }
 // Esc: WorkspaceLayout's exitFocus.
 window.leaveFocus = () => setFocusRange(view, null)
-// The focused range as lines: the first and the last line shown, or null out of focus.
+// What the editor draws: the first and the last line shown, and the lines of the text. Read from the rows alone (the
+// document line each drawn row starts on), never from the stored range.
 window.focused = () => {
+  const rows = [...view.contentDOM.querySelectorAll('.cm-line')].map((row) => view.state.doc.lineAt(view.posAtDOM(row, 0)).number)
+  return { first: rows[0], last: rows.at(-1), consecutive: rows.every((n, index) => n === rows[0] + index), lines: view.state.doc.lines }
+}
+// The stored range (the Slide Focus field, read through currentFocusRange): the lines it starts and ends on, and
+// whether it starts at the start of the first and ends at the end of the last. null out of focus.
+window.stored = () => {
   const range = currentFocusRange(view.state)
   if (!range) return null
-  const doc = view.state.doc
-  return { first: doc.lineAt(range.from).number, last: doc.lineAt(range.to > range.from ? range.to - 1 : range.from).number }
+  const [from, to] = [view.state.doc.lineAt(range.from), view.state.doc.lineAt(range.to)]
+  return { first: from.number, last: to.number, fromStart: range.from === from.from, toEnd: range.to === to.to }
 }
+// The text of every line the editor draws.
+window.drawn = () => [...view.contentDOM.querySelectorAll('.cm-line')].map((line) => line.textContent)
+// Focus set on a range given in offsets (the e2e seam and the workspace's re-sync set one this way).
+window.setRange = (range) => setFocusRange(view, range)
+window.range = () => currentFocusRange(view.state)
 // Transactions as a program makes them (no user event, no mark), one after another in the same task.
 window.dispatchAll = (specs) => {
   for (const spec of specs) view.dispatch({ changes: spec.changes, selection: spec.cursor == null ? undefined : EditorSelection.cursor(spec.cursor) })
@@ -223,6 +260,14 @@ try {
   const click = async (line) => { await run((n) => window.clickLine(n), line); await settle() }
   const caret = () => run(() => window.caret())
   const compiled = () => run(() => window.compiled())
+  /** The focused slide as drawn (first and last line), null out of focus; the stored range is asserted to be those lines, from the start of the first to the end of the last. */
+  const shown = async () => {
+    const [rows, stored] = [await run(() => window.focused()), await run(() => window.stored())]
+    assert.equal(rows.consecutive, true, 'the lines drawn are consecutive')
+    if (!stored) { assert.deepEqual([rows.first, rows.last], [1, rows.lines], 'out of focus no range is stored and all of the text is drawn'); return null }
+    assert.deepEqual(stored, { first: rows.first, last: rows.last, fromStart: true, toEnd: true }, `the stored range is the lines drawn (${rows.first} to ${rows.last}), from the start of the first to the end of the last`)
+    return { first: rows.first, last: rows.last }
+  }
   const check = async (name, body) => {
     if (ONLY && !name.startsWith(ONLY)) return
     ran += 1
@@ -245,7 +290,7 @@ try {
     let last = lines.findIndex((line, index) => index > heading && /^#{1,6}\s/.test(line))
     last = last < 0 ? lines.length : last
     while (lines[last - 1].trim() === '') last -= 1
-    assert.deepEqual(await run(() => window.focused()), { first: heading, last }, 'the focused range is the slide, to its last line that is not empty')
+    assert.deepEqual(await shown(), { first: heading, last }, 'the focused range is the slide, to its last line that is not empty')
   }
   const typedWords = compiledWords((await compile(talk('middle'))).slides.find((slide) => slide.id === 'fq'))
   assert(typedWords.length > 0, 'the focused slide has a quotation')
@@ -291,18 +336,35 @@ try {
     assert.equal(await text(), insertAfter(typed, sourceLine, '- '), 'the first Enter continues the list under the source line, and no form is written')
     const seenAtFirst = await run(() => window.seen.length)
     await enter()
-    return { doc, typed, written: await text(), caret: await caret(), focused: await run(() => window.focused()), second: (await run(() => window.seen))[seenAtFirst] }
+    return { doc, typed, written: await text(), caret: await caret(), focused: await shown(), second: (await run(() => window.seen))[seenAtFirst] }
   }
 
   // ── K. What the Slide Focus guard keeps of the Enter whose caret it moves ──
-  await check('K. the second Enter under a source line that ends the focused slide keeps its mark through Slide Focus', async () => {
+  await check('K. an Enter whose caret Slide Focus moves back keeps its mark (Enter in the title of a slide with no line under its id line)', async () => {
+    // The new empty line is made above the next slide's title, outside the focused slide: the caret is moved back.
+    const doc = ['# Talk', '', `### ${TITLE}`, '{id=fq}', '### After', '{id=s3}', '', 'A paragraph of the slide after.', ''].join('\n')
+    const heading = lineOf(doc, `### ${TITLE}`)
+    const keys = async (focus) => {
+      await begin(doc, focus)
+      await click(heading)
+      const from = await run(() => window.seen.length)
+      await enter()
+      assert.equal(await text(), doc.replace('### After', '\n### After'), 'the Enter makes an empty line above the next slide\'s title')
+      return (await run(() => window.seen))[from]
+    }
+    const plain = await keys(false)
+    assert.deepEqual([plain.userEvent, plain.keyTyped, plain.caretLine], [null, true, heading + 2], 'out of focus: the app\'s Enter has no user event, is marked typed by a key, and leaves the caret on the new line')
+    const focused = await keys(true)
+    assert.equal(focused.caretLine, heading + 1, 'in focus the caret is moved back onto the id line: Slide Focus rebuilt the Enter\'s transaction')
+    assert.equal(focused.userEvent, null, 'the rebuilt transaction has no user event, as the Enter had none')
+    assert.equal(focused.keyTyped, true, 'and it still says it was typed by a key (the mark is an effect; the rebuild keeps the changes and the effects)')
+    assert.deepEqual(await run(() => window.drawn()), [`### ${TITLE}`, '{id=fq}'], 'the focused slide is drawn as it was')
+  })
+  await check('K. the second Enter under a source line that ends the focused slide is taken as it is made: the mark, the caret on the emptied line', async () => {
     const plain = await linkEnterEnter('last', false)
-    const source = lineOf(plain.typed, sourceLine)
-    assert.deepEqual([plain.second.userEvent, plain.second.keyTyped, plain.second.caretLine], [null, true, source + 1], 'out of focus: the app\'s Enter has no user event, is marked typed by a key, and leaves the caret on the emptied line')
     const focused = await linkEnterEnter('last', true)
-    assert.equal(focused.second.caretLine, source, 'in focus the caret is moved back onto the source line: Slide Focus rebuilt the Enter\'s transaction')
-    assert.equal(focused.second.userEvent, null, 'the rebuilt transaction has no user event, as the Enter had none')
-    assert.equal(focused.second.keyTyped, true, 'and it still says it was typed by a key (the mark is an effect; the rebuild keeps the changes and the effects)')
+    const source = lineOf(plain.typed, sourceLine)
+    for (const second of [plain.second, focused.second]) assert.deepEqual([second.userEvent, second.keyTyped, second.caretLine], [null, true, source + 1], 'the app\'s Enter has no user event, is marked typed by a key, and leaves the caret on the emptied line')
   })
 
   // ── F1. The author there, the link typed after it, Enter, Enter ──
@@ -313,14 +375,10 @@ try {
     await assertWritten(emptied, written)
     assert.equal(written, plain.written, 'the text is the one the same keys leave out of Slide Focus')
     const source = lineOf(written, sourceLine)
-    // The emptied line under the source line is in the focused slide only when lines of the slide follow it.
-    if (place === 'notes') {
-      assert.deepEqual(at, { line: source + 1, column: 0 }, 'the caret is on the emptied line, as out of focus')
-      assert.deepEqual(at, plain.caret, 'where the same keys leave it out of focus')
-    } else {
-      assert.deepEqual(at, { line: source, column: sourceLine.length }, 'the caret is at the end of the source line (the emptied line under it is outside the focused slide)')
-    }
-    assert.deepEqual(focused, { first: lineOf(written, `### ${TITLE}`), last: place === 'notes' ? lineOf(written, NOTES[2]) : source }, 'the focused range is still the slide, the written layout line in it')
+    // The emptied line under the source line is a line of the focused slide, at its end too (ticket 15).
+    assert.deepEqual(at, { line: source + 1, column: 0 }, 'the caret is on the emptied line, as out of focus')
+    assert.deepEqual(at, plain.caret, 'where the same keys leave it out of focus')
+    assert.deepEqual(focused, { first: lineOf(written, `### ${TITLE}`), last: place === 'notes' ? lineOf(written, NOTES[2]) : source + 1 }, 'the focused slide is drawn to its last line (the emptied line when it ends the slide), the written layout line in it')
     await leaveEveryWay(written, 'the line left again')
     assert(await undoAll() > 0, 'there were steps to undo')
     assert.equal(await text(), doc, 'all undone: the text is as it was')
@@ -340,7 +398,7 @@ try {
     await enter(); await enter()
     const written = await text()
     await assertWritten(`${typed}\n`, written, link)
-    assert.deepEqual(await caret(), { line: lineOf(written, `- Focus Author ${link}`), column: `- Focus Author ${link}`.length }, 'the caret is at the end of the source line')
+    assert.deepEqual(await caret(), { line: lineOf(written, `- Focus Author ${link}`) + 1, column: 0 }, 'the caret is on the emptied line under the source line')
     await leaveEveryWay(written, 'the line left again')
     await undoAll(link)
     assert.equal(await text(), doc, 'all undone: the text is as it was')
@@ -385,7 +443,7 @@ try {
       await compiled()
       const typed = await text()
       await press('ArrowUp'); await settle()
-      return { typed, written: await text(), caret: await caret(), focused: await run(() => window.focused()) }
+      return { typed, written: await text(), caret: await caret(), focused: await shown() }
     }
     const plain = await keys(false)
     const { typed, written, caret: at, focused } = await keys(true)
@@ -404,13 +462,13 @@ try {
       await compiled()
       const typed = await text()
       await enter(); await enter()
-      return { typed, written: await text(), focused: await run(() => window.focused()) }
+      return { typed, written: await text(), focused: await shown() }
     }
     const plain = await keys(false)
     const { typed, written, focused } = await keys(true)
     assert.equal(written, `${typed}\n`.replace(`### ${TITLE}\n`, `### ${TITLE}\n{form=web}\n`), 'the text as typed with a layout line holding the form under the heading: nothing else changed')
     assert.equal(written, plain.written, 'the text is the one the same keys leave out of Slide Focus')
-    assert.deepEqual(focused, { first: lineOf(written, `### ${TITLE}`), last: lineOf(written, sourceLine) }, 'the focused range is the slide, the new layout line in it')
+    assert.deepEqual(focused, { first: lineOf(written, `### ${TITLE}`), last: lineOf(written, sourceLine) + 1 }, 'the focused slide is drawn to the emptied line under the source line, the new layout line in it')
     const saved = stampMissingIds(written).text
     const id = saved.slice(saved.indexOf(`### ${TITLE}`)).match(/\{id=([A-Za-z0-9_-]+)/)?.[1]
     assert(id, 'the slide has an id once saved')
@@ -429,7 +487,7 @@ try {
       const typed = await text()
       const before = await caret()
       await run(() => window.leaveFocus()); await settle()
-      assert.equal(await run(() => window.focused()), null, 'focus is left')
+      assert.equal(await shown(), null, 'focus is left')
       assert.equal(await text(), typed, 'leaving focus is no leaving of the line: the caret has not moved, nothing is written')
       assert.deepEqual(await caret(), before, 'the caret is where it was')
       if (leave === 'ArrowUp') { await press('ArrowUp'); await settle() } else if (leave === 'leaving the editor') { await run(() => window.blurEditor()); await settle() } else { await enter(); await enter() }
@@ -454,33 +512,174 @@ try {
     await undoAll()
   })
 
-  // ── Q. Enter, Enter at the end of a quotation that ends the focused slide (quote forms ticket 16) ──
-  // In Slide Focus the second Enter would leave the caret on an empty line the focused band does not show (the band ends at
-  // the slide's last line with text), so leaveQuotation declines there and the markdown language's own Enter runs: the
-  // quotation continues (`>`, `> |`) and what is typed lands on a drawn line inside it. This replaces the former case L1,
-  // which stated the limit (text typed after leaving was not on a line of its own).
+  // ── G. A line begun under the last line of the focused slide (ticket 15) ──
+  // focusScope.ts counts an empty line begun at the end of the focused slide as a line of it. Each case types with
+  // real key presses in focus and out of it and asserts the exact text; in focus, after every key, the lines drawn are
+  // the slide's own from its title down, the caret is on one of them, and the next slide's title is not among them.
+  const FOCUS_LINK = 'https://example.org/x'
+  const FOCUS_SOURCE = `- Focus Author ${FOCUS_LINK}`
+  const AFTER = ['### After', '{id=s3}', '', 'A paragraph of the slide after.', '']
+  /** The talk with `body` the lines of the focused slide under its id line; `end`: 'middle' (a slide follows), 'last', or 'last, the file ending with a line break'. */
+  const ending = (body, end) => ['# Talk', '', '### First', '{id=s1}', '', 'Words of the first slide.', '', `### ${TITLE}`, '{id=fq}', '', ...body, ...(end === 'middle' ? ['', ...AFTER] : end === 'last' ? [] : [''])].join('\n')
+  const ENDS = ['middle', 'last', 'last, the file ending with a line break']
+  /** In focus: the editor draws the slide's lines from its title down and nothing else, and the caret is on one of them. */
+  const assertDrawn = async (what) => {
+    const now = (await text()).split('\n')
+    const drawn = await run(() => window.drawn())
+    const first = now.indexOf(`### ${TITLE}`)
+    assert.deepEqual(drawn, now.slice(first, first + drawn.length), `${what}: the lines drawn are the slide's, from its title`)
+    assert.equal(drawn.slice(1).some((line) => /^#{1,6}\s/.test(line)), false, `${what}: no other slide's title is drawn`)
+    const at = await caret()
+    assert(at.line - 1 >= first && at.line - 1 < first + drawn.length, `${what}: the caret is on a line the editor draws (line ${at.line}; drawn ${first + 1} to ${first + drawn.length})`)
+    assert.deepEqual(await shown(), { first: first + 1, last: first + drawn.length }, `${what}: the rows drawn and the stored range are those lines`)
+    return drawn
+  }
+  /** The keys at the end of `on` (a line of `doc`), in focus or out of it: `T:` types the words. The text with the caret as `|`. */
+  const keysAtEnd = async (doc, on, keys, focus) => {
+    await begin(doc, focus)
+    await click(lineOf(doc, on))
+    // Each letter of typed words is a key of its own, asserted after like any other.
+    for (const key of keys.flatMap((key) => (key.startsWith('T:') ? [...key.slice(2)].map((letter) => `T:${letter}`) : [key]))) {
+      if (key.startsWith('T:')) await type(key.slice(2)); else await press(key)
+      await settle()
+      if (focus) await assertDrawn(`after ${key}`)
+    }
+    await compiled()
+    const [now, at] = [await text(), await caret()]
+    const lines = now.split('\n')
+    lines[at.line - 1] = `${lines[at.line - 1].slice(0, at.column)}|${lines[at.line - 1].slice(at.column)}`
+    return lines.join('\n')
+  }
+  /** The keys leave `expected` (the caret as `|`) in focus, and the same out of focus. */
+  const sameInFocus = async (doc, on, keys, expected) => {
+    assert.equal(await keysAtEnd(doc, on, keys, false), expected, 'out of focus: the text and the caret')
+    assert.equal(await keysAtEnd(doc, on, keys, true), expected, 'in focus: the text and the caret the same keys leave out of focus')
+  }
+  /** ArrowUp: `typed` takes its form and nothing else; the compiler draws it; one blank line stands above the next title; out of focus the text is the same. */
+  const formWrittenInFocus = async (typed, end) => {
+    await press('ArrowUp'); await settle()
+    const written = await text()
+    assert.equal(written, withForm(typed), 'the line left: the text as typed with form=web on the slide\'s layout line, nothing else changed')
+    const before = compiledWords((await compile(typed)).slides.find((slide) => slide.id === 'fq'))
+    assert(before.length > 0, 'the slide has a quotation before the form is written')
+    assert.equal(drawnForm(await compile(written), 'fq', 'web', { wordsBefore: before, link: FOCUS_LINK }), '', 'the full compiler draws the written form, citing the typed link, the quotation\'s words unchanged')
+    const lines = written.split('\n')
+    const source = lines.indexOf(FOCUS_SOURCE)
+    assert(source > 0 && lines[source - 1] === '', 'the source is on a line of its own, one blank line above it')
+    if (end === 'middle') assert.deepEqual(lines.slice(source + 1, source + 3), ['', '### After'], 'exactly one blank line stands between the source and the next slide\'s title')
+    else assert.deepEqual(lines.slice(source + 1), [], 'the source is the last line of the text')
+    const drawn = await assertDrawn('after ArrowUp')
+    assert.equal(drawn.at(-1), FOCUS_SOURCE, 'the source line is the last line drawn')
+    await run(() => window.leaveFocus()); await settle()
+    assert.equal(await shown(), null, 'focus is left')
+    assert.equal(await text(), written, 'out of focus the text is the same')
+    assert.equal((await run(() => window.drawn())).join('\n'), written, 'and the editor draws all of it')
+    await undoAll(FOCUS_LINK)
+  }
+
+  for (const end of ENDS) await check(`G1. focus, the slide ${end}, the quotation its last line: Enter, Enter, a source line typed, ArrowUp: the source on its own line under the quotation, the form written`, async () => {
+    const doc = ending([QUOTATION], end)
+    const typed = ending([QUOTATION, '', FOCUS_SOURCE], end === 'middle' ? 'middle' : 'last')
+    await sameInFocus(doc, QUOTATION, ['Enter', 'Enter'], ending([QUOTATION, '', '|'], end === 'middle' ? 'middle' : 'last'))
+    await sameInFocus(doc, QUOTATION, ['Enter', 'Enter', `T:${FOCUS_SOURCE}`], typed.replace(FOCUS_SOURCE, `${FOCUS_SOURCE}|`))
+    await formWrittenInFocus(typed, end)
+    assert.equal(await text(), doc, 'all undone: the text is as it was')
+  })
+  for (const end of ENDS) await check(`G2. focus, the slide ${end}, the quotation its last line: Shift-Enter, a second paragraph; Enter, Enter, a source line, ArrowUp: the form written`, async () => {
+    const doc = ending([QUOTATION], end)
+    const rest = end === 'middle' ? 'middle' : 'last'
+    await sameInFocus(doc, QUOTATION, ['Shift+Enter', 'T:A second paragraph.'], ending([QUOTATION, '>', '> A second paragraph.|'], end))
+    // Shift-Enter, then Enter on the marker line it made: the quotation is left, its bare marker line stays.
+    await sameInFocus(doc, QUOTATION, ['Shift+Enter', 'Enter', 'T:Words under.'], ending([QUOTATION, '>', '', 'Words under.|'], rest))
+    // Enter, then Shift-Enter on the marker line: a second paragraph, still in the quotation.
+    await sameInFocus(doc, QUOTATION, ['Enter', 'Shift+Enter', 'T:A second paragraph.'], ending([QUOTATION, '>', '> A second paragraph.|'], end))
+    const typed = ending([QUOTATION, '>', '> A second paragraph.', '', FOCUS_SOURCE], rest)
+    await sameInFocus(doc, QUOTATION, ['Shift+Enter', 'T:A second paragraph.', 'Enter', 'Enter', `T:${FOCUS_SOURCE}`], typed.replace(FOCUS_SOURCE, `${FOCUS_SOURCE}|`))
+    await formWrittenInFocus(typed, end)
+  })
+  for (const end of ENDS) await check(`G3. focus, the slide ${end}, a paragraph its last line: Enter, Enter, words typed: they are on a line of their own under the paragraph`, async () => {
+    const doc = ending(['A paragraph.'], end)
+    // A line break that ends the file stays where it is: these Enters make their own lines.
+    const rest = end
+    await sameInFocus(doc, 'A paragraph.', ['Enter', 'T:Next line.'], ending(['A paragraph.', 'Next line.|'], rest))
+    await sameInFocus(doc, 'A paragraph.', ['Enter', 'Enter', `T:${FOCUS_SOURCE}`], ending(['A paragraph.', '', `${FOCUS_SOURCE}|`], rest))
+    await assertNoForm('a paragraph and a link under it')
+  })
+  for (const [kind, last] of [['paragraph', 'A paragraph.'], ['quotation', QUOTATION]]) await check(`G7. focus, a ${kind} slide whose last line is directly followed by the next heading: Enter, abc typed: abc is on the new line and the line before is unchanged`, async () => {
+    const doc = ['# Talk', '', '### First', '{id=s1}', '', 'Words of the first slide.', '', `### ${TITLE}`, '{id=fq}', '', last, '### After', '{id=s3}', '', 'A paragraph of the slide after.', ''].join('\n')
+    const keys = async (focus) => {
+      await begin(doc, focus)
+      await click(lineOf(doc, last))
+      await enter()
+      await type('abc')
+      return { text: await text(), caret: await caret() }
+    }
+    const plain = await keys(false)
+    const focused = await keys(true)
+    assert.deepEqual(focused, plain, 'the same text and caret as outside Slide Focus')
+    const lines = focused.text.split('\n')
+    const at = lines.indexOf(last)
+    assert(at >= 0, 'the last line of the slide is unchanged')
+    assert(lines[at + 1].includes('abc') && !lines[at].includes('abc'), 'abc is on the line begun under it')
+    assert.equal(lines.filter((line) => line.includes('abc')).length, 1, 'abc is written once')
+  })
+  for (const end of ENDS) await check(`G4. focus, the slide ${end}, a list its last lines: Enter, Enter at its end leaves the list, words typed are on the line under it`, async () => {
+    const doc = ending(['- one', '- two'], end)
+    const rest = end
+    await sameInFocus(doc, '- two', ['Enter', 'Enter'], ending(['- one', '- two', '|'], rest))
+    await sameInFocus(doc, '- two', ['Enter', 'Enter', 'T:Words under.'], ending(['- one', '- two', 'Words under.|'], rest))
+    await sameInFocus(doc, '- two', ['Enter', 'T:three', 'Enter', 'Enter', 'Enter', 'T:Words under.'], ending(['- one', '- two', '- three', '', 'Words under.|'], rest))
+  })
+  await check('G5. focus, a line begun under the slide\'s last line: ArrowDown and Delete there reach nothing of the next slide', async () => {
+    const doc = ending([QUOTATION], 'middle')
+    const begun = ending([QUOTATION, '', '|'], 'middle')
+    assert.equal(await keysAtEnd(doc, QUOTATION, ['Enter', 'Enter', 'ArrowDown', 'ArrowDown', 'ArrowRight', 'Delete', 'Delete', 'ControlOrMeta+ArrowDown'], true), begun, 'the caret stays on the begun line and nothing is deleted')
+    assert.equal(await keysAtEnd(doc, QUOTATION, ['Enter', 'Enter', 'ArrowDown', 'Delete', 'T:x', 'ArrowDown', 'Delete', 'T:y'], true), begun.replace('|', 'xy|'), 'what is typed then stays on the begun line')
+    // The begun line taken back: the slide ends at its quotation again, and the blank line above the next title is the one that was there.
+    assert.equal(await keysAtEnd(doc, QUOTATION, ['Enter', 'Enter', 'Backspace', 'Backspace'], true), doc.replace(QUOTATION, `${QUOTATION}|`), 'Backspace, Backspace: the text is as it was')
+    assert.deepEqual(await run(() => window.drawn()), [`### ${TITLE}`, '{id=fq}', '', QUOTATION], 'and the slide is drawn to its quotation')
+  })
+  await check('G6. focus: the last line emptied is still a line of the slide; a range set on a begun line; two blank lines above the next title', async () => {
+    // The last line's words deleted: the empty line stays drawn with the caret on it.
+    const doc = ending([QUOTATION, '', 'Words.'], 'middle')
+    assert.equal(await keysAtEnd(doc, 'Words.', ['Shift+Home', 'Backspace', 'T:Other words.'], true), ending([QUOTATION, '', 'Other words.|'], 'middle'), 'the words typed after are on that line')
+    // Two blank lines above the next title: the first is a line of the slide once a line is begun, the second stays hidden.
+    const two = ending([QUOTATION], 'middle').replace('\n\n### After', '\n\n\n### After')
+    const left = await keysAtEnd(two, QUOTATION, ['Enter', 'Enter', `T:${FOCUS_SOURCE}`], true)
+    assert.equal(left, await keysAtEnd(two, QUOTATION, ['Enter', 'Enter', `T:${FOCUS_SOURCE}`], false), 'the same text and caret as out of focus')
+    assert.equal(left, two.replace(`${QUOTATION}\n`, `${QUOTATION}\n\n${FOCUS_SOURCE}|`), 'the blank line that was there is the source\'s line; one blank line is left above the next title')
+    // A range that ends at the start of the blank line above the next title (set from outside) shows the slide to its last line with words, as before.
+    const plain = ending(['A paragraph.'], 'middle')
+    await begin(plain)
+    const edge = endOf(plain, 'A paragraph.') + 1
+    await run((range) => window.setRange(range), { from: endOf(plain, `### ${TITLE}`) - `### ${TITLE}`.length, to: edge })
+    assert.deepEqual(await run(() => window.drawn()), [`### ${TITLE}`, '{id=fq}', '', 'A paragraph.'], 'the blank line above the next title is not drawn')
+    assert.equal((await run(() => window.range())).to, edge, 'and the range is kept as it was set')
+  })
+
+  // ── Q. Enter, Enter at the end of a quotation that ends the focused slide ──
+  // The band takes a blank line begun under the slide's last line (focusScope.ts), so leaveQuotation no longer declines in
+  // Slide Focus: two Enters leave the quotation exactly as outside focus, and the caret is on a drawn line of the band.
   const quoteLines = (doc) => doc.split('\n')
-  for (const place of ['middle', 'last']) await check(`Q${place === 'middle' ? '1' : '2'}. focus, the slide ${place}, the quotation its last line: Enter, Enter, abc typed: abc is on a drawn line inside the quotation`, async () => {
+  for (const place of ['middle', 'last']) await check(`Q${place === 'middle' ? '1' : '2'}. focus, the slide ${place}, the quotation its last line: Enter, Enter leaves the quotation as outside focus; the caret is on a drawn line; abc typed lands there`, async () => {
     const doc = talk(place)
     const first = lineOf(doc, QUOTATION)
-    await begin(doc)
-    await click(first)
-    await enter()
-    assert.equal(await text(), doc.replace(QUOTATION, `${QUOTATION}\n> `), 'the first Enter continues the quotation with `> `')
-    await enter()
-    const afterTwo = await text()
-    assert.equal(afterTwo, doc.replace(QUOTATION, `${QUOTATION}\n>\n> `), 'the second Enter: the markdown Enter, a bare `>` and a new `> ` (as before leaveQuotation existed)')
-    assert.deepEqual(await caret(), { line: first + 2, column: 2 }, 'the caret is on the `> ` line, inside the quotation')
-    assert.equal((await run(() => window.focused())).last, first + 2, 'that line is inside the focused band')
+    const keys = async (focus) => {
+      await begin(doc, focus)
+      await click(first)
+      await enter(); await enter()
+      return { text: await text(), caret: await caret() }
+    }
+    const plain = await keys(false)
+    await run(() => window.leaveFocus()).catch(() => {})
+    const focused = await keys(true)
+    assert.deepEqual(focused, plain, 'the same text and caret as outside Slide Focus')
+    assert.equal(quoteLines(focused.text)[first], '', 'the marker-only line is emptied: the quotation is left')
+    const band = await run(() => window.focused())
+    assert(focused.caret.line >= band.first && focused.caret.line <= band.last, `the caret line ${focused.caret.line} is a line of the focused band ${band.first}-${band.last}`)
     await type('abc')
-    const typed = await text()
-    assert.equal(typed, doc.replace(QUOTATION, `${QUOTATION}\n>\n> abc`), 'abc is on a quotation line of its own')
-    assert.equal(quoteLines(typed)[first - 2], '', 'nothing in front of the first quotation line')
-    assert.equal(quoteLines(typed)[first - 1], QUOTATION, 'the first quotation line is unchanged')
-    if (place === 'middle') assert(typed.endsWith('### After\n{id=s3}\n\nA paragraph of the slide after.\n'), 'the next slide is unchanged')
-    await run(() => window.blurEditor()); await settle()
-    await run(() => window.leaveFocus()); await settle()
-    await assertNoForm('the quotation left')
+    assert(quoteLines(await text())[focused.caret.line - 1].startsWith('abc'), 'abc is written on the caret line, not in front of the quotation')
+    assert.equal(quoteLines(await text())[first - 1], QUOTATION, 'the quotation line is unchanged')
   })
   await check('Q3. focus, the quotation followed by another paragraph of the slide: Enter, Enter leaves the quotation as outside focus', async () => {
     const doc = talk('middle', ['A paragraph under the quotation.'])
@@ -517,8 +716,8 @@ try {
     }
   })
   await check('N2. focus: the link typed by the user, the two Enters\' changes made by a program: no form', async () => {
-    // The very changes and carets of the app's two Enters, dispatched with no mark: Slide Focus moves the second one's
-    // caret back and rebuilds it exactly as it rebuilds the Enter's. Nothing but the mark tells the two apart.
+    // The very changes and carets of the app's two Enters, dispatched with no mark: Slide Focus takes them exactly as
+    // it takes the Enters'. Nothing but the mark tells the two apart.
     for (const place of ['last', 'middle']) {
       const doc = talk(place, [AUTHOR])
       await begin(doc)
@@ -533,9 +732,9 @@ try {
       await settle()
       const now = await text()
       assert.equal(now, insertAfter(typed, sourceLine, ''), `the slide ${place}: the text the two Enters leave, and no form`)
-      assert.deepEqual(await caret(), { line: lineOf(now, sourceLine), column: sourceLine.length }, 'Slide Focus moved the caret back onto the source line, as for the Enter')
+      assert.deepEqual(await caret(), { line: lineOf(now, sourceLine) + 1, column: 0 }, 'the caret is on the emptied line, as for the Enter')
       const last = (await run(() => window.seen)).at(-1)
-      assert.deepEqual([last.userEvent, last.keyTyped], [null, false], 'the rebuilt transaction has no user event and no mark')
+      assert.deepEqual([last.userEvent, last.keyTyped], [null, false], 'the change has no user event and no mark')
       await leaveEveryWay(now, `the slide ${place}, the line left`)
       await run(() => window.leaveFocus()); await settle()
       await leaveEveryWay(now, `the slide ${place}, focus left`)
@@ -756,7 +955,7 @@ try {
     for (const line of observed) console.log(line)
   } else {
     for (const line of observed) console.log(line)
-    console.log(`quote form slide focus editor ok: ${ran} cases; in Slide Focus the form of a typed link is written as out of it (a source line left by Enter, Enter at the end of the focused slide too), any edit of the user's that leaves a quotation with a source link writes the form, and nothing is written for a change a program made`)
+    console.log(`quote form slide focus editor ok: ${ran} cases; in Slide Focus the form of a typed link is written as out of it (a source line left by Enter, Enter at the end of the focused slide too), a line begun under the focused slide's last line is a line of the slide, any edit of the user's that leaves a quotation with a source link writes the form, and nothing is written for a change a program made`)
   }
 } finally {
   await browser.close()

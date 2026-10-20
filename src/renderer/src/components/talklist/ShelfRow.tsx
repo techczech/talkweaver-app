@@ -103,7 +103,7 @@ export default function ShelfRow({
       <Cover slug={talk.slug} coverKey={coverKey} title={talk.title} vaultId={talk.vaultId} />
       <div className="tl-shrow-main">
         <div className={`tl-shrow-title ${fileMode ? 'tl-shrow-title--file' : ''}`}>
-          {hit && !fileMode ? <Marked text={label} ranges={hit.titleHighlights} /> : label}
+          {hit && !fileMode && label === talk.title ? <Marked text={label} ranges={hit.titleHighlights} /> : label}
         </div>
         <div className="tl-shrow-meta">
           <span className="tl-shrow-slides">{slideCount != null ? `${slideCount}sl` : '—'}</span>

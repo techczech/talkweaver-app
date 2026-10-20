@@ -26,10 +26,12 @@ const isMutant = process.env.TW_STAGE_FIT_NO_SCALE === '1'
 const SCALE_LINE = 'const scale = Math.min(availW / width, availH / height);'
 assert.ok(stageFitRuntimeSource.includes(SCALE_LINE), 'the module carries the scale the mutation pins')
 
+// 0.41 ticket 02: the index tab is the default title look; this probe measures the plain top title.
 const source = `---
 title: Stage fit probe
 auto_title_slide: false
 auto_thanks_slide: false
+title_look: full
 ---
 
 ## Part one {id=part}

@@ -60,6 +60,11 @@ The strong colour fills the slide with the section colour and sets the claim in 
 
 The lower third tints the bottom of the slide and leaves the rest of the page plain.
 
+### The statement keeps its picture beside it
+{statement}
+
+![](assets/sample-image.png)
+
 ### Title look tab soft variant — light tab at the left edge
 {list}{titlelook=tab}{titlelook-tone=soft}
 
@@ -165,6 +170,32 @@ The lower third tints the bottom of the slide and leaves the rest of the page pl
 - Give it the context a new colleague would need
 - Let it work, then verify the result end to end
 - Capture what you learned for the next run
+
+### Numbered list keeps its picture
+{numbered}{id=numbered-keeps-its-picture}
+
+1. Unzip the sample folder
+2. Open it in Codex
+3. Ask Codex to analyse it
+4. Check what it found
+
+![](assets/sample-image.png)
+
+### Icon list under a top title
+{iconlist=list}{titletop}{id=icon-list-top-title}
+
+- Translate {icon=lucide:languages}
+- Structure {icon=lucide:boxes}
+- Build {icon=lucide:hammer}
+- Ship {icon=lucide:rocket}
+
+### Numbered list under a top title
+{numbered}{titletop}{id=numbered-top-title}
+
+1. Describe the outcome, not the steps
+2. Give it the context a new colleague would need
+3. Let it work, then verify the result end to end
+4. Capture what you learned for the next run
 
 ### Quote
 {quote}
@@ -465,6 +496,60 @@ The amount of time and effort required to change your brain is constant. AI can 
   - find, organise and connect sources
 - AI as Simulator {icon=lucide:orbit}
   - rehearse conversations and scenarios
+
+### Uses of AI in research (cards, points)
+{cards}{iconlist}{id=cards-points}
+
+- Personal assistant {icon=lucide:user}
+  - Search and note
+  - Draft and summarise
+  - Organise and help
+- Tool for research {icon=lucide:wrench}
+  - Write software
+  - Code text
+  - Ideation and checking
+- Subject of research {icon=lucide:brain}
+  - How models work
+  - Training / finetuning
+  - Impact of use
+
+### Uses of AI in research (cards, five points)
+{cards}{iconlist}{id=cards-points-long}
+
+- Personal assistant {icon=lucide:user}
+  - Search and note
+  - Draft and summarise
+  - Organise and help
+  - Plan the week and keep track of deadlines
+  - Translate and explain
+- Tool for research {icon=lucide:wrench}
+  - Write software
+  - Code text
+  - Ideation and checking
+  - Clean and reshape data
+  - Find and compare sources
+- Subject of research {icon=lucide:brain}
+  - How models work
+  - Training / finetuning
+  - Impact of use
+  - Bias and evaluation
+  - Policy and governance
+
+### Uses of AI in research (icon list boxes)
+{iconlist=boxes}{id=boxes-points}
+
+- Personal assistant {icon=lucide:user}
+  - Search and note
+  - Draft and summarise
+  - Organise and help
+- Tool for research {icon=lucide:wrench}
+  - Write software
+  - Code text
+  - Ideation and checking
+- Subject of research {icon=lucide:brain}
+  - How models work
+  - Training / finetuning
+  - Impact of use
 
 ### Three roles of AI (rows)
 {cards=rows}
@@ -1404,7 +1489,7 @@ Three short steps before the session: a slide, a quick check and a task. Not pre
 - Not sure yet
 
 ### Task: draft one real email with Copilot
-{task}{minutes=20}
+{task}{minutes=20}{local}
 
 - Pick an email you need to send this week
 - Ask Copilot to draft it from your notes

@@ -85,11 +85,11 @@ const ONLY = process.env.QUOTE_TYPED_ONLY
 {
   const editor = readFileSync(join(root, 'src/renderer/src/components/Editor.tsx'), 'utf8')
   const adopt = editor.slice(editor.indexOf('const adoptStampedContent = useCallback('), editor.indexOf('// Writes `text` to `outlinePath` through the save queue'))
-  assert(/adoptSavedText\(view, sentText, res\.content\)/.test(adopt), 'Editor.tsx adoptStampedContent adopts the stamped text through adoptSavedText')
+  assert(/adoptSavedText\(view, sourceText, savedText\)/.test(adopt), 'Editor.tsx adoptStampedContent adopts the saved text through adoptSavedText')
   assert.equal((adopt.match(/\.dispatch\(/g) ?? []).length, 0, 'and dispatches nothing of its own')
   const adoption = readFileSync(join(root, 'src/renderer/src/extensions/savedTextAdoption.ts'), 'utf8')
   const transaction = adoption.slice(adoption.indexOf('export function adoptionTransaction('), adoption.indexOf('export function adoptSavedText('))
-  assert.equal((transaction.match(/savedTextAdopted\.of\(true\)/g) ?? []).length, 2, 'both shapes of the adoption transaction carry the savedTextAdopted mark the link watch reads')
+  assert.equal((transaction.match(/savedTextAdopted\.of\(true\)/g) ?? []).length, 1, 'the adoption transaction (one shape: the save\'s undo step) carries the savedTextAdopted mark the link watch reads')
 }
 
 const entry = `

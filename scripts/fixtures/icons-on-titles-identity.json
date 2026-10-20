@@ -21,7 +21,7 @@
   },
   "braces-that-are-not-icons": {
     "slides": 7,
-    "sha256": "8551428144a0c47d888bb6de422210d3384ea611d4d31961bc8a0dbe0318053c"
+    "sha256": "9c2e84db106faf568c0c49530b74e97e187bc304d565b8420e026046787ce97d"
   },
   "deck-default-icon": {
     "slides": 9,
@@ -36,7 +36,7 @@
     "sha256": "29988bcfc308ac6eaedfdd2dc445f2dbb48b1264fbcac2cfe12a9704f25260a5"
   },
   "deck-default-list-icon-style": {
-    "slides": 9,
-    "sha256": "9263c9d4e143ea845eb51303934790e362e4095e5e6ebd0dd523c53df7f321ac"
+    "slides": 8,
+    "sha256": "52be10855587266b1f7e0c73e8972381af59d65ed5e39bb66712610d98861c98"
   }
 }

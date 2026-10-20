@@ -36,6 +36,12 @@ function fresh() {
   return { root, userData, store: createRecordingStreams({ userDataDir: () => userData, fsyncEveryMs: 0 }) }
 }
 const OWNER = 7
+// Occupy a segment's own name and every replacement name, so no file can be created for it.
+const blockSegment = (dir, id, n) => {
+  const paths = [join(dir, `${id}.seg-${n}.webm`), ...Array.from({ length: 9 }, (_, k) => join(dir, `${id}.seg-${n}.r${k + 1}.webm`))]
+  for (const p of paths) mkdirSync(p)
+  return () => { for (const p of paths) rmSync(p, { recursive: true }) }
+}
 
 await check('append: each chunk is on disk in order as soon as it is appended', () => {
   const { userData, store } = fresh()
@@ -110,6 +116,26 @@ await check('a window that goes mid-recording leaves its session interrupted (cl
   assert.deepEqual(store.listInterrupted().map((f) => [f.manifest.sessionId, f.bytes]), [['sess-d', 3]])
 })
 
+await check('a new stream never takes an id in use: existing audio, marker or Run refuses the open, and a segment file already there is never appended to', () => {
+  const { userData, store } = fresh()
+  const rec = join(userData, 'recordings')
+  mkdirSync(rec, { recursive: true })
+  writeFileSync(join(rec, 'sess-old.webm'), 'earlier')
+  assert.deepEqual(store.open(OWNER, { sessionId: 'sess-old', talkSlug: 'talk' }), { ok: false, error: 'id-taken' })
+  assert.equal(existsSync(join(rec, 'sess-old.recording.json')), false, 'no marker is written for a taken id')
+  writeFileSync(join(rec, 'sess-run.json'), '{}')
+  assert.equal(store.open(OWNER, { sessionId: 'sess-run', talkSlug: 'talk' }).error, 'id-taken', 'a no-vault Run takes the id')
+  writeFileSync(join(rec, 'sess-mark.recording.json'), '{"keep":true}')
+  assert.equal(store.open(OWNER, { sessionId: 'sess-mark', talkSlug: 'talk' }).error, 'id-taken', 'an interrupted marker takes the id')
+  assert.equal(readFileSync(join(rec, 'sess-mark.recording.json'), 'utf8'), '{"keep":true}')
+  // A free id opens; a file that appears at a later segment's path is refused, never appended to.
+  assert.equal(store.open(OWNER, { sessionId: 'sess-new', talkSlug: 'talk' }).ok, true)
+  writeFileSync(join(rec, 'sess-new.seg-2.webm'), 'other')
+  assert.equal(store.startSegment(OWNER, 'sess-new', 1, 0).ok, false)
+  assert.equal(readFileSync(join(rec, 'sess-new.seg-2.webm'), 'utf8'), 'other')
+  assert.equal(readFileSync(join(rec, 'sess-old.webm'), 'utf8'), 'earlier', 'the earlier audio is untouched')
+})
+
 await check('segment open refused once: later segments still open, and finalise writes the held chunks — no audio lost', () => {
   const { userData, store } = fresh()
   store.open(OWNER, { sessionId: 'sess-j', talkSlug: 'talk' })
@@ -136,18 +162,83 @@ await check('segment open refused once: later segments still open, and finalise 
   assert.deepEqual(existingSegmentPaths(userData, 'sess-j').map((p) => p.split('/').pop()), ['sess-j.webm', 'sess-j.seg-2.webm', 'sess-j.seg-3.webm'])
 })
 
+await check('a refused segment is never appended to at finalise: its chunks go to a fresh file of its own, the other file stays byte-identical', () => {
+  const { userData, store } = fresh()
+  const rec = join(userData, 'recordings')
+  assert.equal(store.open(OWNER, { sessionId: 'sess-p', talkSlug: 'talk' }).ok, true)
+  assert.equal(store.startSegment(OWNER, 'sess-p', 0, 0).ok, true)
+  store.append(OWNER, 'sess-p', 0, bytes('FIRST;'))
+  store.endSegment(OWNER, 'sess-p', 0, 10_000)
+  // Another file appears at segment 1's path after the open; the segment open is refused.
+  const planted = join(rec, 'sess-p.seg-2.webm')
+  const plantedBytes = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x4f, 0x4c, 0x44])
+  writeFileSync(planted, plantedBytes)
+  const before = statSync(planted)
+  assert.equal(store.startSegment(OWNER, 'sess-p', 1, 12_000).ok, false)
+  const fin = store.finalise(OWNER, 'sess-p', { recordingMs: 30_000, segments: [{ index: 0, startMs: 0, endMs: 10_000 }, { index: 1, startMs: 12_000, endMs: 30_000 }] },
+    [{ index: 1, bytes: bytes('NEW-1;') }, { index: 1, bytes: bytes('NEW-2;') }])
+  assert.equal(fin.ok, true, JSON.stringify(fin))
+  assert.ok(readFileSync(planted).equals(plantedBytes), 'the other file is byte-identical')
+  assert.equal(statSync(planted).mtimeMs, before.mtimeMs, 'and never written to')
+  assert.equal(readFileSync(join(rec, 'sess-p.seg-2.r1.webm'), 'utf8'), 'NEW-1;NEW-2;', 'the new audio is complete in its own file')
+  assert.deepEqual(fin.segments, [
+    { file: 'sess-p.webm', bytes: 6, startMs: 0, endMs: 10_000 },
+    { file: 'sess-p.seg-2.r1.webm', bytes: 12, startMs: 12_000, endMs: 30_000 }
+  ])
+  const owned = ['sess-p.webm', 'sess-p.seg-2.r1.webm']
+  assert.deepEqual(fin.manifest.segments.map((seg) => seg.file), owned, 'the manifest lists only files the stream created')
+  const marker = JSON.parse(readFileSync(join(rec, 'sess-p.recording.json'), 'utf8'))
+  assert.deepEqual(marker.segments.map((seg) => seg.file), owned, 'so does the marker on disk')
+  assert.deepEqual(store.ownedSegments(OWNER, 'sess-p').map((f) => f.path), owned.map((f) => join(rec, f)), 'the export reads only these')
+  assert.equal(store.ownedSegments(8, 'sess-p'), null, 'another window gets nothing')
+  // A relaunch recovers the same files from the marker, never the other one.
+  store.closeOwner(OWNER)
+  const later = createRecordingStreams({ userDataDir: () => userData })
+  assert.deepEqual(later.listInterrupted().map((f) => f.segments.map((seg) => [seg.file, seg.bytes])), [[['sess-p.webm', 6], ['sess-p.seg-2.r1.webm', 12]]])
+  assert.ok(readFileSync(planted).equals(plantedBytes))
+})
+
+await check('a segment file replaced after it was written is not appended to: the held chunks go to a fresh file', () => {
+  const { userData, store } = fresh()
+  const rec = join(userData, 'recordings')
+  store.open(OWNER, { sessionId: 'sess-q', talkSlug: 'talk' })
+  store.startSegment(OWNER, 'sess-q', 0, 0)
+  store.append(OWNER, 'sess-q', 0, bytes('MINE;'))
+  store.endSegment(OWNER, 'sess-q', 0, 5000)
+  // Our file is moved away and another put in its place (a different file at the same name).
+  rmSync(join(rec, 'sess-q.webm'))
+  writeFileSync(join(rec, 'sess-q.webm'), 'THEIRS')
+  const fin = store.finalise(OWNER, 'sess-q', { recordingMs: 9000 }, [{ index: 0, bytes: bytes('late;') }])
+  assert.equal(fin.ok, true, JSON.stringify(fin))
+  assert.equal(readFileSync(join(rec, 'sess-q.webm'), 'utf8'), 'THEIRS', 'the replacement is untouched')
+  assert.equal(readFileSync(join(rec, 'sess-q.seg-1.r1.webm'), 'utf8'), 'late;')
+  assert.deepEqual(fin.segments.map((seg) => seg.file), ['sess-q.seg-1.r1.webm'])
+  assert.deepEqual(store.discard(OWNER, 'sess-q').files, [join(rec, 'sess-q.seg-1.r1.webm')], 'discard offers only its own file for the Trash')
+  // Replaced with nothing held for it: the segment is left out of the result, never named.
+  const other = fresh()
+  const rec2 = join(other.userData, 'recordings')
+  other.store.open(OWNER, { sessionId: 'sess-r', talkSlug: 'talk' })
+  other.store.startSegment(OWNER, 'sess-r', 0, 0)
+  other.store.append(OWNER, 'sess-r', 0, bytes('A;'))
+  other.store.startSegment(OWNER, 'sess-r', 1, 3000)
+  other.store.append(OWNER, 'sess-r', 1, bytes('B;'))
+  rmSync(join(rec2, 'sess-r.webm'))
+  writeFileSync(join(rec2, 'sess-r.webm'), 'THEIRS')
+  const fin2 = other.store.finalise(OWNER, 'sess-r', { recordingMs: 6000 }, [])
+  assert.deepEqual(fin2.segments.map((seg) => seg.file), ['sess-r.seg-2.webm'])
+})
+
 await check('finalise never drops a held chunk: a failure is an error, and the retry resumes without duplicating', () => {
   const { userData, store } = fresh()
   store.open(OWNER, { sessionId: 'sess-k', talkSlug: 'talk' })
   store.startSegment(OWNER, 'sess-k', 0, 0)
   store.append(OWNER, 'sess-k', 0, bytes('on-disk;'))
-  const blocker = join(userData, 'recordings', 'sess-k.seg-2.webm')
-  mkdirSync(blocker)
+  const unblock = blockSegment(join(userData, 'recordings'), 'sess-k', 2)
   const tail = [{ index: 0, bytes: bytes('late0;') }, { index: 1, bytes: bytes('one;') }, { index: 1, bytes: bytes('two;') }]
   const first = store.finalise(OWNER, 'sess-k', { recordingMs: 9000 }, tail)
   assert.equal(first.ok, false, 'the save must not report success with chunks unwritten')
   assert.equal(readFileSync(join(userData, 'recordings', 'sess-k.webm'), 'utf8'), 'on-disk;late0;')
-  rmSync(blocker, { recursive: true })
+  unblock()
   const retry = store.finalise(OWNER, 'sess-k', { recordingMs: 9000 }, tail)
   assert.equal(retry.ok, true)
   assert.equal(readFileSync(join(userData, 'recordings', 'sess-k.webm'), 'utf8'), 'on-disk;late0;', 'segment 0 tail not written twice')

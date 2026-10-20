@@ -277,7 +277,7 @@ export const OPEN_PATTERN_TOKENS: OpenPatternToken[] = [
   { key: 'center', form: 'equals', pattern: '.+', description: 'US-spelling alias for centre.', justification: 'US-spelling alias for the free diagram centre label.' },
   { key: 'curve', form: 'equals', pattern: 'sigmoid', description: 'Conceptual S-curve layout.', justification: 'Legacy chart-shape alias retained for source compatibility.' },
   { key: 'titlestyle', form: 'equals', pattern: '.+', description: 'Compiler-internal title-rail style.', justification: 'Emitted by the registered sidebar trigger.' },
-  { key: 'results', form: 'equals', pattern: SLIDE_ID_PATTERN, description: 'A talk slide that shows the answers of the named pre-work step (its slide id).', justification: 'Names a step of the talk’s own pre-work section by its slide id; the Inspector’s Results section picks it from the steps (compiler/scripts/lib/prework.mjs).' }
+  { key: 'results', form: 'equals', pattern: `${SLIDE_ID_PATTERN}(?:/${SLIDE_ID_PATTERN})?`, description: 'A talk slide that shows the answers of the named step: a pre-work step of the talk (its slide id), or a work-file step as <file id>/<step id>.', justification: 'Names a step of the talk’s own pre-work section by its slide id, or a step of a work file as <file id>/<step id>; the Inspector’s Results section picks it from the steps (compiler/scripts/lib/prework.mjs parseResultsToken).' }
 ]
 
 /**
@@ -333,10 +333,13 @@ const BOARD_SETTING_KEYS = ['poll', 'limit', 'length', 'cards', 'names', 'closes
 const TOP_TITLE_LOOK: OptionApplicability = { titleRegimes: ['top'] }
 const BOARD_ONLY: OptionApplicability = { titleRegimes: TITLED_REGIMES, requiresTokens: { 'poll-type': ['poll=board'] } }
 /** A pre-work step's tokens (ticket 08): written after the step's kind ({poll=…}/{check}/{task}), before the id. */
-const PREWORK_STEP_KEYS = ['poll', 'check', 'task', 'readonly', 'minutes', 'noask'] as const
+const PREWORK_STEP_KEYS = ['poll', 'check', 'task', 'readonly', 'minutes', 'noask', 'local'] as const
 
 // ADR-0011: every choosing surface consumes these values and writes their exact tokens.
 // ADR-0020 §5: each group declares WHERE it is relevant; options.ts interprets, never decides.
+// The slide tokens that give the plain top title (the compiler's PLAIN_TITLE_LOOKS, title-look.mjs).
+const PLAIN_TITLE_LOOK_TOKENS = ['titlelook=default', 'titlelook=full', 'titlelook=plain', 'titlelook=none', 'titlelook=off']
+
 export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
   {
     key: 'background',
@@ -412,7 +415,7 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     // poster variant) or `titlestyle` (the retired sidebar stamp). Slide redesign (0.39): the three looks
     // sit at the slide edge. The Kicker is a sentence-case typewriter line led by a long line from the
     // edge; Label is a straight sticky note with a thick accent line; Tab is an index tab hanging from
-    // the top edge (soft or strong, see `title-look-tone`). A talk-wide default is the deck's `title_look:` setting,
+    // the top edge (soft or strong, see `title-look-tone`). A talk-wide look is the deck's `title_look:` setting,
     // a section's is `sections:` → `titlelook:`; a slide's own token wins over both.
     key: 'title-look',
     label: 'Title look',
@@ -420,13 +423,22 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     preview: 'segmented',
     section: 'title',
     appliesTo: TOP_TITLE_LOOK,
-    // `titlelook=default` pins a slide to the plain title against a section or talk default.
-    dictionaryTokens: ['titlelook=default'],
+    // 0.41 (ADR-0039): a talk with no `title_look:` draws the index tab, so the slide's unwritten
+    // look is usually Tab (the Inspector lights the inherited look). `titlelook=default` (or `full`)
+    // pins a slide to the plain title against a section or talk default: choosing Full on a slide
+    // that inherits another look writes it (OptionCommitContext.inheritedTitleLook).
+    // `titlelook=intro-then-none`: the section card shows its title; the slides after it show none.
+    // `titlelook=tab-strip` (0.41 ticket 03): a row of pills naming the section's slides, current one filled.
+    // Every plain spelling the compiler accepts (PLAIN_TITLE_LOOKS in title-look.mjs: default, full,
+    // plain, none, off) reads as Full and is replaced when another look is chosen.
+    dictionaryTokens: [...PLAIN_TITLE_LOOK_TOKENS],
     values: [
-      { token: '', label: 'Default', description: 'The plain centred top title' },
+      { token: '', label: 'Full', description: 'The plain top title', altTokens: [...PLAIN_TITLE_LOOK_TOKENS] },
       { token: 'titlelook=kicker', label: 'Kicker', description: 'A typewriter line in the section colour, led by a long line from the slide edge' },
       { token: 'titlelook=label', label: 'Label', description: 'A straight sticky note flush with the slide edge, with a thick coloured line on its left' },
-      { token: 'titlelook=tab', label: 'Tab', description: 'An index tab hanging from the top edge, flush with the left slide edge' }
+      { token: 'titlelook=tab', label: 'Index tab', description: 'An index tab hanging from the top edge, flush with the left slide edge (the default)' },
+      { token: 'titlelook=tab-strip', label: 'Tab strip', description: 'A row of pills naming the section’s slides, the current one filled' },
+      { token: 'titlelook=intro-then-none', label: 'Intro then none', description: 'The section card introduces the topic; the slides after it have no title' }
     ]
   },
   {
@@ -795,6 +807,16 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     ]
   },
   {
+    // 2026-10-19 prework-responses design: where a step's answer goes. Sent to you is the default and
+    // never written; Local only writes {local}. A slide or video has no answer, so the group skips it.
+    key: 'prework-route', label: 'Where this answer goes', preview: 'segmented', section: 'prework',
+    appliesTo: { preworkKinds: ['check', 'question', 'task'] }, anchorKeys: PREWORK_STEP_KEYS,
+    values: [
+      { token: '', label: 'Sent to you', description: 'The answer travels to you like a live question, without a name (default)' },
+      { token: 'local', label: 'Local only', description: 'The answer stays on the participant\'s phone; you never see it' }
+    ]
+  },
+  {
     key: 'pollselections', label: 'Select up to', numberKey: 'pollselections',
     // The pre-ADR-0020 poll rule, now data: a selection cap only means anything on multiple choice.
     appliesTo: { titleRegimes: TITLED_REGIMES, requiresTokens: { 'poll-type': ['poll=multiple'] } },
@@ -844,7 +866,7 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
   },
   {
     // ADR-0028 §6 (Dominik, 2026-09-25): HOW a numbered list draws its number. A numbered list
-    // takes the icon-list layout with the number in the icon's box; the square is the default,
+    // takes the icon-list layout with the number in the icon's box; the mono numeral is the default,
     // plain and styled are the two alternatives. Declared global and adopted by the numbered
     // entry exactly as iconlist-variant is by the iconlist entry, so it nests under List style.
     key: 'number-style',
@@ -852,10 +874,11 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     preview: 'segmented',
     sectionLabel: 'Numbers',
     appliesTo: { requiresTokens: { 'list-style': ['numbered'] } },
-    // The explicit form of the default is registry vocabulary too (the Doctor stays clean for it).
-    dictionaryTokens: ['numbered=square'],
+    // The explicit form of the default is registry vocabulary too (the Doctor stays clean for it);
+    // square is its old name, kept as a silent alias and never offered as a picker value.
+    dictionaryTokens: ['numbered=mono', 'numbered=square'],
     values: [
-      { token: '', label: 'Square', description: 'The number in an outlined square the size of a list icon' },
+      { token: '', label: 'Mono', description: 'A numeral in the accent colour on the first line of its item' },
       { token: 'numbered=plain', label: 'Plain', description: 'The number set like the text, with a full stop' },
       { token: 'numbered=styled', label: 'Styled', description: 'A large light numeral centred on its item' }
     ]
@@ -1226,7 +1249,7 @@ The registry is the product contract.`,
     aliases: [],
     triggerWords: ['contrast'],
     kind: 'layout',
-    titleRegime: 'sidebar',
+    titleRegime: 'top',
     status: 'stable',
     sample: `### Contrast
 {contrast}
@@ -1265,7 +1288,7 @@ The registry is the product contract.`,
     aliases: [],
     triggerWords: ['compare'],
     kind: 'layout',
-    titleRegime: 'hidden',
+    titleRegime: 'top',
     status: 'stable',
     sample: `### What LLMs can and cannot do
 {compare}
@@ -1942,6 +1965,18 @@ def greet():
         values: [
           { token: '', label: 'Grid', description: 'Hairline rules between columns and rows' },
           { token: 'table-columns=off', label: 'Rows only', description: 'Hairline rules between rows only; no column dividers' }
+        ]
+      },
+      // 0.41 preview 2 (Dominik: "table should have an option not to have first column emphasised").
+      // A third orthogonal group in the same `table-<part>=off` style as the two above.
+      {
+        key: 'table-first-column',
+        label: 'First column',
+        preview: 'segmented',
+        dictionaryTokens: ['table-first-column=on'],
+        values: [
+          { token: '', label: 'Accent', description: 'The first column is set in the accent colour' },
+          { token: 'table-first-column=off', label: 'Plain', description: 'The first column reads like the other columns: ink, no accent' }
         ]
       }
     ]
@@ -3076,6 +3111,25 @@ Three short steps before Monday.
 
 - Read two short slides`,
     description: 'Pre-work step: participants cannot ask about this step',
+    category: 'modes',
+    purpose: 'Modes',
+    pickerEligible: false
+  },
+  {
+    // 2026-10-19 prework-responses design: a task, quick check or question whose answer stays on the
+    // participant's phone ("Local only"); nothing about the step is sent.
+    name: 'local',
+    label: 'Local only',
+    trigger: '{local}',
+    aliases: [],
+    triggerWords: ['local'],
+    kind: 'modifier',
+    status: 'stable',
+    sample: `### Try one prompt on a paper of your own
+{task}{minutes=20}{local}
+
+1. Pick a paper you know well`,
+    description: 'Work-file step: the answer stays on the participant\'s phone and is never sent',
     category: 'modes',
     purpose: 'Modes',
     pickerEligible: false

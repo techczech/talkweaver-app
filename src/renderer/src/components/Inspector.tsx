@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react'
-import type { ProjectionRow, RecordingSession, TalkInfo } from '../../../preload/index'
+import type { ProjectionRow, TalkInfo } from '../../../preload/index'
 import type { LayoutDoctorFinding } from '../../../shared/layout-doctor'
 import type { LayoutDef, OptionGroup } from '../data/layouts'
 import { LAYOUTS } from '../data/layouts'
@@ -27,12 +27,8 @@ import SlideProvenance from './SlideProvenance'
 import TalkActivity from './TalkActivity'
 import { slideIdOf } from './slideFocusModel'
 import type { BoardEdit } from '../../../../compiler/scripts/lib/board-slide.mjs'
-import { preworkFromOutline } from '../../../../compiler/scripts/lib/prework.mjs'
 import InspectorPrework from './InspectorPrework'
 import { inspectorPreworkModel } from './inspectorPreworkModel'
-import { preworkEnabled } from '../../../shared/prework-flag'
-import { usePlannedRuns } from './usePlannedRuns'
-import { localToday, nextPlannedRun } from '../../../shared/plan-run'
 import { commandRan } from '../commands/command-ran'
 
 interface Props {
@@ -57,12 +53,6 @@ interface Props {
   picker?: { column: React.ReactNode; tryOutline: string | null; tryLabel: string | null } | null
   /** The layout section's Change button: opens the picker on this slide. */
   onChangeLayout?: () => void
-  /** Ticket 08: writes the inspected quick check's right answer (0-based option; -1 clears). */
-  onRightAnswer: (optionIndex: number) => boolean
-  /** Ticket 08: open the plan sheet for a new Run (null) or to edit the given one. */
-  onPlanRun: (run: RecordingSession | null) => void
-  /** Ticket 08: inspect the slide with this id (a step of the pre-work form). */
-  onInspectSlideId: (slideId: string) => void
 }
 
 function triggerLineOf(block: string): string {
@@ -72,8 +62,7 @@ function triggerLineOf(block: string): string {
 
 export default function Inspector({
   talk, compiledSlides, outlineContent, triggerFindings, activeIndex, headingLine,
-  onPrev, onNext, onEdit, onExplain, onOpenLayoutDoctor, onOpenLayoutPicker, onCommitOption, onBoardEdit, picker = null, onChangeLayout,
-  onRightAnswer, onPlanRun, onInspectSlideId
+  onPrev, onNext, onEdit, onExplain, onOpenLayoutDoctor, onOpenLayoutPicker, onCommitOption, onBoardEdit, picker = null, onChangeLayout
 }: Props) {
   const row = compiledSlides?.[activeIndex] ?? null
   const block = useMemo(
@@ -89,15 +78,11 @@ export default function Inspector({
   const inheritedTitleTone = useMemo(() => inheritedTitleToneForSlide(outlineContent, headingLine), [outlineContent, headingLine])
   const inheritedTitleLook = useMemo(() => inheritedTitleLookForSlide(outlineContent, headingLine), [outlineContent, headingLine])
   const deckStatementToken = useMemo(() => deckStatementTokenForOutline(outlineContent), [outlineContent])
-  // Ticket 08: the talk's pre-work form, read with the compiler's own reader, and this slide's place in it.
-  const preworkDefinition = useMemo(() => preworkFromOutline(outlineContent), [outlineContent])
+  // Ticket 27: a `{results=…}` slide's Results section.
   const prework = useMemo(
-    // Pre-work is hidden for 0.37: no card, no chip, no pre-work option rows.
-    () => (preworkEnabled() ? inspectorPreworkModel(outlineContent, headingLine, triggerLine, preworkDefinition) : null),
-    [outlineContent, headingLine, triggerLine, preworkDefinition]
+    () => inspectorPreworkModel(headingLine, triggerLine),
+    [headingLine, triggerLine]
   )
-  const plannedRuns = usePlannedRuns(talk.slug)
-  const nextRun = prework ? nextPlannedRun(plannedRuns, talk.slug, localToday(new Date())) : null
   const model = useMemo(
     () => inspectorModel(
       compiledSlides, activeIndex, headingLevel, triggerLine, LAYOUTS, block, hasChildren, triggerFindings, deckListStyle, deckStatementToken, prework, inheritedTitleTone, inheritedTitleLook
@@ -405,16 +390,10 @@ export default function Inspector({
                         child.nestedUnder === binding.group.key && !child.group.key.startsWith('board-'))))}
                   </>
                 ) : model.prework && section.id === 'prework' ? (
-                  // Ticket 08 (round-2 E1–E4, round-3 P5): the step's own section, its registry rows
-                  // (Participants, Time it takes, Questions about it) rendered in its body.
+                  // Ticket 27: a `{results=…}` slide's Results section.
                   <InspectorPrework
                     model={model.prework}
-                    nextRun={nextRun}
-                    settings={section.bindings.filter((binding) => !binding.nestedUnder).map((binding) => renderGroup(binding))}
-                    onPlanRun={(runId) => onPlanRun(runId ? plannedRuns.find((run) => run.id === runId) ?? null : null)}
-                    onRightAnswer={(index) => { onRightAnswer(index) }}
                     onResults={(token) => { if (model.prework?.results) onCommitOption(undefined, model.prework.results.group, token) }}
-                    onInspectStep={onInspectSlideId}
                   />
                 ) : section.bindings.filter((binding) => !binding.nestedUnder).map((binding) =>
                   renderGroup(binding, section.bindings.filter((child) => child.nestedUnder === binding.group.key)))}

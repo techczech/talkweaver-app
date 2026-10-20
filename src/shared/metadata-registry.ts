@@ -65,6 +65,13 @@ export interface MetadataEntry {
    * system key.
    */
   defaultable?: boolean
+  /**
+   * Set on a user frontmatter key that is not a deck setting: the deck never reads it, so Deck settings
+   * does not show it (deckSettingsViewModel, DECK_OPTION_GROUPS) and there is no compiled effect to
+   * probe (test-settings-honoured). The Metadata table still offers it. The text says what the key does
+   * instead.
+   */
+  outsideDeck?: string
 }
 
 const bool = (onWhat: string, offWhat: string): MetadataVocabulary => ({
@@ -360,17 +367,20 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     vocabulary: {
       kind: 'closed',
       options: [
-        { value: '', label: 'Default', explanation: 'Key absent — the plain centred top title.' },
-        { value: 'default', label: 'Default', explanation: 'The plain centred top title.' },
+        { value: '', label: 'Index tab', explanation: 'Key absent — the index tab, the default since 0.41.' },
+        { value: 'tab', label: 'Index tab', explanation: 'An index tab hanging from the top edge, flush with the left slide edge.' },
+        { value: 'default', label: 'Full', explanation: 'The plain top title (full is the same choice).' },
+        { value: 'full', label: 'Full', explanation: 'The plain top title (default is the same choice).' },
         { value: 'kicker', label: 'Kicker', explanation: 'A sentence-case typewriter line in the section colour, led by a long line from the slide edge.' },
         { value: 'label', label: 'Label', explanation: 'A straight sticky note flush with the slide edge, with a thick coloured line on its left.' },
-        { value: 'tab', label: 'Tab', explanation: 'An index tab hanging from the top edge, flush with the left slide edge.' }
+        { value: 'tab-strip', label: 'Tab strip', explanation: 'A row of pills naming the section’s slides, the current one filled.' },
+        { value: 'intro-then-none', label: 'Intro then none', explanation: 'The section card introduces the topic; the slides after it have no title.' }
       ]
     },
     label: 'Title look',
     group: 'Design',
     explanation:
-      'How a top title is drawn across the talk: default, kicker, label or tab. A section’s own titlelook in sections: and a slide’s {titlelook=…} override it, in that order. It never touches the opening slide’s title_style, and left-rail titles are unchanged. An unlisted value falls back to default and raises a compiler warning.',
+      'How a top title is drawn across the talk: the index tab (the default), full (the plain title), kicker, label, tab strip (a row of the section’s slide titles, the current one filled), or intro then none. When the title is absent the content re-centres in the space it gains. A section’s own titlelook in sections: and a slide’s {titlelook=…} override it, in that order. It never touches the opening slide’s title_style, and left-rail titles are unchanged. default, full, plain, none and off all give the plain title; an unlisted value falls back to the index tab and raises a compiler warning.',
     defaultable: true,
     ownership: 'user'
   },
@@ -841,7 +851,26 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
 
   // ── Pre-work (ADR-0032 amendment point 5, ticket 08): the talk's "Before the session" form ──
   {
-    key: 'prework', location: 'trigger', type: 'boolean',
+    key: 'prework', location: 'frontmatter', type: 'text',
+    vocabulary: { kind: 'open' },
+    label: 'Pre-work',
+    group: 'Pre-work and post-work',
+    explanation: 'Names the work file for before the session, by its id (the picker shows file names). The strip under this table says whether a published Run has sent that file to anyone. Plan a run starts from it: a new Run offers this file for the phase, and you can pick another file or None there.',
+    ownership: 'user',
+    outsideDeck: 'names the work file sent before the session; its effect is the editor strip (test:work-strips) and the Work files view (test:work-files-view)'
+  },
+  {
+    key: 'postwork', location: 'frontmatter', type: 'text',
+    vocabulary: { kind: 'open' },
+    label: 'Post-work',
+    group: 'Pre-work and post-work',
+    explanation: 'Names the work file for after the session, by its id (the picker shows file names). The strip under this table says whether a published Run has sent that file to anyone. Plan a run starts from it: a new Run offers this file for the phase, and you can pick another file or None there.',
+    ownership: 'user',
+    outsideDeck: 'names the work file sent after the session; its effect is the editor strip (test:work-strips) and the Work files view (test:work-files-view)'
+  },
+  {
+    // The trigger token is {prework}; this entry is keyed prework-section so that `prework` stays free for the front-matter key above.
+    key: 'prework-section', location: 'trigger', type: 'boolean',
     vocabulary: { kind: 'closed', options: [
       { value: 'true', label: 'Pre-work section', explanation: 'Written {prework} on a ## section: its slides are the pre-work form’s steps, answered on the handout link before the session, and are not presented in the talk.' }
     ] },
@@ -909,9 +938,19 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     ownership: 'user'
   },
   {
+    key: 'local', location: 'trigger', type: 'boolean',
+    vocabulary: { kind: 'closed', options: [
+      { value: '', label: 'Sent to you', explanation: 'The answer travels to you without a name and waits on the live service until you open the Run (the default).' },
+      { value: 'true', label: 'Local only', explanation: 'Written {local}: the answer stays on the participant’s phone. You never see it, and a results slide cannot show it.' }
+    ] },
+    label: 'Where this answer goes',
+    explanation: 'On a task, quick check or question of a work file, whether its answers are sent to you or kept on each participant’s phone.',
+    ownership: 'user'
+  },
+  {
     key: 'results', location: 'trigger', type: 'text', vocabulary: { kind: 'freeform' },
     label: 'Answers from pre-work',
-    explanation: 'On a talk slide, the pre-work step (its slide id) whose answers the slide shows. Choose it in the Inspector’s Results section.',
+    explanation: 'On a talk slide, the step whose answers the slide shows: a pre-work step of the talk (its slide id), or a work-file step written <file id>/<step id>. A board slide so fed opens with the bound Run’s starred answers, or all of them. Choose it in the Inspector’s Results section.',
     ownership: 'user'
   },
 

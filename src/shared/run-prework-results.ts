@@ -156,11 +156,13 @@ export function pickedAnswers(prework: RunPrework | null | undefined, stepId: st
   })
 }
 
-/** Star or unstar an answer. Starring the first one switches the step to "Only the answers I pick". */
+/** Star or unstar an answer. Starring the first one switches the step to "Only the answers I pick"; removing the last returns it to every answer. */
 export function togglePick(prework: RunPrework | null | undefined, stepId: string, entryId: string): PreworkPick {
   const current = prework?.picks?.[stepId]
   const ids = current?.ids ?? []
-  return { mode: 'picked', ids: ids.includes(entryId) ? ids.filter((id) => id !== entryId) : [...ids, entryId] }
+  const next = ids.includes(entryId) ? ids.filter((id) => id !== entryId) : [...ids, entryId]
+  // With the last star gone the board opens with every answer again, never with an empty list.
+  return next.length ? { mode: 'picked', ids: next } : { mode: 'all', ids: [] }
 }
 
 /** Move a picked answer one place earlier (-1) or later (1) in the order the board takes them. */
@@ -260,11 +262,25 @@ export function questionCounts(definition: PreworkDefinition, prework: RunPrewor
  */
 export type FedSlide = PreworkFeed
 
-export const feedsForStep = (feeds: readonly PreworkFeed[] | null | undefined, stepId: string): FedSlide[] => (feeds ?? []).filter((feed) => feed.stepId === stepId)
+/**
+ * The board slides that take a step's answers. `fileId` is the work file the Run attaches in the phase
+ * being shown; without one (a Run from before work files, or the `legacy-section` attachment) only
+ * slides naming a step of the talk's own pre-work section count.
+ */
+export const feedsForStep = (feeds: readonly PreworkFeed[] | null | undefined, stepId: string, fileId?: string | null): FedSlide[] => {
+  const file = fileId && fileId !== 'legacy-section' ? fileId : null
+  return (feeds ?? []).filter((feed) => feed.stepId === stepId && (feed.fileId ?? null) === file)
+}
 
-/** The step a board slide (by its compiled id) is fed by, or null. */
+/** The step a board slide (by its compiled id) takes from the talk's own pre-work section, or null. A work-file feed is `workFeedFor`'s. */
 export function stepFeedingSlide(feeds: readonly PreworkFeed[] | null | undefined, slideId: string): string | null {
-  return (feeds ?? []).find((feed) => feed.slideId === slideId)?.stepId ?? null
+  return (feeds ?? []).find((feed) => feed.slideId === slideId && !feed.fileId)?.stepId ?? null
+}
+
+/** The work-file feed of a board slide (`{results=<file id>/<step id>}`), or null. */
+export function workFeedFor(feeds: readonly PreworkFeed[] | null | undefined, slideId: string): (PreworkFeed & { fileId: string }) | null {
+  const feed = (feeds ?? []).find((candidate) => candidate.slideId === slideId && candidate.fileId)
+  return feed ? (feed as PreworkFeed & { fileId: string }) : null
 }
 
 // ── Picks: one change at a time ────────────────────────────────────────────────────────────

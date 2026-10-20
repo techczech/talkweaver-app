@@ -1,0 +1,288 @@
+/* Icon row, process and steps adopt the animated-scene drawings (ADR-0039, 0.41 ticket 06).
+   Values from docs/design/2026-10-16-slide-scene-formatting/after/06-iconrow.html and 11-process.html
+   (drawn at 1920 x 1080, written here in cqw = px / 19.2). Unmarked block: it sorts after every migrated
+   block and after skin/icon-row.css and skin/narrow-columns.css, so it wins where it meets their rules.
+   Class names the older rules and tests read (.ir-item, .ir-label, .ir-desc > li, .proc-step ...) stay.
+
+   Icon row. Each column is a mono head (icon, label) over an accent rule, then one subtle box per line,
+   one icon each. The columns share ONE grid (a head row and --ir-rows item rows, each column a subgrid
+   over them), so a box that wraps keeps its neighbour in the next column level. A link of the column's
+   hue joins each box to the next, from the outer bottom border to the outer top border (its height is
+   the row gap). Text is regular, as large as the boxes allow. Columns take the section accent, then the
+   deck palette's next two hues (hue-2, hue-3), not the drawing's literal colours (ADR-0039 amends ADR-0005).
+
+   Process. A row of subtle boxes, each with its number and icon, joined by arrows. The arrow is an element
+   in the row (.proc-arrow) whose width IS the gap, so its shaft starts on the left box's border and its
+   head tip lands on the right box's border; the head is whole (svg, overflow visible). Under a screenshot
+   row the boxes shrink to their content so the row of pictures keeps its band. Steps (stairs) take the
+   same boxes and arrows, the arrow as tall as the lower box and centred in it. */
+
+/* ---- Icon row ---- */
+.slide .icon-row {
+  --ir-gap: calc(1.3542cqw * var(--list-gap, 1));
+  --ir-type: var(--fs-body);
+  font-size: max(var(--type-floor), var(--ir-type)) !important;
+  grid-template-columns: repeat(var(--ir-cols, 2), minmax(0, 1fr));
+  grid-template-rows: auto repeat(var(--ir-rows, 4), auto);
+  column-gap: 4.1667cqw;
+  row-gap: var(--ir-gap);
+  width: 100%;
+  max-width: none;
+  margin: 0 auto;
+  align-items: start;
+}
+.slide .icon-row.count-1 { --ir-cols: 1; }
+.slide .icon-row.count-2 { --ir-cols: 2; }
+.slide .icon-row.count-3 { --ir-cols: 3; --ir-type: min(var(--fs-body), 2.6cqw); }
+.slide .icon-row.count-4 { --ir-cols: 4; --ir-type: min(var(--fs-body), 2.0833cqw); column-gap: 2.5cqw; }
+.slide .icon-row.count-3 { column-gap: 3cqw; }
+.slide .icon-row .ir-item {
+  --box-hue: var(--accent);
+  grid-row: span calc(var(--ir-rows, 4) + 1);
+  grid-template-rows: subgrid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 0;
+  row-gap: var(--ir-gap);
+  align-items: stretch;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+.slide .icon-row .ir-item.hue-2 { --box-hue: var(--hue-2); }
+.slide .icon-row .ir-item.hue-3 { --box-hue: var(--hue-3); }
+
+/* The head: icon and label share the rule under them. */
+.slide .icon-row .ir-item > .ir-icon,
+.slide .icon-row .ir-item > .ir-label {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  grid-row: 1;
+  grid-column: 1;
+  padding-bottom: calc(.625cqw + var(--subtle-box-line));
+  color: var(--box-hue);
+}
+/* The rule under the head runs across both cells. */
+.slide .icon-row .ir-item::before {
+  content: "";
+  display: block;
+  grid-row: 1;
+  grid-column: 1 / -1;
+  align-self: end;
+  height: var(--subtle-box-line);
+  background: var(--box-hue);
+}
+.slide .icon-row .ir-item > .ir-icon {
+  width: auto;
+  height: auto;
+  margin: 0;
+  gap: 0;
+  box-sizing: border-box;
+}
+.slide .icon-row .ir-item > .ir-icon > svg { width: 1.6667cqw; height: 1.6667cqw; flex: none; }
+.slide .icon-row .ir-item > .ir-icon.ir-num {
+  border-radius: 0;
+  background: none;
+  font-family: var(--mono);
+  font-weight: 400;
+  font-size: 1.3542cqw;
+  letter-spacing: .12em;
+}
+.slide .icon-row .ir-item > .ir-label {
+  grid-column: 2;
+  font-family: var(--mono);
+  font-size: 1.3542cqw;
+  font-weight: 400;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  line-height: 1.25;
+  padding-left: .7292cqw;
+  gap: 0;
+}
+.slide .icon-row .ir-item > .ir-icon.ir-num + .ir-label { padding-left: .7292cqw; }
+
+/* The boxes: direct rows of the shared grid (the list itself draws nothing). */
+.slide .icon-row .ir-item > .ir-desc { display: contents; }
+.slide .slide-content .icon-row .ir-item .ir-desc.ir-desc > li {
+  grid-column: 1 / -1;
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 1.3542cqw;
+  min-height: calc(6.4583cqw * var(--list-gap, 1));
+  margin: 0;
+  padding: calc(1.1458cqw * var(--list-gap, 1)) 1.7708cqw;
+  border-radius: .8333cqw;
+  font-size: max(var(--type-floor), var(--ir-type, var(--fs-body)));
+  font-weight: 400;
+  line-height: 1.2;
+  color: var(--ink);
+  text-align: left;
+}
+.slide .icon-row .ir-item .ir-desc > li > .ir-li-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 2.2917cqw;
+  height: 2.2917cqw;
+  color: var(--box-hue);
+}
+.slide .icon-row .ir-item .ir-desc > li > .ir-li-icon > svg { width: 100%; height: 100%; stroke-width: 1.5; }
+.slide .icon-row .ir-item .ir-desc > li > .ir-li-text { min-width: 0; overflow-wrap: break-word; }
+/* The chain link: from the box's outer bottom edge to the next box's outer top edge (the row gap). */
+.slide .icon-row .ir-item .ir-desc > li > .ir-link {
+  position: absolute;
+  left: 2.8125cqw;
+  top: 100%;
+  width: .1563cqw;
+  height: var(--ir-gap);
+  margin: 0;
+  background: color-mix(in srgb, var(--box-hue) 45%, #fff);
+  pointer-events: none;
+}
+
+/* Rows of columns (five or more, narrow-columns.mjs): no shared rows across the wrapped rows, each column
+   stacks its own boxes with the same gap. */
+.slide-content > .icon-row.ir-rows {
+  --ir-gap: calc(1.3542cqw * var(--list-gap, 1));
+  column-gap: 3cqw !important;
+  row-gap: 2.2cqw !important;
+}
+.slide-content > .icon-row.ir-rows .ir-item {
+  grid-row: auto;
+  grid-template-rows: none;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-content: start;
+}
+.slide-content > .icon-row.ir-rows .ir-item > .ir-desc {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ir-gap);
+  grid-column: 1 / -1;
+}
+.slide-content > .icon-row.ir-rows .ir-item .ir-desc > li { min-height: 0; }
+.slide-content > .icon-row.ir-rows .ir-item > .ir-label { white-space: normal; }
+@container (max-width: 950px) {
+  .slide-content > .icon-row:not(.ir-rows) { grid-auto-flow: column; grid-template-columns: repeat(var(--ir-cols, 2), minmax(0, 1fr)); }
+}
+
+/* ---- Process ---- */
+.slide .process-strip {
+  align-items: stretch;
+  justify-content: stretch;
+  flex-wrap: nowrap;
+  width: 100%;
+  max-width: none;
+  margin: 0 auto;
+  --proc-type: 2.3958cqw;
+}
+.slide .process-strip.count-5 { --proc-type: 2cqw; }
+.slide .process-strip.count-6 { --proc-type: 1.7cqw; }
+.slide .process-strip:is(.count-7, .count-8, .count-9, .count-10) { --proc-type: 1.5cqw; }
+.slide .process-strip .proc-step {
+  --box-hue: var(--accent);
+  flex: 1 1 0;
+  min-width: 0;
+  box-sizing: border-box;
+  min-height: calc(14.0625cqw * var(--list-gap, 1));
+  padding: 1.25cqw 1.3542cqw;
+  border-radius: .9375cqw;
+  align-items: flex-start;
+  justify-content: center;
+  text-align: left;
+  font-size: max(var(--type-floor), min(var(--fs-body), var(--proc-type)));
+  line-height: 1.16;
+  font-weight: 400;
+  color: var(--ink);
+}
+.slide .process-strip .proc-step.hue-2 { --box-hue: var(--hue-2); }
+.slide .process-strip .proc-step.hue-3 { --box-hue: var(--hue-3); }
+.slide .process-strip .proc-step::before { content: none; display: none; }
+.slide .process-strip .proc-head {
+  display: flex;
+  align-self: stretch;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: .6250cqw;
+}
+.slide .process-strip .proc-num {
+  width: auto;
+  height: auto;
+  display: block;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  font-family: var(--mono);
+  font-weight: 400;
+  font-size: 1.3542cqw;
+  letter-spacing: .1em;
+  color: var(--box-hue);
+}
+.slide .process-strip .proc-icon { display: grid; place-items: center; width: 2.0833cqw; height: 2.0833cqw; color: var(--box-hue); }
+.slide .process-strip .proc-icon > svg { width: 100%; height: 100%; stroke-width: 1.5; }
+.slide .process-strip .proc-label { margin: 0; font-weight: 400; font-size: 1em; line-height: 1.16; overflow-wrap: break-word; max-width: 100%; }
+.slide .process-strip .proc-time { font-size: max(var(--type-floor), 1.5cqw); font-weight: 400; color: var(--box-hue); margin-top: .5em; }
+.slide .process-strip .proc-details { margin-top: .5em; }
+.slide .slide-content.layout-process .process-strip .proc-details.proc-details > li { font-size: max(var(--type-floor), 1.5cqw); line-height: 1.25; color: var(--ink); }
+.slide .process-strip .proc-details li::before { color: var(--box-hue); }
+/* The arrow fills the gap exactly: its box is the gap, its shaft starts at the left edge, the head tip is at the right. */
+.slide .process-strip > .proc-arrow,
+.slide .steps-diagram > .step-arrow {
+  flex: none;
+  display: flex;
+  align-items: center;
+  width: 3.9583cqw;
+  color: var(--ink);
+  margin: 0;
+  padding: 0;
+}
+.slide .process-strip > .proc-arrow { align-self: center; height: .9375cqw; }
+.slide .process-strip > .proc-arrow > svg,
+.slide .steps-diagram > .step-arrow > svg { display: block; width: 100%; height: auto; overflow: visible; }
+/* Pictures above the steps: the steps take their content height. */
+.slide .slide-content:has(> .img-row, > .slide-figure, > .figure-row) > .process-strip .proc-step { min-height: 0; }
+.slide .slide-content:has(> .img-row, > .slide-figure, > .figure-row) > .process-strip { margin-top: 1.6cqw; }
+
+/* ---- Steps (stairs) ---- */
+.slide .steps-diagram {
+  gap: 0;
+  width: 100%;
+  max-width: none;
+  margin: 0 auto;
+}
+.slide .steps-diagram .step-col {
+  --box-hue: var(--accent);
+  flex: 1 1 0;
+  min-width: 0;
+  border-radius: .9375cqw;
+  padding: 1.25cqw 1.3542cqw;
+  align-items: flex-start;
+  justify-content: flex-start;
+  text-align: left;
+  color: var(--ink);
+}
+.slide .steps-diagram .step-col.hue-2 { --box-hue: var(--hue-2); }
+.slide .steps-diagram .step-col.hue-3 { --box-hue: var(--hue-3); }
+.slide .steps-diagram .step-col:is(:last-child, :nth-last-child(2), :nth-last-child(3)) { color: var(--ink); }
+.slide .steps-diagram .step-label { font-weight: 400; font-size: max(var(--type-floor), min(var(--fs-body), 2.3958cqw)); line-height: 1.16; }
+.slide .steps-diagram .step-cap { font-size: max(var(--type-floor), 1.5cqw); opacity: 1; color: var(--ink); }
+.slide .steps-diagram > .step-arrow { align-self: flex-end; }
+/* The older stair tint ramp (base.css, nth-last-child) is a heavier fill; the subtle box replaces it. */
+.slide .steps-diagram .step-col.subtle-box {
+  background: color-mix(in srgb, var(--box-hue) 5%, #fff);
+  border: var(--subtle-box-line) solid color-mix(in srgb, var(--box-hue) 34%, #fff);
+}
+
+/* A single screenshot on a process or steps slide keeps its place above the boxes at a size that leaves them
+   their band (it used to fill the whole content area and push the steps off the stage). */
+.slide .slide-content:is(.layout-process, .layout-steps) > .slide-figure {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 46cqh;
+  align-self: center;
+  margin: 0 auto 1.6cqw;
+}
+.slide .slide-content:is(.layout-process, .layout-steps) > .slide-figure img { max-height: 46cqh; width: auto; max-width: 100%; object-fit: contain; }

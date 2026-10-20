@@ -27,7 +27,7 @@ import { countQuoteBlocks, readQuoteSlideLines } from './quote-forms.mjs'
 const DIAGRAM_FENCE_LANGS = new Set(['mermaid', 'svg'])
 
 /** @typedef {{type:'list',items:{depth:number,text:string,pair?:string}[]}
- *          | {type:'p'|'quote'|'attrib',text:string}
+ *          | {type:'p'|'quote'|'attrib',text:string,plain?:true}
  *          | {type:'media',alt:string}
  *          | {type:'audio',title:string}
  *          | {type:'diagram'}
@@ -260,6 +260,12 @@ export function buildSlideScriptPayload(slides) {
   const out = {}
   for (const slide of slides || []) {
     if (!slide?.id) continue
+    // A Run's extra slide (work-files ticket 25, run-extras.mjs) carries its paragraphs as typed: they are its
+    // phone text, never parsed as outline.
+    if (Array.isArray(slide.scriptBlocks)) {
+      if (slide.scriptBlocks.length) out[slide.id] = slide.scriptBlocks.map((block) => ({ ...block }))
+      continue
+    }
     // A slide that folded its `####` children (columns, compare, cards…) carries the wider slice
     // covering them as scriptSourceMarkdown (08-source-adapters.mjs, absorbFoldedChildren).
     const blocks = promotedQuoteAsQuote(addressSourceAsAttribution(parseSlideScript(typeof slide.scriptSourceMarkdown === 'string'

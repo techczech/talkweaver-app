@@ -14,6 +14,9 @@ const {
   componentInsertCommands,
   paletteCommands,
   toolbarCommands,
+  toolsWindowCommands,
+  listedPaletteCommands,
+  TOOLS_RUN_COMMAND_IDS,
 } = await import(
   new URL('../src/shared/command-registry.ts', import.meta.url)
 )
@@ -64,7 +67,7 @@ for (const shortcut of SHORTCUT_REGISTRY) {
 
 const expectedPaletteIds = [
   'refresh', 'optimize-images', 'ocr-index', 'check-embeds', 'layout-doctor', 'where-used', 'focus-slide',
-  'toggle-inspector', 'studio', 'history', 'importer', 'plan-run', 'pathways', 'new-window', 'open-in-new-window', 'new-talk', 'new-folder',
+  'toggle-inspector', 'studio', 'history', 'importer', 'plan-run', 'attach-prework', 'attach-postwork', 'pathways', 'new-window', 'open-in-new-window', 'new-talk', 'new-folder',
   'refresh-talks', 'change-vault', 'search-talks',
   'find-talk', 'add-talk-beside', 'talk-beside', 'close-talk-beside', 'select-whole-section',
   'present-window', 'present-presenter',
@@ -571,3 +574,52 @@ assert.deepEqual(nativeRoles.filter((role) => !osRoleAllowlist.has(role)), [], '
 }
 
 console.log(`command registry parity: ${COMMAND_REGISTRY.length} commands, ${expectedPaletteIds.length} palette entries, ${menuCommands().length} custom menu item`)
+
+// Work files ticket 30: every command of the pre-work build is registered, listed in the Tools window's
+// palette with keywords, has a Tools-scope key (or says it has none), and no chord is held twice.
+{
+  const WANTED = {
+    'tools-view-sessions': ['Sessions', 'Mod-4'], 'tools-view-published': ['Published pages', 'Mod-5'], 'tools-view-workfiles': ['Work files', 'Mod-6'],
+    'tools-plan-run': ['Plan a run…', 'Mod-Alt-n'], 'tools-edit-plan': ['Edit plan', 'Mod-Alt-e'], 'tools-plan-like-this': ['Plan the next run like this', 'Mod-Shift-d'],
+    'tools-publish': ['Publish for this run', 'Mod-Alt-u'], 'tools-unpublish': ['Unpublish', null], 'tools-go-live': ['Go live', 'Mod-Alt-l'],
+    'tools-open-run': ['Open run', 'Mod-Alt-o'], 'tools-copy-link': ['Copy link', 'Mod-Shift-c'], 'tools-copy-invitation': ['Copy invitation text', 'Mod-Alt-c'],
+    'tools-new-work-file': ['New work file…', 'Mod-Shift-n']
+  }
+  assert.deepEqual(toolsWindowCommands().map((command) => command.id), Object.keys(WANTED), 'the Tools window palette lists the pre-work build\'s commands')
+  for (const command of toolsWindowCommands()) {
+    const [label, code] = WANTED[command.id]
+    assert.equal(command.label, label, `${command.id}: label`)
+    assert.equal(command.scope, 'tools', `${command.id}: Tools scope`)
+    assert(command.palette.visible && command.palette.keywords.length >= 3, `${command.id}: palette keywords`)
+    const shortcut = command.shortcutId ? SHORTCUT_REGISTRY.find((entry) => entry.id === command.shortcutId) : null
+    assert.equal(shortcut?.codes[0] ?? null, code, `${command.id}: default key`)
+    if (shortcut) assert.equal(shortcut.scope, 'tools', `${command.id}: its key is a Tools-scope key`)
+    assert.equal(listedPaletteCommands().includes(command), false, `${command.id}: not in the editor palette (it works in the Tools window)`)
+  }
+  for (const id of ['attach-prework', 'attach-postwork']) {
+    const command = COMMAND_REGISTRY.find((entry) => entry.id === id)
+    assert(command?.palette.visible && command.palette.keywords.length >= 3, `${id}: in the editor palette with keywords`)
+    assert.equal(command.shortcutId, undefined, `${id}: no default key (it needs the Metadata table on show)`)
+  }
+  assert(TOOLS_RUN_COMMAND_IDS.every((id) => id in WANTED), 'the Run-page commands are Tools commands')
+  assert.deepEqual([...TOOLS_RUN_COMMAND_IDS].sort(), ['tools-copy-invitation', 'tools-copy-link', 'tools-edit-plan', 'tools-go-live', 'tools-plan-like-this', 'tools-publish', 'tools-unpublish'], 'the commands that need a Run page on show')
+  // No chord twice in the Tools scope, and none already held anywhere else in the registry (the Tools window is a
+  // window of its own, so the second half is a rule the sweep chose, not a technical need).
+  const toolsRows = SHORTCUT_REGISTRY.filter((entry) => entry.scope === 'tools')
+  const held = new Map()
+  for (const entry of SHORTCUT_REGISTRY) for (const code of entry.codes) held.set(code, [...(held.get(code) ?? []), entry])
+  for (const entry of toolsRows) for (const code of entry.codes) {
+    const holders = held.get(code).filter((other) => other !== entry)
+    // The window-numbered view keys repeat the editor's, as ⌘1 to ⌘3 already do (the Tools window is a window of its own).
+    const elsewhere = holders.filter((other) => !/^Mod-\d$/.test(code))
+    assert.deepEqual(elsewhere.map((other) => other.id), [], `${entry.id}: ${code} is held by no other command`)
+  }
+  assert.equal(new Set(toolsRows.flatMap((entry) => entry.codes)).size, toolsRows.flatMap((entry) => entry.codes).length, 'no chord is shared inside the Tools scope')
+  // The three Tools views and the Importer-window trio do not overlap: ⌘1 to ⌘3 stay Studio, History and the Importer.
+  const numbered = toolsRows.flatMap((entry) => entry.codes).filter((code) => /^Mod-\d$/.test(code))
+  assert.deepEqual(numbered, ['Mod-4', 'Mod-5', 'Mod-6'], 'the new views take ⌘4 to ⌘6')
+  // Electron\'s default View menu holds ⌘R, ⇧⌘R, ⌥⌘I and the zoom keys; the OS holds ⌘⌥D (Dock).
+  const reserved = new Set(['Mod-r', 'Mod-Shift-r', 'Mod-Alt-i', 'Mod-0', 'Mod-=', 'Mod--', 'Mod-Alt-d', 'Mod-Shift-p', 'Mod-Shift-k', 'Mod-k', 'Mod-p', 'Mod-f', 'Mod-Shift-f', 'Mod-,', 'Mod-/', 'Mod-w', 'Mod-q', 'Mod-m', 'Mod-h', 'Mod-c', 'Mod-v', 'Mod-x', 'Mod-a', 'Mod-z'])
+  assert.deepEqual(toolsRows.flatMap((entry) => entry.codes).filter((code) => reserved.has(code)), [], 'no Tools key takes a reserved, OS or default-menu chord')
+}
+console.log('Tools-window commands: ok')

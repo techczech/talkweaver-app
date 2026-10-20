@@ -37,7 +37,8 @@ const HORIZONTAL_LABELS = ['Today', 'Soon', 'Long term']
 const RAIL_LABELS = ['30 Nov 2022', '7 Dec 2022', '2023-2024', 'Sept 2025', '2026']
 const dir = mkdtempSync(join(tmpdir(), 'tw-timeline-look-'))
 const source = [
-  '---', 'title: Timeline look probe', 'auto_title_slide: false', 'auto_thanks_slide: false', '---', '',
+  // 0.41 ticket 02: the index tab is the default title look; this probe measures the plain title bar.
+  '---', 'title: Timeline look probe', 'auto_title_slide: false', 'auto_thanks_slide: false', 'title_look: full', '---', '',
   '## Timelines', '',
   '### How do you take this forward?', '{id=tl-horizontal} {timeline}{timeline=horizontal}', '',
   '- Today', '  - Menu of options', '  - Learn that',

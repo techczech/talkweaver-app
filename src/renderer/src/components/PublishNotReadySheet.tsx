@@ -8,7 +8,7 @@ import { notify } from '../lib/notify'
 // Cloudflare account", Open Settings, or "Save as a file instead". Connected with one thing missing:
 // that thing named, and the one button that fixes it. Every word comes from the main process
 // (src/shared/publish-status.ts); this file lays it out in the share sheet's look. It is used for
-// Publish handout (the editor) and for Publish handout for this Run (History).
+// Publish handout (the editor). A Run publishes from its checklist in Sessions (work-files ticket 29).
 
 interface Props {
   /** "Publish handout" or "Publish Run handout": the action that was asked for. */

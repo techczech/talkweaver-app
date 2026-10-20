@@ -13,6 +13,7 @@ import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { talkNamesTitleLook, withoutLaterSlideStamps } from './slide-markup-identity.mjs'
 
 const WEB = 'https://example.org/schemas-and-propositions'
 const DOI = 'https://doi.org/10.1000/xyz123'
@@ -63,7 +64,8 @@ export async function formlessHashes(compilerRoot) {
     const out = {}
     for (const [id] of FORMLESS_SLIDES) {
       const slide = model.slides.find((candidate) => candidate.id === id)
-      const section = html.match(new RegExp(`<section class="slide[^"]*" data-id="${id}"[\\s\\S]*?</section>`))?.[0] ?? ''
+      // Stamps a later ticket added to every slide are left out (slide-markup-identity.mjs).
+      const section = withoutLaterSlideStamps(html.match(new RegExp(`<section class="slide[^"]*" data-id="${id}"[\\s\\S]*?</section>`))?.[0] ?? '', { talkNamesTitleLook: talkNamesTitleLook(text) })
       if (!slide || !section) throw new Error(`form-less slide ${id} did not compile`)
       out[id] = sha(JSON.stringify({ layout: slide.layout, blocks: slide.blocks, section, script: script[id] ?? null }))
     }

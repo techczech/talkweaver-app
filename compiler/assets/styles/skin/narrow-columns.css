@@ -35,6 +35,14 @@
   font-size: 2.3cqw !important; display: inline-block !important; border: 0 !important; padding: 0 !important; margin: 0 !important;
   grid-template-columns: none !important; white-space: nowrap;
 }
+/* The separator is the LEADING mark of every item after the first, never the trailing mark of the one before:
+   an item is nowrap, so its separator travels with it when the run wraps and can never end a line. */
+.slide-content > .feature-list.fl-narrow-cols > li > .fl-sublist > li::after { display: none !important; content: none !important; }
 .slide-content > .feature-list.fl-narrow-cols > li > .fl-sublist > li::before { display: none !important; content: none !important; }
-.slide-content > .feature-list.fl-narrow-cols > li > .fl-sublist > li:not(:last-child)::after { content: "·"; margin: 0 .55em; color: var(--muted); display: inline; }
+.slide-content > .feature-list.fl-narrow-cols > li > .fl-sublist > li:not(:first-child)::before { content: "·" !important; margin: 0 .55em; color: var(--muted); display: inline !important; position: static; }
 .slide-content > .feature-list.fl-narrow-cols > li > .fl-sublist > li > .fl-subtext { grid-column: auto; display: inline; }
+
+/* Members too long to share one line stack, one per line, with no separator (a separator can never end or start a line). */
+.slide-content > .feature-list.fl-narrow-cols.fl-subs-stack > li > .fl-sublist { flex-direction: column; flex-wrap: nowrap; }
+.slide-content > .feature-list.fl-narrow-cols.fl-subs-stack > li > .fl-sublist > li { white-space: normal; }
+.slide-content > .feature-list.fl-narrow-cols.fl-subs-stack > li > .fl-sublist > li:not(:first-child)::before { content: none !important; display: none !important; }

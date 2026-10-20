@@ -1,0 +1,166 @@
+/* Stats, line chart and table adopt the animated-scene drawings (ADR-0039, 0.41 ticket 10).
+   Values from docs/design/2026-10-16-slide-scene-formatting/after/15-stats.html, 16-linechart.html, 20-table.html and
+   20-table-long.html (drawn at 1920 x 1080, written here in cqw = px / 19.2). Unmarked block: it sorts after every
+   migrated block, so it wins where it meets skin/stats.css, skin/table.css, layouts/charts.css and base.css.
+
+   Stats. A row of figures, centred in the band: each figure is a heavy accent number (the picture, not running text),
+   a short accent mark under it and the label under that, regular and larger. The figure steps down as the row gets
+   longer (one, two, three, four, five or more) so a long figure still fits its column. The caption stays, small and muted.
+
+   Line chart. One accent line with dots, the value over each dot and the label under the axis, all regular weight.
+   The compiler draws the chart as a 1000 x 430 picture; it is shown --lc-w wide, a stage-relative length (so the
+   picture's scale is fixed at --lc-s, 1.6 stage px to a picture unit) and every length inside is the drawing's value
+   divided by that scale. Linear scale from zero, as the scene; no gridlines.
+
+   Table. The scene's open table: a mono uppercase head over an ink rule, hairline rules between rows, every second row
+   banded in a light ink tint (a long table keeps the banding), the first column in the section accent at regular weight.
+   No cell is bold. The column head reads at the type floor (the drawing's 26px is under it). The row padding, the
+   density steps and the fitting seam of skin/table.css are unchanged. */
+
+/* ---------- Stats ---------- */
+.slide .stats-row {
+  --st-fig: 7.8125cqw;
+  --st-lab: 2.5cqw;
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: center;
+  align-items: flex-start;
+  --st-n: 2;
+  --st-gap: 5cqw;
+  gap: var(--st-gap);
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+.slide .stats-row.stats-1 { --st-fig: 11cqw; --st-lab: 3cqw; --st-n: 1; }
+.slide .stats-row.stats-3 { --st-fig: 6.4cqw; --st-lab: 2.2cqw; --st-n: 3; --st-gap: 3.5cqw; }
+.slide .stats-row.stats-4 { --st-fig: 5.2cqw; --st-lab: 2.1cqw; --st-n: 4; --st-gap: 3cqw; }
+.slide .stats-row:is(.stats-5, .stats-6, .stats-7, .stats-8, .stats-9) { --st-fig: 4.4cqw; --st-lab: 2.1cqw; --st-n: 5; --st-gap: 2.5cqw; }
+.slide .stats-row .stat {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center !important;
+  background: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  gap: 0;
+}
+.slide .stats-row .stat-value {
+  display: block;
+  max-width: 100%;
+  /* the drawn size, or less when the longest figure would not fit its column on one line (.6em a character) */
+  font-size: min(var(--st-fig), calc((88cqw - (var(--st-n, 2) - 1) * var(--st-gap, 5cqw)) / var(--st-n, 2) / (var(--st-len, 6) * .6)));
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -.03em;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* the short accent mark under a figure */
+.slide .stats-row .stat-value::after {
+  content: "";
+  display: block;
+  width: 2.2917cqw;
+  height: .4167cqw;
+  margin: 1.7708cqw auto 0;
+  background: var(--accent);
+}
+.slide .stats-row .stat-label {
+  display: block;
+  max-width: 100%;
+  margin-top: 1.25cqw;
+  font-size: max(var(--type-floor), var(--st-lab));
+  font-weight: 400;
+  line-height: 1.2;
+  color: var(--ink);
+}
+.slide .stats-row .stat-value:empty + .stat-label,
+.slide .stats-row .stat:not(:has(.stat-value)) .stat-label { margin-top: 0; }
+.slide .stats-row .stat-cap {
+  display: block;
+  max-width: 100%;
+  margin-top: .8cqw;
+  font-size: max(var(--type-floor), 1.9cqw);
+  font-weight: 400;
+  line-height: 1.25;
+  color: var(--muted);
+}
+
+/* ---------- Line chart ---------- */
+.slide .chart-line {
+  --lc-s: 1.6;
+  --lc-w: 83.3333cqw;
+  width: min(var(--lc-w), 100%);
+  min-width: 0;
+  max-width: 100%;
+  margin: 0 auto;
+}
+.slide .chart-line svg { display: block; width: 100%; height: auto; overflow: visible; }
+.slide .chart-line .chart-baseline { stroke: var(--ink); stroke-width: 2.5px; }
+.slide .chart-line .chart-poly { stroke: var(--accent); stroke-width: 4.4px; }
+.slide .chart-line .chart-dot { fill: var(--accent); stroke: none; r: 8.75px; }
+.slide .chart-line .chart-val-svg { font: 400 27.5px/1 var(--sans, system-ui); fill: var(--ink); }
+.slide .chart-line .chart-label-svg { font: 400 23.5px/1 var(--sans, system-ui); fill: var(--muted); }
+
+/* ---------- Table ---------- */
+.slide .slide-table {
+  border: 0;
+  border-collapse: collapse;
+}
+.slide .slide-table thead th {
+  background: none;
+  font-family: var(--mono);
+  font-size: max(var(--type-floor), 1.35cqw);
+  font-weight: 400;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: left;
+  border: 0;
+  border-bottom: .1563cqw solid var(--ink);
+  padding-top: 0;
+  padding-bottom: calc(.8333cqw * var(--list-gap, 1));   /* steps with the rows when the table is fitted */
+}
+.slide .slide-table tbody td,
+.slide .slide-table tbody th {
+  border: 0;
+  border-bottom: .1042cqw solid var(--hairline);
+  font-weight: 400;
+}
+.slide .slide-table tbody td:first-child,
+.slide .slide-table tbody th:first-child {
+  font-family: var(--sans);
+  font-size: max(var(--type-floor), 1em);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--accent);
+  font-weight: 400;
+}
+/* {table-first-column=off}: the first column reads like the others (ink, not the accent) */
+.slide .slide-table.table-plain-first tbody td:first-child,
+.slide .slide-table.table-plain-first tbody th:first-child { color: inherit; }
+.slide .slide-table tbody tr:nth-child(even) > * { background: color-mix(in srgb, var(--ink) 4.5%, transparent); }
+/* A long or dense table (the compiler stamps data-list-density from seven rows) gives up rule weight first: its rules are
+   1px and the head's rule 2px, so the rows keep the room (the fitting ladder in fitLists steps padding, then type). Its head stays on one line:
+   wrapped, a head would make the head row as tall as two body rows, which the ladder cannot take back. */
+.slide .slide-table[data-list-density] thead th { border-bottom-width: max(1px, .1042cqw); white-space: nowrap; }
+.slide .slide-table[data-list-density] tbody td,
+.slide .slide-table[data-list-density] tbody th { border-bottom-width: 1px; }
+/* {table-header=off}: the first row is a plain body row; rules and bands as for any other */
+.slide .slide-table.table-noheader tbody tr:first-child td { border-bottom: .1042cqw solid var(--hairline); }
+/* {table-columns=off} already carries no column rules; the scene's table never has any */
+.slide .slide-table.table-nocolumns,
+.slide .slide-table.table-nocolumns thead th,
+.slide .slide-table.table-nocolumns tbody td,
+.slide .slide-table.table-nocolumns tbody th { border-left: 0; border-right: 0; }
+/* A table that builds row by row (Reveal): the newest row shown is tinted in the section tint while the table builds
+   (20-table.html, tr.now). The runtimes already mark that row: data-mode-state="current" on its .mode-el (deck, presenter
+   preview clone and handout write the same states). The newest row is tinted at every build step, the last row included;
+   at the all-shown step after the last row ("full") no row is tinted, nor in a static view or handout (no mode, no state).
+   A banded row that is not the newest keeps its band. */
+.slide.mode-reveal .slide-table tbody tr.mode-el[data-mode-state="current"] > * { background: var(--tint); }

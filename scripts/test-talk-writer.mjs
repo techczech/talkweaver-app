@@ -116,7 +116,7 @@ try {
     assert.deepEqual([same.ok, same.changed], [true, false], 'unchanged')
     assert.equal(statSync(path).ino, ino, 'nothing written')
     const thrown = await writeTalkOutline(path, () => { throw new Error('slide not found') }, 'tags')
-    assert.deepEqual(thrown, { ok: false, error: 'slide not found' }, 'a thrown transformation is a refusal with its message')
+    assert.deepEqual(thrown, { ok: false, error: 'slide not found', untouched: true }, 'a thrown transformation is a refusal with its message (nothing applied anywhere)')
   }
 
   // 5. Open talk: the write goes to the window that has the file (any alias) and never touches disk.

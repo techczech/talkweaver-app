@@ -29,7 +29,11 @@ import { stampHandoutUrl } from '../src/shared/handout-stamp.ts'
 import { outlineRefusal } from '../src/main/vault-paths.ts'
 import { assetRootsForTalk } from '../src/main/asset-roots.ts'
 import { withoutPreworkSlides } from '../src/shared/run-prework.ts'
-import { handoutHomeDetails, handoutHomePrework } from '../src/shared/handout-home.ts'
+import { handoutHomeDetails, handoutHomePostwork, handoutHomePrework } from '../src/shared/handout-home.ts'
+import { planRunWork, sendRunWork, writeRunWorkPages, runLineFor } from '../src/main/run-work-publish.ts'
+import { RUN_FOLDER_UNCLEAR, runPublishFolder, runSiteFolder } from '../src/main/run-unpublish.ts'
+import { stampRunWork } from '../src/main/runs.ts'
+import { WORK_PAGE_FOLDER } from '../src/shared/run-work.ts'
 // The pages are built and written as the main process's worker thread does it, here in this process.
 import { buildHandoutPages } from '../src/main/handout-pages.ts'
 
@@ -182,7 +186,6 @@ function publishDeps(siteDir, trace) {
     buildHandoutPagesOffThread: (job) => buildHandoutPages(job, (html) => html),
     SITE_FOLDER_REFUSED, publishedFolders, removeSiteFolder, writableSiteFolder,
     withoutPreworkSlides,
-    preworkEnabled: () => false, // pre-work is hidden for 0.37; the pre-work publish test forces it on
     handoutHomeDetails, handoutHomePrework,
     app: { getPath: () => root },
     ledgerSeal: async (path, text, reason) => { trace.sealed.push({ path, text, reason }) },
@@ -343,7 +346,7 @@ for (const baseUrl of ['http://localhost:4000', 'http://127.1:4000', 'http://213
       }
     }
   }
-  assert.equal(readFileSync(join(shortSite, '_redirects'), 'utf8').trim().split('\n').length, NAMES.length * 2, 'all of them are in the redirect file together')
+  assert.equal(readFileSync(join(shortSite, '_redirects'), 'utf8').trim().split('\n').length, NAMES.length * 4, 'all of them are in the redirect file together (the link, the venue screen, pre-work and post-work)')
 }
 
 // 1f. A talk's folder in the site comes from its file's name: a name that would not stay inside the
@@ -436,7 +439,6 @@ function runDeps(path, built, extra = {}) {
   const talk = { slug: basename(path).replace('-outline.md', ''), outlinePath: path }
   return {
     unresolvedOutboundFailure,
-    preworkEnabled: () => false,
     getConfig: (key, fallback) => ({ vaultRoot: root, cfPagesProject: 'talks', liveWorkerBaseUrl: 'http://127.0.0.1:8787' }[key] ?? fallback),
     currentVaultRoot: () => root,
     writableVaultRoot: () => root, // a write resolves the vault only while its folder is there (vaults 07)
@@ -457,6 +459,8 @@ function runDeps(path, built, extra = {}) {
     // What the Run's publish reads before it hands the build over (its link, its QR code, where its copy goes).
     publishUrl, pathToFileURL, getCompilerPath: () => join(REPO, 'compiler/scripts'), writeHandoutRegistry: () => {}, writeFileSync,
     runHandoutDistPath: () => join(dirname(path), 'dist', 'run.html'), handoutHomeDetails, handoutHomePrework, timerSettings: () => ({}),
+    // Publish for this run (work-files ticket 16): with pre-work hidden no work page is sent; the handler still names these.
+    handoutHomePostwork, planRunWork, sendRunWork, writeRunWorkPages, runLineFor, stampRunWork, WORK_PAGE_FOLDER, runSiteFolder, runPublishFolder, RUN_FOLDER_UNCLEAR, listRuns: () => [],
     assetRootsFor: () => [root],
     buildHandoutPagesOffThread: async (job) => {
       built.push(job.text)

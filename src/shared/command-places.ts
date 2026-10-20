@@ -160,6 +160,8 @@ export const COMMAND_PLACES: Readonly<Record<string, PlaceDeclaration>> = {
   'deck-design': ['talk-title', 'metadata'],
   'pathways': NOT_BY_PLACE,
   'plan-run': NOT_BY_PLACE,
+  'attach-prework': NOT_BY_PLACE,
+  'attach-postwork': NOT_BY_PLACE,
 
   // ── Manage talks ── (rows of the Talks panel; deck-wide at an outline place, lock decision 11)
   'browser.open-talk': ['talk'],
@@ -213,7 +215,7 @@ export const GROUP_PLACE_DEFAULTS: Readonly<Record<string, PlaceDeclaration>> = 
 }
 
 /** Id prefixes whose commands work inside their own window; not offered by place (ticket 02 "Not here"). */
-export const VIEW_PREFIXES: readonly string[] = ['pathway.', 'talktext.', 'importer.', 'studio.']
+export const VIEW_PREFIXES: readonly string[] = ['pathway.', 'talktext.', 'importer.', 'studio.', 'tools-', 'tools.']
 
 /**
  * The declaration a command carries: its own row, else its window's (prefix), else its task

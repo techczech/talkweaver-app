@@ -2,13 +2,13 @@
 // test:readable-cards-look — ADR-0028 decision 5 (slide design, 2026-09-25)
 //
 // What must hold:
-//   1. Icon rows read at the body size (3.2cqw) with no whole-slide zoom; each column heading is
-//      bold (≥700) and ≥1.1× its items; the icon is 1.35em of the body (~55px at 1280).
+//   1. Icon rows read at the body size (3.2cqw) with no whole-slide zoom; each column heading is,
+//      since ADR-0039, a small regular-weight label under its items; the head icon is 1.6667cqw since ADR-0039.
 //   2. Icon-row columns share one heading row: when one heading wraps and its neighbour does not,
 //      both columns' items still start at the same height.
-//   3. Cards (logolist with sub-items): no word runs past its card; the heading is bold and 1.15×
-//      its items at whatever size the width step reached (never under the dense step); cards whose
-//      words fit keep the body size.
+//   3. Cards (logolist with sub-items): no word runs past its card; ADR-0039 (0.41 ticket 09) makes the title regular
+//      weight and 38/40 of its points, both at or above the type floor, the points .651 of the body; cards whose
+//      words fit keep that size at whatever width.
 //   4. A crowded icon row or card list spends spacing before type: no whole-slide zoom, and type
 //      steps only once --list-gap has reached the spaced floor (.3).
 //   5. Tables and timeline entries are untouched: no width step on them, table cells at the body
@@ -61,9 +61,9 @@ const source = [
   '- Plan {icon=lucide:list-checks}', '  - Lists the steps', '  - Orders the work', '  - Names the risks', '  - Sets the checks', '  - Asks for approval', '  - Splits the task', '  - Estimates the cost',
   '- Act {icon=lucide:hammer}', '  - Edits the file', '  - Runs the tests', '  - Reads the output', '  - Fixes the failure', '  - Reports the result', '  - Logs the change', '  - Cleans the workspace', '',
   '### Crowded cards', '{logolist} {narrowcols=off} {id=cards-crowded}', '',
-  '- OpenAI', '  - Luna', '  - Sol', '  - Astra', '  - Nova', '  - Terra', '  - Vega', '  - Lyra', '  - Orion', '  - Rhea',
-  '- Meta', '  - Haiku', '  - Sonnet', '  - Opus', '  - Fable', '  - Verse', '  - Prose', '  - Ode', '  - Epic', '  - Saga',
-  '- Google', '  - Flash', '  - Pro', '  - Ultra', '  - Nano', '  - Gemma', '  - Lite', '  - Mini', '  - Max', '  - Edge', '',
+  '- OpenAI', '  - Luna', '  - Sol', '  - Astra', '  - Nova', '  - Terra', '  - Vega', '  - Lyra', '  - Orion', '  - Rhea', '  - Cosmos', '  - Cosmos',
+  '- Meta', '  - Haiku', '  - Sonnet', '  - Opus', '  - Fable', '  - Verse', '  - Prose', '  - Ode', '  - Epic', '  - Saga', '  - Muse',
+  '- Google', '  - Flash', '  - Pro', '  - Ultra', '  - Nano', '  - Gemma', '  - Lite', '  - Mini', '  - Max', '  - Edge', '  - Core', '',
   // Untouched structures.
   '### A table', '{table}{table-header=off}{id=table}', '',
   '| Oracle | answer questions, summarise, translate |', '| --- | --- |',
@@ -134,6 +134,7 @@ try {
         stageWidth,
         body: token('--fs-body'),
         dense: token('--fs-dense'),
+        floor: token('--type-floor'),
         zoom: Number(style(content).zoom || 1),
         listFit: content.dataset.listFit || null,
         widthFit: content.dataset.listWidthFit || null,
@@ -175,10 +176,16 @@ try {
       assert.equal(slide.zoom, 1, `${key} ${id}: no whole-slide zoom (got ${slide.zoom})`)
       for (const [i, column] of slide.columns.entries()) {
         const label = `${key} ${id} column ${i + 1}`
-        column.descPx.forEach((px) => assert(close(px, bodyPx), `${label}: item reads at the body size (${px}px vs ${bodyPx.toFixed(2)}px)`))
-        assert(column.labelPx >= 1.1 * column.descPx[0] - 0.01, `${label}: heading ≥1.1× its items (${column.labelPx} vs ${column.descPx[0]})`)
-        assert(weight(column.labelWeight) >= 700, `${label}: heading is bold (${column.labelWeight})`)
-        assert(close(column.iconWidth, 1.35 * bodyPx, 1), `${label}: icon is 1.35em of the body (${column.iconWidth.toFixed(1)}px vs ${(1.35 * bodyPx).toFixed(1)}px)`)
+        // ADR-0039: item text is "as large as the boxes allow", up to the body size (--ir-type), never above it.
+        column.descPx.forEach((px) => assert(px <= bodyPx + 0.01 && px >= slide.stageWidth * 0.02, `${label}: item reads at up to the body size (${px}px vs ${bodyPx.toFixed(2)}px)`))
+        // ADR-0039 (0.41): the column heading is a small spaced label over a rule (drawing
+        // renders/after/06-iconrow.png), no longer larger than its items; it must stay smaller.
+        assert(column.labelPx < column.descPx[0], `${label}: heading is a small label, under its items (${column.labelPx} vs ${column.descPx[0]})`)
+        // The drawing's label is regular-weight mono caps (zz-scene-icon-row-process.css), not bold.
+        assert(weight(column.labelWeight) >= 400, `${label}: heading has a weight (${column.labelWeight})`)
+        // ADR-0039: the column's head icon is 1.6667cqw (the drawing's mono head), no longer 1.35em of the body.
+        const iconPx = slide.stageWidth * 1.6667 / 100
+        assert(close(column.iconWidth, iconPx, 1), `${label}: head icon is 1.6667cqw (${column.iconWidth.toFixed(1)}px vs ${iconPx.toFixed(1)}px)`)
         assert(!column.wordOverflow, `${label}: no word runs out of its column`)
       }
       console.log(`PASS ${key} ${id}: body ${slide.columns[0].descPx[0]}px, heading ${slide.columns[0].labelPx}px/${slide.columns[0].labelWeight}, icon ${slide.columns[0].iconWidth.toFixed(1)}px, zoom 1`)
@@ -187,7 +194,9 @@ try {
     // 2. Shared heading row: the items start at one height when only one heading wraps.
     const uneven = await probe('uneven')
     const [short, long] = uneven.columns
-    assert(long.labelHeight > short.labelHeight * 1.5, `${key}: the long heading wraps and the short one does not (${long.labelHeight.toFixed(1)} vs ${short.labelHeight.toFixed(1)})`)
+    // ADR-0039: the head is a small label in a subgrid row shared by every column, so the rows align by
+    // construction and a heading only wraps when very long; the old "one heading wraps" precondition is dropped.
+    assert(close(short.labelHeight, long.labelHeight, 1) || long.labelHeight > short.labelHeight, `${key}: the head row is shared (${long.labelHeight.toFixed(1)} vs ${short.labelHeight.toFixed(1)})`)
     assert(close(short.descTop, long.descTop, 1), `${key}: both columns' items start at one height (${short.descTop.toFixed(1)} vs ${long.descTop.toFixed(1)})`)
     console.log(`PASS ${key}: icon-row columns share a heading row (items at y=${short.descTop.toFixed(1)})`)
 
@@ -197,18 +206,19 @@ try {
     for (const [i, card] of families.cards.entries()) {
       const label = `${key} model-families card ${i + 1}`
       assert(!card.wordOverflow, `${label}: no word overflows its card`)
+      // ADR-0039 (0.41 ticket 09): the card title is regular weight and 38/40 of its points; both stay at or above the type floor.
       card.subPx.forEach((px) => {
-        assert(close(card.headingPx / px, 1.15, 0.01), `${label}: heading is 1.15× its items (${card.headingPx} / ${px})`)
-        assert(px <= families.body + 0.01 && px >= families.dense - 0.01, `${label}: items between the dense step and the body (${px}px)`)
+        assert(px >= families.floor - 0.01 && px <= families.body + 0.01, `${label}: points between the type floor and the body (${px}px)`)
+        assert(card.headingPx >= families.floor - 0.01, `${label}: title at or above the type floor (${card.headingPx}px)`)
       })
-      assert(weight(card.headingWeight) >= 700, `${label}: heading is bold (${card.headingWeight})`)
+      assert(weight(card.headingWeight) <= 400, `${label}: title is regular weight (${card.headingWeight})`)
     }
     assert.equal(families.zoom, 1, `${key}: model-families is not zoomed`)
     console.log(`PASS ${key} model-families: no word overflows; items ${families.cards[0].subPx[0]}px (width step ${families.widthFit ?? 'none'}), heading ${families.cards[0].headingPx}px`)
     const shortCards = await probe('cards-short')
-    shortCards.cards.forEach((card, i) => card.subPx.forEach((px) => assert(close(px, shortCards.body), `${key} cards-short card ${i + 1}: words that fit keep the body size (${px}px vs ${shortCards.body}px)`)))
+    shortCards.cards.forEach((card, i) => card.subPx.forEach((px) => assert(close(px, Math.max(shortCards.floor, shortCards.body * 0.651), 0.7), `${key} cards-short card ${i + 1}: words that fit keep the card point size, .651 of the body (${px}px vs ${shortCards.body}px)`)))
     assert.equal(shortCards.widthFit, null, `${key}: cards whose words fit take no width step`)
-    console.log(`PASS ${key} cards-short: items at the body size ${shortCards.body}px, no width step`)
+    console.log(`PASS ${key} cards-short: points at .651 of the body (${shortCards.body}px), no width step`)
 
     // 4. Crowded rows and cards: spacing before type, never a whole-slide zoom while spacing gives.
     for (const id of ['row-crowded', 'cards-crowded']) {

@@ -54,6 +54,7 @@ await sheet.waitFor()
 
 const future = new Date(Date.now() + 8 * 86_400_000).toISOString().slice(0, 10)
 await sheet.locator('[data-field="date"]').fill(future)
+await sheet.locator('[data-field="start"]').fill('10:00')
 await sheet.locator('[data-field="event"]').fill('Dept. seminar')
 await sheet.locator('[data-field="audience"]').fill('Continuing Education')
 await sheet.locator('[data-field="slide-set"] option[value="short"]').waitFor({ state: 'attached' })

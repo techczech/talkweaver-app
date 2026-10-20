@@ -2,14 +2,17 @@
 // test:statement-options-look — ADR-0028 decision 10 (statement slides revised, locked 2026-09-28)
 //
 // Reworked by the 13 October 2026 slide redesign: no box round the text, ever; four Backgrounds.
+// Reworked again by 0.41 ticket 04 (ADR-0039): the accent bar is the text block's own left edge (a left
+// border and its gap on the paragraph) in every option but Rule, which keeps its short rule instead.
+// The box edge (bar included) sits on the 20% / 9% line; the words start the bar and its gap further in.
 //
 // What must hold, read from a real compiled deck in the real deck runtime at 1280×720 (the fixed
 // canvas, ADR-0030), after the runtime's own fit pass has run on the slide:
 //   1. Margins. A statement without a title panel starts 20% of the slide width from the left edge;
 //      beside a panel it starts 9% of the slide width right of the panel's edge. Centred is centred
 //      in its area (the slide, or the content column).
-//   2. No box. The paragraph has no background, padding or border in any option. The colour is on
-//      the slide: Tinted (the default, also {statement=tint} / {statement=full} / Poster) tints the
+//   2. No box. The paragraph has no background in any option; its only left border is the accent bar
+//      (none under Rule). The colour is on the slide: Tinted (the default, also {statement=tint} / {statement=full} / Poster) tints the
 //      whole slide in the section's sidebar colour, with no line at the panel edge beside
 //      a title; Rule ({statement=bar}) keeps the normal page and draws one accent rule above the text.
 //   3. No lone last word on any of the drawing's specimens (short, medium, long), in every option,
@@ -97,6 +100,9 @@ const W = 1280
 const H = 720
 const px = (value) => parseFloat(value)
 const near = (a, b, tolerance = 0.5) => Math.abs(a - b) <= tolerance
+// ADR-0039: the bar (.625cqw) and the gap to the words (3.0208cqw) of a statement paragraph, in canvas px.
+const BAR = 0.00625 * W
+const BAR_GAP = 0.030208 * W
 const rgbOf = (hex) => {
   const value = hex.replace('#', '')
   const [r, g, b] = [0, 2, 4].map((at) => parseInt(value.slice(at, at + 2), 16))
@@ -218,8 +224,9 @@ try {
     check(shot.zoom === '1', `${id}: the slide is not zoomed (zoom ${shot.zoom})`)
     // 2. No box, in any option.
     check(shot.p.background === 'rgba(0, 0, 0, 0)', `${id}: no background on the text (got ${shot.p.background})`)
-    check(shot.p.paddingLeft === 0 && shot.p.paddingRight === 0 && shot.p.paddingTop === 0, `${id}: no padding on the text (got ${shot.p.paddingLeft}/${shot.p.paddingRight}/${shot.p.paddingTop})`)
-    check(shot.p.borderLeft === 0, `${id}: no bar on the text (got ${shot.p.borderLeft}px)`)
+    const barred = option !== 'bar'
+    check(near(shot.p.paddingLeft, barred ? BAR_GAP : 0, 0.1) && shot.p.paddingRight === 0 && shot.p.paddingTop === 0, `${id}: the bar's gap and no other padding on the text (got ${shot.p.paddingLeft}/${shot.p.paddingRight}/${shot.p.paddingTop})`)
+    check(near(shot.p.borderLeft, barred ? BAR : 0, 0.1), `${id}: ${barred ? 'the accent bar' : 'no bar (Rule)'} on the text (got ${shot.p.borderLeft}px)`)
     check(!/statement-bar-/.test(shot.className), `${id}: no bar hook (${shot.className})`)
     check(!/statement-poster/.test(shot.className), `${id}: Poster stamps no class`)
     const rule = option === 'bar'
@@ -240,8 +247,9 @@ try {
     check(shot.p.textWrap === (centred ? 'balance' : 'pretty'), `${id}: text-wrap ${shot.p.textWrap}`)
     // 1. Margins.
     if (!titled) {
-      if (centred) check(near(shot.textLeft, shot.textRight, 2), `${id}: the centred text sits balanced (left ${shot.textLeft.toFixed(1)}, right ${shot.textRight.toFixed(1)})`)
-      else check(near(shot.textLeft, 0.2 * W, 1), `${id}: the text starts 20% from the left edge (got ${(shot.textLeft / W * 100).toFixed(1)}%)`)
+      const inset = barred ? BAR + BAR_GAP : 0
+      if (centred) check(near(shot.textLeft - shot.textRight, inset, 2), `${id}: the centred block (bar and text) sits balanced (left ${shot.textLeft.toFixed(1)}, right ${shot.textRight.toFixed(1)})`)
+      else check(near(shot.textLeft, 0.2 * W + inset, 1), `${id}: the text starts the bar and its gap right of the 20% line (got ${(shot.textLeft / W * 100).toFixed(1)}%)`)
       // 6. The type steps down for a long statement, never below the quote size, and leaves air.
       check(shot.p.fontSize >= Math.max(31, 0.034 * W) - 0.05, `${id}: type ${shot.p.fontSize}px stays at or above the quote size`)
       check(shot.p.bottom - shot.p.top <= 0.72 * H + 1, `${id}: the text block is at most 72% of the slide height (got ${(shot.p.bottom - shot.p.top).toFixed(0)}px)`)
@@ -250,9 +258,9 @@ try {
     } else {
       // Beside the panel: body size, measure 14em; the text starts 9% of the slide right of the panel's edge.
       check(near(shot.p.fontSize, 0.032 * W, 0.05), `${id}: beside the rail the statement keeps the body size (got ${shot.p.fontSize}px)`)
-      check(shot.p.right - shot.p.left <= 14 * shot.p.fontSize + 0.5, `${id}: the text measure stays within 14em`)
+      check(shot.textWidth <= 14 * shot.p.fontSize + 0.5, `${id}: the text measure stays within 14em`)
       if (centred || option !== 'centred') {
-        const expected = shot.column.left - shot.colGap + 0.09 * W
+        const expected = shot.column.left - shot.colGap + 0.09 * W + (barred ? BAR + BAR_GAP : 0)
         check(near(shot.textLeft, expected, 1.5), `${id}: the text starts 9% right of the panel edge (${shot.textLeft.toFixed(1)} vs ${expected.toFixed(1)})`)
       }
     }
@@ -546,7 +554,7 @@ try {
     const ruled = name === 'bar' || name === 'claimbar'
     check(/\bstatement-bg-rule\b/.test(shot.className) === ruled, `${id}: ${ruled ? 'renders as Rule' : 'does not render as Rule'} (${shot.className})`)
     check(lastLineWords(shot) >= 2, `${id}: the last line has ${lastLineWords(shot)} word(s) (${JSON.stringify(shot.lines)})`)
-    check(shot.panel === CLEAR && shot.bar === 0, `${id}: no box and no bar on the text (got ${shot.panel}, ${shot.bar}px)`)
+    check(shot.panel === CLEAR && near(shot.bar, ruled ? 0 : BAR, 0.1), `${id}: no box, and the accent bar except under Rule (got ${shot.panel}, ${shot.bar}px)`)
     if (ruled) {
       check(shot.slideBg === (bg === 'emerald' ? EMERALD : paperNoBg), `${id}: Rule leaves the page, or the authored colour, on the slide (got ${shot.slideBg})`)
     } else {
@@ -701,7 +709,7 @@ try {
       check(!/\bstatement-bg-/.test(shot.className), `${id}: Full is Tinted and stamps no background hook (${shot.className})`)
       check(shot.slideBg === colour, `${id}: Full paints the whole slide ${colour} (got ${shot.slideBg})`)
       check(shot.slideBgImage === 'none', `${id}: nothing is layered over the colour, no line at the panel edge (got ${shot.slideBgImage})`)
-      check(shot.panel === CLEAR && shot.bar === 0, `${id}: Full has no panel and no bar (got ${shot.panel}, ${shot.bar}px)`)
+      check(shot.panel === CLEAR && near(shot.bar, BAR, 0.1), `${id}: Full has no panel and the accent bar (got ${shot.panel}, ${shot.bar}px)`)
     }
     // One type, one measure: every option equals the Default of the same size and background.
     const standard = p10[`${kind}-default-${size}-${bg}`]

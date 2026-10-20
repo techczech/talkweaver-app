@@ -157,3 +157,8 @@
 .guide-cstate--wait { background: #fbe4ea; color: var(--crimson); }
 .guide-cdim { font-size: 11.5px; line-height: 1.4; color: var(--faint); }
 .guide-cmissing { margin-top: 2px; padding: 5px 8px; border-left: 3px solid var(--amber); font-size: 11.5px; line-height: 1.4; color: var(--muted); background: var(--amber-bg); border-radius: 0 6px 6px 0; }
+
+.guide-online-content { margin-top: 16px; padding: 12px; }
+.guide-online-content summary { cursor: pointer; font-weight: 600; }
+.guide-online-content .tw-online-content-body { line-height: 1.5; }
+.guide-online-content a { color: inherit; text-decoration: underline; }

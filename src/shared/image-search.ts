@@ -5,8 +5,10 @@
 //   - the old-PowerPoint archive alone (today's OCR search), when SlideWell is absent.
 // Pure types only, so main, preload and renderer share one definition.
 
-/** Where an image comes from. 'old-slide' is reserved for the Old slides tab (ticket 12). */
-export type ImageSource = 'screenshot' | 'added-image' | 'talk-image' | 'archive-image' | 'old-slide'
+/** Where an image comes from. 'old-slide' is a whole slide of an old PowerPoint (the Old slides tab). */
+import type { OldSlideRecord } from './old-slide.ts'
+
+export type ImageSource = 'screenshot' | 'added-image' | 'talk-image' | 'archive-image' | 'old-slide' | 'vault-image'
 
 /** Words: text match only. Meaning: picture match only. Both: words first, then picture matches. */
 export type MatchMode = 'words' | 'meaning' | 'both'
@@ -36,6 +38,8 @@ export type ImageSearchHit = {
   /** Old-PowerPoint images: the presentation it came from (readable names only). */
   presentationTitle?: string
   /** Old-PowerPoint images: where the archive registry files it (today's palette fields). */
+  /** Old slides: what the archive holds for the slide (thumbUrl is its render), enough to build an editable slide. */
+  oldSlide?: OldSlideRecord
   archive?: { presentationId: string; relPath: string; sha256: string }
 }
 
@@ -53,6 +57,11 @@ export type ImageSearchResult = {
 export type ImageSearchStatus = {
   /** null when no provider can search (no SlideWell store and no archive). */
   provider: ImageSearchProviderName | null
+  /** Is an old-PowerPoint archive folder chosen and readable? Old slides and old-PowerPoint images come only from it. */
+  archive: boolean
 }
 
 export type ImportedImage = { id: string; ext: string; path: string }
+
+/** `images:search-vault`: the pictures in the `_assets` of every open vault. vaults is how many are open (0: none). */
+export type VaultPictureResult = { vaults: number; hits: ImageSearchHit[] }

@@ -1,18 +1,24 @@
-// The pre-work form without a browser (feedback-boards ticket 10, ADR-0032 amendment): the pure module
+// The pre-work form's parts without a browser (feedback-boards ticket 10, ADR-0032 amendment): the pure module
 // (what a person's entries say about each step, "Carry on", the minutes, the answer each poll accepts,
 // what a submission and each refusal say, the icons) and the client that talks to the Worker (one
 // submission at a time per thing, a later one waits and only the newest waiting one is kept; refusals and
-// a dead connection come back as answers, never as throws). The screens on the real page are
-// prework-form-dom.test.mjs; the Worker itself is test-prework-form-live.mjs.
+// a dead connection come back as answers, never as throws). Since work-files ticket 16 the handout no
+// longer embeds the 0.37 form (prework-form.js is gone): these parts are what the participant work page
+// embeds (work-page.js), whose screens are work-page-dom.test.mjs and whose Worker is test-work-page-live.mjs.
 // Usage: node scripts/prework-form.test.mjs
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import {
-  createPreworkClient, normalisePreworkEntries, preworkAnswerReady, preworkDay, preworkDraftFromEntry, preworkEntryFromSubmission,
-  preworkFormRuntimeSource, preworkIcons, preworkKindIcon, preworkKindLabel, preworkMerge, preworkMinutesText, preworkPollHint,
+  normalisePreworkEntries, preworkAnswerReady, preworkDay, preworkDraftFromEntry, preworkEntryFromSubmission,
+  preworkFormModelSource, preworkIcons, preworkKindIcon, preworkKindLabel, preworkMerge, preworkMinutesText, preworkPollHint,
   preworkProgress, preworkRandomId, preworkRefusal, preworkStepState, preworkSubmission, preworkWhen,
-} from '../compiler/assets/runtime/prework-form.js'
+} from '../compiler/assets/runtime/prework-form-model.js'
+import { createPreworkClient, preworkFormClientSource } from '../compiler/assets/runtime/prework-form-client.js'
+import { preworkAnswerControlsSource } from '../compiler/assets/runtime/prework-form-answer.js'
+import { preworkClosedBannerSource } from '../compiler/assets/runtime/prework-closed-banner.js'
+
+const preworkPartsSource = () => [preworkFormModelSource(), preworkFormClientSource(), preworkAnswerControlsSource(), preworkClosedBannerSource()].join('\n')
 
 // ── The icons are lucide's own ───────────────────────────────────────────────────────────────
 const lucide = JSON.parse(readFileSync(new URL('../compiler/assets/icons/lucide.json', import.meta.url), 'utf8'))
@@ -93,7 +99,7 @@ assert.equal(preworkDay(Date.UTC(2026, 8, 30, 9, 30), 'Europe/London'), 'Wed 30 
 assert.equal(preworkWhen(Number.NaN), '')
 assert.match(preworkPollHint(form.steps[2]), /^Pick one\. There is no mark/, 'a quick check says there is no mark')
 assert.equal(preworkPollHint(form.steps[3]), 'Pick up to 2.')
-assert.equal(preworkPollHint(form.steps[6]), 'A sentence is plenty.')
+assert.equal(preworkPollHint(form.steps[6]), 'One or two sentences is plenty.')
 
 // ── The answer a poll accepts (the Worker's own rule) ────────────────────────────────────────
 const single = form.steps[2].poll, multiple = form.steps[3].poll, open = form.steps[6].poll
@@ -189,15 +195,13 @@ const mine = createPreworkClient({ workerBaseUrl: 'https://w.example.test', prew
 assert.deepEqual(await mine.load('device'), { ok: true, entries: [{ ref: 'read:s1', stepId: 's1', kind: 'read', at: 3 }] })
 assert.deepEqual(mineCalls[0], { url: 'https://w.example.test/prework/abc12345/mine', body: { participantId: 'device' } })
 
-// ── The page embeds each function by toString: nothing may reach for a name outside the source ──
+// ── The work page embeds each function by toString: nothing may reach for a name outside the source ──
 const sandbox = {}
 vm.createContext(sandbox)
-vm.runInContext(preworkFormRuntimeSource() + '\nthis.exports = { createPreworkClient, createPreworkForm, createPreworkAnswerControls, showPreworkClosed, preworkProgress, preworkAnswerReady, preworkRefusal }', sandbox)
-for (const name of ['createPreworkClient', 'createPreworkForm', 'createPreworkAnswerControls', 'showPreworkClosed', 'preworkProgress', 'preworkAnswerReady', 'preworkRefusal']) {
+vm.runInContext(preworkPartsSource() + '\nthis.exports = { createPreworkClient, createPreworkAnswerControls, showPreworkClosed, preworkProgress, preworkAnswerReady, preworkRefusal }', sandbox)
+for (const name of ['createPreworkClient', 'createPreworkAnswerControls', 'showPreworkClosed', 'preworkProgress', 'preworkAnswerReady', 'preworkRefusal']) {
   assert.equal(typeof sandbox.exports[name], 'function', `${name} is defined by the embedded source alone`)
 }
 assert.equal(sandbox.exports.preworkProgress(form, five).doneCount, 5, 'and the embedded copy computes the same')
-assert.equal(preworkFormRuntimeSource().includes('innerHTML ='), true, 'sanity: the source is the real one')
-assert.equal((preworkFormRuntimeSource().match(/innerHTML/g) || []).length, 2, 'HTML is written in two places only (the icon helpers), never for participant or author text')
 
 console.log('prework-form: ok')

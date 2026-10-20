@@ -10,10 +10,11 @@
 //   2. A quote beside the rail: no tint, no left rule, no panel padding; the quotation mark hangs
 //      outside the text block, in the gutter (not over the rail); type as before. With an authored
 //      {bg=…} the slide background still paints.
-//   3. A quote-only slide: panel, rule, mark and width have exactly the computed styles they had
-//      before ADR-0028 (ADR-0023 §5/§9). The snapshot below was read from the compiler at 5d63eea.
-//   4. Subsection divider: the parent-section label's left edge equals the title's left edge, and
-//      the head stays centred on the stage.
+//   3. A quote-only slide: the open drawing of 0.41 ticket 04 (ADR-0039): no panel, rule or padding,
+//      a pale mark in the flow, words at 4.1667cqw in line height 1.24, one width of 71.875cqw.
+//   4. Section/subsection divider: a label above its title (now only an authored {kicker=…}, ADR-0039)
+//      has its left edge at the title's left edge, and the head block (accent bar, label, title) sits
+//      at 8.3333cqw from the left edge, with the bar as its own left edge (ticket 04).
 //
 // Compiles a real deck (prepareSource → model.fullHtml) and reads computed styles in Chromium at
 // 1600×900 and 1280×720. ADR-0030: both windows show the one 1280×720 canvas (scaled 1.25 at
@@ -44,8 +45,9 @@ const source = [
   // A quote-only slide keeps the ADR-0023 panel.
   '### Prompt before travel', '{quote} {id=quote-only}', '',
   '> Hey, look at my emails, and schedule all these things on my calendar, including blocks for walks.', '',
-  // A `###` with children: a subsection divider whose kicker is the parent section's title.
-  '### Example from a recent trip', '{id=sub-div}', '#### Child', '', 'Body.'
+  // A `###` with children: a subsection divider with an authored label above its title (ADR-0039: the
+  // parent section's name is no longer put there by the compiler).
+  '### Example from a recent trip', '{id=sub-div} {layout=section-title kicker="The State of AI in September 2026"}', '#### Child', '', 'Body.'
 ].join('\n')
 const path = join(dir, 'statement-quote-subsection.md')
 writeFileSync(path, source, 'utf8')
@@ -61,50 +63,6 @@ const PANEL_PROPS = [
   'letter-spacing', 'position', 'justify-self'
 ]
 const MARK_PROPS = ['content', 'position', 'left', 'top', 'font-size', 'line-height', 'font-family', 'font-weight', 'color', 'opacity']
-const QUOTE_ONLY_BEFORE = {
-  '1280x720': {
-    panel: {
-      "background-color": "rgb(232, 238, 252)",
-      "background-image": "none",
-      "border-left-width": "9px",
-      "border-left-style": "solid",
-      "border-left-color": "rgb(15, 75, 216)",
-      "border-radius": "0px",
-      "box-shadow": "none",
-      "padding-top": "60.928px",
-      "padding-right": "69.632px",
-      "padding-bottom": "52.224px",
-      "padding-left": "104.448px",
-      "margin-left": "0px",
-      width: "1075.19px",
-      "max-width": "100%",
-      "font-family": "\"Trebuchet MS\", system-ui, -apple-system, \"Segoe UI\", sans-serif",
-      "font-size": "43.52px",
-      "font-weight": "400",
-      "line-height": "61.7984px",
-      "letter-spacing": "-0.4352px",
-      position: "relative",
-      "justify-self": "auto"
-    },
-    mark: {
-      content: "\"“\"",
-      position: "absolute",
-      left: "31.6826px",
-      top: "20.3674px",
-      "font-size": "113.152px",
-      "line-height": "113.152px",
-      "font-family": "Georgia, serif",
-      "font-weight": "700",
-      color: "rgb(15, 75, 216)",
-      opacity: "1"
-    },
-    width: 1075.19
-  }
-}
-// ADR-0030: a 1600×900 window shows the same 1280×720 canvas scaled by 1.25, so its computed styles
-// are the canvas's. (Before ADR-0030 the stage was the window: width 1180px, the retired px cap.)
-QUOTE_ONLY_BEFORE['1600x900'] = QUOTE_ONLY_BEFORE['1280x720']
-
 const px = (value) => parseFloat(value)
 const close = (a, b, tolerance = 0.5) => Math.abs(a - b) <= tolerance
 
@@ -139,7 +97,7 @@ try {
         content: { ...pick(content, null, ['column-gap', 'grid-template-columns']), ...rect(content) }
       }
       const p = content.querySelector(':scope > p')
-      if (p) out.p = { ...pick(p, null, ['font-size', 'line-height', 'max-width', 'padding-left', 'padding-right', 'background-color']), ...rect(p) }
+      if (p) out.p = { ...pick(p, null, ['font-size', 'line-height', 'max-width', 'padding-left', 'padding-right', 'border-left-width', 'background-color']), ...rect(p) }
       const quote = content.querySelector(':scope > blockquote')
       if (quote) {
         const mark = pick(quote, '::before', markProps)
@@ -158,7 +116,7 @@ try {
       if (kicker && h1) {
         const range = document.createRange()
         range.selectNodeContents(kicker)
-        out.divider = { kicker: rect(kicker), kickerText: x(range.getBoundingClientRect().left), h1: rect(h1), head: rect(kicker.parentElement) }
+        out.divider = { kicker: rect(kicker), kickerText: x(range.getBoundingClientRect().left), h1: rect(h1), head: rect(kicker.parentElement), bar: { width: parseFloat(getComputedStyle(kicker.parentElement, '::before').width) } }
       }
       return out
     }, { slideId: id, panelProps: PANEL_PROPS, markProps: MARK_PROPS })
@@ -169,7 +127,7 @@ try {
     const quietSize = px(quiet.p['font-size'])
     assert(close(quietSize, Math.max(34, 0.054 * quiet.stage.width), 0.05), `${key}: statement type unchanged at 5.4cqw (got ${quietSize}px)`)
     assert(close(px(quiet.p['line-height']), 1.5 * quietSize, 0.05), `${key}: statement line-height is 1.5× (got ${quiet.p['line-height']} for ${quietSize}px)`)
-    const quietText = quiet.p.width - px(quiet.p['padding-left']) - px(quiet.p['padding-right'])
+    const quietText = quiet.p.width - px(quiet.p['padding-left']) - px(quiet.p['padding-right']) - px(quiet.p['border-left-width'])
     assert(quietText <= 0.68 * quiet.stage.width + 0.5, `${key}: the statement text column stays inside 68cqw (got ${quietText}px)`)
     assert(quietText > 0.64 * quiet.stage.width, `${key}: a long statement uses the measure (text column ${quietText}px)`)
     assert(close(quiet.p.left - quiet.stage.left, 0.2 * quiet.stage.width, 1), `${key}: the statement starts 20% of the stage width from the left edge (slide redesign, 13 Oct 2026)`)
@@ -178,7 +136,7 @@ try {
     const railSize = px(railStatement.p['font-size'])
     assert(close(railSize, 0.032 * railStatement.stage.width, 0.05), `${key}: a rail statement keeps its body type (got ${railSize}px)`)
     assert(close(px(railStatement.p['line-height']), 1.5 * railSize, 0.05), `${key}: a rail statement also takes line-height 1.5 (got ${railStatement.p['line-height']})`)
-    const railText = railStatement.p.width - px(railStatement.p['padding-left']) - px(railStatement.p['padding-right'])
+    const railText = railStatement.p.width - px(railStatement.p['padding-left']) - px(railStatement.p['padding-right']) - px(railStatement.p['border-left-width'])
     assert(railText <= 14 * railSize + 0.5, `${key}: beside the rail the statement measure stays 14em (got ${railText}px)`)
     console.log(`PASS ${key}: statement line-height 1.5×, type unchanged, §10 measure (68cqw without a title, 14em beside the rail), no box`)
 
@@ -211,22 +169,34 @@ try {
     }
     console.log(`PASS ${key}: quote beside the rail has no panel or rule, a hanging mark in the gutter, type unchanged; {bg=…} still paints`)
 
-    // 3. Quote-only slide: the ADR-0023 panel is untouched.
+    // 3. Quote-only slide: 0.41 ticket 04 (ADR-0039) replaces the ADR-0023 panel with the open drawing:
+    //    no tint, no rule, no padding, a pale mark in the flow over the words, words at 4.1667cqw
+    //    (80px at 1920) in line height 1.24, one width of 71.875cqw. The geometry is mirrored in
+    //    quote-layout.mjs (test:quote-sizing guards the split against it).
     const only = await probe('quote-only')
-    const snapshot = { panel: only.quote.style, mark: only.quote.mark, width: Math.round(only.quote.width * 100) / 100 }
-    assert.deepEqual(snapshot, QUOTE_ONLY_BEFORE[key], `${key}: the quote-only panel keeps its pre-ADR-0028 computed styles`)
-    console.log(`PASS ${key}: quote-only panel, rule, mark and width unchanged`)
+    const oq = only.quote
+    const W = only.stage.width
+    assert.equal(oq.style['background-color'], 'rgba(0, 0, 0, 0)', `${key}: the quote-only slide has no tinted panel (got ${oq.style['background-color']})`)
+    assert.equal(oq.style['border-left-width'], '0px', `${key}: no accent rule on the quote`)
+    assert.equal(oq.style['padding-left'], '0px', `${key}: no panel padding`)
+    assert(close(px(oq.style['font-size']), Math.max(31, 0.041667 * W), 0.05), `${key}: quote type is 4.1667cqw (got ${oq.style['font-size']})`)
+    assert(close(px(oq.style['line-height']), 1.24 * px(oq.style['font-size']), 0.05), `${key}: quote line-height is 1.24 (got ${oq.style['line-height']})`)
+    assert(close(oq.width, 0.71875 * W, 1), `${key}: the quote has the one width, 71.875cqw (got ${oq.width})`)
+    assert.equal(oq.mark.position, 'static', `${key}: the mark sits in the flow over the words`)
+    assert.equal(oq.mark['font-weight'], '700', `${key}: the mark glyph keeps its weight`)
+    assert.match(oq.mark.color, /^color\(srgb /, `${key}: the mark is the accent mixed pale (got ${oq.mark.color})`)
+    console.log(`PASS ${key}: quote-only slide is the open drawing (no box, pale mark, 4.1667cqw words, one width)`)
 
-    // 4. Subsection divider: parent label and title share one left edge; the head stays centred.
+    // 4. Subsection divider: the authored label and the title share one left edge; the head stays centred.
     const sub = await probe('sub-div')
     assert.match(sub.layoutClass, /\blayout-section-title\b/, 'a ### with children compiles to a divider')
-    assert(sub.divider, 'the subsection divider carries the parent-section label and a title')
-    assert(close(sub.divider.kicker.left, sub.divider.h1.left), `${key}: parent label left ${sub.divider.kicker.left} equals title left ${sub.divider.h1.left}`)
+    assert(sub.divider, 'the subsection divider carries its authored label and a title')
+    assert(close(sub.divider.kicker.left, sub.divider.h1.left), `${key}: label left ${sub.divider.kicker.left} equals title left ${sub.divider.h1.left}`)
     assert(close(sub.divider.kickerText, sub.divider.h1.left), `${key}: the label's text starts at the title's left edge`)
-    const headCentre = (sub.divider.head.left + sub.divider.head.right) / 2
-    const contentCentre = sub.content.left + sub.content.width / 2
-    assert(close(headCentre, contentCentre, 1), `${key}: the divider head stays centred (head ${headCentre}, content ${contentCentre})`)
-    console.log(`PASS ${key}: subsection parent label left-aligned with the title`)
+    assert(close(sub.divider.head.left, 0.083333 * sub.stage.width, 1), `${key}: the divider head starts 8.3333cqw from the left edge (got ${sub.divider.head.left})`)
+    assert(close(sub.divider.bar.width, 0.00625 * sub.stage.width, 0.1), `${key}: the head carries the accent bar, .625cqw wide (got ${sub.divider.bar.width})`)
+    assert(close(sub.divider.h1.left - sub.divider.head.left, 0.033333 * sub.stage.width, 1), `${key}: the title starts 3.3333cqw right of the bar's edge`)
+    console.log(`PASS ${key}: divider head at the left with its accent bar; label left-aligned with the title`)
     await page.close()
   }
 } finally {

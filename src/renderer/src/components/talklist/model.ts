@@ -1,5 +1,6 @@
 import type { RecordingSession, TalkInfo, TalkMeta } from '../../../../preload/index'
 import { type TreeNode, buildTree, topicOf } from '../talkTreeNav.ts'
+import { talkTitleText } from '../../../../shared/talk-title-text.ts'
 import { displayIsoDate, isIgnoredTalkFolder, type TalkSearchHit } from '../../../../shared/talk-search.ts'
 
 // Pure shared model for the Talks browser (ADR-0008): ONE data/sort/filter/keyboard model,
@@ -40,7 +41,7 @@ export function readNamingPreference(): NamingMode {
 
 /** The row label under the current naming mode: the real title, or the slug read as a filename. */
 export function displayName(talk: TalkInfo, naming: NamingMode): string {
-  return naming === 'file' ? talk.slug : talk.title
+  return naming === 'file' ? talk.slug : talkTitleText(talk.title)
 }
 
 export function readSortPreference(): TalkSortKey {

@@ -27,6 +27,7 @@ import { chromium } from 'playwright'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { slotCompositionFor } from '../compiler/scripts/lib/slot-composition.mjs'
 import { buildDeckStyles } from './build-deck-styles.mjs'
+import { talkNamesTitleLook, withoutLaterSlideStamps } from './lib/slide-markup-identity.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repo = resolve(here, '..')
@@ -272,7 +273,7 @@ async function compile(name) {
   writeFileSync(path, source, 'utf8')
   const model = await prepareSource(path, source, `slot-${name}`, statSync(path), undefined, FIXTURE_ROOTS)
   const slide = model.slides.find((entry) => entry.nodeLevel === 3) ?? model.slides.at(-1)
-  return { model, slide, html: model.fullHtml }
+  return { model, slide, html: model.fullHtml, source }
 }
 
 // Every SLIDE <section> in the deck, as raw html (no DOM library needed for these shapes).
@@ -283,8 +284,10 @@ function sectionsOf(html) {
 }
 
 // The one slide whose markup carries this title.
-function contentOf(html, title) {
-  return sectionsOf(html).find((section) => section.includes(title)) ?? ''
+// Stamps a later ticket added to every slide are left out (scripts/lib/slide-markup-identity.mjs), so the
+// pre-change baseline stays the reference for the rest of the markup.
+function contentOf(deck, title) {
+  return withoutLaterSlideStamps(sectionsOf(deck.body).find((section) => section.includes(title)) ?? '', { talkNamesTitleLook: talkNamesTitleLook(deck.source) })
 }
 
 const compiled = {}
@@ -354,19 +357,19 @@ for (const [name, count] of Object.entries(EXPECTED_COUNT)) {
   )
 }
 
-const fiveUp = contentOf(compiled['paragraph+5images'].body, 'Five screens')
+const fiveUp = contentOf(compiled['paragraph+5images'], 'Five screens')
 assert(fiveUp.includes('data-slot-media-grid="2col"'), '5 media blocks: the media column switches to a 2-column grid')
 assert(
-  !contentOf(compiled['list+3images'].body, 'Three screens').includes('data-slot-media-grid'),
+  !contentOf(compiled['list+3images'], 'Three screens').includes('data-slot-media-grid'),
   '3 media blocks: stay stacked rows (no grid switch)'
 )
-const threeUp = contentOf(compiled['list+3images'].body, 'Three screens')
+const threeUp = contentOf(compiled['list+3images'], 'Three screens')
 assert(!threeUp.includes('img-row') && !threeUp.includes('figure-row'), 'media blocks are never grouped into an image row inside the slot')
 
 // Ticket 15: a MEDIA-ONLY run groups every media kind, while the B2 slot keeps the same blocks
 // stacked. The row owns one aspect token per figure so CSS can give portrait and landscape media
 // proportional widths without detaching captions from their figure.
-const videoImage = contentOf(compiled['media-video+image'].body, 'Video and image')
+const videoImage = contentOf(compiled['media-video+image'], 'Video and image')
 assert(/class="figure-row count-2"/.test(videoImage), 'media-only video + image: one two-item .figure-row')
 assert(!videoImage.includes('figure-row-gallery'), 'media-only video + image: two items stay in one row')
 assert(
@@ -374,25 +377,25 @@ assert(
   'media-only video + image: authored order is preserved and unknown video aspect is flagged'
 )
 
-const imageVideoImage = contentOf(compiled['media-image+video+image'].body, 'Image video image')
+const imageVideoImage = contentOf(compiled['media-image+video+image'], 'Image video image')
 assert(/class="figure-row count-3"/.test(imageVideoImage), 'media-only image + video + image: one three-item .figure-row')
 
-const posterSizedVideo = contentOf(compiled['media-poster-sized-video+image'].body, 'Poster sized video and image')
+const posterSizedVideo = contentOf(compiled['media-poster-sized-video+image'], 'Poster sized video and image')
 assert(
   /class="slide-figure slide-video"[^>]*style="--media-aspect:1\.6000"[^>]*data-media-aspect-source="intrinsic"/.test(posterSizedVideo),
   'video with a sibling poster: poster dimensions provide the intrinsic row aspect'
 )
 
-const portraitLandscape = contentOf(compiled['media-portrait+landscape'].body, 'Portrait and landscape')
+const portraitLandscape = contentOf(compiled['media-portrait+landscape'], 'Portrait and landscape')
 assert(/class="figure-row count-2"[^>]*style="--media-row-aspect:/.test(portraitLandscape), 'portrait + landscape: row carries the summed aspect')
 assert(/style="--media-aspect:0\.64/.test(portraitLandscape), 'portrait + landscape: portrait keeps its intrinsic narrow aspect')
 assert(/style="--media-aspect:1\.77/.test(portraitLandscape), 'portrait + landscape: landscape keeps its intrinsic wide aspect')
 
-const fourMixed = contentOf(compiled['media-four-mixed'].body, 'Four mixed media')
+const fourMixed = contentOf(compiled['media-four-mixed'], 'Four mixed media')
 assert(/class="figure-row figure-row-gallery count-4"/.test(fourMixed), 'four mixed media: one .figure-row-gallery')
 assert((fourMixed.match(/<(?:figure)\b/g) || []).length === 4, 'four mixed media: all four figures stay in the gallery')
 
-const listVideoImage = contentOf(compiled['list+video+image'].body, 'List video and image')
+const listVideoImage = contentOf(compiled['list+video+image'], 'List video and image')
 assert(listVideoImage.includes('data-slot-media-count="2"'), 'list + video + image: both media blocks feed the B2 media column')
 assert(!listVideoImage.includes('figure-row'), 'list + video + image: B2 remains stacked, never a horizontal row')
 assert(
@@ -474,14 +477,14 @@ const UNCHANGED = ['copy-only']
 if (process.env.TW_SLOT_RECORD === '1') {
   const record = {}
   for (const name of UNCHANGED) {
-    record[name] = contentOf(compiled[name].body, name === 'media-only' ? 'Just the picture' : 'Just the words')
+    record[name] = contentOf(compiled[name], name === 'media-only' ? 'Just the picture' : 'Just the words')
   }
   writeFileSync(baselinePath, `${JSON.stringify(record, null, 2)}\n`, 'utf8')
   console.log(`recorded pre-change baseline → ${baselinePath}`)
 } else {
   const baseline = JSON.parse(readFileSync(baselinePath, 'utf8'))
   for (const name of UNCHANGED) {
-    const current = contentOf(compiled[name].body, name === 'media-only' ? 'Just the picture' : 'Just the words')
+    const current = contentOf(compiled[name], name === 'media-only' ? 'Just the picture' : 'Just the words')
     assert(current === baseline[name], `${name}: slide markup byte-identical to the pre-ticket compiler`)
   }
 }
@@ -616,6 +619,9 @@ try {
       if (!row || !content || !head || !footer) return null
       const contentRect = C(content)
       const headRect = C(head)
+      // ADR-0039 band rule: air is measured from the lower edge of the title block. Under a title look
+      // the head is a zero-height box below the look's clear band, so the edge is the painted title.
+      const titleRect = slide.dataset.titleLook && !head.classList.contains('slide-head-quiet') ? C(head.querySelector('h1')) : headRect
       const rowRect = C(row)
       const footerRect = C(footer)
       const figureArea = [...row.querySelectorAll(':scope > figure')]
@@ -625,7 +631,7 @@ try {
       return {
         coverage: bandArea ? figureArea / bandArea : 0,
         rowHeight: rowRect.height,
-        topAir: rowRect.top - headRect.bottom,
+        topAir: rowRect.top - titleRect.bottom,
         bottomAir: footerRect.top - rowRect.bottom,
         rowBottom: rowRect.bottom,
         navTop: footerRect.top
@@ -712,13 +718,17 @@ try {
         body,
         figureWidth: evidence.querySelector('figure').getBoundingClientRect().width,
         evidenceWidth: evidence.getBoundingClientRect().width,
+        slideWidth: slide.offsetWidth,
         claimFonts: [...evidence.querySelectorAll('.callouts li')].map((li) => parseFloat(getComputedStyle(li).fontSize))
       }
     })
     assert(claims !== null, `${viewport.width}x${viewport.height}: image-claim renders its picture and claims`)
     if (claims) {
-      assert(claims.claimFonts.length === 2 && claims.claimFonts.every((px) => px >= claims.body * 1.15 - 0.1), `${viewport.width}x${viewport.height}: claims read at >= 1.15x body (${claims.claimFonts.map((px) => px.toFixed(1)).join('/')} vs body ${claims.body.toFixed(1)})`)
-      assert(Math.abs(claims.figureWidth / claims.evidenceWidth - 0.38) < 0.02, `${viewport.width}x${viewport.height}: the image-claim picture takes the 38% media column`)
+      // 0.41 ticket 12 (ADR-0039): image-claim adopts the scene drawing (skin/zz-scene-chat-code-image.css), so the claims
+      // read at the drawing's 44px on a 1920 canvas (2.2917cqw), not 1.15x the body token, and the picture is as wide as its
+      // own pixels allow up to 1000 of the band's 1680 (52.08cqw), no longer the slot's 38% column.
+      assert(claims.claimFonts.length === 2 && claims.claimFonts.every((px) => Math.abs(px / claims.slideWidth - 44 / 1920) < 0.0006), `${viewport.width}x${viewport.height}: claims read at the scene's 44/1920 of the slide width (${claims.claimFonts.map((px) => (px / claims.slideWidth * 1920).toFixed(1)).join('/')} at 1920)`)
+      assert(claims.figureWidth / claims.evidenceWidth <= 1000 / 1680 + 0.01 && claims.figureWidth / claims.evidenceWidth >= 0.38 - 0.02, `${viewport.width}x${viewport.height}: the image-claim picture is at most the drawing's 1000 of the band's 1680 wide and at least the 38% column`)
     }
     await page.close()
   }

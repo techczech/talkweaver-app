@@ -53,16 +53,32 @@ const explicitSix = await compile('Contrast ledger six', '{contrast=ledger}', 6)
 assert.match(explicitSix.html, /contrast-grid contrast-ledger/, 'explicit six-pair variant keeps its variant grid')
 assert.doesNotMatch(explicitSix.html, /class="contrast-panels"/, 'explicit six-pair variant does not auto-switch to panels')
 
+// ADR-0039 / 0.41 ticket 08: a bare {contrast} is the two-panel "vs" drawing at every pair count; the
+// first pair names the panels from four pairs up. It no longer draws the old opposing arrows or panels.
 const bareSix = await compile('Contrast bare six', '{contrast}', 6)
-assert.match(bareSix.html, /class="contrast-panels"/, 'bare six-pair contrast still auto-switches to panels')
+assert.match(bareSix.html, /class="contrast-grid contrast-vs vs-grid vs-long vs-headed"/, 'bare six-pair contrast draws the vs panels (long: five body rows)')
+assert.doesNotMatch(bareSix.html, /class="contrast-panels"/, 'bare six-pair contrast no longer draws the old panel device')
+const bareSixBody = bareSix.html.slice(bareSix.html.indexOf('class="contrast-grid contrast-vs'))
+assert.equal([...bareSixBody.slice(0, bareSixBody.indexOf('<script')).matchAll(/class="contrast-pair vs-pair"/g)].length >= 5, true, 'five body pairs follow the head pair')
+assert.match(bareSix.html, /<div class="vs-head L">[\s\S]*?Old 1<\/div><\/div><div class="vs-head R">[\s\S]*?New 1<\/div>/, 'the first pair names the panels')
+
+const bareTwo = await compile('Contrast bare two', '{contrast}', 2)
+assert.match(bareTwo.html, /class="contrast-grid contrast-vs vs-grid"/, 'a bare two-pair contrast draws the vs panels without heads')
+assert.doesNotMatch(bareTwo.html, /class="vs-head /, 'two pairs: no head row (the first pair is a row)')
+assert.doesNotMatch(bareTwo.html, /class="contrast-grid contrast-arrows/, 'bare contrast no longer draws opposing arrows')
 
 const unknown = await compile('Contrast unknown', '{contrast=zebra}')
 assert(unknown.model.warnings.includes('contrast-variant-unknown:zebra'), 'unknown variant emits the contrast-variant warning')
 assert.doesNotMatch(unknown.html, /contrast-zebra/, 'unknown variant does not render an invented variant class')
-assert.match(unknown.html, /contrast-grid contrast-arrows/, 'unknown variant falls back to the default device')
+assert.match(unknown.html, /contrast-grid contrast-vs vs-grid/, 'unknown variant falls back to the default device (the vs panels)')
 
+// The default device draws each pair as one row across the panels and keeps the pair a direct child of the
+// grid, which is what presenter stepping reads (`.contrast-grid > .contrast-pair`): both sides arrive together.
 const bareFew = await compile('Contrast bare few', '{contrast}', 2)
-const expectedBareFew = '<div class="contrast-grid contrast-arrows"><div class="contrast-pair"><span class="ct-arrow ct-left">Old 1</span><span class="ct-arrow ct-right">New 1</span></div><div class="contrast-pair"><span class="ct-arrow ct-left">Old 2</span><span class="ct-arrow ct-right">New 2</span></div></div>'
-assert.equal(contrastGrid(bareFew.html, 'contrast-arrows'), expectedBareFew, 'bare few-pair output remains byte-identical')
+const fewStart = bareFew.html.indexOf('<div class="contrast-grid contrast-vs')
+assert.notEqual(fewStart, -1, 'the vs grid is present')
+const fewGrid = bareFew.html.slice(fewStart, bareFew.html.indexOf('</section>', fewStart))
+assert.equal([...fewGrid.matchAll(/<div class="contrast-pair vs-pair" style="grid-row:\d+">/g)].length, 2, 'two pairs are two direct contrast-pair rows')
+assert.match(fewGrid, /<div class="vs-row L[^"]*">(?:<div class="vs-ico">[\s\S]*?<\/div>)?<div class="vs-text">Old 1<\/div><\/div><div class="vs-row R[^"]*">(?:<div class="vs-ico">[\s\S]*?<\/div>)?<div class="vs-text">New 1<\/div><\/div>/, 'a pair holds its left and right cell')
 
 console.log('contrast variants: all checks passed')

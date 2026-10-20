@@ -4,12 +4,14 @@
 // What must hold:
 //   1. Rail title: a visible title on the left rail starts at the rail's left inset whatever its
 //      length — a one-word title and a three-line title share one left edge.
-//   2. Icon rows ({iconlist=list}): the icon is 1.75em, 1.1em from the text, and its vertical
-//      centre is within 2px of its item's text-block centre, for one-line and three-line items.
-//   3. Icon rows: items are separated by a 2px dotted line in ink at ~22% — between items only
-//      (none above the first, none below the last).
+//   2. Icon rows ({iconlist=list}, ADR-0039 / 0.41 ticket 05): the icon is 1.25em, .7em from the
+//      text, and its vertical centre is within 2px of the centre of its item's FIRST line, for
+//      one-line and three-line items.
+//   3. Icon rows: solid hairlines above the first row, between rows and below the last (strokes
+//      on the list and its items, no borders), and 28px (1.4583cqw) of padding on both sides of
+//      every row for the highlight.
 //   4. Cards (logolist with children): every card's heading shares one top edge across the row,
-//      and the same dotted line separates the sub-items inside each card (between them only).
+//      and (ADR-0039, 0.41 ticket 09) the sub-items are highlight rows: no line separates them.
 //
 // Compiles a real deck (prepareSource → model.fullHtml) and reads computed styles and rects in
 // Chromium at 1600×900 and 1280×720 (ADR-0030: both show the one 1280×720 canvas;
@@ -53,17 +55,6 @@ writeFileSync(htmlPath, model.fullHtml, 'utf8')
 
 const px = (value) => parseFloat(value)
 const close = (a, b, tolerance = 0.5) => Math.abs(a - b) <= tolerance
-// color-mix(in srgb, ink 22%, transparent) computes to an rgba/color() with alpha 0.22.
-const alphaOf = (color) => {
-  const m = color.match(/^rgba\(\s*[\d.]+,\s*[\d.]+,\s*[\d.]+,\s*([\d.]+)\s*\)$/) || color.match(/^color\(srgb [\d.]+ [\d.]+ [\d.]+ \/ ([\d.]+)\)$/)
-  return m ? parseFloat(m[1]) : color.startsWith('rgb(') ? 1 : NaN
-}
-const assertDotted = (edge, label) => {
-  assert.equal(edge.style, 'dotted', `${label}: separator is dotted (got ${edge.style})`)
-  assert(close(px(edge.width), 2, 0.01), `${label}: separator is 2px (got ${edge.width})`)
-  const alpha = alphaOf(edge.color)
-  assert(alpha >= 0.15 && alpha <= 0.3, `${label}: separator is low-contrast ink (~22%; got ${edge.color})`)
-}
 
 const browser = await chromium.launch({ headless: true })
 try {
@@ -99,6 +90,7 @@ try {
       return {
         titleLayout: slide.dataset.titleLayout,
         listClass: list.className,
+        listBefore: { content: getComputedStyle(list, '::before').content, height: parseFloat(getComputedStyle(list, '::before').height), background: getComputedStyle(list, '::before').backgroundColor, top: parseFloat(getComputedStyle(list, '::before').top) },
         head: { ...rect(head), paddingLeft: parseFloat(headStyle.paddingLeft) },
         h1: { ...rect(h1), lines: lineCount(h1) },
         items: [...list.children].map((li) => {
@@ -108,6 +100,11 @@ try {
           const text = li.querySelector(':scope > .fl-text')
           return {
             fontSize: parseFloat(style.fontSize),
+            lineHeight: parseFloat(style.lineHeight),
+            paddingLeft: parseFloat(style.paddingLeft),
+            paddingRight: parseFloat(style.paddingRight),
+            after: { content: getComputedStyle(li, '::after').content, height: parseFloat(getComputedStyle(li, '::after').height), background: getComputedStyle(li, '::after').backgroundColor },
+            rect: rect(li),
             columnGap: style.columnGap,
             edges: edges(li),
             icon: icon && { ...rect(icon), svg: svg && rect(svg) },
@@ -142,29 +139,36 @@ try {
       for (const [i, item] of slide.items.entries()) {
         const label = `${key} ${variant} ${i + 1}`
         const em = item.fontSize
-        assert(close(item.icon.width, 1.75 * em) && close(item.icon.height, 1.75 * em), `${label}: icon box is 1.75em (${item.icon.width}×${item.icon.height} for ${em}px)`)
-        assert(close(item.icon.svg.width, 1.75 * em) && close(item.icon.svg.height, 1.75 * em), `${label}: icon glyph is 1.75em (${item.icon.svg.width}px for ${em}px)`)
-        assert(close(px(item.columnGap), 1.1 * em), `${label}: computed icon-to-text gap is 1.1em (got ${item.columnGap} for ${em}px)`)
-        assert(close(item.text.left - item.icon.right, 1.1 * em), `${label}: text starts 1.1em after the icon (got ${item.text.left - item.icon.right}px)`)
+        assert(close(item.icon.width, 1.25 * em) && close(item.icon.height, item.lineHeight), `${label}: icon box is 1.25em wide and one text line tall (${item.icon.width}×${item.icon.height} for ${em}px, line ${item.lineHeight}px)`)
+        assert(close(item.icon.svg.width, 1.25 * em) && close(item.icon.svg.height, 1.25 * em), `${label}: icon glyph is 1.25em (${item.icon.svg.width}px for ${em}px)`)
+        assert(close(px(item.columnGap), 0.7 * em), `${label}: computed icon-to-text gap is .7em (got ${item.columnGap} for ${em}px)`)
+        assert(close(item.text.left - item.icon.right, 0.7 * em), `${label}: text starts .7em after the icon (got ${item.text.left - item.icon.right}px)`)
         const iconCentre = (item.icon.svg.top + item.icon.svg.bottom) / 2
-        const textCentre = (item.text.top + item.text.bottom) / 2
-        assert(Math.abs(iconCentre - textCentre) <= 2, `${label}: icon centre ${iconCentre.toFixed(1)} within 2px of text-block centre ${textCentre.toFixed(1)} (${item.text.lines} lines)`)
+        const firstLineCentre = item.text.top + item.lineHeight / 2
+        assert(Math.abs(iconCentre - firstLineCentre) <= 2, `${label}: icon centre ${iconCentre.toFixed(1)} within 2px of the first line's centre ${firstLineCentre.toFixed(1)} (${item.text.lines} lines)`)
         if (slide === short) lineCounts.add(item.text.lines)
       }
     }
     assert(lineCounts.has(1), `${key}: the probe has a one-line row (line counts ${[...lineCounts]})`)
     assert([...lineCounts].some((n) => n >= 3), `${key}: the probe has a three-line row (line counts ${[...lineCounts]})`)
-    console.log(`PASS ${key}: icon rows — icon 1.75em, gap 1.1em, centred on items of ${[...lineCounts].sort().join(', ')} lines; wide rows too`)
+    console.log(`PASS ${key}: icon rows — icon 1.25em, gap .7em, on the first line of items of ${[...lineCounts].sort().join(', ')} lines; wide rows too`)
 
-    // 3. Icon rows: dotted, low-contrast separators between items only.
+    // 3. Icon rows: solid hairlines above, between and below; padding on both sides.
     for (const [variant, slide] of [['rows', short], ['wide rows', wide]]) {
-      assert.equal(slide.items[0].edges.top.style, 'none', `${key} ${variant}: no line above the first row (got ${slide.items[0].edges.top.style})`)
+      assert.equal(slide.listBefore.content, '""', `${key} ${variant}: a hairline stroke above the first row`)
+      assert(slide.listBefore.height >= 1 && close(slide.listBefore.top, 0, 0.01), `${key} ${variant}: the top stroke is at least 1px, at the list's top edge (${slide.listBefore.height}px)`)
+      assert.notEqual(slide.listBefore.background, 'rgba(0, 0, 0, 0)', `${key} ${variant}: the top stroke is painted`)
       for (const [i, item] of slide.items.entries()) {
-        if (i > 0) assertDotted(item.edges.top, `${key} ${variant} ${i + 1} top`)
-        assert(item.edges.bottom.style === 'none' || px(item.edges.bottom.width) === 0, `${key} ${variant} ${i + 1}: no rule below (got ${item.edges.bottom.style} ${item.edges.bottom.width})`)
+        assert.equal(item.edges.top.style, 'none', `${key} ${variant} ${i + 1}: no border above (got ${item.edges.top.style})`)
+        assert.equal(item.edges.bottom.style, 'none', `${key} ${variant} ${i + 1}: no border below (got ${item.edges.bottom.style})`)
+        assert.equal(item.after.content, '""', `${key} ${variant} ${i + 1}: a hairline stroke below the row`)
+        assert(item.after.height >= 1, `${key} ${variant} ${i + 1}: the stroke is at least 1px (${item.after.height}px)`)
+        assert.notEqual(item.after.background, 'rgba(0, 0, 0, 0)', `${key} ${variant} ${i + 1}: the stroke is painted`)
+        assert(close(item.paddingLeft, item.paddingRight, 0.01) && item.paddingLeft > 0, `${key} ${variant} ${i + 1}: equal padding both sides (${item.paddingLeft} / ${item.paddingRight})`)
+        assert(close(item.paddingLeft, 0.014583 * 1280, 1.5), `${key} ${variant} ${i + 1}: padding is 28px at 1920 (1.4583cqw; got ${item.paddingLeft}px of a 1280px stage)`)
       }
     }
-    console.log(`PASS ${key}: icon rows — dotted 2px separators at low contrast between items, none after the last; wide rows too`)
+    console.log(`PASS ${key}: icon rows — solid hairlines above, between and below; 1.4583cqw of padding each side; wide rows too`)
 
     // 4. Cards: one heading top edge; dotted separators between sub-items.
     const cards = await probe('cards')
@@ -175,13 +179,13 @@ try {
     for (const [i, card] of cards.items.entries()) {
       assert(close(card.text.top, rowTop), `${key} card ${i + 1}: heading top ${card.text.top} matches the row's ${rowTop}`)
       assert(card.subs.length >= 2, `${key} card ${i + 1} has sub-items`)
-      assert.equal(card.subs[0].edges.top.style, 'none', `${key} card ${i + 1}: no line above the first sub-item`)
+      // ADR-0039 (0.41 ticket 09): the sub-items are highlight rows, so no line separates them.
       for (const [j, sub] of card.subs.entries()) {
-        if (j > 0) assertDotted(sub.edges.top, `${key} card ${i + 1} sub ${j + 1} top`)
+        assert(sub.edges.top.style === 'none' || px(sub.edges.top.width) === 0, `${key} card ${i + 1} sub ${j + 1}: no rule above (highlight rows)`)
         assert(sub.edges.bottom.style === 'none' || px(sub.edges.bottom.width) === 0, `${key} card ${i + 1} sub ${j + 1}: no rule below`)
       }
     }
-    console.log(`PASS ${key}: cards — headings share one top edge; dotted separators between sub-items`)
+    console.log(`PASS ${key}: cards — headings share one top edge; sub-items are highlight rows`)
     await page.close()
   }
 } finally {

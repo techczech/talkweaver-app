@@ -104,7 +104,8 @@ const noPanel = (20 / 100) * W
 const panel = shots['act-panel']
 const nop = shots['act-nopanel']
 assert.ok(nop.actions, 'act-nopanel: the action row is a direct child of the statement content')
-assert.ok(near(nop.text.left, noPanel), `act-nopanel: the statement starts 20% in (${nop.text.left.toFixed(1)})`)
+// 0.41 ticket 04 (ADR-0039): the accent bar (.625cqw) and its gap (3.0208cqw) sit between the 20% line and the words.
+assert.ok(near(nop.text.left, noPanel + (0.00625 + 0.030208) * W), `act-nopanel: the statement's bar starts 20% in, its words the bar and gap further (${nop.text.left.toFixed(1)})`)
 assert.ok(near(nop.button.left, nop.text.left), `act-nopanel: the action row starts at the statement's left edge (${nop.button.left.toFixed(1)} vs ${nop.text.left.toFixed(1)})`)
 assert.ok(panel.actions && near(panel.button.left, panel.text.left), `act-panel: the action row starts at the statement's left edge beside the panel (${panel.button?.left.toFixed(1)} vs ${panel.text.left.toFixed(1)})`)
 assert.ok(panel.text.left > panel.head.right, 'act-panel: the text sits right of the panel')

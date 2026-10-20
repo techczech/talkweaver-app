@@ -1,0 +1,247 @@
+/* Cycle, equation and timeline adopt the animated-scene drawings (ADR-0039, 0.41 ticket 07).
+   Values from docs/design/2026-10-16-slide-scene-formatting/after/09-cycle.html, 08-equation-circle.html and
+   10-timeline.html (drawn at 1920 x 1080, written here in cqw = px / 19.2). Unmarked block: it sorts after every
+   migrated block, so it wins where it meets skin/cycle.css, skin/equation.css and layouts/timeline.css.
+
+   Cycle. Subtle neutral boxes on a ring; each connector is an arc of that ring from the border where it leaves
+   one box to the border where it enters the next (the compiler works the ends out from the box rectangles,
+   06-block-renderers.mjs cycleGeometry), with a whole arrowhead whose tip lands on the border. The ring box is
+   the ring is drawn --cy-w wide (a stage-relative length, deliberately not a size container: base.css's
+   narrow-slide @container rule would then fire on it); every length inside is its drawing value times --cy-u
+   (the ring's width over --cy-vw, the drawing's own width), so box sizes and arc ends stay in step at any stage size.
+
+   Equation. Terms are circles in the section hue, then the next two hues of the palette (ADR-0039 amends
+   ADR-0005's one accent); the result is a filled disc in the section accent; operators are muted and regular.
+   --eq-n (terms plus result) sizes the circles so a longer equation still fits on one row.
+
+   Timeline (spine and pills, the track-and-pill drawings). One ink track; each dated stop is a pill on it in
+   its hue (accent, hue-2, hue-3), with a stem to its text, alternating above and below (spine) or all below
+   (pills). The text is regular; a stop's sub-points stay, in the scene's smaller muted lines under the text.
+   Stops are spread over the track with the first and last inset by half a text width, so no text leaves the
+   safe area. --tl-i (the stop's index, set by the compiler) places each stop. */
+
+/* ---- Cycle ---- */
+.slide .slide-content.layout-cycle .cycle-diagram {
+  --cy-w: calc(min(87.5cqw, 128cqh) * var(--cy-vw, 1680) / 1680);
+  --cy-u: calc(var(--cy-w) / var(--cy-vw, 1680));
+  width: var(--cy-w);
+  max-width: none;
+  aspect-ratio: var(--cy-vw, 1680) / var(--cy-vh, 760);
+  margin: 0 auto;
+}
+/* Beside a rail the ring is the content column at most, never wider (the right node ran off the slide; the old
+   ring capped itself at 100% for the same reason). Column = stage - rail - column gap (stage.css) - right inset. */
+.slide[data-title-layout="left"] .slide-content.layout-cycle .cycle-diagram {
+  --cy-w: min(
+    calc(min(87.5cqw, 128cqh) * var(--cy-vw, 1680) / 1680),
+    calc(100cqw - var(--rail-w, 0px) - clamp(40px, 5cqw, 96px) - var(--slide-pad-x, 48px))
+  );
+}
+.slide .cycle-diagram .cycle-node {
+  box-sizing: border-box;
+  width: calc(var(--cy-nw, 450) / var(--cy-vw, 1680) * 100%);
+  max-width: none;
+  min-height: calc(var(--cy-nh, 164) * var(--cy-u));
+  height: calc(var(--cy-nh, 164) * var(--cy-u));
+  padding: calc(18 * var(--cy-u)) calc(26 * var(--cy-u)) calc(20 * var(--cy-u));
+  border-radius: calc(18 * var(--cy-u));
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 0;
+  box-shadow: none;
+  text-align: left;
+  font-weight: 400;
+  font-size: calc(37.2 * var(--cy-u));
+  line-height: 1.15;
+  color: var(--ink);
+  white-space: normal;
+  z-index: 2;
+}
+.slide .cycle-diagram .cycle-node:last-of-type { border-color: rgb(16 20 24 / .26); color: var(--ink); }
+.slide .cycle-diagram .cycle-stage {
+  font-family: var(--mono);
+  font-size: calc(24 * var(--cy-u));
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  line-height: 1.25;
+  color: var(--accent);
+  margin-bottom: calc(8 * var(--cy-u));
+}
+.slide .cycle-diagram .cycle-cap { font-size: inherit; font-weight: 400; color: var(--ink); line-height: 1.15; }
+.slide .cycle-diagram .cycle-arc-svg { overflow: visible; z-index: 1; }
+.slide .cycle-diagram .cycle-arc { fill: none; stroke: var(--ink); stroke-width: 4; stroke-linecap: butt; vector-effect: none; }
+.slide .cycle-diagram .cycle-head { fill: var(--ink); stroke: none; }
+
+/* ---- Equation ---- */
+.slide .equation-row {
+  --eq-d: min(14.5833cqw, calc((87.5cqw - 7.3cqw * (var(--eq-n, 4) - 1)) / var(--eq-n, 4)));
+  --eq-gap: 2.0833cqw;
+  flex-wrap: wrap;
+  gap: 1.6cqw var(--eq-gap);
+  max-width: none;
+  width: 100%;
+  margin: 0 auto;
+}
+.slide .equation-row.equation-circle { flex-wrap: nowrap; }
+.slide .equation-row .eq-unit { gap: var(--eq-gap); }
+.slide .equation-row .eq-unit:nth-child(3n + 1) { --c: var(--accent); }
+.slide .equation-row .eq-unit:nth-child(3n + 2) { --c: var(--hue-2); }
+.slide .equation-row .eq-unit:nth-child(3n) { --c: var(--hue-3); }
+.slide .equation-row .eq-term {
+  box-sizing: border-box;
+  border: .3125cqw solid var(--c, var(--accent));
+  color: var(--c, var(--accent));
+  background: var(--paper);
+  font-weight: 700;
+  font-size: max(var(--type-floor), calc(var(--eq-d) * .1929));
+  line-height: 1.1;
+  white-space: normal;
+  text-align: center;
+  overflow-wrap: anywhere;
+  position: relative;
+}
+.slide .equation-row.equation-circle .eq-term {
+  width: var(--eq-d);
+  min-width: 0;
+  height: var(--eq-d);
+  aspect-ratio: auto;
+  padding: .6cqw;
+  border-radius: 50%;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.slide .equation-row.equation-circle .eq-term.eq-result { width: calc(var(--eq-d) * 1.1429); height: calc(var(--eq-d) * 1.1429); font-size: max(var(--type-floor), calc(var(--eq-d) * .2214)); }
+.slide .equation-row .eq-term.eq-result { background: var(--accent); border-color: var(--accent); color: #fff; }
+.slide .equation-row .eq-op {
+  font-weight: 400;
+  font-size: calc(var(--eq-d) * .3);
+  line-height: 1;
+  color: var(--muted);
+  width: 3.125cqw;
+  text-align: center;
+}
+
+/* ---- Timeline: spine and pills ---- */
+.slide .timeline-spine,
+.slide .timeline-pills {
+  --tl-w: min(25cqw, calc(166cqw / (var(--tl-spine-cols, 3) + 1.1)));
+  --tl-axis: calc((var(--tl-above, 8) + 5.4167) * 1cqw);
+  --tl-m: calc(var(--tl-w) / 2);
+  width: 87.5cqw;
+  max-width: 100%;
+  margin: 0 auto;
+}
+.slide .timeline-spine .tl-spine-track,
+.slide .timeline-pills .tl-spine-track {
+  display: block;
+  position: relative;
+  width: 100%;
+  height: calc((var(--tl-above, 8) + var(--tl-below, 8) + 10.8333) * 1cqw);
+  min-height: 0;
+  padding: 0;
+  align-items: initial;
+}
+.slide .timeline-spine .tl-spine-track::before,
+.slide .timeline-pills .tl-spine-track::before {
+  display: block;
+  content: "";
+  position: absolute;
+  left: 1.0417cqw;
+  right: 1.0417cqw;
+  top: var(--tl-axis);
+  transform: translateY(-50%);
+  height: .4167cqw;
+  border-radius: .2083cqw;
+  background: var(--ink);
+  z-index: 0;
+}
+.slide .timeline .tl-spine-stop {
+  --c: var(--accent);
+  position: absolute;
+  left: calc(var(--tl-m) + var(--tl-i, 0) * (100% - 2 * var(--tl-m)) / max(1, var(--tl-spine-cols, 3) - 1));
+  top: var(--tl-axis);
+  width: 0;
+  height: 0;
+  display: block;
+  min-width: 0;
+}
+.slide .timeline .tl-spine-stop:nth-child(3n + 2) { --c: var(--hue-2); }
+.slide .timeline .tl-spine-stop:nth-child(3n) { --c: var(--hue-3); }
+/* The pill on the track. */
+.slide .timeline .tl-spine-stop[data-side] .tl-spine-date,
+.slide .timeline .tl-spine-stop[data-side] .tl-spine-pill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: auto;
+  transform: translate(-50%, -50%);
+  box-sizing: border-box;
+  min-width: 9.8958cqw;
+  max-width: var(--tl-w);
+  min-height: 3.3333cqw;
+  margin: 0;
+  padding: .4cqw 1.4cqw;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: .2604cqw solid var(--c);
+  border-radius: 1.6667cqw;
+  background: var(--paper);
+  color: var(--c);
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: max(var(--type-floor), 1.4583cqw);
+  line-height: 1.1;
+  white-space: normal;
+  text-align: center;
+  overflow-wrap: anywhere;
+  z-index: 2;
+}
+/* The stem and the text. */
+.slide .timeline .tl-spine-dot { display: none; }
+.slide .timeline .tl-spine-leader {
+  display: block;
+  position: absolute;
+  left: 0;
+  transform: translateX(-50%);
+  width: .2083cqw;
+  height: 3.75cqw;
+  border: 0;
+  background: var(--c);
+  z-index: 1;
+}
+.slide .timeline .tl-spine-stop[data-side="above"] .tl-spine-leader { top: -5.4167cqw; }
+.slide .timeline .tl-spine-stop[data-side="below"] .tl-spine-leader { top: 1.6667cqw; }
+.slide .timeline .tl-spine-card {
+  position: absolute;
+  left: calc(var(--tl-w) / -2);
+  transform: none;
+  box-sizing: border-box;
+  width: var(--tl-w);
+  margin: 0;
+  padding: .5208cqw .8333cqw;
+  border: 0;
+  border-radius: .625cqw;
+  background: none;
+  box-shadow: none;
+  text-align: center;
+  font-size: max(var(--type-floor), calc(2.2917cqw * var(--tl-spine-scale, 1)));
+  line-height: 1.2;
+  color: var(--ink);
+}
+.slide .timeline .tl-spine-stop[data-side="above"] .tl-spine-card { top: auto; bottom: 5.4167cqw; }
+.slide .timeline .tl-spine-stop[data-side="below"] .tl-spine-card { bottom: auto; top: 5.4167cqw; }
+.slide .timeline .tl-spine-card .tl-spine-events { gap: .3em; }
+.slide .timeline .tl-spine-card ol.tl-spine-events > li { font-size: inherit; line-height: inherit; font-weight: 400; color: var(--ink); }
+.slide .timeline .tl-spine-card .tl-spine-events li::before { content: none; }
+/* Sub-points: the stop's detail lines, kept, smaller and muted under the event text. */
+.slide .timeline .tl-spine-card ol.tl-spine-events > li:not([data-tl-text]) {
+  font-size: max(var(--type-floor), .72em);
+  color: var(--muted);
+  line-height: 1.25;
+}
+.slide .timeline .tl-spine-card .tl-spine-events strong { color: var(--c); }

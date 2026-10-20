@@ -13,6 +13,16 @@ import Pathways from './components/Pathways'
 import TalkText from './components/TalkText'
 import Importer from './components/Importer'
 import Toasts from './components/Toasts'
+import PlanRunSheet, { type PlanRunTalk } from './components/PlanRunSheet'
+import { ToolsRail } from './components/ToolsRail'
+import { ToolsPalette } from './components/ToolsPalette'
+import { useToolsActions } from './lib/toolsActions'
+import { PublishedPagesView } from './components/PublishedPagesView'
+import { WorkFilesView } from './components/WorkFilesView'
+import { SessionsView } from './components/SessionsView'
+import { RESPONSES_SEEN_EVENT } from './components/RunAnswers'
+import { isToolsView, type ToolsRunRef, type ToolsView } from '../../shared/tools-views'
+import { runsWithResponses } from '../../shared/sessions-list'
 import ConflictCompare from './components/ConflictCompare'
 import { CONFLICT_COMPARE_EVENT } from './components/talklist/ConflictLine'
 import { VaultSheet, type VaultSheetState } from './components/talklist/VaultSheet'
@@ -31,10 +41,9 @@ import { rowChords, shortChord, type PracticeState } from './components/GuideCha
 import { GUIDE_DEFAULT_SEGMENT, GUIDE_TEXT, EMPTY_GUIDE_PROGRESS, firstSteps, type FirstStepId, type GuideProgress, type GuideSegment } from '../../shared/guide'
 import type { OpenInNewWindowTarget } from '../../shared/open-in-new-window'
 import { encodeFocus } from './components/talklist/vaultSections'
+import { editWindowTitle } from '../../shared/talk-title-text.ts'
 import { armOutlineSwitch, consumeEditorEngagement } from './lib/outlineSwitch'
 import { effectiveKeys, eventToCMKey, KEYMAP_CHANGED_EVENT } from './keymap/store'
-
-type ToolsView = 'studio' | 'history' | 'pathways' | 'talktext' | 'importer'
 
 // The flat "Outline" view was retired: every slide already lives in the file, and the Slides
 // view (now labelled "Slide outline") is the structure people actually want. Two sidebar tabs.
@@ -104,22 +113,55 @@ export default function App() {
 
 function readToolsView(): ToolsView | null {
   const view = new URLSearchParams(window.location.search).get('view')
-  return view === 'studio' || view === 'history' || view === 'pathways' || view === 'talktext' || view === 'importer' ? view : null
+  return isToolsView(view) ? view : null
+}
+
+/**
+ * Runs with responses waiting, for the Sessions rail badge (2026-10-19 prework-responses, decision 12). Read
+ * from the Sessions list main already builds (the live service's count is the work timer's): on opening, when
+ * the window comes to the front, when main says talk facts changed, and when the view or Run on show changes.
+ */
+function useRunsWithResponses(again: unknown): number {
+  const [count, setCount] = useState(0)
+  useEffect(() => {
+    let alive = true
+    const load = (): void => { void window.tw.sessions.list().then((result) => { if (alive) setCount(runsWithResponses(result.runs)) }, () => {}) }
+    load()
+    window.addEventListener('focus', load)
+    window.addEventListener(RESPONSES_SEEN_EVENT, load)
+    const off = window.tw.vault.onTalkMetaUpdated(load)
+    return () => { alive = false; window.removeEventListener('focus', load); window.removeEventListener(RESPONSES_SEEN_EVENT, load); off() }
+  }, [again])
+  return count
 }
 
 function ToolsShell({ initialView }: { initialView: ToolsView }): JSX.Element {
   const [view, setView] = useState<ToolsView>(initialView)
+  const [sessionsRun, setSessionsRun] = useState<ToolsRunRef | null>(null)
+  const runsWithResponsesNow = useRunsWithResponses(`${view}|${sessionsRun ? `${sessionsRun.vaultId ?? ''}|${sessionsRun.talkSlug}/${sessionsRun.runId}` : ''}`)
   const [studioInitialSessionId, setStudioInitialSessionId] = useState<string | null>(null)
   const [talkTextSessionId, setTalkTextSessionId] = useState<string | null>(null)
   const [pathwayContext, setPathwayContext] = useState<PathwayWindowContext | null>(null)
-  // Bumped each time the window is asked to open History's plan sheet (Plan a run… with no talk open).
-  const [planRequest, setPlanRequest] = useState(0)
-  // Asked to open a planned Run's pre-work page ('prework:<talk slug>/<run id>' in the show payload's sessionId).
-  const [preworkRequest, setPreworkRequest] = useState<{ talkSlug: string; runId: string; nonce: number } | null>(null)
+  // The Plan a run sheet, hosted by this window so it opens over whichever view asked for it (issue 234:
+  // it used to switch to History, whose own header then showed behind the sheet).
+  const [planSheet, setPlanSheet] = useState<{ talks: PlanRunTalk[] } | null>(null)
+  const [planSaved, setPlanSaved] = useState(0)
+  // Asked to show one work file (the Run page's Open file): the Work files view selects it.
+  const [workFileRequest, setWorkFileRequest] = useState<{ fileName: string; vaultId: string; nonce: number } | null>(null)
+  // Asked to open a Run's results ('results:<talk slug>/<run id>'; the Run page's Open results).
+  const [resultsRequest, setResultsRequest] = useState<{ talkSlug: string; runId: string; vaultId?: string; nonce: number } | null>(null)
 
   const showStudio = useCallback((sessionId?: string): void => {
     setStudioInitialSessionId(sessionId ?? null)
     setView('studio')
+  }, [])
+
+  const openPlanSheet = useCallback(async (): Promise<void> => {
+    let handouts
+    try { handouts = await window.tw.history.talkHandouts() } catch { handouts = {} }
+    const talks = Object.entries(handouts).map(([slug, talk]) => ({ slug, title: talk.title, outlinePath: talk.outlinePath })).filter((talk) => talk.outlinePath)
+    if (talks.length) setPlanSheet({ talks })
+    else notify('No talk to plan a Run for yet', 'info')
   }, [])
 
   const showHistory = useCallback((): void => {
@@ -140,6 +182,8 @@ function ToolsShell({ initialView }: { initialView: ToolsView }): JSX.Element {
       ? 'TalkWeaver Studio'
       : view === 'history'
         ? 'TalkWeaver History'
+        : view === 'sessions' || view === 'published' || view === 'workfiles'
+          ? 'TalkWeaver Tools'
         : view === 'importer'
           ? 'TalkWeaver Importer'
         : view === 'talktext'
@@ -148,12 +192,18 @@ function ToolsShell({ initialView }: { initialView: ToolsView }): JSX.Element {
   }, [view])
 
   useEffect(() => {
-    return window.tw.tools.onShow(({ view: nextView, sessionId, pathway }) => {
-      if (nextView === 'studio') showStudio(sessionId)
-      else if (nextView === 'history') { setView('history'); if (sessionId === 'plan-run') setPlanRequest((n) => n + 1)
-        else if (sessionId?.startsWith('prework:')) {
+    return window.tw.tools.onShow(({ view: nextView, sessionId, pathway, run }) => {
+      if (!isToolsView(nextView)) return
+      if (nextView === 'sessions' || nextView === 'published' || nextView === 'workfiles') {
+        setSessionsRun(nextView === 'sessions' ? run ?? null : null)
+        setView(nextView)
+        if (nextView === 'sessions' && sessionId === 'plan-run') void openPlanSheet()
+      }
+      else if (nextView === 'studio') showStudio(sessionId)
+      else if (nextView === 'history') { setView('history'); if (sessionId === 'plan-run') void openPlanSheet()
+        else if (sessionId?.startsWith('results:')) {
           const slash = sessionId.indexOf('/')
-          if (slash > 8) setPreworkRequest((current) => ({ talkSlug: sessionId.slice(8, slash), runId: sessionId.slice(slash + 1), nonce: (current?.nonce ?? 0) + 1 }))
+          if (slash > 8) setResultsRequest((current) => ({ talkSlug: sessionId.slice(8, slash), runId: sessionId.slice(slash + 1), ...(run?.vaultId ? { vaultId: run.vaultId } : {}), nonce: (current?.nonce ?? 0) + 1 }))
         } }
       else if (nextView === 'importer') setView('importer')
       else if (nextView === 'talktext') {
@@ -168,7 +218,27 @@ function ToolsShell({ initialView }: { initialView: ToolsView }): JSX.Element {
         setView('pathways')
       }
     })
-  }, [showStudio, showTalkText])
+  }, [showStudio, showTalkText, openPlanSheet])
+
+  const shown: ToolsView = view
+
+  // The Tools commands the window itself carries out (work-files ticket 30): the three views and Plan a run.
+  // The Run page's, Published pages' and Work files' own commands are offered by those views.
+  const planRun = (): void => { void openPlanSheet() }
+  const showRail = (next: ToolsView): void => {
+    if (next === shown) return
+    if (next === 'studio') showStudio()
+    else if (next === 'history') showHistory()
+    else { setSessionsRun(null); setView(next) }
+  }
+  useToolsActions({
+    'tools-view-sessions': { enabled: true, run: () => showRail('sessions') },
+    'tools-view-published': { enabled: true, run: () => showRail('published') },
+    'tools-view-workfiles': { enabled: true, run: () => showRail('workfiles') },
+    'tools-plan-run': { enabled: true, run: planRun }
+  })
+  // The palette and the keys belong to the window with the rail (Pathways, Notes and script and the Importer have their own).
+  const toolsKeysOn = (shown === 'studio' || shown === 'history' || shown === 'sessions' || shown === 'published' || shown === 'workfiles')
 
   if (view === 'pathways') {
     return <Pathways context={pathwayContext} onClose={() => window.close()} />
@@ -184,26 +254,49 @@ function ToolsShell({ initialView }: { initialView: ToolsView }): JSX.Element {
 
   // Studio and History say why an upload did not go through as a notification with its one action
   // ("Set up recording storage"), so this window shows the notification stack too.
+  const body = shown === 'studio' ? (
+    <Studio
+      isOpen
+      onClose={() => window.close()}
+      initialSessionId={studioInitialSessionId}
+      onShowHistory={showHistory}
+      onShowImporter={showImporter}
+      onOpenTalkText={showTalkText}
+    />
+  ) : shown === 'history' ? (
+    <History
+      isOpen
+      onClose={() => window.close()}
+      onShowStudio={showStudio}
+      onShowImporter={showImporter}
+      resultsRequest={resultsRequest}
+    />
+  ) : shown === 'workfiles' ? (
+    <WorkFilesView request={workFileRequest} onOpenRun={(talkSlug, runId, vaultId) => { setSessionsRun({ talkSlug, runId, vaultId }); setView('sessions') }} />
+  ) : shown === 'sessions' ? (
+    <SessionsView key={planSaved} run={sessionsRun} onSelect={setSessionsRun} onPlan={planRun} onShowWorkFile={(fileName, vaultId) => { setWorkFileRequest((r) => ({ fileName, vaultId, nonce: (r?.nonce ?? 0) + 1 })); setSessionsRun(null); setView('workfiles') }} />
+  ) : (
+    <PublishedPagesView onOpenRun={(talkSlug, runId, vaultId) => { setSessionsRun({ talkSlug, runId, vaultId }); setView('sessions') }} />
+  )
+  const selectRail = (next: ToolsView): void => {
+    if (next === 'studio') showStudio()
+    else if (next === 'history') showHistory()
+    else { setSessionsRun(null); setView(next) }
+  }
   return (<>
-    {view === 'studio' ? (
-      <Studio
-        isOpen
-        onClose={() => window.close()}
-        initialSessionId={studioInitialSessionId}
-        onShowHistory={showHistory}
-        onShowImporter={showImporter}
-        onOpenTalkText={showTalkText}
-      />
-    ) : (
-      <History
-        isOpen
-        onClose={() => window.close()}
-        onShowStudio={showStudio}
-        onShowImporter={showImporter}
-        planRequest={planRequest}
-        preworkRequest={preworkRequest}
+    <div className="lt tw-tools-shell">
+      <ToolsRail view={shown} onSelect={selectRail} badges={{ sessions: runsWithResponsesNow }} />
+      <div className="tw-tools-main">{body}</div>
+    </div>
+    {planSheet && (
+      <PlanRunSheet
+        talk={planSheet.talks[0]}
+        talks={planSheet.talks}
+        onClose={() => setPlanSheet(null)}
+        onSaved={() => { setPlanSheet(null); setPlanSaved((n) => n + 1) }}
       />
     )}
+    <ToolsPalette active={toolsKeysOn} />
     <Toasts />
   </>)
 }
@@ -435,7 +528,7 @@ function MainApp() {
   // ⌘` / Mission Control / the Window menu make it easy to pick the right window (esp. with ⌘N open).
   // Electron uses the page <title> for the window title, so setting document.title is enough here.
   useEffect(() => {
-    document.title = activeTalk ? `TalkWeaver Edit — ${activeTalk.title}` : 'TalkWeaver'
+    document.title = editWindowTitle(activeTalk?.title)
   }, [activeTalk])
   /** True when the window switched to `talk`; false when the switch was held (Stay here, or another window has it). */
   const selectTalk = useCallback(async (talk: TalkInfo | null): Promise<boolean> => {

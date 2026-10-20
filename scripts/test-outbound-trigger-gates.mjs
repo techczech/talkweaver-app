@@ -125,10 +125,12 @@ assert.match(
   /const presentPlanned[\s\S]*?unresolvedTriggerBlock\(source\)[\s\S]*?window\.tw\.talk\.present/,
   'History gates planned-Run full-talk presentation before its outbound call'
 )
-assert.match(
-  historySource,
-  /const publishRunHandout[\s\S]*?unresolvedTriggerBlock\(source\)[\s\S]*?window\.tw\.history\.publishRunHandout/,
-  'History gates the live Run-handout publish before its outbound call'
+// Work-files ticket 29: History publishes no Run handout (Publish lives in the Run checklist in
+// Sessions); the main-process 'run:publish-handout' case above is the gate every caller goes through.
+assert.equal(
+  /window\.tw\.history\.(publishRunHandout|unpublishRunHandout)/.test(historySource),
+  false,
+  'History has no Run-handout publish or unpublish call'
 )
 assert.match(
   pathwaysSource,

@@ -1,0 +1,132 @@
+/* Trace in the scene design (ADR-0039, 0.41 ticket 11: "TalkWeaver's trace design at the scene's larger text; scrolls by
+   whole turns, never truncates"). Values from docs/design/2026-10-16-slide-scene-formatting/after/18-trace.html (drawn at
+   1920 x 1080, written here in cqw = px / 19.2). Unmarked block: it sorts after every migrated block, so it wins where it
+   meets base.css, layouts/trace.css and skin/base.css.
+
+   The window. A dark panel (#0b0e13, 20px corners, a soft shadow) as wide as the content band, as tall as its turns and
+   never taller than the band under the title. The text is the scene's: mono 36px at line height 1.5. It is never shrunk to fit and nothing is cut:
+   the runtime (runtime/trace-window.js) sets the panel's scroll position by whole turns, so the newest turn is complete
+   and no turn shows half-way at the top. The vertical padding is a border in the panel colour: the scroll box ends
+   inside it, so a turn scrolled above the window never shows through the padding. On a slide the panel has no scrollbar (the drawing has
+   none) and scrolls by hand only when its turns do not all fit (the runtime marks it data-trace-overflow), so a turn
+   taller than the window, or the start of a long trace shown with no mode, is never out of reach. The handout keeps
+   its scroll box and thin scrollbar, as before, for a reader who scrolls by hand.
+
+   Screen only: print keeps the trace as it was before this design (ADR-0039 leaves handout and print alone).
+
+   The turns (TalkWeaver's terminal-agent look, layouts/simulation.css .sim-terminal-agent): a small route label in grey
+   capitals over each turn; the user's prompt in an outlined box led by a white ">"; a model's call with an orange dot
+   and its name in bold; a result in magenta under an elbow; the model's answer in teal with a teal dot; reasoning in
+   violet italic. A speaker that is not one of those roles keeps its own label colour (the speaker buckets of base.css)
+   over plain text. Under reveal the turns already shown stay at full strength (the drawing marks no newest turn). */
+
+@media screen {
+  .slide[data-title-layout] > .slide-content.layout-trace {
+    max-width: none;
+    width: 100%;
+    min-height: 0;
+  }
+  /* The band: the trace owns the content height under the title, as code and media do (layouts/trace.css under the plain
+     title; title-look.css and slide-foundations.css under a look). */
+  .slide[data-title-layout="top"] > .slide-content.layout-trace {
+    height: min(820px, 86cqh);
+    padding-bottom: max(0px, calc(59px - var(--slide-pad-y)));
+  }
+  .slide[data-title-layout="top"] > .slide-content.layout-trace > .slide-head { margin-bottom: 0 !important; }
+  .slide[data-title-layout="top"][data-title-look] > .slide-content.layout-trace {
+    height: calc(100cqh - var(--titlelook-top) - var(--titlelook-height) - var(--titlelook-clear) - var(--slide-pad-y)) !important;
+    padding-bottom: calc(var(--band-footer) + var(--band-air));
+  }
+
+  .slide .trace {
+    --trace-bg: #0b0e13;
+    position: relative;
+    box-sizing: border-box;
+    /* Sized to its content up to the band (ADR-0039: windows are sized to their content), centred in the band; a longer
+       trace is held at the band's height and scrolls. Turns still to come keep their space under reveal, so the window
+       does not change size as they arrive. */
+    flex: 0 1 auto;
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    margin: 0;
+    padding: 0 2.5cqw;
+    border: 1.7708cqw solid var(--trace-bg);
+    border-left-width: 0;
+    border-right-width: 0;
+    border-radius: 1.0417cqw;
+    background: var(--trace-bg);
+    box-shadow: 0 1.0417cqw 2.6042cqw #0004;
+    color: #d4dce6;
+    font: 400 1.875cqw/1.5 var(--mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+    letter-spacing: 0;
+    /* hidden, not auto, while the turns fit: the runtime still sets scrollTop, and a rounded scroll box leaves a hairline
+       seam at its lower edge on the scaled stage. auto when they do not all fit (data-trace-overflow), so nothing is out
+       of reach. The handout keeps auto (below). */
+    overflow-x: hidden;
+    overflow-y: hidden;
+    overflow-anchor: none;
+    scroll-behavior: auto;
+    scrollbar-width: none;
+  }
+  .slide .trace::-webkit-scrollbar { display: none; }
+  .slide .trace[data-trace-overflow] { overflow-y: auto; }
+  .share-shell .slide .trace { overflow-y: auto; scrollbar-width: thin; scrollbar-color: #3a4757 transparent; }
+  .share-shell .slide .trace::-webkit-scrollbar { display: block; width: 8px; }
+
+  .slide .trace .turn { margin: 0 0 1.3542cqw; }
+  .slide .trace .turn:last-child { margin-bottom: 0; }
+  .slide .trace .turn:not(.trace-speaker) .role { color: #7f8ea3; }
+  .slide .trace .role {
+    margin: 0;
+    font: 400 1.1458cqw/1.7708cqw var(--mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+  /* Any other speaker: the label keeps its speaker colour (base.css buckets), the text sits flush under it. */
+  .slide .trace .turn.trace-speaker .role { font-weight: 700; }
+  .slide .trace .turn.trace-speaker .body { padding-left: 0; }
+  .slide .trace .body {
+    position: relative;
+    padding-left: 1.6em;
+    font-size: 1em;
+    line-height: 1.5;
+    letter-spacing: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: normal;
+    color: #d4dce6;
+  }
+  /* The user's prompt: an outlined box led by a white ">" */
+  .slide .trace .trace-prompt .body {
+    display: flex;
+    gap: .6em;
+    padding: .5208cqw 1.1458cqw;
+    border: .1042cqw solid #5a6676;
+    border-radius: .7292cqw;
+    color: #7cc4f5;
+  }
+  .slide .trace .trace-prompt .body::before { content: ">"; flex: none; color: #fff; font-weight: 700; }
+  /* A model's call and its answer: a dot at the first line */
+  .slide .trace :is(.trace-call, .trace-answer) .body::before {
+    content: "";
+    position: absolute;
+    left: .35em;
+    top: .5em;
+    width: .5em;
+    height: .5em;
+    border-radius: 50%;
+    background: #fbbf64;
+  }
+  .slide .trace .trace-call .trace-fn { color: #fbbf64; font-weight: 700; }
+  .slide .trace .trace-answer .body { color: #5eead4; }
+  .slide .trace .trace-answer .body::before { background: #5eead4; }
+  /* A result: magenta under an elbow at its first line */
+  .slide .trace .trace-result .body { color: #f0abfc; }
+  .slide .trace .trace-result .body::before { content: "\23BF"; position: absolute; left: .35em; top: 0; color: #c78ccc; }
+  .slide .trace .trace-thinking .body { color: #c4b5fd; font-style: italic; }
+
+  /* Reveal: shown turns stay at full strength; only the turns still to come are hidden. */
+  .slide.mode-reveal .trace .turn.mode-el[data-mode-state="soft"] { opacity: 1; }
+}

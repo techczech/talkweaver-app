@@ -34,6 +34,7 @@ import Tree, { type TreeCallbacks } from './Tree'
 import Flyout from './Flyout'
 import { SortPopover, MoveMenu, VaultContextMenu, type VaultAction, type TalkAction, type FolderAction } from './menus'
 import ActionsHerePanel from '../ActionsHerePanel'
+import { talkTitleText } from '../../../../shared/talk-title-text.ts'
 import { actionRowsAt, paletteChordText, type ActionRow, type VaultState } from '../../../../shared/actions-here.ts'
 import { liveShortcutLabel } from '../../keymap/store'
 import { VaultBadge } from './VaultRows'
@@ -888,7 +889,7 @@ export default function TalkList({
                   {vaultById.get(vaultIdOfTalk(t, vaults) ?? '')
                     ? <span className="tl-recent-ficon"><VaultBadge vault={vaultById.get(vaultIdOfTalk(t, vaults) ?? '')!} size={14} /></span>
                     : <span className="tl-recent-ficon"><IcFile size={11.5} /></span>}
-                  <span className="tl-recent-name">{t.title}</span>
+                  <span className="tl-recent-name">{talkTitleText(t.title)}</span>
                   <span className="tl-recent-count">{talkMeta[t.slug]?.slideCount ?? '—'}</span>
                 </button>
               ))}

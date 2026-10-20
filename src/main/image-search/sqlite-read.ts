@@ -26,6 +26,14 @@ export function detectSqlite3(): string | null {
 }
 
 export class SqliteError extends Error {}
+/** The read ran out of time: sqlite3 was killed at timeoutMs, or gave up waiting for a writer's lock. */
+export class SqliteTimeoutError extends SqliteError {}
+
+/** Per read of a store another app writes (SlideWell's, the presentation archive's): the most we wait
+ *  for the owner's lock, and the hard limit after which sqlite3 is killed. The owners wait 4–5 s for a
+ *  lock themselves, so a read of ours can never make a write of theirs fail. */
+export const READ_BUSY_MS = 250
+export const READ_LIMIT_MS = 500
 
 // Run sqlite3 with the SQL script on stdin, no shell. Mirrors raycast runSqlite3.
 // timeoutMs is a hard limit: the process is killed (SIGKILL) when it runs out, and the OS drops
@@ -38,7 +46,9 @@ function runSqlite3(binary: string, args: string[], script: string, timeoutMs: n
       { timeout: timeoutMs, killSignal: 'SIGKILL', maxBuffer: 32 * 1024 * 1024 },
       (err, stdout, stderr) => {
         if (err) {
-          reject(new SqliteError((stderr || '').toString().trim() || err.message))
+          const said = (stderr || '').toString().trim()
+          const timedOut = err.killed === true || /database is locked|database is busy/i.test(said)
+          reject(new (timedOut ? SqliteTimeoutError : SqliteError)(said || err.message))
           return
         }
         resolve((stdout || '').toString())

@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { talkNamesTitleLook, withoutLaterSlideStamps } from './lib/slide-markup-identity.mjs'
 
 export const BASELINE_OUTLINES = [
   'docs/layout-sampler-outline.md',
@@ -47,7 +48,8 @@ export async function quoteSlideHashes(root, { compilerRoot = root } = {}) {
     for (const match of html.matchAll(/<section class="slide[^"]*" data-id="([^"]+)"[\s\S]*?<\/section>/g)) {
       if (!quoteIds.has(match[1])) continue
       // Asset references resolve to absolute paths under the folder the outline sits in: name the root, not the machine.
-      const section = match[0].split(root).join('<root>').split(encodeURI(root)).join('<root>').split(pathToFileURL(root).href).join('<root>')
+      // Stamps a later ticket added to every slide are left out (scripts/lib/slide-markup-identity.mjs).
+      const section = withoutLaterSlideStamps(match[0], { talkNamesTitleLook: talkNamesTitleLook(text) }).split(root).join('<root>').split(encodeURI(root)).join('<root>').split(pathToFileURL(root).href).join('<root>')
       out[`${file}#${match[1]}`] = createHash('sha256').update(section).digest('hex')
     }
   }

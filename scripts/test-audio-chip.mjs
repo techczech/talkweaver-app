@@ -156,18 +156,16 @@ await check('the phone text view names an untitled audio line by its file, as th
   assert.equal(audioChipTitle({ src: 'assets/Theme%20tune.mp3', title: '' }), untitled.title, 'one rule for both')
 })
 
-await check('a pre-work handout step drops the <audio> too', async () => {
-  const { buildShareHtml } = await import(lib('09-output-builders.mjs'))
+await check('a work-file step drops the <audio> too, keeping the chip as a label', async () => {
+  // Work-files ticket 16: the handout no longer carries pre-work steps; a step's slide reaches the
+  // participant work page through compileWorkFile, which strips the <audio> as the handout does.
+  const { stripAudioElements } = await import(lib('09-output-builders.mjs'))
   const model = await compile(['### Step', '', '![Clip](assets/small.mp3)'])
   const stepHtml = slideHtml(model)
   assert.match(stepHtml, /<audio /)
-  const page = buildShareHtml({
-    title: 'T', slides: [{ html: '<section class="slide" data-id="a"><div class="slide-content"><h1>A</h1></div></section>', notes: '' }], styles: '', includeNotes: false, slug: 't',
-    prework: { preworkId: 'p', workerBaseUrl: 'https://w.example', form: { fields: [] }, steps: [{ html: stepHtml }] }
-  })
-  const template = page.match(/<template id="preworkSteps">([\s\S]*?)<\/template>/)?.[1] ?? ''
-  assert.match(template, /class="slide-audio"/, 'the chip is kept as a label')
-  assert.doesNotMatch(template, /<audio|data:audio/)
+  const stripped = stripAudioElements(stepHtml)
+  assert.match(stripped, /class="slide-audio"/, 'the chip is kept as a label')
+  assert.doesNotMatch(stripped, /<audio|data:audio/)
 })
 
 await check('the phone text view names an audio file as audio, not as a figure', () => {

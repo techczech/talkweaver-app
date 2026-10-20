@@ -21,9 +21,14 @@ The talks appear in the Talks panel. TalkWeaver writes its own small settings fi
 - `link-checks/` shows web links, an action button that opens a page kept in the talk folder, a board and My Notes.
 - `one-rendering-model/` shows one layout rule per slide; the speaker notes name the rule.
 - `play-on-next/` shows `{play-on-next}`, where a video or sound starts on a press of Next.
-- `pre-work-workshop/` shows pre-work with all five step kinds, a board filled from pre-work answers, results slides, a custom reaction set and a keep/change/try board.
+- `pre-work-workshop/` shows pre-work with all five step kinds, kept in a work file and named by the talk, a post-work survey, a board filled from pre-work answers, results slides, a custom reaction set and a keep/change/try board.
 - `step-through-images/` shows the talk-level `image_steps` setting, where Next enlarges each image in turn with its label.
 - `testing-live-polls/` is a bare outline for trying live polls.
+
+## Work files
+
+- `Work files/pre-work-workshop-intake.md` holds the five pre-work steps of the pre-work workshop. The talk names it with `prework:`.
+- `Work files/pre-work-workshop-after.md` is a two-question survey about what was learnt, made from the "Survey what was learnt" starting point. The talk names it with `postwork:`.
 
 ## Notes
 

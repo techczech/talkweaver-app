@@ -18,22 +18,26 @@
 //     discarded audio to the Trash);
 //   • nothing is dropped at finalise: chunks the renderer still holds (`tail`) are appended to
 //     their segment file — a segment main never managed to open gets its file then — and a
-//     retried finalise resumes where the last one stopped, so no byte is written twice.
+//     retried finalise resumes where the last one stopped, so no byte is written twice;
+//   • only its own files: the stream writes only to segment files it created itself (exclusive
+//     create, remembered by inode). A segment whose name is held by another file gets a fresh
+//     replacement file (`.seg-<n>.r<k>.webm`) named in the marker; the other file is never opened.
 // No size cap: a chunk is whatever MediaRecorder delivered (~1 s of Opus, a few KB) and the tail
 // is what one recording could not hand over. The stream channels are reached only from the
 // recording preload of a present window TalkWeaver opened (one owner per session, checked here).
 
-import { closeSync, constants, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'fs'
-import { join, resolve } from 'path'
+import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync, writeSync } from 'fs'
+import { basename, join, resolve } from 'path'
 import { isSafeRunId } from './runs.ts'
 import { readbackSlideTimeIndex } from './run-ink-readback.ts'
-import { localSegmentPath, streamMarkerPath } from './recording-paths.ts'
+import { SEGMENT_ALT_MAX, localSegmentAltPath, localSegmentPath, segmentFilePath, sessionIdTaken, streamMarkerPath } from './recording-paths.ts'
 import type { RunAudioGap, RunAudioSegment } from '../shared/run-audio.ts'
 
 export type StreamError =
   | 'unsafe-session-id'
   | 'unsafe-path'
   | 'already-open'
+  | 'id-taken'
   | 'not-open'
   | 'not-owner'
   | 'bad-segment'
@@ -51,8 +55,17 @@ export interface StreamManifest {
   mimeType: string
   timerTargetMin: number
   pathwayId: string | null
-  /** Segment times on the recording clock; endMs is null while the segment is open. */
-  segments: Array<{ index: number; startMs: number; endMs: number | null }>
+  /**
+   * The vault the recording's Run goes to (the presented talk's): a root, or null for no vault. Absent on a marker
+   * written before 0.41 (recovery then uses the current vault, as it did).
+   */
+  vaultRoot?: string | null
+  /**
+   * Segment times on the recording clock; endMs is null while the segment is open. `file` names the
+   * file the stream created for the segment (its own name or a replacement); absent on a marker
+   * written before 0.41, which means the segment's own name.
+   */
+  segments: Array<{ index: number; startMs: number; endMs: number | null; file?: string }>
   gaps: RunAudioGap[]
   /** The recorder's raw slide marks as of the last checkpoint. */
   rawMarks: unknown[]
@@ -69,6 +82,7 @@ export interface StreamOpenInput {
   mimeType?: string
   timerTargetMin?: number
   pathwayId?: string | null
+  vaultRoot?: string | null
 }
 
 export interface StreamCheckpoint {
@@ -116,9 +130,17 @@ export interface RecordingStreams {
    * the next one. Null unless `owner` holds the session. The export skips exactly that much.
    */
   tailProgress(owner: number, sessionId: unknown): { done: number; offset: number } | null
+  /**
+   * The segment files this stream created that are still the files it created, in segment order.
+   * Null unless `owner` holds the session. The export reads these, never a file found by name.
+   */
+  ownedSegments(owner: number, sessionId: unknown): Array<{ index: number; path: string }> | null
   /** Markers on disk with no open session — recordings that never reached Stop. */
   listInterrupted(): InterruptedStream[]
 }
+
+/** A segment file the stream created: its name in the recordings folder and its identity. */
+interface OwnedFile { file: string; dev: number; ino: number }
 
 interface Entry {
   owner: number
@@ -130,6 +152,8 @@ interface Entry {
   /** Tail progress across finalise retries: chunks fully written, bytes of the next one written. */
   tailDone: number
   tailOffset: number
+  /** Segment index → the file this stream created for it. Nothing else is ever written to. */
+  owned: Map<number, OwnedFile>
 }
 
 const finite = (value: unknown, fallback = 0): number => {
@@ -149,12 +173,12 @@ function normaliseGaps(value: unknown): RunAudioGap[] {
 }
 
 /** Segment files with their sizes and times; the open last segment ends at `recordingMs`. */
-export function segmentsFromManifest(manifest: StreamManifest, sizeOf: (index: number) => number | null): RunAudioSegment[] {
+export function segmentsFromManifest(manifest: StreamManifest, sizeOf: (index: number, file: string) => number | null): RunAudioSegment[] {
   const out: RunAudioSegment[] = []
   for (const seg of [...manifest.segments].sort((a, b) => a.index - b.index)) {
-    const bytes = sizeOf(seg.index)
+    const file = seg.file ?? (seg.index === 0 ? `${manifest.sessionId}.webm` : `${manifest.sessionId}.seg-${seg.index + 1}.webm`)
+    const bytes = sizeOf(seg.index, file)
     if (bytes === null) continue
-    const file = seg.index === 0 ? `${manifest.sessionId}.webm` : `${manifest.sessionId}.seg-${seg.index + 1}.webm`
     const startMs = Math.round(finite(seg.startMs))
     const endMs = Math.round(Math.max(startMs, seg.endMs === null ? finite(manifest.recordingMs) : finite(seg.endMs)))
     out.push({ file, bytes, startMs, endMs })
@@ -213,8 +237,8 @@ export function createRecordingStreams(opts: { userDataDir: () => string; now?: 
     if (data.gaps !== undefined) manifest.gaps = normaliseGaps(data.gaps)
   }
 
-  function sizeOf(sessionId: string, index: number): number | null {
-    const target = localSegmentPath(opts.userDataDir(), sessionId, index)
+  function sizeOf(sessionId: string, index: number, file?: string): number | null {
+    const target = segmentFilePath(opts.userDataDir(), sessionId, index, file)
     if (!target.ok) return null
     try {
       const st = lstatSync(target.path)
@@ -224,9 +248,82 @@ export function createRecordingStreams(opts: { userDataDir: () => string; now?: 
     }
   }
 
-  function finalised(manifest: StreamManifest): FinalisedStream {
-    const segments = segmentsFromManifest(manifest, (index) => sizeOf(manifest.sessionId, index))
+  /**
+   * The segments and their sizes. With the open session's `entry`, only files the stream created and
+   * that are still those files count (one replaced since is left out, never named in the Run).
+   */
+  function finalised(manifest: StreamManifest, entry?: Entry): FinalisedStream {
+    const segments = segmentsFromManifest(manifest, (index, file) => {
+      if (!entry) return sizeOf(manifest.sessionId, index, file)
+      const own = entry.owned.get(index)
+      const path = own && own.file === file ? stillOwned(manifest.sessionId, index, own) : null
+      return path ? sizeOf(manifest.sessionId, index, file) : null
+    })
     return { manifest, segments, bytes: segments.reduce((sum, seg) => sum + seg.bytes, 0) }
+  }
+
+  const NOFOLLOW = constants.O_NOFOLLOW ?? 0
+
+  /** The path of a file the stream created, if it is still that file (same inode); else null. */
+  function stillOwned(sessionId: string, index: number, own: OwnedFile): string | null {
+    const target = segmentFilePath(opts.userDataDir(), sessionId, index, own.file)
+    if (!target.ok) return null
+    try {
+      const st = lstatSync(target.path)
+      return st.isFile() && st.dev === own.dev && st.ino === own.ino ? target.path : null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Open a segment file the stream created, for appending. Null when the stream never created one
+   * for this index, or the file there now is not the one it created (gone, replaced, a link).
+   */
+  function openOwned(entry: Entry, index: number): number | null {
+    const own = entry.owned.get(index)
+    if (!own) return null
+    const target = segmentFilePath(opts.userDataDir(), entry.manifest.sessionId, index, own.file)
+    if (!target.ok) { entry.owned.delete(index); return null }
+    let fd: number
+    try {
+      fd = openSync(target.path, constants.O_WRONLY | constants.O_APPEND | NOFOLLOW)
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code
+      if (code === 'ENOENT' || code === 'ELOOP' || code === 'EMLINK') { entry.owned.delete(index); return null }
+      throw e
+    }
+    const st = fstatSync(fd)
+    if (!st.isFile() || st.dev !== own.dev || st.ino !== own.ino) {
+      closeSync(fd)
+      entry.owned.delete(index)
+      return null
+    }
+    return fd
+  }
+
+  /**
+   * Create a fresh file for a segment, exclusively: its own name if free, else the first free
+   * replacement name. Never opens a file that is already there. Throws when no name is free.
+   */
+  function createSegmentFile(sessionId: string, index: number): { fd: number; own: OwnedFile } {
+    for (let k = 0; k <= SEGMENT_ALT_MAX; k++) {
+      const target = k === 0 ? localSegmentPath(opts.userDataDir(), sessionId, index) : localSegmentAltPath(opts.userDataDir(), sessionId, index, k)
+      if (!target.ok) throw new Error(target.error)
+      let fd: number
+      try {
+        fd = openSync(target.path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_APPEND | NOFOLLOW, 0o644)
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'EEXIST') continue
+        throw e
+      }
+      const st = fstatSync(fd)
+      if (!st.isFile()) { closeSync(fd); throw new Error('not a file') }
+      return { fd, own: { file: basename(target.path), dev: st.dev, ino: st.ino } }
+    }
+    const err = new Error(`segment ${index}: every file name is taken`) as NodeJS.ErrnoException
+    err.code = 'EEXIST'
+    throw err
   }
 
   const api: RecordingStreams = {
@@ -237,6 +334,15 @@ export function createRecordingStreams(opts: { userDataDir: () => string; now?: 
       const marker = streamMarkerPath(opts.userDataDir(), sessionId)
       if (!marker.ok) return { ok: false, error: marker.error === 'unsafe-session-id' ? 'unsafe-session-id' : 'unsafe-path' }
       if (!recordingsDirOk()) return { ok: false, error: 'unsafe-path' }
+      // A new recording never takes an id another one uses: any local file named for it (audio,
+      // segment, marker, no-vault Run) refuses the open, and the marker is reserved with an
+      // exclusive create, so the caller tries a fresh id instead.
+      if (sessionIdTaken(null, opts.userDataDir(), input.talkSlug, sessionId)) return { ok: false, error: 'id-taken' }
+      try {
+        closeSync(openSync(marker.path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o644))
+      } catch (e) {
+        return (e as NodeJS.ErrnoException).code === 'EEXIST' ? { ok: false, error: 'id-taken' } : { ok: false, error: 'write-failed', detail: String(e) }
+      }
       const manifest: StreamManifest = {
         version: 1,
         sessionId,
@@ -246,6 +352,7 @@ export function createRecordingStreams(opts: { userDataDir: () => string; now?: 
         mimeType: String(input.mimeType ?? 'audio/webm'),
         timerTargetMin: finite(input.timerTargetMin),
         pathwayId: typeof input.pathwayId === 'string' ? input.pathwayId : null,
+        ...(input.vaultRoot === null || typeof input.vaultRoot === 'string' ? { vaultRoot: input.vaultRoot } : {}),
         segments: [],
         gaps: [],
         rawMarks: [],
@@ -255,9 +362,10 @@ export function createRecordingStreams(opts: { userDataDir: () => string; now?: 
       try {
         writeMarker(manifest)
       } catch (e) {
+        try { rmSync(marker.path, { force: true }) } catch { /* the empty reservation is ignored by recovery */ }
         return { ok: false, error: 'write-failed', detail: String(e) }
       }
-      entries.set(sessionId, { owner, manifest, fd: null, fdIndex: -1, lastSync: now(), finalised: false, tailDone: 0, tailOffset: 0 })
+      entries.set(sessionId, { owner, manifest, fd: null, fdIndex: -1, lastSync: now(), finalised: false, tailDone: 0, tailOffset: 0, owned: new Map() })
       return { ok: true, sessionId }
     },
 
@@ -283,18 +391,23 @@ export function createRecordingStreams(opts: { userDataDir: () => string; now?: 
       const start = Math.round(finite(startMs))
       if (prev && prev.endMs === null) prev.endMs = start
       let fd: number
+      let own: OwnedFile
       try {
-        // O_NOFOLLOW: a link planted at the segment path is refused rather than followed.
-        const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | (constants.O_NOFOLLOW ?? 0)
+        // O_NOFOLLOW: a link planted at the segment path is refused rather than followed. O_EXCL: a
+        // segment opens once, so a file already there belongs to something else and is never appended to.
+        const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_APPEND | NOFOLLOW
         fd = openSync(target.path, flags, 0o644)
-        if (!statSync(target.path).isFile()) { closeSync(fd); return { ok: false, error: 'unsafe-path' } }
+        const st = fstatSync(fd)
+        if (!st.isFile()) { closeSync(fd); return { ok: false, error: 'unsafe-path' } }
+        own = { file: basename(target.path), dev: st.dev, ino: st.ino }
       } catch (e) {
         return { ok: false, error: 'unsafe-path', detail: String(e) }
       }
       entry.fd = fd
       entry.fdIndex = index
       entry.lastSync = now()
-      entry.manifest.segments.push({ index, startMs: start, endMs: null })
+      entry.owned.set(index, own)
+      entry.manifest.segments.push({ index, startMs: start, endMs: null, file: own.file })
       if (index === 0 && typeof startedAt === 'string' && Number.isFinite(Date.parse(startedAt))) entry.manifest.startedAt = new Date(Date.parse(startedAt)).toISOString()
       try { writeMarker(entry.manifest) } catch { /* the audio file is what matters; the next checkpoint retries */ }
       return { ok: true, path: target.path }
@@ -352,8 +465,11 @@ export function createRecordingStreams(opts: { userDataDir: () => string; now?: 
       syncAndClose(entry)
       // Chunks the renderer still holds go to the end of their segment file, in the order given.
       // A segment main never opened is added now (its file created, its times from the bridge).
+      // Only a file this stream created is appended to: a segment whose name another file holds
+      // gets a fresh replacement file, named in the manifest; the other file is never opened.
       // Progress is kept per chunk and per byte, so a retry after a failure resumes: never a
-      // duplicate, never a gap. Any failure is an error — the save must not report success.
+      // duplicate, never a gap. Any failure is an error — the save must not report success, and
+      // the renderer keeps the chunks (Retry, Export).
       const chunks = tail ?? []
       for (let k = entry.tailDone; k < chunks.length; k++) {
         const chunk = chunks[k]
@@ -362,16 +478,26 @@ export function createRecordingStreams(opts: { userDataDir: () => string; now?: 
         }
         const target = localSegmentPath(opts.userDataDir(), entry.manifest.sessionId, chunk.index)
         if (!target.ok || !recordingsDirOk()) return { ok: false, error: 'unsafe-path' }
-        if (!entry.manifest.segments.some((s) => s.index === chunk.index)) {
-          const times = data?.segments?.find((s) => s.index === chunk.index)
-          const startMs = Math.round(finite(times?.startMs))
-          entry.manifest.segments.push({ index: chunk.index, startMs, endMs: times ? Math.max(startMs, Math.round(finite(times.endMs))) : null })
-          entry.manifest.segments.sort((a, b) => a.index - b.index)
-        }
         let fd: number | null = null
         try {
-          fd = openSync(target.path, constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | (constants.O_NOFOLLOW ?? 0), 0o644)
-          if (!statSync(target.path).isFile()) return { ok: false, error: 'unsafe-path' }
+          fd = openOwned(entry, chunk.index)
+          if (fd === null) {
+            // Nothing of this chunk is in the new file yet, whatever went to a file no longer ours.
+            const made = createSegmentFile(entry.manifest.sessionId, chunk.index)
+            fd = made.fd
+            entry.owned.set(chunk.index, made.own)
+            entry.tailOffset = 0
+            const seg = entry.manifest.segments.find((s) => s.index === chunk.index)
+            if (seg) seg.file = made.own.file
+            else {
+              const times = data?.segments?.find((s) => s.index === chunk.index)
+              const startMs = Math.round(finite(times?.startMs))
+              entry.manifest.segments.push({ index: chunk.index, startMs, endMs: times ? Math.max(startMs, Math.round(finite(times.endMs))) : null, file: made.own.file })
+              entry.manifest.segments.sort((a, b) => a.index - b.index)
+            }
+            // The marker names the new file at once, so a crash before the save still recovers it.
+            try { writeMarker(entry.manifest) } catch { /* finalise writes it again at the end */ }
+          }
           while (entry.tailOffset < chunk.bytes.byteLength) {
             entry.tailOffset += writeSync(fd, chunk.bytes, entry.tailOffset, chunk.bytes.byteLength - entry.tailOffset)
           }
@@ -392,7 +518,7 @@ export function createRecordingStreams(opts: { userDataDir: () => string; now?: 
       })
       entry.finalised = true
       try { writeMarker(entry.manifest) } catch { /* the Run write that follows is what counts */ }
-      return { ok: true, ...finalised(entry.manifest) }
+      return { ok: true, ...finalised(entry.manifest, entry) }
     },
 
     complete(sessionId) {
@@ -411,10 +537,11 @@ export function createRecordingStreams(opts: { userDataDir: () => string; now?: 
       if (!got.ok) return got
       const entry = got.entry
       syncAndClose(entry)
+      // Only files this stream created and that are still those files go to the Trash.
       const files: string[] = []
-      for (const seg of entry.manifest.segments) {
-        const target = localSegmentPath(opts.userDataDir(), entry.manifest.sessionId, seg.index)
-        if (target.ok && sizeOf(entry.manifest.sessionId, seg.index) !== null) files.push(target.path)
+      for (const [index, own] of [...entry.owned].sort((a, b) => a[0] - b[0])) {
+        const path = stillOwned(entry.manifest.sessionId, index, own)
+        if (path) files.push(path)
       }
       api.complete(entry.manifest.sessionId)
       return { ok: true, files }
@@ -434,6 +561,16 @@ export function createRecordingStreams(opts: { userDataDir: () => string; now?: 
     tailProgress(owner, sessionId) {
       const got = owned(owner, sessionId)
       return got.ok ? { done: got.entry.tailDone, offset: got.entry.tailOffset } : null
+    },
+
+    ownedSegments(owner, sessionId) {
+      const got = owned(owner, sessionId)
+      if (!got.ok) return null
+      const entry = got.entry
+      return [...entry.owned].sort((a, b) => a[0] - b[0]).flatMap(([index, own]) => {
+        const path = stillOwned(entry.manifest.sessionId, index, own)
+        return path ? [{ index, path }] : []
+      })
     },
 
     isOpen(sessionId) {
@@ -465,10 +602,14 @@ export function createRecordingStreams(opts: { userDataDir: () => string; now?: 
             mimeType: String(raw.mimeType ?? 'audio/webm'),
             timerTargetMin: finite(raw.timerTargetMin),
             pathwayId: typeof raw.pathwayId === 'string' ? raw.pathwayId : null,
+            ...(raw.vaultRoot === null || typeof raw.vaultRoot === 'string' ? { vaultRoot: raw.vaultRoot } : {}),
             segments: Array.isArray(raw.segments)
-              ? raw.segments.flatMap((s) => Number.isInteger(s?.index) && s.index >= 0
-                ? [{ index: s.index, startMs: finite(s.startMs), endMs: s.endMs === null || s.endMs === undefined ? null : finite(s.endMs) }]
-                : [])
+              ? raw.segments.flatMap((s) => {
+                if (!Number.isInteger(s?.index) || s.index < 0) return []
+                // A named file must be the segment's own name or one of its replacement names.
+                if (s.file !== undefined && !segmentFilePath(opts.userDataDir(), sessionId, s.index, s.file).ok) return []
+                return [{ index: s.index, startMs: finite(s.startMs), endMs: s.endMs === null || s.endMs === undefined ? null : finite(s.endMs), ...(s.file !== undefined ? { file: s.file as string } : {}) }]
+              })
               : [],
             gaps: normaliseGaps(raw.gaps),
             rawMarks: Array.isArray(raw.rawMarks) ? raw.rawMarks : [],

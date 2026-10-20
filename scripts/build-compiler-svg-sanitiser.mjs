@@ -34,6 +34,15 @@ await build({
       if (typeof previousWindow === 'undefined') delete globalThis.window
       else globalThis.window = previousWindow
 
+      // Work-files ticket 05: a work-file step's HTML before it is published (src/shared/work-step-html.ts).
+      // Same jsdom window, its own DOMPurify instance; the main process loads it from here because
+      // jsdom is not part of the app's own bundle.
+      const { createStepHtmlSanitiser } = await import('./src/shared/work-step-html.ts')
+      const sanitiseStep = createStepHtmlSanitiser(svgSanitiserDom.window)
+      export function sanitiseWorkStepHtmlForCompiler(html) {
+        return sanitiseStep(html)
+      }
+
       export function sanitiseSvgForCompiler(source) {
         const previousDomParser = globalThis.DOMParser
         globalThis.DOMParser = svgSanitiserDom.window.DOMParser

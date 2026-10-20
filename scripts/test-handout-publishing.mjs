@@ -13,12 +13,20 @@
 //  6. ROW STATE FROM A REFUSED PUBLISH: the row, the next check, a publish that goes up, a new token;
 //  7. order and time limits: two publishes, publish then unpublish, a step that never answers;
 //  8. the loopback rule (D8) and the app's test mode;
-//  9. the live service's own set-up failures, sorted, with Details cleaned.
+//  9. the live service's own set-up failures, sorted, with Details cleaned;
+// 10. unpublishing a Run (work-files ticket 17): every page "not available", other pages untouched, the
+//     order after a publish, a refused withdraw, a Run with its handout only, links never followed; round 3:
+//     the folder decided from the Run's own facts, one sent set, no "publish again" advice, the recorded folder reused.
+// 11. unpublishing a talk handout (work-files ticket 22): only the talk's own folder leaves the site, Run
+//     handouts byte for byte as they were, handout_url cleared through the front-matter editor only once the
+//     site is up; refused when the folder is not this talk's alone or the site's copy is missing; never a link followed;
+//     review round 1: the folder by its name (a folder without a home page removed, a link or file refused), the
+//     short id kept until the link is cleared so a failed upload or a refused link clear can be finished by retrying.
 import { singleKeyPort } from './lib/live-worker-double.mjs'
 import { strict as assert } from 'node:assert'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, lstatSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative, sep } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   CLOUDFLARE_API_BASE, DEPLOY_SUPERSEDED_ERROR, PUBLISH_REFUSED_DETAIL, PUBLISH_SUPERSEDED_ERROR, SITE_FOUND_DETAIL, TOKEN_REMOVED, createCloudflareConnection,
@@ -38,6 +46,18 @@ import {
   NOT_CONNECTED_TITLE, OPEN_SETTINGS, PUBLISHED_WITHOUT_LIVE, SAVE_AS_FILE, publishNotReady, publishedWithoutLiveText,
 } from '../src/shared/publish-status.ts'
 import { REPLY_TEXT_MARK, createFakeCloudflare, fakeCloudflareFetch } from './lib/cloudflare-api-stub.mjs'
+import { TALK_FOLDER_UNCLEAR, TALK_NAME_SHARED, TALK_NOT_FOUND, TALK_UNPUBLISH_CLAIMS_UNREAD, talkByOutline, TALK_UNPUBLISH_FOLDER_CHANGED, TALK_UNPUBLISH_NOT_A_FOLDER, TALK_UNPUBLISH_SITE_MISSING, folderContained, siteEntry, talkSiteFolder, talkUnpublishJob } from '../src/main/talk-unpublish.ts'
+import { editFrontmatterText } from '../src/shared/frontmatter-editor.ts'
+import { collectPublishedPages, openVaults, siteClaims } from '../src/main/published-pages.ts'
+import { TALKS_UNREADABLE, publishedPages } from '../src/shared/published-pages.ts'
+import { createVaultAvailability, nodeAvailabilityProbe } from '../src/main/vault-availability.ts'
+import { serviceFor } from '../src/main/vault-view.ts'
+import { readHandoutUrl } from '../src/main/publishing-logic.ts'
+import { RUN_FOLDER_UNCLEAR, UNPUBLISH_FOLDER_MISSING, UNPUBLISH_SITE_MISSING, replaceRunPages, runPublishFolder, runSiteFolder, runUnpublishJob, sentPhases } from '../src/main/run-unpublish.ts'
+import { normaliseRun, runHandoutSlug, setRunHandoutUrl, stampRunWork } from '../src/main/runs.ts'
+import { runChecklist } from '../src/shared/run-checklist.ts'
+import { workKeyMissing, workOwnerUnknown } from '../src/shared/run-work.ts'
+import { buildNotAvailablePage } from '../compiler/scripts/lib/work-page.mjs'
 import { memorySecrets } from './lib/memory-secrets.mjs'
 import { workerDistFiles } from './lib/worker-dist.mjs'
 import { readSource } from './lib/read-source.mjs'
@@ -202,7 +222,7 @@ async function connected(overrides = {}, token = TOKEN) {
 
 // ── 1. The entry points ─────────────────────────────────────────────────────────────────────────
 {
-  assert.deepEqual(ENTRIES, ['talk', 'run', 'run-unpublish', 'live-short-link'])
+  assert.deepEqual(ENTRIES, ['talk', 'run', 'run-unpublish', 'talk-unpublish', 'live-short-link'])
   assert.deepEqual(WITH_LIVE, ['talk', 'run'], 'the two that write pages may carry the live address')
   // (Read with LF line endings on every platform: a Windows checkout has CRLF.)
   const main = readSource(join(repo, 'src/main/index.ts'))
@@ -211,6 +231,7 @@ async function connected(overrides = {}, token = TOKEN) {
     talk: between("ipcMain.handle('talk:publish-handout'", '\n})\n'),
     run: between("ipcMain.handle('run:publish-handout'", '\n})\n'),
     'run-unpublish': between("ipcMain.handle('run:unpublish-handout'", '\n})\n'),
+    'talk-unpublish': between("ipcMain.handle('published:unpublish-talk'", '\n})\n'),
     'live-short-link': between('async function ensureLiveJoinUrl(', '\n}\n'),
   }
   for (const entry of ENTRIES) {
@@ -232,7 +253,7 @@ async function connected(overrides = {}, token = TOKEN) {
   for (const file of ['src/main/setup-cli.ts', 'src/main/talk-writer.ts']) {
     if (existsSync(join(repo, file))) assert.ok(!readSource(join(repo, file)).includes('handoutPublishing'), `${file} does not publish`)
   }
-  console.log('PASS 1: four entry points, each through the one sequence; the main process uploads the site nowhere else')
+  console.log('PASS 1: five entry points, each through the one sequence; the main process uploads the site nowhere else')
 }
 
 // ── 2. PUBLISHED OUTPUT ─────────────────────────────────────────────────────────────────────────
@@ -280,6 +301,8 @@ const NOT_AN_ADDRESS = ['', '   ', 'localhost', 'localhost:3000/x', '127.0.0.1:8
   const builders = await import('../compiler/scripts/lib/09-output-builders.mjs')
   const { buildShareHtml } = builders
   const { buildHandoutHomePageHtml } = await import('../compiler/scripts/lib/handout-home-page.mjs')
+  const { buildWorkPage } = await import('../compiler/scripts/lib/work-page.mjs')
+  const WORK_FORM = { steps: [{ id: 'q1', kind: 'text', prompt: 'What do you hope to learn?' }] }
   const { buildVenuePageHtml, buildUnavailableVenuePageHtml } = await import('../compiler/scripts/lib/venue-page.mjs')
   assert.equal(builders.APP_CONFIG_MARK, APP_CONFIG_MARK, 'the compiler marks its configuration lines with the mark the publisher looks for')
   const outlinePath = join(scratch, 'probe-outline.md')
@@ -290,8 +313,8 @@ const NOT_AN_ADDRESS = ['', '   ', 'localhost', 'localhost:3000/x', '127.0.0.1:8
   const compiled = extractSlides(model.fullHtml)
   // A slide whose HTML holds the author's raw script, as raw HTML in a talk reaches the builders.
   const slides = [...compiled, { id: 'raw', html: `<section class="slide" data-id="raw"><div class="slide-content">${AUTHOR_RAW.join('\n')}</div></section>`, notes: '' }]
-  const pagesFor = (workerBaseUrl, link = 'https://talks.test/probe/', prework = null) => ({
-    handout: buildShareHtml({ title: 'Probe', slides, styles, includeNotes: false, slug: 'probe', workerBaseUrl, liveTalkSlug: 'probe', prework }),
+  const pagesFor = (workerBaseUrl, link = 'https://talks.test/probe/') => ({
+    handout: buildShareHtml({ title: 'Probe', slides, styles, includeNotes: false, slug: 'probe', workerBaseUrl, liveTalkSlug: 'probe' }),
     home: buildHandoutHomePageHtml({ title: 'Probe', slides, styles, slug: 'probe', workerBaseUrl, liveTalkSlug: 'probe', lazyAssets: true, home: { url: link, qr: '', downloadHref: 'probe-download.html' } }),
     venue: buildVenuePageHtml({ title: 'Probe', slides, styles, slug: 'probe', workerBaseUrl, liveTalkSlug: 'probe', qr: '', handoutUrl: link }),
     unavailable: buildUnavailableVenuePageHtml(),
@@ -312,6 +335,13 @@ const NOT_AN_ADDRESS = ['', '   ', 'localhost', 'localhost:3000/x', '127.0.0.1:8
     assert.ok(/^\s*const VENUE_JOIN = \{"shortUrl":"http:\/\/localhost:8787\/x"/m.test(pages.handout) && /^\s*const PREWORK_CONFIG = \{"preworkId":"p","workerBaseUrl":"http:\/\/localhost:8787"\};$/m.test(pages.handout), 'and they do stand in the handout on lines of their own')
   }
   assert.ok(pagesFor(LIVE).handout.includes(`const LIVE_CONFIG = {"workerBaseUrl":"${LIVE}","talkSlug":"probe"}; ${APP_CONFIG_MARK}`), 'with the live service ready the page carries its address, as now')
+  // Work-files ticket 16: the Run handout embeds no form; its pre-work and post-work are pages of their own.
+  assert.ok(!/startPreworkForm|prework-form|data-prework-host/.test(pagesFor(LIVE).handout), 'the handout embeds no pre-work form')
+  for (const [phase, handoutUrl] of [['pre', 'https://talks.test/probe/'], ['post', '../']]) {
+    const page = buildWorkPage({ phase, preworkId: `${phase}0001`, workerBaseUrl: LIVE, form: WORK_FORM, steps: [], handoutUrl }).html
+    assert.equal((page.match(/^startWorkPage\(window, .*\);$/gm) ?? []).length, 1, `the ${phase}-work page holds exactly one start line`)
+    assert.equal(appWrittenLoopback(`probe/${phase}-work/index.html`, page), null, `a ${phase}-work page with the Worker elsewhere is not refused`)
+  }
   assert.ok(pagesFor('').handout.includes(`const LIVE_CONFIG = null; ${APP_CONFIG_MARK}`), 'and with none it carries no live address at all')
   // (b) The same real pages built with an address on this computer where the APP writes one: caught, in every spelling.
   for (const local of ['http://127.0.0.1:8787', 'http://localhost:8787', 'http://127.1:8787', 'http://2130706433:8787', 'http://0x7f000001:8787', 'http://[::1]:8787']) {
@@ -319,10 +349,17 @@ const NOT_AN_ADDRESS = ['', '   ', 'localhost', 'localhost:3000/x', '127.0.0.1:8
       if (name !== 'unavailable') assert.ok(appWrittenLoopback(`probe/${name}.html`, html)?.startsWith('the live address'), `a real ${name} page built with the live address ${local} IS caught`)
     }
     assert.ok(appWrittenLoopback('probe/p/index.html', pagesFor(LIVE, `${local}/probe/`).venue)?.startsWith("the venue screen's join link"), `a real venue page whose join link is ${local} is caught`)
-    const withPrework = pagesFor(LIVE, undefined, { preworkId: 'p1', workerBaseUrl: local, form: { steps: [] }, steps: [] }).handout
-    assert.equal(marked(withPrework, 'PREWORK_CONFIG'), 1)
-    assert.ok(appWrittenLoopback('probe/probe.html', withPrework)?.startsWith('the pre-work address'), `a real handout whose pre-work address is ${local} is caught`)
+    // A Run's pre-work or post-work page (work-files ticket 16) whose Worker address or handout link is on this computer.
+    const workPage = buildWorkPage({ phase: 'pre', preworkId: 'pre0001', workerBaseUrl: local, form: WORK_FORM, steps: [], handoutUrl: 'https://talks.test/probe/' }).html
+    assert.ok(appWrittenLoopback('probe/pre-work/index.html', workPage)?.startsWith("the work page's live address"), `a real work page whose pre-work address is ${local} is caught`)
+    const workBack = buildWorkPage({ phase: 'post', preworkId: 'post0001', workerBaseUrl: LIVE, form: WORK_FORM, steps: [], handoutUrl: `${local}/probe/` }).html
+    assert.ok(appWrittenLoopback('probe/post-work/index.html', workBack)?.startsWith("the work page's handout link"), `a real work page whose handout link is ${local} is caught`)
   }
+  // A page with TWO startWorkPage lines: every line is checked, so a second one on this computer is refused even when the first is fine.
+  const fineLine = 'startWorkPage(window, {"workerBaseUrl":"https://worker.example.com","handoutUrl":"https://talks.test/probe/"});'
+  const localLine = 'startWorkPage(window, {"workerBaseUrl":"http://127.0.0.1:8787","handoutUrl":"https://talks.test/probe/"});'
+  assert.ok(appWrittenLoopback('probe/pre-work/index.html', `<script>\n${fineLine}\n${localLine}\n</script>`)?.startsWith("the work page's live address"), 'a work page whose second start line has its Worker on this computer is refused')
+  assert.equal(appWrittenLoopback('probe/pre-work/index.html', `<script>\n${fineLine}\n${fineLine}\n</script>`), null, 'a work page with two start lines, both fine, is not refused')
   // An author who copies the mark too: two marked lines of a kind, and neither is read. The author wins.
   const copied = pagesFor('http://127.0.0.1:8787').handout.replace('</body>', `<script>\n  const LIVE_CONFIG = {"workerBaseUrl":"http://localhost:1"}; ${APP_CONFIG_MARK}\n</script></body>`)
   assert.equal(appWrittenLoopback('probe/probe.html', copied), null, 'a page with two marked LIVE_CONFIG lines is never refused on a guess')
@@ -508,7 +545,15 @@ const NOT_AN_ADDRESS = ['', '   ', 'localhost', 'localhost:3000/x', '127.0.0.1:8
     const main = readSource(join(repo, 'src/main/index.ts'))
     assert.deepEqual([...main.matchAll(/join\((?:siteDir|publishSiteDir\(\)), ([^)]*)\)/g)].map((found) => found[1]).filter((rest) => !/^'(?:404\.html|_redirects)'$/.test(rest)), [], 'the only paths joined straight onto the site folder are its two fixed files')
     assert.ok(!/rmSync\(join\(siteDir|existsSync\(join\(siteDir, (?!')/.test(main), 'and nothing is looked for or removed there by a joined name')
-    assert.deepEqual([main.split('writableSiteFolder(siteDir, slug)').length - 1, main.split('removeSiteFolder(siteDir, slug)').length - 1, main.split('siteFolder(siteDir, context.talkSlug)').length - 1, main.split('publishedFolders(siteDir)').length - 1], [2, 1, 1, 4])
+    assert.deepEqual([main.split('writableSiteFolder(siteDir, slug)').length - 1, main.split('removeSiteFolder(').length - 1, main.split('siteFolder(siteDir, context.talkSlug)').length - 1, main.split('publishedFolders(siteDir)').length - 1], [2, 0, 1, 3])
+    // Unpublishing a Run (run-unpublish.ts, ticket 17): its folder is found by membership and only then removed or replaced.
+    const unpublishing = readSource(join(repo, 'src/main/run-unpublish.ts'))
+    assert.deepEqual([...unpublishing.matchAll(/join\(siteDir, ([^)]*)\)/g)].map((found) => found[1]), ["'_redirects'"], 'the Run unpublish joins only the redirect file onto the site folder')
+    assert.deepEqual([unpublishing.split('removeSiteFolder(siteDir, folder)').length - 1, unpublishing.split('replaceRunPages(siteDir, folder,').length - 1, unpublishing.split('runSiteFolder(run, published, registry)').length - 1, unpublishing.split('publishedFolders(siteDir)').length - 1], [1, 1, 1, 1])
+    // Unpublishing a talk handout (talk-unpublish.ts, ticket 22): the same discipline.
+    const talkUnpublishing = readSource(join(repo, 'src/main/talk-unpublish.ts'))
+    assert.deepEqual([...talkUnpublishing.matchAll(/join\(siteDir, ([^)]*)\)/g)].map((found) => found[1]), ["'_redirects'"], 'the talk unpublish joins only the redirect file onto the site folder')
+    assert.deepEqual([talkUnpublishing.split('removeSiteFolder(siteDir, folder)').length - 1, talkUnpublishing.split('publishedFolders(siteDir)').length - 1, /rmSync|unlinkSync|rmdirSync/.test(talkUnpublishing)], [1, 1, false], 'it removes only through removeSiteFolder, by membership')
   }
   {
     // The redirect rule itself.
@@ -988,6 +1033,795 @@ console.log('PASS 7: publishes of one site run one at a time, in order; a thrown
   assert.equal(publishedWithoutLiveText(LIVE_SETUP_FAILED), 'Published. Going live is not set up: Settings → Cloudflare. The live service could not be set up.')
   assert.ok(KEY_REMOVED && TOKEN_REMOVED, 'what stands in for a key or the token, should either ever reach Details')
   console.log('PASS 9: live-service set-up and key failures are sorted; Details hold no token, no key and no reply text')
+}
+
+// ── 10. Unpublishing a Run (work-files ticket 17, src/main/run-unpublish.ts) ──────────────────────
+// The REAL job, in the REAL sequence over the fake Cloudflare API, after a publish of the Run queued
+// before it: every page of the Run's folder shows "This page is not available", the rest of that folder
+// goes, the site's other pages and its redirect file are untouched; each phase is withdrawn before
+// anything is written; the Run keeps its link so Publish again writes back at the same addresses.
+{
+  const NA = buildNotAvailablePage().html
+  const RUN_PAGES = ['run-a/404.html', 'run-a/index.html', 'run-a/post-work/index.html', 'run-a/pre-work/index.html', 'run-a/run-a-download.html', 'run-a/run-a.html']
+  /** One app's Run, kept in memory, written by the publish's `record` and by the unpublish's. */
+  const app = (w, work = { pre: { fileId: 'intake', opens: '2026-10-14T09:00', closes: '2026-10-21T13:00', timeZone: 'UTC' }, post: { fileId: 'feedback', opens: 'session-end', closes: '2026-11-04T17:00', timeZone: 'UTC' } }) => {
+    const state = {
+      run: normaliseRun({ id: 'run-a', talkSlug: 'talk', talkTitle: 'Talk', kind: 'delivery', status: 'planned', plannedDate: '2026-10-21', startTime: '14:00', timeZone: 'UTC',
+        slideSet: { kind: 'full' }, startedAt: '2026-10-01T00:00:00.000Z', endedAt: '', recordingMs: 0, wallClockMs: 0, timerTargetMin: 0, context: null, pathwayId: null,
+        audio: null, transcript: null, slideTimeIndex: [], polls: [], pollResponses: [], work }),
+      registry: {}, withdrawn: [], refuse: null,
+    }
+    const phases = Object.keys(work)
+    state.publishJob = (text = 'A Run handout.') => ({
+      entry: 'run',
+      prepare: async ({ dir: siteDir, link }) => {
+        w.log.push('prepare:run:run-a')
+        const url = link('https://talks.test/run-a/')
+        const folder = join(siteDir, 'run-a')
+        for (const sub of ['', 'assets', ...phases.map((phase) => `${phase}-work`)]) mkdirSync(join(folder, sub), { recursive: true })
+        for (const page of ['index.html', 'run-a.html', 'run-a-download.html', '404.html']) writeFileSync(join(folder, page), `<!doctype html><title>${page}</title><p>${text}</p>`)
+        for (const phase of phases) writeFileSync(join(folder, `${phase}-work`, 'index.html'), `<!doctype html><title>${phase}-work</title><p>${text}</p>`)
+        writeFileSync(join(folder, 'assets', 'picture.png'), 'not really a picture')
+        return { ok: true, built: { url } }
+      },
+      record: ({ url }) => { w.log.push('record:run'); state.run = stampRunWork(setRunHandoutUrl(state.run, url, 'run-a'), phases, 'publishedAt', new Date().toISOString()) },
+    })
+    state.unpublishJob = () => ({
+      entry: 'run-unpublish',
+      ...runUnpublishJob({
+        run: () => state.run, siteExists: () => existsSync(w.dir),
+        readRegistry: () => ({ ...state.registry }), writeRegistry: (registry) => { state.registry = registry },
+        notAvailablePage: async () => NA,
+        service: { withdraw: async (talkSlug, runId, phase, withdrawn) => {
+          w.log.push(`withdraw:${phase}`)
+          state.withdrawn.push([talkSlug, runId, phase, withdrawn])
+          return state.refuse ? { ok: false, error: state.refuse } : { ok: true, withdrawn: true }
+        }, phasesSent: () => state.sent ?? [], ownerRecord: () => 'usable' },
+        persist: (run) => { state.run = run },
+      }),
+    })
+    return state
+  }
+  const pagesOf = (upload, prefix) => Object.keys(upload.files).filter((file) => file.startsWith(prefix)).sort()
+
+  // The not-available page itself: no script, no link, no address, nothing of the Run; it passes the check after the build.
+  assert.match(NA, /<h1>This page is not available<\/h1>[\s\S]*<p>Ask the person who sent you the link\.<\/p>/)
+  assert.equal(/<script|href="(?!data:)|https?:\/\//i.test(NA.replace(/xmlns="http:\/\/www\.w3\.org\/2000\/svg"/, '')), false, 'no script, link or address')
+  assert.equal(appWrittenLoopback('run-a/index.html', NA), null)
+
+  const w = await connected()
+  // Another handout and a redirect file the unpublish must leave alone.
+  mkdirSync(join(w.dir, 'talk-a'), { recursive: true })
+  writeFileSync(join(w.dir, 'talk-a', 'index.html'), '<!doctype html><title>talk-a</title>')
+  writeFileSync(join(w.dir, '_redirects'), '/abcd  /talk-a/  302\n')
+  const state = app(w)
+  // Unpublish asked for while the publish has not even started: it runs after it, and finds what it recorded.
+  const [up, down] = await Promise.all([w.publishing.publish(state.publishJob()), w.publishing.publish(state.unpublishJob())])
+  assert.deepEqual([up.ok, down.ok], [true, true], down.error)
+  assert.deepEqual(w.log.filter((line) => /^(?:prepare|record|withdraw|upload:start)/.test(line)),
+    ['prepare:run:run-a', 'upload:start', 'record:run', 'withdraw:pre', 'withdraw:post', 'upload:start'], 'in order: the publish up and recorded, then each phase withdrawn, then the upload')
+  assert.deepEqual(state.withdrawn, [['talk', 'run-a', 'pre', true], ['talk', 'run-a', 'post', true]])
+  const [published, unpublished] = w.uploads
+  assert.deepEqual(pagesOf(published, 'run-a/'), [...RUN_PAGES, 'run-a/assets/picture.png'].sort())
+  assert.deepEqual(pagesOf(unpublished, 'run-a/'), RUN_PAGES, 'every page of the Run is still there, and nothing else of its folder')
+  for (const page of RUN_PAGES) assert.equal(unpublished.files[page], NA, `${page} shows "This page is not available"`)
+  assert.deepEqual([unpublished.files['talk-a/index.html'], unpublished.files._redirects], [published.files['talk-a/index.html'], published.files._redirects], 'the site\'s other pages and its redirect file are untouched')
+  assert.deepEqual(down.built, { way: 'replaced', folder: 'run-a', pages: RUN_PAGES.map((page) => page.slice('run-a/'.length)).sort(), phases: ['pre', 'post'] })
+  // The Run keeps its link, and its phases are stamped unpublished: the checklist says Unpublished, with Publish again.
+  assert.equal(state.run.handoutUrl, 'https://talks.test/run-a/')
+  assert.ok(['pre', 'post'].every((phase) => Date.parse(state.run.work[phase].unpublishedAt) >= Date.parse(state.run.work[phase].publishedAt)))
+  const check = runChecklist(state.run, new Date('2026-10-16T10:00:00Z'), { answers: { pre: 7 } })
+  assert.deepEqual([check.publication, check.steps.find((step) => step.id === 'published').detail, check.steps.find((step) => step.id === 'published').actions.map((action) => action.id)], ['unpublished', '7 answers kept', ['publish-again', 'preview-page']])
+  // Publish again finds the same folder (its pages are "not available", its home page is there), so the addresses are the same.
+  assert.deepEqual(publishedFolders(w.dir), ['run-a', 'talk-a'])
+  assert.equal(state.run.handoutFolder, 'run-a', 'the folder the publish wrote is recorded on the Run')
+  assert.deepEqual(runSiteFolder(state.run, publishedFolders(w.dir), {}), { kind: 'found', name: 'run-a' })
+  assert.deepEqual(runSiteFolder({ handoutUrl: 'https://handouts.example/dl/run-a/' }, publishedFolders(w.dir), {}), { kind: 'found', name: 'run-a' }, 'a site address with a path of its own')
+  assert.deepEqual(runSiteFolder({ handoutUrl: 'https://talks.test/k3x9', handoutFolder: 'run-a' }, publishedFolders(w.dir), { 'run-a': 'k3x9' }), { kind: 'found', name: 'run-a' }, 'a short id, with the folder recorded')
+  // D2 (amended): with no record, a registered short id is the registry's folder, as in 0.39.
+  assert.deepEqual(runSiteFolder({ handoutUrl: 'https://talks.test/k3x9' }, publishedFolders(w.dir), { 'run-a': 'k3x9' }), { kind: 'found', name: 'run-a' }, 'a short id with no record')
+  assert.deepEqual(runSiteFolder({ handoutUrl: 'https://talks.test/../victim/' }, publishedFolders(w.dir), {}), { kind: 'missing', name: 'victim', recorded: false }, 'a name that is not one of the site\'s folders: missing, and never a path')
+  const again = await w.publishing.publish(state.publishJob('Back again.'))
+  assert.equal(again.ok, true)
+  assert.deepEqual(pagesOf(w.uploads[2], 'run-a/').filter((file) => file.endsWith('.html')), RUN_PAGES, 'Publish again: the same addresses')
+  assert.ok(RUN_PAGES.every((page) => w.uploads[2].files[page].includes('Back again.')))
+  assert.equal(runChecklist(state.run, new Date('2026-10-16T10:00:00Z')).publication, 'published')
+  // Publish, then unpublish once more: the queue keeps the order, whatever was asked last wins.
+  const order = await Promise.all([w.publishing.publish(state.publishJob('Fourth.')), w.publishing.publish(state.unpublishJob())])
+  assert.ok(order.every((result) => result.ok))
+  assert.ok(RUN_PAGES.every((page) => w.uploads.at(-1).files[page] === NA), 'the site ends unpublished')
+  console.log('PASS 10a: unpublishing a Run with work pages: every page "not available", the rest of its folder gone, other pages untouched, after the publish queued before it; Publish again restores the same addresses')
+}
+{
+  // A withdraw the service refuses stops the unpublish before anything is written or uploaded: the Run is still published.
+  const NA = buildNotAvailablePage().html
+  const w = await connected()
+  const state = { run: null }
+  const work = { pre: { fileId: 'intake', opens: '2026-10-14T09:00', closes: '2026-10-21T13:00', timeZone: 'UTC', publishedAt: '2026-10-14T08:00:00.000Z' } }
+  state.run = normaliseRun({ id: 'run-b', talkSlug: 'talk', talkTitle: 'Talk', kind: 'delivery', status: 'planned', plannedDate: '2026-10-21', startTime: '14:00', timeZone: 'UTC',
+    slideSet: { kind: 'full' }, startedAt: '2026-10-01T00:00:00.000Z', endedAt: '', recordingMs: 0, wallClockMs: 0, timerTargetMin: 0, context: null, pathwayId: null,
+    audio: null, transcript: null, slideTimeIndex: [], polls: [], pollResponses: [], handoutUrl: 'https://talks.test/run-b/', work })
+  mkdirSync(join(w.dir, 'run-b', 'pre-work'), { recursive: true })
+  writeFileSync(join(w.dir, 'run-b', 'index.html'), 'handout')
+  writeFileSync(join(w.dir, 'run-b', 'pre-work', 'index.html'), 'pre-work')
+  const REFUSED = 'The pre-work service could not be reached, so nothing was changed. Try again.'
+  const before = JSON.stringify(state.run)
+  // NO RAW TEXT: the sentence is the service's fixed one; what the Worker said is Details only (cleaned).
+  const SAID = 'internal_error: stack at Durable\u0000Object line 12'
+  const job = (refuse) => ({ entry: 'run-unpublish', ...runUnpublishJob({
+    run: () => state.run, siteExists: () => true, readRegistry: () => ({}), writeRegistry: () => assert.fail('no registry write'),
+    notAvailablePage: async () => NA, service: { withdraw: async () => (refuse ? { ok: false, error: REFUSED, details: SAID } : { ok: true, withdrawn: true }), phasesSent: () => [], ownerRecord: () => 'usable' },
+    persist: (run) => { state.run = run },
+  }) })
+  const refused = await w.publishing.publish(job(true))
+  assert.deepEqual([refused.ok, refused.error, refused.details, w.uploads.length], [false, REFUSED, 'internal_error: stack at Durable Object line 12', 0], 'refused in the service\'s fixed words, its reply only in Details; nothing uploaded')
+  assert.deepEqual([readFileSync(join(w.dir, 'run-b', 'index.html'), 'utf8'), readFileSync(join(w.dir, 'run-b', 'pre-work', 'index.html'), 'utf8'), JSON.stringify(state.run)], ['handout', 'pre-work', before], 'nothing written, the Run as it was')
+  const retried = await w.publishing.publish(job(false))
+  assert.equal(retried.ok, true, 'Unpublish can be pressed again')
+  assert.equal(readFileSync(join(w.dir, 'run-b', 'pre-work', 'index.html'), 'utf8'), NA)
+  // No copy of the site on this computer: no page could be replaced, so the deployed pages would stay
+  // readable. Refused with a sentence that says how to recover; nothing withdrawn, stamped or uploaded.
+  const bare = { run: normaliseRun({ ...JSON.parse(before), id: 'run-c' }), calls: 0, persisted: 0 }
+  const offlineJob = () => ({ entry: 'run-unpublish', ...runUnpublishJob({
+    run: () => bare.run, siteExists: () => false, readRegistry: () => ({}), writeRegistry: () => {}, notAvailablePage: async () => NA,
+    service: { withdraw: async () => { bare.calls += 1; return { ok: true, withdrawn: true } }, phasesSent: () => ['pre'], ownerRecord: () => 'usable' }, persist: () => { bare.persisted += 1 },
+  }) })
+  const offline = await w.publishing.publish(offlineJob())
+  assert.deepEqual([offline.ok, offline.error, bare.calls, bare.persisted, w.uploads.length], [false, UNPUBLISH_SITE_MISSING, 0, 0, 1], 'refused; nothing withdrawn, stamped or uploaded')
+  // The Run's folder missing from the site's copy: refused the same way, before anything is withdrawn.
+  rmSync(join(w.dir, 'run-b'), { recursive: true, force: true })
+  bare.run = normaliseRun({ ...JSON.parse(before), id: 'run-c' })
+  const gone = await w.publishing.publish({ ...offlineJob(), ...runUnpublishJob({
+    run: () => bare.run, siteExists: () => true, readRegistry: () => ({}), writeRegistry: () => assert.fail('no registry write'), notAvailablePage: async () => NA,
+    service: { withdraw: async () => { bare.calls += 1; return { ok: true, withdrawn: true } }, phasesSent: () => ['pre'], ownerRecord: () => 'usable' }, persist: () => { bare.persisted += 1 },
+  }) })
+  assert.deepEqual([gone.ok, gone.error, bare.calls, bare.persisted, w.uploads.length], [false, UNPUBLISH_FOLDER_MISSING, 0, 0, 1])
+  console.log('PASS 10b: a refused withdraw stops the unpublish before anything is written, in a fixed sentence with the reply in Details; pressed again it goes through; without the site\'s copy, or the Run\'s folder in it, nothing is withdrawn or stamped')
+}
+{
+  // A Run with its handout only (no work went out): its folder is taken out of the site, its short id out of
+  // the redirect file, and the Run forgets its link, as Unpublish Run handout always did. No withdraw.
+  const w = await connected()
+  for (const name of ['run-d', 'talk-a']) { mkdirSync(join(w.dir, name), { recursive: true }); writeFileSync(join(w.dir, name, 'index.html'), name) }
+  let run = normaliseRun({ id: 'run-d', talkSlug: 'talk', talkTitle: 'Talk', kind: 'delivery', status: 'planned', plannedDate: '2026-10-21', startTime: '14:00',
+    slideSet: { kind: 'full' }, startedAt: '2026-10-01T00:00:00.000Z', endedAt: '', recordingMs: 0, wallClockMs: 0, timerTargetMin: 0, context: null, pathwayId: null,
+    audio: null, transcript: null, slideTimeIndex: [], polls: [], pollResponses: [], handoutUrl: 'https://talks.test/zz99' })
+  let registry = { 'run-d': 'zz99', 'talk-a': 'ab12' }
+  // No folder recorded (a 0.39 Run): its registered short id zz99 is the registry's folder run-d.
+  const result = await w.publishing.publish({ entry: 'run-unpublish', ...runUnpublishJob({
+    run: () => run, siteExists: () => true, readRegistry: () => ({ ...registry }), writeRegistry: (next) => { registry = next },
+    notAvailablePage: async () => assert.fail('no page is built'), service: { withdraw: async () => assert.fail('nothing to withdraw'), phasesSent: () => [], ownerRecord: () => 'usable' }, persist: (next) => { run = next },
+  }) })
+  assert.equal(result.ok, true, result.error)
+  assert.equal(result.built.way, 'removed')
+  assert.deepEqual([existsSync(join(w.dir, 'run-d')), Object.keys(w.uploads[0].files).sort(), registry, run.handoutUrl], [false, ['_redirects', 'talk-a/index.html'], { 'talk-a': 'ab12' }, undefined])
+  assert.equal(readFileSync(join(w.dir, '_redirects'), 'utf8'), buildRedirects({ 'talk-a': 'ab12' }, ['talk-a']))
+  console.log('PASS 10c: a Run with its handout only is taken off the site, as before')
+}
+{
+  // replaceRunPages: chosen by membership; inside the folder nothing is followed.
+  const site = mkdtempSync(join(scratch, 'replace-'))
+  const victim = mkdtempSync(join(scratch, 'replace-victim-'))
+  writeFileSync(join(victim, 'secret.html'), 'the victim\'s page')
+  mkdirSync(join(site, 'run-e', 'pre-work'), { recursive: true })
+  writeFileSync(join(site, 'run-e', 'index.html'), 'home')
+  writeFileSync(join(site, 'run-e', 'pre-work', 'index.html'), 'pre')
+  let linked = true
+  try { symlinkSync(victim, join(site, 'run-e', 'linked'), 'junction'); symlinkSync(join(victim, 'secret.html'), join(site, 'run-e', 'page.html')) } catch { linked = false }
+  for (const name of ['../replace-victim', 'missing', '', '.', 'run-e/pre-work']) assert.deepEqual(replaceRunPages(site, name, 'NA'), { kind: 'absent' }, `nothing for ${name}`)
+  const replaced = replaceRunPages(site, 'run-e', 'NA', ['pre', 'post'])
+  assert.deepEqual(replaced, { kind: 'replaced', pages: ['index.html', 'post-work/index.html', 'pre-work/index.html'] }, 'a phase page that was missing is written too')
+  assert.deepEqual(filesOf(join(site, 'run-e')).map((path) => slashed(relative(join(site, 'run-e'), path))).sort(), ['index.html', 'post-work/index.html', 'pre-work/index.html'])
+  if (linked) assert.equal(readFileSync(join(victim, 'secret.html'), 'utf8'), 'the victim\'s page', 'a link inside the folder is unlinked, never written through')
+  if (linked) {
+    symlinkSync(victim, join(site, 'run-link'), 'junction')
+    assert.deepEqual(replaceRunPages(site, 'run-link', 'NA'), { kind: 'unlinked' })
+    assert.deepEqual([existsSync(join(site, 'run-link')), readFileSync(join(victim, 'secret.html'), 'utf8')], [false, 'the victim\'s page'])
+  }
+  console.log('PASS 10d: the Run\'s folder by membership only; links inside it unlinked, never followed')
+}
+{
+  // The Run's folder is BOUND to the Run (ticket 17 fix round): the folder its publish recorded, when its link
+  // names it too; a Run from before the record only when its link names exactly one folder. Never a guess.
+  const reg = { 'own-run': 'abcd' }
+  const folders = ['abcd', 'own-run']
+  // The reproduction: a short link /abcd, the Run's folder own-run, and another folder that happens to be called abcd.
+  assert.deepEqual(runSiteFolder({ handoutUrl: 'https://talks.test/abcd', handoutFolder: 'own-run' }, folders, reg), { kind: 'found', name: 'own-run' })
+  assert.deepEqual(runSiteFolder({ handoutUrl: 'https://talks.test/abcd' }, folders, reg), { kind: 'found', name: 'own-run' }, 'no record: a registered short id is the registry\'s folder, never the folder called abcd')
+  assert.deepEqual(runSiteFolder({ handoutUrl: 'https://talks.test/abcd/', handoutFolder: 'talk-a' }, [...folders, 'talk-a'], reg), { kind: 'unclear' }, 'a record the link does not name')
+  assert.deepEqual(runSiteFolder({ handoutUrl: 'https://talks.test/k3x9' }, ['one', 'two'], { one: 'k3x9', two: 'k3x9' }), { kind: 'unclear' }, 'one short id given to two folders')
+  // An unrelated prefix: the site's address has a path whose segment is a folder; the Run's own folder is missing.
+  assert.deepEqual(runSiteFolder({ handoutUrl: 'https://talks.test/dl/run-x/' }, ['dl'], {}), { kind: 'missing', name: 'run-x', recorded: false })
+  assert.deepEqual(runSiteFolder({ handoutUrl: 'https://talks.test/dl/run-x/', handoutFolder: 'run-x' }, ['dl'], {}), { kind: 'missing', name: 'run-x', recorded: true })
+  assert.deepEqual(runSiteFolder({ handoutUrl: 'not a link' }, folders, reg), { kind: 'none' })
+  assert.deepEqual(runSiteFolder({ handoutUrl: 'https://talks.test/%E0%A4%A/' }, folders, reg), { kind: 'none' })
+
+  // Through the REAL sequence. A Run whose pre-work went out, linked by the short id /abcd.
+  const NA = buildNotAvailablePage().html
+  const w = await connected()
+  for (const name of ['abcd', 'own-run', 'dl']) {
+    mkdirSync(join(w.dir, name, 'pre-work'), { recursive: true })
+    writeFileSync(join(w.dir, name, 'index.html'), `${name} home`)
+    writeFileSync(join(w.dir, name, 'pre-work', 'index.html'), `${name} pre-work`)
+  }
+  writeFileSync(join(w.dir, '_redirects'), buildRedirects(reg, folders))
+  const whole = () => Object.fromEntries(['abcd', 'own-run', 'dl'].flatMap((name) => ['index.html', 'pre-work/index.html'].map((page) => [`${name}/${page}`, readFileSync(join(w.dir, name, page), 'utf8')])))
+  const before = whole()
+  const base = { id: 'run-f', talkSlug: 'talk', talkTitle: 'Talk', kind: 'delivery', status: 'planned', plannedDate: '2026-10-21', startTime: '14:00', timeZone: 'UTC',
+    slideSet: { kind: 'full' }, startedAt: '2026-10-01T00:00:00.000Z', endedAt: '', recordingMs: 0, wallClockMs: 0, timerTargetMin: 0, context: null, pathwayId: null,
+    audio: null, transcript: null, slideTimeIndex: [], polls: [], pollResponses: [] }
+  const pre = { fileId: 'intake', opens: '2026-10-14T09:00', closes: '2026-10-21T13:00', timeZone: 'UTC', publishedAt: '2026-10-14T08:00:00.000Z' }
+  const post = { fileId: 'feedback', opens: 'session-end', closes: '2026-11-04T17:00', timeZone: 'UTC', publishedAt: '2026-10-14T08:00:00.000Z' }
+  const unpublishing = (state, sent = []) => ({ entry: 'run-unpublish', ...runUnpublishJob({
+    run: () => state.run, siteExists: () => true, readRegistry: () => ({ ...reg }), writeRegistry: () => assert.fail('the registry is not written'),
+    notAvailablePage: async () => NA,
+    service: { withdraw: async (_talk, _run, phase) => { state.withdrawn.push(phase); return { ok: true, withdrawn: true } }, phasesSent: () => sent, ownerRecord: () => 'usable' },
+    persist: (run) => { state.run = run },
+  }) })
+  // No record (a Run from before it): the registered short id abcd is own-run; the folder called abcd is untouched.
+  const legacy = { run: normaliseRun({ ...base, handoutUrl: 'https://talks.test/abcd', work: { pre } }), withdrawn: [] }
+  const legacyDone = await w.publishing.publish(unpublishing(legacy, ['pre']))
+  assert.equal(legacyDone.ok, true, legacyDone.error)
+  assert.deepEqual([legacyDone.built.folder, legacy.withdrawn, w.uploads.length, whole()], ['own-run', ['pre'], 1, { ...before, 'own-run/index.html': NA, 'own-run/pre-work/index.html': NA }], 'round 1: own-run, never abcd')
+  // With the folder recorded: own-run, never abcd.
+  const bound = { run: normaliseRun({ ...base, handoutUrl: 'https://talks.test/abcd', handoutFolder: 'own-run', work: { pre } }), withdrawn: [] }
+  const done = await w.publishing.publish(unpublishing(bound, ['pre']))
+  assert.equal(done.ok, true, done.error)
+  assert.deepEqual([done.built.folder, bound.withdrawn], ['own-run', ['pre']])
+  assert.deepEqual(whole(), { ...before, 'own-run/index.html': NA, 'own-run/pre-work/index.html': NA }, 'only the Run\'s own folder changes; the folder called abcd is untouched')
+  assert.equal(readFileSync(join(w.dir, '_redirects'), 'utf8'), buildRedirects(reg, folders), 'and the redirect file')
+  // A recorded folder the link does not name: RUN_FOLDER_UNCLEAR, nothing withdrawn, written or uploaded.
+  const afterBound = whole()
+  const misbound = { run: normaliseRun({ ...base, handoutUrl: 'https://talks.test/abcd', handoutFolder: 'dl', work: { pre } }), withdrawn: [] }
+  const unclear = await w.publishing.publish(unpublishing(misbound, ['pre']))
+  assert.deepEqual([unclear.ok, unclear.error, misbound.withdrawn, w.uploads.length, whole()], [false, RUN_FOLDER_UNCLEAR, [], 2, afterBound])
+  // An unrelated prefix with the Run's folder missing: refused, the folder named by the prefix untouched.
+  const prefixed = { run: normaliseRun({ ...base, handoutUrl: 'https://talks.test/dl/run-x/', work: { pre } }), withdrawn: [] }
+  const missing = await w.publishing.publish(unpublishing(prefixed, ['pre']))
+  assert.deepEqual([missing.ok, missing.error, prefixed.withdrawn, w.uploads.length], [false, UNPUBLISH_FOLDER_MISSING, [], 2])
+  assert.equal(readFileSync(join(w.dir, 'dl', 'index.html'), 'utf8'), 'dl home')
+  // A handout only, with that link: nothing of the site is taken away (dl is not its folder); the Run forgets its link.
+  const handoutOnly = { run: normaliseRun({ ...base, handoutUrl: 'https://talks.test/dl/run-x/' }), withdrawn: [] }
+  const removed = await w.publishing.publish(unpublishing(handoutOnly))
+  assert.deepEqual([removed.ok, removed.built.way, removed.built.folder, existsSync(join(w.dir, 'dl', 'index.html')), handoutOnly.run.handoutUrl], [true, 'removed', null, true, undefined])
+  console.log('PASS 10e: the Run\'s folder is bound to the Run: the recorded folder when the link names it, else a registered short id\'s folder; a missing folder refuses and touches nothing')
+}
+{
+  // Every phase the Run ever SENT is withdrawn (ticket 17 fix round): pre-work taken off the Run after it
+  // went out is still withdrawn, from the work service's own record of what was sent.
+  const NA = buildNotAvailablePage().html
+  const w = await connected()
+  mkdirSync(join(w.dir, 'run-g', 'post-work'), { recursive: true })
+  writeFileSync(join(w.dir, 'run-g', 'index.html'), 'home')
+  writeFileSync(join(w.dir, 'run-g', 'post-work', 'index.html'), 'post')
+  const post = { fileId: 'feedback', opens: 'session-end', closes: '2026-11-04T17:00', timeZone: 'UTC', publishedAt: '2026-10-14T08:00:00.000Z' }
+  const state = { run: normaliseRun({ id: 'run-g', talkSlug: 'talk', talkTitle: 'Talk', kind: 'delivery', status: 'planned', plannedDate: '2026-10-21', startTime: '14:00', timeZone: 'UTC',
+    slideSet: { kind: 'full' }, startedAt: '2026-10-01T00:00:00.000Z', endedAt: '', recordingMs: 0, wallClockMs: 0, timerTargetMin: 0, context: null, pathwayId: null,
+    audio: null, transcript: null, slideTimeIndex: [], polls: [], pollResponses: [], handoutUrl: 'https://talks.test/run-g/', handoutFolder: 'run-g', work: { post } }), withdrawn: [] }
+  const result = await w.publishing.publish({ entry: 'run-unpublish', ...runUnpublishJob({
+    run: () => state.run, siteExists: () => true, readRegistry: () => ({}), writeRegistry: () => {}, notAvailablePage: async () => NA,
+    service: { withdraw: async (_talk, _run, phase) => { state.withdrawn.push(phase); return { ok: true, withdrawn: true } }, phasesSent: () => ['pre', 'post'], ownerRecord: () => 'usable' },
+    persist: (run) => { state.run = run },
+  }) })
+  assert.equal(result.ok, true, result.error)
+  assert.deepEqual([state.withdrawn, result.built.phases], [['pre', 'post'], ['pre', 'post']], 'the detached pre-work is withdrawn too')
+  console.log('PASS 10f: every phase the Run ever sent is withdrawn, whatever is attached now')
+}
+
+{
+  // Ticket 17 round 3. D2: the Run's folder is decided from the Run's own facts, never from what exists on
+  // this computer. Sol's round-2 reproduction: link /abcd, no recorded folder, registry { own-run: abcd },
+  // own-run MISSING here and an unrelated folder called abcd present. A registered short id is the
+  // registry's folder ONLY (amended D2): own-run, missing; the folder called abcd is never a candidate.
+  const reg = { 'own-run': 'abcd' }
+  assert.deepEqual(runSiteFolder({ handoutUrl: 'https://talks.test/abcd' }, ['abcd'], reg), { kind: 'missing', name: 'own-run', recorded: false }, 'round 2: own-run, missing, never abcd')
+  assert.deepEqual(runSiteFolder({ handoutUrl: 'https://talks.test/abcd' }, ['own-run'], reg), { kind: 'found', name: 'own-run' }, 'the registry\'s folder present')
+  assert.deepEqual(runSiteFolder({ handoutUrl: 'https://talks.test/abcd' }, [], reg), { kind: 'missing', name: 'own-run', recorded: false }, 'and with neither present')
+  assert.deepEqual(runSiteFolder({ handoutUrl: 'https://talks.test/abcd' }, ['abcd', 'own-run'], reg), { kind: 'found', name: 'own-run' }, 'round 1: both present: own-run')
+  assert.deepEqual(runSiteFolder({ handoutUrl: 'https://talks.test/abcd' }, ['abcd'], {}), { kind: 'found', name: 'abcd' }, 'not a registered short id, a folder of that name: found literal')
+  assert.deepEqual(runSiteFolder({ handoutUrl: 'https://talks.test/abcd' }, ['abcd'], { 'talk-a': 'zz99' }), { kind: 'found', name: 'abcd' }, 'another id registered: still the literal folder')
+  assert.deepEqual(runSiteFolder({ handoutUrl: 'https://talks.test/abcd' }, [], {}), { kind: 'missing', name: 'abcd', recorded: false }, 'not registered, not here: missing literal')
+  assert.deepEqual(runSiteFolder({ handoutUrl: 'https://talks.test/abcd', handoutFolder: 'own-run' }, ['abcd'], reg), { kind: 'missing', name: 'own-run', recorded: true }, 'recorded: that folder, missing here, never abcd')
+
+  const NA = buildNotAvailablePage().html
+  const base = { id: 'run-h', talkSlug: 'talk', talkTitle: 'Talk', kind: 'delivery', status: 'planned', plannedDate: '2026-10-21', startTime: '14:00', timeZone: 'UTC',
+    slideSet: { kind: 'full' }, startedAt: '2026-10-01T00:00:00.000Z', endedAt: '', recordingMs: 0, wallClockMs: 0, timerTargetMin: 0, context: null, pathwayId: null,
+    audio: null, transcript: null, slideTimeIndex: [], polls: [], pollResponses: [] }
+  const job = (state, { sent = [], site = true, registry = {}, unknown = [] } = {}) => ({ entry: 'run-unpublish', ...runUnpublishJob({
+    run: () => state.run, siteExists: () => site, readRegistry: () => ({ ...registry }), writeRegistry: () => assert.fail('the registry is not written'),
+    notAvailablePage: async () => NA,
+    service: { withdraw: async (_talk, _run, phase) => { state.withdrawn.push(phase); return { ok: true, withdrawn: true } }, phasesSent: () => sent, ownerRecord: () => 'usable',
+      ownerUnknown: (_talk, _run, phase) => unknown.includes(phase) },
+    persist: (run) => { state.run = run; state.persisted += 1 },
+  }) })
+
+  // Through the REAL sequence: Sol's reproduction binds own-run, which is missing: D3 refusal; abcd is
+  // untouched; nothing withdrawn or uploaded.
+  {
+    const w = await connected()
+    mkdirSync(join(w.dir, 'abcd'), { recursive: true })
+    writeFileSync(join(w.dir, 'abcd', 'index.html'), 'another talk\'s handout')
+    const state = { run: normaliseRun({ ...base, handoutUrl: 'https://talks.test/abcd', work: { pre: { fileId: 'intake', opens: '2026-10-14T09:00', closes: '2026-10-21T13:00', timeZone: 'UTC', publishedAt: '2026-10-14T08:00:00.000Z' } } }), withdrawn: [], persisted: 0 }
+    const refused = await w.publishing.publish(job(state, { sent: ['pre'], registry: reg }))
+    assert.deepEqual([refused.ok, refused.error, state.withdrawn, state.persisted, w.uploads.length, readFileSync(join(w.dir, 'abcd', 'index.html'), 'utf8')],
+      [false, UNPUBLISH_FOLDER_MISSING, [], 0, 0, 'another talk\'s handout'], 'D2 + D3: own-run missing, refused before anything is withdrawn, written or uploaded')
+    assert.deepEqual(runPublishFolder(w.dir, runSiteFolder(state.run, publishedFolders(w.dir), reg), []), { kind: 'new' }, 'and Publish again never writes into abcd (a legacy Run, never recorded: a new folder)')
+  }
+
+  // D1, Sol's round-2 reproduction: pre-work went out, then its attachment lost its stamp (replaced by
+  // another file). The service's record still says pre was sent, so it is REPLACE, not REMOVE: the folder
+  // stays with "not available" pages, the link and folder are kept, and the Run reads Unpublished.
+  {
+    const w = await connected()
+    mkdirSync(join(w.dir, 'run-h', 'pre-work'), { recursive: true })
+    writeFileSync(join(w.dir, 'run-h', 'index.html'), 'home')
+    writeFileSync(join(w.dir, 'run-h', 'pre-work', 'index.html'), 'pre')
+    const replacedFile = { fileId: 'another-file', opens: '2026-10-14T09:00', closes: '2026-10-21T13:00', timeZone: 'UTC' }
+    const state = { run: normaliseRun({ ...base, handoutUrl: 'https://talks.test/run-h/', handoutFolder: 'run-h', work: { pre: replacedFile } }), withdrawn: [], persisted: 0 }
+    assert.deepEqual(sentPhases({ phasesSent: () => ['pre'] }, state.run), ['pre'], 'the one sent set: the service\'s record counts')
+    assert.deepEqual(sentPhases({ phasesSent: () => [] }, normaliseRun({ ...base, work: { post: { fileId: 'f', opens: 'session-end', closes: '2026-11-04T17:00', timeZone: 'UTC', publishedAt: '2026-10-14T08:00:00.000Z' } } })), ['post'], 'and so does a stamp on the attachment')
+    const done = await w.publishing.publish(job(state, { sent: ['pre'] }))
+    assert.equal(done.ok, true, done.error)
+    assert.deepEqual([done.built.way, done.built.folder, done.built.pages, state.withdrawn], ['replaced', 'run-h', ['index.html', 'pre-work/index.html'], ['pre']])
+    assert.deepEqual([readFileSync(join(w.dir, 'run-h', 'index.html'), 'utf8'), readFileSync(join(w.dir, 'run-h', 'pre-work', 'index.html'), 'utf8')], [NA, NA], 'its pages "not available", at the same addresses')
+    assert.deepEqual([state.run.handoutUrl, state.run.handoutFolder, typeof state.run.unpublishedAt], ['https://talks.test/run-h/', 'run-h', 'string'], 'link and folder kept; the Run itself stamped')
+    assert.equal(state.run.work.pre.unpublishedAt, undefined, 'the attachment had no publishedAt, so it carries no stamp')
+    assert.equal(runChecklist(state.run, new Date('2026-10-16T10:00:00Z')).publication, 'unpublished', 'the checklist says Unpublished')
+    // Publish again takes the Run's stamp away: published.
+    const republished = setRunHandoutUrl(state.run, 'https://talks.test/run-h/', 'run-h')
+    assert.deepEqual([republished.unpublishedAt, runChecklist(republished, new Date('2026-10-16T10:00:00Z')).publication], [undefined, 'published'])
+  }
+
+  // D1 + D3: a sent set known only from the service's record, and the site's copy missing, or not holding
+  // the Run's folder: refused; nothing withdrawn, stamped or uploaded; never "publish again".
+  {
+    const w = await connected()
+    const state = { run: normaliseRun({ ...base, handoutUrl: 'https://talks.test/run-h/', handoutFolder: 'run-h' }), withdrawn: [], persisted: 0 }
+    const offline = await w.publishing.publish(job(state, { sent: ['post'], site: false }))
+    assert.deepEqual([offline.ok, offline.error, state.withdrawn, state.persisted, w.uploads.length, state.run.handoutUrl], [false, UNPUBLISH_SITE_MISSING, [], 0, 0, 'https://talks.test/run-h/'], 'site missing: refused (it used to report success)')
+    const gone = await w.publishing.publish(job(state, { sent: ['post'] }))
+    assert.deepEqual([gone.ok, gone.error, state.withdrawn, state.persisted, w.uploads.length], [false, UNPUBLISH_FOLDER_MISSING, [], 0, 0], 'folder missing: refused')
+    for (const sentence of [UNPUBLISH_SITE_MISSING, UNPUBLISH_FOLDER_MISSING]) {
+      assert.doesNotMatch(sentence, /publish (?:it|the run|this run)? ?again|publish again/i, 'D3: never "publish again" as the way out')
+      assert.match(sentence, /cannot be unpublished from here\. Unpublish it from the computer that published it\. Nothing was withdrawn, changed or uploaded\.$/)
+    }
+  }
+
+  // Issue 256 round 3: the Run's only pre-work object records no vault and its attachment was removed, so the sent
+  // set is empty. REMOVE is refused, said as such: the folder stays, nothing is withdrawn, written or uploaded.
+  {
+    const w = await connected()
+    mkdirSync(join(w.dir, 'run-h'), { recursive: true })
+    writeFileSync(join(w.dir, 'run-h', 'index.html'), 'home')
+    const state = { run: normaliseRun({ ...base, handoutUrl: 'https://talks.test/run-h/', handoutFolder: 'run-h' }), withdrawn: [], persisted: 0 }
+    const refused = await w.publishing.publish(job(state, { unknown: ['pre'] }))
+    assert.deepEqual([refused.ok, refused.error, state.withdrawn, state.persisted, w.uploads.length, readFileSync(join(w.dir, 'run-h', 'index.html'), 'utf8')],
+      [false, workOwnerUnknown('pre', true), [], 0, 0, 'home'], 'an object no vault owns: REMOVE refused before anything is taken away')
+    const unlinked = { run: normaliseRun({ ...base }), withdrawn: [], persisted: 0 }
+    const forgot = await w.publishing.publish(job(unlinked, { unknown: ['post'], site: false }))
+    assert.deepEqual([forgot.ok, forgot.error, unlinked.persisted], [false, workOwnerUnknown('post', true), 0], 'and a Run with no link is not quietly forgotten')
+  }
+
+  // D4: Publish again writes into the RECORDED folder when it is missing here, by that same name (a
+  // collision-suffixed one here), unless the name is not one a publish makes or another Run recorded it.
+  {
+    const site = mkdtempSync(join(scratch, 'publish-folder-'))
+    const suffixed = runHandoutSlug('talk', 'Event', '2026-10-21', ['talk-event-2026-10-21'])
+    assert.equal(suffixed, 'talk-event-2026-10-21-2')
+    const recorded = { handoutUrl: `https://talks.test/${suffixed}/`, handoutFolder: suffixed }
+    const missing = runSiteFolder(recorded, [], {})
+    assert.deepEqual(missing, { kind: 'missing', name: suffixed, recorded: true })
+    assert.deepEqual(runPublishFolder(site, missing, []), { kind: 'same', name: suffixed }, 'the recorded name, not a fresh slug')
+    assert.deepEqual(runPublishFolder(site, runSiteFolder({ handoutUrl: 'https://talks.test/zz99', handoutFolder: suffixed }, [], { [suffixed]: 'zz99' }), []), { kind: 'same', name: suffixed }, 'linked by its short id')
+    assert.deepEqual(runPublishFolder(site, missing, ['other-run', suffixed]), { kind: 'unclear' }, 'another Run recorded that folder')
+    for (const name of ['Two Words', 'Talk', 'x--y', '-x', 'con']) {
+      const hostile = runSiteFolder({ handoutUrl: `https://talks.test/${encodeURIComponent(name)}/`, handoutFolder: name }, [], {})
+      assert.deepEqual(runPublishFolder(site, hostile, []), { kind: 'unclear' }, `"${name}" is not a name a publish makes`)
+    }
+    writeFileSync(join(site, suffixed), 'a file where the folder was')
+    assert.deepEqual(runPublishFolder(site, missing, []), { kind: 'unclear' }, 'a file at that name is not built into')
+    assert.deepEqual(runPublishFolder(site, runSiteFolder({ handoutUrl: 'https://talks.test/old-run/' }, [], {}), []), { kind: 'new' }, 'never recorded and missing: a new folder, as a first publish')
+    assert.deepEqual(runPublishFolder(site, { kind: 'none' }, []), { kind: 'new' })
+    assert.deepEqual(runPublishFolder(site, { kind: 'found', name: 'run-a' }, []), { kind: 'same', name: 'run-a' })
+  }
+  console.log('PASS 10g: ticket 17 round 3: the folder from the Run\'s own facts (Sol\'s reproduction binds the missing own-run and refuses); one sent set chooses REPLACE and the refusals (history-only reads Unpublished); no refusal advises publishing again; Publish again writes into the recorded folder')
+}
+
+{
+  // Ticket 17 round 3, finding 2: a sent phase with no usable owner key on this computer (a stamp from
+  // another computer with no row here, or a row whose key is gone) is never reported withdrawn. Refused
+  // before ANY phase is withdrawn and before anything is written, stamped or uploaded.
+  const base = { id: 'run-k', talkSlug: 'talk', talkTitle: 'Talk', kind: 'delivery', status: 'planned', plannedDate: '2026-10-21', startTime: '14:00', timeZone: 'UTC',
+    slideSet: { kind: 'full' }, startedAt: '2026-10-01T00:00:00.000Z', endedAt: '', recordingMs: 0, wallClockMs: 0, timerTargetMin: 0, context: null, pathwayId: null,
+    audio: null, transcript: null, slideTimeIndex: [], polls: [], pollResponses: [] }
+  const stamped = { opens: '2026-10-14T09:00', closes: '2026-10-21T13:00', timeZone: 'UTC', publishedAt: '2026-10-14T08:00:00.000Z' }
+  for (const [label, sent, records, refusedPhase] of [
+    ['a stamp from another computer, no row here', [], { pre: 'none' }, 'pre'],
+    ['pre-work usable, post-work\'s key gone', ['pre', 'post'], { pre: 'usable', post: 'none' }, 'post'],
+  ]) {
+    const w = await connected()
+    mkdirSync(join(w.dir, 'run-k', 'pre-work'), { recursive: true })
+    writeFileSync(join(w.dir, 'run-k', 'index.html'), 'home')
+    writeFileSync(join(w.dir, 'run-k', 'pre-work', 'index.html'), 'pre')
+    const work = refusedPhase === 'pre' ? { pre: { fileId: 'intake', ...stamped } } : { pre: { fileId: 'intake', ...stamped }, post: { fileId: 'after', ...stamped, opens: 'session-end', closes: '2026-11-04T17:00' } }
+    const state = { run: normaliseRun({ ...base, handoutUrl: 'https://talks.test/run-k/', handoutFolder: 'run-k', work }), withdrawn: [], persisted: 0 }
+    const result = await w.publishing.publish({ entry: 'run-unpublish', ...runUnpublishJob({
+      run: () => state.run, siteExists: () => true, readRegistry: () => ({}), writeRegistry: () => assert.fail('the registry is not written'),
+      notAvailablePage: async () => 'NA',
+      service: { withdraw: async (_t, _r, phase) => { state.withdrawn.push(phase); return { ok: true, withdrawn: true } }, phasesSent: () => sent, ownerRecord: (_t, _r, phase) => records[phase] ?? 'none' },
+      persist: (run) => { state.run = run; state.persisted += 1 },
+    }) })
+    assert.deepEqual([result.ok, result.error, state.withdrawn, state.persisted, w.uploads.length, readFileSync(join(w.dir, 'run-k', 'index.html'), 'utf8')],
+      [false, workKeyMissing(refusedPhase), [], 0, 0, 'home'], `${label}: refused, nothing withdrawn, written or uploaded`)
+  }
+  assert.match(workKeyMissing('post'), /^The key for this Run's post-work is not on this computer, so it cannot be withdrawn from here\. Unpublish it from the computer that published it\./)
+  console.log('PASS 10h: a sent phase with no usable owner key on this computer refuses Unpublish before anything is withdrawn, written or uploaded')
+}
+
+// ── 11. Unpublishing a talk handout (work-files ticket 22, src/main/talk-unpublish.ts) ──────────────────
+// The REAL job in the REAL sequence over the fake Cloudflare API. A site with the talk's own folder, two
+// Run handouts of the same talk (one with work pages), another talk and a redirect file with both talks'
+// short ids. Only the talk's folder goes, and its short-id line; every Run handout is byte for byte as it
+// was, on this computer and in what went up; handout_url leaves the outline only after the upload.
+{
+  const OUTLINE = '---\ntitle: AI for research teams\nhandout_url: https://talks.test/t1ab\ntags: [ai]\n---\n\n### Opening\n{id=open}\n\nHello.\n'
+  const seedSite = (dir) => {
+    const files = {
+      'ai-research/index.html': '<!doctype html><title>talk</title>', 'ai-research/ai-research.html': 'the talk handout', 'ai-research/p/index.html': 'venue',
+      'ai-research/assets/picture.webp': 'not really a picture',
+      'ai-research-said-workshop-2026-10-21/index.html': 'Said handout', 'ai-research-said-workshop-2026-10-21/pre-work/index.html': 'Said pre-work',
+      'ai-research-said-workshop-2026-10-21/post-work/index.html': 'Said post-work', 'ai-research-said-workshop-2026-10-21/assets/a.png': 'png',
+      'ai-research-keble-2026-10-28/index.html': 'Keble handout',
+      'ai-teaching/index.html': 'other talk', '404.html': 'not found', '_redirects': '/t1ab  /ai-research/  302\n/t1ab/*  /ai-research/:splat  302\n/t2cd  /ai-teaching/  302\n',
+    }
+    for (const [file, text] of Object.entries(files)) { mkdirSync(dirname(join(dir, file)), { recursive: true }); writeFileSync(join(dir, file), text) }
+    return files
+  }
+  const runClaims = [
+    { handoutUrl: 'https://talks.test/ai-research-said-workshop-2026-10-21/', handoutFolder: 'ai-research-said-workshop-2026-10-21' },
+    { handoutUrl: 'https://talks.test/ai-research-keble-2026-10-28/' },
+  ]
+  const app = (w, overrides = {}) => {
+    const state = { outline: OUTLINE, registry: { 'ai-research': 't1ab', 'ai-teaching': 't2cd' }, cleared: 0, ...overrides.state }
+    state.job = () => ({ entry: 'talk-unpublish', ...talkUnpublishJob({
+      talk: overrides.talk ?? (async () => (state.gone ? null : { slug: 'ai-research', handoutUrl: readHandoutUrl(state.outline) })),
+      siteExists: () => existsSync(w.dir) && !state.siteGone,
+      readRegistry: () => ({ ...state.registry }), writeRegistry: (registry) => { w.log.push('registry'); if (state.registryWriteFails) throw new Error('disk full'); state.registry = registry },
+      claims: overrides.claims ?? (() => ({ runs: overrides.runs ?? runClaims, talks: overrides.talks ?? [{ slug: 'ai-teaching', handoutUrl: 'https://talks.test/t2cd' }], unreadable: 0 })),
+      // As the handler does: the one front-matter editor, through the writer (here: the text in memory).
+      clearLink: async () => {
+        w.log.push('clear-link')
+        if (state.refuseWrite) return { ok: false, error: state.refuseWrite }
+        state.duringClear?.()
+        state.outline = editFrontmatterText(state.outline, [{ key: 'handout_url', value: null }]); state.cleared += 1
+        return { ok: true }
+      },
+    }) })
+    return state
+  }
+  const snapshot = (dir, prefix) => Object.fromEntries(filesOf(dir).map((path) => [slashed(relative(dir, path)), readFileSync(path, 'latin1')]).filter(([file]) => !prefix || file.startsWith(prefix)))
+  const runFiles = (files) => Object.fromEntries(Object.entries(files).filter(([file]) => file.startsWith('ai-research-')))
+
+  {
+    const w = await connected()
+    const seeded = seedSite(w.dir)
+    const state = app(w)
+    const before = snapshot(w.dir)
+    const result = await w.publishing.publish(state.job())
+    assert.equal(result.ok, true, result.error)
+    assert.deepEqual(result.built, { way: 'removed', folder: 'ai-research', linkCleared: true, registryEntry: { name: 'ai-research', id: 't1ab' } })
+    // Only the talk's own folder left this computer's copy; every Run handout is byte for byte as it was.
+    const after = snapshot(w.dir)
+    assert.deepEqual(Object.keys(after).filter((file) => file.startsWith('ai-research/')), [], 'the talk\'s folder is gone, all of it')
+    assert.deepEqual(runFiles(after), runFiles(seeded), 'Run handouts of the talk: byte for byte as they were')
+    assert.deepEqual([after['ai-teaching/index.html'], after['404.html']], [before['ai-teaching/index.html'], before['404.html']], 'the other talk and the site\'s own pages untouched')
+    // What went up is the site without it, and with every Run page as it was.
+    assert.equal(w.uploads.length, 1)
+    const up = w.uploads[0].files
+    assert.deepEqual(Object.keys(up).filter((file) => file.startsWith('ai-research/')), [], 'the upload carries none of the talk\'s pages')
+    assert.deepEqual(runFiles(up), runFiles(seeded), 'and every Run page as it was')
+    assert.equal(up._redirects, after._redirects)
+    assert.doesNotMatch(after._redirects, /t1ab|\/ai-research\//, 'its short-id lines are gone')
+    assert.match(after._redirects, /^\/t2cd\s+\/ai-teaching\/\s+302$/m, 'the other talk\'s stay')
+    assert.deepEqual(state.registry, { 'ai-teaching': 't2cd' }, 'and its id leaves the registry')
+    // The link leaves the outline through the front-matter editor, only after the upload went up; the short
+    // id leaves the registry only after that; the rest of the outline is kept.
+    assert.deepEqual(w.log.filter((line) => /^(?:registry|upload:start|clear-link)$/.test(line)), ['upload:start', 'clear-link', 'registry'])
+    assert.equal(state.outline, OUTLINE.replace('handout_url: https://talks.test/t1ab\n', ''), 'only the handout_url line is gone')
+    // Asked again: nothing published, so nothing is uploaded.
+    const again = await w.publishing.publish(state.job())
+    assert.deepEqual([again.ok, again.built.way, w.uploads.length, state.cleared], [true, 'nothing', 1, 1])
+    console.log('PASS 11a: a talk handout unpublished: only its folder and its short-id lines leave the site; Run handouts byte for byte as they were; handout_url cleared after the upload')
+  }
+
+  // Refused before anything is removed, uploaded or cleared: the site's copy missing, and every way the folder is not this talk's alone.
+  for (const [label, overrides, error] of [
+    ['the site\'s copy missing', { state: { siteGone: true } }, TALK_UNPUBLISH_SITE_MISSING],
+    ['the link names another folder', { state: { outline: OUTLINE.replace('t1ab', 'ai-teaching/') } }, TALK_FOLDER_UNCLEAR],
+    ['the slug\'s short id given to a Run\'s folder too', { state: { registry: { 'ai-research': 't1ab', 'ai-research-keble-2026-10-28': 't1ab' } } }, TALK_FOLDER_UNCLEAR],
+    ['a Run recorded the folder', { runs: [{ handoutUrl: 'https://talks.test/ai-research/', handoutFolder: 'ai-research' }] }, TALK_FOLDER_UNCLEAR],
+    ['a Run\'s link names the folder', { runs: [{ handoutUrl: 'https://talks.test/ai-research/' }] }, TALK_FOLDER_UNCLEAR],
+    ['a talk of the same name in another vault has a link', { talks: [{ slug: 'ai-research', handoutUrl: 'https://talks.test/ai-research/' }] }, TALK_FOLDER_UNCLEAR],
+    ['the talk is gone', { state: { gone: true } }, TALK_NOT_FOUND],
+  ]) {
+    const w = await connected()
+    seedSite(w.dir)
+    const state = app(w, overrides)
+    const before = snapshot(w.dir)
+    const result = await w.publishing.publish(state.job())
+    assert.deepEqual([result.ok, result.error, w.uploads.length, state.cleared, snapshot(w.dir)], [false, error, 0, 0, before], `${label}: refused; nothing removed, uploaded or cleared`)
+    assert.ok(readHandoutUrl(state.outline) || state.gone, `${label}: the talk keeps its link`)
+  }
+  for (const sentence of [TALK_UNPUBLISH_SITE_MISSING, TALK_FOLDER_UNCLEAR, TALK_UNPUBLISH_FOLDER_CHANGED]) assert.doesNotMatch(sentence, /publish (?:it )?again/i, 'D3: never "publish again" as the way out')
+  console.log('PASS 11b: refused, with nothing removed, uploaded or cleared, when the site\'s copy is missing or the folder is not this talk\'s alone (another folder named, a shared short id, a Run\'s, another vault\'s talk)')
+
+  {
+    // The folder missing from a copy that is there goes ahead, as ticket 17's REMOVE: nothing removed, the site goes up without it, the link cleared.
+    const w = await connected()
+    const seeded = seedSite(w.dir)
+    rmSync(join(w.dir, 'ai-research'), { recursive: true })
+    const state = app(w)
+    const result = await w.publishing.publish(state.job())
+    assert.deepEqual([result.ok, result.built, w.uploads.length, state.cleared], [true, { way: 'removed', folder: null, linkCleared: true, registryEntry: { name: 'ai-research', id: 't1ab' } }, 1, 1])
+    assert.deepEqual(runFiles(snapshot(w.dir)), runFiles(seeded))
+    // A link the writer could not clear: the pages are down, and the reply says the link is still in the talk.
+    const w2 = await connected()
+    seedSite(w2.dir)
+    const refusing = app(w2, { state: { refuseWrite: 'the talk changed on disk' } })
+    const half = await w2.publishing.publish(refusing.job())
+    assert.deepEqual([half.ok, half.built.way, half.built.linkCleared, half.built.linkError, w2.uploads.length], [true, 'removed', false, 'the talk changed on disk', 1])
+    console.log('PASS 11c: a folder this computer does not have goes ahead as ticket 17\'s REMOVE; a link the writer refuses is reported, not hidden')
+  }
+
+  {
+    // Links never followed. A link at the talk's name is not the talk's folder: refused, nothing removed
+    // through it or uploaded, what it points at untouched, and the talk keeps its link.
+    const w = await connected()
+    seedSite(w.dir)
+    rmSync(join(w.dir, 'ai-research'), { recursive: true })
+    const outside = join(scratch, `outside-${Date.now()}`)
+    mkdirSync(outside, { recursive: true })
+    writeFileSync(join(outside, 'index.html'), 'precious')
+    symlinkSync(outside, join(w.dir, 'ai-research'), 'dir')
+    assert.deepEqual(talkSiteFolder({ slug: 'ai-research', handoutUrl: 'https://talks.test/t1ab' }, publishedFolders(w.dir), { 'ai-research': 't1ab' }, { runs: [], talks: [] }, (name) => siteEntry(w.dir, name)), { kind: 'not-a-folder', name: 'ai-research' })
+    assert.equal(folderContained(w.dir, 'ai-research'), false, 'a link is never a contained folder')
+    const linked = app(w)
+    const redirectsBefore = readFileSync(join(w.dir, '_redirects'), 'utf8')
+    const refused = await w.publishing.publish(linked.job())
+    assert.deepEqual([refused.ok, refused.error, w.uploads.length, linked.cleared], [false, TALK_UNPUBLISH_NOT_A_FOLDER, 0, 0], 'a link at the talk\'s name: refused, nothing uploaded, the link kept')
+    assert.deepEqual([readFileSync(join(outside, 'index.html'), 'utf8'), lstatSync(join(w.dir, 'ai-research')).isSymbolicLink(), readFileSync(join(w.dir, '_redirects'), 'utf8'), linked.registry['ai-research']], ['precious', true, redirectsBefore, 't1ab'], 'nothing removed through the link or rewritten; what it points at is untouched')
+    assert.ok(readHandoutUrl(linked.outline))
+    // A FILE at the talk's name: refused the same way.
+    const w2 = await connected()
+    seedSite(w2.dir)
+    rmSync(join(w2.dir, 'ai-research'), { recursive: true })
+    writeFileSync(join(w2.dir, 'ai-research'), 'a file, not a folder')
+    const filed = app(w2)
+    const refusedFile = await w2.publishing.publish(filed.job())
+    assert.deepEqual([refusedFile.ok, refusedFile.error, w2.uploads.length, filed.cleared, readFileSync(join(w2.dir, 'ai-research'), 'utf8')], [false, TALK_UNPUBLISH_NOT_A_FOLDER, 0, 0, 'a file, not a folder'])
+    assert.doesNotMatch(TALK_UNPUBLISH_NOT_A_FOLDER, /publish (?:it )?again/i)
+    // Containment by real path: the site reached through a linked parent is still contained; a file or a name with a separator is not.
+    const real = mkdtempSync(join(scratch, 'real-site-'))
+    mkdirSync(join(real, 'talk-x'))
+    writeFileSync(join(real, 'a-file'), 'x')
+    const viaLink = join(scratch, `via-link-${Date.now()}`)
+    symlinkSync(real, viaLink, 'dir')
+    assert.deepEqual([folderContained(viaLink, 'talk-x'), folderContained(viaLink, 'a-file'), folderContained(viaLink, '../talk-x'), folderContained(viaLink, 'missing')], [true, false, false, false])
+    // The talk's folder by its own facts: the slug, named by the link either way, never a path made from the link.
+    const reg = { 'talk-x': 'k3x9' }
+    const isFolder = () => 'folder'
+    assert.deepEqual(talkSiteFolder({ slug: 'talk-x', handoutUrl: 'https://talks.test/k3x9' }, ['talk-x'], reg, { runs: [], talks: [] }, isFolder), { kind: 'found', name: 'talk-x' }, 'by its short id')
+    assert.deepEqual(talkSiteFolder({ slug: 'talk-x', handoutUrl: 'https://talks.test/dl/talk-x/' }, ['talk-x'], {}, { runs: [], talks: [] }, isFolder), { kind: 'found', name: 'talk-x' }, 'by its name, under a path of the site')
+    assert.deepEqual(talkSiteFolder({ slug: 'talk-x', handoutUrl: 'https://talks.test/../victim/' }, ['talk-x', 'victim'], {}, { runs: [], talks: [] }, isFolder), { kind: 'unclear' }, 'a link naming another folder: unclear, never a path')
+    assert.deepEqual(talkSiteFolder({ slug: 'talk-x', handoutUrl: null }, ['talk-x'], {}, { runs: [], talks: [] }, isFolder), { kind: 'none' })
+    // Found by what is at the name, never by the listing: a real folder the listing leaves out (no home page) is found.
+    assert.deepEqual(talkSiteFolder({ slug: 'talk-x', handoutUrl: 'https://talks.test/talk-x/' }, [], {}, { runs: [], talks: [] }, isFolder), { kind: 'found', name: 'talk-x' })
+    assert.deepEqual([siteEntry(real, 'talk-x'), siteEntry(real, 'a-file'), siteEntry(real, 'missing'), siteEntry(real, '../talk-x')], ['folder', 'other', 'none', 'other'])
+    console.log('PASS 11d: links at the talk\'s name refused, never followed (a file too); containment by real path; the folder from the talk\'s own facts')
+  }
+
+  {
+    // The folder by its NAME, not by its home page: a folder of the talk's whose index.html is gone, with its
+    // other pages and assets left, is removed all of it, and none of it goes up again.
+    const w = await connected()
+    const seeded = seedSite(w.dir)
+    rmSync(join(w.dir, 'ai-research', 'index.html'))
+    assert.ok(!publishedFolders(w.dir).includes('ai-research'), 'the listing leaves it out (no home page)')
+    const state = app(w)
+    const result = await w.publishing.publish(state.job())
+    assert.equal(result.ok, true, result.error)
+    assert.deepEqual([result.built.folder, result.built.linkCleared, existsSync(join(w.dir, 'ai-research'))], ['ai-research', true, false], 'removed, all of it')
+    assert.deepEqual(Object.keys(w.uploads[0].files).filter((file) => file.startsWith('ai-research/')), [], 'none of its files in the upload')
+    assert.deepEqual(runFiles(w.uploads[0].files), runFiles(seeded), 'Run handouts as they were')
+    console.log('PASS 11e: the talk\'s folder by its name: one without a home page is removed, and nothing of it goes up')
+  }
+
+  {
+    // RETRY (review round 1, finding 3): the short id stays in the registry until the link is cleared, so an
+    // interrupted unpublish is finished by asking again.
+    // (a) The upload fails: the folder is gone from this computer's copy, the link and the registry entry stay.
+    const w = await connected()
+    seedSite(w.dir)
+    const state = app(w)
+    w.hooks.toolOutput = () => 'something else went wrong'
+    const failed = await w.publishing.publish(state.job())
+    assert.equal(failed.ok, false)
+    assert.deepEqual([existsSync(join(w.dir, 'ai-research')), state.registry['ai-research'], readHandoutUrl(state.outline), state.cleared], [false, 't1ab', 'https://talks.test/t1ab', 0], 'upload failed: folder gone here, short id and link kept')
+    assert.doesNotMatch(readFileSync(join(w.dir, '_redirects'), 'utf8'), /t1ab/, 'its redirect lines are already out of the site\'s copy')
+    w.hooks.toolOutput = null
+    await w.publishing.idle()
+    const retried = await w.publishing.publish(state.job())
+    assert.equal(retried.ok, true, retried.error)
+    assert.deepEqual([retried.built.folder, retried.built.linkCleared, state.cleared, state.registry], [null, true, 1, { 'ai-teaching': 't2cd' }], 'the retry: the short link still read as the talk\'s, the site up, the link cleared, the entry dropped')
+    assert.deepEqual(Object.keys(w.uploads.at(-1).files).filter((file) => file.startsWith('ai-research/')), [])
+    assert.doesNotMatch(w.uploads.at(-1).files._redirects ?? '', /t1ab/)
+    // (b) The link clear is refused after the upload: the entry stays; a retry clears the link and drops it.
+    const w2 = await connected()
+    seedSite(w2.dir)
+    const refusing = app(w2, { state: { refuseWrite: 'the talk changed on disk' } })
+    const half = await w2.publishing.publish(refusing.job())
+    assert.deepEqual([half.ok, half.built.linkCleared, refusing.registry['ai-research'], readHandoutUrl(refusing.outline)], [true, false, 't1ab', 'https://talks.test/t1ab'], 'link not cleared: the entry stays')
+    refusing.refuseWrite = null
+    const finished = await w2.publishing.publish(refusing.job())
+    assert.deepEqual([finished.ok, finished.built.way, finished.built.linkCleared, refusing.cleared, refusing.registry, w2.uploads.length], [true, 'removed', true, 1, { 'ai-teaching': 't2cd' }, 2], 'the retry clears the link and drops the entry')
+    assert.equal(readHandoutUrl(refusing.outline), null)
+    console.log('PASS 11f: the short id stays until the link is cleared: a failed upload and a refused link clear are each finished by retrying')
+  }
+
+  {
+    // REVIEW ROUND 2, finding 1: a talk that cannot be read may hold the folder. Two open vaults, each with a
+    // talk `ai-research` linked to the same folder; the other vault's outline cannot be read. The real
+    // siteClaims over them: refused, the folder kept, nothing uploaded, the link kept.
+    const vaultsDir = mkdtempSync(join(scratch, 'claims-'))
+    const outlineIn = (vault) => { const path = join(vaultsDir, vault, 'ai-research', 'ai-research-outline.md'); mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, OUTLINE); return path }
+    const mine = outlineIn('v1')
+    const theirs = outlineIn('v2')
+    const deps = {
+      vaults: () => [{ id: 'v1', root: join(vaultsDir, 'v1') }, { id: 'v2', root: join(vaultsDir, 'v2') }],
+      talks: (root) => [{ slug: 'ai-research', title: 'AI for research teams', outlinePath: join(root, 'ai-research', 'ai-research-outline.md') }],
+      // As the app's reader does on a failed read (published-pages deps in index.ts): null.
+      readOutline: (path) => (path === theirs ? null : readFileSync(path, 'utf8')),
+    }
+    const claims = siteClaims(deps, { vaultId: 'v1', outlinePath: mine })
+    assert.deepEqual([claims.talks, claims.unreadable], [[], 1], 'the unreadable outline is counted, not left out')
+    const w = await connected()
+    seedSite(w.dir)
+    const state = app(w, { claims: () => siteClaims(deps, { vaultId: 'v1', outlinePath: mine }) })
+    const result = await w.publishing.publish(state.job())
+    assert.deepEqual([result.ok, result.error, w.uploads.length, state.cleared, existsSync(join(w.dir, 'ai-research', 'index.html')), state.registry['ai-research']], [false, TALK_UNPUBLISH_CLAIMS_UNREAD, 0, 0, true, 't1ab'], 'refused: folder kept, nothing uploaded, link and entry kept')
+    assert.ok(readHandoutUrl(state.outline))
+    assert.doesNotMatch(TALK_UNPUBLISH_CLAIMS_UNREAD, /publish (?:it )?again/i)
+    // Readable again: the other talk's link is a claim, so the folder is unclear (still never removed).
+    const readable = { ...deps, readOutline: (path) => readFileSync(path, 'utf8') }
+    const again = await w.publishing.publish(app(w, { claims: () => siteClaims(readable, { vaultId: 'v1', outlinePath: mine }) }).job())
+    assert.deepEqual([again.ok, again.error, w.uploads.length, existsSync(join(w.dir, 'ai-research'))], [false, TALK_FOLDER_UNCLEAR, 0, true])
+    // A vault whose talks cannot be listed counts the same way.
+    assert.equal(siteClaims({ ...deps, talks: (root) => { if (root.endsWith('v2')) throw new Error('EACCES'); return deps.talks(root) } }, { vaultId: 'v1', outlinePath: mine }).unreadable, 1)
+    console.log('PASS 11g: a talk that cannot be read in any open vault refuses the unpublish: the folder kept, nothing uploaded, the link kept')
+  }
+
+  {
+    // REVIEW ROUND 3, finding 1: an unavailable open vault is unknown evidence, never absent. The production
+    // path: the registry's open vaults through openVaults (what publishedPagesDeps in index.ts hands on) and
+    // the REAL availability service over temp folders. Two open vaults, each with a talk linked to folder
+    // `ai-research`; the second loses read permission (or is gone): refused, the folder kept, nothing
+    // uploaded, the link kept; the list says some talks could not be read; the unavailable vault is not read.
+    const vaultsDir = mkdtempSync(join(scratch, 'unavailable-'))
+    const outlineIn = (vault) => { const path = join(vaultsDir, vault, 'ai-research', 'ai-research-outline.md'); mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, OUTLINE); return path }
+    const mine = outlineIn('v1')
+    outlineIn('v2')
+    const registry = [{ id: 'v1', root: join(vaultsDir, 'v1'), open: true, order: 0 }, { id: 'v2', root: join(vaultsDir, 'v2'), open: true, order: 1 }, { id: 'v3', root: join(vaultsDir, 'v3-closed'), open: false, order: 2 }]
+    const availability = createVaultAvailability({
+      probe: nodeAvailabilityProbe(tmpdir()),
+      serviceOf: (root) => serviceFor(root, { home: tmpdir(), exists: (p) => existsSync(p), realpath: (p) => realpathSync(p) }),
+      serviceFromPath: (root) => serviceFor(root, { home: tmpdir(), exists: () => false }),
+    })
+    chmodSync(join(vaultsDir, 'v2'), 0o000)
+    await availability.check(registry, { force: true })
+    let how = availability.status('v2')?.reason
+    if (!availability.isUnavailable('v2')) {
+      // Running with permissions that ignore the mode bits: the folder gone instead.
+      chmodSync(join(vaultsDir, 'v2'), 0o755); rmSync(join(vaultsDir, 'v2'), { recursive: true, force: true })
+      await availability.check(registry, { force: true })
+      how = availability.status('v2')?.reason
+    }
+    assert.ok(availability.isUnavailable('v2') && !availability.isUnavailable('v1'), `v2 unavailable (${how})`)
+    const touched = []
+    const w = await connected()
+    seedSite(w.dir)
+    const deps = {
+      vaults: () => openVaults(registry, (id) => availability.isUnavailable(id)),
+      talks: (root) => { touched.push(root); return [{ slug: 'ai-research', title: 'AI for research teams', outlinePath: join(root, 'ai-research', 'ai-research-outline.md') }] },
+      readOutline: (path) => { touched.push(path); try { return readFileSync(path, 'utf8') } catch { return null } },
+      siteDir: () => w.dir,
+      readRegistry: () => ({ 'ai-research': 't1ab', 'ai-teaching': 't2cd' }),
+    }
+    assert.deepEqual(deps.vaults(), [{ id: 'v1', root: join(vaultsDir, 'v1') }, { id: 'v2', root: join(vaultsDir, 'v2'), unavailable: true }], 'every open vault, the unavailable one marked; the closed one not')
+    const claims = siteClaims(deps, { vaultId: 'v1', outlinePath: mine })
+    assert.deepEqual([claims.talks, claims.unreadable], [[], 1], 'the unavailable vault counts as one unreadable')
+    assert.ok(!touched.some((p) => p.startsWith(join(vaultsDir, 'v2'))), 'the unavailable vault is not read')
+    const state = app(w, { claims: () => siteClaims(deps, { vaultId: 'v1', outlinePath: mine }) })
+    const result = await w.publishing.publish(state.job())
+    assert.deepEqual([result.ok, result.error, w.uploads.length, state.cleared, existsSync(join(w.dir, 'ai-research', 'index.html')), state.registry['ai-research']], [false, TALK_UNPUBLISH_CLAIMS_UNREAD, 0, 0, true, 't1ab'], 'refused: folder kept, nothing uploaded, link and entry kept')
+    assert.ok(readHandoutUrl(state.outline))
+    // The list: v1's talk is shown, with the notice; it is not offered for Unpublish meanwhile.
+    const input = collectPublishedPages(deps)
+    assert.equal(input.unreadable, 1)
+    const list = publishedPages(input, new Date('2026-10-17T12:00:00Z'))
+    assert.deepEqual([list.error, list.notice], [null, TALKS_UNREADABLE], 'the list says some talks could not be read')
+    assert.ok(!touched.some((p) => p.startsWith(join(vaultsDir, 'v2'))), 'nor by the list')
+    if (existsSync(join(vaultsDir, 'v2'))) chmodSync(join(vaultsDir, 'v2'), 0o755)
+    console.log(`PASS 11g2: an unavailable open vault (${how}) refuses the talk unpublish and puts the notice on the list, without being read`)
+  }
+
+  {
+    // REVIEW ROUND 3, finding 2 (was a follow-up): a vault whose Runs cannot be listed counts as one unreadable,
+    // never swallowed. `_PRESENTATIONS` that is a file, not a folder: listRuns throws (ENOTDIR).
+    const vaultsDir = mkdtempSync(join(scratch, 'runs-unread-'))
+    const mine = join(vaultsDir, 'v1', 'ai-research', 'ai-research-outline.md')
+    mkdirSync(dirname(mine), { recursive: true }); writeFileSync(mine, OUTLINE)
+    mkdirSync(join(vaultsDir, 'v2'), { recursive: true }); writeFileSync(join(vaultsDir, 'v2', '_PRESENTATIONS'), 'not a folder')
+    const deps = {
+      vaults: () => [{ id: 'v1', root: join(vaultsDir, 'v1') }, { id: 'v2', root: join(vaultsDir, 'v2') }],
+      talks: (root) => (root.endsWith('v1') ? [{ slug: 'ai-research', title: 'AI for research teams', outlinePath: mine }] : []),
+      readOutline: (path) => readFileSync(path, 'utf8'),
+    }
+    const claims = siteClaims(deps, { vaultId: 'v1', outlinePath: mine })
+    assert.deepEqual([claims.runs, claims.unreadable], [[], 1], 'a Run listing that fails is counted')
+    const w = await connected()
+    seedSite(w.dir)
+    const state = app(w, { claims: () => siteClaims(deps, { vaultId: 'v1', outlinePath: mine }) })
+    const result = await w.publishing.publish(state.job())
+    assert.deepEqual([result.ok, result.error, w.uploads.length, state.cleared, existsSync(join(w.dir, 'ai-research', 'index.html'))], [false, TALK_UNPUBLISH_CLAIMS_UNREAD, 0, 0, true], 'refused: folder kept, nothing uploaded, link kept')
+    console.log('PASS 11g3: a vault whose Runs cannot be listed refuses the talk unpublish')
+  }
+
+  {
+    // REVIEW ROUND 2, finding 2: the outline is checked again at the job's turn (talkByOutline, as the handler
+    // does). A same-slug outline added while the unpublish waits behind a publish: refused, nothing removed.
+    const w = await connected()
+    seedSite(w.dir)
+    const root = '/vault'
+    const vaultTalks = [{ slug: 'ai-research', outlinePath: '/vault/research/ai-research-outline.md' }]
+    const resolvedRoot = resolve(root)
+    const guard = (path) => (path.startsWith(resolvedRoot) && path.endsWith('-outline.md') ? null : 'outside')
+    const state = app(w, {
+      talk: async () => {
+        const now = talkByOutline(root, 'research/ai-research-outline.md', vaultTalks, guard)
+        if (!now.ok) return now.error === TALK_NOT_FOUND ? null : { error: now.error }
+        return { slug: now.talk.slug, handoutUrl: readHandoutUrl(state.outline) }
+      },
+    })
+    const hold = gate()
+    w.hooks.duringUpload = async () => { if (w.uploads.length === 1) await hold.wait }
+    const first = w.publish('talk')
+    await until(() => w.uploads.length === 1)
+    const waiting = w.publishing.publish(state.job())
+    // While it waits: another outline of the same slug, with no link.
+    vaultTalks.push({ slug: 'ai-research', outlinePath: '/vault/copy/ai-research-outline.md' })
+    hold.open()
+    await first
+    const result = await waiting
+    assert.deepEqual([result.ok, result.error, w.uploads.length, state.cleared, existsSync(join(w.dir, 'ai-research', 'index.html'))], [false, TALK_NAME_SHARED, 1, 0, true], 'refused at its turn: nothing removed or uploaded, the link kept')
+    console.log('PASS 11h: a same-slug outline added while the unpublish waits refuses it at its turn')
+  }
+
+  {
+    // The short id is dropped only while the registry still gives it to the folder: a changed id is kept.
+    const w = await connected()
+    seedSite(w.dir)
+    const state = app(w)
+    state.duringClear = () => { state.registry = { ...state.registry, 'ai-research': 'zz99' } }
+    const result = await w.publishing.publish(state.job())
+    assert.deepEqual([result.ok, result.built.linkCleared, state.registry], [true, true, { 'ai-research': 'zz99', 'ai-teaching': 't2cd' }], 'a changed id is not dropped')
+    // A registry write that fails after the link is cleared: the unpublish still reports done; the old registry stands.
+    const w2 = await connected()
+    seedSite(w2.dir)
+    const failing = app(w2, { state: { registryWriteFails: true } })
+    const done = await w2.publishing.publish(failing.job())
+    assert.deepEqual([done.ok, done.built.linkCleared, failing.registry, readHandoutUrl(failing.outline)], [true, true, { 'ai-research': 't1ab', 'ai-teaching': 't2cd' }, null], 'the write failed: the old registry intact, the link cleared')
+    console.log('PASS 11i: the registry entry is dropped only for the same id; a failed registry write leaves the old registry')
+  }
 }
 
 // ── Nothing secret anywhere a window or a caller could see ──────────────────────────────────────

@@ -4,25 +4,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   BarChart3, CalendarDays, Check, Clock, Copy, ExternalLink, FileText, HardDrive, History as HistoryIcon,
   MoreVertical, PanelLeftClose, PanelLeftOpen, Pencil, Play, Radio,
-  Plus, RefreshCw, Search, Settings, Tag, Trash2, UploadCloud, VolumeX, X, FileInput,
+  Plus, RefreshCw, Search, Settings, Tag, Trash2, VolumeX, X, FileInput,
   Image as ImageIcon, LayoutGrid, Link2, ListPlus, Timer, Type, Zap
 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { HistoryLiveCheck, Pathway, RecordingKind, RecordingSession, RunInstantSlide, RunSlideSet, TalkHandouts } from '../../../preload/index'
 import { unresolvedTriggerBlock } from '../../../shared/layout-doctor'
 import PlanRunSheet from './PlanRunSheet'
-import HistoryRunPrework from './HistoryRunPrework'
-import { dayAndTime, preworkWindow, shortDate } from '../../../shared/plan-run'
-import { preworkEnabled } from '../../../shared/prework-flag'
+import { shortDate } from '../../../shared/plan-run'
 import { RunQuestions, RunReactions, type FeedbackSlide } from './HistoryRunFeedback'
 import { RunBoardBlock, RunPollsBlock, RunShareDialog, boardLedgerBadge } from './HistoryRunBoard'
 import { runBoardKey } from '../../../shared/run-board'
 import { runAudioSummary } from '../../../shared/run-audio'
 import '../history.css'
-import { earlierHandoutsToast, publishFailureToast, publishedWithoutLiveToast } from '../lib/publish-failure-toast'
-import PublishNotReadySheet from './PublishNotReadySheet'
-import type { PublishNotReady } from '../../../preload/index'
-import { notify } from '../lib/notify'
 import { clearUploadFailure, showUploadFailure } from '../lib/upload-failure-toast'
 
 type SortMode = 'newest' | 'talk' | 'length'
@@ -165,17 +159,14 @@ export default function History({
   onClose,
   onShowStudio,
   onShowImporter,
-  planRequest = 0,
-  preworkRequest = null
+  resultsRequest = null
 }: {
   isOpen: boolean
   onClose: () => void
   onShowStudio?: (sessionId?: string) => void
   onShowImporter?: () => void
-  /** Increments when the window is asked to open the plan sheet. */
-  planRequest?: number
-  /** Asked to open the Run page of a planned Run's pre-work (the talk's status-bar chip). `nonce` makes a repeat request count. */
-  preworkRequest?: { talkSlug: string; runId: string; nonce: number } | null
+  /** Asked to open a Run's results (the Sessions page's Open results): a delivered Run's details; a planned Run's answers are on its Run page in Sessions. */
+  resultsRequest?: { talkSlug: string; runId: string; vaultId?: string; nonce: number } | null
 }): JSX.Element | null {
   const [sessions, setSessions] = useState<RecordingSession[]>([])
   const [planned, setPlanned] = useState<RecordingSession[]>([])
@@ -204,9 +195,6 @@ export default function History({
   const [planSheet, setPlanSheet] = useState<{ run: RecordingSession | null } | null>(null)
   const [pathwayNames, setPathwayNames] = useState<Record<string, Record<string, string>>>({})
   const [detailId, setDetailId] = useState<string | null>(null)
-  const [handoutBusy, setHandoutBusy] = useState(false)
-  // Publish (or unpublish) Run handout could not start: what is missing and for which Run, for the sheet.
-  const [publishNotReady, setPublishNotReady] = useState<{ row: Row; notReady: PublishNotReady } | null>(null)
   // Ticket 07 (L6): where each instant slide's anchor sits in the talk now, per Run; the row being
   // added; and the last refusal per instant slide (shown under its row).
   const [instantAnchors, setInstantAnchors] = useState<Record<string, Record<string, InstantAnchor | null>>>({})
@@ -218,17 +206,9 @@ export default function History({
   const [boardBusy, setBoardBusy] = useState<{ runId: string; kind: 'refresh' | 'close' } | null>(null)
   const [boardPulled, setBoardPulled] = useState<Record<string, number>>({})
   const [shareRun, setShareRun] = useState<RecordingSession | null>(null)
-  // The Run whose pre-work page is open (feedback-boards ticket 11).
-  const [preworkRunId, setPreworkRunId] = useState<string | null>(null)
 
   const searchRef = useRef<HTMLInputElement>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  // A failed Run handout publish: the sentence, with what the tool printed behind "Details" (never inline).
-  const showPublishFailure = useCallback((what: string, result: { error?: string; details?: string }, key: string): void => {
-    const toast = publishFailureToast(what, result, key, notify)
-    notify(toast.message, toast.level, toast.key, toast.action)
-  }, [])
 
   const flash = useCallback((msg: string): void => {
     setToast(msg)
@@ -236,12 +216,15 @@ export default function History({
     toastTimer.current = setTimeout(() => setToast(null), 2400)
   }, [])
 
+  // The vault History reads: the one an Open results request names (a Run of another open vault), else the current vault.
+  const [readVaultId, setReadVaultId] = useState<string | undefined>(undefined)
+  const [loadedVaultId, setLoadedVaultId] = useState<string | undefined>(undefined) // the vault the lists below were read from
   const reload = useCallback(async (): Promise<void> => {
     let all, talks
     try {
       [all, talks] = await Promise.all([
-        window.tw.history.listRuns(),
-        window.tw.history.talkHandouts()
+        window.tw.history.listRuns(undefined, readVaultId),
+        window.tw.history.talkHandouts(readVaultId)
       ])
     } catch (cause) {
       // A failing IPC call must not silently blank History while the recordings sit right there on
@@ -260,7 +243,8 @@ export default function History({
     setPlanned(valid.filter((run) => run.status === 'planned'))
     setSessions(valid.filter((run) => run.status !== 'planned'))
     setHandouts(talks)
-  }, [flash])
+    setLoadedVaultId(readVaultId)
+  }, [flash, readVaultId])
 
   // Pathway names for the planned rows' slide-set column, per talk.
   useEffect(() => {
@@ -287,14 +271,6 @@ export default function History({
     else flash('No talk to plan a Run for yet')
   }, [flash, planTalks.length])
 
-  // Asked to open the plan sheet (Plan a run… with no talk open): wait for the talks to load first.
-  const handledPlanRequest = useRef(0)
-  useEffect(() => {
-    if (!planRequest || planRequest === handledPlanRequest.current || !planTalks.length) return
-    handledPlanRequest.current = planRequest
-    setPlanSheet({ run: null })
-  }, [planRequest, planTalks.length])
-
   // Another window (the talk's status bar) may have planned or edited a Run.
   useEffect(() => {
     const refresh = (): void => { void reload() }
@@ -302,19 +278,16 @@ export default function History({
     return () => window.removeEventListener('focus', refresh)
   }, [reload])
 
-  // Asked to open a Run's pre-work page: once the Run is loaded.
-  const handledPreworkRequest = useRef(0)
+  // Asked to open a Run's results: once the Run is loaded.
+  const handledResultsRequest = useRef(0)
   useEffect(() => {
-    if (!preworkEnabled() || !preworkRequest || preworkRequest.nonce === handledPreworkRequest.current) return
-    if (!planned.some((run) => run.id === preworkRequest.runId && run.talkSlug === preworkRequest.talkSlug)) return
-    handledPreworkRequest.current = preworkRequest.nonce
-    setPreworkRunId(preworkRequest.runId)
-  }, [preworkRequest, planned])
-  const preworkRun = useMemo(() => planned.find((run) => run.id === preworkRunId) ?? null, [planned, preworkRunId])
-  const preworkRunChanged = useCallback((run: RecordingSession): void => {
-    setPlanned((current) => current.map((candidate) => candidate.id === run.id && candidate.talkSlug === run.talkSlug ? run : candidate))
-  }, [])
-
+    if (!resultsRequest || resultsRequest.nonce === handledResultsRequest.current) return
+    if (resultsRequest.vaultId !== readVaultId) { setReadVaultId(resultsRequest.vaultId); return }
+    if (loadedVaultId !== readVaultId) return // the lists are still the previous vault's
+    const same = (run: RecordingSession): boolean => run.id === resultsRequest.runId && run.talkSlug === resultsRequest.talkSlug
+    if (sessions.some(same)) { handledResultsRequest.current = resultsRequest.nonce; setDetailId(resultsRequest.runId) }
+    else if (planned.some(same)) { handledResultsRequest.current = resultsRequest.nonce; void window.tw.tools.openRun(resultsRequest.talkSlug, resultsRequest.runId) }
+  }, [resultsRequest, sessions, planned, readVaultId, loadedVaultId])
   const beginEditPlanned = useCallback((run: RecordingSession): void => { openPlanner(run) }, [openPlanner])
 
   const removePlanned = useCallback(async (run: RecordingSession): Promise<void> => {
@@ -358,49 +331,12 @@ export default function History({
 
   const detailRow = useMemo(() => rows.find((row) => row.session.id === detailId) ?? null, [detailId, rows])
 
-  const publishRunHandout = useCallback(async (row: Row): Promise<void> => {
-    const talk = handouts[row.session.talkSlug]
-    if (!talk?.outlinePath) { flash('Talk outline not found'); return }
-    const source = await window.tw.talk.readOutline(talk.outlinePath)
-    if (source === null) { flash('Talk outline could not be read'); return }
-    const blocked = unresolvedTriggerBlock(source)
-    if (blocked) { flash(blocked.message); return }
-    setHandoutBusy(true)
-    const result = await window.tw.history.publishRunHandout(row.session.talkSlug, row.session.id)
-    setHandoutBusy(false)
-    if (!result.success && result.notReady) { setPublishNotReady({ row, notReady: result.notReady }); return }
-    if (!result.success) { showPublishFailure('Could not publish Run handout', result, 'run-handout-publish-failed'); return }
-    await reload()
-    // Published without live features (spec D7): "Published. Going live is not set up: Settings → Cloudflare".
-    const withoutLive = publishedWithoutLiveToast(result, 'run-handout-without-live', notify, () => { void window.tw.cloudflare.openSettings() })
-    if (withoutLive) notify(withoutLive.message, withoutLive.level, withoutLive.key, withoutLive.action)
-    const earlier = earlierHandoutsToast(result, 'run-handout-earlier-handouts', notify)
-    if (earlier) notify(earlier.message, earlier.level, earlier.key, earlier.action)
-    if (result.warning) flash(`Run handout published. ${result.warning}`)
-    else if (result.missing?.length) flash(`Run handout published; skipped ${result.missing.length} missing slide id${result.missing.length === 1 ? '' : 's'}`)
-    else flash('Run handout published')
-  }, [flash, handouts, reload])
-
-  // "Save as a file instead" on the sheet: the Run's handout built on this computer and shown in its folder.
-  const saveRunHandoutAsFile = useCallback(async (row: Row): Promise<void> => {
-    setHandoutBusy(true)
-    const result = await window.tw.history.buildRunHandout(row.session.talkSlug, row.session.id)
-    setHandoutBusy(false)
-    if (!result.success || !result.path) { notify(`Could not save the Run handout: ${result.error ?? 'unknown error'}`, 'error', 'run-handout-save-failed'); return }
-    window.tw.shell.showInFolder(result.path)
-    flash('Run handout saved as a file')
+  // A Run's page in Sessions: where its handout is published and unpublished (work-files ticket 29).
+  const openInSessions = useCallback((run: RecordingSession): void => {
+    void window.tw.tools.openRun(run.talkSlug, run.id).then((result) => {
+      if (!result.success) flash(result.error ?? 'Sessions could not be opened')
+    }).catch(() => flash('Sessions could not be opened'))
   }, [flash])
-
-  const unpublishRunHandout = useCallback(async (row: Row): Promise<void> => {
-    setHandoutBusy(true)
-    const reply = await window.tw.history.unpublishRunHandout(row.session.talkSlug, row.session.id)
-    setHandoutBusy(false)
-    // Unpublishing uploads the site too: with no connection the sentence says what is missing (no sheet: there is no file to save instead).
-    const result = reply.notReady ? { success: false, error: `${reply.notReady.title}. See Settings → Cloudflare.` } : reply
-    if (!result.success) { showPublishFailure('Could not unpublish Run handout', result, 'run-handout-unpublish-failed'); return }
-    await reload()
-    flash('Run handout unpublished')
-  }, [flash, reload])
 
   const checkLive = useCallback(async (url: string, force: boolean): Promise<HistoryLiveCheck> => {
     setLiveMap((m) => ({ ...m, [url]: { status: 'checking', checkedAt: null } }))
@@ -747,6 +683,8 @@ export default function History({
         if (e.key === 'Escape') (target as HTMLElement).blur()
         return
       }
+      // A focused planned Run row takes its own Enter (open in Sessions), not the selected delivery's.
+      if (e.key === 'Enter' && target?.closest('[data-opens-run]')) return
       // The share dialog and the Copy as Markdown popover (ticket 06) take the keyboard while open;
       // they close themselves on Escape.
       if (document.querySelector('[data-share-dialog], [data-board-markdown]')) return
@@ -878,19 +816,26 @@ export default function History({
           <section className="twh-planned-wrap" aria-label="Planned Runs">
             <div className="twh-section-label"><span>Planned</span><i /><small>{planned.length} upcoming</small></div>
             <div className="twh-planned-table">
-              <div className={`twh-plan-grid head${preworkEnabled() ? '' : ' no-prework'}`}><span>Date</span><span>Event / audience</span>{preworkEnabled() && <span>Pre-work</span>}<span>Slide set</span><span /></div>
+              <div className="twh-plan-grid head"><span>Date</span><span>Event / audience</span><span>Slide set</span><span /></div>
               {planned.length === 0 && <div className="twh-plan-empty">Nothing planned. Plan a Run from Plan a Run above, or from Present › Plan a run… in a talk.</div>}
               {planned.map((run) => {
                 const set = run.slideSet ?? (run.pathwayId ? { kind: 'pathway' as const, pathwayId: run.pathwayId } : { kind: 'full' as const })
                 const pathwayName = set.kind === 'pathway' ? pathwayNames[run.talkSlug]?.[set.pathwayId] ?? set.pathwayId : ''
-                const window_ = preworkWindow(run)
+                // The row opens the Run's page in Sessions (ADR-0040 decision 6): its pre-work, answers and Publish live there.
+                const opens = {
+                  'data-opens-run': '',
+                  role: 'button',
+                  tabIndex: 0,
+                  title: 'Open this Run in Sessions',
+                  onClick: () => openInSessions(run),
+                  onKeyDown: (event: React.KeyboardEvent) => { if (event.key === 'Enter' && event.target === event.currentTarget) { event.preventDefault(); openInSessions(run) } }
+                }
                 return (
-                  <div className={`twh-plan-grid${preworkEnabled() ? '' : ' no-prework'}`} key={run.id} data-planned-run={run.id}>
+                  <div className="twh-plan-grid" key={run.id} data-planned-run={run.id} {...opens}>
                     <span className="twh-plan-date"><b>{run.plannedDate ? new Date(`${run.plannedDate}T12:00:00`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '—'}</b><small>{relativePlannedDate(run.plannedDate)}</small></span>
                     <span className="twh-plan-event"><b>{run.eventTitle || run.talkTitle}</b>{run.audience && <small> · {run.audience}</small>}{run.expectedPeople ? <small> · {run.expectedPeople} expected</small> : null}</span>
-                    {preworkEnabled() && <span className="twh-plan-prework" data-plan-prework>{window_ ? <><b>Opens {shortDate(window_.opens)}</b><small>until {dayAndTime(window_.closes)}</small>{run.prework?.entries.length ? <small data-plan-prework-count>{new Set(run.prework.entries.map((entry) => entry.participant)).size} started</small> : null}<button className="twh-btn" data-review-prework onClick={() => setPreworkRunId(run.id)}>Review</button></> : <small>—</small>}</span>}
                     <span><span className={`twh-slide-set ${set.kind}`}>{set.kind === 'full' ? '▣ Full talk' : `◇ ${pathwayName}`}</span></span>
-                    <span className="twh-plan-actions"><details><summary aria-label="Planned Run actions">•••</summary><div><button onClick={() => void presentPlanned(run)}><Play className="lt-icon" /> Present</button><button data-plan-edit onClick={() => beginEditPlanned(run)}><Pencil className="lt-icon" /> Edit</button><button className="danger" onClick={() => void removePlanned(run)}><Trash2 className="lt-icon" /> Delete</button></div></details></span>
+                    <span className="twh-plan-actions" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}><details><summary aria-label="Planned Run actions">•••</summary><div><button onClick={() => void presentPlanned(run)}><Play className="lt-icon" /> Present</button><button data-plan-edit onClick={() => beginEditPlanned(run)}><Pencil className="lt-icon" /> Edit</button><button className="danger" onClick={() => void removePlanned(run)}><Trash2 className="lt-icon" /> Delete</button></div></details></span>
                   </div>
                 )
               })}
@@ -1017,9 +962,7 @@ export default function History({
                 <button onClick={() => openStudio(selectedRow.session.id)}><Play className="lt-icon" /> Open in Studio</button>
               )}
               <button onClick={() => { setDetailId(selectedRow.session.id); setMenu(null) }}><FileText className="lt-icon" /> Run details</button>
-              {selectedRow.handoutUrl
-                ? <button onClick={() => void unpublishRunHandout(selectedRow)}><Trash2 className="lt-icon" /> Unpublish Run handout</button>
-                : <button onClick={() => void publishRunHandout(selectedRow)}><UploadCloud className="lt-icon" /> Publish handout for this Run</button>}
+              <button data-open-in-sessions onClick={() => { setMenu(null); openInSessions(selectedRow.session) }}><CalendarDays className="lt-icon" /> Open in Sessions</button>
               <button onClick={() => void copyHandout(selectedRow)}><Copy className="lt-icon" /> Copy link</button>
               <button onClick={() => openHandout(selectedRow)}><ExternalLink className="lt-icon" /> Open handout</button>
               <button onClick={() => void recheckOne(selectedRow)}><RefreshCw className="lt-icon" /> Re-check</button>
@@ -1039,33 +982,14 @@ export default function History({
             <div className="twh-talkbar"><b>{detailRow.title}</b><span className="badge-ever">✦ EVERGREEN handout</span>{detailRow.evergreenUrl ? <button onClick={() => void window.tw.shell.openExternal(detailRow.evergreenUrl!)}>{displayUrl(detailRow.evergreenUrl)}</button> : <span className="muted">not published</span>}<small>the talk’s canonical latest-full-talk link · Run handouts never touch it</small></div>
             <section className="twh-run-card">
               <div className="twh-run-head"><span className={`twh-slide-set ${detailRow.session.slideSet?.kind ?? (detailRow.session.pathwayId ? 'pathway' : 'full')}`}>{detailRow.session.slideSet?.kind === 'pathway' || detailRow.session.pathwayId ? `◇ ${detailRow.session.slideSet?.kind === 'pathway' ? detailRow.session.slideSet.pathwayId : detailRow.session.pathwayId}` : '▣ Full talk'}</span><b>{detailRow.session.eventTitle ?? detailRow.title}</b><span>· {[detailRow.session.audience, detailRow.session.plannedDate].filter(Boolean).join(' · ')}</span></div>
-              <div className="twh-run-handout-line"><b>Run handout</b>{detailRow.handoutUrl ? <><span className="badge-run">RUN</span><button className="url" onClick={() => openHandout(detailRow)}>{displayUrl(detailRow.handoutUrl)}</button><span className="push" /><button className="twh-btn" onClick={() => void copyHandout(detailRow)}>Copy URL</button><button className="twh-btn" disabled={handoutBusy} onClick={() => void unpublishRunHandout(detailRow)}>Unpublish</button></> : <><span className="muted">Not yet published</span><span className="push" /><button className="twh-btn primary" disabled={handoutBusy} onClick={() => void publishRunHandout(detailRow)}>{handoutBusy ? 'Publishing…' : 'Publish handout for this Run'}</button></>}</div>
-              <p>Built from this Run’s slide set · title and event printed on the cover · own URL, listed here only</p>
+              <div className="twh-run-handout-line"><b>Run handout</b>{detailRow.handoutUrl ? <><span className="badge-run">RUN</span><button className="url" onClick={() => openHandout(detailRow)}>{displayUrl(detailRow.handoutUrl)}</button><span className="push" /><button className="twh-btn" onClick={() => void copyHandout(detailRow)}>Copy URL</button></> : <><span className="muted">Not yet published</span><span className="push" /></>}<button className="twh-btn" data-open-in-sessions onClick={() => openInSessions(detailRow.session)}>Open in Sessions</button></div>
+              <p>Built from this Run’s slide set · title and event printed on the cover · own URL · published and unpublished from the Run’s checklist in Sessions</p>
             </section>
           </div>
         </div>
       )}
 
-      {preworkEnabled() && preworkRun && (
-        <HistoryRunPrework
-          run={preworkRun}
-          talk={{ title: handouts[preworkRun.talkSlug]?.title || preworkRun.talkTitle, outlinePath: handouts[preworkRun.talkSlug]?.outlinePath ?? null }}
-          onBack={() => setPreworkRunId(null)}
-          onEditPlan={(run) => openPlanner(run)}
-          onRunChanged={preworkRunChanged}
-          flash={flash}
-        />
-      )}
       {sheet && <CheatSheet onClose={() => setSheet(false)} />}
-      {publishNotReady && (
-        <PublishNotReadySheet
-          what="Publish Run handout"
-          notReady={publishNotReady.notReady}
-          onClose={() => setPublishNotReady(null)}
-          onSaveAsFile={() => { void saveRunHandoutAsFile(publishNotReady.row) }}
-          onRetry={() => { void publishRunHandout(publishNotReady.row) }}
-        />
-      )}
       {shareRun && <div className="rs-scrim" onClick={() => setShareRun(null)}><RunShareDialog run={shareRun} talkTitle={handouts[shareRun.talkSlug]?.title || shareRun.talkTitle} onClose={() => setShareRun(null)} flash={flash} /></div>}
       {planSheet && (
         <PlanRunSheet

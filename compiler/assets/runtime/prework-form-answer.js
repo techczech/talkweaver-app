@@ -2,7 +2,7 @@
 // options to tap for single, multiple and ranking, a label per item for rating and categorisation, and a
 // text box for an open question. What the person has chosen is `draft`; `preworkAnswerReady` (the
 // Worker's own rule) decides when it is complete, and the form is told to save through `commit`.
-// Self-contained like every runtime function the page embeds by `.toString()` (see prework-form.js).
+// Self-contained like every runtime function the page embeds by `.toString()` (see work-page.js).
 // Option labels and typed text are untrusted: written with textContent, never as HTML.
 
 /**

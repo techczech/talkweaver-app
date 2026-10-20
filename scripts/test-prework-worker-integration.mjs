@@ -1,5 +1,11 @@
-// Feedback-boards ticket 09 against a real live Worker (`wrangler dev`: local, throwaway secrets and
-// state, nothing deployed): a planned Run's pre-work object and its routes.
+// Feedback-boards ticket 09 and work-files ticket 12 against a real live Worker (`wrangler dev`: local,
+// throwaway secrets and state, nothing deployed): a planned Run's pre-work (or post-work) object and its routes.
+//   - phase: the push carries pre or post (none is pre) and the status returns it; the other phase is refused;
+//   - a push with a later closing time reopens a form closed by its date, and one the owner closed early;
+//     an admin's close stays closed; a push without a form changes only the window;
+//   - the results name the window `state` and the round of work `phase`, as the status does;
+//   - withdraw (owner only): every public route answers 404 not_available (no-store), the owner still pages every
+//     answer, and {withdrawn: false} serves it again;
 //   - only the admin creates one; only its own owner token pushes the form or reads the answers (the
 //     admin secret, a Run share link's owner token and a shared talk's are refused); nothing is served
 //     until the first push; a form carrying a right answer is refused;
@@ -81,7 +87,7 @@ try {
   const notYet = await status(main)
   assert.equal(notYet.status, 200)
   assert.equal(notYet.headers.get('cache-control'), 'no-store')
-  assert.deepEqual(await notYet.json(), { state: 'not_yet', opensAt: window.opensAt, closesAt: window.closesAt })
+  assert.deepEqual(await notYet.json(), { state: 'not_yet', phase: 'pre', opensAt: window.opensAt, closesAt: window.closesAt })
   const deviceA = device(), deviceB = device()
   const early = await submit(main, { participantId: deviceA, submissionId: nextId(), stepId: 'pwwelcome', kind: 'read' })
   assert.equal(early.status, 409)
@@ -144,7 +150,9 @@ try {
   // The owner pages the entries.
   const all = await (await owned(main, 'results?after=0')).json()
   assert.equal(all.people, 2)
-  assert.equal(all.phase, 'open')
+  assert.equal(all.state, 'open')
+  assert.equal(all.phase, 'pre')
+  assert.equal('workPhase' in all, false, 'one pair of names: state and phase, as the status')
   assert.ok(all.entries.every((entry) => /^[0-9a-f]{16}$/.test(entry.participant)), 'participants are hashes')
   assert.equal(JSON.stringify(all).includes(deviceA), false, 'no device id is ever stored or served')
   const quiz = all.entries.filter((entry) => entry.stepId === 'pwquiz')
@@ -156,7 +164,7 @@ try {
   await sleep(Math.max(0, window.closesAt - Date.now()) + 200)
 
   // ── After it closes ───────────────────────────────────────────────────────────────────────
-  assert.deepEqual(await (await status(main)).json(), { state: 'closed', opensAt: window.opensAt, closesAt: window.closesAt, people: 2 })
+  assert.deepEqual(await (await status(main)).json(), { state: 'closed', phase: 'pre', opensAt: window.opensAt, closesAt: window.closesAt, people: 2 })
   const late = await submit(main, { participantId: deviceA, submissionId: nextId(), stepId: 'pwwelcome', kind: 'read' })
   assert.equal(late.status, 410)
   assert.equal((await (await owned(main, 'results?after=0')).json()).entries.length, all.entries.length, 'the answers are kept for the owner after it closes')
@@ -171,11 +179,92 @@ try {
   assert.equal((await owned(early2, 'close', { method: 'POST' })).status, 200)
   assert.equal((await (await status(early2)).json()).state, 'closed')
   assert.equal((await pushForm(early2, openNow)).status, 200)
-  assert.equal((await (await status(early2)).json()).state, 'closed', 'a later push does not reopen it')
+  assert.equal((await (await status(early2)).json()).state, 'closed', 'a push with the same closing time does not reopen it')
+  const laterClose = { opensAt: openNow.opensAt, closesAt: openNow.closesAt + 60 * 60_000 }
+  assert.equal((await pushForm(early2, laterClose)).status, 200, 'a push without a form changes only the window')
+  assert.equal((await (await status(early2)).json()).state, 'open', 'the owner closed early, then set a later closing time: it reopens')
+  assert.equal((await submit(early2, { participantId: deviceA, submissionId: nextId(), stepId: 'pwquiz', kind: 'answer', choice: 'poll-pwquiz-option-1' })).status, 201)
   const early3 = await create()
   assert.equal((await pushForm(early3, openNow)).status, 200)
   assert.equal((await fetch(`${baseUrl}/prework/${early3.preworkId}/close`, { method: 'POST', headers: admin })).status, 200, 'the admin secret may also close it')
-  pass('the owner (or admin) closes it early; it is never reopened')
+  assert.equal((await pushForm(early3, { ...laterClose, form: form() })).status, 200)
+  assert.equal((await (await status(early3)).json()).state, 'closed', 'an admin close stays closed whatever the owner pushes')
+  const noForm = await create()
+  const missing = await pushForm(noForm, laterClose)
+  assert.equal(missing.status, 409, 'a window-only push before any form is refused')
+  assert.equal((await missing.json()).error.code, 'form_missing')
+  assert.equal((await status(noForm)).status, 404, 'and nothing is served')
+  pass('the owner (or admin) closes it early; a later closing time reopens the owner\'s close, never the admin\'s; a window-only push keeps the form')
+
+  // ── Phase ─────────────────────────────────────────────────────────────────────────────────
+  const post = await create()
+  assert.equal((await pushForm(post, { ...openNow, phase: 'during' })).status, 400, 'a phase other than pre or post is refused')
+  assert.equal((await pushForm(post, { ...openNow, phase: 'post' })).status, 200)
+  assert.equal((await (await status(post)).json()).phase, 'post', 'the status says post-work')
+  const otherPhase = await pushForm(post, { ...openNow, phase: 'pre' })
+  assert.equal(otherPhase.status, 409, 'an object holds one phase: pre-work cannot be pushed onto post-work')
+  assert.equal((await otherPhase.json()).error.code, 'phase_mismatch')
+  assert.equal((await (await owned(post, 'results?after=0')).json()).phase, 'post')
+  assert.equal((await (await status(early3)).json()).phase, 'pre', 'a push with no phase (a 0.37 app) is pre-work')
+  pass('phase: the push carries pre or post and the status returns it; none is pre; the other phase is refused')
+
+  // ── Reopened by a later closing time ──────────────────────────────────────────────────────
+  const reopen = await create()
+  const shortWindow = { phase: 'pre', opensAt: Date.now() - 1_000, closesAt: Date.now() + 1_500, form: form() }
+  assert.equal((await pushForm(reopen, shortWindow)).status, 200)
+  assert.equal((await submit(reopen, { participantId: deviceA, submissionId: nextId(), stepId: 'pwwelcome', kind: 'read' })).status, 201)
+  await sleep(Math.max(0, shortWindow.closesAt - Date.now()) + 200)
+  assert.equal((await (await status(reopen)).json()).state, 'closed')
+  assert.equal((await submit(reopen, { participantId: deviceA, submissionId: nextId(), stepId: 'pwquiz', kind: 'answer', choice: 'poll-pwquiz-option-1' })).status, 410, 'closed by its date')
+  const later = { ...shortWindow, closesAt: Date.now() + 60 * 60_000 }
+  assert.equal((await pushForm(reopen, later)).status, 200)
+  assert.deepEqual(await (await status(reopen)).json(), { state: 'open', phase: 'pre', opensAt: later.opensAt, closesAt: later.closesAt }, 'a later closing time reopens it')
+  assert.equal((await submit(reopen, { participantId: deviceA, submissionId: nextId(), stepId: 'pwquiz', kind: 'answer', choice: 'poll-pwquiz-option-1' })).status, 201, 'submissions are accepted again')
+  assert.equal((await (await owned(reopen, 'results?after=0')).json()).entries.length, 2, 'the answers from before the close are kept')
+  pass('a push with a later closing time reopens a form closed by its date; submissions are accepted again')
+
+  // ── Withdrawn ─────────────────────────────────────────────────────────────────────────────
+  const hidden = await create()
+  assert.equal((await pushForm(hidden, { ...openNow, phase: 'post' })).status, 200)
+  const deviceC = device()
+  for (let i = 0; i < 4; i += 1) {
+    assert.equal((await submit(hidden, { participantId: device(), submissionId: nextId(), stepId: 'pwhope', kind: 'answer', text: `kept ${i}` })).status, 201)
+  }
+  assert.equal((await submit(hidden, { participantId: deviceC, submissionId: nextId(), stepId: 'pwtask1', kind: 'question', text: 'Which data?' })).status, 201)
+  const beforeWithdraw = await (await owned(hidden, 'results?after=0')).json()
+  const withdrawRoute = `${baseUrl}/prework/${hidden.preworkId}/withdraw`
+  assert.equal((await fetch(withdrawRoute, { method: 'POST' })).status, 401, 'withdrawing needs the owner token')
+  assert.equal((await fetch(withdrawRoute, { method: 'POST', headers: admin })).status, 401, 'the admin secret does not withdraw')
+  assert.equal((await fetch(withdrawRoute, { method: 'POST', headers: { authorization: `Bearer ${other.ownerToken}` } })).status, 401, 'another object\'s owner token does not withdraw')
+  assert.equal((await fetch(withdrawRoute)).status, 405)
+  assert.equal((await owned(hidden, 'withdraw', { method: 'POST', headers: json, body: '{"withdrawn":"maybe"}' })).status, 400)
+  const withdrawn = await owned(hidden, 'withdraw', { method: 'POST' })
+  assert.equal(withdrawn.status, 200)
+  assert.equal((await withdrawn.json()).withdrawn, true)
+  const notAvailable = async (response, label) => {
+    assert.equal(response.status, 404, label)
+    assert.equal(response.headers.get('cache-control'), 'no-store', `${label}: never cached, so publishing again is seen at once`)
+    assert.equal((await response.json()).error.code, 'not_available', label)
+  }
+  await notAvailable(await status(hidden), 'the status')
+  await notAvailable(await submit(hidden, { participantId: deviceC, submissionId: nextId(), stepId: 'pwwelcome', kind: 'read' }), 'a submission')
+  await notAvailable(await fetch(`${baseUrl}/prework/${hidden.preworkId}/mine`, { method: 'POST', headers: json, body: JSON.stringify({ participantId: deviceC }) }), 'my answers')
+  assert.equal((await fetch(`${baseUrl}/prework/${hidden.preworkId}`, { headers: { authorization: `Bearer ${hidden.ownerToken}` } })).status, 400, 'public routes still refuse credentials')
+  // The owner still pages every answer, a page at a time.
+  const afterWithdraw = await (await owned(hidden, 'results?after=0')).json()
+  assert.equal(afterWithdraw.withdrawn, true)
+  assert.deepEqual(afterWithdraw.entries, beforeWithdraw.entries, 'every answer is kept for the owner')
+  const secondPage = await (await owned(hidden, `results?after=${afterWithdraw.entries[1].seq}`)).json()
+  assert.deepEqual(secondPage.entries, afterWithdraw.entries.slice(2))
+  assert.equal(JSON.stringify(afterWithdraw).includes(deviceC), false, 'no device id reaches the owner')
+  assert.ok(afterWithdraw.entries.every((entry) => /^[0-9a-f]{16}$/.test(entry.participant) && !('name' in entry)), 'participants are random codes with no name')
+  // A push while withdrawn (a time changed on an unpublished Run) does not serve it again.
+  assert.equal((await pushForm(hidden, { ...openNow, phase: 'post', closesAt: Date.now() + 2 * 60 * 60_000 })).status, 200)
+  await notAvailable(await status(hidden), 'still withdrawn after a push')
+  assert.equal((await owned(hidden, 'withdraw', { method: 'POST', headers: json, body: '{"withdrawn":false}' })).status, 200)
+  assert.equal((await (await status(hidden)).json()).state, 'open', 'put back, it is served again')
+  assert.equal((await submit(hidden, { participantId: deviceC, submissionId: nextId(), stepId: 'pwwelcome', kind: 'read' })).status, 201)
+  pass('withdrawn: every public route says not available; the owner still pages every answer; putting it back serves it')
 
   // ── Rate ──────────────────────────────────────────────────────────────────────────────────
   const busy = await create()

@@ -101,7 +101,13 @@ export const CHAPTER_EXCLUDED: ReadonlySet<string> = new Set([
   'outline-collapse-all', 'outline-expand-all',
   // Move slide to… / Move section to…: rows of the slide and section context menus (Slides outline, grid), also in
   // the palette and Actions here. No row of Write the outline until the practice talk has a Try it for them.
-  'move-slide-to', 'move-section-to'
+  'move-slide-to', 'move-section-to',
+  // Work files ticket 30: the Tools window's commands (Sessions, Published pages, Work files, and what the Run
+  // on show can do) and the two Attach commands. No chapter row and no practice line yet (ticket 30 left them
+  // out while pre-work was hidden); they are on the ⌘/ sheet and in the Tools window's palette.
+  'tools-view-sessions', 'tools-view-published', 'tools-view-workfiles', 'tools-plan-run', 'tools-edit-plan', 'tools-plan-like-this',
+  'tools-publish', 'tools-unpublish', 'tools-go-live', 'tools-open-run', 'tools-copy-link', 'tools-copy-invitation', 'tools-new-work-file',
+  'attach-prework', 'attach-postwork'
 ])
 
 /** A command this module reads. The registry's `CommandDefinition` satisfies it (with `taskGroup` set). */

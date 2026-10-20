@@ -71,6 +71,22 @@ export function readbackInkMark(value: unknown): InkMark | null {
   }
 }
 
+/** A clip mark as stored (a slide video started playing): checked, rebuilt from known fields, or null. */
+export function readbackClipMark(value: unknown): { event: 'clip'; slideId: string; tMs: number; clip: { src: string; atS: number } } | null {
+  try {
+    if (!onlyFields(value, new Set(['event', 'slideId', 'tMs', 'clip']))) return null
+    const m = value
+    if (typeof m.tMs !== 'number' || !Number.isFinite(m.tMs) || m.tMs < 0) return null
+    if (typeof m.slideId !== 'string' || m.slideId.length > 100) return null
+    const c = m.clip
+    if (!onlyFields(c, new Set(['src', 'atS']))) return null
+    if (typeof c.src !== 'string' || c.src.length > 2000 || typeof c.atS !== 'number' || !Number.isFinite(c.atS) || c.atS < 0 || c.atS > 86400) return null
+    return { event: 'clip', slideId: m.slideId, tMs: m.tMs, clip: { src: c.src, atS: c.atS } }
+  } catch {
+    return null
+  }
+}
+
 /**
  * A recording's marks (stored slide-time index, or a checkpoint's raw marks): [] unless an array;
  * ink marks checked (readbackInkMark) and dropped when they fail; once the recording's ink passes
@@ -82,6 +98,11 @@ export function readbackSlideTimeIndex<T = unknown>(value: unknown): T[] {
   let inkBytes = 0
   let spent = false
   for (const mark of value) {
+    if (mark && typeof mark === 'object' && (mark as { event?: unknown }).event === 'clip') {
+      const clip = readbackClipMark(mark)
+      if (clip) out.push(clip)
+      continue
+    }
     if (!mark || typeof mark !== 'object' || (mark as { event?: unknown }).event !== 'ink') { out.push(mark); continue }
     if (spent) continue
     const checked = readbackInkMark(mark)

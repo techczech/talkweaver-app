@@ -147,7 +147,7 @@ try {
   assert.equal(ownerNameFrom(awkward), 'Dominik Lukeš')
   assert.equal(ownerNameFrom('---\ntitle: x\n---\n', 'Fallback Name'), 'Fallback Name')
   console.log('PASS helpers: line count and endings kept, authored text, owner name without e-mail')
-  // Pre-work is hidden for 0.37: a {prework} section's slides are not part of a shared talk, in the page or in the slide texts.
+  // A {prework} section's slides are not part of a shared talk, in the page or in the slide texts.
   const withPrework = `${fm}
 ## Main part
 

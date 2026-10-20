@@ -1,0 +1,194 @@
+/* Section, statement and quote slides adopt the animated-scene formatting (ADR-0039, 0.41 ticket 04).
+   Values from docs/design/2026-10-16-slide-scene-formatting/after/01-section.html, 02-statement.html and
+   03-quote.html, drawn at 1920 x 1080 and written here in cqw (px / 19.2). Unmarked block: it sorts after
+   every migrated block and, by its `zz-` name, after every other unmarked file (skin/statement.css among them), so
+   it wins where it meets the older rules in layouts/title.css, layouts/statement.css, skin/statement.css and
+   layouts/quote.css. The source-styled quote forms (ADR-0038, figure.qf) keep their own look: nothing
+   here reaches a figure.qf, and the quote rules name `blockquote` (the Plain form) alone. */
+
+/* ---- 1. Section card: the accent bar is the title block's own left edge ----
+   The block (an authored kicker, if any, and the title) is one column at 160px from the left edge; the
+   bar runs its full height, inset 6px top and bottom as drawn. No automatic line above the title. */
+.slide-content.layout-section-title {
+  justify-items: start;
+}
+.slide-content.layout-section-title > .slide-head {
+  position: relative;
+  margin-left: calc(8.3333cqw - var(--slide-pad-x));
+  padding-left: 3.3333cqw;
+}
+.slide-content.layout-section-title > .slide-head::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: .3125cqw;
+  bottom: .3125cqw;
+  width: .625cqw;
+  background: var(--accent);
+}
+.slide-content.layout-section-title h1 {
+  font-size: max(38px, 6.25cqw);
+  line-height: 1.12;
+  letter-spacing: -.02em;
+  max-width: 10.33em;
+}
+
+/* ---- 2. Quote: no box, pale mark, regular-weight words, coloured source line ---- */
+/* Never bold: the boxed emphasis (the accent chip) stays, at the quote's own weight. */
+.slide-content.layout-quote > blockquote strong { font-weight: 400; }
+/* The source line: mono caps in the accent, led by a short rule (shared by every placement). */
+.slide-content.layout-quote > blockquote cite,
+.slide-content.layout-quote > blockquote + cite {
+  font-family: var(--mono);
+  font-weight: 400;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: .1em;
+}
+.slide-content.layout-quote > blockquote cite::before { height: 2px; background: currentColor; }
+/* The mark is pale in every placement. */
+.slide-content.layout-quote > blockquote::before {
+  color: color-mix(in srgb, var(--accent) 30%, #fff);
+}
+
+/* Quote on its own (no painted title, no picture): the open drawing, centred on the slide. Beside a title
+   rail or a picture the older geometry stays (ADR-0028 §2) and only the finish above applies.
+   Geometry mirrored in compiler/scripts/lib/quote-layout.mjs: words 4.1667cqw (80px), width 71.875cqw
+   (1380px), line height 1.24, the mark's 1.5em block over the words, source .6em under them. */
+.slide-content.layout-quote:not(:has(> .slide-head:not(.slide-head-quiet), > .slide-figure)) > blockquote {
+  background: none;
+  border-left: 0;
+  padding: 0;
+  width: min(71.875cqw, 100%);
+  --quote-fitted-size: max(31px, 4.1667cqw);
+  line-height: 1.24;
+}
+.slide-content.layout-quote:not(:has(> .slide-head:not(.slide-head-quiet), > .slide-figure)) > blockquote::before {
+  position: static;
+  display: block;
+  font-size: 3.25em;
+  line-height: .7;
+  height: .4615em;      /* the drawing's 120px block, in this 260px mark's em */
+  margin-left: -.5em;   /* hangs 130px left of the words */
+}
+.slide-content.layout-quote:not(:has(> .slide-head:not(.slide-head-quiet), > .slide-figure)) > blockquote cite,
+.slide-content.layout-quote:not(:has(> .slide-head:not(.slide-head-quiet), > .slide-figure)) > blockquote + cite {
+  margin-top: calc(.6 * var(--quote-fitted-size));
+  font-size: max(var(--type-floor), .35em);
+  gap: .7857em;
+}
+.slide-content.layout-quote:not(:has(> .slide-head:not(.slide-head-quiet), > .slide-figure)) > blockquote cite::before {
+  width: 2.2857em;
+}
+
+/* ---- 3. Statement: the accent bar is the text block's own left edge ----
+   The bar is a left border on each statement paragraph; a following paragraph takes its gap as padding
+   (not margin), so the bar runs unbroken from the top of the first to the bottom of the last: exactly as
+   tall as the text block, and it moves with it. Regular weight everywhere: the lead paragraph is told
+   from the quieter ones by ink alone. Replaces ADR-0028 §10's "no bar on the statement". The Rule
+   background keeps its short rule above the text instead of the bar (one device, not two). */
+.slide[data-layout="statement"]:has(> .slide-content.layout-statement) {
+  --stmt-lead-weight: 400;
+  --stmt-bar-w: .625cqw;
+  --stmt-bar-gap: 3.0208cqw;
+  --stmt-bar-ink: var(--accent);
+}
+.slide[data-layout="statement"]:has(> .slide-content.layout-statement.statement-bg-strong) { --stmt-bar-ink: #fff; }
+.slide[data-layout="statement"] > .slide-content.layout-statement > p:not(.kicker):not(.slide-source) {
+  font-weight: 400;
+  border-left: var(--stmt-bar-w) solid var(--stmt-bar-ink);
+  padding-left: var(--stmt-bar-gap);
+}
+.slide[data-layout="statement"] > .slide-content.layout-statement > p:not(.kicker):not(.slide-source) + p:not(.kicker):not(.slide-source) {
+  margin-top: 0;
+  padding-top: var(--stmt-para-gap);
+}
+/* Rule keeps its short rule above the text instead of the bar: the bar and its gap are zero there. */
+.slide[data-layout="statement"]:has(> .slide-content.layout-statement.statement-bg-rule) {
+  --stmt-bar-w: 0px;
+  --stmt-bar-gap: 0px;
+}
+/* The [Action: …] buttons line up with the words, not the bar. */
+.slide[data-layout="statement"] > .slide-content.layout-statement:not(.statement-centred) > .slide-actions {
+  padding-left: calc(var(--stmt-bar-w) + var(--stmt-bar-gap));
+}
+
+/* Statement with its picture: the picture stays, beside a vertically centred text block (the drawing's
+   760px picture, 96px gap, 160px side margins). The compiler stamps `statement-picture` (07-assembly) on
+   the two authored shapes that carry a picture without a separate title: the heading IS the statement (a
+   visible head, no statement paragraph), or the head is the quiet nav-only one and the statement is the
+   paragraph (the picture may come before or after it in the source; it is always drawn on the right).
+   A statement with BOTH a painted title and a paragraph keeps its own title-panel arrangement. */
+.slide[data-layout="statement"]:has(> .slide-content.layout-statement.statement-picture) {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+.slide[data-layout="statement"] > .slide-content.layout-statement.statement-picture.statement-picture {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) 39.5833cqw !important;
+  grid-template-rows: minmax(0, 1fr) !important;
+  column-gap: 5cqw;
+  align-items: center;
+  align-content: center;
+  justify-items: stretch;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  padding-left: 8.3333cqw;
+  padding-right: 8.3333cqw;
+}
+.slide[data-layout="statement"] > .slide-content.layout-statement.statement-picture.statement-picture > :is(.slide-head:not(.slide-head-quiet), p:not(.kicker):not(.slide-source)) {
+  grid-column: 1 !important;
+  grid-row: 1 !important;
+  align-self: center !important;
+  justify-self: start;
+  height: auto !important;
+  min-width: 0;
+  margin: 0 !important;
+  max-width: 100%;
+}
+.slide[data-layout="statement"] > .slide-content.layout-statement.statement-picture.statement-picture > .slide-figure {
+  grid-column: 2 !important;
+  grid-row: 1 !important;
+  align-self: center;
+  justify-self: stretch;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+}
+.slide[data-layout="statement"] > .slide-content.layout-statement.statement-picture.statement-picture > .slide-figure img {
+  width: 100%;
+  max-width: none;
+  max-height: 100%;
+  border-radius: .9375cqw;
+  border: .105cqw solid var(--hairline, #e3e2dc);
+  background: #fff;
+}
+.slide[data-layout="statement"] > .slide-content.layout-statement.statement-picture.statement-picture > p:not(.kicker):not(.slide-source) { width: auto !important; }
+/* The statement is the heading: it takes the statement's look (regular weight, the bar as the block's edge). */
+.slide[data-layout="statement"] > .slide-content.layout-statement.statement-picture.statement-picture > .slide-head:not(.slide-head-quiet) {
+  display: block !important;
+  position: static !important;  /* the rail panel's absolute placement (stage.css) goes: the head is one grid cell here */
+  min-height: 0 !important;
+  width: 100% !important;       /* (the :is rule above sits at the same weight, hence the !important) a definite column, so the title fit can see when a line is too wide */
+  background: none;
+  border-left: var(--stmt-bar-w) solid var(--stmt-bar-ink);
+  padding: 0 0 0 var(--stmt-bar-gap);
+}
+.slide[data-layout="statement"] > .slide-content.layout-statement.statement-picture.statement-picture > .slide-head > h1 {
+  font-weight: 400;
+  font-size: calc(var(--fs-body) * 1.3672);
+  line-height: 1.14;
+  letter-spacing: -.01em;
+  max-width: none;
+  margin: 0;
+}
+/* With a picture beside it the paragraph is set at the drawing's 84px (4.375cqw), not the full-width 104px. */
+.slide[data-layout="statement"] > .slide-content.layout-statement.statement-picture.statement-picture > p:not(.kicker):not(.slide-source) {
+  font-size: calc(var(--fs-body) * 1.3672);
+  line-height: 1.14;
+}

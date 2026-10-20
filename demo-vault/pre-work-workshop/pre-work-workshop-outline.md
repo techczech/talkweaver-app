@@ -6,49 +6,10 @@ event: Pre-work test
 author: TalkWeaver
 date: 30 September 2026
 outline_version: 2
+prework: pre-work-workshop-intake
+postwork: pre-work-workshop-after
 ---
 # Pre-work Workshop
-
-## Before the session
-{id=pwform}{prework} 
-
-Five short steps to do before we meet. They take about half an hour in all, and your answers are anonymous.
-
-### Welcome: what this workshop is for
-{id=pwwelcome}{task}{readonly}{cards}{font-body=xl}{cards=rows}{sidebar}{icons}{bg=emerald}{font-title=xl}{titlelook=tab}
-
-- We will look at what AI agents can do today
-- You will try one small task yourself before we meet
-- Bring one question you would like answered
-
-### Quick check: what makes something an agent?
-{poll=single}{id=pwquiz}{check}
-
-- It answers questions in full sentences
-- It uses tools to carry out steps on its own {right}
-- It runs on a bigger model
-- Not sure yet
-
-### Which AI tools do you already use?
-{poll=multiple}{id=pwtools}{noask}
-
-- ChatGPT
-- Claude
-- Copilot
-- Gemini
-- None yet
-
-### What do you hope to get out of the session?
-{poll=open}{id=pwhope}
-
-One or two sentences is plenty.
-
-### Task: ask an assistant to plan a small job
-{id=pwtask}{task}{minutes=20}
-
-- Pick a real task from your week, such as planning a meeting
-- Ask an AI assistant to break it into steps
-- Note one thing it did well and one thing it got wrong
 
 ## Opening
 {id=open}
@@ -59,16 +20,16 @@ One or two sentences is plenty.
 We start from what you told us before the session.
 
 ### What you knew before we started
-{id=quizresults}{results=pwquiz}
+{id=quizresults}{results=pre-work-workshop-intake/pwquiz}
 
 ### The tools you already use
-{id=toolsresults}{results=pwtools}
+{id=toolsresults}{results=pre-work-workshop-intake/pwtools}
 
 ## Your turn
 {id=turn}
 
 ### What do you hope for today?
-{poll=board}{results=pwhope}{id=hopesboard}
+{poll=board}{results=pre-work-workshop-intake/pwhope}{id=hopesboard}
 
 Add what you hope for, or what worries you. The first cards come from your pre-work.
 

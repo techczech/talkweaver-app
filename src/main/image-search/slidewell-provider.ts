@@ -32,7 +32,7 @@ import { queryWords, wordsScore } from './archive-provider.ts'
 import { extOf, IMAGE_EXTS } from './image-file.ts'
 import type { ImageFile, ImageSearchProvider } from './provider.ts'
 import { askPictureQuery, PICTURE_QUERY_SOCKET, slidewellUserDataDirs, type PictureAnswer } from './slidewell-query.ts'
-import { sqliteQuery } from './sqlite-read.ts'
+import { READ_BUSY_MS, READ_LIMIT_MS, sqliteQuery } from './sqlite-read.ts'
 import { isInsideRoot, pathFromThumbUrl, twarchiveUrl } from './thumb-url.ts'
 
 export type SlideWellLocation = {
@@ -77,9 +77,9 @@ export type SlideWellProviderDeps = {
 const LIMIT = 60
 type AliasedHit = ImageSearchHit & { aliases: string[] }
 const strip = ({ aliases: _aliases, ...hit }: AliasedHit): ImageSearchHit => hit
-/** Per read: the most we wait for SlideWell's lock, and the hard limit after which sqlite3 is killed. */
-export const READ_BUSY_MS = 250
-export const READ_LIMIT_MS = 500
+/** Per read: the most we wait for SlideWell's lock, and the hard limit after which sqlite3 is killed
+ *  (defined beside the reader, where the archive's old-slide reads take the same limits). */
+export { READ_BUSY_MS, READ_LIMIT_MS }
 const CTX_TTL_MS = 5000 // which tables exist: re-read at most this often (item state is read every time); a failed read is never kept
 const RECHECK_BATCH_MS = 5 // thumbnails arriving together are re-checked in one query
 const ISSUED_MAX = 20000

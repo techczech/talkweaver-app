@@ -3,7 +3,12 @@ import { taskGroupFields, type TaskGroupFields } from './task-groups.ts'
 // 'slide-picker' is the ⌘S slide picker (SlideBrowser + its Find a talk box): its own surface with its own
 // keys, so its S (select section) and the Talks panel's S (sort, 'browser' scope) are two surfaces'
 // keys, never one keystroke claimed twice (talk search 08).
-export const SHORTCUT_SCOPES = ['app', 'editor', 'browser', 'slide-picker', 'layout-picker', 'inspector', 'presenter', 'picker', 'pathway', 'studio', 'talktext', 'importer'] as const
+// 'tools' is the Tools window's own keymap beside Studio, History and the Importer (work-files ticket 30):
+// Sessions, Published pages, Work files and the Run page. Each choice below has its reason in its row's
+// explanation; the rule behind all of them is that a chord already held anywhere in the app, by a reserved
+// chord (ADR-0011) or by the OS or Electron's default menu is not taken, even though the Tools window is a
+// window of its own and would not clash in practice.
+export const SHORTCUT_SCOPES = ['app', 'editor', 'browser', 'slide-picker', 'image-drawer', 'layout-picker', 'inspector', 'presenter', 'picker', 'pathway', 'studio', 'talktext', 'importer', 'tools'] as const
 export type ShortcutScope = (typeof SHORTCUT_SCOPES)[number]
 
 export interface ShortcutEntry extends TaskGroupFields {
@@ -43,7 +48,7 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['app.context-menu', '⌘K', ['Mod-k'], 'Actions here', 'Opens Actions here: what you can do where the caret, the selected slide or the selected row is.', 'App'],
     ['app.layout-picker', '⌘L', ['Mod-l'], 'Layout picker: Open', 'Opens the layout picker in the Inspector column for the current slide; pressed again, it closes and puts the slide back.', 'Find & insert'],
     ['app.icon-picker', '⌘I', ['Mod-i'], 'Insert icon', 'Puts an icon on the title, paragraph or list item the cursor is on, in the Plain and the Markdown view.', 'Find & insert'],
-    ['app.image-search', '⌘⇧I', ['Mod-Shift-i'], 'Insert an archived image', 'Searches images recovered from earlier PowerPoint files.', 'Find & insert'],
+    ['app.image-search', '⌘⇧I', ['Mod-Shift-i'], 'Find images', 'Opens or closes the image drawer beside the editor: screenshots, images from old PowerPoints and pictures from your talks.', 'Find & insert'],
     ['app.find', '⌘F', ['Mod-f'], 'Find in outline', 'Opens text search in the current outline editor.', 'Find & insert'],
     ['app.where-used', '⌘⇧U', ['Mod-Shift-u'], 'Where used and versions', 'Shows where the current slide is reused and its available versions.', 'Slides'],
     ['app.slide-focus', '⌘⇧F', ['Mod-Shift-f'], 'Focus current slide', 'Scopes editing and live preview to the current slide.', 'Slides'],
@@ -140,6 +145,14 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['slide-picker.close-beside', 'Esc', ['Escape'], 'Close the talk beside', 'Closes the talk beside the results; the results, their scroll position and the selection are unchanged.', 'Talks'],
     ['slide-picker.add-beside', '⌘↵', ['Mod-Enter'], 'Add the talk beside', 'In Find a talk, adds the highlighted talk as a further column (up to three) instead of replacing the scope.', 'Talks'],
     ['slide-picker.remove-chip', '⌫', ['Backspace'], 'Remove the last talk chip', 'In an empty Find a talk box, takes the last talk picked from it out of the scope.', 'Talks']
+  ]),
+  // The image drawer (ImageDrawer.tsx): docked beside the editor, so these keys act only while focus is inside it.
+  ...entries('image-drawer', [
+    ['image-drawer.move', '↑ ↓ ← →', ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'], 'Move through images', 'Moves the highlighted image: ↑ ↓ by a row, ← → by one image (in the search box, when the cursor is at the edge of the words).', 'Image drawer'],
+    ['image-drawer.insert', '⌘↵', ['Mod-Enter'], 'Insert at caret', 'Copies the highlighted image into the vault and inserts it at the editor caret; the drawer stays open.', 'Image drawer'],
+    ['image-drawer.choose-editable', '↵', ['Enter'], 'Editable slide', 'While the choice for an old slide shows: adds the slide after the current slide, built from its text and images, so it stays editable.', 'PowerPoint Imports'],
+    ['image-drawer.choose-picture', 'P', ['p'], 'Picture of the slide', 'While the choice for an old slide shows: places the slide on the current slide as one image, at the caret.', 'PowerPoint Imports'],
+    ['image-drawer.close', 'Esc', ['Escape'], 'Close the drawer', 'Closes the choice for an old slide first, inserting nothing; otherwise closes the image drawer and returns the cursor to the editor.', 'Image drawer']
   ]),
   ...entries('picker', [
     ['picker.navigate', '↑ ↓ ← →', ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'], 'Move through choices', 'Moves the active choice in command, icon, layout, tag, and search pickers.', 'Pickers'],
@@ -252,6 +265,20 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['talktext.copy', 'C', ['c'], 'Copy', 'Copies the current Notes or Script export using the selected options.', 'Export'],
     ['talktext.help', '?', ['?'], 'Keyboard cheat-sheet', 'Opens the Manage notes keyboard shortcut sheet.', 'Help'],
     ['talktext.close', 'Esc', ['Escape'], 'Close overlay or screen', 'Closes the most local overlay, then Manage notes.', 'Help']
+  ]),
+  ...entries('tools', [
+    ['tools.view-sessions', '⌘4', ['Mod-4'], 'Sessions', 'Shows the Sessions view. ⌘1 to ⌘3 stay Studio, History and the Importer, so the three views of this build take the next three numbers, in rail order. The numbers belong to this window, as ⌘1 to ⌘3 already are (⌘4 is Grid in the editor, a different window).', 'Views'],
+    ['tools.view-published', '⌘5', ['Mod-5'], 'Published pages', 'Shows the Published pages view (⌘4 to ⌘6 follow ⌘1 to ⌘3, which Studio, History and the Importer hold).', 'Views'],
+    ['tools.view-workfiles', '⌘6', ['Mod-6'], 'Work files', 'Shows the Work files view (⌘4 to ⌘6 follow ⌘1 to ⌘3, which Studio, History and the Importer hold).', 'Views'],
+    ['tools.plan-run', '⌘⌥N', ['Mod-Alt-n'], 'Plan a run', 'Opens the plan sheet. N for new, with ⌥ because ⌘N is New window (and New pathway in the Pathways window).', 'Plan'],
+    ['tools.edit-plan', '⌘⌥E', ['Mod-Alt-e'], 'Edit plan', 'Edits the plan of the Run on show. E for edit, with ⌥ because ⌘E is Edit in the presenter.', 'Plan'],
+    ['tools.plan-like-this', '⌘⇧D', ['Mod-Shift-d'], 'Plan the next run like this', 'Opens the plan sheet filled in from the Run on show. D for duplicate, with ⇧ because ⌘D is Duplicate talk and ⌘⌥D is the macOS Dock shortcut.', 'Plan'],
+    ['tools.publish', '⌘⌥U', ['Mod-Alt-u'], 'Publish for this run', 'Publishes the Run on show (U for upload). ⌘⇧P is the command palette, so Publish takes ⌥ and a letter nothing else holds.', 'Publish'],
+    ['tools.go-live', '⌘⌥L', ['Mod-Alt-l'], 'Go live', 'Starts the Run on show live. L for live, with ⌥ because ⌘⇧L is Insert link in the editor and ⌘L is the layout picker.', 'Publish'],
+    ['tools.open-run', '⌘⌥O', ['Mod-Alt-o'], 'Open run', 'Opens the Run of the selected page in Published pages. O for open, with ⌥ because ⌘O is Open talk in the Talks panel and ⌘⇧R is the default View menu\'s Force Reload.', 'Views'],
+    ['tools.copy-link', '⌘⇧C', ['Mod-Shift-c'], 'Copy link', 'Copies the link of the Run on show, the one its Published step shows with the QR code. C for copy; nothing else holds ⌘⇧C.', 'Publish'],
+    ['tools.copy-invitation', '⌘⌥C', ['Mod-Alt-c'], 'Copy invitation text', 'Copies the invitation text of the Run on show (C for copy, ⌥ to tell it from Copy link).', 'Publish'],
+    ['tools.new-work-file', '⌘⇧N', ['Mod-Shift-n'], 'New work file', 'Starts a new work file in the Work files view. N for new; ⇧ because ⌘N is New window and ⌘⌥N is Plan a run.', 'Work files']
   ]),
   ...entries('importer', [
     ['importer.move', 'J / K', ['j', 'k'], 'Previous or next slide', 'Moves through the visible slide queue in the Inspection Bench.', 'Navigation'],

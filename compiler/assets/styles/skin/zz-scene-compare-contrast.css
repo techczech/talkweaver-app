@@ -1,0 +1,179 @@
+/* Compare and contrast adopt the animated-scene drawing (ADR-0039, 0.41 ticket 08).
+   Values from docs/design/2026-10-16-slide-scene-formatting/after/_vs.css, 12-compare*.html and 13-contrast*.html
+   (drawn at 1920 x 1080, written here in cqw = px / 19.2). Unmarked block: it sorts after every migrated block and,
+   by its `zz-` name, after layouts/contrast.css, so it wins where it meets that file's compare and contrast rules.
+
+   Two subtle panels side by side and a dark "vs" disc between them. Panel heads are regular, in the panel's hue
+   over a rule (the section accent on the left, the deck palette's next hue, --hue-2, on the right); a head that
+   names an app carries that app's logo. Rows are regular weight, each with one icon in the panel's hue, and the
+   rows of the two panels share heights: a row that wraps keeps its partner level.
+     compare   `.compare-grid.vs-grid`: one grid; each panel is a subgrid over the head and row tracks, so the
+               panel is sized to its content and half B stays the one reveal beat (.layout-compare .compare-half.half-b).
+     contrast  `.contrast-grid.contrast-vs`: one grid; the panels are two background boxes behind the rows; each
+               `.contrast-pair` is a subgrid row holding the left and right cell, so both sides of a row arrive
+               together (`.contrast-grid > .contrast-pair`) and share a height.
+   --vs-pad is the drawing's air inside the panel above its head and under its last row. A long state (five rows a
+   side, or a long row) steps the text down from 48px to 42px. */
+
+.slide .vs-grid {
+  --vs-pad: 1.3542cqw;
+  --vs-gap: 5.4167cqw;
+  --vs-type: max(var(--type-floor), 2.5cqw);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--vs-gap) minmax(0, 1fr);
+  grid-auto-rows: auto;
+  width: 100%;
+  max-width: none;
+  margin: 0 auto;
+  position: relative;
+  align-items: stretch;
+  align-content: start;
+}
+.slide .vs-grid.vs-long { --vs-type: max(var(--type-floor), 2.1875cqw); }
+.slide .vs-grid .L { --c: var(--accent); }
+.slide .vs-grid .R { --c: var(--hue-2); }
+
+/* The panel box: contrast draws it behind the rows, compare is the box itself (a subgrid). */
+.slide .vs-grid .vs-bg { grid-row: 1 / -1; border-radius: 1.1458cqw; z-index: 0; }
+.slide .vs-grid .vs-bg.L { grid-column: 1; }
+.slide .vs-grid .vs-bg.R { grid-column: 3; }
+.slide .vs-grid .vs-panel {
+  display: grid;
+  grid-template-rows: subgrid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-content: stretch;
+  align-content: stretch;
+  border-radius: 1.1458cqw;
+  padding: var(--vs-pad) 0;
+  min-width: 0;
+  background-color: color-mix(in srgb, var(--box-hue, var(--accent)) 5%, #fff);
+  z-index: 0;
+}
+.slide .vs-grid .vs-panel.L { grid-column: 1; }
+.slide .vs-grid .vs-panel.R { grid-column: 3; }
+
+/* Contrast: a pair is one row across the panels, a subgrid so its cells sit in the two panel columns.
+   skin/contrast.css and layouts/contrast.css give every .contrast-pair two equal columns (!important) and a
+   hairline frame; those are answered here at a higher specificity. */
+.slide .contrast-grid.contrast-vs {
+  border: 0;
+  background: none;
+  margin-top: 0;
+  gap: 0;
+}
+.slide .contrast-grid.contrast-vs .contrast-pair.vs-pair {
+  grid-column: 1 / -1;
+  display: grid !important;
+  grid-template-columns: subgrid !important;
+  grid-template-rows: none;
+  gap: 0 !important;
+  align-items: stretch;
+  align-content: stretch;
+  justify-items: stretch;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  text-align: left;
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+}
+.slide .contrast-grid.contrast-vs .contrast-pair.vs-pair::before,
+.slide .contrast-grid.contrast-vs .contrast-pair.vs-pair::after { display: none !important; content: none; }
+.slide .vs-grid .vs-pair > .vs-row.L { grid-column: 1; }
+.slide .vs-grid .vs-pair > .vs-row.R { grid-column: 3; }
+
+/* Head: regular, the panel hue, a rule under it. */
+.slide .vs-grid .vs-head {
+  margin: 0 1.4583cqw .7292cqw;
+  padding: .2083cqw 0 .7292cqw;
+  display: flex;
+  align-items: center;
+  gap: .8333cqw;
+  font-size: max(var(--type-floor), 1.7708cqw);
+  line-height: 1.2;
+  font-weight: 400;
+  color: var(--c);
+  border-bottom: max(1px, .1042cqw) solid color-mix(in srgb, var(--c) 40%, #fff);
+  min-width: 0;
+  z-index: 1;
+  position: relative;
+}
+.slide .vs-grid > .vs-head { grid-row: 2; }
+.slide .vs-grid > .vs-head.L { grid-column: 1; }
+.slide .vs-grid > .vs-head.R { grid-column: 3; }
+.slide .vs-grid .vs-head-ico { display: inline-flex; width: 2.0833cqw; height: 2.0833cqw; flex: none; }
+.slide .vs-grid .vs-head-ico svg { width: 100%; height: 100%; }
+.slide .vs-grid .vs-head-text strong { font-weight: 400; }
+
+/* Rows: regular weight, one icon each, a hairline between rows. */
+.slide .vs-grid .vs-row {
+  margin: 0 1.4583cqw;
+  padding: 1.3542cqw 1.25cqw;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 1.25cqw;
+  font-size: var(--vs-type);
+  line-height: 1.2;
+  font-weight: 400;
+  color: var(--ink);
+  border-radius: .5208cqw;
+  min-width: 0;
+  z-index: 1;
+}
+.slide .vs-grid.vs-long .vs-row { padding: .9375cqw 1.25cqw; }
+.slide .vs-grid .vs-row::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: -1px;
+  height: max(1px, .1042cqw);
+  background: rgb(16 20 24 / .08);
+}
+.slide .vs-grid .vs-row.last::after { content: none; }
+.slide .vs-grid .vs-row .vs-text { min-width: 0; overflow-wrap: break-word; }
+.slide .vs-grid .vs-row .vs-text strong { font-weight: 400; }
+.slide .vs-grid .vs-ico { display: inline-flex; flex: none; width: 1em; height: 1em; color: var(--c); }
+.slide .vs-grid .vs-ico svg { width: 100%; height: 100%; }
+/* A row with no icon keeps the text where the icon-bearing rows keep theirs. */
+.slide .vs-grid .vs-row.vs-bare { padding-left: calc(1.25cqw + 1em + 1.25cqw); }
+
+/* The disc: dark, centred between the panels over the full height. */
+.slide .vs-grid .vs-disc {
+  grid-column: 2;
+  grid-row: 1 / -1;
+  align-self: center;
+  justify-self: center;
+  width: 4.5833cqw;
+  height: 4.5833cqw;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 1.5625cqw;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+
+/* Compare: the old full-bleed halves are gone; the grid flows in the content band like the other layouts. */
+.slide .slide-content.layout-compare {
+  position: relative;
+  inset: auto;
+  align-content: center;
+  justify-content: center;
+}
+.slide .slide-content.layout-compare > .compare-grid { min-height: 0; }
+
+/* Contrast: the panels take the full width of the content block, as compare's do. */
+.slide .slide-content.layout-contrast {
+  width: 100%;
+  max-width: none;
+}

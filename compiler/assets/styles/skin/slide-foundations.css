@@ -1,0 +1,104 @@
+/* Shared slide-design foundations (ADR-0039, 0.41 ticket 01). Three things every layout builds on; the
+   layout tickets use them, no layout depends on them yet. Values carried over from the locked drawings
+   (docs/design/2026-10-16-slide-scene-formatting/after/_slide.css).
+
+   1. CONTENT BAND. The content block of a top-title slide is centred vertically in the space it owns:
+      between the lower edge of the title block and the top of the footer band (61px above the stage
+      bottom, the reservation table/media/code already make), with equal air above and below it.
+        --band-footer  what the slide's own bottom padding does not already clear of the footer band
+        --band-air     the least air between the title block and the content; mirrored under the
+                       content, so the free space splits evenly and the block sits mid-band.
+                       Plain top title: 2.2cqh (the shared head gap). Title looks (kicker, label, tab):
+                       their clear band, --titlelook-clear (8cqh), which title-look.css already puts
+                       under the title.
+      A top-regime slide with no painted title (a quiet nav-only head, or no head) owns the whole slide:
+      no title-look padding, no head gap, the same reserve top and bottom, so the block centres on the
+      slide. The left rail (stage.css) and the hidden regime already centre their column on the slide.
+      The block's own children keep `flex: 0 1 auto` (stage.css): panels and cards take their content
+      height, they are not stretched to fill the band. Layouts that already reserve the band their own
+      way (table, timeline, media, code, slot) keep their rules under the plain title: they are the
+      same equal-air rule with their own gap. Under a title look their bottom mirrors the clear band
+      (--band-footer + --band-air), as every other layout's does. Exception: a `{contents=strip}` host (`.ct-strip-host`) keeps base.css's 13cqh filmstrip reserve.
+
+   2. SUBTLE BOX. A box around text is never a heavy accent outline: 2px (at 1920) outline mixed 34%
+      accent into white, a 5% accent fill.
+        .subtle-box                 on any element; the hue is --box-hue, the section accent by default
+        .subtle-box.hue-2 / .hue-3  the box in the second or third hue (below)
+        .subtle-box.subtle-box-neutral   a grey box (2.5% ink fill) for a panel that carries no hue
+        --subtle-box-line, --subtle-box-border, --subtle-box-fill   the same values in the section
+                                    accent, for a layout that draws the box on its own element
+
+   3. EXTRA HUES. ADR-0039 amends ADR-0005's one-accent rule: a slide may colour its second and third
+      element in the next two hues of the deck palette's section cycle after its accent (cobalt ->
+      emerald, vermilion; emerald -> vermilion, cobalt; vermilion -> cobalt, emerald; green palette:
+      forest -> vermilion, cobalt). The compiler stamps them per slide as --sec-hue-2/--sec-hue-3 and
+      their tints (07-assembly.mjs, extraHuesForAccent in 02-triggers-layout.mjs); read them as
+        --hue-1 / --hue-1-tint      the section accent and tint (the same as --accent / --tint)
+        --hue-2 / --hue-2-tint      the second hue
+        --hue-3 / --hue-3-tint      the third hue
+      Green and red keep their right/wrong meaning through --green / --red; these hues never stand
+      for right or wrong.
+
+   Unmarked blocks: they sort after every migrated block (README.md), and before title-look.css, whose
+   rules win where both apply. Declared on .slide so they resolve against the slide's inline stamp
+   (the reason base.css re-declares --tint there). */
+
+.slide {
+  --hue-1: var(--accent);
+  --hue-1-tint: var(--tint);
+  --hue-2: var(--sec-hue-2, #0a7a5c);
+  --hue-2-tint: var(--sec-hue-2-tint, #e4f3ee);
+  --hue-3: var(--sec-hue-3, #c2410c);
+  --hue-3-tint: var(--sec-hue-3-tint, #fcece3);
+  --subtle-box-line: max(1px, .105cqw);
+  --subtle-box-border: color-mix(in srgb, var(--accent) 34%, #fff);
+  --subtle-box-fill: color-mix(in srgb, var(--accent) 5%, #fff);
+}
+
+/* ---- 2. Subtle box ---- */
+.slide .subtle-box {
+  border: var(--subtle-box-line) solid color-mix(in srgb, var(--box-hue, var(--accent)) 34%, #fff);
+  background: color-mix(in srgb, var(--box-hue, var(--accent)) 5%, #fff);
+}
+.slide .subtle-box.hue-2 { --box-hue: var(--hue-2); }
+.slide .subtle-box.hue-3 { --box-hue: var(--hue-3); }
+.slide .subtle-box.subtle-box-neutral {
+  border-color: rgb(16 20 24 / .26);
+  background: color-mix(in srgb, var(--ink) 2.5%, #fff);
+}
+
+/* ---- 1. Content band (top title regime) ---- */
+.slide[data-title-layout="top"] {
+  --band-footer: max(0px, calc(61px - var(--slide-pad-y)));
+  --band-air: 2.2cqh;
+}
+.slide[data-title-layout="top"][data-title-look] { --band-air: var(--titlelook-clear); }
+/* The air under the content mirrors the air over it, above the footer band. :where keeps this at the
+   specificity of the shared top-regime rules, so a layout's own reservation still wins. */
+.slide[data-title-layout="top"]:where(:not(.ct-strip-host)) > .slide-content:where(:not(.layout-title, .layout-section-title)) {
+  padding-bottom: calc(var(--band-footer) + var(--band-air));
+}
+/* :where keeps the head gap at the shared rule's specificity: a layout's own head gap (table, timeline,
+   media, code, cards) still wins. */
+.slide[data-title-layout="top"] > .slide-content > .slide-head:where(:not(.slide-head-quiet)) { margin-bottom: var(--band-air) !important; }
+
+/* Under a title look the gap over the content is always the look's clear band (title-look.css zeroes
+   every layout's own head gap), so the layouts that reserve their bottom their own way (table, media,
+   code, slot, timeline) mirror that band instead of their own gap: the footer band plus --band-air.
+   Under the plain title their own rules stand unchanged. */
+.slide[data-title-layout="top"][data-title-look] > .slide-content:is(:has(> .slide-table), .layout-media, .layout-code, :has(> .slot)) {
+  padding-bottom: calc(var(--band-footer) + var(--band-air));
+}
+/* The timeline reserves its band on the slide (layouts/timeline.css): the slide margin plus what it
+   does not clear of the footer band, plus the clear band. */
+.slide[data-title-layout="top"][data-title-look]:has(> .slide-content.layout-timeline) {
+  padding-bottom: calc(var(--slide-pad-y) + var(--band-footer) + var(--band-air));
+}
+
+/* No painted title: the block owns the whole slide and centres on it. */
+.slide[data-title-layout="top"]:not(:has(> .slide-content > .slide-head:not(.slide-head-quiet))) {
+  --band-air: 0px;
+  padding-top: calc(var(--slide-pad-y) + var(--band-footer)) !important;
+}
+.slide[data-title-layout="top"] > .slide-content > .slide-head.slide-head-quiet { margin-bottom: 0 !important; }
+.slide[data-title-layout="top"] > .slide-content > :first-child:not(.slide-head) { margin-top: auto; }

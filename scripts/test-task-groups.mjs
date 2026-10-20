@@ -1,6 +1,6 @@
 // Onboarding 0.38.1 ticket 01: every command has a task group and the palettes list every command.
 //   - each registry command (and each shortcut row) has exactly one of the ten task groups and a
-//     sub-group, or is a key inside a surface (lock decision 13: 47 of them, in no group);
+//     sub-group, or is a key inside a surface (lock decision 13: 52 of them, in no group);
 //   - the command map (docs/design/2026-10-09-onboarding-and-command-help/command-map-talkweaver.json)
 //     matches the registries: same ids, labels, groups, sub-groups, except the listed placements;
 //   - every command is either in the editor palette or on the written exclusion list; every
@@ -65,6 +65,22 @@ const BUILDER_PLACED = {
   'move-section-to': ['Write the outline', 'Reorder slides and items'],
   // Shift-Enter in a quotation: a key added after the map was drawn, placed with the list keys.
   'editor.quote-paragraph': ['Write the outline', 'Lists'],
+  // Work files ticket 30: the Tools window's commands and the two Attach commands, placed with the Run, Share and Present neighbours.
+  'tools-view-sessions': ['Manage talks', 'Sessions, pages and work files'],
+  'tools-view-published': ['Manage talks', 'Sessions, pages and work files'],
+  'tools-view-workfiles': ['Manage talks', 'Sessions, pages and work files'],
+  'tools-open-run': ['Manage talks', 'Sessions, pages and work files'],
+  'tools-plan-run': ['Shape the talk', 'Plan a run'],
+  'tools-edit-plan': ['Shape the talk', 'Plan a run'],
+  'tools-plan-like-this': ['Shape the talk', 'Plan a run'],
+  'tools-new-work-file': ['Shape the talk', 'Work files'],
+  'attach-prework': ['Shape the talk', 'Work files'],
+  'attach-postwork': ['Shape the talk', 'Work files'],
+  'tools-publish': ['Share', 'Publish'],
+  'tools-unpublish': ['Share', 'Publish'],
+  'tools-copy-link': ['Share', 'Publish'],
+  'tools-copy-invitation': ['Share', 'Publish'],
+  'tools-go-live': ['Present', 'Live audience, polls and questions'],
   // Quote forms (ADR-0038): "Quote form: Tweet" and its six siblings, the palette's way to set a quote slide's form.
   'quote-form-auto': ['Build a slide', 'Layouts'],
   'quote-form-plain': ['Build a slide', 'Layouts'],
@@ -101,12 +117,12 @@ test('every registry command has exactly one of the ten task groups and a sub-gr
     assert(TASK_GROUPS.includes(command.taskGroup), `${command.id} ("${command.label}") has no task group; add it to src/shared/task-groups.ts`)
     assert(typeof command.subgroup === 'string' && command.subgroup.length > 0, `${command.id} has no sub-group`)
   }
-  assert.equal(surfaceKeys, 47, 'the 47 keys inside a surface are the registry rows marked so in the map')
+  assert.equal(surfaceKeys, 52, 'the 52 keys inside a surface are the registry rows marked so in the map')
 })
 
-test('the keys inside a surface are exactly the map\'s 47 records of that class', () => {
+test('the keys inside a surface are exactly the map\'s 52 records of that class', () => {
   const mapped = map.records.filter((record) => record.class !== 'command')
-  assert.equal(mapped.length, 47)
+  assert.equal(mapped.length, 52)
   assert.deepEqual(Object.keys(SURFACE_KEYS).sort(), mapped.map((record) => record.id).sort())
   for (const record of mapped) assert.equal(SURFACE_KEYS[record.id], record.surface, record.id)
 })
@@ -177,7 +193,7 @@ test('the count per task group is derived and equals the map plus the builder\'s
   for (const record of map.records.filter((r) => r.class === 'command' && !BUILDER_PLACED[r.id])) expected[record.task] += 1
   for (const [, [task]] of Object.entries(BUILDER_PLACED)) expected[task] += 1
   assert.deepEqual(counts, expected)
-  assert.equal(Object.values(counts).reduce((a, b) => a + b, 0), 232) // ticket 12 adds get-started-show-example; plain view adds view-plain, view-markdown and the two margin-menu commands; quote forms add seven; collapse all and expand all add two; Move slide to… and Move section to… add two (merged: base 225 + plain view 4 + Move-to 2); Shift-Enter in a quotation adds one
+  assert.equal(Object.values(counts).reduce((a, b) => a + b, 0), 247) // ticket 12 adds get-started-show-example; plain view adds view-plain, view-markdown and the two margin-menu commands; quote forms add seven; collapse all and expand all add two; Move slide to… and Move section to… add two (merged: base 225 + plain view 4 + Move-to 2); Shift-Enter in a quotation adds one; the Tools window and Attach commands add fifteen
 })
 
 test('a chord becomes the key event that matches it', () => {

@@ -30,6 +30,8 @@ export interface RunLike {
   boards?: RunBoard[]
   polls?: RunPollLike[]
   pollResponses?: RunPollResponseLike[]
+  /** Pre-work answers mirrored from the handout: only how many there are is read here. */
+  prework?: { entries?: readonly unknown[] }
 }
 
 const DAY_MS = 24 * 60 * 60 * 1_000
@@ -71,11 +73,14 @@ export function shareablePolls(run: RunLike): RunPollSummary[] {
   return runPollSummaries(run).filter((summary) => summary.kind !== 'text')
 }
 
-/** What the Run can put on a link: the dialog's three lines. */
-export function runShareOptions(run: RunLike): { boards: number; boardCards: number; polls: RunPollSummary[]; prework: boolean } {
+/** What the Run can put on a link: the dialog's three lines. `prework` is whether the answers can go on a
+ *  link (not yet: never); `preworkAnswers` is how many the Run holds, so the line says which is the case. */
+export function runShareOptions(run: RunLike): { boards: number; boardCards: number; polls: RunPollSummary[]; prework: boolean; preworkAnswers: number; preworkNote: string } {
   const boards = run.boards ?? []
+  const preworkAnswers = Array.isArray(run.prework?.entries) ? run.prework.entries.length : 0
   return { boards: boards.length, boardCards: boards.reduce((sum, board) => sum + runBoardView(board).cardCount, 0),
-    polls: shareablePolls(run), prework: false }
+    polls: shareablePolls(run), prework: false, preworkAnswers,
+    preworkNote: preworkAnswers ? 'Sharing pre-work answers is not available yet.' : 'No pre-work answers on this Run' }
 }
 
 /** The push for the Worker: the Run's boards (no hidden card, no name) and poll counts, as chosen. */

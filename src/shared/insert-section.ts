@@ -99,10 +99,10 @@ const TITLE_RE = /^#\s+(.+)/
 // depend on the `:::notes` state or on a heading's Trigger line.
 const STAND_IN = '###### title'
 
-/** The compiler's reading of `text`'s structure: which lines are headings, at what level. */
-export function readOutline(text: string): OutlineReading {
+/** `text` as the compiler's parser is handed it, line for line: frontmatter and closed HTML comments
+ *  blanked in place, newlines kept (adaptMarkdownOutlineV2). */
+function blankedBody(text: string): { body: string; bodyStart: number } {
   const src = String(text ?? '')
-  // Frontmatter and closed HTML comments blanked in place, newlines kept (adaptMarkdownOutlineV2).
   let body = src
   let bodyStart = 0
   if (src.startsWith('---')) {
@@ -113,7 +113,48 @@ export function readOutline(text: string): OutlineReading {
       bodyStart = src.slice(0, end + 1).split('\n').length
     }
   }
-  body = body.replace(/<!--[\s\S]*?-->/g, (m) => m.replace(/[^\n]/g, ''))
+  return { body: body.replace(/<!--[\s\S]*?-->/g, (m) => m.replace(/[^\n]/g, '')), bodyStart }
+}
+
+/** One slide as the compiler's parser read it (parseOutlineTree), for comparing two readings of a talk. */
+export interface SlideReading {
+  /** 0-based line of the heading in the text. */
+  line: number
+  level: number
+  title: string
+  id: string
+  /** The heading's and Trigger block's attributes, as JSON (key order as parsed). */
+  attrs: string
+  /** The slide's own content and notes lines, blank lines at either end dropped. */
+  content: string
+  notes: string
+  /** The slide's chain of parents, outermost first, each as its position in `slides` ([] at the top). */
+  ancestors: number[]
+}
+
+/** Every slide of `text` in reading order, the talk's `#` title and what sits above the first heading,
+ *  each exactly as parseOutlineTree reads them. */
+export function readSlides(text: string): { deckTitle: string; preamble: string; slides: SlideReading[] } {
+  const tree = parseOutlineTree(blankedBody(text).body)
+  const own = (lines: readonly string[]): string => lines.join('\n').replace(/^(?:[ \t\r]*\n)+/, '').replace(/\s+$/, '')
+  const slides: SlideReading[] = []
+  const walk = (node: OutlineTreeNode, ancestors: number[]): void => {
+    for (const child of node.children) {
+      const index = slides.length
+      slides.push({
+        line: child.sourceLine - 1, level: child.level, title: child.title, id: child.id, attrs: JSON.stringify(child.attrs),
+        content: own(child.contentLines), notes: own(child.notesLines), ancestors
+      })
+      walk(child, [...ancestors, index])
+    }
+  }
+  walk(tree.root, [])
+  return { deckTitle: tree.meta.title, preamble: own(tree.root.contentLines) + '\n:::notes\n' + own(tree.root.notesLines), slides }
+}
+
+/** The compiler's reading of `text`'s structure: which lines are headings, at what level. */
+export function readOutline(text: string): OutlineReading {
+  const { body, bodyStart } = blankedBody(text)
   const openComment = body.includes('<!--')
 
   const lines = body.split('\n')

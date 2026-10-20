@@ -406,7 +406,10 @@ Run in its own registry; nothing is registered by talk here.
 - `GET /results/<id>` serves the page: plain HTML written from the push with every string escaped,
   no script, `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; …`,
   `no-store`, `noindex`. It refuses any credential (`400 credentials_not_allowed`). An unknown id and
-  a link not pushed yet answer the same 404, so a guessed id learns nothing.
+  a link not pushed yet answer the same 404, so a guessed id learns nothing. The page's footer carries
+  the online-content guidelines and the report link (`worker/online-content-guidelines.ts`, generated
+  from `resources/online-content-guidelines.md`; the link attaches nothing). Adding it made the build
+  `26-online-content-guidelines`.
 - Every route takes exactly one method (`405` otherwise): the page is read-only.
 - `POST /results/<id>/close` (Stop sharing) takes the owner token or the admin secret. The content is
   deleted at once and a tombstone keeps answering `410` ("stopped sharing").
@@ -418,16 +421,32 @@ Run in its own registry; nothing is registered by talk here.
 `RunPrework` Durable Objects (migration `v4`, binding `RUN_PREWORK`) hold one planned Run's pre-work
 form and its anonymous answers. The app keeps one per Run in its own registry (with the owner token)
 and puts the id in the Run's handout; nothing is registered by talk here. Build `18-run-prework`; ticket 11 made it `19-board-seed` (boards open with pre-work answers, below).
+Work-files ticket 12 (ADR-0040) made it `23-work-phases`: one object holds one phase of a Run's work,
+pre-work or post-work, so the app makes one per Run and phase; a later closing time reopens a form
+closed by its date; the owner can withdraw it (the Run unpublished). Ticket 13 made it `24-work-service`:
+a later closing time also lifts the owner's early close (never the admin's), a push may leave the form
+out to change only the window, "not available" is sent with no-store, and the results use the status's
+names (`state`, `phase`). The prework-responses design (2026-10-19) made it `25-prework-responses`: a
+form step may carry `local: true` (`{local}` in the work file), and the object then refuses a read, an
+answer or a done mark for it (`400 step_local`; a question about it is still taken); `GET
+/prework/<id>/waiting?after=<seq>` (owner) answers `{seq, waiting}`, the number of answers and questions
+changed after the app's cursor, without reading any of them out. A form with no `local` flag (every
+form pushed before) is read as before: every step sent.
 
 - `POST /prework` with the admin bearer → `201 {"preworkId","ownerToken"}`. The owner token has its
   own role (`prework-owner`); a shared talk's or a results link's owner token cannot stand in for it.
-- `PUT /prework/<id>/form` (owner; body capped at 256 KiB) sets `{opensAt, closesAt, form}` (ms; it
-  closes after it opens, at most 400 days ahead). The form is rebuilt from a closed schema
+- `PUT /prework/<id>/form` (owner; body capped at 256 KiB) sets `{phase, opensAt, closesAt, form}`
+  (`phase` is `pre` or `post`, `pre` when absent, as a 0.37 app sends it; times in ms; it closes after
+  it opens, at most 400 days ahead). With no `form` only the window changes and the stored form is
+  kept (`409 form_missing` before any form is stored): how the app re-pushes a Run's new closing time.
+  The first push fixes the phase; a push of the other phase is
+  refused `409 phase_mismatch`. An object stored before phases reads as `pre`. The form is rebuilt from a closed schema
   (`worker/prework-protocol.ts`): steps `slide | check | question | task` with their poll or done
   setting. A `right` key anywhere in it is refused (`400 right_answer_not_allowed`): the quick check's
   right answer never leaves the app.
-- `GET /prework/<id>` (public, no credential) → `{state: not_yet | open | closed, opensAt, closesAt,
-  people?}` (`people` only once closed). `404` until the first push, the same as an unknown id.
+- `GET /prework/<id>` (public, no credential) → `{state: not_yet | open | closed, phase: pre | post,
+  opensAt, closesAt, people?}` (`people` only once closed). `404` until the first push, the same as an
+  unknown id.
 - `POST /prework/<id>/submit` (public; 8 KiB) `{participantId, submissionId, stepId, kind, …}` with
   kind `read`, `answer` (`choice` or `text`, checked against the step's poll), `done` (a pre-task
   with Mark as done) or `question` (`text`, optional `name`; only where the step takes questions).
@@ -437,10 +456,18 @@ and puts the id in the Run's handout; nothing is registered by talk here. Build 
   each question is its own entry. The device id is stored only as a hash.
 - `POST /prework/<id>/mine` (public) `{participantId}` → that device's own entries.
 - `GET /prework/<id>/results?after=<seq>` (owner) → entries changed after the sequence number, 500 a
-  page, with `people`, `phase` and `lastActivityAt`; the app mirrors them onto the Run by entry id.
-- `POST /prework/<id>/close` (owner or admin): closes now. Only this early close is sticky: a later
-  push never reopens it. A form closed by its date is reopened by a push that moves the close date
-  later (a rescheduled Run).
+  page, with `people`, `state` (the window: not_yet, open, closed) and `phase` (pre or post), named
+  as the status names them, `withdrawn` and `lastActivityAt`; the app mirrors them onto the Run by entry id. A participant is a
+  hash of the device id, never the id itself; the only name is one a participant typed on a question.
+- `POST /prework/<id>/close` (owner or admin): closes now. A push whose closing time is later than the
+  one stored reopens it when the owner closed it (ADR-0040 decision 3: changing a closing time after
+  close reopens it); a push with the same or an earlier closing time does not. An admin's close stays
+  closed, as does a close stored before 24 (who closed it is not known). A form closed by its date is
+  reopened by a push that moves the close date later (a rescheduled Run).
+- `POST /prework/<id>/withdraw` (owner only; 1 KiB) with an empty body or `{"withdrawn": true}`
+  withdraws it: every public route (status, submit, mine) answers `404 not_available` ("This page is
+  not available"), with `cache-control: no-store` like the status, whatever the body; the owner still pages every answer. A push while withdrawn
+  keeps it withdrawn. `{"withdrawn": false}` serves it again (Publish again).
 - Caps (`PREWORK_LIMITS`): 2 000 people, 400 changes and 20 questions per person, 8 MiB of entries;
   3 000 submissions a minute for the form and 60 for one person; per network source (the entry
   Worker passes `cf-connecting-ip`, hashed in the object; an IPv6 address counts by its /64) 300 a

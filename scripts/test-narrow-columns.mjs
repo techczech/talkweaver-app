@@ -74,6 +74,10 @@ const slides = (extra = '') => [
   '### Two things beside the rail', '{iconlist} {id=two}', '', ...MEANS.slice(0, 2), '',
   '### What this means, authored boxes', '{iconlist=boxes} {id=means-boxes}', '', ...MEANS, '',
   '### What this means, on top', '{iconlist} {titletop} {id=means-top}', '', ...MEANS, '',
+  '### Grouped list with long members', '{iconlist} {id=grouped}', '',
+  '- Strengths {icon=lucide:thumbs-up}', '  - Group headings and their bullets read as one block', '  - Nested items are ink at body size',
+  '- Dangers {icon=lucide:triangle-alert}', '  - A short list can leave most of its column empty', '  - Growing the type is the answer',
+  '- Remedies {icon=lucide:wrench}', '  - Pick a layout', '  - Trim the text', '',
   '### Models come in families by size', `{logolist} {id=families}${extra}`, '', ...FAMILIES, ''
 ]
 const compile = async (dir, name, { frontmatter = [], extra = '' } = {}) => {
@@ -89,7 +93,9 @@ const section = (html, id) => html.match(new RegExp(`<section[^>]*data-id="${id}
 const dir = mkdtempSync(join(tmpdir(), 'tw-narrow-columns-'))
 const on = await compile(dir, 'on')
 assert.match(section(on.html, 'roles'), /class="icon-row count-5 ir-rows ir-rows-3"/, 'it16: five roles stamp rows of three')
-assert.doesNotMatch(section(on.html, 'four'), /ir-rows/, 'four icon-row columns keep today\'s shape')
+// ADR-0039 (0.41): every icon row carries an inline `--ir-rows:N` grid variable, so the bare word
+// "ir-rows" is no longer absent; the reflow shape is the class `ir-rows ir-rows-N` on the row.
+assert.doesNotMatch(section(on.html, 'four'), /class="icon-row[^"]*\bir-rows\b/, 'four icon-row columns keep today\'s shape')
 assert.match(section(on.html, 'means'), /class="feature-list fl-iconlist-list fl-narrow-cols"/, 'it107: three cards beside a rail take the row shape')
 assert.match(section(on.html, 'families'), /fl-iconlist-list fl-narrow-cols/, 'ex42: the logolist cards take the row shape')
 assert.doesNotMatch(section(on.html, 'two'), /fl-iconlist-list/, 'two cards beside a rail still fit')
@@ -98,9 +104,9 @@ assert.doesNotMatch(section(on.html, 'means-top'), /fl-iconlist-list/, 'three ca
 assert.equal(on.warnings.filter((w) => /narrow|unknown/i.test(String(w))).length, 0, `the new token raises no warning (${on.warnings})`)
 
 const slideOff = await compile(dir, 'slide-off', { extra: ' {narrowcols=off}' })
-for (const id of ['roles', 'means', 'families']) assert.doesNotMatch(section(slideOff.html, id), /ir-rows|fl-narrow-cols/, `{narrowcols=off} keeps ${id}'s columns`)
+for (const id of ['roles', 'means', 'families']) assert.doesNotMatch(section(slideOff.html, id), /class="icon-row[^"]*\bir-rows\b|fl-narrow-cols/, `{narrowcols=off} keeps ${id}'s columns`)
 const deckOff = await compile(dir, 'deck-off', { frontmatter: ['narrow_columns: off'] })
-for (const id of ['roles', 'means', 'families']) assert.doesNotMatch(section(deckOff.html, id), /ir-rows|fl-narrow-cols/, `narrow_columns: off keeps ${id}'s columns`)
+for (const id of ['roles', 'means', 'families']) assert.doesNotMatch(section(deckOff.html, id), /class="icon-row[^"]*\bir-rows\b|fl-narrow-cols/, `narrow_columns: off keeps ${id}'s columns`)
 const deckOffSlideOn = await compile(dir, 'deck-off-slide-on', { frontmatter: ['narrow_columns: off'], extra: ' {narrowcols=on}' })
 assert.match(section(deckOffSlideOn.html, 'roles'), /ir-rows-3/, '{narrowcols=on} beats a deck that switched it off')
 const deckBad = await compile(dir, 'deck-bad', { frontmatter: ['narrow_columns: perhaps'] })
@@ -175,9 +181,24 @@ try {
     assert.equal(item.sub.display, 'flex', `ex42 family ${i + 1}: the models run inline`)
     assert(new Set(item.sub.items.map((s) => Math.round(s.top))).size === 1, `ex42 family ${i + 1}: the models share one line`)
     for (const [j, s] of item.sub.items.entries()) {
-      assert.equal(s.before === 'none' || s.before === 'normal', true, `ex42 family ${i + 1} model ${j + 1}: no bullet`)
-      assert.equal(s.after, j < item.sub.items.length - 1 ? '"·"' : 'none', `ex42 family ${i + 1} model ${j + 1}: a middle dot between models only`)
+      assert.equal(s.before, j > 0 ? '"·"' : 'none', `ex42 family ${i + 1} model ${j + 1}: a middle dot before every model but the first (it leads its item, so a wrap never leaves it at a line end)`)
+      assert.equal(s.after, 'none', `ex42 family ${i + 1} model ${j + 1}: no separator trails an item, so none can end a line`)
     }
+  }
+  // A separator never ends or starts a visual line: members too long for one line stack, one per line, no separator.
+  const grouped = await probe(onPage, 'grouped', '.feature-list')
+  assert.match(grouped.cls, /fl-narrow-cols/, 'grouped list: beside a rail it takes the row shape')
+  assert.match(grouped.cls, /fl-subs-stack/, 'grouped list: long members stack')
+  for (const [i, item] of grouped.items.entries()) {
+    assert.equal(new Set(item.sub.items.map((s) => Math.round(s.top))).size, item.sub.items.length, `grouped ${i + 1}: every member is on its own line`)
+    for (const s of item.sub.items) {
+      assert.equal(s.after, 'none', `grouped ${i + 1}: no separator trails a member (none can end a line)`)
+      assert.equal(s.before, 'none', `grouped ${i + 1}: no separator leads a member (none can start a line)`)
+    }
+  }
+  // The inline family run: a separator only ever leads an item that shares its line with the one before it.
+  for (const [i, item] of families.items.entries()) {
+    item.sub.items.slice(1).forEach((s, j) => assert(Math.abs(s.top - item.sub.items[j].top) < 4 && s.left > item.sub.items[j].left, `ex42 family ${i + 1}: separator of model ${j + 2} sits mid-line, after the previous model`))
   }
   await onPage.close()
 
@@ -188,7 +209,9 @@ try {
   const offMeans = await probe(offPage, 'means', '.feature-list')
   assert.equal(tops(offMeans.items).length, 1, 'off: the three cards stay side by side')
   const offFamilies = await probe(offPage, 'families', '.feature-list')
-  assert.notEqual(offFamilies.items[0].sub.display, 'flex', 'off: the family sub-list is today\'s list, not inline')
+  // Ticket 09 (cards) made a card's points a flex COLUMN (skin/zz-scene-cards.css), so display alone no longer tells
+  // today's list from the inline row: the models must still sit on separate lines.
+  assert(new Set(offFamilies.items[0].sub.items.map((s) => Math.round(s.top))).size > 1, 'off: the family sub-list is today\'s list, not inline')
   await offPage.close()
   console.log('PASS narrow-columns look: it16 3 + 2, it107 and ex42 rows, off restores today')
 } finally {

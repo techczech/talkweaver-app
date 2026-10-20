@@ -25,6 +25,7 @@ import { join, relative, resolve } from 'node:path'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { createCheckLedger } from './lib/check-ledger.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
+import { PRE_WORK, POST_WORK } from '../scripts/lib/work-page-fixture.mjs'
 import { REPLY_TEXT_MARK, WORKERS_SUBDOMAIN, startCloudflareApiStub } from '../scripts/lib/cloudflare-api-stub.mjs'
 import { APP_CONFIG_MARK, appWrittenLoopback } from '../src/main/handout-publishing.ts'
 import { PUBLISH_REFUSED } from '../src/main/publishing-logic.ts'
@@ -50,6 +51,13 @@ writeFileSync(join(vault, '_PRESENTATIONS', slug, 'run-probe.json'), JSON.string
   slideSet: { kind: 'full' }, startedAt: '2026-10-01T09:00:00.000Z', endedAt: '2026-10-01T10:00:00.000Z',
 }))
 writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault }))
+// A second talk that names a pre-work and a post-work file (work-files ticket 23): its Publish says they go out with a Run.
+const workSlug = 'work-probe'
+mkdirSync(join(vault, workSlug), { recursive: true })
+mkdirSync(join(vault, 'Work files'), { recursive: true })
+writeFileSync(join(vault, 'Work files', 'research-teams-intake.md'), PRE_WORK)
+writeFileSync(join(vault, 'Work files', 'after-the-session.md'), POST_WORK)
+writeFileSync(join(vault, workSlug, `${workSlug}-outline.md`), ['---', 'title: Work probe', 'outline_version: 2', 'prework: research-teams-intake', 'postwork: after-the-session', '---', '', '### One', '{id=one}', '', '- Kestrelwing point', ''].join('\n'))
 const shots = process.env.TW_SHOTS_DIR ? resolve(process.env.TW_SHOTS_DIR) : null
 if (shots) mkdirSync(shots, { recursive: true })
 
@@ -79,6 +87,7 @@ const CHECKS = [
   'a slide about a local server (its text, its link, its code with localhost and 127.0.0.1) publishes, and is in the published pages as written',
   'a page an earlier version left with the dead live address does not stop a publish and is not rewritten; the result says "1 earlier handout…" with its name behind Details',
   'every toast action button (Copy link, Open Settings, Details; success, warning, error) has a label that can be read: a name, and a colour that stands out from its fill and from the toast',
+  'a talk that names a pre-work and a post-work file: Publish first says "Pre-work and post-work are not included…" with their titles and Plan a run; Cancel sends nothing; Publish carries on; Plan a run opens the plan sheet',
 ]
 const ledger = createCheckLedger(CHECKS)
 const record = (index, ok, detail) => ledger.record(CHECKS[index], Boolean(ok), detail)
@@ -408,6 +417,62 @@ try {
   const inFiles = [...findIn(userData, tokens).map((path) => `userData/${path}`), ...findIn(vault, tokens).map((path) => `vault/${path}`)]
   record(13, inWindow === 0 && inOutput === 0 && inFiles.length === 0 && tokens.every((token) => api.requests.some((request) => request.authorization === `Bearer ${token}`)),
     inFiles.length ? `found in: ${inFiles.join(', ')}` : `${windowText.length} characters of the window and ${output.length} of output searched; each token was really used`)
+
+  // 17. A talk naming work files: Publish says they go out with a Run (ticket 23). The app is started again for it.
+  app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`], cwd: root, env })
+  app.process().stdout.on('data', (chunk) => { output += chunk })
+  app.process().stderr.on('data', (chunk) => { output += chunk })
+  await app.evaluate(({ shell, app: electronApp, BrowserWindow }) => {
+    shell.openExternal = async () => {}
+    shell.showItemInFolder = () => {}
+    shell.openPath = async () => ''
+    if (process.env.TW_E2E_SHOW !== '1') {
+      const hide = (win) => { win.setPosition(-20000, -20000); win.hide() }
+      BrowserWindow.getAllWindows().forEach(hide)
+      electronApp.on('browser-window-created', (_event, win) => hide(win))
+    }
+  })
+  const page2 = await app.firstWindow()
+  await page2.waitForLoadState('domcontentloaded')
+  await openTalkByTitle(page2, 'Work probe')
+  const noticeSheet = page2.locator('[data-testid="publish-work-notice-sheet"]')
+  const notReadySheet = page2.locator('[data-testid="publish-not-ready"]')
+  const noticeText = () => noticeSheet.locator('[data-testid="publish-work-notice-text"]').innerText().then((text) => text.replace(/\s+/g, ' ').trim())
+  const pressPublish2 = async () => {
+    const sent = await app.evaluate(({ BrowserWindow }, url) => {
+      const editor = BrowserWindow.getAllWindows().find((win) => !win.isDestroyed() && win.webContents.getURL() === url)
+      editor?.webContents.send('app:command', 'publish-handout')
+      return Boolean(editor)
+    }, page2.url())
+    if (!sent) throw new Error('the editor window was not found to send Publish to')
+  }
+  const beforeNotice = api.requests.length
+  // The talk's text is still loading when the window first answers: press again until the notice is up.
+  for (let attempt = 0; attempt < 6 && !(await noticeSheet.isVisible()); attempt++) {
+    await pressPublish2()
+    await noticeSheet.waitFor({ state: 'visible', timeout: 4000 }).catch(() => {})
+  }
+  await noticeSheet.waitFor({ state: 'visible', timeout: 5000 })
+  const sentence = await noticeText()
+  await page2.waitForTimeout(500) // the sheet fades in
+  if (shots) await page2.screenshot({ path: join(shots, '10-publish-work-notice.png') }).catch(() => {})
+  await noticeSheet.getByRole('button', { name: 'Cancel' }).click()
+  await noticeSheet.waitFor({ state: 'detached' })
+  const cancelledSent = api.requests.length === beforeNotice && await notReadySheet.count() === 0
+  await pressPublish2()
+  await noticeSheet.waitFor({ state: 'visible', timeout: 20_000 })
+  await noticeSheet.getByRole('button', { name: 'Publish' }).click()
+  await notReadySheet.waitFor({ state: 'visible', timeout: 20_000 }) // not connected here: publishing carried on to its own sheet
+  await page2.keyboard.press('Escape')
+  await notReadySheet.waitFor({ state: 'detached' })
+  await pressPublish2()
+  await noticeSheet.waitFor({ state: 'visible', timeout: 20_000 })
+  await noticeSheet.getByRole('button', { name: 'Plan a run' }).click()
+  await page2.locator('[data-testid="plan-run-sheet"]').waitFor({ state: 'visible', timeout: 20_000 })
+  record(17, sentence === 'Pre-work and post-work are not included. The talk’s pre-work file, Research teams intake, and post-work file, After the session, go out with a run.'
+    && cancelledSent && await noticeSheet.count() === 0, sentence)
+  await app.close()
+  app = null
 
   exitCode = ledger.summary('PUBLISH HANDOUT').exitCode
 } catch (error) {

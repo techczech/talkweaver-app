@@ -1,5 +1,5 @@
 import { EditorView } from '@codemirror/view'
-import { undo, redo } from '@codemirror/commands'
+import { redoWithSave, undoWithSave } from '../extensions/savedTextAdoption'
 import { runActionBarEditing } from '../components/actionBar/editing-command'
 import { EditorSelection, type StateCommand } from '@codemirror/state'
 import { shortcutById } from '../../../shared/shortcut-registry'
@@ -331,8 +331,9 @@ export const EDITOR_COMMANDS: EditorCommand[] = [
   command('sidebar.talks', () => false, 'app.sidebar-talks'),
   command('sidebar.outline', () => false, 'app.sidebar-outline'),
   command('sidebar.toggle', () => false, 'app.sidebar-toggle'),
-  command('undo', undo),
-  command('redo', redo),
+  // A save's step goes with the user's change it was made for (extensions/savedTextAdoption.ts).
+  command('undo', undoWithSave),
+  command('redo', redoWithSave),
   command('new-slide', (view) => runActionBarEditing(view, 'new-slide')),
   command('bulleted-list', (view) => runActionBarEditing(view, 'bulleted-list')),
   command('numbered-list', (view) => runActionBarEditing(view, 'numbered-list')),

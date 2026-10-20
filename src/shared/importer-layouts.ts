@@ -31,6 +31,9 @@ export const IMPORT_LAYOUT_CHOICES: ImportLayoutChoice[] = [
 
 const choiceByValue = new Map(IMPORT_LAYOUT_CHOICES.map((choice) => [choice.value, choice]))
 
+// Retired layout names that saved import runs may still carry; map each to its current trigger token.
+const RETIRED_IMPORT_LAYOUTS: Record<string, string> = { 'contrast-cards': 'contrast=cards' }
+
 export function isImportLayout(value: string): boolean {
   return choiceByValue.has(value)
 }
@@ -38,6 +41,8 @@ export function isImportLayout(value: string): boolean {
 export function importLayoutTrigger(value: string): string {
   const current = choiceByValue.get(value)
   if (current) return current.trigger
+  const retired = RETIRED_IMPORT_LAYOUTS[value]
+  if (retired) return `{${retired}}`
   const token = value.trim().replace(/^\{/, '').replace(/\}$/, '')
   return token ? `{${token}}` : ''
 }

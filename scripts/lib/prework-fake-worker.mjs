@@ -6,11 +6,13 @@ export const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-
 
 /**
  * @param {import('playwright').BrowserContext} context
- * @param {{ baseUrl: string, preworkId: string, state?: 'not_yet'|'open'|'closed', people?: number, closesAt?: number }} options
+ * `phase` adds the phase to the status, as the Worker does since ticket 12; `withdrawn` answers every public
+ * route `404 not_available` (the Run unpublished).
+ * @param {{ baseUrl: string, preworkId: string, state?: 'not_yet'|'open'|'closed', people?: number, closesAt?: number, phase?: 'pre'|'post', withdrawn?: boolean }} options
  */
-export async function fakePreworkWorker(context, { baseUrl, preworkId, state = 'open', people, closesAt = Date.now() + 3 * 86_400_000 }) {
+export async function fakePreworkWorker(context, { baseUrl, preworkId, state = 'open', people, closesAt = Date.now() + 3 * 86_400_000, phase, withdrawn = false }) {
   const world = {
-    state, closesAt, people,
+    state, closesAt, people, phase, withdrawn,
     /** participant → Map(ref → entry) */
     entries: new Map(),
     /** every accepted or refused submit body, in order */
@@ -32,8 +34,9 @@ export async function fakePreworkWorker(context, { baseUrl, preworkId, state = '
     const request = route.request()
     if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS })
     const path = new URL(request.url()).pathname.slice(`/prework/${preworkId}`.length)
+    if (world.withdrawn) return json(route, 404, { error: { code: 'not_available', message: 'This page is not available.' } })
     if (request.method() === 'GET' && path === '') {
-      return json(route, 200, { state: world.state, opensAt: Date.now() - 86_400_000, closesAt: world.closesAt, ...(world.state === 'closed' && world.people !== undefined ? { people: world.people } : {}) })
+      return json(route, 200, { state: world.state, opensAt: Date.now() - 86_400_000, closesAt: world.closesAt, ...(world.phase ? { phase: world.phase } : {}), ...(world.state === 'closed' && world.people !== undefined ? { people: world.people } : {}) })
     }
     const body = JSON.parse(request.postData() || '{}')
     if (path === '/mine') {

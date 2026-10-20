@@ -12,12 +12,6 @@ triggers: liststyle=icons iconlist=boxes icons=all
 
 Body text of the plain slide.
 
-### A list {id=d-list}
-
-- Bikes that are there {icon=lucide:bike}
-- A route home
-- Zap
-
 ### A statement with no body {id=d-statement}
 
 ### Trigger line under the heading {id=d-trigger}

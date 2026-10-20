@@ -38,6 +38,9 @@
 //   (p) one writer: a slide inserted from the Slide Browser at the caret is saved AT ONCE through the
 //       talk's queue — it is on disk well inside the editor's 1.5 s autosave delay (so the insert did
 //       not wait for the autosave), and the file equals the editor buffer.
+//   (q) work-files ticket 29 (ADR-0040 decision 6): History has no Publish or Unpublish for a Run
+//       (menu and Run details) and no pre-work column; a planned Run's row opens its Run page in
+//       Sessions in the same Tools window.
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-history.mjs
 import { _electron as electron } from 'playwright'
@@ -251,6 +254,14 @@ for (const s of sessions) {
   if (s.audio !== null) writeFileSync(join(recordingsDir, `${s.id}.webm`), 'mock-webm-data', 'utf8')
 }
 
+// (q) A planned Run of talk A: listed under Planned, never a delivered row.
+const plannedRun = {
+  id: 'hist-a-planned', talkSlug: talkA.slug, talkTitle: talkA.title, kind: 'delivery', status: 'planned',
+  plannedDate: isoDaysAgo(-7, 12, 0).slice(0, 10), startTime: '14:00', eventTitle: 'Planned workshop', slideSet: { kind: 'full' },
+  startedAt: '', endedAt: '', recordingMs: 0, wallClockMs: 0, timerTargetMin: 0, context: null, pathwayId: null, audio: null, transcript: null, slideTimeIndex: []
+}
+writeFileSync(join(tempVault, '_PRESENTATIONS', plannedRun.talkSlug, `${plannedRun.id}.json`), JSON.stringify(plannedRun, null, 2), 'utf8')
+
 const sessionPath = (s) => join(tempVault, '_PRESENTATIONS', s.talkSlug, `${s.id}.json`)
 const row = (page, id) => page.locator(`[data-history-sid="${id}"]`)
 
@@ -391,6 +402,35 @@ try {
   const closed = tools.waitForEvent('close', { timeout: 4000 }).then(() => true).catch(() => false)
   await tools.keyboard.press('Escape').catch(() => {})
   record('Esc closes the Tools window from History', await closed)
+
+  // (q) Work-files ticket 29: Publish and Unpublish live only in the Run checklist in Sessions.
+  tools = await openHistoryWindow()
+  await tools.waitForSelector('[data-history-sid]', { timeout: 6000 })
+  await row(tools, sessions[0].id).locator('.twh-kebab').click()
+  await tools.waitForSelector('.twh-menu', { timeout: 3000 }).catch(() => {})
+  const menuButtons = (await tools.locator('.twh-menu button').allTextContents()).map((text) => text.trim())
+  const menuToSessions = await tools.locator('.twh-menu [data-open-in-sessions]').count()
+  record('History menu has no Publish or Unpublish for a Run and offers Open in Sessions',
+    menuButtons.length > 0 && !menuButtons.some((text) => /publish/i.test(text)) && menuToSessions === 1, JSON.stringify(menuButtons))
+  await tools.locator('.twh-menu button', { hasText: 'Run details' }).click()
+  await tools.waitForSelector('.twh-run-detail', { timeout: 3000 }).catch(() => {})
+  const detailButtons = (await tools.locator('.twh-run-detail button').allTextContents()).map((text) => text.trim())
+  record('Run details has no Publish or Unpublish and offers Open in Sessions',
+    detailButtons.length > 0 && !detailButtons.some((text) => /publish/i.test(text)) && detailButtons.includes('Open in Sessions'), JSON.stringify(detailButtons))
+  await tools.locator('.twh-run-detail header button').click()
+  const plannedRow = tools.locator(`[data-planned-run="${plannedRun.id}"]`)
+  const plannedShown = await plannedRow.waitFor({ timeout: 6000 }).then(() => true).catch(() => false)
+  const plannedHead = ((await tools.locator('.twh-plan-grid.head').textContent().catch(() => '')) || '')
+  record('the planned Run is listed with no pre-work column',
+    plannedShown && !/pre-work/i.test(plannedHead) && await tools.locator('[data-plan-prework], [data-review-prework]').count() === 0, plannedHead)
+  await plannedRow.locator('.twh-plan-event').click()
+  const toSessions = await tools.waitForSelector(`[data-tools-view="sessions"][data-run="${plannedRun.talkSlug}/${plannedRun.id}"]`, { timeout: 10_000 }).then(() => true).catch(() => false)
+  record('a planned Run row opens its Run page in Sessions in the same Tools window', toSessions && await tools.locator('.twhistory').count() === 0)
+  const stillOneTools = app.windows().filter((w) => w !== page).length
+  record('no second Tools window is opened', stillOneTools === 1, `windows=${stillOneTools}`)
+  const sessionsClosed = tools.waitForEvent('close', { timeout: 4000 }).then(() => true).catch(() => false)
+  await tools.close().catch(() => {})
+  await sessionsClosed
 
   // (l) Instant slides after the talk — file route (talk B is not open in any editor).
   const outlineB = join(talkB.dir, `${talkB.slug}-outline.md`)

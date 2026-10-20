@@ -6,6 +6,8 @@ export interface Command {
   hint?: string // e.g. a keyboard shortcut shown on the right
   group?: string // the task group the command belongs to, shown on the right beside the key
   keywords?: string[]
+  /** Listed, dimmed and not run: a command that needs something the window is not showing (Tools window palette). */
+  disabled?: boolean
   run: () => void
 }
 
@@ -67,7 +69,7 @@ export default function CommandMenu({ isOpen, onClose, commands, initialQuery = 
       } else if (e.key === 'Enter') {
         e.preventDefault()
         const cmd = filtered[active]
-        if (cmd) {
+        if (cmd && !cmd.disabled) {
           onClose()
           cmd.run()
         }
@@ -103,10 +105,13 @@ export default function CommandMenu({ isOpen, onClose, commands, initialQuery = 
                   key={cmd.id}
                   role="option"
                   aria-selected={isActive}
+                  aria-disabled={cmd.disabled ? 'true' : undefined}
                   data-active={isActive ? 'true' : 'false'}
-                  className={`command-menu-item${isActive ? ' command-menu-item--active' : ''}`}
+                  data-command={cmd.id}
+                  className={`command-menu-item${isActive ? ' command-menu-item--active' : ''}${cmd.disabled ? ' command-menu-item--disabled' : ''}`}
                   onMouseEnter={() => setActive(idx)}
                   onClick={() => {
+                    if (cmd.disabled) return
                     onClose()
                     cmd.run()
                   }}

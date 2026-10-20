@@ -1,7 +1,8 @@
 import { TRIGGER_LINE_RE, tokenizeTriggerBody } from "./trigger-tokenizer.mjs";
 import { BOARD_COLUMN_RANGE, boardFindings, boardSource, readBoardSettings } from "./board-slide.mjs";
 
-const POLL_TYPES = new Set(['single', 'multiple', 'open', 'ranking', 'rating', 'categorisation', 'board']);
+/** Every poll type an author may write as `{poll=<type>}`. */
+export const POLL_TYPES = new Set(['single', 'multiple', 'open', 'ranking', 'rating', 'categorisation', 'board']);
 
 // Directives only have meaning as a whole content line, outside Markdown code fences.
 export function pollDirectivesFor(lines = []) {

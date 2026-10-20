@@ -1380,7 +1380,7 @@ function relTime(ts: number): string {
   return `${Math.round(m / 60)} h ago`
 }
 
-// ── styles (inline, warm palette — matches KeyboardHelp / ArchiveImageSearch) ──
+// ── styles (inline, warm palette — matches KeyboardHelp) ──
 const selectStyle: React.CSSProperties = {
   fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--line)',
   background: 'var(--panel)', color: 'var(--ink)', cursor: 'pointer'

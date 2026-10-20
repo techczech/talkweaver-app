@@ -3,6 +3,19 @@ import type { InkMessage, PointerMessage, AudienceQuestion, InstantSlide, PollSt
 import type { SessionRecoveryRecord } from './live-session-store'
 import type { LiveAudienceFeedback } from './live-session-history'
 import { runInstantSlideFrom } from './runs'
+import { talkVaultRoot, type VaultLookup } from './asset-roots'
+
+/** What a presenter window goes live as: its talk, its handout link, and the vault the presented talk is in. */
+export interface LivePresenterContext { talkSlug: string; shortUrl: string | null; vaultRoot: string | null }
+
+/**
+ * A presenter window's live identity (issue 256): the vault is the registered vault holding the outline being
+ * presented, so a Run of a second vault with the same talk and Run id goes live as that vault's Run. Never the
+ * current (first) vault; a talk in no vault has none (null).
+ */
+export function livePresenterContext(vaults: VaultLookup, outlinePath: string, talkSlug: string, shortUrl: string | null): LivePresenterContext {
+  return { talkSlug, shortUrl, vaultRoot: talkVaultRoot(vaults, outlinePath) ?? null }
+}
 
 const instantKey = (slide: InstantSlide): string => `${slide.kind}-${slide.shownAt}`
 /** A final-history error the worker will never get past (HTTP 401 or 404): not retried. */
@@ -52,11 +65,19 @@ export function createLiveSessionManager(deps: {
   notify(windowId: number, channel: string, value: unknown): void
   flushHistory(record: SessionRecoveryRecord, feedback: LiveAudienceFeedback): boolean
   diagnostic?(event: { sessionId: string; event: string; attempt?: number; code?: number; clean?: boolean }): void
+  /**
+   * A session bound to a Run has ended or expired (post-work that opens when the session ends opens now;
+   * work-files ticket 19). `vaultRoot` is the vault the session recorded when it was bound: the Run is
+   * that vault's, never another vault's Run of the same talk slug and id.
+   */
+  onEnded?(reference: { talkSlug: string; runId: string; vaultRoot: string | null }): void
   schedule?: typeof setTimeout
   cancelSchedule?: typeof clearTimeout
   now?: () => number
 }) {
   const sessions = new Map<string, Runtime>()
+  /** Sessions whose end was announced to `onEnded` (work-files ticket 19). */
+  const announcedEnds = new Set<string>()
   const windows = new Map<number, string>()
   const schedule = deps.schedule ?? setTimeout
   const cancelSchedule = deps.cancelSchedule ?? clearTimeout
@@ -298,6 +319,11 @@ export function createLiveSessionManager(deps: {
       commit(runtime, { status: outcome, historyPending: true, ...(runtime.record.endedAtMs === undefined ? { endedAtMs: now() } : {}) })
       notify(runtime, 'live:status', outcome)
       history(runtime)
+      // Once per session in this process (a second End re-runs the end); the listener is idempotent anyway.
+      if (runtime.record.runId && !announcedEnds.has(runtime.record.sessionId)) {
+        announcedEnds.add(runtime.record.sessionId)
+        try { deps.onEnded?.({ talkSlug: runtime.record.talkSlug, runId: runtime.record.runId, vaultRoot: runtime.record.vaultRoot ?? null }) } catch { /* the session has ended */ }
+      }
       if (runtime.endTimer !== undefined) cancelSchedule(runtime.endTimer)
       runtime.endTimer = undefined
     } catch {
@@ -348,6 +374,31 @@ export function createLiveSessionManager(deps: {
         record.talkSlug === talkSlug && record.vaultRoot === vaultRoot
         && record.expiresAt > now() && record.status !== 'ended' && record.status !== 'expired')
       return runtime && runtime.windowId === null ? attachRuntime(runtime, windowId) : null
+    },
+    /**
+     * The Runs a live session is bound to and has not ended (Sessions' "Live now"), each with the vault the session
+     * recorded (null: none): two vaults with the same talk and Run id are two Runs (issue 256).
+     */
+    liveRuns(): Array<{ talkSlug: string; runId: string; vaultRoot: string | null }> {
+      return [...sessions.values()].filter(({ record }) => !!record.runId && !isTerminalLiveStatus(record.status))
+        .map(({ record }) => ({ talkSlug: record.talkSlug, runId: record.runId as string, vaultRoot: record.vaultRoot ?? null }))
+    },
+    /**
+     * Whether a live session bound to this Run of this vault has ended or expired (work-files ticket 19).
+     * A session that recorded no vault, or another vault, is never this Run's.
+     */
+    endedRun(talkSlug: string, runId: string, vaultRoot: string): boolean {
+      return [...sessions.values()].some(({ record }) => record.talkSlug === talkSlug && record.runId === runId
+        && !!record.vaultRoot && record.vaultRoot === vaultRoot && (record.status === 'ended' || record.status === 'expired'))
+    },
+    /**
+     * The window this Run of this vault is being presented in, or null (Sessions' "Open live view"). A session that
+     * recorded no vault, or another vault with the same talk and Run id, is never this Run's (issue 256).
+     */
+    windowFor(talkSlug: string, runId: string, vaultRoot: string): number | null {
+      const found = [...sessions.values()].find(({ record }) => record.talkSlug === talkSlug && record.runId === runId
+        && !!record.vaultRoot && record.vaultRoot === vaultRoot && !isTerminalLiveStatus(record.status))
+      return found?.windowId ?? null
     },
     inUse(talkSlug: string, vaultRoot: string | null, windowId: number) {
       return [...sessions.values()].some((runtime) => runtime.windowId !== null && runtime.windowId !== windowId

@@ -89,13 +89,14 @@ for (const group of allGroups) {
 const contrastGroups = optionGroupsForSlide({ layoutName: 'contrast', headingLevel: 3, hasChildren: false })
 assert.deepEqual(contrastGroups.map(({ group, source }) => [group.key, source]), [
   ['variant', 'entry'],
-  // Title look (0.37) belongs to top-regime layouts only; contrast is a sidebar-regime layout.
+  // Title look (0.37) belongs to top-regime layouts only; contrast became one in 0.41 ticket 08 (ADR-0039:
+  // the drawing has a top title), so it is offered here.
   // Ticket 13: Page width is gated on the slide's source (a local page beside body text), not the layout.
   // Ticket 08: a pre-work step's rows are offered only to a caller that knows the slide is a step.
-  ...GLOBAL_OPTION_GROUPS.filter((group) => group.key !== 'container-mode' && group.key !== 'narrow-columns' && group.key !== 'screenshot-row' && group.key !== 'screenshot-list' && group.key !== 'page-width' && !group.key.startsWith('title-look') && !group.key.startsWith('prework-')).map((group) => [group.key, 'global'])
+  ...GLOBAL_OPTION_GROUPS.filter((group) => group.key !== 'container-mode' && group.key !== 'narrow-columns' && group.key !== 'screenshot-row' && group.key !== 'screenshot-list' && group.key !== 'page-width' && !group.key.startsWith('prework-')).map((group) => [group.key, 'global'])
 ])
 assert.deepEqual(optionGroupsForSlide({ layoutName: 'list', headingLevel: 3, hasChildren: false, preworkKind: 'task' })
-  .map(({ group }) => group.key).filter((key) => key.startsWith('prework-')), ['prework-participants', 'prework-minutes', 'prework-ask'])
+  .map(({ group }) => group.key).filter((key) => key.startsWith('prework-')), ['prework-participants', 'prework-minutes', 'prework-ask', 'prework-route'])
 
 const iconlistVariant = optionGroupsForSlide({ layoutName: 'iconlist', headingLevel: 3, hasChildren: false })[0].group
 assert.equal(iconlistVariant.key, 'iconlist-variant')

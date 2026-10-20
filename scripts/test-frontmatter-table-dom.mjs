@@ -104,4 +104,34 @@ assert.match(defaultsBlock.querySelector('.cm-fm-note')?.textContent ?? '', /Str
 const systemBlock = rows.find((row) => row.dataset.fmKey === 'outline_version').querySelector('.cm-fm-helpblock')
 assert.match(systemBlock.textContent, /Set by TalkWeaver/, 'system keys keep their note in the block')
 
-console.log('frontmatter table DOM: "?" disclosure, aria-expanded, Escape/return-focus, independent rows and the choice fold pass (jsdom)')
+// The block the table shows is the block the shared writer edits (ticket 08 review S2): for each
+// document, the table's range ends where locateFrontmatter's does, and a write through the table's
+// slice changes only the block's inside.
+{
+  const { EditorState } = await import('@codemirror/state')
+  const { parseFrontmatter } = await import(new URL('../src/renderer/src/extensions/frontmatterTable.ts', import.meta.url))
+  const { editFrontmatterText, locateFrontmatter } = await import(new URL('../src/shared/frontmatter-editor.ts', import.meta.url))
+  const docs = [
+    '---\ntitle: T\n---\nbody\n',
+    '---\n---\n# T\n\n---\nbody\n',
+    '--- \ntitle: T\n---  \nbody\n',
+    '---\ntitle: T\n----\n---\nbody\n',
+    '# no block\n---\n',
+    '---\nnever closed\n',
+  ]
+  for (const doc of docs) {
+    const table = parseFrontmatter(EditorState.create({ doc }))
+    const shared = locateFrontmatter(doc)
+    assert.equal(table === null, shared === null, `${JSON.stringify(doc)}: table and writer agree there is a block`)
+    if (!table) continue
+    assert.equal(table.from, 0)
+    assert.equal(table.to, shared.to, `${JSON.stringify(doc)}: table and writer agree where it ends`)
+    const written = editFrontmatterText(table.text, [{ key: 'prework', value: 'a-file' }])
+    const next = doc.slice(0, table.from) + written + doc.slice(table.to)
+    assert.equal(next, editFrontmatterText(doc, [{ key: 'prework', value: 'a-file' }]), `${JSON.stringify(doc)}: the table's write is the writer's`)
+    assert.equal(next.match(/^prework: a-file$/gm)?.length, 1, `${JSON.stringify(doc)}: one prework line, inside the one block`)
+    assert.equal(next.slice(next.indexOf('prework: a-file\n') + 'prework: a-file\n'.length), doc.slice(shared.contentTo), `${JSON.stringify(doc)}: everything after the block is kept`)
+  }
+}
+
+console.log('frontmatter table DOM: "?" disclosure, aria-expanded, Escape/return-focus, independent rows, the choice fold and the shared block rule pass (jsdom)')

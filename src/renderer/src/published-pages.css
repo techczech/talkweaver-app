@@ -1,0 +1,30 @@
+/* The Published pages view (work-files ticket 22; locked mockup S8). Buttons, groups, the detail head and the
+   confirmation sheet are the Sessions view's (sessions-view.css). */
+.tw-pub-n { margin-left: 8px; font-size: 13.5px; font-weight: 700; color: var(--lt-ink-soft); }
+.tw-pub-site-missing { margin: 0; padding: 8px 14px; background: var(--lt-amber-soft); color: var(--lt-amber); font-size: 13.5px; border-bottom: 1px solid var(--lt-hair); }
+
+.tw-pub-row { position: relative; background: #fffdf8; border-bottom: 1px solid var(--lt-hair-soft); border-left: 3px solid transparent; }
+.tw-pub-row:hover { background: #f8f3e8; }
+.tw-pub-row.on { background: var(--lt-oxford-soft); border-left-color: var(--lt-oxford); }
+.tw-tools-view .tw-pub-pick { display: block; width: 100%; box-sizing: border-box; text-align: left; font: inherit; color: inherit; background: none; border: 0; padding: 9px 12px 10px 11px; cursor: pointer; }
+.tw-tools-view .tw-pub-pick:focus-visible { outline: 1.5px solid var(--lt-oxford-mid); outline-offset: -1.5px; }
+.tw-pub-pick .l1 { display: flex; align-items: center; gap: 7px; min-width: 0; padding-right: 112px; min-height: 27px; }
+.tw-pub-pick .l1 svg { width: 16px; height: 16px; stroke-width: 1.8; color: var(--lt-ink-soft); flex: none; }
+.tw-pub-pick .nm { font-weight: 700; font-size: 15.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.tw-pub-pick .l2 { display: block; margin-top: 3px; font: 500 12.5px var(--lt-mono); color: var(--lt-ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tw-pub-pick .l3 { display: flex; gap: 8px; align-items: center; margin-top: 2px; font-size: 13.5px; color: var(--lt-ink-faint); white-space: nowrap; }
+.tw-pub-flag { display: inline-flex; align-items: center; gap: 4px; color: var(--lt-amber); font-weight: 600; }
+.tw-pub-flag svg { width: 13px; height: 13px; stroke-width: 2; }
+.tw-tools-view .tw-pub-unpub { position: absolute; top: 9px; right: 12px; }
+
+.tw-pub-cols { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px 20px; }
+.tw-pub-page { max-width: 420px; }
+.tw-pub-note { display: flex; gap: 8px; align-items: flex-start; padding: 9px 12px; background: var(--lt-amber-soft); color: var(--lt-amber); font-size: 13.5px; line-height: 1.4; border-bottom: 1px solid var(--lt-hair-soft); }
+.tw-pub-note svg { width: 15px; height: 15px; stroke-width: 2; flex: none; margin-top: 2px; }
+.tw-pub-r1 { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-top: 1px solid var(--lt-hair-soft); }
+.tw-pub-page > header + .tw-pub-r1 { border-top: 0; }
+.tw-pub-r1 > svg { width: 16px; height: 16px; stroke-width: 1.8; flex: none; color: var(--lt-ink-soft); }
+.tw-pub-r1 .t { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.tw-pub-r1 .t b { font-size: 14.5px; }
+.tw-pub-r1 .t small { font-size: 13px; color: var(--lt-ink-soft); }
+.tw-pub-r1 .t small.mono { font: 500 12px var(--lt-mono); overflow-wrap: anywhere; }

@@ -8,11 +8,12 @@
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { dirname, join } from 'path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
-import { normaliseRun, writeRunFile, type RunMark, type RunRecord } from './runs'
-import { existingSegmentPaths, saveTargets, segmentIndexOfFile, vaultSessionPath } from './recording-paths'
+import { normaliseRun, writeNewRunFile, type RunMark, type RunRecord } from './runs'
+import { saveTargets, segmentIndexOfFile, sessionIdRandom, sessionIdTaken, vaultSessionPath } from './recording-paths'
 import { isSafeTalkSlug } from './runs'
 import { createRecordingStreams, type RecordingStreams } from './recording-stream'
 import { audioMsFromSegments, type RunAudioGap, type RunAudioSegment } from '../shared/run-audio'
+import type { WriteVault } from './presented-vault'
 
 /** The ledger functions streaming needs (compiler lib/16-presentation-ledger.mjs). */
 export interface StreamLedger {
@@ -23,8 +24,17 @@ export interface StreamLedger {
 export interface StreamIpcDeps {
   userDataDir: () => string
   vaultRoot: () => string | null
+  /**
+   * The vault the window recording this stream writes to (recording.ts vaultFor: the presented talk's vault). Kept in
+   * the in-progress marker, so a recording recovered later becomes a Run in that vault (issue 256).
+   */
+  vaultFor?: (webContentsId: number) => WriteVault | undefined
+  /** That vault's root while it is open and its folder is there, else undefined (recovery waits for it). */
+  writableVault?: (root: string) => string | undefined
   ledger: () => Promise<StreamLedger | null>
-  onSessionSaved?: (saved: { talkSlug: string; kind: 'delivery' | 'rehearsal' | 'recording'; runId: string }) => void
+  onSessionSaved?: (saved: { talkSlug: string; kind: 'delivery' | 'rehearsal' | 'recording'; runId: string; vaultRoot?: string | null }) => void
+  /** The [0,1) source for new session ids; crypto-backed by default (tests pass a repeating one). */
+  sessionRand?: () => number
 }
 
 let streams: RecordingStreams | null = null
@@ -89,6 +99,19 @@ export function audioBlock(
 }
 
 /**
+ * Whether the file at `path` is a saved Run for `sessionId`: it parses as JSON and names that id.
+ * An empty file (a name reserved by a save that then failed) or an unreadable one is not.
+ */
+export function savedRunFor(path: string, sessionId: string): boolean {
+  try {
+    const run = JSON.parse(readFileSync(path, 'utf8')) as { id?: unknown } | null
+    return !!run && typeof run === 'object' && !Array.isArray(run) && run.id === sessionId
+  } catch {
+    return false
+  }
+}
+
+/**
  * Recordings that never reached Stop become Runs marked partial, referencing the audio already on
  * disk. The audio files are never deleted; only the in-progress marker goes once the Run exists.
  * Returns how many Runs were written.
@@ -106,10 +129,26 @@ export async function recoverInterruptedRecordings(): Promise<number> {
       const { manifest } = found
       const sessionId = manifest.sessionId
       if (found.bytes === 0) { streams.complete(sessionId); continue }
-      const vault = deps.vaultRoot()
+      // The vault the marker names (the presented talk's); a marker from before 0.41 names none: the current vault, as then.
+      // A named vault that is not open now is left for a later recovery, never written into another vault.
+      let vault: string | null
+      if (typeof manifest.vaultRoot === 'string') {
+        const root = deps.writableVault?.(manifest.vaultRoot)
+        if (!root) continue
+        vault = root
+      } else if (manifest.vaultRoot === null) {
+        vault = null
+      } else {
+        vault = deps.vaultRoot()
+      }
       const targets = saveTargets(vault, deps.userDataDir(), manifest.talkSlug, sessionId, false)
       if (!targets.ok) continue
-      if (existsSync(targets.sessionJson)) { streams.complete(sessionId); continue }
+      // The marker goes only once a real Run for this session is there; an empty or unreadable
+      // file in its place keeps the marker (and so the audio's recovery record).
+      if (existsSync(targets.sessionJson)) {
+        if (savedRunFor(targets.sessionJson, sessionId)) streams.complete(sessionId)
+        continue
+      }
       const lastEnd = found.segments.reduce((max, seg) => Math.max(max, seg.endMs), 0)
       const recordingMs = Math.max(manifest.recordingMs, lastEnd)
       const rawMarks = Array.isArray(manifest.rawMarks) ? manifest.rawMarks as RunMark[] : []
@@ -132,10 +171,19 @@ export async function recoverInterruptedRecordings(): Promise<number> {
       }
       mkdirSync(dirname(targets.sessionJson), { recursive: true })
       if (vault && !vaultSessionPath(vault, manifest.talkSlug, sessionId).ok) continue
-      writeRunFile(targets.sessionJson, normaliseRun(session))
+      // Created exclusively: a Run that appeared meanwhile is kept as it is, never replaced.
+      try {
+        writeNewRunFile(targets.sessionJson, normaliseRun(session))
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
+          if (savedRunFor(targets.sessionJson, sessionId)) streams.complete(sessionId)
+          continue
+        }
+        throw e
+      }
       streams.complete(sessionId)
       written += 1
-      deps.onSessionSaved?.({ talkSlug: manifest.talkSlug, kind: 'delivery', runId: sessionId })
+      deps.onSessionSaved?.({ talkSlug: manifest.talkSlug, kind: 'delivery', runId: sessionId, vaultRoot: vault ?? null })
     } catch (e) {
       console.warn('[recording] could not recover an interrupted recording:', e)
     }
@@ -172,16 +220,27 @@ export function registerRecordingStreamIpc(deps: StreamIpcDeps): RecordingStream
       if (!isSafeTalkSlug(payload?.talkSlug)) return { ok: false, error: 'unsafe-talk-slug' }
       const L = await deps.ledger()
       if (!L) return { ok: false, error: 'compiler-not-found' }
-      const sessionId = L.newSessionId(Date.now(), Math.random)
-      const res = store.open(event.sender.id, {
-        sessionId,
-        talkSlug: payload.talkSlug as string,
-        talkTitle: String(payload?.talkTitle ?? payload.talkSlug),
-        startedAt: typeof payload?.startedAt === 'string' ? payload.startedAt : undefined,
-        mimeType: typeof payload?.mimeType === 'string' ? payload.mimeType : undefined,
-        timerTargetMin: Number(payload?.timerTargetMin ?? 0),
-        pathwayId: typeof payload?.pathwayId === 'string' ? payload.pathwayId : null
-      })
+      // A window whose talk's vault cannot be named records with no vault: a recovered Run is kept beside its audio.
+      const picked = deps.vaultFor?.(event.sender.id)
+      const vault = picked ? ('error' in picked ? null : picked.root) : deps.vaultRoot()
+      // A fresh id nothing on disk uses yet (no Run in that vault, no local file); the store also
+      // refuses an id whose marker or audio is there ('id-taken'), and then another id is tried.
+      const rand = deps.sessionRand ?? sessionIdRandom
+      let res: ReturnType<RecordingStreams['open']> = { ok: false, error: 'id-taken' }
+      for (let i = 0; i < 5 && !res.ok && res.error === 'id-taken'; i++) {
+        const sessionId = L.newSessionId(Date.now(), rand)
+        if (sessionIdTaken(vault, deps.userDataDir(), payload.talkSlug, sessionId)) continue
+        res = store.open(event.sender.id, {
+          sessionId,
+          ...(picked ? { vaultRoot: 'error' in picked ? null : picked.root } : {}),
+          talkSlug: payload.talkSlug as string,
+          talkTitle: String(payload?.talkTitle ?? payload.talkSlug),
+          startedAt: typeof payload?.startedAt === 'string' ? payload.startedAt : undefined,
+          mimeType: typeof payload?.mimeType === 'string' ? payload.mimeType : undefined,
+          timerTargetMin: Number(payload?.timerTargetMin ?? 0),
+          pathwayId: typeof payload?.pathwayId === 'string' ? payload.pathwayId : null
+        })
+      }
       if (res.ok) watchSender(event.sender)
       return res.ok ? { ok: true, sessionId: res.sessionId } : { ok: false, error: res.error }
     } catch (e) {
@@ -234,10 +293,11 @@ export function registerRecordingStreamIpc(deps: StreamIpcDeps): RecordingStream
       const sessionId = typeof payload?.sessionId === 'string' ? payload.sessionId : null
       // Only the window that owns the stream may export it; its files on disk already hold the
       // tail chunks a failed finalise wrote (all of the first `done`, `offset` bytes of the next),
-      // so those are skipped — every chunk appears exactly once.
+      // so those are skipped — every chunk appears exactly once. Only files the stream created
+      // are read, never another file found under the session's names.
       const progress = sessionId ? store.tailProgress(event.sender.id, sessionId) : null
       if (sessionId && !progress) return { ok: false, error: 'not-owner' }
-      const onDisk = sessionId ? existingSegmentPaths(deps.userDataDir(), sessionId) : []
+      const onDisk = sessionId ? (store.ownedSegments(event.sender.id, sessionId) ?? []).map((f) => f.path) : []
       const held = parts.flatMap((p) => {
         if (!progress || p.k > progress.done) return [p]
         if (p.k < progress.done) return []

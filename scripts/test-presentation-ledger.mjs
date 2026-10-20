@@ -1,7 +1,7 @@
 // Tests for compiler/scripts/lib/16-presentation-ledger.mjs
 // (Recording Capture, Phase 1: pure, node-testable session math).
 import assert from 'node:assert/strict'
-import { newSessionId, recordingMsFromMarks, buildSlideTimeIndex, isDiscardable, serialiseSession, parseSession } from '../compiler/scripts/lib/16-presentation-ledger.mjs'
+import { newSessionId, SESSION_ID_RAND_CHARS, recordingMsFromMarks, buildSlideTimeIndex, isDiscardable, serialiseSession, parseSession } from '../compiler/scripts/lib/16-presentation-ledger.mjs'
 let failures = 0
 const check = (name, fn) => { try { fn(); console.log('ok  -', name) } catch (e) { failures++; console.log('FAIL-', name, '\n   ', e.message) } }
 
@@ -9,7 +9,21 @@ check('newSessionId is deterministic and shaped', () => {
   // 1783339200000 === 2026-07-06T12:00:00Z. (The brief's literal 1751808000000 is
   // actually 2025-07-06T13:20:00Z; corrected here to the time the brief names so the
   // UTC formatter stays a correct general function rather than a hack for one input.)
-  assert.equal(newSessionId(1783339200000, () => 0.5), 'sess-20260706-120000-i')
+  assert.equal(newSessionId(1783339200000, () => 0.5), 'sess-20260706-120000-iiiiiiii')
+  assert.match(newSessionId(1783339200000, Math.random), /^sess-20260706-120000-[0-9a-z]{8}$/)
+  assert.equal(SESSION_ID_RAND_CHARS, 8)
+  // Edge values of rand still give a valid char each (0 → '0', a stray 1 or NaN clamps).
+  assert.equal(newSessionId(1783339200000, () => 0), 'sess-20260706-120000-00000000')
+  assert.equal(newSessionId(1783339200000, () => 1), 'sess-20260706-120000-zzzzzzzz')
+  assert.equal(newSessionId(1783339200000, () => NaN), 'sess-20260706-120000-00000000')
+})
+check('newSessionId: many ids in one fixed second are all distinct', () => {
+  const ids = new Set()
+  for (let i = 0; i < 20000; i++) ids.add(newSessionId(1783339200000, Math.random))
+  assert.equal(ids.size, 20000)
+  // The stamp prefix is unchanged, so ids still sort by the second they were made.
+  const later = newSessionId(1783339201000, () => 0)
+  assert.ok([...ids].every((id) => id.startsWith('sess-20260706-120000-') && id < later))
 })
 check('recordingMs excludes paused spans', () => {
   // enter@0, pause@10000, resume@30000 (20s paused), stop implied at raw 50000 → recorded = 50000-20000 = 30000
@@ -181,6 +195,24 @@ check('buildSlideTimeIndex keeps a zoomed image\'s ink with its image, in image 
     { event: 'ink', slideId: 'p', tMs: 1400, ink: box },
     { event: 'ink', slideId: 'p', tMs: 2000, ink: [] },
   ])
+})
+
+check('a clip mark is re-based, kept with its clip, and changes no timing or duration', () => {
+  const clip = { src: 'demo/tour.mp4', atS: 12.5 }
+  const raw = [
+    { event: 'enter', slideId: 'a', tMs: 0 },
+    { event: 'pause', tMs: 10000 },
+    { event: 'resume', tMs: 30000 },
+    { event: 'clip', slideId: 'a', tMs: 31000, clip },
+    { event: 'clip', slideId: 'a', tMs: 32000, clip: { src: 'x', atS: -1 } },
+    { event: 'clip', tMs: 33000, clip },
+    { event: 'enter', slideId: 'b', tMs: 40000 },
+    { event: 'stop', tMs: 50000 }
+  ]
+  const idx = buildSlideTimeIndex(raw)
+  assert.deepEqual(idx.filter(m => m.event === 'clip'), [{ event: 'clip', slideId: 'a', tMs: 11000, clip }], 'malformed clips dropped')
+  assert.deepEqual(idx.find(m => m.slideId === 'b'), { event: 'enter', slideId: 'b', tMs: 20000 })
+  assert.equal(recordingMsFromMarks(raw), recordingMsFromMarks(raw.filter(m => m.event !== 'clip')))
 })
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed'); process.exit(failures?1:0)

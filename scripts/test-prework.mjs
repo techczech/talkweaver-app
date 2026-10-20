@@ -4,14 +4,16 @@
 //      quick check's right answer, and what is wrong with the pre-work as written.
 //   2. The compiler builds the same definition (model.prework) with every slide the section emits,
 //      and keeps the right answer away from everything the audience gets.
-//   3. Writing the right answer (the Inspector's Quick check section).
-//   4. Presenting skips the pre-work steps (src/main/pathways.ts withoutPresenterSlides).
+//   3. Presenting skips the pre-work steps (src/main/pathways.ts withoutPresenterSlides).
+//   4. The handout carries no form and no step slide.
+// The section is no longer written in the Inspector (work-files ticket 29): these cover the reader
+// that old Runs and "Move to a work file" still need, and that a leftover section never reaches output.
 import { strict as assert } from 'node:assert'
 import { mkdtempSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  applyRightAnswerToOutline, preworkFindings, preworkFromOutline, resultsSteps, takeRightMarkers
+  preworkFindings, preworkFromOutline, resultsSteps, takeRightMarkers
 } from '../compiler/scripts/lib/prework.mjs'
 import { parseOutlineTree } from '../compiler/scripts/lib/14-outline-tree.mjs'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
@@ -20,7 +22,6 @@ import { parseSlideScript } from '../compiler/scripts/lib/slide-script.mjs'
 import { injectPathwayRuntime, injectPresenterNotice, presentStartOutsidePrework, withoutPresenterSlides } from '../src/main/pathways.ts'
 import { extractSlides, extractStyles } from '../compiler/scripts/lib/04-html-extraction.mjs'
 import { buildShareHtml } from '../compiler/scripts/lib/09-output-builders.mjs'
-import { normalisePreworkStatus, preworkStatusUrl } from '../compiler/assets/runtime/prework-status.js'
 import { publicPreworkForm } from '../src/shared/run-prework.ts'
 import { JSDOM, VirtualConsole } from 'jsdom'
 
@@ -145,6 +146,25 @@ assert.deepEqual(findingsOf([
 ], 'every mistake is named on its slide')
 assert.deepEqual(findingsOf('## Before\n{id=pw}{prework}\n\nJust an intro.\n'), [['prework-section-empty', 'pw', 'Before']])
 
+// {local} (2026-10-19 prework-responses design): a task, check or question whose answer stays on the phone.
+// Absent means sent; on a slide it means nothing and is reported; a results slide on it is reported.
+const localTalk = [
+  '## Before', '{id=pw}{prework}', '',
+  '### Read me', '{id=l0}{local}', '',
+  '### Try it', '{id=l1}{task}{minutes=20}{local}', '', '1. Do it', '',
+  '### Check', '{id=l2}{poll=single}{check}{local}', '', '- A {right}', '- B', '',
+  '### Hopes', '{id=l3}{poll=open}{local}', '',
+  '### Sent', '{id=l4}{poll=open}', '',
+  '## After', '{id=after}', '', '### Board', '{id=b1}{poll=board}{results=l3}', '', '- Cards', '', '### Board two', '{id=b2}{poll=board}{results=l4}', '', '- Cards'
+].join('\n')
+const localSteps = preworkFromOutline(localTalk).steps
+assert.deepEqual(localSteps.map((step) => [step.id, step.local === true]), [['l0', false], ['l1', true], ['l2', true], ['l3', true], ['l4', false]],
+  '{local} marks a task, a quick check and a question Local only; a slide never is; no token is sent')
+assert.equal('local' in localSteps[4], false, 'a step without {local} carries no flag at all')
+assert.deepEqual(findingsOf(localTalk), [['prework-local-on-slide', 'l0', 'local'], ['prework-results-local', 'b1', 'l3']],
+  '{local} on a slide is named, and so is a results slide bound to a Local only step')
+assert.deepEqual(findingsOf('## Talk\n{id=t}\n\n### Stray\n{id=s}{local}\n'), [['prework-token-outside', 's', 'local']], '{local} outside the pre-work section is a stray token')
+
 // The {right} marker leaves what participants see.
 const taken = takeRightMarkers(['', '- A', '- B {right}', '  - a hint {right}', '', '```', '- C {right}', '```', 'After {right}.', '- D {Right }'])
 assert.deepEqual(taken.lines, ['', '- A', '- B', '  - a hint', '', '```', '- C {right}', '```', 'After.', '- D'], 'every marker outside code goes, at any indent and in any line; code is left alone')
@@ -170,8 +190,10 @@ const scratch = mkdtempSync(join(tmpdir(), 'tw-prework-'))
 const outlinePath = join(scratch, 'prework-fixture-outline.md')
 writeFileSync(outlinePath, talk, 'utf8')
 const model = await prepareSource(outlinePath, talk, 'prework-fixture', statSync(outlinePath))
-assert.deepEqual(model.warnings.filter((warning) => /^(prework|unknown-trigger|unresolved-trigger|section-only)/.test(warning)), [],
-  'every pre-work token is registered: no unknown or unresolved trigger')
+// Work-files ticket 28: the {prework} section is retired, so the section itself is the one finding (the Layout Doctor
+// offers "Move to a work file"); nothing else is wrong with the fixture.
+assert.deepEqual(model.warnings.filter((warning) => /^(prework|unknown-trigger|unresolved-trigger|section-only)/.test(warning)), ['prework-section-retired:pwform'],
+  'every pre-work token is registered: no unknown or unresolved trigger; the retired section is noted once')
 // `feeds` (the board slides a step feeds, with the compiler's slide ids) is compiled-model only, like `slideIds`.
 const { slideIds, feeds: compiledFeeds, ...compiledDefinition } = model.prework
 assert.ok(Array.isArray(compiledFeeds), 'the compiled model lists the board slides steps feed')
@@ -209,30 +231,11 @@ assert.deepEqual(rows.find((row) => row.slide_id === 'r1tools').warnings, [], 'a
 
 const badOutline = talk.replace('{results=pwtools}', '{results=pwgone}')
 const badModel = await prepareSource(outlinePath, badOutline, 'prework-fixture', statSync(outlinePath), undefined, { projectionsOnly: true })
-assert.deepEqual(badModel.warnings.filter((warning) => warning.startsWith('prework')), ['prework-results-unknown:r1tools:pwgone'])
+assert.deepEqual(badModel.warnings.filter((warning) => warning.startsWith('prework')), ['prework-results-unknown:r1tools:pwgone', 'prework-section-retired:pwform'])
 const plain = await prepareSource(outlinePath, '## A\n{id=a}\n\n### B\n{id=b}\n\nText.\n', 'plain', statSync(outlinePath), undefined, { projectionsOnly: true })
 assert.equal('prework' in plain, false, 'a talk without pre-work has no definition')
 
-// ── 3. Writing the right answer ────────────────────────────────────────────────────────────
-const quizLine = talk.split('\n').findIndex((line) => line.startsWith('### Quick check')) + 1
-const moved = applyRightAnswerToOutline(talk, quizLine, 2)
-assert.deepEqual(preworkFromOutline(moved).steps[1].right, { index: 2, label: 'Not sure yet' }, 'choosing an option moves the marker')
-assert.equal(moved.split('\n').filter((line) => line.includes('{right}')).length, 1, 'one option carries it')
-assert.equal(applyRightAnswerToOutline(moved, quizLine, 2), moved, 'choosing it again changes nothing')
-assert.equal(applyRightAnswerToOutline(talk, quizLine, 1), talk, 'the marked option is already right')
-assert.equal(preworkFromOutline(applyRightAnswerToOutline(talk, quizLine, -1)).steps[1].right, null, '-1 clears it')
-assert.equal(applyRightAnswerToOutline(talk, 2, 0), talk, 'a line that is not a heading is refused')
-// The writer shares the reader's walk: a misplaced marker is moved to where the Inspector writes it.
-const odd = '### C\n{poll=single}{check}\n\n- {right} One\n  - hint {right}\n- Two\n'
-assert.equal(applyRightAnswerToOutline(odd, 1, 0), '### C\n{poll=single}{check}\n\n- One {right}\n  - hint\n- Two\n', 'choosing an option tidies every other marker away')
-assert.equal(applyRightAnswerToOutline(odd, 1, -1), '### C\n{poll=single}{check}\n\n- One\n  - hint\n- Two\n')
-const crlf = talk.replace(/\n/g, '\r\n')
-assert.equal(applyRightAnswerToOutline(crlf, quizLine, 0).split('\r\n').length, crlf.split('\r\n').length, 'CRLF line endings are kept')
-const before = talk.split('\n')
-const changed = moved.split('\n').flatMap((line, index) => line === before[index] ? [] : [line])
-assert.deepEqual(changed, ['- It uses tools to carry out steps for you', '- Not sure yet {right}'], 'only the two option lines change')
-
-// ── 4. Presenting skips the pre-work steps ─────────────────────────────────────────────────
+// ── 3. Presenting skips the pre-work steps ─────────────────────────────────────────────────
 function outerSlideIds(html) {
   const stageStart = html.indexOf('id="stage"')
   const beatsStart = html.indexOf('<script>window.__deckBeats=', stageStart)
@@ -269,9 +272,10 @@ assert.equal(noticed.includes('</script><b>'), false, 'the notice text is JSON i
 assert.match(noticed, /data-prework-notice/)
 assert.match(noticed, /<\/body>\s*<\/html>\s*$/)
 
-// ── 5. The handout before the day (ticket 09) ───────────────────────────────────────────────
-// A planned Run's handout carries the public form and the step slides in an inert template, never
-// as ordinary slides, and asks the Worker whether pre-work is open. The right answer is nowhere in it.
+// ── 4. The handout carries no form (work-files ticket 16) ────────────────────────────────────
+// Pre-work has a page of its own; a Run's handout links to it. Asked for a form the old way, the
+// handout builder ignores it: no steps, no form, no right answer, no pre-work object, and the
+// talk's own slides as before.
 {
   const form = publicPreworkForm(model.prework, model.slides)
   assert.ok(form && form.steps.length === 4, 'the form has the four steps')
@@ -285,47 +289,14 @@ assert.match(noticed, /<\/body>\s*<\/html>\s*$/)
   })
   assert.equal(/\{right\}/i.test(html), false, 'no right-answer marker anywhere in the handout')
   assert.equal(/"right"\s*:/.test(html), false, 'no right answer in any JSON the handout carries')
-  const fetched = []
-  const virtualConsole = new VirtualConsole()
-  const errors = []
-  virtualConsole.on('jsdomError', (error) => errors.push(error.message))
-  const dom = new JSDOM(html, {
-    runScripts: 'dangerously', pretendToBeVisual: true, url: 'https://handouts.example.test/prework-fixture/', virtualConsole,
-    beforeParse(window) {
-      window.fetch = async (url, init) => {
-        fetched.push({ url: String(url), init })
-        if (String(url).includes('/prework/')) return { ok: true, json: async () => ({ state: 'open', opensAt: 1, closesAt: 2 }) }
-        return { ok: true, json: async () => ({ live: false }) }
-      }
-      window.WebSocket = class { close() {} }
-      window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} })
-      window.ResizeObserver = class { observe() {} disconnect() {} }
-    },
-  })
-  const { document } = dom.window
-  const events = []
-  document.addEventListener('tw:prework-status', (event) => events.push(event.detail))
-  await new Promise((resolve) => setTimeout(resolve, 100))
-  const listed = [...document.querySelectorAll('.slide')].map((slide) => slide.dataset.id)
-  assert.equal(listed.some((id) => ids.has(id)), false, 'no pre-work step is an ordinary slide of the handout')
+  for (const gone of ['preworkSteps', 'preworkApp', 'PREWORK_CONFIG', 'createPreworkStatus', 'createPreworkForm', 'pw123456']) assert.equal(html.includes(gone), false, `the handout carries no ${gone}`)
+  const listed = [...html.matchAll(/<section class="slide[^"]*" data-id="([^"]+)"/g)].map((match) => match[1])
+  assert.equal(listed.some((id) => ids.has(id)), false, 'no pre-work step is a slide of the handout')
   assert.ok(listed.includes('turn') && listed.includes('r1tools'), 'the talk\'s own slides are')
-  const template = document.getElementById('preworkSteps')
-  assert.deepEqual([...template.content.querySelectorAll('.slide')].map((slide) => slide.dataset.id), ['pwform', 'pwwelcome', 'pwquiz', 'pwtools', 'pwtask1'],
-    'the steps travel in an inert template for the form')
-  const statusCall = fetched.find((call) => call.url.includes('/prework/'))
-  assert.equal(statusCall.url, 'https://live.example.test/prework/pw123456', 'the handout asks its own pre-work object')
-  assert.equal(statusCall.init.credentials, 'omit', 'and sends no credential')
-  assert.equal(document.body.dataset.prework, 'open', 'the page is marked while pre-work is open')
-  assert.equal(errors.length, 0, errors.join('\n'))
-  dom.window.close()
 
   // Without pre-work the handout carries none of it.
   const plain = buildShareHtml({ title: 'T', slides: all, styles: '', includeNotes: false, slug: 't', workerBaseUrl: 'https://live.example.test' })
   assert.equal(plain.includes('preworkSteps') || plain.includes('createPreworkStatus'), false)
-  assert.equal(preworkStatusUrl({ workerBaseUrl: 'https://w.test//', preworkId: 'ab12cd34' }), 'https://w.test/prework/ab12cd34')
-  assert.equal(normalisePreworkStatus({ state: 'closed', opensAt: 1, closesAt: 2, people: 31 }).people, 31)
-  assert.equal(normalisePreworkStatus({ state: 'open', opensAt: '1', closesAt: 2 }), null)
-  assert.equal(normalisePreworkStatus(null), null)
 }
 
-console.log('prework: definition, findings, compiler model, right-answer writes, presenting skip and the handout before the day checks passed')
+console.log('prework: definition, findings, compiler model, presenting skip and the handout before the day checks passed')

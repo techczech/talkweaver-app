@@ -1,3 +1,4 @@
+import { onlineContentGuidelinesHtml } from './online-content-guidelines.mjs';
 import { escapeHtml, qrGeneratorSource, overviewRuntimeSource, slideFitRuntimeSource, pollExtendedStyles, markmapVendorSource, mermaidVendorSource, boardScreenRuntimeSource } from "./01-cli-utils.mjs";
 import { withoutScripts } from "./04-html-extraction.mjs";
 import { plainInlineText } from "./00-inline-render.mjs";
@@ -7,6 +8,7 @@ import { quoteFormScriptBlocks, quoteFormStatic } from "./quote-forms-static.mjs
 import { liveFollowRuntimeSource } from "../../assets/runtime/live-follow.js";
 import { instantSlideStyles } from "../../assets/runtime/instant-slide.js";
 import { emphasisStepsRuntimeSource } from "../../assets/runtime/emphasis-steps.js";
+import { traceWindowRuntimeSource } from "../../assets/runtime/trace-window.js";
 import { audioChipRuntimeSource } from "../../assets/runtime/audio-chip.js";
 import { mediaStepsRuntimeSource } from "../../assets/runtime/media-steps.js";
 import { embedChannelSource } from "../../assets/runtime/embed-channel.js";
@@ -17,13 +19,12 @@ import { audienceBoardStyles } from "../../assets/runtime/audience-board.js";
 import { audienceMyNotesStyles } from "../../assets/runtime/audience-my-notes.js";
 import { sharedTalkRuntimeSource } from "../../assets/runtime/shared-talk-page.js";
 import { sharedTalkStyles } from "../../assets/runtime/shared-talk-styles.js";
-import { preworkStatusRuntimeSource } from "../../assets/runtime/prework-status.js";
-import { preworkFormStyles, preworkFormRuntimeSource } from "../../assets/runtime/prework-form.js";
 import { renderScriptBlocks, renderSlideNavTitle } from "./slide-script-render.mjs";
 import { handoutHomeMarkup } from "./handout-home.mjs";
 import { handoutHomeRuntimeSource } from "../../assets/runtime/handout-home.js";
 import { liveStepRuntimeSource } from "../../assets/runtime/live-step.js";
 import { handoutHomeStyles } from "../../assets/runtime/handout-home-styles.js";
+import { handoutTokens } from "../../assets/runtime/handout-tokens.js";
 import { lazySlideAssetsStyles, lazySlideAssetsRuntimeSource } from "../../assets/runtime/lazy-slide-assets.js";
 
 // =============================================================================
@@ -47,11 +48,9 @@ function venueTalkQrMarkup(svg, url) {
 // shared-talk Worker serves — the handout with the colleague's comments runtime (LOCKED Margin
 // design). The runtime stays inert unless the Worker's #tw-shared-talk-config block is present.
 // `proposals: false` limits her to notes; `ownerName` is the name the page's copy uses.
-// `prework` (feedback-boards ticket 09): a planned Run's handout published before the day carries
-// `{ preworkId, workerBaseUrl, form, steps: [{ id, html }] }` — the public form (never a right answer)
-// and the step slides, kept in an inert <template> so they are never ordinary slides. The page asks
-// the Worker whether pre-work is open and marks body[data-prework]; while it is open the form (ticket 10,
-// prework-form.js) takes the place of the slide list, and once it has closed a banner sits over the list.
+// A Run's handout no longer carries the pre-work form (work-files ticket 16): pre-work and post-work
+// each have a page of their own (`…/<run>/pre-work`, `…/<run>/post-work`, work-page.mjs), and the
+// handout home links to them (handout-home.mjs).
 // Handout, phone, print and venue pages show an audio chip as a static label and never load or play
 // the file: the <audio> element (and any data URI it carries) is dropped from the share markup.
 // One exception (0.38 ticket 05): the venue screen plays a {play-on-next} chip when the presenter's
@@ -77,7 +76,7 @@ export function stripAudioElements(html, { keepPlayOnNext = false } = {}) {
  */
 export const APP_CONFIG_MARK = "/* talkweaver:app-config */";
 
-export function buildShareHtml({ title, slides, styles, includeNotes, slug, license, workerBaseUrl = "", liveTalkSlug = slug, venue = false, venueQr = "", venueUrl = "", sharedTalk = false, prework = null, home = null, lazyAssets = false, homeHref = "" }) {
+export function buildShareHtml({ title, slides, styles, includeNotes, slug, license, workerBaseUrl = "", liveTalkSlug = slug, venue = false, venueQr = "", venueUrl = "", sharedTalk = false, home = null, lazyAssets = false, homeHref = "" }) {
   // `lazyAssets` (published index.html and <slug>.html): the page carries the slide-asset loader; the
   // publisher then moves heavy inline media out (handout-lazy-assets.mjs). The Download handout and
   // every other export leave it off and stay self-contained.
@@ -92,8 +91,7 @@ export function buildShareHtml({ title, slides, styles, includeNotes, slug, lice
   const sharedTalkOptions = sharedTalk && !venue
     ? JSON.stringify({ proposals: sharedTalk === true || sharedTalk.proposals !== false, ownerName: String((sharedTalk && sharedTalk.ownerName) || "").slice(0, 60) }).replace(/</g, "\\u003c")
     : "null";
-  // The pre-work steps are slides too: one that carries a diagram needs the vendor as much as a talk slide.
-  const hasMermaid = [...slides, ...(prework && !venue && Array.isArray(prework.steps) ? prework.steps : [])]
+  const hasMermaid = slides
     .some((slide) => /\bclass=["'][^"']*\bmermaid-mm\b/.test(String(slide && slide.html || "")));
   const notesButton = includeNotes ? '<button class="btn" id="notesBtn" type="button"><span class="btn-label">Notes</span></button>' : "";
   // Public CC attribution travels into the share export as a no-JS <details> popover.
@@ -103,13 +101,6 @@ export function buildShareHtml({ title, slides, styles, includeNotes, slug, lice
   const liveConfig = workerBaseUrl
     ? JSON.stringify({ workerBaseUrl: String(workerBaseUrl).replace(/\/+$/, ""), talkSlug: String(liveTalkSlug) }).replace(/</g, "\\u003c")
     : "null";
-  const preworkOn = Boolean(prework && !venue && prework.preworkId && prework.workerBaseUrl && prework.form);
-  const preworkConfig = preworkOn
-    ? JSON.stringify({ preworkId: String(prework.preworkId), workerBaseUrl: String(prework.workerBaseUrl).replace(/\/+$/, ""), form: prework.form }).replace(/</g, "\\u003c")
-    : "null";
-  const preworkTemplate = preworkOn
-    ? `<template id="preworkSteps">${(prework.steps || []).map((step) => stripAudioElements(withoutScripts(String(step.html || "")))).join("\n")}</template>`
-    : "";
   const liveControls = workerBaseUrl
     ? '<button class="btn follow-live-btn" id="followLiveBtn" type="button" hidden><span class="live-dot" aria-hidden="true"></span><span class="btn-label">Stop following</span></button><button class="btn return-live-btn" id="returnToPresenterBtn" type="button" hidden>Return to presenter</button><label class="live-name" id="liveNameWrap" hidden>Your name <input id="liveName" type="text" placeholder="optional" autocomplete="name"></label><span class="live-follow-status" id="liveFollowStatus" role="status" aria-live="polite" hidden></span>'
     : "";
@@ -142,11 +133,20 @@ export function buildShareHtml({ title, slides, styles, includeNotes, slug, lice
 ${pollExtendedStyles}
 ${styles}
 ${sharedTalk && !venue ? sharedTalkStyles : ""}
-${preworkOn ? preworkFormStyles : ""}
 ${homeOn ? handoutHomeStyles : ""}
 ${lazyOn ? lazySlideAssetsStyles : ""}
 body { margin: 0; }
 .presenter-root, #presenterBtn { display: none !important; }
+.tw-online-content { position: fixed; right: 12px; bottom: 62px; z-index: 120; max-width: min(36rem, calc(100vw - 24px)); background: #fff; color: ${handoutTokens.ink}; border: 1px solid ${handoutTokens.control}; border-radius: 6px; font: 14px/1.5 ${handoutTokens.font}; box-shadow: 0 2px 8px #0002; }
+.tw-online-content summary { cursor: pointer; padding: 7px 12px; }
+.tw-online-content-body { padding: 0 12px 12px; max-height: 60vh; overflow: auto; }
+.tw-online-content a { color: ${handoutTokens.cobalt}; }
+body.hh-mode .tw-online-content { position: static; box-sizing: border-box; width: calc(100% - 32px); max-width: 640px; margin: 0 auto 32px; border-color: ${handoutTokens.rule}; border-radius: 10px; box-shadow: none; }
+body.hh-mode .tw-online-content summary { color: ${handoutTokens.soft}; }
+body.hh-mode .tw-online-content-body { max-height: none; }
+body.hh-mode.hh-full-open .tw-online-content { display: none; }
+@media (min-width: 900px) { body.hh-mode .tw-online-content { width: calc(100% - 2 * clamp(32px, 5vw, 72px)); max-width: calc(1440px - 2 * clamp(32px, 5vw, 72px)); } }
+@media print { .tw-online-content { display: none; } }
 .share-shell { min-height: 100vh; display: grid; grid-template-rows: 1fr auto; }
 .slide { display: none; }
 .slide.active { display: grid; }
@@ -423,14 +423,13 @@ html, body, .share-shell { width: 100%; height: 100%; overflow: hidden; }
 </head>
 <body class="${venue ? 'venue-screen' : homeOn ? 'hh-mode' : ''}">
 ${homeOn ? handoutHomeMarkup(home, { title, slideCount: slides.length, firstSlideId: (/\bdata-id="([^"]+)"/.exec(String(slides[0] && slides[0].html || "")) || [])[1] || "" }) : ''}
-${preworkOn ? '<div class="pw-closed-host pw-closed-top" id="preworkClosedTop" hidden></div>' : ''}
 <main class="share-shell">
   <div class="phone-bar" id="phoneBar" hidden>
     <button type="button" id="phoneBack" aria-label="All slides">‹ All slides</button>
     <span class="phone-bar-title" id="phoneBarTitle"></span>
     <button type="button" id="phoneFull" style="margin-left:auto" aria-label="Full screen">⤢ Full screen</button>
   </div>
-  <div class="phone-list" id="phoneList" hidden>${homeLink ? `<a class="phone-home" id="phoneHome" href="${homeLink}">&lsaquo; Handout home</a>` : ''}${preworkOn ? '<div class="pw-closed-host pw-closed-list" id="preworkClosedList" hidden></div>' : ''}</div>
+  <div class="phone-list" id="phoneList" hidden>${homeLink ? `<a class="phone-home" id="phoneHome" href="${homeLink}">&lsaquo; Handout home</a>` : ''}</div>
   <div class="stage-fit" id="stageFit">
   <div class="stage" id="stage">
 ${slideMarkup}
@@ -459,6 +458,7 @@ ${slideMarkup}
     </div>
   </footer>
 </main>
+${onlineContentGuidelinesHtml()}
 <aside class="nav-panel" id="navPanel" aria-label="Slide overview">
   <button class="btn" id="closeOverview" type="button"><span class="btn-label">Close</span></button>
   <h2>Overview
@@ -526,7 +526,7 @@ ${includeNotes ? '<aside class="notes-panel" id="notesPanel" aria-label="Speaker
     <span class="lightbox-counter" id="lightboxCounter"></span>
   </div>
 </div>
-${preworkTemplate}${preworkOn ? '<div class="pw-app" id="preworkApp" hidden></div>' : ''}${markmapVendorSource}
+${markmapVendorSource}
 ${hasMermaid ? mermaidVendorSource : ""}
 <script>
 (() => {
@@ -1437,7 +1437,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
   // 2026-07-19: ".timeline .tl-dyn-entries > li" was missing here, so {timeline=dynamic} slides
   // enumerated ZERO units on the audience handout and reveal/focus following silently no-opped
   // on them. The parity test named above did not exist at the time; it does now.
-  const MODE_SELECTOR = ".feature-list[data-reveal-group],.feature-list > li:not(.image-grid *):not([data-reveal-group] *),.feature-list .fl-sublist > li:not([data-reveal-group] *),.timeline .tl-entries > li,.timeline .tl-dyn-entries > li,.timeline .tl-spine-track > li,.timeline > li,.slide-content > blockquote,.statement,.slide-content .content-p:not(.card-gallery *):not(.evidence-layout *):not(.cta-layout *):not(.image-grid *),figure.slide-figure:not(.evidence-layout *):not(.cta-layout *),.trace .turn,.contrast-grid > .contrast-pair,.tile-grid > div,.system-map > div:not(.system-centre),.evidence-layout .callouts > li,.cta-layout .cta-shot,.cta-layout .callouts > li,.cta-layout .slide-action,.smartart-node:not(.smartart-node *),.flow > .flow-node,.flow-cycle-row > .flow-node,.flow-snake-row > .flow-node,.flow > .flow-item,.pyramid .pyr-tier,.orgchart .org-box,.stats-row > .stat,.process-strip > .proc-step,.steps-diagram > .step-col,.icon-row > .ir-item,.image-grid > .ig-cell,.chart-cols > .chart-col,.cycle-diagram .cycle-node,.cycle-diagram .cycle-arc-svg,.timetable tbody tr,.slide-table tbody tr,.mindmap-mm > .mm-step,.layout-compare .compare-half.half-b,.sim .sim-step";
+  const MODE_SELECTOR = ".feature-list[data-reveal-group],.feature-list > li:not(.image-grid *):not([data-reveal-group] *):not(.fl-card-pts),.feature-list .fl-sublist > li:not([data-reveal-group] *),.timeline .tl-entries > li,.timeline .tl-dyn-entries > li,.timeline .tl-spine-track > li,.timeline > li,.slide-content > blockquote,.statement,.slide-content .content-p:not(.card-gallery *):not(.evidence-layout *):not(.cta-layout *):not(.image-grid *),figure.slide-figure:not(.evidence-layout *):not(.cta-layout *),.trace .turn,.contrast-grid > .contrast-pair,.tile-grid > div,.system-map > div:not(.system-centre),.evidence-layout .callouts > li,.cta-layout .cta-shot,.cta-layout .callouts > li,.cta-layout .slide-action,.smartart-node:not(.smartart-node *),.flow > .flow-node,.flow-cycle-row > .flow-node,.flow-snake-row > .flow-node,.flow > .flow-item,.pyramid .pyr-tier,.orgchart .org-box,.stats-row > .stat,.process-strip > .proc-step,.steps-diagram > .step-col,.icon-row > .ir-item,.image-grid > .ig-cell,.chart-cols > .chart-col,.cycle-diagram .cycle-node,.cycle-diagram .cycle-arc-svg,.timetable tbody tr,.slide-table tbody tr,.mindmap-mm > .mm-step,.layout-compare .compare-half.half-b,.sim .sim-step";
   const CARD_UNIT_SELECTOR = ".feature-list > li,blockquote,figure.slide-figure,p.content-p";
   let modeKind = null;   // null | "reveal" | "focus"
   let modeStep = 0;
@@ -1445,6 +1445,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
   // emphasis steps, inlined from compiler/assets/runtime/emphasis-steps.js: the SAME source the
   // deck runtime runs, so the venue screen and the projector read one step the same way.
   ${emphasisStepsRuntimeSource()}
+  // The trace window (0.41 ticket 11): whole-turn scrolling, inlined from runtime/trace-window.js.
+  ${traceWindowRuntimeSource()}
   ${venue ? `// "Play as a step" (0.38 ticket 05): the venue screen starts and stops a {play-on-next} file from
   // the step it is sent, with the SAME playback source the projector runs (runtime/media-steps.js)
   // and the audio chip's own runtime. A handout and a phone never carry either: they show the file
@@ -1572,9 +1574,29 @@ ${hasMermaid ? mermaidVendorSource : ""}
     if (i < cur) return "soft";
     return kind === "focus" ? "fuzzy" : "hidden";
   }
+  // A {trace} window scrolls by whole turns from the painted step (runtime/trace-window.js, the
+  // same source the deck runs; 0.41 ticket 11). Placed after the states are written; a step on the
+  // slide already shown eases the move, arriving places it at once, and again a frame later when
+  // the slide fit has run. Only while a stepping mode is on: with none, the handout shows a trace as
+  // it always has, from its top (a window placed earlier is put back there once).
+  var traceSlide = null;
+  function applyModeDimming() {
+    paintModeDimming();
+    var slide = slides[index];
+    if (!slide) return;
+    if (!slide.classList.contains("mode-active")) {
+      traceSlide = null;
+      if (slide.querySelector(".trace[data-trace-start]")) resetTraceWindows(slide);
+      return;
+    }
+    var animate = traceSlide === slide;
+    traceSlide = slide;
+    placeTraceWindows(slide, { animate: animate });
+    requestAnimationFrame(function () { if (slides[index] === slide && slide.classList.contains("mode-active")) placeTraceWindows(slide, { animate: animate }); });
+  }
   // Diff, do not reset: only the unit(s) whose state changed get a new data-mode-state, so an
   // unchanged unit never loses .mode-el (and its transition) for a frame — no per-step flicker.
-  function applyModeDimming() {
+  function paintModeDimming() {
     const slide = slides[index];
     if (!slide) return;
     // A reveal step changes what is laid out: fit again, as the app does on every step.
@@ -1647,6 +1669,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
     if (!el || typeof el.scrollIntoView !== "function") return;
     // Simulation steps never scroll into view (the handout shows them static and open).
     if (el.closest(".sim")) return;
+    // Nor do trace turns: the trace window moves by whole turns (placeTraceWindows).
+    if (el.closest(".trace")) return;
     requestAnimationFrame(function () {
       try { el.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" }); }
       catch (e) { el.scrollIntoView(false); }
@@ -2213,6 +2237,9 @@ ${hasMermaid ? mermaidVendorSource : ""}
   }
   window.addEventListener("beforeprint", prepareCarouselPrint);
   window.addEventListener("afterprint", removeCarouselPrintPages);
+  // Print keeps the trace as it was (0.41 ticket 11 leaves print alone): from its top, no tail room.
+  window.addEventListener("beforeprint", function () { resetTraceWindows(document); });
+  window.addEventListener("afterprint", function () { applyModeDimming(); });
   document.getElementById("revealBtn").addEventListener("click", () => toggleMode("reveal"));
   document.getElementById("overviewBtn").addEventListener("click", () => overview.open());
   document.getElementById("closeOverview").addEventListener("click", () => overview.close());
@@ -2932,33 +2959,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
     }, { once: true });
   }
   initialiseLiveFollow();
-  initialiseSharedTalk();${preworkOn ? `
-  // Pre-work (ticket 09): ask the Worker whether this Run's pre-work is open and mark the page.
-  const PREWORK_CONFIG = ${preworkConfig}; ${APP_CONFIG_MARK}
-  ${preworkStatusRuntimeSource()}
-  ${preworkFormRuntimeSource()}
-  const preworkStatus = createPreworkStatus({ document, config: PREWORK_CONFIG });
-  const preworkForm = createPreworkForm({
-    document, mount: document.getElementById("preworkApp"), config: PREWORK_CONFIG,
-    client: createPreworkClient({ fetch: window.fetch.bind(window), workerBaseUrl: PREWORK_CONFIG.workerBaseUrl, preworkId: PREWORK_CONFIG.preworkId }),
-    storage: { get: (key) => window.localStorage.getItem(key), set: (key, value) => window.localStorage.setItem(key, value) },
-    random: (n) => { const bytes = new Uint8Array(n); if (window.crypto && window.crypto.getRandomValues) window.crypto.getRandomValues(bytes); else for (let i = 0; i < n; i += 1) bytes[i] = Math.floor(Math.random() * 256); return bytes; },
-    fitSlide: fitSlideClone, isPhone,
-    deckTitle: (document.querySelector('meta[name="deck-title"]') || {}).content || document.title,
-    recheck: () => { void preworkStatus.check(); },
-  });
-  document.addEventListener("tw:prework-status", (event) => {
-    const detail = event.detail || {};
-    const status = detail.status;
-    preworkForm.setStatus(status, detail.steps);
-    // The pre-work form covers the stage while it is open (body.pw-open).
-    syncLocalShareEmbeds();
-    if (status && status.state === "closed") {
-      showPreworkClosed(document, [document.getElementById("preworkClosedTop"), document.getElementById("preworkClosedList")], status);
-      document.body.classList.add("pw-closed-page");
-    }
-  });
-  void preworkStatus.check();` : ""}
+  initialiseSharedTalk();
 })();
 </script>
 </body>

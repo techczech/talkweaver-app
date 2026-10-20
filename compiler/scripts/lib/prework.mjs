@@ -14,14 +14,24 @@
 //     {poll=…}                        a question (any poll type)
 //     (none of these)                 a slide participants read
 //     {noask}                         any step: participants cannot ask about it (default: they can)
-//   {results=<step id>}               on a TALK slide: the slide shows that step's answers
+//     {local}                         a task, quick check or question: its answer, done mark and read
+//                                     mark stay on the participant's phone and are never sent (default:
+//                                     sent to the speaker). A slide or video carries no answer, so the
+//                                     token means nothing there (prework-local-on-slide)
+//   {results=<step id>}               on a TALK slide: the slide shows that step's answers (0.37 section steps)
+//   {results=<file id>/<step id>}     …or a step of a WORK FILE (0.40, ADR-0040): the bound Run's answers
+//                                     for that step in the phase the file is attached to; the step is
+//                                     looked up in the Run's pinned revision (src/shared/results-seed.ts)
 //
 // The compiler (08-source-adapters.mjs) builds `model.prework` with `preworkFromTree` on its own
 // id-resolved tree, strips `{right}` from what participants see (`takeRightMarkers`) and reports
 // `preworkFindings`; the app reads the SAME definition from the outline text with
-// `preworkFromOutline` (the Inspector's "Before the session" section, the plan sheet, the status
-// bar), and presenting leaves the section's slides out (src/main/pathways.ts). Plain ESM that the
-// renderer imports too (prework.d.mts): no Node APIs.
+// `preworkFromOutline` (the Run page labels an old Run's section answers with it, src/shared/
+// run-answers.ts); "Move to a work file" reads the section's tree (src/shared/prework-move.ts); and
+// presenting, the handout and the venue screen leave the section's slides out (src/main/pathways.ts,
+// withoutPreworkSlides). The 0.37 Inspector section and its right-answer writer are gone (work-files
+// ticket 29): a leftover section is never written from the Inspector and never published as a form.
+// Plain ESM that the renderer imports too (prework.d.mts): no Node APIs.
 // =============================================================================
 import { parseOutlineTree } from "./14-outline-tree.mjs";
 import { blankHtmlComments } from "./html-comments.mjs";
@@ -31,12 +41,12 @@ export const PREWORK_KIND_LABELS = Object.freeze({ slide: "Slide", check: "Quick
 /** A pre-task's "Time it takes" (round-2 E3): the values offered; the default is never written. */
 export const PREWORK_MINUTES = Object.freeze({ values: Object.freeze(["5", "10", "20", "30"]), fallback: "10" });
 /** The tokens that only mean something on a step of the pre-work section. */
-export const PREWORK_STEP_TOKENS = Object.freeze(["task", "check", "readonly", "minutes", "noask"]);
+export const PREWORK_STEP_TOKENS = Object.freeze(["task", "check", "readonly", "minutes", "noask", "local"]);
 
 // `{right}` anywhere in a line (any case, spaces inside the braces): the right-answer marker. It is
 // taken out of every line of a quick check outside code fences, wherever it was written.
 const RIGHT_ANY_RE = /[ \t]*\{[ \t]*right[ \t]*\}/gi;
-// Where the Inspector writes it: at the end of a top-level item of the first list.
+// Where it belongs: at the end of a top-level item of the first list.
 const RIGHT_END_RE = /\S[ \t]*\{[ \t]*right[ \t]*\}[ \t]*$/i;
 const ITEM_RE = /^([ \t]*)([-*+]|\d+[.)])([ \t]+)(.*)$/;
 const FENCE_RE = /^(`{3,}|~{3,})/;
@@ -66,6 +76,25 @@ function nodeId(node) {
   return (typeof node.id === "string" && node.id.trim()) || (typeof node.attrs?.id === "string" && node.attrs.id.trim()) || fallbackId(node.title);
 }
 
+const RESULTS_NAME_RE = /^[A-Za-z0-9-]+$/;
+const RESULTS_FILE_ID_RE = /^[a-z0-9][a-z0-9-]{0,79}$/;
+
+/**
+ * What a `{results=…}` value names: `{ fileId: null, stepId }` for a step of the talk's own pre-work
+ * section, `{ fileId, stepId }` for a work-file step (`<file id>/<step id>`), or null when a value
+ * with a `/` is not a file id and a step id. A value without a `/` is always the section form, so
+ * an unknown name stays the old `prework-results-unknown`.
+ */
+export function parseResultsToken(raw) {
+  const value = typeof raw === "string" ? raw.trim() : "";
+  if (!value) return null;
+  const slash = value.indexOf("/");
+  if (slash < 0) return { fileId: null, stepId: value };
+  const fileId = value.slice(0, slash);
+  const stepId = value.slice(slash + 1);
+  return RESULTS_FILE_ID_RE.test(fileId) && RESULTS_NAME_RE.test(stepId) ? { fileId, stepId } : null;
+}
+
 /** A `##` heading whose own trigger tokens carry `{prework}`. */
 export function isPreworkSection(node) {
   return Boolean(node) && node.level === 2 && node.attrs?.prework === true;
@@ -74,9 +103,8 @@ export function isPreworkSection(node) {
 // ── The quick check's options and the {right} marker ─────────────────────────────────────────
 
 /**
- * The ONE walk over a quick check's body that both the reader (`takeRightMarkers`) and the writer
- * (`applyRightAnswerToOutline`) use, so where a marker counts and where the Inspector writes it can
- * never drift. `lines` start after the heading; the walk stops at the next heading outside a fence.
+ * The ONE walk over a quick check's body (`takeRightMarkers`), so where a marker counts and where it
+ * is well placed (the end of an option, where a work file's author writes it) can never drift. `lines` start after the heading; the walk stops at the next heading outside a fence.
  * Each line outside a fence is visited as `{ index, line, item, choice }`: `item` is the list-item
  * match (any indent), `choice` the 0-based option index of a top-level item of the FIRST list (the
  * poll's options), else -1.
@@ -117,7 +145,7 @@ function withoutMarkers(line) {
  *                any indent, at its start, middle or end, or a plain line), code fences untouched
  *   options      the top-level items of the first list, each with whether it carries a marker
  *   rightCount   every marker in the body
- *   misplaced    markers the Inspector would not have written (not at the end of an option)
+ *   misplaced    markers not at the end of an option
  * `throughHeadings` reads a slide's whole source (its heading line included) instead of stopping.
  */
 export function takeRightMarkers(lines = [], { throughHeadings = false } = {}) {
@@ -158,6 +186,8 @@ function introOf(lines = []) {
   return paragraph.join(" ");
 }
 
+const CHOICE_OPTION_POLLS = new Set(["single", "multiple", "ranking"]);
+
 function stepOf(node, index) {
   const attrs = node.attrs || {};
   const pollType = typeof attrs.poll === "string" && attrs.poll.trim() ? attrs.poll.trim() : "";
@@ -171,11 +201,15 @@ function stepOf(node, index) {
     sourceLine: node.sourceLine || null,
   };
   if (pollType) step.pollType = pollType;
+  // Local only (2026-10-19 prework-responses design): nothing about the step is sent. Only a step that
+  // has an answer or a done mark can be local; on a slide the token is a finding and is ignored.
+  if (attrs.local === true && kind !== "slide") step.local = true;
   if (kind === "task") {
     step.done = attrs.readonly !== true;
     step.minutes = readMinutes(attrs.minutes);
   }
-  if (kind === "check") {
+  // A quick check's options carry the {right} marker; a choice question (single, multiple, ranking) lists its options the same way.
+  if (kind === "check" || (kind === "question" && CHOICE_OPTION_POLLS.has(pollType))) {
     const { options } = takeRightMarkers(node.contentLines);
     step.options = options.map((option) => option.label);
     const rightIndex = options.findIndex((option) => option.right);
@@ -202,7 +236,7 @@ export function preworkFromTree(root) {
 }
 
 /**
- * The board slides of the talk that take a pre-work step's answers (`{results=<step id>}` on a slide
+ * The board slides of the talk that take a pre-work step's answers (`{results=<step id>}` or `{results=<file id>/<step id>}` on a slide
  * that is a board), as `{ stepId, slideId, title }` in reading order. Read from the compiler's own
  * id-resolved tree, so a slide id is the one the compiled deck and the live session use (a repeated
  * title is already `hopes-2`); the app never derives one itself.
@@ -210,9 +244,11 @@ export function preworkFromTree(root) {
 export function preworkFeedsFromTree(root) {
   const feeds = [];
   for (const { node } of walk(root?.children)) {
-    const stepId = typeof node.attrs?.results === "string" ? node.attrs.results.trim() : "";
-    if (!stepId || String(node.attrs?.poll ?? "").trim().toLowerCase() !== "board") continue;
-    feeds.push({ stepId, slideId: nodeId(node), title: String(node.title ?? "") });
+    const raw = typeof node.attrs?.results === "string" ? node.attrs.results.trim() : "";
+    if (!raw || String(node.attrs?.poll ?? "").trim().toLowerCase() !== "board") continue;
+    const token = parseResultsToken(raw);
+    if (!token) continue; // a malformed work-file value is a finding (prework-results-invalid), not a feed
+    feeds.push({ stepId: token.stepId, ...(token.fileId ? { fileId: token.fileId } : {}), slideId: nodeId(node), title: String(node.title ?? "") });
   }
   return feeds;
 }
@@ -261,6 +297,7 @@ export function preworkFindings(root, definition = preworkFromTree(root)) {
   if (definition && definition.steps.length === 0) add("prework-section-empty", definition.sectionId, definition.title);
   const primary = sections[0] ?? null;
   const stepIds = new Set((definition?.steps || []).map((step) => step.id));
+  const localIds = new Set((definition?.steps || []).filter((step) => step.local === true).map((step) => step.id));
   for (const { node, ancestors } of walk(root?.children)) {
     const attrs = node.attrs || {};
     const id = nodeId(node);
@@ -273,6 +310,7 @@ export function preworkFindings(root, definition = preworkFromTree(root)) {
       const pollType = typeof attrs.poll === "string" ? attrs.poll : "";
       if (attrs.task === true && (attrs.check === true || pollType)) add("prework-kind-conflict", id, attrs.check === true ? "check" : "poll");
       if (attrs.readonly === true && attrs.task !== true) add("prework-readonly-without-task", id, "readonly");
+      if (attrs.local === true && attrs.task !== true && attrs.check !== true && !pollType) add("prework-local-on-slide", id, "local");
       if (Object.hasOwn(attrs, "minutes") && attrs.task !== true) add("prework-readonly-without-task", id, "minutes");
       if (attrs.task === true && Object.hasOwn(attrs, "minutes") && !PREWORK_MINUTES.values.includes(minutesText(attrs.minutes))) {
         add("prework-minutes-invalid", id, `minutes=${minutesText(attrs.minutes)}`);
@@ -287,35 +325,25 @@ export function preworkFindings(root, definition = preworkFromTree(root)) {
     }
     if (typeof attrs.results === "string" && attrs.results.trim()) {
       const target = attrs.results.trim();
-      if (!stepIds.has(target)) add("prework-results-unknown", id, target);
+      const token = parseResultsToken(target);
+      // A work-file step is looked up in a Run's pinned revision, which the compiler cannot see.
+      if (!token) add("prework-results-invalid", id, target);
+      else if (!token.fileId && !stepIds.has(target)) add("prework-results-unknown", id, target);
+      // A Local only step sends nothing, so a slide bound to it would always be empty.
+      else if (!token.fileId && localIds.has(target)) add("prework-results-local", id, target);
     }
   }
   return findings;
 }
 
-// ── Writing the right answer (the Inspector's Quick check section) ───────────────────────────
-
 /**
- * The outline with the `{right}` marker on the inspected check's option `optionIndex` (0-based,
- * in the first list) and on no other option; -1 clears it. `headingLine` is the slide's 1-based
- * heading line. Every other byte is kept.
+ * The `{prework}` section is retired (0.40, ADR-0040 decision 1 and journeys Amendment 1): pre-work
+ * lives in a work file the talk names with `prework:`. This is the one finding for the section, as
+ * `{ code, slideId, detail }` (null when the talk has none). It is separate from `preworkFindings`,
+ * which also reads a work file's synthetic section and must stay quiet there. Presenting still
+ * leaves the section out until it is moved (src/main/pathways.ts).
  */
-export function applyRightAnswerToOutline(content, headingLine, optionIndex) {
-  const lines = String(content).split("\n");
-  const start = headingLine - 1;
-  if (!/^#{1,6}\s/.test(stripEol(lines[start] ?? ""))) return content;
-  let changed = false;
-  const body = lines.slice(start + 1);
-  walkCheckBody(body, ({ index, line, choice }) => {
-    const markers = (line.match(RIGHT_ANY_RE) || []).length;
-    const want = choice >= 0 && choice === optionIndex;
-    // Already written where the Inspector writes it: keep its bytes.
-    if (want && markers === 1 && RIGHT_END_RE.test(line)) return;
-    if (!want && !markers) return;
-    const eol = lines[start + 1 + index].endsWith("\r") ? "\r" : "";
-    const bare = markers ? withoutMarkers(line) : line;
-    lines[start + 1 + index] = (want ? bare.replace(/\s+$/, "") + " {right}" : bare) + eol;
-    changed = true;
-  });
-  return changed ? lines.join("\n") : content;
+export function preworkRetiredFinding(root) {
+  const section = (root?.children || []).find(isPreworkSection);
+  return section ? { code: "prework-section-retired", slideId: nodeId(section), detail: String(section.title ?? "") } : null;
 }

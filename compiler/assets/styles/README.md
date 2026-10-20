@@ -8,3 +8,7 @@ sorts marked blocks by that number, removes the markers, and concatenates the or
 New blocks do not need an order marker. Put new rules in a new `.css` file in the appropriate
 module directory; unmarked blocks sort after all migrated blocks. Add an order marker only when
 a rule must occupy a specific point in the legacy cascade.
+
+Unmarked files sort by path, so a new file that must override an older unmarked one (for example
+`skin/statement.css`) is named to sort after it: the 0.41 scene-formatting layout rules live in
+`skin/zz-scene-*.css` for that reason.

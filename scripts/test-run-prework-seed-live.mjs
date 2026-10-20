@@ -69,10 +69,10 @@ try {
   await mkdir(join(vault, '_PRESENTATIONS', SLUG), { recursive: true })
   persistRunForTalk(vault, SLUG, RUN_ID, run)
   const setPicks = (pick) => persistRunForTalk(vault, SLUG, RUN_ID, setRunPreworkPick(readRunForTalk(vault, SLUG, RUN_ID), 'pwhope', pick))
-  const glue = (text) => ({ vaultRoot: () => vault, readOutline: () => text, feeds: async (outline) => {
+  const glue = (text) => ({ vaultReadable: (root) => root === vault, readOutline: () => text, feeds: async (outline) => {
     const path = join(scratch, 'glue.md'); await writeFile(path, outline)
     return (await prepareSource(path, outline, 'glue', statSync(path))).prework?.feeds ?? null } })
-  const seedFor = (poll, text = OUTLINE) => seedPollForRun(poll, { talkSlug: SLUG, runId: RUN_ID }, glue(text))
+  const seedFor = (poll, text = OUTLINE) => seedPollForRun(poll, { talkSlug: SLUG, runId: RUN_ID, vaultRoot: vault }, glue(text))
 
   async function session(name) {
     const created = await fetch(`${worker.baseUrl}/sessions`, { method: 'POST', headers: { authorization: `Bearer ${worker.adminSecret}`, 'content-type': 'application/json' }, body: JSON.stringify({ talkSlug: name }) }).then((response) => response.json())

@@ -6,16 +6,9 @@ import { ipcMain } from 'electron'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { readFile } from 'fs/promises'
 import { dirname, join } from 'path'
-import { randomUUID } from 'crypto'
 import { readHandoutUrl } from './publishing-logic'
-import {
-  createPlannedRun,
-  deletePlannedRun,
-  listRuns,
-  updatePlannedRun,
-  type PlannedRunInput,
-  type PlannedRunPatch
-} from './runs'
+import { listRuns } from './runs'
+import { createPlannedRunIn, deletePlannedRunIn, readRoot, updatePlannedRunIn, type PlannedRunsDeps } from './planned-runs-ipc'
 
 type TalkInfo = { slug: string; title: string; outlinePath: string }
 type HistoryStatus = 'live' | 'offline'
@@ -27,7 +20,20 @@ export interface HistoryDeps {
   vaultRoot: () => string | null // the current vault's root (vault registry)
   listTalks: (vaultRoot: string) => Promise<TalkInfo[]> // persisted vault index; never a sync walk
   testMode?: () => boolean // TW_REC_TEST=1: deterministic live/offline checks, no network
+  /**
+   * A planned Run was saved with a changed plan, or a delivered Run's work times changed, in this vault: work
+   * already sent is given its new times (work-files ticket 13), and post-work owed now is opened (ticket 19).
+   */
+  onPlannedRunUpdated?: (talkSlug: string, runId: string, vaultRoot: string) => void
+  /** The vault a planned-Run request names by vaultId: that open, writable vault, or the refusal (planned-runs-ipc.ts). */
+  runVault?: PlannedRunsDeps['runVault']
+  /** Whether a talk is in a vault: a new plan is written only into the vault that holds its talk. */
+  hasTalk?: PlannedRunsDeps['hasTalk']
+  openVaults?: PlannedRunsDeps['openVaults']
+  /** Root of the open vault of this id whose folder is there (reads only), or undefined. */
+  readVault?: (vaultId: string) => string | undefined
 }
+
 
 const LIVE_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000
 const LIVE_CHECK_TIMEOUT_MS = 5000
@@ -91,9 +97,10 @@ async function checkUrlLive(url: string, testMode: boolean): Promise<LiveCheckRe
 
 export function registerHistoryIpc(deps: HistoryDeps): void {
   // Published handout URL per Talk, read from each outline's frontmatter. {} when no vault.
-  ipcMain.handle('history:talk-handouts', async () => {
+  // With a vault id (the Sessions view, for the selected Run's own talk): that open vault's talks; none: the current vault's.
+  ipcMain.handle('history:talk-handouts', async (_event, vaultId?: unknown) => {
     try {
-      const vault = deps.vaultRoot()
+      const vault = readRoot(deps, vaultId)
       if (!vault) return {}
       const out: Record<string, { title: string; outlinePath: string; handoutUrl: string | null }> = {}
       for (const talk of await deps.listTalks(vault)) {
@@ -127,41 +134,24 @@ export function registerHistoryIpc(deps: HistoryDeps): void {
     }
   })
 
-  ipcMain.handle('history:list-runs', (_event, talkSlug?: string) => {
-    const vault = deps.vaultRoot()
+  // With a vault id (the Sessions view's Edit plan and Plan like this): that open vault's Runs; none: the current vault's, as History lists them.
+  ipcMain.handle('history:list-runs', (_event, talkSlug?: string, vaultId?: unknown) => {
+    const vault = readRoot(deps, vaultId)
     return vault ? listRuns(vault, talkSlug ? String(talkSlug) : undefined) : []
   })
 
-  ipcMain.handle('history:create-planned-run', (_event, input: PlannedRunInput) => {
-    try {
-      const vault = deps.vaultRoot()
-      if (!vault) return { ok: false, error: 'no-vault' }
-      return { ok: true, run: createPlannedRun(vault, input, () => `run-${randomUUID()}`) }
-    } catch (cause) {
-      return { ok: false, error: cause instanceof Error ? cause.message : String(cause) }
-    }
-  })
+  // Planned Runs live in their talk's vault (planned-runs-ipc.ts): a request naming a vault writes there only.
+  ipcMain.handle('history:create-planned-run', (_event, input: unknown) => createPlannedRunIn(plannedRunDeps(deps), input))
+  ipcMain.handle('history:update-planned-run', (_event, payload: unknown) => updatePlannedRunIn(plannedRunDeps(deps), payload))
+  ipcMain.handle('history:delete-planned-run', (_event, payload: unknown) => deletePlannedRunIn(plannedRunDeps(deps), payload))
+}
 
-  ipcMain.handle('history:update-planned-run', (_event, payload: { talkSlug: string; runId: string; patch: PlannedRunPatch }) => {
-    try {
-      const vault = deps.vaultRoot()
-      if (!vault) return { ok: false, error: 'no-vault' }
-      const run = updatePlannedRun(vault, String(payload.talkSlug), String(payload.runId), payload.patch)
-      return run ? { ok: true, run } : { ok: false, error: 'planned-run-not-found' }
-    } catch (cause) {
-      return { ok: false, error: cause instanceof Error ? cause.message : String(cause) }
-    }
-  })
-
-  ipcMain.handle('history:delete-planned-run', (_event, payload: { talkSlug: string; runId: string }) => {
-    try {
-      const vault = deps.vaultRoot()
-      if (!vault) return { ok: false, error: 'no-vault' }
-      return deletePlannedRun(vault, String(payload.talkSlug), String(payload.runId))
-        ? { ok: true }
-        : { ok: false, error: 'planned-run-not-found' }
-    } catch (cause) {
-      return { ok: false, error: cause instanceof Error ? cause.message : String(cause) }
-    }
-  })
+function plannedRunDeps(deps: HistoryDeps): PlannedRunsDeps {
+  return {
+    vaultRoot: deps.vaultRoot,
+    ...(deps.runVault ? { runVault: deps.runVault } : {}),
+    ...(deps.hasTalk ? { hasTalk: deps.hasTalk } : {}),
+    ...(deps.openVaults ? { openVaults: deps.openVaults } : {}),
+    ...(deps.onPlannedRunUpdated ? { onPlannedRunUpdated: deps.onPlannedRunUpdated } : {}),
+  }
 }

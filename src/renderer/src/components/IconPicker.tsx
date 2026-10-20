@@ -11,7 +11,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
  * mood-* family: the compiler's auto-match gate narrows what it GUESSES, never what a person may
  * explicitly choose, and a search is an explicit user action.
  *
- * Mirrors ArchiveImageSearch: debounced search, results grid, ←↑↓→ navigation, Enter pick,
+ * Debounced search, results grid, ←↑↓→ navigation, Enter pick,
  * Escape close, capture-phase key handling so the editor never also sees the keystroke.
  */
 
@@ -23,7 +23,7 @@ type IconsApi = {
 }
 
 // Read window.tw.icons without depending on the preload's exported type, so a missing/lagging
-// preload declaration never breaks this file's compilation (matches ArchiveImageSearch).
+// preload declaration never breaks this file's compilation.
 function iconsApi(): IconsApi | null {
   const tw = (window as unknown as { tw?: { icons?: IconsApi } }).tw
   return tw?.icons ?? null

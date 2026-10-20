@@ -63,8 +63,9 @@ function optionFromMetadata(entry: MetadataEntry): DeckOption {
   }
 }
 
+// A key that is not a deck setting (outsideDeck: prework, postwork) is left out of Deck settings.
 const editableCompilerOptions = METADATA_REGISTRY.filter((entry) =>
-  entry.location === 'frontmatter' && entry.ownership === 'user' && !entry.since
+  entry.location === 'frontmatter' && entry.ownership === 'user' && !entry.since && !entry.outsideDeck
 )
 
 const order: string[] = []

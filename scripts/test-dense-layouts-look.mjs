@@ -7,8 +7,8 @@
 //   1. A table slide is as wide as a card slide: .slide-content spans the slide minus the slide's own
 //      padding once, not twice. Table cells pad .9cqw at the sides; the first column is 12-13% of the
 //      table and the last 15-16%; the table's text is >= 42px at 1920 with no whole-slide zoom.
-//   2. A short-line icon list of five items or fewer under a top title runs in two columns at
-//      >= 44px at 1920, no zoom. A long-line list of the same shape stays one column.
+//   2. A short-line icon list of five items or fewer under a top title is one centred column (ticket 05,
+//      ADR-0039; replaces the 0.37 two-column form) at >= 44px at 1920, no zoom. A long-line list stays one column.
 //   3. Four smartart cards are 2x2 (never 3+1); two cards fill the width (no 1000px cap); card text
 //      follows the deck card type: >= 46px (four) / >= 52px (two) at 1920, heading 1.15x the text.
 //   4. An annotated list beside a rail: the rail is the base 26cqw, the annotation has no 40ch cap, the
@@ -83,7 +83,9 @@ try {
       const node = walker.currentNode
       if (!node.nodeValue.trim()) continue
       const el = node.parentElement
-      if (el.closest('.sr-only, h1, script, style')) continue
+      // 0.41 ticket 10 (ADR-0039): a table's column head is a small mono label over an ink rule (it reads at the
+      // type floor, tested in test:stats-chart-table-look); the 42px minimum is for the cells' running text.
+      if (el.closest('.sr-only, h1, script, style, .slide-table thead')) continue
       const r = el.getBoundingClientRect()
       if (!r.width || !r.height) continue
       min = Math.min(min, parseFloat(cs(el).fontSize))
@@ -132,7 +134,7 @@ try {
 
   // 2. Short-line icon list.
   const short = await probe('ex25')
-  assert.equal(short.listColumns, '2', 'a short-line icon list of four items runs in two columns')
+  assert.notEqual(short.listColumns, '2', 'a short-line icon list of four items is one column (ADR-0039 drawing 04)')
   assert.equal(short.zoom, 1, 'the icon list is not zoomed')
   assert.ok(short.minText * K >= 44 - 0.1, `icon list text >= 44px at 1920 (${short.minText * K})`)
   const long = await probe('ex25-long')

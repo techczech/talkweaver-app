@@ -153,6 +153,7 @@ function createSlideFit() {
   function fitTitle(h1) {
     if (!h1) return;
     h1.style.fontSize = ""; // reset to the stylesheet (clamp) size, then measure
+    h1.style.overflowWrap = "";
     // A title overflows a column when its content is wider than its content box. clientWidth
     // excludes any (zero here) scrollbar; scrollWidth is the laid-out content width.
     const tooWide = () => titleExcess(h1) > 1;
@@ -168,6 +169,10 @@ function createSlideFit() {
       h1.style.fontSize = size + "px";
       if (!over()) break;
     }
+    // Last resort: one unbreakable word wider than the column at the floor size (a long identifier or
+    // compound in the left rail) breaks inside the word instead of running out of the rail or the stage.
+    // Not set earlier: it would also hide the excess settleTitle and the shrink step react to.
+    if (tooWide()) h1.style.overflowWrap = "anywhere";
   }
   function fitTitles(root = document) {
     root.querySelectorAll(".slide.active .slide-content h1:not(.sr-only)").forEach((h1) => { settleTitle(h1); fitTitle(h1); });
@@ -770,6 +775,55 @@ function createSlideFit() {
     }
   }
 
+  // Image with claims (0.41 ticket 12, drawing after/21-image-claim.html): each claim's link starts on the box's
+  // outer left border at the box's mid-height and its head's tip lands on the picture's outer right border at
+  // y = clamp(picture top + reach, box mid, picture bottom - reach), reach = --ic-reach (24 px at 1920). A claim
+  // level with the picture keeps the horizontal link the stylesheet draws; one above or below it gets two custom
+  // properties on its .ic-link: --ic-angle (a rotation about the box-side end) and --ic-stretch (the link's length
+  // over the gap). Both are ratios of painted px, so the stage scale and the whole-slide zoom cancel out. Without
+  // this pass (no script) every link stays horizontal. Runs last in fitContent, and again when the picture or a
+  // claim changes size (a late image, a reveal step) through one ResizeObserver per layout.
+  const claimObservers = new WeakSet();
+  function cqwOf(el, name, fallback) {
+    const value = getComputedStyle(el).getPropertyValue(name).trim();
+    const n = /cqw$/.test(value) ? parseFloat(value) : NaN;
+    return n > 0 ? n : fallback;
+  }
+  function linkClaims(layout) {
+    const picture = layout.querySelector(":scope > figure.slide-figure");
+    const links = [...layout.querySelectorAll(":scope > .callouts > li > .ic-link")];
+    if (!picture || !links.length) return;
+    const pic = picture.getBoundingClientRect();
+    if (!(pic.width > 0 && pic.height > 0)) return;
+    const reachRatio = cqwOf(layout, "--ic-reach", 1.25) / cqwOf(layout, "--ic-gap", 6.7708);
+    for (const link of links) {
+      const box = link.parentElement.getBoundingClientRect();
+      const dx = pic.right - box.left;
+      const shown = box.height > 0 && dx < 0 && getComputedStyle(link).display !== "none";
+      const mid = box.top + box.height / 2;
+      const reach = Math.min(-dx * reachRatio, pic.height / 2);
+      const dy = shown ? Math.max(pic.top + reach, Math.min(pic.bottom - reach, mid)) - mid : 0;
+      if (Math.abs(dy) < 0.25) {
+        link.style.removeProperty("--ic-angle");
+        link.style.removeProperty("--ic-stretch");
+        continue;
+      }
+      link.style.setProperty("--ic-angle", (Math.atan2(-dy, -dx) * 180 / Math.PI).toFixed(3) + "deg");
+      link.style.setProperty("--ic-stretch", (Math.hypot(dx, dy) / -dx).toFixed(5));
+    }
+  }
+  function linkImageClaims(content) {
+    content.querySelectorAll(".evidence-layout").forEach((layout) => {
+      linkClaims(layout);
+      if (claimObservers.has(layout) || typeof ResizeObserver === "undefined") return;
+      claimObservers.add(layout);
+      const observer = new ResizeObserver(() => linkClaims(layout));
+      const picture = layout.querySelector(":scope > figure.slide-figure");
+      if (picture) observer.observe(picture);
+      layout.querySelectorAll(":scope > .callouts > li").forEach((li) => observer.observe(li));
+    });
+  }
+
   function fitContent(content) {
     if (!content) return;
     fitQuotes(content);
@@ -785,6 +839,7 @@ function createSlideFit() {
     fitStatements(content);
     alignParagraphIcons(content);
     autofitContent(content);
+    linkImageClaims(content);
   }
 
   return { fitContent, canvasScale };

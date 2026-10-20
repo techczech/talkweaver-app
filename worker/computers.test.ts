@@ -233,6 +233,6 @@ describe('GET /computers, POST /computers/self, DELETE /computers/<id>', () => {
   test('GET /capabilities keeps its shape and names this build', async () => {
     const s = service()
     expect((await s.call('GET', '/capabilities')).json).toEqual({ protocol: LIVE_PROTOCOL_VERSION, build: LIVE_WORKER_BUILD })
-    expect(LIVE_WORKER_BUILD).toBe('22-signing-key')
+    expect(LIVE_WORKER_BUILD).toBe('26-online-content-guidelines')
   })
 })

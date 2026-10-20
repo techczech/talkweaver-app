@@ -1,0 +1,143 @@
+/* Icon list and numbered list rows adopt the animated-scene list formatting (ADR-0039, 0.41 ticket 05).
+   Values from docs/design/2026-10-16-slide-scene-formatting/after/04-iconlist.html and 05-numbered.html
+   (drawn at 1920 x 1080, written here in cqw = px / 19.2). Unmarked block: it sorts after every migrated
+   block and after skin/list.css, so it wins where it meets the ADR-0028 row rules there. It styles the ROW
+   forms (`.fl-iconlist-list`: icon lists above three items or pinned {iconlist=list}, and the numbered
+   lists that take the same rows); cards (boxes, numbered cards) are the cards ticket's. Type size stays on
+   --fs-body, so the runtime fit (slide-fit.js) still steps spacing before type.
+
+   What changes:
+   - Rows are separated by solid hairlines above the first row, between rows and below the last (was a
+     dotted line between rows only). The lines are strokes on the list and its items (not borders), so a
+     rounded highlight never bends them.
+   - Each row carries 28px (1.4583cqw) of padding on both sides: the room a highlight needs.
+   - The icon or number is a box one text line tall, so it sits on the FIRST line of its item (was
+     centred on the whole item). The icon is 1.25em; the gap to the text .7em.
+   - The default number loses its outlined square: a mono numeral in the accent, 0.9em of the text.
+     {numbered=plain} and {numbered=styled} are explicit author choices and keep their own look.
+   - The same rows style a list beside a picture (`.slot-copy`), so a numbered list that keeps its image
+     reads the same way.
+   - The title stays in the left column beside the list (the existing left regime, no line above it).
+     Under a top title the list is one column, centred under it, 57-81cqw wide (the drawing's
+     1100-1560px), replacing the 0.37 two-column short-list form. */
+
+
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list:not(.fl-annotated) {
+  position: relative;
+  gap: 0;
+}
+/* Hairline above the first row. */
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list:not(.fl-annotated)::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: max(1px, .1563cqw);
+  background: var(--hairline);
+}
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list:not(.fl-annotated) > li,
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-wide.fl-iconlist-list:not(.fl-annotated) > li {
+  position: relative;
+  align-items: start;
+  column-gap: .7em;
+  row-gap: calc(8px * var(--list-gap, 1));
+  padding: calc(.55em * var(--list-gap, 1)) 1.4583cqw;
+  border-radius: .5208cqw;
+  border: 0;
+}
+/* Hairline below every row (between rows, and under the last). */
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list:not(.fl-annotated) > li::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: max(1px, .1563cqw);
+  background: var(--hairline);
+}
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list:not(.fl-annotated) > li + li,
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-wide.fl-iconlist-list:not(.fl-annotated) > li + li {
+  border-top: 0;
+}
+
+/* The icon: a box one text line tall, the glyph centred in it. */
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list:not(.fl-annotated) > li > .fl-icon {
+  display: grid;
+  place-items: center;
+  width: 1.25em;
+  height: calc(var(--list-lh, 1.35) * 1em);
+  color: var(--accent);
+}
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list:not(.fl-annotated) > li > .fl-icon > svg {
+  width: 1.25em;
+  height: 1.25em;
+  stroke-width: 1.5;
+}
+
+/* The default number: a mono numeral in the accent, centred in the same one-line box. */
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list.fl-numbered:not(.fl-annotated):not(.fl-numbered-plain):not(.fl-numbered-styled) > li > .fl-icon.fl-num {
+  border: 0;
+  border-radius: 0;
+  background: none;
+  font-family: var(--mono);
+  font-weight: 400;
+  line-height: 1;
+  width: calc(1.25em / .9);
+  height: calc(var(--list-lh, 1.35) * 1em / .9);
+  box-sizing: border-box;
+}
+/* The numeral is .9 of the item's text size; beside a picture that size is the slot's --copy-size. */
+.slide .slide-content > .feature-list.fl-iconlist-list.fl-numbered:not(.fl-annotated):not(.fl-numbered-plain):not(.fl-numbered-styled) > li > .fl-icon.fl-num {
+  font-size: .9em;
+}
+.slide .slot-copy > .feature-list.fl-iconlist-list.fl-numbered:not(.fl-annotated):not(.fl-numbered-plain):not(.fl-numbered-styled) > li > .fl-icon.fl-num {
+  font-size: calc(.9 * var(--copy-size));
+}
+/* The plain numeral keeps its text-size look; only its row and box line up with the new rows. */
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list.fl-numbered-plain:not(.fl-annotated) > li > .fl-icon.fl-num {
+  display: block;
+  height: auto;
+  width: 1.4em;
+}
+/* The styled numeral is two lines tall and stays centred on its item, as drawn for it in ADR-0028 §6. */
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list.fl-numbered-styled:not(.fl-annotated) > li,
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-wide.fl-iconlist-list.fl-numbered-styled:not(.fl-annotated) > li {
+  align-items: center;
+}
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list.fl-numbered-styled:not(.fl-annotated) > li > .fl-icon.fl-num {
+  display: block;
+  height: auto;
+}
+
+/* A warning row (the drawing's red row) is not an authoring form yet; nothing to style here. */
+
+/* Sub-items sit under the text, not the icon. */
+.slide :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list:not(.fl-annotated) > li > .fl-sublist { grid-column: 2; }
+
+/* ---- Under a top title: one centred column, as drawn (replaces the 0.37 two-column short list) ---- */
+.slide[data-title-layout="top"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-annotated),
+.slide[data-title-layout="top"] > .slide-content > .feature-list.fl-iconlist-list.fl-short-lines:not(.fl-annotated) {
+  display: grid;
+  columns: auto;
+  width: fit-content;
+  min-width: min(57.3cqw, 100%);
+  max-width: min(81.25cqw, 100%);
+  margin-left: auto;
+  margin-right: auto;
+  align-self: center;
+}
+.slide[data-title-layout="top"] > .slide-content > .feature-list.fl-iconlist-list.fl-short-lines:not(.fl-annotated) > li {
+  break-inside: auto;
+  margin-bottom: 0;
+}
+.slide[data-title-layout="top"]:not([data-font-body]) > .slide-content:has(> .feature-list.fl-iconlist-list.fl-short-lines) {
+  --fs-body: max(var(--type-floor), 2.8125cqw);
+}
+
+/* Left title column: the list fills the space beside it. */
+.slide[data-title-layout="left"] > .slide-content.layout-list > .feature-list.fl-iconlist-list:not(.fl-annotated) {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+}
