@@ -125,6 +125,34 @@ try {
   // The chosen place had moved on to the added slide; with that slide undone, the earlier place is back.
   await page.waitForFunction(() => document.querySelector('.sp-place-where')?.textContent === 'Inserts after slide 1 · ‘Opening’')
 
+  // Mixed selected candidates: reverse tick order, one transaction, exact Undo/Redo.
+  await page.locator('.pane-btn[title="Grid"]').click()
+  await page.locator('.grid-view').waitFor()
+  await page.getByLabel('Select Chart', { exact: true }).check()
+  await page.getByLabel('Select What is an agent?', { exact: true }).check()
+  await page.getByRole('button', { name: 'Insert selection as slides', exact: true }).dblclick()
+  await waitSaved(t => t.includes('### Chart') && t.includes('What is an agent?'), 'the whole batch is saved')
+  const batchText = saved()
+  assert.equal([...batchText.matchAll(/^#{2,6} What is an agent\?/gm)].length, 1, 'a double-click inserts the batch only once')
+  assert.equal([...batchText.matchAll(/^#{2,6} Chart/gm)].length, 1)
+  assert.ok(batchText.indexOf('What is an agent?') < batchText.indexOf('### Chart'), 'display order wins over tick order')
+  await page.waitForFunction(() => document.querySelectorAll('.sp-card input:checked').length === 0)
+  assert.equal(await page.locator('.sp-card input:checked').count(), 0)
+  await page.waitForFunction(() => document.querySelectorAll('.grid-cell[data-selected="true"]').length === 2).catch(async error => { console.log('batch grid diagnostic', await page.locator('.grid-cell').evaluateAll(nodes => nodes.map(node=>({selected:node.getAttribute('data-selected'),active:node.getAttribute('data-active'),title:node.textContent.trim().slice(0,90)})))); throw error })
+  const selected = await page.locator('.grid-cell[data-selected="true"]').allTextContents()
+  assert.ok(selected.some(text => text.includes('What is an agent?')))
+  assert.ok(selected.some(text => text.includes('Chart')))
+  await page.locator('.grid-view').focus()
+  await page.keyboard.press('ControlOrMeta+z')
+  await waitSaved(t => t === original, 'one Undo restores the exact original after a batch')
+  await page.keyboard.press('ControlOrMeta+Shift+z')
+  await waitSaved(t => t === batchText, 'one Redo restores the exact batch')
+  await page.keyboard.press('ControlOrMeta+z')
+  await waitSaved(t => t === original, 'the batch can be undone again')
+  await page.waitForFunction(() => document.querySelector('.sp-place-where')?.textContent === 'Inserts after slide 1 · ‘Opening’')
+
+  await page.locator('.pane-btn[title="Editor + slide strip"]').click()
+
   // An agent's SVG, visual only, at the chosen place: a new slide after Opening, copied into assets/, the card names
   // the slide by its title (a number would go stale), the agent's file untouched.
   const agentSvg = readFileSync(join(talkDir, 'scratchpad', 'chart.svg'))
@@ -182,7 +210,7 @@ try {
 
   assert.deepEqual(errors, [])
   if (process.env.SHOTS) await page.screenshot({ path: join(resolve(process.env.SHOTS), 'talkweaver-scratchpad-insert-undo.png') })
-  console.log(`PASS (${mode} view) Slide Scratchpad: Change place closes on a pick; Insert whole slide lands, saves, counts; one Undo removes exactly it, saves, counts, labels; the card and the place follow; an SVG visual goes in as a new slide; an agent page cannot leave its preview or show a vault file`)
+  console.log(`PASS (${mode} view) Slide Scratchpad: Change place closes on a pick; Insert whole slide lands, saves, counts; one Undo removes exactly it, saves, counts, labels; mixed batch selects its new grid cards and has exact one-step Undo/Redo; the card and the place follow; an SVG visual goes in as a new slide; an agent page cannot leave its preview or show a vault file`)
 } catch (error) {
   if (process.env.SHOTS && app) await (await app.firstWindow()).screenshot({ path: join(resolve(process.env.SHOTS), 'talkweaver-scratchpad-insert-failed.png') }).catch(() => {})
   throw error

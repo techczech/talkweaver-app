@@ -4,6 +4,8 @@ export interface SlideSelectionControls {
   /** The selection's size (talk order not needed here). */
   count: () => number
   selectSection: () => boolean
+  /** Select an inserted batch only when every heading line exists in the current rows. */
+  selectLines: (lines: readonly number[]) => boolean
   clear: () => void
   openMove: () => boolean
   setAside?: () => boolean

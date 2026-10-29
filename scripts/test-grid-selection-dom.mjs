@@ -220,6 +220,12 @@ try {
   await page.evaluate(() => window.selectionCommands().clear())
   await sleep(60)
   assert.equal(await bar().count(), 0, 'the Clear slide selection command')
+  assert.equal(await page.evaluate(lines => window.selectionCommands().selectLines(lines), [lineOf(TALK, sl(0,0)), lineOf(TALK, sl(2,1))]), true)
+  await sleep(60)
+  assert.deepEqual(await selectedTitles(), titles([0,0], [2,1]), 'an inserted batch selects exactly its heading lines')
+  assert.equal(await page.evaluate(() => window.selectionCommands().selectLines([99999])), false, 'stale compile rows are refused without changing selection')
+  assert.deepEqual(await selectedTitles(), titles([0,0], [2,1]))
+  await page.evaluate(() => window.selectionCommands().clear())
   pass('selecting: Select section on a heading, Esc, and the Select section / Clear slide selection commands')
 
   // ── 2. Move to… ──

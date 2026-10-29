@@ -87,6 +87,12 @@ check('group filter and query combine; Kept and Rejected ignore the group filter
   assert.deepEqual(groupCounts(items, [{ id: 'g1', name: 'Opening' }, { id: 'g2', name: 'Maybe' }]), { all: 4, ungrouped: 2, byId: { g1: 2, g2: 0 } })
 })
 
+check('equal-time picked slides retain their source order rather than random item ID order', () => {
+  const first = slide('z', 'First', 'Talk'); const second = slide('a', 'Second', 'Talk')
+  second.addedAt = first.addedAt; second.batch = first.batch
+  assert.deepEqual(batchSections([first, second]).flatMap(section => section.items.map(item => item.id)), ['z', 'a'])
+})
+
 check('newest first by batch time', () => {
   assert.deepEqual(visibleItems(items, { list: 'all', group: 'all', query: '' }).map((i) => i.id), ['c', 'd', 'a', 'b'])
 })

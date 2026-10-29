@@ -64,7 +64,7 @@ import CaptureResearchSheet from './CaptureResearchSheet'
 import ResearchPanel, { type ResearchActions } from './ResearchPanel'
 import ScratchpadPanel, { type ScratchpadActions } from './scratchpad/ScratchpadPanel'
 import type { PlaceChoice, ScratchpadInsertApi } from './scratchpad/ScratchpadInsert'
-import { runScratchInsert, type ScratchInsertHost } from '../lib/scratchpadInsert'
+import { runScratchBatch, runScratchInsert, type ScratchInsertHost } from '../lib/scratchpadInsert'
 import { settlePlace, type ScratchPlace, type ScratchVisual } from '../../../shared/scratchpad-insert'
 import { blockAt, copyBlocks, cutBlocks, moveBlocks, refAt, refHolds, stepPlace, type SlideRef as MoveRef } from '../../../shared/slide-handling/blocks'
 import type { SlidePlace } from '../../../shared/slide-handling/place'
@@ -447,6 +447,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   const scratchInsertingRef = useRef(false)
   /** The places a chosen place advanced from (settlePlace), so an Undo of the insert brings the earlier place back. */
   const scratchChosenEarlierRef = useRef<ScratchPlace[]>([])
+  const [scratchBatchLanding, setScratchBatchLanding] = useState<{ talk: string; text: string; lines: number[]; at: number } | null>(null)
   useEffect(() => { setScratchChosenPlace(null); scratchChosenEarlierRef.current = [] }, [activeTalk?.outlinePath])
   const [researchHighlight, setResearchHighlight] = useState<string | null>(null)
   const researchCaptureDropRef = useRef<{ body: string; artefact?: string } | null>(null)
@@ -691,6 +692,15 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     scratchChosenEarlierRef.current = settled.earlier
     if (settled.place !== scratchChosenPlace) setScratchChosenPlace(settled.place)
   }, [outlineContent, scratchChosenPlace, scratchPanelShown])
+
+  useEffect(() => {
+    const pending = scratchBatchLanding
+    if (!pending) return
+    const live = editorReadRef.current?.()
+    if (activeTalk?.outlinePath !== pending.talk || live?.text !== pending.text || Date.now() - pending.at > 15000) { setScratchBatchLanding(null); return }
+    if (compiledSourceRef.current !== pending.text) return
+    if (!gridModeRef.current || slideSelectionControls()?.selectLines(pending.lines)) setScratchBatchLanding(null)
+  }, [compiledSlides, outlineContent, activeTalk?.outlinePath, scratchBatchLanding])
 
   // The Plain view's margin: Talk / Section / Slide n with the layout name. Recomputed when the
   // compiled rows change (or the outline first loads), not on every keystroke: between compiles the
@@ -2836,6 +2846,38 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       setScratchInserting(false)
     }
   }
+  async function scratchpadInsertMany(ids: string[]): Promise<boolean> {
+    if (scratchInsertingRef.current) return false
+    const talk = activeTalkRef.current?.outlinePath
+    if (!talk) return false
+    scratchInsertingRef.current = true; setScratchInserting(true)
+    try {
+      const text = editorReadRef.current?.()?.text ?? outlineContentRef.current
+      const place = scratchChosenPlaceRef.current ?? scratchAutoPlace(slideRows(text).filter(row => row.level >= 2)).place
+      const outcome = await runScratchBatch({ ...scratchInsertHost, api: window.tw.scratchpad,
+        prepareSlide: async (markdown, source) => {
+          if (activeTalkRef.current?.outlinePath !== talk) throw new Error('The open talk changed.')
+          if (source === talk) return markdown
+          const idsInTalk = [...text.matchAll(/\{id=([A-Za-z0-9_-]+)\}/g)].map(match => match[1])
+          const copied = await window.tw.talk.insertFromVault(source, talk, markdown, idsInTalk)
+          if (!copied.ok) throw new Error(copied.error)
+          if (copied.crossVault) return copied.markdown
+          const materialized = await window.tw.talk.materializeSlideAssets(source, markdown)
+          if (!materialized?.success) throw new Error('The selected slide media could not be prepared.')
+          return materialized.markdown
+        }
+      }, ids, place)
+      if (!outcome.ok) return false
+      if (activeTalkRef.current?.outlinePath === talk) {
+        scratchChosenEarlierRef.current = [...scratchChosenEarlierRef.current, place]
+        setScratchChosenPlace(outcome.newSlide)
+        setScratchBatchLanding({ talk, text: outcome.sourceText, lines: outcome.selectionLines, at: Date.now() })
+        slideSelectionControls()?.clear()
+        setFocusLine({ line: outcome.lines[0], takeFocus: false })
+      }
+      return true
+    } finally { scratchInsertingRef.current = false; setScratchInserting(false) }
+  }
   async function handleScratchDrop(id: string, place: SlidePlace): Promise<void> {
     if (scratchInsertingRef.current) return
     const talk = activeTalkRef.current?.outlinePath
@@ -2862,6 +2904,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     numberAt: scratchNumberAt,
     choose: (place) => { scratchChosenEarlierRef.current = []; setScratchChosenPlace(place) },
     insert: scratchpadInsert,
+    insertMany: scratchpadInsertMany,
     busy: scratchInserting,
     hasSlideTitled: (title) => scratchRows.some((r) => r.text === title)
   }
@@ -3061,6 +3104,8 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     'scratchpad-new-group': () => scratchpadActionsRef.current['scratchpad-new-group']?.(),
     'scratchpad-remove-missing': () => scratchpadActionsRef.current['scratchpad-remove-missing']?.(),
     // Ticket 2: the panel acts on its selection; opening the panel first so the result is seen.
+    'scratchpad-move-up': () => { if (activeTalkRef.current) { scratchpadLayout.expand(); scratchpadActionsRef.current['scratchpad-move-up']?.() } },
+    'scratchpad-move-down': () => { if (activeTalkRef.current) { scratchpadLayout.expand(); scratchpadActionsRef.current['scratchpad-move-down']?.() } },
     'scratchpad-insert-slide': () => { if (activeTalkRef.current) { scratchpadLayout.expand(); scratchpadActionsRef.current['scratchpad-insert-slide']?.() } else notify('Open a talk first.', 'info') },
     'scratchpad-insert-visual': () => { if (activeTalkRef.current) { scratchpadLayout.expand(); scratchpadActionsRef.current['scratchpad-insert-visual']?.() } else notify('Open a talk first.', 'info') },
     'scratchpad-compare': () => { if (activeTalkRef.current) { scratchpadLayout.expand(); scratchpadActionsRef.current['scratchpad-compare']?.() } else notify('Open a talk first.', 'info') },

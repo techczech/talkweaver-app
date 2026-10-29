@@ -23,6 +23,7 @@ export interface ScratchpadInsertApi {
   /** Change place: a place by hand; null follows the cursor again. */
   choose(place: ScratchPlace | null): void
   insert(item: ScratchItem, mode: 'slide' | 'visual', visual?: ScratchVisual | null): Promise<boolean>
+  insertMany(ids: string[]): Promise<boolean>
   /** An insert is running; the Insert buttons wait. */
   busy: boolean
   /** The card's Inserted note: a slide with this title is in the talk now (gone after an Undo or a delete). */

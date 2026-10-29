@@ -1045,6 +1045,14 @@ export default function GridView({
   }
   useEffect(() => registerSlideSelection({
     count: () => live.current.sel.count,
+    selectLines: lines => {
+      const rows = live.current.groups.flatMap(group => group.rows)
+      const indices = lines.map(line => rows.find(row => lineOfSlideRef.current?.(row.globalIndex) === line)?.globalIndex)
+      if (!indices.length || indices.some(index => index === undefined)) return false
+      live.current.sel.clear()
+      live.current.sel.addMany(indices as number[])
+      return true
+    },
     selectSection: () => {
       const gi = live.current.groups.findIndex((g) => g.rows.some((r) => r.globalIndex === live.current.activeIndex))
       if (gi < 0) return false

@@ -116,7 +116,7 @@ export const CHAPTER_EXCLUDED: ReadonlySet<string> = new Set([
   'research-capture', 'research-reveal-folder',
   // Slide Scratchpad (docs/design/2026-10-27-slide-scratchpad): a panel and its item actions; no chapter row and no
   // practice line yet. They are in the palette; the panel's own buttons are how a person meets the item actions.
-  'scratchpad-panel', 'scratchpad-dock', 'scratchpad-float', 'scratchpad-collapse', 'scratchpad-add-slides', 'scratchpad-keep', 'scratchpad-reject', 'scratchpad-move-back', 'scratchpad-move-to-group', 'scratchpad-new-group', 'scratchpad-remove-missing', 'scratchpad-insert-slide', 'scratchpad-insert-visual', 'scratchpad-compare', 'scratchpad-change-place',
+  'scratchpad-panel', 'scratchpad-dock', 'scratchpad-float', 'scratchpad-collapse', 'scratchpad-add-slides', 'scratchpad-keep', 'scratchpad-reject', 'scratchpad-move-back', 'scratchpad-move-to-group', 'scratchpad-new-group', 'scratchpad-remove-missing', 'scratchpad-insert-slide', 'scratchpad-insert-visual', 'scratchpad-compare', 'scratchpad-change-place', 'scratchpad-move-up', 'scratchpad-move-down',
   // The Research panel and picker stay discoverable in the palette and keyboard sheet; this parcel adds no practice chapter.
   'research-panel', 'research-find', 'research-insert', 'research-make-slide', 'research-open', 'research-previous', 'research-next', 'research-scope', 'research-close', 'research-copy-reference', 'research-reveal', 'research-source', 'research-used-in', 'research-scope-talk', 'research-scope-research', 'research-scope-everything', 'research-retry', 'research-rename', 'research-change-kind', 'research-delete', 'research-move', 'research-copy', 'research-insert-here'
 ])

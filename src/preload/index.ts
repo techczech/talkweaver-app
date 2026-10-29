@@ -2,7 +2,7 @@ import type { ResearchWriteOp, ResearchWriteInput, ResearchWriteResult } from '.
 import type { HtmlPageChoice, HtmlPageImport } from '../shared/html-page-import'
 import type { ResearchListInput, ResearchSearchInput, ResearchUsedInput, ResearchListResult, ResearchUsedResult } from '../shared/research'
 import type { readAbstract } from '../main/abstract-ipc'
-import type { ScratchGroup, ScratchReply, ScratchSlideInput, ScratchSnapshot, ScratchStatus, ScratchVisualImport } from '../shared/scratchpad'
+import type { ScratchPreparedInsert, ScratchInsertedRecord, ScratchGroup, ScratchReply, ScratchSlideInput, ScratchSnapshot, ScratchStatus, ScratchVisualImport } from '../shared/scratchpad'
 export type { ScratchGroup, ScratchItem, ScratchReply, ScratchSlideInput, ScratchSnapshot, ScratchStatus, ScratchVisualImport } from '../shared/scratchpad'
 import type { RecordingRecovery } from '../shared/recording-recovery'
 export type { RecordingRecovery } from '../shared/recording-recovery'
@@ -1301,6 +1301,10 @@ const api = {
   // only the app-owned state file changes. `subscribe` answers the snapshot and then `onChanged` carries every
   // later one (folder watch, or a change made from any window on the talk); `unsubscribe` stops it.
   scratchpad: {
+    setSort: (sort: 'newest' | 'manual', expectedOutline: string): Promise<ScratchReply<{ snapshot: ScratchSnapshot }>> => ipcRenderer.invoke('scratchpad:set-sort', sort, expectedOutline),
+    reorder: (visible: string[], next: string[], expectedOutline: string): Promise<ScratchReply<{ snapshot: ScratchSnapshot }>> => ipcRenderer.invoke('scratchpad:reorder', visible, next, expectedOutline),
+    prepareInsert: (ids: string[], expectedOutline: string): Promise<ScratchReply<{ entries: ScratchPreparedInsert[] }>> => ipcRenderer.invoke('scratchpad:prepare-insert', ids, expectedOutline),
+    markInsertedMany: (records: ScratchInsertedRecord[], expectedOutline: string): Promise<ScratchReply<{ snapshot: ScratchSnapshot }>> => ipcRenderer.invoke('scratchpad:mark-inserted-many', records, expectedOutline),
     setAside: (slides: ScratchSlideInput[], expectedOutline: string): Promise<ScratchReply<{ snapshot: ScratchSnapshot }>> => ipcRenderer.invoke('scratchpad:set-aside', slides, expectedOutline),
     subscribe: (): Promise<ScratchReply<{ snapshot: ScratchSnapshot }>> => ipcRenderer.invoke('scratchpad:subscribe'),
     unsubscribe: (): Promise<{ ok: true }> => ipcRenderer.invoke('scratchpad:unsubscribe'),

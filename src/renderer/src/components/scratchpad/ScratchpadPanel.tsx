@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { GripVertical, Search } from 'lucide-react'
 import {
-  LISTS, LIST_LABEL, TYPE_LABEL, batchSections, groupCounts, listCounts, parseQuery, toggleTypeInQuery, typeCounts, visibleItems,
+  LISTS, LIST_LABEL, TYPE_LABEL, scratchOrder, batchSections, groupCounts, listCounts, parseQuery, toggleTypeInQuery, typeCounts, visibleItems,
   type ScratchGroupFilter, type ScratchItem, type ScratchList, type ScratchTypeKey
 } from '../../../../shared/scratchpad'
 import { useSlideSelection } from '../../lib/useSlideSelection'
@@ -20,11 +20,13 @@ import { ScratchpadGroupMenu, type GroupMenuRow } from './ScratchpadGroupMenu'
 import { ScratchpadPreview } from './ScratchpadPreview'
 import { ScratchpadCompare } from './ScratchpadCompare'
 import { ScratchpadInsertButtons, ScratchpadPlaceNote, type ScratchpadInsertApi } from './ScratchpadInsert'
-import { scratchVisuals } from '../../../../shared/scratchpad-insert'
+import { scratchVisuals, placeRows } from '../../../../shared/scratchpad-insert'
 import '../../scratchpad.css'
 
 /** What the command registry's Slide Scratchpad commands run (WorkspaceLayout's handler map calls these). */
 export interface ScratchpadActions {
+  'scratchpad-move-up'?: () => void
+  'scratchpad-move-down'?: () => void
   'scratchpad-keep'?: () => void
   'scratchpad-reject'?: () => void
   'scratchpad-move-back'?: () => void
@@ -81,17 +83,44 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
   const types = useMemo(() => typeCounts(items), [items])
   const gCounts = useMemo(() => groupCounts(items, groups), [items, groups])
   const parsed = useMemo(() => parseQuery(query), [query])
-  const visible = useMemo(() => visibleItems(items, { list, group, query }), [items, list, group, query])
-  const sections = useMemo(() => (list === 'kept' || list === 'rejected' ? null : batchSections(visible)), [visible, list])
+  const manual = data.snapshot.sort === 'manual'
+  const visible = useMemo(() => {
+    const result = visibleItems(items, { list, group, query })
+    if (!manual) return result
+    const order = scratchOrder(items, data.snapshot.order)
+    const rank = new Map(order.map((id, index) => [id, index]))
+    return result.sort((a,b) => rank.get(a.id)! - rank.get(b.id)!)
+  }, [items, list, group, query, manual, data.snapshot.order])
+  const sections = useMemo(() => (manual || list === 'kept' || list === 'rejected' ? null : batchSections(visible)), [visible, list, manual])
   const displayed = useMemo(() => sections ? sections.flatMap(section => section.items) : visible, [sections, visible])
   const selection = useSlideSelection(displayed.map(item => item.id))
   const selectedIds = selection.pickedIndices.map(index => displayed[index].id)
+  const batchIds = displayed.filter(item => selectedIds.includes(item.id)).map(item => item.id)
+  const batchSlideCount = batchIds.reduce((count, id) => { const item = items.find(candidate => candidate.id === id); return count + (item?.kind === 'slide' ? placeRows(item.slide?.markdown ?? '').filter(row => row.level >= 2).length : 1) }, 0)
   const focusedId = selection.focusedIndex == null ? null : displayed[selection.focusedIndex].id
   const byId = useMemo(() => new Map(items.map((i) => [i.id, i])), [items])
   const groupOf = (id: string | null) => groups.find((g) => g.id === id) ?? null
   const groupName = group === 'ungrouped' ? 'Ungrouped' : groups.find((g) => g.id === group)?.name ?? ''
 
   const targetIds = useCallback((): string[] => (selectedIds.length > 0 ? selectedIds : focusedId ? [focusedId] : []), [selectedIds, focusedId])
+  const orderDrag = useRef<string[] | null>(null)
+  const arrange = (picked: string[], target: string, after = false): void => {
+    if (insert?.busy || picked.includes(target)) return
+    const ids = displayed.map(item => item.id)
+    const moving = ids.filter(id => picked.includes(id))
+    const next = ids.filter(id => !picked.includes(id))
+    const at = next.indexOf(target)
+    if (!moving.length || at < 0) return
+    next.splice(at + (after ? 1 : 0), 0, ...moving)
+    if (next.some((id, index) => id !== ids[index])) void data.reorder(ids, next)
+  }
+  const moveSelected = (down: boolean): void => {
+    const picked = targetIds(); const ids = displayed.map(item => item.id)
+    const indices = ids.map((id,index) => picked.includes(id) ? index : -1).filter(index => index >= 0)
+    if (!indices.length) return
+    const edge = down ? indices[indices.length - 1] + 1 : indices[0] - 1
+    if (ids[edge]) arrange(picked, ids[edge], down)
+  }
   const clearSelection = (): void => { selection.clear(); setMenu(null) }
 
   const keep = useCallback(async (ids: string[]): Promise<void> => {
@@ -129,6 +158,7 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
   // The insert commands act on the one item selected (or shown in the big preview).
   const insertOne = (mode: 'slide' | 'visual'): void => {
     const ids = previewId ? [previewId] : targetIds()
+    if (mode === 'slide' && ids.length > 1 && insert) { void insert.insertMany(displayed.filter(item => ids.includes(item.id)).map(item => item.id)).then(ok => { if (ok) clearSelection() }); return }
     const item = ids.length === 1 ? byId.get(ids[0]) : undefined
     if (!insert) return
     if (!item) { notify('Select one Slide Scratchpad item to insert first.', 'info', 'scratchpad'); return }
@@ -148,6 +178,8 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
   }
   const actionsRef = useRef<ScratchpadActions>({})
   actionsRef.current = {
+    'scratchpad-move-up': () => moveSelected(false),
+    'scratchpad-move-down': () => moveSelected(true),
     'scratchpad-keep': needSelection((ids) => void keep(ids), 'keep'),
     'scratchpad-reject': needSelection((ids) => void reject(ids), 'reject'),
     'scratchpad-move-back': needSelection((ids) => void moveBack(ids), 'move back'),
@@ -161,6 +193,8 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
   }
   useEffect(() => {
     registerActions({
+      'scratchpad-move-up': () => actionsRef.current['scratchpad-move-up']?.(),
+      'scratchpad-move-down': () => actionsRef.current['scratchpad-move-down']?.(),
       'scratchpad-keep': () => actionsRef.current['scratchpad-keep']?.(),
       'scratchpad-reject': () => actionsRef.current['scratchpad-reject']?.(),
       'scratchpad-move-back': () => actionsRef.current['scratchpad-move-back']?.(),
@@ -295,6 +329,11 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
       ) : (
         <>
           <div className="sp-top">
+            <div className="sp-order-controls">
+              <label>Order <select aria-label="Scratchpad sort order" value={manual ? 'manual' : 'newest'} disabled={insert?.busy} onChange={event => void data.setSort(event.target.value as 'manual' | 'newest')}><option value="newest">Newest first</option><option value="manual">Your order</option></select></label>
+              <button type="button" className="sp-btn sp-btn--sm" aria-label="Move selected items up" disabled={insert?.busy || targetIds().length === 0} onClick={() => moveSelected(false)}>Move up</button>
+              <button type="button" className="sp-btn sp-btn--sm" aria-label="Move selected items down" disabled={insert?.busy || targetIds().length === 0} onClick={() => moveSelected(true)}>Move down</button>
+            </div>
             <div className="sp-searchrow">
               <label className="sp-search">
                 <Search size={14} aria-hidden="true" />
@@ -341,15 +380,15 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
 
           <div className="sp-main">
             {query ? (
-              <div className="sp-res"><b>{visible.length}</b> match &ldquo;{query}&rdquo;{group !== 'all' && listIsTriage ? <> in <b>{groupName}</b></> : null} · newest first</div>
+              <div className="sp-res"><b>{visible.length}</b> match &ldquo;{query}&rdquo;{group !== 'all' && listIsTriage ? <> in <b>{groupName}</b></> : null} · {manual ? 'your order' : 'newest first'}</div>
             ) : list === 'kept' ? (
               <div className="sp-note">Kept items are marked for your library, which all your talks will share. Move one back to use it in this talk.</div>
             ) : list === 'rejected' ? (
               <div className="sp-note">Rejected items are never deleted. Move one back to bring it into the Slide Scratchpad again.</div>
             ) : group === 'all' ? (
-              <div className="sp-res"><b>{visible.length}</b> {visible.length === 1 ? 'item' : 'items'}, newest first</div>
+              <div className="sp-res"><b>{visible.length}</b> {visible.length === 1 ? 'item' : 'items'}, {manual ? 'your order' : 'newest first'}</div>
             ) : (
-              <div className="sp-res"><b>{groupName}</b> · {plural(visible.length)}, newest first</div>
+              <div className="sp-res"><b>{groupName}</b> · {plural(visible.length)}, {manual ? 'your order' : 'newest first'}</div>
             )}
             {visible.length === 0 ? (
               <div className="sp-none">
@@ -363,8 +402,13 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
                     {sections && <div className="sp-batch">{section.label}<em>{section.items.length}</em></div>}
                     <div className="sp-cards">
                       {section.items.map((item) => (
-                        <ScratchpadCard
-                          key={item.id} item={item} terms={parsed.terms}
+                        <div key={item.id} className="sp-order-card"
+                          onDragOver={event => { if (orderDrag.current) { event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'move' } }}
+                          onDrop={event => { const moving = orderDrag.current; orderDrag.current = null; if (!moving) return; event.preventDefault(); event.stopPropagation(); const box = event.currentTarget.getBoundingClientRect(); arrange(moving, item.id, event.clientY > box.top + box.height / 2) }}>
+                        <button type="button" className="sp-order-handle" aria-label={`Arrange ${item.title}`} title="Drag to arrange in Your order" draggable={!insert?.busy}
+                          onDragStart={event => { event.stopPropagation(); orderDrag.current = selectedIds.includes(item.id) ? batchIds : [item.id]; event.dataTransfer.setData('application/x-talkweaver-scratchpad-order', item.id); event.dataTransfer.effectAllowed = 'move' }}
+                          onDragEnd={() => { orderDrag.current = null }}><GripVertical size={14} aria-hidden="true" /></button>
+                        <ScratchpadCard item={item} terms={parsed.terms}
                           ticked={selectedIds.includes(item.id)} selected={focusedId === item.id && selectedIds.length === 0}
                           groupTag={group === 'all' ? groupOf(item.group) : null}
                           onSelect={(event) => { const index = displayed.findIndex(i => i.id === item.id); if (event?.shiftKey) selection.extendTo(index, selection.focusedIndex ?? index); else if (event?.metaKey || event?.ctrlKey) selection.toggle(index); else selection.reset(index); setMenu(null) }}
@@ -375,6 +419,7 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
                           insertedNote={insertedNote(item)}
                           inTalk={inTalk(item)}
                         />
+                        </div>
                       ))}
                     </div>
                   </div>
@@ -389,11 +434,13 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
                 <>
                   <div className="sp-batchbar">
                     <b>{selectedIds.length} selected</b>
+                    {insert && <button type="button" className="sp-btn sp-btn--sm sp-btn--primary" disabled={insert.busy || selectedIds.some(id => byId.get(id)?.missing)} onClick={() => void insert.insertMany(batchIds).then(ok => { if (ok) clearSelection() })}>{selectedIds.every(id => byId.get(id)?.kind === 'slide') ? `Insert ${batchSlideCount} slides` : 'Insert selection as slides'}</button>}
                     {itemActions(selectedIds)}
                     <button type="button" className="sp-btn sp-btn--sm sp-btn--primary" disabled={selectedIds.length > COMPARE_MAX} onClick={compareTicked}>Compare side by side</button>
                     <span className="sp-flex" />
                     <button type="button" className="sp-link" onClick={clearSelection}>Clear selection</button>
                   </div>
+                  {placeNote(null)}
                   {selectedIds.length > COMPARE_MAX && <div className="sp-why">Compare side by side takes 2 to 4 items. Untick some to compare.</div>}
                 </>
               ) : selectedOne ? (
@@ -405,7 +452,7 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
               ) : (
                 <>
                   <div className="sp-idle">Click an item to see what you can do with it. Tick several to act on them together or compare them side by side.</div>
-                  {placeOpen && placeNote(null)}
+                  {placeNote(null)}
                 </>
               )}
             </div>

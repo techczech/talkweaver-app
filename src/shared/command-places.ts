@@ -216,6 +216,8 @@ export const COMMAND_PLACES: Readonly<Record<string, PlaceDeclaration>> = {
   'scratchpad-insert-visual': NOT_BY_PLACE,
   'scratchpad-compare': NOT_BY_PLACE,
   'scratchpad-change-place': NOT_BY_PLACE,
+  'scratchpad-move-up': NOT_BY_PLACE,
+  'scratchpad-move-down': NOT_BY_PLACE,
   'attach-prework': NOT_BY_PLACE,
   'attach-postwork': NOT_BY_PLACE,
 

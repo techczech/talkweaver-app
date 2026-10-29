@@ -43,6 +43,8 @@ export const TASK_GROUP_TABLE: Readonly<Record<string, readonly [TaskGroup, stri
   'scratchpad-insert-visual': ['Reuse slides', 'Slide Scratchpad'],
   'scratchpad-compare': ['Reuse slides', 'Slide Scratchpad'],
   'scratchpad-change-place': ['Reuse slides', 'Slide Scratchpad'],
+  'scratchpad-move-up': ['Reuse slides', 'Slide Scratchpad'],
+  'scratchpad-move-down': ['Reuse slides', 'Slide Scratchpad'],
   'where-used': ['Reuse slides', 'Where used and versions'],
   'app.where-used': ['Reuse slides', 'Where used and versions'],
   'focus-slide': ['See the talk', 'Focus on a slide'],

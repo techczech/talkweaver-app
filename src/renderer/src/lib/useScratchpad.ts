@@ -17,6 +17,8 @@ export interface ScratchpadData {
   setStatus: (ids: string[], status: ScratchStatus) => Promise<boolean>
   setGroup: (ids: string[], group: string | null) => Promise<boolean>
   createGroup: (name: string) => Promise<ScratchGroup | null>
+  setSort: (sort: 'newest' | 'manual') => Promise<boolean>
+  reorder: (visible: string[], next: string[]) => Promise<boolean>
   removeMissing: (ids: string[]) => Promise<boolean>
 }
 
@@ -24,6 +26,7 @@ export interface ScratchpadData {
 export function useScratchpad(talkKey: string | null): ScratchpadData {
   const [snapshot, setSnapshot] = useState<ScratchSnapshot>(EMPTY)
   const [loading, setLoading] = useState(true)
+  const talkRef = useRef(talkKey); talkRef.current = talkKey
   const noticeShown = useRef('')
 
   useEffect(() => {
@@ -55,8 +58,10 @@ export function useScratchpad(talkKey: string | null): ScratchpadData {
   }, [snapshot.notices])
 
   const apply = useCallback(async <T extends { snapshot: ScratchSnapshot }>(call: Promise<{ ok: true } & T | { ok: false; error: string }>): Promise<T | null> => {
+    const origin = talkRef.current
     try {
       const reply = await call
+      if (talkRef.current !== origin) return null
       if (!reply.ok) { notify(reply.error, 'warning', 'scratchpad'); return null }
       setSnapshot(reply.snapshot)
       return reply
@@ -73,6 +78,8 @@ export function useScratchpad(talkKey: string | null): ScratchpadData {
     setStatus: async (ids, status) => (await apply(window.tw.scratchpad.setStatus(ids, status))) !== null,
     setGroup: async (ids, group) => (await apply(window.tw.scratchpad.setGroup(ids, group))) !== null,
     createGroup: async (name) => (await apply(window.tw.scratchpad.createGroup(name)))?.group ?? null,
+    setSort: async sort => talkKey !== null && (await apply(window.tw.scratchpad.setSort(sort, talkKey))) !== null,
+    reorder: async (visible, next) => talkKey !== null && (await apply(window.tw.scratchpad.reorder(visible, next, talkKey))) !== null,
     removeMissing: async (ids) => (await apply(window.tw.scratchpad.removeMissing(ids))) !== null
-  }), [snapshot, loading, apply])
+  }), [snapshot, loading, apply, talkKey])
 }

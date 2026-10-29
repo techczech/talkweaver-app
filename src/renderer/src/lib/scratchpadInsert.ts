@@ -10,7 +10,7 @@ import type { OutlineMutationResult } from './outlineMutation.ts'
 import { HTML_PAGE_INSERT_TEXT } from './insertHtmlPage.ts'
 import type { ScratchItem, ScratchReply, ScratchSnapshot, ScratchVisualImport } from '../../../shared/scratchpad.ts'
 import {
-  caretInSlideBody, headingTitle, insertSlideAt, placeForLine, restampTakenIds, visualNeedsCopy, visualSlide, scratchVisuals,
+  placeRows, planScratchSlides, caretInSlideBody, headingTitle, insertSlideAt, placeForLine, restampTakenIds, visualNeedsCopy, visualSlide, scratchVisuals,
   type ScratchPlace, type ScratchVisual
 } from '../../../shared/scratchpad-insert.ts'
 
@@ -57,7 +57,7 @@ export const INSERT_TEXT = {
   notMarked: (why: string): string => `It was inserted, but the Slide Scratchpad could not note that: ${why}`
 } as const
 
-const FAIL: ScratchInsertOutcome = { ok: false }
+const FAIL: { ok: false } = { ok: false }
 
 /** One Insert, start to finish. Never throws; every refusal is said. */
 export async function runScratchInsert(host: ScratchInsertHost, request: ScratchInsertRequest): Promise<ScratchInsertOutcome> {
@@ -169,4 +169,61 @@ async function visualOnly(host: ScratchInsertHost, talk: string, request: Extrac
     host.notify(`${HTML_PAGE_INSERT_TEXT.inserted(got.page.embedPath, got.page.how)} ${HTML_PAGE_INSERT_TEXT.onlyThisFile}${named}`, got.page.localReferences.length ? 'warning' : 'success', 'scratchpad-insert-page')
   }
   return outcome
+}
+
+
+export type ScratchBatchHost = Pick<ScratchInsertHost, 'talk' | 'editor' | 'apply' | 'prepareSlide' | 'notify'> & {
+  api: {
+    prepareInsert(ids: string[], expectedOutline: string): Promise<ScratchReply<{ entries: import('../../../shared/scratchpad.ts').ScratchPreparedInsert[] }>>
+    markInsertedMany(records: import('../../../shared/scratchpad.ts').ScratchInsertedRecord[], expectedOutline: string): Promise<ScratchReply<{ snapshot: ScratchSnapshot }>>
+  }
+}
+
+/** Prepare all items before the only outline transaction. A refusal never applies a partial batch. */
+export async function runScratchBatch(host: ScratchBatchHost, ids: string[], place: SlidePlace): Promise<
+  { ok: true; newSlide: ScratchPlace; lines: number[]; selectionLines: number[]; sourceText: string } | { ok: false }
+> {
+  const talk = host.talk(); const editor = host.editor()
+  if (!talk || !editor || editor.path !== talk || !ids.length || new Set(ids).size !== ids.length) return FAIL
+  const unchanged = (): boolean => host.talk() === talk && host.editor()?.path === talk && host.editor()?.text === editor.text
+  try {
+    const prepared = await host.api.prepareInsert(ids, talk)
+    if (!prepared.ok) throw new Error(prepared.error)
+    if (prepared.entries.length !== ids.length || prepared.entries.some((item, i) => item.id !== ids[i])) throw new Error('The selection changed. Nothing was inserted.')
+    const blocks: string[] = []
+    for (const item of prepared.entries) {
+      if (!unchanged()) throw new Error('The talk changed while preparing the selection. Nothing was inserted.')
+      const block = 'markdown' in item ? await host.prepareSlide(item.markdown, item.sourceOutlinePath) : visualSlide(item.title, item.line)
+      if (block === null) return FAIL
+      blocks.push(block)
+    }
+    if (!unchanged()) throw new Error('The talk changed while preparing the selection. Nothing was inserted.')
+    const planned = planScratchSlides(editor.text, place, blocks)
+    if (!planned.ok) throw new Error(planned.error)
+    const result = await host.apply(talk, current => {
+      if (!unchanged() || current !== editor.text) throw new Error('The talk changed. Nothing was inserted.')
+      return planned.text
+    })
+    if (!result.ok && !result.applied) return FAIL
+    const saved = 'saved' in result ? result.saved : null
+    const sourceText = saved && typeof saved === 'object' && 'content' in saved && typeof saved.content === 'string' ? saved.content : planned.text
+    const beforeRows = placeRows(planned.text); const afterRows = placeRows(sourceText)
+    const sameHeadings = beforeRows.length === afterRows.length && beforeRows.every((row, index) => row.title === afterRows[index].title && row.level === afterRows[index].level)
+    const canonicalLines = new Map(sameHeadings ? beforeRows.map((row,index) => [row.line, afterRows[index].line]) : [])
+    const lines = planned.lines.map(line => canonicalLines.get(line) ?? line)
+    const selectionLines = sameHeadings ? planned.selectionLines.map(line => canonicalLines.get(line)!).filter(line => line !== undefined) : []
+    const newSlide = planned.lastPlace.kind === 'after' && canonicalLines.has(planned.lastPlace.line) ? { ...planned.lastPlace, line: canonicalLines.get(planned.lastPlace.line)! } : planned.lastPlace
+    if (host.talk() === talk) {
+      try {
+        const records = prepared.entries.map((item, i) => ({ id: item.id, title: headingTitle(planned.text.split('\n')[planned.lines[i] - 1]) }))
+        const marked = await host.api.markInsertedMany(records, talk)
+        if (!marked.ok) host.notify(INSERT_TEXT.notMarked(marked.error), 'warning', 'scratchpad-insert-mark')
+      } catch (error) { host.notify(INSERT_TEXT.notMarked(String(error)), 'warning', 'scratchpad-insert-mark') }
+      host.notify(`Inserted ${selectionLines.length || ids.length} slides from ${ids.length} Scratchpad items.`, 'success', 'scratchpad-insert')
+    }
+    return { ok: true, newSlide, lines, selectionLines, sourceText }
+  } catch (error) {
+    host.notify(INSERT_TEXT.failed(error instanceof Error ? error.message : String(error)), 'warning', 'scratchpad-insert')
+    return FAIL
+  }
 }

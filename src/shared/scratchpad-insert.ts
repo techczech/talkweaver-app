@@ -91,7 +91,7 @@ export {
   headingTitle, insertionPoint, placeForLine, placeRows, resolvePlace, settlePlace, PLACE_GONE
 } from './slide-handling/place.ts'
 export type { InsertionPoint, PlaceRow, ScratchPlace } from './slide-handling/place.ts'
-import { insertionPoint, UNSAFE_PLACE as UNSAFE, type SlidePlace } from './slide-handling/place.ts'
+import { insertionPoint, headingTitle, UNSAFE_PLACE as UNSAFE, type ScratchPlace, type SlidePlace } from './slide-handling/place.ts'
 
 
 export type PlacedSlide =
@@ -208,4 +208,44 @@ export function restampTakenIds(block: string, talkText: string, rng: () => numb
     if (!next) { next = mintSlideId(taken, rng); taken.add(next); fresh.set(id, next) }
     return `{id=${next}}`
   })
+}
+
+
+/** Plan the entire selection without writing. Each block uses the existing placement proof.
+ * Place in reverse at the same anchor so a section keeps its children and the next card
+ * remains its sibling. IDs are reserved in displayed order before any placement. */
+export function planScratchSlides(text: string, place: SlidePlace, blocks: readonly string[]):
+  { ok: true; text: string; lines: number[]; selectionLines: number[]; lastPlace: ScratchPlace } | { ok: false; error: string } {
+  if (!blocks.length || blocks.length > 5000) return { ok: false, error: 'Choose slides to insert.' }
+  let reserved = text
+  const ready = blocks.map(block => {
+    const next = restampTakenIds(block, reserved)
+    reserved += '\n' + next
+    return next
+  })
+  for (const block of ready) {
+    const source = block.replace(/\r\n?/g, '\n').split('\n')
+    const parsed = readOutline(source.join('\n')); const ids: string[] = []
+    source.forEach((line, index) => {
+      if (parsed.levels[index] < 2) return
+      const metadata = /^\s*\{[^}]+\}\s*$/.test(source[index + 1] ?? '') ? source[index + 1] : ''
+      ids.push(...[...`${line}\n${metadata}`.matchAll(ID_TOKEN)].map(match => match[1]))
+    })
+    if (new Set(ids).size !== ids.length) return { ok: false, error: 'A selected snapshot contains duplicate slide identifiers. Nothing was inserted.' }
+  }
+  let current = text
+  let lines: number[] = []
+  for (let i = ready.length - 1; i >= 0; i--) {
+    const result = insertSlideAt(current, place, ready[i])
+    if (!result.ok) return result
+    const delta = result.text.split('\n').length - current.split('\n').length
+    lines = [result.line, ...lines.map(line => line + delta)]
+    current = result.text
+  }
+  const lastRoot = lines[lines.length - 1] - 1
+  const count = ready[ready.length - 1].trim().split('\n').length
+  const parsed = readOutline(current)
+  let last = lastRoot
+  for (let i = lastRoot; i < lastRoot + count; i++) if (parsed.levels[i] >= 2) last = i
+  return { ok: true, text: current, lines, selectionLines: parsed.levels.flatMap((level, index) => index >= lines[0] - 1 && index <= last && level >= 2 ? [index + 1] : []), lastPlace: { kind: 'after', line: last + 1, title: headingTitle(current.split('\n')[last]) } }
 }

@@ -9,9 +9,9 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  caretInSlideBody, headingTitle, insertSlideAt, insertionPoint, placeForLine, placeRows, resolvePlace, restampTakenIds, scratchVisuals, settlePlace, visualNeedsCopy, visualSlide, PLACE_GONE
+  planScratchSlides, caretInSlideBody, headingTitle, insertSlideAt, insertionPoint, placeForLine, placeRows, resolvePlace, restampTakenIds, scratchVisuals, settlePlace, visualNeedsCopy, visualSlide, PLACE_GONE
 } from '../src/shared/scratchpad-insert.ts'
-import { atCaretBlock, runScratchInsert, INSERT_TEXT } from '../src/renderer/src/lib/scratchpadInsert.ts'
+import { atCaretBlock, runScratchBatch, runScratchInsert, INSERT_TEXT } from '../src/renderer/src/lib/scratchpadInsert.ts'
 import { createScratchVisualImporter, slideSourceOutline, slideVisualFile } from '../src/main/scratchpad-visual-import.ts'
 import { registerScratchpadIpc } from '../src/main/scratchpad-ipc.ts'
 
@@ -28,6 +28,52 @@ const TALK = [
 const lineOf = (text, heading) => text.split('\n').findIndex((l) => l.startsWith(heading)) + 1
 /** The heading lines (the fenced example line in TALK is not one). */
 const headings = (text) => text.split('\n').filter((l) => /^#{1,6}\s/.test(l) && l !== '### not a heading')
+
+await test('batch flow prepares every candidate before one exact-buffer apply and one badge write', async () => {
+  let text = '# Talk\n\n## Anchor\n\nBody.\n'; let talk = 'talk'; let applies = 0; let marks = 0
+  const notices = []
+  const host = {
+    talk: () => talk, editor: () => ({ path: talk, text, caret: 0 }),
+    apply: async (path, mutate) => { applies++; text = mutate(text).replace('## B\n', '## B\n{id=stamp}\n'); return { ok: true, saved: { content: text } } },
+    prepareSlide: async markdown => markdown,
+    notify: message => notices.push(message),
+    api: {
+      prepareInsert: async () => ({ ok: true, entries: [{ id: 'a', title: 'A', markdown: '### A {id=a}', sourceOutlinePath: 'source' }, { id: 'b', title: 'B', line: '![](img-abcdef1)' }] }),
+      markInsertedMany: async () => { marks++; return { ok: true } }
+    }
+  }
+  const out = await runScratchBatch(host, ['a', 'b'], { kind: 'start' })
+  assert.ok(out.ok); assert.equal(applies, 1); assert.equal(marks, 1)
+  assert.equal(out.sourceText, text, 'selection follows the canonical text returned by the save')
+  assert.deepEqual(headings(text).map(headingTitle), ['Talk', 'A', 'B', 'Anchor'])
+  const before = text
+  host.prepareSlide = async markdown => { text += '\nEdited while preparing'; return markdown }
+  assert.equal((await runScratchBatch(host, ['a', 'b'], { kind: 'start' })).ok, false)
+  assert.equal(applies, 1); assert.equal(marks, 1)
+  assert.ok(text.startsWith(before))
+  host.prepareSlide = async markdown => { talk = 'other'; return markdown }
+  assert.equal((await runScratchBatch(host, ['a', 'b'], { kind: 'start' })).ok, false)
+  assert.equal(applies, 1)
+})
+
+await test('batch planning preserves source order, section children and IDs without changing the buffer', () => {
+  const original = '# Talk\n\n## Anchor {id=anchor}\n\nBody.\n'
+  const blocks = ['## Section {id=section}\n\n### Child {id=child}\n\nChild body.', '### Next {id=child}\n\nNext body.']
+  const result = planScratchSlides(original, { kind: 'after', line: 3, title: 'Anchor' }, blocks)
+  assert.ok(result.ok, result.error)
+  assert.deepEqual(headings(result.text).map(headingTitle), ['Talk', 'Anchor', 'Section', 'Child', 'Next'])
+  const ids = [...result.text.matchAll(/\{id=([^}]+)\}/g)].map(m => m[1])
+  assert.equal(new Set(ids).size, ids.length)
+  assert.equal(result.lines.length, 2)
+  assert.equal(result.selectionLines.length, 3)
+  assert.equal(planScratchSlides(original, { kind: 'start' }, ['## Duplicate {id=dup}\n\n### Child {id=dup}']).ok, false)
+  assert.equal(result.lastPlace.title, 'Next')
+  assert.equal(original, '# Talk\n\n## Anchor {id=anchor}\n\nBody.\n')
+  assert.equal(planScratchSlides(original, { kind: 'start' }, ['### Good', 'not a slide']).ok, false)
+  const sectionLast = planScratchSlides(original, { kind: 'after', line: 3, title: 'Anchor' }, ['## Section\n\n### Child\n\nBody.'])
+  assert.ok(sectionLast.ok)
+  assert.equal(sectionLast.lastPlace.title, 'Child', 'next insertion follows the section children')
+})
 
 await test('a chosen place follows its slide; when an Undo takes the added slide back, the earlier place returns', () => {
   const helps = { kind: 'after', line: lineOf(TALK, '### Where AI helps'), title: 'Where AI helps' }
@@ -363,6 +409,18 @@ try {
     const refused = await call('scratchpad:import-slide-visual', slide.id, '../talk/scratchpad/chart.png')
     assert.equal(refused.ok, false, 'a file the snapshot does not name is refused'); assert.equal(asked.length, 2)
     assert.equal((await call('scratchpad:import-visual', 'sp-unknown')).ok, false)
+    const prepared = await call('scratchpad:prepare-insert', [slide.id, file.id], outline)
+    assert.equal(prepared.ok, true)
+    assert.deepEqual(prepared.entries.map(item => item.id), [slide.id, file.id])
+    assert.equal(prepared.entries[0].markdown, slide.slide.markdown)
+    assert.equal(prepared.entries[1].line, '![](img-0000001)')
+    assert.equal((await call('scratchpad:prepare-insert', [file.id, 'gone'], outline)).ok, false)
+    assert.equal((await call('scratchpad:prepare-insert', [file.id], 'other-outline')).ok, false)
+    assert.equal((await call('scratchpad:mark-inserted-many', [{ id: file.id, title: 'Batch picture' }, { id: 'gone', title: 'Gone' }], outline)).ok, false)
+    assert.equal((await call('scratchpad:load')).snapshot.items.find(i => i.id === file.id).insertedAt, undefined)
+    const batchMarked = await call('scratchpad:mark-inserted-many', [{ id: file.id, title: 'Batch picture' }, { id: slide.id, title: 'Batch flow' }], outline)
+    assert.equal(batchMarked.ok, true)
+    assert.equal(batchMarked.snapshot.items.find(i => i.id === file.id).insertedInto, 'Batch picture')
     const marked = await call('scratchpad:mark-inserted', file.id, 'Where AI helps')
     assert.equal(marked.snapshot.items.find((i) => i.id === file.id).insertedInto, 'Where AI helps')
     assert.equal(readFileSync(outline, 'utf8'), TALK, 'no scratchpad handler wrote the outline')

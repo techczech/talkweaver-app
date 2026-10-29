@@ -45,6 +45,8 @@ export interface ScratchStateItem {
 }
 
 export interface ScratchState {
+  order?: string[]
+  sort?: 'newest' | 'manual'
   version: 1
   groups: ScratchGroup[]
   items: ScratchStateItem[]
@@ -65,6 +67,8 @@ export interface ScratchItem extends ScratchStateItem {
 }
 
 export interface ScratchSnapshot {
+  order?: string[]
+  sort?: 'newest' | 'manual'
   groups: ScratchGroup[]
   items: ScratchItem[]
   /** Said to the user as they are: a state file that could not be read, files that were skipped. */
@@ -183,8 +187,8 @@ export function inGroup(item: ScratchItem, group: ScratchGroupFilter): boolean {
 }
 
 /** Newest first by the batch time, then by the item's own time. */
-export function newestFirst(a: ScratchItem, b: ScratchItem): number {
-  return b.batch.at.localeCompare(a.batch.at) || b.addedAt.localeCompare(a.addedAt) || a.id.localeCompare(b.id)
+export function newestFirst(a: Pick<ScratchStateItem, 'batch' | 'addedAt' | 'id'>, b: Pick<ScratchStateItem, 'batch' | 'addedAt' | 'id'>): number {
+  return b.batch.at.localeCompare(a.batch.at) || b.addedAt.localeCompare(a.addedAt)
 }
 
 export function visibleItems(items: readonly ScratchItem[], view: { list: ScratchList; group: ScratchGroupFilter; query: string }): ScratchItem[] {
@@ -273,3 +277,16 @@ export function titleFromFileName(name: string): string {
   return sentence.split(' ').map((word) => (KNOWN_ACRONYMS.has(word.toLowerCase()) ? word.toUpperCase() : word)).join(' ')
 }
 const KNOWN_ACRONYMS = new Set(['ai', 'llm', 'llms', 'html', 'svg', 'gpqa', 'mmlu', 'uk', 'us', 'api', 'pdf', 'csv', 'json', 'url', 'gpu', 'ocr', 'rag'])
+
+/** Authoritative candidates resolved for one originating talk; never renderer-supplied source. */
+export type ScratchPreparedInsert = { id: string; title: string } & (
+  { markdown: string; sourceOutlinePath: string } | { line: string }
+)
+export interface ScratchInsertedRecord { id: string; title: string }
+
+
+/** Keep saved positions; append arrivals in the store's source order. Removed IDs disappear. */
+export function scratchOrder(items: readonly { id: string }[], saved: readonly string[] = []): string[] {
+  const known = new Set(items.map(item => item.id))
+  return [...new Set([...saved.filter(id => known.has(id)), ...items.map(item => item.id)])]
+}

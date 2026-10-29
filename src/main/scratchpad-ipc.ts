@@ -9,7 +9,7 @@ import { watchScratchFolder, type ScratchpadWatch } from './scratchpad-watch.ts'
 import type { ScratchHtmlPreview } from './scratchpad-html.ts'
 import { slideVisualFile, type VisualRequest } from './scratchpad-visual-import.ts'
 import { scratchVisuals, visualNeedsCopy } from '../shared/scratchpad-insert.ts'
-import type { ScratchReply, ScratchSlide, ScratchSlideInput, ScratchSnapshot, ScratchStatus, ScratchVisualImport } from '../shared/scratchpad.ts'
+import type { ScratchPreparedInsert, ScratchReply, ScratchSlide, ScratchSlideInput, ScratchSnapshot, ScratchStatus, ScratchVisualImport } from '../shared/scratchpad.ts'
 
 export interface ScratchpadIpcDeps {
   ipc: Pick<IpcMain, 'handle'>
@@ -111,6 +111,15 @@ export function registerScratchpadIpc(deps: ScratchpadIpcDeps): { closeAll(): vo
     if (!Array.isArray(inputs) || inputs.length === 0 || inputs.length > MAX_IDS) return { ok: false, error: 'Choose slides to set aside.' }
     return change(event, (store) => store.setAside(inputs as ScratchSlideInput[]))
   })
+  deps.ipc.handle('scratchpad:set-sort', (event, sort: unknown, expectedOutline: unknown) => {
+    if (expectedOutline !== deps.outlinePathFor(event) || (sort !== 'newest' && sort !== 'manual')) return { ok: false, error: 'The talk or sort order changed.' }
+    return change(event, store => store.setSort(sort))
+  })
+  deps.ipc.handle('scratchpad:reorder', (event, visible: unknown, next: unknown, expectedOutline: unknown) => {
+    const before = strings(visible); const after = strings(next)
+    if (expectedOutline !== deps.outlinePathFor(event) || !before || !after) return { ok: false, error: 'The talk or selection changed.' }
+    return change(event, store => store.reorder(before, after))
+  })
   deps.ipc.handle('scratchpad:set-status', (event, ids: unknown, status: unknown) => {
     const list = strings(ids)
     if (!list || (status !== 'active' && status !== 'kept' && status !== 'rejected')) return { ok: false, error: 'Choose items and a status.' }
@@ -195,6 +204,38 @@ export function registerScratchpadIpc(deps: ScratchpadIpcDeps): { closeAll(): vo
       if (!file) throw new Error(`The file ${visual.label} could not be found in the talk “${slide.talkTitle}”, so nothing was inserted.`)
       return visualReply(await deps.importVisual({ kind: visual.kind === 'page' ? 'html' : 'svg', path: file, outlinePath: outlineOf(event), from: `${slide.talkTitle}: ${visual.ref}` }))
     })
+  })
+  deps.ipc.handle('scratchpad:prepare-insert', (event, ids: unknown, expectedOutline: unknown) => {
+    const list = strings(ids)
+    const outline = deps.outlinePathFor(event)
+    if (!outline || expectedOutline !== outline || !list?.length || new Set(list).size !== list.length) return { ok: false, error: 'The talk or selection changed. Nothing was inserted.' }
+    return withTalk(event, async store => {
+      const check = (): void => { if (deps.outlinePathFor(event) !== outline) throw new Error('The talk changed while preparing the selection. Nothing was inserted.') }
+      const snapshot = await store.load(); check()
+      const items = list.map(id => snapshot.items.find(item => item.id === id))
+      if (items.some(item => !item || item.missing || item.status !== 'active')) throw new Error('An item is no longer available. Nothing was inserted.')
+      const entries: ScratchPreparedInsert[] = []
+      for (const candidate of items) {
+        const item = candidate!; check()
+        if (item.kind === 'slide' && item.slide) {
+          const source = deps.slideSource?.(item.slide, outline)
+          if (!source) throw new Error(`The source talk for “${item.title}” is unavailable. Nothing was inserted.`)
+          entries.push({ id: item.id, title: item.title, markdown: item.slide.markdown, sourceOutlinePath: source.outlinePath })
+        } else {
+          if (!deps.importVisual) throw new Error('Inserting is not available.')
+          const file = await store.fileFor(item.id); check()
+          if (!file) throw new Error(`The file for “${item.title}” is unavailable. Nothing was inserted.`)
+          const imported = await deps.importVisual({ kind: file.kind, path: file.path, outlinePath: outline, from: `${store.folder.split(/[\\/]/).slice(-2).join('/')}/${file.name}` }); check()
+          const visual = visualReply(imported)
+          entries.push({ id: item.id, title: item.title, line: visual.line })
+        }
+      }
+      check(); return { entries }
+    })
+  })
+  deps.ipc.handle('scratchpad:mark-inserted-many', (event, records: unknown, expectedOutline: unknown) => {
+    if (expectedOutline !== deps.outlinePathFor(event) || !Array.isArray(records) || !records.length || records.length > MAX_IDS || records.some(r => !r || typeof r.id !== 'string' || typeof r.title !== 'string') || new Set(records.map(r => r.id)).size !== records.length) return { ok: false, error: 'The talk or insertion records changed.' }
+    return change(event, store => store.markInsertedMany(records))
   })
   deps.ipc.handle('scratchpad:mark-inserted', (event, id: unknown, slideTitle: unknown) => {
     if (typeof id !== 'string' || typeof slideTitle !== 'string') return { ok: false, error: 'Choose an item.' }

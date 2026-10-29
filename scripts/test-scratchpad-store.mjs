@@ -380,6 +380,27 @@ try {
     assert.equal(await store.fileFor(a.id), null)
   })
 
+  await test('manual order persists, filters preserve hidden slots and arrivals append', async () => {
+    const talk = newTalk(); put(talk, 'a.svg', '<svg/>'); put(talk, 'b.svg', '<svg/>'); put(talk, 'c.svg', '<svg/>')
+    const opts = options(); const store = createScratchpadStore(talk, opts)
+    const snap = await store.load()
+    await store.setSort('manual')
+    const base = (await store.load()).order
+    const moved = await store.reorder([base[0], base[2]], [base[2], base[0]])
+    assert.deepEqual(moved.order, [base[2], base[1], base[0]], 'the hidden middle slot never moves')
+    await assert.rejects(store.reorder([base[0], base[2]], [base[2], base[0]]), /changed/)
+    await assert.rejects(store.reorder([base[2]], ['not-an-item']), /selection/)
+    await store.setSort('newest')
+    const reopened = createScratchpadStore(talk, opts)
+    await reopened.setSort('manual')
+    assert.deepEqual((await reopened.load()).order, moved.order)
+    put(talk, 'new.svg', '<svg>new</svg>')
+    const arrived = await reopened.load()
+    assert.deepEqual(arrived.order.slice(0, 3), moved.order)
+    assert.equal(arrived.order[3], arrived.items.find(item => item.file === 'new.svg').id)
+    assert.equal(arrived.sort, 'manual')
+  })
+
   await test('markInserted records when and into which slide, keeps everything else, and survives a reload (version stays 1)', async () => {
     const talk = newTalk()
     put(talk, 'chart.png', 'PNGBYTES')

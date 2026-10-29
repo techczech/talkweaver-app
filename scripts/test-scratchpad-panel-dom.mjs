@@ -41,6 +41,8 @@ const reply = (extra = {}) => ({ ok: true, snapshot: snap, ...extra })
 window.tw = { scratchpad: {
   subscribe: async () => reply(), unsubscribe: async () => ({ ok: true }), load: async () => reply(),
   onChanged: (cb) => { listeners.add(cb); return () => listeners.delete(cb) },
+  setSort: async sort => { snap = { ...snap, sort, order: snap.order ?? [...snap.items].sort((a,b) => b.batch.at.localeCompare(a.batch.at) || b.addedAt.localeCompare(a.addedAt) || a.id.localeCompare(b.id)).map(i=>i.id) }; return reply() },
+  reorder: async (visible, next) => { let n=0; const order=snap.order ?? [...snap.items].sort((a,b)=>b.batch.at.localeCompare(a.batch.at)||b.addedAt.localeCompare(a.addedAt)||a.id.localeCompare(b.id)).map(i=>i.id); snap={...snap,sort:'manual',order:order.map(id=>visible.includes(id)?next[n++]:id)}; return reply() },
   setStatus: async (ids, status) => { window.calls.push('status:' + status + ':' + ids.join(',')); snap = { ...snap, items: snap.items.map((i) => ids.includes(i.id) ? { ...i, status } : i) }; return reply() },
   setGroup: async (ids, g) => { window.calls.push('group:' + g + ':' + ids.join(',')); snap = { ...snap, items: snap.items.map((i) => ids.includes(i.id) ? { ...i, group: g } : i) }; return reply() },
   createGroup: async (name) => { const group = { id: 'g' + (snap.groups.length + 1), name }; window.calls.push('new:' + name); snap = { ...snap, groups: [...snap.groups, group] }; return reply({ group }) },
@@ -68,6 +70,7 @@ function useFakeInsert() {
     rows: () => ROWS, numberAt: (line) => ROWS.find((r) => r.line === line)?.no ?? null,
     choose: (place) => setChosen(place), busy: false,
     hasSlideTitled: (title) => ROWS.some((r) => r.title === title) && !window.undone,
+    insertMany: async ids => { window.inserts.push(['batch', ...ids]); return true },
     insert: async (item, mode, visual) => {
       window.inserts.push([mode, item.id, visual ? visual.ref : null])
       snap = { ...snap, items: snap.items.map((i) => (i.id === item.id ? { ...i, insertedAt: new Date().toISOString(), insertedInto: 'Where it does not help' } : i)) }; emit()
@@ -450,6 +453,38 @@ createRoot(document.getElementById('root')).render(<App />)`,
     await page.evaluate(() => window.run('scratchpad-keep'))
     assert.deepEqual(await calls(), [])
     await page.getByLabel('Search the Slide Scratchpad').fill('')
+  })
+  await step('batch insertion follows displayed order, clears ticks and keeps original cards', async () => {
+    await page.evaluate(() => { window.selectionFixture(); window.inserts = [] })
+    await page.getByLabel('Search the Slide Scratchpad').fill('Run')
+    await page.locator('.sp-tabs button').first().click()
+    await page.getByLabel('Select Run oldest', { exact: true }).check()
+    await page.getByLabel('Select Run newest', { exact: true }).check()
+    await page.getByRole('button', { name: 'Insert 2 slides', exact: true }).click()
+    assert.deepEqual(await inserts(), [['batch', 'new', 'old']])
+    assert.equal(await page.locator('.sp-card input:checked').count(), 0)
+    assert.equal(await page.getByLabel('Select Run oldest', { exact: true }).count(), 1)
+  })
+  await step('manual ordering moves visible selection and survives date sorting', async () => {
+    await page.evaluate(() => window.selectionFixture())
+    await page.getByLabel('Search the Slide Scratchpad').fill('Run')
+    await page.locator('.sp-tabs button').first().click()
+    await page.getByLabel('Select Run middle', { exact: true }).check()
+    await page.getByRole('button', { name: 'Move selected items up', exact: true }).click()
+    assert.equal(await page.getByLabel('Scratchpad sort order').inputValue(), 'manual')
+    const order = () => page.locator('.sp-card input[type=checkbox]').evaluateAll(nodes=>nodes.map(node=>node.getAttribute('aria-label')))
+    assert.deepEqual(await order(), ['Select Run middle','Select Run newest','Select Run oldest','Select Run tail'])
+    await page.getByLabel('Scratchpad sort order').selectOption('newest')
+    await page.waitForFunction(() => document.querySelector('.sp-card input[type=checkbox]')?.getAttribute('aria-label') === 'Select Run newest')
+    assert.equal((await order())[0], 'Select Run newest')
+    await page.getByLabel('Scratchpad sort order').selectOption('manual')
+    await page.waitForFunction(() => document.querySelector('.sp-card input[type=checkbox]')?.getAttribute('aria-label') === 'Select Run middle')
+    assert.equal((await order())[0], 'Select Run middle')
+    await page.evaluate(() => window.run('scratchpad-move-down'))
+    await page.waitForFunction(() => document.querySelector('.sp-card input[type=checkbox]')?.getAttribute('aria-label') === 'Select Run newest')
+    await page.getByRole('button', { name: 'Arrange Run tail', exact: true }).dragTo(page.locator('.sp-order-card').filter({ has: page.getByLabel('Select Run newest', { exact: true }) }), { targetPosition: { x: 5, y: 5 } })
+    await page.waitForFunction(() => document.querySelector('.sp-card input[type=checkbox]')?.getAttribute('aria-label') === 'Select Run tail')
+
   })
   await step('empty state: the mockup wording, both starting points work', async () => {
     await page.evaluate(() => window.empty())

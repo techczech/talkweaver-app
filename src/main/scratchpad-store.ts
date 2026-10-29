@@ -25,7 +25,7 @@ import { createScratchpadDisk, type ScratchDiskScan, type ScratchFileIdentity } 
 import { extname, join } from 'node:path'
 import { contentTextFor, MAX_CONTENT_CHARS } from './scratchpad-text.ts'
 import {
-  FILE_KIND_BY_EXTENSION, SCRATCH_FOLDER_NAME, STATE_FILE_NAME, titleFromFileName,
+  scratchOrder, newestFirst, FILE_KIND_BY_EXTENSION, SCRATCH_FOLDER_NAME, STATE_FILE_NAME, titleFromFileName,
   type ScratchFileKind, type ScratchGroup, type ScratchItem, type ScratchSlide, type ScratchSlideInput,
   type ScratchSnapshot, type ScratchSource, type ScratchState, type ScratchStateItem, type ScratchStatus
 } from '../shared/scratchpad.ts'
@@ -47,6 +47,8 @@ export interface ScratchpadStore {
   addSlides(inputs: readonly ScratchSlideInput[]): Promise<{ snapshot: ScratchSnapshot; added: number; skipped: number }>
   /** Atomically saves every snapshot and its dated group; rejects the entire batch on any invalid input. */
   setAside(inputs: readonly ScratchSlideInput[]): Promise<ScratchSnapshot>
+  setSort(sort: 'newest' | 'manual'): Promise<ScratchSnapshot>
+  reorder(visible: readonly string[], next: readonly string[]): Promise<ScratchSnapshot>
   setStatus(ids: readonly string[], status: ScratchStatus): Promise<ScratchSnapshot>
   /** group === null moves to Ungrouped. Rejects an unknown group id. */
   setGroup(ids: readonly string[], group: string | null): Promise<ScratchSnapshot>
@@ -59,6 +61,7 @@ export interface ScratchpadStore {
   itemFor(id: string): Promise<ScratchStateItem | null>
   /** After an insert: when, and the title of the slide it went into. Nothing else about the item changes. */
   markInserted(id: string, slideTitle: string): Promise<ScratchSnapshot>
+  markInsertedMany(records: readonly { id: string; title: string }[]): Promise<ScratchSnapshot>
 }
 
 const MAX_TITLE = 200
@@ -155,7 +158,7 @@ function parseState(text: string): ParsedState {
     if (item.group !== null && !groups.some((g) => g.id === item.group)) { item.group = null; problems.push('an item named a group that is not in the list') }
     items.push(item)
   }
-  return { state: { version: 1, groups, items }, problems }
+  return { state: { version: 1, groups, items, ...(Array.isArray(raw.order) && raw.order.every(id => typeof id === 'string') ? { order: scratchOrder(items, raw.order as string[]) } : {}), ...(raw.sort === 'manual' || raw.sort === 'newest' ? { sort: raw.sort } : {}) }, problems }
 }
 
 interface FolderFile { name: string; path: string; kind: ScratchFileKind; mtime: Date; sidecar: string | null }
@@ -285,7 +288,7 @@ export function createScratchpadStore(talkDir: string, options: ScratchpadStoreO
         contentText: file ? mergedText(contentTextFor(file.path, kind), kind === 'html' ? options.renderedTextFor?.(file.path) ?? '' : '') || undefined : undefined
       }
     })
-    return { groups: state.groups, items, notices }
+    return { groups: state.groups, items, notices, ...(state.order ? { order: scratchOrder(items, state.order) } : {}), ...(state.sort ? { sort: state.sort } : {}) }
   }
 
   /** The common frame of every operation: read, merge, change, write if changed, answer. A `read` (load) on a state
@@ -417,6 +420,32 @@ export function createScratchpadStore(talkDir: string, options: ScratchpadStoreO
 
     async itemFor(id) {
       return serial(async () => (await current()).state.items.find((i) => i.id === id) ?? null)
+    },
+
+    async setSort(sort) {
+      if (sort !== 'newest' && sort !== 'manual') throw new Error('Choose a sort order.')
+      return (await operate('change', state => ({ state: { ...state, sort, order: scratchOrder(state.items, state.order ?? [...state.items].sort(newestFirst).map(item => item.id)) }, result: null }))).snapshot
+    },
+
+    async reorder(visible, next) {
+      if (!visible.length || new Set(visible).size !== visible.length || next.length !== visible.length || new Set(next).size !== next.length || next.some(id => !visible.includes(id))) throw new Error('The selection is invalid.')
+      return (await operate('change', state => {
+        const base = state.sort === 'manual' ? scratchOrder(state.items, state.order) : [...state.items].sort(newestFirst).map(item => item.id)
+        const selected = new Set(visible)
+        if (base.filter(id => selected.has(id)).join('\0') !== visible.join('\0')) throw new Error('The Scratchpad order changed. Try the move again.')
+        let at = 0
+        const order = base.map(id => selected.has(id) ? next[at++] : id)
+        return { state: { ...state, sort: 'manual', order }, result: null }
+      })).snapshot
+    },
+
+    async markInsertedMany(records) {
+      return (await operate('change', state => {
+        if (!records.length || records.some(record => !state.items.some(item => item.id === record.id))) throw new Error('An item is not in the Slide Scratchpad any more.')
+        const titles = new Map(records.map(record => [record.id, record.title.replace(/\s+/g, ' ').trim().slice(0, MAX_TITLE)]))
+        const at = now().toISOString()
+        return { state: { ...state, items: state.items.map(item => titles.has(item.id) ? { ...item, insertedAt: at, insertedInto: titles.get(item.id) } : item) }, result: null }
+      })).snapshot
     },
 
     async markInserted(id, slideTitle) {
