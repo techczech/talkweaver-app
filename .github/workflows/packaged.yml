@@ -112,8 +112,15 @@ jobs:
         run: |
           $env:ELECTRON_RUN_AS_NODE = '1'
           try {
-            & './release/win-unpacked/TalkWeaver.exe' --experimental-strip-types scripts/test-scratchpad-disk.mjs
-            if ($LASTEXITCODE -ne 0) { throw "Scratchpad disk safety failed: $LASTEXITCODE" }
+            # This is a GUI-subsystem executable even in Node mode. Wait explicitly;
+            # direct invocation can return before it finishes and leave LASTEXITCODE unset.
+            $scratchpadSafetyProcess = Start-Process `
+              -FilePath (Resolve-Path './release/win-unpacked/TalkWeaver.exe').Path `
+              -ArgumentList @('--experimental-strip-types', 'scripts/test-scratchpad-disk.mjs') `
+              -WorkingDirectory (Get-Location).Path `
+              -NoNewWindow -Wait -PassThru -ErrorAction Stop
+            if ($null -eq $scratchpadSafetyProcess.ExitCode) { throw 'Scratchpad disk safety did not return an exit code' }
+            if ($scratchpadSafetyProcess.ExitCode -ne 0) { throw "Scratchpad disk safety failed: $($scratchpadSafetyProcess.ExitCode)" }
           } finally { Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue }
       # TalkWeaver.exe as Node runs the wrangler inside resources/app; PATH holds only System32.
       # It also publishes a site (`pages deploy`) against the fake Cloudflare API on loopback, checks
