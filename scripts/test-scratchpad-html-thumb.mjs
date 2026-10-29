@@ -59,10 +59,11 @@ try {
   await test('a failed page gives null, is not cached and is not retried until it changes', async () => {
     mode = 'fail'
     const p = join(talk, 'bad.html'); writeFileSync(p, 'x')
+    const beforeFiles = readdirSync(cache).sort()
     const before = captures
     assert.equal(await thumb(p), null); assert.equal(await thumb(p), null)
     assert.equal(captures - before, 1)
-    assert.equal(readdirSync(cache).some((f) => f.includes('bad')), false)
+    assert.deepEqual(readdirSync(cache).sort(), beforeFiles, 'a failed page writes no cache files')
     mode = 'ok'; writeFileSync(p, 'xy')
     assert.ok(await thumb(p))
   })

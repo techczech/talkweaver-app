@@ -8,6 +8,7 @@
 import { createHash } from 'node:crypto'
 import { lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { scratchSnapshotIdentity } from './scratchpad-disk.ts'
 import type { ScratchHtmlPreview } from './scratchpad-html.ts'
 
 export const HTML_THUMB_TIMEOUT_MS = 8000
@@ -16,7 +17,8 @@ const MAX_THUMB_BYTES = 4 * 1024 * 1024
 
 /** The cache key: the same file at the same size and modification time is the same picture. */
 export function htmlThumbKey(path: string, mtimeMs: number, size: number): string {
-  return createHash('sha256').update(`${path}\0${Math.round(mtimeMs)}\0${size}`).digest('hex').slice(0, 40)
+  const snapshot = scratchSnapshotIdentity(path)
+  return createHash('sha256').update(snapshot ? `snapshot\0${snapshot}` : `${path}\0${Math.round(mtimeMs)}\0${size}`).digest('hex').slice(0, 40)
 }
 
 export interface HtmlThumbDeps {

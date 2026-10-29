@@ -16,8 +16,12 @@
 //   - Items are only ever added, re-statused, re-grouped, marked inserted (ticket 2: when, and into which slide),
 //     or (state only) removed when their file is missing. The outline is never this module's business.
 // Every operation runs one after another (a queue), so two clicks never interleave their read-modify-write.
+// scratchpad-disk.ts pins filesystem authority in a child working directory and returns private checked
+// snapshots; deferred previews/imports never reopen an agent-writable path. State/recovery writes are
+// relative to the held directory and every state write is read back there before the queue advances.
 import { createHash, randomBytes } from 'node:crypto'
-import { constants as fsConstants, copyFileSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { lstatSync } from 'node:fs'
+import { createScratchpadDisk, type ScratchDiskScan, type ScratchFileIdentity } from './scratchpad-disk.ts'
 import { extname, join } from 'node:path'
 import { contentTextFor, MAX_CONTENT_CHARS } from './scratchpad-text.ts'
 import {
@@ -30,7 +34,7 @@ export interface ScratchpadStoreOptions {
   now?: () => Date
   newItemId?: () => string
   newGroupId?: () => string
-  /** Where an <img> can load an agent's picture or SVG; main passes the twfile address. */
+  /** An image address for the checked private snapshot (never the agent-writable source path). */
   fileUrlFor?: (absolutePath: string) => string | undefined
   /** The words an HTML page rendered (captured in the hidden window), '' until captured; merged into the search text. */
   renderedTextFor?: (absolutePath: string) => string
@@ -49,7 +53,7 @@ export interface ScratchpadStore {
   createGroup(name: string): Promise<{ snapshot: ScratchSnapshot; group: ScratchGroup }>
   /** Takes "File missing" items out of the state. Items whose file exists are left alone. State only. */
   removeMissing(ids: readonly string[]): Promise<ScratchSnapshot>
-  /** The agent file an item names, if it is still in the folder and is a plain file; else null. */
+  /** A private copy of the checked agent file, retaining its name and bytes; else null. */
   fileFor(id: string): Promise<{ path: string; name: string; kind: ScratchFileKind } | null>
   /** The item as the state holds it now (a picked slide's snapshot, for an insert), or null. */
   itemFor(id: string): Promise<ScratchStateItem | null>
@@ -57,7 +61,6 @@ export interface ScratchpadStore {
   markInserted(id: string, slideTitle: string): Promise<ScratchSnapshot>
 }
 
-const MAX_SIDECAR_BYTES = 256 * 1024
 const MAX_TITLE = 200
 const MAX_DESCRIPTION = 2000
 const MAX_GROUP_NAME = 80
@@ -155,32 +158,12 @@ function parseState(text: string): ParsedState {
   return { state: { version: 1, groups, items }, problems }
 }
 
-interface FolderFile { name: string; path: string; kind: ScratchFileKind; mtime: Date }
+interface FolderFile { name: string; path: string; kind: ScratchFileKind; mtime: Date; sidecar: string | null }
 
-function listFolder(folder: string): FolderFile[] {
-  let names: string[]
-  try { names = readdirSync(folder) } catch { return [] }
-  const out: FolderFile[] = []
-  for (const name of names) {
-    if (!plainName(name)) continue
-    const kind = FILE_KIND_BY_EXTENSION[extname(name).toLowerCase()]
-    if (!kind) continue
-    const path = join(folder, name)
-    try {
-      const info = lstatSync(path) // a link is skipped: it could point outside the talk
-      if (!info.isFile()) continue
-      out.push({ name, path, kind, mtime: info.mtime })
-    } catch { /* gone between listing and reading */ }
-  }
-  return out.sort((a, b) => a.name.localeCompare(b.name))
-}
-
-function readSidecar(folder: string, file: string): { title?: string; description?: string; sources: ScratchSource[] } {
-  const path = join(folder, `${file}.json`)
+function readSidecar(text: string | null): { title?: string; description?: string; sources: ScratchSource[] } {
   try {
-    const info = lstatSync(path)
-    if (!info.isFile() || info.size > MAX_SIDECAR_BYTES) return { sources: [] }
-    const raw: unknown = JSON.parse(readFileSync(path, 'utf8'))
+    if (text === null) return { sources: [] }
+    const raw: unknown = JSON.parse(text)
     if (!isRecord(raw)) return { sources: [] }
     const sources: ScratchSource[] = []
     if (Array.isArray(raw.sources)) {
@@ -203,16 +186,15 @@ export function mergedText(staticText: string, rendered: string): string {
   return rendered ? `${staticText} ${rendered}`.trim().slice(0, 2 * MAX_CONTENT_CHARS) : staticText
 }
 
-export function createScratchpadStore(talkDir: string, options: ScratchpadStoreOptions = {}): ScratchpadStore {
+export function createScratchpadStore(talkDir: string, options: ScratchpadStoreOptions = {}, disk = createScratchpadDisk(talkDir)): ScratchpadStore {
   const now = options.now ?? ((): Date => new Date())
   const newItemId = options.newItemId ?? ((): string => `sp-${hex(6)}`)
   const newGroupId = options.newGroupId ?? ((): string => `g-${hex(4)}`)
   const folder = join(talkDir, SCRATCH_FOLDER_NAME)
-  const statePath = join(folder, STATE_FILE_NAME)
 
   // One operation at a time.
   let queue: Promise<unknown> = Promise.resolve()
-  function serial<T>(run: () => T): Promise<T> {
+  function serial<T>(run: () => T | Promise<T>): Promise<T> {
     const next = queue.then(run, run)
     queue = next.catch(() => undefined)
     return next
@@ -235,29 +217,20 @@ export function createScratchpadStore(talkDir: string, options: ScratchpadStoreO
   /** Reads the state file; a file that cannot be used is copied aside and its loss is described. `writable` is false
    *  when the state file must not be replaced on this load: it exists but could not be read, it is not a regular file
    *  (a link is never followed, read, copied or overwritten), or it was broken and could not be copied aside. */
-  function readState(notices: string[]): { state: ScratchState; text: string | null; writable: boolean } {
+  async function readState(notices: string[], scan: ScratchDiskScan): Promise<{ state: ScratchState; text: string | null; writable: boolean }> {
     const empty = (): ScratchState => ({ version: 1, groups: [], items: [] })
     const readOnly = 'The folder\'s files are shown as ungrouped items, and changes are not saved until the state file is fixed or removed.'
-    let info
-    try { info = lstatSync(statePath) } catch (error) {
-      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return { state: empty(), text: null, writable: true }
-      notices.push(`The Slide Scratchpad's saved state could not be read (${error instanceof Error ? error.message : String(error)}). ${readOnly}`)
+    if (scan.state.error) {
+      notices.push(`The Slide Scratchpad's saved state could not be read (${scan.state.error}). ${readOnly}`)
       return { state: empty(), text: null, writable: false }
     }
-    if (!info.isFile()) {
-      notices.push(`The Slide Scratchpad's saved state is ${info.isSymbolicLink() ? 'a link' : 'not a plain file'}, so it was not read. ${readOnly}`)
-      return { state: empty(), text: null, writable: false }
-    }
-    let text: string
-    try { text = readFileSync(statePath, 'utf8') } catch (error) {
-      notices.push(`The Slide Scratchpad's saved state could not be read (${error instanceof Error ? error.message : String(error)}). ${readOnly}`)
-      return { state: empty(), text: null, writable: false }
-    }
+    const text = scan.state.text
+    if (text === null) return { state: empty(), text: null, writable: true }
     const parsed = parseState(text)
     if (parsed.problems.length > 0) {
       const broken = `scratchpad-state.broken-${stampFor(now())}.json`
       let kept = false
-      try { copyFileSync(statePath, join(folder, broken), fsConstants.COPYFILE_EXCL); kept = true } catch { /* say so below */ }
+      try { await disk.backup(broken, text, scan.folder); kept = true } catch { /* say so below */ }
       const lost = parsed.state.groups.length === 0 && parsed.state.items.length === 0
         ? 'Its groups, choices and picked slides were not recovered; the folder\'s files are shown as ungrouped items.'
         : 'What could be read was kept; the rest was dropped.'
@@ -267,18 +240,14 @@ export function createScratchpadStore(talkDir: string, options: ScratchpadStoreO
     return { state: parsed.state, text, writable: true }
   }
 
-  function writeState(state: ScratchState, previous: string | null): void {
+  async function writeState(state: ScratchState, previous: string | null, folderId: ScratchFileIdentity | null): Promise<void> {
     const text = serialise(state)
-    if (text === previous) return
-    mkdirSync(folder, { recursive: true })
-    const temp = join(folder, `.${STATE_FILE_NAME}.${process.pid}.${hex(4)}.tmp`)
-    try {
-      writeFileSync(temp, text, { flag: 'wx' })
-      renameSync(temp, statePath)
-    } catch (error) {
-      try { rmSync(temp, { force: true }) } catch { /* nothing more to do */ }
-      throw error
-    }
+    if (text !== previous) await disk.write(text, previous, folderId)
+  }
+
+  function folderFiles(scan: ScratchDiskScan): FolderFile[] {
+    return scan.files.map((file) => ({ ...file, kind: FILE_KIND_BY_EXTENSION[extname(file.name).toLowerCase()], mtime: new Date(file.mtime) }))
+      .sort((a, b) => a.name.localeCompare(b.name))
   }
 
   /** Merges the folder into the state: new files become agent items stamped with this scan. */
@@ -304,7 +273,7 @@ export function createScratchpadStore(talkDir: string, options: ScratchpadStoreO
       const name = item.file as string
       const file = byName.get(name)
       const kind = file?.kind ?? FILE_KIND_BY_EXTENSION[extname(name).toLowerCase()] ?? 'pic'
-      const sidecar = file ? readSidecar(folder, name) : { sources: [] as ScratchSource[] }
+      const sidecar = file ? readSidecar(file.sidecar) : { sources: [] as ScratchSource[] }
       return {
         ...item,
         title: sidecar.title ?? titleFromFileName(name),
@@ -321,23 +290,24 @@ export function createScratchpadStore(talkDir: string, options: ScratchpadStoreO
 
   /** The common frame of every operation: read, merge, change, write if changed, answer. A `read` (load) on a state
    *  that must not be written answers the files read-only; a change on it is refused, and nothing is written. */
-  function operate<T>(mode: 'read' | 'change', change: (state: ScratchState, files: readonly FolderFile[]) => { state: ScratchState; result: T }, confirm = false): Promise<{ snapshot: ScratchSnapshot; result: T }> {
-    return serial(() => {
+  function operate<T>(mode: 'read' | 'change', change: (state: ScratchState, files: readonly FolderFile[]) => { state: ScratchState; result: T }): Promise<{ snapshot: ScratchSnapshot; result: T }> {
+    return serial(async () => {
       const notices: string[] = []
       if (!folderUsable(notices)) {
         if (mode === 'change') throw new Error(notices[0])
         return { snapshot: { groups: [], items: [], notices }, result: change({ version: 1, groups: [], items: [] }, []).result }
       }
-      const { state: read, text, writable } = readState(notices)
+      const scan = await disk.scan(Object.keys(FILE_KIND_BY_EXTENSION))
+      notices.push(...scan.notices)
+      const { state: read, text, writable } = await readState(notices, scan)
       if (!writable && mode === 'change') throw new Error(`Nothing was changed. ${notices[0] ?? ''}`.trim())
-      const files = listFolder(folder)
+      const files = folderFiles(scan)
       const merged = merge(read, files, !writable)
       const changed = change(merged, files)
       // A talk with no scratch folder and nothing in the state stays untouched on disk.
       const hasContent = changed.state.items.length > 0 || changed.state.groups.length > 0
       if (writable && (hasContent || text !== null)) {
-        writeState(changed.state, text)
-        if (confirm && readFileSync(statePath, 'utf8') !== serialise(changed.state)) throw new Error('The Scratchpad write could not be confirmed.')
+        await writeState(changed.state, text, scan.folder)
       }
       return { snapshot: view(changed.state, files, notices), result: changed.result }
     })
@@ -345,11 +315,12 @@ export function createScratchpadStore(talkDir: string, options: ScratchpadStoreO
 
   /** The state as an action sees it (fileFor, itemFor): nothing from an unusable folder; a read-only state merged with
    *  the folder the way load() shows it, so the ids the panel holds still name their files. */
-  function current(): { state: ScratchState; files: FolderFile[] } {
+  async function current(): Promise<{ state: ScratchState; files: FolderFile[] }> {
     const notices: string[] = []
     if (!folderUsable(notices)) return { state: { version: 1, groups: [], items: [] }, files: [] }
-    const { state, writable } = readState(notices)
-    const files = listFolder(folder)
+    const scan = await disk.scan(Object.keys(FILE_KIND_BY_EXTENSION))
+    const { state, writable } = await readState(notices, scan)
+    const files = folderFiles(scan)
     return { state: writable ? state : merge(state, files, true), files }
   }
 
@@ -394,7 +365,7 @@ export function createScratchpadStore(talkDir: string, options: ScratchpadStoreO
           items.push({ id: newItemId(), kind: 'slide', addedAt: at, batch: { source: 'slide-browser', at }, group: group.id, status: 'active', slide })
         }
         return { state: { ...state, groups: state.groups.some((g) => g.id === group.id) ? state.groups : [...state.groups, group], items }, result: null }
-      }, true)).snapshot
+      })).snapshot
     },
 
     async setStatus(ids, status) {
@@ -434,19 +405,18 @@ export function createScratchpadStore(talkDir: string, options: ScratchpadStoreO
     },
 
     async fileFor(id) {
-      return serial(() => {
-        const { state, files } = current()
+      return serial(async () => {
+        const { state, files } = await current()
         const item = state.items.find((i) => i.id === id)
         if (!item || item.kind !== 'file') return null
         const file = files.find((f) => f.name === item.file)
         if (!file) return null
-        try { if (!statSync(file.path).isFile()) return null } catch { return null }
         return { path: file.path, name: file.name, kind: file.kind }
       })
     },
 
     async itemFor(id) {
-      return serial(() => current().state.items.find((i) => i.id === id) ?? null)
+      return serial(async () => (await current()).state.items.find((i) => i.id === id) ?? null)
     },
 
     async markInserted(id, slideTitle) {

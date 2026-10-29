@@ -325,6 +325,7 @@
     "test:research-capture",
     "test:research-writer",
     "test:research-reader",
+    "test:scratchpad-disk",
     "test:scratchpad-store",
     "test:scratchpad-search",
     "test:scratchpad-insert",

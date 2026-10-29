@@ -42,6 +42,36 @@ let checks = 0
 const test = async (name, fn) => { try { await fn(); checks++ } catch (error) { console.error(`FAIL ${name}`); throw error } }
 
 try {
+  await test('a scratch folder linked during state mutation cannot redirect writes', async () => {
+    for (const existed of [false, true]) {
+      const talk = newTalk(); const victim = newTalk()
+      const victimState = join(victim, 'scratchpad-state.json')
+      writeFileSync(victimState, 'unrelated state bytes')
+      if (existed) mkdirSync(scratch(talk))
+      const opts = options()
+      const store = createScratchpadStore(talk, { ...opts, newGroupId: () => {
+        if (existed) fs.renameSync(scratch(talk), join(talk, 'held-scratchpad'))
+        symlinkSync(victim, scratch(talk), 'dir')
+        return 'g-race'
+      } })
+      await assert.rejects(store.createGroup('Race'))
+      assert.equal(readFileSync(victimState, 'utf8'), 'unrelated state bytes')
+      assert.deepEqual(readdirSync(victim), ['scratchpad-state.json'])
+    }
+  })
+
+  await test('a file returned for preview or import remains the checked bytes after source replacement', async () => {
+    const talk = newTalk(); put(talk, 'page.html', '<p>checked page</p>')
+    const victim = join(root, 'private-page.html'); writeFileSync(victim, '<p>unrelated private page</p>')
+    const store = createScratchpadStore(talk, options())
+    const item = (await store.load()).items[0]
+    const file = await store.fileFor(item.id)
+    assert.ok(file)
+    rmSync(join(scratch(talk), 'page.html')); symlinkSync(victim, join(scratch(talk), 'page.html'))
+    assert.equal(readFileSync(file.path, 'utf8'), '<p>checked page</p>')
+    assert.equal(await store.fileFor(item.id), null, 'the linked replacement is refused')
+  })
+
   await test('a talk with no scratch folder answers empty and writes nothing', async () => {
     const talk = newTalk()
     const snap = await createScratchpadStore(talk, options()).load()
@@ -341,7 +371,10 @@ try {
     const snap = await store.load()
     assert.deepEqual(snap.items.map((i) => i.file), ['a.html'], 'a link in the folder is ignored')
     const a = snap.items[0]
-    assert.deepEqual(await store.fileFor(a.id), { path: join(scratch(talk), 'a.html'), name: 'a.html', kind: 'html' })
+    const copy = await store.fileFor(a.id)
+    assert.deepEqual({ name: copy?.name, kind: copy?.kind }, { name: 'a.html', kind: 'html' })
+    assert.notEqual(copy.path, join(scratch(talk), 'a.html'), 'consumers get a private snapshot')
+    assert.equal(readFileSync(copy.path, 'utf8'), '<p>hi</p>')
     assert.equal(await store.fileFor('sp-nope'), null)
     rmSync(join(scratch(talk), 'a.html'))
     assert.equal(await store.fileFor(a.id), null)

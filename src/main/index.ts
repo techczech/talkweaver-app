@@ -8247,12 +8247,21 @@ const scratchpadHtmlThumbs = createHtmlThumbnailer({
   preview: scratchpadHtmlPreview,
   capture: createHtmlCapture({ store: scratchpadPreviewStore })
 })
+const scratchpadImageUrls = new Map<string, string>()
 const scratchpadIpc = registerScratchpadIpc({
   ipc: ipcMain,
   outlinePathFor: (event) => editorWindows.get(event.sender.id)?.outlinePath ?? null,
-  // A picture or SVG loads in an <img> through the existing twfile:// path (guarded to the vault root).
+  // Pictures use checked private snapshots as data URLs; no renderer reopens an agent-writable path.
   storeOptions: {
-    fileUrlFor: (absolutePath) => `twfile://f/${Buffer.from(absolutePath, 'utf8').toString('base64url')}`,
+    fileUrlFor: (absolutePath) => {
+      const hit = scratchpadImageUrls.get(absolutePath)
+      if (hit) return hit
+      const mime = /\.svg$/i.test(absolutePath) ? 'image/svg+xml' : /\.png$/i.test(absolutePath) ? 'image/png' : /\.webp$/i.test(absolutePath) ? 'image/webp' : /\.gif$/i.test(absolutePath) ? 'image/gif' : 'image/jpeg'
+      const url = `data:${mime};base64,${readFileSync(absolutePath).toString('base64')}`
+      if (scratchpadImageUrls.size >= 128) scratchpadImageUrls.delete(scratchpadImageUrls.keys().next().value!)
+      scratchpadImageUrls.set(absolutePath, url)
+      return url
+    },
     renderedTextFor: (absolutePath) => scratchpadHtmlThumbs.textFor(absolutePath)
   },
   htmlPreview: scratchpadHtmlPreview,

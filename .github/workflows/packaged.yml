@@ -107,6 +107,14 @@ jobs:
       # Unpacked build only (release/win-unpacked): no installer, no signing, nothing uploaded.
       - name: Package (unpacked)
         run: npx electron-builder --win --dir --publish never
+      - name: Scratchpad safety on the packaged Windows runtime
+        shell: pwsh
+        run: |
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          try {
+            & './release/win-unpacked/TalkWeaver.exe' --experimental-strip-types scripts/test-scratchpad-disk.mjs
+            if ($LASTEXITCODE -ne 0) { throw "Scratchpad disk safety failed: $LASTEXITCODE" }
+          } finally { Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue }
       # TalkWeaver.exe as Node runs the wrangler inside resources/app; PATH holds only System32.
       # It also publishes a site (`pages deploy`) against the fake Cloudflare API on loopback, checks
       # resources/worker-dist against its manifest and sets the live service up from it on
@@ -175,6 +183,8 @@ jobs:
         run: npx electron-builder --mac --dir --publish never -c.mac.identity=null -c.mac.notarize=false
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Scratchpad safety on the packaged macOS runtime
+        run: ELECTRON_RUN_AS_NODE=1 release/mac-arm64/TalkWeaver.app/Contents/MacOS/TalkWeaver --experimental-strip-types scripts/test-scratchpad-disk.mjs
       # The release gate on this unsigned build (docs/RELEASING.md): the afterPack attestation for the
       # committed pin is in the app and its ffmpeg has the pinned SHA-256. Independent of electron-builder.
       - name: Verify the Mac package (ffmpeg pin, attestation)
