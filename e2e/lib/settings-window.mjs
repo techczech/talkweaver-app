@@ -8,6 +8,20 @@ export function findSettingsWindow(app) {
   return app.windows().find((w) => !w.isClosed() && w.url().includes('settings.html')) ?? null
 }
 
+// Thumbnail workers are BrowserWindows too. Identify the page after navigation rather than
+// accepting the first window event; all candidates share the existing 15-second deadline.
+function nextSettingsWindow(app) {
+  return app.waitForEvent('window', {
+    timeout: 15_000,
+    predicate: async (candidate) => {
+      try {
+        await candidate.waitForURL(/\/settings\.html(?:[?#]|$)/, { timeout: 15_000 })
+        return true
+      } catch { return false }
+    },
+  })
+}
+
 /**
  * Open the Settings window from the editor window `page` with ⌘, (the command the gear and the
  * App menu run), at `section` when one is named. Returns the Settings window's Page.
@@ -15,7 +29,7 @@ export function findSettingsWindow(app) {
 export async function openSettingsWindow(app, page, section) {
   let sw = findSettingsWindow(app)
   if (!sw) {
-    ;[sw] = await Promise.all([app.waitForEvent('window', { timeout: 15_000 }), page.keyboard.press('ControlOrMeta+,')])
+    ;[sw] = await Promise.all([nextSettingsWindow(app), page.keyboard.press('ControlOrMeta+,')])
   } else {
     await page.keyboard.press('ControlOrMeta+,')
   }
@@ -32,7 +46,7 @@ export async function openSettingsWindow(app, page, section) {
  */
 export async function openSettingsAtCloudflare(app, page) {
   await closeSettingsWindow(app)
-  const [sw] = await Promise.all([app.waitForEvent('window', { timeout: 15_000 }), page.evaluate(() => window.tw.cloudflare.openSettings())])
+  const [sw] = await Promise.all([nextSettingsWindow(app), page.evaluate(() => window.tw.cloudflare.openSettings())])
   await sw.waitForLoadState('domcontentloaded')
   await sw.locator('button.bsw-nav').first().waitFor({ state: 'attached', timeout: 15_000 })
   return sw

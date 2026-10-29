@@ -72,7 +72,24 @@ try {
   record('click the button again: the Guide closes and the column is as before (no tab row)', await gone('[data-guide]') && (await page.locator('[data-right-column-tabs]').count()) === 0 && !/open/.test(await button.innerText()))
 
   // Settings → Get started: the switch.
-  const settings = await openSettingsWindow(app, page, 'general')
+  // A hidden thumbnail window can open at the same time as Settings. Force that ordering
+  // so the shared driver must identify Settings rather than taking the first window event.
+  const press = page.keyboard.press.bind(page.keyboard)
+  page.keyboard.press = async (...args) => {
+    if (args[0] === 'ControlOrMeta+,') await app.evaluate(({ BrowserWindow }) => {
+      const unrelated = new BrowserWindow({ show: false, title: 'settings-driver-distractor' })
+      void unrelated.loadURL('data:text/html,<title>settings-driver-distractor</title>')
+    })
+    return press(...args)
+  }
+  let settings
+  try { settings = await openSettingsWindow(app, page, 'general') }
+  finally {
+    page.keyboard.press = press
+    await app.evaluate(({ BrowserWindow }) => {
+      for (const win of BrowserWindow.getAllWindows()) if (win.getTitle() === 'settings-driver-distractor') win.destroy()
+    })
+  }
   await settings.waitForSelector('[data-key="general.guideButton"] [role="switch"]', { timeout: 4000 })
   const switchEl = settings.locator('[data-key="general.guideButton"] [role="switch"]')
   const first = await settings.evaluate(() => document.querySelector('.bsw-root')?.getAttribute('data-section'))
