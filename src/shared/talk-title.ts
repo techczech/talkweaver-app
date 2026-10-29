@@ -1,8 +1,8 @@
 // Where the talk's title is, for every move of a slide or section (pure).
 //
 // THE RULE: nothing is ever placed before the talk's level-1 title. The outline's relocate functions
-// (src/renderer/src/extensions/slideOutline.ts), the whole-slide paste and "Move … to…"
-// (slideBlockOps.ts) and the grid's reorder (grid-reorder.ts) all ask the two functions here, so no
+// (src/shared/slide-handling/slide-outline.ts), the whole-slide paste and "Move … to…"
+// (slide-block-ops.ts) and the slide moves of slide-handling/blocks.ts (through them) all ask the two functions here, so no
 // entry point can decide it differently. scripts/test-slide-outline-moves.mjs tests them.
 //
 // The title is the first level-1 heading line (`# …`) after the YAML frontmatter that is not inside

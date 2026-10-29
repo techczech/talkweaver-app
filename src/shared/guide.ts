@@ -148,14 +148,16 @@ export function firstStepsCount(steps: readonly FirstStep[]): string {
 
 // ── The right column's tab row ──────────────────────────────────────────────────────────────────
 
-export type RightColumnTab = 'guide' | 'slides' | 'inspector'
+export type RightColumnTab = 'guide' | 'whats-new' | 'slides' | 'inspector'
 
 /**
- * The tab row. Without the Guide there is no row (the column is the strip or the Inspector, as
- * before). With it: Guide first, then Slides and Inspector; with no talk open only the Guide, as
- * there is no slide to show.
+ * The tab row. With neither the Guide nor What's new up there is no row (the column is the strip or the
+ * Inspector, as before). With either: Guide first, then What's new (opened by the Updated mark or its
+ * command, update notices ADR-0041), then Slides and Inspector; with no talk open only the tabs that are
+ * up, as there is no slide to show.
  */
-export function rightColumnTabs(input: { guideUp: boolean; hasTalk: boolean }): RightColumnTab[] {
-  if (!input.guideUp) return []
-  return input.hasTalk ? ['guide', 'slides', 'inspector'] : ['guide']
+export function rightColumnTabs(input: { guideUp: boolean; whatsNewUp?: boolean; hasTalk: boolean }): RightColumnTab[] {
+  const up: RightColumnTab[] = [...(input.guideUp ? ['guide' as const] : []), ...(input.whatsNewUp ? ['whats-new' as const] : [])]
+  if (up.length === 0) return []
+  return input.hasTalk ? [...up, 'slides', 'inspector'] : up
 }

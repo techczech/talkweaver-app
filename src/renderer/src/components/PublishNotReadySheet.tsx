@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import type { PublishNotReady } from '../../../preload/index'
 import { SAVE_AS_FILE } from '../../../shared/publish-status'
 import { notify } from '../lib/notify'
@@ -6,7 +6,7 @@ import { notify } from '../lib/notify'
 // The sheet a publish shows when it cannot start (spec docs/plans/cloudflare-setup-in-app, the table
 // "What each user action does when its feature is not ready"). Not connected: "Publishing needs a
 // Cloudflare account", Open Settings, or "Save as a file instead". Connected with one thing missing:
-// that thing named, and the one button that fixes it. Every word comes from the main process
+// that thing named, and Open Settings (Settings → Cloudflare, where each is fixed, the site made too). Every word comes from the main process
 // (src/shared/publish-status.ts); this file lays it out in the share sheet's look. It is used for
 // Publish handout (the editor). A Run publishes from its checklist in Sessions (work-files ticket 29).
 
@@ -17,12 +17,9 @@ interface Props {
   onClose: () => void
   /** Save the handout as a file on this computer instead (offered when not connected). */
   onSaveAsFile: () => void
-  /** Publish again, after "Create <site>" has made the site. */
-  onRetry: () => void
 }
 
-export default function PublishNotReadySheet({ what, notReady, onClose, onSaveAsFile, onRetry }: Props) {
-  const [busy, setBusy] = useState(false)
+export default function PublishNotReadySheet({ what, notReady, onClose, onSaveAsFile }: Props) {
   const fixRef = useRef<HTMLButtonElement>(null)
 
   // Escape closes this sheet, as it closes the share sheet; it is not a registered shortcut (listed in the shortcut scan's ignore list).
@@ -35,20 +32,12 @@ export default function PublishNotReadySheet({ what, notReady, onClose, onSaveAs
   }, [onClose])
   useEffect(() => { fixRef.current?.focus() }, [])
 
+  // Every fix is in Settings → Cloudflare. Making the site is there too: it saves the account and
+  // site publishing goes to, which only the Settings window changes (Sol review 4).
   const fix = async (): Promise<void> => {
-    if (notReady.fix.action === 'open-settings') {
-      onClose()
-      const shown = await window.tw.cloudflare.openSettings().catch(() => false)
-      if (!shown) notify('Open the editor window, then Settings → Cloudflare.', 'info')
-      return
-    }
-    // "Create <site>": the site is made (its name is on the button), then the publish is tried again.
-    setBusy(true)
-    const reply = await window.tw.cloudflare.createSite().catch(() => null)
-    setBusy(false)
-    if (reply?.ok && reply.status.publishing.state === 'ready') { onClose(); onRetry(); return }
     onClose()
-    notify(reply && !reply.ok ? reply.error : 'The site could not be created. See Settings → Cloudflare.', 'error', 'publish-create-site')
+    const shown = await window.tw.cloudflare.openSettings().catch(() => false)
+    if (!shown) notify('Open the editor window, then Settings → Cloudflare.', 'info')
   }
 
   return (
@@ -69,7 +58,7 @@ export default function PublishNotReadySheet({ what, notReady, onClose, onSaveAs
           )}
           <div className="sh-foot-right">
             <button className="sh-btn sh-btn--plain" onClick={onClose}>Cancel</button>
-            <button ref={fixRef} className="sh-btn" data-testid="publish-fix" disabled={busy} onClick={() => void fix()}>{busy ? 'Creating…' : notReady.fix.label}</button>
+            <button ref={fixRef} className="sh-btn" data-testid="publish-fix" onClick={() => void fix()}>{notReady.fix.label}</button>
           </div>
         </div>
       </div>

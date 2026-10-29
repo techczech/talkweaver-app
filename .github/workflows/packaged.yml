@@ -36,8 +36,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
-      - run: npm ci
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - name: Cache Bun packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+      - run: bun install --frozen-lockfile
       # Path shapes (pure), `wrangler --version` through the launcher from the checkout with an
       # empty PATH, and the guard that no bare `wrangler` call is left.
       - name: Launcher unit tests
@@ -93,7 +100,7 @@ jobs:
       - name: Handout slimming with sharp
         run: npm run test:handout-slimming
       # Transcription (spec D16): the row from fixture paths, the ffmpeg resolver with Windows names
-      # and Path, and the ffmpeg that npm ci downloaded (ffmpeg.exe) making transcription's WAV.
+      # and Path, and the ffmpeg that bun install downloaded (ffmpeg.exe) making transcription's WAV.
       - name: Transcription set-up and the shipped ffmpeg
         run: npm run test:transcription-setup
       - run: npm run build
@@ -120,8 +127,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
-      - run: npm ci
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - name: Cache Bun packages
+        if: ${{ inputs.hosted }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+      - run: bun install --frozen-lockfile
       - name: Worker compile integrity
         run: npm run test:worker-compile-integrity
       - name: Live service upload unit tests

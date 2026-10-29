@@ -226,7 +226,7 @@ await test('wiring: installed at app start; the three editor-kind windows are re
   sharing.addAppWindow(fakeWindow(77))
   assert.deepEqual([...shared], [77])
   assert.equal(sharing.appWindowIds(), shared)
-  // Every permission-like handler in the main process is in recording-permissions.ts. A new one
+  // Recording grants live in recording-permissions.ts; live-page-host.ts separately denies every request. A new handler
   // anywhere must be checked for the same gap (a request from a frame that is not the main frame).
   const mainDir = fileURLToPath(new URL('../src/main/', import.meta.url))
   const sources = (dir) => readdirSync(dir).flatMap((name) => {
@@ -238,7 +238,7 @@ await test('wiring: installed at app start; the three editor-kind windows are re
     const text = readFileSync(path, 'utf8')
     for (const m of text.matchAll(/\b(setPermissionRequestHandler|setPermissionCheckHandler|setDevicePermissionHandler|setDisplayMediaRequestHandler|setBluetoothPairingHandler|setUSBProtectedClassesHandler)\(/g)) found.push(`${path.slice(mainDir.length)}:${m[1]}`)
   }
-  assert.deepEqual([...new Set(found)].sort(), ['recording-permissions.ts:setPermissionCheckHandler', 'recording-permissions.ts:setPermissionRequestHandler'])
+  assert.deepEqual([...new Set(found)].sort(), ['live-page-host.ts:setDevicePermissionHandler', 'live-page-host.ts:setDisplayMediaRequestHandler', 'live-page-host.ts:setPermissionCheckHandler', 'live-page-host.ts:setPermissionRequestHandler', 'recording-permissions.ts:setPermissionCheckHandler', 'recording-permissions.ts:setPermissionRequestHandler'])
 })
 
 console.log(`permissions: ${passed} passed`)

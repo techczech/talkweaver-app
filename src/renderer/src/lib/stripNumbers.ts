@@ -76,3 +76,13 @@ export function stripNumbersToPublish(
 ): ReadonlyMap<number, number> | null {
   return compiled && compiled.length > 0 ? slideNumbersByLine(slideLines) : null
 }
+
+/** True when `outlineNumbers` took its numbers from the published strip numbers by line (not by position or by counting). */
+export function numbersAreCurrent(
+  rows: ReadonlyArray<{ line: number }>,
+  published: ReadonlyMap<number, number> | null = getStripNumbers()
+): boolean {
+  if (!published || published.size === 0) return false
+  const rowLines = new Set(rows.map((r) => r.line))
+  return [...published].every(([line, no]) => rowLines.has(line) || no === 1)
+}

@@ -9,8 +9,9 @@
 //   - organizer: drop after the last row = end of the talk; drop on a collapsed section = inside
 //     it, as its last slide; resting on a collapsed section opens it; a drop on a slide row still
 //     goes before it; each move is one undo step in a real CodeMirror editor;
-//   - grid: the same targets, through its block-index reorder (text worked out with the real
-//     reorder function, src/shared/grid-reorder.ts).
+//   - grid: the same targets, through the shared move (each drop names the dragged card's heading
+//     line and text and a place; the text is worked out with the real moveBlocks,
+//     src/shared/slide-handling/blocks.ts).
 // SCREENSHOT_DIR=<dir> saves pictures of the three indicators.
 import { strict as assert } from 'node:assert'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
@@ -19,9 +20,9 @@ import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 import { chromium } from 'playwright'
-import { listSlideBlocks } from '../compiler/scripts/lib/12-outline-edit.mjs'
 import { relocateBlock, relocateBlockInto, relocateBlockToEnd } from '../src/renderer/src/extensions/slideOutline.ts'
-import { reorderGridBlocks } from '../src/shared/grid-reorder.ts'
+import { moveBlocks } from '../src/shared/slide-handling/blocks.ts'
+import { sectionDropBoundary } from '../src/renderer/src/lib/sectionDrop.ts'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const dir = mkdtempSync(join(tmpdir(), 'talk-weaver-slide-drag-'))
@@ -40,8 +41,8 @@ const TALK = parts.join('\n')
 const talkLines = TALK.split('\n')
 const lineOf = (heading) => talkLines.indexOf(heading) + 1
 const sortedLines = (t) => t.split('\n').sort()
-// The projection rows the grid gets: one section-title row per section (not reorderable) and one
-// row per ### slide, so block indices and display indices differ, as they do in the app.
+// The projection rows the grid gets: one section-title row per section (movable since slide handling
+// ticket 1a: it moves the whole section) and one row per ### slide.
 const gridRows = []
 for (let s = 0; s < SECTIONS; s += 1) {
   gridRows.push({ slide_id: `sec${s}`, title: `Section ${s}`, nav_title: `Section ${s}`, section: `Section ${s}`, role: 'section-title', layout: 'section', source_markdown: '', render_hash: `sec${s}`, content_hash: `sec${s}`, warnings: [] })
@@ -49,7 +50,52 @@ for (let s = 0; s < SECTIONS; s += 1) {
     gridRows.push({ slide_id: `s${s}-${i}`, title: `Slide ${s}.${i}`, nav_title: `Slide ${s}.${i}`, section: `Section ${s}`, role: 'content', layout: 'default', source_markdown: `### Slide ${s}.${i}\n{id=s${s}-${i}}\n\n- point ${s}.${i}`, render_hash: `r${s}-${i}`, content_hash: `c${s}-${i}`, warnings: [] })
   }
 }
-const block = (s, i) => s * PER + i
+// The grid numbers its movable cards: each section's card, then its slides.
+const block = (s, i) => s * (PER + 1) + 1 + i
+// What the host hands the grid for a card (slideRefOf) and what a drop names: the heading line and text.
+const refOf = (s, i) => ({ line: lineOf(`### Slide ${s}.${i}`), headingText: `### Slide ${s}.${i}` })
+const refOfBlock = (b) => {
+  const s = Math.floor(b / (PER + 1))
+  const i = (b % (PER + 1)) - 1
+  return i < 0 ? { line: lineOf(`## Section ${s}`), headingText: `## Section ${s}` } : refOf(s, i)
+}
+const placeAt = (kind, s, i) => ({ kind, line: lineOf(`### Slide ${s}.${i}`), title: `Slide ${s}.${i}` })
+const gridRefs = gridRows.map((row) => {
+  const heading = row.source_markdown ? row.source_markdown.split('\n')[0] : `## ${row.title}`
+  return { line: lineOf(heading), headingText: heading }
+})
+
+// Fix round 2 (R3): a nested talk (## / ### subsection / ####). The compiler gives every card under a `##` the
+// `##`'s section id (08-source-adapters.mjs: current.section is set only at level 2; a `###` with children is a
+// subsection-title card in the same section), so a section card dropped on a `####` slide or on the subsection's
+// own card snaps to the `##` boundary, and the move core takes it (no capture).
+{
+  const N = ['# T', '', '## A', '', '### A1', 'a1', '', '## B', '', '### Sub', '', '#### B1', 'b1', '', '#### B2', 'b2', '', '### B3', 'b3', '', '## C', '', '### C1', 'c1', ''].join('\n')
+  const nl = N.split('\n')
+  const rows = [
+    ['## A', 'section-title', 'A'], ['### A1', 'content', 'A'], ['## B', 'section-title', 'B'], ['### Sub', 'subsection-title', 'B'],
+    ['#### B1', 'content', 'B'], ['#### B2', 'content', 'B'], ['### B3', 'content', 'B'], ['## C', 'section-title', 'C'], ['### C1', 'content', 'C']
+  ].map(([h, role, section]) => ({ h, role, section, movable: true }))
+  const refN = (i) => ({ line: nl.indexOf(rows[i].h) + 1, headingText: rows[i].h })
+  const drop = (from, to) => {
+    const b = sectionDropBoundary(rows, from, to)
+    assert(b, `section ${rows[from].h} on ${rows[to].h} snaps`)
+    const t = refN(b.refIndex)
+    const r = moveBlocks(N, [refN(from)], { kind: b.kind, line: t.line, title: t.headingText.replace(/^#+\s*/, '') })
+    assert(!('refused' in r), `the core takes it (${r.refused})`)
+    return { b, heads: r.text.split('\n').filter((l) => /^#{1,6}\s/.test(l)) }
+  }
+  let d = drop(0, 4) // ## A down onto #### B1
+  assert.deepEqual([d.b.cell, d.b.refIndex, d.b.kind], [6, 2, 'after'], 'bar on B\'s last card, after section B')
+  assert.deepEqual(d.heads, ['# T', '## B', '### Sub', '#### B1', '#### B2', '### B3', '## A', '### A1', '## C', '### C1'])
+  d = drop(7, 5) // ## C up onto #### B2
+  assert.deepEqual([d.b.cell, d.b.refIndex, d.b.kind], [2, 2, 'before'], 'bar on B\'s card, before section B')
+  assert.deepEqual(d.heads, ['# T', '## A', '### A1', '## C', '### C1', '## B', '### Sub', '#### B1', '#### B2', '### B3'])
+  d = drop(7, 3) // ## C up onto the ### subsection's own card
+  assert.deepEqual([d.b.cell, d.b.kind], [2, 'before'], 'a subsection card is not a boundary: the ## section is')
+  assert.equal(sectionDropBoundary(rows, 3, 8), null, 'a dragged ### subsection card keeps the plain drop (the core refuses a capture)')
+  console.log('PASS nested ## / ### / ####: a section card snaps to the ## boundary, never a subsection\'s')
+}
 
 const entry = `
 import React, { useEffect, useState } from 'react'
@@ -96,7 +142,7 @@ window.mountOutline = (doc) => {
   window.outlineUndo = () => undo(view)
 }
 
-window.mountGrid = (rows) => {
+window.mountGrid = (rows, columns = 3) => {
   unmount()
   resetOutlineCollapseForTests({ storage: null })
   document.getElementById('stage').innerHTML = '<div id="grid" style="width:900px;height:600px"></div>'
@@ -104,9 +150,10 @@ window.mountGrid = (rows) => {
   const root = createRoot(document.getElementById('grid'))
   flushSync(() => root.render(React.createElement(GridView, {
     talk: { slug: 't', title: 'T', outlinePath: '/v/t/t-outline.md' },
-    compiledSlides: rows, triggerFindings: [], thumbnails: null, activeIndex: 0, columns: 3,
+    compiledSlides: rows, triggerFindings: [], thumbnails: null, activeIndex: 0, columns,
     onSelectSlide: () => {}, onEdit: () => {}, onExplain: () => {},
-    onReorder: (from, to, placement) => { window.reorders.push([from, to, placement ?? null]) }
+    slideRefOf: (index) => window.gridRefs[index] ?? null,
+    onMoveSlides: (refs, place) => { window.reorders.push([refs, place]) }
   })))
   mounted = { root }
 }
@@ -475,14 +522,14 @@ try {
   const GRID = '.grid-view'
   const cell = (s, i) => page.locator(`${GRID} .grid-cell[data-block-index="${block(s, i)}"]`)
   const header = (s) => page.locator(`${GRID} [data-section-header]`, { hasText: `Section ${s}` })
-  const mountGrid = () => page.evaluate((rows) => window.mountGrid(rows), gridRows)
+  const mountGrid = () => page.evaluate(([rows, refs]) => { window.gridRefs = refs; window.mountGrid(rows) }, [gridRows, gridRefs])
   const reorders = () => page.evaluate(() => window.reorders)
-  const gridText = (call) => reorderGridBlocks(TALK, listSlideBlocks(TALK), call[0], call[1], call[2] ?? undefined)
+  const gridText = (call) => { const r = moveBlocks(TALK, call[0], call[1]); assert(!('refused' in r), `the move is possible (${r.refused})`); return r.text }
   const lastIn = (text, s) => { const l = text.split('\n'); const a = l.indexOf(`## Section ${s}`); let b = l.findIndex((x, i) => i > a && x.startsWith('## ')); if (b < 0) b = l.length; return l.slice(a, b).filter((x) => x.startsWith('### ')).pop() }
 
   {
     await mountGrid()
-    assert.equal(await page.locator(`${GRID} .grid-cell[draggable="true"]`).count(), 100, 'the grid shows 100 draggable cells')
+    assert.equal(await page.locator(`${GRID} .grid-cell[draggable="true"]`).count(), 110, 'the grid shows 110 draggable cells: 100 slides and the 10 section cards')
     const gridMax = await maxScroll(GRID)
     assert(gridMax > 3000, `the grid scrolls (${gridMax}px of travel)`)
     const box = await rectOf(GRID)
@@ -534,7 +581,7 @@ try {
     await page.mouse.up()
     await sleep(60)
     const calls = await reorders()
-    assert.deepEqual(calls, [[block(0, 1), block(9, 9), 'after']], 'one reorder: after the last slide of the talk')
+    assert.deepEqual(calls, [[[refOf(0, 1)], placeAt('after', 9, 9)]], 'one move: after the last slide of the talk')
     const text = gridText(calls[0])
     assert(text.trimEnd().endsWith('Note: note 0.1'), 'the slide ends the talk')
     assert.deepEqual(sortedLines(text), sortedLines(TALK), 'no line lost or duplicated')
@@ -596,7 +643,7 @@ try {
     assert.equal(await cell(0, 0).getAttribute('data-drop-target'), 'true', 'and shows the drop indicator')
     await page.mouse.up()
     await sleep(60)
-    assert.deepEqual(await reorders(), [[Number(from), block(0, 0), null]], 'one reorder: onto the first slide')
+    assert.deepEqual(await reorders(), [[[refOfBlock(Number(from))], placeAt('before', 0, 0)]], 'one move: before the first slide (dragged up onto it)')
     pass(`grid: the top zone starts under the toolbar (${Math.round(cover)}px): ${slowRate}px then ${fastRate}px per 400ms, ${Math.round(perSecond)}px/s over the toolbar, and the first card takes the drop at the top`)
   }
 
@@ -622,7 +669,7 @@ try {
     await page.mouse.up()
     await sleep(60)
     const calls = await reorders()
-    assert.deepEqual(calls, [[block(fromS, fromI), block(1, 9), 'after']], 'one reorder: after the last slide of Section 1')
+    assert.deepEqual(calls, [[[refOf(fromS, fromI)], placeAt('after', 1, 9)]], 'one move: after the last slide of Section 1')
     const text = gridText(calls[0])
     assert.equal(lastIn(text, 1), `### Slide ${fromS}.${fromI}`, 'the slide is the last slide of Section 1')
     assert.deepEqual(sortedLines(text), sortedLines(TALK), 'no line lost or duplicated')
@@ -645,8 +692,56 @@ try {
     await sleep(60)
     await page.mouse.up()
     await sleep(60)
-    assert.deepEqual(await reorders(), [[block(0, 9), block(1, 1), null]], 'a drop on a cell is the reorder it always was')
+    const calls = await reorders()
+    assert.deepEqual(calls, [[[refOf(0, 9)], placeAt('after', 1, 1)]], 'a drop on a cell (dragged down) lands after it, as it always did')
+    assert.deepEqual(sortedLines(gridText(calls[0])), sortedLines(TALK), 'no line lost or duplicated')
     pass('grid: resting on a collapsed header opens the section; a drop on a cell is unchanged')
+  }
+
+  // Fix round 1 (F2): a SECTION card dropped on a SLIDE card lands at that slide's section boundary (mockup H11: the
+  // bar between sections), never between two slides where it would take in the slides after it.
+  {
+    const mountWide = () => page.evaluate(([rows, refs]) => { window.gridRefs = refs; window.mountGrid(rows, 6) }, [gridRows, gridRefs])
+    const secCell = (s) => page.locator(`${GRID} .grid-cell[data-block-index="${s * (PER + 1)}"]`)
+    const secPlace = (kind, s) => ({ kind, line: lineOf(`## Section ${s}`), title: `Section ${s}` })
+    const secHeads = (text) => text.split('\n').filter((l) => l.startsWith('## '))
+    // Down: Section 2's card onto a slide in the middle of Section 3 → after Section 3; the bar is on Section 3's last card.
+    await mountWide()
+    await header(2).evaluate((el) => el.scrollIntoView({ block: 'start' }))
+    await startDrag(secCell(2))
+    let c = await centre(cell(3, 4))
+    await dragTo(c.x, c.y, 4)
+    await sleep(80)
+    assert.equal(await cell(3, 4).getAttribute('data-drop-target'), null, 'no bar between two slides of Section 3')
+    assert.equal(await cell(3, 9).getAttribute('data-drop-target'), 'true', 'the bar is at the end of Section 3')
+    await page.mouse.up()
+    await sleep(60)
+    let calls = await reorders()
+    assert.deepEqual(calls, [[[refOfBlock(2 * (PER + 1))], secPlace('after', 3)]], 'one move: after Section 3')
+    let text = gridText(calls[0])
+    assert.deepEqual(secHeads(text).slice(1, 5), ['## Section 1', '## Section 3', '## Section 2', '## Section 4'])
+    assert.equal(lastIn(text, 3), '### Slide 3.9', 'Section 3 keeps all its slides')
+    assert.deepEqual(sortedLines(text), sortedLines(TALK), 'no line lost or duplicated')
+    // The same drop as a plain cell drop would have been refused by the move core (it would adopt 3.5–3.9).
+    assert('refused' in moveBlocks(TALK, calls[0][0], placeAt('after', 3, 4)), 'core refuses a section between slides')
+    pass('grid: a section card dropped (down) on a slide card lands after that slide\'s section')
+    // Up: Section 4's card onto a slide of Section 3 → before Section 3; the bar is on Section 3's own card.
+    await mountWide()
+    await header(3).evaluate((el) => el.scrollIntoView({ block: 'start' }))
+    await startDrag(secCell(4))
+    c = await centre(cell(3, 6))
+    await dragTo(c.x, c.y, 4)
+    await sleep(80)
+    assert.equal(await cell(3, 6).getAttribute('data-drop-target'), null, 'no bar on the slide')
+    assert.equal(await secCell(3).getAttribute('data-drop-target'), 'true', 'the bar is on Section 3\'s card (before the section)')
+    await page.mouse.up()
+    await sleep(60)
+    calls = await reorders()
+    assert.deepEqual(calls, [[[refOfBlock(4 * (PER + 1))], secPlace('before', 3)]], 'one move: before Section 3')
+    text = gridText(calls[0])
+    assert.deepEqual(secHeads(text).slice(2, 6), ['## Section 2', '## Section 4', '## Section 3', '## Section 5'])
+    assert.deepEqual(sortedLines(text), sortedLines(TALK), 'no line lost or duplicated')
+    pass('grid: a section card dropped (up) on a slide card lands before that slide\'s section')
   }
 
   assert.deepEqual(errors, [], 'no page errors')

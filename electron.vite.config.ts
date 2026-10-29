@@ -26,24 +26,32 @@ function gitShort(): string {
 const APP_VERSION = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf8')).version
 const BUILD_SHA = gitShort()
 const BUILD_TIME = new Date().toISOString()
+// The shared settings packages are bundled, not left as node_modules files: they are linked by
+// file: path, and electron-builder copies those as plain files with whatever transitive versions
+// it finds. The Settings window's preload is sandboxed and cannot require packages at all.
+const BUNDLED = ['@app-patterns/commands', '@app-patterns/settings', '@app-patterns/settings-electron', '@app-patterns/settings-react']
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin({ exclude: BUNDLED })],
     build: {
       rollupOptions: {
         input: {
           index: resolve(__dirname, 'src/main/index.ts'),
-          // A publish builds and writes its handout pages in a worker thread, off the main process (handout-pages.ts).
+          // A publish builds and writes its handout pages in a utility process of its own (handout-pages-worker.ts).
           'handout-pages-worker': resolve(__dirname, 'src/main/handout-pages-worker.ts'),
-          // The live compile (prepareTalk) runs in a worker thread too (prepare-talk-worker.ts).
-          'prepare-talk-worker': resolve(__dirname, 'src/main/prepare-talk-worker.ts')
+          // The live compile (prepareTalk) runs in a utility process of its own (prepare-talk-worker.ts).
+          'prepare-talk-worker': resolve(__dirname, 'src/main/prepare-talk-worker.ts'),
+          // An Insert › HTML page… copy runs in a utility process started in the talk folder (html-page-import-worker.ts).
+          'html-page-import-worker': resolve(__dirname, 'src/main/html-page-import-worker.ts'),
+          // A saved view of a live web page is written by a utility process started in the talk folder (live-page-capture-worker.ts).
+          'live-page-capture-worker': resolve(__dirname, 'src/main/live-page-capture-worker.ts')
         }
       }
     }
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin({ exclude: BUNDLED })],
     build: {
       rollupOptions: {
         input: {
@@ -53,7 +61,9 @@ export default defineConfig({
           // It also mounts the ⌘E edit bridge (shared present-edit-bridge module).
           presentRecorder: resolve(__dirname, 'src/preload/present-recorder.ts'),
           // Edit-only bridge for a plain presentation window — ⌘E jumps back to the editor.
-          presentEdit: resolve(__dirname, 'src/preload/present-edit.ts')
+          presentEdit: resolve(__dirname, 'src/preload/present-edit.ts'),
+          // The shared Settings window (sandboxed): the settings: bridge and the app's own pages' calls.
+          settings: resolve(__dirname, 'src/preload/settings.ts')
         }
       }
     }
@@ -68,7 +78,10 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: {
-          index: resolve(__dirname, 'src/renderer/index.html')
+          index: resolve(__dirname, 'src/renderer/index.html'),
+          settings: resolve(__dirname, 'src/renderer/settings.html'),
+          // Capture embed… (src/main/live-page-capture-window.ts): an app page with no preload.
+          'capture-embed': resolve(__dirname, 'src/renderer/capture-embed.html')
         }
       }
     },

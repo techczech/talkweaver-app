@@ -8,7 +8,7 @@ import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { buildPerSlideProjections } from '../compiler/scripts/lib/10-projections.mjs'
 import { computeSlideLines, slideNumbersByLine } from '../src/shared/slide-lines.ts'
 import { outlineNumbers } from '../src/renderer/src/lib/stripNumbers.ts'
-import { moveMessage, moveSubject, placementOptions, sectionMoveOptions, slideMoveOptions } from '../src/renderer/src/lib/moveDestinations.ts'
+import { batchMoveOptions, moveMessage, moveSubject, placementOptions, sectionMoveOptions, slideMoveOptions } from '../src/renderer/src/lib/moveDestinations.ts'
 
 let cases = 0
 const check = (name, fn) => { fn(); cases += 1 }
@@ -218,6 +218,29 @@ check('what a command acts on, from the caret line', () => {
     assert.equal(n.get(orows[4].line), published.get(orows[4].line))
   })
   assert.ok(obj(outlineNumbers([], null)) && outlineNumbers([], published).size === 0)
+}
+
+// Batch destinations (ticket 1b): Move N slides to… — Start/End of talk, section ends, slides to go after; each a SlidePlace.
+{
+  const T = ['# T', '', '## One', '', '### A', '', '### B', '', '## Two', '', '### C', '', '### D', ''].join('\n')
+  const rows = slideRows(T)
+  const lineOf = (h) => T.split('\n').indexOf(h) + 1
+  const picked = [lineOf('### A'), lineOf('### C')]
+  const all = batchMoveOptions(rows, picked)
+  assert.deepEqual(all.map((o) => o.key.split(':')[0]), ['start', 'end', 'into', 'into', 'after', 'after', 'after', 'after'].slice(0, all.length))
+  const into = all.filter((o) => o.group === 'End of section')
+  assert.deepEqual(into.map((o) => o.label), ['One', 'Two'])
+  assert.deepEqual(into[0].place, { kind: 'endOfSection', line: lineOf('## One'), title: 'One' })
+  assert.deepEqual(all.find((o) => o.key === 'end').place, { kind: 'after', line: lineOf('## Two'), title: 'Two' })
+  assert.deepEqual(all.find((o) => o.key === 'start').place, { kind: 'start' })
+  // the selection itself is never offered as a place
+  assert.equal(all.some((o) => o.key === `after:${lineOf('### A')}` || o.key === `after:${lineOf('### C')}`), false)
+  // a selected section hides itself and what is inside it; typed text filters
+  const sec = batchMoveOptions(rows, [lineOf('## One'), lineOf('### C')])
+  assert.equal(sec.some((o) => o.label === 'One' || o.label === 'A' || o.label === 'B'), false)
+  assert.deepEqual(batchMoveOptions(rows, picked, 'D').filter((o) => o.group === 'After slide').map((o) => o.key), [`after:${lineOf('### D')}`])
+  assert.deepEqual(batchMoveOptions(rows, []), [])
+  cases += 1
 }
 
 console.log(`move destinations: ${cases} cases passed`)

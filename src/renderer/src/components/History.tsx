@@ -1,3 +1,5 @@
+import { recordingRunKey, recordingRunHome } from '../../../shared/recording-run-home'
+import type { RecordingRecovery } from '../../../shared/recording-recovery'
 // TalkWeaver History — the delivered-talks ledger (ADR-0035, direction-5).
 // Full-window Light Table surface joining recorded Sessions with published handout metadata.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -168,6 +170,7 @@ export default function History({
   /** Asked to open a Run's results (the Sessions page's Open results): a delivered Run's details; a planned Run's answers are on its Run page in Sessions. */
   resultsRequest?: { talkSlug: string; runId: string; vaultId?: string; nonce: number } | null
 }): JSX.Element | null {
+  const [recovery, setRecovery] = useState<RecordingRecovery[]>([])
   const [sessions, setSessions] = useState<RecordingSession[]>([])
   const [planned, setPlanned] = useState<RecordingSession[]>([])
   const [handouts, setHandouts] = useState<TalkHandouts>({})
@@ -219,20 +222,26 @@ export default function History({
   // The vault History reads: the one an Open results request names (a Run of another open vault), else the current vault.
   const [readVaultId, setReadVaultId] = useState<string | undefined>(undefined)
   const [loadedVaultId, setLoadedVaultId] = useState<string | undefined>(undefined) // the vault the lists below were read from
+  const reloadRequest = useRef(0)
   const reload = useCallback(async (): Promise<void> => {
-    let all, talks
+    const request = ++reloadRequest.current
+    let all, talks, interrupted
     try {
-      [all, talks] = await Promise.all([
+      [all, talks, interrupted] = await Promise.all([
         window.tw.history.listRuns(undefined, readVaultId),
-        window.tw.history.talkHandouts(readVaultId)
+        window.tw.history.talkHandouts(readVaultId),
+        window.tw.recording.listRecovery()
       ])
     } catch (cause) {
+      if (request !== reloadRequest.current) return
       // A failing IPC call must not silently blank History while the recordings sit right there on
       // disk (this happened once: a .DS_Store in _PRESENTATIONS threw ENOTDIR). Surface it; keep state.
       console.error('[history] reload failed', cause)
       flash("Couldn't load History — see the console. Your recordings are safe on disk.")
       return
     }
+    // Switching vaults can start another read before this one finishes. Only the latest may update History.
+    if (request !== reloadRequest.current) return
     // Guard against a malformed/partial session.json (e.g. a write interrupted mid-save): the UI keys,
     // sorts and seeds avatars off id/startedAt/talkSlug, and one missing field would crash the whole
     // window. Drop invalid sessions at this single load boundary rather than defending every access.
@@ -243,6 +252,7 @@ export default function History({
     setPlanned(valid.filter((run) => run.status === 'planned'))
     setSessions(valid.filter((run) => run.status !== 'planned'))
     setHandouts(talks)
+    setRecovery(interrupted)
     setLoadedVaultId(readVaultId)
   }, [flash, readVaultId])
 
@@ -284,8 +294,13 @@ export default function History({
     if (!resultsRequest || resultsRequest.nonce === handledResultsRequest.current) return
     if (resultsRequest.vaultId !== readVaultId) { setReadVaultId(resultsRequest.vaultId); return }
     if (loadedVaultId !== readVaultId) return // the lists are still the previous vault's
-    const same = (run: RecordingSession): boolean => run.id === resultsRequest.runId && run.talkSlug === resultsRequest.talkSlug
-    if (sessions.some(same)) { handledResultsRequest.current = resultsRequest.nonce; setDetailId(resultsRequest.runId) }
+    const same = (run: RecordingSession): boolean => run.kept !== 'app-data' && run.id === resultsRequest.runId && run.talkSlug === resultsRequest.talkSlug
+    const requestedRun = sessions.find(same)
+    if (requestedRun) {
+      handledResultsRequest.current = resultsRequest.nonce
+      setSelectedId(recordingRunKey(requestedRun))
+      setDetailId(recordingRunKey(requestedRun))
+    }
     else if (planned.some(same)) { handledResultsRequest.current = resultsRequest.nonce; void window.tw.tools.openRun(resultsRequest.talkSlug, resultsRequest.runId) }
   }, [resultsRequest, sessions, planned, readVaultId, loadedVaultId])
   const beginEditPlanned = useCallback((run: RecordingSession): void => { openPlanner(run) }, [openPlanner])
@@ -318,7 +333,7 @@ export default function History({
   }, [isOpen, reload])
 
   const rows = useMemo<Row[]>(() => sessions.map((session) => {
-    const h = handouts[session.talkSlug]
+    const h = session.kept === 'app-data' ? undefined : handouts[session.talkSlug]
     const handoutUrl = normaliseUrl(session.handoutUrl ?? null)
     return {
       session,
@@ -329,10 +344,11 @@ export default function History({
     }
   }), [sessions, handouts, liveMap])
 
-  const detailRow = useMemo(() => rows.find((row) => row.session.id === detailId) ?? null, [detailId, rows])
+  const detailRow = useMemo(() => rows.find((row) => recordingRunKey(row.session) === detailId) ?? null, [detailId, rows])
 
   // A Run's page in Sessions: where its handout is published and unpublished (work-files ticket 29).
   const openInSessions = useCallback((run: RecordingSession): void => {
+    if (recordingRunHome(run) === null) return
     void window.tw.tools.openRun(run.talkSlug, run.id).then((result) => {
       if (!result.success) flash(result.error ?? 'Sessions could not be opened')
     }).catch(() => flash('Sessions could not be opened'))
@@ -396,7 +412,7 @@ export default function History({
     return arr
   }, [rows, kinds, query, hasRecording, liveOnly, talkScope, sort])
 
-  const rowOrder = useMemo(() => visible.map((r) => r.session.id), [visible])
+  const rowOrder = useMemo(() => visible.map((r) => recordingRunKey(r.session)), [visible])
 
   useEffect(() => {
     if (!isOpen) return
@@ -436,48 +452,49 @@ export default function History({
     return Array.from(map.values()).sort((a, b) => (b.latest || '').localeCompare(a.latest || ''))
   }, [rows])
 
-  const selectedRow = useMemo(() => rows.find((r) => r.session.id === selectedId) ?? null, [rows, selectedId])
+  const selectedRow = useMemo(() => rows.find((r) => recordingRunKey(r.session) === selectedId) ?? null, [rows, selectedId])
 
   // Resolve the selected Run's instant-slide anchors against the talk as it is now.
-  const selectedInstantKey = selectedRow?.session.instantSlides?.length
-    ? `${selectedRow.session.talkSlug}\0${selectedRow.session.id}\0${selectedRow.session.instantSlides.map((e) => e.id + (e.added ? '+' : '')).join(',')}`
+  const selectedInstantKey = selectedRow && recordingRunHome(selectedRow.session) !== null && selectedRow.session.instantSlides?.length
+    ? `${recordingRunKey(selectedRow.session)}\0${selectedRow.session.instantSlides.map((e) => e.id + (e.added ? '+' : '')).join(',')}`
     : ''
   useEffect(() => {
     if (!selectedInstantKey || !selectedRow) return
     let cancelled = false
     const { talkSlug, id } = selectedRow.session
-    void window.tw.history.instantAnchors(talkSlug, id).then((anchors) => {
-      if (!cancelled) setInstantAnchors((prev) => ({ ...prev, [id]: anchors ?? {} }))
+    void window.tw.history.instantAnchors(talkSlug, id, recordingRunHome(selectedRow.session)).then((anchors) => {
+      if (!cancelled) setInstantAnchors((prev) => ({ ...prev, [recordingRunKey(selectedRow.session)]: anchors ?? {} }))
     }).catch(() => {})
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedInstantKey])
 
   // Reactions ticket 06: the slides the selected Run's questions and reactions name, as the talk is now.
-  const selectedFeedbackKey = selectedRow && (selectedRow.session.questions?.length || selectedRow.session.reactions?.length
+  const selectedFeedbackKey = selectedRow && recordingRunHome(selectedRow.session) !== null && (selectedRow.session.questions?.length || selectedRow.session.reactions?.length
     || selectedRow.session.boards?.length || selectedRow.session.polls?.length)
-    ? `${selectedRow.session.talkSlug}\0${selectedRow.session.id}\0${selectedRow.session.questions?.length ?? 0}\0${selectedRow.session.reactions?.length ?? 0}\0${selectedRow.session.boards?.length ?? 0}\0${selectedRow.session.polls?.length ?? 0}`
+    ? `${recordingRunKey(selectedRow.session)}\0${selectedRow.session.questions?.length ?? 0}\0${selectedRow.session.reactions?.length ?? 0}\0${selectedRow.session.boards?.length ?? 0}\0${selectedRow.session.polls?.length ?? 0}`
     : ''
   useEffect(() => {
     if (!selectedFeedbackKey || !selectedRow) return
     let cancelled = false
     const { talkSlug, id } = selectedRow.session
-    void window.tw.history.feedbackSlides(talkSlug, id).then((slides) => {
-      if (!cancelled) setFeedbackSlides((prev) => ({ ...prev, [id]: slides ?? {} }))
+    void window.tw.history.feedbackSlides(talkSlug, id, recordingRunHome(selectedRow.session)).then((slides) => {
+      if (!cancelled) setFeedbackSlides((prev) => ({ ...prev, [recordingRunKey(selectedRow.session)]: slides ?? {} }))
     }).catch(() => {})
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedFeedbackKey])
 
   const addInstantSlide = useCallback(async (row: Row, entry: RunInstantSlide): Promise<void> => {
-    const key = `${row.session.id}\0${entry.id}`
+    if (recordingRunHome(row.session) === null) return
+    const key = `${recordingRunKey(row.session)}\0${entry.id}`
     setInstantBusy(key)
     setInstantErrors((prev) => { const next = { ...prev }; delete next[key]; return next })
     try {
-      const result = await window.tw.history.addInstantSlide(row.session.talkSlug, row.session.id, entry.id)
+      const result = await window.tw.history.addInstantSlide(row.session.talkSlug, row.session.id, entry.id, recordingRunHome(row.session))
       if (result.ok) {
-        const run = result.run
-        setSessions((prev) => prev.map((session) => session.id === run.id && session.talkSlug === run.talkSlug ? run : session))
+        const run = { ...result.run, home: row.session.home, kept: row.session.kept }
+        setSessions((prev) => prev.map((session) => recordingRunKey(session) === recordingRunKey(row.session) ? run : session))
         flash(result.warning ?? `Added to the talk after slide ${result.afterSlideNumber}.`)
       } else {
         setInstantErrors((prev) => ({ ...prev, [key]: result.error }))
@@ -489,25 +506,28 @@ export default function History({
     }
   }, [flash])
   // Feedback-boards ticket 06: a Run changed in main (late cards pulled, a card put back) replaces its row.
-  const replaceRun = useCallback((run: RecordingSession): void => {
-    setSessions((prev) => prev.map((session) => session.id === run.id && session.talkSlug === run.talkSlug ? run : session))
-    setShareRun((current) => current && current.id === run.id && current.talkSlug === run.talkSlug ? run : current)
+  const replaceRun = useCallback((run: RecordingSession, source?: RecordingSession): void => {
+    const matches = (session: RecordingSession): boolean => source ? recordingRunKey(session) === recordingRunKey(source)
+      : session.kept !== 'app-data' && session.id === run.id && session.talkSlug === run.talkSlug
+    const located = (session: RecordingSession): RecordingSession => ({ ...run, home: session.home, kept: session.kept })
+    setSessions((prev) => prev.map((session) => matches(session) ? located(session) : session))
+    setShareRun((current) => current && matches(current) ? located(current) : current)
   }, [])
 
   const pullBoard = useCallback(async (row: Row, kind: 'refresh' | 'close'): Promise<void> => {
-    if (boardBusy) return
-    setBoardBusy({ runId: row.session.id, kind })
+    if (boardBusy || recordingRunHome(row.session) === null) return
+    setBoardBusy({ runId: recordingRunKey(row.session), kind })
     try {
       const result = kind === 'close'
-        ? await window.tw.history.boardClose(row.session.talkSlug, row.session.id)
-        : await window.tw.history.boardRefresh(row.session.talkSlug, row.session.id)
-      if (result.run) replaceRun(result.run)
+        ? await window.tw.history.boardClose(row.session.talkSlug, row.session.id, recordingRunHome(row.session))
+        : await window.tw.history.boardRefresh(row.session.talkSlug, row.session.id, recordingRunHome(row.session))
+      if (result.run) replaceRun(result.run, row.session)
       if (!result.ok) { flash(result.error); return }
       if (kind === 'close') {
-        setBoardPulled((prev) => { const next = { ...prev }; delete next[row.session.id]; return next })
+        setBoardPulled((prev) => { const next = { ...prev }; delete next[recordingRunKey(row.session)]; return next })
         flash(result.added ? `Board closed · ${result.added} late card${result.added === 1 ? '' : 's'} pulled in` : 'Board closed · the Run keeps it as it is')
       } else {
-        setBoardPulled((prev) => ({ ...prev, [row.session.id]: result.added }))
+        setBoardPulled((prev) => ({ ...prev, [recordingRunKey(row.session)]: result.added }))
         flash(result.warning ?? (result.added ? `${result.added} late card${result.added === 1 ? '' : 's'} pulled in` : 'No new cards on the board'))
       }
     } catch {
@@ -518,10 +538,11 @@ export default function History({
   }, [boardBusy, flash, replaceRun])
 
   const putBackCard = useCallback(async (row: Row, boardId: string, sessionId: string | undefined, cardId: string, putBack: boolean): Promise<void> => {
-    const result = await window.tw.history.boardPutBack(row.session.talkSlug, row.session.id, boardId, sessionId, cardId, putBack)
+    if (recordingRunHome(row.session) === null) return
+    const result = await window.tw.history.boardPutBack(row.session.talkSlug, row.session.id, boardId, sessionId, cardId, putBack, recordingRunHome(row.session))
       .catch(() => ({ ok: false as const, error: 'The card could not be changed.' }))
     if (!result.ok) { flash(result.error); return }
-    replaceRun(result.run)
+    replaceRun(result.run, row.session)
     // A share link that could not be pushed may still show (or hide) the card: say so.
     flash(result.warning ?? (putBack ? 'Card put back: on the board and the share link' : 'Card hidden again'))
   }, [flash, replaceRun])
@@ -529,14 +550,15 @@ export default function History({
   const kindFilterDefault = kinds.delivery && !kinds.rehearsal && !kinds.recording
   const anyFilter = !!(query || hasRecording || liveOnly || talkScope || !kindFilterDefault)
 
-  const openStudio = useCallback((sessionId?: string): void => {
+  const openStudio = useCallback((session?: RecordingSession): void => {
+    const sessionId = session && sessions.filter((s) => s.id === session.id).length > 1 ? recordingRunKey(session) : session?.id
     if (onShowStudio) {
       onShowStudio(sessionId)
       return
     }
     window.dispatchEvent(new CustomEvent('tw-open-studio', { detail: sessionId ? { sessionId } : undefined }))
     onClose()
-  }, [onClose, onShowStudio])
+  }, [onClose, onShowStudio, sessions])
 
   const copyHandout = useCallback(async (row: Row | null): Promise<void> => {
     if (!row?.handoutUrl) { flash('No handout link to copy'); return }
@@ -573,19 +595,19 @@ export default function History({
   const beginEdit = useCallback((row: Row): void => {
     setMenu(null)
     setKindChoice(null)
-    setEditingId(row.session.id)
+    setEditingId(recordingRunKey(row.session))
     setContextDraft(row.session.context ?? '')
   }, [])
 
   const commitContext = useCallback(async (): Promise<void> => {
     if (!editingId) return
-    const row = rows.find((r) => r.session.id === editingId)
+    const row = rows.find((r) => recordingRunKey(r.session) === editingId)
     if (!row) { setEditingId(null); return }
     const next = contextDraft.trim()
     if (next !== (row.session.context ?? '')) {
-      const res = await window.tw.recording.setContext(row.session.talkSlug, row.session.id, next)
+      const res = await window.tw.recording.setContext(row.session.talkSlug, row.session.id, next, recordingRunHome(row.session))
       if (res.ok) {
-        setSessions((all) => all.map((s) => s.id === row.session.id ? { ...s, context: next } : s))
+        setSessions((all) => all.map((s) => recordingRunKey(s) === recordingRunKey(row.session) ? { ...s, context: next } : s))
         flash('Context updated')
       } else flash('Context could not be updated')
     }
@@ -594,9 +616,9 @@ export default function History({
 
   const uploadRow = useCallback(async (row: Row | null): Promise<void> => {
     if (!row || !row.session.audio || row.session.audio.uploaded || uploadBusy) return
-    setUploadBusy(row.session.id)
+    setUploadBusy(recordingRunKey(row.session))
     try {
-      const res = await window.tw.recording.upload(row.session.talkSlug, row.session.id)
+      const res = await window.tw.recording.upload(row.session.talkSlug, row.session.id, recordingRunHome(row.session))
       if (res.ok && res.uploaded) {
         clearUploadFailure()
         flash('Uploaded to R2')
@@ -616,9 +638,9 @@ export default function History({
   }, [])
 
   const changeKind = useCallback(async (row: Row, kind: RecordingKind): Promise<void> => {
-    const res = await window.tw.recording.setKind(row.session.talkSlug, row.session.id, kind)
+    const res = await window.tw.recording.setKind(row.session.talkSlug, row.session.id, kind, recordingRunHome(row.session))
     if (res.ok) {
-      setSessions((all) => all.map((s) => s.id === row.session.id ? { ...s, kind: res.kind ?? kind } : s))
+      setSessions((all) => all.map((s) => recordingRunKey(s) === recordingRunKey(row.session) ? { ...s, kind: res.kind ?? kind } : s))
       setMenu(null)
       setKindChoice(null)
       flash(`Changed to ${kindLabel(res.kind ?? kind)}`)
@@ -626,7 +648,7 @@ export default function History({
   }, [flash])
 
   const deleteRow = useCallback(async (row: Row): Promise<void> => {
-    const res = await window.tw.recording.deleteSession(row.session.talkSlug, row.session.id)
+    const res = await window.tw.recording.deleteSession(row.session.talkSlug, row.session.id, recordingRunHome(row.session))
     if (res.ok) {
       setConfirmDelete(null)
       setMenu(null)
@@ -709,11 +731,11 @@ export default function History({
         const next = e.key === 'ArrowDown' ? Math.min(rowOrder.length - 1, cur + 1) : Math.max(0, cur < 0 ? 0 : cur - 1)
         const id = rowOrder[next]
         setSelectedId(id)
-        requestAnimationFrame(() => document.querySelector(`[data-history-sid="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest' }))
+        requestAnimationFrame(() => document.querySelector(`[data-history-key="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest' }))
         return
       }
       if (!selectedRow) return
-      if (e.key === 'Enter' && hasRecordedAudio(selectedRow.session)) openStudio(selectedRow.session.id)
+      if (e.key === 'Enter' && hasRecordedAudio(selectedRow.session)) openStudio(selectedRow.session)
       else if (key === 'c') void copyHandout(selectedRow)
       else if (key === 'o') openHandout(selectedRow)
       else if (key === 'l') void recheckOne(selectedRow)
@@ -846,6 +868,11 @@ export default function History({
             <div>Date</div><div>Event / audience</div><div>Slide set</div><div>Handout</div>
           </div>
           <div className="twh-scroll">
+            {recovery.length ? <section aria-label="Recording recovery">{recovery.map((run) => (
+              <div className="twh-group-head" key={run.sessionId} data-recording-recovery={run.sessionId}>
+                <span>{run.talkTitle}: {run.message}</span>
+              </div>
+            ))}</section> : null}
             {rows.length === 0 ? (
               <EmptyNone openStudio={() => openStudio()} openSheet={() => setSheet(true)} />
             ) : visible.length === 0 ? (
@@ -857,15 +884,15 @@ export default function History({
                     <div className="twh-group-head"><span className="g-name">{g.name}</span>{g.when && <span className="g-when">{g.when}</span>}<span className="g-count">{g.items.length} {g.items.length === 1 ? 'talk' : 'talks'}</span></div>
                     {g.items.map((row, i) => (
                       <HistoryEntry
-                        key={row.session.id}
+                        key={recordingRunKey(row.session)}
                         row={row}
                         index={i}
-                        selected={selectedId === row.session.id}
-                        editing={editingId === row.session.id}
+                        selected={selectedId === recordingRunKey(row.session)}
+                        editing={editingId === recordingRunKey(row.session)}
                         contextDraft={contextDraft}
-                        uploadBusy={uploadBusy === row.session.id}
-                        onSelect={() => setSelectedId(row.session.id)}
-                        onOpenStudio={() => openStudio(row.session.id)}
+                        uploadBusy={uploadBusy === recordingRunKey(row.session)}
+                        onSelect={() => setSelectedId(recordingRunKey(row.session))}
+                        onOpenStudio={() => openStudio(row.session)}
                         onBeginEdit={() => beginEdit(row)}
                         onDraft={setContextDraft}
                         onCommit={() => void commitContext()}
@@ -873,23 +900,23 @@ export default function History({
                         onOpenHandout={() => openHandout(row)}
                         onRecheck={() => void recheckOne(row)}
                         onUpload={() => void uploadRow(row)}
-                        onMenu={(x, y) => { setSelectedId(row.session.id); setMenu({ id: row.session.id, x, y }); setKindChoice(null); setConfirmDelete(null) }}
+                        onMenu={(x, y) => { setSelectedId(recordingRunKey(row.session)); setMenu({ id: recordingRunKey(row.session), x, y }); setKindChoice(null); setConfirmDelete(null) }}
                         boardBadge={boardLedgerBadge(row.session, Date.now())}
                       >
-                        {selectedId === row.session.id && row.session.polls?.length ? (
-                          <RunPollsBlock run={row.session} slides={feedbackSlides[row.session.id]} />
+                        {selectedId === recordingRunKey(row.session) && row.session.polls?.length ? (
+                          <RunPollsBlock run={row.session} slides={feedbackSlides[recordingRunKey(row.session)]} />
                         ) : null}
-                        {selectedId === row.session.id ? (row.session.boards ?? []).map((board) => (
+                        {selectedId === recordingRunKey(row.session) && recordingRunHome(row.session) !== null ? (row.session.boards ?? []).map((board) => (
                           <RunBoardBlock
                             key={runBoardKey(board)}
                             sameBoardTwice={(row.session.boards ?? []).filter((other) => other.id === board.id).length > 1}
                             run={row.session}
                             talkTitle={row.title}
                             board={board}
-                            slide={board.slideId ? feedbackSlides[row.session.id]?.[board.slideId] : undefined}
+                            slide={board.slideId ? feedbackSlides[recordingRunKey(row.session)]?.[board.slideId] : undefined}
                             now={Date.now()}
-                            busy={boardBusy?.runId === row.session.id ? boardBusy.kind : null}
-                            pulled={boardPulled[row.session.id] ?? null}
+                            busy={boardBusy?.runId === recordingRunKey(row.session) ? boardBusy.kind : null}
+                            pulled={boardPulled[recordingRunKey(row.session)] ?? null}
                             onRefresh={() => void pullBoard(row, 'refresh')}
                             onCloseNow={() => void pullBoard(row, 'close')}
                             onPutBack={(cardId, putBack) => void putBackCard(row, board.id, board.sessionId, cardId, putBack)}
@@ -897,22 +924,22 @@ export default function History({
                             flash={flash}
                           />
                         )) : null}
-                        {selectedId === row.session.id && row.session.instantSlides?.length ? (
+                        {selectedId === recordingRunKey(row.session) && recordingRunHome(row.session) !== null && row.session.instantSlides?.length ? (
                           <InstantSlidesShown
                             entries={row.session.instantSlides}
-                            anchors={instantAnchors[row.session.id]}
-                            busyId={instantBusy?.startsWith(`${row.session.id}\0`) ? instantBusy.slice(row.session.id.length + 1) : null}
+                            anchors={instantAnchors[recordingRunKey(row.session)]}
+                            busyId={instantBusy?.startsWith(`${recordingRunKey(row.session)}\0`) ? instantBusy.slice(recordingRunKey(row.session).length + 1) : null}
                             errors={Object.fromEntries(Object.entries(instantErrors)
-                              .filter(([key]) => key.startsWith(`${row.session.id}\0`))
-                              .map(([key, value]) => [key.slice(row.session.id.length + 1), value]))}
+                              .filter(([key]) => key.startsWith(`${recordingRunKey(row.session)}\0`))
+                              .map(([key, value]) => [key.slice(recordingRunKey(row.session).length + 1), value]))}
                             onAdd={(entry) => void addInstantSlide(row, entry)}
                           />
                         ) : null}
-                        {selectedId === row.session.id && row.session.questions?.length ? (
-                          <RunQuestions questions={row.session.questions} startedAt={row.session.startedAt} slides={feedbackSlides[row.session.id]} />
+                        {selectedId === recordingRunKey(row.session) && row.session.questions?.length ? (
+                          <RunQuestions questions={row.session.questions} startedAt={row.session.startedAt} slides={feedbackSlides[recordingRunKey(row.session)]} />
                         ) : null}
-                        {selectedId === row.session.id && row.session.reactions?.length ? (
-                          <RunReactions reactions={row.session.reactions} slides={feedbackSlides[row.session.id]} />
+                        {selectedId === recordingRunKey(row.session) && row.session.reactions?.length ? (
+                          <RunReactions reactions={row.session.reactions} slides={feedbackSlides[recordingRunKey(row.session)]} />
                         ) : null}
                       </HistoryEntry>
                     ))}
@@ -936,13 +963,13 @@ export default function History({
 
       {menu && selectedRow && (
         <div className="twh-menu open" style={{ left: menu.x, top: menu.y }} onClick={(e) => e.stopPropagation()}>
-          {confirmDelete === selectedRow.session.id ? (
+          {confirmDelete === recordingRunKey(selectedRow.session) ? (
             <div className="twh-confirm">
               <p>Delete this session?</p>
               <button className="danger" onClick={() => void deleteRow(selectedRow)}>Delete</button>
               <button onClick={() => setConfirmDelete(null)}>Cancel</button>
             </div>
-          ) : kindChoice === selectedRow.session.id ? (
+          ) : kindChoice === recordingRunKey(selectedRow.session) ? (
             <div className="twh-confirm twh-kind-choice">
               <p>Change kind</p>
               {KIND_ORDER.map((kind) => (
@@ -959,17 +986,17 @@ export default function History({
           ) : (
             <>
               {hasRecordedAudio(selectedRow.session) && (
-                <button onClick={() => openStudio(selectedRow.session.id)}><Play className="lt-icon" /> Open in Studio</button>
+                <button onClick={() => openStudio(selectedRow.session)}><Play className="lt-icon" /> Open in Studio</button>
               )}
-              <button onClick={() => { setDetailId(selectedRow.session.id); setMenu(null) }}><FileText className="lt-icon" /> Run details</button>
-              <button data-open-in-sessions onClick={() => { setMenu(null); openInSessions(selectedRow.session) }}><CalendarDays className="lt-icon" /> Open in Sessions</button>
+              <button onClick={() => { setDetailId(recordingRunKey(selectedRow.session)); setMenu(null) }}><FileText className="lt-icon" /> Run details</button>
+              {recordingRunHome(selectedRow.session) !== null && <button data-open-in-sessions onClick={() => { setMenu(null); openInSessions(selectedRow.session) }}><CalendarDays className="lt-icon" /> Open in Sessions</button>}
               <button onClick={() => void copyHandout(selectedRow)}><Copy className="lt-icon" /> Copy link</button>
               <button onClick={() => openHandout(selectedRow)}><ExternalLink className="lt-icon" /> Open handout</button>
               <button onClick={() => void recheckOne(selectedRow)}><RefreshCw className="lt-icon" /> Re-check</button>
               <button onClick={() => beginEdit(selectedRow)}><Pencil className="lt-icon" /> Edit context</button>
-              <button onClick={() => setKindChoice(selectedRow.session.id)}><Tag className="lt-icon" /> Change kind…</button>
+              <button onClick={() => setKindChoice(recordingRunKey(selectedRow.session))}><Tag className="lt-icon" /> Change kind…</button>
               <div className="msep" />
-              <button className="danger" onClick={() => setConfirmDelete(selectedRow.session.id)}><Trash2 className="lt-icon" /> Delete…</button>
+              <button className="danger" onClick={() => setConfirmDelete(recordingRunKey(selectedRow.session))}><Trash2 className="lt-icon" /> Delete…</button>
             </>
           )}
         </div>
@@ -982,7 +1009,7 @@ export default function History({
             <div className="twh-talkbar"><b>{detailRow.title}</b><span className="badge-ever">✦ EVERGREEN handout</span>{detailRow.evergreenUrl ? <button onClick={() => void window.tw.shell.openExternal(detailRow.evergreenUrl!)}>{displayUrl(detailRow.evergreenUrl)}</button> : <span className="muted">not published</span>}<small>the talk’s canonical latest-full-talk link · Run handouts never touch it</small></div>
             <section className="twh-run-card">
               <div className="twh-run-head"><span className={`twh-slide-set ${detailRow.session.slideSet?.kind ?? (detailRow.session.pathwayId ? 'pathway' : 'full')}`}>{detailRow.session.slideSet?.kind === 'pathway' || detailRow.session.pathwayId ? `◇ ${detailRow.session.slideSet?.kind === 'pathway' ? detailRow.session.slideSet.pathwayId : detailRow.session.pathwayId}` : '▣ Full talk'}</span><b>{detailRow.session.eventTitle ?? detailRow.title}</b><span>· {[detailRow.session.audience, detailRow.session.plannedDate].filter(Boolean).join(' · ')}</span></div>
-              <div className="twh-run-handout-line"><b>Run handout</b>{detailRow.handoutUrl ? <><span className="badge-run">RUN</span><button className="url" onClick={() => openHandout(detailRow)}>{displayUrl(detailRow.handoutUrl)}</button><span className="push" /><button className="twh-btn" onClick={() => void copyHandout(detailRow)}>Copy URL</button></> : <><span className="muted">Not yet published</span><span className="push" /></>}<button className="twh-btn" data-open-in-sessions onClick={() => openInSessions(detailRow.session)}>Open in Sessions</button></div>
+              <div className="twh-run-handout-line"><b>Run handout</b>{detailRow.handoutUrl ? <><span className="badge-run">RUN</span><button className="url" onClick={() => openHandout(detailRow)}>{displayUrl(detailRow.handoutUrl)}</button><span className="push" /><button className="twh-btn" onClick={() => void copyHandout(detailRow)}>Copy URL</button></> : <><span className="muted">Not yet published</span><span className="push" /></>}{recordingRunHome(detailRow.session) !== null && <button className="twh-btn" data-open-in-sessions onClick={() => openInSessions(detailRow.session)}>Open in Sessions</button>}</div>
               <p>Built from this Run’s slide set · title and event printed on the cover · own URL · published and unpublished from the Run’s checklist in Sessions</p>
             </section>
           </div>
@@ -1039,6 +1066,7 @@ function HistoryEntry(props: {
       className={`twh-entry ${selected ? 'selected' : ''}`}
       style={{ ['--i' as string]: index }}
       data-history-sid={row.session.id}
+      data-history-key={recordingRunKey(row.session)}
       onClick={props.onSelect}
     >
       <button
@@ -1065,6 +1093,7 @@ function HistoryEntry(props: {
           {props.boardBadge ? <span className="twh-board-badge" data-board-badge><LayoutGrid className="lt-icon" />{props.boardBadge}</span> : null}
         </div>
         <div className="tk-ctx">
+          {row.session.kept === 'app-data' ? <span className="upl local">kept on this Mac</span> : null}
           {editing ? (
             <input
               className="ctx-input"

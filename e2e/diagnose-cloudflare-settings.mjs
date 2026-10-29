@@ -1,4 +1,4 @@
-// Settings → Cloudflare in the real app (spec docs/plans/cloudflare-setup-in-app, ticket 03): the
+// Settings window → Cloudflare page in the real app (spec docs/plans/cloudflare-setup-in-app, ticket 03): the
 // connection header and the Publishing handouts row, in the spec's words, through the window a
 // person uses. A throwaway user-data folder and vault, made-up tokens and the fake Cloudflare API on
 // this computer's loopback address (the app is pointed at it by the test-only override, which a
@@ -28,6 +28,11 @@
 // date: it sends only its own lookup, attach and removal requests, and no script upload; decisions
 // R2, R3 and R11), and have not been run either.
 //
+// Since 0.42 Settings is its own window (⌘, from the editor window; a page of it is picked with its nav button). The token,
+// the account, Disconnect, the share-link address and the Cloudflare fields can be changed only from that window: the editor
+// window is refused (check 23). The recording keys are typed in Accounts and keys as id:secret, and the endpoint and
+// bucket are the Recording page's rows (set here through the editor's call, which main still answers).
+//
 // TW_SHOTS_DIR=<dir> saves a picture of the Cloudflare screen in each state.
 import { _electron as electron } from 'playwright'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
@@ -35,6 +40,7 @@ import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { createCheckLedger } from './lib/check-ledger.mjs'
+import { findSettingsWindow, openSettingsWindow, closeSettingsWindow, gotoSection, shutdownApp } from './lib/settings-window.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
 import { REPLY_TEXT_MARK, WORKERS_SUBDOMAIN, startCloudflareApiStub } from '../scripts/lib/cloudflare-api-stub.mjs'
 import { S3_REPLY_TEXT_MARK, startS3Stub } from '../scripts/lib/s3-stub.mjs'
@@ -89,6 +95,7 @@ const CHECKS = [
   'the Worker deleted in Cloudflare\'s dashboard: Check again finds it gone and the row reads Not set up; Set up going live then makes new keys and ends Ready',
   'a custom domain on the site: the Publishing handouts row shows it ("Site talkweaver-handouts · handouts.example", a link); the Share-link domain row suggests share.handouts.example (also in the empty field) with "Use share.handouts.example"; nothing is attached before the press; pressing it saves it and attaches it to the live service now (Attached); the live address stays the Worker\'s own',
   'with a token that may not touch the zone\'s Workers routes, pressing "Use share.handouts.example" saves it, attaches nothing, and the row says "Add the permission Zone · Workers Routes · Edit to your Cloudflare token, then press Check again"',
+  'the Settings window\'s own calls are refused from the editor window and allowed from the Settings window: saving a token, choosing an account, Disconnect, the share-link address and the Cloudflare fields change nothing when the editor window asks (the Settings-only message), and work from the Settings window',
 ]
 const ledger = createCheckLedger(CHECKS)
 const record = (index, ok, detail) => ledger.record(CHECKS[index], Boolean(ok), detail)
@@ -127,7 +134,7 @@ try {
   for (const name of ['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'SHELL', 'DISPLAY', 'SystemRoot', 'SYSTEMROOT', 'windir', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'USERNAME', 'PATHEXT', 'ComSpec']) {
     if (process.env[name] !== undefined) env[name] = process.env[name]
   }
-  app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`], cwd: root, env })
+  app = await electron.launch({ args: ['.', '--use-mock-keychain', `--user-data-dir=${userData}`], cwd: root, env })
   app.process().stdout.on('data', (chunk) => { output += chunk })
   app.process().stderr.on('data', (chunk) => { output += chunk })
   // Out of the way of whoever is at this computer (as the secrets gate does). TW_E2E_SHOW=1 leaves the window visible.
@@ -158,23 +165,26 @@ try {
     `config keys now: ${Object.keys(afterNotice).join(', ')}`)
   if (noticeShown) await notice.getByRole('button', { name: 'Dismiss' }).click()
 
-  const SETTINGS = '[aria-label="Settings"]'
-  const settings = page.locator(SETTINGS).first()
-  const part = (name) => settings.locator(`[data-cloudflare="${name}"]`)
+  // The Settings window (its own Page, replaced each time it is opened). `settings` is whatever window is open now.
+  let sw = null
+  const settings = new Proxy({}, { get: (_target, name) => { const value = sw[name]; return typeof value === 'function' ? value.bind(sw) : value } })
+  const part = (name) => sw.locator(`[data-cloudflare="${name}"]`)
   const openSettings = async () => {
-    if (await page.locator(SETTINGS).count() === 0) await page.keyboard.press('ControlOrMeta+,')
+    sw = findSettingsWindow(app) ? await openSettingsWindow(app, page, 'cloudflare') : await openSettingsWindow(app, page, 'cloudflare')
     await part('connection').waitFor({ state: 'visible' })
     await part('connection').scrollIntoViewIfNeeded()
   }
   const closeSettings = async () => {
-    await page.keyboard.press('Escape')
-    await page.locator(SETTINGS).waitFor({ state: 'detached' })
+    await closeSettingsWindow(app)
+    sw = null
   }
-  const headerIs = (text) => page.waitForFunction((wanted) => {
+  /** Run something in the Settings window (its preload has the calls only it may make), opening it if it is closed. */
+  const inSettings = async (fn, arg) => { if (!findSettingsWindow(app)) await openSettings(); sw = findSettingsWindow(app); return sw.evaluate(fn, arg) }
+  const headerIs = (text) => sw.waitForFunction((wanted) => {
     const label = document.querySelector('[data-cloudflare="connection-label"]')?.textContent ?? ''
     return typeof wanted === 'string' ? label === wanted : new RegExp(wanted.pattern).test(label)
   }, text, { timeout: 40_000 })
-  const settled = () => page.waitForFunction(() => document.querySelector('[data-cloudflare="connection"]')?.getAttribute('data-busy') === 'no', null, { timeout: 40_000 })
+  const settled = () => sw.waitForFunction(() => document.querySelector('[data-cloudflare="connection"]')?.getAttribute('data-busy') === 'no', null, { timeout: 40_000 })
   const buttons = async () => (await part('connection').locator('button').allInnerTexts()).map((text) => text.trim())
   const rowText = async () => (await part('publishing').innerText()).replace(/\s+/g, ' ').trim()
   const shot = async (name) => {
@@ -198,6 +208,31 @@ try {
   record(1, await part('token').locator('input[type="password"]').count() === 1 && named.every((line) => howTo.includes(line))
     && (await rowText()) === NOTHING_TO_REPORT, named.filter((line) => !howTo.includes(line)).join('; '))
   await shot('1-not-connected-how-to-make-a-token')
+  // 23. The new rule: these calls are the Settings window's own. The editor window is refused and nothing changes.
+  const SETTINGS_ONLY = 'This can be changed only in the Settings window.'
+  const fromEditor = await page.evaluate(async (token) => ({
+    save: await window.tw.cloudflare.saveToken(token),
+    choose: await window.tw.cloudflare.chooseAccount('acc-ada-0001'),
+    disconnect: await window.tw.cloudflare.disconnect(),
+    share: await window.tw.cloudflare.useShareDomain(),
+    config: await window.tw.publish.setConfig({ accountId: 'acc-from-editor', project: 'from-editor', baseUrl: '', workerBaseUrl: '', useShortIds: false, shareDomain: '' }),
+    saved: await window.tw.publish.getConfig(),
+  }), TOKENS.full)
+  const refusedFromEditor = fromEditor.save.ok === false && fromEditor.save.error === SETTINGS_ONLY && fromEditor.choose.ok === false && fromEditor.choose.error === SETTINGS_ONLY
+    && fromEditor.disconnect.ok === false && fromEditor.disconnect.error === SETTINGS_ONLY && fromEditor.share.ok === false
+    && fromEditor.config.success === false && fromEditor.config.error === SETTINGS_ONLY
+    && fromEditor.saved.hasToken === false && fromEditor.saved.accountId === '' && fromEditor.saved.project === ''
+    && !existsSync(join(userData, 'cf-pages-token.bin')) && !('cfAccountId' in config())
+  // ...and the Settings window is allowed: the Cloudflare field is saved from there, then put back.
+  const fromSettings = await inSettings(async () => {
+    const before = await window.tw.publish.getConfig()
+    const saved = await window.tw.publish.setConfig({ accountId: before.accountId, project: 'from-settings', baseUrl: before.baseUrl, workerBaseUrl: before.workerBaseUrl, useShortIds: before.useShortIds, shareDomain: '' })
+    const after = await window.tw.publish.getConfig()
+    await window.tw.publish.setConfig({ accountId: before.accountId, project: before.project, baseUrl: before.baseUrl, workerBaseUrl: before.workerBaseUrl, useShortIds: before.useShortIds, shareDomain: '' })
+    return { saved, project: after.project }
+  })
+  record(23, refusedFromEditor && fromSettings.saved.success === true && fromSettings.project === 'from-settings',
+    refusedFromEditor ? `editor window refused every call; Settings window saved ${fromSettings.project}` : `editor replies: ${JSON.stringify({ save: fromEditor.save.error, choose: fromEditor.choose.error, disconnect: fromEditor.disconnect.error, share: fromEditor.share.error, config: fromEditor.config })}`)
   await settings.getByRole('button', { name: 'How to make a token' }).click()
 
   // 2. Paste a token; Cloudflare is slow to answer; the editor is used meanwhile.
@@ -230,7 +265,7 @@ try {
     && await settings.locator('input[placeholder="Cloudflare account id"]').inputValue() === ADA.id, (await buttons()).join(' · '))
 
   // The rows as laid out: where the list, a row's name and a row's right-hand edge are.
-  const layout = () => page.evaluate(() => {
+  const layout = () => sw.evaluate(() => {
     const box = (element) => { const r = element.getBoundingClientRect(); return { left: Math.round(r.left), right: Math.round(r.right), top: Math.round(r.top), bottom: Math.round(r.bottom) } }
     const list = document.querySelector('[data-cloudflare="features"]')
     const style = getComputedStyle(list)
@@ -259,7 +294,7 @@ try {
   const offered = await create.count() === 1
   await shot('3-connected-no-site-yet')
   await create.click()
-  await page.waitForFunction(() => document.querySelector('[data-cloudflare="publishing"]')?.getAttribute('data-state') === 'ready')
+  await sw.waitForFunction(() => document.querySelector('[data-cloudflare="publishing"]')?.getAttribute('data-state') === 'ready')
   await settled()
   const layoutReady = await layout()
   record(4, before === 'Publishing handouts No site yet Create talkweaver-handouts' && layoutNoSite.rows[0].edgeText === 'Create talkweaver-handouts' && offered
@@ -268,27 +303,35 @@ try {
     && api.reached().filter((line) => line === `POST /accounts/${ADA.id}/pages/projects`).length === 1, `before: ${before} · after: ${await rowText()}`)
   await shot('4-connected-ready')
   // The Share-link domain row (ticket 06): "None" with no address; typing one in Settings asks again and the row turns Attached; cleared again for what follows.
-  const withShareDomain = (shareDomain) => page.evaluate(async (domain) => {
+  const withShareDomain = (shareDomain) => inSettings(async (domain) => {
     const saved = await window.tw.publish.getConfig()
     return window.tw.publish.setConfig({ ...saved, shareDomain: domain })
   }, shareDomain)
   await withShareDomain('drafts.handouts.example')
-  await page.waitForFunction(() => document.querySelector('[data-cloudflare="share-link"]')?.getAttribute('data-state') === 'attached')
+  await sw.waitForFunction(() => document.querySelector('[data-cloudflare="share-link"]')?.getAttribute('data-state') === 'attached')
   const attachedText = (await part('share-link').innerText()).replace(/\s+/g, ' ').trim()
   await shot('4b-share-link-attached')
   await withShareDomain('')
-  await page.waitForFunction(() => document.querySelector('[data-cloudflare="share-link"]')?.getAttribute('data-state') === 'none')
+  await sw.waitForFunction(() => document.querySelector('[data-cloudflare="share-link"]')?.getAttribute('data-state') === 'none')
   // The Recording storage row (ticket 06), in the same list. Its keys are typed where a person types them.
   const recordingText = async () => (await part('recording-storage').innerText()).replace(/\s+/g, ' ').trim()
-  const recordingIs = (state) => page.waitForFunction((wanted) => {
+  const recordingIs = (state) => sw.waitForFunction((wanted) => {
     const row = document.querySelector('[data-cloudflare="recording-storage"]')
     return row?.getAttribute('data-state') === wanted && row.getAttribute('data-checking') === 'no'
   }, state)
-  const withStorage = (endpoint, bucket) => page.evaluate(({ endpoint: at, bucket: named }) => window.tw.recording.setStorage({ endpoint: at, bucket: named, discardSeconds: 20 }), { endpoint, bucket })
+  // The endpoint and bucket are a Settings-window-only change (main refuses the editor window).
+  const withStorage = (endpoint, bucket) => inSettings(({ endpoint: at, bucket: named }) => window.tw.recording.setStorage({ endpoint: at, bucket: named, discardSeconds: 20 }), { endpoint, bucket })
+  // The recording keys are typed where a person types them since 0.42: Accounts and keys, as id:secret (Add key… or Replace key…).
   const typeKeys = async (keys) => {
-    await settings.getByLabel('Recording storage access key id').fill(keys.id)
-    await settings.getByLabel('Recording storage secret access key').fill(keys.secret)
-    await settings.getByRole('button', { name: 'Save keys' }).click()
+    await gotoSection(sw, 'accounts')
+    const slot = sw.locator('[data-slot="accounts.recording"]')
+    const open = slot.getByRole('button', { name: /^(Add key…|Replace key…)$/ })
+    await open.click()
+    await slot.locator('input[aria-label="Key for Recording storage keys"]').fill(`${keys.id}:${keys.secret}`)
+    await slot.getByRole('button', { name: 'Add key' }).click()
+    await slot.locator('input[type="password"]').waitFor({ state: 'detached' })
+    await gotoSection(sw, 'cloudflare')
+    await part('connection').waitFor({ state: 'visible' })
   }
   const pressCheck = () => part('recording-storage-check').click()
   const recordingSeen = []
@@ -297,7 +340,7 @@ try {
   const noCheckYet = await part('recording-storage-check').count() === 0
   await shot('15-recording-storage-not-set-up')
   await withStorage(s3.endpoint, 'talks')
-  await page.waitForFunction(() => document.querySelector('[data-cloudflare="recording-storage-detail"]')?.textContent?.includes('your access keys'))
+  await sw.waitForFunction(() => document.querySelector('[data-cloudflare="recording-storage-detail"]')?.textContent?.includes('your access keys'))
   recordingSeen.push(await recordingText())
   await typeKeys(S3_KEYS.good)
   await recordingIs('not-checked')
@@ -321,7 +364,8 @@ try {
   await recordingIs('keys-rejected')
   recordingSeen.push(await recordingText())
   await shot('19-recording-storage-keys-rejected')
-  const keyFields = await settings.getByLabel('Recording storage secret access key').inputValue() + await settings.getByLabel('Recording storage access key id').inputValue()
+  // The key form clears itself and closes on Save: no field of the window still holds a key.
+  const keyFields = (await sw.locator('input').evaluateAll((inputs) => inputs.map((input) => input.value).join(''))).includes('test-token') ? 'a key is still in a field' : ''
   const recordingWanted = [
     'Recording storage Recordings stay on this computer until storage is set up Not set up Set up recording storage',
     'Recording storage Enter your access keys to finish setting up Not set up Set up recording storage',
@@ -340,7 +384,7 @@ try {
 
   // 17. Before going live is set up: the row offers it, and a publish goes up without live features (D9: set up on purpose).
   const liveText = async () => (await part('live-service').innerText()).replace(/\s+/g, ' ').trim()
-  const liveIs = (state) => page.waitForFunction((wanted) => document.querySelector('[data-cloudflare="live-service"]')?.getAttribute('data-state') === wanted, state, { timeout: 60_000 })
+  const liveIs = (state) => sw.waitForFunction((wanted) => document.querySelector('[data-cloudflare="live-service"]')?.getAttribute('data-state') === wanted, state, { timeout: 60_000 })
   const workersWrites = () => api.requests.filter((request) => request.method !== 'GET' && request.path.includes('/workers/')).length
   const LIVE_UPLOAD = `PUT /accounts/${ADA.id}/workers/scripts/talkweaver-live-sessions`
   const liveUploads = () => api.reached().filter((line) => line === LIVE_UPLOAD).length
@@ -419,7 +463,7 @@ try {
   const isScriptUpload = (line) => /^PUT \S+\/workers\/scripts\/[a-z0-9_-]+$/.test(line)
   const uploadsBefore = api.reached().filter(isScriptUpload).length
   const shareChangedAt = api.requests.length
-  const marked = await page.evaluate(async () => {
+  const marked = await inSettings(async () => {
     const current = await window.tw.publish.getConfig()
     return window.tw.publish.setConfig({ accountId: current.accountId, project: current.project, baseUrl: current.baseUrl, workerBaseUrl: current.workerBaseUrl, useShortIds: current.useShortIds, shareDomain: 'drafts.example.test' })
   })
@@ -521,7 +565,7 @@ try {
 
   // 21. A custom domain on the site (a site with its own web address): the handout address on the row, and share.<it> suggested.
   const shareText = async () => (await part('share-link').innerText()).replace(/\s+/g, ' ').trim()
-  const shareIs = (state) => page.waitForFunction((wanted) => document.querySelector('[data-cloudflare="share-link"]')?.getAttribute('data-state') === wanted, state, { timeout: 30_000 })
+  const shareIs = (state) => sw.waitForFunction((wanted) => document.querySelector('[data-cloudflare="share-link"]')?.getAttribute('data-state') === wanted, state, { timeout: 30_000 })
     .catch(async (error) => { throw new Error(`share-link row not ${state}: it is ${await part('share-link').getAttribute('data-state').catch(() => 'gone')} (${await shareText().catch(() => '')}); header ${await part('connection-label').innerText().catch(() => '')}; ${error.message}`) })
   const SHARE = 'share.handouts.example'
   const attachesOf = () => api.requests.filter((request) => request.method === 'PUT' && request.path.endsWith('/domains/records') && String(request.body ?? '').includes(SHARE)).length
@@ -529,7 +573,7 @@ try {
   api.model.sites.get(ADA.id).get('talkweaver-handouts').domains = [{ id: 'domain-one', name: 'handouts.example', status: 'active' }]
   await settings.getByRole('button', { name: 'Check again' }).click()
   await settled()
-  await page.waitForFunction(() => document.querySelector('[data-cloudflare="share-link-label"]')?.tagName === 'BUTTON')
+  await sw.waitForFunction(() => document.querySelector('[data-cloudflare="share-link-label"]')?.tagName === 'BUTTON')
   const addressRow = await rowText()
   const addressLink = await part('publishing-address').getAttribute('href')
   const suggestedRow = await shareText()
@@ -555,7 +599,7 @@ try {
   api.model.workerDomains.set(ADA.id, (api.model.workerDomains.get(ADA.id) ?? []).filter((domain) => domain.hostname !== SHARE))
   await settings.getByRole('button', { name: 'Check again' }).click()
   await settled()
-  await page.waitForFunction(() => document.querySelector('[data-cloudflare="share-link-label"]')?.tagName === 'BUTTON')
+  await sw.waitForFunction(() => document.querySelector('[data-cloudflare="share-link-label"]')?.tagName === 'BUTTON')
   const attachesBefore22 = attachesOf()
   await settings.locator('[data-cloudflare="share-link-label"]').click()
   await shareIs('no-permission')
@@ -574,7 +618,7 @@ try {
   await headerIs('Connected · Ada Lovelace')
   await settled()
   // With no account named, the same token asks.
-  await page.evaluate(async () => {
+  await inSettings(async () => {
     const current = await window.tw.publish.getConfig()
     await window.tw.publish.setConfig({ accountId: '', project: current.project, baseUrl: current.baseUrl, workerBaseUrl: current.workerBaseUrl, useShortIds: current.useShortIds, shareDomain: '' })
   })
@@ -592,19 +636,21 @@ try {
   await settings.getByRole('button', { name: 'Disconnect' }).click()
   await headerIs('Not connected')
   await settled()
-  const changes = await page.evaluate(async () => (await window.tw.settings.getChangelog()).filter((entry) => entry.key === 'publish.token').map((entry) => `${entry.from}→${entry.to}`))
+  const rawChanges = await inSettings(async () => (await window.bridleSettings.view()).state.changes)
+  // The change log keeps the token's presence only: accounts.cloudflare missing→connected, connected→missing.
+  const changes = rawChanges.filter((entry) => entry.key === 'accounts.cloudflare').map((entry) => `${entry.from}→${entry.to}`)
   // 14. A row with nothing to report shows no dash (the row is unknown again once disconnected), and no dash followed "No site yet".
   const emptyRow = await rowText()
   const emptyLayout = await layout()
   const settingsText = (await settings.innerText()).replace(/\s+/g, ' ')
   record(14, emptyRow === NOTHING_TO_REPORT && emptyLayout.rows[0].edge === null && !/[—–]/.test(emptyRow) && !/[—–]/.test(before)
     && !settingsText.includes('Leave empty to deploy with your token') && !settingsText.includes('local Wrangler') && settingsText.includes('Live Worker URL'), `the row with nothing to report: "${emptyRow}"`)
-  record(11, !existsSync(join(userData, 'cf-pages-token.bin')) && await part('token').locator('input').count() === 1 && changes.includes('set→not set') && changes.includes('not set→set')
+  record(11, !existsSync(join(userData, 'cf-pages-token.bin')) && await part('token').locator('input').count() === 1 && changes.includes('connected→missing') && changes.includes('missing→connected')
     && config().cfAccountId === GRACE.id, `changelog (presence only): ${changes.join(', ')}`)
   await shot('9-disconnected')
 
   // 12. Nothing secret anywhere it could be read.
-  const windowText = await page.evaluate(() => document.documentElement.outerHTML)
+  const windowText = `${await page.evaluate(() => document.documentElement.outerHTML)}\n${await inSettings(() => document.documentElement.outerHTML)}`
   await app.close()
   app = null
   // The recording keys are searched for with the tokens: typed into Settings, kept only encrypted.
@@ -625,9 +671,7 @@ try {
   try { ledger.summary('CLOUDFLARE SETTINGS') } catch { /* summary already printed */ }
   exitCode = 1
 } finally {
-  const pid = app?.process().pid
-  try { await app?.close() } catch { /* already closed */ }
-  if (pid) { try { process.kill(pid) } catch { /* gone, as it should be */ } }
+  await shutdownApp(app)
   await api?.close()
   await s3?.close()
   rmSync(scratch, { recursive: true, force: true, maxRetries: 3 })

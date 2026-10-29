@@ -1,7 +1,14 @@
+import { scratchDropExtension } from '../extensions/scratchDrop'
+import type { SlidePlace } from '../../../shared/slide-handling/place'
 import { runActionBarEditing } from './actionBar/editing-command'
 import { boardStarterInsertion, mintBoardSlideId } from '../../../../compiler/scripts/lib/board-slide.mjs'
 import { useEffect, useRef, useCallback } from 'react'
-import { imageWidgetExtension, imagePlacementsChanged } from '../extensions/imageWidget'
+import { imageWidgetExtension, imagePlacementsChanged, editorImageUrl } from '../extensions/imageWidget'
+import { cardMediaFacet } from '../extensions/objectBlocks/cardWidgets'
+import { insertSpeakerNotes, objectDeletionNotices, objectStatusRequests } from '../extensions/objectBlocks/commands'
+import { objectStatusSource, type CardFileStatus } from '../extensions/objectBlocks/status'
+import { cardActionHost } from '../extensions/objectBlocks/cardActions'
+import { HTML_PAGE_INSERT_TEXT } from '../lib/insertHtmlPage'
 import { imagePlacementForLine, type PlacementRow } from '../../../shared/image-placement.ts'
 import {
   getCursorListItemContext,
@@ -59,7 +66,7 @@ import type { TalkInfo } from '../../../preload/index'
 import { notify } from '../lib/notify'
 import { queueOutlineWrite } from '../lib/saveQueue'
 import { lookForRecovery, noteOutlineSaveReply, outlineDiskChanges } from '../lib/outlineDiskChange'
-import { applyMinimalChange } from '../lib/minimalChange'
+import { replaceDocTransaction } from '../lib/replaceDocTransaction'
 import { adoptSavedText, redoWithSave, savedTextAdoption, undoWithSave } from '../extensions/savedTextAdoption'
 import { saveTidyUp, textForSave } from '../extensions/saveTidyUp'
 import { triggerCompleteExtension } from '../extensions/triggerComplete'
@@ -67,8 +74,10 @@ import { tokenProtectExtension } from '../extensions/idProtect'
 import {
   copySlideAt, cutSlideAt, deleteSlideAt, moveSlideTo, pasteSlideTextAtCaret, pasteSlidesAfter, slideCutCopyExtension, wouldPasteAsSlides
 } from '../extensions/slideCutPaste'
+import { researchDropHandlers, researchInsertionMarker } from '../extensions/researchDrop'
 import { blockAnchorAfterLine, insertAtCaretLine, insertBlockAfterLine, pasteAtHeadingEnd, pasteBlockAtSelection, pasteTextAtSelection } from '../extensions/headingEndInsert'
 import type { MoveTarget } from '../extensions/slideBlockOps'
+import type { SlideRef } from '../../../shared/slide-handling/blocks'
 import { quoteLinkFormExtension } from '../extensions/quoteLinkForm'
 import { setSlideNumberLines, slideNumberGutterExtension } from '../extensions/slideNumberGutter'
 import { setTextFitNotes, textFitWarningExtension } from '../extensions/textFitWarning'
@@ -152,11 +161,14 @@ export interface SlideBlockOps {
   copy: (line: number) => string | null
   /** After the slide or section on `afterLine`; at the end of the talk when null. */
   paste: (clip: string, afterLine: number | null) => number | null
-  moveTo: (fromLine: number, target: MoveTarget) => number | null
+  /** `cardRef`: a grid card's heading (slideRefOf), checked against the buffer by the move core. */
+  moveTo: (fromLine: number, target: MoveTarget, cardRef?: SlideRef) => number | null
   delete: (line: number) => void
 }
 
 interface Props {
+  onResearchDrop?: (file: string) => void
+  showResearchInsertion?: boolean
   talk: TalkInfo
   content: string
   onContentChange: (content: string) => void
@@ -196,13 +208,14 @@ interface Props {
   // file stay in sync without the parent rewriting the whole outline. Unlike the
   // onSlashCommand insertFn (which replaces the trigger line in place), this is a
   // free insert at wherever the caret is. Editor re-registers if the prop changes.
+  onScratchDrop?: (id: string, place: SlidePlace) => void
   registerInsert?: (fn: (text: string) => void) => void
   /** Registered object insertion door shared by the slide menu, command palette and `{` picker. */
   registerInsertObject?: (fn: ObjectInsertHandler) => void
   /** Diagram remains a layout family until its object renderer arrives. */
   onOpenObjectLayoutFamily?: (kind: 'chart' | 'diagram') => void
   /** Triple-backtick object door, anchored at the live editor coordinates. */
-  onInsertObjectMenu?: (coords: { x: number; y: number }) => void
+  onInsertObjectMenu?: (coords: { x: number; y: number }, consumeFence: () => void) => void
   // Lets the app drive editor-only commands (fold/unfold all) from the command palette.
   registerEditorCommands?: (cmds: {
     foldAll: () => void
@@ -243,6 +256,8 @@ interface Props {
     cutSelection: () => void
     copySelection: () => void
     pasteClipboard: () => void
+    // The selected text ('' when the caret is a point): the "Capture to research…" sheet's body.
+    selectionText: () => string
     // Whole slides and sections, addressed by heading line (the Slides outline, the grid, the Move … to…
     // commands): extensions/slideCutPaste.ts. Each is one undo step and says what it did in a toast.
     // cut/copy return the Markdown for the clipboard; paste/moveTo return the heading's new line.
@@ -262,7 +277,7 @@ interface Props {
   // With `savedFrom` the text is what a save wrote for that sent text (tidied, ids stamped): it is
   // adopted as the save's own undo step (extensions/savedTextAdoption.ts), and only while the buffer is
   // still the text the save was made from.
-  registerReplaceDoc?: (fn: (text: string, opts?: { save?: boolean; savedFrom?: string }) => string | null) => void
+  registerReplaceDoc?: (fn: (text: string, opts?: { save?: boolean; savedFrom?: string; ownUndoStep?: boolean }) => string | null) => void
   // The buffer's live text, the talk it belongs to and the caret (selection head offset), or null
   // while that talk's text is not loaded (one-writer spec D1: a mutation of the open talk reads THIS,
   // never the React mirror of it; the section insert places itself from the caret).
@@ -291,6 +306,8 @@ interface Props {
   /** Plain margin (spec T8, T9): the margin word and the layout name were opened; `line` is the heading's 1-based line. */
   onMarginLevelMenu?: (line: number, anchor: DOMRect) => void
   onMarginLayoutMenu?: (line: number, anchor: DOMRect) => void
+  /** Capture embed… from a web page card: the page, on the slide whose heading is on `headingLine` (1-based). */
+  onCaptureEmbedAt?: (headingLine: number, pageUrl: string) => void
   registerHeadingTools?: (tools: HeadingTools) => void
   // The layout the compiler gave the compiled slide whose heading is on a line: the web form's link-edit rule (spec 3.1) needs it
   // for a quote-only slide with no `{quote}` token.
@@ -320,6 +337,8 @@ export type { PlainIconTools }
 export interface HeadingTools {
   caretHeading: () => { line: number; anchor: DOMRect } | null
   focusHeading: (line: number) => void
+  /** Speaker notes for the caret's slide, through the notes planner (Insert › Speaker notes). */
+  insertNotes: () => boolean
 }
 
 // history() lives in a Compartment so a talk switch can RESET the undo stack: detaching and
@@ -340,6 +359,8 @@ const viewCompartment = new Compartment()
 const plainTypeCompartment = new Compartment()
 
 export default function Editor({
+  onResearchDrop,
+  showResearchInsertion = false,
   talk,
   onContentChange,
   onSaved,
@@ -355,6 +376,7 @@ export default function Editor({
   onPlace,
   onImageWidgetClick,
   onOpenHelp,
+  onScratchDrop,
   registerInsert,
   registerInsertObject,
   onOpenObjectLayoutFamily,
@@ -372,6 +394,7 @@ export default function Editor({
   plainLook = PLAIN_LOOK_DEFAULT,
   onMarginLevelMenu,
   onMarginLayoutMenu,
+  onCaptureEmbedAt,
   registerHeadingTools,
   compiledLayoutAt,
   registerPlainIconTools,
@@ -379,12 +402,16 @@ export default function Editor({
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
+  const researchMarkerCompartment = useRef(new Compartment())
+  useEffect(() => { viewRef.current?.dispatch({ effects: researchMarkerCompartment.current.reconfigure(showResearchInsertion ? researchInsertionMarker : []) }) }, [showResearchInsertion])
   const onPlanRunRef = useRef(onPlanRun)
   onPlanRunRef.current = onPlanRun
   const viewModeRef = useRef<EditorViewMode>(viewMode)
   const plainLookRef = useRef<PlainLook>(plainLook)
   plainLookRef.current = plainLook
   // The margin's menu callbacks read the latest props at click time, so a render never rebuilds the extension.
+  const captureEmbedAtRef = useRef(onCaptureEmbedAt)
+  captureEmbedAtRef.current = onCaptureEmbedAt
   const marginMenusRef = useRef({ onMarginLevelMenu, onMarginLayoutMenu })
   marginMenusRef.current = { onMarginLevelMenu, onMarginLayoutMenu }
   const marginMenuHandlers = useRef<MarginMenuHandlers>({
@@ -434,6 +461,10 @@ export default function Editor({
   useEffect(() => { onOpenHelpRef.current = onOpenHelp }, [onOpenHelp])
   const onProtectedTokenClickRef = useRef(onProtectedTokenClick)
   useEffect(() => { onProtectedTokenClickRef.current = onProtectedTokenClick }, [onProtectedTokenClick])
+  const scratchDropRef = useRef(onScratchDrop)
+  scratchDropRef.current = onScratchDrop
+  const researchDropRef = useRef(onResearchDrop)
+  researchDropRef.current = onResearchDrop
   // Ref, not closure: the engagement triggers live in the mount-once view (domEventHandlers +
   // updateListener below), so a prop re-render must be visible there without re-creating the view.
   const onEditorEngagedRef = useRef(onEditorEngaged)
@@ -547,6 +578,9 @@ export default function Editor({
       state: EditorState.create({
         doc: '',
         extensions: [
+          researchMarkerCompartment.current.of(showResearchInsertion ? researchInsertionMarker : []),
+          scratchDropExtension((id, place) => scratchDropRef.current?.(id, place)),
+          EditorView.domEventHandlers(researchDropHandlers(file => researchDropRef.current?.(file))),
           EditorView.domEventHandlers({
             // T29b engagement trigger 1: the first pointerdown in the editor surface — clicks in
             // the text, the gutter, any widget chrome (observational only; never consumes).
@@ -665,7 +699,7 @@ export default function Editor({
             // Drag-and-drop a media FILE into the editor → store + insert at the drop point.
             // Video/GIF go to the media pipeline (by path, so we never pipe big bytes over IPC);
             // images keep the existing path. Text drags are left to CodeMirror's drag-to-move.
-            drop(event: DragEvent) {
+            drop(event: DragEvent, view) {
               const files = event.dataTransfer?.files
               if (!files || files.length === 0) return false
               const arr = Array.from(files)
@@ -783,15 +817,67 @@ export default function Editor({
           keyCapExtension,
           // RIVER object blocks: slide-white rendered widgets in the warm-paper outline flow.
           objectBlocksExtension({
-            onInsertMenu: (coords) => onInsertObjectMenuRef.current?.(coords),
+            onInsertMenu: (coords, consumeFence) => onInsertObjectMenuRef.current?.(coords, consumeFence),
             cheatSheet: {
               isShortcut: (event) => eventMatchesEffectiveShortcut(event, 'app.help'),
               request: () => onOpenHelpRef.current?.(),
               isFinishShortcut: (event) =>
                 eventMatchesEffectiveShortcut(event, 'editor.object-finish', 'object-finish'),
               isLeaveShortcut: (event) =>
-                eventMatchesEffectiveShortcut(event, 'editor.object-leave', 'object-leave')
+                eventMatchesEffectiveShortcut(event, 'editor.object-leave', 'object-leave'),
+              // Keys inside the object editors (row moves, Discard) are registered and rebindable.
+              matches: (event, shortcutId) =>
+                eventMatchesEffectiveShortcut(event, shortcutId, shortcutId.replace(/^editor\./, ''))
             }
+          }),
+          objectDeletionNotices,
+          // Card file status (missing, outside the vault): main answers only for this window's own talk.
+          objectStatusSource.of({
+            scope: () => currentTalkRef.current,
+            ask: async (refs) => {
+              const outlinePath = currentTalkRef.current
+              if (!outlinePath) return null
+              const answer = await window.tw.objects.status(outlinePath, refs)
+              if (!answer?.ok || currentTalkRef.current !== outlinePath) return null
+              return new Map(answer.statuses.map((s): [string, CardFileStatus] => [s.ref, { state: s.state, path: s.path }]))
+            }
+          }),
+          objectStatusRequests,
+          // Card header actions: Open and Reveal through the shell channels (main checks the path again
+          // then); Replace file through main's HTML page picker and copy, for this talk only.
+          cardActionHost.of({
+            openPath: (path) => window.tw.shell.openPath(path),
+            showInFolder: (path) => window.tw.shell.showInFolder(path),
+            openExternal: (url) => window.tw.shell.openExternal(url),
+            copyText: (text) => navigator.clipboard.writeText(text),
+            captureEmbed: (headingLine, pageUrl) => captureEmbedAtRef.current?.(headingLine, pageUrl),
+            earlierViews: async (pageUrl) => {
+              const talk = currentTalkRef.current
+              if (!talk) return null
+              const answer = await window.tw.objects.earlierViews(talk, pageUrl)
+              return answer.ok && currentTalkRef.current === talk ? answer.views : null
+            },
+            chooseReplacementPage: async () => {
+              const talk = currentTalkRef.current
+              if (!talk) return null
+              const choice = await window.tw.htmlPage.choose(talk)
+              if (choice === null) return null
+              if (!choice.ok) { notify(choice.message, 'error', 'card-replace'); return null }
+              if (currentTalkRef.current !== talk) { notify(HTML_PAGE_INSERT_TEXT.talkChangedBeforeCopy, 'warning', 'card-replace'); return null }
+              const result = await window.tw.htmlPage.import(choice.token, talk)
+              if (!result.ok) { notify(result.message, 'error', 'card-replace'); return null }
+              if (currentTalkRef.current !== talk) { notify(HTML_PAGE_INSERT_TEXT.talkChangedAfterCopy(result.embedPath), 'warning', 'card-replace'); return null }
+              const named = result.localReferences.length ? ` ${HTML_PAGE_INSERT_TEXT.namedFiles(result.localReferences)}` : ''
+              return { ref: result.embedPath, note: `${HTML_PAGE_INSERT_TEXT.onlyThisFile}${named}`, warn: result.localReferences.length > 0 }
+            }
+          }),
+          // Saved-view thumbnails on a web page card: the image widget's own local resolver; never remote.
+          cardMediaFacet.of({
+            resolveImage: (src) => editorImageUrl(
+              src,
+              vaultRoot ?? null,
+              currentTalkRef.current.replace(/\/[^/]*$/, '') || null
+            )
           }),
           // Plain-text find (⌘F opens the search panel) + match highlighting.
           search({ top: true }),
@@ -1257,6 +1343,7 @@ export default function Editor({
       // clipboard handlers apply (same semantics as ⌘X/⌘C, including empty-selection rules).
       cutSelection: () => { const v = viewRef.current; if (v) { v.focus(); document.execCommand('cut') } },
       copySelection: () => { const v = viewRef.current; if (v) { v.focus(); document.execCommand('copy') } },
+      selectionText: () => { const v = viewRef.current; if (!v) return ''; const { from, to } = v.state.selection.main; return v.state.sliceDoc(from, to) },
       pasteClipboard: () => {
         const v = viewRef.current
         if (!v) return
@@ -1280,7 +1367,7 @@ export default function Editor({
         cut: (line) => { const v = viewRef.current; return v ? cutSlideAt(v, line) : null },
         copy: (line) => { const v = viewRef.current; return v ? copySlideAt(v, line) : null },
         paste: (clip, afterLine) => { const v = viewRef.current; return v ? pasteSlidesAfter(v, clip, afterLine) : null },
-        moveTo: (fromLine, target) => { const v = viewRef.current; return v ? moveSlideTo(v, fromLine, target) : null },
+        moveTo: (fromLine, target, cardRef) => { const v = viewRef.current; return v ? moveSlideTo(v, fromLine, target, cardRef) : null },
         delete: (line) => { const v = viewRef.current; if (v) deleteSlideAt(v, line) }
       },
       runFormat: (id) => {
@@ -1450,8 +1537,8 @@ export default function Editor({
         adoptSavedText(view, source, text)
         return view.state.doc.toString()
       }
-      const change = applyMinimalChange(view.state.doc.toString(), text)
-      if (change) view.dispatch({ changes: change })
+      const spec = replaceDocTransaction(view.state.doc.toString(), text, { ownUndoStep: opts?.ownUndoStep })
+      if (spec) view.dispatch(spec)
       if (!opts?.save) return view.state.doc.toString()
       // The caller saves the whole buffer now: the debounced autosave this dispatch (or an earlier
       // keystroke) scheduled is superseded. Same position-only normalisation as flushSave.
@@ -1468,7 +1555,8 @@ export default function Editor({
   useEffect(() => {
     registerHeadingTools?.({
       caretHeading: () => (viewRef.current ? caretHeadingTarget(viewRef.current) : null),
-      focusHeading: (line) => { if (viewRef.current) focusHeading(viewRef.current, line) }
+      focusHeading: (line) => { if (viewRef.current) focusHeading(viewRef.current, line) },
+      insertNotes: () => (viewRef.current ? insertSpeakerNotes(viewRef.current) : false)
     })
   }, [registerHeadingTools])
 

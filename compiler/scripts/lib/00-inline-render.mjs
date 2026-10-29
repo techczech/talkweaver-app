@@ -79,6 +79,8 @@ function renderInlineEscaped(text) {
     let out = renderEmphasisEscaped(source);
     out = out.replace(/`([^`]+)`/g, "<code>$1</code>");
     out = out.replace(/\[([^\]]+)\]\(\s*([^)\s]+)(?:\s+&quot;(.*?)&quot;)?\s*\)/g, (_, label, url, title) => {
+      // Research stubs remain private source files, so exports keep the label without a dead href.
+      if (/^Research:/i.test(label) && /^(?:\.\/)?research\/[^?#]+\.md$/i.test(url)) return label;
       const safe = isSafeLinkUrl(url) ? url : "#";
       const titleAttr = title ? ` title="${title}"` : "";
       return `<a href="${safe}"${titleAttr} target="_blank" rel="noopener">${label}</a>`;

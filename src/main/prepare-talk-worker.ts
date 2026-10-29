@@ -1,23 +1,30 @@
-// The worker thread the live compile runs in (prepareTalk in index.ts), off the main process's thread.
+// The process the live compile (prepareTalk in index.ts) runs in, apart from the main process.
 //
 // prepareSource inlines every picture of a deck as base64 and builds one enormous HTML string; on a
 // talk of large photographs that held the main process for 400-500 ms at a time after the talk
-// opened and after every edit pause (the beachball). Here it runs in a worker instead. The main
+// opened and after every edit pause (the beachball). Here it runs in a child process instead. The main
 // process keeps everything else: the prepared-talk cache, the preparation gate (single-flight.ts:
-// one heavy compile at a time, so this worker is only ever given one job at a time) and the cache key.
+// one heavy compile at a time, so this process is only ever given one job at a time) and the cache key.
 //
-// One long-lived worker, started on the first compile and ended after a quiet minute: each job is
+// A process, not a worker thread (2026-10-22): Electron's V8 keeps the main process and all its worker
+// threads in ONE shared 4 GB heap, so a compile that needed 2.8 GB in a worker thread, while the main
+// process held its own share, ended the whole app out of memory. A utility process (Electron's
+// utilityProcess, started by prepare-talk-utility-process.ts) has a heap of its own: a compile that
+// runs out of memory ends this process only, and its job fails.
+//
+// One long-lived process, started on the first compile and ended after a quiet minute: each job is
 // { id, compilerDir, outlinePath, text, slug, defaults, options }; the answer is
-// { id, ok: true, model, rows, previewKey } or { id, ok: false, error }. The compiler's modules are loaded here
-// from the compiler folder the job names, as the main process loaded them.
+// { id, ok: true, model, rows, previewKey } or { id, ok: false, error }. Jobs arrive and answers leave
+// through process.parentPort. The compiler's modules are loaded here from the compiler folder the job
+// names, as the main process loaded them.
 //
 // A job whose options carry no allowed media folders is refused (compile-roots.ts): every compile is
 // given the talk's roots, and a job posted without them fails rather than compiling with the
 // compiler's own fallback.
 //
-// No Electron import and erasable TypeScript only: this file runs in a plain worker thread, and
-// scripts/test-media-inside-vault.mjs starts it directly.
-import { parentPort } from 'node:worker_threads'
+// No Electron import and erasable TypeScript only: a utility process needs nothing of Electron but
+// process.parentPort, and scripts/test-media-inside-vault.mjs starts this file directly (under plain
+// Node, with a stand-in for process.parentPort: scripts/lib/node-compile-child.mjs).
 import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -80,19 +87,23 @@ async function prepare(job: PrepareTalkJob): Promise<PrepareTalkReply> {
   return { id: job.id, ok: true, model, rows, previewKey }
 }
 
-parentPort?.on('message', (job: PrepareTalkJob) => {
+// A utility process's port (process.parentPort): jobs arrive as message events carrying the job as
+// their data; answers are posted back the same way.
+const port = process.parentPort
+port.on('message', (event: { data: PrepareTalkJob }) => {
+  const job = event.data
   prepare(job).then(
     (reply) => {
       try {
-        parentPort?.postMessage(reply)
+        port.postMessage(reply)
       } catch (error) {
         // A model that cannot be copied to the main process (a function in it) is a failed compile.
-        parentPort?.postMessage({ id: job.id, ok: false, error: `The compiled talk could not be handed back: ${error instanceof Error ? error.message : String(error)}` })
+        port.postMessage({ id: job.id, ok: false, error: `The compiled talk could not be handed back: ${error instanceof Error ? error.message : String(error)}` })
       }
     },
     (error: unknown) => {
       console.error('[prepare-talk]', error)
-      parentPort?.postMessage({ id: job.id, ok: false, error: error instanceof Error ? error.message : String(error) })
+      port.postMessage({ id: job.id, ok: false, error: error instanceof Error ? error.message : String(error) })
     },
   )
 })

@@ -1,0 +1,23 @@
+/* The "Capture to research…" sheet: one sheet over the window, in the plan sheet's look. */
+.rc-backdrop { position: fixed; inset: 0; z-index: 220; background: rgba(23, 32, 42, .28); display: flex; justify-content: center; align-items: flex-start; padding-top: 72px; }
+.rc-sheet { width: 640px; max-width: calc(100vw - 32px); max-height: calc(100vh - 96px); display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 11px; box-shadow: 0 14px 38px #17202a30, 0 3px 10px #17202a1c; font-family: var(--font-ui); color: var(--ink); }
+.rc-head { padding: 16px 22px 6px; }
+.rc-head h2 { font-size: 19px; font-weight: 650; margin: 0; }
+.rc-head p { font-size: 12.5px; color: var(--muted); margin: 4px 0 0; line-height: 1.45; overflow-wrap: anywhere; }
+.rc-body { padding: 8px 22px 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+.rc-row { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; }
+.rc-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.rc-label { font: 700 10px var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+.rc-label em { font-style: normal; font-weight: 500; }
+.rc-sheet input, .rc-sheet select { height: 34px; border: 1px solid var(--line); border-radius: 6px; background: #fff; padding: 0 10px; font: 13px var(--font-ui); color: var(--ink); min-width: 0; width: 100%; }
+.rc-sheet textarea { min-height: 150px; border: 1px solid var(--line); border-radius: 6px; background: #fff; padding: 8px 10px; font: 13px/1.45 var(--font-ui); color: var(--ink); resize: vertical; width: 100%; box-sizing: border-box; }
+.rc-sheet input:focus, .rc-sheet select:focus, .rc-sheet textarea:focus { outline: 2px solid var(--oxford); outline-offset: -1px; }
+.rc-sheet input.is-error { border-color: var(--crimson); background: #fff8fa; box-shadow: 0 0 0 3px #f5d7df; }
+.rc-foot { display: flex; align-items: center; gap: 8px; padding: 12px 22px; border-top: 1px solid var(--line); }
+.rc-note { flex: 1; font-size: 12px; color: var(--muted); min-width: 0; }
+.rc-note.is-error { color: var(--crimson); font-weight: 600; }
+.rc-btn { border: 1px solid var(--ink); background: var(--ink); color: #fff; border-radius: 6px; padding: 7px 14px; font: 600 13px var(--font-ui); cursor: pointer; white-space: nowrap; }
+.rc-btn:disabled { opacity: .5; cursor: default; }
+.rc-btn-plain { background: var(--panel); color: var(--ink); border-color: var(--line); }
+.rc-btn-plain:hover:not(:disabled) { background: var(--hover); }
+.rc-btn-small { padding: 3px 9px; font-size: 11.5px; text-transform: none; letter-spacing: 0; }

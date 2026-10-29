@@ -1,4 +1,4 @@
-// React render budget for the slide strip and the grid (docs/talkweaver-performance-contract.md).
+// React render budget for the slide strip and the grid (the TalkWeaver performance contract).
 //
 // The strip's cards are memoised (MemoSlideCard, 94ed811, 10 July) so that a keystroke, a selection
 // change or a thumbnail arriving re-renders only the cards whose data changed. On 27 July (187007c)
@@ -18,12 +18,20 @@ import { JSDOM } from 'jsdom'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const dir = mkdtempSync(join(root, '.test-strip-render-budget-'))
 const bundle = join(dir, 'bundle.mjs')
+process.once('exit', () => rmSync(dir, {recursive:true, force:true}))
 
 const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'https://talkweaver.test/' })
 for (const key of ['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node']) {
   Object.defineProperty(globalThis, key, { configurable: true, value: key === 'window' ? dom.window : dom.window[key] })
 }
 dom.window.Element.prototype.scrollIntoView = function scrollIntoView() {}
+// JSDOM has no image decoder; this harness counts React work, not pixels.
+dom.window.HTMLImageElement.prototype.decode = async function decode() {}
+window.tw = {talk: {slidePictureText: async (p, refs) => refs.map(() => ''), slidePictureGeneration: async () => 0}}
+window.requestAnimationFrame = () => 1
+window.cancelAnimationFrame = () => {}
+globalThis.requestAnimationFrame = () => 1
+globalThis.cancelAnimationFrame = () => {}
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 const renders = (globalThis.__twMemoRenders = {})
 const reset = () => { for (const k of Object.keys(renders)) delete renders[k] }
@@ -55,7 +63,7 @@ const countMemoRenders = {
   }
 }
 
-const SLIDES = 50
+const SLIDES = 500
 function makeRows(n) {
   const rows = []
   for (let i = 0; i < n; i += 1) {
@@ -86,7 +94,8 @@ try {
         "import { createRoot } from 'react-dom/client'",
         "import SlideStrip from './src/renderer/src/components/SlideStrip.tsx'",
         "import GridView from './src/renderer/src/components/GridView.tsx'",
-        'export { React, createRoot, SlideStrip, GridView }'
+        "import {setSlideQuery} from './src/renderer/src/lib/slideSearch.ts'",
+        'export { React, createRoot, SlideStrip, GridView, setSlideQuery }'
       ].join('\n'),
       resolveDir: root,
       sourcefile: 'test-strip-render-budget-entry.tsx',
@@ -102,7 +111,7 @@ try {
     outfile: bundle,
     logLevel: 'error'
   })
-  const { React, createRoot, SlideStrip, GridView } = await import(pathToFileURL(bundle).href)
+  const { React, createRoot, SlideStrip, GridView, setSlideQuery } = await import(pathToFileURL(bundle).href)
   const { act } = React
   const failures = []
   const check = (ok, message) => { if (!ok) failures.push(message) }
@@ -126,7 +135,8 @@ try {
     markers,
     onSelectSlide: () => {},
     onEdit: () => {},
-    onReorder: () => {},
+    slideRefOf: (i) => ({line: i * 3 + 1, headingText: `### Slide ${i}`}),
+    onMoveSlides: () => {},
     onExplain: () => {},
     onMarker: () => {},
     onGhost: () => {},
@@ -176,7 +186,8 @@ try {
     activeIndex: 0,
     onSelectSlide: () => {},
     onEdit: () => {},
-    onReorder: () => {},
+    slideRefOf: (i) => ({line: i * 3 + 1, headingText: `### Slide ${i}`}),
+    onMoveSlides: () => {},
     onExplain: () => {},
     columns: 4,
     ...over
@@ -195,6 +206,25 @@ try {
   reset()
   await renderGrid({ activeIndex: 1 })
   check(count('GridCell') === 0, `grid: a parent re-render with equal inputs re-rendered ${count('GridCell')} cells (budget: 0)`)
+  reset()
+  await renderGrid({activeIndex: 1, thumbnails: {...thumbnails, [last.render_hash]: `twthumb://t/${last.render_hash}.png`}})
+  check(count('GridCell') === 1, `grid: one arriving thumbnail re-rendered ${count('GridCell')} cells (budget: 1)`)
+  await act(async () => setSlideQuery(talk.outlinePath, 'Slide'))
+  await act(async () => { await new Promise(r => setTimeout(r, 250)) }) // OCR result is a legitimate data update, not a hover.
+  const fire = async (index, type) => act(async () => {
+    const cell = host.querySelector(`[data-slide-index="${index}"]`)
+    cell.dispatchEvent(new dom.window.Event(type, {bubbles:true, cancelable:true}))
+  })
+  await fire(1, 'dragstart')
+  for (let i = 2; i < 22; i++) {
+    reset()
+    const start = performance.now()
+    await fire(i, 'dragover')
+    check(count('GridCell') <= 2, `grid search dragover ${i}: ${count('GridCell')} cell renders (budget: 2)`)
+    if (i === 21) console.log(`500-slide search dragover sample: ${(performance.now()-start).toFixed(1)}ms, ${count('GridCell')} cell renders`)
+  }
+  await fire(1, 'dragend')
+  await act(async () => setSlideQuery(talk.outlinePath, ''))
   await act(async () => { gridRoot.unmount() })
 
   if (failures.length) {
@@ -205,5 +235,6 @@ try {
     console.log(`ok: strip and grid re-render only the cards whose data changed (${SLIDES} slides)`)
   }
 } finally {
+  dom.window.close()
   rmSync(dir, { recursive: true, force: true })
 }

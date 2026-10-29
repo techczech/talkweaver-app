@@ -98,7 +98,8 @@ export interface VersionCounts {
 }
 
 /** Everything a card, a grid and a talk's chunks read from the Browser's live state. The shell
- *  rebuilds it every render, so a card always sees the current selection, focus and expansion. */
+ *  rebuilds it every render; each card gets only its own primitive props from it (CardGrid's
+ *  `cardElement`), so the memoised cards re-render only when their own props change. */
 export interface GridCtx {
   vRows: SearchResult[]
   selected: Set<string>
@@ -113,17 +114,12 @@ export interface GridCtx {
   sectionNoByKey: Map<string, number>
   thumbNonces: Record<string, number>
   regenTalk: string | null
-  noteThumbUnavailable: (row: SearchResult) => void
   getCounts: (id: string) => VersionCounts | undefined
   rowsByTalk: Map<string, SearchResult[]>
-  onCardClick: (pos: number, shift: boolean) => void
-  onCardEnter: (pos: number) => void
-  openBesideAt: (pos: number) => void
-  toggleStrip: (pos: number) => Promise<void>
-  toggleLocations: (pos: number) => void
-  toggleNear: (pos: number) => void
   selectWholeSection: (talkSlug: string, section: string) => number
   renderExpansion: (anchor: number, row: SearchResult) => React.ReactElement | null
   /** With several open vaults (ticket 06): a result's vault, for its label. */
   vaultOf?: (vaultId: string | undefined) => import('./vaultChipsModel').ChipVault | undefined
+  /** The cards' handlers: one stable object (see SlideCard's identity contract). */
+  actions: import('./SlideCard').CardActions
 }

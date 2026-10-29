@@ -73,7 +73,7 @@ window.mount = (doc, mode, withSource = true, outliner = true) => {
   document.getElementById('host').innerHTML = ''
   const view = new EditorView({ parent: document.getElementById('host'), state: EditorState.create({
     doc, selection: EditorSelection.cursor(0),
-    extensions: [EditorView.lineWrapping, history(), markdown({ base: markdownLanguage, codeLanguages: languages }), tokenProtectExtension(), appKeyState(), search(), keymap.of(historyKeymap),
+    extensions: [EditorView.lineWrapping, history(), markdown({ base: markdownLanguage, codeLanguages: languages }), tokenProtectExtension(), appKeyState({ sourceOnly: true }), search(), keymap.of(historyKeymap),
       // The app's own Enter chain (keymap/registry.ts), with the state it reads. outliner = false leaves them out, to show
       // that Plain's own Enter rule (Enter as if from the line's end) holds without them too.
       ...(outliner ? [Prec.highest(keymap.of(appEnterBindings()))] : []),

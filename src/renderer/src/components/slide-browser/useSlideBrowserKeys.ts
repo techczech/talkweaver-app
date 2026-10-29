@@ -40,7 +40,8 @@ export interface SlideBrowserKeyState {
   anchorRef: MutableRefObject<number>
   setOpenPop: Dispatch<SetStateAction<string | null>>
   setPreview: Dispatch<SetStateAction<boolean>>
-  setQuery: Dispatch<SetStateAction<string>>
+  /** Sets the query at once (the field and the search together). */
+  setQuery: (q: string) => void
   setSelected: Dispatch<SetStateAction<Set<string>>>
   setActivePos: Dispatch<SetStateAction<number>>
   setRailCollapsed: Dispatch<SetStateAction<boolean>>
@@ -136,7 +137,8 @@ export function useSlideBrowserKeys(k: SlideBrowserKeyState): void {
         if (openLoc) { closeLoc(); return }
         // The talk beside the results closes before anything else of the results changes (K5).
         if (besideOn) { closeBesideNow(); return }
-        if (inSearch && query) { setQuery(''); return }
+        // The field's own text: it may hold words not yet searched (the field debounces typing).
+        if (inSearch && (inputRef.current?.value || query)) { setQuery(''); return }
         if (selected.size > 0) { setSelected(new Set()); return }
         onClose(); return
       }

@@ -43,7 +43,7 @@ const mainSource = readFileSync(join(repoRoot, 'src/main/index.ts'), 'utf8')
 const prerenderSource = mainSource.match(/async function prerenderAllThumbnails\(\): Promise<void> \{([\s\S]*?)\n\}\n\n\/\/ ── OCR/)?.[1] ?? ''
 assert(prerenderSource, 'startup prerender function is available for source-contract checks')
 assert(
-  prerenderSource.indexOf('shouldPrerenderTalk(') < prerenderSource.indexOf('await prepareSource('),
+  prerenderSource.indexOf('shouldPrerenderTalk(') < prerenderSource.indexOf('await withPrewarmYield(() => prepareSource('),
   'ledger skip is evaluated before the synchronous compiler pass'
 )
 assert.match(prerenderSource, /setTimeout\(resolve, 250\)/, 'changed-talk compiles pause for 250ms between talks')

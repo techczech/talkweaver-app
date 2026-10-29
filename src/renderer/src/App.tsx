@@ -5,7 +5,6 @@ import TalkList, { PromptModal } from './components/talklist/TalkList'
 import WorkspaceLayout, { type OutlineOps } from './components/WorkspaceLayout'
 import NewTalkDialog from './components/NewTalkDialog'
 import SlidesOrganizer from './components/SlidesOrganizer'
-import SettingsPanel from './components/SettingsPanel'
 import MetadataPanel from './components/MetadataPanel'
 import Studio from './components/Studio'
 import History from './components/History'
@@ -27,6 +26,11 @@ import ConflictCompare from './components/ConflictCompare'
 import { CONFLICT_COMPARE_EVENT } from './components/talklist/ConflictLine'
 import { VaultSheet, type VaultSheetState } from './components/talklist/VaultSheet'
 import { notify } from './lib/notify'
+
+/** Settings is its own window (0.42); main opens it, at `section` when one is named. */
+function openSettingsWindow(section?: string): void {
+  void window.tw.settingsWindow?.open(section).catch(() => { /* main not answering: nothing to show */ })
+}
 import GuidePane from './components/GuidePane'
 import RemoveExampleConfirm from './components/RemoveExampleConfirm'
 import { EXAMPLE_REMOVAL_TEXT, type ExampleRemovalPreview } from '../../shared/example-vault-removal'
@@ -43,7 +47,7 @@ import type { OpenInNewWindowTarget } from '../../shared/open-in-new-window'
 import { encodeFocus } from './components/talklist/vaultSections'
 import { editWindowTitle } from '../../shared/talk-title-text.ts'
 import { armOutlineSwitch, consumeEditorEngagement } from './lib/outlineSwitch'
-import { effectiveKeys, eventToCMKey, KEYMAP_CHANGED_EVENT } from './keymap/store'
+import { effectiveKeys, eventToCMKey, KEYMAP_CHANGED_EVENT, startKeymapSync } from './keymap/store'
 
 // The flat "Outline" view was retired: every slide already lives in the file, and the Slides
 // view (now labelled "Slide outline") is the structure people actually want. Two sidebar tabs.
@@ -405,7 +409,7 @@ function MainApp() {
   const runConnectionAction = useCallback((action: ConnectionActionId): void => {
     if (action === 'open-settings') window.dispatchEvent(new Event('tw-open-settings'))
     // Settings, scrolled to its Cloudflare section (the same route as a publish sheet's Open Settings).
-    else if (action === 'open-cloudflare') { setSettingsCloudflare((asked) => asked + 1); setSettingsOpen(true) }
+    else if (action === 'open-cloudflare') openSettingsWindow('cloudflare')
     else if (action === 'get-slidewell') void window.tw.guide.openLink('slidewell-download').catch(() => undefined)
   }, [])
   const selectGuideChapter = useCallback((task: TaskGroup): void => {
@@ -447,9 +451,6 @@ function MainApp() {
     window.addEventListener('tw-remove-example', removeRequest)
     return () => { cancelled = true; offChanged?.(); window.removeEventListener('tw-remove-example', removeRequest) }
   }, [openRemoveConfirm])
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  // Bumped each time Settings is asked to open at its Cloudflare section.
-  const [settingsCloudflare, setSettingsCloudflare] = useState(0)
   const [sidebarWidth, setSidebarWidth] = useState<number>(readSidebarWidth)
   const draggingRef = useRef(false)
   // Every launch opens on the Talks list, expanded — never restored into Slide-outline mode or
@@ -466,7 +467,8 @@ function MainApp() {
   // The source line of the slide the editor cursor is in, mirrored up from WorkspaceLayout so the
   // Slide-outline sidebar can follow the cursor (highlight + scroll the current slide into view).
   const [activeOutlineLine, setActiveOutlineLine] = useState<number | null>(null)
-  const jumpRef = useRef<((line: number) => void) | null>(null)
+  const [researchJump, setResearchJump] = useState<{ file: string; line: number; nonce: number } | null>(null)
+  const jumpRef = useRef<((line: number, opts?: { takeFocus?: boolean }) => void) | null>(null)
   const [outlineOps, setOutlineOps] = useState<OutlineOps | null>(null)
   // STABLE registration sink + identity bail. outlineOps is the one register* channel that
   // lives in STATE (the Slides sidebar re-renders from it) — an inline `(ops) => setOutlineOps(ops)`
@@ -666,7 +668,7 @@ function MainApp() {
       if ((e.metaKey || e.ctrlKey) && e.key === ',') {
         e.preventDefault()
         e.stopPropagation()
-        setSettingsOpen((o) => !o)
+        openSettingsWindow()
         commandRan('app.settings')
       }
     }
@@ -682,7 +684,7 @@ function MainApp() {
   // Commands that live deeper in the tree (command palette / toolbar) reach App via window events,
   // so every clickable action also has a keyboard-reachable command. Settings / New talk / New folder.
   useEffect(() => {
-    const openSettings = (): void => setSettingsOpen(true)
+    const openSettings = (): void => openSettingsWindow()
     const openStudio = (event: Event): void => {
       const detail = (event as CustomEvent<{ sessionId?: string }>).detail
       void window.tw.tools.open('studio', detail?.sessionId)
@@ -710,7 +712,7 @@ function MainApp() {
     const openMetadata = (): void => { if (activeTalkRef.current) setMetadataTalk(activeTalkRef.current) }
     window.addEventListener('tw-open-settings', openSettings)
     // "Open Settings" on a publish sheet or notice (any window): Settings, at its Cloudflare section.
-    const stopShowCloudflare = window.tw.cloudflare.onShowSettings(() => { setSettingsCloudflare((asked) => asked + 1); setSettingsOpen(true) })
+    const stopShowCloudflare = window.tw.cloudflare.onShowSettings(() => openSettingsWindow('cloudflare'))
     // The live service is being set up or updated before a use (spec D9: the person is told). One toast, replaced by the next.
     const stopLiveNotice = window.tw.liveService.onNotice((message) => notify(message, 'info', 'live-service-notice'))
     window.addEventListener('tw-open-studio', openStudio)
@@ -888,6 +890,17 @@ function MainApp() {
     openGuide()
   }
   restoreExampleRef.current = restoreExampleVault
+  const addVaultRef = useRef(addVault)
+  addVaultRef.current = addVault
+  // The Settings window's Get started page asks this window to open the Guide, show the example
+  // vault again or add a vault (0.42: Settings is its own window).
+  useEffect(() => window.tw.app.onEditorAction?.((action) => {
+    if (action === 'open-guide') openGuide()
+    else if (action === 'restore-example') void restoreExampleRef.current?.()
+    else if (action === 'add-vault') void addVaultRef.current()
+  }), [openGuide])
+  // The keymap's overrides come from the settings store (moved there once from localStorage).
+  useEffect(() => startKeymapSync(), [])
   // Pick a folder (ticket 04). A folder with no vault file opens the New vault sheet, one with a
   // vault file the join sheet; a folder already open as a vault, or inside one, is refused in a small
   // sheet that names that vault.
@@ -947,7 +960,7 @@ function MainApp() {
   useEffect(() => {
     if (!shellReady) return
     void window.tw.recording.takeSetupNotice().then((notice) => {
-      if (notice) notify(notice, 'warning', 'recording-keys-notice', { label: 'Open Settings', onAction: () => { setSettingsCloudflare((asked) => asked + 1); setSettingsOpen(true) } })
+      if (notice) notify(notice, 'warning', 'recording-keys-notice', { label: 'Open Settings', onAction: () => openSettingsWindow('accounts') })
     }).catch(() => {})
   }, [shellReady])
 
@@ -1111,7 +1124,7 @@ function MainApp() {
           )}
           {sidebarMode === 'slides' && (
             <div className="sidebar-nav-body">
-              <SlidesOrganizer content={outlineContent} onJump={(line) => jumpRef.current?.(line)} ops={outlineOps} currentLine={activeOutlineLine} talkKey={activeTalk?.outlinePath ?? null} />
+              <SlidesOrganizer content={outlineContent} onJump={(line, opts) => jumpRef.current?.(line, opts)} ops={outlineOps} currentLine={activeOutlineLine} talkKey={activeTalk?.outlinePath ?? null} talkTitle={activeTalk?.title ?? null} />
             </div>
           )}
 
@@ -1166,12 +1179,18 @@ function MainApp() {
         />
       )}
       <WorkspaceLayout
+        researchJump={researchJump}
+        onResearchJump={(use) => {
+          const target = state.talks.find(talk => talk.outlinePath === use.file)
+          if (!target) { notify('That slide is not in an open talk.', 'info'); return }
+          void selectTalk(target).then(selected => { if (selected) setResearchJump({ file: use.file, line: use.slideLine, nonce: Date.now() }) })
+        }}
         activeTalk={activeTalk}
         vaultRoot={activeVault.root}
         onOutlineChange={slidesOutlineVisible ? setOutlineContent : undefined}
         registerJump={(fn) => { jumpRef.current = fn }}
         registerOutlineOps={registerOutlineOps}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={() => openSettingsWindow()}
         onSelectTalk={selectTalk}
         onEditorEngaged={onEditorEngaged}
         registerFlushSave={(fn) => { flushSaveRef.current = fn }}
@@ -1196,16 +1215,6 @@ function MainApp() {
         onSaved={() => {
           void refreshTalks() // sidebar title/subtitle/event may have changed
         }}
-      />
-      <SettingsPanel
-        isOpen={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        showCloudflare={settingsCloudflare}
-        vaultRoot={firstOpenVault.root}
-        onChangeVault={async () => { setSettingsOpen(false); await addVault() }}
-        onOpenGuide={() => { setSettingsOpen(false); openGuide() }}
-        exampleRemoved={exampleRemoved && !exampleVault}
-        onRestoreExample={() => { setSettingsOpen(false); void restoreExampleVault() }}
       />
       {removeConfirm && (
         <RemoveExampleConfirm

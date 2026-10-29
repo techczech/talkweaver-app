@@ -266,7 +266,8 @@
   body:not(.presenter-mode) .slide.active figure.slide-figure img { cursor: zoom-in; }/* @order 1043 */
   /* Embed-only slides (2026-06-10): the simulation COVERS the whole stage under the title bar —
      never a letterboxed 16:9 window with scrollbars. Outranks the top-title centring margins. *//* @order 1044 */
-  .slide[data-title-layout="top"] .slide-content.layout-media > figure.slide-embed {
+  .slide[data-title-layout="top"] .slide-content.layout-media > figure.slide-embed,
+  .slide[data-title-layout="hidden"] .slide-content.layout-media > figure.slide-embed {
     flex: 1 1 auto !important;
     width: 100%;
     min-height: 0;
@@ -767,3 +768,7 @@
   .slot[data-embed-split="80"]:not([data-slot-arrange]):has(> .slot-media figure.slide-embed[data-embed="local"]) { grid-template-columns: minmax(0, 1fr) minmax(0, 4fr); }
   .slot[data-embed-split="80"]:not([data-slot-arrange])[data-slot-side="left"]:has(> .slot-media figure.slide-embed[data-embed="local"]) { grid-template-columns: minmax(0, 4fr) minmax(0, 1fr); }
 }
+
+/* Hidden titles have no title/content grid to supply a definite iframe height. *//* @order 2000 */
+.slide[data-title-layout="hidden"] .slide-content.layout-media:has(> figure.slide-embed),
+.slide[data-title-layout="hidden"] .slide-content.layout-media > figure.slide-embed { height: 100%; }

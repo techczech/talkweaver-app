@@ -8,7 +8,8 @@ import { withoutScripts } from "./04-html-extraction.mjs";
 import { resolveIconOverrides, decideFeatureListStyle, iconSvg } from "./05-icons.mjs";
 import { parseChartItems, renderChartBlock } from "./06-chart-renderer.mjs";
 import { plainListForcedIcons } from "./11-frame.mjs";
-import { embedLocalFigureMarkup } from "./embed-frame.mjs";
+import { embedLocalFigureMarkup, embedSandboxValue } from "./embed-frame.mjs";
+import { workPagePlayerUrl } from "../../assets/runtime/work-page-parts.js";
 import { stripWrappingQuoteMarks } from "./quote-layout.mjs";
 import { renderQuoteForm, shortenAddressLinks } from "./quote-forms.mjs";
 import { iconRowPerRow, cardsTooNarrow } from "./narrow-columns.mjs";
@@ -41,11 +42,15 @@ function vsHeadHtml(panel, side) {
   const icon = key && iconSvg(key) ? `<div class="vs-head-ico">${iconSvg(key)}</div>` : "";
   return `<div class="vs-head ${side}">${icon}<div class="vs-head-text">${renderInline(panel.head)}</div></div>`;
 }
+function contrastChildrenHtml(nodes) {
+  if (!nodes?.length) return "";
+  return `<ul class="vs-children">${nodes.map((node) => `<li>${renderInline(node.text || "")}${contrastChildrenHtml(node.children)}</li>`).join("")}</ul>`;
+}
 function vsRowHtml(row, side, last, vocab) {
   const key = rowIconKey(row, vocab);
   const svg = key ? iconSvg(key) : "";
   const icon = svg ? `<div class="vs-ico">${svg}</div>` : "";
-  return `<div class="vs-row ${side}${last ? " last" : ""}${svg ? "" : " vs-bare"}">${icon}<div class="vs-text">${renderInline(row.text)}</div></div>`;
+  return `<div class="vs-row ${side}${last ? " last" : ""}${svg ? "" : " vs-bare"}">${icon}<div class="vs-text">${renderInline(row.text)}${contrastChildrenHtml(row.children)}</div></div>`;
 }
 function vsRowTracks(model) {
   return `${model.headed ? "auto " : ""}repeat(${model.rowCount}, auto)`;
@@ -225,6 +230,15 @@ function mediaAspectAttrs(block) {
   if (!block?.mediaRowAspect) return "";
   const value = Number(block.mediaRowAspect).toFixed(4);
   return ` style="--media-aspect:${value}" data-media-aspect-source="${block.mediaAspectSource}"`;
+}
+
+/** A saved view's capture date for its label, from the record's ISO time (UTC): "27 Oct 2026". */
+function savedViewDate(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T/.exec(String(iso || ""));
+  if (!m) return "";
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const month = months[Number(m[2]) - 1];
+  return month ? `${Number(m[3])} ${month} ${m[1]}` : "";
 }
 
 function renderImageFigure(block) {
@@ -554,7 +568,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
       // The title: the one written in the outline, else the page's own <title>, else the file name
       // as it may be shown (never a folder outside the talk's).
       const title = block.title || block.pageTitle || block.shownName || shownReference(block.src || "");
-      return embedLocalFigureMarkup({ doc: block.srcdoc, title, simulation: block.variant === "simulation", figureAttrs: aspectAttrs, icon: iconSvg("lucide:mouse-pointer-click"), after: interactChip });
+      return embedLocalFigureMarkup({ doc: block.srcdoc, title, simulation: block.variant === "simulation", figureAttrs: `${aspectAttrs} data-resource-title="${escapeHtml(block.title || block.pageTitle || referenceFileName(block.shownName || block.src) || "HTML page")}"`, icon: iconSvg("lucide:mouse-pointer-click"), after: interactChip });
     }
     // A local embed whose source file was missing: show a visible placeholder, never a broken iframe.
     if (block.missing) {
@@ -564,9 +578,11 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     const src = escapeHtml(rawSrc);
     const remote = /^https?:/i.test(rawSrc);
     // A YouTube/Vimeo player iframe PLAYS from file:// — mark it so the runtime promotes it to a
-    // live src (never the offline fallback card) regardless of protocol. Detect against the
-    // normalized embed endpoint (youtube-nocookie.com / player.vimeo.com) the generator emitted.
-    const isVideo = /(?:youtube-nocookie\.com\/embed\/|player\.vimeo\.com\/video\/)/i.test(rawSrc);
+    // live src (never the offline fallback card) regardless of protocol. Only the player itself is
+    // one: its own https origin and endpoint (the normalized address the lexer emits), by the same
+    // rule as the step sanitiser and the work page. An address that merely contains a player path
+    // is a web page, and keeps the remote sandbox and its Open link.
+    const isVideo = workPagePlayerUrl(rawSrc);
     // Remote (non-video) embeds also get a persistent "Open <host> ↗" caption: in a shared file a
     // site that refuses framing still gives the viewer a working link, and we never guess-and-card.
     let openLink = "";
@@ -575,7 +591,29 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
       try { host = new URL(rawSrc).hostname.replace(/^www\./, ""); } catch { /* keep raw */ }
       openLink = `<a class="embed-open-link" href="${src}" target="_blank" rel="noopener">Open ${escapeHtml(host)} ↗</a>`;
     }
-    return `<figure class="slide-embed${block.variant === "simulation" ? " slide-simulation" : ""}${isVideo ? " slide-embed-video" : ""}"${aspectAttrs}><iframe data-src="${src}"${remote ? ` data-embed-url="${src}"` : ` scrolling="no"`}${isVideo ? ` data-embed-video="1"` : ""} title="${escapeHtml(block.title || block.src || "")}" loading="lazy" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>${openLink}${isVideo ? "" : interactChip}</figure>`;
+    // A remote web page (not a video player) runs in the remote sandbox (embed-frame.mjs, design 2.4):
+    // its own origin, scripts and forms, but no pop-ups, no top-level navigation and no downloads.
+    // Video players keep their markup (their own "Watch on" links open pop-ups).
+    const remoteSandbox = remote && !isVideo ? ` sandbox="${embedSandboxValue("remote")}"` : "";
+    // Saved views of the page (the capture gallery, lib/live-page-captures.mjs): when the talk has
+    // any, they ARE the slide wherever the page is not shown live (editor preview, exports, share
+    // pages, handouts): a strip of pictures, one per view, that scrolls sideways without a script,
+    // each labelled with its capture date, the Open link beside them. The frame stays as the layout
+    // box and is never loaded there (deck runtime). Only public fields: the picture and its date.
+    const savedViews = remote && !isVideo && Array.isArray(block.savedViews) ? block.savedViews.filter((v) => v && typeof v.src === "string" && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(v.src)) : [];
+    const savedHost = (() => { try { return new URL(rawSrc).hostname.replace(/^www\./, ""); } catch { return ""; } })();
+    const savedStrip = savedViews.length
+      ? `<div class="embed-saved-views" data-count="${savedViews.length}">${savedViews.map((v, i) => {
+          const date = savedViewDate(v.capturedAt);
+          const page = v.mode === "page";
+          const label = `${page ? "Entire page" : "Saved view"}${savedViews.length > 1 ? ` ${i + 1} of ${savedViews.length}` : ""}${date ? `, captured ${date}` : ""}`;
+          const dims = Number.isInteger(v.width) && Number.isInteger(v.height) ? ` width="${v.width}" height="${v.height}"` : "";
+          // An Entire page view is tall: it scrolls in its own box at full width, never shrunk to fit.
+          const img = `<img src="${v.src}"${dims} alt="${escapeHtml(`${label}${savedHost ? ` of ${savedHost}` : ""}`)}" data-captured-at="${escapeHtml(String(v.capturedAt || ""))}"${page ? ` data-mode="page"` : ""} loading="lazy" decoding="async">`;
+          return `<figure class="embed-saved-view${page ? " is-page" : ""}">${page ? `<div class="embed-saved-view-scroll">${img}</div>` : img}<figcaption>${escapeHtml(label)}</figcaption></figure>`;
+        }).join("")}</div>`
+      : "";
+    return `<figure class="slide-embed${savedStrip ? " has-saved-views" : ""}${block.variant === "simulation" ? " slide-simulation" : ""}${isVideo ? " slide-embed-video" : ""}"${aspectAttrs}><iframe data-src="${src}"${remote ? ` data-resource-url="${escapeHtml(block.resourceUrl || rawSrc)}"` : ""}${remote ? ` data-embed-url="${src}"` : ` scrolling="no"`}${remoteSandbox}${isVideo ? ` data-embed-video="1"` : ""} title="${escapeHtml(block.title || block.pageTitle || block.src || "")}" loading="lazy" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>${savedStrip}${openLink}${isVideo || savedStrip ? "" : interactChip}</figure>`;
   }
   if (block.type === "timeline") {
     // Ticket 22 — ONE model for every source form: `stops` [{date, text, details, category}]
@@ -860,9 +898,9 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     // every pair count, and all preserve `.contrast-grid > .contrast-pair` plus first/last
     // span ordering for stepping and projection.
     if (["ledger", "rows", "tint", "flip"].includes(block.variant)) {
-      const pair = ([l, r]) => block.variant === "rows"
-        ? `<div class="contrast-pair"><span class="ct-old">${renderInline(l)}</span><span class="ct-arrow" aria-hidden="true">→</span><span class="ct-new">${renderInline(r)}</span></div>`
-        : `<div class="contrast-pair"><span class="ct-old">${renderInline(l)}</span><span class="ct-new">${renderInline(r)}</span></div>`;
+      const pair = ([l, r], i) => block.variant === "rows"
+        ? `<div class="contrast-pair"><span class="ct-old">${renderInline(l)}${contrastChildrenHtml(block.pairChildren?.[i]?.[0])}</span><span class="ct-arrow" aria-hidden="true">→</span><span class="ct-new">${renderInline(r)}${contrastChildrenHtml(block.pairChildren?.[i]?.[1])}</span></div>`
+        : `<div class="contrast-pair"><span class="ct-old">${renderInline(l)}${contrastChildrenHtml(block.pairChildren?.[i]?.[0])}</span><span class="ct-new">${renderInline(r)}${contrastChildrenHtml(block.pairChildren?.[i]?.[1])}</span></div>`;
       return `<div class="contrast-grid contrast-${block.variant}">${block.pairs.map(pair).join("")}</div>`;
     }
     // Complex comparisons (2026-06-10): with 5+ pairs the pair-cards dissolve into noise — the
@@ -889,9 +927,9 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     // legacy device via {contrast=cards}. The `.contrast-grid > .contrast-pair` contract is
     // unchanged either way (MODE_SELECTOR stepping + tests survive).
     if (block.variant === "cards") {
-      return `<div class="contrast-grid">${block.pairs.map(([l, r]) => `<div class="contrast-pair"><span>${renderInline(l)}</span><strong aria-hidden="true">/</strong><span>${renderInline(r)}</span></div>`).join("")}</div>`;
+      return `<div class="contrast-grid">${block.pairs.map(([l, r], i) => `<div class="contrast-pair"><span>${renderInline(l)}${contrastChildrenHtml(block.pairChildren?.[i]?.[0])}</span><strong aria-hidden="true">/</strong><span>${renderInline(r)}${contrastChildrenHtml(block.pairChildren?.[i]?.[1])}</span></div>`).join("")}</div>`;
     }
-    return `<div class="contrast-grid contrast-arrows">${block.pairs.map(([l, r]) => `<div class="contrast-pair"><span class="ct-arrow ct-left">${renderInline(l)}</span><span class="ct-arrow ct-right">${renderInline(r)}</span></div>`).join("")}</div>`;
+    return `<div class="contrast-grid contrast-arrows">${block.pairs.map(([l, r], i) => `<div class="contrast-pair"><span class="ct-arrow ct-left">${renderInline(l)}${contrastChildrenHtml(block.pairChildren?.[i]?.[0])}</span><span class="ct-arrow ct-right">${renderInline(r)}${contrastChildrenHtml(block.pairChildren?.[i]?.[1])}</span></div>`).join("")}</div>`;
   }
   if (block.type === "tiles") {
     // Grid / tiles. The column count is the author's explicit {blocks:RxC} cols if set, else the
@@ -1852,13 +1890,33 @@ export function mapBlocksToLayout(layout, blocks) {
   const firstImage = blocks.find((b) => b.type === "image");
   const rest = (skip) => blocks.filter((b) => !skip.includes(b));
   if (layout === "contrast" && firstList) {
-    const pairs = firstList.items.map((item) => {
-      const idx = item.indexOf(" / ");
-      return idx >= 0 ? [item.slice(0, idx), item.slice(idx + 3)] : [item, ""];
-    });
-    // contrast consumes firstList; featurize any other lists that remain
-    return featurizeRemainingLists([...rest([firstList]), { type: "contrast", pairs, ...(firstList.iconOverrides ? { iconOverrides: firstList.iconOverrides } : {}) }]);
+    const children = firstList.children ?? [];
+    // Exactly two roots are sides. Keep existing all-slash rows unless the author supplied
+    // a child tree: that explicit column structure wins, including slashes in its labels.
+    const sides = firstList.items.length === 2 &&
+      (children.some((kids) => kids?.length) || !firstList.items.every((item) => item.includes(" / ")));
+    let pairs, pairChildren, headed = false;
+    if (sides) {
+      pairs = [[...firstList.items]];
+      pairChildren = [[[], []]];
+      headed = children.some((kids) => kids?.length);
+      for (let i = 0; i < Math.max(children[0]?.length ?? 0, children[1]?.length ?? 0); i += 1) {
+        pairs.push([children[0]?.[i]?.text ?? "", children[1]?.[i]?.text ?? ""]);
+        pairChildren.push([children[0]?.[i]?.children ?? [], children[1]?.[i]?.children ?? []]);
+      }
+    } else {
+      pairs = firstList.items.map((item) => {
+        const idx = item.indexOf(" / ");
+        return idx >= 0 ? [item.slice(0, idx), item.slice(idx + 3)] : [item, ""];
+      });
+      pairChildren = pairs.map((_, i) => [children[i] ?? [], []]);
+    }
+    return featurizeRemainingLists([...rest([firstList]), {
+      type: "contrast", pairs, pairChildren, ...(sides ? { headed } : {}),
+      ...(!sides && firstList.iconOverrides ? { iconOverrides: firstList.iconOverrides } : {})
+    }]);
   }
+
   if (layout === "list" && firstList) {
     // Ticket 05: a practice quotation stays AFTER the list it refers to ("Four stalls … Try it:
     // move a slide"); every other block keeps the list layout's order (list last).

@@ -1,12 +1,14 @@
-// Settings → Cloudflare at the window's default size, in the states seen on 0.38.2-preview.1
+// Settings window → Cloudflare page at the window's default size, in the states seen on 0.38.2-preview.1
 // (a long account name, a custom domain, a share-link domain the token cannot attach, recording
 // storage not set up). Two things are checked:
-//   - WIDTH: nothing in the Settings panel is wider than the panel, and no part of it is scrolled
-//     sideways, whether Settings is opened with ⌘, or at the Cloudflare section (the publish sheet,
-//     the Guide's "Set up", a notice). A screenshot showed the left edge of the section cut off.
-//   - SET UP RECORDING STORAGE: the Recording storage row offers it; pressing it brings the fields
-//     (endpoint, bucket, access keys) into view with the endpoint focused, even under a search that
-//     had hidden them.
+//   - WIDTH: nothing on the Cloudflare page is wider than the Settings window's page area, and no part
+//     of it is scrolled sideways, whether Settings is opened with ⌘, (then the Cloudflare page picked)
+//     or at the Cloudflare page (the publish sheet, the Guide's "Set up", a notice). A screenshot
+//     showed the left edge of the section cut off.
+//   - SET UP RECORDING STORAGE: the Recording storage row offers it; pressing it brings the storage
+//     fields (endpoint, bucket) into view with the endpoint focused, after a search that had hidden
+//     the page has been cleared. Since 0.42 the fields are the Recording page's rows (the access keys are in
+//     Accounts and keys), so "into view" means that page, with the Storage endpoint row focused.
 // A throwaway user-data folder and vault, a made-up token and the fake Cloudflare API on this
 // computer's loopback address. Nothing here contacts Cloudflare.
 // TW_SHOTS_DIR=<dir> saves pictures of the panel in each way it was opened.
@@ -16,6 +18,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { createCheckLedger } from './lib/check-ledger.mjs'
+import { openSettingsWindow, openSettingsAtCloudflare, gotoSection, closeSettingsWindow, shutdownApp } from './lib/settings-window.mjs'
 import { startCloudflareApiStub } from '../scripts/lib/cloudflare-api-stub.mjs'
 
 const root = process.cwd()
@@ -37,11 +40,11 @@ const ACCOUNT = { id: 'acc-ada-0001', name: "Ada.Lovelace.long.address@example-u
 const SITE = 'adas-handouts'
 
 const CHECKS = [
-  'the app started on the throwaway folder at its default window size, pointed at the fake API',
-  'opened with ⌘, : nothing in the Settings panel is wider than the panel and nothing is scrolled sideways',
-  'opened at the Cloudflare section: nothing in the Settings panel is wider than the panel and nothing is scrolled sideways',
+  'the app started on the throwaway folder at its default window size, pointed at the fake API; the Settings window opens at its default size',
+  'opened with ⌘, and the Cloudflare page picked: nothing on the page is wider than the Settings window\'s page area and nothing is scrolled sideways',
+  'opened at the Cloudflare page: nothing on the page is wider than the Settings window\'s page area and nothing is scrolled sideways',
   'the Recording storage row says "Not set up" and offers "Set up recording storage"; its words do not send the person "below"',
-  '"Set up recording storage" brings Recording storage into view with the endpoint field focused, even under a search that hid it',
+  '"Set up recording storage" brings the Recording page\'s Storage endpoint row into view, focused (after a search that took the Cloudflare page away has been cleared)',
 ]
 const ledger = createCheckLedger(CHECKS)
 const record = (index, ok, detail) => ledger.record(CHECKS[index], Boolean(ok), detail)
@@ -61,7 +64,7 @@ try {
   for (const name of ['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'SHELL', 'DISPLAY', 'SystemRoot', 'SYSTEMROOT', 'windir', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'USERNAME', 'PATHEXT', 'ComSpec']) {
     if (process.env[name] !== undefined) env[name] = process.env[name]
   }
-  app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`], cwd: root, env })
+  app = await electron.launch({ args: ['.', '--use-mock-keychain', `--user-data-dir=${userData}`], cwd: root, env })
   if (process.env.TW_E2E_SHOW !== '1') {
     await app.evaluate(({ app: electronApp, BrowserWindow }) => {
       const hide = (win) => { win.setPosition(-20000, -20000); win.hide() }
@@ -79,87 +82,93 @@ try {
     return win.getContentSize()
   })
   const viewport = await page.evaluate(() => [window.innerWidth, window.innerHeight])
-  record(0, realpathSync(where) === realpathSync(userData) && size[0] === 1400 && size[1] === 900, `window ${size.join(' × ')}; page ${viewport.join(' × ')}`)
+  const record0 = realpathSync(where) === realpathSync(userData) && size[0] === 1400 && size[1] === 900
+  const record0Detail = `window ${size.join(' × ')}; page ${viewport.join(' × ')}`
 
-  const settings = page.locator('[aria-label="Settings"]').first()
-  const part = (name) => settings.locator(`[data-cloudflare="${name}"]`)
-  const shot = async (name) => { if (shots) await page.screenshot({ path: join(shots, `${name}.png`) }).catch(() => {}) }
-  const closeSettings = async () => { await page.keyboard.press('Escape'); await page.locator('[aria-label="Settings"]').waitFor({ state: 'detached' }) }
+  const shot = async (sw, name) => { if (shots) await sw.screenshot({ path: join(shots, `${name}.png`) }).catch(() => {}) }
+  const pageSize = () => app.evaluate(({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes('settings.html'))
+    return win ? win.getContentSize() : null
+  })
 
-  // Connect.
-  await page.keyboard.press('ControlOrMeta+,')
+  // Connect (the token is saved in the Settings window: the editor window is refused).
+  let sw = await openSettingsWindow(app, page, 'cloudflare')
+  const part = (name) => sw.locator(`[data-cloudflare="${name}"]`)
   await part('token').locator('input').fill(TOKEN)
   await part('token').getByRole('button', { name: 'Save token' }).click()
-  await page.waitForFunction((name) => document.querySelector('[data-cloudflare="connection-label"]')?.textContent === `Connected · ${name}`, ACCOUNT.name, { timeout: 40_000 })
-  await page.waitForFunction(() => document.querySelector('[data-cloudflare="connection"]')?.getAttribute('data-busy') === 'no', null, { timeout: 40_000 })
-  await page.waitForFunction(() => document.querySelector('[data-cloudflare="share-link"]')?.getAttribute('data-state') === 'no-permission', null, { timeout: 20_000 }).catch(() => {})
-  await page.waitForFunction(() => document.querySelector('[data-cloudflare="recording-storage"]')?.getAttribute('data-state') === 'not-set-up')
-  await closeSettings()
+  await sw.waitForFunction((name) => document.querySelector('[data-cloudflare="connection-label"]')?.textContent === `Connected · ${name}`, ACCOUNT.name, { timeout: 40_000 })
+  await sw.waitForFunction(() => document.querySelector('[data-cloudflare="connection"]')?.getAttribute('data-busy') === 'no', null, { timeout: 40_000 })
+  await sw.waitForFunction(() => document.querySelector('[data-cloudflare="share-link"]')?.getAttribute('data-state') === 'no-permission', null, { timeout: 20_000 }).catch(() => {})
+  await sw.waitForFunction(() => document.querySelector('[data-cloudflare="recording-storage"]')?.getAttribute('data-state') === 'not-set-up')
+  const settingsSize = await pageSize()
+  record(0, record0 && settingsSize && settingsSize[0] === 1000 && settingsSize[1] === 690, `${record0Detail}; Settings window ${settingsSize?.join(' × ')}`)
+  await closeSettingsWindow(app)
 
-  /** Everything that could put part of the panel out of sight sideways. */
-  const measure = () => page.evaluate(() => {
-    const modal = document.querySelector('[aria-label="Settings"]')
-    const body = modal.querySelector('[data-cloudflare="section"]').parentElement
-    const box = modal.getBoundingClientRect()
+  /** Everything that could put part of the page out of sight sideways. The page area is the Settings window's scrolling pane around the Cloudflare page. */
+  const measure = () => sw.evaluate(() => {
+    const section = document.querySelector('[data-settings-page="cloudflare"]')
+    const pane = section.parentElement
+    const box = pane.getBoundingClientRect()
     const scrolledSideways = []
-    for (let node = modal.querySelector('[data-cloudflare="section"]'); node; node = node.parentElement) {
-      if (node.scrollLeft) scrolledSideways.push(`${node.tagName.toLowerCase()}${node.getAttribute('aria-label') ? `[${node.getAttribute('aria-label')}]` : ''} by ${node.scrollLeft}px`)
+    for (let node = section; node; node = node.parentElement) {
+      if (node.scrollLeft) scrolledSideways.push(`${node.tagName.toLowerCase()}${node.className ? `.${String(node.className).split(' ')[0]}` : ''} by ${node.scrollLeft}px`)
     }
     if (document.scrollingElement?.scrollLeft) scrolledSideways.push(`the page by ${document.scrollingElement.scrollLeft}px`)
-    // Visible elements whose box goes past the panel's left or right edge.
-    const outside = [...modal.querySelectorAll('*')].filter((el) => {
+    // Visible elements whose box goes past the page area's left or right edge.
+    const outside = [...section.querySelectorAll('*')].filter((el) => {
       const r = el.getBoundingClientRect()
       return r.width > 0 && r.height > 0 && (r.left < box.left - 0.5 || r.right > box.right + 0.5)
     }).slice(0, 6).map((el) => `${el.tagName.toLowerCase()} "${(el.textContent ?? '').trim().slice(0, 40)}" (${Math.round(el.getBoundingClientRect().left)}…${Math.round(el.getBoundingClientRect().right)})`)
-    const label = modal.querySelector('[data-cloudflare="connection-label"]').getBoundingClientRect()
+    const label = section.querySelector('[data-cloudflare="connection-label"]').getBoundingClientRect()
     return {
       panel: `${Math.round(box.left)}…${Math.round(box.right)} of ${window.innerWidth}`,
-      modalWide: modal.scrollWidth - modal.clientWidth, bodyWide: body.scrollWidth - body.clientWidth,
+      modalWide: document.documentElement.scrollWidth - document.documentElement.clientWidth, bodyWide: pane.scrollWidth - pane.clientWidth,
       scrolledSideways, outside, labelLeft: Math.round(label.left - box.left),
     }
   })
-  const fits = (m) => m.modalWide <= 0 && m.bodyWide <= 0 && m.scrolledSideways.length === 0 && m.outside.length === 0
-  const said = (m) => `panel ${m.panel}; wider than the panel by ${m.modalWide}px (panel) / ${m.bodyWide}px (its body); scrolled sideways: ${m.scrolledSideways.join(', ') || 'nothing'}; past its edges: ${m.outside.join(' · ') || 'nothing'}; "Connected" starts ${m.labelLeft}px inside the panel`
+  const fits = (m) => m.modalWide <= 0 && m.bodyWide <= 0 && m.scrolledSideways.length === 0 && m.outside.length === 0 && m.labelLeft >= 0
+  const said = (m) => `page area ${m.panel}; window wider than itself by ${m.modalWide}px / page area by ${m.bodyWide}px; scrolled sideways: ${m.scrolledSideways.join(', ') || 'nothing'}; past its edges: ${m.outside.join(' · ') || 'nothing'}; "Connected" starts ${m.labelLeft}px inside the page area`
 
-  // 1. ⌘,
-  await page.keyboard.press('ControlOrMeta+,')
+  // 1. ⌘, then the Cloudflare page.
+  sw = await openSettingsWindow(app, page, 'cloudflare')
   await part('connection').waitFor({ state: 'visible' })
   await part('section').scrollIntoViewIfNeeded()
-  await page.waitForTimeout(300)
+  await sw.waitForTimeout(300)
   const byKey = await measure()
-  await shot('settings-cloudflare-opened-with-cmd-comma')
+  await shot(sw, 'settings-cloudflare-opened-with-cmd-comma')
   record(1, fits(byKey), said(byKey))
-  await closeSettings()
 
-  // 2. At the Cloudflare section (as the publish sheet, the Guide and the notices open it).
-  await page.evaluate(() => window.tw.cloudflare.openSettings())
+  // 2. At the Cloudflare page (as the publish sheet, the Guide and the notices open it).
+  sw = await openSettingsAtCloudflare(app, page)
   await part('connection').waitFor({ state: 'visible' })
-  await page.waitForTimeout(800) // the section is looked for every 50 ms until it is drawn, then scrolled to
+  await sw.waitForTimeout(800)
   const atSection = await measure()
-  await shot('settings-cloudflare-opened-at-the-section')
-  record(2, fits(atSection), said(atSection))
+  await shot(sw, 'settings-cloudflare-opened-at-the-section')
+  record(2, fits(atSection) && await sw.locator('button.bsw-nav[data-section="cloudflare"]').count() === 1, said(atSection))
 
   // 3. The Recording storage row.
   const rowText = (await part('recording-storage').innerText()).replace(/\s+/g, ' ').trim()
   record(3, rowText === 'Recording storage Recordings stay on this computer until storage is set up Not set up Set up recording storage' && !/below/.test(rowText), rowText)
 
-  // 4. Set up recording storage, under a search that shows only the Cloudflare section.
-  await settings.getByLabel('Search settings').fill('cloudflare')
-  const hiddenFirst = await settings.locator('[data-settings-section="recording"]').count() === 0
+  // 4. Set up recording storage. A search turns the window into a list of matching rows, which has no Cloudflare page (so no button
+  // to press under it): the search is typed, seen to hide the page and the Recording page's nav button, then cleared, and the button pressed.
+  await sw.getByLabel('Search settings').fill('cloudflare')
+  await sw.waitForTimeout(300)
+  const hiddenFirst = await part('recording-storage-set-up').count() === 0
+  await sw.getByLabel('Clear search').click()
+  await part('recording-storage-set-up').waitFor({ state: 'visible' })
   await part('recording-storage-set-up').click()
-  const reached = await page.waitForFunction(() => {
-    const modal = document.querySelector('[aria-label="Settings"]')
-    const head = modal?.querySelector('[data-settings-section="recording"]')
-    const field = modal?.querySelector('input[aria-label="Recording storage endpoint"]')
-    if (!head || !field || document.activeElement !== field) return false
-    const body = head.parentElement.getBoundingClientRect()
-    const r = head.getBoundingClientRect()
+  const reached = await sw.waitForFunction(() => {
+    const field = document.querySelector('input[aria-label="Storage endpoint"]')
+    if (!field || document.activeElement !== field) return false
+    const pane = field.closest('.bsw-pscroll') ?? document.documentElement
+    const body = pane.getBoundingClientRect()
     const f = field.getBoundingClientRect()
-    return r.top >= body.top - 1 && f.bottom <= body.bottom + 1
+    return f.top >= body.top - 1 && f.bottom <= body.bottom + 1
   }, null, { timeout: 5000 }).then(() => true, () => false)
-  const searchNow = await settings.getByLabel('Search settings').inputValue()
-  await shot('settings-recording-storage-set-up')
-  record(4, hiddenFirst && reached && searchNow === '', `the search had hidden the section: ${hiddenFirst}; the section at the top with the endpoint focused: ${reached}; the search now: "${searchNow}"`)
+  const searchNow = await sw.getByLabel('Search settings').inputValue()
+  await shot(sw, 'settings-recording-storage-set-up')
+  record(4, hiddenFirst && reached && searchNow === '', `a search had taken the Cloudflare page away: ${hiddenFirst}; the Storage endpoint row in view and focused: ${reached}; the search now: "${searchNow}"`)
 
   exitCode = ledger.summary('SETTINGS PANEL WIDTH').exitCode
 } catch (error) {
@@ -167,9 +176,7 @@ try {
   try { ledger.summary('SETTINGS PANEL WIDTH') } catch { /* summary already printed */ }
   exitCode = 1
 } finally {
-  const pid = app?.process().pid
-  try { await app?.close() } catch { /* already closed */ }
-  if (pid) { try { process.kill(pid) } catch { /* gone */ } }
+  await shutdownApp(app)
   await api?.close()
   rmSync(scratch, { recursive: true, force: true, maxRetries: 3 })
 }

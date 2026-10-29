@@ -657,7 +657,7 @@ const NOT_READY = [
   ['not connected', {}, null, { kind: 'not-connected', title: NOT_CONNECTED_TITLE, action: 'open-settings' }],
   ['a token Cloudflare does not know', {}, UNKNOWN, { kind: 'not-ready', title: 'Cloudflare did not accept this token', action: 'open-settings' }],
   ['several accounts, none chosen', {}, BOTH_ACCOUNTS, { kind: 'not-ready', title: 'Choose a Cloudflare account', action: 'open-settings' }],
-  ['no site yet', { config: { project: 'not-made-yet' } }, TOKEN, { kind: 'not-ready', title: 'No site yet', action: 'create-site', label: 'Create not-made-yet' }],
+  ['no site yet', { config: { project: 'not-made-yet' } }, TOKEN, { kind: 'not-ready', title: 'No site yet', action: 'open-settings', label: 'Open Settings' }],
   ['a token that cannot even read Pages', {}, NO_PAGES, { kind: 'not-ready', title: 'The token cannot publish pages', action: 'open-settings' }],
   ['a site name that cannot be used', { config: { project: 'not a name' } }, TOKEN, { kind: 'not-ready', title: 'Publishing is not ready', action: 'open-settings' }],
   ['Cloudflare does not answer', { timeoutMs: 30, hang: true }, TOKEN, { kind: 'not-ready', title: 'Cloudflare could not be reached', action: 'open-settings' }],
@@ -681,11 +681,14 @@ for (const entry of ENTRIES) {
   const sheet = (await world().publish('talk')).notReady
   assert.deepEqual([sheet.title, sheet.fix.label, SAVE_AS_FILE], ['Publishing needs a Cloudflare account', 'Open Settings', 'Save as a file instead'])
   assert.equal(OPEN_SETTINGS, 'Open Settings')
-  // "No site yet": the one button makes the site, and the publish then goes.
+  // "No site yet": the sheet opens Settings → Cloudflare, where the site is made (Settings-window-only
+  // since Sol review 4); once it is made there, the same publish goes.
   const w = world({ stored: TOKEN, config: { project: 'not-made-yet' } })
-  assert.equal((await w.publish('talk')).notReady.fix.action, 'create-site')
+  const noSite = (await w.publish('talk')).notReady
+  assert.deepEqual([noSite.fix.action, noSite.fix.label], ['open-settings', 'Open Settings'])
+  assert.match(noSite.detail, /Create it in Settings → Cloudflare\.$/)
   see(await w.connection.createSite())
-  assert.equal((await w.publish('talk')).ok, true, 'after "Create not-made-yet" the same publish goes up, with no "Check again" in between')
+  assert.equal((await w.publish('talk')).ok, true, 'after the site is made in Settings the same publish goes up, with no "Check again" in between')
   assert.equal(w.uploads[0].args[w.uploads[0].args.indexOf('--project-name') + 1], 'not-made-yet')
   // A connection that was offline is asked again at the next publish, not held against the person.
   const flaky = world({ stored: TOKEN, timeoutMs: 30 })

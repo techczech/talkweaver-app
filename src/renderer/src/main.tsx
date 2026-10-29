@@ -9,6 +9,7 @@ import './vault-sheet.css'
 import './guide.css'
 import './conflict-compare.css'
 import './image-drawer.css'
+import './update-notices.css'
 import { installMock } from './tw-mock'
 
 // In Electron, window.tw is injected synchronously by the preload script.

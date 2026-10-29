@@ -15,19 +15,40 @@ import type { SlideRow } from '../extensions/slideOutline'
 import type { SlideBlockOps } from './Editor'
 import SlideRowMenus, { type SlideMenuRequest } from './SlideRowMenus'
 import { releaseSelectionOutside } from '../lib/outlineSelection'
+import type { SlideRef } from '../../../shared/slide-handling/blocks'
+import { slideKeys, useSlideSelection } from '../lib/useSlideSelection'
+import BatchBar from './slide-handling/BatchBar'
+import { writeSlideClipboard } from './SlideRowMenus'
+import { registerSlideSelection } from '../lib/slideSelectionBus'
+import { placeAtHeading, type SlidePlace } from '../../../shared/slide-handling/place'
+import { sectionDropBoundary, type DropRow } from '../lib/sectionDrop'
+import { headingLevelOfSource, highlightSegments, isEmptyQuery, parseQuery, type Snippet } from '../../../shared/slide-handling/query.ts'
+import { firstHitFrom, hitPosition, runSearch, stepHit } from '../lib/slideSearchModel'
+import { registerSearchSurface, usePictureText, useSlideQuery } from '../lib/slideSearch'
 
 interface Props {
   talk: TalkInfo
   compiledSlides: ProjectionRow[] | null
   triggerFindings: readonly LayoutDoctorFinding[]
   thumbnails?: Record<string, string> | null
+  previewsPending?: boolean
   activeIndex: number
   onSelectSlide: (index: number) => void
   // Enter / double-click: open this slide's source in the editor, focused and ready to type
   // (leaves grid mode). Single click stays select-only so browsing never steals focus.
   onEdit?: (index: number) => void
-  // `placement` names the side of the target block to land on; without it the drag direction decides.
-  onReorder?: (fromIndex: number, toIndex: number, placement?: 'before' | 'after') => void
+  /** The heading behind the card at a display index, in the editor's current text (null: a card with no heading). */
+  slideRefOf?: (index: number) => SlideRef | null
+  /** Move these slides or sections to `place` (shared/slide-handling moveBlocks, one undo step). */
+  onMoveSlides?: (refs: SlideRef[], place: SlidePlace) => void
+  /** ⌘↑ / ⌘↓ on the selected card. */
+  onStepSlide?: (ref: SlideRef, dir: 'up' | 'down') => void
+  /** Cut or delete these slides as ONE undo step (the clip goes on the clipboard by the host for 'cut'); false: refused. */
+  onSetAsideSlides?: (refs: SlideRef[]) => Promise<boolean>
+  onScratchDrop?: (id: string, place: SlidePlace) => void
+  onCutSlides?: (refs: SlideRef[], mode: 'cut' | 'delete') => Promise<boolean>
+  /** Copy these slides, talk order: the clip text, or null. */
+  onCopySlides?: (refs: SlideRef[]) => string | null
   onExplain?: (index: number) => void
   columns: number
   // Whole-slide operations by source line (Editor.tsx SlideBlockOps). With them a right-click on a
@@ -35,6 +56,9 @@ interface Props {
   slideOps?: SlideBlockOps | null
   /** The source line of the heading behind the card at a display index, or null (cover, closing). */
   lineOfSlide?: (index: number) => number | null
+  /** Paste after the card at a display index (⌘V, the card menu's Paste); the host checks the card's heading is
+   *  still on its line and refuses otherwise. Returns the pasted heading's line, or null. */
+  onPasteAfterCard?: (clip: string, index: number) => number | null
   /** After a paste or a "Move … to…" made here: the heading's new source line, to select and reveal. */
   onLanded?: (line: number) => void
   /** The menu's More actions… row: Actions here for the card at this index. */
@@ -47,32 +71,17 @@ function thumbKey(row: ProjectionRow): string | null {
   return row.render_hash || row.content_hash || row.slide_id || null
 }
 
-// A projection row is a reorderable outline block iff its source_markdown begins
-// with a `### ` heading. Synthesized rows (cover title, section dividers, closing)
-// carry empty/non-heading source_markdown and must not be dragged. Mirrors SlideStrip.
+// A projection row is a movable outline block iff it is a section's card or its source_markdown
+// begins with a slide or section heading (`##`–`######`): a section's card moves the whole
+// section. The cover title and closing carry no heading and are not dragged; a card whose heading
+// line the host cannot find (slideRefOf null) does not move either. Moves are addressed by source line and heading text (slideRefOf), never by this counter,
+// which only numbers the movable cards. Mirrors SlideStrip.
 function isOutlineBlock(p: ProjectionRow): boolean {
-  return /^###\s/.test((p.source_markdown ?? '').trimStart())
-}
-
-// Flat list of every row with its global display index and outline-block index
-// (null for synthesized rows). Same block counter as groupBySection, used by the
-// ⌘↑/⌘↓ keyboard-move so the move maps to the lib's block-index reorder.
-function flatBlocks(
-  rows: ProjectionRow[]
-): Array<{ globalIndex: number; blockIndex: number | null }> {
-  let block = 0
-  return rows.map((row, globalIndex) => {
-    const isBlock = isOutlineBlock(row)
-    const blockIndex = isBlock ? block : null
-    if (isBlock) block += 1
-    return { globalIndex, blockIndex }
-  })
+  return p.role === 'section-title' || /^#{2,6}\s/.test((p.source_markdown ?? '').trimStart())
 }
 
 interface SectionGroup {
-  // Stable key for the collapsed-set: prefer the section string; fall back to a
-  // synthetic key derived from the first slide's global index so consecutive runs
-  // with an empty section string stay distinct.
+  // Identity of a section run, independent of its current position.
   key: string
   /** The compiled `section` string the run was grouped by ('' before the first section). */
   section: string
@@ -84,7 +93,7 @@ interface SectionGroup {
 // Group consecutive rows sharing the same `section` string into runs. Section title:
 // prefer the row whose role === 'section-title' in that run (its nav_title/title),
 // else the section string, else "(no section)".
-function groupBySection(rows: ProjectionRow[]): SectionGroup[] {
+function groupBySection(rows: ProjectionRow[], keys: ReadonlyArray<string | null>): SectionGroup[] {
   const groups: SectionGroup[] = []
   let block = 0
   let current: SectionGroup | null = null
@@ -98,7 +107,7 @@ function groupBySection(rows: ProjectionRow[]): SectionGroup[] {
     const section = row.section ?? ''
     if (current === null || section !== currentSection) {
       current = {
-        key: section ? `sec:${section}` : `idx:${globalIndex}`,
+        key: `group:${keys[globalIndex]}`,
         section,
         title: section || '(no section)',
         rows: []
@@ -129,7 +138,7 @@ type GridDropTarget = number | string | null
 const SECTION_DROP = 'section:'
 const END_DROP = 'end'
 
-// The last reorderable (`###`) block of a section run, or null when it has none — a drop on the
+// The last movable block of a section run, or null when it has none — a drop on the
 // section's header lands after this block.
 function lastBlockOf(group: SectionGroup): { globalIndex: number; blockIndex: number } | null {
   for (let i = group.rows.length - 1; i >= 0; i -= 1) {
@@ -139,9 +148,21 @@ function lastBlockOf(group: SectionGroup): { globalIndex: number; blockIndex: nu
   return null
 }
 
+/** The drag image of several slides: a small stack with the count. */
+function setStackDragImage(e: React.DragEvent, n: number): void {
+  if (!e.dataTransfer?.setDragImage) return
+  const ghost = document.createElement('div')
+  ghost.textContent = `${n} slides`
+  ghost.style.cssText = 'position:fixed;top:-200px;left:-200px;padding:10px 16px;background:#fff;color:#1b2d57;font:600 12px sans-serif;border:2px solid #1b2d57;border-radius:6px;box-shadow:4px 4px 0 -1px #fff,5px 5px 0 0 #1b2d57,9px 9px 0 -1px #fff,10px 10px 0 0 #1b2d57'
+  document.body.appendChild(ghost)
+  e.dataTransfer.setDragImage(ghost, 20, 16)
+  window.setTimeout(() => ghost.remove(), 0)
+}
+
 interface CellThumbProps {
   row: ProjectionRow
   thumbnailUrl: string | null
+  previewsPending: boolean
   triggerFindings: readonly LayoutDoctorFinding[]
 }
 
@@ -149,7 +170,33 @@ interface CellThumbProps {
 // slide title so the grid stays legible before thumbnails render.
 // Memoized: during a drag the whole grid re-renders on each cell-crossing (dropTarget state), but a
 // cell's thumbnail props (row + url) don't change — so the heavy <img> tree is skipped, keeping drag smooth.
-const CellThumb = React.memo(function CellThumb({ row, thumbnailUrl, triggerFindings }: CellThumbProps) {
+const CellThumb = React.memo(function CellThumb({ row, thumbnailUrl, triggerFindings, previewsPending }: CellThumbProps) {
+  // A recompilation may change section-dependent artwork. Keep only this SAME source slide's
+  // last decoded image while its replacement is pending; do not attach it to a new artwork hash.
+  // Decode before swapping src, otherwise an already-loaded card flashes blank for a frame.
+  const identity = JSON.stringify([row.slide_id, row.source_markdown])
+  const [decoded, setDecoded] = useState({ identity, url: thumbnailUrl })
+  useEffect(() => {
+    if (!thumbnailUrl) return
+    if (decoded.identity === identity && decoded.url === thumbnailUrl) return
+    let cancelled = false
+    const image = document.createElement('img')
+    image.src = thumbnailUrl
+    image.decode().then(() => {
+      if (!cancelled) setDecoded({ identity, url: image.src })
+    }).catch(() => {
+      // A rejected decode alone is not a load failure. A fully loaded candidate is still this
+      // exact picture and can use the browser's normal paint path. Never substitute another slide.
+      if (!cancelled) setDecoded({ identity, url: image.complete && image.naturalWidth > 0 ? image.src : null })
+    })
+    return () => { cancelled = true }
+    // Request completion does not change the image; keep an unchanged decode in flight.
+  }, [identity, thumbnailUrl]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!thumbnailUrl && !previewsPending) setDecoded(previous =>
+      previous.identity === identity && previous.url === null ? previous : { identity, url: null })
+  }, [identity, thumbnailUrl, previewsPending])
+  const visibleUrl = decoded.identity === identity ? decoded.url : thumbnailUrl
   const title = plainInlineText(row.nav_title || row.title) || 'Slide'
   const warnings = surfacedWarnings(row, 'strip-badge', triggerFindings)
   return (
@@ -177,10 +224,10 @@ const CellThumb = React.memo(function CellThumb({ row, thumbnailUrl, triggerFind
           ⚠ {warnings.length}
         </span>
       )}
-      {thumbnailUrl ? (
+      {visibleUrl ? (
         <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
           <img
-            src={thumbnailUrl}
+            src={visibleUrl}
             alt={title}
             // Lazy + async decode: off-screen cells in a big deck don't pay decode/compose cost
             // until scrolled near. DnD-safe (unlike content-visibility, which broke native drag).
@@ -225,13 +272,22 @@ interface GridCellProps {
   row: ProjectionRow
   triggerFindings: readonly LayoutDoctorFinding[]
   thumbnails: Record<string, string> | null
+  previewsPending: boolean
   globalIndex: number
   blockIndex: number | null
   isActive: boolean
   isDropTarget: boolean
   isDragging: boolean
+  isSelected: boolean
+  /** Searching and this card does not match: dimmed in place. */
+  dim: boolean
+  isHitNow: boolean
+  /** Strings to mark in the title while searching, else null. */
+  marks: readonly string[] | null
+  snippet: Snippet | null
   cellDraggable: boolean
-  onSelect: (globalIndex: number) => void
+  onSelect: (globalIndex: number, e: React.MouseEvent) => void
+  onTick?: (globalIndex: number) => void
   onEdit?: (globalIndex: number) => void
   onMenu?: (e: React.MouseEvent, globalIndex: number, blockIndex: number | null) => void
   onDragStart: (e: React.DragEvent, globalIndex: number, blockIndex: number | null) => void
@@ -248,13 +304,20 @@ const GridCell = React.memo(function GridCell({
   row,
   triggerFindings,
   thumbnails,
+  previewsPending,
   globalIndex,
   blockIndex,
   isActive,
   isDropTarget,
   isDragging,
+  isSelected,
+  dim,
+  isHitNow,
+  marks,
+  snippet,
   cellDraggable,
   onSelect,
+  onTick,
   onEdit,
   onMenu,
   onDragStart,
@@ -286,9 +349,12 @@ const GridCell = React.memo(function GridCell({
         data-slide-index={globalIndex}
         data-block-index={blockIndex ?? ''}
         data-active={isActive ? 'true' : 'false'}
+        data-selected={isSelected ? 'true' : undefined}
+        data-search-dim={dim ? 'true' : undefined}
+        data-search-hit={isHitNow ? 'true' : undefined}
         data-drop-target={isDropTarget ? 'true' : undefined}
         draggable={cellDraggable}
-        onClick={() => onSelect(globalIndex)}
+        onClick={(e) => onSelect(globalIndex, e)}
         onDoubleClick={onEdit ? () => onEdit(globalIndex) : undefined}
         onContextMenu={onMenu ? (e) => onMenu(e, globalIndex, blockIndex) : undefined}
         onDragStart={
@@ -322,7 +388,7 @@ const GridCell = React.memo(function GridCell({
           boxShadow: isActive
             ? '0 0 0 2px rgba(11,58,107,0.22), 0 2px 6px rgba(0,0,0,0.08)'
             : 'none',
-          opacity: isDragging ? 0.4 : 1,
+          opacity: isDragging ? 0.4 : dim ? 0.3 : 1,
           userSelect: 'none',
           transition: 'box-shadow 0.08s ease, border-color 0.08s ease'
         }}
@@ -342,7 +408,19 @@ const GridCell = React.memo(function GridCell({
             }}
           />
         )}
-        <CellThumb row={row} thumbnailUrl={thumbnailUrl} triggerFindings={triggerFindings} />
+        {onTick && (
+          <input
+            type="checkbox"
+            className="grid-tick"
+            data-grid-tick
+            aria-label={`Select ${title}`}
+            checked={isSelected}
+            draggable={false}
+            onClick={(e) => e.stopPropagation()}
+            onChange={() => onTick(globalIndex)}
+          />
+        )}
+        <CellThumb row={row} thumbnailUrl={thumbnailUrl} previewsPending={previewsPending} triggerFindings={triggerFindings} />
         <div
           style={{
             padding: '5px 8px',
@@ -371,9 +449,14 @@ const GridCell = React.memo(function GridCell({
               whiteSpace: 'nowrap'
             }}
           >
-            {title}
+            {marks ? highlightSegments(title, marks).map((seg, i) => (seg.hit ? <mark key={i} className="so-match">{seg.text}</mark> : seg.text)) : title}
           </span>
         </div>
+        {snippet && (
+          <div className="so-snippet" data-grid-snippet style={{ padding: '0 8px 5px' }}>
+            {snippet.label}: {snippet.segments.map((seg, i) => (seg.hit ? <mark key={i} className="so-match">{seg.text}</mark> : seg.text))}
+          </div>
+        )}
       </div>
       {/* Carousel sub-slides: each stepped full-bleed sub-slide as its own cell. */}
       {subUrls.map((u, i) => (
@@ -382,7 +465,7 @@ const GridCell = React.memo(function GridCell({
           className="grid-subcell"
           data-subslide
           title={`${title} — step ${i + 1}`}
-          onClick={() => onSelect(globalIndex)}
+          onClick={(e) => onSelect(globalIndex, e)}
           style={{
             position: 'relative',
             border: '1px dashed var(--line)',
@@ -422,6 +505,21 @@ const GridCell = React.memo(function GridCell({
       ))}
     </React.Fragment>
   )
+}, (before, after) => {
+  // Each progressive update replaces the map. Compare only THIS cell's pictures so an arriving
+  // preview cannot re-render a whole large grid. Every other prop (handlers included) still counts.
+  for (const key of Object.keys(before) as Array<keyof GridCellProps>) {
+    if (key !== 'thumbnails' && !Object.is(before[key], after[key])) return false
+  }
+  const key = thumbKey(after.row)
+  if (!key || before.thumbnails === after.thumbnails) return true
+  if (before.thumbnails?.[key] !== after.thumbnails?.[key]) return false
+  for (let i = 0; ; i++) {
+    const a = before.thumbnails?.[`${key}__${i}`]
+    const b = after.thumbnails?.[`${key}__${i}`]
+    if (a !== b) return false
+    if (!a && !b) return true
+  }
 })
 
 export default function GridView({
@@ -429,14 +527,22 @@ export default function GridView({
   compiledSlides,
   triggerFindings,
   thumbnails,
+  previewsPending = false,
   activeIndex,
   onSelectSlide,
   onEdit,
-  onReorder,
+  slideRefOf,
+  onMoveSlides,
+  onStepSlide,
+  onSetAsideSlides,
+  onScratchDrop,
+  onCutSlides,
+  onCopySlides,
   onExplain,
   columns,
   slideOps,
   lineOfSlide,
+  onPasteAfterCard,
   onLanded,
   onMoreActions
 }: Props): React.JSX.Element {
@@ -455,7 +561,21 @@ export default function GridView({
       return value
     })
   }
-  const groups = useMemo(() => (compiledSlides ? groupBySection(compiledSlides) : []), [compiledSlides])
+  // Include generated opening/closing cards; disambiguate malformed/legacy duplicate ids too.
+  const cardKeys = useMemo(() => slideKeys(compiledSlides ?? [], () => true), [compiledSlides])
+  const groups = useMemo(() => (compiledSlides ? groupBySection(compiledSlides, cardKeys) : []), [compiledSlides, cardKeys])
+  // Search (ticket 2): the outline's query, the same rule. Non-matching cards dim in place; drag and selection stay on.
+  const [query, setQuery] = useSlideQuery(tk)
+  const [hitIndex, setHitIndex] = useState<number | null>(null)
+  const queryActive = !isEmptyQuery(parseQuery(query))
+  const blocks = useMemo(() => (compiledSlides ?? []).map((r) => r.source_markdown ?? ''), [compiledSlides])
+  const pictureText = usePictureText(tk || null, blocks, queryActive)
+  const run = useMemo(() => runSearch((compiledSlides ?? []).map((r, i) => ({
+    key: i, level: r.role === 'section-title' ? 2 : headingLevelOfSource(r.source_markdown ?? ''), title: `${r.nav_title || ''}\n${r.title || ''}`, body: r.source_markdown ?? '', image: pictureText.length === blocks.length ? pictureText[i] : ''
+  })), query, talk?.title ?? ''), [compiledSlides, query, pictureText, blocks, talk?.title])
+  const searching = run.active
+  const titleScope = run.query.scope === 'all' || run.query.scope === 'title'
+  const hitsInGroup = useMemo(() => groups.map((g) => g.rows.filter((r) => run.isHit.has(r.globalIndex)).length), [groups, run])
   const outlineKeys = useMemo(() => matchGroupsToSections(snap.rows, groups.map((g) => ({ section: g.section, title: g.title }))), [snap.rows, groups])
   const isCollapsedAt = (gi: number): boolean => {
     const key = outlineKeys[gi]
@@ -494,10 +614,16 @@ export default function GridView({
   // A jump that lands on a slide in a collapsed group (the strip, a search, a drop on a header)
   // opens the group; moving the selection with the arrow keys only ever visits visible cells.
   const [revealTick, setRevealTick] = useState(0)
+  const explicitRevealRef = useRef(false)
   const seenActiveRef = useRef(activeIndex)
+  const seenActiveKeyRef = useRef(cardKeys[activeIndex])
   useEffect(() => {
     if (seenActiveRef.current === activeIndex) return
     seenActiveRef.current = activeIndex
+    const previousKey = seenActiveKeyRef.current
+    seenActiveKeyRef.current = cardKeys[activeIndex]
+    if (previousKey === cardKeys[activeIndex] && !explicitRevealRef.current) return
+    if (noRevealRef.current) { noRevealRef.current = false; return } // typing a search lands on a hit without opening its section
     const gi = groups.findIndex((g) => g.rows.some((r) => r.globalIndex === activeIndex))
     if (gi < 0 || !isCollapsedAt(gi)) return
     const key = outlineKeys[gi]
@@ -506,21 +632,28 @@ export default function GridView({
     setRevealTick((n) => n + 1)
   }, [activeIndex]) // eslint-disable-line react-hooks/exhaustive-deps
   const containerRef = useRef<HTMLDivElement>(null)
+  const [barHeight, setBarHeight] = useState(0)
   // dragFrom is the GLOBAL slide index of the source cell; held in a ref too so the
   // synchronous drop handler reads the live value, not a stale render closure.
   const [dragFrom, setDragFrom] = useState<number | null>(null)
+  const [scratchDragging, setScratchDragging] = useState(false)
   const [dropTarget, setDropTarget] = useState<GridDropTarget>(null)
   const stopAutoScrollRef = useRef<(() => void) | null>(null)
   const dragFromRef = useRef<number | null>(null)
   const dragFromBlockRef = useRef<number | null>(null)
+  const dragRefRef = useRef<SlideRef | null>(null)
 
-  const canReorder = !!onReorder
+  const canReorder = !!onMoveSlides && !!slideRefOf
 
   const resetDrag = useCallback((keepGroupKey: string | null = null): void => {
     closeSprungRef.current(keepGroupKey)
     dragFromRef.current = null
     dragFromBlockRef.current = null
+    dragRefRef.current = null
+    dragRefsRef.current = []
+    setDragMulti(false)
     setDragFrom(null)
+    setScratchDragging(false)
     setDropTarget(null)
     stopAutoScrollRef.current?.()
     stopAutoScrollRef.current = null
@@ -578,9 +711,10 @@ export default function GridView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slideCount])
 
-  // ⌘↑ / ⌘↓ — move the active slide up/down among reorderable blocks. GridView only mounts
-  // in grid mode, so this window listener is scoped to the grid; it also bows out while the
-  // editor or any text input is focused so it never hijacks caret navigation.
+  // ⌘↑ / ⌘↓ — move the active slide or section past its neighbour of the same level (the host
+  // works the place out from the text: shared/slide-handling stepPlace). GridView only mounts in
+  // grid mode, so this window listener is scoped to the grid; it also bows out while the editor or
+  // any text input is focused so it never hijacks caret navigation.
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
       if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return
@@ -589,22 +723,19 @@ export default function GridView({
       if (ae && (ae.closest('.cm-editor') || ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) {
         return
       }
-      if (!onReorder || !compiledSlides) return
-      const flat = flatBlocks(compiledSlides)
-      const active = flat.find((r) => r.globalIndex === activeIndex)
-      if (!active || active.blockIndex === null) return
-      const fromBlock = active.blockIndex
-      const toBlock = e.key === 'ArrowUp' ? fromBlock - 1 : fromBlock + 1
-      const target = flat.find((r) => r.blockIndex === toBlock)
-      if (!target) return
+      if (!onStepSlide || !slideRefOf || !compiledSlides) return
+      const row = compiledSlides[activeIndex]
+      if (!row || !isOutlineBlock(row)) return
+      const ref = slideRefOf(activeIndex)
+      if (!ref) return
       e.preventDefault()
       e.stopPropagation()
-      onReorder(fromBlock, toBlock)
-      onSelectSlide(target.globalIndex) // follow the moved slide to its new slot
+      explicitRevealRef.current = true
+      onStepSlide(ref, e.key === 'ArrowUp' ? 'up' : 'down') // the host selects the moved slide where it lands
     }
     window.addEventListener('keydown', onKey, { capture: true })
     return () => window.removeEventListener('keydown', onKey, { capture: true })
-  }, [activeIndex, compiledSlides, onReorder, onSelectSlide])
+  }, [activeIndex, compiledSlides, onStepSlide, slideRefOf])
 
   // The grid owns keyboard focus while it is on screen: it only mounts in grid mode, so
   // focusing on mount means ⌘4 (or the Grid button) lands you ready to arrow around.
@@ -612,8 +743,15 @@ export default function GridView({
     containerRef.current?.focus({ preventScroll: true })
   }, [])
 
-  // Keep the active cell in view when selection moves by keyboard.
+  // Reindexing the SAME active card is not navigation. In particular, a drop must not scroll
+  // back to the previous selection before the moved card's landing selects its destination.
+  const scrolledSelectionRef = useRef<{ key: string | null; reveal: number } | null>(null)
   useEffect(() => {
+    const key = cardKeys[activeIndex] ?? null
+    const previous = scrolledSelectionRef.current
+    scrolledSelectionRef.current = { key, reveal: revealTick }
+    if (previous?.key === key && previous.reveal === revealTick && !explicitRevealRef.current) return
+    explicitRevealRef.current = false
     containerRef.current
       ?.querySelector(`[data-slide-index="${activeIndex}"]`)
       ?.scrollIntoView({ block: 'nearest' })
@@ -628,6 +766,7 @@ export default function GridView({
     if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
     // Keys typed in the Move … to… filter box (it is drawn inside this view) are not grid navigation.
     if (e.target instanceof HTMLElement && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return
+    if (e.key === 'Escape' && sel.count > 0) { e.preventDefault(); sel.clear(); return }
     const visible: number[] = []
     groups.forEach((g, gi) => {
       if (!isCollapsedAt(gi)) for (const r of g.rows) visible.push(r.globalIndex)
@@ -678,18 +817,68 @@ export default function GridView({
   const onSelectSlideRef = useRef(onSelectSlide)
   const onEditRef = useRef(onEdit)
   const onExplainRef = useRef(onExplain)
-  const onReorderRef = useRef(onReorder)
+  const onMoveSlidesRef = useRef(onMoveSlides)
+  const onScratchDropRef = useRef(onScratchDrop)
+  const onSetAsideRef = useRef(onSetAsideSlides)
+  onScratchDropRef.current = onScratchDrop
+  onSetAsideRef.current = onSetAsideSlides
+  const slideRefOfRef = useRef(slideRefOf)
   onSelectSlideRef.current = onSelectSlide
   onEditRef.current = onEdit
   onExplainRef.current = onExplain
-  onReorderRef.current = onReorder
+  onMoveSlidesRef.current = onMoveSlides
+  slideRefOfRef.current = slideRefOf
   const stableOnEdit = useCallback((index: number) => onEditRef.current?.(index), [])
+  const gotoHit = (index: number | null): void => {
+    if (index == null) return
+    setHitIndex(index)
+    onSelectSlideRef.current(index)
+    requestAnimationFrame(() => containerRef.current?.querySelector(`[data-slide-index="${index}"]`)?.scrollIntoView({ block: 'nearest' }))
+  }
+  const stepSearch = (dir: 1 | -1): void => gotoHit(stepHit(run.order, hitIndex, dir))
+  const orderKey = run.order.join(',')
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const surfaceRef = useRef<{ focus(): void; step(dir: 1 | -1): boolean }>({ focus: () => {}, step: () => false })
+  surfaceRef.current = {
+    focus: () => { searchInputRef.current?.focus(); searchInputRef.current?.select() },
+    step: (dir) => { if (!searching) return false; stepSearch(dir); return true }
+  }
+  useEffect(() => registerSearchSurface('grid', { focus: () => surfaceRef.current.focus(), step: (d) => surfaceRef.current.step(d) }), [])
+  // Landing on the first hit happens ONLY when the query changes (a new non-empty query), once it has a hit, and
+  // typing does not open collapsed sections (the outline does not either; Next / Previous and a click do).
+  // After a recompile nothing moves: the current hit is found again by its title, or dropped when it is gone.
+  const runRef = useRef(run)
+  runRef.current = run
+  const titleAt = (i: number): string => { const r = compiledSlides?.[i]; return r ? `${r.nav_title || ''}\n${r.title || ''}` : '' }
+  const hitTitleRef = useRef<string | null>(null)
+  useEffect(() => { hitTitleRef.current = hitIndex == null ? null : titleAt(hitIndex) }, [hitIndex]) // eslint-disable-line react-hooks/exhaustive-deps
+  const noRevealRef = useRef(false)
+  useEffect(() => {
+    if (!searching) { setHitIndex(null); return }
+    // Keyed on the query text alone: reads the hits at that moment; no hit -> nothing lands until the query changes again.
+    const order = runRef.current.order
+    if (order.length === 0) return
+    const first = firstHitFrom(order, activeIndex)
+    noRevealRef.current = first != null && first !== activeIndex
+    gotoHit(first)
+  }, [query]) // eslint-disable-line react-hooks/exhaustive-deps
+  // After a recompile: the current hit, found again by its title (or dropped when it is gone). Nothing else moves.
+  useEffect(() => {
+    if (hitIndex == null) return
+    let next: number | null = hitIndex
+    if (hitTitleRef.current != null && titleAt(hitIndex) !== hitTitleRef.current) {
+      const at = (compiledSlides ?? []).findIndex((_, i) => titleAt(i) === hitTitleRef.current)
+      next = at >= 0 ? at : null
+    }
+    const keep = next != null && run.isHit.has(next) ? next : null
+    if (keep !== hitIndex) setHitIndex(keep)
+  }, [compiledSlides]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── The slide and section menus, and ⌘X / ⌘C / ⌘V on the selected card ──
   // Everything is addressed by SOURCE LINE through slideOps (the editor's whole-slide operations),
-  // not by the block-index counter the drag uses. A card can be cut, copied, moved or deleted here
-  // only when it is a `###` slide (the same cards the drag moves, isOutlineBlock); a paste goes
-  // after any card that has a heading of its own. A section is addressed through its outline row.
+  // as the drag is. A card can be cut, copied, moved or deleted here when it has a heading of its
+  // own, at any level (a section's card takes the whole section); a paste goes after any such card.
+  // A section is also addressed through its outline row.
   const slideOpsRef = useRef(slideOps ?? null)
   const lineOfSlideRef = useRef(lineOfSlide)
   slideOpsRef.current = slideOps ?? null
@@ -719,40 +908,168 @@ export default function GridView({
   const inTextField = (target: EventTarget): boolean => target instanceof HTMLElement && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
   function handleCutCopy(e: React.ClipboardEvent, cut: boolean): void {
     if (inTextField(e.target) || !slideOps || !compiledSlides) return
-    const line = lineOfSlide?.(activeIndex) ?? null
+    if (sel.count >= 2 && onCutSlides && onCopySlides) {
+      // Several selected: one cut or copy of all, talk order (the host puts a cut on the clipboard itself).
+      e.preventDefault()
+      if (cut) void cutSelected('cut')
+      else { const clip = onCopySlides(selectedRefs()); if (clip != null) e.clipboardData.setData('text/plain', clip) }
+      return
+    }
     const row = compiledSlides[activeIndex]
     if (!row) return
     e.preventDefault()
-    if (line == null || !isOutlineBlock(row)) {
-      notify(`This card cannot be ${cut ? 'cut' : 'copied'} from the grid. ${cut ? 'Cut' : 'Copy'} it in the Slides outline or the editor.`, 'info', 'slide-clipboard')
-      return
-    }
-    const clip = cut ? slideOps.cut(line) : slideOps.copy(line)
+    // One card: the same checked cut / copy as several (the card's heading must still be on its line).
+    const clip = cardCutCopy(activeIndex, cut ? 'cut' : 'copy')
     if (clip != null) e.clipboardData.setData('text/plain', clip)
   }
+  /** Cut, copy or delete ONE card through the host's checked handlers (cutBlocks / copyBlocks); the clip for a copy. */
+  function cardCutCopy(index: number, mode: 'cut' | 'copy' | 'delete'): string | null {
+    const ref = slideRefOfRef.current?.(index) ?? null
+    const cutFn = onCutSlidesRef.current
+    const copyFn = onCopySlidesRef.current
+    if (!ref || !cutFn || !copyFn) {
+      const verb = mode === 'copy' ? 'copied' : mode === 'cut' ? 'cut' : 'deleted'
+      notify(`This card cannot be ${verb} from the grid. Do it in the Slides outline or the editor.`, 'info', 'slide-clipboard')
+      return null
+    }
+    if (mode === 'copy') return copyFn([ref])
+    void cutFn([ref], mode) // the host puts a cut on the clipboard itself
+    return null
+  }
   function handlePaste(e: React.ClipboardEvent): void {
-    if (inTextField(e.target) || !slideOps) return
+    if (inTextField(e.target) || !slideOps || !onPasteAfterCard) return
     e.preventDefault()
     // After the selected card's slide (after its whole block); at the end of the talk when it has no heading of its own.
-    const at = slideOps.paste(e.clipboardData.getData('text/plain'), lineOfSlide?.(activeIndex) ?? null)
+    const at = onPasteAfterCard(e.clipboardData.getData('text/plain'), activeIndex)
     if (at != null) onLanded?.(at)
   }
+  // The card menu's Cut / Copy / Delete / Paste go through the same checked handlers as the keys (a section header's
+  // menu keeps the editor's line operations: its line is read from the buffer's own outline, not from a card).
+  const cardMenuOps = useMemo<SlideBlockOps | null>(() => {
+    if (!slideOps) return null
+    const cardIndex = (): number | null => { const f = menuForRef.current; return f && 'index' in f ? f.index : null }
+    return {
+      ...slideOps,
+      cut: (line) => { const i = cardIndex(); return i == null ? slideOps.cut(line) : cardCutCopy(i, 'cut') },
+      copy: (line) => { const i = cardIndex(); return i == null ? slideOps.copy(line) : cardCutCopy(i, 'copy') },
+      delete: (line) => { const i = cardIndex(); if (i == null) slideOps.delete(line); else cardCutCopy(i, 'delete') },
+      // Move slide to…: the card's heading goes with the move, so a stale card is refused (moveBlocks' ref check).
+      moveTo: (line, target) => {
+        const i = cardIndex()
+        if (i == null) return slideOps.moveTo(line, target)
+        const ref = slideRefOfRef.current?.(i) ?? null
+        if (!ref) { notify('This card cannot be moved from the grid. Do it in the Slides outline or the editor.', 'info', 'slide-clipboard'); return null }
+        return slideOps.moveTo(ref.line, target, ref)
+      },
+      paste: (clip, afterLine) => {
+        const i = cardIndex()
+        if (i == null) return slideOps.paste(clip, afterLine)
+        return onPasteAfterCard ? onPasteAfterCard(clip, i) : null
+      }
+    }
+  }, [slideOps, onPasteAfterCard]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Stable handler callbacks — deps are minimal so these survive re-renders during drag.
   // Selecting by click also claims keyboard focus for the grid container, so arrows work
   // immediately after a click (a plain div click otherwise focuses nothing).
+  // The selection of several slides (slide handling 1b): ticks, ⇧-click range, ⌘-click toggle, Select section.
+  // Keys are the slides' stable identity (useSlideSelection.slideKeys), so it survives a move.
+  const slideKeyList = useMemo(
+    () => (compiledSlides ? slideKeys(compiledSlides, (i) => isOutlineBlock(compiledSlides[i])) : []),
+    [compiledSlides]
+  )
+  const sel = useSlideSelection(slideKeyList)
+  const [moveOpen, setMoveOpen] = useState(false)
+  const [dragMulti, setDragMulti] = useState(false)
+  const dragRefsRef = useRef<SlideRef[]>([])
+  const onCutSlidesRef = useRef(onCutSlides)
+  const onCopySlidesRef = useRef(onCopySlides)
+  onCutSlidesRef.current = onCutSlides
+  onCopySlidesRef.current = onCopySlides
+  const live = useRef({ sel, groups, activeIndex, canReorder, isCollapsedAt })
+  live.current = { sel, groups, activeIndex, canReorder, isCollapsedAt }
+  // A section card dragged onto a slide card lands at that slide's section boundary (sectionDrop.ts); the bar shows there.
+  const dropRows = useMemo<DropRow[]>(
+    () => (compiledSlides ?? []).map((r) => ({ role: r.role, section: r.section ?? '', movable: isOutlineBlock(r) })),
+    [compiledSlides]
+  )
+  const dropRowsRef = useRef(dropRows)
+  dropRowsRef.current = dropRows
+  const barCell = (index: number): number => {
+    const from = dragFromRef.current
+    return from === null ? index : sectionDropBoundary(dropRowsRef.current, from, index)?.cell ?? index
+  }
+  const selectedRefs = (): SlideRef[] =>
+    live.current.sel.indices.map((i) => slideRefOfRef.current?.(i) ?? null).filter((r): r is SlideRef => r !== null)
+  useEffect(() => { if (sel.count < 2) setMoveOpen(false) }, [sel.count])
+
   const onSelect = useCallback(
-    (index: number) => {
+    (index: number, e?: React.MouseEvent) => {
       containerRef.current?.focus({ preventScroll: true })
+      const L = live.current
+      if (L.canReorder && e?.shiftKey) {
+        const visible = new Set<number>()
+        L.groups.forEach((g, gi) => { if (!L.isCollapsedAt(gi)) for (const r of g.rows) visible.add(r.globalIndex) })
+        L.sel.extendTo(index, L.activeIndex, (i) => visible.has(i))
+      } else if (L.canReorder && (e?.metaKey || e?.ctrlKey)) L.sel.toggle(index)
+      else L.sel.reset(index)
       onSelectSlideRef.current(index)
     },
     []
   )
+  const onTick = useCallback((index: number) => {
+    containerRef.current?.focus({ preventScroll: true })
+    live.current.sel.toggle(index)
+  }, [])
+  /** "Select section": every movable card of the section (its own card included, so it all moves as one block). */
+  function selectGroup(gi: number, keepOthers = false): void {
+    const group = groups[gi]
+    if (!group) return
+    const list = group.rows.filter((r) => r.blockIndex !== null).map((r) => r.globalIndex)
+    if (list.length === 0) return
+    if (!keepOthers) sel.reset(list[0])
+    sel.addMany(list)
+  }
+  const selectedLines = (): number[] => live.current.sel.indices.map((i) => lineOfSlideRef.current?.(i) ?? null).filter((n): n is number => n !== null)
+  async function cutSelected(mode: 'cut' | 'delete'): Promise<void> {
+    const refs = selectedRefs()
+    if (refs.length === 0 || !onCutSlidesRef.current) return
+    if (await onCutSlidesRef.current(refs, mode)) live.current.sel.clear()
+  }
+  async function asideSelected(refs = selectedRefs()): Promise<void> {
+    if (refs.length > 0 && await onSetAsideRef.current?.(refs)) live.current.sel.clear()
+  }
+  function copySelected(): void {
+    const clip = onCopySlidesRef.current?.(selectedRefs()) ?? null
+    if (clip != null) writeSlideClipboard(clip, false)
+  }
+  useEffect(() => registerSlideSelection({
+    count: () => live.current.sel.count,
+    selectSection: () => {
+      const gi = live.current.groups.findIndex((g) => g.rows.some((r) => r.globalIndex === live.current.activeIndex))
+      if (gi < 0) return false
+      selectGroup(gi)
+      return true
+    },
+    clear: () => live.current.sel.clear(),
+    openMove: () => { if (live.current.sel.count < 2) return false; setMoveOpen(true); return true },
+    setAside: () => { const refs = live.current.sel.count > 0 ? selectedRefs() : [slideRefOfRef.current?.(live.current.activeIndex)].filter((r): r is SlideRef => r != null); if (!refs.length || !onSetAsideRef.current) return false; void asideSelected(refs); return true },
+    remove: () => { if (live.current.sel.count < 2) return false; void cutSelected('delete'); return true }
+  }), []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const onDragStart = useCallback(
     (e: React.DragEvent, index: number, blockIdx: number | null) => {
       dragFromRef.current = index
       dragFromBlockRef.current = blockIdx
+      // What is dragged: the card's heading line and text as the buffer has them NOW, so a drop after
+      // the talk changed is refused (moveBlocks) instead of moving another block.
+      dragRefRef.current = blockIdx !== null ? slideRefOfRef.current?.(index) ?? null : null
+      // A selected card drags every selected slide (talk order); an unselected card drags just itself.
+      const L = live.current
+      const multi = dragRefRef.current !== null && L.sel.count >= 2 && L.sel.isSelected(index)
+      dragRefsRef.current = multi ? selectedRefs() : dragRefRef.current ? [dragRefRef.current] : []
+      setDragMulti(multi && dragRefsRef.current.length >= 2)
+      if (multi && dragRefsRef.current.length >= 2) setStackDragImage(e, dragRefsRef.current.length)
       setDragFrom(index)
       setDropTarget(index)
       if (e.dataTransfer) {
@@ -768,7 +1085,8 @@ export default function GridView({
         stopAutoScrollRef.current = startDragAutoScroll(containerRef.current, {
           sticky: '[data-grid-toolbar]',
           onScroll: (p) => {
-            const at = dropTargetAt(document.elementFromPoint(p.x, p.y), p.x, p.y)
+            const raw = dropTargetAt(document.elementFromPoint(p.x, p.y), p.x, p.y)
+            const at = typeof raw === 'number' ? barCell(raw) : raw
             // Outside the grid: keep the last target, the pointer has not moved.
             if (at !== null) setDropTarget((d) => (d === at ? d : at))
           }
@@ -779,25 +1097,43 @@ export default function GridView({
   )
 
   const onDragEnter = useCallback((index: number) => {
-    if (dragFromRef.current !== null) setDropTarget(index)
-  }, [])
+    if (dragFromRef.current !== null) setDropTarget(barCell(index))
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const onDragOver = useCallback((e: React.DragEvent, index: number) => {
+    if (e.dataTransfer?.types.includes('application/x-tw-scratch-item') && onScratchDropRef.current) {
+      e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setScratchDragging(true); setDropTarget(index); return
+    }
     if (dragFromRef.current === null) return
     e.preventDefault()
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
-    setDropTarget((d) => (d === index ? d : index))
-  }, [])
+    const at = barCell(index)
+    setDropTarget((d) => (d === at ? d : at))
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const onDrop = useCallback(
     (e: React.DragEvent, index: number, blockIdx: number | null) => {
       e.preventDefault()
-      const fromBlock = dragFromBlockRef.current
-      resetDrag(groupKeyOfCellRef.current(index))
-      if (fromBlock !== null && blockIdx !== null && fromBlock !== blockIdx) {
-        onReorderRef.current?.(fromBlock, blockIdx)
-        onSelectSlideRef.current(index)
+      const scratchId = e.dataTransfer?.getData('application/x-tw-scratch-item')
+      if (scratchId) {
+        e.stopPropagation()
+        const target = slideRefOfRef.current?.(index)
+        resetDrag()
+        if (target) onScratchDropRef.current?.(scratchId, placeAtHeading('before', target))
+        return
       }
+      const from = dragFromRef.current
+      const dragged = dragRefsRef.current
+      const multi = dragged.length >= 2
+      resetDrag(groupKeyOfCellRef.current(index))
+      if (from === null || dragged.length === 0 || blockIdx === null || from === index) return
+      if (multi && live.current.sel.isSelected(index)) return // dropped on one of the dragged slides: nothing to do
+      // A section card on a slide card: the boundary of that slide's section (before it going up, after it going down).
+      const boundary = sectionDropBoundary(dropRowsRef.current, from, index)
+      const target = slideRefOfRef.current?.(boundary ? boundary.refIndex : index)
+      if (!target) return
+      // Dragging down lands after the target card's block, dragging up before it (the drop line shows which).
+      onMoveSlidesRef.current?.(dragged, placeAtHeading(boundary ? boundary.kind : index > from ? 'after' : 'before', target))
     },
     [resetDrag]
   )
@@ -807,7 +1143,18 @@ export default function GridView({
   // Section headers, the end zone and the open space under it: handled on the grid container
   // (cells keep their own memoised handlers above and are skipped here).
   function handleAreaDragOver(e: React.DragEvent): void {
-    if (dragFromRef.current === null) return
+    const scratch = e.dataTransfer?.types.includes('application/x-tw-scratch-item') && !!onScratchDropRef.current
+    if (dragFromRef.current === null && !scratch) return
+    if (scratch) {
+      setScratchDragging(true)
+      if (!stopAutoScrollRef.current && containerRef.current) stopAutoScrollRef.current = startDragAutoScroll(containerRef.current, {
+        sticky: '[data-grid-toolbar]',
+        onScroll: (pointer) => {
+          const at = dropTargetAt(document.elementFromPoint(pointer.x, pointer.y), pointer.x, pointer.y)
+          if (at !== null) setDropTarget(at)
+        }
+      })
+    }
     const at = dropTargetAt(e.target as Element, e.clientX, e.clientY)
     if (typeof at !== 'string') {
       // Not a header or the end zone. Off every target (a gap, a header with nothing to land after)
@@ -816,15 +1163,16 @@ export default function GridView({
       return
     }
     e.preventDefault()
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+    if (e.dataTransfer) e.dataTransfer.dropEffect = scratch ? 'copy' : 'move'
     setDropTarget((d) => (d === at ? d : at))
   }
   // A drop on a header puts the slide after that section's last slide; a drop on the end zone puts
-  // it after the last slide of the talk. Both go through the same block-index reorder as a cell drop.
+  // it after the last slide of the talk. Both go through the same move as a cell drop.
   function handleAreaDrop(e: React.DragEvent, groups: SectionGroup[]): void {
-    const fromBlock = dragFromBlockRef.current
+    const dragged = dragRefsRef.current
     const from = dragFromRef.current
-    if (from === null) return
+    const scratchId = e.dataTransfer?.getData('application/x-tw-scratch-item')
+    if (from === null && !scratchId) return
     const at = dropTargetAt(e.target as Element, e.clientX, e.clientY)
     if (typeof at !== 'string') return
     e.preventDefault()
@@ -833,11 +1181,11 @@ export default function GridView({
       : groups.find((g) => g.key === at.slice(SECTION_DROP.length))
     resetDrag(group?.key ?? null)
     const last = group ? lastBlockOf(group) : null
-    if (fromBlock === null || !last || last.blockIndex === fromBlock) return
-    onReorderRef.current?.(fromBlock, last.blockIndex, 'after')
-    // Follow the moved slide: it takes the old last slide's place when it came from above it, and
-    // the place after it when it came from below.
-    onSelectSlideRef.current(Math.min(slideCount - 1, from < last.globalIndex ? last.globalIndex : last.globalIndex + 1))
+    if (!last || (!scratchId && (dragged.length === 0 || last.globalIndex === from))) return
+    const target = slideRefOf?.(last.globalIndex)
+    if (!target) return
+    if (scratchId) { onScratchDropRef.current?.(scratchId, placeAtHeading('after', target)); return }
+    onMoveSlidesRef.current?.(dragged, placeAtHeading('after', target)) // the host selects the moved slide
   }
 
   if (!compiledSlides || compiledSlides.length === 0) {
@@ -845,7 +1193,19 @@ export default function GridView({
       <div
         className="grid-view"
         data-view="grid"
+        data-drop-target={scratchDragging ? 'true' : undefined}
+        onDragOver={(event) => {
+          if (!event.dataTransfer.types.includes('application/x-tw-scratch-item') || !onScratchDrop) return
+          event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; setScratchDragging(true)
+        }}
+        onDragLeave={() => setScratchDragging(false)}
+        onDrop={(event) => {
+          const id = event.dataTransfer.getData('application/x-tw-scratch-item')
+          if (!id || !onScratchDrop) return
+          event.preventDefault(); event.stopPropagation(); resetDrag(); onScratchDrop(id, { kind: 'start' })
+        }}
         style={{
+          boxShadow: scratchDragging ? 'inset 4px 0 var(--oxford)' : undefined,
           background: 'var(--panel)',
           height: '100%',
           display: 'flex',
@@ -877,7 +1237,10 @@ export default function GridView({
         background: 'var(--panel)',
         height: '100%',
         overflowY: 'auto',
+        overflowAnchor: 'none',
         padding: '16px',
+        // While the selection bar shows it sticks over the lowest cards: pad by its height (and its 12px margin plus a gap).
+        paddingBottom: barHeight > 0 ? `${barHeight + 12 + 16}px` : '16px',
         outline: 'none'
       }}
       onDragOver={handleAreaDragOver}
@@ -887,21 +1250,50 @@ export default function GridView({
         // crosses between cells inside it.
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
           setDropTarget(null)
+          if (scratchDragging) resetDrag()
         }
       }}
     >
       <div
         data-grid-toolbar
-        style={{ position: 'sticky', top: '-16px', zIndex: 2, display: 'flex', justifyContent: 'flex-end', gap: '2px', margin: '-16px -16px 12px', padding: '6px 16px', background: 'var(--panel)', borderBottom: '1px solid var(--line)' }}
+        style={{ position: 'sticky', top: '-16px', zIndex: 2, display: 'flex', alignItems: 'center', gap: '6px', margin: '-16px -16px 12px', padding: '6px 16px', background: 'var(--panel)', borderBottom: '1px solid var(--line)' }}
       >
+        <input
+          type="search"
+          className="so-search-input grid-search-input"
+          data-grid-search
+          ref={searchInputRef}
+          placeholder="Search titles, text and pictures…"
+          aria-label="Search the slides"
+          value={query}
+          style={{ width: '260px', flex: '0 1 260px' }}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            e.stopPropagation()
+            if (e.key === 'Enter' && searching && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); stepSearch(e.shiftKey ? -1 : 1) }
+            else if (e.key === 'Escape' && query) { e.preventDefault(); setQuery('') }
+          }}
+          onCut={(e) => e.stopPropagation()}
+          onCopy={(e) => e.stopPropagation()}
+          onPaste={(e) => e.stopPropagation()}
+        />
+        {searching && (
+          <span data-grid-hitbar style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--muted)' }}>
+            <span data-grid-hitcount><b style={{ color: 'var(--ink)' }}>{hitPosition(run.order, hitIndex).k}</b> of {run.order.length}</span>
+            <button type="button" className="tl-tbtn so-hitbtn" data-grid-prev disabled={run.order.length === 0} onClick={() => stepSearch(-1)}>‹ Previous</button>
+            <button type="button" className="tl-tbtn so-hitbtn" data-grid-next disabled={run.order.length === 0} onClick={() => stepSearch(1)}>Next ›</button>
+          </span>
+        )}
+        <span style={{ flex: 1 }} />
         <button type="button" className="tl-tbtn" title="Collapse all sections" aria-label="Collapse all sections" data-grid-collapse-all onClick={() => collapseAllSections(tk)}><IcCollapse /></button>
         <button type="button" className="tl-tbtn" title="Expand all sections" aria-label="Expand all sections" data-grid-expand-all onClick={() => expandAllSections(tk)}><IcExpand /></button>
       </div>
       {groups.map((group, groupIndex) => {
         const isCollapsed = isCollapsedAt(groupIndex)
-        const isHeaderDrop = dragFrom !== null && dropTarget === SECTION_DROP + group.key
+        const isHeaderDrop = (scratchDragging || dragFrom !== null) && dropTarget === SECTION_DROP + group.key
+        const groupHits = hitsInGroup[groupIndex]
         return (
-          <section key={group.key} style={{ marginBottom: '20px' }}>
+          <section key={group.key} style={{ marginBottom: '20px' }} data-group-dim={searching && groupHits === 0 ? 'true' : undefined}>
             <div
               className="grid-section-header"
               data-section-header
@@ -928,6 +1320,7 @@ export default function GridView({
                 borderBottom: '1px solid var(--line)',
                 cursor: 'pointer',
                 userSelect: 'none',
+                opacity: searching && groupHits === 0 ? 0.4 : 1,
                 // Drop indicator: the slide will go inside this section, as its last slide.
                 borderRadius: isHeaderDrop ? '4px' : undefined,
                 background: isHeaderDrop ? 'color-mix(in srgb, var(--oxford) 14%, transparent)' : undefined,
@@ -969,6 +1362,20 @@ export default function GridView({
               >
                 ({group.rows.length})
               </span>
+              {searching && groupHits > 0 && (
+                <span data-grid-section-hits className="so-hits">{groupHits} hit{groupHits === 1 ? '' : 's'}</span>
+              )}
+              {canReorder && lastBlockOf(group) && (
+                <button
+                  type="button"
+                  className="grid-select-section"
+                  data-grid-select-section
+                  onClick={(e) => { e.stopPropagation(); selectGroup(groupIndex, e.metaKey || e.ctrlKey) }}
+                  onKeyDown={(e) => e.stopPropagation()}
+                >
+                  Select section
+                </button>
+              )}
             </div>
 
             {!isCollapsed && (
@@ -983,17 +1390,24 @@ export default function GridView({
               >
                 {group.rows.map(({ row, globalIndex, blockIndex }) => (
                   <GridCell
-                    key={`${row.slide_id || row.content_hash || 'row'}-${globalIndex}`}
+                    key={cardKeys[globalIndex]}
                     row={row}
                     triggerFindings={triggerFindings}
                     thumbnails={thumbnails ?? null}
+                    previewsPending={previewsPending}
                     globalIndex={globalIndex}
                     blockIndex={blockIndex}
                     isActive={activeIndex === globalIndex}
-                    isDropTarget={dropTarget === globalIndex && dragFrom !== null && dragFrom !== globalIndex}
-                    isDragging={dragFrom === globalIndex}
+                    isDropTarget={dropTarget === globalIndex && (scratchDragging || (dragFrom !== null && dragFrom !== globalIndex))}
+                    isDragging={dragFrom === globalIndex || (dragMulti && dragFrom !== null && sel.isSelected(globalIndex))}
+                    isSelected={sel.isSelected(globalIndex)}
+                    dim={searching && !run.isHit.has(globalIndex)}
+                    isHitNow={searching && hitIndex === globalIndex}
+                    marks={searching && titleScope ? run.terms : null}
+                    snippet={run.snippets.get(globalIndex) ?? null}
                     cellDraggable={canReorder && blockIndex !== null}
                     onSelect={onSelect}
+                    onTick={canReorder && blockIndex !== null ? onTick : undefined}
                     onEdit={onEdit ? stableOnEdit : undefined}
                     onMenu={onExplain || slideOps ? stableOnMenu : undefined}
                     onDragStart={onDragStart}
@@ -1013,22 +1427,39 @@ export default function GridView({
       {canReorder && (
         <div
           data-grid-drop-end
-          data-drop-active={dragFrom !== null && dropTarget === END_DROP ? 'true' : undefined}
+          data-drop-active={(scratchDragging || dragFrom !== null) && dropTarget === END_DROP ? 'true' : undefined}
           aria-hidden
           style={{ position: 'relative', height: '56px', marginTop: '-12px' }}
         >
-          {dragFrom !== null && dropTarget === END_DROP && (
+          {(scratchDragging || dragFrom !== null) && dropTarget === END_DROP && (
             <div style={{ position: 'absolute', left: 0, right: 0, top: '4px', height: '4px', borderRadius: '2px', background: 'var(--oxford)' }} />
           )}
         </div>
       )}
+      {canReorder && onCutSlides && onCopySlides && (
+        <BatchBar
+          count={sel.count}
+          rows={menuRows}
+          selectedLines={selectedLines()}
+          moveOpen={moveOpen}
+          onMoveOpenChange={setMoveOpen}
+          onClear={() => sel.clear()}
+          onMove={(place) => { const refs = selectedRefs(); if (refs.length > 0) { explicitRevealRef.current = true; onMoveSlidesRef.current?.(refs, place) } }}
+          onCut={() => { void cutSelected('cut') }}
+          onSetAside={onSetAsideSlides ? () => { void asideSelected() } : undefined}
+          onHeight={setBarHeight}
+          onCopy={copySelected}
+          onDelete={() => { void cutSelected('delete') }}
+        />
+      )}
       <SlideRowMenus
         request={menu}
         rows={menuRows}
-        ops={slideOps ?? null}
+        ops={cardMenuOps}
         onClose={() => setMenu(null)}
         onActed={() => containerRef.current?.focus({ preventScroll: true })}
-        onLanded={onLanded}
+        onLanded={(line) => { explicitRevealRef.current = true; onLanded?.(line) }}
+        onSetAside={onSetAsideSlides ? () => { const f = menuForRef.current; const ref = f && 'index' in f ? slideRefOfRef.current?.(f.index) : null; if (ref) void asideSelected([ref]) } : undefined}
         onToggleCollapse={() => { const f = menuForRef.current; if (f && 'group' in f) toggleAt(f.group) }}
         onExplain={onExplain ? () => { const f = menuForRef.current; if (f && 'index' in f) onExplain(f.index) } : undefined}
         onMore={onMoreActions ? () => { const f = menuForRef.current; if (f && 'index' in f && menu) onMoreActions(f.index, { x: menu.x, y: menu.y }) } : undefined}

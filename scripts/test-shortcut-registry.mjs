@@ -149,7 +149,7 @@ assert.deepEqual(
 )
 assert.deepEqual(
   SHORTCUT_REGISTRY.filter((entry) => entry.unbound).map((entry) => entry.id),
-  ['editor.new-slide', 'editor.bulleted-list', 'editor.numbered-list', 'editor.italic', 'editor.inline-code', 'editor.highlight', 'editor.strikethrough', 'editor.underline'],
+  ['research.copy-reference', 'research.reveal', 'research.source', 'research.used-in', 'research.scope-talk', 'research.scope-research', 'research.scope-everything', 'research.rename', 'research.change-kind', 'research.delete', 'research.move', 'research.copy', 'research.insert-here', 'research.retry', 'app.check-for-updates', 'app.whats-new', 'editor.new-slide', 'editor.bulleted-list', 'editor.numbered-list', 'editor.italic', 'editor.inline-code', 'editor.highlight', 'editor.strikethrough', 'editor.underline', 'editor.object-expand', 'editor.object-discard', 'editor.delete-comment', 'editor.insert-notes'],
   'unbound commands include the new slide and list actions alongside the existing text-formatting residents'
 )
 assert.deepEqual(
@@ -349,6 +349,7 @@ const BINDING_MAP = new Map([
   ['src/preload/present-rec-ui.ts', ['presenter.record', 'presenter.record-pause', 'presenter.save-run-as', 'presenter.save-run', 'presenter.close', 'presenter.next', 'presenter.previous']],
   ['src/renderer/src/App.tsx', ['app.sidebar-talks', 'app.sidebar-outline', 'app.sidebar-toggle', 'app.settings']],
   // The image drawer (ticket 11): docked beside the editor; keys act only while focus is inside it.
+  ['src/renderer/src/components/ResearchPanel.tsx', ['research.previous', 'research.next', 'research.insert', 'research.make-slide', 'research.open', 'research.scope', 'research.close']],
   ['src/renderer/src/components/ImageDrawer.tsx', ['image-drawer.move', 'image-drawer.insert', 'image-drawer.close', 'image-drawer.choose-editable', 'image-drawer.choose-picture']],
   ['src/renderer/src/components/CommandMenu.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
   // The option controls the Inspector draws (the file no longer holds the ⌘L palette): ← → Space Enter within a group.
@@ -371,7 +372,6 @@ const BINDING_MAP = new Map([
   ['src/renderer/src/components/PlainIconPicker.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
   ['src/renderer/src/components/PropagationChecklist.tsx',['picker.navigate', 'picker.choose', 'picker.close', 'picker.toggle']],
   ['src/renderer/src/components/SearchPalette.tsx', ['browser.move', 'browser.insert', 'browser.preview', 'browser.toggle-selection', 'browser.close']],
-  ['src/renderer/src/components/SettingsPanel.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
   // The ⌘S slide picker: its own scope; the key-truth check below holds it to exactly these keys.
   ['src/renderer/src/components/slide-browser/useSlideBrowserKeys.ts', ['slide-picker.move', 'slide-picker.extend', 'slide-picker.view', 'slide-picker.tab', 'slide-picker.close', 'slide-picker.clear-scope', 'slide-picker.toggle-selection', 'slide-picker.select-section', 'slide-picker.insert', 'slide-picker.select-whole-section', 'slide-picker.tags', 'slide-picker.preview', 'slide-picker.versions', 'slide-picker.near', 'slide-picker.density', 'slide-picker.rail', 'slide-picker.talk-beside', 'slide-picker.close-beside']],
   ['src/renderer/src/components/SlideFocus.tsx', ['browser.move', 'browser.open', 'browser.close']],
@@ -381,7 +381,7 @@ const BINDING_MAP = new Map([
   ['src/renderer/src/components/ToolsPalette.tsx', ['app.command-palette', 'tools.view-sessions', 'tools.view-published', 'tools.view-workfiles', 'tools.plan-run', 'tools.edit-plan', 'tools.plan-like-this', 'tools.publish', 'tools.go-live', 'tools.open-run', 'tools.copy-link', 'tools.copy-invitation', 'tools.new-work-file']],
   ['src/renderer/src/components/TalkText.tsx', ['talktext.notes', 'talktext.script', 'talktext.rewrite', 'talktext.show-slide', 'talktext.previous-slide', 'talktext.next-slide', 'talktext.copy', 'talktext.help', 'talktext.close']],
   ['src/renderer/src/components/TagPicker.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
-  ['src/renderer/src/components/WorkspaceLayout.tsx', ['app.slide-search', 'app.find-talk', 'app.context-menu', 'app.layout-picker', 'app.icon-picker', 'app.image-search', 'app.where-used', 'app.slide-focus', 'app.command-palette', 'app.new-window', 'app.help', 'app.toggle-inspector', 'app.view-editor', 'app.view-split', 'app.view-strip', 'app.view-grid', 'app.present', 'app.present-current']],
+  ['src/renderer/src/components/WorkspaceLayout.tsx', ['app.research-panel', 'app.research-find', 'app.slide-search', 'app.find-talk', 'app.context-menu', 'app.layout-picker', 'app.icon-picker', 'app.image-search', 'app.where-used', 'app.slide-focus', 'app.command-palette', 'app.new-window', 'app.help', 'app.toggle-inspector', 'app.view-editor', 'app.view-split', 'app.view-strip', 'app.view-grid', 'app.present', 'app.present-current']],
   ['src/renderer/src/components/talklist/TalkList.tsx', ['browser.open']],
   // Talk search completion (ADR-0029 §2): ↑↓ move, ↵/Tab complete, Esc dismisses — a picker.
   ['src/renderer/src/components/talklist/SearchAssist.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
@@ -396,13 +396,20 @@ const BINDING_MAP = new Map([
   ['src/renderer/src/extensions/triggerComplete.ts', ['picker.navigate', 'picker.choose', 'picker.close', 'picker.back', 'picker.digit']],
   ['src/renderer/src/extensions/idProtect.ts', ['editor.protect-heading-delete']],
   ['src/renderer/src/extensions/objectBlocks/field.ts', ['browser.move', 'editor.protect-heading-delete']],
-  ['src/renderer/src/objects/shell.ts', ['app.help', 'editor.object-finish', 'editor.object-leave']],
+  ['src/renderer/src/objects/shell.ts', ['app.help', 'editor.object-finish', 'editor.object-leave', 'editor.object-discard']],
+  ['src/renderer/src/objects/card-editors.ts', ['editor.object-row-up', 'editor.object-row-down']],
   ['src/renderer/src/objects/table-editor.ts', ['picker.navigate', 'picker.close']]
 ])
 
 // Generic handlers are deliberately not shortcut commands. Each ignored file must still produce a
 // scan hit, so deleting the handler makes this list fail as stale.
 const SCAN_IGNORE = new Map([
+  ['src/renderer/src/components/scratchpad/ScratchpadInsert.tsx', 'Escape dismisses the open insertion menu and Enter chooses the first filtered destination; local menu behaviour, no shortcut is bound'],
+  ['src/main/settings-update-menu.ts', 'Uses the effective shared binding for app.check-for-updates while building the app-menu template; declares no shortcut.'],
+  ['src/renderer/src/components/scratchpad/ScratchpadCard.tsx', 'Enter opens the big preview and Space selects while a Slide Scratchpad card has focus (native button-like card behaviour); no shortcut is bound'],
+  ['src/renderer/src/components/slide-handling/BatchBar.tsx', '↑ ↓ and Enter move through the destinations of the open Move to… list and Escape closes it (the same local list behaviour as the Move slide to… panel); no shortcut is bound'],
+  ['src/renderer/src/components/scratchpad/ScratchpadGroupMenu.tsx', 'Escape-only dismissal of the open group menu; no shortcut is bound'],
+  ['src/renderer/src/components/ResearchTidySheet.tsx', 'Escape dismisses this confirmation and Tab contains focus inside it; local modal behaviour, no shortcut is bound'],
   ['src/renderer/src/components/EditorTabs.tsx', 'Arrow keys, Home and End move between the two editor tabs (WAI-ARIA tablist) while a tab has focus; the commands are view-plain and view-markdown and have no shortcut'],
   ['src/renderer/src/components/actionBar/ActionBar.tsx', 'Escape only dismisses the visible tooltip or overflow menu; no shortcut is bound'],
   ['src/renderer/src/components/AbstractPanel.tsx', 'Escape-only modal dismissal and Enter on a native form control'],
@@ -420,6 +427,7 @@ const SCAN_IGNORE = new Map([
   ['src/renderer/src/extensions/workStrips.ts', 'Escape-only dismissal of the open Attach / Open run list under the Metadata table (ticket 08, local menu); no shortcut is bound'],
   ['src/renderer/src/extensions/imageFullScreenPreview.ts', 'Escape-only dismissal of the full-screen image view; no shortcut is bound'],
   ['src/renderer/src/components/ImageMetaPanel.tsx', 'Escape-only panel dismissal'],
+  ['src/renderer/src/components/UpdateNotices.tsx', 'Escape-only dismissal of the open update popover (update notices, ADR-0041); the commands are check-for-updates and whats-new, which have no default key'],
   ['src/renderer/src/components/KeyboardHelp.tsx', 'Escape only closes the shortcut dialog; the opening command is app.help'],
   ['src/renderer/src/components/SlideRowMenus.tsx', '↑ ↓ Enter inside the open Move slide to… / Move section to… destination list (modal, local list keys, as Actions here); the opening commands are move-slide-to and move-section-to, which have no shortcut'],
   ['src/renderer/src/components/ActionsHerePanel.tsx', '↑ ↓ Enter and Escape inside the open Actions here panel (modal, local menu keys, as the row menus); the opening command is app.context-menu'],
@@ -439,6 +447,7 @@ const SCAN_IGNORE = new Map([
   ['src/preload/present-live-setup.ts', 'A key on the Going live prompt\'s button only blurs the button, so Space and Enter go on to the slides (ticket 05); no shortcut is bound'],
   ['src/preload/present-end-live-boards.ts', 'Escape cancels and Enter confirms the End live board question (D20, modal, local); no app shortcut is bound'],
   ['src/renderer/src/components/ShareSheet.tsx', 'Escape-only share-sheet dismissal (share for comments)'],
+  ['src/renderer/src/components/CaptureResearchSheet.tsx', 'Escape dismissal, Enter in the title field and Cmd+Enter to file in the Capture to research sheet (modal, local)'],
   ['src/renderer/src/components/PublishNotReadySheet.tsx', 'Escape-only dismissal of the publish "not ready" sheet'],
   ['src/renderer/src/components/PublishWorkNoticeSheet.tsx', 'Escape-only dismissal of the publish dialog that says work files go out with a Run'],
   ['src/renderer/src/extensions/frontmatterTable.ts', 'Escape-only dismissal of the metadata row\'s "?" help block (T27); no shortcut is bound'],
@@ -600,6 +609,7 @@ const PRESENTER_KEY_CLAIMS = [
   ['template handleKey', /\(key === "v" \|\| key === "V"\) && slideVideos\(\)\.length > 0\) \{ event\.preventDefault\(\); videoFullscreenCommand\(\); return; \}/, ['presenter.video-fullscreen']],
   ['template handleKey', /if \(key === "(?:Home|End)"\) \{ event\.preventDefault\(\); publish\(\{ lightbox/, ['presenter.gallery']],
   ['template handleKey', /key === "Escape" && interactingFrame/, ['presenter.close']],
+  ['template handleKey', /key === "Escape" && livePage\.interact/, ['presenter.close']],
   // Esc puts the slide back when its embedded page is full screen and not in use (ticket 13).
   ['template handleKey', /key === "Escape" && embedFullScreenOn\(\)/, ['presenter.close']],
   ['template handleKey', /key === "e" \|\| key === "E"/, ['presenter.embed']],
@@ -800,7 +810,7 @@ const SURFACE_KEY_IDS = Object.fromEntries(
   [...(surfaceKeysSource.match(/export const SURFACE_KEYS = \{([\s\S]*?)\}/)?.[1] ?? '').matchAll(/'([^']+)':\s*'([^']+)'/g)]
     .map((match) => [match[1], match[2]])
 )
-assert.equal(Object.keys(SURFACE_KEY_IDS).length, 5, 'the five rebindable surface keys are read from surfaceKeys.ts')
+assert.equal(Object.keys(SURFACE_KEY_IDS).length, 34, 'the rebindable talk-search and research surface keys are read from surfaceKeys.ts')
 const SURFACE_KEY_COMPARISON = /\be\.key\s*[!=]==|\.includes\(e\.key\)|\.test\(e\.key\)|surfaceKey\(|findBoxOwnsKey\(e\.key/
 const PICKER_REGIONS = [
   ['picker', slideBrowserSource, 'function handleKey(e: KeyboardEvent): void {', "window.addEventListener('keydown', handleKey, { capture: true })"],
@@ -968,9 +978,8 @@ const RESERVED_CHORDS = new Map([
   ['Mod-k', ['app.context-menu']],
   ['Mod-p', ['app.toggle-inspector']],
   ['Mod-f', ['app.find', 'importer.search']],
-  // Pre-existing, not moved by talk search 08: ⌘⇧F is ADR-0011's "search everything" but TalkWeaver
-  // binds it to Focus current slide. Reported for its own decision.
-  ['Mod-Shift-f', ['app.slide-focus']],
+  // ⌘⇧F is "search everything": Focus current slide moved to ⌘⌥⇧F (shared settings, 0.40), so it is unbound.
+  ['Mod-Shift-f', []],
   ['Mod-,', ['app.settings']],
   ['Mod-/', ['app.help']],
   ['Mod-Shift-,', ['presenter.rebind']]

@@ -7,15 +7,18 @@ import {
   toggleSectionTree, useOutlineCollapse
 } from '../lib/outlineCollapseStore'
 import { IcCollapse, IcExpand } from './talklist/icons'
+import { highlightSegments, isEmptyQuery, parseQuery } from '../../../shared/slide-handling/query.ts'
+import { firstHitFrom, hitPosition, outlineBlocks, outlineItems, runSearch, sectionHitCounts, stepHit } from '../lib/slideSearchModel'
+import { registerSearchSurface, useSlideQuery, usePictureText, useSlideThumbs } from '../lib/slideSearch'
 import { releaseSelectionOutside, setOutlineSelection } from '../lib/outlineSelection'
 import { rowAfterEdit } from '../lib/activeOutlineLine'
-import { getStripNumbers, outlineNumbers, subscribeStripNumbers } from '../lib/stripNumbers'
+import { getStripNumbers, numbersAreCurrent, outlineNumbers, subscribeStripNumbers } from '../lib/stripNumbers'
 import SlideRowMenus, { type SlideMenuRequest } from './SlideRowMenus'
 import type { OutlineOps } from './WorkspaceLayout'
 
 interface Props {
   content: string
-  onJump: (line: number) => void
+  onJump: (line: number, opts?: { takeFocus?: boolean }) => void
   ops: OutlineOps | null
   /** Source line of the slide the editor cursor is in (item 1: outline follows cursor). The row
    *  containing it is marked + scrolled into view. Distinct from the user's click-selection, and
@@ -24,6 +27,8 @@ interface Props {
   /** The open talk's outline path: the key its collapse state is kept and remembered under. Without
    *  one the state lasts only as long as the app is open. */
   talkKey?: string | null
+  /** The talk's title: what `from:` compares with (the grid reads the same value). */
+  talkTitle?: string | null
 }
 
 // Where a dragged row would land: before the row at `line`, inside the collapsed section at `line`
@@ -32,7 +37,7 @@ type DropTarget = { kind: 'before' | 'into'; line: number } | { kind: 'end' }
 /** How long a drag must rest on a collapsed section row before the section opens (ms). */
 export const DRAG_EXPAND_DELAY_MS = 700
 
-export default function SlidesOrganizer({ content, onJump, ops, currentLine, talkKey }: Props) {
+export default function SlidesOrganizer({ content, onJump, ops, currentLine, talkKey, talkTitle: talkTitleProp }: Props) {
   const rows = useMemo(() => slideRows(content), [content])
   const tk = talkKey ?? ''
   // Which sections are collapsed lives in the per-talk store (outlineCollapseStore.ts), by section
@@ -54,7 +59,9 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
   }, [rows])
   const [selectedLine, setSelectedLine] = useState<number | null>(null)
   const [highlightedLine, setHighlightedLine] = useState<number | null>(null)
-  const [query, setQuery] = useState('')
+  // ONE query shared with the grid (lib/slideSearch.ts); the search itself is src/shared/slide-handling/query.ts.
+  const [query, setQuery] = useSlideQuery(talkKey ?? '')
+  const [hitLine, setHitLine] = useState<number | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const rowRefs = useRef(new Map<number, HTMLElement>())
@@ -231,12 +238,11 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
     if (searching) revealLine(tk, line, content)
     setSelectedLine(line)
     setHighlightedLine(line)
+    if (searching && run.isHit.has(line)) setHitLine(line)
     onJump(line) // single-click selects AND jumps (keeps jump behavior)
   }
 
-  // Search filters the outline by heading text. While a query is active, drag-reorder and
-  // section-collapse are suspended (matches render as a flat list) and the matched run is marked.
-  // Clearing the box restores the normal tree.
+  // Search dims the rows that do not match, in place: the tree, drag, section collapse and the row menu all stay on.
   // The row the editor cursor is currently in: the row with the greatest heading line ≤ currentLine
   // (the slide/section that contains the caret). Marked distinctly and scrolled into view below.
   const currentRowLine = useMemo(() => {
@@ -246,16 +252,25 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
     return best
   }, [rows, currentLine])
 
-  const q = query.trim().toLowerCase()
-  const searching = q.length > 0
+  // Matching reads titles, the text under each heading and the text in its pictures (picture text only while searching).
+  const queryActive = !isEmptyQuery(parseQuery(query))
+  const baseItems = useMemo(() => outlineItems(content, rows), [content, rows])
+  const pictureText = usePictureText(talkKey ?? null, useMemo(() => outlineBlocks(baseItems), [baseItems]), queryActive)
+  const items = useMemo(() => (pictureText.length === baseItems.length ? baseItems.map((it, i) => ({ ...it, image: pictureText[i] })) : baseItems), [baseItems, pictureText])
+  const talkTitle = talkTitleProp ?? (rows[0]?.level === 1 ? rows[0].text : '') // the same value the grid's from: reads (the talk's title)
+  const run = useMemo(() => runSearch(items, query, talkTitle), [items, query, talkTitle])
+  const searching = run.active
+  const titleScope = run.query.scope === 'all' || run.query.scope === 'title'
+  const sectionHits = useMemo(() => sectionHitCounts(rows, run.isHit), [rows, run.isHit])
+  const thumbs = useSlideThumbs()
 
   // Typing in a slide inside a collapsed section does not open it. The row that stands for the caret
   // is then the collapsed section that hides it (outermost), so the marker and the scroll still show
   // where the caret is.
   const shownCurrentLine = useMemo(() => {
     if (currentRowLine == null) return null
-    return (!searching && hidingSectionLine(keyed, collapsed, currentRowLine)) || currentRowLine
-  }, [currentRowLine, keyed, collapsed, searching])
+    return hidingSectionLine(keyed, collapsed, currentRowLine) || currentRowLine
+  }, [currentRowLine, keyed, collapsed])
 
   // Follow the cursor: scroll the current row into view when it changes. block:'nearest' keeps it
   // gentle (no recentring), and it won't fire while the row is already visible.
@@ -285,20 +300,68 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
     const line = keyed.find((r) => r.key === snap.revealKey)?.line
     if (line != null) rowRefs.current.get(line)?.scrollIntoView({ block: 'nearest' })
   }, [snap.revealSeq, snap.revealKey, keyed])
-  const visibleRows = rows.filter((r) => (searching ? r.text.toLowerCase().includes(q) : !hidden.has(r.line)))
-  const matchCount = searching ? visibleRows.length : 0
-  const renderText = (text: string): ReactNode => {
-    if (!searching) return text
-    const i = text.toLowerCase().indexOf(q)
-    if (i < 0) return text
-    return (
-      <>
-        {text.slice(0, i)}
-        <mark className="so-match">{text.slice(i, i + q.length)}</mark>
-        {text.slice(i + q.length)}
-      </>
-    )
+  const visibleRows = rows.filter((r) => !hidden.has(r.line))
+  const matchCount = run.order.length
+  const renderText = (text: string, marked = true): ReactNode => {
+    if (!searching || !marked || !titleScope) return text
+    return highlightSegments(text, run.terms).map((seg, i) => (seg.hit ? <mark key={i} className="so-match">{seg.text}</mark> : seg.text))
   }
+  const snippetOf = (line: number): ReactNode => {
+    const sn = run.snippets.get(line)
+    if (!sn) return null
+    return <span className="so-snippet" data-so-snippet>{sn.label}: {sn.segments.map((seg, i) => (seg.hit ? <mark key={i} className="so-match">{seg.text}</mark> : seg.text))}</span>
+  }
+  // Option C: a thumbnail under each matching row, only while a search is active.
+  const thumbOf = (line: number): ReactNode => {
+    if (!searching || !run.isHit.has(line)) return null
+    const no = numbersCurrent ? numbersByLine.get(line) : null // stale numbers (counted by position): no preview rather than a wrong one
+    const url = no != null && thumbs ? thumbs[no - 1] : null
+    return url ? <span className="so-thumb" data-so-thumb><img src={url} alt="" draggable={false} /></span> : null
+  }
+  const dimmed = (line: number, isSection: boolean): boolean => searching && !run.isHit.has(line) && !(isSection && (sectionHits.get(line) ?? 0) > 0)
+
+  // Previous / Next move the editor to the hit (the caret stays in the search box) and open the sections around it. Typing lands on the first hit at or after the caret's row without changing which sections are open.
+  function gotoHit(line: number | null, takeFocus: boolean, reveal = true): void {
+    if (line == null) return
+    setHitLine(line)
+    setSelectedLine(line)
+    setHighlightedLine(line)
+    if (reveal) revealLine(tk, line, content)
+    onJump(line, { takeFocus })
+  }
+  const stepSearch = (dir: 1 | -1): void => gotoHit(stepHit(run.order, hitLine, dir), false)
+  const orderKey = run.order.join(',')
+  const surfaceRef = useRef<{ focus(): void; step(dir: 1 | -1): boolean }>({ focus: () => {}, step: () => false })
+  surfaceRef.current = {
+    focus: () => { searchRef.current?.focus(); searchRef.current?.select() },
+    step: (dir) => { if (!searching) return false; stepSearch(dir); return true }
+  }
+  useEffect(() => registerSearchSurface('outline', { focus: () => surfaceRef.current.focus(), step: (d) => surfaceRef.current.step(d) }), [])
+  // Landing on the first hit happens ONLY when the query itself changes (a new non-empty query), once it has a hit.
+  // After the content changes (an edit, a move) nothing moves: the current hit is found again by its heading text
+  // (as rowAfterEdit does for the selection) or dropped when it is gone; the k of N count follows, nothing else.
+  const runRef = useRef(run)
+  runRef.current = run
+  const hitTextRef = useRef<string | null>(null)
+  const hitCountRef = useRef(rows.length)
+  useEffect(() => {
+    hitTextRef.current = hitLine == null ? null : rows.find((x) => x.line === hitLine)?.text ?? null
+  }, [hitLine]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!searching) { setHitLine(null); return }
+    // Keyed on the query text alone: reads the hits at that moment; no hit -> nothing lands until the query changes again.
+    const order = runRef.current.order
+    if (order.length === 0) return
+    gotoHit(firstHitFrom(order, currentRowLine), false, false) // typing never opens or closes a section; Next / Previous and a click do
+  }, [query]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const sameCount = hitCountRef.current === rows.length
+    hitCountRef.current = rows.length
+    if (hitLine == null) return
+    const next = rowAfterEdit(rows, hitLine, hitTextRef.current, sameCount)
+    const keep = next != null && run.isHit.has(next) ? next : null
+    if (keep !== hitLine) setHitLine(keep)
+  }, [rows]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (highlightedLine != null && !visibleRows.some((r) => r.line === highlightedLine)) {
@@ -340,8 +403,7 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
       return
     }
     // ←/→ on a highlighted SECTION row collapse/expand it — the caret button's keyboard path.
-    // Suspended while searching (matches render as a flat list, same as drag).
-    if (!modified && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !searching) {
+    if (!modified && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
       const line = highlightedLine ?? selectedLine
       if (line != null && sectionLines.has(line)) {
         e.preventDefault()
@@ -378,7 +440,7 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
   function openMenu(line: number, x: number, y: number, startAtFirst = false): void {
     setSelectedLine(line)
     setHighlightedLine(line)
-    setMenu({ x, y, line, mode: 'menu', collapsed: sectionLines.has(line) && !searching ? collapsed.has(keyByLine.get(line) ?? '') : null, startAtFirst })
+    setMenu({ x, y, line, mode: 'menu', collapsed: sectionLines.has(line) ? collapsed.has(keyByLine.get(line) ?? '') : null, startAtFirst })
   }
   function handleContextMenu(e: ReactMouseEvent<HTMLElement>): void {
     const row = (e.target as Element).closest('[data-line]')
@@ -426,6 +488,7 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
   // Row numbers are the strip's (compiled) numbers, the same map the Move list reads.
   const stripNumbers = useSyncExternalStore(subscribeStripNumbers, getStripNumbers)
   const numbersByLine = useMemo(() => outlineNumbers(rows, stripNumbers), [rows, stripNumbers])
+  const numbersCurrent = useMemo(() => numbersAreCurrent(rows, stripNumbers), [rows, stripNumbers])
   const rowNumber = (r: { line: number }): string => {
     const n = numbersByLine.get(r.line)
     return n != null ? String(n).padStart(2, '0') : ''
@@ -476,7 +539,6 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
     stopAutoScrollRef.current = null
   }
   function beginDrag(e: ReactDragEvent<HTMLElement>, line: number, level: number, text: string): void {
-    if (searching) return
     dragLineRef.current = line
     dragLevelRef.current = level
     draggedTextRef.current = text
@@ -537,28 +599,35 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
           ref={searchRef}
           type="search"
           className="so-search-input"
-          placeholder="Search slide titles…"
+          placeholder="Search titles, text and pictures…"
           value={query}
           onChange={(e) => { setQuery(e.target.value); setHighlightedLine(null) }}
+          onKeyDown={(e) => { if (e.key === 'Enter' && searching && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); e.stopPropagation(); stepSearch(e.shiftKey ? -1 : 1) } }}
           aria-label="Search the slide outline"
         />
         <button type="button" className="tl-tbtn" title="Collapse all sections" aria-label="Collapse all sections" data-so-collapse-all onClick={() => { publishOutline(tk, content); collapseAllSections(tk) }}><IcCollapse /></button>
         <button type="button" className="tl-tbtn" title="Expand all sections" aria-label="Expand all sections" data-so-expand-all onClick={() => { publishOutline(tk, content); expandAllSections(tk) }}><IcExpand /></button>
       </div>
+      {searching && (
+        <div className="so-hitbar" data-so-hitbar>
+          <span className="so-hitcount" data-so-hitcount><b>{hitPosition(run.order, hitLine).k}</b> of {matchCount}</span>
+          <button type="button" className="tl-tbtn so-hitbtn" data-so-prev disabled={matchCount === 0} onClick={() => stepSearch(-1)}>‹ Previous</button>
+          <button type="button" className="tl-tbtn so-hitbtn" data-so-next disabled={matchCount === 0} onClick={() => stepSearch(1)}>Next ›</button>
+        </div>
+      )}
       {searching && matchCount === 0 && (
         <div className="pres-nav-empty">No slides match “{query.trim()}”.</div>
       )}
       {rows.map((r) => {
-        if (searching ? !r.text.toLowerCase().includes(q) : hidden.has(r.line)) return null
+        if (hidden.has(r.line)) return null
         const isSel = selectedLine === r.line
         const isHighlighted = highlightedLine === r.line
-        // Indent by heading depth (##/# flush left) so nesting reads as a tree at any level;
-        // suspended while searching (matches render as a flat list).
-        const indent = searching ? undefined : { paddingLeft: `${6 + Math.max(0, r.level - 2) * 14}px` }
+        // Indent by heading depth (##/# flush left) so nesting reads as a tree at any level.
+        const indent = { paddingLeft: `${6 + Math.max(0, r.level - 2) * 14}px` }
         if (sectionLines.has(r.line)) {
           const rowKey = keyByLine.get(r.line) ?? ''
           const isCollapsed = collapsed.has(rowKey)
-          const heldSlides = isCollapsed && !searching ? slideCount(keyed, rowKey) : 0
+          const heldSlides = isCollapsed ? slideCount(keyed, rowKey) : 0
           return (
             <div
               key={r.line}
@@ -566,19 +635,18 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
                 if (el) rowRefs.current.set(r.line, el)
                 else rowRefs.current.delete(r.line)
               }}
-              className={`so-section ${isSel ? 'so-row--sel' : ''} ${isHighlighted ? 'so-row--kbd' : ''} ${shownCurrentLine === r.line ? 'so-row--current' : ''} ${dropClass(r.line)}`}
+              className={`so-section ${isSel ? 'so-row--sel' : ''} ${isHighlighted ? 'so-row--kbd' : ''} ${shownCurrentLine === r.line ? 'so-row--current' : ''} ${dimmed(r.line, true) ? 'so-row--dim' : ''} ${dropClass(r.line)}`}
               style={indent}
               data-line={r.line}
-              draggable={!searching}
+              draggable
               onDragStart={(e) => beginDrag(e, r.line, r.level, r.text)}
             >
               <span className="so-slide-no" data-so-no>{rowNumber(r)}</span>
-              {!searching && (
-                <button type="button" className="so-caret" onClick={(e) => { e.stopPropagation(); toggle(r.line, e.altKey) }} aria-expanded={!isCollapsed} title="Option-click: this section and all inside it">
-                  {isCollapsed ? '▸' : '▾'}
-                </button>
-              )}
+              <button type="button" className="so-caret" onClick={(e) => { e.stopPropagation(); toggle(r.line, e.altKey) }} aria-expanded={!isCollapsed} title="Option-click: this section and all inside it">
+                {isCollapsed ? '▸' : '▾'}
+              </button>
               <button type="button" className="so-section-label" onClick={() => select(r.line)}>{renderText(r.text)}</button>
+              {searching && (sectionHits.get(r.line) ?? 0) > 0 && <span className="so-hits" data-so-hits title="Hits inside this section">{sectionHits.get(r.line)} hit{sectionHits.get(r.line) === 1 ? '' : 's'}</span>}
               {heldSlides > 0 && <span className="so-count" data-so-count title={`${heldSlides} slide${heldSlides === 1 ? '' : 's'} inside`}>{heldSlides}</span>}
             </div>
           )
@@ -591,23 +659,25 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
               if (el) rowRefs.current.set(r.line, el)
               else rowRefs.current.delete(r.line)
             }}
-            className={`so-slide ${isSel ? 'so-row--sel' : ''} ${isHighlighted ? 'so-row--kbd' : ''} ${shownCurrentLine === r.line ? 'so-row--current' : ''} ${dropClass(r.line)}`}
+            className={`so-slide ${isSel ? 'so-row--sel' : ''} ${isHighlighted ? 'so-row--kbd' : ''} ${shownCurrentLine === r.line ? 'so-row--current' : ''} ${dimmed(r.line, false) ? 'so-row--dim' : ''} ${run.isHit.has(r.line) && searching && hitLine === r.line ? 'so-row--hit' : ''} ${dropClass(r.line)}`}
             style={indent}
             data-line={r.line}
             onClick={() => select(r.line)}
-            draggable={!searching}
+            draggable
             onDragStart={(e) => beginDrag(e, r.line, r.level, r.text)}
           >
             <span className="so-slide-no">{rowNumber(r)}</span>
-            <span className="so-slide-title">{renderText(r.text)}</span>
+            <span className="so-slide-text">
+              <span className="so-slide-title">{renderText(r.text)}</span>
+              {snippetOf(r.line)}
+              {thumbOf(r.line)}
+            </span>
           </button>
         )
       })}
       {/* Always in the tree (adding it at drag start would shift the list under the pointer): the
           drop zone after the last row, which moves the dragged slide to the end of the talk. */}
-      {!searching && (
-        <div className={`so-drop-end ${dropTarget?.kind === 'end' ? 'so-drop-end--active' : ''}`} data-drop-end aria-hidden />
-      )}
+      <div className={`so-drop-end ${dropTarget?.kind === 'end' ? 'so-drop-end--active' : ''}`} data-drop-end aria-hidden />
     </div>
     <SlideRowMenus
       request={menu}

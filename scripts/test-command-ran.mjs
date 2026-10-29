@@ -39,7 +39,9 @@ function walk(dir, out = []) {
  * and not found in the source fails the test.
  */
 const ACCEPTED = {
-  'editor.protect-heading-delete': 'Not an action the person runs: the Delete key on a heading is refused by the identity guard (idProtect.ts), which has nothing to report. The row can only be ticked by the Guide’s own limit: it stays unticked.'
+  'editor.protect-heading-delete': 'Not an action the person runs: the Delete key on a heading is refused by the identity guard (idProtect.ts), which has nothing to report. The row can only be ticked by the Guide’s own limit: it stays unticked.',
+  'editor.object-row-up': 'A real key, bound in the chat, terminal and trace row editor (objects/card-editors.ts, chordMatches) and in both registries. That plain-DOM editor does not import the notifier, so a press is not counted toward the Guide’s tried-counts: a reporting gap, not a dead command.',
+  'editor.object-row-down': 'The same key family as editor.object-row-up (⌃⌘↓): bound and working in objects/card-editors.ts, not counted toward the Guide’s tried-counts.'
 }
 const accepted = (id) => ACCEPTED[id] ?? null
 
@@ -156,7 +158,10 @@ await test('every command in a chapter has a reporting route; a key of its own i
 await test('the accepted exceptions are real, and are only what they say; the presenter is no longer one', () => {
   const ids = new Set(chapterCommands().map((c) => c.id))
   assert.ok(ids.has('editor.protect-heading-delete'))
-  assert.deepEqual(Object.keys(ACCEPTED), ['editor.protect-heading-delete'])
+  assert.deepEqual(Object.keys(ACCEPTED), ['editor.protect-heading-delete', 'editor.object-row-up', 'editor.object-row-down'])
+  assert.ok(ids.has('editor.object-row-up') && ids.has('editor.object-row-down'))
+  const rowEditor = read('src/renderer/src/objects/card-editors.ts')
+  assert.ok(rowEditor.includes("'editor.object-row-up'") && rowEditor.includes("'editor.object-row-down'"), 'the accepted row keys are really bound in the row editor')
   const presenter = [...ids].filter((id) => id.startsWith('presenter.') || id.startsWith('presenter-palette.'))
   assert.ok(presenter.length > 30)
   assert.deepEqual(presenter.filter((id) => !presenterRoute(id)), [], 'every presenter command has a route')

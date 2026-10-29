@@ -20,12 +20,12 @@ export const PEN_HEAD = { thin: 20, thick: 32 };
 
 /** The extent of a space in its own units. */
 export function penSpaceSize(space) {
-  return space === 'image' ? [1, 1] : [1280, 720];
+  return space === 'image' || space === 'still' ? [1, 1] : [1280, 720];
 }
 
 /** One coordinate, rounded to what the screen can show (keeps messages small). */
 export function penRound(value, space) {
-  const k = space === 'image' ? 10000 : 10;
+  const k = space === 'image' || space === 'still' ? 10000 : 10;
   return Math.round(value * k) / k;
 }
 
@@ -141,8 +141,10 @@ function penInkViewChecked(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const { slideId, space } = value;
   if (typeof slideId !== 'string' || !slideId.trim() || slideId.length > PEN_LIMITS.slideIdChars) return null;
-  if (space !== 'slide' && space !== 'image') return null;
+  if (space !== 'slide' && space !== 'image' && space !== 'still') return null;
   if (space === 'image' ? !Number.isSafeInteger(value.image) || value.image < 0 || value.image >= PEN_LIMITS.images : value.image !== undefined) return null;
+  // A frozen live page picture's layer names the picture (16-hex id); no other layer has one.
+  if (space === 'still' ? typeof value.still !== 'string' || !/^[0-9a-f]{16}$/.test(value.still) : value.still !== undefined) return null;
   if (!Array.isArray(value.strokes) || value.strokes.length > PEN_LIMITS.strokesPerLayer) return null;
   const strokes = [];
   let total = 0;
@@ -159,7 +161,7 @@ function penInkViewChecked(value) {
     total += draft.points.length;
   }
   if (total > PEN_LIMITS.pointsPerLayer) return null;
-  return { slideId, space, ...(space === 'image' ? { image: value.image } : {}), strokes, draft };
+  return { slideId, space, ...(space === 'image' ? { image: value.image } : {}), ...(space === 'still' ? { still: value.still } : {}), strokes, draft };
 }
 
 /**
@@ -211,8 +213,9 @@ export function penPictureRect(box, natural, fit, position) {
   return { left: box.left + x, top: box.top + y, width, height };
 }
 
-/** The key of one layer: a slide's own, or one zoomed image of it. */
+/** The key of one layer: a slide's own, one zoomed image of it, or one frozen picture (`image` is then its id). */
 export function penLayerKey(slideId, space = 'slide', image = 0) {
+  if (space === 'still') return `${slideId}\u0000still\u0000${image}`;
   return space === 'image' ? `${slideId}\u0000image\u0000${image}` : `${slideId}\u0000slide`;
 }
 
@@ -286,7 +289,7 @@ export function penDraw(group, view, { rect, canvasScale }) {
   while (group.firstChild) group.firstChild.remove();
   if (!view || !rect || !(rect.width > 0) || !(rect.height > 0) || !(canvasScale > 0)) return;
   const sx = rect.width / 1280, sy = rect.height / 720;
-  const [uw, uh] = view.space === 'image' ? [1280, 720] : [1, 1];
+  const [uw, uh] = view.space === 'image' || view.space === 'still' ? [1280, 720] : [1, 1];
   const vb = (p) => [p[0] * uw, p[1] * uh];
   const px = (p) => [p[0] * uw * sx, p[1] * uh * sy];
   const back = (p) => [p[0] / sx, p[1] / sy];
@@ -372,7 +375,7 @@ export function penCursor(tool, ink, widthPx) {
 export function createPenGesture({ root, surface, settings, onDraft, onCommit, fits = (_key, _strokes, _points) => true }) {
   const win = root.ownerDocument.defaultView;
   let drag = null;
-  const epsilon = (space) => (space === 'image' ? 0.0005 : 0.6);
+  const epsilon = (space) => (space === 'image' || space === 'still' ? 0.0005 : 0.6);
   function shapeNow() {
     if (!drag) return null;
     const { tool, ink, width } = drag.pen;
@@ -384,7 +387,8 @@ export function createPenGesture({ root, surface, settings, onDraft, onCommit, f
   }
   function draft() {
     const s = shapeNow();
-    onDraft(s ? { tool: s.tool, ink: s.ink, width: s.width, points: s.points } : null, drag ? drag.pieces.slice() : []);
+    // The draft names the layer it was started on (its key): it is never shown or sent as another's.
+    onDraft(s ? { tool: s.tool, ink: s.ink, width: s.width, points: s.points } : null, drag ? drag.pieces.slice() : [], drag ? drag.key : null);
   }
   const piecePoints = () => drag.pieces.reduce((sum, piece) => sum + piece.points.length, 0);
   function finishFreehandPiece() {
@@ -404,7 +408,7 @@ export function createPenGesture({ root, surface, settings, onDraft, onCommit, f
     if (!inside) return;
     event.preventDefault(); event.stopPropagation();
     try { root.setPointerCapture?.(event.pointerId); } catch {}
-    drag = { pen: { tool: pen.tool, ink: pen.ink, width: pen.width }, rect: s.rect, space: s.space, key: penLayerKey(s.slideId, s.space, s.image),
+    drag = { pen: { tool: pen.tool, ink: pen.ink, width: pen.width }, rect: s.rect, space: s.space, key: penLayerKey(s.slideId, s.space, s.space === 'still' ? s.still : s.image),
       from: [event.clientX, event.clientY], to: [event.clientX, event.clientY], shift: event.shiftKey, last: [event.clientX, event.clientY],
       points: [penPoint(event.clientX, event.clientY, s.rect, s.space)], pieces: [], pointerId: event.pointerId };
     draft();

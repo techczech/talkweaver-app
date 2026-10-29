@@ -107,4 +107,106 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
   assert.equal(gate.waiting(), 0)
 }
 
+// ── 6. With a hook installed, the start is deferred; an ordinary request arriving in that gap still
+//       goes ahead of a waiting background job (share build vs editor compile) ─────────────────────
+{
+  const gate = createSingleFlight({ beforeRequest: () => {} })
+  const order = []
+  const job = (name) => async () => { order.push(name); await wait(2); return name }
+  const first = gate(job('first'))
+  const share = gate.background(job('share build'))
+  // Let 'first' finish: its settle reserves the gate for the next job; the editor asks in that gap.
+  let editor
+  const ask = (async () => { await first; for (let i = 0; i < 10; i += 1) await Promise.resolve(); editor = gate(job('editor compile')) })()
+  await Promise.all([ask, share])
+  await editor
+  assert.deepEqual(order, ['first', 'editor compile', 'share build'], 'a foreground request during the deferred start is not overtaken by a background job')
+}
+
+// Reproduce the review finding without relying on the prewarm-specific API.
+{
+  let released = false
+  const gate = createSingleFlight({ beforeRequest: () => { released = true } })
+  const background = gate.background(async () => {
+    assert.equal(released, true, 'release precedes background compilation')
+  })
+  assert.equal(released, true, 'background release is synchronous, before queueing')
+  await background
+}
+
+// Every preparation except the prewarm's own idle work releases its retained deck synchronously,
+// before the request enters either queue (even when another compile already owns the gate).
+{
+  let gate
+  const seenWaiting = []
+  gate = createSingleFlight({ beforeRequest: () => seenWaiting.push(gate.waiting()) })
+  let finish
+  const held = gate.prewarm(() => new Promise((resolve) => { finish = resolve }))
+  assert.deepEqual(seenWaiting, [], 'prewarm does not announce itself')
+  await new Promise((resolve) => setImmediate(resolve))
+  await new Promise((resolve) => setImmediate(resolve))
+  const background = gate.background(async () => {
+    assert.deepEqual(seenWaiting, [1], 'release already happened before the task runs')
+    return 'variant'
+  })
+  assert.deepEqual(seenWaiting, [1], 'release is synchronous and precedes background queueing')
+  assert.equal(gate.waiting(), 2)
+  finish('prewarm')
+  assert.deepEqual(await Promise.all([held, background]), ['prewarm', 'variant'])
+  await gate.prewarm(async () => {
+    assert.deepEqual(seenWaiting, [1], 'prewarm never releases its own preparation')
+  })
+  const throwing = createSingleFlight({ beforeRequest: () => { throw Error('release failed') } })
+  assert.equal(await throwing.background(async () => 'still runs'), 'still runs', 'a failing hook does not wedge background work')
+}
+
 console.log('PASS single flight: strict ordering, own values, failure releases the gate, background lane yields')
+
+// Ungated compiles release synchronously, are counted independently, and never join either queue.
+{
+  const events = []
+  let gate
+  gate = createSingleFlight({ beforeRequest: () => events.push('release') })
+  let endA, endB
+  const a = gate.withPrewarmYield(() => {
+    events.push('compile-a')
+    assert.equal(gate.foregroundBusy(), true, 'counter is visible inside fn')
+    return new Promise((resolve) => { endA = resolve })
+  })
+  assert.deepEqual(events, ['release', 'compile-a'], 'release and fn run synchronously, in that order')
+  assert.equal(gate.waiting(), 0, 'the export does not enter the gate queue')
+  const b = gate.withPrewarmYield(() => new Promise((resolve) => { endB = resolve }))
+  assert.equal(typeof endB, 'function', 'overlapping exports keep their existing concurrency')
+  assert.equal(await gate(async () => 'live'), 'live', 'ordinary gate jobs do not wait behind exports')
+  endA('a')
+  assert.equal(await a, 'a')
+  assert.equal(gate.foregroundBusy(), true, 'one finished compile cannot hide another')
+  endB('b')
+  assert.equal(await b, 'b')
+  assert.equal(gate.foregroundBusy(), false, 'the last scope clears the counter')
+  await assert.rejects(gate.withPrewarmYield(() => { throw Error('sync compile') }), /sync compile/)
+  assert.equal(gate.foregroundBusy(), false, 'a synchronous throw clears the counter')
+  await assert.rejects(gate.withPrewarmYield(async () => { throw Error('async compile') }), /async compile/)
+  assert.equal(gate.foregroundBusy(), false, 'a rejected compile clears the counter')
+  const brokenHook = createSingleFlight({ beforeRequest: () => { throw Error('hook') } })
+  assert.equal(await brokenHook.withPrewarmYield(async () => 'ok'), 'ok')
+  assert.equal(brokenHook.foregroundBusy(), false)
+}
+
+// Even a prewarm already queued (or reserved for a deferred start) cannot begin during an export.
+{
+  const gate = createSingleFlight({ beforeRequest: () => {} })
+  let started = false, finish
+  const prewarm = gate.prewarm(async () => { started = true; return 'warm' })
+  await Promise.resolve() // pump has reserved a deferred start
+  const foreground = gate.withPrewarmYield(() => new Promise((resolve) => { finish = resolve }))
+  await wait(10)
+  assert.equal(started, false, 'queued prewarm checks the counter again when it would actually start')
+  assert.equal(await gate.background(async () => 'share'), 'share', 'other background jobs do not wait behind a blocked prewarm')
+  assert.equal(started, false, 'background completion cannot start a blocked prewarm')
+  finish('export')
+  assert.equal(await foreground, 'export')
+  assert.equal(await prewarm, 'warm', 'prewarm resumes when the foreground counter clears')
+  assert.equal(gate.foregroundBusy(), false)
+}
+console.log('PASS ungated compiles: synchronous release, counted busy scope, throw cleanup, prewarm start guard')

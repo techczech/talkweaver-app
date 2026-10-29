@@ -111,10 +111,13 @@ try {
     // Owner check 10 Oct: Presentation window and Audience view are not rows of the Present chapter (Launch audience covers them).
     // Plain editing view ticket 01 adds the two editor tabs' commands until the Guide names them (ticket 10).
     // Quote forms (ADR-0038): the seven "Quote form: …" palette commands are not practice rows either.
-    assert.deepEqual([...CHAPTER_EXCLUDED].sort(), ['attach-postwork', 'attach-prework', 'change-heading-level', 'change-slide-layout', 'move-section-to', 'move-slide-to', 'outline-collapse-all', 'outline-expand-all', 'present-audience', 'present-window', 'quote-form-auto', 'quote-form-book', 'quote-form-paper', 'quote-form-plain', 'quote-form-tweet', 'quote-form-video', 'quote-form-web',
+    assert.deepEqual([...CHAPTER_EXCLUDED].sort(), ['attach-postwork', 'attach-prework', 'change-heading-level', 'change-slide-layout', 'check-for-updates', 'whats-new', 'move-section-to', 'move-slide-to', 'outline-collapse-all', 'outline-expand-all', 'present-audience', 'present-window', 'quote-form-auto', 'quote-form-book', 'quote-form-paper', 'quote-form-plain', 'quote-form-tweet', 'quote-form-video', 'quote-form-web', 'research-capture', 'research-reveal-folder',
+      'research-panel', 'research-find', 'research-insert', 'research-make-slide', 'research-open', 'research-previous', 'research-next', 'research-scope', 'research-close', 'research-copy-reference', 'research-reveal', 'research-source', 'research-used-in', 'research-scope-talk', 'research-scope-research', 'research-scope-everything', 'research-retry', 'research-rename', 'research-change-kind', 'research-delete', 'research-move', 'research-copy', 'research-insert-here',
+      // Slide Scratchpad: a panel and its item actions; no practice row yet.
+      'scratchpad-panel', 'scratchpad-dock', 'scratchpad-float', 'scratchpad-collapse', 'scratchpad-add-slides', 'scratchpad-keep', 'scratchpad-reject', 'scratchpad-move-back', 'scratchpad-move-to-group', 'scratchpad-new-group', 'scratchpad-remove-missing', 'scratchpad-insert-slide', 'scratchpad-insert-visual', 'scratchpad-compare', 'scratchpad-change-place',
       // Work files ticket 30: the Tools window's commands, held back with pre-work.
       'tools-copy-invitation', 'tools-copy-link', 'tools-edit-plan', 'tools-go-live', 'tools-new-work-file', 'tools-open-run', 'tools-plan-like-this', 'tools-plan-run', 'tools-publish', 'tools-unpublish', 'tools-view-published', 'tools-view-sessions', 'tools-view-workfiles',
-      'view-markdown', 'view-plain'])
+      'view-markdown', 'view-plain'].sort())
     for (const id of CHAPTER_EXCLUDED) {
       assert.ok(chapterCommands().some((c) => c.id === id), `${id} is still a command (palette, menus)`)
       assert.ok(!placed.includes(id), `${id} is in no chapter`)

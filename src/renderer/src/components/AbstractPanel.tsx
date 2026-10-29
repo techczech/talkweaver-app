@@ -9,7 +9,7 @@ interface Props {
 
 function scaffold(title: string): string {
   return `---
-title: ${title}
+title: ${JSON.stringify(title)}
 genre: talk
 series: []
 deliveries: []
@@ -33,14 +33,27 @@ export default function AbstractPanel({ talk, isOpen, onClose }: Props) {
   const [saved, setSaved] = useState(false)
   const [isScaffold, setIsScaffold] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [parseError, setParseError] = useState<string | null>(null)
+  const [readFailed, setReadFailed] = useState(false)
+  const [source, setSource] = useState<'named' | 'bare' | null>(null)
+  const [slug, setSlug] = useState('')
+  const [candidates, setCandidates] = useState<string[]>([])
+  const [recordedRuns, setRecordedRuns] = useState<Awaited<ReturnType<typeof window.tw.abstract.read>>['recordedRuns']>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  // Load abstract.md when the panel opens for a talk.
+  // Load the resolved abstract when the panel opens for a talk.
   useEffect(() => {
     if (!isOpen || !talk) return
 
     let cancelled = false
     setLoading(true)
+    setRaw('')
+    setParseError(null)
+    setReadFailed(false)
+    setSource(null)
+    setSlug(talk.slug)
+    setCandidates([])
+    setRecordedRuns([])
     setError(null)
     setSaved(false)
     setIsScaffold(false)
@@ -48,17 +61,25 @@ export default function AbstractPanel({ talk, isOpen, onClose }: Props) {
       try {
         const result = await window.tw.abstract.read(talk.path)
         if (cancelled) return
-        if (result) {
+        setSlug(result.slug)
+        setSource(result.source)
+        setCandidates(result.candidates)
+        setRecordedRuns(result.recordedRuns)
+        setParseError(result.parseError)
+        setError(result.parseError)
+        if (result.raw !== null) {
           setRaw(result.raw)
-          setIsScaffold(false)
+        } else if (result.candidates.length) {
+          setRaw('')
+          setError(`Several abstracts found: ${result.candidates.join(', ')}`)
         } else {
           setRaw(scaffold(talk.title))
           setIsScaffold(true)
         }
       } catch (err) {
         if (cancelled) return
-        setRaw(scaffold(talk.title))
-        setIsScaffold(true)
+        setRaw('')
+        setReadFailed(true)
         setError(err instanceof Error ? err.message : 'Failed to read abstract.')
       } finally {
         if (!cancelled) setLoading(false)
@@ -71,7 +92,11 @@ export default function AbstractPanel({ talk, isOpen, onClose }: Props) {
   }, [isOpen, talk])
 
   const handleSave = useCallback(async () => {
-    if (!talk) return
+    if (!talk || loading || readFailed) return
+    if (parseError || candidates.length) {
+      setError(parseError ?? `Several abstracts found: ${candidates.join(', ')}`)
+      return
+    }
     setSaving(true)
     setSaved(false)
     setError(null)
@@ -80,6 +105,7 @@ export default function AbstractPanel({ talk, isOpen, onClose }: Props) {
       if (ok) {
         setSaved(true)
         setIsScaffold(false)
+        setSource('named')
       } else {
         setError('Save failed.')
       }
@@ -88,7 +114,7 @@ export default function AbstractPanel({ talk, isOpen, onClose }: Props) {
     } finally {
       setSaving(false)
     }
-  }, [talk, raw])
+  }, [talk, raw, loading, readFailed, parseError, candidates])
 
   // Escape closes.
   useEffect(() => {
@@ -128,8 +154,13 @@ export default function AbstractPanel({ talk, isOpen, onClose }: Props) {
         <div style={bodyStyle}>
           {isScaffold && (
             <div style={noticeStyle}>
-              No <code style={codeStyle}>abstract.md</code> yet. A scaffold is shown below — edit it
+              No <code style={codeStyle}>{slug}-abstract.md</code> yet. A scaffold is shown below — edit it
               and Save to create the file.
+            </div>
+          )}
+          {source === 'bare' && (
+            <div style={noticeStyle}>
+              Saving will create <code style={codeStyle}>{slug}-abstract.md</code> and leave <code style={codeStyle}>abstract.md</code> as it is.
             </div>
           )}
           <textarea
@@ -138,12 +169,26 @@ export default function AbstractPanel({ talk, isOpen, onClose }: Props) {
             onChange={(e) => {
               setRaw(e.target.value)
               setSaved(false)
+              setParseError(null)
+              setError(null)
             }}
-            disabled={loading}
+            disabled={loading || readFailed || candidates.length > 0}
             spellCheck={false}
             style={textareaStyle}
             placeholder={loading ? 'Loading…' : ''}
           />
+          {recordedRuns.length > 0 && (
+            <section style={{ ...noticeStyle, maxHeight: 120, overflowY: 'auto' }} aria-label="Recorded runs">
+              <strong>Recorded runs</strong>
+              <ul style={{ margin: '0.3rem 0 0', paddingLeft: '1.2rem' }}>
+                {recordedRuns.map((run) => (
+                  <li key={run.runId}>
+                    {run.date || 'Date not recorded'} — {run.eventTitle || run.context || 'Event not recorded'} — {run.status}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
         </div>
 
         <div style={footerStyle}>
@@ -165,11 +210,11 @@ export default function AbstractPanel({ talk, isOpen, onClose }: Props) {
             <button
               type="button"
               onClick={handleSave}
-              disabled={saving || loading}
+              disabled={saving || loading || readFailed || candidates.length > 0}
               style={{
                 ...btnStyle,
                 ...btnPrimaryStyle,
-                ...(saving || loading ? btnDisabledStyle : {})
+                ...(saving || loading || readFailed || candidates.length > 0 ? btnDisabledStyle : {})
               }}
             >
               {saving ? 'Saving…' : 'Save'}

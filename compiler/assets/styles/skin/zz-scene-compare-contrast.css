@@ -177,3 +177,7 @@
   width: 100%;
   max-width: none;
 }
+
+/* Deeper authored bullets stay inside their side and inherit the stage's type scale. */
+.slide .contrast-grid .vs-children { margin: .35em 0 0; padding-left: 1.1em; font-size: .85em; }
+.slide .contrast-grid .vs-children li { margin: .2em 0; }

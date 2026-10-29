@@ -73,14 +73,19 @@ export function createPreparedTalkCache<T>(options: {
       for (const [key, entry] of [...retained]) if (entry.group === group) remove(key)
       if (!pending.size || ![...pending.values()].some(value => value.group === group)) latest.delete(group)
     },
+    /** Drop every retained preparation of one talk, whatever its defaults and options (its files beside the outline changed, e.g. a saved view of a live page). */
+    evictOutline(outlinePath: string): void {
+      const prefix = outlinePath + '\0'
+      for (const group of new Set([...retained.values()].map(entry => entry.group))) if (group.startsWith(prefix)) this.evict(group)
+    },
     stats: () => ({ entries: retained.size, bytes, pending: pending.size })
   }
 }
 
 /** Which preparation a compile is: the live deck (the editor strip, the Inspector, Present, the
  *  thumbnails of the talk as written) or a layout VARIANT of it (a picture of the slide in another
- *  layout, ADR-0032 §6), which nothing else will ask for again. */
-export type PreparationLane = 'live' | 'variant'
+ *  layout, ADR-0032 §6), which nothing else will ask for again, or the prewarm's own idle work. */
+export type PreparationLane = 'live' | 'variant' | 'prewarm'
 
 /** Runs one heavy step (the compiler's `prepareSource`) on the preparation gate. */
 export type GatedRun = <R>(task: () => Promise<R>) => Promise<R>
@@ -90,16 +95,19 @@ export type GatedRun = <R>(task: () => Promise<R>) => Promise<R>
  * gate's ordinary lane. A variant compile bypasses the cache (it would evict the live deck's retained
  * model and stay retained itself) and takes the gate's background lane, so the live deck's compile on
  * a typing pause never waits behind a variant: it still runs one deck at a time with everything else,
- * and queues in order with the other background work (the share builder).
+ * and queues in order with the other background work (the share builder). The prewarm is also uncached
+ * and at background priority, but uses its explicit entry point so it does not release itself.
  */
 export function createPreparationRoute<T>(
   cache: { get(key: string, group: string, load: () => Promise<T>): Promise<T> },
-  gate: GatedRun & { background: GatedRun }
+  gate: GatedRun & { background: GatedRun; prewarm: GatedRun }
 ) {
   return (lane: PreparationLane, key: string, group: string, load: (gated: GatedRun) => Promise<T>): Promise<T> =>
-    lane === 'variant'
-      ? load((task) => gate.background(task))
-      : cache.get(key, group, () => load((task) => gate(task)))
+    lane === 'prewarm'
+      ? load((task) => gate.prewarm(task))
+      : lane === 'variant'
+        ? load((task) => gate.background(task))
+        : cache.get(key, group, () => load((task) => gate(task)))
 }
 
 /**

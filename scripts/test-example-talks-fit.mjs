@@ -63,7 +63,7 @@ function readFit(id) {
 
 let passed = 0
 const failures = []
-const browser = await chromium.launch({ headless: true })
+const browser = await chromium.launch({ headless: true, ...(process.env.TW_HEADLESS_SHELL ? { executablePath: process.env.TW_HEADLESS_SHELL } : {}) })
 try {
   for (const slug of talks) {
     const path = join(BUNDLE, slug, `${slug}-outline.md`)

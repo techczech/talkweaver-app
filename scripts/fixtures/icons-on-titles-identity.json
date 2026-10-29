@@ -8,12 +8,12 @@
     "sha256": "83c0bfec7192ddde4f6c9112691bd144ce33e194a1c372f5e175df75100b473e"
   },
   "lightning-round": {
-    "slides": 8,
-    "sha256": "b7bf0fe92f92a69dd9f7d1cade174254276d8c804239a188ceffc0c1cf8fe0c0"
+    "slides": 9,
+    "sha256": "f73a65cc90b729f7504ef577f80e0a66d2edf1fb3337f8a7b392a6bcf330026e"
   },
   "the-saturday-market": {
-    "slides": 22,
-    "sha256": "70584dc2add1f07635f1ab3ec146675b28009f1b7af95d9cef814093cb0d8ddc"
+    "slides": 25,
+    "sha256": "faae5f820b4359b6f0542baea0b49355878a292acad32c227a1d12572f2066f3"
   },
   "walking-the-old-town": {
     "slides": 30,

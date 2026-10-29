@@ -1,11 +1,16 @@
+import { lexMarkdownBlocks } from '../compiler/scripts/lib/03-markdown-lexer.mjs'
+import { mapBlocksToLayout, renderBlock } from '../compiler/scripts/lib/06-block-renderers.mjs'
+import { buildPerSlideProjections } from '../compiler/scripts/lib/10-projections.mjs'
+import { contrastModel, headIconKey, contrastRowDrawsIcon } from '../compiler/scripts/lib/vs-panels.mjs'
 import { strict as assert } from 'node:assert'
-import { mkdtempSync, statSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, mkdtempSync, statSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { buildDeckHtmlFromModel } from '../compiler/scripts/lib/07-assembly.mjs'
 
-const dir = mkdtempSync(join(tmpdir(), 'tw-contrast-variants-'))
+mkdirSync(new URL('../research/', import.meta.url), { recursive: true })
+const dir = mkdtempSync(join(import.meta.dirname, '../research/.tmp-contrast-variants-'))
+process.on('exit', () => rmSync(dir, { recursive: true, force: true }))
 let probeNumber = 0
 
 async function compile(label, trigger, pairCount = 4) {
@@ -82,3 +87,37 @@ assert.equal([...fewGrid.matchAll(/<div class="contrast-pair vs-pair" style="gri
 assert.match(fewGrid, /<div class="vs-row L[^"]*">(?:<div class="vs-ico">[\s\S]*?<\/div>)?<div class="vs-text">Old 1<\/div><\/div><div class="vs-row R[^"]*">(?:<div class="vs-ico">[\s\S]*?<\/div>)?<div class="vs-text">New 1<\/div><\/div>/, 'a pair holds its left and right cell')
 
 console.log('contrast variants: all checks passed')
+
+// Two top-level items are sides; descendants belong to their own side.
+function authoredContrast(body) {
+  const blocks = mapBlocksToLayout('contrast', lexMarkdownBlocks(body.split('\n')))
+  return { block: blocks.find((b) => b.type === 'contrast'), html: blocks.map((b) => renderBlock(b, {})).join('') }
+}
+const simpleSides = authoredContrast('- Manual\n- Automated')
+assert.deepEqual(simpleSides.block.pairs, [['Manual', 'Automated']], 'two bullets define a single pair of sides')
+const nestedSides = authoredContrast('- Before\n  - Manual work\n    - Review by hand\n  - Separate tools\n- After\n  - Automated work\n  - One workspace')
+const nestedModel = contrastModel(nestedSides.block)
+assert.deepEqual(nestedModel.panels.map((p) => p.head), ['Before', 'After'], 'parents name the two columns')
+assert.deepEqual(nestedModel.panels.map((p) => p.rows.map((r) => r.text)), [['Manual work', 'Separate tools'], ['Automated work', 'One workspace']], 'each column keeps its own child rows')
+assert.match(nestedSides.html, /Review by hand/, 'deeper descendants are not discarded')
+const unequal = authoredContrast('- Before\n  - One\n  - Two\n- After\n  - Three')
+assert.match(unequal.html, /Two/, 'unequal column lengths retain the last child')
+const legacy = authoredContrast('- Manual / Automated\n- Slow / Fast')
+assert.deepEqual(legacy.block.pairs, [['Manual', 'Automated'], ['Slow', 'Fast']], 'existing slash rows retain their interpretation')
+
+assert.match(buildPerSlideProjections({ slides: [{title: 'Nested', blocks: [nestedSides.block]}] }, 'nested')[0].text_excerpt, /Review by hand/, 'search and export projections preserve deeper descendants')
+
+assert.equal(headIconKey('After'), null, 'the generic side label After does not mean Adobe After Effects')
+assert.equal(headIconKey('After Effects'), 'svgl:after-effects', 'the actual product name still receives its logo')
+assert.equal(contrastRowDrawsIcon(nestedSides.block, 0), false, 'an explicit side head is not a body icon row')
+assert.equal(contrastRowDrawsIcon(nestedSides.block, 2), true, 'the last headed body row has the right icon offset')
+
+// The source adapter retires contrast=cards before rendering: authored legacy content
+// uses the default panels and must retain descendants at every row count.
+const legacyCardsSource = '### Legacy cards\n{contrast=cards}\n\n- Before\n  - One\n    - Deep detail\n  - Two\n  - Three\n  - Four\n- After\n  - Automated\n'
+const legacyCardsPath = join(dir, 'legacy-cards.md')
+writeFileSync(legacyCardsPath, legacyCardsSource)
+const legacyCardsModel = await prepareSource(legacyCardsPath, legacyCardsSource, 'legacy-cards', statSync(legacyCardsPath))
+assert.match(legacyCardsModel.fullHtml, /contrast-vs/)
+assert.match(legacyCardsModel.fullHtml, /Deep detail/)
+assert.doesNotMatch(legacyCardsModel.fullHtml, /class="contrast-panels"/)

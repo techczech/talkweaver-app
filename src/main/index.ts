@@ -1,6 +1,10 @@
+import { researchDestinations } from './research-writer'
+import { researchWriteHandler } from './agent-verbs'
+import { RESEARCH_INSERT_VERB, RESEARCH_MAKE_SLIDE_VERB } from './agent-verbs'
+import { revealResearchSource } from './research-reader'
 import { INK_LIMITS, parseInkMessage, parsePointerMessage } from '../../worker/protocol'
 import { createLatestThumbnailRequestHandler } from './thumbnail-queue'
-import { app, BrowserWindow, clipboard, ipcMain, dialog, Menu, net, protocol, shell, session, screen, powerMonitor, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, clipboard, ipcMain, dialog, Menu, net, protocol, shell, session, screen, powerMonitor, WebContentsView, type IpcMainInvokeEvent, type MenuItemConstructorOptions } from 'electron'
 import { join, basename, dirname, extname } from 'path'
 
 // EPIPE guard: when the packaged binary is launched with stdout/stderr piped and the pipe
@@ -18,6 +22,10 @@ const E2E = process.env.TW_E2E === '1'
 // (Owner, 10 Oct: setup refuses while the app is open), so only one process ever writes this folder.
 const SETUP_ARGS = setupArguments(process.argv, Boolean(process.defaultApp))
 if (SETUP_ARGS) app.dock?.hide()
+// `TalkWeaver settings …` (0.42, settings-cli.ts): the agent's settings path. Like `setup` it opens no
+// window, but it takes no single-instance lock: the settings file has its own, so it runs beside an open app.
+const SETTINGS_ARGS = SETUP_ARGS ? null : settingsArguments(process.argv, Boolean(process.defaultApp))
+if (SETTINGS_ARGS) app.dock?.hide()
 
 // One TalkWeaver per user-data folder (ticket 12): two instances on one folder would share the
 // share registry, the owner-token store and every other file there, each holding its own copy in
@@ -27,8 +35,10 @@ if (SETUP_ARGS) app.dock?.hide()
 // A setup command says so in the lock's data, so an open TalkWeaver does not bring its window
 // forward for a command it is refusing.
 const SETUP_LOCK_DATA = { talkweaverSetup: true }
-const holdsInstanceLock = app.requestSingleInstanceLock(SETUP_ARGS ? SETUP_LOCK_DATA : undefined)
-if (SETUP_ARGS) {
+const holdsInstanceLock = SETTINGS_ARGS ? false : app.requestSingleInstanceLock(SETUP_ARGS ? SETUP_LOCK_DATA : undefined)
+if (SETTINGS_ARGS) {
+  // No lock, no window: the command runs once the app is ready and exits (app.whenReady below).
+} else if (SETUP_ARGS) {
   if (!holdsInstanceLock) {
     // TalkWeaver is open on this folder: refused before anything is parsed, read from standard input
     // or written. Written at once (a few bytes to a pipe or terminal) so the process can go now.
@@ -94,7 +104,7 @@ protocol.registerSchemesAsPrivileged([
   // Serves local image files referenced by path in an outline (twfile://f/<b64url>), guarded
   // to the vault root. Lets the editor preview path-based images from the dev http origin too.
   { scheme: 'twfile', privileges: { standard: true, secure: true, supportFetchAPI: true } },
-  // Serves a recorded Session's local audio (twrec://<sessionId>) to Studio's <audio>. `stream`
+  // Serves a recorded Session's local audio (twrec://<sessionId>?talk=<talkSlug>) to Studio's <audio>. `stream`
   // enables Range requests so the player can seek/scrub without downloading the whole file.
   { scheme: 'twrec', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
   // Serves the compiled present HTML and sibling assets for Studio replay iframes.
@@ -110,7 +120,12 @@ installNavigationGuard(app, {
   // being marked. A hidden renderer (thumbnail capture: window-kinds.ts) navigates nowhere and hands
   // out nothing at all.
   refuseHandOut: (_contents, link, from) => contentHandOutRefusal({ url: link, from }),
-  isHiddenRenderer: (contents) => isHiddenRenderer((contents as { id?: unknown } | null)?.id)
+  isHiddenRenderer: (contents) => isHiddenRenderer((contents as { id?: unknown } | null)?.id),
+  // A live web page's own view judges its own navigations and never hands anything to the OS (live-page-host.ts).
+  isLivePageContents,
+  // A frame showing a Slide Scratchpad page stays on that page: its own script cannot send it to twfile:// or
+  // another twpresent:// address (scratchpad-html.ts).
+  frameRule: scratchFrameNavigation
 })
 // No IPC listener answers a frame that is not its window's main frame (ipc-main-frame-only.ts).
 // Applied to ipcMain itself, here, BEFORE the first registration below and before any module is
@@ -121,7 +136,7 @@ applyMainFrameOnly(ipcMain)
 const pressLedger = createPressLedger()
 installPressLedger(app, pressLedger)
 import { fileURLToPath, pathToFileURL } from 'url'
-import { homedir, hostname, tmpdir } from 'os'
+import { cpus, homedir, hostname, loadavg, tmpdir, totalmem } from 'os'
 import { installNavigationGuard } from './navigation-guard'
 import { applyMainFrameOnly } from './ipc-main-frame-only'
 import { contentHandOutRefusal, handOutLink } from './hand-out'
@@ -136,19 +151,27 @@ import {
   configureTalkWriter, emptyOverNonemptyMessage, flushTalkForPublish, isStructurallyEmptyOutline, readTalkOutline, withTalkFileLock, writeTalkOutline,
   type EditorBuffer, type TalkWriteOptions, type TalkWriteOrigin,
 } from './talk-writer'
+import { readAbstract, writeAbstract } from './abstract-ipc'
+import { registerScratchpadIpc } from './scratchpad-ipc'
+import { createScratchVisualImporter, slideSourceOutline } from './scratchpad-visual-import'
+import { createScratchpadHtmlPreviews, scratchFrameNavigation } from './scratchpad-html'
+import { createHtmlThumbnailer } from './scratchpad-html-thumb'
+import { createHtmlCapture } from './scratchpad-html-capture'
+import { researchCaptureHandler, researchRevealHandler, researchReadHandler } from './agent-verbs'
 import { createOutlineDiskGuard } from './outline-disk-guard'
 import { createOutlineRecovery } from './outline-recovery'
 import { createDirectoryWatcherRegistry } from './talkTextWatchers'
 import type { OutlineDiskChange } from '../shared/outline-disk-change'
 import { type Dirent, existsSync, lstatSync, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, realpathSync, cpSync, rmSync, renameSync, createReadStream, constants as fsConstants, mkdtempSync, openSync, readSync, closeSync, appendFileSync, watch, writeSync } from 'fs'
-import { createHash, randomBytes } from 'crypto'
+import { createHash, randomBytes, randomUUID } from 'crypto'
 import { execFile, execFileSync, spawn, type ChildProcessByStdio } from 'child_process'
 import type { Readable } from 'stream'
-import { resolve as resolvePath, sep as pathSep, relative as relativePath } from 'path'
-import { renderThumbnails } from './thumbnails'
+import { resolve as resolvePath, sep as pathSep, relative as relativePath, isAbsolute } from 'path'
+import { cancelThumbnailRender, recycleRenderWindow, renderThumbnails, renderThumbnailsIdle, renderWindowProcessId, thumbnailForeground } from './thumbnails'
+import { createThumbnailPrewarm, type PrewarmTalk } from './thumbnail-prewarm'
+import { thumbKeysIn } from './thumb-key-resolution'
 import { createVariantThumbnailHandler, createVariantThumbnailRenderer, mediaFingerprint } from './layout-variant-thumbnail'
 import {
-  abstractPath,
   assetSidecarPath,
   createFolderTarget,
   deleteFolderTarget,
@@ -169,6 +192,12 @@ import { createSlideWellProvider, locateSlideWell } from './image-search/slidewe
 import { detectSqlite3 } from './image-search/sqlite-read'
 import { fromBase64Url, isInsideRoot } from './image-search/thumb-url'
 import { createVaultPictureSearch, twassetFileFor, gatherVaultImages as gatherVaultImagesIn, MAX_VAULT_QUERY } from './image-search/vault-pictures'
+import { createOcrIndex, type OcrIndex, type OcrPicture } from './ocr-index'
+import { createSlideSearch, normalizeSearchQuery, type ImageTextSource, type SearchQuery } from './slide-search'
+import { compactSlideSearchReply } from '../shared/slide-search-reply'
+import { currentSearchTalks, scanWithStartStamp, searchIndexStamp } from './search-index-stamp'
+import { OCR_PICTURE_EXTS, deckPicturesOf, extractImageRefs, resolveImagePaths, rowImageRefs, slideImagePaths, talkImagePaths, type DeckPictures, type ImageRef } from './slide-image-refs'
+import { createSupersedeTracker } from './search-supersede'
 import { importImageForTalk, talkVaultWriteRoot, type ImageImportDeps } from './image-search/image-import'
 import type { ImageSearchResult, ImageSearchStatus, ImportedImage, MatchMode, VaultPictureResult } from '../shared/image-search'
 import { decideShellPath } from './shell-path-policy'
@@ -178,7 +207,7 @@ import { convertibleImageRefs, planOptimisation, rewriteConvertedRefs, writeNewF
 import { isSearchIndexEntryFresh } from './search-index-freshness'
 import { sweepOrphanedThumbCaches } from './thumbnail-cache-gc'
 import { createPreparationRoute, createPreparedTalkCache, memoiseUntilFailure, preparedTalkGroup, type PreparationLane } from './prepared-talk-cache'
-import { createSingleFlight } from './single-flight'
+import { preparePass, setPreparationReleaseHook, withPrewarmYield } from './preparation-gate'
 import {
   BROWSER_THUMBNAIL_LANE,
   THUMBNAIL_HEAP_WAIT_MAX_MS,
@@ -208,13 +237,14 @@ import { createTalkActivity } from './talk-activity'
 import { createConflictCompare } from './conflict-compare'
 import { createTalkSearch, handleTalkSearchRequest } from './talk-search'
 import { emptyTalkSearchResult, mergeTalkSearchResults } from '../shared/talk-search'
-import { reorderGridBlocks, type OutlineSlideBlock } from '../shared/grid-reorder'
 import { createTalkFolderStateStore, type StoredFolderStates } from './talk-folder-state'
 import { createVaultRegistry, resolveInVaults, type Vault, type VaultPersonal } from './vault-registry'
 import { viewVaults, refusalMessage, serviceFor, type AddVaultOutcome, type VaultService } from './vault-view'
 import { createVaultAvailability, nodeAvailabilityProbe, SERVICE_APPS, mkdirBelowRoot, writableRoot, type LastGood } from './vault-availability'
 import { createVaultFileStore, fileText } from './vault-file'
 import { registerVaultSettingsIpc, refusalOutcome, talkFolderRelOf } from './vault-settings-ipc'
+import { HTML_PAGE_TEXT, createHtmlPageImportRunner, importHtmlPage, registerHtmlPageImportIpc } from './html-page-import'
+import { registerObjectStatusIpc } from './object-status'
 import { ExampleVault, resolveExampleHome } from './example-vault'
 import { ExampleVaultRemoval, windowsOnExample, type OpenAppWindow } from './example-vault-removal'
 import { resolveExampleTrash } from './example-trash-harness'
@@ -222,6 +252,15 @@ import { resolveNewTalkDefaults } from '../shared/vault-defaults'
 import { pathsInVault, pathsOutsideOpenVaults, searchVaults } from './vault-scope'
 import { VAULTS_DIR, adoptLegacyThumbDirs, isPlainSegment, parseThumbUrl, talkThumbDir, thumbFileFor, thumbLookupDirs, thumbUrl, touchNamespace } from './thumb-cache-dirs'
 import { createConfigFile, type ConfigFile } from './config-file'
+import type { ConfigOverlay } from './settings-overlay'
+import { settingsPageUrl, startSettingsHost, type TalkWeaverSettings } from './settings-host'
+import { createSecretSlots, recordedKeyChange } from './settings-secret-slots'
+import { createSettingsKeymap, legacyOverridesArg, overridesArg, type SettingsKeymap } from './settings-keymap'
+import { openSettings, runWithSettings } from './settings-open'
+import { RECORDING_SETTINGS_ONLY, settingsWindowOnly } from './settings-window-channels'
+import { SECRET_KEYS } from '../shared/settings-schema'
+import { KEYMAP_SETTING } from '../shared/keymap-overrides'
+import { bridleIdOfKeymapId, keymapIdOf } from '../shared/bridle-commands'
 import {
   createSlidePreviewStore,
   markSlidePreviewHtml,
@@ -240,6 +279,8 @@ import {
   unregisterRecordingContext,
   shouldOfferRunSave,
   recordingAudioArmed,
+  recordingOpen,
+  onRecordingOpenChange,
   recordingRunReference,
   sendRecordingCloseOffer,
   recordingAudioPath,
@@ -340,24 +381,33 @@ import { presentedTalkVault, type PresentedVaultDeps } from './presented-vault'
 import { createLiveSessionStore, type SessionRecoveryRecord } from './live-session-store'
 import { secretsSlot, type SecretSlot, type SecretsStore } from './secrets-store'
 import { openSecretsStore } from './secrets-store-electron'
+import { installUpdateNotices } from './update-notices'
+import { helpMenu, macAppMenu } from './app-menu'
+import type { UpdateState } from '@app-patterns/updates'
 import { cloudflareApiBase, createCloudflareConnection, standInApiBase, type CloudflareConnectionService, type ConnectionReply as CloudflareReply } from './cloudflare-connection'
 import { LIVE_ACCESS_REMOVED, LIVE_NOT_SET_UP, LiveServiceError, deployLiveService, lookUpLiveService, surveyLiveService, type DeployPhase, type LiveDeployResult } from './live-service-deploy'
 import { KeyStoreUnreadable, computerNameOrNull, createComputerKeyStore, defaultComputerName, keyKind, keyToPresent, sendWithHeldKeys, type ComputerKeyStore, type KeyKind, type StoredKey } from './live-service-key'
 import { changeShareAddress, shareDomainEntries, shareLinkBase, type ShareDomainEntry, type ShareDomainPorts, type ShareDomainRecords, type ShareDomainResult } from './live-service-share-domain'
 import type { AdminEndpoint } from './live-admin-request'
-import { createLiveService, setUpAllowedFrom, type LiveService } from './live-service'
+import { createLiveService, type LiveService } from './live-service'
 import { LIVE_WORKER_NAME, type GoingLiveRow, type LiveSetupPrompt } from '../shared/live-service-status'
 import { WORKER_DIST_DIR, readShippedFiles, type ShippedFiles } from './live-service-upload'
 import { addressKind, createHandoutPublishing, liveAddressForPages, localLiveAllowed, publishedFolders, writableSiteFolder, type HandoutPublishing } from './handout-publishing'
 import { slimHandoutHtml } from './handout-slimming'
 import { buildRunHandoutHtml, placedRunExtras, runCompileOption, runForHandoutOf, runHandoutSourceFrom, withRunExtraIds, type HandoutPagesJob, type HandoutPagesResult, type RunExtrasModel, type RunCompileOption, type RunForHandout, type RunHandoutSource } from './handout-pages'
-import { Worker } from 'node:worker_threads'
 import { createPrepareTalkOffThread } from './prepare-talk-off-thread'
+import { forkCompileChild, forkHandoutPagesChild, forkHtmlPageImportChild, forkLivePageCaptureChild } from './prepare-talk-utility-process'
+import { createLivePageCaptureRunner, createLivePageCaptureSaver, encodeCapture, placeSavedView } from './live-page-capture'
+import { CAPTURE_EMBED_TEXT, captureEmbedInitScript, captureEmbedPageUrl, checkCaptureEmbedRequest, readCaptureEmbedViews } from './live-page-capture-window'
+import { slideSavedViews } from './live-page-saved-views'
+import { createHandoutPagesOffProcess } from './handout-pages-off-process'
 import { SHARE_LINK_NOT_NOW, type CloudflareStatus } from '../shared/cloudflare-status'
 import { LEGACY_OUTLINE_ADAPTER } from '../shared/run-extra-slides'
 import { createRecordingStorage, type RecordingStorage } from './recording-storage'
 import type { RecordingStorageRow } from '../shared/recording-storage-status'
 import { appOpenRefusal, runSetup, setupArguments, type ImporterRow } from './setup-cli'
+import { runTalkWeaverSettings, settingsArguments } from './settings-cli'
+import { folderInside, separateFolderProblem } from '../shared/settings-folders'
 import { createSetupOperations, type PublishSettings, type RecordingSettings } from './setup-operations'
 import { readSecretInput } from './setup-stdin'
 import { discoverRenderer } from './importer/pptx'
@@ -401,6 +451,9 @@ import { buildInGate, buildSharedTalkPayload, ownerNameFrom } from './shared-tal
 import { isSharedTalkStopped, isValidShareDomain } from '../shared/shared-talk'
 import { deckWindowKeyAction, deckWindowMode, OPEN_AUDIENCE_SCRIPT } from './deck-window-keys'
 import { appWindowOpenHandler, guardDeckWindowTree, isAppAudienceUrl } from './present-window-open'
+import { followRemotePages } from './remote-page-follow'
+import { createLivePageHost, disposeAllLivePageHosts, isLivePageContents, pairLivePageHosts, type DeckWindow, type LivePageHost, type LivePageRole, type LivePageSession, type LiveView } from './live-page-host'
+import { testLoopbackAllowance } from './live-page-policy'
 import { isPresenterBoardMessage, parsePresenterMessage, parseSlideLightbox } from '../../worker/protocol'
 import { handoutHomeDetails, handoutHomePostwork, handoutHomePrework } from '../shared/handout-home'
 import { historyResultsRefusal, isOpenableToolsView, parseToolsRunRef, type ToolsRunRef, type ToolsView } from '../shared/tools-views'
@@ -449,7 +502,8 @@ type Config = {
   // Presentation backup (a "present from anywhere" safety net): periodically write each Talk's
   // full self-contained presenter HTML to a folder the user puts inside OneDrive/Dropbox, so a
   // forgotten laptop never blocks presenting. TalkWeaver only writes files; the sync client syncs.
-  // Opt-in (default off) background OCR of vault images for image-text search (SCALE policy, 2026-07-20).
+  // Background image-text reading for image search. On unless false (default flipped to on 2026-10-20;
+  // the palette command "Index image text" runs whatever this says).
   ocrEnabled?: boolean
   backupEnabled?: boolean
   backupFolder?: string
@@ -493,9 +547,15 @@ type Config = {
   // The example vault was removed (onboarding ticket 12): Settings → Get started offers it again.
   // Beside the vault registry, outside every vault; progress is kept under its own keys.
   exampleVaultRemoved?: boolean
+  // The editor keymap's overrides were moved from the renderer's localStorage into the settings store (0.42), once.
+  keymapOverridesMoved?: boolean
   // The status-bar place chip, "Show where I am in the status bar" (onboarding ticket 02): ON
   // until switched off; read tolerantly (src/shared/place-chip-settings.ts).
   placeChipVisible?: boolean
+  // Update notices (ADR-0041): the setting `updates.checkForNewVersions` (on until switched off) and the
+  // check's state (last result, skipped version, last version run); both read in src/main/update-notices.ts.
+  updatesCheckForNewVersions?: boolean
+  updateNotices?: UpdateState
   // The Guide (onboarding ticket 07): "Show the Guide button in the sidebar" (ON until switched off)
   // and the Guide's progress. Both read tolerantly (src/shared/guide.ts); progress lives here,
   // beside the vault registry and outside every vault.
@@ -516,11 +576,17 @@ function configPath() {
 function configFile(): ConfigFile<Config> {
   return createConfigFile<Config>(configPath())
 }
+// Since 0.42 the preferences live in the settings store (settings-host.ts); readConfig / writeConfig
+// go through its overlay once it is open, so every reader below is unchanged. The app opens it in
+// startSharedSettings and the setup command in runSetupCommand (both through settings-open.ts, after
+// the migration); nothing reads a preference before that.
+let settingsOverlay: ConfigOverlay | null = null
 function readConfig(): Config {
-  return configFile().read()
+  return (settingsOverlay ? settingsOverlay.read() : configFile().read()) as Config
 }
 function writeConfig(patch: Partial<Config>) {
-  configFile().write(patch)
+  if (settingsOverlay) settingsOverlay.write(patch as Record<string, unknown>)
+  else configFile().write(patch)
 }
 function getConfig<K extends keyof Config>(key: K, fallback: Config[K]): Config[K] {
   return readConfig()[key] ?? fallback
@@ -728,6 +794,17 @@ function ownerTokens(): OwnerTokens {
   return ownerTokenStore
 }
 
+// ── The Settings window's own changes (Sol review 1, #2) ─────────────────────────────────────────
+/** True when a call came from the Settings window's own page, in its top frame (the settings host's rule, given the whole event). */
+function fromSettingsWindow(event: IpcMainInvokeEvent): boolean {
+  return sharedSettings?.host.isSettingsWindowSender(event) === true
+}
+/** A change only the Settings window's pages make (settings-window-channels.ts SETTINGS_WINDOW_ONLY): any other sender gets `refused()`. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function handleFromSettingsWindow(channel: string, refused: () => unknown, handler: (event: IpcMainInvokeEvent, ...args: any[]) => unknown): void {
+  ipcMain.handle(channel, settingsWindowOnly(fromSettingsWindow, refused, handler))
+}
+
 // ── Cloudflare: the one token (slot `cloudflare-token`) and the connection made with it ──────────
 // The token is saved, replaced, checked and removed only through cloudflare-connection.ts (spec
 // decisions D1, D4, D5, D6), and handed out only inside its authorisations (a publish, the live
@@ -781,24 +858,29 @@ ipcMain.handle('cloudflare:check', async (_event, reason: unknown) => {
   void liveService().look(why).catch(() => {})
   return reply
 })
-ipcMain.handle('cloudflare:save-token', (_event, token: unknown) => cloudflareConnection().saveToken(token))
-ipcMain.handle('cloudflare:choose-account', (_event, id: unknown) => cloudflareConnection().chooseAccount(id))
-ipcMain.handle('cloudflare:create-site', () => cloudflareConnection().createSite())
-ipcMain.handle('cloudflare:disconnect', () => cloudflareConnection().disconnect())
+// Saving, replacing and removing the token, and choosing the account, are the Settings window's own
+// (settings-window-channels.ts): any other window or frame is refused. Save and Disconnect log the
+// token's change in Changes as Accounts and keys does: connected or missing, never the value.
+const cloudflareSettingsOnly = (): CloudflareReply => ({ ok: false, error: 'This can be changed only in the Settings window.', status: cloudflareConnection().status() })
+function recordedCloudflareKeyChange(run: () => Promise<CloudflareReply> | CloudflareReply): Promise<CloudflareReply> {
+  return recordedKeyChange({
+    has: () => tokenExists(),
+    run,
+    record: async (from, to) => (sharedSettings ? sharedSettings.store.recordSecret(SECRET_KEYS.cloudflare, from, to) : { ok: false }),
+    changed: () => sharedSettings?.host.slotsChanged(),
+    log: (line) => console.warn(line)
+  })
+}
+handleFromSettingsWindow('cloudflare:save-token', cloudflareSettingsOnly, (_event, token: unknown) => recordedCloudflareKeyChange(() => cloudflareConnection().saveToken(token)))
+handleFromSettingsWindow('cloudflare:choose-account', cloudflareSettingsOnly, (_event, id: unknown) => cloudflareConnection().chooseAccount(id))
+// Making the site saves the account and site the publishing goes to: Settings configuration, so the
+// Settings window's only (Sol review 4). A publish sheet in an editor window opens Settings → Cloudflare.
+handleFromSettingsWindow('cloudflare:create-site', cloudflareSettingsOnly, () => cloudflareConnection().createSite())
+handleFromSettingsWindow('cloudflare:disconnect', cloudflareSettingsOnly, () => recordedCloudflareKeyChange(() => cloudflareConnection().disconnect()))
 // "Open Settings" on a publish sheet or notice, from whichever window showed it: the editor window
 // comes forward with Settings → Cloudflare. Carries nothing.
-ipcMain.handle('cloudflare:open-settings', () => {
-  const editor = targetEditorFor(null)
-  if (!editor) return false
-  // A test harness keeps its windows out of the way of whoever is at the computer: it is not brought forward.
-  if (app.isPackaged || process.env.TW_E2E !== '1') {
-    if (editor.isMinimized()) editor.restore()
-    editor.show()
-    editor.focus()
-  }
-  editor.webContents.send('cloudflare:show-settings')
-  return true
-})
+// "Open Settings" from a publish sheet or notice: the Settings window at its Cloudflare page (0.42).
+ipcMain.handle('cloudflare:open-settings', () => openSettingsWindow('cloudflare'))
 
 // Share link domain (ticket 07): Settings shows and takes a bare hostname ("drafts.handouts.fyi");
 // the share module and the live-Worker deploy both want it as a full origin, so config keeps the
@@ -832,8 +914,9 @@ function publishSettings(): PublishSettings {
   }
 }
 
-ipcMain.handle(
+handleFromSettingsWindow(
   'publish:set-config',
+  () => ({ success: false, error: 'This can be changed only in the Settings window.' }),
   (_event, cfg: { accountId?: string; project?: string; baseUrl?: string; workerBaseUrl?: string; useShortIds?: boolean; shareDomain?: string }):
     { success: true } | { success: false; error: string } => {
     const saved = applyPublishSettings(cfg)
@@ -1159,7 +1242,8 @@ function recordingStorage(): RecordingStorage {
     retired: {
       read: () => readConfig() as Record<string, unknown>,
       drop: (keys) => {
-        const kept = { ...(readConfig() as Record<string, unknown>) }
+        // config.json itself, not the overlay's view: the store's preferences are never written into it.
+        const kept = { ...(configFile().read() as Record<string, unknown>) }
         for (const key of keys) delete kept[key]
         configFile().replace(kept as Config)
       },
@@ -1180,10 +1264,11 @@ ipcMain.handle('recording:get-storage', () => ({
   hasKeys: recordingStorage().hasKeys()
 }))
 
-ipcMain.handle(
+handleFromSettingsWindow(
   'recording:set-storage',
+  () => RECORDING_SETTINGS_ONLY,
   (
-    _event,
+    _event: IpcMainInvokeEvent,
     cfg: {
       endpoint?: string
       bucket?: string
@@ -1216,8 +1301,10 @@ function applyRecordingSettings(cfg: { endpoint?: string; bucket?: string; disca
   recordingStorage().settingsChanged()
 }
 
-ipcMain.handle('recording:set-keys', (_event, keys: unknown) => recordingStorage().saveKeys(keys))
-ipcMain.handle('recording:clear-keys', () => recordingStorage().clearKeys())
+// The recording keys are a secret: only the Settings window may save or remove them (Accounts and
+// keys goes through settings-secret-slots.ts; these calls are that window's too).
+handleFromSettingsWindow('recording:set-keys', () => RECORDING_SETTINGS_ONLY, (_event, keys: unknown) => recordingStorage().saveKeys(keys))
+handleFromSettingsWindow('recording:clear-keys', () => RECORDING_SETTINGS_ONLY, () => recordingStorage().clearKeys())
 // The Recording storage row of Settings → Cloudflare, and its Check (one list of the bucket; a read).
 ipcMain.handle('recording:storage-status', () => recordingStorage().status())
 ipcMain.handle('recording:check-storage', () => recordingStorage().check())
@@ -1261,9 +1348,11 @@ function transcriptionSetup(): TranscriptionSetup {
   return transcriptionSetupInstance
 }
 
-ipcMain.handle('settings:get-transcription', () => transcriptionSettings())
+ipcMain.handle('preferences:get-transcription', () => transcriptionSettings())
 
-ipcMain.handle('settings:set-transcription', async (_event, cfg: { python?: string; script?: string; ffmpeg?: string }) => {
+// These paths name programs main runs (Python, the script, ffmpeg): only the Settings window may
+// change them; any other sender gets the paths as they are, unchanged.
+handleFromSettingsWindow('preferences:set-transcription', () => transcriptionSettings(), async (_event, cfg: { python?: string; script?: string; ffmpeg?: string }) => {
   // Settings sends all three; an empty field clears its setting. Stored as typed (`~` kept).
   writeConfig({
     transcriptionPython: (cfg.python || '').trim() || undefined,
@@ -1424,7 +1513,9 @@ function targetEditorFor(outlinePath: string | null): BrowserWindow | null {
   return null
 }
 
-function installApplicationMenu(): void {
+// Only when the settings store could not open (startSharedSettings): the menu bar of 0.41, so the app
+// stays usable. Normally the shared settings host generates the menu bar from the command registry.
+function installFallbackMenu(): void {
   const customMenus = new Map<string, MenuItemConstructorOptions[]>()
   for (const command of menuCommands()) {
     const menuName = command.menu?.path[0]
@@ -1438,7 +1529,8 @@ function installApplicationMenu(): void {
     customMenus.set(menuName, items)
   }
   const template: MenuItemConstructorOptions[] = [
-    ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
+    // The macOS TalkWeaver menu carries Check for Updates… under About; Help is the registry's Help items (app-menu.ts).
+    ...(process.platform === 'darwin' ? [macAppMenu(app.name, customMenus.get('Help') ?? [])] : []),
     // File menu: the OS-standard role PLUS a discoverable "New Window" (⌘N). New Window is driven
     // from MAIN so it opens a window regardless of which surface has focus, and is prepended so it
     // reads first. Working on two presentations at once (2026-07-19).
@@ -1451,9 +1543,10 @@ function installApplicationMenu(): void {
       ]
     },
     { role: 'editMenu' },
-    ...[...customMenus].map(([label, submenu]) => ({ label, submenu })),
-    { role: 'viewMenu' },
-    { role: 'windowMenu' }
+    ...[...customMenus].filter(([label]) => label !== 'View' && label !== 'Help').map(([label, submenu]) => ({ label, submenu })),
+    { label: 'View', submenu: [...(customMenus.get('View') ?? []), { type: 'separator' }, { role: 'togglefullscreen' }] },
+    { role: 'windowMenu' },
+    helpMenu(customMenus.get('Help') ?? [], process.platform)
   ]
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
@@ -1463,6 +1556,8 @@ function installApplicationMenu(): void {
 const presentWindows = new Map<number, { outlinePath: string; mode: string; pathwayId?: string; runId?: string }>()
 const livePresenterContexts = new Map<number, LivePresenterContext>()
 let liveSessions: ReturnType<typeof createLiveSessionManager> | null = null
+/** The update check, once installed: told whenever a talk opens or closes. */
+let updateChecker: ReturnType<typeof installUpdateNotices> | null = null
 let liveRecoveryStore: ReturnType<typeof createLiveSessionStore> | null = null
 
 async function probeLiveSession(record: SessionRecoveryRecord): Promise<LiveStatus | null> {
@@ -1502,6 +1597,7 @@ function initialiseLiveSessions() {
       flushHistory: flushLiveSessionHistory,
       diagnostic: (event) => console.info('[live-recovery]', JSON.stringify(event)),
       onEnded: ({ talkSlug, runId, vaultRoot }) => openPostWorkFor(talkSlug, runId, vaultRoot),
+      onActivity: () => updateChecker?.busyChanged(),
     })
     liveSessions.restore()
     powerMonitor.on('resume', () => liveSessions?.reconnect())
@@ -1615,6 +1711,9 @@ function openToolsWindow(view: ToolsView, sessionId?: string, run?: ToolsRunRef)
 // The one way into the Tools window: a view, and for Sessions optionally a Run by its talk and Run id.
 ipcMain.handle('tools:open', (_event, view: unknown, sessionId?: unknown, run?: unknown) => {
   if (!isOpenableToolsView(view)) return { success: false, error: 'Unknown Tools view.' }
+  if (view === 'sessions' && run && typeof run === 'object' && (run as { home?: unknown }).home === null) {
+    return { success: false, error: 'This action requires a Run in an open vault.' }
+  }
   const runRef = run === undefined || run === null ? undefined : parseToolsRunRef(run)
   if (runRef === null) return { success: false, error: 'Unknown Run.' }
   // A reference without a vault comes from History, which lists the primary vault's Runs (writableVaultRoot):
@@ -1835,6 +1934,41 @@ registerVaultSettingsIpc({
   e2e: E2E
 })
 
+// Insert › HTML page… (src/main/html-page-import.ts). Under TW_E2E the OS picker is never shown: a
+// test sets globalThis.__twE2eHtmlPagePick to the file to answer with (null = Cancel) and reads the
+// options the picker was opened with from __twE2eHtmlPagePickOptions.
+type E2eHtmlPick = { __twE2eHtmlPagePick?: string | null; __twE2eHtmlPagePickOptions?: Electron.OpenDialogOptions }
+// Object cards' file status (object-status.ts): only for the talk the asking editor window has open,
+// contained in the folders the compiler reads that talk's media from; never a read, listing or fetch.
+registerObjectStatusIpc({
+  ipcMain,
+  currentTalkOf: (senderId) => editorWindows.get(senderId)?.outlinePath ?? null,
+  contextFor: (outlinePath) => ({
+    talkDir: dirname(outlinePath),
+    roots: assetRootsFor(outlinePath),
+    vaultRoot: talkVaultRoot(vaultRegistry, outlinePath) ?? undefined
+  })
+})
+// The copy runs in its own process, started in the talk folder (html-page-import-worker.ts). The Slide Scratchpad's
+// Insert visual only uses the same copy for an agent's page or SVG (scratchpad-visual-import.ts).
+const htmlPageRunImport = createHtmlPageImportRunner(join(__dirname, 'html-page-import-worker.js'), forkHtmlPageImportChild)
+registerHtmlPageImportIpc({
+  ipcMain,
+  dialog: E2E
+    ? {
+        showOpenDialog: async (...args: unknown[]) => {
+          const g = globalThis as typeof globalThis & E2eHtmlPick
+          g.__twE2eHtmlPagePickOptions = args[args.length - 1] as Electron.OpenDialogOptions
+          const pick = g.__twE2eHtmlPagePick
+          return pick ? { canceled: false, filePaths: [pick] } : { canceled: true, filePaths: [] }
+        }
+      } as unknown as Pick<Electron.Dialog, 'showOpenDialog'>
+    : dialog,
+  windowOf: (sender) => BrowserWindow.fromWebContents(sender),
+  writableTalkRoot: (outlinePath) => writableTalkRoot(outlinePath),
+  runImport: htmlPageRunImport
+})
+
 // Open example vault (onboarding ticket 06): five talks written from the bundle to
 // ~/Documents/TalkWeaver/Example vault on a click, then added to the list flagged as the example.
 // No argument: the path is fixed in example-vault.ts. A run with TW_E2E never sees the real home.
@@ -1995,7 +2129,7 @@ vaultRegistry.onChange(() => {
 // archiveDefault is always null — the archive is config-only (no hardcoded fallback).
 // detectArchiveRoot is declared lower in this file; these handlers run lazily (at call time,
 // after the module is fully initialised) so the forward reference is safe.
-ipcMain.handle('settings:get-paths', () => {
+ipcMain.handle('preferences:get-paths', () => {
   const c = readConfig()
   return {
     vaultRoot: currentVaultRoot() ?? null,
@@ -2005,7 +2139,7 @@ ipcMain.handle('settings:get-paths', () => {
   }
 })
 
-ipcMain.handle('settings:choose-archive', async () => {
+handleFromSettingsWindow('preferences:choose-archive', () => null, async () => {
   const result = await dialog.showOpenDialog({
     title: 'Choose Image Archive Root',
     message: 'Select the folder containing the old-PowerPoint image archive (registry/media.db)',
@@ -2019,10 +2153,8 @@ ipcMain.handle('settings:choose-archive', async () => {
   return chosen
 })
 
-ipcMain.handle('settings:clear-archive', () => {
-  const c = readConfig()
-  delete c.archiveRoot
-  configFile().replace(c)
+handleFromSettingsWindow('preferences:clear-archive', () => detectArchiveRoot(), () => {
+  writeConfig({ archiveRoot: undefined }) // a preference: back to its default through the store
   searchCache.clear()
   invalidateTalkCache()
   return null
@@ -2089,7 +2221,7 @@ async function buildTalkFullHtml(
   const content = readFileSync(outlinePath, 'utf8')
   const vaultRoot = vaultRootFor(outlinePath)
   const resolved = resolvePooledRefs(content, outlinePath)
-  const model = await prepareSource(outlinePath, resolved, slug, stat, timerSettings(), { ...mediaOptions, allowedAssetRoots: assetRootsFor(outlinePath) })
+  const model = await withPrewarmYield(() => prepareSource(outlinePath, resolved, slug, stat, timerSettings(), { ...mediaOptions, allowedAssetRoots: assetRootsFor(outlinePath) }))
   return String(model.fullHtml ?? '')
 }
 
@@ -2100,6 +2232,8 @@ async function runBackupFor(talks: Array<{ slug: string; outlinePath: string }>)
   const compilerDir = getCompilerPath()
   const empty = { at: Date.now(), ok: false, exported: 0, skipped: 0, failed: 0, skippedTalks: [] as BackupSkip[] }
   if (!folder) return (lastBackup = { ...empty, error: 'No backup folder set' })
+  const overlap = backupFolderOverlap(folder)
+  if (overlap) return (lastBackup = { ...empty, error: overlap })
   if (!compilerDir) return (lastBackup = { ...empty, error: 'No compiler' })
   if (!talks.length) return (lastBackup = { ...empty, ok: true, folder })
   const { prepareSource, BACKUP_EXPORT_MEDIA_OPTIONS } = await import(
@@ -2238,8 +2372,8 @@ function broadcastActionBar(): void {
     try { if (!win.isDestroyed()) win.webContents.send('action-bar:changed', state) } catch { /* window closing */ }
   }
 }
-ipcMain.handle('settings:get-action-bar', () => actionBarState())
-ipcMain.handle('settings:set-action-bar-visible', (_event, visible: boolean) => {
+ipcMain.handle('preferences:get-action-bar', () => actionBarState())
+ipcMain.handle('preferences:set-action-bar-visible', (_event, visible: boolean) => {
   writeConfig({ actionBarVisible: visible === true })
   broadcastActionBar()
   return actionBarState().visible
@@ -2249,8 +2383,8 @@ ipcMain.handle('settings:set-action-bar-visible', (_event, visible: boolean) => 
 function editorViewMode(): EditorViewMode {
   return editorViewModeFrom(readConfig()[EDITOR_VIEW_MODE_KEY])
 }
-ipcMain.handle('settings:get-editor-view-mode', () => editorViewMode())
-ipcMain.handle('settings:set-editor-view-mode', (_event, mode: unknown) => {
+ipcMain.handle('preferences:get-editor-view-mode', () => editorViewMode())
+ipcMain.handle('preferences:set-editor-view-mode', (_event, mode: unknown) => {
   writeConfig({ [EDITOR_VIEW_MODE_KEY]: editorViewModeFrom(mode) })
   const next = editorViewMode()
   for (const win of BrowserWindow.getAllWindows()) {
@@ -2263,8 +2397,8 @@ ipcMain.handle('settings:set-editor-view-mode', (_event, mode: unknown) => {
 function plainLook(): PlainLook {
   return plainLookFrom(readConfig() as Record<string, unknown>)
 }
-ipcMain.handle('settings:get-plain-look', () => plainLook())
-ipcMain.handle('settings:set-plain-look', (_event, change: unknown) => {
+ipcMain.handle('preferences:get-plain-look', () => plainLook())
+ipcMain.handle('preferences:set-plain-look', (_event, change: unknown) => {
   const c = (change && typeof change === 'object' ? change : {}) as { font?: unknown; size?: unknown }
   const current = plainLook()
   writeConfig({
@@ -2282,8 +2416,8 @@ ipcMain.handle('settings:set-plain-look', (_event, change: unknown) => {
 function placeChipVisible(): boolean {
   return placeChipVisibleFrom(readConfig().placeChipVisible)
 }
-ipcMain.handle('settings:get-place-chip', () => ({ visible: placeChipVisible() }))
-ipcMain.handle('settings:set-place-chip-visible', (_event, visible: boolean) => {
+ipcMain.handle('preferences:get-place-chip', () => ({ visible: placeChipVisible() }))
+ipcMain.handle('preferences:set-place-chip-visible', (_event, visible: boolean) => {
   writeConfig({ placeChipVisible: visible === true })
   const state = { visible: placeChipVisible() }
   for (const win of BrowserWindow.getAllWindows()) {
@@ -2301,7 +2435,7 @@ function broadcastToWindows(channel: string, state: unknown): void {
 function guideButtonVisible(): boolean {
   return guideButtonVisibleFrom(readConfig().guideButtonVisible)
 }
-ipcMain.handle('settings:get-guide-button', () => ({ visible: guideButtonVisible() }))
+ipcMain.handle('preferences:get-guide-button', () => ({ visible: guideButtonVisible() }))
 function setGuideButtonVisible(visible: boolean): boolean {
   writeConfig({ guideButtonVisible: visible === true })
   const state = { visible: guideButtonVisible() }
@@ -2310,7 +2444,7 @@ function setGuideButtonVisible(visible: boolean): boolean {
   pushPresentChapter()
   return state.visible
 }
-ipcMain.handle('settings:set-guide-button-visible', (_event, visible: boolean) => setGuideButtonVisible(visible === true))
+ipcMain.handle('preferences:set-guide-button-visible', (_event, visible: boolean) => setGuideButtonVisible(visible === true))
 ipcMain.handle('guide:get-progress', () => guideProgressFrom(readConfig().guideProgress))
 // A talk of the example vault was opened in some window: kept once, told to every window.
 ipcMain.handle('guide:note-example-talk-opened', () => {
@@ -2441,9 +2575,9 @@ ipcMain.handle('guide:open-link', async (event, id: unknown): Promise<boolean> =
   try { await shell.openExternal(link.href); return true } catch { return false }
 })
 
-ipcMain.handle('settings:get-backup', () => backupSettings())
+ipcMain.handle('preferences:get-backup', () => backupSettings())
 
-ipcMain.handle('settings:set-backup', (_event, patch: { enabled?: boolean; intervalMin?: number }) => {
+ipcMain.handle('preferences:set-backup', (_event, patch: { enabled?: boolean; intervalMin?: number }) => {
   const next: Partial<Config> = {}
   if (typeof patch.enabled === 'boolean') next.backupEnabled = patch.enabled
   if (Number.isFinite(patch.intervalMin)) next.backupIntervalMin = Math.max(5, Math.round(patch.intervalMin as number))
@@ -2455,7 +2589,7 @@ ipcMain.handle('settings:set-backup', (_event, patch: { enabled?: boolean; inter
   return backupSettings()
 })
 
-ipcMain.handle('settings:choose-backup-folder', async () => {
+handleFromSettingsWindow('preferences:choose-backup-folder', () => backupSettings(), async () => {
   const result = await dialog.showOpenDialog({
     title: 'Choose Backup Folder',
     message: 'Pick a folder inside your OneDrive/Dropbox — TalkWeaver saves presentable HTML backups there',
@@ -2467,10 +2601,8 @@ ipcMain.handle('settings:choose-backup-folder', async () => {
   return backupSettings()
 })
 
-ipcMain.handle('settings:clear-backup-folder', () => {
-  const c = readConfig()
-  delete c.backupFolder
-  configFile().replace(c)
+handleFromSettingsWindow('preferences:clear-backup-folder', () => backupSettings(), () => {
+  writeConfig({ backupFolder: undefined }) // a preference: back to its default through the store
   return backupSettings()
 })
 
@@ -2483,9 +2615,9 @@ function timerSettings(): { warnAtMinutes: number; urgentAtMinutes: number } {
   }
 }
 
-ipcMain.handle('settings:get-timer', () => timerSettings())
+ipcMain.handle('preferences:get-timer', () => timerSettings())
 
-ipcMain.handle('settings:set-timer', (_event, patch: { warnAtMinutes?: number; urgentAtMinutes?: number }) => {
+ipcMain.handle('preferences:set-timer', (_event, patch: { warnAtMinutes?: number; urgentAtMinutes?: number }) => {
   const next: Partial<Config> = {}
   if (Number.isFinite(patch.warnAtMinutes)) next.timerWarnAtMinutes = Math.max(1, Math.round(patch.warnAtMinutes as number))
   if (Number.isFinite(patch.urgentAtMinutes)) next.timerUrgentAtMinutes = Math.max(1, Math.round(patch.urgentAtMinutes as number))
@@ -2500,9 +2632,9 @@ function metadataDefaults(): MetadataDefaults {
   return normaliseMetadataDefaults(METADATA_REGISTRY, getConfig('metadataDefaults', {}) ?? {})
 }
 
-ipcMain.handle('settings:get-metadata-defaults', () => metadataDefaults())
+ipcMain.handle('preferences:get-metadata-defaults', () => metadataDefaults())
 
-ipcMain.handle('settings:set-metadata-defaults', (_event, patch: MetadataDefaults) => {
+ipcMain.handle('preferences:set-metadata-defaults', (_event, patch: MetadataDefaults) => {
   writeConfig({ metadataDefaults: normaliseMetadataDefaults(METADATA_REGISTRY, { ...metadataDefaults(), ...(patch ?? {}) }) })
   return metadataDefaults()
 })
@@ -2519,8 +2651,8 @@ function readSettingsChangelog(): SettingsChangeEntry[] {
     return Array.isArray(raw) ? (raw as SettingsChangeEntry[]) : []
   } catch { return [] }
 }
-ipcMain.handle('settings:changelog-get', () => readSettingsChangelog())
-ipcMain.handle('settings:changelog-log', (_event, entry: { key: string; label: string; from: string; to: string }) => {
+ipcMain.handle('preferences:changelog-get', () => readSettingsChangelog())
+ipcMain.handle('preferences:changelog-log', (_event, entry: { key: string; label: string; from: string; to: string }) => {
   if (
     typeof entry?.key !== 'string' || typeof entry?.label !== 'string' ||
     typeof entry?.from !== 'string' || typeof entry?.to !== 'string'
@@ -2533,14 +2665,14 @@ ipcMain.handle('settings:changelog-log', (_event, entry: { key: string; label: s
 })
 
 // Manual "Back up now" — force-exports every Talk regardless of change signature.
-ipcMain.handle('backup:run-now', async () => {
+handleFromSettingsWindow('backup:run-now', () => null, async () => {
   const state = loadBackupScope()
   const talks = enrolledSlugs(state).map((slug) => ({ slug, outlinePath: state.talks[slug].outlinePath }))
   return runBackupFor(talks.filter((t) => t.outlinePath))
 })
 
 // Settings: tick/untick a talk. Unticking is how a talk leaves the set before the 14 days are up.
-ipcMain.handle('backup:set-enrolled', (_event, slug: string, enrolled: boolean) => {
+handleFromSettingsWindow('backup:set-enrolled', () => backupSettings(), (_event, slug: string, enrolled: boolean) => {
   const state = loadBackupScope()
   setEnrolled(state, slug, enrolled, Date.now())
   saveBackupScope(state)
@@ -3143,7 +3275,7 @@ ipcMain.handle('layout:preview-thumbnails', async () => {
     writeFileSync(outlinePath, outline, 'utf8')
     const stat = statSync(outlinePath)
     // The reference deck is the app's own: its media is the fixtures folder copied into this temp folder.
-    const model = await prepareSource(outlinePath, outline, slug, stat, undefined, { allowedAssetRoots: [refWork] })
+    const model = await withPrewarmYield(() => prepareSource(outlinePath, outline, slug, stat, undefined, { allowedAssetRoots: [refWork] }))
     const rows = (buildPerSlideProjections(model, slug) ?? []) as Array<{
       slide_id?: string
       render_hash?: string
@@ -3274,16 +3406,22 @@ const preparedTalkCache = createPreparedTalkCache<PreparedTalk>({
   sizeOf: (entry) => typeof entry.model.fullHtml === 'string' ? entry.model.fullHtml.length * 2 : 0
 })
 
-// One full-deck preparation in flight at a time. prepareSource base64-inlines a whole deck into a
-// single enormous string; two lanes preparing at once (the editor strip and the Slide Browser's
-// background sweep) put two of them in the heap together. The render QUEUE serialises renders, not
-// preparation — this gate is what makes T11's "one deck in memory" law hold here (2026-09-15 OOM).
-const preparePass = createSingleFlight()
+// Live, variant and share preparations are serialised by preparePass. Direct compiles (builds,
+// exports, diagnostics, previews and publishing workers) use its counted withPrewarmYield scope;
+// they keep their existing concurrency and do not wait in either queue. Every non-prewarm gate
+// request and direct scope releases the prewarm's held talk synchronously. Queued work and direct
+// scopes block prewarm starts, including a prewarm job queued before a direct compile began. This bounds prewarm overlap;
+// it does not promise that other callers retain only one deck after their compile has settled.
+// Residual: a scope does not queue. If it starts while a prewarm compile is already running in the worker, the scope's
+// deck and the prewarm's incoming video-free deck are both in the main heap until wantedWhilePreparing drops the latter
+// (thumbnail-prewarm.ts:365).
 // A live compile: cached, on the gate's ordinary lane. A layout variant: uncached, on its background lane.
 const routePreparation = createPreparationRoute(preparedTalkCache, preparePass)
 
-// The live compile's worker thread (prepare-talk-off-thread.ts): started on the first compile, ended when idle.
-const prepareTalkOffThread = createPrepareTalkOffThread(join(__dirname, 'prepare-talk-worker.js'))
+// The live compile's own process (prepare-talk-off-thread.ts): a utility process with a heap of its own,
+// started on the first compile, ended when idle. out/main/prepare-talk-worker.js is its own build entry
+// (electron.vite.config.ts) and ships as a plain file (asar is off in package.json "build").
+const prepareTalkOffThread = createPrepareTalkOffThread(join(__dirname, 'prepare-talk-worker.js'), forkCompileChild)
 
 async function prepareTalk(
   outlinePath: string,
@@ -3292,7 +3430,8 @@ async function prepareTalk(
   options?: Record<string, unknown>,
   /** 'variant' for a compile that is not the live deck (a layout variant): uncached, so it neither
    *  displaces the live deck's retained model nor stays retained itself, and on the preparation gate's
-   *  background lane, so the live deck's compile never waits behind it (createPreparationRoute). */
+   *  background lane, so the live deck's compile never waits behind it (createPreparationRoute).
+   *  'prewarm' is the same uncached priority, but must not trigger its own release hook. */
   lane: PreparationLane = 'live'
 ): Promise<PreparedTalk | null> {
   const compilerDir = getCompilerPath()
@@ -3310,7 +3449,7 @@ async function prepareTalk(
       const testGlobal = globalThis as typeof globalThis & { __twPrepareCount?: number }
       testGlobal.__twPrepareCount = (testGlobal.__twPrepareCount ?? 0) + 1
     }
-    // The compile and the per-slide rows run in the compile's worker thread (prepare-talk-worker.ts),
+    // The compile and the per-slide rows run in the compile's own process (prepare-talk-worker.ts),
     // still inside the gate: one heavy compile at a time, as before.
     const { model, rows, previewKey } = await gated(() => prepareTalkOffThread({ compilerDir, outlinePath, text: resolved, slug, defaults, options: compileOptions }))
     return { slug, model: model as PreparedTalk['model'], rows, previewKey }
@@ -3649,7 +3788,7 @@ ipcMain.handle('talk:check-embeds', async (_event, outlinePath: string, content:
     const { parseVideoEmbed } = await import(pathToFileURL(join(compilerDir, 'lib/02-triggers-layout.mjs')).href)
     const vaultRoot = vaultRootFor(outlinePath)
     const resolved = resolvePooledRefs(content, outlinePath)
-    const model = await prepareSource(outlinePath, resolved, slug, stat, undefined, { allowedAssetRoots: assetRootsFor(outlinePath) })
+    const model = await withPrewarmYield(() => prepareSource(outlinePath, resolved, slug, stat, undefined, { allowedAssetRoots: assetRootsFor(outlinePath) }))
     const embeds = extractDeckEmbeds(model.fullHtml || '')
     if (!embeds.length) return []
     // Check each unique URL once, then map the result back to every slide that uses it.
@@ -3683,7 +3822,7 @@ ipcMain.handle('talk:explain-slide', async (_event, outlinePath: string, content
     const resolved = resolvePooledRefs(content, outlinePath)
     const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
     const { buildPerSlideProjections } = await import(pathToFileURL(join(compilerDir, 'lib/10-projections.mjs')).href)
-    const model = await prepareSource(outlinePath, resolved, slug, stat, undefined, { allowedAssetRoots: assetRootsFor(outlinePath) })
+    const model = await withPrewarmYield(() => prepareSource(outlinePath, resolved, slug, stat, undefined, { allowedAssetRoots: assetRootsFor(outlinePath) }))
     const rows = (buildPerSlideProjections(model, slug) ?? []) as ProjectionRowMain[]
     const fullHtml = String(model.fullHtml ?? '')
     // The Nth `<section class="slide" …>` opening tag is this slide's render decisions.
@@ -3724,7 +3863,7 @@ ipcMain.handle('talk:explain-slide', async (_event, outlinePath: string, content
 // `compilerTag` = the compiler namespace (thumbCacheRoot()) the rows' render_hash values were
 // built with; rows from another compiler address thumbnails no build will write (see
 // search-index-freshness.ts). Absent on entries persisted before 2026-09-15 → stale.
-type SearchCacheEntry = { mtimeMs: number; compilerTag?: string; rows: ProjectionRowMain[]; talkTitle: string; meta?: string }
+type SearchCacheEntry = { mtimeMs: number; compilerTag?: string; rows: ProjectionRowMain[]; talkTitle: string; meta?: string; deckPictures?: DeckPictures }
 
 // Lowercased frontmatter keywords (title/subtitle/event/author/license/…) for the search's metadata
 // filter. A single haystack string — the filter is a substring match over it.
@@ -3752,7 +3891,15 @@ interface ProjectionRowMain {
   tags?: string[]
   [k: string]: unknown
 }
-const searchCache = new Map<string, SearchCacheEntry & { slug: string }>()
+// The search index, counting the times it dropped entries (`resets`: delete and clear). Part of the
+// Slide Browser's freshness stamp (search-index-stamp.ts); an entry rebuilt for a changed outline is
+// already told by the outline's mtime there.
+class ResetCountingMap<K, V> extends Map<K, V> {
+  resets = 0
+  delete(key: K): boolean { const had = super.delete(key); if (had) this.resets += 1; return had }
+  clear(): void { if (this.size > 0) this.resets += 1; super.clear() }
+}
+const searchCache = new ResetCountingMap<string, SearchCacheEntry & { slug: string }>()
 // Outlines the warm pass could not compile (talk search treats them as read, with no slide text).
 const slideTextUnreadable = new Set<string>()
 
@@ -3823,18 +3970,25 @@ async function ensureTalkRows(
   // compiler renames every changed slide's thumbnail) AND rows carry `tags`.
   if (entry && isSearchIndexEntryFresh(entry, stat.mtimeMs, compilerTag)) {
     // Backfill meta for entries loaded from an older on-disk index (cheap; frontmatter only).
-    if (entry.meta === undefined) { try { entry.meta = parseTalkMeta(readFileSync(talk.outlinePath, 'utf8')) } catch { entry.meta = '' } }
+    if (entry.meta === undefined || entry.deckPictures === undefined) {
+      let content = ''
+      try { content = readFileSync(talk.outlinePath, 'utf8') } catch { /* unreadable: empty */ }
+      if (entry.meta === undefined) entry.meta = parseTalkMeta(content)
+      if (entry.deckPictures === undefined) entry.deckPictures = deckPicturesOf(content)
+    }
     return entry.rows
   }
   const content = readFileSync(talk.outlinePath, 'utf8')
   const resolved = resolveImageRefs(content, vaultRoot, talk.outlinePath)
   // projectionsOnly: search rows are pure TEXT — never inline this talk's media (video/image Buffers)
   // into the main process. A whole-vault warm/search over a heavy-media vault used to OOM-crash here.
-  const model = await prepareSource(talk.outlinePath, resolved, talk.slug, stat, undefined, { projectionsOnly: true, allowedAssetRoots: assetRootsFor(talk.outlinePath) })
+  const model = await withPrewarmYield(() => prepareSource(talk.outlinePath, resolved, talk.slug, stat, undefined, { projectionsOnly: true, allowedAssetRoots: assetRootsFor(talk.outlinePath) }))
   const rows = buildPerSlideProjections(model, talk.slug)
   if (!rows) return null
-  searchCache.set(talk.outlinePath, { mtimeMs: stat.mtimeMs, compilerTag, rows, talkTitle: talk.title, slug: talk.slug, meta: parseTalkMeta(content) })
+  searchCache.set(talk.outlinePath, { mtimeMs: stat.mtimeMs, compilerTag, rows, talkTitle: talk.title, slug: talk.slug, meta: parseTalkMeta(content), deckPictures: deckPicturesOf(content) })
   persistSearchIndexSoon()
+  // New or changed pictures this rebuild brought in: read their text in the background.
+  queueTalkImages(talk.outlinePath, vaultRoot, rows, content)
   return rows
 }
 
@@ -3865,12 +4019,113 @@ async function warmSearchIndex(): Promise<void> {
       } catch { slideTextUnreadable.add(talk.outlinePath) }
     }
     console.log('[search] index warmed: ' + searchCache.size + ' talks')
+    thumbnailPrewarm.nudge() // new or changed talks: the prewarm looks again
   } catch (e) {
     console.error('[search] warm failed', e)
   } finally {
     warming = false
   }
 }
+
+// ── Thumbnail prewarm (thumbnail-prewarm.ts says why it is shaped as it is) ─────────────────────
+// Renders, in the background, the pictures the Slide Browser will ask for: every talk of every open
+// vault, open-in-an-editor first, then most recently edited. The talk list and its picture keys come
+// from the search index (no compile); a talk is compiled only when a picture is missing, video-free and
+// uncached (the explicit 'prewarm' lane, behind every live compile), and its model is
+// dropped as soon as its pictures are written. Renders take the lowest place in the render queue.
+const PREWARM_RENDER_KEY = 'prewarm'
+type PrewarmDeckHeld = { fullHtml: string | null; deckKey?: string; cacheDir: string }
+const prewarmDecks = new WeakMap<object, PrewarmDeckHeld>()
+const thumbnailPrewarm = createThumbnailPrewarm({
+  listTalks: () => {
+    const compilerTag = thumbCacheRoot()
+    const open = new Set([...editorWindows.values()].map((entry) => entry.outlinePath).filter((p): p is string => Boolean(p)))
+    const talks: PrewarmTalk[] = []
+    for (const vault of availableVaults()) for (const talk of findTalks(vault.root)) {
+      const entry = searchCache.get(talk.outlinePath)
+      let mtimeMs = 0
+      try { mtimeMs = statSync(talk.outlinePath).mtimeMs } catch { continue }
+      // Only rows built from this outline by this compiler name the pictures the Browser asks for.
+      if (!entry || !isSearchIndexEntryFresh(entry, mtimeMs, compilerTag)) continue
+      const keys = entry.rows
+        .map((row) => { const r = row as { render_hash?: string; content_hash?: string }; return r.render_hash || r.content_hash || '' })
+        .filter(Boolean)
+      if (keys.length) talks.push({ outlinePath: talk.outlinePath, slug: talk.slug, editedMs: mtimeMs, open: open.has(talk.outlinePath), keys })
+    }
+    return talks
+  },
+  missing: (talk, keys) => {
+    const held = thumbKeysIn(talkThumbCacheDir(talk.outlinePath, talk.slug))
+    return keys.filter((key) => !held.has(key))
+  },
+  prepare: async (talk) => {
+    if (outlineRefused(talk.outlinePath)) return null
+    const mediaOptions = await browserThumbnailMediaOptions()
+    if (!mediaOptions) return null // never the standing defaults: inlining every video is the crash
+    const content = await readFileAsync(talk.outlinePath, 'utf8')
+    const prepared = await prepareTalk(talk.outlinePath, content, undefined, mediaOptions, 'prewarm')
+    if (!prepared || typeof prepared.model.fullHtml !== 'string') return null
+    const fullHtml = prepared.model.fullHtml
+    const slides = thumbnailSlides((prepared.rows ?? []) as Parameters<typeof thumbnailSlides>[0], thumbnailDocumentId(fullHtml, prepared.previewKey))
+    const held: PrewarmDeckHeld = { fullHtml, deckKey: prepared.previewKey, cacheDir: talkThumbCacheDir(talk.outlinePath, prepared.slug) }
+    const deck = { slides, release: () => { held.fullHtml = null } }
+    prewarmDecks.set(deck, held)
+    return deck
+  },
+  render: async (_talk, deck, slides, paceMs, shouldYield) => {
+    const held = prewarmDecks.get(deck)
+    if (!held?.fullHtml) return { interrupted: false }
+    const { interrupted } = await renderThumbnailsIdle({
+      fullHtml: held.fullHtml, deckKey: held.deckKey, slides, cacheDir: held.cacheDir, requestKey: PREWARM_RENDER_KEY, paceMs, shouldYield
+    })
+    return { interrupted }
+  },
+  talkAlive: (talk) => existsSync(talk.outlinePath) && availableVaults().some((vault) => {
+    const rel = relativePath(vault.root, talk.outlinePath)
+    return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)
+  }),
+  recycleRenderer: () => recycleRenderWindow(),
+  cancelRender: () => cancelThumbnailRender(PREWARM_RENDER_KEY),
+  memory: () => {
+    const usage = process.memoryUsage()
+    const rendererPid = renderWindowProcessId()
+    let appBytes = 0
+    let rendererBytes: number | null = null
+    try {
+      for (const metric of app.getAppMetrics()) {
+        const bytes = (metric.memory?.workingSetSize ?? 0) * 1024
+        appBytes += bytes
+        if (rendererPid != null && metric.pid === rendererPid) rendererBytes = bytes
+      }
+    } catch { appBytes = usage.rss }
+    return { mainHeapBytes: usage.heapUsed, mainRssBytes: usage.rss, rendererBytes, appBytes, loadPerCpu: loadavg()[0] / Math.max(1, cpus().length) }
+  },
+  presenting: () => presentWindows.size > 0 || (liveSessions?.liveRuns().length ?? 0) > 0,
+  // Someone's render or compile, or the search index's own warm (it compiles in this process).
+  foregroundBusy: () => thumbnailForeground().busy || preparePass.foregroundBusy() || warming,
+  lastForegroundAt: () => thumbnailForeground().lastAt,
+  now: () => Date.now(),
+  sleep: (ms, signal) => new Promise<void>((resolve) => {
+    if (signal.aborted) { resolve(); return }
+    const timer = setTimeout(done, ms)
+    function done(): void { clearTimeout(timer); signal.removeEventListener('abort', done); resolve() }
+    signal.addEventListener('abort', done, { once: true })
+  }),
+  log: (message) => logThumbnails(message),
+  limits: {
+    // Half the machine at most, and never past 8 GB, for the whole app before the prewarm waits.
+    appPauseBytes: Math.min(8192 * 1024 * 1024, Math.floor(totalmem() * 0.5)),
+    hardAppBytes: Math.min(10240 * 1024 * 1024, Math.floor(totalmem() * 0.6)),
+    ...(E2E && process.env.TW_E2E_PREWARM_DELAY_MS ? { startDelayMs: Number(process.env.TW_E2E_PREWARM_DELAY_MS) } : {}),
+    ...(E2E && process.env.TW_E2E_PREWARM_QUIET_MS ? { quietMs: Number(process.env.TW_E2E_PREWARM_QUIET_MS) } : {}),
+    ...(E2E && process.env.TW_E2E_PREWARM_MAX_LOAD ? { loadPerCpuPause: Number(process.env.TW_E2E_PREWARM_MAX_LOAD) } : {})
+  }
+})
+setPreparationReleaseHook(() => thumbnailPrewarm.releaseNow())
+// Test runs leave the prewarm off (it would render behind every other e2e spec) unless asked for;
+// a harness that asks reads its state from the main process.
+const PREWARM_ENABLED = !E2E || process.env.TW_E2E_PREWARM === '1'
+if (E2E && PREWARM_ENABLED) (globalThis as typeof globalThis & { __twPrewarm?: typeof thumbnailPrewarm }).__twPrewarm = thumbnailPrewarm
 
 // Pre-generate per-slide thumbnails for changed/new talks (ADR-0019: cross-Talk search is "backed
 // by pre-generated thumbnails"). A persisted outline-content ledger prevents the expensive
@@ -3903,7 +4158,7 @@ async function prerenderAllThumbnails(): Promise<void> {
         compiled += 1
         const stat = statSync(talk.outlinePath)
         const resolved = resolveImageRefs(content, vaultRoot, talk.outlinePath)
-        const model = await prepareSource(talk.outlinePath, resolved, talk.slug, stat, undefined, { allowedAssetRoots: assetRootsFor(talk.outlinePath) })
+        const model = await withPrewarmYield(() => prepareSource(talk.outlinePath, resolved, talk.slug, stat, undefined, { allowedAssetRoots: assetRootsFor(talk.outlinePath) }))
         const rows = (buildPerSlideProjections(model, talk.slug) ?? []) as Array<{
           content_hash?: string
           render_hash?: string
@@ -3940,27 +4195,22 @@ async function prerenderAllThumbnails(): Promise<void> {
 // cache the text by file path+mtime, and fold it into the search haystack so a query word that only
 // appears INSIDE a slide's image still finds the slide. SlideWell will later own a richer index;
 // this is the good-enough-now version with no third-party deps (Vision is built into macOS).
-const ocrCache = new Map<string, { mtimeMs: number; text: string }>()
-let ocrCacheLoaded = false
-let ocring = false
-const slideOcrMemo = new Map<string, string>() // slideKey → lowercased OCR text (cleared on cache change)
-
 function ocrCacheFile(): string { return join(app.getPath('userData'), 'ocr-cache.json') }
-function loadOcrCache(): void {
-  if (ocrCacheLoaded) return
-  ocrCacheLoaded = true
-  try {
-    const obj = JSON.parse(readFileSync(ocrCacheFile(), 'utf8')) as Record<string, { mtimeMs: number; text: string }>
-    for (const [k, v] of Object.entries(obj)) ocrCache.set(k, v)
-  } catch { /* no cache yet */ }
-}
-let ocrPersistTimer: ReturnType<typeof setTimeout> | null = null
-function persistOcrCacheSoon(): void {
-  if (ocrPersistTimer) clearTimeout(ocrPersistTimer)
-  ocrPersistTimer = setTimeout(() => {
-    try { writeFileSync(ocrCacheFile(), JSON.stringify(Object.fromEntries(ocrCache)), 'utf8') } catch { /* ignore */ }
-  }, 1500)
-}
+// Image-text index (ocr-index.ts): file path + mtime -> recognised text. On by default; Settings
+// (`ocrEnabled: false`) stops the BACKGROUND pass only, the palette command always runs.
+const ocrIndex: OcrIndex = createOcrIndex({
+  loadCache: () => { try { return JSON.parse(readFileSync(ocrCacheFile(), 'utf8')) } catch { return null } },
+  saveCache: (cache) => { try { writeFileSync(ocrCacheFile(), JSON.stringify(cache), 'utf8') } catch { /* ignore */ } },
+  mtimeOf: (path) => { try { return statSync(path).mtimeMs } catch { return null } },
+  runHelper: (paths) => new Promise((resolve) => {
+    const bin = resolveOcrBin()
+    if (!bin) { resolve({ stdout: '', ok: false }); return }
+    execFile(bin, paths, { maxBuffer: 64 * 1024 * 1024, timeout: 120000 }, (err, out) => resolve({ stdout: String(out || ''), ok: !err }))
+  }),
+  helperAvailable: () => !!resolveOcrBin(),
+  isEnabled: () => getConfig('ocrEnabled', true) !== false,
+  log: (m) => console.log(m)
+})
 // Packaged: <Resources>/ocr; dev (electron .): repo native/ocr (out/main → ../../native/ocr).
 function resolveOcrBin(): string | null {
   const candidates = [
@@ -4002,126 +4252,90 @@ function hashFileSoon(p: string): Promise<string> {
     s.on('end', () => resolve(h.digest('hex').slice(0, 7)))
   })
 }
-// OCR a batch of image paths via the helper (chunked to keep argv sane). Updates the cache.
-async function ocrBatch(paths: string[]): Promise<void> {
-  const bin = resolveOcrBin()
-  if (!bin || paths.length === 0) return
-  const CHUNK = 80
-  for (let i = 0; i < paths.length; i += CHUNK) {
-    const chunk = paths.slice(i, i + CHUNK)
-    const stdout = await new Promise<string>((resolve) => {
-      execFile(bin, chunk, { maxBuffer: 64 * 1024 * 1024, timeout: 120000 }, (err, out) => resolve(err ? '' : String(out || '')))
-    })
-    for (const line of stdout.split('\n')) {
-      if (!line.trim()) continue
-      try {
-        const obj = JSON.parse(line) as { p: string; t: string }
-        let mtimeMs = 0
-        try { mtimeMs = statSync(obj.p).mtimeMs } catch { /* file may be gone */ }
-        ocrCache.set(obj.p, { mtimeMs, text: obj.t || '' })
-      } catch { /* skip a bad line */ }
-    }
+// Every picture file the image-text pass should read for one vault: the pool + each talk's assets/
+// (contained, no links: image-search/vault-pictures.ts) AND every picture a slide there names.
+function ocrCandidatesFor(vaultRoot: string): string[] {
+  const talks = findTalks(vaultRoot)
+  const out = new Set(gatherVaultImagesIn(vaultRoot, talks.map((talk) => talk.outlinePath), OCR_PICTURE_EXTS))
+  for (const talk of talks) {
+    const cached = searchCache.get(talk.outlinePath)
+    if (!cached?.rows) continue
+    for (const p of talkImagePaths(cached.rows, talk.outlinePath, vaultRoot)) out.add(p)
+    // The deck logo (drawn on title / closing posters), from the cached frontmatter.
+    if (cached.deckPictures?.logo.length) for (const p of resolveImagePaths(cached.deckPictures.logo, dirname(talk.outlinePath), vaultRoot)) out.add(p)
   }
-  slideOcrMemo.clear()
-  persistOcrCacheSoon()
+  return [...out]
 }
-// Gather every image file under the vault pool (_assets) + each talk's assets/ dir (contained, no links:
-// image-search/vault-pictures.ts).
-function gatherVaultImages(vaultRoot: string): string[] {
-  return gatherVaultImagesIn(vaultRoot, findTalks(vaultRoot).map((talk) => talk.outlinePath))
+// Every open vault, the first (current) one first. Each picture carries the vault it was found in:
+// the index re-checks, right before reading, that its real path is still inside that vault.
+function ocrCandidates(): OcrPicture[] {
+  const out = new Map<string, string>()
+  const primary = currentVaultRoot()
+  const roots = [...(primary ? [primary] : []), ...availableVaults().map((v) => v.root).filter((r) => r !== primary)]
+  for (const root of roots) for (const p of ocrCandidatesFor(root)) if (!out.has(p)) out.set(p, root)
+  return [...out].map(([path, root]) => ({ path, root }))
 }
-// Background pass: OCR every vault image not already cached (or changed). Idempotent + cached.
-async function ocrAllVaultImages(): Promise<void> {
-  if (ocring) return
-  // Opt-in (default off): OCR of every vault image is the heaviest background pass and only powers
-  // image-text search. On a large imported vault it saturates the machine, so it never runs unless
-  // Dominik turns it on (SCALE policy, 2026-07-20).
-  if (!getConfig('ocrEnabled', false)) return
-  const vaultRoot = currentVaultRoot()
-  if (!vaultRoot || !resolveOcrBin()) return
-  ocring = true
+// Background pass: read every picture not already known (or changed). Idempotent + cached; one
+// helper process at a time, never blocks search.
+function ocrAllVaultImages(): void {
+  if (!getConfig('ocrEnabled', true)) return
   try {
-    loadOcrCache()
-    const all = gatherVaultImages(vaultRoot)
-    const todo = all.filter((p) => {
-      const c = ocrCache.get(p)
-      if (!c) return true
-      try { return statSync(p).mtimeMs !== c.mtimeMs } catch { return false }
-    })
-    if (todo.length) {
-      console.log('[ocr] indexing ' + todo.length + ' image(s)…')
-      await ocrBatch(todo)
-      console.log('[ocr] done (' + ocrCache.size + ' images cached)')
-    }
-  } catch (e) { console.error('[ocr] pass failed', e) } finally { ocring = false }
+    const all = ocrCandidates()
+    ocrIndex.queue(all)
+  } catch (e) { console.error('[ocr] pass failed', e) }
 }
-// Resolve a slide image ref to an absolute file path (img-id → pool; relative → talk dir; decoded).
-function resolveImageAbs(ref: string, talkDir: string, vaultRoot: string): string | null {
-  let s = ref.trim().replace(/\s+"[^"]*"$/, '')
-  if (/^(https?:|data:)/.test(s)) return null
-  s = s.replace(/^img-img-([0-9a-f]{7})$/, 'img-$1')
-  if (/^img-[0-9a-f]{7}$/.test(s)) {
-    for (const ext of ['webp', 'png', 'jpg', 'jpeg', 'gif']) {
-      const p = join(vaultRoot, '_assets', s + '.' + ext)
-      if (existsSync(p)) return pathStaysInside(vaultRoot, p) ? p : null
-    }
-    return null
+// A talk's rows were just rebuilt (save, import, startup warm): queue its pictures that are new or
+// changed. Debounced inside the index; returns at once.
+function queueTalkImages(outlinePath: string, vaultRoot: string, rows: ProjectionRowMain[], outlineText: string): void {
+  if (!getConfig('ocrEnabled', true)) return
+  try { ocrIndex.queue(talkImagePaths(rows, outlinePath, vaultRoot, outlineText).map((path) => ({ path, root: vaultRoot }))) } catch { /* background only */ }
+}
+// The picture files one row names (extract + resolve), for the search's image haystack.
+// The text read from the pictures a talk names, keyed by the picture's absolute path: handed to the compiler
+// (`pictureText`, ticket 2b) so the presenter outline and the exported pages can search "in picture:". Pictures with
+// no stored text are left out; with the setting off nothing is ever stored.
+function pictureTextForCompile(outlinePath: string, outlineText: string): Record<string, string> {
+  const vaultRoot = vaultRootFor(outlinePath)
+  if (!vaultRoot) return {}
+  const out: Record<string, string> = {}
+  for (const path of slideImagePaths(outlineText, dirname(outlinePath), vaultRoot)) {
+    const entry = ocrIndex.entry(path)
+    if (entry && !entry.failed && !entry.skipped && entry.text) out[path] = entry.text
   }
-  try { s = decodeURIComponent(s) } catch { /* keep raw */ }
-  // Only a picture really inside this vault: a slide must not pick up the recognised text of a
-  // picture elsewhere on this Mac (another vault's, say) by naming its path (ADR-0036).
-  const abs = s.startsWith('/') ? s : join(talkDir, s)
-  return pathStaysInside(vaultRoot, abs) ? abs : null
+  return out
 }
-// The cached OCR text for one slide's images (lowercased), memoized by a stable slide key.
-function slideOcrText(row: ProjectionRowMain, talkDir: string, vaultRoot: string): string {
-  // Keyed per vault: the same slide text in two vaults can point at different image files.
-  const key = vaultRoot + '\u0000' + String(row.content_hash || row.slide_id || '')
-  const memo = slideOcrMemo.get(key)
-  if (memo !== undefined) return memo
-  const md = String(row.source_markdown || '')
-  let text = ''
-  for (const m of md.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)) {
-    const abs = resolveImageAbs(m[1], talkDir, vaultRoot)
-    if (abs) { const c = ocrCache.get(abs); if (c && c.text) text += '\n' + c.text }
-  }
-  text = text.toLowerCase()
-  slideOcrMemo.set(key, text)
-  return text
-}
+const slideImageText: ImageTextSource = { generation: () => ocrIndex.generation(), textLower: (p) => ocrIndex.textLower(p) }
+const slideSearch = createSlideSearch({ imageText: slideImageText })
 
-// Manual trigger for the OCR index (command palette) — runs the same cached pass and reports counts.
-ipcMain.handle('talk:ocr-index', async () => {
-  const vaultRoot = currentVaultRoot()
-  if (!vaultRoot) return { success: false, error: 'No vault root' }
-  if (!resolveOcrBin()) return { success: false, error: 'OCR helper not found (rebuild the app)' }
-  loadOcrCache()
-  const before = ocrCache.size
-  await ocrAllVaultImages()
-  const total = gatherVaultImages(vaultRoot).length
-  return { success: true, total, cached: ocrCache.size, added: ocrCache.size - before }
+// The text read from the pictures each slide block names (the same picture text the Slide Browser's search reads),
+// one string per block, '' when none. The grid and the outline search it for "in picture:" hits (ticket 2).
+// Rises whenever the OCR index changes (a picture read later in the background), so the renderer cache refetches.
+ipcMain.handle('talk:slide-picture-generation', (): number => ocrIndex.generation())
+ipcMain.handle('talk:slide-picture-text', (_event, outlinePath: unknown, blocks: unknown): string[] => {
+  if (typeof outlinePath !== 'string' || !Array.isArray(blocks)) return []
+  const vaultRoot = vaultRootFor(outlinePath)
+  if (!vaultRoot) return blocks.map(() => '')
+  const talkDir = dirname(outlinePath)
+  return blocks.map((block) => {
+    if (typeof block !== 'string' || !block) return ''
+    let text = ''
+    for (const path of resolveImagePaths(extractImageRefs(block), talkDir, vaultRoot)) {
+      const entry = ocrIndex.entry(path)
+      if (entry && !entry.failed && !entry.skipped && entry.text) text += (text ? '\n' : '') + entry.text
+    }
+    return text
+  })
 })
 
-// The structured search the renderer sends (mirrors slideBrowserModel.ParsedQuery). A bare
-// string is the legacy all-fields all-words form — kept so older callers and the diagnose
-// harnesses that invoke tw.search.allSlides('word') still work unchanged.
-type SearchQuery = { scope: 'all' | 'title' | 'body' | 'image'; exact: boolean; text: string; terms: string[] }
-function normalizeSearchQuery(q: unknown): SearchQuery {
-  if (typeof q === 'string') {
-    return { scope: 'all', exact: false, text: q, terms: q.toLowerCase().split(/\s+/).filter(Boolean) }
-  }
-  const o = (q ?? {}) as Partial<SearchQuery>
-  const scope = o.scope === 'title' || o.scope === 'body' || o.scope === 'image' ? o.scope : 'all'
-  const text = typeof o.text === 'string' ? o.text : ''
-  const terms = Array.isArray(o.terms) ? o.terms.filter((t): t is string => typeof t === 'string' && t !== '') : []
-  return { scope, exact: Boolean(o.exact), text, terms }
-}
-// Does a lowercased haystack satisfy the query? Exact → the phrase must appear contiguously; else
-// every term must appear (order-independent). An empty phrase / empty term list matches all.
-function matchHay(hayLower: string, q: SearchQuery): boolean {
-  if (q.exact) return hayLower.includes(q.text.toLowerCase())
-  return q.terms.every((t) => hayLower.includes(t))
-}
+// Manual trigger for the OCR index (command palette): runs whatever the setting says and reports
+// what really happened.
+ipcMain.handle('talk:ocr-index', async () => {
+  if (!currentVaultRoot()) return { success: false, error: 'No vault root' }
+  if (!resolveOcrBin()) return { success: false, error: 'OCR helper not found (rebuild the app)' }
+  const counts = await ocrIndex.runNow(ocrCandidates())
+  ocrIndex.flush()
+  return { success: true, total: counts.total, read: counts.read, known: counts.known, failed: counts.failed, skipped: counts.skipped, cached: ocrIndex.size(), added: counts.read }
+})
 
 // Talk search over IPC (ADR-0029 §1): the Talks browser today, the picker's "Find a talk" next.
 // options.vaultIds (a list) searches those vaults, merged in that order; an empty list searches
@@ -4156,61 +4370,117 @@ ipcMain.handle('talks:set-folder-state', (_event, changes: unknown) => {
 
 // options.vaultIds limits the search to those open vaults (vault-scope.ts searchVaults); without it,
 // the first open vault as before. Rows carry the vaultId of their talk.
-ipcMain.handle('search:all-slides', async (_event, query: string | SearchQuery, options?: unknown) => {
+// options.requestId + options.supersedeKey: a newer request with the same key from the same window
+// replaces this one; the scan stops at the next yield and answers [] (the renderer drops it).
+// The latest request id per window + key; a window's records go when its page navigates (a reload
+// restarts the renderer's ids at 1) or closes.
+const searchSupersede = createSupersedeTracker()
+const searchSupersedeWatched = new WeakSet<Electron.WebContents>()
+function watchSearchSender(wc: Electron.WebContents): void {
+  if (searchSupersedeWatched.has(wc)) return
+  searchSupersedeWatched.add(wc)
+  const id = wc.id
+  const forget = (): void => searchSupersede.forgetSender(id)
+  wc.on('did-navigate', forget)
+  wc.once('destroyed', forget)
+}
+function searchTalksOf(vaults: ReadonlyArray<{ id: string; root: string }>): Array<{ vaultId: string; vaultRoot: string; talk: TalkInfo }> {
+  // A fresh walk, not the 5 s findTalks cache: the stamp must see a talk added or removed just now.
+  return currentSearchTalks(vaults, scanTalks, (root, talks) => talkCache.set(root, { at: Date.now(), talks }))
+}
+function browserIndexStamp(talks: ReadonlyArray<{ vaultId: string; vaultRoot: string; talk: TalkInfo }>): string {
+  return searchIndexStamp({
+    talks,
+    mtimeOf: (p) => { try { return statSync(p).mtimeMs } catch { return null } },
+    compilerTag: thumbCacheRoot(),
+    resets: searchCache.resets
+  })
+}
+// The Slide Browser's freshness probe: the stamp a whole-index scan of these vaults would carry if
+// it started now (search-index-stamp.ts). Stats the outlines; compiles and reads nothing. null when
+// there is nothing to search.
+ipcMain.handle('search:index-stamp', (_event, options?: unknown) => {
+  const vaults = searchVaults(vaultRegistry.list().filter((v) => !vaultAvailability.isUnavailable(v.id)), options)
+  if (!vaults.length || !getCompilerPath()) return null
+  try { return browserIndexStamp(searchTalksOf(vaults)) } catch { return null }
+})
+
+ipcMain.handle('search:all-slides', async (event, query: string | SearchQuery, options?: unknown) => {
   const vaults = searchVaults(vaultRegistry.list().filter((v) => !vaultAvailability.isUnavailable(v.id)), options)
   if (!vaults.length) return options ? [] : null
   const compilerDir = getCompilerPath()
   if (!compilerDir) return null
-  loadOcrCache()
+  const opts = (options && typeof options === 'object' ? options : {}) as { requestId?: unknown; supersedeKey?: unknown }
+  if (typeof opts.requestId === 'number' && typeof opts.supersedeKey === 'string' && opts.supersedeKey) watchSearchSender(event.sender)
+  const superseded = searchSupersede.begin(event.sender.id, opts.supersedeKey, opts.requestId)
   try {
-    const results: Array<ProjectionRowMain & { vaultId: string; talkSlug: string; talkTitle: string; outlinePath: string; talkMtimeMs: number; talkMeta: string; titleHit: boolean }> = []
-    // Scoped, all-words (or exact-phrase) match. The four searchable fields are the slide TITLE
-    // (nav_title + title), the slide BODY (full source_markdown), and the IMAGE text (cached OCR of
-    // the slide's images) — Section/subsection are deliberately NOT searched (they are a UI filter;
-    // matching them made search far too broad). scope picks which field(s) the query is tested
-    // against; scope 'all' is today's behaviour (all four at once). Empty query → every slide.
+    // Scoped, all-words (or exact-phrase) match (slide-search.ts). The searchable fields are the slide
+    // TITLE (nav_title + title), the slide BODY (full source_markdown), and the IMAGE text (cached OCR of
+    // the pictures the slide names) - Section/subsection are deliberately NOT searched (they are a UI
+    // filter; matching them made search far too broad). scope picks which field(s) the query is tested
+    // against; scope 'all' tests all three. Empty query -> every slide.
     const q = normalizeSearchQuery(query)
     const adaptersUrl = pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href
     const projectionsUrl = pathToFileURL(join(compilerDir, 'lib/10-projections.mjs')).href
     const { prepareSource } = await import(adaptersUrl)
     const { buildPerSlideProjections } = await import(projectionsUrl)
 
-    for (const { id: vaultId, root: vaultRoot } of vaults) for (const talk of findTalks(vaultRoot)) {
-      try {
-        const rows = await ensureTalkRows(talk, vaultRoot, prepareSource, buildPerSlideProjections)
-        if (!rows) continue
-        const cached = searchCache.get(talk.outlinePath)
-        const talkMtimeMs = cached?.mtimeMs ?? 0
-        const talkMeta = cached?.meta ?? ''
-        const talkDir = dirname(talk.outlinePath)
-        for (const row of rows) {
-          const titleHay = `${row.nav_title || ''}\n${row.title || ''}`.toLowerCase()
-          const bodyHay = String(row.source_markdown || '').toLowerCase()
-          const imageHay = slideOcrText(row, talkDir, vaultRoot) // already lowercased
-          const fieldHay =
-            q.scope === 'title' ? titleHay
-              : q.scope === 'body' ? bodyHay
-                : q.scope === 'image' ? imageHay
-                  : `${titleHay}\n${bodyHay}\n${imageHay}`
-          if (matchHay(fieldHay, q)) {
-            // titleHit drives the renderer's title-priority ranking: a title-scoped hit is a title
-            // hit by definition; otherwise it is whether the query also matches the title field.
-            const titleHit = q.scope === 'title' ? true : matchHay(titleHay, q)
-            results.push({
-              ...row,
-              vaultId,
-              talkSlug: talk.slug,
-              talkTitle: talk.title,
-              outlinePath: talk.outlinePath,
-              talkMtimeMs,
-              talkMeta,
-              titleHit
-            })
+    const compact = (opts as { compact?: unknown }).compact === true
+    const wholeIndex = compact && q.terms.length === 0 && q.text.trim() === ''
+    // Only a held whole-index snapshot needs fresh discovery. Typing queries keeps the 5 s cache.
+    const talks = wholeIndex ? searchTalksOf(vaults) : vaults.flatMap(({ id: vaultId, root: vaultRoot }) =>
+      findTalks(vaultRoot).map((talk) => ({ vaultId, vaultRoot, talk })))
+    // The Browser's reply is stamped BEFORE the scan reads anything: an outline changed while it
+    // runs leaves the stamp behind main's, so the held rows read as stale (search-index-stamp.ts).
+    let skippedTalk = false // a talk that failed to load is missing from the rows: the stamp says so
+    const { stamp, result: hits } = await scanWithStartStamp(() => wholeIndex ? browserIndexStamp(talks) : '', () => slideSearch.scan({
+      query: q,
+      talks,
+      shouldStop: superseded,
+      load: async ({ vaultRoot, talk }) => {
+        try {
+          const rows = await ensureTalkRows(talk, vaultRoot, prepareSource, buildPerSlideProjections)
+          if (!rows) { skippedTalk = true; return null }
+          const cached = searchCache.get(talk.outlinePath)
+          const talkDir = dirname(talk.outlinePath)
+          const deck = cached?.deckPictures ?? null
+          return {
+            key: talk.outlinePath,
+            freshness: `${cached?.mtimeMs ?? 0}|${cached?.compilerTag ?? ''}`,
+            rows,
+            // The row's own pictures, plus the deck logo on the title / closing slides that draw it.
+            imageRefsFor: (row: ProjectionRowMain) => rowImageRefs(row, deck),
+            resolveImages: (refs: readonly unknown[]) => resolveImagePaths(refs as ImageRef[], talkDir, vaultRoot)
           }
+        } catch { skippedTalk = true; return null /* skip failed talks */ }
+      }
+    }), () => skippedTalk)
+    if (hits === null) return []
+    // The Slide Browser asks for the compact reply: each talk once, rows pointing at it, without
+    // the projection fields it never reads (slide-search-reply.ts). Other callers get full rows.
+    if (compact) {
+      return compactSlideSearchReply(hits, ({ talk: { vaultId, talk }, row, titleHit }) => {
+        const cached = searchCache.get(talk.outlinePath)
+        return {
+          row: row as unknown as Record<string, unknown>,
+          titleHit,
+          talk: { talkSlug: talk.slug, talkTitle: talk.title, outlinePath: talk.outlinePath, vaultId, talkMtimeMs: cached?.mtimeMs ?? 0, talkMeta: cached?.meta ?? '' }
         }
-      } catch { /* skip failed talks */ }
+      }, wholeIndex ? stamp : null)
     }
-    return results
+    return hits.map(({ talk: { vaultId, talk }, row, titleHit }) => {
+      const cached = searchCache.get(talk.outlinePath)
+      return {
+        ...row,
+        vaultId,
+        talkSlug: talk.slug,
+        talkTitle: talk.title,
+        outlinePath: talk.outlinePath,
+        talkMtimeMs: cached?.mtimeMs ?? 0,
+        talkMeta: cached?.meta ?? '',
+        titleHit
+      }
+    })
   } catch (e) {
     console.error('[search:all-slides]', e)
     return null
@@ -4485,6 +4755,8 @@ ipcMain.handle('talk:write-outline', async (_event, outlinePath: string, content
   try { sharedTalks().noteSaved(outlinePath, toWrite) } catch { /* sharing must never break a save */ }
   // ADR-0024: this is the app-edit event that enrolment is keyed on — a real save, made here.
   try { noteAppEdit(outlinePath) } catch { /* backup bookkeeping must never break a save */ }
+  // Open decks and the Capture embed window show the slide's saved views as saved now.
+  try { refreshLivePageSavedViews(outlinePath) } catch { /* a deck refresh must never break a save */ }
   // Ledger records only on a REAL write (a refused write above returns before here). Records the
   // STAMPED content so newly-minted ids are ledgered in the same save that created them.
   const collisions = await ledgerRecord(outlinePath, toWrite)
@@ -4991,7 +5263,7 @@ ipcMain.handle('ledger:version-thumbnails', async (_event, id: string) => {
     writeFileSync(outlinePath, resolved, 'utf8')
     const stat = statSync(outlinePath)
     // The versions are this vault's slides, staged in a temp folder: their pooled media is in the vault.
-    const model = await prepareSource(outlinePath, resolved, cacheSlug, stat, undefined, { allowedAssetRoots: assetRootsFor(outlinePath, [vaultRoot]) })
+    const model = await withPrewarmYield(() => prepareSource(outlinePath, resolved, cacheSlug, stat, undefined, { allowedAssetRoots: assetRootsFor(outlinePath, [vaultRoot]) }))
     const rows = (buildPerSlideProjections(model, cacheSlug) ?? []) as Array<{
       source_line?: number | null
       render_hash?: string
@@ -5056,7 +5328,7 @@ async function compileTalkForPresent(outlinePath: string, content: string, run?:
   // strip just compiled with different defaults) still recompiles, but repeated F5s don't.
   // presenterClipRefs: the presenter window's deck alone keeps each video's authored reference (so
   // a recording can name the clip); every other compile has it stripped (compiler prepareSource).
-  const prepared = await prepareTalk(outlinePath, content, timerSettings(), { presenterClipRefs: true, ...(run ? { run } : {}) })
+  const prepared = await prepareTalk(outlinePath, content, timerSettings(), { presenterClipRefs: true, pictureText: pictureTextForCompile(outlinePath, content), ...(run ? { run } : {}) })
   if (!prepared) throw new Error('Compiler not found')
   // Ticket 08: the talk's pre-work section (compiler model.prework) — its slides are answered
   // before the session and never presented.
@@ -5122,6 +5394,125 @@ function talkBySlug(slug: string): TalkInfo | null {
   return findTalks(vaultRoot).find((talk) => talk.slug === slug) ?? null
 }
 
+// A live web page on a slide (live-page-host.ts): one host per deck window TalkWeaver opens (loaded
+// with ?livepage=1), the presenter's paired with its audience window's for following.
+const livePageHosts = new Map<number, LivePageHost>()
+const livePageAllowance = testLoopbackAllowance({ isPackaged: app.isPackaged, e2e: E2E, value: process.env.TW_E2E_LIVE_PAGE_ALLOW })
+// The capture gallery (live-page-capture.ts): a deck window's saved views go to the talk main opened
+// that window for (recorded here at attach time, never taken from the deck or the page), written by a
+// process of their own started in the talk folder (live-page-capture-worker.ts).
+// A Capture embed window (live-page-capture-window.ts) is also bound to the one slide and page it was
+// opened for: the saver refuses any other.
+const livePageTalks = new Map<number, { outlinePath: string; bound?: { slideId: string; pageUrl: string } }>()
+const saveLivePageCapture = createLivePageCaptureSaver({
+  talkOf: (deckId) => {
+    const talk = livePageTalks.get(deckId)
+    const root = talk ? writableTalkRoot(talk.outlinePath) : undefined
+    return talk && root ? { root, outlinePath: talk.outlinePath, ...(talk.bound ? { bound: talk.bound } : {}) } : null
+  },
+  run: createLivePageCaptureRunner(join(__dirname, 'live-page-capture-worker.js'), forkLivePageCaptureChild),
+  saved: (outlinePath) => preparedTalkCache.evictOutline(outlinePath),
+  // The saved view's {capture} line (live-page-capture-markup.mjs) goes under the slide's page through
+  // the one talk writer, as a transformation of the talk's CURRENT text: an open editor's buffer takes
+  // it as one change (unsaved typing kept, one Undo step), a closed talk's file is written in place
+  // under its lock. A slide whose id the compiler derives is found only in the text compiled
+  // (live-page-capture.ts placeSavedView); a slide or page no longer in the talk leaves it untouched.
+  place: (outlinePath, view) => placeSavedView({
+    read: (p) => readTalkOutline(p),
+    compiledSlides: async (p, text) => (await outlineTools()).compiledSlides(p, text),
+    write: async (p, next) => {
+      const result = await writeTalkOutline(p, next, 'live-page-capture')
+      return result.ok ? { ok: true, changed: result.changed } : { ok: false, error: result.error }
+    }
+  }, outlinePath, view).finally(() => refreshLivePageSavedViews(outlinePath))
+})
+// Every open deck and Capture embed window of the talk is told its slide's saved views as the talk's
+// text has them now (live-page-saved-views.ts): after an editor save, a placed view, a removed one.
+function refreshLivePageSavedViews(outlinePath: string): void {
+  let canonical = ''
+  try { canonical = canonicalOutlinePath(outlinePath) } catch { return }
+  for (const [id, talk] of livePageTalks) {
+    let same = false
+    try { same = canonicalOutlinePath(talk.outlinePath) === canonical } catch { same = false }
+    if (same) void livePageHosts.get(id)?.refreshSavedViews().catch(() => { /* the deck reloaded */ })
+  }
+}
+const livePageSavedViewsOf = (outlinePath: string) => (slideId: string, pageUrl: string) => slideSavedViews({
+  read: (p) => readTalkOutline(p),
+  compiledSlides: async (p, text) => (await outlineTools()).compiledSlides(p, text),
+  pictures: (p, items) => readCaptureEmbedViews(p, items)
+}, outlinePath, slideId, pageUrl)
+function attachLivePageHost(win: BrowserWindow, role: LivePageRole, outlinePath: string, bound?: { slideId: string; pageUrl: string }): LivePageHost | null {
+  if (win.isDestroyed()) return null
+  const id = win.webContents.id
+  const existing = livePageHosts.get(id)
+  if (existing) return existing
+  const host = createLivePageHost(win as unknown as DeckWindow, role, {
+    createView: (webPreferences) => new WebContentsView({ webPreferences }) as unknown as LiveView,
+    sessionFor: (partition) => session.fromPartition(partition) as unknown as LivePageSession,
+    allowance: livePageAllowance,
+    devTools: !app.isPackaged,
+    userAgent: app.userAgentFallback,
+    newId: () => randomUUID(),
+    capture: { encode: encodeCapture, save: (request) => saveLivePageCapture(id, request), views: livePageSavedViewsOf(outlinePath) }
+  })
+  livePageHosts.set(id, host)
+  livePageTalks.set(id, { outlinePath, ...(bound ? { bound } : {}) })
+  win.once('closed', () => { livePageHosts.delete(id); livePageTalks.delete(id) })
+  return host
+}
+app.on('before-quit', () => disposeAllLivePageHosts())
+
+// Capture embed… (live-page-capture-window.ts): one window at a time, for one slide's web page, opened
+// by an editor window for the talk it has open. It closes when that editor closes or asks (another
+// talk, another request). Its page has no preload: the live page and the capture are the host's.
+let captureEmbed: { win: BrowserWindow; opener: number } | null = null
+function closeCaptureEmbed(): void {
+  const open = captureEmbed
+  captureEmbed = null
+  if (open && !open.win.isDestroyed()) open.win.close()
+}
+ipcMain.handle('live-page:open-capture', async (event, raw: unknown) => {
+  const opener = BrowserWindow.fromWebContents(event.sender)
+  const checked = checkCaptureEmbedRequest(raw, { writableTalkRoot: (p) => writableTalkRoot(p), allowance: livePageAllowance })
+  if (!checked.ok) return checked
+  const { request } = checked
+  // Only an editor window, for the talk it has open (never a deck, the page, or another talk).
+  const editor = opener ? editorWindowForOutline(request.outlinePath) : null
+  if (!opener || !editor || editor.win !== opener) return { ok: false, message: CAPTURE_EMBED_TEXT.noEditor }
+  closeCaptureEmbed()
+  const alts = (raw as { alts?: unknown }).alts
+  const views = readCaptureEmbedViews(request.outlinePath, request.images.map((image, i) => ({ image, alt: Array.isArray(alts) && typeof alts[i] === 'string' ? alts[i] : '' })))
+  const win = new BrowserWindow({
+    width: 1280, height: 860, minWidth: 760, minHeight: 520,
+    title: 'Capture embed',
+    ...(E2E ? { show: false } : {}),
+    backgroundColor: '#f7f3ea',
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false, backgroundThrottling: false }
+  })
+  captureEmbed = { win, opener: opener.webContents.id }
+  // The page is the app's own and never goes anywhere else.
+  win.webContents.on('will-navigate', (e) => e.preventDefault())
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  attachLivePageHost(win, 'presenter', request.outlinePath, { slideId: request.slideId, pageUrl: request.pageUrl })
+  let host = ''
+  try { host = new URL(request.pageUrl).host } catch { /* checked */ }
+  win.webContents.once('did-finish-load', () => {
+    if (win.isDestroyed()) return
+    win.webContents.executeJavaScript(captureEmbedInitScript({ slideId: request.slideId, pageUrl: request.pageUrl, title: request.title, host, views }), false).catch(() => {})
+  })
+  const onOpenerClosed = (): void => { if (captureEmbed?.win === win) closeCaptureEmbed() }
+  opener.once('closed', onOpenerClosed)
+  win.once('closed', () => { if (captureEmbed?.win === win) captureEmbed = null; if (!opener.isDestroyed()) opener.removeListener('closed', onOpenerClosed) })
+  await win.loadURL(captureEmbedPageUrl(process.env['ELECTRON_RENDERER_URL'], __dirname))
+  return { ok: true }
+})
+// The editor switched talk or slide set: its Capture embed window closes (no other window can ask).
+ipcMain.handle('live-page:close-capture', (event) => {
+  if (captureEmbed && captureEmbed.opener === event.sender.id) closeCaptureEmbed()
+  return true
+})
+
 ipcMain.handle('talk:present', async (_event, outlinePath: string, content: string, mode?: string, startSlideId?: string, pathwayId?: string, plannedRunId?: string) => {
   const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
   if (refusal) return { success: false, error: refusal }
@@ -5170,6 +5561,7 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
           // Cache-bust (_r) so the reused window truly reloads the freshly-compiled file.
           const reuseQuery: Record<string, string> =
             mode === 'presenter' ? { presenter: '1' } : mode === 'audience' ? { audience: '1' } : {}
+          reuseQuery.livepage = '1'
           reuseQuery._r = String(++presentReloadNonce)
           const reuseOpts: { query: Record<string, string>; hash?: string } = { query: reuseQuery }
           if (hash) reuseOpts.hash = hash
@@ -5225,17 +5617,20 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
     }
     // mode: 'presenter' → presenter view (notes + controls); 'audience' → chromeless audience view;
     // anything else → the plain presentation window. The deck runtime reads ?presenter=1 / ?audience=1.
-    const query: Record<string, string> | undefined = mode === 'presenter' ? { presenter: '1' } : mode === 'audience' ? { audience: '1' } : undefined
+    // livepage=1: this deck shows a slide's web page live, in a view of its own (live-page-host.ts).
+    const query: Record<string, string> = { ...(mode === 'presenter' ? { presenter: '1' } : mode === 'audience' ? { audience: '1' } : {}), livepage: '1' }
     // ⇧F5 present-from-here: the runtime reads location.hash on init and starts on the slide whose
     // dataset.id matches the id (09-output-builders.mjs). An unknown/empty id falls back to slide 0.
     const loadOpts: { query?: Record<string, string>; hash?: string } = {}
     if (query) loadOpts.query = query
     if (startSlideId) loadOpts.hash = startSlideId
+    attachLivePageHost(win, mode === 'presenter' ? 'presenter' : mode === 'audience' ? 'audience' : 'window', outlinePath)
     win.loadFile(presentPath, Object.keys(loadOpts).length ? loadOpts : undefined)
     // Track this deck for ⌘R refresh-in-place, and OWN ⌘R here: before-input-event preempts the
     // default menu's Reload accelerator (which would reload to slide 0 without recompiling).
     const deckWcId = win.webContents.id
     presentWindows.set(deckWcId, { outlinePath, mode: mode ?? 'window', pathwayId, ...(typeof plannedRunId === 'string' && plannedRunId ? { runId: plannedRunId } : {}) })
+    updateChecker?.busyChanged()
     if (mode === 'presenter') livePresenterContexts.set(deckWcId, livePresenterContext(vaultRegistry, outlinePath, slug, publishedUrl))
     win.on('close', (event) => {
       const record = attachLiveWindow(deckWcId)
@@ -5251,6 +5646,7 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
       presenterGuide.forget(deckWcId)
       presentWindows.delete(deckWcId)
       livePresenterContexts.delete(deckWcId)
+      updateChecker?.busyChanged()
     })
     // F5 in the presenter opens the audience view (its Audience button); ⇧F5 there, F5 / ⇧F5 in the
     // other deck windows and ⌘R everywhere refresh the deck in place (deck-window-keys.ts).
@@ -5297,6 +5693,25 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
         win.once('closed', closeChild)
         child.once('closed', () => { if (!win.isDestroyed()) win.removeListener('closed', closeChild) })
         return
+      }
+      // A web page on a slide: the audience side's copy follows the presenter pane's scrolling
+      // (remote-page-follow.ts). The presenter's Audience window, or the Presenter window opened from
+      // a presentation window (then the presentation window is the audience side).
+      const followPair = mode === 'presenter' && details?.url?.includes('audience=1') ? [win.webContents, child.webContents]
+        : mode !== 'presenter' && details?.url?.includes('presenter=1') ? [child.webContents, win.webContents] : null
+      if (followPair) {
+        const stopFollowing = followRemotePages(followPair[0], followPair[1])
+        child.once('closed', stopFollowing)
+        win.once('closed', stopFollowing)
+        // The same pair for a live web page: the child deck window gets its own host (it loads the
+        // opener's deck address, livepage=1 included), and the presenter's host leads.
+        if (details?.url?.includes('livepage=1')) {
+          const childHost = attachLivePageHost(child, mode === 'presenter' ? 'audience' : 'presenter', outlinePath)
+          const ownHost = livePageHosts.get(deckWcId) ?? null
+          const unpair = mode === 'presenter' ? pairLivePageHosts(ownHost, childHost) : pairLivePageHosts(childHost, ownHost)
+          child.once('closed', unpair)
+          win.once('closed', unpair)
+        }
       }
       if (!details?.url || !details.url.includes('audience=1')) return
       // The presenter-spawned audience window gets its own role title too.
@@ -5415,6 +5830,7 @@ ipcMain.handle('present:rebuild', async (_event, deckWcId: number, outlinePath: 
     const mode = info?.mode
     // Cache-bust (_r) so this is a REAL navigation, not a same-URL no-op that skips the fresh file.
     const query: Record<string, string> = mode === 'presenter' ? { presenter: '1' } : mode === 'audience' ? { audience: '1' } : {}
+    query.livepage = '1'
     query._r = String(++presentReloadNonce)
     const loadOpts: { query: Record<string, string>; hash?: string } = { query }
     if (slideId) loadOpts.hash = slideId
@@ -5456,6 +5872,8 @@ registerRecordingIpc({
   compilerDir: () => getCompilerPath(),
   userDataDir: () => app.getPath('userData'),
   vaultRoot: () => writableVaultRoot() ?? null, // writes: only a vault folder that is there (ticket 07)
+  openVaultRoots: () => availableVaults().map((vault) => vault.root),
+  hasUnavailableOpenVaults: () => vaultRegistry.list().some((vault) => vault.open && vaultAvailability.isUnavailable(vault.id)),
   // A presenter window's recording, Run and stream marker go to the vault of the talk it presents (issue 256).
   presenterVault: (wcId) => {
     const info = presentWindows.get(wcId)
@@ -5631,7 +6049,7 @@ ipcMain.handle('talk:build', async (_event, outlinePath: string, content: string
     const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
     const vaultRoot = vaultRootFor(outlinePath)
     const resolved = resolvePooledRefs(content, outlinePath)
-    const model = await prepareSource(outlinePath, resolved, slug, stat, timerSettings(), { allowedAssetRoots: assetRootsFor(outlinePath) })
+    const model = await withPrewarmYield(() => prepareSource(outlinePath, resolved, slug, stat, timerSettings(), { allowedAssetRoots: assetRootsFor(outlinePath), pictureText: pictureTextForCompile(outlinePath, content) }))
     const html = model.fullHtml as string
     const distDir = join(talkDir, 'dist')
     if (!existsSync(distDir)) mkdirSync(distDir) // only inside a talk folder that is there (a vanished vault is never re-created)
@@ -5660,7 +6078,7 @@ ipcMain.handle('talk:build-variants', async (_event, outlinePath: string, conten
     const resolved = resolvePooledRefs(content, outlinePath)
 
     const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
-    const model = await prepareSource(outlinePath, resolved, slug, stat, timerSettings(), { allowedAssetRoots: assetRootsFor(outlinePath) })
+    const model = await withPrewarmYield(() => prepareSource(outlinePath, resolved, slug, stat, timerSettings(), { allowedAssetRoots: assetRootsFor(outlinePath) }))
 
     const distDir = join(talkDir, 'dist')
     if (!existsSync(distDir)) mkdirSync(distDir) // only inside a talk folder that is there (a vanished vault is never re-created)
@@ -5810,7 +6228,7 @@ ipcMain.handle('talk:export-handout', async (_event, outlinePath: string, conten
     const resolved = resolvePooledRefs(content, outlinePath)
 
     const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
-    const model = await prepareSource(outlinePath, resolved, slug, stat, undefined, { allowedAssetRoots: assetRootsFor(outlinePath) })
+    const model = await withPrewarmYield(() => prepareSource(outlinePath, resolved, slug, stat, undefined, { allowedAssetRoots: assetRootsFor(outlinePath), pictureText: pictureTextForCompile(outlinePath, content) }))
     const title = (model.title as string) ?? slug
     const fullHtml = model.fullHtml as string
 
@@ -5904,7 +6322,18 @@ function standInCloudflareApi(): Record<string, string> {
 }
 /** A message when the site about to be published would make `pages deploy` compile code; else null. */
 function pagesBundlingBlock(siteDir: string): string | null {
-  return pagesBundlingHazard(siteDir, wranglerWorkDir(), existsSync)
+  return siteFolderOverlap(siteDir) ?? pagesBundlingHazard(siteDir, wranglerWorkDir(), existsSync)
+}
+// Separate folders (settings-folders.ts): checked again where they are used, as the import rule asks.
+// The site folder is uploaded as it is, so it never overlaps the backup folder (talks with their
+// notes) and never holds a vault.
+function siteFolderOverlap(siteDir: string): string | null {
+  const backup = (getConfig('backupFolder', undefined) ?? '').trim()
+  const vaultsInside = vaultRegistry.list().filter((v) => folderInside(v.root, siteDir)).map((v) => ({ path: v.root, name: 'a vault' }))
+  return separateFolderProblem(siteDir, 'Publishing', [...(backup ? [{ path: expandHomePath(backup), name: 'the backup folder' }] : []), ...vaultsInside])
+}
+function backupFolderOverlap(folder: string): string | null {
+  return separateFolderProblem(expandHomePath(folder.trim()), 'Backing up', [{ path: publishSiteDir(), name: 'the published site folder' }])
 }
 /**
  * A failed `deploy` or `dev`: when what wrangler printed is esbuild refusing a malformed
@@ -5923,24 +6352,14 @@ function wranglerMissingText(missing: WranglerMissing): string {
 // Slimming the PUBLISHED handout (each file under Cloudflare Pages' 25 MiB limit) is
 // handout-slimming.ts: `sharp` on every platform, no program taken from the machine (spec D11).
 
-// A publish's handout pages are built and written in a worker thread (handout-pages.ts): one worker
-// for the one job, ended when it answers. A build that fails rejects, as the build in this thread did.
+// A publish's handout pages are built and written in a utility process of its own (handout-pages.ts,
+// handout-pages-off-process.ts): a heap of its own, so a heavy talk can never end the app. One process
+// for the one job, ended when it answers; a build that dies or takes over 10 minutes fails the publish.
+// The parent scopes the whole job so its compiles are visible to the main process's prewarm. A build
+// failure rejects as it did in this thread.
+const buildHandoutPagesInOwnProcess = createHandoutPagesOffProcess(join(__dirname, 'handout-pages-worker.js'), forkHandoutPagesChild)
 function buildHandoutPagesOffThread(job: HandoutPagesJob): Promise<HandoutPagesResult> {
-  return new Promise((resolve, reject) => {
-    const worker = new Worker(join(__dirname, 'handout-pages-worker.js'), { workerData: job })
-    let settled = false
-    const settle = (finish: () => void): void => {
-      if (settled) return
-      settled = true
-      finish()
-      void worker.terminate()
-    }
-    worker.once('message', (reply: { ok: true; result: HandoutPagesResult } | { ok: false; error: string }) => {
-      settle(() => (reply.ok ? resolve(reply.result) : reject(new Error(reply.error))))
-    })
-    worker.once('error', (error) => settle(() => reject(error)))
-    worker.once('exit', (code) => settle(() => reject(new Error(`The handout could not be built (the build stopped with code ${code}).`))))
-  })
+  return withPrewarmYield(() => buildHandoutPagesInOwnProcess(job))
 }
 
 // Every upload of the site goes through this one service (handout-publishing.ts): leave to publish
@@ -6391,6 +6810,7 @@ function liveService(): LiveService {
       },
     }),
     // A Worker deleted in the dashboard: its address, build and account are dropped. The key stays.
+    // Reached from cloudflare:check (any window) by design: the caller cannot choose a value, the address is only cleared when the Worker is verifiably gone (Sol review 4, S2, accepted).
     forget: () => writeConfig({ liveWorkerBaseUrl: undefined, liveWorkerVersion: undefined, liveWorkerAccountId: undefined, liveComputerRecordedFor: undefined }),
     onChange: (row: GoingLiveRow) => {
       broadcast('live-service:status', row)
@@ -6405,12 +6825,14 @@ const liveRowListeners = new Set<(row: GoingLiveRow) => void>()
 // Settings → Cloudflare's Going live and sharing row. A row holds states, the live service's address,
 // its build and fixed sentences: never a key.
 ipcMain.handle('live-service:status', () => liveService().row())
-ipcMain.handle('live-service:set-up', (event) => {
-  // Only from an editor window's own top frame, where the Settings row is: never a presenter window
-  // (its slides may hold embeds), another window, or a frame embedded in a page.
-  if (!setUpAllowedFrom(event, (id) => editorWindows.has(id))) return { ok: false, error: 'Going live can be set up only from TalkWeaver itself.', details: null, row: liveService().row() }
-  return liveService().setUp()
-})
+// The set-up deploys the live service and saves its address and keys: Settings configuration, so
+// only the Settings window's Cloudflare page (its Going live and sharing row) may ask (Sol review 4,
+// S1). Editor, Tools, presenter windows and embedded frames are refused; they open Settings instead.
+handleFromSettingsWindow(
+  'live-service:set-up',
+  () => ({ ok: false, error: 'Going live can be set up only in the Settings window.', details: null, row: liveService().row() }),
+  () => liveService().setUp()
+)
 
 // Settings → Cloudflare's Share-link domain row: its one button, "Use share.<handout domain>"
 // (Dominik, 10 Oct: "definitely want share.handouts.fyi"). The address is the one the row suggests,
@@ -6434,12 +6856,15 @@ async function useSuggestedShareDomain(): Promise<CloudflareReply> {
   const after = await cloudflareConnection().check('asked')
   return !attached || attached.ok ? { ok: true, status: after.status } : { ok: false, error: attached.error, status: after.status }
 }
-ipcMain.handle('cloudflare:use-share-domain', (event): Promise<CloudflareReply> | CloudflareReply => {
-  // As Set up going live: only from an editor window's own top frame, where the Settings row is.
-  if (!setUpAllowedFrom(event, (id) => editorWindows.has(id))) return { ok: false, error: 'A share-link address can be set only from TalkWeaver itself.', status: cloudflareConnection().status() }
-  shareUse ??= useSuggestedShareDomain().finally(() => { shareUse = null })
-  return shareUse
-})
+// Only from the Settings window's Cloudflare page, where the row is (0.42).
+handleFromSettingsWindow(
+  'cloudflare:use-share-domain',
+  (): CloudflareReply => ({ ok: false, error: 'A share-link address can be set only from TalkWeaver’s Settings window.', status: cloudflareConnection().status() }),
+  (): Promise<CloudflareReply> => {
+    shareUse ??= useSuggestedShareDomain().finally(() => { shareUse = null })
+    return shareUse
+  }
+)
 
 // Throws a LiveServiceError (a fixed sentence, with Details, and what Go live offers) when there is
 // no live service to use. Publishing never calls this directly: handout-publishing.ts does, and turns
@@ -7497,6 +7922,7 @@ interface ThumbnailRequest {
   outlinePath: string
   content: string
   lane: string
+  progress?: (map: Record<string, string>) => void
   /** The media contract this lane compiles under; part of the prepared-cache identity. */
   mediaOptions?: Record<string, unknown>
 }
@@ -7504,7 +7930,7 @@ interface ThumbnailRequest {
 const latestThumbnailRequest = createLatestThumbnailRequestHandler(
   ({ outlinePath, content, mediaOptions }: ThumbnailRequest) =>
     prepareTalk(outlinePath, content, undefined, mediaOptions),
-  async (input, prepared, owner): Promise<Record<string, string> | null> => {
+  async (input, prepared, owner, isCurrent): Promise<Record<string, string> | null> => {
     if (!prepared) return null
     const { slug, model } = prepared
     const rows = (prepared.rows ?? []) as Array<{
@@ -7524,7 +7950,15 @@ const latestThumbnailRequest = createLatestThumbnailRequestHandler(
     const vaultId = vaultIdOf(input.outlinePath)
     let rendered: Record<string, string> = {}
     try {
-      rendered = await renderThumbnails({ fullHtml, deckKey: prepared.previewKey, slides, cacheDir, requestKey: `editor:${owner}` })
+      rendered = await renderThumbnails({
+        fullHtml, deckKey: prepared.previewKey, slides, cacheDir, requestKey: `editor:${owner}`,
+        onProgress: input.progress ? (pictures) => {
+          if (!isCurrent()) return
+          const map: Record<string, string> = {}
+          for (const key of Object.keys(pictures)) map[key] = thumbUrl(slug, basename(pictures[key], '.png'), vaultId)
+          input.progress?.(map)
+        } : undefined
+      })
     } finally {
       // The background sweep has no follow-up request for this deck, so nothing may keep its
       // (possibly 200MB+) model alive once the render is done — including the cache's "one
@@ -7554,7 +7988,7 @@ const latestThumbnailRequest = createLatestThumbnailRequestHandler(
 // Browser's background per-talk render. With a window-wide owner the strip's re-request ABORTED
 // the browser's render mid-talk: a partial cache, `{}` back, and the browser marked the talk done —
 // half its cards blank for the rest of the session (2026-09-15).
-ipcMain.handle('talk:thumbnails', async (_event, outlinePath: string, content: string, opts?: { lane?: string }) => {
+ipcMain.handle('talk:thumbnails', async (_event, outlinePath: string, content: string, opts?: { lane?: string; requestId?: string }) => {
   const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
   if (refusal) return null
   try {
@@ -7595,7 +8029,11 @@ ipcMain.handle('talk:thumbnails', async (_event, outlinePath: string, content: s
       logThumbnails('the video-free media contract is unavailable — skipping the background pass')
       return {}
     }
-    const result = await latestThumbnailRequest(owner, { outlinePath, content, lane, mediaOptions })
+    const requestId = typeof opts?.requestId === 'string' && /^[a-zA-Z0-9-]{1,80}$/.test(opts.requestId) ? opts.requestId : null
+    const progress = requestId ? (thumbnails: Record<string, string>): void => {
+      if (!_event.sender.isDestroyed()) _event.sender.send('talk:thumbnail-progress', { outlinePath, requestId, thumbnails })
+    } : undefined
+    const result = await latestThumbnailRequest(owner, { outlinePath, content, lane, mediaOptions, progress })
     // Backstop for the path the render callback never reaches: a superseded request still
     // PREPARED its deck, and that model would otherwise sit retained with no follow-up to use it.
     if (lane === BROWSER_THUMBNAIL_LANE) {
@@ -7713,81 +8151,140 @@ ipcMain.handle(
 )
 
 // ── Abstract read/write (ADR-0009) ───────────────────────────────────────────
-ipcMain.handle('abstract:read', (_event, talkPath: string) => {
-  // talkPath comes from the renderer: only `<talk folder>/abstract.md` inside the vault.
-  const target = abstractPath(vaultRootFor(talkPath), talkPath)
-  if (!target.ok) return null
-  const path = target.path
-  if (!existsSync(path)) return null
-  try {
-    const raw = readFileSync(path, 'utf8')
-    const fm = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/)
-    const frontmatter: Record<string, unknown> = {}
-    let body = raw
-    if (fm) {
-      body = fm[2]
-      for (const line of fm[1].split('\n')) {
-        const m = line.match(/^([A-Za-z0-9_-]+):\s?(.*)$/)
-        if (m) frontmatter[m[1]] = m[2].replace(/^["']|["']$/g, '')
-      }
-    }
-    return { raw, frontmatter, body }
-  } catch (e) {
-    console.error('[abstract:read]', e)
-    return null
-  }
-})
+ipcMain.handle('abstract:read', (_event, talkPath: string) =>
+  readAbstract(vaultRootFor(talkPath), talkPath)
+)
 
 ipcMain.handle('abstract:write', (_event, talkPath: string, raw: string): boolean => {
-  // talkPath comes from the renderer: only a talk folder inside the vault (never the vault root).
   const vaultRoot = writableRootFor(talkPath)
-  if (!vaultRoot) return false // the talk's vault is unavailable: nothing is written into it
-  const target = abstractPath(vaultRoot, talkPath)
-  if (!target.ok) { console.error('[abstract:write] refused', target.error); return false }
-  try {
-    const folder = dirname(target.path)
-    mkdirInVault(vaultRoot, folder)
-    writeFileSync(target.path, raw, 'utf8')
-    return true
-  } catch (e) {
-    console.error('[abstract:write]', e)
-    return false
-  }
+  if (!vaultRoot) return false
+  return writeAbstract(vaultRoot, talkPath, raw)
 })
 
-// ── Outline reorder (ADR-0005/0019 strip↔file sync) ──────────────────────────
-// The renderer's block indices count ONLY `### `-headed rows (GridView/SlideStrip
-// isOutlineBlock), but outline-v2 listSlideBlocks lists EVERY heading ##–###### as its
-// own block — indexing those directly moved the WRONG block (e.g. the `## Section` line)
-// and could park a section below its own subsection. Map grid indices to depth-3 heading
-// blocks and move each with its WHOLE SUBTREE (its ####–###### children travel with it),
-// which is the only structurally sound move under heading-is-slide. Returns new text;
-// does NOT write the file. `content` is the text to reorder — the open editor's buffer (one-writer
-// spec D1: the renderer mutates its buffer, then saves it); without it the file is read.
-// `placement` ('before' | 'after', optional) fixes the side of the target block the moved block lands
-// on; without it the drag direction decides, as it always has. Same `###` blocks, same indices.
-ipcMain.handle('outline:reorder', async (_event, outlinePath: string, fromIndex: number, toIndex: number, content?: unknown, placement?: unknown) => {
-  const compilerDir = getCompilerPath()
-  if (!compilerDir) return null
-  try {
-    const text = typeof content === 'string' ? content : readFileSync(outlinePath, 'utf8')
-    const { listSlideBlocks } = await import(
-      pathToFileURL(join(compilerDir, 'lib/12-outline-edit.mjs')).href
-    )
-    // The move itself is src/shared/grid-reorder.ts (`###` blocks only — the deliberate stopgap
-    // documented there; do not extend it here either).
-    return reorderGridBlocks(
-      text,
-      listSlideBlocks(text) as OutlineSlideBlock[],
-      fromIndex,
-      toIndex,
-      placement === 'before' || placement === 'after' ? placement : undefined
-    )
-  } catch (e) {
-    console.error('[outline:reorder]', e)
-    return null
+// ── Research folder (knowledge step two) ─────────────────────────────────────
+// The sheet and the agent reach the same verb (agent-verbs.ts RESEARCH_CAPTURE_VERB): scout writes the
+// file; main only checks the talk folder is inside the vault that holds it. Never throws: the sheet
+// shows the error message.
+let researchLogFile: ((message: string) => void) | null = null
+const researchLog = (message: string): void => {
+  try { researchLogFile ??= createAppendLog(join(app.getPath('userData'), 'tw-research.log')); researchLogFile(message) } catch { /* logging must never fail a capture */ }
+}
+const researchUsageControllers = new Map<string, AbortController>()
+ipcMain.on('research:cancel-usage', (event, requestId: unknown) => {
+  if (typeof requestId === 'string') researchUsageControllers.get(`${event.sender.id}:${requestId}`)?.abort()
+})
+for (const [channel, verb] of [['research:list', 'research.list'], ['research:where-used', 'research.whereUsed'], ['research:search', 'research.search']] as const) {
+  ipcMain.handle(channel, async (event, input: unknown) => {
+    const requestId = input && typeof input === 'object' && 'requestId' in input ? input.requestId : undefined
+    const key = typeof requestId === 'string' && requestId.length <= 128 ? `${event.sender.id}:${requestId}` : null
+    const controller = new AbortController()
+    if (key) { researchUsageControllers.get(key)?.abort(); researchUsageControllers.set(key, controller) }
+    const destroyed = (): void => controller.abort()
+    event.sender.once('destroyed', destroyed)
+    try {
+      return await researchReadHandler(verb, input, {
+        signal: controller.signal,
+        vaultRootFor: (dir) => availableVaults().find(v => pathStaysInside(v.root, dir) !== null)?.root ?? null,
+        vaultRoots: availableVaults().map(v => v.root), log: researchLog
+      })
+    } finally {
+      event.sender.removeListener('destroyed', destroyed)
+      if (key && researchUsageControllers.get(key) === controller) researchUsageControllers.delete(key)
+    }
+  })
+}
+ipcMain.handle('research:destinations', () => researchDestinations({ vaultRoot: null, vaultRoots: availableVaults().map(v => v.root) }))
+ipcMain.handle('research:write', async (event, op: unknown, input: unknown) => {
+  if (typeof op !== 'string') return { ok: false, error: { code: 'invalid-input', message: 'Choose a research action.' } }
+  const editor = editorWindows.get(event.sender.id)
+  if (!editor?.outlinePath) return { ok: false, error: { code: 'not-open', message: 'Open a talk first.' } }
+  const outlinePath = editor.outlinePath
+  return researchWriteHandler(op, input, {
+    vaultRoot: null, vaultRoots: availableVaults().map(v => v.root), log: researchLog,
+    activeTalkDir: () => editor.outlinePath === outlinePath ? dirname(outlinePath) : null,
+    trash: file => shell.trashItem(file),
+    insertResearch: async (file, slide) => {
+      if (editor.outlinePath !== outlinePath) return { ok: false, error: { code: 'not-open', message: 'The active talk changed. The copy was kept.' } }
+      const reply = await requestEditorDocument(editor.win, { kind: 'research-insert', outlinePath, file, slide })
+      return reply?.ok ? { ok: true } : { ok: false, error: { code: 'insert-failed', message: reply && !reply.ok ? reply.error : 'The editor did not answer. The copy was kept.' } }
+    }
+  })
+})
+ipcMain.handle('research:insert', async (event, input: unknown, slide: unknown) => {
+  const editor = editorWindows.get(event.sender.id)
+  if (!editor?.outlinePath) return { ok: false, error: { code: 'not-open', message: 'Open a talk first.' } }
+  const outlinePath = editor.outlinePath
+  return (slide === true ? RESEARCH_MAKE_SLIDE_VERB : RESEARCH_INSERT_VERB).run(input, {
+    vaultRoot: null, vaultRoots: availableVaults().map(v => v.root),
+    activeTalkDir: () => editor.outlinePath === outlinePath ? dirname(outlinePath) : null,
+    insertResearch: async (file, makeSlide) => {
+      const reply = await requestEditorDocument(editor.win, { kind: 'research-insert', outlinePath, file, slide: makeSlide })
+      return reply?.ok ? { ok: true } : { ok: false, error: { code: 'insert-failed', message: reply && !reply.ok ? reply.error : 'The editor did not answer. Try again.' } }
+    }
+  })
+})
+ipcMain.handle('research:reveal-source', (_event, input: unknown) => revealResearchSource(input, {
+  vaultRoot: null, vaultRoots: availableVaults().map(v => v.root), log: researchLog,
+  reveal: (file) => { if (!E2E) shell.showItemInFolder(file) }
+}))
+ipcMain.handle('research:capture', (_event, input: unknown) =>
+  researchCaptureHandler(input, { vaultRootFor: (dir) => vaultRootFor(dir) ?? null, log: researchLog })
+)
+ipcMain.handle('research:reveal-folder', (_event, talkDir: unknown) =>
+  researchRevealHandler(talkDir, {
+    vaultRootFor: (dir) => vaultRootFor(dir) ?? null,
+    reveal: (path) => { if (!E2E) shell.showItemInFolder(path) }
+  })
+)
+
+// ── Slide Scratchpad (scratchpad-ipc.ts): the open talk's scratch folder; agent files read-only ─────────
+// An agent's HTML page is previewed through twpresent://preview/… from its own small store, so it never
+// pushes a deck's preview out of slidePreviewStore.
+const scratchpadPreviewStore = createSlidePreviewStore(6)
+const scratchpadHtmlPreview = createScratchpadHtmlPreviews({ compilerDir: () => getCompilerPath(), store: scratchpadPreviewStore })
+const scratchpadHtmlThumbs = createHtmlThumbnailer({
+  cacheDir: join(app.getPath('userData'), 'cache', 'scratchpad-html-thumbs'),
+  preview: scratchpadHtmlPreview,
+  capture: createHtmlCapture({ store: scratchpadPreviewStore })
+})
+const scratchpadIpc = registerScratchpadIpc({
+  ipc: ipcMain,
+  outlinePathFor: (event) => editorWindows.get(event.sender.id)?.outlinePath ?? null,
+  // A picture or SVG loads in an <img> through the existing twfile:// path (guarded to the vault root).
+  storeOptions: {
+    fileUrlFor: (absolutePath) => `twfile://f/${Buffer.from(absolutePath, 'utf8').toString('base64url')}`,
+    renderedTextFor: (absolutePath) => scratchpadHtmlThumbs.textFor(absolutePath)
+  },
+  htmlPreview: scratchpadHtmlPreview,
+  // Thumbnails of agent HTML pages: captured once in a hidden window, cached in userData (never in the talk).
+  htmlThumb: scratchpadHtmlThumbs,
+  htmlText: (path) => scratchpadHtmlThumbs.textFor(path),
+  revealFolder: (folder) => {
+    try { mkdirSync(folder, { recursive: true }) } catch { /* the reveal below says nothing then */ }
+    if (!E2E) shell.showItemInFolder(folder)
+  },
+  // Insert visual only (ticket 2): a picture through the image drawer's pool import (a lookup that answers this one
+  // file only), an SVG or a page through Insert › HTML page…'s checked copy into the talk's assets folder.
+  importVisual: createScratchVisualImporter({
+    importPicture: (path, outlinePath, provenance) => importImageForTalk(
+      { ...imageImportDeps, fileFor: async (asked) => (asked === path ? { absPath: path, provenance } : null) }, path, outlinePath),
+    copyIntoAssets: async (path, outlinePath, kind) => {
+      const root = writableTalkRoot(outlinePath)
+      if (!root) return { ok: false, reason: 'vault-unavailable', message: HTML_PAGE_TEXT.vaultUnavailable }
+      return importHtmlPage({ root, outlinePath }, path, htmlPageRunImport, undefined, undefined, { kind, alwaysCopy: true })
+    }
+  }),
+  slideSource: (slide, outlinePath) => {
+    const holding = vaultRegistry.resolve(outlinePath)?.vault.root
+    const own = slide.vaultId ? vaultRegistry.get(slide.vaultId) : null
+    const roots = [holding, own?.open ? own.root : undefined, currentVaultRoot()].filter((r): r is string => typeof r === 'string' && r !== '')
+    const source = slideSourceOutline(slide, roots)
+    if (!source) return null
+    const hit = vaultRegistry.resolve(source)
+    return { outlinePath: source, root: hit && hit.vault.open && vaultAvailable(hit.vault) ? hit.vault.root : null }
   }
 })
+app.on('before-quit', () => scratchpadIpc.closeAll())
 
 // ── Per-item icon override (ADR-0021 icon picker) ────────────────────────────
 // Pin (or clear, iconKey=null) the icon on ONE top-level list item of a slide, by writing the
@@ -8056,7 +8553,8 @@ function outlineTools(): Promise<OutlineTools> {
   return instantOutlineTools
 }
 
-ipcMain.handle('history:instant-anchors', async (_event, payload: { talkSlug?: unknown; runId?: unknown }) => {
+ipcMain.handle('history:instant-anchors', async (_event, payload: { talkSlug?: unknown; runId?: unknown; home?: unknown }) => {
+  if (payload?.home === null) return {}
   const vaultRoot = currentVaultRoot()
   const talkSlug = String(payload?.talkSlug ?? ''), runId = String(payload?.runId ?? '')
   // Only this talk's own Run, from this talk's folder (the names are validated as path segments).
@@ -8078,7 +8576,8 @@ ipcMain.handle('history:instant-anchors', async (_event, payload: { talkSlug?: u
 
 // Reactions ticket 06: where each slide a Run's questions and reactions name sits in the talk NOW
 // (number and title for the Run card), keyed by slide id; null when the slide is no longer there.
-ipcMain.handle('history:feedback-slides', async (_event, payload: { talkSlug?: unknown; runId?: unknown }) => {
+ipcMain.handle('history:feedback-slides', async (_event, payload: { talkSlug?: unknown; runId?: unknown; home?: unknown }) => {
+  if (payload?.home === null) return {}
   const vaultRoot = currentVaultRoot()
   const talkSlug = String(payload?.talkSlug ?? ''), runId = String(payload?.runId ?? '')
   const run = vaultRoot ? readRunForTalk(vaultRoot, talkSlug, runId) : null
@@ -8099,7 +8598,8 @@ ipcMain.handle('history:feedback-slides', async (_event, payload: { talkSlug?: u
   }
 })
 
-ipcMain.handle('history:add-instant-slide', async (_event, payload: { talkSlug?: unknown; runId?: unknown; entryId?: unknown }) => {
+ipcMain.handle('history:add-instant-slide', async (_event, payload: { talkSlug?: unknown; runId?: unknown; home?: unknown; entryId?: unknown }) => {
+  if (payload?.home === null) return { ok: false, error: 'This action requires a Run in an open vault.' }
   const vaultRoot = writableVaultRoot()
   if (!vaultRoot) return { ok: false, error: 'No vault is open.' }
   const talkSlug = String(payload?.talkSlug ?? ''), runId = String(payload?.runId ?? ''), entryId = String(payload?.entryId ?? '')
@@ -8546,7 +9046,7 @@ ipcMain.handle('vault:list-folders', async (_event, vaultId?: string) => {
     for (const entry of entries) {
       const name = entry.name
       // `_`-prefixed dirs are system areas (_assets, _SLIDE-VERSIONS), never category folders.
-      if (name.startsWith('.') || name.startsWith('_') || SKIP.has(name)) continue
+      if (name.startsWith('.') || name.startsWith('_') || name.toLowerCase() === 'research' || SKIP.has(name)) continue
       if (!entry.isDirectory()) continue
       const full = join(dir, name)
       if (await isTalkDir(full)) continue // a talk, not a category folder
@@ -8743,33 +9243,47 @@ async function importerRow(): Promise<ImporterRow> {
  *  the single-instance lock (top of this file) until it exits. */
 async function runSetupCommand(args: string[]): Promise<void> {
   app.dock?.hide()
-  let code = 1
   const write = (stream: NodeJS.WriteStream, line: string): void => { try { stream.write(`${line}\n`) } catch { /* the reader has gone */ } }
-  try {
-    const ops = createSetupOperations({
-      connection: cloudflareConnection(),
-      liveService: liveService(),
-      recording: recordingStorage(),
-      transcription: transcriptionSetup(),
-      importer: importerRow,
-      publishSettings: { read: publishSettings, apply: applyPublishSettings },
-      recordingSettings: { read: recordingSettings, apply: applyRecordingSettings },
-      watchLiveRow: (listener) => { liveRowListeners.add(listener); return () => { liveRowListeners.delete(listener) } },
-      applyShareAddress: () => applyShareAddress(),
-    })
-    code = await runSetup(args, {
-      out: (line) => write(process.stdout, line),
-      err: (line) => write(process.stderr, line),
-      readSecret: (prompts, pipeHint) => readSecretInput(process.stdin, process.stderr, prompts, pipeHint),
-    }, ops, {
-      // A test harness's S3 stand-in on loopback, accepted as the recording endpoint under the same
-      // three conditions as the Cloudflare API override: unpackaged, TW_E2E=1, and named exactly.
-      testEndpoint: !app.isPackaged && E2E ? process.env.TW_E2E_RECORDING_ENDPOINT ?? null : null,
-    })
-  } catch {
-    write(process.stderr, 'Something went wrong. Nothing more was done.')
-    code = 1
-  }
+  // The preferences setup reads and writes (the recording endpoint and bucket, the publishing fields)
+  // live in the settings store: it is opened after the migration, as the app opens it, and every
+  // readConfig / writeConfig below goes through it (Sol review 1, #6). Never config.json's old copies.
+  // runWithSettings (settings-open.ts, Sol review 2) refuses a store that did not open or may not be
+  // used (a newer version's file, another app's, a damaged one) with "Nothing was done.", and fails
+  // the command when a preference it wrote was not saved.
+  const code = await runWithSettings(
+    () => openSettings({
+      dir: app.getPath('userData'),
+      appVersion: app.getVersion(),
+      file: { read: () => configFile().read() as Record<string, unknown>, write: (patch) => configFile().write(patch as Partial<Config>) },
+      watch: false,
+      log: (line) => write(process.stderr, line)
+    }),
+    async (opened) => {
+      settingsOverlay = opened.overlay
+      const ops = createSetupOperations({
+        connection: cloudflareConnection(),
+        liveService: liveService(),
+        recording: recordingStorage(),
+        transcription: transcriptionSetup(),
+        importer: importerRow,
+        publishSettings: { read: publishSettings, apply: applyPublishSettings },
+        recordingSettings: { read: recordingSettings, apply: applyRecordingSettings },
+        watchLiveRow: (listener) => { liveRowListeners.add(listener); return () => { liveRowListeners.delete(listener) } },
+        applyShareAddress: () => applyShareAddress(),
+      })
+      return runSetup(args, {
+        out: (line) => write(process.stdout, line),
+        err: (line) => write(process.stderr, line),
+        readSecret: (prompts, pipeHint) => readSecretInput(process.stdin, process.stderr, prompts, pipeHint),
+      }, ops, {
+        // A test harness's S3 stand-in on loopback, accepted as the recording endpoint under the same
+        // three conditions as the Cloudflare API override: unpackaged, TW_E2E=1, and named exactly.
+        testEndpoint: !app.isPackaged && E2E ? process.env.TW_E2E_RECORDING_ENDPOINT ?? null : null,
+      })
+    },
+    (line) => write(process.stderr, line)
+  )
+  settingsOverlay = null
   // A test harness may confirm that the command opened no window (an unpackaged test run only).
   if (E2E && !app.isPackaged) write(process.stderr, `[setup] windows=${BrowserWindow.getAllWindows().length}`)
   // Standard output may be a pipe, which Node writes to later: everything is handed over before exit.
@@ -8781,12 +9295,162 @@ async function runSetupCommand(args: string[]): Promise<void> {
 
 // ── App lifecycle ──────────────────────────────────────────────────────────
 
+
+// ── Shared settings (0.42): the store, the Settings window, the menu bar (settings-host.ts) ──────────
+// Started first thing at launch (app.whenReady below), before anything reads a preference.
+let sharedSettings: TalkWeaverSettings | null = null
+let settingsKeymap: SettingsKeymap | null = null
+let lastShortcutKeys = ''
+
+/** Opens the Settings window (one only), at `section` when it names one. False before the store is open. */
+function openSettingsWindow(section?: string): boolean {
+  if (!sharedSettings) return false
+  sharedSettings.host.openSettingsWindow(typeof section === 'string' && section ? section : undefined)
+  return true
+}
+
+/** Every change to the store, from anywhere, reaches the windows and services that follow a preference. */
+function preferencesChanged(keys: string[], shortcutKeys: Readonly<Record<string, string>>): void {
+  const has = (...wanted: string[]): boolean => wanted.some((k) => keys.includes(k))
+  if (has('updates.checkForNewVersions')) updateChecker?.settingChanged()
+  if (has('writing.actionBar')) broadcastActionBar()
+  if (has('general.placeChip')) broadcastToWindows('place-chip:changed', { visible: placeChipVisible() })
+  if (has('general.guideButton')) { broadcastToWindows('guide-button:changed', { visible: guideButtonVisible() }); pushPresentChapter() }
+  if (has('writing.plainFont', 'writing.plainTextSize')) broadcastToWindows('plain-look:changed', plainLook())
+  if (has('recording.endpoint', 'recording.bucket', 'recording.discardShorter')) recordingStorage().settingsChanged()
+  if (has('publishing.customDomain')) void cloudflareConnection().settingsChanged().catch(() => {})
+  // The Settings window and CLI can enable main's background image-text pass after startup.
+  if (has('general.imageText') && getConfig('ocrEnabled', true)) ocrAllVaultImages()
+  // Turning backup on, or a new folder: whatever is enrolled and stale is backed up (never a vault scan).
+  if (has('presenting.backup', 'presenting.backupFolder') && getConfig('backupEnabled', false) && getConfig('backupFolder', undefined)) {
+    setTimeout(() => { runLaunchBackup().catch(() => {}) }, 400)
+  }
+  const shortcuts = JSON.stringify(shortcutKeys)
+  if (has(KEYMAP_SETTING) || shortcuts !== lastShortcutKeys) {
+    // A registry shortcut changed (a rebind or reset in Settings, an import, the CLI): that command's
+    // app-layer key goes too, so a reset shows the default (Sol review 1, #5). The write comes back here.
+    if (shortcuts !== lastShortcutKeys && settingsKeymap) {
+      let before: Record<string, string> = {}
+      try { before = JSON.parse(lastShortcutKeys || '{}') as Record<string, string> } catch { /* none known */ }
+      void settingsKeymap.registryChanged(before, shortcutKeys)
+    }
+    lastShortcutKeys = shortcuts
+    if (settingsKeymap) broadcastToWindows('keymap:changed', settingsKeymap.overrides())
+  }
+}
+
+async function startSharedSettings(): Promise<void> {
+  const dir = app.getPath('userData')
+  sharedSettings = await startSettingsHost({
+    dir,
+    appVersion: app.getVersion(),
+    file: { read: () => configFile().read() as Record<string, unknown>, write: (patch) => configFile().write(patch as Partial<Config>) },
+    window: { preload: join(__dirname, '../preload/settings.js'), url: settingsPageUrl(process.env['ELECTRON_RENDERER_URL'], __dirname) },
+    slots: createSecretSlots({
+      cloudflare: {
+        has: () => secrets().has('cloudflare-token'),
+        save: (token) => cloudflareConnection().saveToken(token),
+        disconnect: () => cloudflareConnection().disconnect()
+      },
+      recording: {
+        has: () => recordingStorage().hasKeys(),
+        save: (keys) => recordingStorage().saveKeys(keys),
+        clear: () => recordingStorage().clearKeys()
+      }
+    }),
+    openMain: () => {
+      const win = targetEditorFor(null)
+      if (!win) { createWindow(); return }
+      if (!E2E) bringToFront(win)
+    },
+    runInEditor: (commandId) => {
+      const win = targetEditorFor(null)
+      if (!win) return
+      // A window made just now runs it once its page has loaded.
+      if (win.webContents.isLoading()) win.webContents.once('did-finish-load', () => win.webContents.send('app:run-command', commandId))
+      else win.webContents.send('app:run-command', commandId)
+    },
+    runInMain: (commandId) => {
+      if (commandId !== 'new-window') return false
+      createWindow()
+      guideLearn.commandRan('new-window', { inExample: false })
+      return true
+    },
+    changed: (keys, state) => preferencesChanged(keys, state.keys)
+  })
+  settingsOverlay = sharedSettings.overlay
+  settingsKeymap = createSettingsKeymap(sharedSettings.store, { bridleIdOfKeymapId, keymapIdOf })
+  lastShortcutKeys = JSON.stringify(sharedSettings.store.view().keys)
+}
+
+// Every app window may open Settings (its own window), at a section.
+ipcMain.handle('settings-window:open', (_event, section: unknown) => openSettingsWindow(typeof section === 'string' ? section : undefined))
+// The Settings window's Get started page: these run in the editor window. Only the Settings window may ask.
+handleFromSettingsWindow('settings-window:editor-action', () => false, (_event, action: unknown) => {
+  if (action === 'whats-new') {
+    const win = targetEditorFor(null) ?? createWindow()
+    const send = (): void => win.webContents.send('app:run-command', 'whats-new')
+    if (win.webContents.isLoading()) win.webContents.once('did-finish-load', send)
+    else send()
+    return true
+  }
+  if (action !== 'open-guide' && action !== 'restore-example' && action !== 'add-vault') return false
+  const win = targetEditorFor(null) ?? createWindow()
+  if (!E2E) bringToFront(win)
+  const send = (): void => win.webContents.send('settings-window:editor-action', action)
+  if (win.webContents.isLoading()) win.webContents.once('did-finish-load', send)
+  else send()
+  return true
+})
+ipcMain.handle('settings-window:example-removed', () => readConfig().exampleVaultRemoved === true && !vaultRegistry.list().some((v) => v.example))
+// The editor keymap's overrides (keymap/store.ts): kept in the store, the same for every window.
+ipcMain.handle('keymap:get', () => settingsKeymap?.overrides() ?? {})
+ipcMain.handle('keymap:set', async (_event, wanted: unknown) => {
+  const overrides = overridesArg(wanted)
+  if (!settingsKeymap || !overrides) return { ok: false, overrides: settingsKeymap?.overrides() ?? {} }
+  const r = await settingsKeymap.set(overrides)
+  return { ok: r.ok, overrides: r.overrides }
+})
+// Answers consumed (the renderer may delete its localStorage copy) or retry (it keeps it): Sol review 1, #9.
+ipcMain.handle('keymap:move-legacy', async (_event, legacy: unknown) => {
+  const overrides = legacyOverridesArg(legacy)
+  if (!settingsKeymap || !overrides) return { outcome: 'retry', overrides: settingsKeymap?.overrides() ?? {} }
+  return settingsKeymap.moveLegacy(
+    overrides,
+    () => configFile().read().keymapOverridesMoved === true,
+    () => configFile().write({ keymapOverridesMoved: true })
+  )
+})
+
 app.whenReady().then(async () => {
   // A setup refused because the app is open has already exited (app.exit above); one holding the
   // lock runs its command and exits.
+  if (SETTINGS_ARGS) {
+    let code = 1
+    try {
+      code = await runTalkWeaverSettings(SETTINGS_ARGS, {
+        dir: app.getPath('userData'),
+        version: app.getVersion(),
+        io: {
+          stdout: (text) => { try { process.stdout.write(text) } catch { /* the reader has gone */ } },
+          stderr: (text) => { try { process.stderr.write(text) } catch { /* the reader has gone */ } }
+        }
+      })
+    } catch { try { process.stderr.write('The settings command could not run.\n') } catch { /* gone */ } }
+    // app.exit does not flush pipes. A trailing write callback waits for every queued byte on
+    // each stream, including error output, without closing either stream. A gone reader is safe.
+    await Promise.all([process.stdout, process.stderr].map((stream) => new Promise<void>((done) => {
+      try { stream.write('', () => done()) } catch { done() }
+    })))
+    app.exit(code)
+    return
+  }
   if (SETUP_ARGS) { if (holdsInstanceLock) await runSetupCommand(SETUP_ARGS); return }
   // A second instance on this user-data folder is quitting (the lock above): it starts nothing.
   if (!holdsInstanceLock) return
+  // Shared settings first: the preferences are moved in (or again after a downgrade) and the store
+  // opened before anything reads one. A store that cannot open leaves config.json as the source.
+  try { await startSharedSettings() } catch (error) { console.error('[settings] the settings store did not open', error) }
   // Owner tokens (owner-tokens.ts). Before anything reads a registry: with the switch, write them
   // back into the registries for an older version and quit; otherwise move any that are still in a
   // registry into the secrets store. Only counts are logged.
@@ -8927,14 +9591,23 @@ app.whenReady().then(async () => {
   } catch (error) { console.warn('[shared-talk] interrupted creates not read', error) }
   // Feedback rail: open the owner socket of every shared talk (never blocks launch).
   try { sharedTalkFeedback().sync() } catch (error) { console.warn('[shared-talk] feedback start failed', error) }
-  installApplicationMenu()
+  // The menu bar is generated from the command registry by the shared settings host (startSharedSettings).
+  if (!sharedSettings) installFallbackMenu()
+  updateChecker = installUpdateNotices({
+    editorWindows: () => [...editorWindows.values()].map((entry) => entry.win).concat((sharedSettings?.host.settingsWindow() as BrowserWindow | null) ?? []),
+    isPresentingNow: () => presentWindows.size > 0 || recordingOpen() || (liveSessions?.anyOpen() ?? false),
+    readConfig,
+    writeConfig,
+    e2e: E2E,
+  })
+  onRecordingOpenChange(() => updateChecker?.busyChanged())
   // Every permission request and check is answered by one table from app start: the microphone to a
   // presenter window's own page, clipboard and full screen to a window's own page, nothing to a
   // frame embedded in a slide (recording-permissions.ts).
   installRecordingPermissions(session.defaultSession)
   // A page embedded in a slide does not reach this Mac's services or the local network
-  // (local-address-filter.ts). The session's ONE onBeforeRequest listener; the two hooks below are
-  // other events (onHeadersReceived, onBeforeSendHeaders) and are untouched.
+  // (local-address-filter.ts). The session's ONE onBeforeRequest listener; the player Referer hook
+  // below is another event (onBeforeSendHeaders) and is untouched.
   // A request with no frame (main's own, or a worker's) may reach a local address only at a host
   // registered here: the dev server in development. Main asks for no other local address this way.
   // Only an app window saves a download; a deck window, a hidden renderer and a request with no
@@ -8945,28 +9618,10 @@ app.whenReady().then(async () => {
     console.warn(`[download] cancelled ${String(item?.getURL?.() ?? '').slice(0, 120)} from window ${String(contents?.id ?? '?')}: only the editor saves downloads`)
   })
   installLocalAddressFilter(session.defaultSession, { appLocalHosts: [appLocalHostOf(process.env['ELECTRON_RENDERER_URL'])].filter((host): host is string => !!host) })
-  // Let embedded iframes load sites that would otherwise refuse framing (X-Frame-Options /
-  // CSP frame-ancestors). Scoped to SUB-FRAMES only, so app/editor chrome and top-level loads
-  // are untouched. App-only — a shared HTML file in a browser can't do this (hence the compile-
-  // time "Open ↗" caption beside remote embeds).
-  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-    if (details.resourceType !== 'subFrame') {
-      callback({})
-      return
-    }
-    const headers = details.responseHeaders ?? {}
-    for (const key of Object.keys(headers)) {
-      const lower = key.toLowerCase()
-      if (lower === 'x-frame-options') {
-        delete headers[key]
-      } else if (lower === 'content-security-policy') {
-        headers[key] = (headers[key] as string[]).map((v) =>
-          v.replace(/frame-ancestors[^;]*;?/gi, '').trim()
-        )
-      }
-    }
-    callback({ responseHeaders: headers })
-  })
+  // A page that refuses to be framed (X-Frame-Options, CSP frame-ancestors) is refused in the app
+  // too: no response header is rewritten, for any frame. Such a page shows Chromium's refusal in the
+  // frame, beside the "Open <host> ↗" link the compiler gives every remote page, and Check embeds
+  // reports it as "Refuses framing" (e2e/check-remote-page-framing.mjs).
 
   // 2026-07-08: YouTube's embedded player refuses to configure without an HTTP Referer
   // ("Error 153 — video player configuration error"). Decks load from file:// / twpresent://,
@@ -9015,14 +9670,18 @@ app.whenReady().then(async () => {
     } catch { /* fall through */ }
     callback({ error: -2 })
   })
-  // Serve a recorded Session's local audio: twrec://<sessionId> -> {userData}/recordings/<id>.webm.
-  // The session id is a controlled `sess-<utc>-<rand>` token (no user path input), so serving the
-  // file directly is safe; Range requests (seeking) work via the stream-privileged scheme.
+  // Serve only a segment named by this talk's Run (or its recovery marker).
   protocol.registerFileProtocol('twrec', (request, callback) => {
     try {
-      const sessionId = new URL(request.url).hostname
-      if (!sessionId) { callback({ error: -2 }); return }
-      const p = recordingAudioPath(app.getPath('userData'), sessionId)
+      const url = new URL(request.url)
+      const sessionId = url.hostname
+      const talkSlug = url.searchParams.get('talk')
+      if (!sessionId || !talkSlug) { callback({ error: -2 }); return }
+      const home = url.searchParams.get('home')
+      const vault = home === null ? currentVaultRoot() ?? null : home === '' ? null
+        : availableVaults().some((v) => v.root === home) ? writableRoot(home, rootFs) : undefined
+      if (vault === undefined) { callback({ error: -2 }); return }
+      const p = recordingAudioPath(app.getPath('userData'), sessionId, vault, talkSlug)
       if (p && existsSync(p)) { callback({ path: p }); return }
     } catch { /* fall through */ }
     callback({ error: -2 })
@@ -9034,7 +9693,7 @@ app.whenReady().then(async () => {
       const url = new URL(request.url)
       if (url.hostname === 'preview') {
         const previewId = slidePreviewIdFromUrl(request.url)
-        const html = previewId == null ? undefined : slidePreviewStore.get(previewId)
+        const html = previewId == null ? undefined : slidePreviewStore.get(previewId) ?? scratchpadPreviewStore.get(previewId)
         return html == null
           ? new Response('Preview not found', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' } })
           : new Response(html, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } })
@@ -9086,7 +9745,6 @@ app.whenReady().then(async () => {
   // thumbnail directory is missing); the persisted prerender ledger skips compilation entirely
   // for unchanged talks while keeping cross-Talk search backed by rendered slides (ADR-0019).
   loadSearchIndexFromDisk()
-  loadOcrCache()
   // Temp files an interrupted config write left behind (config-file.ts), older than a minute.
   configFile().sweepStaleTemps(60_000)
   // SCALE (2026-07-20, Dominik): a vault can now hold thousands of imported slides. The old startup
@@ -9097,15 +9755,23 @@ app.whenReady().then(async () => {
   // least essential pass) is OPT-IN via `ocrEnabled` (default off). Only the light search-index warm
   // still runs at startup so cross-talk ⌘K stays instant; prerenderAllThumbnails remains available
   // for an explicit "rebuild previews" action.
+  // 2026-10-20: thumbnails are rendered ahead of the Browser again, but by the bounded prewarm
+  // (thumbnail-prewarm.ts): one video-free talk at a time, lowest render priority, paused under
+  // memory pressure and while presenting — not the eager sweep above.
   setTimeout(() => {
     // Frontmatter details and delivery summaries for talk search: cheap, read before first use.
     talkSearch.warm().catch(() => {})
     warmSearchIndex()
       .catch(() => {})
       .finally(() => {
-        if (getConfig('ocrEnabled', false)) {
-          setTimeout(() => { ocrAllVaultImages().catch(() => {}) }, 3000)
+        // Image text is on by default (Settings can turn the background pass off); one helper
+        // process at a time, queued behind a debounce, never blocking search.
+        if (getConfig('ocrEnabled', true)) {
+          setTimeout(() => { ocrAllVaultImages() }, 3000)
         }
+        // Thumbnail prewarm: after the search rows it reads are warm and the image-text pass has
+        // started; it then waits its own start delay and works only while nothing else is.
+        if (PREWARM_ENABLED) thumbnailPrewarm.start()
       })
   }, 800)
   // Presentation backup (ADR-0024): ONE pass over the enrolled talks that are stale, never a
@@ -9143,13 +9809,25 @@ app.on('window-all-closed', () => {
 // kept (ticket 12 round 2). What does not finish in time keeps its note: reported at the next start,
 // and replaced on the service when the talk is next shared.
 let sharedTalkCreatesDrained = false
+// Preference writes the store has not answered yet are waited for (the overlay queues them), then the store is closed.
+let sharedSettingsClosed = false
 app.on('will-quit', (event) => {
+  if (sharedSettings && !sharedSettingsClosed) {
+    sharedSettingsClosed = true
+    event.preventDefault()
+    const closing = sharedSettings
+    // Electron ignores a re-entrant quit while this will-quit callback is still unwinding.
+    // Disposal can settle in a microtask; resume on the next turn so the quit is honoured.
+    void Promise.race([closing.dispose(), new Promise((done) => setTimeout(done, 3000))]).catch(() => {}).finally(() => setImmediate(() => app.quit()))
+    return
+  }
   if (!sharedTalkCreatesDrained && sharedTalkService?.createsPending()) {
     sharedTalkCreatesDrained = true
     event.preventDefault()
     void sharedTalkService.drainCreates(5000).catch(() => {}).finally(() => app.quit())
     return
   }
+  void thumbnailPrewarm.stop()
   liveSessions?.shutdown()
   sharedTalkFeedbackService?.stopAll()
   try { localLiveWorker?.process.kill('SIGTERM') } catch { /* already stopped */ }
@@ -9162,5 +9840,6 @@ app.on('will-quit', (event) => {
 app.on('activate', () => {
   // The setup command never opens a window, whatever macOS asks of it.
   if (SETUP_ARGS || !holdsInstanceLock) return
-  if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  // Settings and hidden utility windows are not editors. createWindow keeps E2E runs hidden.
+  if (!targetEditorFor(null)) createWindow()
 })

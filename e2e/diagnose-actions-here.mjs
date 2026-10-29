@@ -47,9 +47,10 @@ try {
   const line = (text) => page.locator('.cm-content .cm-line', { hasText: text }).first()
 
   // 1. ⌘K on a slide heading lists heading actions, in task groups, and the chip counts them.
-  await line('### Four stalls').click()
+  await line('Four stalls').click()
   await page.waitForFunction(() => document.querySelector('[data-testid="status-place"]')?.getAttribute('data-place') === 'slide-heading', null, { timeout: 4000 })
   const expected = await chipCount()
+  const caretBox = await page.evaluate(() => { const v = document.querySelector('.cm-content').cmTile.root.view; const r = v.coordsAtPos(v.state.selection.main.head); return { x: r.left, y: r.bottom + 4 } })
   await page.keyboard.press('Meta+k')
   await panel.waitFor({ timeout: 4000 })
   const headingRows = await rowKeys()
@@ -61,8 +62,13 @@ try {
   record('rows sit under task-group headings in order', groups[0] === 'Write the outline' && groups.includes('Build a slide') && groups.indexOf('Build a slide') < groups.indexOf('Reuse slides'), groups.join(' | '))
   const lastLabel = await page.locator('[data-actions-here-all]').innerText()
   record('the last row is "All commands… ⇧⌘P"', /All commands…\s*⇧⌘P/.test(lastLabel.replace(/\s+/g, ' ')), JSON.stringify(lastLabel))
-  const small = await panel.evaluate((node) => { const r = node.getBoundingClientRect(); return { w: r.width, centred: Math.abs(r.left + r.width / 2 - window.innerWidth / 2) < 40 } })
-  record('the panel is small and at the caret, not a centred dialog', small.w <= 420 && !small.centred, JSON.stringify(small))
+  const small = await panel.evaluate((node, caret) => {
+    const r = node.getBoundingClientRect()
+    const x = Math.max(8, Math.min(caret.x, innerWidth - r.width - 8))
+    const y = Math.max(8, Math.min(caret.y, innerHeight - r.height - 8))
+    return { w: r.width, dx: Math.abs(r.left - x), dy: Math.abs(r.top - y) }
+  }, caretBox)
+  record('the panel is small and anchored at the caret within the viewport', small.w <= 420 && small.dx <= 1 && small.dy <= 1, JSON.stringify(small))
 
   const iconless = await page.$$eval('[data-actions-here-row], [data-actions-here-all]', (nodes) => nodes.filter((n) => !n.querySelector('.actions-here-icon svg.lucide')).map((n) => n.getAttribute('data-actions-here-row') ?? 'all'))
   record('every row carries a lucide icon (owner check 10 Oct)', iconless.length === 0, iconless.join(', '))

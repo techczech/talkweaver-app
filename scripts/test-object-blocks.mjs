@@ -175,8 +175,8 @@ const blocks = detectObjectBlocks(doc)
 const kinds = blocks.map((block) => block.kind)
 assert.deepEqual(
   kinds,
-  ['trigger-table', 'gfm-table', 'mermaid', 'svg'],
-  'python fence is NOT an object'
+  ['trigger-table', 'gfm-table', 'mermaid', 'svg', 'code'],
+  'ADR-0042 (owner lock 2026-10-28): every closed fence is an object; a python fence is a code card'
 )
 
 const trig = blocks[0]
@@ -376,7 +376,11 @@ assert.equal(
 )
 
 const demoted = detectObjectBlocks('```mermaid code\nflowchart LR\n  A --> B\n```\n')
-assert.deepEqual(demoted, [], 'a second fence token of code demotes a drawable fence')
+assert.deepEqual(
+  demoted.map((block) => [block.kind, block.info]),
+  [['code', 'mermaid code']],
+  'the whole info string is the language (compiler takeFence): ```mermaid code is a code card, never a diagram'
+)
 
 const prose = detectObjectBlocks('A prose sentence ending in {table}\n- stays prose\n')
 assert.deepEqual(prose, [], 'a trailing token on prose is not an authored Trigger line')

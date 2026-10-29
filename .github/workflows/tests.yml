@@ -46,10 +46,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
       # test:board-panel (unit tier) runs `bun test`, so bun is needed before test:unit.
       - uses: oven-sh/setup-bun@v2
-      - run: npm ci
+        with:
+          bun-version-file: .bun-version
+      - name: Cache Bun packages
+        if: ${{ inputs.hosted }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+      - run: bun install --frozen-lockfile
       - run: npm run typecheck
       - name: Unit tier (minus macOS-only scripts)
         run: |
@@ -77,9 +84,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
       - uses: oven-sh/setup-bun@v2
-      - run: npm ci
+        with:
+          bun-version-file: .bun-version
+      - name: Cache Bun packages
+        if: ${{ inputs.hosted }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+      - run: bun install --frozen-lockfile
       - run: npm run test:unit
 
   browser-tiers:
@@ -101,9 +115,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
       - uses: oven-sh/setup-bun@v2
-      - run: npm ci
+        with:
+          bun-version-file: .bun-version
+      - name: Cache Bun packages
+        if: ${{ inputs.hosted }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+      - run: bun install --frozen-lockfile
       # On the Studio runner PLAYWRIGHT_BROWSERS_PATH (runner .env) points at a shared
       # cache under ~/actions-runner, so browsers are not installed per user or globally.
       - name: Install Playwright Chromium

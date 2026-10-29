@@ -381,3 +381,19 @@ console.log('layout verbs: all checks passed')
   assert.equal(squash(previewLayout(listSlide, 'ab1', 'numbered')), squash(previewLayout(previewLayout(listSlide, 'ab1', 'numbered'), 'ab1', 'numbered')))
   console.log('ok: Icon list and Numbered list differ on a Cards slide (the list styles take it to List)')
 }
+
+// Explain's chat insertion reuses the picker's empty-slide starter path.
+for (const layout of ['chat', 'chat-lanes']) {
+  const original = '### Keep this title\n{id=chat-example}\n\n### Following slide\n{id=following}\n\nExisting body\n'
+  const inserted = setLayout(original, 'chat-example', layout, [], true).outline
+  assert.equal((inserted.match(/^### /gm) ?? []).length, 2, 'starter never introduces another heading')
+  assert.match(inserted, /^### Keep this title\n/)
+  assert.match(inserted, /```chat\nuser:/)
+  assert.match(inserted, /\nbot:.*\n```/)
+  assert.match(inserted, /### Following slide\n\{id=following\}\n\nExisting body/)
+  const nonempty = inserted.replace('user: What changed', 'user: **literal** What changed')
+  assert.equal(setLayout(nonempty, 'chat-example', layout, [], true).outline, setLayout(nonempty, 'chat-example', layout).outline, 'starter preserves an authored chat body')
+}
+
+const unstampedChat = setLayout('### Empty\n\n', {headingLine: 1}, 'chat', [], true).outline
+assert.match(unstampedChat, /```chat\nuser:/, 'the example also inserts before the empty slide has a stamped id')

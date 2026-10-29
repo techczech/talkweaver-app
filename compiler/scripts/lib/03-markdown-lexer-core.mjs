@@ -25,6 +25,7 @@
 import { isImageBlockLine, IMAGE_SYNTAX_RE, imageSyntaxIsVideo, imageSyntaxIsAudio } from "./image-line-rules.mjs";
 export { isImageBlockLine };
 import { isVideoEmbedUrl, normalizeEmbedUrl, isBareUrl, timelineBlockFields, claimFromBoldParagraph, parseTrace } from "./02-triggers-layout.mjs";
+import { hasCaptureToken, isCaptureViewsMarker } from "./live-page-capture-markup.mjs";
 import {
   chartObjectTokenAt,
   isMarkdownFenceClosingLine,
@@ -305,6 +306,9 @@ export function lexMarkdownBlocksWith(lines, normalizeIconKey) {
     if (!t) { i += 1; continue; }
     turn = { at: blocks.length, first: i };
     let m;
+    // The saved-views marker (live-page-capture-markup.mjs): the embed above's saved views are its
+    // {capture} lines. Kept through comment blanking only when exact and alone on its line.
+    if (isCaptureViewsMarker(t)) { blocks.push({ type: "capture-views", capture: true }); i += 1; continue; }
     // Fenced code block must be tested before everything else: its body can contain lines that
     // otherwise look like lists, quotes, tables, or directives, and they must pass through raw.
     const fenceOpening = parseMarkdownFenceOpeningLine(t);
@@ -334,8 +338,9 @@ export function lexMarkdownBlocksWith(lines, normalizeIconKey) {
     }
     if ((m = t.match(/^\[(Embed|Simulation):\s*(.+?)\]$/i))) {
       const rawSrc = m[2].trim();
+      // Resource links retain authored query/fragment spelling; playback keeps its normalised src.
       const src = /^https?:/i.test(rawSrc) ? normalizeEmbedUrl(rawSrc) : rawSrc;
-      blocks.push({ type: "embed", variant: m[1].toLowerCase(), src });
+      blocks.push({ type: "embed", variant: m[1].toLowerCase(), src, ...(/^https?:/i.test(rawSrc) ? { resourceUrl: rawSrc } : {}) });
       i += 1; continue;
     }
     // `[Video: …]` takes one trailing token, {play-on-next}: a file plays as a step; a YouTube or
@@ -347,7 +352,7 @@ export function lexMarkdownBlocksWith(lines, normalizeIconKey) {
       // (which plays in the standalone HTML from file://), not an HTML5 <video> that cannot load
       // a YouTube page. Real video file URLs / local assets stay as a <video> element.
       if (isVideoEmbedUrl(rawSrc)) {
-        blocks.push({ type: "embed", variant: "video", src: normalizeEmbedUrl(rawSrc), ...(playOnNext ? { playOnNext: true } : {}) });
+        blocks.push({ type: "embed", variant: "video", src: normalizeEmbedUrl(rawSrc), resourceUrl: rawSrc, ...(playOnNext ? { playOnNext: true } : {}) });
       } else {
         blocks.push({ type: "video", src: rawSrc, ...(playOnNext ? { flags: { playOnNext: true } } : {}) });
       }
@@ -363,6 +368,12 @@ export function lexMarkdownBlocksWith(lines, normalizeIconKey) {
       i += 1; continue;
     }
     if ((m = t.match(IMAGE_SYNTAX_RE))) {
+      // A saved view of a web page (live-page-capture-markup.mjs): `![…](assets/live-page-captures/….jpg){capture}`
+      // under its page's embed. Never an ordinary image: folded into that embed below (captureBlocks).
+      if (hasCaptureToken(m[4])) {
+        blocks.push({ type: "image", capture: true, alt: m[1] || "", src: m[2] });
+        i += 1; continue;
+      }
       // A video FILE in image syntax is a video block (2026-06-10): ![alt](assets/talk.mp4)
       // is the natural authoring form next to images; [Video:] remains equivalent. Trailing curly
       // tokens (group 4) carry playback intent for videos (ADR-0028); images ignore them.
@@ -432,7 +443,7 @@ export function lexMarkdownBlocksWith(lines, normalizeIconKey) {
       // such a URL therefore renders as a full-bleed live embed. (Multi-token prose that merely
       // contains a URL stays a paragraph.)
       if (isBareUrl(paraText)) {
-        blocks.push({ type: "embed", variant: "embed", src: normalizeEmbedUrl(paraText) });
+        blocks.push({ type: "embed", variant: "embed", src: normalizeEmbedUrl(paraText), resourceUrl: paraText });
       } else {
         // G1: a paragraph that is wholly a double-quoted statement becomes a quote block (ADR-0023 §5 D1:
         // a following dash-led line folds into its cite by the same rule the `>` path uses).
@@ -465,5 +476,28 @@ export function lexMarkdownBlocksWith(lines, normalizeIconKey) {
     else i += 1;
   }
   stampTurn();
-  return blocks;
+  return foldCaptureBlocks(blocks);
+}
+
+// Each {capture} image joins the nearest web page embed before it on the slide as one of its saved
+// views (`captures`, in order); one with no embed before it is dropped (`orphanCaptures` on the first
+// block, for the warning). The marker line sets `capturesManaged` on the embed above (else dropped).
+// Nothing else moves.
+function foldCaptureBlocks(blocks) {
+  if (!blocks.some((b) => b && b.capture === true)) return blocks;
+  const out = [];
+  let embed = null;
+  let orphans = 0;
+  for (const block of blocks) {
+    if (block && block.type === "embed" && block.variant === "embed" && /^https?:/i.test(String(block.src))) { embed = { ...block }; out.push(embed); continue; }
+    if (block && block.type === "capture-views") { if (embed) embed.capturesManaged = true; continue; }
+    if (block && block.type === "image" && block.capture === true) {
+      if (embed) (embed.captures ??= []).push({ src: block.src, alt: block.alt });
+      else orphans += 1;
+      continue;
+    }
+    out.push(block);
+  }
+  if (orphans && out[0]) out[0] = { ...out[0], orphanCaptures: orphans };
+  return out;
 }

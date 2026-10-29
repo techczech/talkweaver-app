@@ -32,3 +32,18 @@ export function resolveThumbFile(dir: string, key: string): string | null {
   }
   return entry.byKey.get(key) ?? null
 }
+
+/** Every picture key `dir` holds, bare or document-prefixed (the same naming rule resolveThumbFile
+ *  reads), from one listing of the folder. Empty when the folder is not there. */
+export function thumbKeysIn(dir: string): Set<string> {
+  const keys = new Set<string>()
+  let names: string[]
+  try { names = readdirSync(dir) } catch { return keys }
+  for (const name of names) {
+    if (!name.endsWith('.png')) continue
+    const base = name.slice(0, -4)
+    const match = /^[0-9a-f]{16}-(.+)$/.exec(base)
+    keys.add(match ? match[1] : base)
+  }
+  return keys
+}

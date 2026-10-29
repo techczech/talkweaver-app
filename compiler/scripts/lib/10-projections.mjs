@@ -55,7 +55,9 @@ function sha256Hex(value) {
 // (slide-script.mjs) and paints nothing (the form the slide is drawn in is already in its blocks), so a quote slide
 // that had a form before that ticket keeps the picture key, and the thumbnail, it had.
 export function pictureKeyForSlide(slide, mediaDigests = []) {
-  const renderKey = JSON.stringify(slide, (k, v) =>
+  // The heading line is an address, not artwork; moving a slide keeps its picture key.
+  const { sourceLine: _sourceLine, ...picture } = slide;
+  const renderKey = JSON.stringify(picture, (k, v) =>
     k === "id" || k === "sourceMarkdown" || k === "scriptSourceMarkdown" || k === "notes" || k === "tags" || k === "quoteFormSet" ? undefined : v
   );
   return `sha256-${sha256Hex(mediaDigests.length ? JSON.stringify([renderKey, mediaDigests]) : renderKey)}`;
@@ -126,8 +128,14 @@ function blockText(block) {
       return (block.edges || []).map((e) => [e?.from, e?.label, e?.to].filter(Boolean).join(" ")).join(" ");
     case "timeline":
       return (block.items || []).map(stripInlineMarkdown).filter(Boolean).join(" ");
+    case "contrast": {
+      const pairs = (block.pairs || []).map((pair) => stripInlineMarkdown(JSON.stringify(pair))).join(" ");
+      const descendants = (block.pairChildren || []).flatMap((sides) => sides.flatMap((nodes) =>
+        flattenListItems({ items: nodes }).map(stripInlineMarkdown)
+      )).join(" ");
+      return [pairs, descendants].filter(Boolean).join(" ");
+    }
     case "tiles":
-    case "contrast":
       return (block.items || block.pairs || []).map((x) => stripInlineMarkdown(typeof x === "string" ? x : x?.text || JSON.stringify(x))).join(" ");
     case "cards":
       return (block.cards || []).map((c) => [stripInlineMarkdown(c.title), ...(c.blocks || []).map(blockText)].filter(Boolean).join(" ")).join(" ");

@@ -1,3 +1,11 @@
+import type { ResearchWriteOp, ResearchWriteInput, ResearchWriteResult } from '../shared/research'
+import type { HtmlPageChoice, HtmlPageImport } from '../shared/html-page-import'
+import type { ResearchListInput, ResearchSearchInput, ResearchUsedInput, ResearchListResult, ResearchUsedResult } from '../shared/research'
+import type { readAbstract } from '../main/abstract-ipc'
+import type { ScratchGroup, ScratchReply, ScratchSlideInput, ScratchSnapshot, ScratchStatus, ScratchVisualImport } from '../shared/scratchpad'
+export type { ScratchGroup, ScratchItem, ScratchReply, ScratchSlideInput, ScratchSnapshot, ScratchStatus, ScratchVisualImport } from '../shared/scratchpad'
+import type { RecordingRecovery } from '../shared/recording-recovery'
+export type { RecordingRecovery } from '../shared/recording-recovery'
 import type { InkStroke } from '../../worker/protocol'
 import type { RunAudioFields } from '../shared/run-audio'
 import type { ImageSearchResult, ImageSearchStatus, ImportedImage, MatchMode, VaultPictureResult } from '../shared/image-search'
@@ -8,6 +16,7 @@ import type { RunBoard } from '../shared/run-board'
 import type { ExampleVaultResult } from '../shared/example-vault'
 import type { ExampleRemovalPreview, ExampleRemovalState, ExampleRemoveResult, ExampleRestoreResult } from '../shared/example-vault-removal'
 import type { ConnectionRow } from '../shared/guide-connections'
+import type { CompactSlideSearchReply } from '../shared/slide-search-reply'
 import type { RunPrework } from '../shared/run-prework'
 import type { RunWorkSet } from '../shared/run-work'
 import type { PickChange } from '../shared/run-prework-results'
@@ -28,6 +37,8 @@ import type { PhaseSteps } from '../shared/run-answers'
 import type { WorkFileState } from '../shared/run-checklist'
 import { isToolsView, parseToolsRunRef, type ToolsRunRef, type ToolsView } from '../shared/tools-views'
 import type { PaletteCommandHandlerId } from '../shared/command-registry'
+import type { UpdateSnapshot } from '@app-patterns/updates'
+import type { WhatsNewItem } from '@app-patterns/updates'
 import type { LayoutDoctorFinding } from '../shared/layout-doctor'
 import type { SharedTalkInspection, SharedTalkState } from '../shared/shared-talk'
 import type { CloudflareStatus } from '../shared/cloudflare-status'
@@ -287,6 +298,8 @@ export type ProjectionRow = {
   content_hash: string
   /** Hash of the rendered slide MODEL (layout + blocks), not just text — the thumbnail cache key. */
   render_hash: string
+  /** Exact compiled artwork plus document styling/media identity. */
+  thumbnail_hash?: string
   /** Per-slide compiler warnings (e.g. `iconlist-no-icons:<slide-id>`); surfaced as a slide badge. */
   warnings?: string[]
   /** ADR-0028 §10: the compiled title regime — 'left' (rail), 'top', 'hidden' (no title painted)
@@ -403,10 +416,15 @@ ipcRenderer.on('tools:show', (_event, payload: ToolsShowPayload) => {
   toolsShowSubscribers.forEach((cb) => cb(payload))
 })
 
+
 // One recorded Session (ADR-0035) as it lives in the Vault Presentation Ledger — audio + a
 // slide-time index keyed to Slide Ledger ids, plus timing. `slideTimeIndex` marks are enter
 // (with slideId) / pause / resume, on the pause-aware recording clock.
 export type RecordingSession = {
+  /** Read-time location only; a kept Run lives in this Mac’s app data. */
+  kept?: 'app-data'
+  /** Read-time vault root; null selects the kept copy. Never persisted into the Run. */
+  home?: string | null
   id: string
   talkSlug: string
   talkTitle: string
@@ -542,6 +560,34 @@ const api = {
       const listener = (_event: unknown, command: PaletteCommandHandlerId): void => cb(command)
       ipcRenderer.on('app:command', listener)
       return () => ipcRenderer.removeListener('app:command', listener)
+    },
+    // A command chosen from the menu bar (generated from the command registry, 0.42): its app
+    // command id, run as its palette row runs it.
+    onRunCommand: (cb: (commandId: string) => void): (() => void) => {
+      const listener = (_event: unknown, commandId: string): void => cb(commandId)
+      ipcRenderer.on('app:run-command', listener)
+      return () => ipcRenderer.removeListener('app:run-command', listener)
+    },
+    // Asked from the Settings window's Get started page: open the Guide, show the example vault again, add a vault.
+    onEditorAction: (cb: (action: 'open-guide' | 'restore-example' | 'add-vault') => void): (() => void) => {
+      const listener = (_event: unknown, action: 'open-guide' | 'restore-example' | 'add-vault'): void => cb(action)
+      ipcRenderer.on('settings-window:editor-action', listener)
+      return () => ipcRenderer.removeListener('settings-window:editor-action', listener)
+    }
+  },
+  // The shared Settings window (0.42): its own window, opened at a section when one is named.
+  settingsWindow: {
+    open: (section?: string): Promise<boolean> => ipcRenderer.invoke('settings-window:open', section)
+  },
+  // The editor keymap's overrides, kept by main in the settings store (keymap/store.ts holds the last ones sent).
+  keymap: {
+    get: (): Promise<Record<string, string>> => ipcRenderer.invoke('keymap:get'),
+    set: (overrides: Record<string, string>): Promise<{ ok: boolean; overrides: Record<string, string> }> => ipcRenderer.invoke('keymap:set', overrides),
+    moveLegacy: (overrides: Record<string, string>): Promise<{ outcome: 'consumed' | 'retry'; overrides: Record<string, string> }> => ipcRenderer.invoke('keymap:move-legacy', overrides),
+    onChanged: (cb: (overrides: Record<string, string>) => void): (() => void) => {
+      const listener = (_event: unknown, overrides: Record<string, string>): void => cb(overrides)
+      ipcRenderer.on('keymap:changed', listener)
+      return () => ipcRenderer.removeListener('keymap:changed', listener)
     }
   },
   // Ticket 10: the compare screen. load reads both versions (writes nothing); check tells whether
@@ -699,26 +745,25 @@ const api = {
       archiveRoot: string | null
       archiveDefault: string
       archiveAvailable: boolean
-    }> => ipcRenderer.invoke('settings:get-paths'),
-    chooseArchive: (): Promise<string | null> => ipcRenderer.invoke('settings:choose-archive'),
-    clearArchive: (): Promise<string> => ipcRenderer.invoke('settings:clear-archive'),
+    }> => ipcRenderer.invoke('preferences:get-paths'),
+    chooseArchive: (): Promise<string | null> => ipcRenderer.invoke('preferences:choose-archive'),
+    clearArchive: (): Promise<string> => ipcRenderer.invoke('preferences:clear-archive'),
     // Presentation backup (ADR-0028 sibling feature): auto-write each Talk's full presenter HTML to a
     // folder inside OneDrive/Dropbox on a timer, so a forgotten laptop never blocks presenting.
-    getBackup: (): Promise<BackupSettings> => ipcRenderer.invoke('settings:get-backup'),
+    getBackup: (): Promise<BackupSettings> => ipcRenderer.invoke('preferences:get-backup'),
     setBackup: (patch: { enabled?: boolean; intervalMin?: number }): Promise<BackupSettings> =>
-      ipcRenderer.invoke('settings:set-backup', patch),
-    chooseBackupFolder: (): Promise<BackupSettings> => ipcRenderer.invoke('settings:choose-backup-folder'),
-    clearBackupFolder: (): Promise<BackupSettings> => ipcRenderer.invoke('settings:clear-backup-folder'),
+      ipcRenderer.invoke('preferences:set-backup', patch),
+    chooseBackupFolder: (): Promise<BackupSettings> => ipcRenderer.invoke('preferences:choose-backup-folder'),
+    clearBackupFolder: (): Promise<BackupSettings> => ipcRenderer.invoke('preferences:clear-backup-folder'),
     // Presenter clock amber/dark-amber thresholds (Task 3): global default; a deck's own
     // frontmatter `warn-at:`/`urgent-at:` overrides these per-talk.
-    getTimer: (): Promise<TimerSettings> => ipcRenderer.invoke('settings:get-timer'),
+    getTimer: (): Promise<TimerSettings> => ipcRenderer.invoke('preferences:get-timer'),
     setTimer: (patch: { warnAtMinutes?: number; urgentAtMinutes?: number }): Promise<TimerSettings> =>
-      ipcRenderer.invoke('settings:set-timer', patch),
+      ipcRenderer.invoke('preferences:set-timer', patch),
     // Local transcription paths (optional; spec D16). Non-secret; unset by default. An empty ffmpeg
     // uses the one that ships with the app.
-    getTranscription: (): Promise<TranscriptionSettings> => ipcRenderer.invoke('settings:get-transcription'),
-    setTranscription: (cfg: { python: string; script: string; ffmpeg: string }): Promise<TranscriptionSettings> =>
-      ipcRenderer.invoke('settings:set-transcription', cfg),
+    getTranscription: (): Promise<TranscriptionSettings> => ipcRenderer.invoke('preferences:get-transcription'),
+    // The paths are changed only in the Settings window (src/preload/settings.ts; main refuses any other sender).
     // The Transcription row: whether it can run, or the one missing thing (never a path).
     transcriptionStatus: (): Promise<TranscriptionRow> => ipcRenderer.invoke('transcription:status'),
     // "Copy instructions for your agent": the prompt, with this computer's set-up and user-data folders.
@@ -729,34 +774,34 @@ const api = {
     // value pre-filled into new talks. A blank value clears that default; nothing is ever
     // overwritten in an existing outline without an explicit click.
     getMetadataDefaults: (): Promise<Record<string, string>> =>
-      ipcRenderer.invoke('settings:get-metadata-defaults'),
+      ipcRenderer.invoke('preferences:get-metadata-defaults'),
     setMetadataDefaults: (patch: Record<string, string>): Promise<Record<string, string>> =>
-      ipcRenderer.invoke('settings:set-metadata-defaults', patch),
+      ipcRenderer.invoke('preferences:set-metadata-defaults', patch),
     // Settings changelog (Gate-5): every settings change recorded old → new in a per-machine
     // userData JSON log; Settings → Changes lists it with a per-entry Reset. Never secret values.
-    getChangelog: (): Promise<SettingsChangeEntry[]> => ipcRenderer.invoke('settings:changelog-get'),
+    getChangelog: (): Promise<SettingsChangeEntry[]> => ipcRenderer.invoke('preferences:changelog-get'),
     logChange: (entry: { key: string; label: string; from: string; to: string }): Promise<SettingsChangeEntry[]> =>
-      ipcRenderer.invoke('settings:changelog-log', entry),
+      ipcRenderer.invoke('preferences:changelog-log', entry),
     // Action bar (ADR-0025): one app-wide visibility flag; `items` is the RAW stored button list
     // (left untyped here — the renderer parses it tolerantly, and the configure sheet that will
     // write it is a later parcel). The broadcast lets one window's toggle redraw every open window.
     getActionBar: (): Promise<{ visible: boolean; items: unknown }> =>
-      ipcRenderer.invoke('settings:get-action-bar'),
+      ipcRenderer.invoke('preferences:get-action-bar'),
     setActionBarVisible: (visible: boolean): Promise<boolean> =>
-      ipcRenderer.invoke('settings:set-action-bar-visible', visible),
+      ipcRenderer.invoke('preferences:set-action-bar-visible', visible),
     getEditorViewMode: (): Promise<'plain' | 'markdown'> =>
-      ipcRenderer.invoke('settings:get-editor-view-mode'),
+      ipcRenderer.invoke('preferences:get-editor-view-mode'),
     setEditorViewMode: (mode: 'plain' | 'markdown'): Promise<'plain' | 'markdown'> =>
-      ipcRenderer.invoke('settings:set-editor-view-mode', mode),
+      ipcRenderer.invoke('preferences:set-editor-view-mode', mode),
     onEditorViewModeChanged: (cb: (mode: 'plain' | 'markdown') => void): (() => void) => {
       const listener = (_e: unknown, mode: 'plain' | 'markdown'): void => cb(mode)
       ipcRenderer.on('editor-view-mode:changed', listener)
       return () => ipcRenderer.removeListener('editor-view-mode:changed', listener)
     },
     getPlainLook: (): Promise<{ font: 'sans' | 'serif'; size: number }> =>
-      ipcRenderer.invoke('settings:get-plain-look'),
+      ipcRenderer.invoke('preferences:get-plain-look'),
     setPlainLook: (change: { font?: 'sans' | 'serif'; size?: number }): Promise<{ font: 'sans' | 'serif'; size: number }> =>
-      ipcRenderer.invoke('settings:set-plain-look', change),
+      ipcRenderer.invoke('preferences:set-plain-look', change),
     onPlainLookChanged: (cb: (look: { font: 'sans' | 'serif'; size: number }) => void): (() => void) => {
       const listener = (_e: unknown, look: { font: 'sans' | 'serif'; size: number }): void => cb(look)
       ipcRenderer.on('plain-look:changed', listener)
@@ -769,9 +814,9 @@ const api = {
     },
     // The status-bar place chip (onboarding ticket 02): one app-wide flag, broadcast to every window.
     getPlaceChip: (): Promise<{ visible: boolean }> =>
-      ipcRenderer.invoke('settings:get-place-chip'),
+      ipcRenderer.invoke('preferences:get-place-chip'),
     setPlaceChipVisible: (visible: boolean): Promise<boolean> =>
-      ipcRenderer.invoke('settings:set-place-chip-visible', visible),
+      ipcRenderer.invoke('preferences:set-place-chip-visible', visible),
     onPlaceChipChanged: (cb: (state: { visible: boolean }) => void): (() => void) => {
       const listener = (_e: unknown, state: { visible: boolean }): void => cb(state)
       ipcRenderer.on('place-chip:changed', listener)
@@ -779,9 +824,9 @@ const api = {
     },
     // The Guide button in the sidebar (onboarding ticket 07): one app-wide flag, broadcast to every window.
     getGuideButton: (): Promise<{ visible: boolean }> =>
-      ipcRenderer.invoke('settings:get-guide-button'),
+      ipcRenderer.invoke('preferences:get-guide-button'),
     setGuideButtonVisible: (visible: boolean): Promise<boolean> =>
-      ipcRenderer.invoke('settings:set-guide-button-visible', visible),
+      ipcRenderer.invoke('preferences:set-guide-button-visible', visible),
     onGuideButtonChanged: (cb: (state: { visible: boolean }) => void): (() => void) => {
       const listener = (_e: unknown, state: { visible: boolean }): void => cb(state)
       ipcRenderer.on('guide-button:changed', listener)
@@ -985,8 +1030,17 @@ const api = {
     } & PublishReplyExtras> => ipcRenderer.invoke('talk:publish-handout', outlinePath, content),
     // `lane` separates independent requesters inside ONE window: the editor strip and the Slide
     // Browser's background per-talk render must not supersede each other (2026-09-15).
-    thumbnails: (outlinePath: string, content: string, opts?: { lane?: string }): Promise<Record<string, string> | null> =>
+    thumbnails: (outlinePath: string, content: string, opts?: { lane?: string; requestId?: string }): Promise<Record<string, string> | null> =>
       ipcRenderer.invoke('talk:thumbnails', outlinePath, content, opts),
+    /** Pictures for one correlated request, cached first and then as each slide finishes. */
+    onThumbnailProgress: (cb: (payload: { outlinePath: string; requestId: string; thumbnails: Record<string, string> }) => void): (() => void) => {
+      const listener = (_event: unknown, payload: { outlinePath: string; requestId: string; thumbnails: Record<string, string> }): void => cb(payload)
+      ipcRenderer.on('talk:thumbnail-progress', listener)
+      return () => ipcRenderer.removeListener('talk:thumbnail-progress', listener)
+    },
+    // The text read from the pictures each slide block names, one string per block ('' when none): the grid's and the outline's search.
+    slidePictureText: (outlinePath: string, blocks: string[]): Promise<string[]> => ipcRenderer.invoke('talk:slide-picture-text', outlinePath, blocks),
+    slidePictureGeneration: (): Promise<number> => ipcRenderer.invoke('talk:slide-picture-generation'),
     // Manual rebuild: wipe this talk's thumbnail cache so the next compile re-renders from scratch.
     // outlinePath names the talk's vault, so only that vault's pictures go (without it, every vault's folder for the slug).
     clearThumbCache: (slug: string, outlinePath?: string): Promise<boolean> => ipcRenderer.invoke('talk:clear-thumb-cache', slug, outlinePath),
@@ -1017,7 +1071,7 @@ const api = {
     ): Promise<{ success: boolean; markdown: string; materialized?: number; skipped?: number; error?: string }> =>
       ipcRenderer.invoke('talk:materialize-pasted-assets', markdown),
     // OCR-index the vault's images (native macOS Vision) so search matches text INSIDE images.
-    ocrIndex: (): Promise<{ success: boolean; total?: number; cached?: number; added?: number; error?: string }> =>
+    ocrIndex: (): Promise<{ success: boolean; total?: number; read?: number; known?: number; failed?: number; skipped?: number; cached?: number; added?: number; error?: string }> =>
       ipcRenderer.invoke('talk:ocr-index')
   },
   // Slide Ledger (ADR-0032): per-slide identity, history, and cross-talk usage.
@@ -1092,6 +1146,35 @@ const api = {
   // (saveToken); every reply and every push is a CloudflareStatus, which holds states, an account's
   // name and id and fixed sentences, never the token. A call resolves when its work is done, but
   // nothing in the window waits on it: `onStatus` delivers each change as it happens.
+  // Update notices (ADR-0041, src/main/update-notices.ts). The windows send no address: Download opens the
+  // link the last validated feed gave for this computer, and the notes link is built from a version.
+  updates: {
+    get: (): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:get'),
+    /** Check for Updates…: always checks (a Store copy and a development run answer without a request). */
+    check: (): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:check'),
+    skip: (version: string): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:skip', version),
+    stopSkipping: (): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:stop-skipping'),
+    notNow: (): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:not-now'),
+    /** The setting `updates.checkForNewVersions`. */
+    setEnabled: (on: boolean): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:set-enabled', on),
+    download: (): Promise<boolean> => ipcRenderer.invoke('updates:download'),
+    openNotes: (version: string): Promise<boolean> => ipcRenderer.invoke('updates:open-notes', version),
+    openStore: (): Promise<boolean> => ipcRenderer.invoke('updates:open-store'),
+    /** The notes shipped for the running version, or null. */
+    whatsNew: (): Promise<{ version: string; from: string | null; items: WhatsNewItem[] } | null> => ipcRenderer.invoke('updates:whats-new'),
+    dismissWhatsNew: (): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:dismiss-whats-new'),
+    onChange: (cb: (snapshot: UpdateSnapshot) => void): (() => void) => {
+      const listener = (_e: unknown, snapshot: UpdateSnapshot): void => cb(snapshot)
+      ipcRenderer.on('updates:changed', listener)
+      return () => ipcRenderer.removeListener('updates:changed', listener)
+    },
+    /** The answer of a Check for Updates… that waited for a talk to end. */
+    onAnswer: (cb: (snapshot: UpdateSnapshot) => void): (() => void) => {
+      const listener = (_e: unknown, snapshot: UpdateSnapshot): void => cb(snapshot)
+      ipcRenderer.on('updates:answered', listener)
+      return () => ipcRenderer.removeListener('updates:answered', listener)
+    }
+  },
   cloudflare: {
     status: (): Promise<CloudflareStatus> => ipcRenderer.invoke('cloudflare:status'),
     /** `opened`: Settings → Cloudflare was opened (the main process checks at most once a minute). */
@@ -1099,7 +1182,7 @@ const api = {
     /** Save or replace the token; the check follows by itself. */
     saveToken: (token: string): Promise<CloudflareReply> => ipcRenderer.invoke('cloudflare:save-token', token),
     chooseAccount: (accountId: string): Promise<CloudflareReply> => ipcRenderer.invoke('cloudflare:choose-account', accountId),
-    /** Make the Pages site the Publishing handouts row names. */
+    /** Make the Pages site the Publishing handouts row names. Settings window only: main refuses an editor window (the type is shared with Settings → Cloudflare). */
     createSite: (): Promise<CloudflareReply> => ipcRenderer.invoke('cloudflare:create-site'),
     /** Remove the token. Nothing at Cloudflare is touched. */
     disconnect: (): Promise<CloudflareReply> => ipcRenderer.invoke('cloudflare:disconnect'),
@@ -1132,7 +1215,7 @@ const api = {
   // build, and fixed sentences; never a key.
   liveService: {
     status: (): Promise<GoingLiveRow> => ipcRenderer.invoke('live-service:status'),
-    /** "Set up going live", Try again or "Set up going live now". Resolves when the set-up has finished. */
+    /** "Set up going live", Try again or "Set up going live now". Resolves when the set-up has finished. Settings window only: main refuses an editor window (the type is shared with Settings → Cloudflare). */
     setUp: (): Promise<LiveSetUpReply> => ipcRenderer.invoke('live-service:set-up'),
     onStatus: (listener: (row: GoingLiveRow) => void): (() => void) => {
       const handler = (_event: Electron.IpcRendererEvent, row: GoingLiveRow): void => listener(row)
@@ -1145,6 +1228,34 @@ const api = {
       ipcRenderer.on('live-service:notice', handler)
       return () => { ipcRenderer.removeListener('live-service:notice', handler) }
     },
+  },
+  // Capture embed… (src/main/live-page-capture-window.ts): a window for one slide's web page, in which
+  // the person captures views of it; main checks every field and binds the window to that slide and
+  // page. images/alts: the slide's {capture} lines now, for the window's list. close: this editor's
+  // window closes (another talk).
+  livePage: {
+    openCapture: (request: { outlinePath: string; slideId: string; pageUrl: string; title: string; images: string[]; alts: string[] }): Promise<{ ok: true } | { ok: false; message: string }> =>
+      ipcRenderer.invoke('live-page:open-capture', request),
+    closeCapture: (): Promise<boolean> => ipcRenderer.invoke('live-page:close-capture'),
+  },
+  // Object cards' file status (src/main/object-status.ts): for the talk this window has open only.
+  objects: {
+    status: (outlinePath: string, refs: string[]): Promise<
+      | { ok: true; statuses: Array<{ ref: string; state: 'present' | 'missing' | 'outside' | 'remote' | 'invalid' | 'unchecked'; path?: string }> }
+      | { ok: false; reason: string }
+    > => ipcRenderer.invoke('object:status', outlinePath, refs),
+    /** A web page's views saved before {capture} lines existed, for Place earlier views. */
+    earlierViews: (outlinePath: string, pageUrl: string): Promise<
+      | { ok: true; views: Array<{ image: string; capturedAt: string; mode?: 'page' }> }
+      | { ok: false; reason: string }
+    > => ipcRenderer.invoke('object:earlier-views', outlinePath, pageUrl),
+  },
+  // Insert › HTML page… (src/main/html-page-import.ts). choose opens the native picker for the named
+  // talk and writes nothing (null = cancelled); import copies the chosen page into that talk's assets
+  // folder and answers the reference for the `[Embed: …]` line, which the editor writes.
+  htmlPage: {
+    choose: (outlinePath: string): Promise<HtmlPageChoice | null> => ipcRenderer.invoke('talk:choose-html-page', outlinePath),
+    import: (token: string, outlinePath: string): Promise<HtmlPageImport> => ipcRenderer.invoke('talk:import-html-page', token, outlinePath),
   },
   asset: {
     // outlinePath: the talk being edited; the image goes to that talk's vault (default: the current vault).
@@ -1167,10 +1278,69 @@ const api = {
       meta: { alt: string; caption: string; source: string; tags: string[] }
     ): Promise<boolean> => ipcRenderer.invoke('asset:write-sidecar', id, meta)
   },
+  // The research folder beside a talk (knowledge step two). `capture` calls the main-process verb that runs
+  // `scout capture`; `revealFolder` creates `<talk>/research/` when absent and shows it in Finder.
+  research: {
+    write: (op: ResearchWriteOp, input: Omit<ResearchWriteInput, 'op'>): Promise<ResearchWriteResult> => ipcRenderer.invoke('research:write', op, input),
+    destinations: (): Promise<{ path: string; title: string }[]> => ipcRenderer.invoke('research:destinations'),
+    revealSource: (file: string): Promise<{ ok: true } | { ok: false; error: { code: string; message: string } }> => ipcRenderer.invoke('research:reveal-source', { file }),
+    list: (input: ResearchListInput): Promise<ResearchListResult> => ipcRenderer.invoke('research:list', input),
+    insert: (file: string, slide = false): Promise<{ ok: true } | { ok: false; error: { code: string; message: string } }> => ipcRenderer.invoke('research:insert', { file }, slide),
+    cancelUsage: (requestId: string): void => ipcRenderer.send('research:cancel-usage', requestId),
+    whereUsed: (input: ResearchUsedInput): Promise<ResearchUsedResult> => ipcRenderer.invoke('research:where-used', input),
+    search: (input: ResearchSearchInput): Promise<ResearchListResult> => ipcRenderer.invoke('research:search', input),
+    capture: (input: {
+      talkDir: string; title: string; kind: string; prompt?: string; sources?: string[]; artefact?: string; body: string
+    }): Promise<{ ok: true; file: string; corpus: string | null; indexed: boolean } | { ok: false; error: { code: string; message: string } }> =>
+      ipcRenderer.invoke('research:capture', input),
+    revealFolder: (talkDir: string): Promise<{ ok: true; path: string } | { ok: false; error: { code: string; message: string } }> =>
+      ipcRenderer.invoke('research:reveal-folder', talkDir)
+  },
+  // Slide Scratchpad (src/main/scratchpad-ipc.ts, spec docs/design/2026-10-27-slide-scratchpad). The renderer
+  // names no path: every call acts on the talk this window has open. Agent files are read-only to all of it;
+  // only the app-owned state file changes. `subscribe` answers the snapshot and then `onChanged` carries every
+  // later one (folder watch, or a change made from any window on the talk); `unsubscribe` stops it.
+  scratchpad: {
+    setAside: (slides: ScratchSlideInput[], expectedOutline: string): Promise<ScratchReply<{ snapshot: ScratchSnapshot }>> => ipcRenderer.invoke('scratchpad:set-aside', slides, expectedOutline),
+    subscribe: (): Promise<ScratchReply<{ snapshot: ScratchSnapshot }>> => ipcRenderer.invoke('scratchpad:subscribe'),
+    unsubscribe: (): Promise<{ ok: true }> => ipcRenderer.invoke('scratchpad:unsubscribe'),
+    load: (): Promise<ScratchReply<{ snapshot: ScratchSnapshot }>> => ipcRenderer.invoke('scratchpad:load'),
+    addSlides: (slides: ScratchSlideInput[]): Promise<ScratchReply<{ snapshot: ScratchSnapshot; added: number; skipped: number }>> =>
+      ipcRenderer.invoke('scratchpad:add-slides', slides),
+    setStatus: (ids: string[], status: ScratchStatus): Promise<ScratchReply<{ snapshot: ScratchSnapshot }>> =>
+      ipcRenderer.invoke('scratchpad:set-status', ids, status),
+    /** group null = Ungrouped. */
+    setGroup: (ids: string[], group: string | null): Promise<ScratchReply<{ snapshot: ScratchSnapshot }>> =>
+      ipcRenderer.invoke('scratchpad:set-group', ids, group),
+    createGroup: (name: string): Promise<ScratchReply<{ snapshot: ScratchSnapshot; group: ScratchGroup }>> =>
+      ipcRenderer.invoke('scratchpad:create-group', name),
+    /** Takes "File missing" items out of the state; never touches a file. */
+    removeMissing: (ids: string[]): Promise<ScratchReply<{ snapshot: ScratchSnapshot }>> => ipcRenderer.invoke('scratchpad:remove-missing', ids),
+    /** The live page of an agent's HTML item: shown in an iframe with exactly this sandbox, no other. */
+    htmlPreview: (id: string): Promise<ScratchReply<{ url: string; sandbox: string }>> => ipcRenderer.invoke('scratchpad:html-preview', id),
+    /** A PNG data address for an HTML item's thumbnail (url null: none yet or none possible). */
+    htmlThumb: (id: string): Promise<ScratchReply<{ url: string | null }>> => ipcRenderer.invoke('scratchpad:html-thumb', id),
+    revealFolder: (): Promise<ScratchReply> => ipcRenderer.invoke('scratchpad:reveal-folder'),
+    // Inserting (ticket 2). Main copies the file a visual needs into this talk's vault and answers the line; the
+    // renderer writes the outline itself, through the editor. None of these touches the outline or an agent file.
+    /** An agent file's visual: picture → vault pool, SVG / HTML page → the talk's assets folder (a copy). */
+    importVisual: (id: string): Promise<ScratchVisualImport> => ipcRenderer.invoke('scratchpad:import-visual', id),
+    /** A picked slide's SVG file or page (`ref` as the snapshot names it), copied from its talk into this one. */
+    importSlideVisual: (id: string, ref: string): Promise<ScratchVisualImport> => ipcRenderer.invoke('scratchpad:import-slide-visual', id, ref),
+    /** The outline a picked slide came from, for the slide insert's media path. */
+    slideSource: (id: string): Promise<ScratchReply<{ outlinePath: string }>> => ipcRenderer.invoke('scratchpad:slide-source', id),
+    /** After an insert: records when, and the title of the slide it went into. */
+    markInserted: (id: string, slideTitle: string): Promise<ScratchReply<{ snapshot: ScratchSnapshot }>> => ipcRenderer.invoke('scratchpad:mark-inserted', id, slideTitle),
+    onChanged: (callback: (snapshot: ScratchSnapshot) => void): (() => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, snapshot: ScratchSnapshot): void => callback(snapshot)
+      ipcRenderer.on('scratchpad:changed', handler)
+      return () => ipcRenderer.removeListener('scratchpad:changed', handler)
+    }
+  },
   abstract: {
     read: (
       talkPath: string
-    ): Promise<{ raw: string; frontmatter: Record<string, any>; body: string } | null> =>
+    ): Promise<ReturnType<typeof readAbstract>> =>
       ipcRenderer.invoke('abstract:read', talkPath),
     write: (talkPath: string, raw: string): Promise<boolean> =>
       ipcRenderer.invoke('abstract:write', talkPath, raw)
@@ -1195,10 +1365,6 @@ const api = {
     // one save queue (lib/saveQueue.ts). Resolved on every write. null for an empty path.
     identity: (outlinePath: string): Promise<{ key: string; realPath: string } | null> =>
       ipcRenderer.invoke('talk:outline-identity', outlinePath),
-    // The outline with grid block `fromIndex` moved to `toIndex`, worked out on `content` (the open
-    // editor's buffer) or, without it, on the file. Writes nothing. null when the move is not possible.
-    reorder: (outlinePath: string, fromIndex: number, toIndex: number, content?: string, placement?: 'before' | 'after'): Promise<string | null> =>
-      ipcRenderer.invoke('outline:reorder', outlinePath, fromIndex, toIndex, content, placement),
     // Pin (or clear, iconKey=null) the icon on ONE top-level list item of a slide, by writing the
     // canonical `{icon=KEY}` token at the end of that bullet's line. The item is addressed by
     // `itemLine`, its 1-based line in `content`, under the slide whose heading line is
@@ -1258,14 +1424,26 @@ const api = {
     // scoped query (t:/s:/i:/e: parsed via parseSearchQuery). Rows carry `titleHit` so the
     // Browser can float title matches to the front.
     // options.vaultIds limits the search to those open vaults; without it, the first open vault.
+    // options.requestId + supersedeKey: a newer request with the same key from this window stops this scan (it answers []).
     allSlides: (
       query:
         | string
         | { scope: 'all' | 'title' | 'body' | 'image'; exact: boolean; text: string; terms: string[] },
-      options?: { vaultIds?: string[] }
+      options?: { vaultIds?: string[]; requestId?: number; supersedeKey?: string }
     ): Promise<
       Array<ProjectionRow & { vaultId?: string; talkSlug: string; talkTitle: string; outlinePath: string; titleHit?: boolean }> | null
-    > => options === undefined ? ipcRenderer.invoke('search:all-slides', query) : ipcRenderer.invoke('search:all-slides', query, options)
+    > => options === undefined ? ipcRenderer.invoke('search:all-slides', query) : ipcRenderer.invoke('search:all-slides', query, options),
+    // The Slide Browser's form of allSlides: each talk once, rows pointing at it, unread fields
+    // dropped (shared/slide-search-reply.ts; expandSlideSearchReply restores the row type).
+    allSlidesCompact: (
+      query: { scope: 'all' | 'title' | 'body' | 'image'; exact: boolean; text: string; terms: string[] },
+      options: { vaultIds?: string[]; requestId?: number; supersedeKey?: string }
+    ): Promise<CompactSlideSearchReply | ProjectionRow[] | null> =>
+      ipcRenderer.invoke('search:all-slides', query, { ...options, compact: true }),
+    // The stamp a whole-index scan of these vaults would carry now (main/search-index-stamp.ts): the
+    // Browser reuses its held rows only while it equals theirs. null = nothing to search.
+    indexStamp: (options: { vaultIds?: string[] }): Promise<string | null> =>
+      ipcRenderer.invoke('search:index-stamp', options)
   },
   // The image search seam (ticket 10): SlideWell's shared store when present, else the archive.
   // search() returns words hits first, then picture matches (match 'both' by default).
@@ -1348,33 +1526,33 @@ const api = {
       ipcRenderer.invoke('run:unpublish-handout', { talkSlug, runId, ...(vaultId ? { vaultId } : {}) }),
     // Live-presenting ticket 07 (L6): where each recorded instant slide's anchor sits in the talk NOW
     // (null = that slide is no longer in the talk), and "Add to talk" for one of them.
-    instantAnchors: (talkSlug: string, runId: string): Promise<Record<string, { slideNumber: number; title: string } | null>> =>
-      ipcRenderer.invoke('history:instant-anchors', { talkSlug, runId }),
+    instantAnchors: (talkSlug: string, runId: string, home?: string | null): Promise<Record<string, { slideNumber: number; title: string } | null>> =>
+      ipcRenderer.invoke('history:instant-anchors', { talkSlug, runId, ...(home !== undefined ? { home } : {}) }),
     // Reactions ticket 06: slide number and title NOW for each slide the Run's questions and
     // reactions name (null = no longer in the talk).
-    feedbackSlides: (talkSlug: string, runId: string): Promise<Record<string, { slideNumber: number; title: string } | null>> =>
-      ipcRenderer.invoke('history:feedback-slides', { talkSlug, runId }),
-    addInstantSlide: (talkSlug: string, runId: string, entryId: string): Promise<
+    feedbackSlides: (talkSlug: string, runId: string, home?: string | null): Promise<Record<string, { slideNumber: number; title: string } | null>> =>
+      ipcRenderer.invoke('history:feedback-slides', { talkSlug, runId, ...(home !== undefined ? { home } : {}) }),
+    addInstantSlide: (talkSlug: string, runId: string, entryId: string, home?: string | null): Promise<
       { ok: true; afterSlideNumber: number; afterSlideTitle: string; run: RecordingSession; warning?: string } | { ok: false; error: string }
-    > => ipcRenderer.invoke('history:add-instant-slide', { talkSlug, runId, entryId }),
+    > => ipcRenderer.invoke('history:add-instant-slide', { talkSlug, runId, entryId, ...(home !== undefined ? { home } : {}) }),
     // Feedback-boards ticket 06: a board left open (Refresh from the board, Close it now, and every
     // such board on Re-check live), Put back on a hidden card, and the Run's read-only share link.
-    boardRefresh: (talkSlug: string, runId: string): Promise<RunBoardPullResult> =>
-      ipcRenderer.invoke('history:board-refresh', { talkSlug, runId }),
-    boardClose: (talkSlug: string, runId: string): Promise<RunBoardPullResult> =>
-      ipcRenderer.invoke('history:board-close', { talkSlug, runId }),
+    boardRefresh: (talkSlug: string, runId: string, home?: string | null): Promise<RunBoardPullResult> =>
+      ipcRenderer.invoke('history:board-refresh', { talkSlug, runId, ...(home !== undefined ? { home } : {}) }),
+    boardClose: (talkSlug: string, runId: string, home?: string | null): Promise<RunBoardPullResult> =>
+      ipcRenderer.invoke('history:board-close', { talkSlug, runId, ...(home !== undefined ? { home } : {}) }),
     recheckBoards: (): Promise<{ runs: RecordingSession[]; late: number; warning?: string }> => ipcRenderer.invoke('history:recheck-boards'),
     // A board is named by its poll and its live session (the same board in two sessions is two boards).
-    boardPutBack: (talkSlug: string, runId: string, boardId: string, sessionId: string | undefined, cardId: string, putBack: boolean): Promise<
+    boardPutBack: (talkSlug: string, runId: string, boardId: string, sessionId: string | undefined, cardId: string, putBack: boolean, home?: string | null): Promise<
       { ok: true; run: RecordingSession; warning?: string } | { ok: false; error: string }
-    > => ipcRenderer.invoke('history:board-put-back', { talkSlug, runId, boardId, sessionId, cardId, putBack }),
-    resultsShareStatus: (talkSlug: string, runId: string): Promise<RunResultsShareState | null> =>
-      ipcRenderer.invoke('history:results-share-status', { talkSlug, runId }),
-    resultsShare: (talkSlug: string, runId: string, include: { board: boolean; polls: boolean }, lifetime: RunShareLifetime, title?: string): Promise<
+    > => ipcRenderer.invoke('history:board-put-back', { talkSlug, runId, boardId, sessionId, cardId, putBack, ...(home !== undefined ? { home } : {}) }),
+    resultsShareStatus: (talkSlug: string, runId: string, home?: string | null): Promise<RunResultsShareState | null> =>
+      ipcRenderer.invoke('history:results-share-status', { talkSlug, runId, ...(home !== undefined ? { home } : {}) }),
+    resultsShare: (talkSlug: string, runId: string, include: { board: boolean; polls: boolean }, lifetime: RunShareLifetime, title?: string, home?: string | null): Promise<
       { ok: true; share: RunResultsShareState } | { ok: false; error: string }
-    > => ipcRenderer.invoke('history:results-share', { talkSlug, runId, include, lifetime, title }),
-    resultsShareStop: (talkSlug: string, runId: string): Promise<{ ok: true } | { ok: false; error: string }> =>
-      ipcRenderer.invoke('history:results-share-stop', { talkSlug, runId }),
+    > => ipcRenderer.invoke('history:results-share', { talkSlug, runId, include, lifetime, title, ...(home !== undefined ? { home } : {}) }),
+    resultsShareStop: (talkSlug: string, runId: string, home?: string | null): Promise<{ ok: true } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('history:results-share-stop', { talkSlug, runId, ...(home !== undefined ? { home } : {}) }),
     // Feedback-boards ticket 09, work-files ticket 13: a Run's pre-work or post-work (`phase`, pre-work
     // when left out) — whether it has one, pull the answers onto the Run now, and close it now (then
     // one last pull).
@@ -1619,9 +1797,9 @@ const api = {
     open: (view: ToolsView, sessionId?: string, run?: ToolsRunRef): Promise<{ success: boolean; error?: string }> =>
       isToolsView(view) ? ipcRenderer.invoke('tools:open', view, sessionId, run) : Promise.resolve({ success: false, error: 'Unknown Tools view.' }),
     /** Sessions on one Run; with vaultId, that vault's Run when two vaults hold the same talk and Run id. */
-    openRun: (talkSlug: string, runId: string, vaultId?: string): Promise<{ success: boolean; error?: string }> => {
+    openRun: (talkSlug: string, runId: string, vaultId?: string, home?: string | null): Promise<{ success: boolean; error?: string }> => {
       const ref = parseToolsRunRef({ talkSlug, runId, ...(vaultId ? { vaultId } : {}) })
-      return ref ? ipcRenderer.invoke('tools:open', 'sessions', undefined, ref) : Promise.resolve({ success: false, error: 'Unknown Run.' })
+      return ref ? ipcRenderer.invoke('tools:open', 'sessions', undefined, { ...ref, ...(home !== undefined ? { home } : {}) }) : Promise.resolve({ success: false, error: 'Unknown Run.' })
     },
     onShow: (cb: (payload: ToolsShowPayload) => void): (() => void) => {
       toolsShowSubscribers.add(cb)
@@ -1739,16 +1917,8 @@ const api = {
       discardSeconds: number
       hasKeys: boolean
     }> => ipcRenderer.invoke('recording:get-storage'),
-    setStorage: (cfg: {
-      endpoint: string
-      bucket: string
-      discardSeconds: number
-    }): Promise<{ success: boolean }> => ipcRenderer.invoke('recording:set-storage', cfg),
-    // Store the R2 access keys (in the secrets store in main; never read back to the renderer).
-    // `error` is a fixed sentence.
-    setKeys: (keys: { accessKeyId: string; secretAccessKey: string }): Promise<{ success: boolean; error?: string }> =>
-      ipcRenderer.invoke('recording:set-keys', keys),
-    clearKeys: (): Promise<{ success: boolean }> => ipcRenderer.invoke('recording:clear-keys'),
+    // The endpoint, bucket and access keys are changed only in the Settings window (its preload,
+    // src/preload/settings.ts; main refuses any other sender).
     // The Recording storage row of Settings → Cloudflare: its state, the bucket's name and fixed
     // sentences. Never a key. `checkStorage` lists the bucket once (a read; it writes nothing).
     storageStatus: (): Promise<RecordingStorageRow> => ipcRenderer.invoke('recording:storage-status'),
@@ -1767,30 +1937,33 @@ const api = {
       ipcRenderer.invoke('recording:list-sessions', talkSlug),
     // Every Session across all talks (Studio's rail), newest first.
     listAllSessions: (): Promise<RecordingSession[]> => ipcRenderer.invoke('recording:list-all-sessions'),
+    listRecovery: (): Promise<RecordingRecovery[]> => ipcRenderer.invoke('recording:list-recovery'),
     // Upload ONE session to R2 — direct and ONLY on request (never automatic). On failure the
     // recording stays local, untouched. `error` is a fixed word, never an error's text: an
     // UploadFailure ('not-set-up' / 'keys-rejected' / 'bucket-not-found' / 'offline' / 'failed' /
     // 'audio-missing') or a local reason; uploadFailureMessage (shared/recording-storage-status.ts) turns it into the sentence.
-    upload: (talkSlug: string, sessionId: string): Promise<{ ok: boolean; uploaded?: boolean; error?: string }> =>
-      ipcRenderer.invoke('recording:upload', { talkSlug, sessionId }),
+    upload: (talkSlug: string, sessionId: string, home?: string | null): Promise<{ ok: boolean; uploaded?: boolean; error?: string }> =>
+      ipcRenderer.invoke('recording:upload', { talkSlug, sessionId, home }),
     // Edit (or clear) a session's context label.
-    setContext: (talkSlug: string, sessionId: string, context: string): Promise<{ ok: boolean; error?: string }> =>
-      ipcRenderer.invoke('recording:set-context', { talkSlug, sessionId, context }),
+    setContext: (talkSlug: string, sessionId: string, context: string, home?: string | null): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('recording:set-context', { talkSlug, sessionId, context, home }),
     setKind: (
       talkSlug: string,
       sessionId: string,
-      kind: RecordingKind
+      kind: RecordingKind,
+      home?: string | null
     ): Promise<{ ok: boolean; kind?: RecordingKind; error?: string }> =>
-      ipcRenderer.invoke('recording:set-kind', { talkSlug, sessionId, kind }),
+      ipcRenderer.invoke('recording:set-kind', { talkSlug, sessionId, kind, home }),
     setTrims: (
       talkSlug: string,
       sessionId: string,
-      trims: TrimRange[]
+      trims: TrimRange[],
+      home?: string | null
     ): Promise<{ ok: boolean; trims?: TrimRange[]; error?: string }> =>
-      ipcRenderer.invoke('recording:set-trims', { talkSlug, sessionId, trims }),
+      ipcRenderer.invoke('recording:set-trims', { talkSlug, sessionId, trims, home }),
     // Delete a session — session.json + local audio go to the OS Trash (recoverable).
-    deleteSession: (talkSlug: string, sessionId: string): Promise<{ ok: boolean; error?: string }> =>
-      ipcRenderer.invoke('recording:delete-session', { talkSlug, sessionId })
+    deleteSession: (talkSlug: string, sessionId: string, home?: string | null): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('recording:delete-session', { talkSlug, sessionId, home })
   }
 }
 

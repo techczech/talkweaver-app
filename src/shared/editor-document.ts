@@ -5,6 +5,7 @@
 // refusal can say what was not applied. `moved` on a refusal: the buffer was no longer `base`
 // (nothing applied; main may work the change out again against a fresh read).
 export type EditorDocumentRequestBody =
+  | { kind: 'research-insert'; outlinePath: string; file: string; slide: boolean }
   | { kind: 'read'; outlinePath: string }
   | { kind: 'apply'; outlinePath: string; base: string; next: string; origin?: string }
 export type EditorDocumentRequest = EditorDocumentRequestBody & { requestId: string }
@@ -28,6 +29,7 @@ export function changeNoun(origin: string | undefined): string {
     case 'publish-flush': return 'the talk for publishing'
     case 'optimize-images': return 'the optimised images'
     case 'retitle': return 'the new title'
+    case 'live-page-capture': return 'the saved view'
     case 'strip-published': return 'the publishing details removal'
     case 'share-for-comments': return 'the share link'
     case 'conflict-merge': return 'the merged conflict copy'

@@ -14,6 +14,7 @@ import {
 } from './model'
 import { useFolderMemory } from './folderMemory'
 import { useTalkFacts } from '../../lib/talkFacts'
+import { useWorkspaceCovered } from '../../lib/workspaceCover'
 import { startDragAutoScroll } from '../../lib/dragAutoScroll'
 import { shareForTalk, useSharedTalks } from '../../lib/sharedTalks'
 import { useFeedbackSummaries } from '../../lib/feedback'
@@ -182,6 +183,7 @@ export default function TalkList({
   const searchRef = useRef<HTMLInputElement>(null)
   const sortBtnRef = useRef<HTMLButtonElement>(null)
   const treeRef = useRef<HTMLDivElement>(null)
+  const covered = useWorkspaceCovered()
   const stopAutoScrollRef = useRef<(() => void) | null>(null)
   useEffect(() => () => { stopAutoScrollRef.current?.() }, [])
   const scrollRafRef = useRef<number | null>(null)
@@ -403,9 +405,10 @@ export default function TalkList({
   // A later sync render (the Shelf click) skipped it and re-ran every later heights updater from
   // the old base state, minting a new, equal heights object per render — a new `layout` each
   // time, which re-ran the scroll effect below, whose state write rendered again: React #185.
+  // While the Slide Browser covers the window nothing here is measured (lib/workspaceCover.ts).
   useLayoutEffect(() => {
     const container = treeRef.current
-    if (!container) return
+    if (!container || covered) return
 
     const measure = (): void => {
       const height = container.clientHeight
@@ -438,13 +441,14 @@ export default function TalkList({
     ].filter((sample): sample is HTMLElement => sample != null)
     for (const sample of samples) observer.observe(sample)
     return () => observer.disconnect()
-  }, [viewMode, rows, focusKey])
+  }, [viewMode, rows, focusKey, covered])
 
   // Offset scrolling works even before the target row has mounted. Pinning the focused index
   // makes the row and its focus ring commit together, avoiding a one-frame missing-row flash.
   // The flyout anchor is written only when it changes: this effect re-runs on every new
   // `layout`, and a state write here with nothing changed still costs a render (ticket 09).
   useLayoutEffect(() => {
+    if (covered) return
     const container = treeRef.current
     const index = focusKey ? rowIndexByKey.get(focusKey) : undefined
     const anchor = container && index != null && focusKey ? rowRefs.current.get(focusKey) ?? null : null
@@ -456,7 +460,7 @@ export default function TalkList({
       }
     }
     if (anchor !== anchorEl) setAnchorEl(anchor)
-  }, [focusKey, rowIndexByKey, layout, viewMode, viewportH])
+  }, [focusKey, rowIndexByKey, layout, viewMode, viewportH, covered])
 
   useEffect(() => () => {
     if (scrollRafRef.current != null) cancelAnimationFrame(scrollRafRef.current)

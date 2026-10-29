@@ -11,7 +11,7 @@
 // This file is the thin shell: it owns the state that spans the whole overlay and composes the
 // modules in ./slide-browser/ (hooks for the stateful logic, components for the pieces, and
 // browserHelpers.ts for the pure derivations).
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { hasSearchTerms } from '../../../shared/talk-query'
 import { findChips } from './browser-rail/findTalkModel'
@@ -29,6 +29,8 @@ import { PreviewLightbox } from './slide-browser/PreviewLightbox'
 import { RailPane } from './slide-browser/RailPane'
 import { ResultsPane } from './slide-browser/ResultsPane'
 import { SelectionTray } from './slide-browser/SelectionTray'
+import type { CardActions } from './slide-browser/SlideCard'
+import type { SlideSearchInputApi } from './slide-browser/SlideSearchInput'
 import { TopBar } from './slide-browser/TopBar'
 import {
   DENSITY_STORAGE_KEY, type GridCtx, type SearchResult, type SlideBrowserProps
@@ -53,6 +55,7 @@ import {
   type ChipVault, chipVaults, countByVault, currentVaultIdFor, offVaultMatches, rowsInVaults, toggleVault
 } from './slide-browser/vaultChipsModel'
 import { withoutActiveTalk } from './slide-browser/browserHelpers'
+import { setWorkspaceCovered } from '../lib/workspaceCover'
 import type { VaultView } from '../../../preload/index'
 
 export type { SearchResult } from './slide-browser/types'
@@ -62,7 +65,10 @@ export default function SlideBrowser({
   onAdoptVersion, registerFocusSearch, registerCommands, onRequestMerge, refreshNonce,
   currentOutlinePath, currentTalkVaultId
 }: SlideBrowserProps) {
+  // The COMMITTED query: the search field keeps what is typed and reports it once typing pauses
+  // (SlideSearchInput). The shell only learns when a typing burst starts or finishes; cards stay memoised.
   const [query, setQuery] = useState('')
+  const [queryPending, setQueryPending] = useState(false)
   const [activePos, setActivePos] = useState(0)
   const [preview, setPreview] = useState(false)
   const [density, setDensityState] = useState<number>(readDensity)
@@ -79,7 +85,20 @@ export default function SlideBrowser({
   const [main, setMain] = useState<PickerMain>(RESULTS_ONLY)
 
   const rootRef = useRef<HTMLDivElement>(null)
+  const cardActionsLatest = useRef<CardActions | null>(null)
+  const cardActions = useMemo<CardActions>(() => ({
+    onCardClick: (p, shift) => cardActionsLatest.current?.onCardClick(p, shift),
+    onCardEnter: (p) => cardActionsLatest.current?.onCardEnter(p),
+    openBesideAt: (p) => cardActionsLatest.current?.openBesideAt(p),
+    toggleStrip: async (p) => { await cardActionsLatest.current?.toggleStrip(p) },
+    toggleLocations: (p) => cardActionsLatest.current?.toggleLocations(p),
+    toggleNear: (p) => cardActionsLatest.current?.toggleNear(p),
+    noteThumbUnavailable: (row) => cardActionsLatest.current?.noteThumbUnavailable(row)
+  }), [])
   const inputRef = useRef<HTMLInputElement>(null)
+  const searchApiRef = useRef<SlideSearchInputApi | null>(null)
+  /** Set the query at once (Esc, Clear search): the field and the search together, no debounce. */
+  const setQueryNow = useCallback((q: string): void => { searchApiRef.current?.set(q); setQuery(q) }, [])
   const prevFocusRef = useRef<HTMLElement | null>(null)
 
   // The query parsed into scope/exact/terms — sent to main (scoped matching) and read by the
@@ -121,7 +140,7 @@ export default function SlideBrowser({
   const model = useBrowserModel({
     results, fullRows, talks: vault.talks, vaultRoot, currentTalkSlug, scope: rail.scope,
     facets: rail.facets, query, nearExpanded, viewPref: rail.viewPref, main,
-    loading: search.loading, unavailable: search.unavailable, currentVaultId
+    loading: queryPending || search.loading, unavailable: search.unavailable, currentVaultId
   })
   const { vRows, vCards, gridMode, leftCount, rowsByTalk } = model
   const railModel = useRailModel({
@@ -140,7 +159,8 @@ export default function SlideBrowser({
   })
   const insert = useInsert({
     vRows, activePos, selected, fullRows, cardByRow: model.cardByRow, titleBySlug: model.titleBySlug,
-    onInsert, onInsertMany, onClose, onRequestMerge
+    onInsert, onInsertMany, onClose, onRequestMerge, vaultRoot,
+    onAddedToScratchpad: selection.clearSelection
   })
   const viewer = useViewer({ fullRows, results, setOpenPop, setPreview, insertRows: insert.insertRows })
   const beside = useBeside({
@@ -149,10 +169,10 @@ export default function SlideBrowser({
   })
   useSnapshotFetch({
     isOpen, isOpenRef: thumbs.isOpenRef, beside: main.beside, fullRows, results, rowsByTalk,
-    setFullRows: search.setFullRows
+    refetchFull: search.refetchFull
   })
   const { selectWholeSectionAt } = usePickerCommands({
-    registerCommands, gridMode, besideOn: model.besideOn, activePos, leftCount, vRows, rowsByTalk,
+    registerCommands, addToScratchpad: insert.doAddToScratchpad, gridMode, besideOn: model.besideOn, activePos, leftCount, vRows, rowsByTalk,
     findCmdRef: rail.findCmdRef, selectWholeSection: selection.selectWholeSection,
     openBesideAt: beside.openBesideAt, closeBesideNow: beside.closeBesideNow,
     setRailCollapsed, setFindFocusReq: rail.setFindFocusReq
@@ -167,7 +187,7 @@ export default function SlideBrowser({
   useEffect(() => {
     if (!isOpen) return
     prevFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    setQuery(''); search.setUnavailable(false); selection.clearSelection(); setActivePos(0)
+    setQuery(''); setQueryPending(false); search.setUnavailable(false); selection.clearSelection(); setActivePos(0)
     setPreview(false); setOpenPop(null); rail.resetRail(); selection.anchorRef.current = 0
     ex.resetExpansions(); setNearExpanded(new Set())
     tagging.setTagPickerOpen(false)
@@ -204,19 +224,29 @@ export default function SlideBrowser({
     try { window.localStorage.setItem(DENSITY_STORAGE_KEY, String(density)) } catch { /* ignore */ }
   }, [density])
 
+  // While open the Browser covers the workspace: what is behind stops measuring itself.
+  useEffect(() => {
+    setWorkspaceCovered(isOpen)
+    return () => setWorkspaceCovered(false)
+  }, [isOpen])
+
   useEffect(() => {
     if (activePos > vRows.length - 1) setActivePos(Math.max(0, vRows.length - 1))
   }, [vRows.length, activePos])
+  // The focused card in view. The results list scrolls itself (VirtualGrid draws only what is on
+  // screen, so the card may not exist yet); the side-by-side columns and the talk beside are drawn
+  // whole and scroll their card into view.
   useEffect(() => {
+    if (gridMode !== 'side' && activePos < leftCount) return
     rootRef.current?.querySelector<HTMLElement>(`[data-pos="${activePos}"]`)?.scrollIntoView({ block: 'nearest' })
-  }, [activePos, vRows])
+  }, [activePos, vRows, gridMode, leftCount])
 
   useSlideBrowserKeys({
     isOpen, suspendKeys, tagPickerOpen: tagging.tagPickerOpen, viewer: viewer.viewer, vCards, vRows,
     activePos, density, gridMode, scope: rail.scope, preview, openPop, openStrip: ex.openStrip,
     openLoc: ex.openLoc, query, selected, onClose, main, splitLayout: beside.splitLayout, leftCount,
     fullRows, besideOn: model.besideOn, inputRef, rootRef, anchorRef: selection.anchorRef,
-    setOpenPop, setPreview, setQuery, setSelected: selection.setSelected, setActivePos, setRailCollapsed,
+    setOpenPop, setPreview, setQuery: setQueryNow, setSelected: selection.setSelected, setActivePos, setRailCollapsed,
     setDensity, closeBesideNow: beside.closeBesideNow, closeStrip: ex.closeStrip, closeLoc: ex.closeLoc,
     clearScope: rail.clearScope, selectWholeSectionAt, openBesideAt: beside.openBesideAt,
     doInsert: insert.doInsert, extendTo: selection.extendTo, toggleAt: selection.toggleAt,
@@ -225,12 +255,32 @@ export default function SlideBrowser({
     openViewer: viewer.openViewer
   })
 
+  // Whole-list derivations, once per change of their inputs (not per hover or selection render).
+  const openExpansionKey = ex.openStrip?.rowKey ?? ex.openLoc?.rowKey ?? null
+  const openExpansionPos = useMemo(() => expansionPos(vRows, openExpansionKey), [vRows, openExpansionKey])
+  const leftTalkCount = useMemo(() => new Set(model.leftCards.map((c) => c.row.talkSlug)).size, [model.leftCards])
+
+  // The cards' handlers: one object for the Browser's life, reading this render's state through a
+  // ref, so the memoised cards never re-render for a new handler identity (SlideCard).
+  cardActionsLatest.current = {
+    onCardClick: (p, shift) => {
+      if (shift) { setActivePos(p); selection.extendTo(p) } else selection.toggleAt(p)
+      setActivePos(p)
+    },
+    onCardEnter: (p) => setActivePos(p),
+    openBesideAt: beside.openBesideAt,
+    toggleStrip: ex.toggleStrip,
+    toggleLocations: ex.toggleLocations,
+    toggleNear: ex.toggleNear,
+    noteThumbUnavailable: thumbs.noteThumbUnavailable
+  }
+
   if (!isOpen) return null
   const activeRow = vRows[activePos]
 
   // Where the open expansion (version filmstrip OR identical-stack locations) sits in the
   // visual order (or -1: the card was filtered away, so the panel just doesn't render).
-  const expandedRowKey = ex.openStrip?.rowKey ?? ex.openLoc?.rowKey ?? null
+  const expandedRowKey = openExpansionKey
   // Whichever expansion is open (versions filmstrip or identical-stack locations) fills the slot.
   function renderExpansion(anchor: number, row: SearchResult): React.ReactElement | null {
     if (ex.openStrip) {
@@ -275,25 +325,16 @@ export default function SlideBrowser({
     selected,
     activePos,
     expandedRowKey,
-    expandedPos: expansionPos(vRows, expandedRowKey),
+    expandedPos: openExpansionPos,
     leftCount,
     hlPos: model.besidePlanNow ? leftCount + model.besidePlanNow.hl : null,
     besideOk: besideAvailable(gridMode),
     sectionNoByKey: model.sectionNoByKey,
     thumbNonces: thumbs.thumbNonces,
     regenTalk: thumbs.regenTalk,
-    noteThumbUnavailable: thumbs.noteThumbUnavailable,
     getCounts: (id) => ex.countsRef.current.get(id),
     rowsByTalk,
-    onCardClick: (p, shift) => {
-      if (shift) { setActivePos(p); selection.extendTo(p) } else selection.toggleAt(p)
-      setActivePos(p)
-    },
-    onCardEnter: (p) => setActivePos(p),
-    openBesideAt: beside.openBesideAt,
-    toggleStrip: ex.toggleStrip,
-    toggleLocations: ex.toggleLocations,
-    toggleNear: ex.toggleNear,
+    actions: cardActions,
     selectWholeSection: selection.selectWholeSection,
     renderExpansion,
     vaultOf: severalVaults ? (id: string | undefined) => (id ? vaultById.get(id) : undefined) : undefined
@@ -301,12 +342,12 @@ export default function SlideBrowser({
 
   const countLabel = countLabelFor({
     unavailable: search.unavailable,
-    loading: search.loading,
+    loading: queryPending || search.loading,
     grouped: gridMode === 'grouped',
     slideCount: model.display.slideCount,
     sectionCount: model.sectionCount,
     leftCount,
-    talkCount: new Set(model.leftCards.map((c) => c.row.talkSlug)).size
+    talkCount: leftTalkCount
   })
   const findChipList = findChips({ scope: rail.scope, picked: rail.findPicked })
   const viewerTalkMeta = viewer.viewer ? vault.talkMeta[viewer.viewer.slug] : undefined
@@ -355,6 +396,8 @@ export default function SlideBrowser({
               inputRef,
               query,
               onQueryChange: setQuery,
+              onQueryPendingChange: setQueryPending,
+              searchApiRef,
               find: {
                 query: rail.findQuery,
                 onQueryChange: rail.setFindQuery,
@@ -416,8 +459,9 @@ export default function SlideBrowser({
             groups={model.groups}
             groupTotals={model.groupTotals}
             secName={model.secName}
+            sectionNames={model.sectionNames}
             density={density}
-            loading={search.loading}
+            loading={queryPending || search.loading}
             resultCount={results.length}
             unavailable={search.unavailable}
             query={query}
@@ -440,8 +484,8 @@ export default function SlideBrowser({
                   onSwitchOn: (id: string) => setOffVaults((prev) => toggleVault(prev, id))
                 }
                 : null,
-              onClearSearch: () => { setQuery(''); inputRef.current?.focus() },
-              onClearFilters: () => { rail.clearFacets(); rail.clearScope(); setQuery('') },
+              onClearSearch: () => { setQueryNow(''); inputRef.current?.focus() },
+              onClearFilters: () => { rail.clearFacets(); rail.clearScope(); setQueryNow('') },
               onClose
             }}
           />
@@ -453,6 +497,7 @@ export default function SlideBrowser({
               onClear={selection.clearSelection}
               onTag={tagging.openTagPicker}
               onInsert={insert.doInsert}
+              onAddToScratchpad={insert.doAddToScratchpad}
             />
           )}
 

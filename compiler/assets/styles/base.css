@@ -2621,3 +2621,68 @@
    swap); over a disclosure in the picture the pane shows a hand (the pane takes the click). */
 .preview > iframe.preview-incoming { visibility: hidden; }
 .preview.sim-pane-control { cursor: pointer; }
+
+/* Recovery controls must remain outside a remote frame, including a refused one. */
+.preview.preview-live-sim:has(> .remote-preview-tools) > .live-sim-frame {
+  height: calc(100% - 100px);
+}
+.preview .remote-preview-tools {
+  position: absolute; inset: auto 0 0; height: 100px; padding: 12px;
+  display: flex; flex-wrap: wrap; align-content: center; align-items: center; gap: 8px;
+  background: var(--paper); color: var(--ink); font: 13px/1.3 var(--sans);
+}
+.remote-preview-tools > div { flex: 1 1 100%; min-width: 0; }
+.remote-preview-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview .remote-preview-tools .embed-open-link,
+.preview .remote-preview-tools .embed-interact-chip {
+  position: static; display: inline-flex; transform: none; margin: 0; max-width: 100%;
+}
+/* A live web page (decks TalkWeaver opens itself, ?livepage=1): main lays the page, a separate view,
+   over the slot (src/main/live-page-host.ts). The slot shows the page's state while that view is
+   hidden: loading, failed, blocked. In the slide, the never-loaded frame stays as the layout box. */
+.live-page-figure { position: relative; }
+.live-page-figure > iframe[data-live-page] { visibility: hidden; }
+.live-page-figure > .embed-interact-chip { display: none; }
+.live-page-slot {
+  position: absolute; z-index: 2; box-sizing: border-box; overflow: hidden;
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  background: #fff; color: #1f2328; border: 1px solid var(--line, #d0d7de); border-radius: 8px;
+  font: 15px/1.4 var(--sans, system-ui, sans-serif);
+}
+.preview.preview-live-page > .live-page-slot { inset: 0 0 100px 0; border: 0; border-radius: 0; }
+.live-page-message { display: grid; gap: 6px; max-width: 36em; padding: 16px; }
+.live-page-url { opacity: .7; font-size: 13px; word-break: break-all; }
+.live-page-status { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .85; }
+body.live-page-interacting .live-page-interact { background: var(--accent, #0b6bcb); color: #fff; }
+/* Saved views of a web page (the capture gallery, lib/live-page-captures.mjs). Where the page is not
+   shown live (preview, exports, share pages, handouts) they stand in for it: a strip that scrolls
+   sideways, one picture per view, labelled with its capture date. The frame keeps the layout box and
+   is never loaded there. */
+.slide-embed.has-saved-views { position: relative; }
+.slide-embed.has-saved-views > iframe { visibility: hidden; }
+.embed-saved-views {
+  position: absolute; inset: 0; display: flex; overflow-x: auto; overflow-y: hidden;
+  scroll-snap-type: x mandatory; background: #fff; border-radius: inherit;
+}
+.embed-saved-view { flex: 0 0 100%; margin: 0; scroll-snap-align: start; position: relative; display: flex; flex-direction: column; min-width: 0; }
+.embed-saved-view > img { flex: 1 1 auto; min-height: 0; width: 100%; height: auto; object-fit: contain; object-position: top center; background: #fff; }
+.embed-saved-view.is-page > .embed-saved-view-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; background: #fff; }
+.embed-saved-view.is-page > .embed-saved-view-scroll > img { display: block; width: 100%; height: auto; }
+.embed-saved-view > figcaption { flex: 0 0 auto; padding: 4px 8px; font: 12px/1.4 var(--sans, system-ui, sans-serif); color: #57606a; background: rgba(255, 255, 255, .92); }
+.slide-embed.has-saved-views > .embed-open-link { z-index: 1; }
+.live-page-figure.has-saved-views > .embed-saved-views { visibility: hidden; }
+/* In a live page's slot (decks TalkWeaver opens itself): a saved view shown instead of the page. */
+.live-page-slot > .live-page-saved { display: none; }
+.live-page-slot.live-page-gallery-on > .live-page-message { display: none; }
+.live-page-slot.live-page-gallery-on > .live-page-saved { position: absolute; inset: 0; display: flex; flex-direction: column; background: #fff; }
+.live-page-saved > img { flex: 1 1 auto; min-height: 0; width: 100%; object-fit: contain; object-position: top center; }
+.live-page-saved.is-page { overflow-y: auto; overscroll-behavior: contain; }
+.live-page-saved.is-page > img { flex: 0 0 auto; height: auto; object-fit: fill; }
+.live-page-saved.is-page > .live-page-saved-caption { position: sticky; bottom: 0; background: rgba(255, 255, 255, .92); }
+/* Freeze and mark: the picture the room saw, over the slot while the live view is hidden (live-page-freeze.js). */
+.live-page-slot > .live-page-frozen { position: absolute; inset: 0; z-index: 2; background: #fff; }
+.live-page-frozen > img { display: block; width: 100%; height: 100%; object-fit: contain; object-position: center; }
+.live-page-saved > .live-page-saved-caption { flex: 0 0 auto; padding: 4px 8px; font-size: 12px; color: #57606a; text-align: left; }
+.live-page-tools .live-page-gallery-step { min-width: 2em; }
+.live-page-tools .live-page-gallery[aria-pressed="true"] { background: var(--accent, #0b6bcb); color: #fff; }
+.live-page-tools .live-page-capture-note { display: block; font-size: 12px; opacity: .85; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

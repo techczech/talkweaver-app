@@ -12,7 +12,7 @@ import { readFile as readFileAsync } from 'fs/promises'
 import { tmpdir } from 'os'
 import { basename, dirname, join } from 'path'
 import { spawn, type ChildProcess } from 'child_process'
-import { existingSegmentPaths, localRecordingPath, sessionJsonPath, transcriptPath as transcriptPathFor, type RecordingPath } from './recording-paths'
+import { recordedSegmentPaths, readRecordingSource, transcriptPath as transcriptPathFor, type RecordingPath } from './recording-paths'
 import { silencesBetween, transcodeArgs } from './transcode-args'
 import { childEnvWithFfmpegDir, type FfmpegResolution } from './ffmpeg-path'
 import { transcriptionActionMessage, type TranscriptionRow } from '../shared/transcription-status'
@@ -57,26 +57,6 @@ let activeJob: ActiveJob | null = null
 // refuses unsafe names (the handler then reads or writes nothing).
 function transcriptPath(deps: TranscriptionDeps, talkSlug: string, sessionId: string): RecordingPath {
   return transcriptPathFor(deps.vaultRoot(), deps.userDataDir(), talkSlug, sessionId)
-}
-
-function audioPath(deps: TranscriptionDeps, sessionId: string): RecordingPath {
-  return localRecordingPath(deps.userDataDir(), sessionId, 'webm')
-}
-
-// The silence to put before each segment, from the Run's segment times; zeros when the Run has
-// none (an older Run, or one that cannot be read — the segments are then joined back to back).
-function segmentSilences(deps: TranscriptionDeps, talkSlug: string, sessionId: string, count: number): number[] {
-  const none = new Array<number>(count).fill(0)
-  if (count <= 1) return none
-  try {
-    const target = sessionJsonPath(deps.vaultRoot(), deps.userDataDir(), talkSlug, sessionId)
-    if (!target.ok) return none
-    const run = JSON.parse(readFileSync(target.path, 'utf8')) as { audio?: { segments?: Array<{ startMs: number; endMs: number }> } | null }
-    const segments = Array.isArray(run?.audio?.segments) ? run.audio.segments : []
-    return segments.length === count ? silencesBetween(segments) : none
-  } catch {
-    return none
-  }
 }
 
 function emitProgress(win: BrowserWindow | null, sessionId: string, note: string): void {
@@ -249,14 +229,11 @@ export function registerTranscriptionIpc(deps: TranscriptionDeps): void {
       if (refusal || !ready.ffmpeg.found) return { ok: false, error: refusal ?? transcriptionActionMessage({ ...ready.row, state: 'ffmpeg-not-found' }) }
       const ffmpegPath = ready.ffmpeg.path
 
-      const audio = audioPath(deps, sid)
-      if (!audio.ok) return { ok: false, error: audio.error }
-      const sourceAudio = audio.path
-      if (!existsSync(sourceAudio)) return { ok: false, error: 'The local audio file for this Run is missing.' }
-      // A Run that lost its microphone and picked it up again has several segments: one WAV of all
-      // of them in order, with the gaps as silence, so timestamps stay on the recording clock.
-      const sources = existingSegmentPaths(deps.userDataDir(), sid)
-      const silences = segmentSilences(deps, String(talkSlug), sid, sources.length)
+      const source = readRecordingSource(deps.vaultRoot(), deps.userDataDir(), String(talkSlug), sid)
+      const audioSegments = recordedSegmentPaths(deps.userDataDir(), sid, source)
+      if (!audioSegments.length) return { ok: false, error: 'The local audio file for this Run is missing.' }
+      const sources = audioSegments.map((seg) => seg.path)
+      const silences = silencesBetween(audioSegments)
 
       const base = `${basename(sid)}-${Date.now()}`
       const wavPath = join(tmpdir(), `talkweaver-${base}.wav`)
@@ -265,7 +242,7 @@ export function registerTranscriptionIpc(deps: TranscriptionDeps): void {
 
       emitProgress(win, sid, sources.length > 1 ? `Joining ${sources.length} audio segments into one WAV for Parakeet.` : 'Converting WebM audio to WAV for Parakeet.')
       const childEnv = childEnvWithFfmpegDir(ffmpegPath)
-      const ffmpeg = await spawnAndCollect(ffmpegPath, transcodeArgs(sources.length ? sources : [sourceAudio], silences, wavPath), win, sid, 'ffmpeg', childEnv)
+      const ffmpeg = await spawnAndCollect(ffmpegPath, transcodeArgs(sources, silences, wavPath), win, sid, 'ffmpeg', childEnv)
       if (!ffmpeg.ok) {
         if (ffmpeg.error === 'cancelled') return { ok: false, error: 'cancelled' }
         return { ok: false, error: humanFfmpegError(ffmpeg) }

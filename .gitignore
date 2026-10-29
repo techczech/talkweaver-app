@@ -33,3 +33,6 @@ worker-dist.staged-*/
 # Its GPL corresponding source, packed for the release by `npm run build:ffmpeg-source` from
 # scripts/lib/ffmpeg-mac-source-manifest.json (downloads cached here), never committed.
 /ffmpeg-mac-source/
+
+# Scout capture runtime lock; evidence and manifest remain versioned.
+/research/.manifest.lock

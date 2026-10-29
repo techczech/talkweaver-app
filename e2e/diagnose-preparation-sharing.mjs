@@ -17,4 +17,21 @@ assert.equal(result.preparations,1,'concurrent editor and inspector requests pre
 console.log(JSON.stringify(result))
 console.log('simultaneousRequestsMs',timing)
 console.log('PASS real preparation sharing: three requests, one compiler pass')
-}finally {await app.close()}
+}finally {
+  // Passing compiler assertions is not enough: settings must drain and Electron must exit too.
+  const child = app.process()
+  let timer
+  try {
+    await Promise.race([
+      app.close(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error('Electron did not quit within 10 seconds after preparation sharing'))
+          child.kill('SIGKILL')
+        }, 10_000)
+      })
+    ])
+    assert.equal(child.exitCode, 0, 'Electron exits normally after settings shutdown')
+    console.log('PASS real Electron shutdown: settings drained and process exited normally')
+  } finally { clearTimeout(timer) }
+}

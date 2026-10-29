@@ -24,7 +24,7 @@
 
 import { ipcRenderer } from 'electron'
 import type { InkStroke } from '../../worker/protocol'
-import { recordedInk } from './recorder-ink'
+import { recordedDeckInk } from './recorder-ink'
 import { mountEditBridge } from './present-edit-bridge'
 import { mountLiveBridge } from './present-live-bridge'
 import type { PresentationCloseOffer, LiveCloseAction } from './present-close-flow'
@@ -362,7 +362,8 @@ export function createRecorderController(ctx: RecContext): RecorderController {
   // of layer on the same slide (zoom in or out), so replay shows the layer the audience saw. While a
   // stroke is being drawn (a draft, and a long line's pieces with it) nothing is recorded.
   function noteInk(slideId: string, tMs: number): void {
-    const read = recordedInk(document.documentElement.dataset.twLiveInk, slideId)
+    // Nothing while the deck is frozen on a live page picture (its marks are never recorded).
+    const read = recordedDeckInk(document.documentElement, slideId)
     if (!read) return
     const { strokes, layer } = read
     const signature = `${slideId}|${layer.space ?? 'slide'}|${layer.image ?? ''}|${JSON.stringify(strokes)}`

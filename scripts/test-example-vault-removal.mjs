@@ -563,11 +563,11 @@ try {
         "import { renderToStaticMarkup } from 'react-dom/server'",
         "import RemoveExampleConfirm from './src/renderer/src/components/RemoveExampleConfirm.tsx'",
         "import GuidePane from './src/renderer/src/components/GuidePane.tsx'",
-        "import SettingsPanel from './src/renderer/src/components/SettingsPanel.tsx'",
+        "import { GetStartedRows } from './src/renderer/src/components/SettingsWindowPages.tsx'",
         "import { VaultContextMenu } from './src/renderer/src/components/talklist/menus.tsx'",
         "export const confirm = (props) => renderToStaticMarkup(React.createElement(RemoveExampleConfirm, props))",
         "export const pane = (props) => renderToStaticMarkup(React.createElement(GuidePane, props))",
-        "export const settings = (props) => renderToStaticMarkup(React.createElement(SettingsPanel, props))",
+        "export const settings = (props) => renderToStaticMarkup(React.createElement(GetStartedRows, props))",
         "export const vaultMenu = (props) => renderToStaticMarkup(React.createElement(VaultContextMenu, props))"
       ].join('\n'),
       resolveDir: REPO,
@@ -639,14 +639,15 @@ try {
     assert.ok(!inChapter.includes('data-guide-remove-example'))
   })
 
-  await test('Settings → Get started after removal (state 16): “The example vault was removed.”, Show the example vault again, Open the Guide; before removal only Open the Guide', () => {
-    const removed = m.settings({ isOpen: true, onClose: noop, vaultRoot: '/v', onChangeVault: noop, onOpenGuide: noop, exampleRemoved: true, onRestoreExample: noop })
-    const row = removed.slice(removed.indexOf('data-setting="get-started"'), removed.indexOf('data-setting="guide-button"'))
+  await test('Settings › Get started after removal (state 16): “The example vault was removed.”, Show the example vault again, Open the Guide; before removal only Open the Guide', () => {
+    // 0.42: Get started is a page of the Settings window (SettingsWindowPages.tsx).
+    const removed = m.settings({ exampleRemoved: true, onAction: noop })
+    const row = removed.slice(removed.indexOf('data-setting="get-started"'), removed.indexOf('data-setting="vaults"'))
     const t = text(row)
     assert.ok(t.includes('Get started') && t.includes(TEXT.settings.note), t)
     assert.ok(t.indexOf(TEXT.settings.b1) < t.indexOf(TEXT.settings.b2), 'Show the example vault again, then Open the Guide')
     assert.ok(row.includes('data-restore-example') && row.includes('data-open-guide'))
-    const before = m.settings({ isOpen: true, onClose: noop, vaultRoot: '/v', onChangeVault: noop, onOpenGuide: noop })
+    const before = m.settings({ exampleRemoved: false, onAction: noop })
     assert.ok(!before.includes('data-restore-example') && !text(before).includes(TEXT.settings.note))
   })
 

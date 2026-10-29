@@ -101,3 +101,23 @@ console.log('PASS preview HTML retention budget')
   assert.equal(shared, 1, 'callers during a load share it')
   console.log('PASS memoiseUntilFailure: a transient failure is retried, a found value kept')
 }
+
+// The prewarm is uncached and must use its own gate entry point, never the variant's release hook.
+{
+  let announces = 0, prewarms = 0, backgrounds = 0, compiles = 0
+  const { createSingleFlight } = await import('../src/main/single-flight.ts')
+  const gate = createSingleFlight({ beforeRequest: () => { announces += 1 } })
+  const originalPrewarm = gate.prewarm, originalBackground = gate.background
+  gate.prewarm = (fn) => { prewarms += 1; return originalPrewarm(fn) }
+  gate.background = (fn) => { backgrounds += 1; return originalBackground(fn) }
+  const cache = createPreparedTalkCache({ maxEntries: 2, maxBytes: 100, sizeOf: () => 1 })
+  const route = module.createPreparationRoute(cache, gate)
+  const compile = (gated) => gated(async () => ++compiles)
+  assert.equal(await route('prewarm', 'same', 'deck', compile), 1)
+  assert.equal(await route('prewarm', 'same', 'deck', compile), 2, 'the same prewarm is compiled afresh')
+  assert.equal(prewarms, 2, 'prewarm calls gate.prewarm')
+  assert.equal(backgrounds, 0, 'prewarm never calls gate.background')
+  assert.equal(announces, 0, 'prewarm does not release itself')
+  assert.deepEqual(cache.stats(), { entries: 0, bytes: 0, pending: 0 }, 'prewarm never enters the cache')
+  console.log('PASS preparation route: prewarm is uncached and uses only gate.prewarm')
+}

@@ -28,7 +28,7 @@ export type ToolbarIconToken =
   | 'design' | 'pane-strip' | 'handout' | 'abstract' | 'refresh' | 'tools' | 'trash'
   | 'present' | 'settings' | 'keyboard' | 'window' | 'presenter' | 'audience'
   | 'table' | 'mindmap' | 'chart' | 'mermaid' | 'diagram' | 'svg'
-  | 'code' | 'qr' | 'action' | 'embed' | 'countdown'
+  | 'code' | 'qr' | 'action' | 'embed' | 'countdown' | 'comment'
   | 'strip' | 'publish' | 'calendar' | 'command' | 'undo' | 'redo' | 'newslide' | 'promote' | 'demote' | 'bullets' | 'numbered' | 'bold' | 'italic' | 'link' | 'more'
 
 export interface CommandToolbarPlacement {
@@ -164,7 +164,8 @@ const COMPONENT_INSERT_COMMAND_IDS = [
   'insert-component-action',
   'insert-component-embed',
   'insert-component-auto-embed',
-  'insert-component-countdown'
+  'insert-component-countdown',
+  'insert-component-notes'
 ] as const
 
 type ComponentInsertCommandId = (typeof COMPONENT_INSERT_COMMAND_IDS)[number]
@@ -175,7 +176,8 @@ const COMPONENT_TOOLBAR_ICON: Record<string, ToolbarIconToken> = {
   action: 'action',
   embed: 'embed',
   'auto-embed': 'embed',
-  countdown: 'countdown'
+  countdown: 'countdown',
+  notes: 'comment'
 }
 
 const componentInsertCommandIds: ReadonlySet<string> = new Set(COMPONENT_INSERT_COMMAND_IDS)
@@ -250,11 +252,57 @@ const QUOTE_FORM_COMMANDS = QUOTE_FORM_COMMAND_IDS.map((id) => command({
 // Application commands are declared once here. The palette and native custom menus retain their
 // existing order, but now render this data instead of maintaining parallel title/shortcut lists.
 const PALETTE_COMMANDS = [
+  // Research repeat actions are palette-only: their keys belong to the picker, never native menus.
+  command({ id: 'research-panel', label: 'Research', scope: 'app', shortcutId: 'app.research-panel', menu: { path: ['View'], order: 180 }, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-panel' }),
+  command({ id: 'research-find', label: 'Find in research…', scope: 'app', shortcutId: 'app.research-find', menu: { path: ['View'], order: 181 }, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-find' }),
+  command({ id: 'research-rename', label: 'Rename research…', scope: 'research', shortcutId: 'research.rename', menu: null, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-rename' }),
+  command({ id: 'research-change-kind', label: 'Change research kind…', scope: 'research', shortcutId: 'research.change-kind', menu: null, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-change-kind' }),
+  command({ id: 'research-delete', label: 'Delete research…', scope: 'research', shortcutId: 'research.delete', menu: null, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-delete' }),
+  command({ id: 'research-move', label: 'Move research to another talk…', scope: 'research', shortcutId: 'research.move', menu: null, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-move' }),
+  command({ id: 'research-copy', label: 'Copy research to another talk…', scope: 'research', shortcutId: 'research.copy', menu: null, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-copy' }),
+  command({ id: 'research-insert-here', label: 'Insert research from another talk', scope: 'research', shortcutId: 'research.insert-here', menu: null, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-insert-here' }),
+  command({ id: 'research-insert', label: 'Insert research at cursor', scope: 'research', shortcutId: 'research.insert', menu: null, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-insert' }),
+  command({ id: 'research-make-slide', label: 'Make slide from research', scope: 'research', shortcutId: 'research.make-slide', menu: null, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-make-slide' }),
+  command({ id: 'research-open', label: 'Open research item', scope: 'research', shortcutId: 'research.open', menu: null, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-open' }),
+  command({ id: 'research-previous', label: 'Previous research item', scope: 'research', shortcutId: 'research.previous', menu: null, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-previous' }),
+  command({ id: 'research-next', label: 'Next research item', scope: 'research', shortcutId: 'research.next', menu: null, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-next' }),
+  command({ id: 'research-scope', label: 'Change research scope', scope: 'research', shortcutId: 'research.scope', menu: null, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-scope' }),
+  command({ id: 'research-close', label: 'Close research', scope: 'research', shortcutId: 'research.close', menu: null, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-close' }),
+  command({ id: 'research-copy-reference', label: 'Copy research reference', scope: 'research', shortcutId: 'research.copy-reference', menu: null, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-copy-reference' }),
+  command({ id: 'research-reveal', label: 'Reveal research item', scope: 'research', shortcutId: 'research.reveal', menu: null, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-reveal' }),
+  command({ id: 'research-source', label: 'Open research source', scope: 'research', shortcutId: 'research.source', menu: null, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-source' }),
+  command({ id: 'research-used-in', label: 'Jump to research use', scope: 'research', shortcutId: 'research.used-in', menu: null, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-used-in' }),
+  command({ id: 'research-scope-talk', label: 'Research scope: This talk', scope: 'research', shortcutId: 'research.scope-talk', menu: null, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-scope-talk' }),
+  command({ id: 'research-scope-research', label: 'Research scope: All research', scope: 'research', shortcutId: 'research.scope-research', menu: null, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-scope-research' }),
+  command({ id: 'research-scope-everything', label: 'Research scope: Everything', scope: 'research', shortcutId: 'research.scope-everything', menu: null, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-scope-everything' }),
+  command({ id: 'research-retry', label: 'Reload research', scope: 'research', shortcutId: 'research.retry', menu: null, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-retry' }),
   command({ id: 'refresh', label: 'Rebuild preview', scope: 'deck', menu: null, toolbar: { menu: 'deck', order: 50, icon: 'refresh' }, palette: { visible: true, keywords: ['refresh', 'preview', 'thumbnail', 'compile'] }, handlerId: 'refresh' }),
   command({ id: 'optimize-images', label: 'Optimise images to WebP (smaller, faster previews)', scope: 'deck', menu: null, palette: { visible: true, keywords: ['optimise', 'images', 'webp', 'compress'] }, handlerId: 'optimize-images' }),
   command({ id: 'ocr-index', label: 'Index image text (OCR) for search', scope: 'tools', menu: null, palette: { visible: true, keywords: ['ocr', 'index', 'image', 'search'] }, handlerId: 'ocr-index' }),
   command({ id: 'check-embeds', label: 'Check embeds (will videos & sites load when presenting?)', scope: 'tools', menu: null, palette: { visible: true, keywords: ['embed', 'video', 'site', 'check'] }, handlerId: 'check-embeds' }),
   command({ id: 'layout-doctor', label: 'Layout Doctor (trigger-line health)…', scope: 'tools', menu: null, palette: { visible: true, keywords: ['doctor', 'trigger', 'layout', 'health', 'unresolved'] }, handlerId: 'layout-doctor' }),
+  // Knowledge step two: the research folder beside a talk. Capture is a content command (verb research.capture);
+  // Reveal is chrome (ui-navigation): both in src/main/agent-verbs.ts.
+  command({ id: 'research-capture', label: 'Capture to research…', scope: 'app', menu: null, palette: { visible: true, keywords: ['capture', 'research', 'evidence', 'file', 'save', 'scout', 'table', 'snippet'] }, handlerId: 'research-capture' }),
+  command({ id: 'research-reveal-folder', label: 'Reveal research folder', scope: 'app', menu: null, palette: { visible: true, keywords: ['reveal', 'research', 'folder', 'finder', 'show'] }, handlerId: 'research-reveal-folder' }),
+  // Slide Scratchpad (docs/design/2026-10-27-slide-scratchpad): candidates for this talk. Actions act on the
+  // panel's current selection; only the two Insert commands change the outline.
+  command({ id: 'scratchpad-panel', label: 'Slide Scratchpad', scope: 'app', menu: { path: ['View'], order: 182 }, palette: { visible: true, keywords: ['scratchpad', 'slide', 'candidates', 'collect', 'agent', 'visuals', 'triage'] }, handlerId: 'scratchpad-panel' }),
+  command({ id: 'scratchpad-dock', label: 'Dock Slide Scratchpad to the right', scope: 'app', menu: null, palette: { visible: true, keywords: ['scratchpad', 'dock', 'right', 'panel'] }, handlerId: 'scratchpad-dock' }),
+  command({ id: 'scratchpad-float', label: 'Float Slide Scratchpad over the workspace', scope: 'app', menu: null, palette: { visible: true, keywords: ['scratchpad', 'float', 'panel', 'window'] }, handlerId: 'scratchpad-float' }),
+  command({ id: 'scratchpad-collapse', label: 'Collapse Slide Scratchpad to a pill', scope: 'app', menu: null, palette: { visible: true, keywords: ['scratchpad', 'collapse', 'pill', 'hide', 'minimise'] }, handlerId: 'scratchpad-collapse' }),
+  command({ id: 'scratchpad-add-slides', label: 'Add selected slides to Slide Scratchpad', scope: 'app', menu: null, palette: { visible: true, keywords: ['scratchpad', 'add', 'slides', 'picker', 'browser', 'selected', 'candidates'] }, handlerId: 'scratchpad-add-slides' }),
+  command({ id: 'scratchpad-keep', label: 'Keep selected Slide Scratchpad items for the library', scope: 'app', menu: null, palette: { visible: true, keywords: ['scratchpad', 'keep', 'library', 'save'] }, handlerId: 'scratchpad-keep' }),
+  command({ id: 'scratchpad-reject', label: 'Reject selected Slide Scratchpad items', scope: 'app', menu: null, palette: { visible: true, keywords: ['scratchpad', 'reject', 'discard', 'no'] }, handlerId: 'scratchpad-reject' }),
+  command({ id: 'scratchpad-move-back', label: 'Move selected Slide Scratchpad items back', scope: 'app', menu: null, palette: { visible: true, keywords: ['scratchpad', 'move', 'back', 'restore', 'kept', 'rejected'] }, handlerId: 'scratchpad-move-back' }),
+  command({ id: 'scratchpad-move-to-group', label: 'Move Slide Scratchpad items to a group…', scope: 'app', menu: null, palette: { visible: true, keywords: ['scratchpad', 'group', 'move', 'sort'] }, handlerId: 'scratchpad-move-to-group' }),
+  command({ id: 'scratchpad-new-group', label: 'New Slide Scratchpad group…', scope: 'app', menu: null, palette: { visible: true, keywords: ['scratchpad', 'group', 'new', 'create'] }, handlerId: 'scratchpad-new-group' }),
+  command({ id: 'scratchpad-remove-missing', label: 'Remove missing files from Slide Scratchpad', scope: 'app', menu: null, palette: { visible: true, keywords: ['scratchpad', 'missing', 'file', 'remove', 'clean'] }, handlerId: 'scratchpad-remove-missing' }),
+  // Ticket 2: the only Slide Scratchpad actions that change the outline (the two Insert commands), and comparing.
+  command({ id: 'scratchpad-insert-slide', label: 'Insert whole slide from Slide Scratchpad', scope: 'app', menu: null, palette: { visible: true, keywords: ['scratchpad', 'insert', 'slide', 'whole', 'add', 'reuse'] }, handlerId: 'scratchpad-insert-slide' }),
+  command({ id: 'scratchpad-insert-visual', label: 'Insert visual only from Slide Scratchpad', scope: 'app', menu: null, palette: { visible: true, keywords: ['scratchpad', 'insert', 'visual', 'picture', 'svg', 'html', 'page', 'image'] }, handlerId: 'scratchpad-insert-visual' }),
+  command({ id: 'scratchpad-compare', label: 'Compare Slide Scratchpad items side by side', scope: 'app', menu: null, palette: { visible: true, keywords: ['scratchpad', 'compare', 'side by side', 'columns'] }, handlerId: 'scratchpad-compare' }),
+  command({ id: 'scratchpad-change-place', label: 'Change where Slide Scratchpad inserts…', scope: 'app', menu: null, palette: { visible: true, keywords: ['scratchpad', 'place', 'insert', 'after', 'slide', 'position', 'where'] }, handlerId: 'scratchpad-change-place' }),
   command({ id: 'where-used', label: 'Slide: where used & versions', scope: 'app', shortcutId: 'app.where-used', menu: null, palette: { visible: true, keywords: ['slide', 'usage', 'versions'] }, handlerId: 'where-used' }),
   command({ id: 'focus-slide', label: 'Focus on this slide (scoped editing + live preview)', scope: 'app', shortcutId: 'app.slide-focus', menu: null, palette: { visible: true, keywords: ['focus', 'slide', 'preview'] }, handlerId: 'focus-slide' }),
   command({ id: 'toggle-inspector', label: 'Inspector mode', scope: 'app', shortcutId: 'app.toggle-inspector', menu: { path: ['Deck'], order: 10 }, toolbar: { menu: 'deck', order: 20, icon: 'pane-strip' }, palette: { visible: true, keywords: ['inspector', 'slide strip', 'pane'] }, handlerId: 'toggle-inspector' }),
@@ -305,6 +353,12 @@ const PALETTE_COMMANDS = [
   command({ id: 'icon-picker', label: 'Insert icon…', scope: 'app', shortcutId: 'app.icon-picker', menu: null, toolbar: { menu: 'insert', order: 40, icon: 'sparkles', menuLabel: 'Icon…' }, palette: { visible: true, keywords: ['insert', 'icon', 'bullet', 'title', 'paragraph', 'list item', 'picture'] }, handlerId: 'icon-picker' }),
   ...OBJECT_PALETTE_COMMANDS,
   ...COMPONENT_INSERT_COMMANDS,
+  // Insert › HTML page…: a native file picker for an HTML file, copied into the talk's assets folder when
+  // it is outside the talk, then an `[Embed: assets/…]` line at the caret (src/main/html-page-import.ts).
+  // Listed with the components, right after Embed, whose template line it fills in.
+  command({ id: 'insert-html-page', label: 'Insert HTML page…', scope: 'app', menu: null, toolbar: { menu: 'insert', order: 235, icon: 'embed', group: 'component', menuLabel: 'HTML page…' }, palette: { visible: true, keywords: ['insert', 'html', 'page', 'file', 'embed', 'simulation', 'interactive', 'widget', 'import', 'picker'] }, handlerId: 'insert-html-page' }),
+  // Capture embed… (lib/captureEmbed.ts, src/main/live-page-capture-window.ts): a window for the inspected slide's web page; keyless by design (owner 2026-10-27: no guessed shortcut).
+  command({ id: 'capture-embed', label: 'Capture embed…', scope: 'app', menu: null, palette: { visible: true, keywords: ['capture', 'embed', 'web', 'page', 'live', 'screenshot', 'saved', 'view', 'entire', 'before', 'presenting'] }, handlerId: 'capture-embed' }),
   command({ id: 'format-bold', label: 'Bold', scope: 'editor', shortcutId: 'editor.bold', menu: null, toolbar: { menu: 'deck', order: 170, icon: 'bold', actionBarOnly: true }, palette: { visible: true, keywords: ['format', 'bold', 'strong', 'markdown'] }, handlerId: 'format-bold' }),
   command({ id: 'format-italic', label: 'Italic', scope: 'editor', shortcutId: 'editor.italic', menu: null, toolbar: { menu: 'deck', order: 180, icon: 'italic', actionBarOnly: true }, palette: { visible: true, keywords: ['format', 'italic', 'emphasis', 'markdown'] }, handlerId: 'format-italic' }),
   command({ id: 'format-inline-code', label: 'Inline code', scope: 'editor', shortcutId: 'editor.inline-code', menu: null, palette: { visible: true, keywords: ['format', 'inline', 'code', 'backtick', 'markdown'] }, handlerId: 'format-inline-code' }),
@@ -335,6 +389,15 @@ const PALETTE_COMMANDS = [
   // assigns them no chord; the palette, Actions here and the slide and section context menus are the way in.
   command({ id: 'move-slide-to', label: 'Move slide to…', scope: 'app', menu: null, palette: { visible: true, keywords: ['move', 'slide', 'reorder', 'section', 'start', 'end', 'before', 'after'] }, handlerId: 'move-slide-to' }),
   command({ id: 'move-section-to', label: 'Move section to…', scope: 'app', menu: null, palette: { visible: true, keywords: ['move', 'section', 'reorder', 'start', 'end', 'before', 'after'] }, handlerId: 'move-section-to' }),
+  // Select several slides in the grid (slide handling 1b): the commands behind the "Select section" link, Esc and the batch bar's Move to….
+  command({ id: 'select-section', label: 'Select section', scope: 'app', menu: null, palette: { visible: true, keywords: ['select', 'section', 'slides', 'grid', 'several'] }, handlerId: 'select-section' }),
+  command({ id: 'clear-slide-selection', label: 'Clear slide selection', scope: 'app', menu: null, palette: { visible: true, keywords: ['clear', 'deselect', 'selection', 'slides', 'grid'] }, handlerId: 'clear-slide-selection' }),
+  command({ id: 'set-aside-slides', label: 'Set aside in Scratchpad', scope: 'app', shortcutId: 'app.set-aside', menu: { path: ['Slides'], order: 85 }, palette: { visible: true, keywords: ['set aside', 'scratchpad', 'park', 'selected', 'slides'] }, handlerId: 'set-aside-slides' }),
+  command({ id: 'move-selected-slides-to', label: 'Move selected slides to…', scope: 'app', menu: null, palette: { visible: true, keywords: ['move', 'selected', 'slides', 'reorder', 'section', 'grid'] }, handlerId: 'move-selected-slides-to' }),
+  // Search the slides (slide handling 2): the grid's search box, and Next / Previous through the hits of whichever search is showing (grid first, else the outline's).
+  command({ id: 'search-slides-grid', label: 'Search slides in the grid', scope: 'app', shortcutId: 'app.grid-search', menu: null, palette: { visible: true, keywords: ['search', 'find', 'slides', 'grid', 'dim', 'highlight'] }, handlerId: 'search-slides-grid' }),
+  command({ id: 'search-next', label: 'Next search result', scope: 'app', shortcutId: 'app.search-next', menu: null, palette: { visible: true, keywords: ['search', 'next', 'result', 'hit', 'slides', 'outline', 'grid'] }, handlerId: 'search-next' }),
+  command({ id: 'search-previous', label: 'Previous search result', scope: 'app', shortcutId: 'app.search-previous', menu: null, palette: { visible: true, keywords: ['search', 'previous', 'result', 'hit', 'slides', 'outline', 'grid'] }, handlerId: 'search-previous' }),
   command({ id: 'normalize-triggers', label: 'Normalize trigger lines', scope: 'editor', menu: null, toolbar: { menu: 'deck', order: 60, icon: 'tools' }, palette: { visible: true, keywords: ['normalise', 'trigger', 'lines'] }, handlerId: 'normalize-triggers' }),
   command({ id: 'undo', label: 'Undo', scope: 'editor', shortcutId: 'editor.undo', menu: null, toolbar: { menu: 'deck', order: 100, icon: 'undo', actionBarOnly: true }, palette: { visible: true, keywords: ['undo', 'history'] }, handlerId: 'undo' }),
   command({ id: 'redo', label: 'Redo', scope: 'editor', shortcutId: 'editor.redo', menu: null, toolbar: { menu: 'deck', order: 110, icon: 'redo', actionBarOnly: true }, palette: { visible: true, keywords: ['redo', 'history'] }, handlerId: 'redo' }),
@@ -347,8 +410,12 @@ const PALETTE_COMMANDS = [
   // T27: ⌘⇧P is promoted from the shortcut-only fallthrough to an explicit command so the Tools
   // menu can open the palette too. Palette-hidden: the palette must not list itself.
   command({ id: 'app.command-palette', label: 'All commands…', scope: 'app', shortcutId: 'app.command-palette', menu: null, toolbar: { menu: 'tools', order: 45, icon: 'command' }, palette: { visible: false, keywords: [] }, handlerId: 'app.command-palette' }),
-  command({ id: 'help', label: 'Keyboard shortcuts', scope: 'app', shortcutId: 'app.help', menu: null, toolbar: { menu: 'tools', order: 50, icon: 'keyboard' }, palette: { visible: true, keywords: ['help', 'keyboard', 'shortcuts'] }, handlerId: 'help' }),
-  command({ id: 'settings', label: 'Settings', scope: 'app', shortcutId: 'app.settings', menu: null, toolbar: { menu: 'tools', order: 40, icon: 'settings' }, palette: { visible: true, keywords: ['settings', 'preferences'] }, handlerId: 'settings' }),
+  command({ id: 'help', label: 'Keyboard shortcuts', scope: 'app', shortcutId: 'app.help', menu: { path: ['Help'], order: 30 }, toolbar: { menu: 'tools', order: 50, icon: 'keyboard' }, palette: { visible: true, keywords: ['help', 'keyboard', 'shortcuts'] }, handlerId: 'help' }),
+  command({ id: 'settings', label: 'Settings', scope: 'app', shortcutId: 'app.settings', menu: null, toolbar: { menu: 'tools', order: 40, icon: 'settings' }, palette: { visible: true, keywords: ['settings', 'preferences', 'about', 'updates', 'version', 'check for new versions'] }, handlerId: 'settings' }),
+  // Update notices (ADR-0041): both commands have no default key, are rebindable, and sit in the Help menu
+  // (Check for Updates… sits in the TalkWeaver menu under About on macOS: src/main/app-menu.ts).
+  command({ id: 'check-for-updates', label: 'Check for Updates…', scope: 'app', shortcutId: 'app.check-for-updates', menu: { path: ['Help'], order: 10 }, palette: { visible: true, keywords: ['update', 'updates', 'new version', 'upgrade', 'download', 'latest', 'check'] }, handlerId: 'check-for-updates' }),
+  command({ id: 'whats-new', label: "What's new in TalkWeaver", scope: 'app', shortcutId: 'app.whats-new', menu: { path: ['Help'], order: 20 }, palette: { visible: true, keywords: ['whats new', 'release notes', 'changes', 'version', 'updated', 'notes'] }, handlerId: 'whats-new' }),
   // Onboarding ticket 12: first of the three Get started rows (state 16b); it brings the removed example vault back.
   command({ id: 'get-started-show-example', label: 'Get started: show the example vault again', scope: 'app', menu: null, palette: { visible: true, keywords: ['get started', 'example', 'example vault', 'restore', 'bring back', 'onboarding'] }, handlerId: 'example.restore' }),
   // Onboarding ticket 07: the Guide's two palette rows (state 16b). No key, no menu, no toolbar placement.
@@ -443,7 +510,11 @@ export const PALETTE_EXCLUSIONS: Readonly<Record<string, string>> = {
   'editor.protect-heading-delete': 'the Delete key on a heading: acts on the key press itself',
   'editor.object-edit': 'needs an object at the caret and the Enter key',
   'editor.object-raw': 'needs an object widget under the caret',
-  'editor.object-finish': 'needs an open object editor'
+  'editor.object-finish': 'needs an open object editor',
+  'editor.object-discard': 'needs an open object editor',
+  'editor.object-row-up': 'works only with focus in a chat, terminal or trace editor row',
+  'editor.object-row-down': 'works only with focus in a chat, terminal or trace editor row',
+  'editor.insert-notes': 'the same as Insert speaker notes (listed once, from the Insert menu); this row is its rebindable key'
 }
 
 // Whole windows and panels whose keys act on their own focused row or state; the palette in the
