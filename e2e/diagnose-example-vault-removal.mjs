@@ -66,6 +66,19 @@ async function launch(p) {
   await app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) w.setSize(1440, 900) })
   return { app, page }
 }
+// Thumbnail capture also creates BrowserWindows. Only a renderer editor window can be
+// the requested talk; retain the existing deadline and all subsequent content checks.
+function nextTalkWindow(app) {
+  return app.waitForEvent('window', {
+    timeout: 15000,
+    predicate: async (candidate) => {
+      try {
+        await candidate.waitForURL(/\/renderer\/index\.html(?:[?#]|$)/, { timeout: 15000 })
+        return true
+      } catch { return false }
+    },
+  })
+}
 const exampleHeader = (page) => page.locator('[data-vault-header][data-vault-example="true"]')
 async function waitFor(page, fn, arg, timeout = 15000) {
   return page.waitForFunction(fn, arg, { timeout }).then(() => true).catch(() => false)
@@ -81,7 +94,7 @@ async function setUp(p) {
   await exampleHeader(page).waitFor({ state: 'visible', timeout: 15000 })
   await waitFor(page, (want) => want.every((t) => document.querySelector(`[data-talk-title="${CSS.escape(t)}"]`)), TITLES)
   const outline = join(realpathSync(p.root), 'the-saturday-market', 'the-saturday-market-outline.md')
-  const second = app.waitForEvent('window')
+  const second = nextTalkWindow(app)
   await page.evaluate((outlinePath) => window.tw.windows.openInNewWindow({ kind: 'talk', outlinePath }), outline)
   const win2 = await second
   await win2.waitForLoadState('domcontentloaded')
@@ -92,7 +105,7 @@ async function setUp(p) {
 /** Open an example talk in a window of its own; returns its page. */
 async function openExampleWindow(app, page, root, slug, title) {
   const outlinePath = join(realpathSync(root), slug, `${slug}-outline.md`)
-  const next = app.waitForEvent('window')
+  const next = nextTalkWindow(app)
   await page.evaluate((path) => window.tw.windows.openInNewWindow({ kind: 'talk', outlinePath: path }), outlinePath)
   const win = await next
   await win.waitForLoadState('domcontentloaded')

@@ -8,7 +8,7 @@ import { mkdtempSync, realpathSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative, sep } from 'node:path'
 
-export interface ScratchFileIdentity { dev: number; ino: number }
+export interface ScratchFileIdentity { dev: string; ino: string }
 export interface ScratchDiskFile { name: string; path: string; mtime: string; sidecar: string | null }
 export interface ScratchDiskScan {
   folder: ScratchFileIdentity | null
@@ -43,44 +43,44 @@ export function scratchSnapshotIdentity(path: string): string | null {
 // Electron runs it in Node-only mode, including in signed packages. No window or profile opens.
 const IO_SCRIPT = String.raw`
 const fs = require('node:fs'); const path = require('node:path'); const crypto = require('node:crypto');
-const same = (a,b) => a.dev === b.dev && a.ino === b.ino;
-const identity = (s) => ({dev:s.dev, ino:s.ino});
+const same = (a,b) => String(a.dev) === String(b.dev) && String(a.ino) === String(b.ino);
+const identity = (s) => ({dev:String(s.dev), ino:String(s.ino)});
 const plain = (n) => typeof n === 'string' && n !== '' && !/[\\/\0]/.test(n) && !n.startsWith('.');
 const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0);
 function readPlain(name, max = 64 * 1024 * 1024) {
-  const listed = fs.lstatSync(name);
+  const listed = fs.lstatSync(name,{bigint:true});
   if (!listed.isFile()) throw new Error(listed.isSymbolicLink() ? 'is a link' : 'is not a plain file');
   if (listed.size > max) throw new Error('is too large to read safely');
   const fd = fs.openSync(name, flags);
   try {
-    const opened = fs.fstatSync(fd);
+    const opened = fs.fstatSync(fd,{bigint:true});
     if (!opened.isFile() || !same(listed, opened)) throw new Error('changed while opening');
     if (opened.size > max) throw new Error('is too large to read safely');
-    const bytes = Buffer.alloc(opened.size); let offset = 0;
+    const bytes = Buffer.alloc(Number(opened.size)); let offset = 0;
     while (offset < bytes.length) {
       const n = fs.readSync(fd,bytes,offset,bytes.length-offset,null);
       if (n === 0) throw new Error('changed while reading');
       offset += n;
     }
-    const after = fs.fstatSync(fd);
-    if (!same(opened, after) || opened.size !== after.size || opened.mtimeMs !== after.mtimeMs || opened.ctimeMs !== after.ctimeMs) throw new Error('changed while reading');
+    const after = fs.fstatSync(fd,{bigint:true});
+    if (!same(opened, after) || opened.size !== after.size || opened.mtimeNs !== after.mtimeNs || opened.ctimeNs !== after.ctimeNs) throw new Error('changed while reading');
     return {bytes, info:after};
   } finally { fs.closeSync(fd); }
 }
 function run(job) {
-  if (!same(fs.statSync('.'), job.talkId) || fs.realpathSync('.') !== job.talk) throw new Error('The talk folder changed. Nothing was changed.');
+  if (!same(fs.statSync('.',{bigint:true}), job.talkId) || fs.realpathSync('.') !== job.talk) throw new Error('The talk folder changed. Nothing was changed.');
   let info;
-  try { info = fs.lstatSync('scratchpad'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  try { info = fs.lstatSync('scratchpad',{bigint:true}); } catch (e) { if (e.code !== 'ENOENT') throw e; }
   if (!info && job.action === 'scan') return {folder:null, state:{text:null,error:null}, files:[], notices:[]};
-  if (!info) { fs.mkdirSync('scratchpad'); info = fs.lstatSync('scratchpad'); }
+  if (!info) { fs.mkdirSync('scratchpad'); info = fs.lstatSync('scratchpad',{bigint:true}); }
   if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('The Scratchpad folder is a link or is not a folder. Nothing was changed.');
   if (job.folder && !same(info,job.folder)) throw new Error('The Scratchpad folder changed. Nothing was changed.');
   process.chdir('scratchpad');
-  const held = fs.statSync('.'); const heldPath = fs.realpathSync('.');
+  const held = fs.statSync('.',{bigint:true}); const heldPath = fs.realpathSync('.');
   const holds = () => {
-    const named = fs.lstatSync(job.folderPath);
+    const named = fs.lstatSync(job.folderPath,{bigint:true});
     if (!named.isDirectory() || named.isSymbolicLink() || !same(named,held) || fs.realpathSync('.') !== heldPath) throw new Error('The Scratchpad folder changed. Nothing was changed.');
-    if (!same(fs.statSync(job.talk),job.talkId) || fs.realpathSync(job.talk) !== job.talk) throw new Error('The talk folder changed. Nothing was changed.');
+    if (!same(fs.statSync(job.talk,{bigint:true}),job.talkId) || fs.realpathSync(job.talk) !== job.talk) throw new Error('The talk folder changed. Nothing was changed.');
   };
   if (!same(info,held)) throw new Error('The Scratchpad folder changed. Nothing was changed.');
   holds();
@@ -139,10 +139,10 @@ process.stdin.on('end', () => { try { process.stdout.write(JSON.stringify({ok:tr
 
 export function createScratchpadDisk(talkDir: string, spawnChild: typeof spawn = spawn) {
   const talk = realpathSync(talkDir)
-  const talkId = statSync(talk)
+  const talkId = statSync(talk, { bigint: true })
   const folderPath = join(talk, 'scratchpad')
   function run<T>(request: Record<string, unknown>): Promise<T> {
-    const input = JSON.stringify({ ...request, talk, talkId: { dev: talkId.dev, ino: talkId.ino }, folderPath, cache: cacheFolder() })
+    const input = JSON.stringify({ ...request, talk, talkId: { dev: talkId.dev.toString(), ino: talkId.ino.toString() }, folderPath, cache: cacheFolder() })
     return new Promise((resolve, reject) => {
       const childEnv: NodeJS.ProcessEnv = { ELECTRON_RUN_AS_NODE: '1' }
       // Built-ins only: never inherit loaders, module paths, injected libraries or inspector hooks.
@@ -153,27 +153,37 @@ export function createScratchpadDisk(talkDir: string, spawnChild: typeof spawn =
       })
       activeChildren.add(child)
       let output = ''; let diagnostic = ''; let done = false
-      const finish = (error?: Error): void => {
+      let stopped: Error | null = null
+      const stop = (error: Error): void => {
+        if (done || stopped) return
+        stopped = error
+        clearTimeout(timer)
+        try { child.kill('SIGKILL') } catch { /* close still decides when this writer has ended */ }
+      }
+      // Only close releases the store queue. A kill request alone is not proof that a writer
+      // has stopped: rejecting early could let its late commit overwrite the next action.
+      const finish = (): void => {
         if (done) return
         done = true; clearTimeout(timer)
-        if (error) { child.kill(); reject(error); return }
+        if (stopped) { reject(stopped); return }
         try {
           const answer = JSON.parse(output) as { ok: boolean; value?: T; error?: string }
           if (!answer.ok) reject(new Error(answer.error ?? 'The Scratchpad operation failed.'))
           else resolve(answer.value as T)
         } catch { reject(new Error(`The Scratchpad operation did not answer. ${diagnostic.slice(0, 300)}`)) }
       }
-      const timer = setTimeout(() => finish(new Error('The Scratchpad operation did not finish. Nothing was set aside.')), 15_000)
-      child.on('error', finish)
-      child.stdin.on('error', (error) => finish(error))
+      const timer = setTimeout(() => stop(new Error('The Scratchpad operation did not finish. Nothing was set aside.')), 15_000)
+      child.on('error', stop)
+      child.stdin.on('error', stop)
       child.stdout.setEncoding('utf8')
       child.stdout.on('data', (chunk: string) => {
+        if (stopped || done) return
         output += chunk
-        if (output.length > 64 * 1024 * 1024) finish(new Error('The Scratchpad answer was too large.'))
+        if (output.length > 64 * 1024 * 1024) stop(new Error('The Scratchpad answer was too large.'))
       })
       child.stderr.on('data', (chunk: Buffer) => { if (diagnostic.length < 1000) diagnostic += chunk.toString() })
       child.on('close', () => { activeChildren.delete(child); finish() })
-      child.stdin.end(input)
+      try { child.stdin.end(input) } catch (error) { stop(error instanceof Error ? error : new Error(String(error))) }
     })
   }
   return {

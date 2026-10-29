@@ -6,6 +6,8 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { spawn, spawnSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
+import { EventEmitter } from 'node:events'
+import { PassThrough } from 'node:stream'
 import { createScratchpadStore } from '../src/main/scratchpad-store.ts'
 import { createScratchpadDisk } from '../src/main/scratchpad-disk.ts'
 const root = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'tw-scratchpad-disk-')))
@@ -74,6 +76,40 @@ try {
     assert.match(snap.notices[0],/larger than 64 MB/)
     const after=fs.statSync(file)
     assert.deepEqual([after.size,after.mtimeMs],[before.size,before.mtimeMs])
+  })
+  await check('a failed I/O child must close before the next queued action starts',async()=>{
+    const talk=folder('child-drain'); const children=[]
+    const disk=createScratchpadDisk(talk,()=>{
+      const child=new EventEmitter()
+      child.stdin=new PassThrough();child.stdout=new PassThrough();child.stderr=new PassThrough()
+      child.kills=0;child.kill=()=>{child.kills++;return true}
+      children.push(child);return child
+    })
+    const store=createScratchpadStore(talk,{},disk)
+    let firstSettled=false
+    const first=store.createGroup('Refused').then(()=>{throw new Error('must reject')},e=>{firstSettled=true;return e})
+    const next=store.fileFor('unknown')
+    await new Promise(setImmediate);assert.equal(children.length,1)
+    children[0].emit('error',new Error('controlled I/O failure'))
+    await new Promise(setImmediate)
+    assert.equal(firstSettled,false,'kill request is not proof that the writer stopped')
+    assert.equal(children.length,1,'no next filesystem job can race the live writer')
+    children[0].stdout.end();children[0].stderr.end();children[0].emit('close',1)
+    assert.ok((await first).message.includes('controlled I/O failure'))
+    await new Promise(setImmediate);assert.equal(children.length,2)
+    children[1].stdout.end(JSON.stringify({ok:true,value:{folder:null,state:{text:null,error:null},files:[],notices:[]}}))
+    children[1].stderr.end();children[1].emit('close',0)
+    assert.equal(await next,null)
+    assert.equal(children[0].kills,1)
+  })
+  await check('filesystem identities are read without numeric inode rounding',async()=>{
+    const talk=folder('lossless-identity'); const scratch=join(talk,'scratchpad'); fs.mkdirSync(scratch)
+    fs.writeFileSync(join(scratch,'page.html'),'<p>Lossless identity</p>')
+    const hook=`const fs=require('node:fs');const lstat=fs.lstatSync,stat=fs.statSync,fstat=fs.fstatSync;fs.lstatSync=function(p,options){if((p==='scratchpad'||p==='page.html')&&!options?.bigint)throw new Error('lossless lstat required');return lstat.call(this,p,options)};fs.statSync=function(p,options){if(!options?.bigint)throw new Error('lossless stat required');return stat.call(this,p,options)};fs.fstatSync=function(fd,options){if(!options?.bigint)throw new Error('lossless fstat required');return fstat.call(this,fd,options)}`
+    await withHook(hook,async()=>{
+      const store=makeStore(talk);const snap=await store.load();assert.equal(snap.items.length,1)
+      const file=await store.fileFor(snap.items[0].id);assert.equal(fs.readFileSync(file.path,'utf8'),'<p>Lossless identity</p>')
+    })
   })
   await check('production I/O drops ambient Node preloads',async()=>{
     const talk=folder('ambient-env'); const marker=join(root,'ambient-ran.txt'); const hook=join(root,'ambient.cjs')
