@@ -34,11 +34,14 @@ jobs:
     # in `unit-macos` instead (kept skipped here so the hosted Linux fallback passes):
     #   test:vault-paths  needs APFS Unicode normalisation (NFC/NFD folder names);
     #                     ext4 on Linux keeps the two forms distinct, so it fails there.
+    #   test:html-page-import, test:live-page-capture, test:live-page-capture-window
+    #   test:live-page-capture-markup
+    #                     exercise macOS-only no-link filesystem operations; other platforms refuse.
     if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name != 'pull_request'
     runs-on: ${{ inputs.hosted && 'ubuntu-latest' || fromJSON('["self-hosted","macOS","ARM64"]') }}
     timeout-minutes: 20
     env:
-      MACOS_ONLY_TESTS: test:vault-paths
+      MACOS_ONLY_TESTS: test:vault-paths test:html-page-import test:live-page-capture test:live-page-capture-window test:live-page-capture-markup
     steps:
       - uses: actions/checkout@v4
         with:
