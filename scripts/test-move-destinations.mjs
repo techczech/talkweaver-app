@@ -211,6 +211,27 @@ check('what a command acts on, from the caret line', () => {
     const noTitle = slideRows(J('## S', '', ...slide('A')))
     assert.deepEqual(noTitle.map((r) => outlineNumbers(noTitle, null).get(r.line)), [1, 2])
   })
+  {
+    const noCoverText = J('---', 'title: No cover', 'auto_title_slide: false', 'auto_thanks_slide: false', '---', '',
+      '### Opening', '{id=open1}', '', 'Opening body.', '', '### Middle', '{id=mid01}', '', 'Middle body.', '', '### Closing', '{id=close}', '', 'Closing body.')
+    const model = await prepareSource('/tmp/no-cover-numbers.md', noCoverText, 'no-cover-numbers')
+    const compiled = buildPerSlideProjections(model, 'no-cover-numbers')
+    const published = slideNumbersByLine(computeSlideLines(compiled, noCoverText))
+    check('no automatic cover: stale numbers keep the first slide at 1 after an insert or body edit', () => {
+      const grown = slideRows(noCoverText.replace('### Middle', '### Chart\n{id=chart}\n\n![](assets/chart.svg)\n\n\n### Middle'))
+      assert.deepEqual(grown.map((r) => outlineNumbers(grown, published).get(r.line)), [1, 2, 3, 4])
+      const edited = slideRows(noCoverText.replace('Opening body.', 'Opening body.\nMore body.\nMore again.'))
+      assert.deepEqual(edited.map((r) => outlineNumbers(edited, published).get(r.line)), [1, 2, 3])
+    })
+    const withCoverText = noCoverText.replace('auto_title_slide: false', 'auto_title_slide: true')
+    const withCoverModel = await prepareSource('/tmp/with-cover-numbers.md', withCoverText, 'with-cover-numbers')
+    const withCoverSlides = buildPerSlideProjections(withCoverModel, 'with-cover-numbers')
+    const withCoverPublished = slideNumbersByLine(computeSlideLines(withCoverSlides, withCoverText))
+    check('a real synthetic cover still offsets stale heading numbers by one', () => {
+      const grown = slideRows(withCoverText.replace('### Middle', '### Chart\n{id=chart}\n\n![](assets/chart.svg)\n\n\n### Middle'))
+      assert.deepEqual(grown.map((r) => outlineNumbers(grown, withCoverPublished).get(r.line)), [2, 3, 4, 5])
+    })
+  }
   check('fresh with a row the compiler gave no slide: that row has no number, the others keep theirs', () => {
     const partial = new Map(published); partial.delete(orows[3].line)
     const n = outlineNumbers(orows, partial)

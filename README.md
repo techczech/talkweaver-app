@@ -71,11 +71,11 @@ Going live is set up per computer. Intel Macs are not built yet.
 
 ## Build from source
 
-Requires [Node.js](https://nodejs.org) 20+ and, for the macOS native helpers, the Swift
+Requires [Bun](https://bun.sh) 1.3.10 (pinned in `.bun-version`), [Node.js](https://nodejs.org) 24+ and, for the macOS native helpers, the Swift
 toolchain (Xcode command-line tools).
 
 ```sh
-npm install
+bun install --frozen-lockfile
 npm run dev            # run in development
 npm test              # full test suite
 npm run dist:mac:release   # build a macOS installer (.dmg + .zip) into release/
