@@ -78,14 +78,16 @@ try {
   record('it is in the bottom bar, beside Outline', await presenter.evaluate(() => document.getElementById('twguide-chip')?.parentElement?.previousElementSibling?.id === 'outlineBtn' && !!document.getElementById('twguide-chip').closest('#presenterBottomBar')))
   await presenter.keyboard.press('c')
   await sleep(300)
-  record('C does nothing', !(await presenter.evaluate(() => !!document.getElementById('twguide-col'))))
+  record('C opens the Present chapter', await until(() => presenter.evaluate(() => !!document.getElementById('twguide-col')), Boolean))
+  await presenter.keyboard.press('c')
+  record('C closes the Present chapter again', await until(() => presenter.evaluate(() => !document.getElementById('twguide-col')), Boolean))
 
   // → reaches main through the bridge: the page's event crosses into the isolated preload.
   await presenter.keyboard.press('ArrowRight')
   const ran = await until(() => learnOnDisk().ran, (r) => r.includes('presenter.next'))
   record('→ in the presenter is in the record in app config', ran.includes('presenter.next'), ran.join(', '))
-  const ticked = await until(() => presenter.evaluate(() => document.querySelector('#twguide-chip b')?.textContent || ''), (t) => t.startsWith('1 of'))
-  record('main pushes the new count to the presenter', ticked.startsWith('1 of'), ticked)
+  const ticked = await until(() => presenter.evaluate(() => document.querySelector('#twguide-chip b')?.textContent || ''), (t) => t.startsWith('2 of'))
+  record('main pushes the count for Guide and Next to the presenter', ticked.startsWith('2 of'), ticked)
   const editorLearn = await editor.evaluate(() => window.tw.guide.getLearn())
   record('the editor reads the same record', Array.isArray(editorLearn?.ran) && editorLearn.ran.includes('presenter.next'))
 
@@ -125,7 +127,7 @@ try {
     record(`${w}: the button again closes it and no window is resized or moved`, !shut.open && same(before, await bounds()))
   }
   const ranAfter = learnOnDisk().ran
-  record('the Guide button is in the record too (presenter-palette.guide)', ranAfter.includes('presenter-palette.guide'))
+  record('the Guide button is in the record too (presenter.guide)', ranAfter.includes('presenter.guide'))
 
   // "All chapters": the TalkWeaver window comes forward with the Guide open on the chapter list. Nothing but
   // a bare request leaves the presenter, and no other chapter's data goes into it.

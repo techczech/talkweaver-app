@@ -13,6 +13,9 @@ const SECTION_HUE_STAMP = /; --sec-hue-[23](?:-tint)?: #[0-9a-f]{6}/g
 // `sections:` or a slide token) a tab stamp may be authored, and dropping it would hide a regression
 // where an explicit tab disappears. So callers say which talk this is (talkNamesTitleLook below).
 const DEFAULT_TITLE_LOOK_STAMP = / data-title-look="tab"/g
+// 0.42 (web page on a slide, 2026-10-27): a remote web page's frame (not a video player) carries the
+// remote sandbox (embed-frame.mjs EMBED_SANDBOX_REMOTE). A reference recorded before has no sandbox there.
+const REMOTE_PAGE_SANDBOX = / sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"(?= data-embed-url=| title=)/g
 
 /** Whether the outline text names a title look anywhere: `title_look:` / `title-look:` in the
  *  frontmatter, `titlelook:` in `defaults:` or `sections:`, or a slide's `{titlelook=…}`. */
@@ -30,6 +33,6 @@ export function withoutLaterSlideStamps(html, talk) {
   if (typeof talk?.talkNamesTitleLook !== 'boolean') {
     throw new TypeError('withoutLaterSlideStamps: say whether the talk names a title look ({ talkNamesTitleLook })')
   }
-  const out = String(html).replace(SECTION_HUE_STAMP, '')
+  const out = String(html).replace(SECTION_HUE_STAMP, '').replace(REMOTE_PAGE_SANDBOX, '')
   return talk.talkNamesTitleLook ? out : out.replace(DEFAULT_TITLE_LOOK_STAMP, '')
 }

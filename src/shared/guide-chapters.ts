@@ -107,7 +107,18 @@ export const CHAPTER_EXCLUDED: ReadonlySet<string> = new Set([
   // out while pre-work was hidden); they are on the ⌘/ sheet and in the Tools window's palette.
   'tools-view-sessions', 'tools-view-published', 'tools-view-workfiles', 'tools-plan-run', 'tools-edit-plan', 'tools-plan-like-this',
   'tools-publish', 'tools-unpublish', 'tools-go-live', 'tools-open-run', 'tools-copy-link', 'tools-copy-invitation', 'tools-new-work-file',
-  'attach-prework', 'attach-postwork'
+  'attach-prework', 'attach-postwork',
+  // Update notices (ADR-0041): Check for Updates… and What's new in TalkWeaver are app chrome in the Help menu and the
+  // palette, not something the practice talks teach; no chapter row and no practice line. They are on the ⌘/ sheet.
+  'check-for-updates', 'whats-new',
+  // Knowledge step two: Capture to research… and Reveal research folder. No chapter row and no practice line yet;
+  // they are in the palette and on the ⌘/ sheet.
+  'research-capture', 'research-reveal-folder',
+  // Slide Scratchpad (docs/design/2026-10-27-slide-scratchpad): a panel and its item actions; no chapter row and no
+  // practice line yet. They are in the palette; the panel's own buttons are how a person meets the item actions.
+  'scratchpad-panel', 'scratchpad-dock', 'scratchpad-float', 'scratchpad-collapse', 'scratchpad-add-slides', 'scratchpad-keep', 'scratchpad-reject', 'scratchpad-move-back', 'scratchpad-move-to-group', 'scratchpad-new-group', 'scratchpad-remove-missing', 'scratchpad-insert-slide', 'scratchpad-insert-visual', 'scratchpad-compare', 'scratchpad-change-place', 'scratchpad-move-up', 'scratchpad-move-down',
+  // The Research panel and picker stay discoverable in the palette and keyboard sheet; this parcel adds no practice chapter.
+  'research-panel', 'research-find', 'research-insert', 'research-make-slide', 'research-open', 'research-previous', 'research-next', 'research-scope', 'research-close', 'research-copy-reference', 'research-reveal', 'research-source', 'research-used-in', 'research-scope-talk', 'research-scope-research', 'research-scope-everything', 'research-retry', 'research-rename', 'research-change-kind', 'research-delete', 'research-move', 'research-copy', 'research-insert-here'
 ])
 
 /** A command this module reads. The registry's `CommandDefinition` satisfies it (with `taskGroup` set). */

@@ -438,7 +438,14 @@ await test('wiring: the hand-out rule is for every window; the thumbnail window 
   const mainDir = fileURLToPath(new URL('../src/main/', import.meta.url))
   const made = []
   for (const name of readdirSync(mainDir)) if (/\.ts$/.test(name)) for (const _ of readFileSync(join(mainDir, name), 'utf8').matchAll(/new BrowserWindow\(/g)) made.push(name)
-  assert.deepEqual(made.sort(), ['index.ts', 'index.ts', 'index.ts', 'index.ts', 'thumbnails.ts'], 'a new window: decide whether it is an app window, a deck window or a hidden renderer')
+  assert.deepEqual(made.sort(), ['index.ts', 'index.ts', 'index.ts', 'index.ts', 'index.ts', 'scratchpad-html-capture.ts', 'thumbnails.ts'], 'a new window: decide whether it is an app window, a deck window or a hidden renderer')
+  const capture = readFileSync(join(mainDir, 'scratchpad-html-capture.ts'), 'utf8')
+  assert.match(capture, /show: false/)
+  assert.match(capture, /markHiddenRenderer\(win\)/)
+  assert.match(capture, /disableDialogs: true/)
+  assert.match(capture, /setWindowOpenHandler\(\(\) => \(\{ action: 'deny' \}\)\)/)
+  assert.match(capture, /'will-prevent-unload', \(event\) => event\.preventDefault\(\)/)
+  assert.match(src, /win\.webContents\.on\('will-navigate', \(e\) => e\.preventDefault\(\)\)/, 'the Capture embed window refuses navigation')
   assert.match(src, /show: false/) // E2E only; a window created hidden for another reason must be marked
 })
 

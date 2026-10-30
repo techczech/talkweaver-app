@@ -48,6 +48,15 @@ Five minutes go quickly. Start the timer before the first word.
 Point at one thing only. Clear the drawing before you move on.
 :::
 
+### Return to a live page
+{id=practice-return-live}
+
+> **Try it.** On a web page frozen for Pointer or Pen, choose **Return Live** from the presenter’s list (<kbd>⌘⇧P</kbd>) to show the live page again.
+
+:::notes
+Freeze a page with Pointer or Pen, then return to the live page.
+:::
+
 ### Notes and help
 {id=s24}
 

@@ -99,7 +99,7 @@ const pass = (name) => { passed += 1; console.log(`PASS ${name}`) }
   assert.ok(effect, 'WorkspaceLayout works the caret row out again when the slides change')
   assert.ok(effect[0].includes('activeLineReporter.report(activeHeadingLine(slideLines, line))'))
   const organizer = readFileSync(join(root, 'src/renderer/src/components/SlidesOrganizer.tsx'), 'utf8')
-  assert.equal((organizer.match(/rowAfterEdit\(rows, /g) ?? []).length, 2, 'the selection and the keyboard highlight both follow their row')
+  assert.equal((organizer.match(/rowAfterEdit\(rows, /g) ?? []).length, 3, 'the selection, the keyboard highlight and the current search hit all follow their row')
   assert.ok(!/\}, \[selectedLine, rows\]\)/.test(organizer), 'the selected title is not re-read from the line number when the rows change')
   pass('WorkspaceLayout and the Slide outline use these rules')
 }

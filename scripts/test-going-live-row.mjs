@@ -539,7 +539,7 @@ async function goLive(pc) {
   assert.ok(!/deployLiveWorker\(/.test(ensure.replace(/\/\/[^\n]*/g, '')), 'ensureLiveWorker sets nothing up itself')
   assert.ok(/return liveService\(\)\.endpoint\(\)/.test(ensure))
   assert.ok(/setup: cause\.prompt/.test(main) && /function sharedTalkError[\s\S]{0,400}error\.prompt/.test(main), 'Go live and Share for comments carry the prompt')
-  assert.ok(/ipcMain\.handle\('live-service:set-up'/.test(main) && /ipcMain\.handle\('live-service:status'/.test(main))
+  assert.ok(/handleFromSettingsWindow\(\s*'live-service:set-up'/.test(main) && /ipcMain\.handle\('live-service:status'/.test(main))
   assert.ok(/deploy: \(progress\) => setUpLiveWorker\(progress\)/.test(main) && /const result = await deployLiveWorker\(progress\)/.test(main) && /lookUp: \(accountId\) => lookUpLiveService\(/.test(main))
   const settingsRow = readSource(join(repo, 'src/renderer/src/components/CloudflareSettings.tsx'))
   assert.ok(/data-cloudflare="live-service"/.test(settingsRow) && /goingLiveRowEdge\(live\)/.test(settingsRow) && /window\.tw\.liveService\.setUp\(\)/.test(settingsRow))
@@ -654,8 +654,10 @@ async function goLive(pc) {
   assert.equal(setUpAllowedFrom({ sender: { id: 9, mainFrame: topFrame }, senderFrame: topFrame }, isEditor), false, 'a presenter window\'s top frame: refused')
   assert.equal(setUpAllowedFrom({ sender: { id: 7, mainFrame: topFrame }, senderFrame: childFrame }, isEditor), false, 'a frame embedded in an editor window: refused')
   assert.equal(setUpAllowedFrom({ sender: { mainFrame: topFrame }, senderFrame: topFrame }, isEditor), false)
-  assert.match(main, /ipcMain\.handle\('live-service:set-up', \(event\) => \{(?:\s*\/\/[^\n]*)*\s*if \(!setUpAllowedFrom\(event, \(id\) => editorWindows\.has\(id\)\)\) return \{ ok: false/, 'the handler refuses any window but an editor window, and any frame but its top one')
-  console.log('PASS 13 (fix 3, round 2): a set-up is accepted only from an editor window\'s top frame, never a presenter window; the presenter prompt cannot set anything up (PASS 8)')
+  // Sol review 4 (S1): only the Settings window now; an editor window is refused too (the guard is tested in test-shared-settings.mjs).
+  assert.match(main, /handleFromSettingsWindow\(\s*'live-service:set-up',\s*\(\) => \(\{ ok: false, error: 'Going live can be set up only in the Settings window\.'/, 'the handler refuses every sender but the Settings window')
+  assert.ok(!main.includes("ipcMain.handle('live-service:set-up'"), 'no unguarded handler')
+  console.log('PASS 13 (fix 3, round 2; Sol review 4): a set-up is accepted only from the Settings window, never an editor or presenter window; the presenter prompt cannot set anything up (PASS 8)')
 }
 
 // ── A key slot that cannot be read, and what is never sent ──────────────────────────────────────

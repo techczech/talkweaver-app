@@ -1,7 +1,8 @@
 // Slide tags (ADR-0037, `t`): the tray-anchored picker writes via tags:apply. `tagBusy` guards one
 // in-flight write; `tagsVersion` bumps after an optimistic per-row `tags` update (the rows are
 // mutated in place — the same objects the display model holds — so applying a tag never re-runs
-// the whole search or reflows the grid).
+// the whole search or reflows the grid). The memoised cards see the change through their `tagsKey`
+// prop (SlideCard), which the bump's re-render recomputes from the mutated rows.
 import { useEffect, useState } from 'react'
 import { notify } from '../../lib/notify'
 import { tagTargetsFromRows } from '../slideBrowserModel'

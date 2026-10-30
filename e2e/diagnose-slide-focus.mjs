@@ -3,7 +3,7 @@
 // rendered preview on the right (the stage), a where-used strip, prev/next, and detach.
 //
 // Checks:
-//   (a) ⌘⇧F on a slide enters Focus; the crumb names that slide; only its block is visible (focus-scope).
+//   (a) ⌘⌥⇧F on a slide enters Focus; the crumb names that slide; only its block is visible (focus-scope).
 //   (b) the live stage renders the slide and REFRESHES ~300ms after an in-band edit (debounced).
 //   (c) where-used shows a row per talk carrying the id (a shared slide → two rows, one marked here).
 //   (d) detach flushes + re-ids + toasts, and the strip collapses to the one remaining use.
@@ -91,7 +91,7 @@ try {
 
   // ── (a) enter Focus via ⌘⇧F on the Shared idea slide ──────────────────────
   await clickLine('### Shared idea slide')
-  await page.keyboard.press('Meta+Shift+f')
+  await page.keyboard.press('Meta+Alt+Shift+f')
   await page.waitForSelector('.lt-focus', { timeout: 6000 })
   await page.waitForTimeout(400)
   {
@@ -218,7 +218,7 @@ try {
   await page.keyboard.press('Escape'); await page.waitForTimeout(250) // leave case (g)'s Browser-origin Focus
   await page.keyboard.press('Escape'); await page.waitForTimeout(300) // …then close the reopened Browser
   await clickLine('### Shared idea slide')
-  await page.keyboard.press('Meta+Shift+f')
+  await page.keyboard.press('Meta+Alt+Shift+f')
   await page.waitForSelector('.lt-focus', { timeout: 6000 })
   await page.waitForTimeout(1700) // start from a compile-aligned band
   await clickLine('This slide is shared across two talks.')
@@ -250,7 +250,7 @@ try {
   // ── (i) deleting the focused slide (⌘⇧P → "Delete current slide") exits Focus (finding 2) ────
   await page.keyboard.press('Escape'); await page.waitForTimeout(300) // back to the workspace
   await clickLine('### Local only slide')
-  await page.keyboard.press('Meta+Shift+f')
+  await page.keyboard.press('Meta+Alt+Shift+f')
   await page.waitForSelector('.lt-focus', { timeout: 6000 })
   await page.waitForTimeout(500)
   const beforeDelete = (await page.locator('.lt-focus').count()) === 1

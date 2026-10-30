@@ -8,6 +8,7 @@
 
 import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
 import { fencedLineFlags } from '../../../shared/outline-normalize.ts'
+import { parseQuery as parseSlideQuery } from '../../../shared/slide-handling/query.ts'
 
 export interface SelRow {
   talkSlug: string
@@ -72,39 +73,10 @@ export interface ParsedQuery {
   terms: string[]
 }
 
-// A leading single-letter operator (case-insensitive) then a colon, at the VERY start of the
-// query, with optional whitespace after the colon. Only t/s/i/e qualify — so `http://x` (starts
-// `h:`… no, `http:`) and `foo:bar` are never operators, and a bare `about me` stays a plain query.
-const SEARCH_OP_RE = /^([tsie]):\s*([\s\S]*)$/i
-const OP_SCOPE: Record<string, ParsedQuery['scope']> = { t: 'title', s: 'body', i: 'image' }
-
-// Strip ONE pair of matching surrounding quotes so `e:"exact phrase"` matches the bare phrase.
-function stripWrappingQuotes(s: string): string {
-  if (s.length >= 2) {
-    const a = s[0]
-    const b = s[s.length - 1]
-    if ((a === '"' && b === '"') || (a === "'" && b === "'")) return s.slice(1, -1)
-  }
-  return s
-}
-
-// Parse a raw search string into a scoped/exact structured query. No recognised operator → an
-// all-fields, all-words query over the raw string (today's behaviour, verbatim). A recognised
-// operator sets the scope (t: title, s: slide body, i: image text) or exact (e:), and the
-// remainder — trimmed, surrounding quotes stripped — becomes text/terms. An operator with an
-// empty remainder (e.g. `t:`) yields empty terms, which (like an empty query) matches everything
-// in that scope.
+/** The Browser's reading of the query: a leading operator or plain words (src/shared/slide-handling/query.ts; no Scratchpad prefixes here). */
 export function parseSearchQuery(raw: string): ParsedQuery {
-  const s = String(raw ?? '')
-  const m = SEARCH_OP_RE.exec(s)
-  if (!m) {
-    return { scope: 'all', exact: false, text: s, terms: s.toLowerCase().split(/\s+/).filter(Boolean) }
-  }
-  const op = m[1].toLowerCase()
-  const text = stripWrappingQuotes(m[2].trim())
-  const terms = text.toLowerCase().split(/\s+/).filter(Boolean)
-  if (op === 'e') return { scope: 'all', exact: true, text, terms }
-  return { scope: OP_SCOPE[op], exact: false, text, terms }
+  const { scope, exact, text, terms } = parseSlideQuery(raw, { operators: true, prefixes: false })
+  return { scope, exact, text, terms }
 }
 
 // A short label for the field(s) a scoped/exact query looks in — drives the zero-results copy.

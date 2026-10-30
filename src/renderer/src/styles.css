@@ -836,6 +836,28 @@ html, body, #root {
 .grid-view { background: var(--bg-1); }
 .grid-section-header:hover { background: var(--bg-2); }
 .grid-cell:hover { border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+/* Select many slides in the grid (slide handling 1b; mockup H01/H02): tick box, selected card, batch bar. */
+.grid-cell .grid-tick { position: absolute; left: 6px; top: 6px; width: 18px; height: 18px; margin: 0; cursor: pointer; accent-color: var(--oxford); z-index: 5; opacity: 0; }
+.grid-cell:hover .grid-tick, .grid-cell .grid-tick:checked, .grid-cell .grid-tick:focus-visible { opacity: 1; }
+.grid-cell[data-selected="true"] { outline: 3px solid var(--oxford); outline-offset: -1px; box-shadow: 0 4px 14px rgba(27, 45, 87, 0.25); }
+.grid-select-section { margin-left: auto; font-size: 10px; color: var(--oxford); text-decoration: underline; background: none; border: 0; cursor: pointer; padding: 0 2px; flex-shrink: 0; }
+.batch-bar { flex-wrap: wrap; position: sticky; bottom: 0; margin: 12px -4px 0; background: #1b2d57; color: #fff; border-radius: 12px; padding: 9px 12px; display: flex; align-items: center; gap: 8px; box-shadow: 0 10px 30px rgba(20, 25, 40, 0.35); z-index: 20; }
+.batch-bar-n { font-weight: 600; }
+.batch-bar-link { background: none; border: 0; color: #c9d2f3; text-decoration: underline; cursor: pointer; font-size: 12px; margin-right: 6px; }
+.batch-bar-btn { background: rgba(255, 255, 255, 0.12); color: #fff; border: 1px solid rgba(255, 255, 255, 0.28); border-radius: 7px; padding: 6px 11px; font-size: 12.5px; cursor: pointer; white-space: nowrap; }
+.batch-bar-btn:hover { background: rgba(255, 255, 255, 0.24); }
+.batch-bar-btn--danger { margin-left: auto; border-color: #f0a0a0; color: #ffd6d6; }
+.batch-bar-wrap { position: relative; }
+.batch-menu { position: absolute; left: 0; bottom: calc(100% + 10px); background: #fff; color: #1f2430; border: 1px solid #cfc6b6; border-radius: 9px; box-shadow: 0 10px 30px rgba(20, 25, 40, 0.28); padding: 5px; width: 320px; z-index: 30; text-align: left; }
+.batch-menu-title, .batch-menu-group { font-size: 11px; color: #777; padding: 6px 9px 3px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+.batch-menu input { width: calc(100% - 12px); margin: 3px 6px 5px; padding: 5px 8px; font-size: 12.5px; border: 1px solid #cfc6b6; border-radius: 6px; }
+.batch-menu-list { max-height: 260px; overflow-y: auto; }
+.batch-menu-row { display: flex; gap: 8px; width: 100%; padding: 6px 9px; border: 0; border-radius: 5px; background: none; font-size: 12.5px; text-align: left; cursor: pointer; color: inherit; }
+.batch-menu-row[data-active="true"] { background: #e9edf8; }
+.batch-menu-no { color: #999; font-family: var(--font-mono); font-size: 11px; min-width: 18px; }
+.batch-menu-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.batch-menu-detail { color: #999; font-size: 11px; }
+.batch-menu-empty { padding: 8px 9px; font-size: 12px; color: #777; }
 .tw-slide-warning { background: var(--amber); }
 .tw-slide-warning--error { background: var(--crimson); }
 .tw-unresolved-block-backdrop { position: fixed; inset: 0; z-index: 1200; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .45); }
@@ -1522,6 +1544,17 @@ html, body, #root {
 .so-search-input:focus { border-color: var(--accent); }
 .so-search-input::placeholder { color: var(--faint); }
 .so-match { background: color-mix(in srgb, var(--accent) 30%, transparent); color: inherit; border-radius: 2px; padding: 0 1px; }
+/* Search dims in place (ticket 2): non-matching rows stay where they are, drag and collapse stay on. */
+.so-row--dim { opacity: .4; }
+.so-row--hit { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.so-slide-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.so-snippet { font-size: 11px; line-height: 1.3; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.so-hits { flex-shrink: 0; margin-left: auto; font-size: 11px; font-weight: 700; padding: 0 8px; border-radius: 9px; background: color-mix(in srgb, var(--accent) 30%, transparent); color: var(--ink); }
+.so-thumb { display: block; width: 168px; max-width: 100%; margin: 3px 0 2px; aspect-ratio: 16 / 9; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; background: #fff; }
+.so-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.so-hitbar { position: sticky; top: 44px; z-index: 1; display: flex; align-items: center; gap: 6px; padding: 3px 10px; background: var(--paper); border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.so-hitbar b { color: var(--ink); }
+.so-hitbtn { width: auto; padding: 2px 8px; font-size: 12px; }
 
 /* ── Frontmatter table editor (inline, raw ↔ table) ──────────────────────────── */
 /* No margin on the block-widget root: CodeMirror measures offsetHeight (excludes margins),
@@ -1702,6 +1735,110 @@ html, body, #root {
   order: 1; padding: 7px 11px; border-top: 1px solid color-mix(in srgb, var(--crimson) 32%, transparent);
   background: color-mix(in srgb, var(--crimson) 10%, #fdfdfb); color: var(--crimson);
   font: 600 11px/1.45 var(--font-ui);
+}
+
+/* Object cards (ADR-0042, lock Shape A): one compact line per fence, page, notes block or comment;
+   ⌄ opens a read-only preview of bounded height, </> the source. Text only; nothing remote loads. */
+.tw-obj-card .tw-obj-head { border-bottom: 0; }
+.tw-obj-chip {
+  flex: 0 1 auto; min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 4px;
+  padding: 0 6px; color: var(--muted); text-overflow: ellipsis; white-space: nowrap;
+}
+/* A card's header actions (Open, Reveal, Copy markup, Replace file, Remove): on hover and when selected. */
+.tw-obj-actions { display: none; flex: 0 0 auto; gap: 2px; margin-left: auto; }
+.tw-obj-card:hover .tw-obj-actions, .tw-obj-card.tw-obj-selected .tw-obj-actions { display: inline-flex; }
+.tw-obj-action {
+  border: 0; border-radius: 3px; padding: 1px 5px; background: transparent; color: var(--faint);
+  font: inherit; cursor: pointer;
+}
+.tw-obj-action:hover { background: var(--hover); color: var(--oxford); }
+.tw-obj-action-remove:hover { color: var(--crimson); }
+/* A card's file status (main's object:status): missing or outside the vault; never a permission. */
+.tw-obj-status { color: var(--crimson); border-color: color-mix(in srgb, var(--crimson) 45%, transparent); }
+.tw-obj-status-outside { color: #8a5a00; border-color: color-mix(in srgb, var(--amber) 65%, transparent); }
+.tw-obj-expand {
+  flex: 0 0 auto; border: 0; border-radius: 3px; padding: 1px 5px;
+  background: transparent; color: var(--faint); font: inherit; cursor: pointer;
+}
+.tw-obj-expand:hover, .tw-obj-expand.is-active { background: var(--hover); color: var(--oxford); }
+.tw-obj-card-first {
+  order: 1; padding: 0 10px 6px; overflow: hidden; color: var(--muted);
+  font: 400 12px/1.45 var(--font-ui); text-overflow: ellipsis; white-space: nowrap;
+}
+.tw-obj-card-expanded {
+  order: 1; max-height: 280px; overflow: auto; padding: 6px 10px 10px; border-top: 1px solid #efe9dd;
+  font: 400 12px/1.5 var(--font-ui);
+}
+.tw-obj-card-row { display: flex; gap: 8px; padding: 2px 0; }
+.tw-obj-card-role {
+  flex: 0 0 auto; min-width: 72px; color: var(--oxford); font: 700 10px/1.8 var(--font-mono);
+  letter-spacing: .06em; text-transform: uppercase;
+}
+.tw-obj-card-text { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tw-obj-card-views { order: 1; display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 10px 8px; }
+.tw-obj-card-view {
+  display: flex; flex-direction: column; gap: 3px; width: 112px;
+  font: 400 11px/1.35 var(--font-ui); color: var(--muted);
+}
+.tw-obj-card-thumb { width: 112px; height: 63px; object-fit: cover; border: 1px solid var(--line); border-radius: 3px; background: var(--paper); }
+.tw-obj-card-view-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-obj-card-view-remove {
+  align-self: flex-start; border: 0; padding: 0; background: transparent;
+  color: var(--faint); font: inherit; cursor: pointer;
+}
+.tw-obj-card-view-remove:hover { color: var(--crimson); }
+.tw-obj-card-notes { border-left: 3px solid color-mix(in srgb, var(--oxford) 45%, #e3e2dc); }
+.tw-obj-card-comment { border-style: dashed; }
+
+/* An inline comment as one chip in the text; × deletes exactly that comment. */
+.tw-comment-chip {
+  display: inline-flex; align-items: baseline; gap: 4px; max-width: 28ch; margin: 0 1px;
+  border: 1px dashed var(--line); border-radius: 4px; padding: 0 4px;
+  color: var(--muted); font: 500 11px/1.4 var(--font-ui); vertical-align: baseline; cursor: default;
+}
+.tw-comment-chip-mark { color: var(--faint); }
+.tw-comment-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-comment-chip-remove { border: 0; padding: 0 1px; background: transparent; color: var(--faint); font: inherit; cursor: pointer; }
+.tw-comment-chip-remove:hover { color: var(--crimson); }
+
+/* An unclosed notes block or comment: the text stays as written, marked, never folded. */
+.tw-region-warning { text-decoration: underline wavy color-mix(in srgb, var(--crimson) 55%, transparent); text-underline-offset: 3px; }
+.tw-region-warning-note { color: var(--crimson); font: 600 11px/1.45 var(--font-ui); }
+.tw-region-warning-action {
+  margin-left: 8px; border: 1px solid var(--line); border-radius: 4px; padding: 0 6px;
+  background: var(--paper); color: var(--oxford); font: 600 11px/1.5 var(--font-ui); cursor: pointer;
+}
+
+/* Card editors inside the object shell: code, rows (chat, terminal, trace), notes, comment, page source. */
+.oe-discard {
+  border: 1px solid var(--line); border-radius: 4px; padding: 2px 9px;
+  background: var(--paper); color: var(--muted); font: inherit; cursor: pointer;
+}
+.oe-discard:hover { color: var(--ink); }
+.oe-code, .oe-rows { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; }
+.oe-code-tools { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.oe-code-language-input { width: 16ch; border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; font: 12px var(--font-mono); }
+.oe-code-longer { border: 1px solid var(--line); border-radius: 4px; padding: 1px 7px; background: var(--paper); font: inherit; cursor: pointer; }
+.oe-code-count { margin-left: auto; color: var(--faint); }
+.oe-code-body, .oe-notes-body, .oe-comment-source, .oe-embed-source, .oe-row-content {
+  width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px;
+  background: #fff; color: #101418; font: 12px/1.5 var(--font-mono); resize: vertical; tab-size: 2;
+}
+.oe-code-body { min-height: 120px; }
+.oe-notes-body { min-height: 100px; font-family: var(--font-ui); }
+.oe-row { display: grid; grid-template-columns: 130px 1fr auto; gap: 6px 8px; align-items: start; }
+/* Browsing the rows (Esc in a field): the selected row; ↑↓ move it, ↵ or typing edits it, a paste adds rows. */
+.oe-row-sel { outline: 2px solid color-mix(in srgb, var(--oxford) 45%, transparent); outline-offset: 2px; border-radius: 4px; }
+.oe-row-preamble { grid-template-columns: 1fr; }
+.oe-row-role, .oe-row-prompt, .oe-row-menu {
+  border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px; background: var(--paper); font: 12px var(--font-ui);
+}
+.oe-row-role-label { color: var(--muted); font: 600 10px/1.6 var(--font-mono); text-transform: uppercase; }
+.oe-row-content { min-height: 44px; }
+.oe-row-hint { grid-column: 2 / 4; color: var(--muted); font: 400 11px/1.45 var(--font-ui); }
+.oe-row-hint-action {
+  margin-left: 6px; border: 1px solid var(--line); border-radius: 4px; padding: 0 6px;
+  background: var(--paper); color: var(--oxford); font: inherit; cursor: pointer;
 }
 
 /* RIVER object editor shell (ADR-0019, locked Scene 2). The editor replaces its object block
@@ -2199,3 +2336,5 @@ html, body, #root {
 .move-to-row--current .actions-here-label { color: var(--oxford); font-weight: 600; flex: 0 1 auto; }
 .move-to-row--current .actions-here-hint { flex: 1; }
 .move-to .actions-here-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.cm-scratch-insert-here { border-top: 3px solid var(--oxford); }

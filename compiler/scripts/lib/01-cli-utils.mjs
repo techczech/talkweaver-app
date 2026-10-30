@@ -122,7 +122,10 @@ export const timerRuntimeSource = readFileSync(join(scriptDir, "..", "assets", "
 // Shared overview runtime (rankSlides / deriveSlideStatus / createOverview). Injected verbatim into
 // the presenter template AND the handout via the `<!--OVERVIEW_RUNTIME-->` placeholder — SINGLE
 // SOURCE OF TRUTH, also loaded directly by scripts/test-overview.mjs. No `export` so it inlines cleanly.
-export const overviewRuntimeSource = readFileSync(join(scriptDir, "..", "assets", "runtime", "overview.js"), "utf8");
+// The search rule comes first: slide-search.js is GENERATED from src/shared/slide-handling/query.ts (the app's one
+// search rule, scripts/build-slide-search-runtime.mjs) and defines `SlideSearch`, which overview.js uses.
+export const overviewRuntimeSource = readFileSync(join(scriptDir, "..", "assets", "runtime", "slide-search.js"), "utf8")
+  + readFileSync(join(scriptDir, "..", "assets", "runtime", "overview.js"), "utf8");
 // Slide fitting (createSlideFit: quote/code/title fit, the list ladder, the whole-slide zoom). Injected
 // verbatim into the presenter template via `<!--SLIDE_FIT_RUNTIME-->` AND into the share page
 // (buildShareHtml: handout + /p venue) — SINGLE SOURCE OF TRUTH, measured in canvas units so it fits
@@ -144,7 +147,9 @@ export const boardScreenRuntimeSource = [pollFrameRuntimeSource(), ...["poll-dis
 // never hand-positioned"). Three minified browser builds, concatenated as VALUES (never re-quoted)
 // into ONE <script> that runs at document top-level so each vendor IIFE sees `this === window`:
 //   d3@7.9.0 (UMD → window.d3) · markmap-view@0.18.12 (this.markmap.{Markmap,deriveOptions}, needs d3)
-//   · markmap-lib@0.18.12 (this.markmap.Transformer, katex optional).
+//   · markmap-lib@0.18.12 (this.markmap.Transformer, katex optional). markmap-lib is NOT the upstream
+//   IIFE (that inlines a pre-14.3.3 markdown-it): it is rebuilt from node_modules by
+//   scripts/build-markmap-lib-vendor.mjs and pinned by test:markmap-lib-vendor.
 // Load order matters: d3 → view (consumes d3) → lib. Both markmap builds MERGE into `this.markmap`
 // (`this.markmap = this.markmap || {}`), so Transformer and Markmap coexist on one global. No CDN —
 // the deck stays a self-contained single HTML file. Injected via the `<!--MARKMAP_VENDOR-->`

@@ -65,7 +65,7 @@ export function stripVideos(html: string, limit: number): string {
   })
 }
 
-type Sharp = typeof import('sharp')
+type Sharp = typeof import('sharp').default // sharp 0.35 types the module's named exports; the callable is `default`
 let loaded: Promise<Sharp> | null = null
 function loadSharp(): Promise<Sharp> {
   loaded ??= import('sharp').then((module) => (module as unknown as { default: Sharp }).default ?? (module as unknown as Sharp))

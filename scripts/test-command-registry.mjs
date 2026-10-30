@@ -66,7 +66,8 @@ for (const shortcut of SHORTCUT_REGISTRY) {
 }
 
 const expectedPaletteIds = [
-  'refresh', 'optimize-images', 'ocr-index', 'check-embeds', 'layout-doctor', 'where-used', 'focus-slide',
+  'research-panel', 'research-find', 'research-rename', 'research-change-kind', 'research-delete', 'research-move', 'research-copy', 'research-insert-here', 'research-insert', 'research-make-slide', 'research-open', 'research-previous', 'research-next', 'research-scope', 'research-close', 'research-copy-reference', 'research-reveal', 'research-source', 'research-used-in', 'research-scope-talk', 'research-scope-research', 'research-scope-everything', 'research-retry',
+  'refresh', 'optimize-images', 'ocr-index', 'check-embeds', 'layout-doctor', 'research-capture', 'research-reveal-folder', 'scratchpad-panel', 'scratchpad-dock', 'scratchpad-float', 'scratchpad-collapse', 'scratchpad-add-slides', 'scratchpad-keep', 'scratchpad-reject', 'scratchpad-move-back', 'scratchpad-move-to-group', 'scratchpad-new-group', 'scratchpad-remove-missing', 'scratchpad-insert-slide', 'scratchpad-insert-visual', 'scratchpad-compare', 'scratchpad-change-place', 'scratchpad-move-up', 'scratchpad-move-down', 'where-used', 'focus-slide',
   'toggle-inspector', 'studio', 'history', 'importer', 'plan-run', 'attach-prework', 'attach-postwork', 'pathways', 'new-window', 'open-in-new-window', 'new-talk', 'new-folder',
   'refresh-talks', 'change-vault', 'search-talks',
   'find-talk', 'add-talk-beside', 'talk-beside', 'close-talk-beside', 'select-whole-section',
@@ -75,12 +76,14 @@ const expectedPaletteIds = [
   'quote-form-auto', 'quote-form-plain', 'quote-form-tweet', 'quote-form-video', 'quote-form-book', 'quote-form-paper', 'quote-form-web',
   'image', 'search', 'insert-board-slide', 'icon-picker', 'insert-object-table', 'insert-object-mindmap',
   'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg',
-  'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-component-auto-embed', 'insert-component-countdown',
+  'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-component-auto-embed', 'insert-component-countdown', 'insert-component-notes',
+  'insert-html-page', 'capture-embed',
   'format-bold', 'format-italic', 'format-inline-code', 'format-highlight', 'format-strikethrough', 'format-underline', 'format-link',
   'deck-design', 'metadata', 'tag-slide', 'abstract',
   'view-editor', 'view-both', 'view-plain', 'view-markdown', 'change-heading-level', 'change-slide-layout', 'view-strip', 'view-grid', 'fold-all', 'unfold-all', 'outline-collapse-all', 'outline-expand-all',
-  'move-slide-to', 'move-section-to',
-  'normalize-triggers', 'undo', 'redo', 'new-slide', 'promote-heading', 'demote-heading', 'bulleted-list', 'numbered-list', 'delete-slide', 'app.command-palette', 'help', 'settings',
+  'move-slide-to', 'move-section-to', 'select-section', 'clear-slide-selection', 'set-aside-slides', 'move-selected-slides-to',
+  'search-slides-grid', 'search-next', 'search-previous',
+  'normalize-triggers', 'undo', 'redo', 'new-slide', 'promote-heading', 'demote-heading', 'bulleted-list', 'numbered-list', 'delete-slide', 'app.command-palette', 'help', 'settings', 'check-for-updates', 'whats-new',
   'get-started-show-example', 'get-started-open-guide', 'get-started-show-guide-button'
 ]
 assert.deepEqual(paletteCommands().map((command) => command.id), expectedPaletteIds, 'palette is generated in its existing order')
@@ -117,8 +120,8 @@ assert.deepEqual(
 const insertToolbar = toolbarCommands('insert').map((command) => command.id)
 assert.deepEqual(
   insertToolbar,
-  ['layout', 'image', 'search', 'insert-board-slide', 'icon-picker', 'insert-object-table', 'insert-object-mindmap', 'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg', 'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-component-auto-embed', 'insert-component-countdown'],
-  'the Insert toolbar menu is the five built-ins, then the six objects, then the six components, in order'
+  ['layout', 'image', 'search', 'insert-board-slide', 'icon-picker', 'insert-object-table', 'insert-object-mindmap', 'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg', 'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-html-page', 'insert-component-auto-embed', 'insert-component-countdown', 'insert-component-notes'],
+  'the Insert toolbar menu is the five built-ins, then the six objects, then the components with HTML page… after Embed and speaker notes last, in order'
 )
 
 // ADR-0032 §4: every component-kind entry without an object door is inserted at the cursor from the
@@ -126,9 +129,11 @@ assert.deepEqual(
 const componentEntries = componentInsertEntries(LAYOUTS)
 assert.deepEqual(
   componentEntries.map((entry) => entry.name),
-  ['code', 'qr', 'action', 'embed', 'auto-embed', 'countdown'],
-  'the component inserts are the registry component entries that have no object door'
+  ['code', 'qr', 'action', 'embed', 'auto-embed', 'countdown', 'notes'],
+  'the component inserts are the registry component entries that have no object door, then speaker notes'
 )
+// Speaker notes are written by the notes planner (privacy checked by the compiler's reading), never as a snippet.
+assert.deepEqual(componentEntries.filter((entry) => entry.planner).map((entry) => [entry.name, entry.planner, entry.snippet]), [['notes', 'notes', '']])
 const componentCommands = componentInsertCommands(LAYOUTS)
 assert.deepEqual(componentCommands.map((command) => command.id), componentEntries.map((entry) => entry.commandId), 'one command per component entry')
 for (const componentCommand of componentCommands) {
@@ -144,6 +149,15 @@ for (const entry of LAYOUTS.filter((candidate) => candidate.kind === 'component'
     : componentCommands.some((command) => command.id === `insert-component-${entry.name}`)
   assert.equal(hasDoor, true, `${entry.name}: every component entry is reachable from Insert`)
 }
+// Insert › HTML page… (roadmap insert-an-html-page-with-a-file-picker): in the Insert menu right after
+// Embed, in the palette under its own name and the words people search with, and Insert embed /
+// simulation still writes its template line.
+const htmlPage = COMMAND_REGISTRY.find((command) => command.id === 'insert-html-page')
+assert.equal(htmlPage?.label, 'Insert HTML page…')
+assert.deepEqual([htmlPage.toolbar.menu, htmlPage.toolbar.group, htmlPage.toolbar.menuLabel], ['insert', 'component', 'HTML page…'])
+assert.equal(htmlPage.shortcutId, undefined, 'no new keyboard chord')
+for (const word of ['html', 'page', 'file', 'embed', 'simulation', 'import']) assert.ok(htmlPage.palette.keywords.includes(word), `palette finds it by "${word}"`)
+assert.equal(componentEntries.find((entry) => entry.name === 'embed').snippet, '[Embed: https://example.com]', 'Insert embed / simulation keeps its template line')
 assert.equal(componentEntries.find((entry) => entry.name === 'qr').snippet, '[QR: https://example.com | Label]', 'a component inserts its registry trigger unless it declares its own snippet')
 
 // T27: ⌘⇧P is promoted to an explicit command — the Tools menu's "All commands…" opens the palette,
@@ -203,12 +217,12 @@ assert.equal(
 
 assert.deepEqual(
   menuCommands().map((command) => [command.menu.path.join('/'), command.id]),
-  [['Deck', 'toggle-inspector'], ['Deck', 'pathways']],
+  [['Deck', 'toggle-inspector'], ['Deck', 'pathways'], ['Help', 'check-for-updates'], ['Help', 'whats-new'], ['Help', 'help'], ['Slides', 'set-aside-slides'], ['View', 'research-panel'], ['View', 'research-find'], ['View', 'scratchpad-panel']],
   'native custom menu keeps its existing structure'
 )
 
 const expectedToolbarIds = {
-  insert: ['layout', 'image', 'search', 'insert-board-slide', 'icon-picker', 'insert-object-table', 'insert-object-mindmap', 'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg', 'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-component-auto-embed', 'insert-component-countdown'],
+  insert: ['layout', 'image', 'search', 'insert-board-slide', 'icon-picker', 'insert-object-table', 'insert-object-mindmap', 'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg', 'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-html-page', 'insert-component-auto-embed', 'insert-component-countdown', 'insert-component-notes'],
   deck: ['deck-design', 'toggle-inspector', 'pathways', 'metadata', 'abstract', 'refresh', 'normalize-triggers', 'delete-slide'],
   tools: ['studio', 'history', 'importer', 'settings', 'app.command-palette', 'help'],
   present: ['present-window', 'present-presenter', 'present-from-here', 'present-audience', 'plan-run']
@@ -480,6 +494,35 @@ try {
   assert.deepEqual(
     surface.map((command) => [command.id, command.shortcutId, command.category]),
     [
+      ['check-for-updates', 'app.check-for-updates', 'Set up TalkWeaver'],
+      ['whats-new', 'app.whats-new', 'Set up TalkWeaver'],
+      ['research-panel', 'app.research-panel', 'Shape the talk'],
+      ['research-find', 'app.research-find', 'Shape the talk'],
+      ['set-aside-slides', 'app.set-aside', 'Write the outline'],
+      ['search-slides-grid', 'app.grid-search', 'See the talk'],
+      ['search-next', 'app.search-next', 'See the talk'],
+      ['search-previous', 'app.search-previous', 'See the talk'],
+      ['research-rename', 'research.rename', 'Shape the talk'],
+      ['research-change-kind', 'research.change-kind', 'Shape the talk'],
+      ['research-delete', 'research.delete', 'Shape the talk'],
+      ['research-move', 'research.move', 'Shape the talk'],
+      ['research-copy', 'research.copy', 'Shape the talk'],
+      ['research-insert-here', 'research.insert-here', 'Shape the talk'],
+      ['research-insert', 'research.insert', 'Shape the talk'],
+      ['research-make-slide', 'research.make-slide', 'Shape the talk'],
+      ['research-open', 'research.open', 'Shape the talk'],
+      ['research-previous', 'research.previous', 'Shape the talk'],
+      ['research-next', 'research.next', 'Shape the talk'],
+      ['research-scope', 'research.scope', 'Shape the talk'],
+      ['research-close', 'research.close', 'Shape the talk'],
+      ['research-copy-reference', 'research.copy-reference', 'Shape the talk'],
+      ['research-reveal', 'research.reveal', 'Shape the talk'],
+      ['research-source', 'research.source', 'Shape the talk'],
+      ['research-used-in', 'research.used-in', 'Shape the talk'],
+      ['research-scope-talk', 'research.scope-talk', 'Shape the talk'],
+      ['research-scope-research', 'research.scope-research', 'Shape the talk'],
+      ['research-scope-everything', 'research.scope-everything', 'Shape the talk'],
+      ['research-retry', 'research.retry', 'Shape the talk'],
       ['find-talk', 'app.find-talk', 'Reuse slides'],
       ['add-beside', 'slide-picker.add-beside', 'Reuse slides'],
       ['talk-beside', 'slide-picker.talk-beside', 'Reuse slides'],
@@ -550,7 +593,7 @@ const osRoleAllowlist = new Map([
   ['appMenu', 'macOS-standard application menu, including About and Quit'],
   ['fileMenu', 'Electron-standard File menu'],
   ['editMenu', 'OS-standard undo, cut, copy, paste and selection roles'],
-  ['viewMenu', 'Electron-standard View menu'],
+  ['togglefullscreen', 'Standard full-screen role retained in the single generated View menu'],
   ['windowMenu', 'OS-standard window management roles'],
   ['close', 'OS-standard Close Window role in the File menu, beside New Window']
 ])

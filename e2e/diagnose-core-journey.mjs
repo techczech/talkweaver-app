@@ -1,3 +1,4 @@
+import { openSettingsWindow, closeSettingsWindow } from './lib/settings-window.mjs'
 // Work-files-and-sessions ticket 31: the core pre-work journey, end to end in the real app
 // (journeys.md § Locked, journey 1 "Right when"). Hidden-window Electron on a throwaway
 // vault and user-data folder, the fake Cloudflare API on this computer's loopback address (the app is
@@ -167,26 +168,24 @@ try {
   const shot = async (name, target = page) => { if (shots) await target.screenshot({ path: join(shots, `${name}.png`) }).catch(() => {}) }
 
   // ---- Connect Cloudflare and set up going live through Settings, as a person does.
-  const SETTINGS = '[aria-label="Settings"]'
-  const settings = page.locator(SETTINGS).first()
+  const settingsPage = await openSettingsWindow(app, page, 'cloudflare')
+  const settings = settingsPage.locator('.bsw-root')
   const part = (name) => settings.locator(`[data-cloudflare="${name}"]`)
-  const settled = () => page.waitForFunction(() => document.querySelector('[data-cloudflare="connection"]')?.getAttribute('data-busy') === 'no', null, { timeout: 40_000 })
+  const settled = () => settingsPage.waitForFunction(() => document.querySelector('[data-cloudflare="connection"]')?.getAttribute('data-busy') === 'no', null, { timeout: 40_000 })
   await page.waitForTimeout(1500)
-  await page.keyboard.press('ControlOrMeta+,')
   await part('connection').waitFor({ state: 'visible' })
   await part('connection').scrollIntoViewIfNeeded()
   await part('token').locator('input').fill(TOKEN)
   await part('token').getByRole('button', { name: 'Save token' }).click()
-  await page.waitForFunction(() => document.querySelector('[data-cloudflare="connection-label"]')?.textContent === 'Connected · Ada Lovelace', null, { timeout: 40_000 })
+  await settingsPage.waitForFunction(() => document.querySelector('[data-cloudflare="connection-label"]')?.textContent === 'Connected · Ada Lovelace', null, { timeout: 40_000 })
   await settled()
-  const liveIs = (state, timeout = 90_000) => page.waitForFunction((wanted) => document.querySelector('[data-cloudflare="live-service"]')?.getAttribute('data-state') === wanted, state, { timeout })
+  const liveIs = (state, timeout = 90_000) => settingsPage.waitForFunction((wanted) => document.querySelector('[data-cloudflare="live-service"]')?.getAttribute('data-state') === wanted, state, { timeout })
   await liveIs('not-set-up', 120_000)
   await part('live-service-label').click()
   await liveIs('ready')
   await shot('0-live-service-ready', settings)
   const liveReady = readFileSync(join(userData, 'config.json'), 'utf8').includes(LIVE_HOST)
-  await page.keyboard.press('Escape')
-  await page.locator(SETTINGS).waitFor({ state: 'detached' })
+  await closeSettingsWindow(app)
 
   // ---- 1. Attach a work file in metadata.
   await openTalkByTitle(page, 'Core journey')
@@ -285,7 +284,7 @@ try {
   phone.on('console', (message) => { if (message.type() === 'error') participantErrors.push(message.text()) })
   await phone.goto(preUrl)
   await phone.waitForSelector('[data-wp-cta]', { timeout: 20_000 })
-  const saved = () => phone.waitForFunction(() => { const note = document.querySelector('.wp-note'); return note && !note.hidden && note.innerText.includes('Saved') }, null, { timeout: 15_000 })
+  const saved = () => phone.waitForFunction(() => { const note = document.querySelector('.wp-note'); return note && !note.hidden && note.dataset.tone === 'ok' && note.innerText.includes('Sent to the speaker') }, null, { timeout: 15_000 })
   await shot('5-participant-start', phone)
   await phone.click('[data-wp-cta]')
   await phone.waitForSelector('.wp-media iframe[src^="https://www.youtube-nocookie.com/embed/"]')

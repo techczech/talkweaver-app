@@ -601,6 +601,18 @@
    "readsBetterAs": "Insert embed or simulation"
   },
   {
+   "id": "insert-html-page",
+   "label": "Insert HTML page…",
+   "chord": "—",
+   "scope": "app",
+   "currentGroup": null,
+   "paletteToday": true,
+   "task": "Build a slide",
+   "taskNo": 2,
+   "subgroup": "Components",
+   "class": "command"
+  },
+  {
    "id": "insert-component-auto-embed",
    "label": "Insert auto-embed (bare URL)",
    "chord": "—",

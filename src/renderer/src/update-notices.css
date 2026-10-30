@@ -1,0 +1,27 @@
+@import "@app-patterns/updates-react/updates.css";
+:root {
+  --app-updates-line: var(--line);
+  --app-updates-panel: var(--panel);
+  --app-updates-hover: var(--hover);
+  --app-updates-ink: var(--ink);
+  --app-updates-muted: var(--muted);
+  --app-updates-green: var(--green);
+  --app-updates-oxford: var(--oxford);
+  --app-updates-amber: var(--amber);
+  --app-updates-faint: var(--faint);
+}
+/* Update notices (ADR-0041; frames 01, 02, 07, 08, 09, 11 of docs/design/2026-10-20-update-notices). */
+.tw-update-note { position: fixed; right: 16px; bottom: 36px; z-index: 2000; width: 330px; max-width: 90vw; padding: 10px 12px 10px 14px; border: 1px solid var(--line); border-left: 4px solid var(--amber); border-radius: 8px; background: var(--panel); box-shadow: 0 8px 30px #17202a33; color: var(--ink); font-size: 12.5px; line-height: 1.45; }
+.tw-update-note--good { border-left-color: var(--green); }
+.tw-update-note--new { border-left-color: var(--green); }
+.tw-update-note--store { border-left-color: var(--oxford); }
+.tw-update-note--plain { border-left-color: var(--faint); }
+.tw-update-note-title { font-weight: 700; margin-bottom: 2px; }
+.tw-update-note-detail { color: var(--muted); }
+.tw-update-note .apu-update-actions { margin-top: 8px; }
+.tw-update-note-close { position: absolute; top: 4px; right: 6px; border: 0; background: none; color: var(--faint); font-size: 15px; line-height: 1; cursor: pointer; }
+.pane--whats-new { padding: 16px 18px; overflow: auto; background: var(--panel); height: 100%; box-sizing: border-box; }
+.pane--whats-new h2 { margin: 0 0 2px; font-size: 16px; }
+.pane--whats-new .tw-update-sub { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+.pane--whats-new dt { font-weight: 700; font-size: 13px; margin-top: 12px; }
+.pane--whats-new dd { margin: 2px 0 0; color: var(--ink); font-size: 13px; line-height: 1.45; }

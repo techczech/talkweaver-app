@@ -8,6 +8,7 @@ import { readFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { readHandoutUrl } from './publishing-logic'
 import { listRuns } from './runs'
+import { listKeptRuns } from './recording-paths'
 import { createPlannedRunIn, deletePlannedRunIn, readRoot, updatePlannedRunIn, type PlannedRunsDeps } from './planned-runs-ipc'
 
 type TalkInfo = { slug: string; title: string; outlinePath: string }
@@ -137,7 +138,10 @@ export function registerHistoryIpc(deps: HistoryDeps): void {
   // With a vault id (the Sessions view's Edit plan and Plan like this): that open vault's Runs; none: the current vault's, as History lists them.
   ipcMain.handle('history:list-runs', (_event, talkSlug?: string, vaultId?: unknown) => {
     const vault = readRoot(deps, vaultId)
-    return vault ? listRuns(vault, talkSlug ? String(talkSlug) : undefined) : []
+    const slug = talkSlug === undefined ? undefined : String(talkSlug)
+    // An explicitly named unavailable vault is still refused; no fallback to another vault.
+    if (vaultId !== undefined && !vault) return []
+    return [...(vault ? listRuns(vault, slug).map((run) => ({ ...run, home: vault })) : []), ...listKeptRuns(deps.userDataDir(), slug)]
   })
 
   // Planned Runs live in their talk's vault (planned-runs-ipc.ts): a request naming a vault writes there only.

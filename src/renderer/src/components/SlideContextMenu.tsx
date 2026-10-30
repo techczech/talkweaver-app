@@ -103,7 +103,7 @@ const SLIDE_ITEMS: Item[] = [
   { action: 'tag', icon: <Tag size={IC} />, label: 'Tag slide…' },
   ...OBJECT_ITEMS,
   ...FORMAT_ITEMS,
-  { action: 'focus', icon: <Crosshair size={IC} />, label: 'Focus this slide', k: '⌘⇧F' },
+  { action: 'focus', icon: <Crosshair size={IC} />, label: 'Focus this slide', k: '⌘⌥⇧F' },
   { action: 'where-used', icon: <Layers size={IC} />, label: 'Where used & versions', k: '⌘⇧U' },
   { action: 'explain', icon: <Info size={IC} />, label: 'Explain rendering' },
   { action: 'present-here', icon: <Play size={IC} />, label: 'Present from here', k: '⇧F5' },
@@ -119,7 +119,7 @@ const TEXT_ITEMS: Item[] = [
 ]
 
 export default function SlideContextMenu({
-  x, y, startAtFirst = false, startAtAction, withText = false, currentLayoutName, onAction, onSetLayout, onClose
+  x, y, startAtFirst = false, startAtAction, withText = false, currentLayoutName, onAction: runAction, onSetLayout: setLayout, onClose, consumeFence
 }: {
   x: number
   y: number
@@ -133,7 +133,11 @@ export default function SlideContextMenu({
   currentLayoutName?: string
   onSetLayout: (layout: LayoutDef) => void
   onClose: () => void
+  /** Typed fences remain on dismissal and are consumed only by a chosen command. */
+  consumeFence?: () => void
 }) {
+  const onAction = (action: SlideMenuAction): void => { consumeFence?.(); runAction(action) }
+  const onSetLayout = (layout: LayoutDef): void => { consumeFence?.(); setLayout(layout) }
   useDismiss(onClose)
   const { ref, left, top } = useClamped(x, y)
   const items = withText ? [...SLIDE_ITEMS, ...TEXT_ITEMS] : SLIDE_ITEMS

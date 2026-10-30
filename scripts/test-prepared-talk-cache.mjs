@@ -101,3 +101,41 @@ console.log('PASS preview HTML retention budget')
   assert.equal(shared, 1, 'callers during a load share it')
   console.log('PASS memoiseUntilFailure: a transient failure is retried, a found value kept')
 }
+
+// The prewarm is uncached and must use its own gate entry point, never the variant's release hook.
+{
+  let announces = 0, prewarms = 0, backgrounds = 0, compiles = 0
+  const { createSingleFlight } = await import('../src/main/single-flight.ts')
+  const gate = createSingleFlight({ beforeRequest: () => { announces += 1 } })
+  const originalPrewarm = gate.prewarm, originalBackground = gate.background
+  gate.prewarm = (fn) => { prewarms += 1; return originalPrewarm(fn) }
+  gate.background = (fn) => { backgrounds += 1; return originalBackground(fn) }
+  const cache = createPreparedTalkCache({ maxEntries: 2, maxBytes: 100, sizeOf: () => 1 })
+  const route = module.createPreparationRoute(cache, gate)
+  const compile = (gated) => gated(async () => ++compiles)
+  assert.equal(await route('prewarm', 'same', 'deck', compile), 1)
+  assert.equal(await route('prewarm', 'same', 'deck', compile), 2, 'the same prewarm is compiled afresh')
+  assert.equal(prewarms, 2, 'prewarm calls gate.prewarm')
+  assert.equal(backgrounds, 0, 'prewarm never calls gate.background')
+  assert.equal(announces, 0, 'prewarm does not release itself')
+  assert.deepEqual(cache.stats(), { entries: 0, bytes: 0, pending: 0 }, 'prewarm never enters the cache')
+  console.log('PASS preparation route: prewarm is uncached and uses only gate.prewarm')
+}
+
+// Eviction separates in-flight generations even when the outline/cache key stays identical.
+{
+  const c=createPreparedTalkCache({maxEntries:4,maxBytes:100,sizeOf:()=>1})
+  const group=module.preparedTalkGroup('/capture/outline.md')
+  let finishOld, finishNew, loads=0
+  const old=c.get('same',group,async()=>{loads++;return await new Promise(r=>finishOld=r)})
+  await Promise.resolve()
+  c.evictOutline('/capture/outline.md')
+  const fresh=c.get('same',group,async()=>{loads++;return await new Promise(r=>finishNew=r)})
+  await Promise.resolve()
+  assert.equal(loads,2,'post-eviction request must not join stale in-flight preparation')
+  finishOld('old');assert.equal(await old,'old','existing caller still gets its result')
+  assert.equal(c.stats().pending,1,'old finally must not remove replacement pending work')
+  finishNew('fresh');assert.equal(await fresh,'fresh')
+  assert.equal(await c.get('same',group,()=>{throw Error('fresh value missing')}),'fresh')
+  console.log('PASS outline eviction: pending generations invalidated, old completion cannot remove or retain over fresh work')
+}

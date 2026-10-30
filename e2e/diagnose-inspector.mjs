@@ -290,9 +290,9 @@ const carouselPreview = await page.frameLocator('.tw-inspector-stage iframe')
 rec('committing Carousel folds the child slides into the preview carousel', carouselPreview === 1, String(carouselPreview))
 
 // 9. Slide Focus uses the same fixed-logical-size preview path.
-await page.keyboard.press('Meta+Shift+F')
+await page.keyboard.press('Meta+Alt+Shift+F')
 await page.waitForTimeout(1200)
-rec('⌘⇧F opens Slide Focus', await page.locator('.lt-focus').count() === 1)
+rec('⌘⌥⇧F opens Slide Focus', await page.locator('.lt-focus').count() === 1)
 if (await page.locator('.lt-focus').count() === 1) {
   const focusActivation = await frameActivation('.lt-stage-frame iframe')
   rec('Slide Focus stage has exactly one active slide', focusActivation.activeSlides === 1, JSON.stringify(focusActivation))

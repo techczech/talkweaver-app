@@ -47,7 +47,7 @@ assert.deepEqual(handoutHomePrework({ title: '', steps: [{ title: 'Try one agent
 })
 assert.deepEqual(handoutHomePrework({ title: 'Three questions to answer before Monday', steps: [{}] }), { label: 'Three questions to answer before Monday', detail: '1 step', minutes: 0, steps: [{ label: 'Step 1', minutes: null, kind: '' }] })
 
-// Links: http(s) only, once each, never the page's own address; labelled with the slide's title.
+// Links: http(s) only, once each, never the page's own address; labelled with authored link text.
 const slides = [
   { html: '<section class="slide" data-id="a" data-nav-title="Title"><a href="https://handouts.fyi/737u">x</a></section>' },
   { html: '<section class="slide" data-id="b" data-nav-title="Join &lt;b&gt;us&lt;/b&gt;"><a href="https://news.test/?a=1&amp;b=2">x</a><a href="javascript:alert(1)">y</a><a href="mailto:a@b.test">z</a></section>' },
@@ -55,7 +55,7 @@ const slides = [
 ]
 const links = collectTalkLinks(slides, { exclude: ['https://handouts.fyi/737u/'] })
 assert.deepEqual(links.map((link) => link.href), ['https://news.test/?a=1&b=2'])
-assert.ok(!/<b>/.test(links[0].labelHtml), 'a slide title with markup stays text')
+assert.equal(links[0].labelHtml, 'x', 'the authored anchor labels the resource')
 const home = { slidesHref: 'agents.html', downloadHref: 'agents-download.html', url: 'https://handouts.fyi/737u', qr: '', links,
   day: '<i>d</i>', date: '<i>dd</i>', startTime: '<i>t</i>', event: '<i>e</i>', author: '<i>a</i>', subtitle: '<i>s</i>', affiliation: '<i>f</i>' }
 const markup = handoutHomeMarkup({ ...home, prework: { label: '<b>x</b>', detail: '2 min', minutes: 2, steps: [{ label: '<b>step</b>', minutes: 2, kind: 'task' }] } }, { title: '<script>t</script> **Agents**', slideCount: 3, firstSlideId: 'a"b' })
@@ -127,5 +127,7 @@ assert.ok(!buildShareHtml({ ...shareArgs, homeHref: './', home: { slidesHref: 'a
   const introOnly = handoutHomeMarkup({ ...home, extras: { intro: 'Hi' } }, { title: 'Agents', slideCount: 1 })
   assert.match(introOnly, /<section class="hh-card" id="hhExtras" data-hh-for="before handout"><h2>For this session<\/h2><p class="hh-note">Hi<\/p><\/section>/)
 }
+
+await import('./test-handout-resource-links.mjs')
 
 console.log('PASS handout home details: band parts, planned start, look-ahead setting, pre-work steps, links mentioned, escaping, nothing drawn without data, slides view link home, Run extras card')

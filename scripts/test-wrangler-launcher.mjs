@@ -9,7 +9,9 @@
 //    check that the main process starts no command through a shell.
 // The packaged-build half is scripts/smoke-packaged-wrangler.mjs.
 import { strict as assert } from 'node:assert'
-import { EventEmitter } from 'node:events'
+import { EventEmitter, once } from 'node:events'
+import { createInterface } from 'node:readline'
+import { mock } from 'node:test'
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -114,7 +116,7 @@ const DANGEROUS = [
   'NODE_EXTRA_CA_CERTS', 'NODE_TLS_REJECT_UNAUTHORIZED', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
   'CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_API_KEY', 'CLOUDFLARE_EMAIL', 'CLOUDFLARE_ACCOUNT_ID', 'CF_API_TOKEN', 'CF_API_KEY',
   'CF_EMAIL', 'CF_ACCOUNT_ID', 'CLOUDFLARE_ACCESS_CLIENT_ID', 'CLOUDFLARE_ACCESS_CLIENT_SECRET',
-  'WRANGLER_CF_AUTHORIZATION_TOKEN', 'WRANGLER_R2_SQL_AUTH_TOKEN', 'CF_PAGES_UPLOAD_JWT', 'WRANGLER_CLIENT_ID',
+  'WRANGLER_CF_AUTHORIZATION_TOKEN', 'WRANGLER_R2_SQL_AUTH_TOKEN', 'WRANGLER_BASIN_SQL_AUTH_TOKEN', 'CF_PAGES_UPLOAD_JWT', 'WRANGLER_CLIENT_ID',
   'CLOUDFLARE_CLIENT_ID', 'WRANGLER_CI_OVERRIDE_NAME', 'WRANGLER_CI_MATCH_TAG', 'WORKERS_CI_BRANCH', 'CF_PAGES_COMMIT_SHA',
   'WRANGLER_SEND_METRICS', 'WRANGLER_LOG', 'CI', 'GITHUB_SHA', 'npm_config_user_agent', 'BWS_ACCESS_TOKEN', 'TALKWEAVER_LIVE_ADMIN_SECRET',
 ]
@@ -456,18 +458,22 @@ function fakeChild(script) {
   // clock of the machine running it: each step is waited for, and the tool goes only when the test lets it.
   // (An earlier form slept 50 and 40 ms and expected the tool, due to go 100 ms in, not to have gone
   // yet: a 10 ms margin, which a Windows runner's coarser timers overran.)
+  mock.timers.enable({ apis: ['setTimeout'] })
   let stubborn
   let answered = false
-  const reached = async (what, condition) => { for (const end = Date.now() + 10_000; Date.now() < end;) { if (condition()) return; await new Promise((resolve) => setTimeout(resolve, 2)) } assert.fail(`timed out waiting for: ${what}`) }
+  const advance = async (ms) => { mock.timers.tick(ms); await Promise.resolve() }
   const run = runWrangler(mac, ['pages', 'deploy'], { timeoutMs: 30, killGraceMs: 1500, start: () => {
     stubborn = fakeChild((c) => { c.stdout.emit('data', 'uploading… ') })
     return stubborn // its `kill` only records the signal: it goes when `close` is emitted below
   } })
   void run.then(() => { answered = true })
-  await reached('the request to stop', () => stubborn.killed.length >= 1)
+  await advance(29)
+  assert.deepEqual(stubborn.killed, [], 'nothing is sent before the time limit')
+  await advance(1)
   assert.deepEqual([stubborn.killed, answered], [['SIGTERM'], false], 'at the limit it is asked to stop, and the run is NOT answered while it is still there')
-  await reached('the kill', () => stubborn.killed.length >= 2)
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  await advance(1499)
+  assert.deepEqual(stubborn.killed, ['SIGTERM'], 'no hard kill before the grace ends')
+  await advance(1)
   assert.deepEqual([stubborn.killed, answered], [['SIGTERM', 'SIGKILL'], false], 'after the grace it is killed, and still not answered until it has gone')
   stubborn.emit('close', null)
   const stopped = await run
@@ -475,11 +481,13 @@ function fakeChild(script) {
   assert.ok(stopped.stderr.endsWith(WRANGLER_TIMED_OUT_MESSAGE), 'the reason is the last thing in stderr')
   // A tool that stops when asked: no kill, and what it printed on the way out is kept.
   let polite
-  const asked = await runWrangler(mac, ['deploy'], { timeoutMs: 20, killGraceMs: 500, start: () => {
+  const asking = runWrangler(mac, ['deploy'], { timeoutMs: 20, killGraceMs: 500, start: () => {
     polite = fakeChild(() => {})
     polite.kill = (signal) => { polite.killed.push(signal); polite.stderr.emit('data', 'interrupted'); queueMicrotask(() => polite.emit('close', 143)) }
     return polite
   } })
+  await advance(20)
+  const asked = await asking
   assert.deepEqual([polite.killed, asked.timedOut, asked.ok], [['SIGTERM'], true, false])
   // In time: nothing is sent, and a failure of its own is not called a time-out.
   const inTime = await runWrangler(mac, ['deploy'], { timeoutMs: 500, start: () => fakeChild((c) => { c.emit('close', 1) }) })
@@ -487,19 +495,25 @@ function fakeChild(script) {
   // Windows: a signal does not reach the processes the tool started, so the whole tree is ended at the limit.
   const trees = []
   let onWindows
-  const winRun = await runWrangler(windows, ['pages', 'deploy'], { timeoutMs: 20, killGraceMs: 20, killTree: (pid) => { trees.push(pid); setTimeout(() => onWindows.emit('close', 1), 10) }, start: () => {
+  const winPending = runWrangler(windows, ['pages', 'deploy'], { timeoutMs: 20, killGraceMs: 20, killTree: (pid) => { trees.push(pid); setTimeout(() => onWindows.emit('close', 1), 10) }, start: () => {
     onWindows = Object.assign(fakeChild(() => {}), { pid: 4242 })
     return onWindows
   } })
+  await advance(20)
+  await advance(10)
+  const winRun = await winPending
   assert.deepEqual([trees, winRun.timedOut], [[4242], true], 'taskkill /T /F for the tool\'s process id, and the run answered once it has gone')
   const noTree = []
   let onMac
-  await runWrangler(mac, ['deploy'], { timeoutMs: 10, killGraceMs: 10, killTree: (pid) => noTree.push(pid), start: () => {
+  const macPending = runWrangler(mac, ['deploy'], { timeoutMs: 10, killGraceMs: 10, killTree: (pid) => noTree.push(pid), start: () => {
     onMac = Object.assign(fakeChild(() => {}), { pid: 7 })
     onMac.kill = () => queueMicrotask(() => onMac.emit('close', null))
     return onMac
   } })
+  await advance(10)
+  await macPending
   assert.deepEqual(noTree, [], 'elsewhere the signals are enough')
+  mock.timers.reset()
 }
 
 {
@@ -507,19 +521,32 @@ function fakeChild(script) {
   // never says anything, not even that it has gone, is answered at the deadline after the kill.
   const destroyed = []
   let silent
-  const began = Date.now()
-  const lost = await runWrangler(mac, ['pages', 'deploy'], { timeoutMs: 20, killGraceMs: 20, killDeadlineMs: 40, start: () => {
+  mock.timers.enable({ apis: ['setTimeout'] })
+  let answered = false
+  const losing = runWrangler(mac, ['pages', 'deploy'], { timeoutMs: 20, killGraceMs: 20, killDeadlineMs: 40, start: () => {
     silent = fakeChild(() => {})
     silent.stdout.destroy = () => destroyed.push('stdout')
     silent.stderr.destroy = () => destroyed.push('stderr')
     return silent
   } })
+  void losing.then(() => { answered = true })
+  mock.timers.tick(20)
+  mock.timers.tick(20)
+  mock.timers.tick(39)
+  await Promise.resolve()
+  assert.equal(answered, false, 'not answered before the kill deadline')
+  mock.timers.tick(1)
+  const lost = await losing
   assert.deepEqual([lost.timedOut, lost.ok, silent.killed, destroyed], [true, false, ['SIGTERM', 'SIGKILL'], ['stdout', 'stderr']], 'answered as timed out, and its output is no longer read')
-  assert.ok(Date.now() - began < 1500, 'at the deadline, not later')
+  assert.equal(answered, true, 'answered at the kill deadline, not later')
   assert.deepEqual([WRANGLER_KILL_DEADLINE_MS, WRANGLER_DRAIN_MS], [3_000, 2_000])
   // The process has exited but its output is held open: answered after the drain, with what it printed.
   let held
-  const drained = await runWrangler(mac, ['deploy'], { drainMs: 30, start: () => (held = fakeChild((c) => { c.stdout.emit('data', 'Published'); c.emit('exit', 0) })) })
+  const draining = runWrangler(mac, ['deploy'], { drainMs: 30, start: () => (held = fakeChild((c) => { c.stdout.emit('data', 'Published'); c.emit('exit', 0) })) })
+  await Promise.resolve() // the fake child's script emits exit
+  mock.timers.tick(30)
+  const drained = await draining
+  mock.timers.reset()
   assert.deepEqual({ ok: drained.ok, stdout: drained.stdout, timedOut: drained.timedOut }, { ok: true, stdout: 'Published', timedOut: undefined })
 
   // Now with REAL processes (not Windows, where the tree is ended by taskkill): a tool that starts
@@ -527,15 +554,44 @@ function fakeChild(script) {
   if (process.platform !== 'win32') {
     const dir = mkdtempSync(join(tmpdir(), 'tw-launcher-group-'))
     const gone = async (pid) => { for (const end = Date.now() + 3000; Date.now() < end;) { try { process.kill(pid, 0) } catch { return true } await new Promise((resolve) => setTimeout(resolve, 25)) } return false }
-    const script = (name, body) => { const path = join(dir, name); writeFileSync(path, `const { spawn } = require('node:child_process')\nconst inner = spawn('sleep', ['60'], { stdio: ['ignore', 'inherit', 'inherit'] })\nconsole.log(JSON.stringify({ inner: inner.pid, cwd: process.cwd(), env: process.env }))\n${body}\n`); return path }
-    const real = (path, options) => runWrangler(mac, ['pages', 'deploy'], { ...options, start: (launch) => startWranglerProcess({ ...launch, command: process.execPath, args: [path], cwd: dir, env: { PATH: process.env.PATH, MADE_UP_ONLY: 'yes' } }, process.platform) })
+    const script = (name, body, beforeReady = '') => { const path = join(dir, name); writeFileSync(path, `const { spawn } = require('node:child_process')\nconst inner = spawn('sleep', ['60'], { stdio: ['ignore', 'inherit', 'inherit'] })\n${beforeReady}\nconsole.log(JSON.stringify({ inner: inner.pid, cwd: process.cwd(), env: process.env }))\n${body}\n`); return path }
+    let child
+    const real = (path, options) => runWrangler(mac, ['pages', 'deploy'], { ...options, start: (launch) => (child = startWranglerProcess({ ...launch, command: process.execPath, args: [path], cwd: dir, env: { PATH: process.env.PATH, MADE_UP_ONLY: 'yes' } }, process.platform)) })
+    const lineFrom = async (stream) => {
+      const lines = createInterface({ input: stream })
+      try {
+        // A ceiling for a broken fixture, never the signal to proceed; pipe chunks can split a line.
+        const [line] = await once(lines, 'line', { signal: AbortSignal.timeout(20_000) })
+        return line
+      } finally {
+        lines.close()
+      }
+    }
     try {
       // (1) The tool ignores the request to stop and never exits by itself.
-      const stuckAt = Date.now()
-      const stuck = await real(script('stuck.cjs', "process.on('SIGTERM', () => {})\nsetInterval(() => {}, 1000)"), { timeoutMs: 400, killGraceMs: 300, killDeadlineMs: 1500 })
-      const stuckSaid = JSON.parse(stuck.stdout.trim().split('\n')[0])
+      let stuck
+      let stuckSaid
+      mock.timers.enable({ apis: ['setTimeout'] })
+      try {
+        const stopping = real(script('stuck.cjs', "setInterval(() => {}, 1000)", "process.on('SIGTERM', () => process.stderr.write('SIGTERM received\\n'))"), { timeoutMs: 400, killGraceMs: 300, killDeadlineMs: 1500 })
+        // The old 400 ms wall clock could kill Node before it printed anything under CPU load.
+        // Start the timeout check only once the real child has printed a complete readiness line.
+        stuckSaid = JSON.parse(await lineFrom(child.stdout))
+        const terminated = lineFrom(child.stderr)
+        mock.timers.tick(400)
+        assert.equal(await terminated, 'SIGTERM received', 'the real child received SIGTERM and stayed alive')
+        const closed = once(child, 'close', { signal: AbortSignal.timeout(20_000) })
+        mock.timers.tick(300)
+        // Let the real exit and output events settle the run; deadline timing is covered above.
+        mock.timers.reset()
+        await closed
+        stuck = await stopping
+      } finally {
+        mock.timers.reset()
+        endAllWranglerRuns()
+      }
       assert.deepEqual([stuck.timedOut, stuck.ok], [true, false])
-      assert.ok(Date.now() - stuckAt < 400 + 300 + 1500 + 1000, `answered within the deadline (${Date.now() - stuckAt} ms), although the process it started holds its output open for a minute`)
+      assert.deepEqual(JSON.parse(stuck.stdout.trim().split('\n')[0]), stuckSaid, 'the run kept the complete readiness output')
       assert.equal(await gone(stuckSaid.inner), true, 'and the process it started is gone: the signal went to the whole group')
       // `detached` changed neither the working folder nor the environment.
       assert.equal(realpathSync(stuckSaid.cwd), realpathSync(dir), 'the working folder is the launch\'s')
@@ -634,10 +690,11 @@ child.stdout.once('data', (chunk) => {
   }
   {
     // Which groups are signalled at quit, on every platform's runner (the signal goes through the test's seam).
+    mock.timers.enable({ apis: ['setTimeout'] })
     const sent = []
     const grouped = (script) => Object.assign(fakeChild(script), { pid: 1073741822, group: true })
     const start = (script) => { let child; const run = runWrangler(mac, ['pages', 'deploy'], { drainMs: 400, signalGroup: (pid, signal) => sent.push([pid, signal]), start: () => (child = grouped(script)) }); return { run, child: () => child } }
-    const tick = () => new Promise((resolve) => setTimeout(resolve, 20))
+    const tick = () => Promise.resolve() // let fakeChild emit its events without advancing the drain clock
     // (1) The tool is running: its group is signalled.
     const running = start(() => {})
     await tick()
@@ -649,44 +706,55 @@ child.stdout.once('data', (chunk) => {
     const holding = start((c) => { c.emit('exit', 0) })
     await tick()
     assert.deepEqual([endAllWranglerRuns(), sent.splice(0)], [1, [[1073741822, 'SIGKILL']]], 'exited, output still open: its group is ended')
+    mock.timers.tick(400)
     await holding.run
     sent.splice(0)
     // (3) The tool has exited and BOTH its outputs have closed: nothing proves the group id is still its own. Nothing is sent.
     const closed = start((c) => { c.emit('exit', 0); c.stdout.emit('close'); c.stderr.emit('close') })
     await tick()
     assert.deepEqual([endAllWranglerRuns(), sent.splice(0), closed.child().killed], [0, [], []], 'exited, both outputs closed: nothing is sent to that group number, or to the tool')
+    mock.timers.tick(400)
     await closed.run
     assert.deepEqual(sent, [], 'nor when the run is then answered')
     // (3b) One output closed is not both.
     const half = start((c) => { c.emit('exit', 0); c.stdout.emit('close') })
     await tick()
     assert.deepEqual([endAllWranglerRuns(), sent.splice(0)], [1, [[1073741822, 'SIGKILL']]])
+    mock.timers.tick(400)
     await half.run
+    mock.timers.reset()
     const header = readSource(join(repo, 'src/main/wrangler-launcher.ts')).split('\nimport ')[0].replace(/\n\/\/ ?/g, ' ')
     assert.ok(header.includes('A helper that outlives the tool and has closed the output it inherited is not ended at quit.'), 'the limit is written in the launcher\'s header')
   }
   {
     // Not a group (and so on Windows): a process id that has exited may already be another program's.
     // Nothing is sent to it, by signal or by taskkill.
+    mock.timers.enable({ apis: ['setTimeout'] })
     const trees = []
     let finished
     const draining = runWrangler(windows, ['pages', 'deploy'], { drainMs: 300, killTree: (pid) => trees.push(pid), start: () => (finished = Object.assign(fakeChild((c) => { c.stdout.emit('data', 'Published'); c.emit('exit', 0) }), { pid: 4242 })) })
-    await new Promise((resolve) => setTimeout(resolve, 30))
+    await Promise.resolve()
     assert.deepEqual([endAllWranglerRuns(), finished.killed, trees], [0, [], []], 'Windows, the tool has exited: no taskkill for its process id, and no signal')
+    mock.timers.tick(300)
     assert.deepEqual({ ok: (await draining).ok, killed: finished.killed, trees }, { ok: true, killed: [], trees: [] }, 'and the run is answered with its own result')
     // One still running IS ended: on Windows by the tree kill for its process id.
     let running
     const live = runWrangler(windows, ['pages', 'deploy'], { killTree: (pid) => { trees.push(pid); queueMicrotask(() => running.emit('exit', null)) }, start: () => (running = Object.assign(fakeChild(() => {}), { pid: 4243 })) })
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await Promise.resolve()
     assert.deepEqual([endAllWranglerRuns(), trees], [1, [4243]], 'Windows, the tool is running: the tree kill, for its own process id')
+    await Promise.resolve() // the tree kill emits exit
+    mock.timers.tick(WRANGLER_DRAIN_MS)
     await live
     // And where it is neither a group nor Windows (a test's stand-in): the tool itself is killed only while it runs.
     let plain
     const plainRun = runWrangler(mac, ['deploy'], { start: () => (plain = Object.assign(fakeChild(() => {}), { pid: 4244 })) })
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await Promise.resolve()
     plain.kill = (signal) => { plain.killed.push(signal); queueMicrotask(() => plain.emit('exit', null)) }
     assert.deepEqual([endAllWranglerRuns(), plain.killed], [1, ['SIGKILL']])
+    await Promise.resolve() // the process kill emits exit
+    mock.timers.tick(WRANGLER_DRAIN_MS)
     await plainRun
+    mock.timers.reset()
     // The default tree kill at quit is the absolute taskkill, run to its end.
     assert.ok(/const kill = taskkillCommand\(run\.install, run\.inherited, pid\)\s+spawnSync\(kill\.command, kill\.args, \{ \.\.\.kill\.options, timeout: 5_000 \}\)/.test(readSource(join(repo, 'src/main/wrangler-launcher.ts'))))
     const header = readSource(join(repo, 'src/main/wrangler-launcher.ts')).split('\nimport ')[0].replace(/\n\/\/ ?/g, ' ')

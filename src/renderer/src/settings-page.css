@@ -1,0 +1,18 @@
+/* The Settings window: the shared window's own look (@app-patterns/settings-react/settings.css) plus the
+   few TalkWeaver colours and faces the app's own pages (SettingsWindowPages.tsx) are drawn with.
+   The main window's styles.css is not loaded here: its resets would restyle the shared window. */
+:root {
+  --panel: #fffdf8;
+  --hover: #ede8dc;
+  --line: #d9d0c1;
+  --ink: #17202a;
+  --muted: #5d6875;
+  --faint: #8a9099;
+  --oxford: #0b3a6b;
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+}
+html, body, #root { height: 100%; margin: 0; }
+
+/* About is supplied by the app; keep its sole navigation row pinned below Changes. */
+.bsw-navwrap [data-section="updates"] { display: none; }

@@ -3,6 +3,7 @@
 // removes the button and the tab; the palette command opens the Guide with the button off; the other
 // commands and tabs still work. Progress survives the switch.
 import { _electron as electron } from 'playwright'
+import { openSettingsWindow, closeSettingsWindow } from './lib/settings-window.mjs'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
@@ -71,17 +72,34 @@ try {
   record('click the button again: the Guide closes and the column is as before (no tab row)', await gone('[data-guide]') && (await page.locator('[data-right-column-tabs]').count()) === 0 && !/open/.test(await button.innerText()))
 
   // Settings → Get started: the switch.
-  await page.evaluate(() => window.dispatchEvent(new Event('tw-open-settings')))
-  await page.waitForSelector('[data-setting="guide-button"] [role="switch"]', { timeout: 4000 })
-  const switchEl = page.locator('[data-setting="guide-button"] [role="switch"]')
-  const first = await page.evaluate(() => document.querySelector('[data-settings-section]')?.getAttribute('data-settings-section'))
-  record('Settings: Get started is the first section; the switch is on by default', first === 'get-started' && (await switchEl.getAttribute('aria-checked')) === 'true')
+  // A hidden thumbnail window can open at the same time as Settings. Force that ordering
+  // so the shared driver must identify Settings rather than taking the first window event.
+  const press = page.keyboard.press.bind(page.keyboard)
+  page.keyboard.press = async (...args) => {
+    if (args[0] === 'ControlOrMeta+,') await app.evaluate(({ BrowserWindow }) => {
+      const unrelated = new BrowserWindow({ show: false, title: 'settings-driver-distractor' })
+      void unrelated.loadURL('data:text/html,<title>settings-driver-distractor</title>')
+    })
+    return press(...args)
+  }
+  let settings
+  try { settings = await openSettingsWindow(app, page, 'general') }
+  finally {
+    page.keyboard.press = press
+    await app.evaluate(({ BrowserWindow }) => {
+      for (const win of BrowserWindow.getAllWindows()) if (win.getTitle() === 'settings-driver-distractor') win.destroy()
+    })
+  }
+  await settings.waitForSelector('[data-key="general.guideButton"] [role="switch"]', { timeout: 4000 })
+  const switchEl = settings.locator('[data-key="general.guideButton"] [role="switch"]')
+  const first = await settings.evaluate(() => document.querySelector('.bsw-root')?.getAttribute('data-section'))
+  record('Settings: General holds the Guide switch, on by default', first === 'general' && (await switchEl.getAttribute('aria-checked')) === 'true')
   await switchEl.click()
-  await page.waitForSelector('[data-setting="guide-button"] [role="switch"][aria-checked="false"]', { timeout: 3000 })
-  const flash = await page.waitForFunction(() => document.body.innerText.includes('Guide button removed from the sidebar. Settings → Get started, or the palette, brings it back.'), null, { timeout: 4000 }).then(() => true).catch(() => false)
-  record('switch off: the flash says the button was removed and how it comes back', flash)
-  await page.keyboard.press('Escape')
-  record('switch off: the sidebar has no Guide button and the config keeps the choice', await gone('[data-guide-button]') && JSON.parse(readFileSync(join(ud, 'config.json'), 'utf8')).guideButtonVisible === false)
+  await settings.waitForSelector('[data-key="general.guideButton"] [role="switch"][aria-checked="false"]', { timeout: 3000 })
+  const change = await settings.evaluate(async () => (await window.bridleSettings.view()).state.changes.find((entry) => entry.key === 'general.guideButton' && entry.from === true && entry.to === false))
+  record('switch off: Settings records the Guide preference change', Boolean(change))
+  await closeSettingsWindow(app)
+  record('switch off: the sidebar has no Guide button and the config keeps the choice', await gone('[data-guide-button]') && JSON.parse(readFileSync(join(ud, 'settings.json'), 'utf8')).settings['general.guideButton'] === false)
 
   // The palette opens it anyway, for this session.
   await page.evaluate(() => window.dispatchEvent(new Event('tw-guide-open')))

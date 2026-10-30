@@ -4,7 +4,7 @@
 // scripts/test-transcription-setup.mjs drives it with fixture files.
 //
 // Windows: the binary comes from node_modules/ffmpeg-static (gyan.dev essentials, GPL v3), which
-//   `npm install` downloads. It must be there; an installer may not carry a build marked
+//   `bun install` downloads. It must be there; an installer may not carry a build marked
 //   --enable-nonfree; an unpacked build (`--dir`) may.
 // The staged check (macOS): after electron-builder has copied extraResources into the app and before
 //   it signs, the binary inside the app (Contents/Resources/ffmpeg/ffmpeg) must be the pinned bytes, a
@@ -81,7 +81,7 @@ function ffmpegShipProblem(input) {
   if (!bytes || bytes.length < 1024 * 1024) {
     return pin
       ? `the ffmpeg that ships with TalkWeaver on macOS is missing (${input.binary}); run npm run fetch:ffmpeg-mac`
-      : `the ffmpeg that ships with TalkWeaver is missing (${input.binary}); run npm install (ffmpeg-static downloads it)`
+      : `the ffmpeg that ships with TalkWeaver is missing (${input.binary}); run bun install (ffmpeg-static downloads it)`
   }
   if (pin) {
     const arch = builderArchName(input.arch)

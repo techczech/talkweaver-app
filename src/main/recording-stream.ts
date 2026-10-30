@@ -26,11 +26,11 @@
 // is what one recording could not hand over. The stream channels are reached only from the
 // recording preload of a present window TalkWeaver opened (one owner per session, checked here).
 
-import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync, writeSync } from 'fs'
+import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync, writeSync } from 'fs'
 import { basename, join, resolve } from 'path'
 import { isSafeRunId } from './runs.ts'
 import { readbackSlideTimeIndex } from './run-ink-readback.ts'
-import { SEGMENT_ALT_MAX, localSegmentAltPath, localSegmentPath, segmentFilePath, sessionIdTaken, streamMarkerPath } from './recording-paths.ts'
+import { SEGMENT_ALT_MAX, existingRecordedSegmentPath, recordingsDirOk, localSegmentAltPath, localSegmentPath, segmentFilePath, sessionIdTaken, streamMarkerPath } from './recording-paths.ts'
 import type { RunAudioGap, RunAudioSegment } from '../shared/run-audio.ts'
 
 export type StreamError =
@@ -192,13 +192,12 @@ export function createRecordingStreams(opts: { userDataDir: () => string; now?: 
   const fsyncEveryMs = opts.fsyncEveryMs ?? 2000
 
   // The recordings folder must be a real folder inside userData, not a link to somewhere else.
-  function recordingsDirOk(): boolean {
+  function ensureRecordingsDir(): boolean {
     try {
       const userData = opts.userDataDir()
       const dir = resolve(userData, 'recordings')
       mkdirSync(dir, { recursive: true })
-      if (lstatSync(dir).isSymbolicLink()) return false
-      return realpathSync(dir) === join(realpathSync(userData), 'recordings')
+      return recordingsDirOk(userData)
     } catch {
       return false
     }
@@ -238,10 +237,10 @@ export function createRecordingStreams(opts: { userDataDir: () => string; now?: 
   }
 
   function sizeOf(sessionId: string, index: number, file?: string): number | null {
-    const target = segmentFilePath(opts.userDataDir(), sessionId, index, file)
-    if (!target.ok) return null
+    const path = existingRecordedSegmentPath(opts.userDataDir(), sessionId, index, file)
+    if (!path) return null
     try {
-      const st = lstatSync(target.path)
+      const st = lstatSync(path)
       return st.isFile() ? st.size : null
     } catch {
       return null
@@ -333,7 +332,7 @@ export function createRecordingStreams(opts: { userDataDir: () => string; now?: 
       if (entries.has(sessionId)) return { ok: false, error: 'already-open' }
       const marker = streamMarkerPath(opts.userDataDir(), sessionId)
       if (!marker.ok) return { ok: false, error: marker.error === 'unsafe-session-id' ? 'unsafe-session-id' : 'unsafe-path' }
-      if (!recordingsDirOk()) return { ok: false, error: 'unsafe-path' }
+      if (!ensureRecordingsDir()) return { ok: false, error: 'unsafe-path' }
       // A new recording never takes an id another one uses: any local file named for it (audio,
       // segment, marker, no-vault Run) refuses the open, and the marker is reserved with an
       // exclusive create, so the caller tries a fresh id instead.
@@ -385,7 +384,7 @@ export function createRecordingStreams(opts: { userDataDir: () => string; now?: 
       if (typeof index !== 'number' || !Number.isInteger(index) || index <= lastIndex) return { ok: false, error: 'bad-segment' }
       const target = localSegmentPath(opts.userDataDir(), entry.manifest.sessionId, index)
       if (!target.ok) return { ok: false, error: target.error === 'unsafe-session-id' ? 'unsafe-session-id' : 'unsafe-path' }
-      if (!recordingsDirOk()) return { ok: false, error: 'unsafe-path' }
+      if (!ensureRecordingsDir()) return { ok: false, error: 'unsafe-path' }
       syncAndClose(entry)
       const prev = entry.manifest.segments[entry.manifest.segments.length - 1]
       const start = Math.round(finite(startMs))
@@ -477,7 +476,7 @@ export function createRecordingStreams(opts: { userDataDir: () => string; now?: 
           return { ok: false, error: 'bad-segment', detail: `tail chunk ${k}` }
         }
         const target = localSegmentPath(opts.userDataDir(), entry.manifest.sessionId, chunk.index)
-        if (!target.ok || !recordingsDirOk()) return { ok: false, error: 'unsafe-path' }
+        if (!target.ok || !ensureRecordingsDir()) return { ok: false, error: 'unsafe-path' }
         let fd: number | null = null
         try {
           fd = openOwned(entry, chunk.index)
@@ -579,7 +578,7 @@ export function createRecordingStreams(opts: { userDataDir: () => string; now?: 
 
     listInterrupted() {
       const out: InterruptedStream[] = []
-      if (!recordingsDirOk()) return out
+      if (!ensureRecordingsDir()) return out
       const dir = resolve(opts.userDataDir(), 'recordings')
       let names: string[]
       try { names = readdirSync(dir) } catch { return out }
@@ -616,8 +615,6 @@ export function createRecordingStreams(opts: { userDataDir: () => string; now?: 
             recordingMs: finite(raw.recordingMs),
             updatedAt: String(raw.updatedAt ?? '')
           }
-          // A crash before the first segment was recorded in the marker: the first file may exist.
-          if (!manifest.segments.length && sizeOf(sessionId, 0) !== null) manifest.segments.push({ index: 0, startMs: 0, endMs: null })
           out.push({ ...finalised(manifest), markerPath: marker.path })
         } catch {
           continue

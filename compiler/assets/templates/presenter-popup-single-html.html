@@ -3367,7 +3367,8 @@
   body.embed-interacting .embed-return-btn { display: inline-flex; }
   /* Embed-only slides (2026-06-10): the simulation COVERS the whole stage under the title bar —
      never a letterboxed 16:9 window with scrollbars. Outranks the top-title centring margins. */
-  .slide[data-title-layout="top"] .slide-content.layout-media > figure.slide-embed {
+  .slide[data-title-layout="top"] .slide-content.layout-media > figure.slide-embed,
+  .slide[data-title-layout="hidden"] .slide-content.layout-media > figure.slide-embed {
     flex: 1 1 auto !important;
     width: 100%;
     min-height: 0;
@@ -6237,6 +6238,8 @@
      band starts 61px above the stage bottom (.footer rect top = 839 at 900): reserve what the slide
      margin does not already clear (the reservation media.css @order 0280 makes for a lone figure).
      Without it the last hairline row sat under the footer. */
+.slide[data-title-layout="hidden"] .slide-content.layout-media:has(> figure.slide-embed),
+.slide[data-title-layout="hidden"] .slide-content.layout-media > figure.slide-embed { height: 100%; }
   .slide:has(> .slide-content.layout-timeline) {
     --tl-footer-band: 61px;
     --tl-head-gap: max(2.2cqh, 2.6cqw);
@@ -6599,6 +6602,71 @@
    swap); over a disclosure in the picture the pane shows a hand (the pane takes the click). */
 .preview > iframe.preview-incoming { visibility: hidden; }
 .preview.sim-pane-control { cursor: pointer; }
+
+/* Recovery controls must remain outside a remote frame, including a refused one. */
+.preview.preview-live-sim:has(> .remote-preview-tools) > .live-sim-frame {
+  height: calc(100% - 100px);
+}
+.preview .remote-preview-tools {
+  position: absolute; inset: auto 0 0; height: 100px; padding: 12px;
+  display: flex; flex-wrap: wrap; align-content: center; align-items: center; gap: 8px;
+  background: var(--paper); color: var(--ink); font: 13px/1.3 var(--sans);
+}
+.remote-preview-tools > div { flex: 1 1 100%; min-width: 0; }
+.remote-preview-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview .remote-preview-tools .embed-open-link,
+.preview .remote-preview-tools .embed-interact-chip {
+  position: static; display: inline-flex; transform: none; margin: 0; max-width: 100%;
+}
+/* A live web page (decks TalkWeaver opens itself, ?livepage=1): main lays the page, a separate view,
+   over the slot (src/main/live-page-host.ts). The slot shows the page's state while that view is
+   hidden: loading, failed, blocked. In the slide, the never-loaded frame stays as the layout box. */
+.live-page-figure { position: relative; }
+.live-page-figure > iframe[data-live-page] { visibility: hidden; }
+.live-page-figure > .embed-interact-chip { display: none; }
+.live-page-slot {
+  position: absolute; z-index: 2; box-sizing: border-box; overflow: hidden;
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  background: #fff; color: #1f2328; border: 1px solid var(--line, #d0d7de); border-radius: 8px;
+  font: 15px/1.4 var(--sans, system-ui, sans-serif);
+}
+.preview.preview-live-page > .live-page-slot { inset: 0 0 100px 0; border: 0; border-radius: 0; }
+.live-page-message { display: grid; gap: 6px; max-width: 36em; padding: 16px; }
+.live-page-url { opacity: .7; font-size: 13px; word-break: break-all; }
+.live-page-status { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .85; }
+body.live-page-interacting .live-page-interact { background: var(--accent, #0b6bcb); color: #fff; }
+/* Saved views of a web page (the capture gallery, lib/live-page-captures.mjs). Where the page is not
+   shown live (preview, exports, share pages, handouts) they stand in for it: a strip that scrolls
+   sideways, one picture per view, labelled with its capture date. The frame keeps the layout box and
+   is never loaded there. */
+.slide-embed.has-saved-views { position: relative; }
+.slide-embed.has-saved-views > iframe { visibility: hidden; }
+.embed-saved-views {
+  position: absolute; inset: 0; display: flex; overflow-x: auto; overflow-y: hidden;
+  scroll-snap-type: x mandatory; background: #fff; border-radius: inherit;
+}
+.embed-saved-view { flex: 0 0 100%; margin: 0; scroll-snap-align: start; position: relative; display: flex; flex-direction: column; min-width: 0; }
+.embed-saved-view > img { flex: 1 1 auto; min-height: 0; width: 100%; height: auto; object-fit: contain; object-position: top center; background: #fff; }
+.embed-saved-view.is-page > .embed-saved-view-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; background: #fff; }
+.embed-saved-view.is-page > .embed-saved-view-scroll > img { display: block; width: 100%; height: auto; }
+.embed-saved-view > figcaption { flex: 0 0 auto; padding: 4px 8px; font: 12px/1.4 var(--sans, system-ui, sans-serif); color: #57606a; background: rgba(255, 255, 255, .92); }
+.slide-embed.has-saved-views > .embed-open-link { z-index: 1; }
+.live-page-figure.has-saved-views > .embed-saved-views { visibility: hidden; }
+/* In a live page's slot (decks TalkWeaver opens itself): a saved view shown instead of the page. */
+.live-page-slot > .live-page-saved { display: none; }
+.live-page-slot.live-page-gallery-on > .live-page-message { display: none; }
+.live-page-slot.live-page-gallery-on > .live-page-saved { position: absolute; inset: 0; display: flex; flex-direction: column; background: #fff; }
+.live-page-saved > img { flex: 1 1 auto; min-height: 0; width: 100%; object-fit: contain; object-position: top center; }
+.live-page-saved.is-page { overflow-y: auto; overscroll-behavior: contain; }
+.live-page-saved.is-page > img { flex: 0 0 auto; height: auto; object-fit: fill; }
+.live-page-saved.is-page > .live-page-saved-caption { position: sticky; bottom: 0; background: rgba(255, 255, 255, .92); }
+/* Freeze and mark: the picture the room saw, over the slot while the live view is hidden (live-page-freeze.js). */
+.live-page-slot > .live-page-frozen { position: absolute; inset: 0; z-index: 2; background: #fff; }
+.live-page-frozen > img { display: block; width: 100%; height: 100%; object-fit: contain; object-position: center; }
+.live-page-saved > .live-page-saved-caption { flex: 0 0 auto; padding: 4px 8px; font-size: 12px; color: #57606a; text-align: left; }
+.live-page-tools .live-page-gallery-step { min-width: 2em; }
+.live-page-tools .live-page-gallery[aria-pressed="true"] { background: var(--accent, #0b6bcb); color: #fff; }
+.live-page-tools .live-page-capture-note { display: block; font-size: 12px; opacity: .85; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Title in a left panel (data-title-layout="left") on a slide that also shows the section's
    contents rail (.ct-rail-host, painted by the deck runtime): the rail owns the leftmost strip,
    so the title column starts where the rail ends: rail, title column, body.
@@ -7192,6 +7260,8 @@ body:not(.audience-mode) figure.slide-embed[data-embed="local"][data-embed-stopp
   .slot[data-embed-split="80"]:not([data-slot-arrange])[data-slot-side="left"]:has(> .slot-media figure.slide-embed[data-embed="local"]) { grid-template-columns: minmax(0, 4fr) minmax(0, 1fr); }
 }
 
+/* Hidden titles have no title/content grid to supply a definite iframe height. */
+
   .slide:has(> .slide-content.layout-quote) {
     --quote-chrome-band: 59px;
     padding-bottom: calc(var(--slide-pad-y) + var(--quote-chrome-band));
@@ -7681,7 +7751,6 @@ body:not(.audience-mode) figure.slide-embed[data-embed="local"][data-embed-stopp
   .sim .sim-step { opacity: 1 !important; visibility: visible !important; }
   .sim .sim-link { visibility: visible !important; }
 }
-.sim-static .sim-scroll { overflow: hidden; }
 .sim-static .is-closed .sim-body { display: block !important; }
 .sim-static .sim-chevron, .sim-static .sim-toggle-results, .sim-static .sim-more { display: none !important; }
 .sim-static .sim-toggle { pointer-events: none; }
@@ -7882,6 +7951,24 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
   color: #b8c6d2;
   font-size: 0.9rem;
 }
+
+/* Outline search (slide handling ticket 2b): the outline keeps its order, what does not match is dimmed in
+   place, hits carry a mark, a line saying where the words were found and a thumbnail under the row. */
+.tw-match { background: color-mix(in srgb, #f2b705 42%, transparent); color: inherit; border-radius: 2px; padding: 0 1px; }
+.slide-link.tw-dim, .slide-sublink.tw-dim, .section-head.tw-dim, .subsection-head.tw-dim { opacity: 0.4; }
+.slide-link.tw-hit { background: color-mix(in srgb, #f2b705 12%, transparent); }
+.tw-hit-count {
+  float: right; min-width: 1.4em; padding: 0 7px; border-radius: 9px; text-align: center;
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0;
+  background: color-mix(in srgb, #f2b705 38%, transparent); color: inherit;
+}
+.tw-hit-detail { margin: -2px 10px 6px 18px; cursor: pointer; }
+.tw-snippet {
+  display: block; margin-top: 2px; font-size: 0.78rem; font-weight: 400; line-height: 1.3;
+  opacity: 0.8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tw-thumb.tw-thumb-hit { width: 168px; max-width: 100%; margin: 5px 0 2px; }
+.tw-overview-hits { margin: 8px 8px 2px; font-size: 0.78rem; opacity: 0.75; }
 /* The Pen (0.38 ticket 08; ADR-0037; drawn in docs/design/2026-10-06-pointer-and-pen/, P2 shots
    05a-05d, 07, 08, 08b, 12). The bar button with its ink dot and tool glyph, the "Pen on" chip and
    the quiet "Clear drawing" button in the status bar, the options popover above the Pen button,
@@ -11414,6 +11501,10 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
   width: 100%;
   max-width: none;
 }
+
+/* Deeper authored bullets stay inside their side and inherit the stage's type scale. */
+.slide .contrast-grid .vs-children { margin: .35em 0 0; padding-left: 1.1em; font-size: .85em; }
+.slide .contrast-grid .vs-children li { margin: .2em 0; }
 /* Cycle, equation and timeline adopt the animated-scene drawings (ADR-0039, 0.41 ticket 07).
    Values from docs/design/2026-10-16-slide-scene-formatting/after/09-cycle.html, 08-equation-circle.html and
    10-timeline.html (drawn at 1920 x 1080, written here in cqw = px / 19.2). Unmarked block: it sorts after every
@@ -13490,6 +13581,15 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
   const isPresenter = params.get("presenter") === "1";
   const isAudience = params.get("audience") === "1";
   const isReplay = params.get("replay") === "1";
+  // A live web page (?livepage=1: only decks TalkWeaver itself opens from a file): the slide's one
+  // remote page is shown by main as a separate top-level view over an empty slot, so sites that
+  // refuse framing show too (src/main/live-page-host.ts). Without the flag (exports, share pages,
+  // handouts, a browser) the page stays an iframe with its Open link.
+  const livePageMode = params.get("livepage") === "1" && !isReplay && location.protocol === "file:" && !document.body.hasAttribute("data-tw-preview");
+  // Capture gallery: captureSeq is bumped by the presenter's Capture button and read by main; gallery is
+  // the presenter's Live / saved view choice (main passes it to the audience window as audienceGallery);
+  // added holds views saved during this session, by page address, until the next rebuild carries them.
+  const livePage = { interact: false, reloadSeq: 0, state: null, stateKey: "", captureSeq: 0, gallery: { on: false, index: 0, auto: false }, audienceGallery: { on: false, index: 0, url: "" }, added: new Map(), told: new Map(), captureNote: "", freeze: null, stills: null, frozenShown: null, freezeTimer: 0 };
   const isPaired = !isReplay && (isPresenter || isAudience);
   const sessionId = isPaired ? (params.get("session") || createSessionId()) : "";
   const deckId = document.body.dataset.deckId || location.pathname;
@@ -14681,6 +14781,8 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
   // inlined before its first use (its constants are not hoisted). The share page's venue screen
   // runs the same source (live-follow.js).
 <!--PEN_INK_RUNTIME-->
+  // Freeze and mark on a live web page, the deck's side: compiler/assets/runtime/live-page-freeze.js.
+<!--LIVE_PAGE_FREEZE_RUNTIME-->
   const slideFit = createSlideFit();
   // The fixed slide canvas scaled to its box (ADR-0030): compiler/assets/runtime/stage-fit.js.
 <!--STAGE_FIT_RUNTIME-->
@@ -15501,6 +15603,10 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
     syncLocalEmbeds();
     document.querySelectorAll(".slide.active iframe[data-src]").forEach((frame) => {
       if (frame.src) return;
+      // A live page is never loaded in a frame: the audience side gets the slot main's view covers.
+      if (livePageMode && livePageFrameOf(frame.closest(".slide")) === frame) { if (!isPresenter) mountLivePageSlot(frame); return; }
+      // A web page with saved views shows them instead (lib/live-page-captures.mjs): never loaded here.
+      if (frame.parentElement && frame.parentElement.classList.contains("has-saved-views")) return;
       // Promote every embed to a live src. Remote sites that refuse framing simply show blank with
       // the persistent "Open ↗" caption beside them (compile-time); inside the app the session
       // header-strip lets them load. No runtime blocked-detection (it false-positived on slow sites).
@@ -16035,10 +16141,594 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
     cover.innerHTML = `<span class="live-sim-cover-label">Click to run again</span><span class="live-sim-cover-note">${EMBED_STOPPED_LINE}</span>`;
   }
 
-  // Bug B: a REMOTE URL embed on the presenter's current slide is shown LIVE here (the session
-  // header-strip lets it frame in-app) rather than as the embed-stripping thumbnail clone — so the
-  // presenter actually sees the site. Cross-origin, so it is display-only (no mirroring); the
-  // audience deck loads the same URL independently via syncEmbeds.
+  // === LIVE PAGE (livepage=1) ===================================================================
+  // The deck says where the live page goes; main (live-page-host.ts) lays its view there and says how
+  // the page is doing. Contract v1: window.__twLivePageSlot() → report (polled by main every 100 ms),
+  // window.__twLivePageState(json) ← state, window.__twLivePageInteract(false) ← Esc in the view.
+  // Everything the page or main says is shown with textContent only.
+
+  // The one remote page a slide shows live (design D1): a remote, non-video embed on a slide whose
+  // embed owns it (media / embed layout), not in a card or carousel, and the only one on the slide.
+  function livePageFrameOf(slide) {
+    if (!livePageMode || !slide) return null;
+    if (!slide.querySelector(".slide-content.layout-media, .slide-content.layout-embed")) return null;
+    const frames = Array.from(slide.querySelectorAll("figure.slide-embed > iframe[data-embed-url]")).filter((f) => !f.hasAttribute("data-embed-video"));
+    if (frames.length !== 1 || frames[0].closest(".card-gallery, .card")) return null;
+    return frames[0];
+  }
+  function livePageHostOf(url) { try { return new URL(url).host; } catch { return ""; } }
+  function livePageStatusText(s) {
+    if (!s) return "Loading…";
+    if (s.state === "slow") return "Still loading…";
+    if (s.state === "live") return s.httpStatus ? `Live — the site answered ${s.httpStatus}` : (s.message ? `Live. ${s.message}` : "Live");
+    if (s.state === "failed") return `Couldn't load: ${s.message || "the page did not load"}`;
+    if (s.state === "blocked") return `Blocked: ${s.message || "this address is not opened as a live page"}`;
+    return "Loading…";
+  }
+  // What the slot shows while main's view is hidden (loading, failed, blocked): title, host, state, address.
+  function renderLivePageMessage(slot) {
+    const url = slot.dataset.url || "";
+    const s = livePage.state;
+    let box = slot.querySelector(":scope > .live-page-message");
+    if (!box) { box = document.createElement("div"); box.className = "live-page-message"; slot.appendChild(box); }
+    const title = document.createElement("strong");
+    title.textContent = slot.dataset.title || "Live web page";
+    const status = document.createElement("span");
+    status.className = "live-page-message-status";
+    status.textContent = `${livePageHostOf(url)} — ${livePageStatusText(s)}`;
+    const address = document.createElement("span");
+    address.className = "live-page-url";
+    address.textContent = url;
+    box.replaceChildren(title, status, address);
+  }
+  // Audience / plain deck: the slide's frame stays as the layout box, never loaded; the slot is laid
+  // over it (positioned again whenever main asks, so it follows the slide's layout).
+  function mountLivePageSlot(frame) {
+    const figure = frame.parentElement;
+    if (!figure) return null;
+    figure.classList.add("live-page-figure");
+    frame.dataset.livePage = "1";
+    let slot = figure.querySelector(":scope > .live-page-slot");
+    if (!slot) {
+      slot = document.createElement("div");
+      slot.className = "live-page-slot";
+      slot.dataset.url = frame.dataset.embedUrl || "";
+      slot.dataset.title = frame.closest(".slide")?.dataset.navTitle || frame.title || "";
+      figure.appendChild(slot);
+      livePage.state = null;
+      renderLivePageMessage(slot);
+    }
+    slot.style.left = `${frame.offsetLeft}px`;
+    slot.style.top = `${frame.offsetTop}px`;
+    slot.style.width = `${frame.offsetWidth}px`;
+    slot.style.height = `${frame.offsetHeight}px`;
+    return slot;
+  }
+  // The presenter's Current pane on a live page slide: the slot (main's view sits over it) and the
+  // strip under it: title, state, Open ↗, Reload, Interact (e). The strip is never under the view.
+  function renderLivePageSlot(target, srcIframe) {
+    const url = srcIframe.dataset.embedUrl || "";
+    const slide = srcIframe.closest(".slide");
+    const key = `${slide?.dataset.id || ""}|${url}`;
+    if (target.dataset.livePageKey === key && target.querySelector(":scope > .live-page-slot")) return;
+    releasePaneEmbeds(target);
+    target.replaceChildren();
+    delete target.dataset.previewKey;
+    target.dataset.livePageKey = key;
+    target.classList.remove("embed-stopped");
+    target.classList.add("preview-live-sim", "preview-live-page");
+    if (livePage.stateKey !== key) { livePageFreezeEnd(); livePage.state = null; livePage.stateKey = key; livePage.gallery = { on: false, index: 0, auto: false }; livePage.captureNote = ""; }
+    setLivePageInteract(false);
+    const slot = document.createElement("div");
+    slot.className = "live-page-slot";
+    slot.dataset.url = url;
+    slot.dataset.title = slide?.dataset.navTitle || srcIframe.title || "";
+    target.appendChild(slot);
+    renderLivePageMessage(slot);
+    const tools = document.createElement("div");
+    tools.className = "remote-preview-tools live-page-tools";
+    const title = document.createElement("strong");
+    title.className = "remote-preview-title";
+    title.textContent = slot.dataset.title || livePageHostOf(url);
+    const status = document.createElement("span");
+    status.className = "live-page-status";
+    status.textContent = `${livePageHostOf(url)} — ${livePageStatusText(null)}`;
+    const copy = document.createElement("div");
+    copy.append(title, status);
+    tools.appendChild(copy);
+    const open = srcIframe.parentElement?.querySelector(".embed-open-link");
+    if (open) tools.appendChild(open.cloneNode(true));
+    const reload = document.createElement("button");
+    reload.type = "button";
+    reload.className = "embed-interact-chip live-page-reload";
+    reload.textContent = "Reload";
+    reload.addEventListener("click", (event) => { if (event.isTrusted) { livePageFreezeEnd(); livePage.reloadSeq += 1; livePage.state = null; if (livePage.gallery.auto) livePage.gallery = { on: false, index: livePage.gallery.index, auto: false }; renderLivePageState(); } });
+    tools.appendChild(reload);
+    const interact = document.createElement("button");
+    interact.type = "button";
+    interact.className = "embed-interact-chip live-page-interact";
+    interact.textContent = "Interact (e)";
+    interact.setAttribute("aria-pressed", "false");
+    interact.addEventListener("click", (event) => { if (event.isTrusted) setLivePageInteract(!livePage.interact); });
+    tools.appendChild(interact);
+    // The capture gallery (buttons only: c and g are the Guide and Go live): Capture saves the visible view with the talk; Saved views
+    // shows them instead of the live page, in both windows; ‹ › step through them.
+    const capture = document.createElement("button");
+    capture.type = "button";
+    capture.className = "embed-interact-chip live-page-capture";
+    capture.textContent = "Capture";
+    capture.title = "Save what the page shows now with the talk";
+    capture.addEventListener("click", (event) => { if (event.isTrusted) livePageCapture(); });
+    tools.appendChild(capture);
+    const gallery = document.createElement("button");
+    gallery.type = "button";
+    gallery.className = "embed-interact-chip live-page-gallery";
+    gallery.setAttribute("aria-pressed", "false");
+    gallery.addEventListener("click", (event) => { if (event.isTrusted) livePageToggleGallery(); });
+    tools.appendChild(gallery);
+    for (const [label, step] of [["‹", -1], ["›", 1]]) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "embed-interact-chip live-page-gallery-step";
+      b.textContent = label;
+      b.setAttribute("aria-label", step < 0 ? "Previous saved view" : "Next saved view");
+      b.dataset.step = String(step);
+      b.addEventListener("click", (event) => { if (event.isTrusted) livePageStepGallery(step); });
+      tools.appendChild(b);
+    }
+    // Freeze and mark: Pointer or Pen froze the page; Return Live (button and palette command, no
+    // default key) shows the live page again. Esc and the tool button only turn the tool off.
+    const returnLive = document.createElement("button");
+    returnLive.type = "button";
+    returnLive.id = "livePageReturnLive";
+    returnLive.className = "embed-interact-chip live-page-return-live";
+    returnLive.textContent = "Return Live";
+    returnLive.title = "Show the live page again in every window";
+    returnLive.hidden = true;
+    returnLive.addEventListener("click", (event) => { if (event.isTrusted) livePageReturnLive(); });
+    tools.appendChild(returnLive);
+    const note = document.createElement("span");
+    note.className = "live-page-capture-note";
+    copy.appendChild(note);
+    target.appendChild(tools);
+    renderLivePageTools();
+  }
+  function livePageSlotElement() {
+    if (!livePageMode) return null;
+    if (isPresenter) {
+      const pane = els.currentPreview;
+      return pane && pane.classList.contains("preview-live-page") ? pane.querySelector(":scope > .live-page-slot") : null;
+    }
+    const frame = livePageFrameOf(document.querySelector(".slide.active"));
+    return frame ? mountLivePageSlot(frame) : null;
+  }
+  // Occlusion: visible only when the slot itself is what is on top at its centre and four corners
+  // (8 px in): any overlay of the deck (palette, help, menus, outline, pause screen) hides the view.
+  function livePageVisible(slot, r) {
+    if (document.visibilityState !== "visible" || r.width < 40 || r.height < 40) return false;
+    if (!isPresenter && !slot.closest(".slide.active")) return false;
+    const i = 8;
+    const points = [[r.left + r.width / 2, r.top + r.height / 2], [r.left + i, r.top + i], [r.right - i, r.top + i], [r.left + i, r.bottom - i], [r.right - i, r.bottom - i]];
+    return points.every(([x, y]) => { const hit = document.elementFromPoint(x, y); return !!hit && (hit === slot || slot.contains(hit)); });
+  }
+  function setLivePageInteract(on) {
+    livePage.interact = Boolean(on) && isPresenter && livePageFreezePhase() === "off";
+    const btn = els.currentPreview && els.currentPreview.querySelector(".live-page-interact");
+    if (btn) { btn.textContent = livePage.interact ? "Interacting — Esc returns" : "Interact (e)"; btn.setAttribute("aria-pressed", livePage.interact ? "true" : "false"); }
+    document.body.classList.toggle("live-page-interacting", livePage.interact);
+  }
+  function livePageActive() {
+    return livePageMode && isPresenter && !!(els.currentPreview && els.currentPreview.querySelector(":scope > .live-page-slot"));
+  }
+  // --- Capture gallery (saved views) ---
+  function livePageKey(url) { try { return new URL(url).href; } catch { return String(url || ""); } }
+  // The page's saved views, in order: those the deck was built with, then those saved since.
+  function livePageSavedViews(url) {
+    const key = livePageKey(url);
+    // What main last said this slide shows (__twLivePageViews, read from the talk's current text) wins
+    // over the compiled deck and the views saved from this window.
+    const slot = livePageSlotElement();
+    const slide = slot ? (isPresenter ? currentSlide() : slot.closest(".slide")) : null;
+    const told = slide ? livePage.told.get(`${slide.dataset.id || ""}\n${key}`) : null;
+    if (told) return told;
+    const out = [];
+    const seen = new Set();
+    document.querySelectorAll("figure.slide-embed.has-saved-views > iframe[data-embed-url]").forEach((frame) => {
+      if (livePageKey(frame.dataset.embedUrl || "") !== key) return;
+      frame.parentElement.querySelectorAll(":scope > .embed-saved-views > .embed-saved-view > img").forEach((img) => {
+        const src = img.getAttribute("src") || "";
+        if (!src || seen.has(src)) return;
+        seen.add(src);
+        out.push({ src, capturedAt: img.dataset.capturedAt || "", mode: img.dataset.mode === "page" ? "page" : "view" });
+      });
+    });
+    (livePage.added.get(key) || []).forEach((v) => { if (!seen.has(v.src)) { seen.add(v.src); out.push(v); } });
+    return out;
+  }
+  function livePageSavedDate(iso) {
+    const d = new Date(String(iso || ""));
+    return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  }
+  // Which saved view this window shows now, or null for the live page.
+  function livePageGalleryChoice(slot) {
+    if (!slot) return null;
+    const url = slot.dataset.url || "";
+    const g = isPresenter ? livePage.gallery : (livePageKey(livePage.audienceGallery.url) === livePageKey(url) ? livePage.audienceGallery : null);
+    if (!g || !g.on) return null;
+    const views = livePageSavedViews(url);
+    if (!views.length) return null;
+    const index = Math.max(0, Math.min(views.length - 1, g.index | 0));
+    return { views, index };
+  }
+  function renderLivePageSaved(slot) {
+    const choice = livePageGalleryChoice(slot);
+    slot.classList.toggle("live-page-gallery-on", !!choice);
+    let box = slot.querySelector(":scope > .live-page-saved");
+    if (!choice) { if (box) box.remove(); return; }
+    if (!box) { box = document.createElement("div"); box.className = "live-page-saved"; slot.appendChild(box); }
+    let img = box.querySelector(":scope > img");
+    if (!img) { img = document.createElement("img"); img.alt = ""; box.appendChild(img); }
+    const v = choice.views[choice.index];
+    // An Entire page view scrolls in the slot at full width (base.css .live-page-saved.is-page).
+    box.classList.toggle("is-page", v.mode === "page");
+    if (img.getAttribute("src") !== v.src) { img.setAttribute("src", v.src); box.scrollTop = 0; }
+    let caption = box.querySelector(":scope > .live-page-saved-caption");
+    if (!caption) { caption = document.createElement("span"); caption.className = "live-page-saved-caption"; box.appendChild(caption); }
+    const date = livePageSavedDate(v.capturedAt);
+    caption.textContent = `${v.mode === "page" ? "Entire page" : "Saved view"} ${choice.index + 1} of ${choice.views.length}${date ? `, captured ${date}` : ""} — ${livePageHostOf(slot.dataset.url || "")}`;
+  }
+  function renderLivePageTools() {
+    const pane = isPresenter ? els.currentPreview : null;
+    if (!pane) return;
+    const slot = pane.querySelector(":scope > .live-page-slot");
+    const count = slot ? livePageSavedViews(slot.dataset.url || "").length : 0;
+    const on = livePage.gallery.on && count > 0;
+    const gallery = pane.querySelector(".live-page-gallery");
+    if (gallery) {
+      // Always says how many: "No saved views" when there are none (never a bare, disabled "Saved views").
+      gallery.textContent = on ? "Live" : count ? `Saved views (${count})` : "No saved views";
+      gallery.disabled = !count;
+      gallery.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+    pane.querySelectorAll(".live-page-gallery-step").forEach((b) => { b.disabled = !on || count < 2; });
+    const freezing = livePageFreezePhase() !== "off";
+    const capture = pane.querySelector(".live-page-capture");
+    if (capture) capture.disabled = on || freezing;
+    const interactBtn = pane.querySelector(".live-page-interact");
+    if (interactBtn) interactBtn.disabled = freezing;
+    const back = pane.querySelector(".live-page-return-live");
+    if (back) back.hidden = !freezing;
+    const note = pane.querySelector(".live-page-capture-note");
+    if (note) note.textContent = livePageFreezeNote() || livePage.captureNote;
+  }
+  function livePageCapture() {
+    if (!livePageActive() || livePage.gallery.on) return;
+    livePage.captureSeq += 1;
+    livePage.captureNote = "Capturing…";
+    renderLivePageTools();
+  }
+  function livePageToggleGallery() {
+    if (!livePageActive()) return;
+    livePageFreezeEnd();
+    const slot = livePageSlotElement();
+    const count = slot ? livePageSavedViews(slot.dataset.url || "").length : 0;
+    if (!count) { livePage.captureNote = "No saved views of this page yet. Capture saves one."; renderLivePageTools(); return; }
+    const on = !livePage.gallery.on;
+    livePage.gallery = { on, index: on ? count - 1 : livePage.gallery.index, auto: false };
+    if (on) setLivePageInteract(false);
+    renderLivePageState();
+  }
+  function livePageStepGallery(step) {
+    if (!livePageActive() || !livePage.gallery.on) return;
+    livePageFreezeEnd();
+    const slot = livePageSlotElement();
+    const count = slot ? livePageSavedViews(slot.dataset.url || "").length : 0;
+    if (count < 2) return;
+    livePage.gallery.index = Math.max(0, Math.min(count - 1, livePage.gallery.index + step));
+    renderLivePageState();
+  }
+  function renderLivePageState() {
+    livePageSavedFreezeCheck();
+    const slot = livePageSlotElement();
+    if (!slot) return;
+    // The page did not load (offline, the site failed or refused) and saved views exist: show the
+    // latest saved view, in both windows, labelled with its date; Live or Reload goes back.
+    if (isPresenter && livePage.state && (livePage.state.state === "failed" || livePage.state.state === "blocked") && !livePage.gallery.on) {
+      const count = livePageSavedViews(slot.dataset.url || "").length;
+      if (count) livePage.gallery = { on: true, index: count - 1, auto: true };
+    }
+    renderLivePageMessage(slot);
+    renderLivePageSaved(slot);
+    renderLivePageTools();
+    const status = isPresenter && els.currentPreview ? els.currentPreview.querySelector(".live-page-status") : null;
+    if (status) status.textContent = `${livePageHostOf(slot.dataset.url || "")} — ${livePageStatusText(livePage.state)}`;
+  }
+  // --- Freeze and mark (live-page-freeze.js; main: live-page-freeze.ts) ---
+  // Presenter: Pointer or Pen on a live page asks main (report.freeze) for one picture of what the room
+  // sees; main shows it in every window showing the page (`show`, answered with the picture's id once
+  // decoded), hides the live views, then says `on` and the tool turns on. A shown saved view is marked
+  // as it is. Audience: shows main's picture over its slot. Marks live in the 'still' space, keyed by
+  // the picture's id; they never go to the venue screen, phones or a recording.
+  function livePageFreeze() {
+    if (!livePage.freeze) { livePage.freeze = createLiveFreeze(); livePage.stills = createLiveStillLedger(LIVE_FREEZE_LIMITS.stills); }
+    return livePage.freeze;
+  }
+  function livePageFreezePhase() { return livePage.freeze ? livePage.freeze.state().phase : "off"; }
+  function livePageFreezeNote() {
+    const st = livePage.freeze ? livePage.freeze.state() : null;
+    if (!st || st.phase === "off") return "";
+    if (st.phase === "pending") return LIVE_FREEZE_TEXT.pending;
+    return st.source === "saved" ? LIVE_FREEZE_TEXT.saved : st.source === "presenter" ? LIVE_FREEZE_TEXT.frozenPresenter : LIVE_FREEZE_TEXT.frozen;
+  }
+  function livePageStopFreezeTimer() { clearTimeout(livePage.freezeTimer); livePage.freezeTimer = 0; }
+  // The picture over the slot (main's frozen picture; never a saved view, which shows in its own box).
+  function renderLivePageFrozen(slot, src) {
+    let box = slot ? slot.querySelector(":scope > .live-page-frozen") : null;
+    if (!src) { if (box) box.remove(); return null; }
+    if (!box) { box = document.createElement("div"); box.className = "live-page-frozen"; slot.appendChild(box); }
+    let img = box.querySelector(":scope > img");
+    if (!img) { img = document.createElement("img"); img.alt = ""; img.draggable = false; box.appendChild(img); }
+    if (img.getAttribute("src") !== src) img.setAttribute("src", src);
+    return img;
+  }
+  function livePageClearFrozen() {
+    document.querySelectorAll(".live-page-slot > .live-page-frozen").forEach((box) => box.remove());
+  }
+  // The pictures marked this talk (at most 20): a picture dropped past that loses its marks.
+  function livePageNoteStill(slideId, id) {
+    if (!isPresenter || !penStore) return;
+    const drop = livePage.stills.note(penLayerKey(slideId, "still", id), (key) => penStore.has(key));
+    if (drop) { penStore.clear(drop); refreshInkMarks(); }
+  }
+  // Every way a freeze ends without main's say (Live, slide or page left, Reload, saved views): the
+  // tools go off with it (nothing to mark on a moving page) and the deck shows the slot again.
+  function livePageFreezeEnd(how = "leave") {
+    if (!livePage.freeze || livePageFreezePhase() === "off") return false;
+    const was = livePage.freeze.state();
+    const result = how === "live" ? livePage.freeze.live() : (livePage.freeze.leave() ? "leave" : null);
+    livePageStopFreezeTimer();
+    livePageClearFrozen();
+    if (was.phase === "frozen") { if (pointerArmed) setPointerArmed(false); if (penArmed) setPenArmed(false); }
+    if (result === "saved") livePage.gallery = { on: false, index: livePage.gallery.index, auto: false };
+    penViewChanged();
+    livePageFreezeMark();
+    if (livePageSlotElement()) renderLivePageState();
+    return true;
+  }
+  /**
+   * The deck's freeze mark on its root (data-tw-live-freeze), read by this window's preload: while it
+   * is there no pointer or ink goes to the venue screen, phones or a recording. Set as soon as a freeze
+   * is asked for; taken off only once the freeze is over, the stroke in progress dropped and the venue
+   * slots rewritten from the slide (so nothing queued while frozen is sent after it).
+   */
+  function livePageFreezeMark() {
+    if (!isPresenter) return;
+    const root = document.documentElement;
+    if (livePageFreezePhase() !== "off") { if (!root.hasAttribute("data-tw-live-freeze")) root.setAttribute("data-tw-live-freeze", ""); return; }
+    if (!root.hasAttribute("data-tw-live-freeze")) return;
+    penGesture?.cancel();
+    penDraft = null; penDraftKey = null; penPieces = [];
+    clearTimeout(penLiveTimer); penLiveTimer = 0;
+    clearTimeout(pointerLiveTimer); pointerLiveTimer = 0;
+    writeLiveInk();
+    writeLivePointer();
+    root.removeAttribute("data-tw-live-freeze");
+  }
+  // A marked saved view stops being the one shown (its list changed, another chosen, Live): marking ends.
+  function livePageSavedFreezeCheck() {
+    const st = livePage.freeze ? livePage.freeze.state() : null;
+    if (!st || st.phase !== "frozen" || st.source !== "saved") return;
+    const slot = livePageSlotElement();
+    const choice = slot ? livePageGalleryChoice(slot) : null;
+    const v = choice ? choice.views[choice.index] : null;
+    if (v && v.mode !== "page" && liveStillKey(v.src) === st.id) return;
+    livePageFreezeEnd();
+    livePage.captureNote = LIVE_FREEZE_TEXT.savedChanged;
+    renderLivePageTools();
+  }
+  function livePageReturnLive() { livePageFreezeEnd("live"); }
+  function livePageFreezeFollowSlide(slot) {
+    if (isPresenter) {
+      const st = livePage.freeze ? livePage.freeze.state() : null;
+      if (!st || st.phase === "off") return;
+      const slide = currentSlide();
+      if (!slot || !slide || slide.dataset.id !== st.slideId || !liveSamePage(slot.dataset.url, st.url)) livePageFreezeEnd();
+      else if (st.phase === "pending" && livePage.freeze.expire(Date.now())) livePageFreezeFailed(LIVE_FREEZE_TEXT.failed);
+      return;
+    }
+    const shown = livePage.frozenShown;
+    if (!shown) return;
+    const slide = slot ? slot.closest(".slide") : null;
+    if (!slot || !slide || slide.dataset.id !== shown.slideId || !liveSamePage(slot.dataset.url, shown.url)) { livePage.frozenShown = null; livePageClearFrozen(); }
+  }
+  function livePageFreezeFailed(message) {
+    livePageStopFreezeTimer();
+    livePageClearFrozen();
+    if (pointerArmed) setPointerArmed(false);
+    if (penArmed) setPenArmed(false);
+    livePage.captureNote = message || LIVE_FREEZE_TEXT.failed;
+    penViewChanged();
+    livePageFreezeMark();
+    renderLivePageState();
+  }
+  /**
+   * Pointer or Pen turned on (any route: key, button, palette). Answers true when the deck took the
+   * press here (freeze asked, cancelled, refused) and the tool must not turn on now.
+   */
+  function livePageFreezePress(tool) {
+    if (!livePageActive()) return false;
+    const slot = livePageSlotElement();
+    const slide = currentSlide();
+    if (!slot || !slide) return false;
+    const choice = livePageGalleryChoice(slot);
+    const saved = choice ? choice.views[choice.index] : null;
+    const st = livePage.state && livePage.state.state;
+    const answer = livePageFreeze().press(tool, {
+      slideId: String(slide.dataset.id || ""), url: slot.dataset.url || "",
+      live: !saved && (st === "live" || st === "slow"), saved: saved ? { src: saved.src, mode: saved.mode } : null, now: Date.now()
+    });
+    livePageFreezeMark();
+    if (answer.do === "pending") {
+      setLivePageInteract(false);
+      livePage.captureNote = "";
+      livePageStopFreezeTimer();
+      livePage.freezeTimer = setTimeout(() => { if (livePage.freeze.expire(Date.now())) livePageFreezeFailed(LIVE_FREEZE_TEXT.failed); }, LIVE_FREEZE_LIMITS.pendingMs + 50);
+      renderLivePageTools();
+      return true;
+    }
+    if (answer.do === "cancel") { livePageStopFreezeTimer(); livePageClearFrozen(); renderLivePageTools(); return true; }
+    if (answer.do === "swap") { renderLivePageTools(); return true; }
+    if (answer.do === "refuse") { livePage.captureNote = answer.message; renderLivePageTools(); return true; }
+    const now = livePage.freeze.state();
+    if (now.source === "saved") livePageNoteStill(now.slideId, now.id);
+    setLivePageInteract(false);
+    renderLivePageTools();
+    queueMicrotask(penViewChanged);
+    return false;
+  }
+  // ← main. show: put the picture in the slot and answer its id once decoded (false: not this press,
+  // slide or page). on: every window shows it; the tool comes on. clear: the picture goes.
+  function livePageFrozenFromMain(m) {
+    const slot = livePageSlotElement();
+    const slide = slot ? (isPresenter ? currentSlide() : slot.closest(".slide")) : null;
+    const here = !!slot && !!slide && slide.dataset.id === m.slideId && liveSamePage(slot.dataset.url, m.url);
+    if (m.op === "show") {
+      if (!here) return false;
+      if (isPresenter) { if (!livePageFreeze().show(m)) return false; }
+      else livePage.frozenShown = { id: m.id, slideId: m.slideId, url: m.url };
+      const img = renderLivePageFrozen(slot, m.src);
+      const stillWanted = () => isPresenter ? (livePage.freeze.state().phase === "pending" && livePage.freeze.state().id === m.id)
+        : (livePage.frozenShown && livePage.frozenShown.id === m.id);
+      return img.decode().then(() => (stillWanted() && img.naturalWidth > 0 ? m.id : false), () => false);
+    }
+    if (m.op === "on") {
+      if (!isPresenter || !here) return false;
+      const tool = livePageFreeze().on(m);
+      if (!tool) return false;
+      livePageStopFreezeTimer();
+      livePageNoteStill(m.slideId, m.id);
+      if (tool === "pen") setPenArmed(true); else setPointerArmed(true);
+      penViewChanged();
+      renderLivePageTools();
+      return true;
+    }
+    if (isPresenter) {
+      const was = livePage.freeze ? livePage.freeze.state().phase : "off";
+      if (livePage.freeze && livePage.freeze.clear(m)) livePageFreezeFailed(m.message || (was === "frozen" ? "" : LIVE_FREEZE_TEXT.failed));
+    } else if (livePage.frozenShown) { livePage.frozenShown = null; livePageClearFrozen(); }
+    return true;
+  }
+  // The frozen or saved picture as a Pointer/Pen surface: 0–1 over the picture itself (letterboxing
+  // excluded), clipped to the slot, the slide canvas scale for ring and line widths.
+  function livePageStillSurface() {
+    if (!livePageMode) return null;
+    const slot = livePageSlotElement();
+    if (!slot) return null;
+    let img = null, id = null;
+    if (isPresenter) {
+      const st = livePage.freeze ? livePage.freeze.state() : null;
+      if (!st || st.phase !== "frozen") return null;
+      img = slot.querySelector(st.source === "saved" ? ":scope > .live-page-saved > img" : ":scope > .live-page-frozen > img");
+      if (st.source === "saved" && img && liveStillKey(img.getAttribute("src") || "") !== st.id) return null;
+      id = st.id;
+    } else if (livePage.frozenShown) {
+      img = slot.querySelector(":scope > .live-page-frozen > img");
+      id = livePage.frozenShown.id;
+    } else {
+      const choice = livePageGalleryChoice(slot);
+      const v = choice ? choice.views[choice.index] : null;
+      if (!v || v.mode === "page") return null;
+      img = slot.querySelector(":scope > .live-page-saved > img");
+      if (!img || img.getAttribute("src") !== v.src) return null;
+      id = liveStillKey(v.src);
+    }
+    if (!img || !img.naturalWidth || !id) return null;
+    const slide = isPresenter ? currentSlide() : slot.closest(".slide");
+    const scaleBox = isPresenter ? els.currentPreview : document.querySelector(".stage");
+    return { element: img, rect: replayPictureRect(img), captureRect: slot.getBoundingClientRect(),
+      canvasScale: ((scaleBox && scaleBox.getBoundingClientRect().width) || 1280) / 1280,
+      space: "still", still: id, slideId: slide ? slide.dataset.id : undefined };
+  }
+
+  if (livePageMode) {
+    window.__twLivePageFrozen = function (json) {
+      const m = liveFrozenMessage(json);
+      if (!m) return false;
+      try { return livePageFrozenFromMain(m); } catch (e) { return false; }
+    };
+    window.__twLivePageSlot = function () {
+      try {
+        const slot = livePageSlotElement();
+        livePageFreezeFollowSlide(slot);
+        if (!slot) { if (livePage.interact) setLivePageInteract(false); return null; }
+        const r = slot.getBoundingClientRect();
+        const slide = isPresenter ? currentSlide() : slot.closest(".slide");
+        return {
+          v: 1, slideId: String((slide && slide.dataset.id) || "").slice(0, 128), url: slot.dataset.url || "",
+          rect: { x: r.left, y: r.top, w: r.width, h: r.height }, visible: !livePageGalleryChoice(slot) && livePageVisible(slot, r),
+          interact: isPresenter && livePage.interact, reloadSeq: livePage.reloadSeq, layoutWidth: isPresenter ? null : (r.width > 0 ? r.width : null),
+          captureSeq: isPresenter ? livePage.captureSeq : 0,
+          freeze: isPresenter ? { seq: livePageFreeze().state().seq, want: livePageFreeze().want() } : { seq: 0, want: null },
+          gallery: isPresenter && livePageGalleryChoice(slot) ? { on: true, index: Math.min(999, livePageGalleryChoice(slot).index) } : { on: false, index: 0 }
+        };
+      } catch (e) { return null; }
+    };
+    window.__twLivePageState = function (json) {
+      let s = null;
+      try { s = JSON.parse(String(json)); } catch (e) { return; }
+      if (!s || s.v !== 1 || !["loading", "live", "slow", "failed", "blocked"].includes(s.state)) return;
+      livePage.state = { state: s.state, httpStatus: Number.isInteger(s.httpStatus) ? s.httpStatus : undefined, message: typeof s.message === "string" ? s.message.slice(0, 200) : "" };
+      renderLivePageState();
+    };
+    window.__twLivePageInteract = function (on) { setLivePageInteract(on === true); };
+    // ← main: the presenter's Live / saved view choice (audience window), as {v, url, on, index}.
+    window.__twLivePageGallery = function (json) {
+      let g = null;
+      try { g = JSON.parse(String(json)); } catch (e) { return; }
+      if (!g || g.v !== 1 || typeof g.on !== "boolean" || typeof g.url !== "string" || !Number.isInteger(g.index)) return;
+      livePage.audienceGallery = { on: g.on, index: Math.max(0, Math.min(999, g.index)), url: g.url.slice(0, 2048) };
+      renderLivePageState();
+    };
+    // ← main: a view was saved ({add: {src, capturedAt}}, both windows) or the presenter's Capture
+    // answered ({ok, message}). Only a JPEG data: picture is ever shown.
+    // <- main: the saved views one slide shows for its page now ({slideId, url, views}; views null:
+    // the compiled deck says). Only JPEG data: pictures are kept; the gallery position is clamped.
+    window.__twLivePageViews = function (json) {
+      let c = null;
+      try { c = JSON.parse(String(json)); } catch (e) { return; }
+      if (!c || c.v !== 1 || typeof c.url !== "string" || typeof c.slideId !== "string") return;
+      const k = `${c.slideId.slice(0, 128)}\n${livePageKey(c.url)}`;
+      if (c.views === null) livePage.told.delete(k);
+      else if (Array.isArray(c.views)) {
+        livePage.told.set(k, c.views.slice(0, 60)
+          .filter((v) => v && typeof v.src === "string" && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(v.src))
+          .map((v) => ({ src: v.src, capturedAt: typeof v.capturedAt === "string" ? v.capturedAt.slice(0, 40) : "", mode: v.mode === "page" ? "page" : "view" })));
+      } else return;
+      const slot = livePageSlotElement();
+      const count = slot ? livePageSavedViews(slot.dataset.url || "").length : 0;
+      if (!count && livePage.gallery.on) livePage.gallery = { on: false, index: 0, auto: false };
+      else if (livePage.gallery.index > count - 1) livePage.gallery.index = Math.max(0, count - 1);
+      renderLivePageState();
+      renderLivePageTools();
+    };
+    window.__twLivePageCaptured = function (json) {
+      let c = null;
+      try { c = JSON.parse(String(json)); } catch (e) { return; }
+      if (!c || c.v !== 1 || typeof c.url !== "string") return;
+      if (c.add && typeof c.add.src === "string" && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(c.add.src)) {
+        const key = livePageKey(c.url);
+        const list = livePage.added.get(key) || [];
+        if (!list.some((v) => v.src === c.add.src)) list.push({ src: c.add.src, capturedAt: typeof c.add.capturedAt === "string" ? c.add.capturedAt.slice(0, 40) : "", mode: c.add.mode === "page" ? "page" : "view" });
+        livePage.added.set(key, list);
+      }
+      if (typeof c.ok === "boolean" && isPresenter) livePage.captureNote = typeof c.message === "string" ? c.message.slice(0, 300) : "";
+      renderLivePageState();
+      renderLivePageTools();
+    };
+  }
+
+  // Remote pages keep the site's framing policy. Keep recovery controls in the parent document:
+  // a refused cross-origin frame cannot reliably report its failure to the deck.
   function renderLivePreviewEmbed(target, srcIframe) {
     releasePaneEmbeds(target);
     target.replaceChildren();
@@ -16052,9 +16742,37 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
     // B3: a non-video remote embed in the presenter pane is gated (pointer-events:none) so a click
     // can't capture focus and break presenter navigation — `e` opts in. Videos stay interactive.
     if (srcIframe.hasAttribute("data-embed-video")) iframe.dataset.embedVideo = "1";
-    else iframe.dataset.remoteEmbed = "1";
+    else {
+      iframe.dataset.remoteEmbed = "1";
+      // The slide's own sandbox (a remote web page: its own origin, no pop-ups, no top navigation),
+      // and the name main looks for to make the audience window's copy follow this pane's scrolling
+      // (src/main/remote-page-follow.ts). Both set before the page loads.
+      if (srcIframe.hasAttribute("sandbox")) iframe.setAttribute("sandbox", srcIframe.getAttribute("sandbox"));
+      iframe.name = "tw-remote-pane";
+    }
     iframe.src = srcIframe.dataset.embedUrl || srcIframe.dataset.src || "";
     target.appendChild(iframe);
+    if (!srcIframe.hasAttribute("data-embed-video")) {
+      const tools = document.createElement("div");
+      tools.className = "remote-preview-tools";
+      const title = document.createElement("strong");
+      title.className = "remote-preview-title";
+      title.textContent = srcIframe.closest(".slide")?.dataset.navTitle || srcIframe.title;
+      const note = document.createElement("span");
+      note.textContent = "If this page stays blank, the site may block embedding. Open it in your browser.";
+      const copy = document.createElement("div");
+      copy.append(title, note);
+      tools.appendChild(copy);
+      const open = srcIframe.parentElement?.querySelector(".embed-open-link");
+      if (open) tools.appendChild(open.cloneNode(true));
+      const interact = document.createElement("button");
+      interact.type = "button";
+      interact.className = "embed-interact-chip";
+      interact.textContent = "Interact (e)";
+      interact.addEventListener("click", (event) => { if (event.isTrusted) enterEmbedInteract(iframe); });
+      tools.appendChild(interact);
+      target.appendChild(tools);
+    }
   }
 
   // === B3: embed interaction (opt-in) ===========================================================
@@ -16106,7 +16824,7 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
     }
     const fig = Array.from(root.querySelectorAll("figure.slide-embed")).find((f) => {
       const ifr = f.querySelector("iframe");
-      return ifr && !ifr.hasAttribute("data-embed-video");
+      return ifr && !ifr.hasAttribute("data-embed-video") && !ifr.hasAttribute("data-live-page");
     });
     return fig ? fig.querySelector("iframe") : null;
   }
@@ -16141,6 +16859,7 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
   }
 
   function toggleEmbedInteract() {
+    if (livePageActive()) { setLivePageInteract(!livePage.interact); return; }
     if (interactingFrame) { exitEmbedInteract(); return; }
     enterEmbedInteract(activeInteractFrame());
   }
@@ -16170,8 +16889,7 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
     // current pane instead of the static thumbnail clone (which strips embed src → blank). A local
     // page is loaded in its sandbox, interactive, and mirrored to the audience through the embed
     // channel (ticket 11); a remote URL embed is shown
-    // live (the session header-strip lets it frame) but NOT mirrored — cross-origin can't be driven,
-    // so the audience shows the same URL independently.
+    // live when the site permits framing; the audience loads its own copy.
     if (!staticCurrent && isPresenter && target === els.currentPreview && slide && !slide.dataset.poll && !pollProjection.quick().visible) {
       // Scope the embed lookup to the ACTIVE exclusive-gallery card. A whole-slide querySelector
       // grabs the FIRST embed in ANY card — even a hidden one — so a carousel whose later card is
@@ -16199,7 +16917,11 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
       // the layout the audience sees (the embed area shows as a placeholder; the audience deck
       // plays the real embed independently).
       const embedOwnsSlide = !!slide.querySelector(".slide-content.layout-media, .slide-content.layout-embed");
-      if (remote && embedOwnsSlide) {
+      if (remote && embedOwnsSlide && livePageFrameOf(slide) === remote) {
+        renderLivePageSlot(target, remote);
+        return;
+      }
+      if (remote && embedOwnsSlide && !remote.parentElement?.classList.contains("has-saved-views")) {
         renderLivePreviewEmbed(target, remote);
         return;
       }
@@ -16216,7 +16938,7 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
     target.classList.remove("preview-end");
     // staticCurrent (ticket 13): the picture of the slide UNDER the Current pane's running page.
     // The pane keeps its page, cover and state; only the picture is drawn, and replaced in place.
-    if (!staticCurrent) target.classList.remove("preview-live-sim", "embed-stopped");
+    if (!staticCurrent) target.classList.remove("preview-live-sim", "preview-live-page", "embed-stopped");
     // The mode state changes the preview's appearance, so it is part of the cache key.
     // A slide whose emphasis steps has steps with no mode on, so its key carries the step too.
     // A file stops once the slide's image sequence begins, which the step does not show: that too.
@@ -17128,6 +17850,8 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
   // control's own listener runs), or sends its registry key (`code`), or calls the function below
   // that its key calls. Rows that do not apply now show dimmed; ↑ ↓ skip them.
   const PRESENTER_PALETTE_RUN = {
+    // Freeze and mark: the live page again in every window (no default key; rebindable).
+    "return-live": { run: livePageReturnLive, enabled: () => livePageFreezePhase() !== "off" },
     "embed-fullscreen": { run: toggleEmbedFullScreen, enabled: () => Boolean(panePageSource()) },
     "previews-larger": { run: () => cyclePreviewSize(-1) },
     "previews-smaller": { run: () => cyclePreviewSize(1) },
@@ -18558,7 +19282,7 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
   let pointerHeartbeat = null;
   // The Pen's state (ticket 08). `var`: applyState and the capture sync may run before the Pen's
   // block below at start-up; penReady holds every Pen render until the generated block has run.
-  var penArmed = false, penReady = false, penStore = null, penGesture = null, penDraft = null, penPieces = [];
+  var penArmed = false, penReady = false, penStore = null, penGesture = null, penDraft = null, penDraftKey = null, penPieces = [];
   const pointerOverlaySurfaces = [...document.querySelectorAll(
     '#presenterCommandPalette, #twShortcuts, #presenterQuickPollCompose, #presenterInstantCompose, #presenterInstantPaste, '
     + '#presenterQuestionsTray, #twDurationSetter, #liveGoPanel, #presenterRoot .tw-menu, #notesMenu'
@@ -18585,6 +19309,10 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
   }
 
   const pointerSurface = () => {
+    const still = livePageStillSurface();
+    if (still) return still;
+    // A live page freeze asked for or on with its picture missing: nothing to point at (never the slide).
+    if (isPresenter && livePageFreezePhase() !== 'off') return null;
     const image = state.lightbox?.open && !els.lightboxImg.hidden ? els.lightboxImg : null;
     const target = image || (isPresenter ? els.currentPreview?.querySelector('iframe') : document.querySelector('.stage'));
     if (!target) return null;
@@ -18643,13 +19371,16 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
   }
   function writeLivePointer() {
     clearTimeout(pointerLiveTimer); pointerLiveTimer = 0;
-    // The preload owns IPC; only this path has the venue's 15 Hz limit.
-    document.documentElement.dataset.twLivePointer = JSON.stringify(pointerPending);
+    // The preload owns IPC; only this path has the venue's 15 Hz limit. A frozen live page picture is
+    // the app's windows' only: the venue sees no pointer while it is marked.
+    const held = livePageFreezePhase() !== 'off' || (pointerPending !== 'gone' && pointerPending.space === 'still');
+    document.documentElement.dataset.twLivePointer = JSON.stringify(held ? 'gone' : pointerPending);
     pointerLiveAt = Date.now();
     document.documentElement.dataset.twLivePointerTick = String(pointerLiveAt);
   }
   function setPointerArmed(on) {
     if (!isPresenter) return;
+    if (on && livePageFreezePress('pointer')) return;
     pointerArmed = Boolean(on);
     if (pointerArmed && penArmed) setPenArmed(false);
     watchMarkSuspension();
@@ -18705,18 +19436,25 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
   let penFrame = 0, penLiveTimer = 0, penLiveAt = 0, penHeartbeat = 0, penLastLayer = '';
   if (isPresenter) penStore = createPenStore();
   function penLayer() {
+    const still = livePageStillSurface();
+    if (still && still.slideId) return { slideId: still.slideId, space: 'still', still: still.still };
+    // While a live page freeze is asked for or on, the only layer is its picture: none when it is missing.
+    if (isPresenter && livePageFreezePhase() !== 'off') return null;
     const slideId = currentSlide()?.dataset.id;
     if (!slideId) return null;
     const image = Boolean(state.lightbox?.open && els.lightboxImg && !els.lightboxImg.hidden);
     return { slideId, space: image ? 'image' : 'slide', image: image ? Math.max(0, Number(state.lightbox?.index) || 0) : undefined };
   }
-  const penKeyOf = (layer) => penLayerKey(layer.slideId, layer.space, layer.image);
+  const penKeyOf = (layer) => penLayerKey(layer.slideId, layer.space, layer.space === 'still' ? layer.still : layer.image);
   function penView(withDraft = true) {
     const layer = penLayer();
     if (!layer || !penStore) return null;
-    return { slideId: layer.slideId, space: layer.space, ...(layer.space === 'image' ? { image: layer.image } : {}),
+    return { slideId: layer.slideId, space: layer.space, ...(layer.space === 'image' ? { image: layer.image } : {}), ...(layer.space === 'still' ? { still: layer.still } : {}),
       // The finished pieces of a long line still being drawn show with it; Esc drops them with it.
-      strokes: withDraft ? penStore.strokes(penKeyOf(layer)).concat(penPieces) : penStore.strokes(penKeyOf(layer)), draft: withDraft ? penDraft : null };
+      // A stroke in progress shows only on the layer it was started on (never retagged as another's).
+      ...(() => { const key = penKeyOf(layer); const own = withDraft && penDraft !== null && penDraftKey === key;
+        const pieces = withDraft && penDraftKey === key ? penPieces : [];
+        return { strokes: penStore.strokes(key).concat(pieces), draft: own ? penDraft : null }; })() };
   }
   function inkHere() { const layer = penLayer(); return Boolean(layer && penStore?.has(penKeyOf(layer))); }
   function penCursorNow() {
@@ -18739,7 +19477,8 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
   function writeLiveInk() {
     clearTimeout(penLiveTimer); penLiveTimer = 0;
     const view = penView();
-    if (!view) return;
+    // A frozen live page picture's ink stays in the app's windows: never the venue, phones or a recording.
+    if (!view || view.space === 'still' || livePageFreezePhase() !== 'off') return;
     // The preload owns IPC (present-live-bridge.ts); the recorder reads the same slot for replay.
     document.documentElement.dataset.twLiveInk = JSON.stringify(view);
     penLiveAt = Date.now();
@@ -18752,16 +19491,17 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
     if (key === penLastLayer) return;
     penLastLayer = key;
     penGesture?.cancel();
-    penDraft = null; penPieces = [];
+    penDraft = null; penDraftKey = null; penPieces = [];
     pushInk();
   }
   function setPenArmed(on) {
     if (!isPresenter) return;
     on = Boolean(on);
+    if (on && livePageFreezePress('pen')) return;
     if (on && pointerArmed) setPointerArmed(false);
     if (on && highlightArmed) setHighlightArmed(false);
     if (on) releaseEmbedEngagement();
-    if (!on) { penGesture?.cancel(); penDraft = null; penPieces = []; }
+    if (!on) { penGesture?.cancel(); penDraft = null; penDraftKey = null; penPieces = []; }
     penArmed = on;
     watchMarkSuspension();
     syncPointerCapture();
@@ -18881,9 +19621,16 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
   if (isPresenter && pointerOverlay) {
     penGesture = createPenGesture({ root: pointerOverlay.root, surface: pointerSurface,
       settings: () => (penArmed ? penSettings : null),
-      onDraft: (stroke, pieces) => { penDraft = stroke; penPieces = pieces || []; pushInk(); },
+      onDraft: (stroke, pieces, key) => {
+        // The layer changed under the stroke (a saved view replaced, a freeze ended): it is dropped, never moved.
+        const layer = penLayer();
+        if (stroke && (!layer || key !== penKeyOf(layer))) { penGesture.cancel(); return; }
+        penDraft = stroke; penDraftKey = stroke ? key : null; penPieces = stroke ? (pieces || []) : []; pushInk();
+      },
       fits: (key, strokes, points) => penStore.fits(key, strokes, points),
       onCommit: (strokes, key) => {
+        const layer = penLayer();
+        if (!layer || key !== penKeyOf(layer)) { pushInk(); return; }
         const before = penStore.slideHas(key.split('\u0000')[0]);
         // One gesture, one undo unit: a long line's pieces go in (and come out) together.
         penStore.add(key, strokes);
@@ -19070,12 +19817,10 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
   <!--OVERVIEW_RUNTIME-->
   const overviewSlideData = slides.map((el, index) => ({
     index,
-    title: el.dataset.navLabel || el.dataset.navTitle || el.querySelector("h1,h2")?.textContent || "",
+    ...overviewSlideBase(el, isPresenter),
     section: el.dataset.section || "",
     subsection: el.dataset.subsection || "",
-    body: el.textContent || "",
-    notes: el.querySelector("aside.notes")?.textContent || "",
-    subs: Array.from(el.querySelectorAll(".carousel-subslide")).map((c) => ({ title: c.dataset.subTitle || "", subIndex: Number(c.dataset.subIndex) || 0, body: c.textContent || "" })),
+    // body / notes / picture text are read from the slide element by the overview at the first search.
     el,
   }));
   // ONE overview instance per window. In presenter mode it mounts on the presenter's own
@@ -19237,6 +19982,7 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
     if (isPresenter && event.key === "F5") { event.preventDefault(); openAudienceChromeless(); return; }
     if (isPresenter && event.key === "?") { event.preventDefault(); toggleShortcuts(); return; }
     if (isPresenter && event.key === "Escape" && els.twShortcuts && !els.twShortcuts.hidden) { event.preventDefault(); toggleShortcuts(false); return; }
+    if (isPresenter && event.key === 'Escape' && livePageFreezePhase() === 'pending') { event.preventDefault(); livePage.freeze.toolOff(); livePageStopFreezeTimer(); livePageClearFrozen(); livePageFreezeMark(); renderLivePageTools(); return; }
     if (isPresenter && event.key === 'Escape' && pointerArmed) { event.preventDefault(); setPointerArmed(false); return; }
     if (isPresenter && event.key.toLowerCase() === 'i' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) { event.preventDefault(); togglePointer(); return; }
     // The Pen (ticket 08): Esc abandons a drag in progress, else turns the pen off; D, W / ⇧W, X / ⇧X;
@@ -19325,6 +20071,7 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
     // first (it ends the engagement), so a second Esc is the one that restores the slide.
     // The presenter's open outline drawer takes Esc before this (its dismissal sits further down).
     if (key === "Escape" && embedFullScreenOn() && !embedInUse() && !(isPresenter && overview.isOpen())) { event.preventDefault(); publish({ embedFullScreen: null }); return; }
+    if (key === "Escape" && livePage.interact) { event.preventDefault(); setLivePageInteract(false); return; }
     if (key === "Escape" && interactingFrame) { event.preventDefault(); exitEmbedInteract(); return; }
     if ((key === "e" || key === "E") && !event.metaKey && !event.ctrlKey && !event.altKey && event.isTrusted) {
       event.preventDefault(); toggleEmbedInteract(); return;
@@ -19932,7 +20679,7 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
   // Controls a preload injects (recording, edit pencil) carry the same data-tip / data-key and are
   // shown by the same delegated tooltip.
   /*SHORTCUT_HELP*/
-  const PRESENTER_COMMAND_KEYS = [{"id":"presenter.next","label":"Next","codes":["ArrowRight","Space","ArrowDown","PageDown","Enter","MediaTrackNext"],"keys":"→ Space ↓ PgDn ↵"},{"id":"presenter.previous","label":"Previous","codes":["ArrowLeft","ArrowUp","PageUp","Backspace","MediaTrackPrevious"],"keys":"← ↑ PgUp Backspace"},{"id":"presenter.first","label":"First slide","codes":["Home"],"keys":"Home"},{"id":"presenter.last","label":"Last slide","codes":["End"],"keys":"End"},{"id":"presenter.grid-child","label":"Jump to grid child","codes":["Digit1-Digit9"],"keys":"1–9"},{"id":"presenter.skip","label":"Skip next slide","codes":["s"],"keys":"S"},{"id":"presenter.return","label":"Return from jump","codes":["b"],"keys":"B"},{"id":"presenter.overview","label":"Outline","codes":["o"],"keys":"O"},{"id":"presenter.timer","label":"Start or pause timer","codes":["p"],"keys":"P"},{"id":"presenter.duration","label":"Set duration","codes":["t"],"keys":"T"},{"id":"presenter.record","label":"Start, or stop and save, recording","codes":["Shift-r"],"keys":"⇧R"},{"id":"presenter.record-pause","label":"Pause or resume recording","codes":["Shift-p"],"keys":"⇧P"},{"id":"presenter.save-run-as","label":"Save run as…","codes":["l"],"keys":"L"},{"id":"presenter.save-run","label":"Save this run as a delivery","codes":["Enter"],"keys":"↵"},{"id":"presenter.reveal","label":"Reveal mode","codes":["r"],"keys":"R"},{"id":"presenter.focus","label":"Focus mode","codes":["f"],"keys":"F"},{"id":"presenter.rebind","label":"Rebind the highlighted command","codes":["Mod-Shift-,"],"keys":"⌘⇧,"},{"id":"presenter.pointer","label":"Pointer","codes":["i"],"keys":"I"},{"id":"presenter.pen","label":"Pen","codes":["d"],"keys":"D"},{"id":"presenter.pen-tool","label":"Next or previous pen tool","codes":["w","Shift-w"],"keys":"W / ⇧W"},{"id":"presenter.ink-undo","label":"Undo last stroke","codes":["Mod-z"],"keys":"⌘Z"},{"id":"presenter.ink-clear","label":"Clear drawing on this slide","codes":["x"],"keys":"X"},{"id":"presenter.ink-clear-all","label":"Clear all drawings","codes":["Shift-x"],"keys":"⇧X"},{"id":"presenter.highlight","label":"Highlight","codes":["h"],"keys":"H"},{"id":"presenter.preview-size","label":"Resize previews","codes":["BracketLeft","BracketRight"],"keys":"[ / ]"},{"id":"presenter.notes-scroll","label":"Scroll notes forward or back","codes":["j","Shift-j"],"keys":"J / ⇧J"},{"id":"presenter.media","label":"Play audience media","codes":["m"],"keys":"M"},{"id":"presenter.gallery","label":"Gallery or lightbox","codes":["z"],"keys":"Z"},{"id":"presenter.embed-fullscreen","label":"Embedded page: full screen","codes":["z"],"keys":"Z"},{"id":"presenter.video-fullscreen","label":"Video: Fullscreen","codes":["v"],"keys":"V"},{"id":"presenter.embed","label":"Interact with embed","codes":["e"],"keys":"E"},{"id":"presenter.font-larger","label":"Increase text size","codes":["+"],"keys":"+"},{"id":"presenter.font-smaller","label":"Decrease text size","codes":["-"],"keys":"−"},{"id":"presenter.audience","label":"Launch audience","codes":["F5"],"keys":"F5"},{"id":"presenter.live","label":"Go or end live","codes":["g"],"keys":"G"},{"id":"presenter.poll-primary","label":"Open or close current poll","codes":["q"],"keys":"Q"},{"id":"presenter.poll-reveal","label":"Reveal held poll results","codes":["Shift-q"],"keys":"⇧ Q"},{"id":"presenter.questions","label":"Open the questions tray","codes":["a"],"keys":"A"},{"id":"presenter.poll-compose","label":"Compose a Quick poll","codes":["k"],"keys":"K"},{"id":"presenter.instant-compose","label":"Compose an instant slide","codes":["Mod-Alt-i"],"keys":"⌥⌘I"},{"id":"presenter.instant-paste","label":"Preview clipboard as an instant slide","codes":["Mod-v"],"keys":"⌘V"},{"id":"presenter.instant-return","label":"Back to slide while instant slide is shown","codes":["ArrowRight"],"keys":"→"},{"id":"presenter.talk-qr","label":"Show the talk's QR code","codes":["u"],"keys":"U"},{"id":"presenter.board-pick","label":"Pick up or drop a board card","codes":["Alt-Enter"],"keys":"⌥↵"},{"id":"presenter.board-undo","label":"Undo the last board change","codes":["Mod-z"],"keys":"⌘Z"},{"id":"presenter.edit","label":"Edit this slide in TalkWeaver","codes":["Mod-e"],"keys":"⌘E"},{"id":"presenter.refresh","label":"Refresh with latest edits","codes":["Mod-r","Shift-F5"],"keys":"⌘R / ⇧F5"},{"id":"presenter.command-palette","label":"Command palette","codes":["Mod-Shift-p"],"keys":"⌘⇧P"},{"id":"presenter.help","label":"Show shortcuts","codes":["?"],"keys":"?"},{"id":"presenter.guide","label":"Guide","codes":["c"],"keys":"C"},{"id":"presenter.close","label":"Close overlay or mode","codes":["Escape"],"keys":"Esc"},{"id":"palette.reset-timer","label":"Reset timer","codes":[],"keys":""},{"id":"palette.join-link","label":"Show join link and venue screen","codes":[],"keys":""},{"id":"palette.copy-venue-link","label":"Copy venue-screen link","codes":[],"keys":""},{"id":"palette.allow-questions","label":"Allow slide questions","codes":[],"keys":""},{"id":"palette.allow-reactions","label":"Allow slide reactions","codes":[],"keys":""},{"id":"palette.poll-panel","label":"Show poll panel","codes":[],"keys":""},{"id":"palette.quick-poll-restore","label":"Show Quick poll on screens","codes":[],"keys":""},{"id":"palette.quick-poll-dismiss","label":"Dismiss Quick poll","codes":[],"keys":""},{"id":"palette.board-freeze","label":"Freeze or unfreeze the board","codes":[],"keys":""},{"id":"palette.board-panel","label":"Show board panel","codes":[],"keys":""},{"id":"palette.board-full","label":"Board full screen","codes":[],"keys":""},{"id":"palette.board-popout","label":"Pop out the board","codes":[],"keys":""},{"id":"palette.notes-off","label":"Notes: off","codes":[],"keys":""},{"id":"palette.notes-bottom","label":"Notes: bottom","codes":[],"keys":""},{"id":"palette.notes-sidebar","label":"Notes: sidebar","codes":[],"keys":""},{"id":"palette.notes-top-band","label":"Notes: top band","codes":[],"keys":""},{"id":"palette.notes-camera-column","label":"Notes: camera column","codes":[],"keys":""},{"id":"palette.notes-scroll-hand","label":"Notes scroll by hand","codes":[],"keys":""},{"id":"palette.notes-scroll-auto","label":"Notes scroll automatically","codes":[],"keys":""},{"id":"palette.notes-faster","label":"Notes scroll faster","codes":[],"keys":""},{"id":"palette.notes-slower","label":"Notes scroll slower","codes":[],"keys":""},{"id":"palette.pen-freehand","label":"Pen tool: Freehand","codes":[],"keys":""},{"id":"palette.pen-arrow","label":"Pen tool: Arrow","codes":[],"keys":""},{"id":"palette.pen-rectangle","label":"Pen tool: Rectangle","codes":[],"keys":""},{"id":"palette.highlight-clear","label":"Clear highlights","codes":[],"keys":""}];
+  const PRESENTER_COMMAND_KEYS = [{"id":"presenter.next","label":"Next","codes":["ArrowRight","Space","ArrowDown","PageDown","Enter","MediaTrackNext"],"keys":"→ Space ↓ PgDn ↵"},{"id":"presenter.previous","label":"Previous","codes":["ArrowLeft","ArrowUp","PageUp","Backspace","MediaTrackPrevious"],"keys":"← ↑ PgUp Backspace"},{"id":"presenter.first","label":"First slide","codes":["Home"],"keys":"Home"},{"id":"presenter.last","label":"Last slide","codes":["End"],"keys":"End"},{"id":"presenter.grid-child","label":"Jump to grid child","codes":["Digit1-Digit9"],"keys":"1–9"},{"id":"presenter.skip","label":"Skip next slide","codes":["s"],"keys":"S"},{"id":"presenter.return","label":"Return from jump","codes":["b"],"keys":"B"},{"id":"presenter.overview","label":"Outline","codes":["o"],"keys":"O"},{"id":"presenter.timer","label":"Start or pause timer","codes":["p"],"keys":"P"},{"id":"presenter.duration","label":"Set duration","codes":["t"],"keys":"T"},{"id":"presenter.record","label":"Start, or stop and save, recording","codes":["Shift-r"],"keys":"⇧R"},{"id":"presenter.record-pause","label":"Pause or resume recording","codes":["Shift-p"],"keys":"⇧P"},{"id":"presenter.save-run-as","label":"Save run as…","codes":["l"],"keys":"L"},{"id":"presenter.save-run","label":"Save this run as a delivery","codes":["Enter"],"keys":"↵"},{"id":"presenter.reveal","label":"Reveal mode","codes":["r"],"keys":"R"},{"id":"presenter.focus","label":"Focus mode","codes":["f"],"keys":"F"},{"id":"presenter.rebind","label":"Rebind the highlighted command","codes":["Mod-Shift-,"],"keys":"⌘⇧,"},{"id":"presenter.pointer","label":"Pointer","codes":["i"],"keys":"I"},{"id":"presenter.pen","label":"Pen","codes":["d"],"keys":"D"},{"id":"presenter.pen-tool","label":"Next or previous pen tool","codes":["w","Shift-w"],"keys":"W / ⇧W"},{"id":"presenter.ink-undo","label":"Undo last stroke","codes":["Mod-z"],"keys":"⌘Z"},{"id":"presenter.ink-clear","label":"Clear drawing on this slide","codes":["x"],"keys":"X"},{"id":"presenter.ink-clear-all","label":"Clear all drawings","codes":["Shift-x"],"keys":"⇧X"},{"id":"presenter.highlight","label":"Highlight","codes":["h"],"keys":"H"},{"id":"presenter.preview-size","label":"Resize previews","codes":["BracketLeft","BracketRight"],"keys":"[ / ]"},{"id":"presenter.notes-scroll","label":"Scroll notes forward or back","codes":["j","Shift-j"],"keys":"J / ⇧J"},{"id":"presenter.media","label":"Play audience media","codes":["m"],"keys":"M"},{"id":"presenter.gallery","label":"Gallery or lightbox","codes":["z"],"keys":"Z"},{"id":"presenter.embed-fullscreen","label":"Embedded page: full screen","codes":["z"],"keys":"Z"},{"id":"presenter.video-fullscreen","label":"Video: Fullscreen","codes":["v"],"keys":"V"},{"id":"presenter.embed","label":"Interact with embed","codes":["e"],"keys":"E"},{"id":"presenter.font-larger","label":"Increase text size","codes":["+"],"keys":"+"},{"id":"presenter.font-smaller","label":"Decrease text size","codes":["-"],"keys":"−"},{"id":"presenter.audience","label":"Launch audience","codes":["F5"],"keys":"F5"},{"id":"presenter.live","label":"Go or end live","codes":["g"],"keys":"G"},{"id":"presenter.poll-primary","label":"Open or close current poll","codes":["q"],"keys":"Q"},{"id":"presenter.poll-reveal","label":"Reveal held poll results","codes":["Shift-q"],"keys":"⇧ Q"},{"id":"presenter.questions","label":"Open the questions tray","codes":["a"],"keys":"A"},{"id":"presenter.poll-compose","label":"Compose a Quick poll","codes":["k"],"keys":"K"},{"id":"presenter.instant-compose","label":"Compose an instant slide","codes":["Mod-Alt-i"],"keys":"⌥⌘I"},{"id":"presenter.instant-paste","label":"Preview clipboard as an instant slide","codes":["Mod-v"],"keys":"⌘V"},{"id":"presenter.instant-return","label":"Back to slide while instant slide is shown","codes":["ArrowRight"],"keys":"→"},{"id":"presenter.talk-qr","label":"Show the talk's QR code","codes":["u"],"keys":"U"},{"id":"presenter.board-pick","label":"Pick up or drop a board card","codes":["Alt-Enter"],"keys":"⌥↵"},{"id":"presenter.board-undo","label":"Undo the last board change","codes":["Mod-z"],"keys":"⌘Z"},{"id":"presenter.edit","label":"Edit this slide in TalkWeaver","codes":["Mod-e"],"keys":"⌘E"},{"id":"presenter.refresh","label":"Refresh with latest edits","codes":["Mod-r","Shift-F5"],"keys":"⌘R / ⇧F5"},{"id":"presenter.command-palette","label":"Command palette","codes":["Mod-Shift-p"],"keys":"⌘⇧P"},{"id":"presenter.help","label":"Show shortcuts","codes":["?"],"keys":"?"},{"id":"presenter.guide","label":"Guide","codes":["c"],"keys":"C"},{"id":"presenter.close","label":"Close overlay or mode","codes":["Escape"],"keys":"Esc"},{"id":"palette.reset-timer","label":"Reset timer","codes":[],"keys":""},{"id":"palette.join-link","label":"Show join link and venue screen","codes":[],"keys":""},{"id":"palette.copy-venue-link","label":"Copy venue-screen link","codes":[],"keys":""},{"id":"palette.allow-questions","label":"Allow slide questions","codes":[],"keys":""},{"id":"palette.allow-reactions","label":"Allow slide reactions","codes":[],"keys":""},{"id":"palette.poll-panel","label":"Show poll panel","codes":[],"keys":""},{"id":"palette.quick-poll-restore","label":"Show Quick poll on screens","codes":[],"keys":""},{"id":"palette.quick-poll-dismiss","label":"Dismiss Quick poll","codes":[],"keys":""},{"id":"palette.board-freeze","label":"Freeze or unfreeze the board","codes":[],"keys":""},{"id":"palette.board-panel","label":"Show board panel","codes":[],"keys":""},{"id":"palette.board-full","label":"Board full screen","codes":[],"keys":""},{"id":"palette.board-popout","label":"Pop out the board","codes":[],"keys":""},{"id":"palette.notes-off","label":"Notes: off","codes":[],"keys":""},{"id":"palette.notes-bottom","label":"Notes: bottom","codes":[],"keys":""},{"id":"palette.notes-sidebar","label":"Notes: sidebar","codes":[],"keys":""},{"id":"palette.notes-top-band","label":"Notes: top band","codes":[],"keys":""},{"id":"palette.notes-camera-column","label":"Notes: camera column","codes":[],"keys":""},{"id":"palette.notes-scroll-hand","label":"Notes scroll by hand","codes":[],"keys":""},{"id":"palette.notes-scroll-auto","label":"Notes scroll automatically","codes":[],"keys":""},{"id":"palette.notes-faster","label":"Notes scroll faster","codes":[],"keys":""},{"id":"palette.notes-slower","label":"Notes scroll slower","codes":[],"keys":""},{"id":"palette.pen-freehand","label":"Pen tool: Freehand","codes":[],"keys":""},{"id":"palette.pen-arrow","label":"Pen tool: Arrow","codes":[],"keys":""},{"id":"palette.pen-rectangle","label":"Pen tool: Rectangle","codes":[],"keys":""},{"id":"palette.return-live","label":"Return Live","codes":[],"keys":""},{"id":"palette.highlight-clear","label":"Clear highlights","codes":[],"keys":""}];
   const PRESENTER_CONTROL_COMMANDS = {"twClockBtn":"presenter.timer","twStartTimerBtn":"presenter.timer","twDurationBtn":"presenter.duration","presenterGoLive":"presenter.live","presenterEndLive":"presenter.live","liveGoButton":"presenter.live","presenterAudienceApp":"presenter.audience","liveTalkQr":"presenter.talk-qr","presenterInstantButton":"presenter.instant-compose","liveInstantPaste":"presenter.instant-paste","liveInstantBack":"presenter.instant-return","presenterQuickPollButton":"presenter.poll-compose","pollMenuPrimary":"presenter.poll-primary","pollMenuReveal":"presenter.poll-reveal","pollMenuBoardClose":"presenter.poll-primary","pollMenuQuestions":"presenter.questions","viewOutline":"presenter.overview","viewFontDown":"presenter.font-smaller","viewFontUp":"presenter.font-larger","viewReveal":"presenter.reveal","viewFocus":"presenter.focus","viewHighlight":"presenter.highlight","viewShortcuts":"presenter.help","viewCommands":"presenter.command-palette","presenterInstantBack":"presenter.instant-return","presenterPollOpen":"presenter.poll-primary","presenterPollClose":"presenter.poll-primary","presenterPollReveal":"presenter.poll-reveal","presenterNotesMore":"presenter.notes-scroll","presenterOutlineClose":"presenter.overview","outlineBtn":"presenter.overview","presenterPrev":"presenter.previous","presenterNext":"presenter.next","skipNextBtn":"presenter.skip","returnBtn":"presenter.return","presenterMediaPlay":"presenter.media","presenterVideoFullscreen":"presenter.video-fullscreen","presenterGalleryBtn":"presenter.gallery","presenterEmbedFullscreen":"presenter.embed-fullscreen","navQuickPoll":"presenter.poll-compose","navInstant":"presenter.instant-compose","presenterFocus":"presenter.focus","presenterPointer":"presenter.pointer","viewPointer":"presenter.pointer","morePointer":"presenter.pointer","presenterPointerExit":"presenter.close","presenterPen":"presenter.pen","viewPen":"presenter.pen","morePen":"presenter.pen","presenterPenExit":"presenter.close","presenterInkClear":"presenter.ink-clear","viewInkClear":"presenter.ink-clear","moreInkClear":"presenter.ink-clear","viewInkClearAll":"presenter.ink-clear-all","moreInkClearAll":"presenter.ink-clear-all","penUndo":"presenter.ink-undo","penClear":"presenter.ink-clear","penStripUndo":"presenter.ink-undo","penStripClear":"presenter.ink-clear","penStripOff":"presenter.close","presenterHighlight":"presenter.highlight","presenterFirst":"presenter.first","presenterLast":"presenter.last","moreReturn":"presenter.return","moreGridCard":"presenter.grid-child","presenterReveal":"presenter.reveal","moreEmbed":"presenter.embed","fontDown":"presenter.font-smaller","fontUp":"presenter.font-larger","moreRefresh":"presenter.refresh","presenterModeExit":"presenter.close","presenterHighlightExit":"presenter.close","twrec-primary":"presenter.record","twrec-change-kind":"presenter.save-run-as","twrec-pause":"presenter.record-pause","twrec-resume":"presenter.record-pause","twrec-stop":"presenter.record","twrec-toast-yes":"presenter.record-pause","twrec-save-delivery":"presenter.save-run","twrec-save-as":"presenter.save-run-as","twrec-start-record":"presenter.record","twrec-saved-change":"presenter.save-run-as","twedit-btn":"presenter.edit","twguide-chip":"presenter.guide"};
   const PRESENTER_TIPS = {"twClockBtn":["Start timer","P"],"twStartTimerBtn":["Start timer","P"],"twDurationBtn":["Talk length and reset","T"],"twResetBtn":["Reset timer",""],"twDurationMinus":["Talk length 5 minutes shorter",""],"twDurationPlus":["Talk length 5 minutes longer",""],"presenterGoLive":["Go live","G"],"presenterEndLive":["End live session","G"],"presenterMenuLive":["Live menu",""],"presenterMenuPoll":["Poll menu",""],"presenterMenuView":["View menu",""],"liveGoButton":["Go live","G"],"presenterAudienceApp":["Open audience window","F5"],"liveShowJoin":["Show join link and venue screen",""],"liveCopyVenueLink":["Copy venue-screen link",""],"liveAllowQuestions":["Allow slide questions",""],"liveAllowReactions":["Allow slide reactions",""],"liveTalkQr":["Show talk QR code","U"],"presenterInstantButton":["Compose instant slide","⌥⌘I"],"liveInstantPaste":["Instant slide from clipboard","⌘V"],"liveInstantBack":["Back to slide","→"],"presenterQuickPollButton":["Compose Quick poll","K"],"presenterQuickPollRestore":["Show Quick poll on screens",""],"pollMenuPrimary":["Open or close current poll","Q"],"pollMenuReveal":["Reveal results","⇧ Q"],"presenterPollPanelToggle":["Show poll panel",""],"pollMenuBoardClose":["Close board to new cards","Q"],"pollMenuBoardFreeze":["Freeze board",""],"pollMenuBoardPanel":["Show board panel",""],"pollMenuBoardFull":["Board full screen",""],"pollMenuBoardPopout":["Pop out the board",""],"pollMenuQuestions":["Open questions","A"],"notesPlacementBtn":["Notes placement and scrolling",""],"viewOutline":["Outline","O"],"viewFontDown":["Slide text smaller","−"],"viewFontUp":["Slide text larger","+"],"viewReveal":["Reveal mode","R"],"viewFocus":["Focus mode","F"],"viewHighlight":["Highlight text","H"],"viewHighlightClear":["Clear highlights",""],"viewShortcuts":["Keyboard shortcuts","?"],"viewCommands":["All commands","⌘⇧P"],"notesWpmSlower":["Notes scroll slower",""],"notesWpmFaster":["Notes scroll faster",""],"liveGoPanelClose":["Hide the join link",""],"liveVenueCopy":["Copy venue-screen link",""],"presenterInstantBack":["Back to slide","→"],"instantClose":["Close instant slide",""],"instantPasteClose":["Cancel clipboard preview",""],"quickPollClose":["Close Quick poll",""],"presenterPollDismiss":["Hide the poll panel",""],"presenterPollOpen":["Open poll","Q"],"presenterPollClose":["Stop accepting responses","Q"],"presenterPollReveal":["Reveal results","⇧ Q"],"presenterPollShowQuestion":["Show the question on screens",""],"presenterPollShowResults":["Show the results on screens",""],"presenterPollPreviousPage":["Previous page of the poll",""],"presenterPollNextPage":["Next page of the poll",""],"presenterQuickPollDismiss":["Dismiss Quick poll",""],"presenterNotesMore":["Step notes forward","J / ⇧J"],"presenterOutlineExpand":["Show previews in the outline",""],"presenterOutlineClose":["Close outline","O"],"outlineBtn":["Outline","O"],"presenterPrev":["Previous","← ↑ PgUp Backspace"],"presenterNext":["Next","→ Space ↓ PgDn ↵"],"skipNextBtn":["Skip next slide","S"],"returnBtn":["Return to where you jumped from","B"],"presenterMediaPlay":["Play media","M"],"presenterMediaPause":["Pause media",""],"presenterVideoFullscreen":["Video full screen","V"],"presenterGalleryBtn":["Image gallery","Z"],"presenterEmbedFullscreen":["Embedded page: full screen","Z"],"navQuickPoll":["Compose Quick poll","K"],"navInstant":["Compose instant slide","⌥⌘I"],"presenterFocus":["Focus mode","F"],"presenterPointer":["Pointer: show your mouse on every screen","I"],"viewPointer":["Pointer","I"],"morePointer":["Pointer","I"],"presenterPointerExit":["Turn off pointer","Esc"],"presenterPen":["Pen: draw on the slide on every screen","D"],"viewPen":["Pen","D"],"morePen":["Pen","D"],"presenterPenExit":["Turn off pen","Esc"],"presenterInkClear":["Clear the drawing on this slide","X"],"viewInkClear":["Clear drawing on this slide","X"],"moreInkClear":["Clear drawing on this slide","X"],"viewInkClearAll":["Clear all drawings","⇧X"],"moreInkClearAll":["Clear all drawings","⇧X"],"penToolFreehand":["Freehand: draw with the mouse",""],"penToolArrow":["Arrow: press on the point, drag to the tail",""],"penToolRectangle":["Rectangle: drag from one corner to the opposite",""],"penInkRed":["Red ink",""],"penInkYellow":["Yellow ink",""],"penInkGreen":["Green ink",""],"penInkBlue":["Blue ink",""],"penWidthThin":["Thin line",""],"penWidthThick":["Thick line",""],"penUndo":["Undo last stroke","⌘Z"],"penClear":["Clear this slide","X"],"penStripFreehand":["Freehand: draw with the mouse",""],"penStripArrow":["Arrow: press on the point, drag to the tail",""],"penStripRectangle":["Rectangle: drag from one corner to the opposite",""],"penStripInkRed":["Red ink",""],"penStripInkYellow":["Yellow ink",""],"penStripInkGreen":["Green ink",""],"penStripInkBlue":["Blue ink",""],"penStripWidthThin":["Thin line",""],"penStripWidthThick":["Thick line",""],"penStripUndo":["Undo last stroke","⌘Z"],"penStripClear":["Clear this slide","X"],"penStripOff":["Pen off","Esc"],"presenterHighlight":["Highlight text","H"],"presenterMore":["More",""],"presenterFirst":["First slide","Home"],"presenterLast":["Last slide","End"],"moreReturn":["Return to where you jumped from","B"],"moreGridCard":["Card on a grid slide","1–9"],"presenterReveal":["Reveal mode","R"],"presenterHighlightClear":["Clear highlights",""],"moreEmbed":["Interact with embedded page","E"],"fontDown":["Slide text smaller","−"],"fontUp":["Slide text larger","+"],"moreRefresh":["Refresh with latest edits","⌘R / ⇧F5"],"presenterModeExit":["Turn off focus mode","Esc"],"presenterHighlightExit":["Turn off highlighting","Esc"],"presenterHighlightChipClear":["Clear highlights on this slide",""]};
   const PRESENTER_ICON_OF = {"twStartTimerBtn":["timer",0,0],"twDurationBtn":["chevron-down",0,1],"twResetBtn":["timer-reset",0,0],"twDurationMinus":["minus",0,1],"twDurationPlus":["plus",0,1],"presenterGoLive":["radio",0,0],"presenterEndLive":["radio-off",0,0],"presenterMenuLive":["radio",0,0],"presenterMenuPoll":["vote",0,0],"presenterMenuView":["panels-top-left",0,0],"liveGoButton":["radio",0,0],"presenterAudienceApp":["monitor-up",0,0],"liveShowJoin":["scan-qr-code",0,0],"liveCopyVenueLink":["link",0,0],"liveAllowQuestions":["message-circle-question-mark",0,0],"liveAllowReactions":["smile-plus",0,0],"liveTalkQr":["qr-code",0,0],"presenterInstantButton":["zap",0,0],"liveInstantPaste":["clipboard",0,0],"liveInstantBack":["undo-2",0,0],"presenterQuickPollButton":["vote",0,0],"presenterQuickPollRestore":["monitor-play",0,0],"pollMenuPrimary":["lock-open",0,0],"pollMenuReveal":["eye",0,0],"presenterPollPanelToggle":["chart-bar",0,0],"pollMenuBoardClose":["lock",0,0],"pollMenuBoardFreeze":["snowflake",0,0],"pollMenuBoardPanel":["layout-grid",0,0],"pollMenuBoardFull":["maximize-2",0,0],"pollMenuBoardPopout":["picture-in-picture-2",0,0],"pollMenuQuestions":["message-circle-question-mark",0,0],"notesPlacementBtn":["notebook-text",0,0],"viewOutline":["list-tree",0,0],"viewFontDown":["a-arrow-down",0,0],"viewFontUp":["a-arrow-up",0,0],"viewReveal":["layers",0,0],"viewFocus":["focus",0,0],"viewHighlight":["highlighter",0,0],"viewHighlightClear":["eraser",0,0],"viewShortcuts":["keyboard",0,0],"viewCommands":["command",0,0],"notesWpmSlower":["minus",0,1],"notesWpmFaster":["plus",0,1],"liveGoPanelClose":["x",0,1],"liveVenueCopy":["copy",0,0],"presenterInstantBack":["undo-2",0,0],"instantClose":["x",0,1],"instantPasteClose":["x",0,1],"quickPollClose":["x",0,1],"presenterPollDismiss":["x",0,1],"presenterPollOpen":["lock-open",0,0],"presenterPollClose":["lock",0,0],"presenterPollReveal":["eye",0,0],"presenterPollShowQuestion":["message-square-text",0,0],"presenterPollShowResults":["chart-bar",0,0],"presenterPollPreviousPage":["chevron-left",0,0],"presenterPollNextPage":["chevron-right",0,0],"presenterQuickPollDismiss":["x",0,0],"presenterNotesMore":["chevrons-down",1,0],"presenterOutlineExpand":["layout-grid",0,0],"presenterOutlineClose":["x",0,1],"outlineBtn":["list-tree",0,0],"presenterPrev":["arrow-left",0,0],"presenterNext":["arrow-right",1,0],"skipNextBtn":["skip-forward",0,1],"returnBtn":["undo-2",0,0],"presenterMediaPlay":["play",0,0],"presenterMediaPause":["pause",0,0],"presenterVideoFullscreen":["fullscreen",0,0],"presenterGalleryBtn":["images",0,0],"presenterEmbedFullscreen":["maximize-2",0,1],"navQuickPoll":["vote",0,0],"navInstant":["zap",0,0],"presenterFocus":["focus",0,0],"presenterPointer":["mouse-pointer-2",0,0],"viewPointer":["mouse-pointer-2",0,0],"morePointer":["mouse-pointer-2",0,0],"presenterPointerExit":["x",0,1],"presenterPen":["pen-tool",0,0],"viewPen":["pen-tool",0,0],"morePen":["pen-tool",0,0],"presenterPenExit":["x",0,1],"presenterInkClear":["eraser",0,0],"viewInkClear":["eraser",0,0],"moreInkClear":["eraser",0,0],"viewInkClearAll":["eraser",0,0],"moreInkClearAll":["eraser",0,0],"penToolFreehand":["pen-line",0,0],"penToolArrow":["move-up-right",0,0],"penToolRectangle":["square",0,0],"penUndo":["undo-2",0,0],"penClear":["eraser",0,0],"penStripFreehand":["pen-line",0,0],"penStripArrow":["move-up-right",0,0],"penStripRectangle":["square",0,0],"penStripUndo":["undo-2",0,0],"penStripClear":["eraser",0,0],"penStripOff":["x",0,0],"presenterHighlight":["highlighter",0,0],"presenterMore":["ellipsis",0,1],"presenterFirst":["chevron-first",0,0],"presenterLast":["chevron-last",0,0],"moreReturn":["undo-2",0,0],"moreGridCard":["layout-grid",0,0],"presenterReveal":["layers",0,0],"presenterHighlightClear":["eraser",0,0],"moreEmbed":["mouse-pointer-click",0,0],"fontDown":["a-arrow-down",0,0],"fontUp":["a-arrow-up",0,0],"moreRefresh":["refresh-cw",0,0],"presenterModeExit":["x",0,1],"presenterHighlightExit":["x",0,1],"presenterHighlightChipClear":["eraser",0,0]};
@@ -19942,7 +20689,7 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
   const PRESENTER_ICONS = {"a-arrow-down":"<svg class=\"tw-ico tw-btn-ico lucide lucide-a-arrow-down\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m14 12 4 4 4-4\"/><path d=\"M18 16V7\"/><path d=\"m2 16 4.039-9.69a.5.5 0 0 1 .923 0L11 16\"/><path d=\"M3.304 13h6.392\"/></svg>","a-arrow-up":"<svg class=\"tw-ico tw-btn-ico lucide lucide-a-arrow-up\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m14 11 4-4 4 4\"/><path d=\"M18 16V7\"/><path d=\"m2 16 4.039-9.69a.5.5 0 0 1 .923 0L11 16\"/><path d=\"M3.304 13h6.392\"/></svg>","alarm-clock":"<svg class=\"tw-ico tw-btn-ico lucide lucide-alarm-clock\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"13\" r=\"8\"/><path d=\"M12 9v4l2 2\"/><path d=\"M5 3 2 6\"/><path d=\"m22 6-3-3\"/><path d=\"M6.38 18.7 4 21\"/><path d=\"M17.64 18.67 20 21\"/></svg>","arrow-left":"<svg class=\"tw-ico tw-btn-ico lucide lucide-arrow-left\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m12 19-7-7 7-7\"/><path d=\"M19 12H5\"/></svg>","arrow-right":"<svg class=\"tw-ico tw-btn-ico lucide lucide-arrow-right\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M5 12h14\"/><path d=\"m12 5 7 7-7 7\"/></svg>","bookmark":"<svg class=\"tw-ico tw-btn-ico lucide lucide-bookmark\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M17 3a2 2 0 0 1 2 2v15a1 1 0 0 1-1.496.868l-4.512-2.578a2 2 0 0 0-1.984 0l-4.512 2.578A1 1 0 0 1 5 20V5a2 2 0 0 1 2-2z\"/></svg>","chart-bar":"<svg class=\"tw-ico tw-btn-ico lucide lucide-chart-bar\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M3 3v16a2 2 0 0 0 2 2h16\"/><path d=\"M7 16h8\"/><path d=\"M7 11h12\"/><path d=\"M7 6h3\"/></svg>","check":"<svg class=\"tw-ico tw-btn-ico lucide lucide-check\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M20 6 9 17l-5-5\"/></svg>","chevron-down":"<svg class=\"tw-ico tw-btn-ico lucide lucide-chevron-down\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m6 9 6 6 6-6\"/></svg>","chevron-first":"<svg class=\"tw-ico tw-btn-ico lucide lucide-chevron-first\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m17 18-6-6 6-6\"/><path d=\"M7 6v12\"/></svg>","chevron-last":"<svg class=\"tw-ico tw-btn-ico lucide lucide-chevron-last\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m7 18 6-6-6-6\"/><path d=\"M17 6v12\"/></svg>","chevron-left":"<svg class=\"tw-ico tw-btn-ico lucide lucide-chevron-left\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m15 18-6-6 6-6\"/></svg>","chevron-right":"<svg class=\"tw-ico tw-btn-ico lucide lucide-chevron-right\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m9 18 6-6-6-6\"/></svg>","chevrons-down":"<svg class=\"tw-ico tw-btn-ico lucide lucide-chevrons-down\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m7 6 5 5 5-5\"/><path d=\"m7 13 5 5 5-5\"/></svg>","chevrons-up":"<svg class=\"tw-ico tw-btn-ico lucide lucide-chevrons-up\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m17 11-5-5-5 5\"/><path d=\"m17 18-5-5-5 5\"/></svg>","circle":"<svg class=\"tw-ico tw-btn-ico lucide lucide-circle\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"12\" r=\"10\"/></svg>","circle-alert":"<svg class=\"tw-ico tw-btn-ico lucide lucide-circle-alert\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"12\" x2=\"12\" y1=\"8\" y2=\"12\"/><line x1=\"12\" x2=\"12.01\" y1=\"16\" y2=\"16\"/></svg>","circle-check":"<svg class=\"tw-ico tw-btn-ico lucide lucide-circle-check\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"m9 12 2 2 4-4\"/></svg>","circle-dashed":"<svg class=\"tw-ico tw-btn-ico lucide lucide-circle-dashed\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M10.1 2.182a10 10 0 0 1 3.8 0\"/><path d=\"M13.9 21.818a10 10 0 0 1-3.8 0\"/><path d=\"M17.609 3.721a10 10 0 0 1 2.69 2.7\"/><path d=\"M2.182 13.9a10 10 0 0 1 0-3.8\"/><path d=\"M20.279 17.609a10 10 0 0 1-2.7 2.69\"/><path d=\"M21.818 10.1a10 10 0 0 1 0 3.8\"/><path d=\"M3.721 6.391a10 10 0 0 1 2.7-2.69\"/><path d=\"M6.391 20.279a10 10 0 0 1-2.69-2.7\"/></svg>","circle-dot":"<svg class=\"tw-ico tw-btn-ico lucide lucide-circle-dot\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><circle cx=\"12\" cy=\"12\" r=\"1\"/></svg>","circle-pause":"<svg class=\"tw-ico tw-btn-ico lucide lucide-circle-pause\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"10\" x2=\"10\" y1=\"15\" y2=\"9\"/><line x1=\"14\" x2=\"14\" y1=\"15\" y2=\"9\"/></svg>","circle-play":"<svg class=\"tw-ico tw-btn-ico lucide lucide-circle-play\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M9 9.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997A1 1 0 0 1 9 14.996z\"/><circle cx=\"12\" cy=\"12\" r=\"10\"/></svg>","circle-slash":"<svg class=\"tw-ico tw-btn-ico lucide lucide-circle-slash\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"9\" x2=\"15\" y1=\"15\" y2=\"9\"/></svg>","clipboard":"<svg class=\"tw-ico tw-btn-ico lucide lucide-clipboard\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"8\" height=\"4\" x=\"8\" y=\"2\" rx=\"1\" ry=\"1\"/><path d=\"M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2\"/></svg>","clock":"<svg class=\"tw-ico tw-btn-ico lucide lucide-clock\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M12 6v6l4 2\"/></svg>","command":"<svg class=\"tw-ico tw-btn-ico lucide lucide-command\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3\"/></svg>","copy":"<svg class=\"tw-ico tw-btn-ico lucide lucide-copy\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"14\" height=\"14\" x=\"8\" y=\"8\" rx=\"2\" ry=\"2\"/><path d=\"M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2\"/></svg>","ellipsis":"<svg class=\"tw-ico tw-btn-ico lucide lucide-ellipsis\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"12\" r=\"1\"/><circle cx=\"19\" cy=\"12\" r=\"1\"/><circle cx=\"5\" cy=\"12\" r=\"1\"/></svg>","eraser":"<svg class=\"tw-ico tw-btn-ico lucide lucide-eraser\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M21 21H8a2 2 0 0 1-1.42-.587l-3.994-3.999a2 2 0 0 1 0-2.828l10-10a2 2 0 0 1 2.829 0l5.999 6a2 2 0 0 1 0 2.828L12.834 21\"/><path d=\"m5.082 11.09 8.828 8.828\"/></svg>","eye":"<svg class=\"tw-ico tw-btn-ico lucide lucide-eye\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/></svg>","eye-off":"<svg class=\"tw-ico tw-btn-ico lucide lucide-eye-off\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49\"/><path d=\"M14.084 14.158a3 3 0 0 1-4.242-4.242\"/><path d=\"M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143\"/><path d=\"m2 2 20 20\"/></svg>","flag":"<svg class=\"tw-ico tw-btn-ico lucide lucide-flag\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528\"/></svg>","focus":"<svg class=\"tw-ico tw-btn-ico lucide lucide-focus\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M3 7V5a2 2 0 0 1 2-2h2\"/><path d=\"M17 3h2a2 2 0 0 1 2 2v2\"/><path d=\"M21 17v2a2 2 0 0 1-2 2h-2\"/><path d=\"M7 21H5a2 2 0 0 1-2-2v-2\"/></svg>","frown":"<svg class=\"tw-ico tw-btn-ico lucide lucide-frown\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M16 16s-1.5-2-4-2-4 2-4 2\"/><line x1=\"9\" x2=\"9.01\" y1=\"9\" y2=\"9\"/><line x1=\"15\" x2=\"15.01\" y1=\"9\" y2=\"9\"/></svg>","fullscreen":"<svg class=\"tw-ico tw-btn-ico lucide lucide-fullscreen\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M3 7V5a2 2 0 0 1 2-2h2\"/><path d=\"M17 3h2a2 2 0 0 1 2 2v2\"/><path d=\"M21 17v2a2 2 0 0 1-2 2h-2\"/><path d=\"M7 21H5a2 2 0 0 1-2-2v-2\"/><rect width=\"10\" height=\"8\" x=\"7\" y=\"8\" rx=\"1\"/></svg>","gallery-vertical-end":"<svg class=\"tw-ico tw-btn-ico lucide lucide-gallery-vertical-end\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M7 2h10\"/><path d=\"M5 6h14\"/><rect width=\"18\" height=\"12\" x=\"3\" y=\"10\" rx=\"2\"/></svg>","graduation-cap":"<svg class=\"tw-ico tw-btn-ico lucide lucide-graduation-cap\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z\"/><path d=\"M22 10v6\"/><path d=\"M6 12.5V16a6 3 0 0 0 12 0v-3.5\"/></svg>","grip-vertical":"<svg class=\"tw-ico tw-btn-ico lucide lucide-grip-vertical\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"9\" cy=\"12\" r=\"1\"/><circle cx=\"9\" cy=\"5\" r=\"1\"/><circle cx=\"9\" cy=\"19\" r=\"1\"/><circle cx=\"15\" cy=\"12\" r=\"1\"/><circle cx=\"15\" cy=\"5\" r=\"1\"/><circle cx=\"15\" cy=\"19\" r=\"1\"/></svg>","group":"<svg class=\"tw-ico tw-btn-ico lucide lucide-group\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M3 7V5c0-1.1.9-2 2-2h2\"/><path d=\"M17 3h2c1.1 0 2 .9 2 2v2\"/><path d=\"M21 17v2c0 1.1-.9 2-2 2h-2\"/><path d=\"M7 21H5c-1.1 0-2-.9-2-2v-2\"/><rect width=\"7\" height=\"5\" x=\"7\" y=\"7\" rx=\"1\"/><rect width=\"7\" height=\"5\" x=\"10\" y=\"12\" rx=\"1\"/></svg>","hand":"<svg class=\"tw-ico tw-btn-ico lucide lucide-hand\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2\"/><path d=\"M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2\"/><path d=\"M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8\"/><path d=\"M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15\"/></svg>","highlighter":"<svg class=\"tw-ico tw-btn-ico lucide lucide-highlighter\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m9 11-6 6v3h9l3-3\"/><path d=\"m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4\"/></svg>","image":"<svg class=\"tw-ico tw-btn-ico lucide lucide-image\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\"/><circle cx=\"9\" cy=\"9\" r=\"2\"/><path d=\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\"/></svg>","images":"<svg class=\"tw-ico tw-btn-ico lucide lucide-images\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m22 11-1.296-1.296a2.4 2.4 0 0 0-3.408 0L11 16\"/><path d=\"M4 8a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2\"/><circle cx=\"13\" cy=\"7\" r=\"1\" fill=\"currentColor\"/><rect x=\"8\" y=\"2\" width=\"14\" height=\"14\" rx=\"2\"/></svg>","inbox":"<svg class=\"tw-ico tw-btn-ico lucide lucide-inbox\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><polyline points=\"22 12 16 12 14 15 10 15 8 12 2 12\"/><path d=\"M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z\"/></svg>","keyboard":"<svg class=\"tw-ico tw-btn-ico lucide lucide-keyboard\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M10 8h.01\"/><path d=\"M12 12h.01\"/><path d=\"M14 8h.01\"/><path d=\"M16 12h.01\"/><path d=\"M18 8h.01\"/><path d=\"M6 8h.01\"/><path d=\"M7 16h10\"/><path d=\"M8 12h.01\"/><rect width=\"20\" height=\"16\" x=\"2\" y=\"4\" rx=\"2\"/></svg>","layers":"<svg class=\"tw-ico tw-btn-ico lucide lucide-layers\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z\"/><path d=\"M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12\"/><path d=\"M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17\"/></svg>","layout-grid":"<svg class=\"tw-ico tw-btn-ico lucide lucide-layout-grid\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"7\" height=\"7\" x=\"3\" y=\"3\" rx=\"1\"/><rect width=\"7\" height=\"7\" x=\"14\" y=\"3\" rx=\"1\"/><rect width=\"7\" height=\"7\" x=\"14\" y=\"14\" rx=\"1\"/><rect width=\"7\" height=\"7\" x=\"3\" y=\"14\" rx=\"1\"/></svg>","lightbulb":"<svg class=\"tw-ico tw-btn-ico lucide lucide-lightbulb\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5\"/><path d=\"M9 18h6\"/><path d=\"M10 22h4\"/></svg>","link":"<svg class=\"tw-ico tw-btn-ico lucide lucide-link\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71\"/><path d=\"M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71\"/></svg>","list-end":"<svg class=\"tw-ico tw-btn-ico lucide lucide-list-end\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M16 5H3\"/><path d=\"M16 12H3\"/><path d=\"M9 19H3\"/><path d=\"m16 16-3 3 3 3\"/><path d=\"M21 5v12a2 2 0 0 1-2 2h-6\"/></svg>","list-tree":"<svg class=\"tw-ico tw-btn-ico lucide lucide-list-tree\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M8 5h13\"/><path d=\"M13 12h8\"/><path d=\"M13 19h8\"/><path d=\"M3 10a2 2 0 0 0 2 2h3\"/><path d=\"M3 5v12a2 2 0 0 0 2 2h3\"/></svg>","loader-circle":"<svg class=\"tw-ico tw-btn-ico lucide lucide-loader-circle\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M21 12a9 9 0 1 1-6.219-8.56\"/></svg>","lock":"<svg class=\"tw-ico tw-btn-ico lucide lucide-lock\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"18\" height=\"11\" x=\"3\" y=\"11\" rx=\"2\" ry=\"2\"/><path d=\"M7 11V7a5 5 0 0 1 10 0v4\"/></svg>","lock-open":"<svg class=\"tw-ico tw-btn-ico lucide lucide-lock-open\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"18\" height=\"11\" x=\"3\" y=\"11\" rx=\"2\" ry=\"2\"/><path d=\"M7 11V7a5 5 0 0 1 9.9-1\"/></svg>","maximize-2":"<svg class=\"tw-ico tw-btn-ico lucide lucide-maximize-2\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M15 3h6v6\"/><path d=\"m21 3-7 7\"/><path d=\"m3 21 7-7\"/><path d=\"M9 21H3v-6\"/></svg>","message-circle-more":"<svg class=\"tw-ico tw-btn-ico lucide lucide-message-circle-more\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719\"/><path d=\"M8 12h.01\"/><path d=\"M12 12h.01\"/><path d=\"M16 12h.01\"/></svg>","message-circle-question-mark":"<svg class=\"tw-ico tw-btn-ico lucide lucide-message-circle-question-mark\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719\"/><path d=\"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3\"/><path d=\"M12 17h.01\"/></svg>","message-square-text":"<svg class=\"tw-ico tw-btn-ico lucide lucide-message-square-text\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z\"/><path d=\"M7 11h10\"/><path d=\"M7 15h6\"/><path d=\"M7 7h8\"/></svg>","minimize-2":"<svg class=\"tw-ico tw-btn-ico lucide lucide-minimize-2\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m14 10 7-7\"/><path d=\"M20 10h-6V4\"/><path d=\"m3 21 7-7\"/><path d=\"M4 14h6v6\"/></svg>","minus":"<svg class=\"tw-ico tw-btn-ico lucide lucide-minus\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M5 12h14\"/></svg>","monitor":"<svg class=\"tw-ico tw-btn-ico lucide lucide-monitor\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"20\" height=\"14\" x=\"2\" y=\"3\" rx=\"2\"/><line x1=\"8\" x2=\"16\" y1=\"21\" y2=\"21\"/><line x1=\"12\" x2=\"12\" y1=\"17\" y2=\"21\"/></svg>","monitor-check":"<svg class=\"tw-ico tw-btn-ico lucide lucide-monitor-check\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m9 10 2 2 4-4\"/><rect width=\"20\" height=\"14\" x=\"2\" y=\"3\" rx=\"2\"/><path d=\"M12 17v4\"/><path d=\"M8 21h8\"/></svg>","monitor-off":"<svg class=\"tw-ico tw-btn-ico lucide lucide-monitor-off\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M12 17v4\"/><path d=\"M17 17H4a2 2 0 0 1-2-2V5a2 2 0 0 1 1.184-1.826\"/><path d=\"m2 2 20 20\"/><path d=\"M8 21h8\"/><path d=\"M8.656 3H20a2 2 0 0 1 2 2v10a2 2 0 0 1-.293 1.042\"/></svg>","monitor-play":"<svg class=\"tw-ico tw-btn-ico lucide lucide-monitor-play\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M15.033 9.44a.647.647 0 0 1 0 1.12l-4.065 2.352a.645.645 0 0 1-.968-.56V7.648a.645.645 0 0 1 .967-.56z\"/><path d=\"M12 17v4\"/><path d=\"M8 21h8\"/><rect x=\"2\" y=\"3\" width=\"20\" height=\"14\" rx=\"2\"/></svg>","monitor-up":"<svg class=\"tw-ico tw-btn-ico lucide lucide-monitor-up\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m9 10 3-3 3 3\"/><path d=\"M12 13V7\"/><rect width=\"20\" height=\"14\" x=\"2\" y=\"3\" rx=\"2\"/><path d=\"M12 17v4\"/><path d=\"M8 21h8\"/></svg>","monitor-x":"<svg class=\"tw-ico tw-btn-ico lucide lucide-monitor-x\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m14.5 12.5-5-5\"/><path d=\"m9.5 12.5 5-5\"/><rect width=\"20\" height=\"14\" x=\"2\" y=\"3\" rx=\"2\"/><path d=\"M12 17v4\"/><path d=\"M8 21h8\"/></svg>","mouse-pointer-2":"<svg class=\"tw-ico tw-btn-ico lucide lucide-mouse-pointer-2\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z\"/></svg>","mouse-pointer-click":"<svg class=\"tw-ico tw-btn-ico lucide lucide-mouse-pointer-click\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M14 4.1 12 6\"/><path d=\"m5.1 8-2.9-.8\"/><path d=\"m6 12-1.9 2\"/><path d=\"M7.2 2.2 8 5.1\"/><path d=\"M9.037 9.69a.498.498 0 0 1 .653-.653l11 4.5a.5.5 0 0 1-.074.949l-4.349 1.041a1 1 0 0 0-.74.739l-1.04 4.35a.5.5 0 0 1-.95.074z\"/></svg>","move-up-right":"<svg class=\"tw-ico tw-btn-ico lucide lucide-move-up-right\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M13 5H19V11\"/><path d=\"M19 5L5 19\"/></svg>","notebook-text":"<svg class=\"tw-ico tw-btn-ico lucide lucide-notebook-text\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M2 6h4\"/><path d=\"M2 10h4\"/><path d=\"M2 14h4\"/><path d=\"M2 18h4\"/><rect width=\"16\" height=\"20\" x=\"4\" y=\"2\" rx=\"2\"/><path d=\"M9.5 8h5\"/><path d=\"M9.5 12H16\"/><path d=\"M9.5 16H14\"/></svg>","panel-bottom":"<svg class=\"tw-ico tw-btn-ico lucide lucide-panel-bottom\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/><path d=\"M3 15h18\"/></svg>","panel-right":"<svg class=\"tw-ico tw-btn-ico lucide lucide-panel-right\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/><path d=\"M15 3v18\"/></svg>","panel-top":"<svg class=\"tw-ico tw-btn-ico lucide lucide-panel-top\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/><path d=\"M3 9h18\"/></svg>","panels-top-left":"<svg class=\"tw-ico tw-btn-ico lucide lucide-panels-top-left\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/><path d=\"M3 9h18\"/><path d=\"M9 21V9\"/></svg>","pause":"<svg class=\"tw-ico tw-btn-ico lucide lucide-pause\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect x=\"14\" y=\"3\" width=\"5\" height=\"18\" rx=\"1\"/><rect x=\"5\" y=\"3\" width=\"5\" height=\"18\" rx=\"1\"/></svg>","pen-line":"<svg class=\"tw-ico tw-btn-ico lucide lucide-pen-line\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M13 21h8\"/><path d=\"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z\"/></svg>","pen-tool":"<svg class=\"tw-ico tw-btn-ico lucide lucide-pen-tool\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M15.707 21.293a1 1 0 0 1-1.414 0l-1.586-1.586a1 1 0 0 1 0-1.414l5.586-5.586a1 1 0 0 1 1.414 0l1.586 1.586a1 1 0 0 1 0 1.414z\"/><path d=\"m18 13-1.375-6.874a1 1 0 0 0-.746-.776L3.235 2.028a1 1 0 0 0-1.207 1.207L5.35 15.879a1 1 0 0 0 .776.746L13 18\"/><path d=\"m2.3 2.3 7.286 7.286\"/><circle cx=\"11\" cy=\"11\" r=\"2\"/></svg>","pencil":"<svg class=\"tw-ico tw-btn-ico lucide lucide-pencil\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z\"/><path d=\"m15 5 4 4\"/></svg>","picture-in-picture-2":"<svg class=\"tw-ico tw-btn-ico lucide lucide-picture-in-picture-2\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M21 9V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10c0 1.1.9 2 2 2h4\"/><rect width=\"10\" height=\"7\" x=\"12\" y=\"13\" rx=\"2\"/></svg>","play":"<svg class=\"tw-ico tw-btn-ico lucide lucide-play\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z\"/></svg>","plus":"<svg class=\"tw-ico tw-btn-ico lucide lucide-plus\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M5 12h14\"/><path d=\"M12 5v14\"/></svg>","presentation":"<svg class=\"tw-ico tw-btn-ico lucide lucide-presentation\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M2 3h20\"/><path d=\"M21 3v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3\"/><path d=\"m7 21 5-5 5 5\"/></svg>","qr-code":"<svg class=\"tw-ico tw-btn-ico lucide lucide-qr-code\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"5\" height=\"5\" x=\"3\" y=\"3\" rx=\"1\"/><rect width=\"5\" height=\"5\" x=\"16\" y=\"3\" rx=\"1\"/><rect width=\"5\" height=\"5\" x=\"3\" y=\"16\" rx=\"1\"/><path d=\"M21 16h-3a2 2 0 0 0-2 2v3\"/><path d=\"M21 21v.01\"/><path d=\"M12 7v3a2 2 0 0 1-2 2H7\"/><path d=\"M3 12h.01\"/><path d=\"M12 3h.01\"/><path d=\"M12 16v.01\"/><path d=\"M16 12h1\"/><path d=\"M21 12v.01\"/><path d=\"M12 21v-1\"/></svg>","radio":"<svg class=\"tw-ico tw-btn-ico lucide lucide-radio\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M16.247 7.761a6 6 0 0 1 0 8.478\"/><path d=\"M19.075 4.933a10 10 0 0 1 0 14.134\"/><path d=\"M4.925 19.067a10 10 0 0 1 0-14.134\"/><path d=\"M7.753 16.239a6 6 0 0 1 0-8.478\"/><circle cx=\"12\" cy=\"12\" r=\"2\"/></svg>","radio-off":"<svg class=\"tw-ico tw-btn-ico lucide lucide-radio-off\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M13.414 13.414a2 2 0 1 1-2.828-2.828\"/><path d=\"M16.247 7.761a6 6 0 0 1 1.744 4.572\"/><path d=\"M19.075 4.933a10 10 0 0 1 2.234 10.72\"/><path d=\"m2 2 20 20\"/><path d=\"M4.925 19.067a10 10 0 0 1 0-14.134\"/><path d=\"M7.753 16.239a6 6 0 0 1 0-8.478\"/></svg>","refresh-cw":"<svg class=\"tw-ico tw-btn-ico lucide lucide-refresh-cw\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8\"/><path d=\"M21 3v5h-5\"/><path d=\"M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16\"/><path d=\"M8 16H3v5\"/></svg>","scan-qr-code":"<svg class=\"tw-ico tw-btn-ico lucide lucide-scan-qr-code\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M17 12v4a1 1 0 0 1-1 1h-4\"/><path d=\"M17 3h2a2 2 0 0 1 2 2v2\"/><path d=\"M17 8V7\"/><path d=\"M21 17v2a2 2 0 0 1-2 2h-2\"/><path d=\"M3 7V5a2 2 0 0 1 2-2h2\"/><path d=\"M7 17h.01\"/><path d=\"M7 21H5a2 2 0 0 1-2-2v-2\"/><rect x=\"7\" y=\"7\" width=\"5\" height=\"5\" rx=\"1\"/></svg>","search":"<svg class=\"tw-ico tw-btn-ico lucide lucide-search\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m21 21-4.34-4.34\"/><circle cx=\"11\" cy=\"11\" r=\"8\"/></svg>","skip-forward":"<svg class=\"tw-ico tw-btn-ico lucide lucide-skip-forward\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M21 4v16\"/><path d=\"M6.029 4.285A2 2 0 0 0 3 6v12a2 2 0 0 0 3.029 1.715l9.997-5.998a2 2 0 0 0 .003-3.432z\"/></svg>","smile-plus":"<svg class=\"tw-ico tw-btn-ico lucide lucide-smile-plus\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M22 11v1a10 10 0 1 1-9-10\"/><path d=\"M8 14s1.5 2 4 2 4-2 4-2\"/><line x1=\"9\" x2=\"9.01\" y1=\"9\" y2=\"9\"/><line x1=\"15\" x2=\"15.01\" y1=\"9\" y2=\"9\"/><path d=\"M16 5h6\"/><path d=\"M19 2v6\"/></svg>","snail":"<svg class=\"tw-ico tw-btn-ico lucide lucide-snail\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M2 13a6 6 0 1 0 12 0 4 4 0 1 0-8 0 2 2 0 0 0 4 0\"/><circle cx=\"10\" cy=\"13\" r=\"8\"/><path d=\"M2 21h12c4.4 0 8-3.6 8-8V7a2 2 0 1 0-4 0v6\"/><path d=\"M18 3 19.1 5.2\"/><path d=\"M22 3 20.9 5.2\"/></svg>","snowflake":"<svg class=\"tw-ico tw-btn-ico lucide lucide-snowflake\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m10 20-1.25-2.5L6 18\"/><path d=\"M10 4 8.75 6.5 6 6\"/><path d=\"m14 20 1.25-2.5L18 18\"/><path d=\"m14 4 1.25 2.5L18 6\"/><path d=\"m17 21-3-6h-4\"/><path d=\"m17 3-3 6 1.5 3\"/><path d=\"M2 12h6.5L10 9\"/><path d=\"m20 10-1.5 2 1.5 2\"/><path d=\"M22 12h-6.5L14 15\"/><path d=\"m4 10 1.5 2L4 14\"/><path d=\"m7 21 3-6-1.5-3\"/><path d=\"m7 3 3 6h4\"/></svg>","square":"<svg class=\"tw-ico tw-btn-ico lucide lucide-square\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/></svg>","tags":"<svg class=\"tw-ico tw-btn-ico lucide lucide-tags\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M13.172 2a2 2 0 0 1 1.414.586l6.71 6.71a2.4 2.4 0 0 1 0 3.408l-4.592 4.592a2.4 2.4 0 0 1-3.408 0l-6.71-6.71A2 2 0 0 1 6 9.172V3a1 1 0 0 1 1-1z\"/><path d=\"M2 7v6.172a2 2 0 0 0 .586 1.414l6.71 6.71a2.4 2.4 0 0 0 3.191.193\"/><circle cx=\"10.5\" cy=\"6.5\" r=\".5\" fill=\"currentColor\"/></svg>","thumbs-down":"<svg class=\"tw-ico tw-btn-ico lucide lucide-thumbs-down\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z\"/><path d=\"M17 14V2\"/></svg>","thumbs-up":"<svg class=\"tw-ico tw-btn-ico lucide lucide-thumbs-up\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z\"/><path d=\"M7 10v12\"/></svg>","timer":"<svg class=\"tw-ico tw-btn-ico lucide lucide-timer\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><line x1=\"10\" x2=\"14\" y1=\"2\" y2=\"2\"/><line x1=\"12\" x2=\"15\" y1=\"14\" y2=\"11\"/><circle cx=\"12\" cy=\"14\" r=\"8\"/></svg>","timer-reset":"<svg class=\"tw-ico tw-btn-ico lucide lucide-timer-reset\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M10 2h4\"/><path d=\"M12 14v-4\"/><path d=\"M4 13a8 8 0 0 1 8-7 8 8 0 1 1-5.3 14L4 17.6\"/><path d=\"M9 17H4v5\"/></svg>","trash-2":"<svg class=\"tw-ico tw-btn-ico lucide lucide-trash-2\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M10 11v6\"/><path d=\"M14 11v6\"/><path d=\"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6\"/><path d=\"M3 6h18\"/><path d=\"M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\"/></svg>","type":"<svg class=\"tw-ico tw-btn-ico lucide lucide-type\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M12 4v16\"/><path d=\"M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2\"/><path d=\"M9 20h6\"/></svg>","undo-2":"<svg class=\"tw-ico tw-btn-ico lucide lucide-undo-2\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M9 14 4 9l5-5\"/><path d=\"M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11\"/></svg>","ungroup":"<svg class=\"tw-ico tw-btn-ico lucide lucide-ungroup\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><rect width=\"8\" height=\"6\" x=\"5\" y=\"4\" rx=\"1\"/><rect width=\"8\" height=\"6\" x=\"11\" y=\"14\" rx=\"1\"/></svg>","user-round":"<svg class=\"tw-ico tw-btn-ico lucide lucide-user-round\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"8\" r=\"5\"/><path d=\"M20 21a8 8 0 0 0-16 0\"/></svg>","vote":"<svg class=\"tw-ico tw-btn-ico lucide lucide-vote\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"m9 12 2 2 4-4\"/><path d=\"M5 7c0-1.1.9-2 2-2h10a2 2 0 0 1 2 2v12H5V7Z\"/><path d=\"M22 19H2\"/></svg>","webcam":"<svg class=\"tw-ico tw-btn-ico lucide lucide-webcam\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"10\" r=\"8\"/><circle cx=\"12\" cy=\"10\" r=\"3\"/><path d=\"M7 22h10\"/><path d=\"M12 22v-4\"/></svg>","wifi-off":"<svg class=\"tw-ico tw-btn-ico lucide lucide-wifi-off\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M12 20h.01\"/><path d=\"M8.5 16.429a5 5 0 0 1 7 0\"/><path d=\"M5 12.859a10 10 0 0 1 5.17-2.69\"/><path d=\"M19 12.859a10 10 0 0 0-2.007-1.523\"/><path d=\"M2 8.82a15 15 0 0 1 4.177-2.643\"/><path d=\"M22 8.82a15 15 0 0 0-11.288-3.764\"/><path d=\"m2 2 20 20\"/></svg>","x":"<svg class=\"tw-ico tw-btn-ico lucide lucide-x\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M18 6 6 18\"/><path d=\"m6 6 12 12\"/></svg>","zap":"<svg class=\"tw-ico tw-btn-ico lucide lucide-zap\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z\"/></svg>"};
   const SHORTCUTS_LIST = [["Navigation",[["→ Space ↓ PgDn ↵","Next",null,"presenter.next"],["← ↑ PgUp Backspace","Previous",null,"presenter.previous"],["Home","First slide",null,"presenter.first"],["End","Last slide",null,"presenter.last"],["1–9","Jump to grid child",null,"presenter.grid-child"],["S","Skip next slide",null,"presenter.skip"],["B","Return from jump",null,"presenter.return"]]],["Overview & timer",[["O","Outline",null,"presenter.overview"],["P","Start or pause timer",null,"presenter.timer"],["T","Set duration",null,"presenter.duration"]]],["Recording",[["⇧R","Start, or stop and save, recording","#twrec-module","presenter.record"],["⇧P","Pause or resume recording","#twrec-module","presenter.record-pause"],["L","Save run as…","#twrec-module","presenter.save-run-as"],["↵","Save this run as a delivery","#twrec-module","presenter.save-run"]]],["Modes & display",[["R","Reveal mode",null,"presenter.reveal"],["F","Focus mode",null,"presenter.focus"],["I","Pointer",null,"presenter.pointer"],["D","Pen",null,"presenter.pen"],["W / ⇧W","Next or previous pen tool",null,"presenter.pen-tool"],["⌘Z","Undo last stroke",null,"presenter.ink-undo"],["X","Clear drawing on this slide",null,"presenter.ink-clear"],["⇧X","Clear all drawings",null,"presenter.ink-clear-all"],["H","Highlight",null,"presenter.highlight"],["[ / ]","Resize previews",null,"presenter.preview-size"],["J / ⇧J","Scroll notes forward or back",null,"presenter.notes-scroll"],["M","Play audience media",null,"presenter.media"],["Z","Gallery or lightbox",null,"presenter.gallery"],["Z","Embedded page: full screen",null,"presenter.embed-fullscreen"],["V","Video: Fullscreen",null,"presenter.video-fullscreen"],["E","Interact with embed",null,"presenter.embed"],["+","Increase text size",null,"presenter.font-larger"],["−","Decrease text size",null,"presenter.font-smaller"]]],["Help",[["⌘⇧,","Rebind the highlighted command",null,"presenter.rebind"],["⌘⇧P","Command palette",null,"presenter.command-palette"],["?","Show shortcuts",null,"presenter.help"],["C","Guide","#twguide-chip","presenter.guide"],["Esc","Close overlay or mode",null,"presenter.close"]]],["Audience",[["F5","Launch audience",null,"presenter.audience"],["G","Go or end live","[data-tw-live-bridge]","presenter.live"],["Q","Open or close current poll","[data-tw-live-bridge]","presenter.poll-primary"],["⇧ Q","Reveal held poll results","[data-tw-live-bridge]","presenter.poll-reveal"],["A","Open the questions tray","[data-tw-live-bridge]","presenter.questions"],["K","Compose a Quick poll","[data-tw-live-bridge]","presenter.poll-compose"],["⌥⌘I","Compose an instant slide",null,"presenter.instant-compose"],["⌘V","Preview clipboard as an instant slide",null,"presenter.instant-paste"],["→","Back to slide while instant slide is shown",null,"presenter.instant-return"],["U","Show the talk's QR code",null,"presenter.talk-qr"]]],["Board",[["⌥↵","Pick up or drop a board card",null,"presenter.board-pick"],["⌘Z","Undo the last board change",null,"presenter.board-undo"]]],["Editor",[["⌘E","Edit this slide in TalkWeaver","#twedit-btn","presenter.edit"],["⌘R / ⇧F5","Refresh with latest edits","#twedit-btn","presenter.refresh"]]]];
   const AUDIENCE_REACTION_NAMES = {"puzzled":["frown","Puzzled by this","Puzzled by this"],"helped":["lightbulb","Helped me understand","Helped me understand"],"bookmark":["bookmark","Bookmark","Bookmark: I need to return to this"],"agree":["thumbs-up","Agree","Agree"],"disagree":["thumbs-down","Disagree","Disagree"],"yes":["check","Yes","Yes"],"no":["x","No","No"],"more":["message-circle-more","Tell me more","Tell me more"],"slower":["snail","Slower, please","Slower, please"]};
-  const PRESENTER_PALETTE = [["Slides",[{"id":"next","shortcut":"presenter.next","name":"Next","icon":"arrow-right","keys":"→","controls":["#presenterNext"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"previous","shortcut":"presenter.previous","name":"Previous","icon":"arrow-left","keys":"←","controls":["#presenterPrev"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"skip","shortcut":"presenter.skip","name":"Skip next slide","icon":"skip-forward","keys":"S","controls":["#skipNextBtn"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"return","shortcut":"presenter.return","name":"Return to where you jumped from","icon":"undo-2","keys":"B","controls":["#returnBtn","#moreReturn"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"first","shortcut":"presenter.first","name":"First slide","icon":"chevron-first","keys":"Home","controls":["#presenterFirst"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"last","shortcut":"presenter.last","name":"Last slide","icon":"chevron-last","keys":"End","controls":["#presenterLast"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"outline","shortcut":"presenter.overview","name":"Outline","icon":"list-tree","keys":"O","controls":["#outlineBtn","#viewOutline"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"grid-card","shortcut":"presenter.grid-child","name":"Go to card on a grid slide","icon":"layout-grid","keys":"1–9","controls":["#moreGridCard"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"embed","shortcut":"presenter.embed","name":"Interact with embedded page","icon":"mouse-pointer-click","keys":"E","controls":["#moreEmbed"],"code":null,"needs":null,"words":[],"task":"Present"}]],["Timer",[{"id":"timer","shortcut":"presenter.timer","name":"Start, pause or resume timer","icon":"timer","keys":"P","controls":["#twClockBtn","#twStartTimerBtn"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"duration","shortcut":"presenter.duration","name":"Talk length and reminders…","icon":"alarm-clock","keys":"T","controls":["#twDurationBtn"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"reset-timer","shortcut":null,"name":"Reset timer","icon":"timer-reset","keys":"","controls":["#twResetBtn"],"code":null,"needs":null,"words":[],"task":"Present"}]],["Recording",[{"id":"record-start","shortcut":"presenter.record","name":"Start recording","icon":"circle-dot","keys":"⇧R","controls":["#twrec-primary"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"record-pause","shortcut":"presenter.record-pause","name":"Pause or resume recording","icon":"circle-pause","keys":"⇧P","controls":["#twrec-pause","#twrec-resume"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"record-stop","shortcut":"presenter.record","name":"Stop and save recording","icon":"square","keys":"⇧R","controls":["#twrec-stop"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"save-run-as","shortcut":"presenter.save-run-as","name":"Save run as…","icon":"tags","keys":"L","controls":["#twrec-change-kind"],"code":"l","needs":"#twrec-module","words":["run kind","history","change"],"task":"Present"}]],["Live",[{"id":"live","shortcut":"presenter.live","name":"Go live or end live session","icon":"radio","keys":"G","controls":["#liveGoButton","#presenterEndLive","#presenterGoLive"],"code":null,"needs":"[data-tw-live-bridge]","words":[],"task":"Present"},{"id":"audience","shortcut":"presenter.audience","name":"Open audience window","icon":"monitor-up","keys":"F5","controls":["#presenterAudienceApp"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"join-link","shortcut":null,"name":"Show join link and venue screen","icon":"scan-qr-code","keys":"","controls":["#liveShowJoin"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"copy-venue-link","shortcut":null,"name":"Copy venue-screen link","icon":"link","keys":"","controls":["#liveCopyVenueLink"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"allow-questions","shortcut":null,"name":"Allow slide questions","icon":"message-circle-question-mark","keys":"","controls":["#liveAllowQuestions"],"code":null,"needs":"[data-tw-live-bridge]","words":["pause","phones","audience"],"task":"Present"},{"id":"allow-reactions","shortcut":null,"name":"Allow slide reactions","icon":"smile-plus","keys":"","controls":["#liveAllowReactions"],"code":null,"needs":"[data-tw-live-bridge]","words":["pause","phones","audience"],"task":"Present"},{"id":"talk-qr","shortcut":"presenter.talk-qr","name":"Show talk QR code","icon":"qr-code","keys":"U","controls":["#liveTalkQr"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"instant-compose","shortcut":"presenter.instant-compose","name":"Compose instant slide…","icon":"zap","keys":"⌥⌘I","controls":["#presenterInstantButton","#navInstant"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"instant-paste","shortcut":"presenter.instant-paste","name":"Instant slide from clipboard","icon":"clipboard","keys":"⌘V","controls":["#liveInstantPaste"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"instant-back","shortcut":"presenter.instant-return","name":"Back to slide","icon":"undo-2","keys":"→","controls":["#liveInstantBack","#presenterInstantBack"],"code":null,"needs":null,"words":[],"task":"Present"}]],["Poll and questions",[{"id":"quick-poll","shortcut":"presenter.poll-compose","name":"Compose Quick poll…","icon":"vote","keys":"K","controls":["#presenterQuickPollButton","#navQuickPoll"],"code":null,"needs":"[data-tw-live-bridge]","words":[],"task":"Present"},{"id":"poll-primary","shortcut":"presenter.poll-primary","name":"Open or close current poll","icon":"lock-open","keys":"Q","controls":["#pollMenuPrimary","#presenterPollOpen","#presenterPollClose"],"code":null,"needs":"[data-tw-live-bridge]","words":[],"task":"Present"},{"id":"poll-reveal","shortcut":"presenter.poll-reveal","name":"Reveal results","icon":"eye","keys":"⇧ Q","controls":["#pollMenuReveal","#presenterPollReveal"],"code":null,"needs":"[data-tw-live-bridge]","words":[],"task":"Present"},{"id":"poll-panel","shortcut":null,"name":"Show poll panel","icon":"chart-bar","keys":"","controls":["#presenterPollPanelToggle"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"quick-poll-restore","shortcut":null,"name":"Show Quick poll on screens","icon":"monitor-play","keys":"","controls":["#presenterQuickPollRestore"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"quick-poll-dismiss","shortcut":null,"name":"Dismiss Quick poll","icon":"x","keys":"","controls":["#presenterQuickPollDismiss"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"board-close","shortcut":"presenter.poll-primary","name":"Close board to new cards or reopen it","icon":"lock","keys":"Q","controls":["#pollMenuBoardClose"],"code":null,"needs":"[data-tw-live-bridge]","words":["board","cards"],"task":"Present"},{"id":"board-freeze","shortcut":null,"name":"Freeze or unfreeze the board","icon":"snowflake","keys":"","controls":["#pollMenuBoardFreeze"],"code":null,"needs":"[data-tw-live-bridge]","words":["board","final"],"task":"Present"},{"id":"board-panel","shortcut":null,"name":"Show board panel","icon":"layout-grid","keys":"","controls":["#pollMenuBoardPanel"],"code":null,"needs":null,"words":["board","inbox"],"task":"Present"},{"id":"board-full","shortcut":null,"name":"Board full screen","icon":"maximize-2","keys":"","controls":["#pollMenuBoardFull"],"code":null,"needs":null,"words":["board"],"task":"Present"},{"id":"board-popout","shortcut":null,"name":"Pop out the board","icon":"picture-in-picture-2","keys":"","controls":["#pollMenuBoardPopout"],"code":null,"needs":null,"words":["board","window","screen"],"task":"Present"},{"id":"questions","shortcut":"presenter.questions","name":"Open questions","icon":"message-circle-question-mark","keys":"A","controls":["#pollMenuQuestions"],"code":null,"needs":"[data-tw-live-bridge]","words":[],"task":"Present"}]],["View",[{"id":"previews-larger","shortcut":"presenter.preview-size","name":"Larger previews","icon":"gallery-vertical-end","keys":"]","controls":[],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"previews-smaller","shortcut":"presenter.preview-size","name":"Smaller previews","icon":"gallery-vertical-end","keys":"[","controls":[],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"notes-off","shortcut":null,"name":"Notes: off","icon":"eye-off","keys":"","controls":["[data-notes-placement-option=\"off\"]"],"code":null,"needs":null,"words":["placement"],"task":"Present"},{"id":"notes-bottom","shortcut":null,"name":"Notes: bottom","icon":"panel-bottom","keys":"","controls":["[data-notes-placement-option=\"bottom\"]"],"code":null,"needs":null,"words":["placement"],"task":"Present"},{"id":"notes-sidebar","shortcut":null,"name":"Notes: sidebar","icon":"panel-right","keys":"","controls":["[data-notes-placement-option=\"sidebar\"]"],"code":null,"needs":null,"words":["placement"],"task":"Present"},{"id":"notes-top-band","shortcut":null,"name":"Notes: top band","icon":"panel-top","keys":"","controls":["[data-notes-placement-option=\"top-band\"]"],"code":null,"needs":null,"words":["placement","teleprompter"],"task":"Present"},{"id":"notes-camera-column","shortcut":null,"name":"Notes: camera column","icon":"webcam","keys":"","controls":["[data-notes-placement-option=\"camera-column\"]"],"code":null,"needs":null,"words":["placement","teleprompter"],"task":"Present"},{"id":"notes-scroll-hand","shortcut":null,"name":"Notes scroll by hand","icon":"hand","keys":"","controls":["[data-notes-scroll-option=\"hand\"]"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"notes-scroll-auto","shortcut":null,"name":"Notes scroll automatically","icon":"play","keys":"","controls":["[data-notes-scroll-option=\"auto\"]"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"notes-forward","shortcut":"presenter.notes-scroll","name":"Step notes forward","icon":"chevrons-down","keys":"J","controls":[],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"notes-back","shortcut":"presenter.notes-scroll","name":"Step notes back","icon":"chevrons-up","keys":"⇧J","controls":[],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"notes-faster","shortcut":null,"name":"Notes scroll faster","icon":"plus","keys":"","controls":["#notesWpmFaster"],"code":null,"needs":null,"words":["speed"],"task":"Present"},{"id":"notes-slower","shortcut":null,"name":"Notes scroll slower","icon":"minus","keys":"","controls":["#notesWpmSlower"],"code":null,"needs":null,"words":["speed"],"task":"Present"}]],["Slide on every screen",[{"id":"reveal","shortcut":"presenter.reveal","name":"Reveal mode","icon":"layers","keys":"R","controls":["#viewReveal","#presenterReveal"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"focus","shortcut":"presenter.focus","name":"Focus mode","icon":"focus","keys":"F","controls":["#presenterFocus","#viewFocus"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"pointer","shortcut":"presenter.pointer","name":"Pointer","icon":"mouse-pointer-2","keys":"I","controls":["#presenterPointer","#viewPointer","#morePointer"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"pen","shortcut":"presenter.pen","name":"Pen","icon":"pen-tool","keys":"D","controls":["#presenterPen","#viewPen","#morePen"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"pen-freehand","shortcut":null,"name":"Pen tool: Freehand","icon":"pen-line","keys":"","controls":["#penToolFreehand","#penStripFreehand"],"code":null,"needs":null,"words":["draw"],"task":"Present"},{"id":"pen-arrow","shortcut":null,"name":"Pen tool: Arrow","icon":"move-up-right","keys":"","controls":["#penToolArrow","#penStripArrow"],"code":null,"needs":null,"words":["draw"],"task":"Present"},{"id":"pen-rectangle","shortcut":null,"name":"Pen tool: Rectangle","icon":"square","keys":"","controls":["#penToolRectangle","#penStripRectangle"],"code":null,"needs":null,"words":["draw","box"],"task":"Present"},{"id":"pen-next-tool","shortcut":"presenter.pen-tool","name":"Pen: next tool","icon":"pen-tool","keys":"W","controls":[],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"ink-undo","shortcut":"presenter.ink-undo","name":"Undo last stroke","icon":"undo-2","keys":"⌘Z","controls":["#penUndo","#penStripUndo"],"code":null,"needs":null,"words":["pen","drawing"],"task":"Present"},{"id":"ink-clear","shortcut":"presenter.ink-clear","name":"Clear drawing on this slide","icon":"eraser","keys":"X","controls":["#presenterInkClear","#viewInkClear","#moreInkClear"],"code":null,"needs":null,"words":["pen"],"task":"Present"},{"id":"ink-clear-all","shortcut":"presenter.ink-clear-all","name":"Clear all drawings","icon":"eraser","keys":"⇧X","controls":["#viewInkClearAll","#moreInkClearAll"],"code":null,"needs":null,"words":["pen"],"task":"Present"},{"id":"highlight","shortcut":"presenter.highlight","name":"Highlight text","icon":"highlighter","keys":"H","controls":["#presenterHighlight","#viewHighlight"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"highlight-clear","shortcut":null,"name":"Clear highlights","icon":"eraser","keys":"","controls":["#presenterHighlightClear","#viewHighlightClear","#presenterHighlightChipClear"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"font-smaller","shortcut":"presenter.font-smaller","name":"Slide text smaller","icon":"a-arrow-down","keys":"−","controls":["#fontDown","#viewFontDown"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"font-larger","shortcut":"presenter.font-larger","name":"Slide text larger","icon":"a-arrow-up","keys":"+","controls":["#fontUp","#viewFontUp"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"media","shortcut":"presenter.media","name":"Play or pause media","icon":"play","keys":"M","controls":["#presenterMediaPlay","#presenterMediaPause"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"video-fullscreen","shortcut":"presenter.video-fullscreen","name":"Video full screen","icon":"fullscreen","keys":"V","controls":["#presenterVideoFullscreen"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"embed-fullscreen","shortcut":"presenter.embed-fullscreen","name":"Embedded page: full screen","icon":"maximize-2","keys":"Z","controls":["#presenterEmbedFullscreen"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"gallery","shortcut":"presenter.gallery","name":"Image gallery","icon":"images","keys":"Z","controls":["#presenterGalleryBtn"],"code":null,"needs":null,"words":[],"task":"Present"}]],["Editor and help",[{"id":"edit","shortcut":"presenter.edit","name":"Edit this slide in TalkWeaver","icon":"pencil","keys":"⌘E","controls":["#twedit-btn"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"refresh","shortcut":"presenter.refresh","name":"Refresh with latest edits","icon":"refresh-cw","keys":"⌘R / ⇧F5","controls":["#moreRefresh"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"shortcuts","shortcut":"presenter.help","name":"Keyboard shortcuts","icon":"keyboard","keys":"?","controls":["#viewShortcuts"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"guide","shortcut":"presenter.guide","name":"Guide: Present chapter","icon":"graduation-cap","keys":"C","controls":["#twguide-chip"],"code":null,"needs":"#twguide-chip","words":["learn","onboarding","chapter","tried"],"task":"Present"}]]];
+  const PRESENTER_PALETTE = [["Slides",[{"id":"next","shortcut":"presenter.next","name":"Next","icon":"arrow-right","keys":"→","controls":["#presenterNext"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"previous","shortcut":"presenter.previous","name":"Previous","icon":"arrow-left","keys":"←","controls":["#presenterPrev"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"skip","shortcut":"presenter.skip","name":"Skip next slide","icon":"skip-forward","keys":"S","controls":["#skipNextBtn"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"return","shortcut":"presenter.return","name":"Return to where you jumped from","icon":"undo-2","keys":"B","controls":["#returnBtn","#moreReturn"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"first","shortcut":"presenter.first","name":"First slide","icon":"chevron-first","keys":"Home","controls":["#presenterFirst"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"last","shortcut":"presenter.last","name":"Last slide","icon":"chevron-last","keys":"End","controls":["#presenterLast"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"outline","shortcut":"presenter.overview","name":"Outline","icon":"list-tree","keys":"O","controls":["#outlineBtn","#viewOutline"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"grid-card","shortcut":"presenter.grid-child","name":"Go to card on a grid slide","icon":"layout-grid","keys":"1–9","controls":["#moreGridCard"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"embed","shortcut":"presenter.embed","name":"Interact with embedded page","icon":"mouse-pointer-click","keys":"E","controls":["#moreEmbed"],"code":null,"needs":null,"words":[],"task":"Present"}]],["Timer",[{"id":"timer","shortcut":"presenter.timer","name":"Start, pause or resume timer","icon":"timer","keys":"P","controls":["#twClockBtn","#twStartTimerBtn"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"duration","shortcut":"presenter.duration","name":"Talk length and reminders…","icon":"alarm-clock","keys":"T","controls":["#twDurationBtn"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"reset-timer","shortcut":null,"name":"Reset timer","icon":"timer-reset","keys":"","controls":["#twResetBtn"],"code":null,"needs":null,"words":[],"task":"Present"}]],["Recording",[{"id":"record-start","shortcut":"presenter.record","name":"Start recording","icon":"circle-dot","keys":"⇧R","controls":["#twrec-primary"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"record-pause","shortcut":"presenter.record-pause","name":"Pause or resume recording","icon":"circle-pause","keys":"⇧P","controls":["#twrec-pause","#twrec-resume"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"record-stop","shortcut":"presenter.record","name":"Stop and save recording","icon":"square","keys":"⇧R","controls":["#twrec-stop"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"save-run-as","shortcut":"presenter.save-run-as","name":"Save run as…","icon":"tags","keys":"L","controls":["#twrec-change-kind"],"code":"l","needs":"#twrec-module","words":["run kind","history","change"],"task":"Present"}]],["Live",[{"id":"live","shortcut":"presenter.live","name":"Go live or end live session","icon":"radio","keys":"G","controls":["#liveGoButton","#presenterEndLive","#presenterGoLive"],"code":null,"needs":"[data-tw-live-bridge]","words":[],"task":"Present"},{"id":"audience","shortcut":"presenter.audience","name":"Open audience window","icon":"monitor-up","keys":"F5","controls":["#presenterAudienceApp"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"join-link","shortcut":null,"name":"Show join link and venue screen","icon":"scan-qr-code","keys":"","controls":["#liveShowJoin"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"copy-venue-link","shortcut":null,"name":"Copy venue-screen link","icon":"link","keys":"","controls":["#liveCopyVenueLink"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"allow-questions","shortcut":null,"name":"Allow slide questions","icon":"message-circle-question-mark","keys":"","controls":["#liveAllowQuestions"],"code":null,"needs":"[data-tw-live-bridge]","words":["pause","phones","audience"],"task":"Present"},{"id":"allow-reactions","shortcut":null,"name":"Allow slide reactions","icon":"smile-plus","keys":"","controls":["#liveAllowReactions"],"code":null,"needs":"[data-tw-live-bridge]","words":["pause","phones","audience"],"task":"Present"},{"id":"talk-qr","shortcut":"presenter.talk-qr","name":"Show talk QR code","icon":"qr-code","keys":"U","controls":["#liveTalkQr"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"instant-compose","shortcut":"presenter.instant-compose","name":"Compose instant slide…","icon":"zap","keys":"⌥⌘I","controls":["#presenterInstantButton","#navInstant"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"instant-paste","shortcut":"presenter.instant-paste","name":"Instant slide from clipboard","icon":"clipboard","keys":"⌘V","controls":["#liveInstantPaste"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"instant-back","shortcut":"presenter.instant-return","name":"Back to slide","icon":"undo-2","keys":"→","controls":["#liveInstantBack","#presenterInstantBack"],"code":null,"needs":null,"words":[],"task":"Present"}]],["Poll and questions",[{"id":"quick-poll","shortcut":"presenter.poll-compose","name":"Compose Quick poll…","icon":"vote","keys":"K","controls":["#presenterQuickPollButton","#navQuickPoll"],"code":null,"needs":"[data-tw-live-bridge]","words":[],"task":"Present"},{"id":"poll-primary","shortcut":"presenter.poll-primary","name":"Open or close current poll","icon":"lock-open","keys":"Q","controls":["#pollMenuPrimary","#presenterPollOpen","#presenterPollClose"],"code":null,"needs":"[data-tw-live-bridge]","words":[],"task":"Present"},{"id":"poll-reveal","shortcut":"presenter.poll-reveal","name":"Reveal results","icon":"eye","keys":"⇧ Q","controls":["#pollMenuReveal","#presenterPollReveal"],"code":null,"needs":"[data-tw-live-bridge]","words":[],"task":"Present"},{"id":"poll-panel","shortcut":null,"name":"Show poll panel","icon":"chart-bar","keys":"","controls":["#presenterPollPanelToggle"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"quick-poll-restore","shortcut":null,"name":"Show Quick poll on screens","icon":"monitor-play","keys":"","controls":["#presenterQuickPollRestore"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"quick-poll-dismiss","shortcut":null,"name":"Dismiss Quick poll","icon":"x","keys":"","controls":["#presenterQuickPollDismiss"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"board-close","shortcut":"presenter.poll-primary","name":"Close board to new cards or reopen it","icon":"lock","keys":"Q","controls":["#pollMenuBoardClose"],"code":null,"needs":"[data-tw-live-bridge]","words":["board","cards"],"task":"Present"},{"id":"board-freeze","shortcut":null,"name":"Freeze or unfreeze the board","icon":"snowflake","keys":"","controls":["#pollMenuBoardFreeze"],"code":null,"needs":"[data-tw-live-bridge]","words":["board","final"],"task":"Present"},{"id":"board-panel","shortcut":null,"name":"Show board panel","icon":"layout-grid","keys":"","controls":["#pollMenuBoardPanel"],"code":null,"needs":null,"words":["board","inbox"],"task":"Present"},{"id":"board-full","shortcut":null,"name":"Board full screen","icon":"maximize-2","keys":"","controls":["#pollMenuBoardFull"],"code":null,"needs":null,"words":["board"],"task":"Present"},{"id":"board-popout","shortcut":null,"name":"Pop out the board","icon":"picture-in-picture-2","keys":"","controls":["#pollMenuBoardPopout"],"code":null,"needs":null,"words":["board","window","screen"],"task":"Present"},{"id":"questions","shortcut":"presenter.questions","name":"Open questions","icon":"message-circle-question-mark","keys":"A","controls":["#pollMenuQuestions"],"code":null,"needs":"[data-tw-live-bridge]","words":[],"task":"Present"}]],["View",[{"id":"previews-larger","shortcut":"presenter.preview-size","name":"Larger previews","icon":"gallery-vertical-end","keys":"]","controls":[],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"previews-smaller","shortcut":"presenter.preview-size","name":"Smaller previews","icon":"gallery-vertical-end","keys":"[","controls":[],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"notes-off","shortcut":null,"name":"Notes: off","icon":"eye-off","keys":"","controls":["[data-notes-placement-option=\"off\"]"],"code":null,"needs":null,"words":["placement"],"task":"Present"},{"id":"notes-bottom","shortcut":null,"name":"Notes: bottom","icon":"panel-bottom","keys":"","controls":["[data-notes-placement-option=\"bottom\"]"],"code":null,"needs":null,"words":["placement"],"task":"Present"},{"id":"notes-sidebar","shortcut":null,"name":"Notes: sidebar","icon":"panel-right","keys":"","controls":["[data-notes-placement-option=\"sidebar\"]"],"code":null,"needs":null,"words":["placement"],"task":"Present"},{"id":"notes-top-band","shortcut":null,"name":"Notes: top band","icon":"panel-top","keys":"","controls":["[data-notes-placement-option=\"top-band\"]"],"code":null,"needs":null,"words":["placement","teleprompter"],"task":"Present"},{"id":"notes-camera-column","shortcut":null,"name":"Notes: camera column","icon":"webcam","keys":"","controls":["[data-notes-placement-option=\"camera-column\"]"],"code":null,"needs":null,"words":["placement","teleprompter"],"task":"Present"},{"id":"notes-scroll-hand","shortcut":null,"name":"Notes scroll by hand","icon":"hand","keys":"","controls":["[data-notes-scroll-option=\"hand\"]"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"notes-scroll-auto","shortcut":null,"name":"Notes scroll automatically","icon":"play","keys":"","controls":["[data-notes-scroll-option=\"auto\"]"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"notes-forward","shortcut":"presenter.notes-scroll","name":"Step notes forward","icon":"chevrons-down","keys":"J","controls":[],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"notes-back","shortcut":"presenter.notes-scroll","name":"Step notes back","icon":"chevrons-up","keys":"⇧J","controls":[],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"notes-faster","shortcut":null,"name":"Notes scroll faster","icon":"plus","keys":"","controls":["#notesWpmFaster"],"code":null,"needs":null,"words":["speed"],"task":"Present"},{"id":"notes-slower","shortcut":null,"name":"Notes scroll slower","icon":"minus","keys":"","controls":["#notesWpmSlower"],"code":null,"needs":null,"words":["speed"],"task":"Present"}]],["Slide on every screen",[{"id":"reveal","shortcut":"presenter.reveal","name":"Reveal mode","icon":"layers","keys":"R","controls":["#viewReveal","#presenterReveal"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"focus","shortcut":"presenter.focus","name":"Focus mode","icon":"focus","keys":"F","controls":["#presenterFocus","#viewFocus"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"pointer","shortcut":"presenter.pointer","name":"Pointer","icon":"mouse-pointer-2","keys":"I","controls":["#presenterPointer","#viewPointer","#morePointer"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"pen","shortcut":"presenter.pen","name":"Pen","icon":"pen-tool","keys":"D","controls":["#presenterPen","#viewPen","#morePen"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"pen-freehand","shortcut":null,"name":"Pen tool: Freehand","icon":"pen-line","keys":"","controls":["#penToolFreehand","#penStripFreehand"],"code":null,"needs":null,"words":["draw"],"task":"Present"},{"id":"pen-arrow","shortcut":null,"name":"Pen tool: Arrow","icon":"move-up-right","keys":"","controls":["#penToolArrow","#penStripArrow"],"code":null,"needs":null,"words":["draw"],"task":"Present"},{"id":"pen-rectangle","shortcut":null,"name":"Pen tool: Rectangle","icon":"square","keys":"","controls":["#penToolRectangle","#penStripRectangle"],"code":null,"needs":null,"words":["draw","box"],"task":"Present"},{"id":"return-live","shortcut":null,"name":"Return Live","icon":"radio","keys":"","controls":["#livePageReturnLive"],"code":null,"needs":null,"words":["web page","live page","freeze","frozen","pointer","pen"],"task":"Present"},{"id":"pen-next-tool","shortcut":"presenter.pen-tool","name":"Pen: next tool","icon":"pen-tool","keys":"W","controls":[],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"ink-undo","shortcut":"presenter.ink-undo","name":"Undo last stroke","icon":"undo-2","keys":"⌘Z","controls":["#penUndo","#penStripUndo"],"code":null,"needs":null,"words":["pen","drawing"],"task":"Present"},{"id":"ink-clear","shortcut":"presenter.ink-clear","name":"Clear drawing on this slide","icon":"eraser","keys":"X","controls":["#presenterInkClear","#viewInkClear","#moreInkClear"],"code":null,"needs":null,"words":["pen"],"task":"Present"},{"id":"ink-clear-all","shortcut":"presenter.ink-clear-all","name":"Clear all drawings","icon":"eraser","keys":"⇧X","controls":["#viewInkClearAll","#moreInkClearAll"],"code":null,"needs":null,"words":["pen"],"task":"Present"},{"id":"highlight","shortcut":"presenter.highlight","name":"Highlight text","icon":"highlighter","keys":"H","controls":["#presenterHighlight","#viewHighlight"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"highlight-clear","shortcut":null,"name":"Clear highlights","icon":"eraser","keys":"","controls":["#presenterHighlightClear","#viewHighlightClear","#presenterHighlightChipClear"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"font-smaller","shortcut":"presenter.font-smaller","name":"Slide text smaller","icon":"a-arrow-down","keys":"−","controls":["#fontDown","#viewFontDown"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"font-larger","shortcut":"presenter.font-larger","name":"Slide text larger","icon":"a-arrow-up","keys":"+","controls":["#fontUp","#viewFontUp"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"media","shortcut":"presenter.media","name":"Play or pause media","icon":"play","keys":"M","controls":["#presenterMediaPlay","#presenterMediaPause"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"video-fullscreen","shortcut":"presenter.video-fullscreen","name":"Video full screen","icon":"fullscreen","keys":"V","controls":["#presenterVideoFullscreen"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"embed-fullscreen","shortcut":"presenter.embed-fullscreen","name":"Embedded page: full screen","icon":"maximize-2","keys":"Z","controls":["#presenterEmbedFullscreen"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"gallery","shortcut":"presenter.gallery","name":"Image gallery","icon":"images","keys":"Z","controls":["#presenterGalleryBtn"],"code":null,"needs":null,"words":[],"task":"Present"}]],["Editor and help",[{"id":"edit","shortcut":"presenter.edit","name":"Edit this slide in TalkWeaver","icon":"pencil","keys":"⌘E","controls":["#twedit-btn"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"refresh","shortcut":"presenter.refresh","name":"Refresh with latest edits","icon":"refresh-cw","keys":"⌘R / ⇧F5","controls":["#moreRefresh"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"shortcuts","shortcut":"presenter.help","name":"Keyboard shortcuts","icon":"keyboard","keys":"?","controls":["#viewShortcuts"],"code":null,"needs":null,"words":[],"task":"Present"},{"id":"guide","shortcut":"presenter.guide","name":"Guide: Present chapter","icon":"graduation-cap","keys":"C","controls":["#twguide-chip"],"code":null,"needs":"#twguide-chip","words":["learn","onboarding","chapter","tried"],"task":"Present"}]]];
   /*END_SHORTCUT_HELP*/
 
   // ── The Guide's tick reports (onboarding 0.38.1 ticket 10) ──────────────────────────────────
@@ -20423,7 +21170,7 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
     moreGridCard: { run: () => { const target = gridCardTarget(1); if (target) goToContainerChild(target); }, enabled: () => Boolean(gridCardTarget(1)) },
     presenterReveal: { checked: () => armedMode() === "reveal" },
     presenterHighlightClear: { enabled: () => slideHasHighlights() },
-    moreEmbed: { run: () => toggleEmbedInteract(), enabled: () => Boolean(interactingFrame || activeInteractFrame()) },
+    moreEmbed: { run: () => toggleEmbedInteract(), enabled: () => Boolean(livePageActive() || interactingFrame || activeInteractFrame()) },
     fontDown: { stayOpen: true },
     fontUp: { stayOpen: true },
   };

@@ -194,6 +194,8 @@ export interface LayoutDef {
   titleRegime?: TitleRegime
   status: LayoutStatus
   sample: string
+  /** Markdown body structure shown by Explain, beside the canonical sample. */
+  authoring?: string
   description: string
   category: LayoutCategory
   /** ADR-0032 §4: the picker group this entry is browsed under. */
@@ -947,6 +949,7 @@ export const LAYOUTS: LayoutDef[] = [
   // -- Everyday ---------------------------------------------------------------
   {
     name: 'statement',
+    authoring: "Write one paragraph below the trigger. Keep the heading as the slide title.",
     label: 'Statement',
     trigger: '{statement}',
     aliases: [],
@@ -1035,6 +1038,7 @@ The registry is the product contract.`,
   },
   {
     name: 'list',
+    authoring: "Write each point as a top-level bullet (- followed by a space). Indent sub-bullets under their parent.",
     label: 'List',
     trigger: '{list}',
     aliases: [],
@@ -1143,6 +1147,7 @@ The registry is the product contract.`,
   },
   {
     name: 'quote',
+    authoring: "Start each quotation line with >. Put the attribution in a bullet after a blank line.",
     label: 'Quote',
     trigger: '{quote}',
     aliases: [],
@@ -1225,6 +1230,7 @@ The registry is the product contract.`,
   },
   {
     name: 'media',
+    authoring: "Write a Markdown image reference ![description](assets/file.png), a video reference or an embed on its own line.",
     label: 'Image',
     trigger: '{media}',
     aliases: [],
@@ -1244,6 +1250,7 @@ The registry is the product contract.`,
   },
   {
     name: 'contrast',
+    authoring: "Write exactly two top-level bullets: the first is the left side and the second is the right side. With no sub-bullets, Manual and Automated are the two sides. Indent sub-bullets under Before and After to supply each column. Do not use headings for the columns. Existing rows in which every bullet contains left / right remain supported; their slash separates the sides.",
     label: 'Contrast',
     trigger: '{contrast}',
     aliases: [],
@@ -1251,17 +1258,21 @@ The registry is the product contract.`,
     kind: 'layout',
     titleRegime: 'top',
     status: 'stable',
-    sample: `### Contrast
+    sample: `### Manual and automated
 {contrast}
 
-- Manual / Automated
-- Slow / Fast
+- Manual
+- Automated
 
-### Contrast rows
-{contrast=rows}
+### Before and after
+{contrast}
 
-- Manual / Automated
-- Slow / Fast`,
+- Before
+  - Manual work
+  - Separate tools
+- After
+  - Automated work
+  - One workspace`,
     description: 'Two-column comparison; opt-in variants: ledger, rows, tint and flip',
     category: 'everyday',
     purpose: 'Everyday',
@@ -1272,8 +1283,8 @@ The registry is the product contract.`,
       label: 'Variant',
       preview: 'thumbs',
       values: [
-        { token: '', label: 'Default', description: 'Opposing ledger rows, accent tick' },
-        { token: 'contrast=cards', label: 'Cards', description: 'Rich side-by-side comparison panels' },
+        { token: '', label: 'Default', description: 'Two panels with a vs divider' },
+        { token: 'contrast=cards', label: 'Cards', description: 'Legacy alias for the default panels' },
         { token: 'contrast=ledger', label: 'Ledger', description: 'Struck negative, ink positive' },
         { token: 'contrast=rows', label: 'Rows', description: 'Muted → ink typographic arrows' },
         { token: 'contrast=tint', label: 'Tint', description: 'Plain old, tinted-panel new' },
@@ -1283,6 +1294,7 @@ The registry is the product contract.`,
   },
   {
     name: 'compare',
+    authoring: "Use two child groups, each with a label and its body, as shown below. Keep both groups under the comparison heading.",
     label: 'Compare',
     trigger: '{compare}',
     aliases: [],
@@ -1308,6 +1320,7 @@ The learning.`,
   },
   {
     name: 'copy-visual',
+    authoring: "Write one visual reference and a text paragraph, separated by a blank line. The visual and copy share the slide.",
     label: 'Copy + visual',
     trigger: '{copy-visual}',
     aliases: [],
@@ -1329,6 +1342,7 @@ Text sits beside a single visual.`,
   },
   {
     name: 'cards',
+    authoring: "Write one top-level bullet per card. Use the Cards options to change how the cards appear.",
     label: 'Cards',
     trigger: '{cards}',
     aliases: [],
@@ -1386,6 +1400,7 @@ Text sits beside a single visual.`,
   },
   {
     name: 'carousel',
+    authoring: "Separate each thought with a blank line. Each block is a carousel item.",
     label: 'Carousel',
     trigger: '{carousel}',
     aliases: [],
@@ -1409,6 +1424,7 @@ Second thought.`,
   // -- Structural -------------------------------------------------------------
   {
     name: 'title',
+    authoring: "Write the title in the heading and any subtitle as a paragraph below the trigger.",
     label: 'Title',
     trigger: '{title}',
     aliases: [],
@@ -1428,6 +1444,7 @@ AICC Workshop 2026`,
   },
   {
     name: 'section',
+    authoring: "Write a level-two heading (##), followed by its child slides. An empty parent body becomes a section divider.",
     label: 'Section divider',
     trigger: '{role=section-title}',
     aliases: [],
@@ -1448,6 +1465,7 @@ AICC Workshop 2026`,
   },
   {
     name: 'subsection',
+    authoring: "Write {sub} under the subsection heading, then its child slides. Leave the divider body empty.",
     label: 'Subsection divider',
     trigger: '{sub}',
     aliases: ['sub'],
@@ -1472,6 +1490,7 @@ AICC Workshop 2026`,
   },
   {
     name: 'closing',
+    authoring: "Write a closing message below the trigger. Separate a link or contact line with a blank line.",
     label: 'Closing',
     trigger: '{closing}',
     aliases: [],
@@ -1493,6 +1512,7 @@ yoursite.example`,
   },
   {
     name: 'timeline',
+    authoring: "Write one top-level bullet per stop. Put its date or label on the parent and indent the stop details below it.",
     label: 'Timeline',
     trigger: '{timeline}',
     aliases: [],
@@ -1539,6 +1559,7 @@ yoursite.example`,
   },
   {
     name: 'grid',
+    authoring: "Write one bullet per tile. Set the grid dimensions with a token such as {blocks:2x2}.",
     label: 'Grid',
     trigger: '{grid}',
     aliases: [],
@@ -1561,6 +1582,7 @@ yoursite.example`,
   },
   {
     name: 'system-map',
+    authoring: "Write the system as a parent bullet and indent its parts as sub-bullets.",
     label: 'System map',
     trigger: '{system-map}',
     aliases: [],
@@ -1594,6 +1616,7 @@ yoursite.example`,
   // -- Specialised ------------------------------------------------------------
   {
     name: 'smartart',
+    authoring: "Write a bullet hierarchy. Indentation defines the branches of the diagram.",
     label: 'SmartArt',
     trigger: '{smartart}',
     aliases: [],
@@ -1616,6 +1639,7 @@ yoursite.example`,
   },
   {
     name: 'timeline-visual',
+    authoring: "Write timeline stops as bullets, then a commentary paragraph separated by a blank line.",
     label: 'Timeline + comment',
     trigger: '{timeline-visual}',
     aliases: [],
@@ -1639,6 +1663,7 @@ A timeline with a comment lays the two side by side.`,
   },
   {
     name: 'list-visual',
+    authoring: "Write the feature bullets and a visual reference in separate blocks, with a blank line between them.",
     label: 'List + media',
     trigger: '{list-visual}',
     aliases: [],
@@ -1662,6 +1687,7 @@ A timeline with a comment lays the two side by side.`,
   },
   {
     name: 'flow',
+    authoring: "Write one top-level bullet per node in order. Indent details under the node they belong to.",
     label: 'Flow diagram',
     trigger: '{flow}',
     aliases: [],
@@ -1695,6 +1721,7 @@ A timeline with a comment lays the two side by side.`,
   },
   {
     name: 'image-claim',
+    authoring: "Write an image reference on its own line, then the claims as bullets after a blank line.",
     label: 'Image + claim',
     trigger: '{image-claim}',
     aliases: [],
@@ -1717,6 +1744,7 @@ A timeline with a comment lays the two side by side.`,
   },
   {
     name: 'cta-screenshots',
+    authoring: "Write the screenshot image reference, then the caption and an action token such as [Action: Get started -> https://example.com].",
     label: 'CTA + screenshots',
     trigger: '{cta-screenshots}',
     aliases: [],
@@ -1739,6 +1767,7 @@ A timeline with a comment lays the two side by side.`,
   },
   {
     name: 'trace',
+    authoring: "Write speaker-labelled turns as bullets, using a colon between each speaker and message.",
     label: 'Trace (transcript)',
     trigger: '{trace}',
     aliases: [],
@@ -1759,6 +1788,7 @@ A timeline with a comment lays the two side by side.`,
   },
   {
     name: 'trace-dialogue',
+    authoring: "Write one speaker-labelled turn per line, with a colon between the speaker and message.",
     label: 'Trace (any dialogue)',
     trigger: '{trace}',
     aliases: [],
@@ -1780,6 +1810,7 @@ Listener: It is still a trace.`,
   },
   {
     name: 'chat',
+    authoring: "Enclose the conversation in a fenced chat block: three backticks followed by chat, then the turns, then three closing backticks. Supported labels are user:, bot:, model-reasoning:, context-retrieval:, tool-call: and tool-results:. A reasoning label may include a duration such as (4s). \n\nMessage bodies render literal text: Markdown emphasis, links and bullets inside a message are not formatted. AI chat shows hidden work as disclosure rows; choose AI chat with behind the scenes to put that work in a separate panel.\n\nIn the Inspector, open Layout for History sidebar, Text size, Reveal, Streaming and Disclosures.",
     label: 'AI chat',
     trigger: '{chat}',
     aliases: [],
@@ -1809,6 +1840,7 @@ bot: The refund window shrank from 30 to 14 days.
   },
   {
     name: 'chat-lanes',
+    authoring: "Use a fenced chat block with user:, bot:, model-reasoning:, context-retrieval:, tool-call: and tool-results: labels. Indent continuation lines under their turn. Close the block with three backticks. \n\nMessage bodies render literal text rather than inline Markdown. This layout places hidden work beside the conversation; AI chat shows it as disclosure rows.\n\nIn the Inspector, open Layout for History sidebar, Text size, Reveal, Streaming and Disclosures.",
     label: 'AI chat with behind the scenes',
     trigger: '{chat-lanes}',
     aliases: [],
@@ -1836,6 +1868,7 @@ bot: The refund window shrank from 30 to 14 days.
   },
   {
     name: 'terminal',
+    authoring: "Enclose shell text in a fenced terminal block and close it with three backticks. Start commands with $; following lines are their output.",
     label: 'Terminal',
     trigger: '{terminal}',
     aliases: [],
@@ -1861,6 +1894,7 @@ a41c9e2 Cut refund window to 14 days
   },
   {
     name: 'terminal-agent',
+    authoring: "Enclose labelled turns in a fenced terminal block. Use user:, bot:, model-reasoning:, context-retrieval:, tool-call: and tool-results:. Close the block with three backticks.",
     label: 'Agent in a terminal',
     trigger: '{terminal-agent}',
     aliases: [],
@@ -1912,6 +1946,7 @@ def greet():
   },
   {
     name: 'table',
+    authoring: "Write each column as a parent bullet and its cells as indented sub-bullets, in row order. A Markdown pipe table is also supported.",
     label: 'Table',
     trigger: '{table}',
     aliases: [],
@@ -2068,6 +2103,7 @@ https://example.com`,
   },
   {
     name: 'image-quote',
+    authoring: "Write an image reference, a quotation starting with >, and an attribution bullet as separate blocks.",
     label: 'Image + quote',
     trigger: '{image-quote}',
     aliases: ['imagequote'],
@@ -2091,6 +2127,7 @@ https://example.com`,
   },
   {
     name: 'image-grid',
+    authoring: "Write each image as a Markdown image reference in its own block, separated by a blank line.",
     label: 'Image grid',
     trigger: '{image-grid}',
     aliases: ['imagegrid'],
@@ -2112,6 +2149,7 @@ https://example.com`,
   },
   {
     name: 'chart',
+    authoring: "Write one bullet per value as label: number. Choose the chart type in the layout options.",
     label: 'Chart',
     trigger: '{chart}',
     aliases: [],
@@ -2159,6 +2197,7 @@ https://example.com`,
   },
   {
     name: 'barchart',
+    authoring: "Write one bullet per bar as label: number.",
     label: 'Bar chart',
     trigger: '{barchart}',
     aliases: [],
@@ -2188,6 +2227,7 @@ https://example.com`,
   },
   {
     name: 'piechart',
+    authoring: "Write one bullet per slice as label: number.",
     label: 'Pie chart',
     trigger: '{piechart}',
     aliases: [],
@@ -2217,6 +2257,7 @@ https://example.com`,
   },
   {
     name: 'linechart',
+    authoring: "Write the points in order as bullets containing label: number.",
     label: 'Line chart',
     trigger: '{linechart}',
     aliases: ['curve'],
@@ -2246,6 +2287,7 @@ https://example.com`,
   },
   {
     name: 'sigmoid',
+    authoring: "Write the stages as bullets containing label: number.",
     label: 'S-curve (sigmoid)',
     trigger: '{sigmoid}',
     aliases: [],
@@ -2267,6 +2309,7 @@ https://example.com`,
   },
   {
     name: 'timetable',
+    authoring: "Write one bullet per entry with its time, a hyphen and its description.",
     label: 'Timetable',
     trigger: '{timetable}',
     aliases: [],
@@ -2288,6 +2331,7 @@ https://example.com`,
   },
   {
     name: 'table-outline',
+    authoring: "Write each column heading as a parent bullet, then indent its cells in row order.",
     label: 'Table from outline',
     trigger: '{table}',
     aliases: [],
@@ -2333,6 +2377,7 @@ https://example.com`,
   },
   {
     name: 'stmt-list',
+    authoring: "Write the claim as a paragraph, then the points as bullets after a blank line.",
     label: 'Statement + list',
     trigger: '{stmt-list}',
     aliases: ['stmtlist'],
@@ -2355,6 +2400,7 @@ The claim sits beside the list.
   },
   {
     name: 'links',
+    authoring: "Write Markdown links as [label](https://example.com), with separate links in separate blocks.",
     label: 'Links index',
     trigger: '{links}',
     aliases: [],
@@ -2376,6 +2422,7 @@ The claim sits beside the list.
   // -- Diagrams ---------------------------------------------------------------
   {
     name: 'columns',
+    authoring: "Use child groups beneath the slide heading, one group per column, as shown in the example.",
     label: 'Columns',
     trigger: '{columns}',
     aliases: [],
@@ -2456,6 +2503,7 @@ The claim sits beside the list.
   },
   {
     name: 'pyramid',
+    authoring: "Write the tiers as top-level bullets, from apex to base. Indent details under the relevant tier.",
     label: 'Pyramid',
     trigger: '{pyramid}',
     aliases: [],
@@ -2477,6 +2525,7 @@ The claim sits beside the list.
   },
   {
     name: 'orgchart',
+    authoring: "Write the lead as a parent bullet and indent its reports beneath it. Further indentation creates deeper levels.",
     label: 'Org chart',
     trigger: '{orgchart}',
     aliases: [],
@@ -2498,6 +2547,7 @@ The claim sits beside the list.
   },
   {
     name: 'mindmap',
+    authoring: "Write the central topic as a parent bullet and indent its branches beneath it.",
     label: 'Mind map',
     trigger: '{mindmap}',
     aliases: [],
@@ -2585,6 +2635,7 @@ flowchart LR
   },
   {
     name: 'conceptmap',
+    authoring: "Write one relationship per bullet as source -relationship- target.",
     label: 'Concept map',
     trigger: '{conceptmap}',
     aliases: [],
@@ -2605,6 +2656,7 @@ flowchart LR
   },
   {
     name: 'stats',
+    authoring: "Write one bullet per statistic as value: description.",
     label: 'Stats',
     trigger: '{stats}',
     aliases: [],
@@ -2625,6 +2677,7 @@ flowchart LR
   },
   {
     name: 'process',
+    authoring: "Write one top-level bullet per stage, in process order.",
     label: 'Process / agenda strip',
     trigger: '{process}',
     aliases: ['agenda'],
@@ -2646,6 +2699,7 @@ flowchart LR
   },
   {
     name: 'steps',
+    authoring: "Write one top-level bullet per step, in order.",
     label: 'Steps',
     trigger: '{steps}',
     aliases: ['stairs'],
@@ -2667,6 +2721,7 @@ flowchart LR
   },
   {
     name: 'iconrow',
+    authoring: "Write one top-level bullet per item. Add {icon=lucide:name} to choose its icon; indent supporting text beneath the item.",
     label: 'Icon row',
     trigger: '{iconrow}',
     aliases: ['icon-row'],
@@ -2689,6 +2744,7 @@ flowchart LR
   },
   {
     name: 'cycle',
+    authoring: "Write one top-level bullet per stage, in cycle order.",
     label: 'Cycle',
     trigger: '{cycle}',
     aliases: [],
@@ -2709,6 +2765,7 @@ flowchart LR
   },
   {
     name: 'equation',
+    authoring: "Write one top-level bullet per term. The trigger chooses the equation treatment.",
     label: 'Equation',
     trigger: '{equation=pills}',
     aliases: ['equation=circle', 'equation=square', 'equation=oval'],
@@ -3246,6 +3303,7 @@ Three short steps before Monday.
   },
   {
     name: 'grid-linear',
+    authoring: "Put the container trigger under a level-two section heading. Its child slides supply the grid items.",
     label: 'Grid linear',
     trigger: '{grid-linear}',
     aliases: [],
@@ -3270,6 +3328,7 @@ Three short steps before Monday.
   },
   {
     name: 'grid-zoom',
+    authoring: "Put the container trigger under a level-two section heading. Its child slides supply the zoomable grid items.",
     label: 'Grid zoom',
     trigger: '{grid-zoom}',
     aliases: [],
@@ -3294,6 +3353,7 @@ Three short steps before Monday.
   },
   {
     name: 'contents',
+    authoring: "Put {contents} under the section heading. Its child headings supply the contents entries.",
     label: 'Contents',
     trigger: '{contents}',
     aliases: [],
@@ -3337,6 +3397,7 @@ Three short steps before Monday.
   },
   {
     name: 'timer-audience',
+    authoring: "Put {timer=10min}{timer-audience} under the section heading and the timed slides beneath it.",
     label: 'Timer audience',
     trigger: '{timer-audience}',
     aliases: [],
@@ -3493,9 +3554,25 @@ export interface ComponentInsertEntry {
   menuLabel: string
   commandLabel: string
   commandId: `insert-component-${string}`
-  /** The source written at the cursor, as its own blank-line-separated block. */
+  /** The source written at the cursor, as its own blank-line-separated block (empty for a planner entry). */
   snippet: string
   keywords: string[]
+  /**
+   * Written by a planner instead of a snippet. `notes`: speaker notes for the slide at the caret, through
+   * the notes planner, which the compiler's reading must confirm keeps them private (notes-planner.ts).
+   */
+  planner?: 'notes'
+}
+
+/** Speaker notes in the Insert registry (ADR-0042): not a layout, written by the notes planner, never as a snippet. */
+const NOTES_INSERT_ENTRY: ComponentInsertEntry = {
+  name: 'notes',
+  menuLabel: 'Speaker notes',
+  commandLabel: 'Insert speaker notes',
+  commandId: 'insert-component-notes',
+  snippet: '',
+  keywords: ['insert', 'speaker notes', 'notes', 'presenter', 'private', 'script'],
+  planner: 'notes'
 }
 
 const COMPONENT_INSERT_PRESENTATION: Record<string, {
@@ -3515,6 +3592,10 @@ const COMPONENT_INSERT_PRESENTATION: Record<string, {
 export function componentInsertEntries(
   layouts: readonly LayoutDef[] = LAYOUTS
 ): ComponentInsertEntry[] {
+  return [...componentLayoutEntries(layouts), NOTES_INSERT_ENTRY]
+}
+
+function componentLayoutEntries(layouts: readonly LayoutDef[]): ComponentInsertEntry[] {
   return layouts
     .filter((entry) => entry.kind === 'component' && entry.object === undefined)
     .map((entry): ComponentInsertEntry => {

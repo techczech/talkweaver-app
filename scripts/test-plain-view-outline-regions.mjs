@@ -2,7 +2,8 @@
 // labels text only on lines the compiler reads as outline. Fenced code (whatever the mark and its
 // length), a comment, the speaker notes and the front matter stay ordinary text.
 //
-// In the editor, mounted as the app mounts it (its token protection, history, key bindings):
+// In an inline-source editor with the app’s token protection, history and key bindings, without
+// replacing source regions with object cards (the separate object suites cover those cards):
 //   - on every document of scripts/fixtures/plain-view-outline-regions.json, each protected
 //     region, each icon item, each placeholder and each margin label is on a line the compiler
 //     reads as outline (scripts/lib/plain-view-compiler-lines.mjs: its outline tree), and the
@@ -54,7 +55,7 @@ window.mount = (doc, mode = 'plain') => {
     extensions: [
       history(), markdown({ base: markdownLanguage, codeLanguages: languages }),
       tokenProtectExtension(), focusScopeExtension(), frontmatterTableExtension(),
-      appKeyState(), search(),
+      appKeyState({ sourceOnly: true }), search(),
       keymap.of([...editorBaseKeymap]),
       Prec.highest(keymap.of(buildEditorKeyBindings())),
       compartment.of(viewModeExtension(mode, { iconSvg: async () => STAR })),

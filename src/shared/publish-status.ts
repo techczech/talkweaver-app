@@ -24,7 +24,8 @@ export type PublishNotReady = {
   /** The missing thing, named. */
   title: string
   detail: string | null
-  fix: { action: 'open-settings' | 'create-site'; label: string }
+  /** Every fix is in Settings → Cloudflare: making the site there too (it saves the account and site, Settings configuration). */
+  fix: { action: 'open-settings'; label: string }
 }
 
 const inSettings = { action: 'open-settings', label: OPEN_SETTINGS } as const
@@ -57,10 +58,7 @@ export function publishNotReady(status: CloudflareStatus): PublishNotReady | nul
     case 'ready':
       return null
     case 'no-site':
-      return {
-        kind: 'not-ready', title: 'No site yet', detail: `Handouts are published to the Cloudflare Pages site ${publishing.project}, which does not exist yet.`,
-        fix: { action: 'create-site', label: `Create ${publishing.project}` },
-      }
+      return notReady('No site yet', `Handouts are published to the Cloudflare Pages site ${publishing.project}, which does not exist yet. Create it in Settings → Cloudflare.`)
     case 'no-permission':
       return notReady('The token cannot publish pages', `Add this permission to the token: ${publishing.permission ?? PAGES_PERMISSION}.`)
     case 'creating':

@@ -34,11 +34,14 @@ jobs:
     # in `unit-macos` instead (kept skipped here so the hosted Linux fallback passes):
     #   test:vault-paths  needs APFS Unicode normalisation (NFC/NFD folder names);
     #                     ext4 on Linux keeps the two forms distinct, so it fails there.
+    #   test:html-page-import, test:live-page-capture, test:live-page-capture-window
+    #   test:live-page-capture-markup
+    #                     exercise macOS-only no-link filesystem operations; other platforms refuse.
     if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name != 'pull_request'
     runs-on: ${{ inputs.hosted && 'ubuntu-latest' || fromJSON('["self-hosted","macOS","ARM64"]') }}
     timeout-minutes: 20
     env:
-      MACOS_ONLY_TESTS: test:vault-paths
+      MACOS_ONLY_TESTS: test:vault-paths test:html-page-import test:live-page-capture test:live-page-capture-window test:live-page-capture-markup
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,10 +49,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
       # test:board-panel (unit tier) runs `bun test`, so bun is needed before test:unit.
       - uses: oven-sh/setup-bun@v2
-      - run: npm ci
+        with:
+          bun-version-file: .bun-version
+      - name: Cache Bun packages
+        if: ${{ inputs.hosted }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+      - run: bun install --frozen-lockfile
       - run: npm run typecheck
       - name: Unit tier (minus macOS-only scripts)
         run: |
@@ -77,9 +87,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
       - uses: oven-sh/setup-bun@v2
-      - run: npm ci
+        with:
+          bun-version-file: .bun-version
+      - name: Cache Bun packages
+        if: ${{ inputs.hosted }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+      - run: bun install --frozen-lockfile
       - run: npm run test:unit
 
   browser-tiers:
@@ -101,9 +118,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
       - uses: oven-sh/setup-bun@v2
-      - run: npm ci
+        with:
+          bun-version-file: .bun-version
+      - name: Cache Bun packages
+        if: ${{ inputs.hosted }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+      - run: bun install --frozen-lockfile
       # On the Studio runner PLAYWRIGHT_BROWSERS_PATH (runner .env) points at a shared
       # cache under ~/actions-runner, so browsers are not installed per user or globally.
       - name: Install Playwright Chromium

@@ -336,7 +336,7 @@ function PlaybackController({
   useEffect(() => {
     const audio = audioRef.current
     if (!audio || !active) return
-    audio.src = `twrec://${active.id}`
+    audio.src = `twrec://${active.id}?talk=${encodeURIComponent(active.talkSlug)}`
     audio.load()
     curMsRef.current = 0
     durMsRef.current = active.recordingMs ?? 0

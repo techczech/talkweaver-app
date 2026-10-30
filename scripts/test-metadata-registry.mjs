@@ -102,11 +102,14 @@ if (failures === 0) ok(`${METADATA_REGISTRY.length} entries well-formed (locatio
 // Reads that LOOK like metadata-key accesses but are not talk-outline metadata. Every entry
 // needs a reason; delete the entry when the code it excuses goes away.
 const SCAN_IGNORE = new Map([
+  ['url', 'The url: research source prefix (ResearchPanel.tsx) is provenance, not a deck frontmatter key'],
   // 13-slide-ledger.mjs builds a local `const meta = new Map()` of heading functions.
   ['get', 'Map.get on a local variable named meta (13-slide-ledger.mjs), not frontmatter'],
   ['set', 'Map.set on a local variable named meta (13-slide-ledger.mjs), not frontmatter'],
   // setup-cli.ts validates the R2 endpoint with /^https:\/\/…/; the `^https:` is a URL scheme, not a key.
   ['https', 'URL scheme in the R2 endpoint regex (src/main/setup-cli.ts), not frontmatter'],
+  // object-status.ts tests a picture reference with /^data:/ (an inline data: URL counts as present).
+  ['data', 'URL scheme in the data: reference check (src/main/object-status.ts), not frontmatter'],
   // The legacy JSON slide-library adapter reads PER-SLIDE frontmatter of library entries
   // (role/id/message/…), a retired input format — not talk-outline metadata (ADR-0036 scope).
   ...['role', 'id', 'message', 'prepares_for', 'preparesFor', 'section', 'subsection',

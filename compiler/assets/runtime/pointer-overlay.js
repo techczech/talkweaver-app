@@ -1,21 +1,27 @@
 // Live marks never enter slide markup or preview documents. The SVG has independent ink and
 // pointer groups: the Pen can append shapes to strokes without rebuilding the Ring or capture.
+// Spaces: 'slide' (1280×720 canvas units), 'image' (0–1 on a zoomed image) and 'still' (0–1 on a
+// frozen live web page picture, named by `still`, its 16-hex id; shown only over that same picture).
 export function pointerPoint(clientX, clientY, rect, space = 'slide') {
   if (!rect || rect.width <= 0 || rect.height <= 0 || !Number.isFinite(clientX) || !Number.isFinite(clientY)) return null;
   const x = (clientX - rect.left) / rect.width, y = (clientY - rect.top) / rect.height;
   if (x < 0 || x > 1 || y < 0 || y > 1) return null;
-  return { x: x * (space === 'image' ? 1 : 1280), y: y * (space === 'image' ? 1 : 720), space };
+  const unit = space === 'image' || space === 'still';
+  return { x: x * (unit ? 1 : 1280), y: y * (unit ? 1 : 720), space };
 }
 export function pointerPixels(point, rect) {
-  return { x: rect.left + point.x / (point.space === 'image' ? 1 : 1280) * rect.width,
-    y: rect.top + point.y / (point.space === 'image' ? 1 : 720) * rect.height };
+  const unit = point.space === 'image' || point.space === 'still';
+  return { x: rect.left + point.x / (unit ? 1 : 1280) * rect.width,
+    y: rect.top + point.y / (unit ? 1 : 720) * rect.height };
 }
 export function validPointer(value) {
   if (value === 'gone') return true;
-  if (!value || !['slide', 'image'].includes(value.space) || typeof value.slideId !== 'string'
+  if (!value || !['slide', 'image', 'still'].includes(value.space) || typeof value.slideId !== 'string'
     || !value.slideId.trim() || value.slideId.length > 100) return false;
-  return typeof value.x === 'number' && Number.isFinite(value.x) && value.x >= 0 && value.x <= (value.space === 'image' ? 1 : 1280)
-    && typeof value.y === 'number' && Number.isFinite(value.y) && value.y >= 0 && value.y <= (value.space === 'image' ? 1 : 720);
+  if (value.space === 'still' ? typeof value.still !== 'string' || !/^[0-9a-f]{16}$/.test(value.still) : value.still !== undefined) return false;
+  const unit = value.space === 'image' || value.space === 'still';
+  return typeof value.x === 'number' && Number.isFinite(value.x) && value.x >= 0 && value.x <= (unit ? 1 : 1280)
+    && typeof value.y === 'number' && Number.isFinite(value.y) && value.y >= 0 && value.y <= (unit ? 1 : 720);
 }
 // `drawInk(group, view, { rect, canvasScale })` draws the Pen's ink (pen-ink.js penDraw); the overlay
 // shows a view only on the surface it belongs to (same slide, same space, same zoomed image).
@@ -41,7 +47,8 @@ export function createPointerOverlay({ document, surface, onMove = undefined, st
   const style = document.createElement('style');
   style.textContent = '@media print{.tw-live-overlay{display:none!important}}';
   document.head.append(style);
-  /** @type {import('../../../worker/protocol.ts').PointerMessage['pointer']} */
+  // The worker's pointer plus the app-only 'still' space (worker/protocol.ts refuses that one).
+  /** @type {import('../../../worker/protocol.ts').PointerMessage['pointer'] | { x: number, y: number, space: 'still', still: string, slideId: string }} */
   let point = 'gone';
   let armed = false, timer, frame, observed;
   let penArmed = false, penCursorCss = '', inkView = null, inkVersion = 0, inkDrawn = '';
@@ -55,7 +62,8 @@ export function createPointerOverlay({ document, surface, onMove = undefined, st
     drawInk(strokes, view, { rect, canvasScale });
   };
   const inkShown = (s) => Boolean(inkView && s && inkView.slideId === s.slideId && inkView.space === s.space
-    && (s.space !== 'image' || inkView.image === (s.image ?? 0)) && (inkView.strokes.length || inkView.draft));
+    && (s.space !== 'image' || inkView.image === (s.image ?? 0)) && (s.space !== 'still' || inkView.still === s.still)
+    && (inkView.strokes.length || inkView.draft));
   function refresh() {
     const s = surface();
     const rect = s?.rect;
@@ -66,7 +74,8 @@ export function createPointerOverlay({ document, surface, onMove = undefined, st
       watch.observe(observed);
       if (observed.parentElement) watch.observe(observed.parentElement);
     }
-    const visible = point !== 'gone' && point.slideId === s?.slideId && point.space === s?.space;
+    const visible = point !== 'gone' && point.slideId === s?.slideId && point.space === s?.space
+      && (point.space !== 'still' || point.still === s?.still);
     const usable = rect && rect.width > 0 && rect.height > 0;
     const ink = usable && inkShown(s);
     root.style.display = usable && (armed || penArmed || visible || ink) ? '' : 'none';
@@ -84,8 +93,9 @@ export function createPointerOverlay({ document, surface, onMove = undefined, st
     drawInkOnce(ink ? inkView : null, rect, s.canvasScale ?? rect.width / 1280);
     if (point !== 'gone') {
       const pixelScale = s.canvasScale ?? rect.width / 1280;
-      const x = point.x * (point.space === 'image' ? 1280 : 1);
-      const y = point.y * (point.space === 'image' ? 720 : 1);
+      const unit = point.space === 'image' || point.space === 'still';
+      const x = point.x * (unit ? 1280 : 1);
+      const y = point.y * (unit ? 720 : 1);
       // Position uses the image rect; size always uses the slide canvas, independently on both axes.
       ring.setAttribute('transform', `translate(${x} ${y}) scale(${pixelScale * 1280 / rect.width} ${pixelScale * 720 / rect.height})`);
     }
@@ -102,7 +112,7 @@ export function createPointerOverlay({ document, surface, onMove = undefined, st
     if (!armed) return;
     const s = surface();
     const p = s && pointerPoint(event.clientX, event.clientY, s.rect, s.space);
-    const next = p ? { ...p, slideId: s.slideId } : 'gone';
+    const next = p ? { ...p, slideId: s.slideId, ...(s.space === 'still' ? { still: s.still } : {}) } : 'gone';
     show(next);
     onMove?.(next);
   }

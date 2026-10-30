@@ -15,7 +15,7 @@
 //   - `set` (what this one call asks for, e.g. the token): passed as given, except names that change
 //     how Node itself starts, which are refused.
 //
-// Variables read by wrangler 4.144, miniflare 5, esbuild 0.28, workerd and Node that select an
+// Variables read by wrangler 4.153 (and 4.144 before it), miniflare 5, esbuild 0.28, workerd and Node that select an
 // executable, a module path, a settings location or an endpoint. None is in INHERITED_NAMES, so none
 // can arrive from the inherited side (scripts/test-wrangler-launcher.mjs checks each):
 //   executables   ESBUILD_BINARY_PATH, MINIFLARE_WORKERD_PATH, CLOUDFLARED_PATH, WRANGLER_DOCKER_BIN,
@@ -35,7 +35,8 @@
 //   identity      CLOUDFLARE_API_TOKEN, CLOUDFLARE_API_KEY, CLOUDFLARE_EMAIL, CLOUDFLARE_ACCOUNT_ID,
 //                 CF_API_TOKEN, CF_API_KEY, CF_EMAIL, CF_ACCOUNT_ID, CLOUDFLARE_ACCESS_CLIENT_ID,
 //                 CLOUDFLARE_ACCESS_CLIENT_SECRET, WRANGLER_CF_AUTHORIZATION_TOKEN,
-//                 WRANGLER_R2_SQL_AUTH_TOKEN, CF_PAGES_UPLOAD_JWT, WRANGLER_CLIENT_ID,
+//                 WRANGLER_R2_SQL_AUTH_TOKEN (4.144; WRANGLER_BASIN_SQL_AUTH_TOKEN from 4.153),
+//                 CF_PAGES_UPLOAD_JWT, WRANGLER_CLIENT_ID,
 //                 CLOUDFLARE_CLIENT_ID, WRANGLER_CI_OVERRIDE_NAME, WRANGLER_CI_MATCH_TAG,
 //                 WORKERS_CI_BRANCH, CF_PAGES_COMMIT_SHA
 // Kept on purpose, because a machine behind a proxy cannot publish without them: the proxy variables.

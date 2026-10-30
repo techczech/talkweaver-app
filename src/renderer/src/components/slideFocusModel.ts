@@ -111,7 +111,7 @@ export function nextFocusableSlide(slideLines: readonly (number | null)[], index
 }
 
 /** The FIRST focusable slide at/after `index` (used when an entry point lands on a synthesized row —
- *  e.g. ⌘⇧F with the caret on a section divider). null when the talk has no focusable slide at all. */
+ *  e.g. ⌘⌥⇧F with the caret on a section divider). null when the talk has no focusable slide at all. */
 export function firstFocusableFrom(slideLines: readonly (number | null)[], index: number): number | null {
   const n = slideLines.length
   for (let i = Math.max(0, index); i < n; i += 1) if (slideLines[i] != null) return i

@@ -5,7 +5,9 @@ import { dirname, join } from "node:path";
 import assert from "node:assert/strict";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const src = readFileSync(join(here, "..", "compiler", "assets", "runtime", "overview.js"), "utf8");
+// The runtime as the pages get it: the generated search rule (SlideSearch) in front of overview.js.
+const runtimeDir = join(here, "..", "compiler", "assets", "runtime");
+const src = readFileSync(join(runtimeDir, "slide-search.js"), "utf8") + readFileSync(join(runtimeDir, "overview.js"), "utf8");
 const { rankSlides, deriveSlideStatus, preferredOverviewRow, clampOverviewHighlight } = new Function(`${src}\nreturn { rankSlides, deriveSlideStatus, preferredOverviewRow: typeof preferredOverviewRow === "function" ? preferredOverviewRow : null, clampOverviewHighlight: typeof clampOverviewHighlight === "function" ? clampOverviewHighlight : null };`)();
 
 let passed = 0;
@@ -20,11 +22,12 @@ const slides = [
 // empty query -> all in order
 ok("empty query returns all", JSON.stringify(rankSlides("", slides)) === "[0,1,2]");
 
-// title match ranks above body-only match: query "method" hits slide1 title and slide2 body
+// hits keep outline order (ticket 2b: no score ranking): query "method" hits slide1 title and slide2 body
 {
   const r = rankSlides("method", slides);
-  ok("title match first", r[0] === 1);           // "Method notes" title beats body-only
+  ok("title match first", r[0] === 1);           // slide 1 comes before slide 2 because it is earlier in the talk
   ok("body match included after", r.includes(2));
+  ok("hits in outline order", JSON.stringify(r) === "[1,2]");   // CHANGED (2b): added with the ranking replaced
 }
 
 // Carousel child titles rank their parent at title strength while preserving the public
@@ -35,7 +38,7 @@ ok("empty query returns all", JSON.stringify(rankSlides("", slides)) === "[0,1,2
     { index: 1, title: "Method parent", section: "", subsection: "", body: "", notes: "", subs: [] },
   ];
   ok("child title prefix ranks parent first", rankSlides("deep", data)[0] === 0);
-  ok("child title prefix uses title-level score", rankSlides("method", data)[0] === 1);
+  ok("child title hit keeps outline order", JSON.stringify(rankSlides("method", data)) === "[0,1]");  // CHANGED (2b): was rank order [1,0]
 }
 
 {
@@ -73,11 +76,12 @@ if (clampOverviewHighlight) {
     { index: 0, title: "Overview of methods", section: "", subsection: "", body: "", notes: "" },
     { index: 1, title: "Method", section: "", subsection: "", body: "", notes: "" },
   ];
-  ok("prefix beats substring", rankSlides("method", data)[0] === 1);
+  ok("prefix does not jump the queue", JSON.stringify(rankSlides("method", data)) === "[0,1]");  // CHANGED (2b): was "prefix beats substring", [1,0]
 }
 
 // notes-only match still surfaces (weak)
 ok("notes-only surfaces", rankSlides("sample", slides).includes(1));
+ok("notes-only is not a hit when notes are not allowed", !rankSlides("sample", slides.map(({ _fields, _prepared, ...x }) => x), false).includes(1));
 
 // no match -> empty
 ok("no match empty", rankSlides("zzz", slides).length === 0);

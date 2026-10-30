@@ -107,6 +107,25 @@ export function thumbnailSlides(rows: ThumbnailProjectionRow[], documentId: stri
     .filter((slide): slide is IndexedThumbnailSlide => slide !== null)
 }
 
+/** Keep displayed pictures across a compile only when their EXACT artwork identity still matches.
+ * Model keys alone miss fonts/section colours/media; legacy rows deliberately retain nothing. */
+export function retainMatchingThumbnails(
+  pictures: Record<string, string> | null,
+  before: readonly ThumbnailProjectionRow[] | null,
+  after: readonly ThumbnailProjectionRow[] | null
+): Record<string, string> {
+  if (!pictures || !before || !after) return {}
+  const fingerprints = new Map(before.map(row => [row.render_hash || row.content_hash || row.slide_id, row.thumbnail_hash]))
+  const kept: Record<string, string> = {}
+  for (const row of after) {
+    const key = row.render_hash || row.content_hash || row.slide_id
+    if (!key || !row.thumbnail_hash || row.thumbnail_hash !== fingerprints.get(key)) continue
+    if (pictures[key]) kept[key] = pictures[key]
+    for (let i = 0; pictures[`${key}__${i}`]; i++) kept[`${key}__${i}`] = pictures[`${key}__${i}`]
+  }
+  return kept
+}
+
 /** Build one thumbnail request while retaining its position in the full compiled deck. */
 export function selectedThumbnailSlide(
   rows: ThumbnailProjectionRow[],

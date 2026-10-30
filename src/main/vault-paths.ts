@@ -3,10 +3,11 @@
 // absolute paths and refuse anything that would land outside its root — lexically or once symlinks
 // are resolved — so a handler that gets `{ ok: false }` touches nothing on disk.
 
-import { statSync } from 'fs'
+import { readdirSync, statSync } from 'fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { isSafeTalkSlug } from './runs.ts'
 import { pathStaysInside } from './path-containment.ts'
+import { pickOutlineEntry } from './talk-scan.mjs'
 
 export { pathStaysInside }
 
@@ -54,6 +55,13 @@ export function cleanFolderName(name: unknown): string | null {
   return clean
 }
 
+/** Folder builders check containment before refusing reserved research paths. */
+function reservedChecked(vaultRoot: string, path: string): { ok: false; error: VaultPathError } | null {
+  if (!staysInside(resolve(vaultRoot), path)) return refuse('outside-vault')
+  if (inReservedFolder(resolve(vaultRoot), resolve(path))) return refuse('unsafe-name')
+  return null
+}
+
 /** vault:create-folder — `<vault>/<parentRel>/<name>`. */
 export function createFolderTarget(vaultRoot: string | null | undefined, name: unknown, parentRel: unknown): VaultPath {
   const clean = cleanFolderName(name)
@@ -61,7 +69,7 @@ export function createFolderTarget(vaultRoot: string | null | undefined, name: u
   const parent = vaultFolder(vaultRoot, parentRel, true)
   if (!parent.ok) return parent
   const path = join(parent.path, clean)
-  return staysInside(resolve(vaultRoot as string), path) ? { ok: true, path } : refuse('outside-vault')
+  return reservedChecked(vaultRoot as string, path) ?? { ok: true, path }
 }
 
 /** vault:rename-folder — the folder (never the vault root) and its renamed sibling. */
@@ -75,7 +83,8 @@ export function renameFolderTargets(
   const src = vaultFolder(vaultRoot, folderRel)
   if (!src.ok) return src
   const dest = join(dirname(src.path), clean)
-  if (!staysInside(resolve(vaultRoot as string), dest)) return refuse('outside-vault')
+  const refusal = reservedChecked(vaultRoot as string, dest)
+  if (refusal) return refusal
   return { ok: true, src: src.path, dest }
 }
 
@@ -103,8 +112,17 @@ export function talkFolderOfOutline(vaultRoot: string | null | undefined, outlin
   // part of its path is a system area (`_assets`, `_PRESENTATIONS`, any `_…`) or hidden (`.…`) —
   // the scan never descends into those, so trashing or moving them is never a talk operation.
   if (!outline.endsWith('-outline.md') || !isExistingFile(outline)) return refuse('not-a-talk')
-  if (relative(root, folder).split(sep).some((part) => part.startsWith('_') || part.startsWith('.'))) return refuse('not-a-talk')
+  if (relative(root, folder).split(sep).some((part) => part.startsWith('_') || part.startsWith('.')) || inReservedFolder(root, folder)) return refuse('not-a-talk')
   return { ok: true, path: folder }
+}
+
+/**
+ * A folder named `research` (any case) anywhere under the vault root is reserved for captured
+ * research (CONTEXT.md, "research folder"): never a talk, never an outline or abstract source.
+ * Only the segments below `root` count, so a vault that is itself called Research is not reserved.
+ */
+export function inReservedFolder(root: string, folder: string): boolean {
+  return relative(root, folder).split(sep).some((part) => part.toLowerCase() === 'research')
 }
 
 function isExistingFile(path: string): boolean {
@@ -122,7 +140,8 @@ export function moveTalkTargets(
   const parent = vaultFolder(vaultRoot, destFolderRel, true)
   if (!parent.ok) return parent
   const dest = join(parent.path, basename(src.path))
-  if (!staysInside(resolve(vaultRoot as string), dest)) return refuse('outside-vault')
+  const refusal = reservedChecked(vaultRoot as string, dest)
+  if (refusal) return refusal
   return { ok: true, srcDir: src.path, destParent: parent.path, dest }
 }
 
@@ -156,15 +175,55 @@ export function talkFolderPath(vaultRoot: string | null | undefined, talkPath: u
   const root = resolve(vaultRoot)
   const path = resolve(talkPath)
   if (path === root) return refuse('vault-root')
-  return staysInside(root, path) ? { ok: true, path } : refuse('outside-vault')
+  if (!staysInside(root, path)) return refuse('outside-vault')
+  return inReservedFolder(root, path) ? refuse('not-a-talk') : { ok: true, path }
 }
 
-/** abstract:read / abstract:write — `<talk folder>/abstract.md`, itself inside the vault. */
+/** The guarded bare abstract path, used only as the resolver's read fallback. */
 export function abstractPath(vaultRoot: string | null | undefined, talkPath: unknown): VaultPath {
   const folder = talkFolderPath(vaultRoot, talkPath)
   if (!folder.ok) return folder
   const path = join(folder.path, 'abstract.md')
   return staysInside(resolve(vaultRoot as string), path) ? { ok: true, path } : refuse('outside-vault')
+}
+
+/** Prefer the outline slug, then a unique older slug; never guess between abstracts. */
+export function abstractPaths(
+  vaultRoot: string | null | undefined,
+  talkPath: unknown
+): { ok: true; readPath: string | null; writePath: string; slug: string; source: 'named' | 'bare' | null; candidates: string[] } | { ok: false; error: VaultPathError } {
+  const folder = talkFolderPath(vaultRoot, talkPath)
+  if (!folder.ok) return folder
+  // A talk folder without an outline uses its folder name, including after its first Save.
+  let outlineName: string | undefined
+  let names: string[] = []
+  try {
+    const items = readdirSync(folder.path, { withFileTypes: true })
+    outlineName = pickOutlineEntry(items, basename(folder.path))?.name
+    names = items.filter((entry) => entry.name.endsWith('-abstract.md') && isExistingFile(join(folder.path, entry.name))).map((entry) => entry.name).sort()
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return refuse('not-a-talk')
+  }
+  if (outlineName) {
+    const outline = talkFolderOfOutline(vaultRoot, join(folder.path, outlineName))
+    if (!outline.ok) return outline
+  }
+  const slug = outlineName ? outlineName.slice(0, -'-outline.md'.length) : basename(folder.path)
+  if (!isSafeTalkSlug(slug)) return refuse('unsafe-slug')
+  let writePath = join(folder.path, `${slug}-abstract.md`)
+  const root = resolve(vaultRoot as string)
+  if (!staysInside(root, writePath)) return refuse('outside-vault')
+  if (isExistingFile(writePath)) return { ok: true, readPath: writePath, writePath, slug, source: 'named', candidates: [] }
+  if (names.length === 1) {
+    writePath = join(folder.path, names[0])
+    if (!staysInside(root, writePath)) return refuse('outside-vault')
+    return { ok: true, readPath: writePath, writePath, slug, source: 'named', candidates: [] }
+  }
+  if (names.length > 1) return { ok: true, readPath: null, writePath, slug, source: null, candidates: names }
+  const bare = abstractPath(vaultRoot, talkPath)
+  if (!bare.ok) return bare
+  const found = isExistingFile(bare.path)
+  return { ok: true, readPath: found ? bare.path : null, writePath, slug, source: found ? 'bare' : null, candidates: [] }
 }
 
 /**
@@ -177,7 +236,7 @@ export function siblingTalkFolder(vaultRoot: string | null | undefined, srcDir: 
     return refuse('unsafe-name')
   }
   const path = join(dirname(srcDir), slug)
-  return staysInside(resolve(vaultRoot), path) ? { ok: true, path } : refuse('outside-vault')
+  return reservedChecked(vaultRoot, path) ?? { ok: true, path }
 }
 
 /**
@@ -200,7 +259,7 @@ export function newTalkFolder(vaultRoot: string | null | undefined, slug: unknow
   const parent = vaultFolder(vaultRoot, topicFolder, true)
   if (!parent.ok) return parent
   const path = join(parent.path, slug)
-  return staysInside(resolve(vaultRoot as string), path) ? { ok: true, path } : refuse('outside-vault')
+  return reservedChecked(vaultRoot as string, path) ?? { ok: true, path }
 }
 
 /** What the person reads when a handler refuses an outline outside the current vault. */

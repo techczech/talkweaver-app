@@ -63,6 +63,11 @@ const ELECTRON_SWITCHES = /^(--user-data-dir=.+|--use-mock-keychain)$/
  * file to open or anything else in that position means this is an ordinary launch.
  */
 export function setupArguments(argv: readonly string[], defaultApp: boolean): string[] | null {
+  return commandArguments(argv, defaultApp, 'setup')
+}
+
+/** The arguments after `command` at the command position (as for `setup`), or null when the launch is not that command. `settings` (0.42) uses it too. */
+export function commandArguments(argv: readonly string[], defaultApp: boolean, command: string): string[] | null {
   let index = 1
   if (defaultApp) {
     // The app's path itself, which is never a switch.
@@ -72,7 +77,7 @@ export function setupArguments(argv: readonly string[], defaultApp: boolean): st
   } else if (MAC_PROCESS_SERIAL.test(String(argv[index] ?? ''))) {
     index += 1
   }
-  if (argv[index] !== 'setup') return null
+  if (argv[index] !== command) return null
   return argv.slice(index + 1).map(String).filter((arg) => !ELECTRON_SWITCHES.test(arg))
 }
 

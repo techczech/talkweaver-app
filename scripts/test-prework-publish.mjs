@@ -32,6 +32,7 @@
 //      never sees them; the talk's own handout pages and its outline file stay byte-identical.
 // Usage: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-prework-publish.mjs
 import assert from 'node:assert/strict'
+import { withPrewarmYield } from '../src/main/preparation-gate.ts'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -147,6 +148,9 @@ const trace = { deploys: 0 }
 const config = { vaultRoot: vault, cfAccountId: 'acct', cfPagesProject: 'talks', publishBaseUrl: 'https://talks.test', publishUseShortIds: false, liveWorkerBaseUrl: 'https://live.example.test' }
 const publishing = grantedPublishing({ siteDir, onUpload: () => { trace.deploys += 1 } })
 const common = {
+  withPrewarmYield,
+  // ticket 2b: the OCR text handed to the compiler; this test has no OCR index.
+  pictureTextForCompile: () => ({}),
   getConfig: (key, fallback) => (key in config ? config[key] : fallback),
   currentVaultRoot: () => vault, writableVaultRoot: () => vault, vaultRootFor: () => vault,
   // The real root choice (ADR-0036), with the test's vault as the one registered vault.

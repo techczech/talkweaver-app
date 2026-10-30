@@ -28,6 +28,60 @@ const test = (name, fn) => { try { fn(); results.push([true, name]) } catch (err
 // Commands the map leaves out, or marks "Did not fit": placed by the builder from the map's
 // neighbours, reported to the owner. Id -> [task, subgroup].
 const BUILDER_PLACED = {
+  // Return Live (freeze and mark on a live web page, 2026-10-28): beside Pointer and Pen in Display modes.
+  'presenter-palette.return-live': ['Present', 'Display modes'],
+  // Object cards (ADR-0042, 2026-10-28): beside the other object keys in the map's Objects.
+  'editor.object-expand': ['Build a slide', 'Objects'],
+  'editor.object-discard': ['Build a slide', 'Objects'],
+  'editor.object-row-up': ['Build a slide', 'Objects'],
+  'editor.object-row-down': ['Build a slide', 'Objects'],
+  'editor.delete-comment': ['Build a slide', 'Objects'],
+  'editor.insert-notes': ['Build a slide', 'Objects'],
+  // Insert speaker notes (ADR-0042 completion, 2026-10-28): in the Insert registry beside the other components.
+  'insert-component-notes': ['Build a slide', 'Components'],
+  // Capture embed… (2026-10-27): beside Insert HTML page… in the map's Components.
+  'capture-embed': ['Build a slide', 'Components'],
+  // Slide Scratchpad (2026-10-27): a panel and its item actions, beside Slides from other talks.
+  'scratchpad-panel': ['Reuse slides', 'Slide Scratchpad'],
+  'scratchpad-dock': ['Reuse slides', 'Slide Scratchpad'],
+  'scratchpad-float': ['Reuse slides', 'Slide Scratchpad'],
+  'scratchpad-collapse': ['Reuse slides', 'Slide Scratchpad'],
+  'scratchpad-add-slides': ['Reuse slides', 'Slide Scratchpad'],
+  'scratchpad-keep': ['Reuse slides', 'Slide Scratchpad'],
+  'scratchpad-reject': ['Reuse slides', 'Slide Scratchpad'],
+  'scratchpad-move-back': ['Reuse slides', 'Slide Scratchpad'],
+  'scratchpad-move-to-group': ['Reuse slides', 'Slide Scratchpad'],
+  'scratchpad-new-group': ['Reuse slides', 'Slide Scratchpad'],
+  'scratchpad-remove-missing': ['Reuse slides', 'Slide Scratchpad'],
+  'scratchpad-insert-slide': ['Reuse slides', 'Slide Scratchpad'],
+  'scratchpad-insert-visual': ['Reuse slides', 'Slide Scratchpad'],
+  'scratchpad-compare': ['Reuse slides', 'Slide Scratchpad'],
+  'scratchpad-change-place': ['Reuse slides', 'Slide Scratchpad'],
+  'scratchpad-move-up': ['Reuse slides', 'Slide Scratchpad'],
+  'scratchpad-move-down': ['Reuse slides', 'Slide Scratchpad'],
+  'research-panel': ['Shape the talk', 'Research folder'],
+  'research-find': ['Shape the talk', 'Research folder'],
+  'research-insert': ['Shape the talk', 'Research folder'],
+  'research-make-slide': ['Shape the talk', 'Research folder'],
+  'research-open': ['Shape the talk', 'Research folder'],
+  'research-previous': ['Shape the talk', 'Research folder'],
+  'research-next': ['Shape the talk', 'Research folder'],
+  'research-scope': ['Shape the talk', 'Research folder'],
+  'research-close': ['Shape the talk', 'Research folder'],
+  'research-copy-reference': ['Shape the talk', 'Research folder'],
+  'research-reveal': ['Shape the talk', 'Research folder'],
+  'research-source': ['Shape the talk', 'Research folder'],
+  'research-used-in': ['Shape the talk', 'Research folder'],
+  'research-scope-talk': ['Shape the talk', 'Research folder'],
+  'research-scope-research': ['Shape the talk', 'Research folder'],
+  'research-scope-everything': ['Shape the talk', 'Research folder'],
+  'research-rename': ['Shape the talk', 'Research folder'],
+  'research-change-kind': ['Shape the talk', 'Research folder'],
+  'research-delete': ['Shape the talk', 'Research folder'],
+  'research-move': ['Shape the talk', 'Research folder'],
+  'research-copy': ['Shape the talk', 'Research folder'],
+  'research-insert-here': ['Shape the talk', 'Research folder'],
+  'research-retry': ['Shape the talk', 'Research folder'],
   // Plain editing view ticket 01: the two editor tabs sit with the other views.
   'view-plain': ['See the talk', 'Views (editor, strip, grid)'],
   'view-markdown': ['See the talk', 'Views (editor, strip, grid)'],
@@ -42,6 +96,12 @@ const BUILDER_PLACED = {
   'get-started-show-example': ['Set up TalkWeaver', 'Get started'],
   'get-started-open-guide': ['Set up TalkWeaver', 'Get started'],
   'get-started-show-guide-button': ['Set up TalkWeaver', 'Get started'],
+  // Update notices (ADR-0041): not in the 2026-10-09 map; placed under Set up TalkWeaver beside Settings.
+  'check-for-updates': ['Set up TalkWeaver', 'Updates'],
+  'whats-new': ['Set up TalkWeaver', 'Updates'],
+  // Knowledge step two: the research folder beside a talk.
+  'research-capture': ['Shape the talk', 'Research folder'],
+  'research-reveal-folder': ['Shape the talk', 'Research folder'],
   'presenter.command-palette': ['Present', 'Help and commands'],
   'presenter.help': ['Present', 'Help and commands'],
   'presenter.rebind': ['Present', 'Help and commands'],
@@ -63,6 +123,15 @@ const BUILDER_PLACED = {
   // Move slide to… / Move section to… (slide and section context menus, the palette): not in the map, placed with reordering.
   'move-slide-to': ['Write the outline', 'Reorder slides and items'],
   'move-section-to': ['Write the outline', 'Reorder slides and items'],
+  'select-section': ['Write the outline', 'Reorder slides and items'],
+  'clear-slide-selection': ['Write the outline', 'Reorder slides and items'],
+  'move-selected-slides-to': ['Write the outline', 'Reorder slides and items'],
+  // Set aside in Scratchpad (slide handling 3): a command in the Slides menu and the palette, not in the map, placed with reordering.
+  'set-aside-slides': ['Write the outline', 'Reorder slides and items'],
+  // Search in the grid and the outline (slide handling 2): the grid's search box and Next / Previous result, with their keys.
+  'search-slides-grid': ['See the talk', 'Sidebar and outline search'],
+  'search-next': ['See the talk', 'Sidebar and outline search'],
+  'search-previous': ['See the talk', 'Sidebar and outline search'],
   // Shift-Enter in a quotation: a key added after the map was drawn, placed with the list keys.
   'editor.quote-paragraph': ['Write the outline', 'Lists'],
   // Work files ticket 30: the Tools window's commands and the two Attach commands, placed with the Run, Share and Present neighbours.
@@ -193,7 +262,7 @@ test('the count per task group is derived and equals the map plus the builder\'s
   for (const record of map.records.filter((r) => r.class === 'command' && !BUILDER_PLACED[r.id])) expected[record.task] += 1
   for (const [, [task]] of Object.entries(BUILDER_PLACED)) expected[task] += 1
   assert.deepEqual(counts, expected)
-  assert.equal(Object.values(counts).reduce((a, b) => a + b, 0), 247) // ticket 12 adds get-started-show-example; plain view adds view-plain, view-markdown and the two margin-menu commands; quote forms add seven; collapse all and expand all add two; Move slide to… and Move section to… add two (merged: base 225 + plain view 4 + Move-to 2); Shift-Enter in a quotation adds one; the Tools window and Attach commands add fifteen
+  assert.equal(Object.values(counts).reduce((a, b) => a + b, 0), 308) // Set aside in Scratchpad adds one (slide handling 3); Search slides in the grid, Next search result and Previous search result add three (slide handling 2); Select section, Clear slide selection and Move selected slides to… add three (slide handling 1b); Return Live (freeze and mark) adds one; Insert › Speaker notes adds one; the object cards add six (expand, Discard, row up/down, delete comment, insert speaker notes); Capture embed… adds one; Insert HTML page… adds one; six research tidy/cross-talk commands added; ticket 12 adds get-started-show-example; plain view adds view-plain, view-markdown and the two margin-menu commands; quote forms add seven; collapse all and expand all add two; Move slide to… and Move section to… add two (merged: base 225 + plain view 4 + Move-to 2); Shift-Enter in a quotation adds one; the Tools window and Attach commands add fifteen; the research folder adds two (Capture to research…, Reveal research folder) Slide Scratchpad adds fifteen (ticket 2: insert slide, insert visual, compare, change place); Capture embed… adds one; Insert HTML page… adds one; six research tidy/cross-talk commands added; ticket 12 adds get-started-show-example; plain view adds view-plain, view-markdown and the two margin-menu commands; quote forms add seven; collapse all and expand all add two; Move slide to… and Move section to… add two (merged: base 225 + plain view 4 + Move-to 2); Shift-Enter in a quotation adds one; the Tools window and Attach commands add fifteen; the research folder adds two (Capture to research…, Reveal research folder)
 })
 
 test('a chord becomes the key event that matches it', () => {

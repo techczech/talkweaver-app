@@ -35,7 +35,8 @@ export function getStripNumbers(): ReadonlyMap<number, number> | null {
  *  - stale, different count (a slide added or removed), or nothing published yet (talk just opened): ordinal, every row
  *    counts, title row 1, until the next publish. The compiler gives the cover, each section title and each slide one number
  *    each, which is one per outline row; the closing slide has no heading and so no row.
- * A talk with no `#` title has a synthesized cover, so its first row starts at 2 once the compiler has published.
+ * A synthesized cover maps to file line 1 before the first heading. Only that published cover
+ * offsets the fallback: a talk with automatic covers disabled still starts at slide 1.
  */
 export function outlineNumbers(
   rows: ReadonlyArray<{ line: number; level: number }>,
@@ -44,6 +45,9 @@ export function outlineNumbers(
   const out = new Map<number, number>()
   const hasTitle = rows.length > 0 && rows[0].level === 1
   const entries = published ? [...published].sort((a, b) => a[0] - b[0]) : []
+  // No H1 does not imply a cover: auto_title_slide can be false. computeSlideLines maps
+  // an actual synthesized cover to file line 1, before the first source heading.
+  const hasSyntheticCover = !hasTitle && rows[0]?.line !== 1 && entries.some(([line, no]) => line === 1 && no === 1)
   if (entries.length > 0) {
     const rowLines = new Set(rows.map((r) => r.line))
     if (entries.every(([line, no]) => rowLines.has(line) || no === 1)) {
@@ -53,13 +57,13 @@ export function outlineNumbers(
       }
       return out
     }
-    const paired = hasTitle ? entries : entries.slice(1)
+    const paired = hasSyntheticCover ? entries.slice(1) : entries
     if (paired.length === rows.length) {
       rows.forEach((r, k) => out.set(r.line, paired[k][1]))
       return out
     }
   }
-  const start = hasTitle || entries.length === 0 ? 1 : 2
+  const start = hasSyntheticCover ? 2 : 1
   rows.forEach((r, k) => out.set(r.line, start + k))
   return out
 }
@@ -75,4 +79,14 @@ export function stripNumbersToPublish(
   slideLines: ReadonlyArray<number | null>
 ): ReadonlyMap<number, number> | null {
   return compiled && compiled.length > 0 ? slideNumbersByLine(slideLines) : null
+}
+
+/** True when `outlineNumbers` took its numbers from the published strip numbers by line (not by position or by counting). */
+export function numbersAreCurrent(
+  rows: ReadonlyArray<{ line: number }>,
+  published: ReadonlyMap<number, number> | null = getStripNumbers()
+): boolean {
+  if (!published || published.size === 0) return false
+  const rowLines = new Set(rows.map((r) => r.line))
+  return [...published].every(([line, no]) => rowLines.has(line) || no === 1)
 }

@@ -4,6 +4,7 @@
 import { emptyGuideLearn, withChapterOpened, withCommandRan, withTopicRead, type GuideLearn } from '../../shared/guide-learn'
 import { resolveCommandId } from '../../shared/guide-chapters'
 import { NO_SOURCES, connectionRows, type ConnectionSources } from '../../shared/guide-connections'
+import { compactSlideSearchReply } from '../../shared/slide-search-reply'
 
 const MOCK_VAULT_ROOT = '/Users/you/Talks'
 
@@ -287,6 +288,16 @@ export function installMock() {
         }
         return results
       },
+      // The Browser's compact form (shared/slide-search-reply.ts): the same rows, each talk once.
+      allSlidesCompact: async (query: { scope: string; exact: boolean; text: string; terms: string[] }) => {
+        const rows = await (window as any).tw.search.allSlides(query)
+        return compactSlideSearchReply(rows, (r: any) => {
+          const { talkSlug, talkTitle, outlinePath, talkMtimeMs, talkMeta, titleHit, vaultId, ...row } = r
+          return { row, titleHit, talk: { talkSlug, talkTitle, outlinePath, vaultId, talkMtimeMs, talkMeta } }
+        }, null)
+      },
+      // No freshness stamp in the mock: the Browser always asks again when the search is cleared.
+      indexStamp: async () => null,
     },
     // The workspace reads the action-bar setting on mount (ADR-0025); the browser mock keeps the
     // flag in memory so the plain-browser dev preview still boots. Other settings sections are

@@ -158,7 +158,9 @@ function contentKind(written, facts, slide) {
 }
 /** For each settable layout, the kinds of content it was chosen on, across the seeds. */
 const chosenOn = new Map(SETTABLE.map((entry) => [entry.name, new Map()]))
-let cursor = 0
+// Cycle separately for each content kind: a global cursor can miss a layout/kind pair
+// even across all default seeds. Keep the complete matrix assertion below.
+const cursors = new Map()
 const total = {}
 const table = []
 for (const SEED of SEEDS) {
@@ -234,7 +236,9 @@ for (const SEED of SEEDS) {
         const written = text.split('\n')
         // Every settable layout in turn, so each one meets every kind of content.
         const kind = contentKind(written, facts, was)
-        for (const entry of [SETTABLE[(cursor++) % SETTABLE.length], null]) {
+        const cursor = cursors.get(kind) ?? 0
+        cursors.set(kind, cursor + 1)
+        for (const entry of [SETTABLE[cursor % SETTABLE.length], null]) {
           const verb = entry ? 'choose' : 'clear'
           if (entry) { const seen = chosenOn.get(entry.name); const cell = seen.get(kind) ?? { ok: 0, refused: 0 }; seen.set(kind, cell); cell.pending = true }
           const w = entry ? chooseLayout(text, { headingLine: h + 1 }, entry.name) : clearLayout(text, { headingLine: h + 1 })

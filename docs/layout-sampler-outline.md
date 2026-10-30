@@ -1323,6 +1323,10 @@ You cannot act in the world and look up everything. You must know things in a sp
 
 [Simulation: assets/sampler-embedded-page.html]
 
+### local
+
+[Embed: assets/sampler-embedded-page.html]
+
 ### plainlist
 {plainlist}
 

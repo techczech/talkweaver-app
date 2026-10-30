@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert'
+import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -96,3 +97,21 @@ assert.equal(
   'the generated template keeps the paragraph rule byte-identical to its pre-O-E form'
 )
 console.log(`css modules: ${modules.length} layout modules; overrides ${overrides.split('\n').length} lines; generated template current`)
+
+// A sampler build may overlap a compiler read in the parallel unit tier. An already-current
+// template must never be opened for writing, which would briefly truncate the shared source.
+const unchangedWriter = spawnSync(process.execPath, ['--input-type=module', '-e', `
+  import fs from 'node:fs';
+  import { syncBuiltinESMExports } from 'node:module';
+  const target = ${JSON.stringify(join(repo, 'compiler/assets/templates/presenter-popup-single-html.html'))};
+  const write = fs.writeFileSync;
+  fs.writeFileSync = function(path, ...args) {
+    if (path === target) throw new Error('An unchanged template was opened for writing');
+    return write.call(this, path, ...args);
+  };
+  syncBuiltinESMExports();
+  const { writeDeckStyles } = await import('./scripts/build-deck-styles.mjs');
+  if (writeDeckStyles() !== target) throw new Error('The build must still return its template path');
+`], { cwd: repo, encoding: 'utf8' })
+assert.equal(unchangedWriter.status, 0, unchangedWriter.stderr || unchangedWriter.error?.message)
+console.log('css modules: a current shared template is never truncated by an overlapping sampler build')

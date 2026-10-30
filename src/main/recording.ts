@@ -33,9 +33,11 @@ import {
   type RunRecord,
 } from './runs'
 import {
-  deleteTargets,
-  existingSegmentPaths,
-  localRecordingPath,
+  listKeptRuns,
+  recordedSegmentPaths,
+  existingRecordedSegmentPath,
+  segmentIndexOfFile,
+  readRecordingSource,
   localSegmentPath,
   saveTargets,
   sessionIdRandom,
@@ -103,6 +105,10 @@ export interface RecordingDeps {
   compilerDir: () => string | null // where lib/16-presentation-ledger.mjs lives (dev or packaged)
   userDataDir: () => string // app.getPath('userData')
   vaultRoot: () => string | null // the current vault's root (vault registry)
+  /** All open, available vaults: a same-id Run in any of them retains shared audio. */
+  openVaultRoots?: () => string[]
+  /** An open vault that cannot be scanned may own a same-id Run; retain audio without touching it. */
+  hasUnavailableOpenVaults?: () => boolean
   /**
    * The vault a presenter window's writes go to: the vault of the talk it presents (presented-vault.ts), or the
    * refusal in words. `undefined`: the sender is not a presenter window (Studio, History), which act in the
@@ -230,14 +236,24 @@ export function bufferLiveRunPollResponse(webContentsId: number, response: RunPo
     persistLivePollBuffer(webContentsId, vaultRoot)
   } catch { /* live interaction must never interrupt presenting */ }
 }
+let recordingChanged: (() => void) | null = null
+/** Told whenever a recording context or the armed audio comes or goes (the update check asks again whether a talk is on). */
+export function onRecordingOpenChange(fn: (() => void) | null): void { recordingChanged = fn }
+const recordingMoved = (): void => { try { recordingChanged?.() } catch { /* never interrupts a recording */ } }
 export function registerRecordingContext(webContentsId: number, ctx: RecordingContext): void {
   contexts.set(webContentsId, ctx)
+  recordingMoved()
 }
 export function unregisterRecordingContext(webContentsId: number): void {
   contexts.delete(webContentsId)
   runStates.delete(webContentsId)
   livePollBuffers.delete(webContentsId)
   runHomes.delete(webContentsId)
+  recordingMoved()
+}
+/** A recording is open: a presenter window has registered its recording context, or audio is armed (the update check waits). */
+export function recordingOpen(): boolean {
+  return contexts.size > 0 || [...runStates.values()].some((state) => state.audioArmed)
 }
 export function shouldOfferRunSave(webContentsId: number): boolean {
   const s = runStates.get(webContentsId)
@@ -340,7 +356,15 @@ function vaultFor(deps: RecordingDeps, webContentsId: number): { root: string | 
  * the vault it would pick now has changed), else the vault this window resolves to. A Run saved into a vault that is
  * not writable now is refused, never looked for (or copied) elsewhere.
  */
-function runHomeFor(deps: RecordingDeps, webContentsId: number, sessionId: unknown): { ok: true; root: string | null } | { ok: false; error: string } {
+function runHomeFor(deps: RecordingDeps, webContentsId: number, sessionId: unknown, talkSlug?: unknown, requestedHome?: unknown): { ok: true; root: string | null } | { ok: false; error: string } {
+  if (requestedHome !== undefined) {
+    if (requestedHome !== null && typeof requestedHome !== 'string') return { ok: false, error: 'vault-not-open' }
+    const root = requestedHome === null ? null : deps.writableVault ? deps.writableVault(requestedHome)
+      : requestedHome === vaultFor(deps, webContentsId).root ? requestedHome : undefined
+    if (root === undefined) return { ok: false, error: 'vault-not-open' }
+    const target = sessionPath(deps, root, talkSlug, sessionId)
+    return target.ok && runIsFor(target.path, talkSlug, sessionId) ? { ok: true, root } : { ok: false, error: 'session-not-found' }
+  }
   const homes = runHomes.get(webContentsId)
   const key = typeof sessionId === 'string' ? sessionId : ''
   if (key && homes?.has(key)) {
@@ -349,7 +373,15 @@ function runHomeFor(deps: RecordingDeps, webContentsId: number, sessionId: unkno
     const live = deps.writableVault ? deps.writableVault(root) : root
     return live ? { ok: true, root: live } : { ok: false, error: 'vault-not-open' }
   }
-  return { ok: true, root: vaultFor(deps, webContentsId).root }
+  const root = vaultFor(deps, webContentsId).root
+  // History/Studio can open a kept Run in a fresh window after a restart. Match its own identity,
+  // and retain the vault-first read order used by playback when the vault already has that name.
+  if (talkSlug !== undefined) {
+    const local = sessionPath(deps, null, talkSlug, sessionId)
+    const inVault = root ? sessionPath(deps, root, talkSlug, sessionId) : null
+    if (local.ok && runIsFor(local.path, talkSlug, sessionId) && (!inVault?.ok || !existsSync(inVault.path))) return { ok: true, root: null }
+  }
+  return { ok: true, root }
 }
 
 function rememberRunHome(webContentsId: number, sessionId: string, root: string | null): void {
@@ -570,18 +602,17 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
   })
 
   // The minimum Studio/History (Plans 2–3) need now: the Sessions recorded for a talk, read
-  // straight from the Vault Presentation Ledger, newest first. [] when no vault / no recordings.
+  // from the current vault and this Mac’s kept Runs, newest first.
   ipcMain.handle('recording:list-sessions', async (_event, talkSlug: string) => {
     try {
       const vault = deps.vaultRoot()
-      if (!vault) return []
-      const out: unknown[] = []
-      for (const file of await listSessionJsonFiles(vault, talkSlug)) {
+      const out: unknown[] = listKeptRuns(deps.userDataDir(), talkSlug)
+      for (const file of vault ? await listSessionJsonFiles(vault, talkSlug) : []) {
         try {
           // A file whose root is not a session (null, an array, a number) is skipped: it would
           // break the sort below and blank the whole list.
           const session = sessionForList(JSON.parse(await readFileAsync(file, 'utf8')))
-          if (session) out.push(session)
+          if (session) out.push({ ...session, home: vault })
         } catch {
           /* skip an unreadable session file rather than failing the whole list */
         }
@@ -597,19 +628,18 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
     }
   })
 
-  // Every recorded Session across all talks (Studio's rail), newest first. [] with no vault.
+  // Every recorded Session across all talks (Studio’s rail), including kept Runs, newest first.
   ipcMain.handle('recording:list-all-sessions', async () => {
     try {
       const vault = deps.vaultRoot()
-      if (!vault) return []
-      const out: unknown[] = []
+      const out: unknown[] = listKeptRuns(deps.userDataDir())
       // Every talk folder and session file is checked to resolve inside the vault first.
-      for (const file of await listSessionJsonFiles(vault)) {
+      for (const file of vault ? await listSessionJsonFiles(vault) : []) {
         try {
           // A file whose root is not a session (null, an array, a number) is skipped: it would
           // break the sort below and blank the whole list.
           const session = sessionForList(JSON.parse(await readFileAsync(file, 'utf8')))
-          if (session) out.push(session)
+          if (session) out.push({ ...session, home: vault })
         } catch {
           /* skip an unreadable session file */
         }
@@ -626,11 +656,11 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
   })
 
   ipcMain.handle('recording:planned-runs', (event, talkSlug: string, pathwayId: string | null) => {
-    const picked = vaultFor(deps, event.sender.id)
-    const vault = picked.root
-    if (!vault) return []
-    if (!talkRunFolderForTalk(vault, talkSlug)) return []
     const preferredId = contexts.get(event.sender.id)?.preferredPlannedRunId
+    const home = runHomeFor(deps, event.sender.id, runStates.get(event.sender.id)?.sessionId ?? preferredId, talkSlug)
+    if (!home.ok || !home.root) return []
+    const vault = home.root
+    if (!talkRunFolderForTalk(vault, talkSlug)) return []
     return plannedRunCandidates(listRuns(vault, String(talkSlug)), pathwayId ? String(pathwayId) : null).map((run) => ({
       ...run,
       preferred: preferredId ? run.id === preferredId : !!pathwayId && run.slideSet.kind === 'pathway' && run.slideSet.pathwayId === pathwayId
@@ -645,25 +675,31 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
   // one write is the `uploaded` flag in session.json, made only after storage accepted the upload.
   // `error` is a fixed word: one of the UploadFailure words for anything about storage, or a local
   // reason ('no-vault', 'session-not-found', …). Never the text of an error.
-  ipcMain.handle('recording:upload', async (event, { talkSlug, sessionId }: { talkSlug: string; sessionId: string }) => {
+  ipcMain.handle('recording:upload', async (event, { talkSlug, sessionId, home }: { talkSlug: string; sessionId: string; home?: string | null }) => {
     const refused = (failure: UploadFailure): { ok: false; error: UploadFailure } => ({ ok: false, error: failure })
     try {
-      const picked = vaultFor(deps, event.sender.id)
-      const vault = picked.root
-      if (!vault) return { ok: false, error: 'no-vault' }
-      const target = vaultSessionPath(vault, talkSlug, sessionId)
+      const resolvedHome = runHomeFor(deps, event.sender.id, sessionId, talkSlug, home)
+      if (!resolvedHome.ok) return resolvedHome
+      const vault = resolvedHome.root
+      const target = sessionPath(deps, vault, talkSlug, sessionId)
       if (!target.ok) return { ok: false, error: target.error }
-      const audioTarget = localRecordingPath(deps.userDataDir(), sessionId, 'webm')
-      if (!audioTarget.ok) return { ok: false, error: audioTarget.error }
       const sessionJsonPath = target.path
       if (!existsSync(sessionJsonPath)) return { ok: false, error: 'session-not-found' }
-      const session = JSON.parse(readFileSync(sessionJsonPath, 'utf8')) as {
-        audio?: { uploaded?: boolean; r2Key?: string; bytes?: number } | null
+      const source = readRecordingSource(vault, deps.userDataDir(), talkSlug, sessionId)
+      if (!source || source.kind !== 'run') return { ok: false, error: 'session-not-found' }
+      const session = source.record as {
+        audio?: { uploaded?: boolean; r2Key?: string; bytes?: number; segments?: unknown } | null
       }
       if (!session?.audio) return { ok: false, error: 'not-recorded' }
       if (session?.audio?.uploaded) return { ok: true, uploaded: true }
-      const audioPath = audioTarget.path
-      if (!existsSync(audioPath)) return { ok: false, error: 'audio-missing' }
+      const segments = session.audio.segments
+      const firstSegment = Array.isArray(segments) ? segments[0] : null
+      const firstIndex = firstSegment && typeof firstSegment.file === 'string' ? segmentIndexOfFile(firstSegment.file) : null
+      // Upload must not skip a missing or unowned first entry and publish a later segment.
+      const audioPath = segments === undefined
+        ? existingRecordedSegmentPath(deps.userDataDir(), sessionId, 0)
+        : firstIndex === null ? null : existingRecordedSegmentPath(deps.userDataDir(), sessionId, firstIndex, firstSegment.file)
+      if (!audioPath) return { ok: false, error: 'audio-missing' }
       const r2Key = session.audio?.r2Key ?? `presentations/${talkSlug}/${sessionId}/audio.webm`
 
       if (deps.testMode && deps.testMode()) {
@@ -684,11 +720,11 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
   })
 
   // Edit a session's context label ("Oxford AICC · lunch"), or clear it (null).
-  ipcMain.handle('recording:set-context', (event, { talkSlug, sessionId, context }: { talkSlug: string; sessionId: string; context: string }) => {
+  ipcMain.handle('recording:set-context', (event, { talkSlug, sessionId, context, home }: { talkSlug: string; sessionId: string; home?: string | null; context: string }) => {
     try {
-      const home = runHomeFor(deps, event.sender.id, sessionId)
-      if (!home.ok) return home
-      const target = sessionPath(deps, home.root, talkSlug, sessionId)
+      const resolvedHome = runHomeFor(deps, event.sender.id, sessionId, talkSlug, home)
+      if (!resolvedHome.ok) return resolvedHome
+      const target = sessionPath(deps, resolvedHome.root, talkSlug, sessionId)
       if (!target.ok) return { ok: false, error: target.error }
       const p = target.path
       if (!existsSync(p)) return { ok: false, error: 'session-not-found' }
@@ -701,11 +737,11 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
     }
   })
 
-  ipcMain.handle('recording:set-kind', (event, { talkSlug, sessionId, kind }: { talkSlug: string; sessionId: string; kind: RunKind }) => {
+  ipcMain.handle('recording:set-kind', (event, { talkSlug, sessionId, kind, home }: { talkSlug: string; sessionId: string; home?: string | null; kind: RunKind }) => {
     try {
-      const home = runHomeFor(deps, event.sender.id, sessionId)
-      if (!home.ok) return home
-      const target = sessionPath(deps, home.root, talkSlug, sessionId)
+      const resolvedHome = runHomeFor(deps, event.sender.id, sessionId, talkSlug, home)
+      if (!resolvedHome.ok) return resolvedHome
+      const target = sessionPath(deps, resolvedHome.root, talkSlug, sessionId)
       if (!target.ok) return { ok: false, error: target.error }
       const p = target.path
       if (!existsSync(p)) return { ok: false, error: 'session-not-found' }
@@ -718,11 +754,11 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
     }
   })
 
-  ipcMain.handle('recording:set-trims', (event, { talkSlug, sessionId, trims }: { talkSlug: string; sessionId: string; trims: TrimRange[] }) => {
+  ipcMain.handle('recording:set-trims', (event, { talkSlug, sessionId, trims, home }: { talkSlug: string; sessionId: string; home?: string | null; trims: TrimRange[] }) => {
     try {
-      const home = runHomeFor(deps, event.sender.id, sessionId)
-      if (!home.ok) return home
-      const target = sessionPath(deps, home.root, talkSlug, sessionId)
+      const resolvedHome = runHomeFor(deps, event.sender.id, sessionId, talkSlug, home)
+      if (!resolvedHome.ok) return resolvedHome
+      const target = sessionPath(deps, resolvedHome.root, talkSlug, sessionId)
       if (!target.ok) return { ok: false, error: target.error }
       const p = target.path
       if (!existsSync(p)) return { ok: false, error: 'session-not-found' }
@@ -745,7 +781,7 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       const talkSlug = String(payload?.talkSlug ?? 'talk')
       const sessionId = String(payload?.sessionId ?? '')
       if (!sessionId) return { ok: false, error: 'session-id-required' }
-      const home = runHomeFor(deps, event.sender.id, sessionId)
+      const home = runHomeFor(deps, event.sender.id, sessionId, talkSlug)
       if (!home.ok) return home
       const target = sessionPath(deps, home.root, talkSlug, sessionId)
       if (!target.ok) return { ok: false, error: target.error }
@@ -784,6 +820,7 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       forwardAdvances: Number.isFinite(Number(state?.forwardAdvances)) ? Math.max(0, Number(state.forwardAdvances)) : 0
     }
     runStates.set(event.sender.id, next)
+    recordingMoved()
     return { ok: true }
   })
 
@@ -800,6 +837,7 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       const win = BrowserWindow.fromWebContents(event.sender)
       if (win && !win.isDestroyed()) win.destroy()
       runStates.delete(event.sender.id)
+      recordingMoved()
       return { ok: true }
     } catch (error) {
       return { ok: false, error: String(error) }
@@ -807,26 +845,37 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
   })
 
   // Delete a session — session.json + local audio go to the OS Trash (recoverable).
-  ipcMain.handle('recording:delete-session', async (event, { talkSlug, sessionId }: { talkSlug: string; sessionId: string }) => {
+  ipcMain.handle('recording:delete-session', async (event, { talkSlug, sessionId, home }: { talkSlug: string; sessionId: string; home?: string | null }) => {
     try {
-      const home = runHomeFor(deps, event.sender.id, sessionId)
-      if (!home.ok) return home
-      const targets = deleteTargets(home.root, deps.userDataDir(), talkSlug, sessionId)
-      if (!targets.ok) return { ok: false, error: targets.error }
+      const resolvedHome = runHomeFor(deps, event.sender.id, sessionId, talkSlug, home)
+      if (!resolvedHome.ok) return resolvedHome
       // The session id alone proves nothing (audio is addressed by id only): delete only a Run this window can see,
       // the Run JSON in the vault it resolves to (or kept in TalkWeaver's folder) that itself names this talk and session.
-      const json = sessionPath(deps, home.root, talkSlug, sessionId)
+      const json = sessionPath(deps, resolvedHome.root, talkSlug, sessionId)
       if (!json.ok) return { ok: false, error: json.error }
       const p = json.path
-      if (!existsSync(p) || !runIsFor(p, talkSlug, sessionId)) return { ok: false, error: 'session-not-found' }
-      const audioPath = targets.audio
-      // Later segments of a recording that lost and regained its input (listed before the first goes).
-      const extraSegments = existingSegmentPaths(deps.userDataDir(), sessionId).slice(1)
-      await shell.trashItem(p)
-      if (existsSync(audioPath)) await shell.trashItem(audioPath)
-      for (const extra of extraSegments) await shell.trashItem(extra)
+      const saved = existsSync(p)
+      if (saved && !runIsFor(p, talkSlug, sessionId)) return { ok: false, error: 'session-not-found' }
+      const source = readRecordingSource(resolvedHome.root, deps.userDataDir(), talkSlug, sessionId)
+      if (!source || (!saved && (source.kind !== 'marker' || streamStore.isOpen(sessionId)))) return { ok: false, error: 'session-not-found' }
+      // Audio and recovery metadata are named by id globally. Another valid Run with that id
+      // keeps all of it, even when it belongs to a different talk; only this Run's JSON is trashed.
+      const otherHomes = new Set([null, deps.vaultRoot(), vaultFor(deps, event.sender.id).root, ...(deps.openVaultRoots?.() ?? [])])
+      otherHomes.delete(resolvedHome.root)
+      let shared = true
+      try {
+        const strict = { strictSessionId: sessionId }
+        shared = !!deps.hasUnavailableOpenVaults?.() || [...otherHomes].some((root) => root === null
+          ? listKeptRuns(deps.userDataDir(), undefined, strict).some((run) => run.id === sessionId)
+          : listRuns(root, undefined, strict).some((run) => run.id === sessionId && readRunForTalk(root, run.talkSlug, sessionId, strict) !== null))
+      } catch {
+        // A failed listing or unreadable same-id Run cannot prove that the audio is unshared.
+      }
+      const audioPaths = shared ? [] : recordedSegmentPaths(deps.userDataDir(), sessionId, source)
+      const targets = [...(saved ? [p] : []), ...audioPaths.map((audio) => audio.path)]
       const marker = streamMarkerPath(deps.userDataDir(), sessionId)
-      if (marker.ok && existsSync(marker.path) && !streamStore.isOpen(sessionId)) await shell.trashItem(marker.path)
+      if (!shared && marker.ok && existsSync(marker.path) && !streamStore.isOpen(sessionId)) targets.push(marker.path)
+      for (const path of new Set(targets)) await shell.trashItem(path)
       runHomes.get(event.sender.id)?.delete(sessionId)
       return { ok: true }
     } catch (e) {
@@ -835,9 +884,8 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
   })
 }
 
-// The local audio file for a session — served to the renderer's <audio> via the twrec:// protocol.
-// null when the session id is not a safe single name.
-export function recordingAudioPath(userDataDir: string, sessionId: string): string | null {
-  const target = localRecordingPath(userDataDir, sessionId, 'webm')
-  return target.ok ? target.path : null
+// The first owned segment for the existing single-file player; legacy Runs retain the old lookup.
+export function recordingAudioPath(userDataDir: string, sessionId: string, vaultRoot: string | null, talkSlug: string): string | null {
+  const source = readRecordingSource(vaultRoot, userDataDir, talkSlug, sessionId)
+  return recordedSegmentPaths(userDataDir, sessionId, source)[0]?.path ?? null
 }

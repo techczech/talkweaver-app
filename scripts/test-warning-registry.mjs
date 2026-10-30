@@ -33,6 +33,9 @@ for (const name of readdirSync(libDir).filter((name) => name.endsWith('.mjs') &&
 }
 assert.deepEqual([...literalCodes].filter((id) => !ids.has(id)).sort(), [], 'compiler warnings.push literal prefix lacks a registry entry')
 
+assert.equal(formatWarning('live-page-captures-unreadable:slide-3:captures'), 'Some saved views for slide slide-3 could not be read from captures. Open the page and capture the missing views again.')
+assert.equal(formatWarning('capture-not-a-saved-view:slide-3:assets/picture.png'), 'Slide slide-3 names a picture that is not a saved view: assets/picture.png. Capture the page in TalkWeaver and choose one of its saved views.')
+
 assert.equal(formatWarning('made-up-code:payload'), 'made-up-code:payload', 'unknown warnings fall back to raw text')
 const iconWarning = formatWarning('iconlist-no-icons:slide-1')
 assert(iconWarning.includes('No icons resolved'), 'registered warning renders its message')

@@ -56,8 +56,11 @@ export function renderTemplateWithDeckStyles(template = readFileSync(templatePat
 }
 
 export function writeDeckStyles() {
-  const next = renderTemplateWithDeckStyles()
-  writeFileSync(templatePath, next, 'utf8')
+  const current = readFileSync(templatePath, 'utf8')
+  const next = renderTemplateWithDeckStyles(current)
+  // Sampler tests share this source with concurrent compiler readers. A current template
+  // needs no write: opening it again would briefly expose an empty file to those readers.
+  if (next !== current) writeFileSync(templatePath, next, 'utf8')
   return templatePath
 }
 

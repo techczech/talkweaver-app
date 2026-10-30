@@ -72,7 +72,14 @@ Ten pounds a morning, tables lent free.
 - Plants
 - Second-hand books
 
-> **Try it: move a slide.** Put the caret on the heading above and press <kbd>⌘⇧↓</kbd>. The whole slide moves below **Opening hours**.
+> **Try it: move a slide.** Put the caret on the heading above and press <kbd>⌘⇧↓</kbd>. The whole slide moves down one place.
+
+### Select and set aside
+{id=practice-grid-selection}
+
+> **Try it.** In the grid, open All commands (<kbd>⌘⇧P</kbd>): **Select section**, **Move selected slides to…**, then **Clear slide selection**.
+
+> **Try it.** Select a slide; <kbd>⌘⌥S</kbd> sets it aside in the Scratchpad. Drag it back when needed.
 
 > **Try it.** <kbd>⌘⇧↑</kbd> moves it back, <kbd>⌘⇧⌫</kbd> deletes it, <kbd>⌘Z</kbd> undoes, <kbd>⇧⌘Z</kbd> redoes.
 
@@ -110,12 +117,24 @@ Saturdays, eight until one.
 
 > **Try it.** On the id line under the title, <kbd>↵</kbd> moves the caret into the slide.
 
+### Object controls
+{id=practice-object-controls}
+
+> **Try it.** In All commands (<kbd>⌘⇧P</kbd>), **Expand or collapse object card** shows or hides its preview. **Discard object edits** abandons changes in its editor. In a table, <kbd>⌃⌘↑</kbd> and <kbd>⌃⌘↓</kbd> move the current row.
+
+> **Try it.** Use All commands (<kbd>⌘⇧P</kbd>) to choose **Delete comment at caret** or **Insert speaker notes**.
+
 ### Add something
 {id=s12}
 
 > **Try it.** In All commands (<kbd>⌘⇧P</kbd>) choose **Insert table**, **Insert mindmap**, **Insert Chart**, **Insert Mermaid diagram**, **Insert diagram…** or **Insert SVG**.
 
-> **Try it.** The same list (<kbd>⌘⇧P</kbd>) has **Insert Code**, **Insert QR code**, **Insert Action button**, **Insert embed / simulation**, **Insert auto-embed** or **Insert countdown**.
+> **Try it.** The same list (<kbd>⌘⇧P</kbd>) has **Insert Code**, **Insert QR code**, **Insert Action button**, **Insert embed / simulation**, **Insert HTML page…**, **Insert auto-embed** or **Insert countdown**.
+
+### Notes and saved page views
+{id=practice-page-capture}
+
+> **Try it.** All commands (<kbd>⌘⇧P</kbd>) also offers **Insert speaker notes**. On a slide with a web page, **Capture embed…** opens the page so you can save a view.
 
 ## 04 See the talk
 {id=04-see-the-talk}
@@ -140,6 +159,8 @@ Tomatoes, beans and courgettes go out after the last frost.
 ### Find your way
 {id=s16}
 
-> **Try it.** <kbd>⌘⇧F</kbd> works on this slide alone; Esc goes back. <kbd>⌘⌥←</kbd> and <kbd>⌘⌥→</kbd> jump to the heading before or after.
+> **Try it.** <kbd>⌘⌥⇧F</kbd> works on this slide alone; Esc goes back. <kbd>⌘⌥←</kbd> and <kbd>⌘⌥→</kbd> jump to the heading before or after.
 
 > **Try it.** <kbd>⌘⇧O</kbd> searches the slide outline, <kbd>⌘⇧[</kbd> hides or shows the sidebar, and <kbd>⌘F</kbd> finds words.
+
+> **Try it.** <kbd>⌘⌥F</kbd> searches slides in the grid. <kbd>⌘⌥J</kbd> goes to the next result and <kbd>⌘⌥⇧J</kbd> to the previous one.

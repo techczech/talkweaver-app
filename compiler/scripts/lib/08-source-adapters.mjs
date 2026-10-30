@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
@@ -27,7 +27,6 @@ import { resolveScreenshotStyle, SCREENSHOT_STYLES } from "./screenshot-row.mjs"
 import { resolveShotList, SHOT_LIST_ARRANGEMENTS } from "./slot-composition.mjs";
 import { posterBlockFor, posterAccentFor, applyAuthoredPosters, TITLE_STYLES } from "./title-poster.mjs";
 import { parseOutlineTree, classifyContentLines } from "./14-outline-tree.mjs";
-import { blankHtmlComments } from "./html-comments.mjs";
 import { audienceSourceLines } from "./slide-script.mjs";
 import { readDeckFlag, deckFlagOn, readDeckChoice, readDeckMinutes, DECK_PALETTES, DECK_FONTS, DECK_LOGO_COLOURS } from "./deck-settings.mjs";
 import { sequence } from "./15-sequencer.mjs";
@@ -46,6 +45,8 @@ import { pictureKeyForSlide } from "./10-projections.mjs";
 import { createAssetContainment, remoteReferenceUrl } from "./asset-containment.mjs";
 import { referenceFileName, shownReference } from "./shown-reference.mjs";
 import { withEmbedLead, embedPageTitle } from "./embed-frame.mjs";
+import { blankHtmlCommentsKeepingCaptureMarkers } from "./live-page-capture-markup.mjs";
+import { LIVE_PAGE_CAPTURES_DIR, MAX_CAPTURE_ENTRY_BYTES, MAX_CAPTURES_TOTAL, earlierCapturesFor, galleryFromEntries, isCaptureEntryName, isCaptureImagePath, parseCaptureEntry } from "./live-page-captures.mjs";
 
 // =============================================================================
 // 8. Source adapters — outline v2/v1, JSON, static HTML -> model; prepareSource dispatches
@@ -404,7 +405,8 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
   // them rendering. Blank the content but PRESERVE newlines (so line numbers stay source-accurate).
   // A commented-out `## …`/`### …` heading is still ignored (its text is blanked). Shared helper:
   // the slide-script and Links readers of a slide's raw source blank comments the same way.
-  body = blankHtmlComments(body);
+  // The one exception: the saved-views marker line (live-page-capture-markup.mjs), kept for the lexer.
+  body = blankHtmlCommentsKeepingCaptureMarkers(body);
   const rawSourceLines = String(markdown ?? "").split(/\r?\n/);
   const tree = parseOutlineTree(body);
   const warnings = [...(tree.warnings || [])];
@@ -2135,6 +2137,42 @@ const DATA_URI_CACHE_LIMIT_BYTES = 256 * 1024 * 1024;
 const dataUriCache = new Map(); // absolute -> { mtimeMs, size, uri, dims }
 let dataUriCacheBytes = 0;
 
+// The text read from a slide's pictures (OCR), for the presenter outline's and the exported pages' search
+// ("in picture:"). The caller (the app) hands over `options.pictureText`, a plain object from a picture's
+// absolute path to its text; the compiler has no OCR of its own. Each slide that draws a picture with text gets
+// `slide.pictureText`, which the section carries as data-picture-text. A picture outside the allowed roots is
+// never looked up (same containment as the inliner, ADR-0036).
+async function addPictureText(model, sourceDir, containment, pictureText) {
+  if (!pictureText || typeof pictureText !== "object") return;
+  const textOf = new Map();
+  async function lookup(src) {
+    if (typeof src !== "string" || /^(data:|https?:)/.test(src)) return "";
+    if (textOf.has(src)) return textOf.get(src);
+    const found = await containment.reference(sourceDir, src);
+    const named = found.ok ? [found.path, resolve(sourceDir, src)] : [];
+    const text = named.map((path) => pictureText[path]).find((value) => typeof value === "string") || "";
+    textOf.set(src, text);
+    return text;
+  }
+  async function collect(value, out) {
+    if (!value || typeof value !== "object") return;
+    if (value.type === "image") {
+      const text = await lookup(value.src);
+      if (text && !out.includes(text)) out.push(text);
+    }
+    for (const child of Object.values(value)) {
+      if (Array.isArray(child)) for (const item of child) await collect(item, out);
+      else if (child && typeof child === "object") await collect(child, out);
+    }
+  }
+  for (const slide of model.slides) {
+    const out = [];
+    await collect(slide.blocks, out);
+    await collect(slide.carousel, out);
+    if (out.length) slide.pictureText = out.join("\n");
+  }
+}
+
 async function pictureKeysForModel(model, sourceDir, containment) {
   const digestsByPath = new Map();
   async function imageDigest(src) {
@@ -2265,6 +2303,68 @@ async function inlineAndCollectAssets(model, sourceDir, budget = createMediaInli
   const carriesOwnBytes = (src, kind) => typeof src === "string" && src.slice(0, kind.length + 6).toLowerCase() === `data:${kind}/`;
   // The reference to emit when it is remote, or null: `{ ...block, src }` only when the spelling changes.
   const remoteBlock = (block, remote) => (remote === block.src ? block : { ...block, src: remote });
+  // Saved views of a web page (live-page-captures.mjs): the talk's saved-view folder is listed once;
+  // each record file is read through the same containment as every other file here, and only within
+  // the same limits the writer keeps (record size, count), so whatever the writer wrote is read and
+  // anything out of shape is skipped (with a warning), never repaired. Each picture path must be
+  // exactly the writer's own `assets/live-page-captures/<hex>.jpg` before it is resolved, and is
+  // inlined as a data: URI (output kind (i)), so previews, exports and offline handouts carry it.
+  // Only the public fields go further.
+  // Read once, as one promise every slide awaits: slides are visited concurrently, and a second slide
+  // must wait for the first read, never see it half done (two embeds with saved views crashed the
+  // compile, and an embed on the compatibility listing lost its views; review fix e3b41fd1).
+  let capturesRecordRead;
+  const readCapturesRecord = (slideId) => (capturesRecordRead ??= (async () => {
+      let names = [];
+      try { names = (await readdir(join(sourceDir, LIVE_PAGE_CAPTURES_DIR))).filter(isCaptureEntryName).sort(); } catch { names = []; }
+      const entries = [];
+      let skipped = 0;
+      for (const name of names.slice(0, MAX_CAPTURES_TOTAL * 2)) {
+        const found = await containment.reference(sourceDir, `${LIVE_PAGE_CAPTURES_DIR}/${name}`);
+        let entry = null;
+        if (found.ok) {
+          try {
+            const info = await stat(found.path);
+            entry = info.size <= MAX_CAPTURE_ENTRY_BYTES ? parseCaptureEntry(await readFile(found.path, "utf8"), name) : null;
+          } catch { entry = null; }
+        }
+        if (entry) entries.push({ ...entry, name }); else skipped++;
+      }
+      if (skipped || names.length > MAX_CAPTURES_TOTAL * 2) model.warnings.push(`live-page-captures-unreadable:${slideId}:${LIVE_PAGE_CAPTURES_DIR}`);
+      return galleryFromEntries(entries);
+    })());
+  const savedViewsOf = async (url, slideId, markup, managed) => {
+    const capturesRecord = await readCapturesRecord(slideId);
+    // The embed's own {capture} lines are the gallery when it has any (live-page-capture-markup.mjs),
+    // each dated from its record. With the marker line and no {capture} line: none (the last line
+    // deleted stays deleted). With neither: the views recorded for its address before the markup.
+    // The outline alone says which: a record never does (review 2026-10-27, P2). A {capture} path
+    // that is not a capture writer's picture is never resolved.
+    let chosen;
+    if (Array.isArray(markup) && markup.length) {
+      const byImage = new Map();
+      for (const list of Object.values(capturesRecord.pages)) for (const c of list) if (!byImage.has(c.image)) byImage.set(c.image, c);
+      chosen = [];
+      for (const ref of markup) {
+        if (!isCaptureImagePath(ref.src)) { model.warnings.push(`capture-not-a-saved-view:${slideId}:${containment.label(String(ref.src))}`); continue; }
+        const rec = byImage.get(ref.src);
+        chosen.push({ image: ref.src, capturedAt: rec ? rec.capturedAt : "", ...(rec && rec.mode === "page" ? { mode: "page" } : {}) });
+      }
+    } else {
+      chosen = managed ? [] : earlierCapturesFor(capturesRecord, url);
+    }
+    const views = [];
+    for (const view of chosen) {
+      if (!isCaptureImagePath(view.image)) continue;
+      const found = await containment.reference(sourceDir, view.image);
+      if (!found.ok) { model.warnings.push(`missing-asset:${slideId}:${view.image}`); continue; }
+      try {
+        const inlined = await inlineDataUri(found.path, "image/jpeg");
+        views.push({ src: inlined.uri, capturedAt: view.capturedAt, ...(view.mode === "page" ? { mode: "page" } : {}), ...(inlined.dims || {}) });
+      } catch { model.warnings.push(`missing-asset:${slideId}:${view.image}`); }
+    }
+    return views;
+  };
   // An embedded local page is a whole document that runs inside the slide. Its own references are
   // addresses the compiler did not resolve, so the page is given a policy, as the first thing in the
   // document, that lets it load inline, data:, blob: and http(s) content and nothing local: no
@@ -2446,7 +2546,10 @@ async function inlineAndCollectAssets(model, sourceDir, budget = createMediaInli
       const remote = remoteReferenceUrl(block.src);
       if (remote) {
         model.warnings.push(`remote-embed:${slideId}`);
-        return remoteBlock(block, remote);
+        const savedViews = await savedViewsOf(remote, slideId, block.captures, block.capturesManaged === true);
+        const { captures: _markup, capturesManaged: _managed, ...rest } = block;
+        const out = remoteBlock(rest, remote);
+        return savedViews.length ? { ...out, savedViews } : out;
       }
       block = { ...block, src: String(block.src ?? "") };
       const found = await resolveAsset(block.src);
@@ -2709,6 +2812,7 @@ async function prepareSourceModel(sourcePath, sourceText, explicitTitle, sourceS
     const sourceDir = dirname(resolve(sourcePath));
     const containment = createAssetContainment(Array.isArray(options?.allowedAssetRoots) ? options.allowedAssetRoots : [sourceDir]);
     model.pictureKeys = await pictureKeysForModel(model, sourceDir, containment);
+    await addPictureText(model, sourceDir, containment, options?.pictureText);
     // Projections-only (search index / cross-talk search): buildPerSlideProjections reads model.slides
     // ONLY — never fullHtml or assets. Skip media inlining + the full-HTML build so warming or
     // searching a large media vault never loads video/image Buffers into the MAIN process. This was

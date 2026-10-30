@@ -10,7 +10,7 @@ import { mergeRunBoards, normaliseRunBoards, type RunBoard } from '../shared/run
 import { mergeRunPrework, normaliseRunPrework, zonedLocalToMs, type PreworkPick, type RunPrework } from '../shared/run-prework.ts'
 import { applySeenChange, type SeenChange } from '../shared/run-answers.ts'
 import { normaliseRunExtraSlides, normaliseRunExtras, type RunExtraSlide, type RunExtras } from '../shared/run-extras.ts'
-import { closeSync, existsSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'fs'
+import { closeSync, existsSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { resolvePathways, type Pathway, type PathwaySlideRow } from './pathways.ts'
 import { pathStaysInside } from './path-containment.ts'
@@ -730,38 +730,66 @@ export function writeRunFile(path: string, run: RunRecord): void {
  * into place (fails if the name is taken); where the filesystem has no hard links, the name is
  * reserved with an exclusive create and the temporary file renamed over that empty reservation.
  */
-export function writeNewRunFile(path: string, run: RunRecord): void {
+export function writeNewRunFile(path: string, run: RunRecord, recoverReservation = false): void {
   mkdirSync(dirname(path), { recursive: true })
   const temp = writeRunTemp(path, run)
+  const proofPath = `${path}.reservation`
+  let identity: { dev: number; ino: number } | undefined
   try {
-    try {
-      linkSync(temp, path)
-      return
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'EEXIST') throw e
-    }
-    // The reservation is removed again if the save fails after it — only while it is still the
-    // empty file made here (same inode, no bytes), so an empty Run name never poses as a save.
-    let reserved: { dev: number; ino: number }
-    const fd = openSync(path, 'wx')
-    try {
-      const st = fstatSync(fd)
-      reserved = { dev: st.dev, ino: st.ino }
-    } finally {
-      closeSync(fd)
-    }
-    try {
-      renameSync(temp, path)
-    } catch (e) {
+    const reserved = recoverReservation && runReservationIsFor(path, run.id, run.talkSlug)
+    if (reserved) {
+      const st = lstatSync(path)
+      identity = { dev: st.dev, ino: st.ino }
+    } else {
       try {
-        const st = lstatSync(path)
-        if (st.isFile() && st.size === 0 && st.dev === reserved.dev && st.ino === reserved.ino) unlinkSync(path)
-      } catch { /* gone already, or not ours: left alone */ }
-      throw e
+        linkSync(temp, path)
+        return
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'EEXIST') throw e
+      }
+      const fd = openSync(path, 'wx')
+      try {
+        const st = fstatSync(fd)
+        identity = { dev: st.dev, ino: st.ino }
+      } finally { closeSync(fd) }
+      // Exclusive creation proves this empty Run is ours. Remove an orphaned proof first;
+      // exclusive proof creation still refuses a link or file that appears meanwhile.
+      try { unlinkSync(proofPath) } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e }
+      const proof = openSync(proofPath, 'wx')
+      try {
+        writeFileSync(proof, JSON.stringify({ sessionId: run.id, talkSlug: run.talkSlug, ...identity }))
+        fsyncSync(proof)
+      } finally { closeSync(proof) }
     }
+    // No asynchronous work between the identity/empty check and the atomic replacement.
+    if (!runReservationIsFor(path, run.id, run.talkSlug)) throw Object.assign(new Error('run-reservation-changed'), { code: 'EEXIST' })
+    renameSync(temp, path)
+    try { unlinkSync(proofPath) } catch { /* the saved Run is already complete */ }
+  } catch (e) {
+    if (identity) {
+      try {
+        // Proof first: if its removal fails, retain the empty Run for recovery/attention.
+        // This also removes a proof whose write stopped part-way or whose Run changed.
+        try { unlinkSync(proofPath) } catch (cleanup) { if ((cleanup as NodeJS.ErrnoException).code !== 'ENOENT') throw cleanup }
+        const st = lstatSync(path)
+        if (st.isFile() && st.size === 0 && st.dev === identity.dev && st.ino === identity.ino) unlinkSync(path)
+      } catch { /* never remove an unproven Run or leave an orphaned proof by deleting its Run first */ }
+    }
+    throw e
   } finally {
     try { unlinkSync(temp) } catch { /* renamed into place */ }
   }
+}
+
+/** Only the same session's proven, still-empty reservation can be completed after a crash. */
+export function runReservationIsFor(path: string, sessionId: string, talkSlug: string): boolean {
+  try {
+    const st = lstatSync(path)
+    const proofPath = `${path}.reservation`
+    if (!st.isFile() || st.size !== 0 || !lstatSync(proofPath).isFile()) return false
+    const proof = JSON.parse(readFileSync(proofPath, 'utf8'))
+    return proof?.sessionId === sessionId && proof.talkSlug === talkSlug && proof.dev === st.dev && proof.ino === st.ino
+  } catch { return false }
 }
 
 function stripProblem(work: RunWork): RunWork {
@@ -789,14 +817,21 @@ export function readRun(vaultRoot: string, talkSlug: string, runId: string): Run
   try { return normaliseRun(JSON.parse(readFileSync(runPath(vaultRoot, talkSlug, runId), 'utf8'))) } catch { return null }
 }
 
-export function listRuns(vaultRoot: string, talkSlug?: string): RunRecord[] {
+/** `strictSessionId` is only for shared-audio deletion: uncertainty must retain that session's audio. */
+export function listRuns(vaultRoot: string, talkSlug?: string, options?: { strictSessionId: string }): RunRecord[] {
   const root = join(vaultRoot, '_PRESENTATIONS')
-  if (!existsSync(root)) return []
+  if (!options && !existsSync(root)) return []
   // A named talk comes from the renderer (history:list-runs): list only its guarded folder.
   if (talkSlug !== undefined && !talkRunFolderForTalk(vaultRoot, talkSlug)) return []
   // Only iterate DIRECTORIES: _PRESENTATIONS routinely picks up a Finder .DS_Store (and other stray
   // files). readdirSync on such a file throws ENOTDIR — if that escaped, History blanked entirely.
-  const slugs = talkSlug ? [talkSlug] : readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name)
+  let slugs: string[]
+  try {
+    slugs = talkSlug ? [talkSlug] : readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name)
+  } catch (error) {
+    if (options && (error as NodeJS.ErrnoException).code === 'ENOENT' && existsSync(vaultRoot)) return [] // no Run folder yet
+    throw error
+  }
   const runs: RunRecord[] = []
   for (const slug of slugs) {
     const dir = join(root, slug)
@@ -804,15 +839,24 @@ export function listRuns(vaultRoot: string, talkSlug?: string): RunRecord[] {
     // that is a link is never reached: the Dirent filter above skips links, and a named talk went
     // through talkRunFolderForTalk.)
     let names: string[]
-    try { names = readdirSync(dir) } catch { continue } // not a directory / unreadable — skip, never throw
+    try { names = readdirSync(dir) } catch (error) {
+      if (options) throw error
+      continue // History skips unreadable talk folders.
+    }
     for (const name of names) {
       if (!name.endsWith('.json') || name === 'manifest.json') continue
       const file = join(dir, name)
-      if (!pathStaysInside(vaultRoot, file)) continue
+      if (!pathStaysInside(vaultRoot, file)) {
+        if (options && name === `${options.strictSessionId}.json`) throw new Error('run-path-unreadable')
+        continue
+      }
       try {
         const run = normaliseRun(JSON.parse(readFileSync(file, 'utf8')))
         if (run.id && run.talkSlug) runs.push(run)
-      } catch { /* one malformed Run must not blank History */ }
+      } catch (error) {
+        if (options && name === `${options.strictSessionId}.json`) throw error
+        // One malformed Run must not blank History or block deletion of unrelated audio.
+      }
     }
   }
   return runs.sort((a, b) => {
@@ -1309,12 +1353,17 @@ export function talkRunFolderForTalk(vaultRoot: string, talkSlug: string): strin
   return folder
 }
 
-/** Reads a Run only from its talk's folder, and only if the Run says it is that talk's Run. */
-export function readRunForTalk(vaultRoot: string, talkSlug: string, runId: string): RunRecord | null {
+/** Reads a Run only from its talk's folder, and only if the Run says it is that talk's Run.
+ * Shared-audio deletion must also retain audio if this confirmation read fails after listing.
+ */
+export function readRunForTalk(vaultRoot: string, talkSlug: string, runId: string, options?: { strictSessionId: string }): RunRecord | null {
   const path = runPathForTalk(vaultRoot, talkSlug, runId)
   if (!path) return null
   let run: RunRecord
-  try { run = normaliseRun(JSON.parse(readFileSync(path, 'utf8'))) } catch { return null }
+  try { run = normaliseRun(JSON.parse(readFileSync(path, 'utf8'))) } catch (error) {
+    if (runId === options?.strictSessionId) throw error
+    return null
+  }
   return run.id === runId && run.talkSlug === talkSlug ? run : null
 }
 

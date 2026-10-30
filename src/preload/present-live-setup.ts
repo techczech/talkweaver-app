@@ -7,8 +7,8 @@
 // No set-up starts here (fix round 2). The presenter window shows the person's slides, embeds
 // included, and an embed can reach this document: it could move or relabel any button here and have
 // the person's own click land on it. So the only thing this prompt can do is open Settings, a
-// surface slide content cannot reach; the main process takes a set-up only from an editor window's
-// top frame (setUpAllowedFrom in live-service.ts).
+// surface slide content cannot reach; the main process takes a set-up only from the Settings window
+// (handleFromSettingsWindow in index.ts).
 //
 // Only a person's pointer press acts: a click a script makes (`isTrusted` false) does nothing. A
 // press never focuses a button (mousedown is refused focus), a button that has focus all the same

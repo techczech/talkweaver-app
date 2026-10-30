@@ -26,11 +26,11 @@ export interface RunBoardIpcDeps {
   shares: RunResultsShares
 }
 
-type RunRef = { talkSlug: string; runId: string }
+type RunRef = { talkSlug: string; runId: string; home?: unknown }
 
 function runRef(payload: unknown): RunRef {
   const value = (payload ?? {}) as Record<string, unknown>
-  return { talkSlug: String(value.talkSlug ?? ''), runId: String(value.runId ?? '') }
+  return { talkSlug: String(value.talkSlug ?? ''), runId: String(value.runId ?? ''), home: value.home }
 }
 
 function lateCards(run: RunRecord | null): number {
@@ -44,7 +44,8 @@ function visibleCards(run: RunRecord | null): number {
 export const LINK_NOT_UPDATED = 'The share link could not be updated; it may still show this card. Try again.'
 
 export function registerRunBoardIpc(deps: RunBoardIpcDeps): void {
-  const read = ({ talkSlug, runId }: RunRef): RunRecord | null => {
+  const read = ({ talkSlug, runId, home }: RunRef): RunRecord | null => {
+    if (home === null) return null
     const vaultRoot = deps.vaultRoot()
     return vaultRoot ? readRunForTalk(vaultRoot, talkSlug, runId) : null
   }
@@ -101,6 +102,7 @@ export function registerRunBoardIpc(deps: RunBoardIpcDeps): void {
   // R8: Put back a hidden card (or hide it again) — in the Run and on its share link; the live board is not changed.
   deps.ipcMain.handle('history:board-put-back', async (_event, payload) => {
     const ref = runRef(payload)
+    if (ref.home === null) return { ok: false, error: 'This action requires a Run in an open vault.' }
     const value = (payload ?? {}) as Record<string, unknown>
     const vaultRoot = deps.vaultRoot()
     const run = read(ref)
@@ -147,6 +149,7 @@ export function registerRunBoardIpc(deps: RunBoardIpcDeps): void {
 
   deps.ipcMain.handle('history:results-share-stop', async (_event, payload) => {
     const ref = runRef(payload)
+    if (ref.home === null) return { ok: false, error: 'This action requires a Run in an open vault.' }
     return deps.shares.stop(ref.talkSlug, ref.runId)
   })
 }

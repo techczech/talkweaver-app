@@ -70,6 +70,8 @@ export function createLiveSessionManager(deps: {
    * work-files ticket 19). `vaultRoot` is the vault the session recorded when it was bound: the Run is
    * that vault's, never another vault's Run of the same talk slug and id.
    */
+  /** A session came, went or changed status: the update check asks again whether a talk is on. */
+  onActivity?(): void
   onEnded?(reference: { talkSlug: string; runId: string; vaultRoot: string | null }): void
   schedule?: typeof setTimeout
   cancelSchedule?: typeof clearTimeout
@@ -89,6 +91,7 @@ export function createLiveSessionManager(deps: {
     const record = { ...runtime.record, ...patch }
     deps.save([...sessions.values()].map((item) => item === runtime ? record : item.record))
     runtime.record = record
+    try { deps.onActivity?.() } catch { /* never interrupts a session */ }
   }
   function notify(runtime: Runtime, channel: string, value: unknown) {
     if (runtime.windowId !== null) deps.notify(runtime.windowId, channel, value)
@@ -338,11 +341,13 @@ export function createLiveSessionManager(deps: {
     const runtime = runtimeForWindow(id)
     windows.delete(id)
     if (runtime?.windowId === id) { runtime.windowId = null; history(runtime) }
+    try { deps.onActivity?.() } catch { /* never interrupts a session */ }
   }
   function attachRuntime(runtime: Runtime, windowId: number) {
     if (runtime.windowId !== null && runtime.windowId !== windowId) windows.delete(runtime.windowId)
     runtime.windowId = windowId
     windows.set(windowId, runtime.record.sessionId)
+    try { deps.onActivity?.() } catch { /* never interrupts a session */ }
     connect(runtime)
     return runtime.record
   }
@@ -374,6 +379,10 @@ export function createLiveSessionManager(deps: {
         record.talkSlug === talkSlug && record.vaultRoot === vaultRoot
         && record.expiresAt > now() && record.status !== 'ended' && record.status !== 'expired')
       return runtime && runtime.windowId === null ? attachRuntime(runtime, windowId) : null
+    },
+    /** A live session has not ended, whether or not a window holds it now (the update check waits while one is). */
+    anyOpen(): boolean {
+      return [...sessions.values()].some((runtime) => !isTerminalLiveStatus(runtime.record.status))
     },
     /**
      * The Runs a live session is bound to and has not ended (Sessions' "Live now"), each with the vault the session

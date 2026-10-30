@@ -365,9 +365,37 @@ await test('wiring: the filter is the session\'s only onBeforeRequest listener, 
   for (const path of sources(mainDir)) {
     const text = readFileSync(path, 'utf8')
     for (const m of text.matchAll(/webRequest\s*\.\s*(on[A-Za-z]+)\(/g)) registrations.push(`${path.slice(mainDir.length)}:${m[1]}`)
-    if (!path.endsWith('local-address-filter.ts')) assert.ok(!/\bfromPartition\(|\bpartition\s*:/.test(text), `${path} gives a window another session, which this filter does not cover`)
+    const code = text.replace(/\/\/.*$/gm, '')
+    if (path.endsWith('local-address-filter.ts')) continue
+    if (path.endsWith('update-notices.ts')) continue // the one allowed partition, checked below
+    if (path.endsWith('live-page-host.ts')) continue // the live page's own session, checked below
+    // A live web page's view (live-page-host.ts): its own in-memory session, hardened there with the
+    // same local-address rule, every request treated as embedded (scripts/test-live-page.mjs).
+    const withoutLivePage = path.endsWith('/index.ts') ? code.replace(/sessionFor: \(partition\) => session\.fromPartition\(partition\)/, '') : code
+    assert.ok(!/\bfromPartition\(|\bpartition\s*:/.test(withoutLivePage), `${path} gives a window another session, which this filter does not cover`)
   }
-  assert.deepEqual(registrations.sort(), ['index.ts:onBeforeSendHeaders', 'index.ts:onHeadersReceived', 'local-address-filter.ts:onBeforeRequest'])
+  // No onHeadersReceived: no response header is rewritten for any frame (2026-10-27 review; e2e/check-remote-page-framing.mjs).
+  assert.deepEqual(registrations.sort(), ['index.ts:onBeforeSendHeaders', 'live-page-host.ts:onBeforeRequest', 'local-address-filter.ts:onBeforeRequest'])
+  const host = readFileSync(join(mainDir, 'live-page-host.ts'), 'utf8')
+  assert.match(host, /localAddressRequestListener\(\{ resolveHost: opts\.resolveHost, log, everyRequestIsEmbedded: true \}\)/, 'the live-page session uses the same rule, every request embedded')
+  assert.match(host, /partition = `tw-live-page:\$\{role\}:\$\{deps\.newId\(\)\}`/, 'in-memory partition (no persist:)')
+})
+
+await test('the update check\'s own session: exactly one in-memory partition, and the filter is installed on it', async () => {
+  const text = readFileSync(join(mainDir, 'update-notices.ts'), 'utf8').replace(/\/\/.*$/gm, '')
+  assert.deepEqual([...text.matchAll(/fromPartition\(([^)]*)\)/g)].map((m) => m[1].trim()), ['UPDATES_PARTITION, { cache: false }'], 'one session, from the named constant')
+  assert.match(text, /UPDATES_PARTITION = 'updates-check'/, 'named updates-check, with no persist: prefix, so it keeps nothing')
+  assert.ok(!/\bpartition\s*:|persist:/.test(text))
+  assert.match(text, /updatesSession = session\.fromPartition\(UPDATES_PARTITION, \{ cache: false \}\)\s*installLocalAddressFilter\(updatesSession\)/, 'the filter goes on before the session is returned for use')
+  assert.match(text, /session: \{ fromPartition: \(\) => checkSession\(\) \}/, 'the request goes through that session')
+  // Installed on such a session (no registered app host, no frame: main\'s own request), the filter refuses this Mac and lets the public web through.
+  const calls = []
+  const session = { webRequest: { onBeforeRequest: (filter, listener) => calls.push({ filter, listener }) }, resolveHost: async () => ({ endpoints: [{ address: '93.184.216.34', family: 'ipv4' }] }) }
+  installLocalAddressFilter(session, { log: () => {} })
+  assert.equal(calls.length, 1)
+  const ask = (details) => new Promise((resolve) => calls[0].listener(details, resolve))
+  for (const url of ['http://127.0.0.1:8787/updates.json', 'https://localhost/updates.json', 'https://192.168.1.9/updates.json']) assert.deepEqual(await ask({ id: 1, url, resourceType: 'other' }), cancelled, url)
+  assert.deepEqual(await ask({ id: 2, url: 'https://talkweaver.app/updates.json', resourceType: 'other' }), {})
 })
 
 console.log(`local address filter: ${passed} passed`)

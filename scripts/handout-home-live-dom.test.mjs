@@ -151,7 +151,7 @@ try {
     assert.equal(await page.locator('.hh-cover-row span').textContent(), '4 slides')
     assert.equal(await page.locator('.hh-cover-row a').getAttribute('href'), 'agents-2026.html#title', 'Start from slide 1 names the first slide')
     const links = await page.locator('#hhLinks a.hh-row').evaluateAll((rows) => rows.map((row) => [row.textContent.trim(), row.getAttribute('href')]))
-    assert.deepEqual(links, [['Join MondAI for Latest News', 'https://news.example.test/']], 'links mentioned, never the page\'s own address')
+    assert.deepEqual(links, [['news', 'https://news.example.test/']], 'links mentioned, never the page\'s own address')
     assert.equal((await page.locator('#hhDownload').textContent()).trim(), 'Download slides')
     assert.equal(await page.locator('#hhDownload').getAttribute('download'), 'agents-2026.html')
     assert.equal(await page.locator('.hh-share-text b').textContent(), 'handouts.example.test/k7m2')

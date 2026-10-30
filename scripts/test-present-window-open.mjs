@@ -376,7 +376,8 @@ await test('the editor\'s own page opens no window: its links go through main (s
   const mainDir = fileURLToPath(new URL('../src/main/', import.meta.url))
   const sites = []
   for (const name of readdirSync(mainDir)) if (/\.ts$/.test(name)) for (const m of readFileSync(join(mainDir, name), 'utf8').matchAll(/shell\.openExternal\(([^)]*)\)/g)) sites.push(`${name}: ${m[1]}`)
-  assert.deepEqual(sites.sort(), ['index.ts: link.href', 'index.ts: link.href', 'index.ts: url', 'index.ts: url'], 'a new openExternal site: hand out a handOutLink href')
+  // update-notices.ts: the browser opens the update notices' links (a download or notes link on talkweaver.app, or the Store listing), each through handOutLink.
+  assert.deepEqual(sites.sort(), ['index.ts: link.href', 'index.ts: link.href', 'index.ts: url', 'index.ts: url', 'update-notices.ts: handed.href'], 'a new openExternal site: hand out a handOutLink href')
   assert.equal(index.match(/appWindowOpenHandler\(appWindowOpenOpts, \(\) => pressLedger\.pressedRecently\(win\.webContents\.id\)\)/g).length, 3, 'editor, Tools and Pathways each ask their own window\'s presses')
 })
 
