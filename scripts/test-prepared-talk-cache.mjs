@@ -121,3 +121,21 @@ console.log('PASS preview HTML retention budget')
   assert.deepEqual(cache.stats(), { entries: 0, bytes: 0, pending: 0 }, 'prewarm never enters the cache')
   console.log('PASS preparation route: prewarm is uncached and uses only gate.prewarm')
 }
+
+// Eviction separates in-flight generations even when the outline/cache key stays identical.
+{
+  const c=createPreparedTalkCache({maxEntries:4,maxBytes:100,sizeOf:()=>1})
+  const group=module.preparedTalkGroup('/capture/outline.md')
+  let finishOld, finishNew, loads=0
+  const old=c.get('same',group,async()=>{loads++;return await new Promise(r=>finishOld=r)})
+  await Promise.resolve()
+  c.evictOutline('/capture/outline.md')
+  const fresh=c.get('same',group,async()=>{loads++;return await new Promise(r=>finishNew=r)})
+  await Promise.resolve()
+  assert.equal(loads,2,'post-eviction request must not join stale in-flight preparation')
+  finishOld('old');assert.equal(await old,'old','existing caller still gets its result')
+  assert.equal(c.stats().pending,1,'old finally must not remove replacement pending work')
+  finishNew('fresh');assert.equal(await fresh,'fresh')
+  assert.equal(await c.get('same',group,()=>{throw Error('fresh value missing')}),'fresh')
+  console.log('PASS outline eviction: pending generations invalidated, old completion cannot remove or retain over fresh work')
+}

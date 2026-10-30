@@ -36,13 +36,13 @@ export function ItemThumb({ item, big = false }: { item: ScratchItem; big?: bool
     const slide = item.slide
     const pic = slide ? slidePictureFor(slide) : null
     if (slide && pic && !failed) {
-      return <div className={cls}><img key={nonce} src={thumbUrl(pic.talkSlug, pic.thumbKey, pic.vaultId)} alt="" draggable={false} onError={() => { setFailed(true); noteSourceThumbUnavailable(slide) }} /></div>
+      return <div className={cls}><img loading="lazy" decoding="async" key={nonce} src={thumbUrl(pic.talkSlug, pic.thumbKey, pic.vaultId)} alt="" draggable={false} onError={() => { setFailed(true); noteSourceThumbUnavailable(slide) }} /></div>
     }
     return <div className={`${cls} sp-thumb--text`}><span>{item.title}</span></div>
   }
   if (item.missing) return <div className={`${cls} sp-thumb--tile`}><span>File missing</span></div>
   if (item.fileKind === 'html') return <HtmlThumb item={item} cls={cls} />
-  if (item.fileUrl && !failed) return <div className={cls}><img src={item.fileUrl} alt="" draggable={false} onError={() => setFailed(true)} /></div>
+  if (item.fileUrl && !failed) return <div className={cls}><img loading="lazy" decoding="async" src={item.fileUrl} alt="" draggable={false} onError={() => setFailed(true)} /></div>
   return <div className={`${cls} sp-thumb--tile`}><span>{failed ? 'Could not load' : 'Picture'}</span></div>
 }
 
@@ -55,7 +55,7 @@ function HtmlThumb({ item, cls }: { item: ScratchItem; cls: string }): JSX.Eleme
     void window.tw.scratchpad.htmlThumb?.(item.id).then((reply) => { if (live && reply.ok) setUrl(reply.url) }, () => undefined)
     return () => { live = false }
   }, [item.id, item.file])
-  if (url) return <div className={cls}><img src={url} alt="" draggable={false} onError={() => setUrl(null)} /></div>
+  if (url) return <div className={cls}><img loading="lazy" decoding="async" src={url} alt="" draggable={false} onError={() => setUrl(null)} /></div>
   return <div className={`${cls} sp-thumb--tile`}><span>HTML page</span></div>
 }
 

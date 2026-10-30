@@ -157,9 +157,10 @@ try {
   // the slide by its title (a number would go stale), the agent's file untouched.
   const agentSvg = readFileSync(join(talkDir, 'scratchpad', 'chart.svg'))
   const picture = page.locator('.sp-card', { hasText: 'chart' }).locator('.sp-thumb img')
+  await picture.scrollIntoViewIfNeeded()
   const decoded = await picture.evaluate(async (img) => {
     await img.decode()
-    return { width: img.naturalWidth, height: img.naturalHeight, checkedCopy: img.src.startsWith('data:image/svg+xml;base64,') }
+    return { width: img.naturalWidth, height: img.naturalHeight, checkedCopy: img.src.startsWith('twthumb://scratch/') }
   })
   assert.deepEqual(decoded, { width: 40, height: 20, checkedCopy: true }, 'the checked SVG snapshot actually renders in its card')
   await page.locator('.sp-card', { hasText: 'chart' }).click()

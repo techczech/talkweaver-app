@@ -10,6 +10,7 @@ import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import { createScratchpadStore } from '../src/main/scratchpad-store.ts'
 import { createScratchpadDisk } from '../src/main/scratchpad-disk.ts'
+import * as snapshotUrls from '../src/main/scratchpad-disk.ts'
 const root = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'tw-scratchpad-disk-')))
 let checks = 0
 let activeHook
@@ -147,6 +148,24 @@ try {
     const others=Array.from({length:4},()=>makeStore(talk))
     const files=await Promise.all(others.map(s=>s.fileFor(snap.items[0].id)))
     for(const file of files) assert.equal(fs.readFileSync(file.path,'utf8'),text)
+    fs.writeFileSync(join(scratch,'picture.svg'),'<svg xmlns="http://www.w3.org/2000/svg"/>')
+    const loaded=await first.load();const picture=loaded.items.find(item=>item.file==='picture.svg')
+    const image=await first.fileFor(picture.id)
+    assert.equal(typeof snapshotUrls.scratchSnapshotUrl,'function','private images use compact URLs, not eager base64')
+    const address=snapshotUrls.scratchSnapshotUrl(image.path)
+    assert.ok(address.startsWith('twthumb://scratch/'));assert.ok(address.length<256)
+    assert.equal(snapshotUrls.scratchSnapshotFileFor(address),image.path)
+    assert.equal(snapshotUrls.scratchSnapshotUrl(files[0].path),undefined,'HTML cannot enter the image protocol')
+    for(const invalid of [address+'?x=1',address+'#x',address.replace('/scratch/','/other/'),'twthumb://scratch/../picture.svg',address.replace('picture.svg','picture.html')])
+      assert.equal(snapshotUrls.scratchSnapshotFileFor(invalid),null,invalid)
+    assert.equal(snapshotUrls.scratchSnapshotUrl(join(scratch,'picture.svg')),undefined,'agent-writable source is never served')
+    fs.renameSync(image.path,image.path+'.held')
+    try {
+      fs.symlinkSync(join(scratch,'picture.svg'),image.path)
+      assert.equal(snapshotUrls.scratchSnapshotFileFor(address),null,'a linked private image is refused')
+    } finally { fs.rmSync(image.path,{force:true});fs.renameSync(image.path+'.held',image.path) }
+
+
   })
 } finally { fs.rmSync(root,{recursive:true,force:true}) }
 console.log(`${checks} Scratchpad disk safety checks passed`)

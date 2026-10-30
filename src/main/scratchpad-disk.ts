@@ -4,7 +4,7 @@
 // Reads are opened once, checked against lstat, and consumed through that descriptor. Consumers
 // receive private, content-addressed copies, never paths back into the agent-writable folder.
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { mkdtempSync, realpathSync, rmSync, statSync } from 'node:fs'
+import { lstatSync, mkdtempSync, realpathSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative, sep } from 'node:path'
 
@@ -37,6 +37,31 @@ export function scratchSnapshotIdentity(path: string): string | null {
   const parts = relative(cache, path).split(sep)
   return parts.length === 2 && /^[a-f0-9]{64}$/.test(parts[0]) && parts[1] !== '' && !parts[1].startsWith('.')
     ? `${parts[0]}/${parts[1]}` : null
+}
+
+// Only immutable private image snapshots are addressable. URLs carry no filesystem paths;
+// Chromium streams them on demand instead of main retaining base64 copies of the entire panel.
+export function scratchSnapshotUrl(path: string): string | undefined {
+  const identity = scratchSnapshotIdentity(path)
+  if (!identity || !/\.(svg|png|jpe?g|webp|gif)$/i.test(identity)) return undefined
+  const [hash, name] = identity.split('/')
+  return `twthumb://scratch/${hash}/${encodeURIComponent(name)}`
+}
+
+export function scratchSnapshotFileFor(address: string): string | null {
+  if (!cache) return null
+  try {
+    const url = new URL(address)
+    if (url.protocol !== 'twthumb:' || url.host !== 'scratch' || url.username || url.password || url.search || url.hash) return null
+    const parts = url.pathname.slice(1).split('/').map(decodeURIComponent)
+    if (parts.length !== 2 || !/^[a-f0-9]{64}$/.test(parts[0]) || !parts[1] || /[\\/\0]/.test(parts[1]) || parts[1].startsWith('.')) return null
+    const path = join(cache, ...parts)
+    if (scratchSnapshotUrl(path) !== address) return null
+    const dir = lstatSync(join(cache, parts[0]))
+    const file = lstatSync(path)
+    if (!dir.isDirectory() || dir.isSymbolicLink() || !file.isFile() || file.isSymbolicLink() || file.size > 64 * 1024 * 1024) return null
+    return path
+  } catch { return null }
 }
 
 // Constant Node program; no outline, filename or content is interpolated into executable text.
