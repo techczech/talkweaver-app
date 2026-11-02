@@ -120,6 +120,8 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
         ...depsRef.current!,
         flush: () => wiringRef.current.flush(),
         ask: (pending) => new Promise<OutlineDiskChoice>((resolve) => {
+          // A visible choice may wait indefinitely; an ordinary stalled flush must retain main's timeout.
+          void window.tw.talk.ackCloseRequest?.()
           // A second leave while the sheet is open (another click, a close): the first one stays.
           sheetAnswerRef.current?.('stay')
           busyRef.current = false
@@ -143,8 +145,22 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
   // Main holds a close (or ⌘Q) while this window's talk differs from the disk: the same sheet, then
   // the close goes ahead once the choice has completed.
   useEffect(() => window.tw.talk.onCloseRequested?.(({ quit }) => {
-    void window.tw.talk.ackCloseRequest?.()
-    void leave().then((ok) => { if (ok) void window.tw.talk.confirmClose({ quit }) })
+    void (async () => {
+      const from = wiringRef.current.activeOutlinePath
+      if (from) {
+        const receipt = await window.tw.windows.recoverMovedTalk(from)
+        if (wiringRef.current.activeOutlinePath !== from) return
+        if (receipt.kind !== 'no-receipt') {
+          await window.tw.talk.ackCloseRequest?.()
+          const kept = await new Promise<boolean>(done => window.dispatchEvent(new CustomEvent('tw-retire-moved-editor', {detail:{from,retire:true,done}})))
+          if (kept && (!wiringRef.current.activeOutlinePath || wiringRef.current.activeOutlinePath === from)) await window.tw.talk.confirmClose({quit})
+          return
+        }
+      }
+      const mayClose = await leave()
+      await window.tw.talk.ackCloseRequest?.()
+      if (mayClose) await window.tw.talk.confirmClose({quit})
+    })()
   }), [leave])
 
   return { change, busy, choose, sheet, answerSheet, guardLeave: leave }

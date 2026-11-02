@@ -3,6 +3,7 @@
 // this file directly. The move itself is moveBlock (extensions/slideBlockOps.ts).
 import type { SlideRow } from '../extensions/slideOutline.ts'
 import type { MoveTarget } from '../extensions/slideBlockOps.ts'
+import type { SlidePlace } from '../../../shared/slide-handling/place.ts'
 
 export interface MoveOption {
   key: string
@@ -170,4 +171,51 @@ export function moveSubject(rows: readonly SlideRow[], line: number, want: 'slid
   if (want === 'slide') return { line: rows[i].line, kind: 'slide', title: rows[i].text }
   const parent = parentSection(rows, i)
   return parent < 0 ? null : { line: rows[parent].line, kind: 'section', title: rows[parent].text }
+}
+
+/** One destination of "Move N slides to…" (the batch bar): where the selected slides go, as a SlidePlace. */
+export interface BatchMoveOption {
+  key: string
+  label: string
+  detail: string
+  no: string
+  group: 'Talk' | 'End of section' | 'After slide'
+  indent: number
+  place: SlidePlace
+}
+
+/**
+ * The destinations for several selected slides or sections (`selectedLines`: their heading lines): Start / End of
+ * talk, the end of each section the selection could sit inside (shallower than every selected block), and, as the
+ * typed text asks, "after" any slide outside the selection (typed text filters both lists by name or number).
+ * Nothing inside a selected block is offered. Every option is a SlidePlace for moveBlocks.
+ */
+export function batchMoveOptions(rows: readonly SlideRow[], selectedLines: readonly number[], query = '', numbers?: StripNumbers | null): BatchMoveOption[] {
+  const picked = rows.map((_, i) => i).filter((i) => selectedLines.includes(rows[i].line))
+  if (picked.length === 0) return []
+  const needle = q(query)
+  const inside = (i: number): boolean => picked.some((p) => i >= p && i < subtreeEnd(rows, p))
+  const minLevel = Math.min(...picked.map((p) => rows[p].level))
+  const topLevel = Math.min(...rows.filter((r) => r.level > 1).map((r) => r.level))
+  const lastTop = [...rows].reverse().find((r) => r.level === topLevel)
+  const out: BatchMoveOption[] = []
+  const talk = (key: string, label: string, place: SlidePlace): void => {
+    if (has(label, needle)) out.push({ key, label, detail: '', no: '', group: 'Talk', indent: 0, place })
+  }
+  talk('start', 'Start of talk', { kind: 'start' })
+  if (lastTop) talk('end', 'End of talk', { kind: 'after', line: lastTop.line, title: lastTop.text })
+  const sections = rows.map((_, i) => i).filter((i) => rows[i].level > 1 && rows[i].level < minLevel && isSectionAt(rows, i) && !inside(i))
+  const top = sections.length ? Math.min(...sections.map((i) => rows[i].level)) : 0
+  for (const i of sections) {
+    if (!(has(rows[i].text, needle) || numberMatches(rows[i], needle, numbers))) continue
+    out.push({
+      key: `into:${rows[i].line}`, label: rows[i].text, detail: count(slidesInside(rows, i)), no: slideNumber(rows[i], numbers), group: 'End of section',
+      indent: rows[i].level - top, place: { kind: 'endOfSection', line: rows[i].line, title: rows[i].text }
+    })
+  }
+  rows.forEach((r, i) => {
+    if (r.level === 1 || inside(i) || !(has(r.text, needle) || numberMatches(r, needle, numbers))) return
+    out.push({ key: `after:${r.line}`, label: r.text, detail: '', no: slideNumber(r, numbers), group: 'After slide', indent: 0, place: { kind: 'after', line: r.line, title: r.text } })
+  })
+  return out
 }

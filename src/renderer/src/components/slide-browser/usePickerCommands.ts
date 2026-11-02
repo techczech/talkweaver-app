@@ -9,10 +9,12 @@ import { besideAvailable } from '../talkBesideModel'
 import type { SearchResult } from './types'
 
 export function usePickerCommands({
-  registerCommands, gridMode, besideOn, activePos, leftCount, vRows, rowsByTalk, findCmdRef,
+  registerCommands, addToScratchpad, gridMode, besideOn, activePos, leftCount, vRows, rowsByTalk, findCmdRef,
   selectWholeSection, openBesideAt, closeBesideNow, setRailCollapsed, setFindFocusReq
 }: {
   registerCommands?: (commands: SlidePickerCommands) => void
+  /** Adds the selected (or focused) slides to the Slide Scratchpad; false when there is nothing to add. */
+  addToScratchpad: () => boolean
   gridMode: Parameters<typeof besideAvailable>[0]
   besideOn: boolean
   activePos: number
@@ -52,7 +54,8 @@ export function usePickerCommands({
       closeBesideNow()
       return true
     },
-    selectWholeSection: () => selectWholeSectionAt(activePos)
+    selectWholeSection: () => selectWholeSectionAt(activePos),
+    addToScratchpad: () => (addToScratchpad() ? true : 'Select slides in the picker first.')
   }
   useEffect(() => {
     registerCommands?.({
@@ -60,7 +63,8 @@ export function usePickerCommands({
       addTalkBeside: () => liveCommandsRef.current?.addTalkBeside() ?? 'The slide picker is not open.',
       talkBeside: () => liveCommandsRef.current?.talkBeside() ?? 'The slide picker is not open.',
       closeTalkBeside: () => liveCommandsRef.current?.closeTalkBeside() ?? 'The slide picker is not open.',
-      selectWholeSection: () => liveCommandsRef.current?.selectWholeSection() ?? 'The slide picker is not open.'
+      selectWholeSection: () => liveCommandsRef.current?.selectWholeSection() ?? 'The slide picker is not open.',
+      addToScratchpad: () => liveCommandsRef.current?.addToScratchpad() ?? 'The slide picker is not open.'
     })
   }, [registerCommands])
 

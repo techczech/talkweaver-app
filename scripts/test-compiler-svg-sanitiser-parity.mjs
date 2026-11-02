@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert'
+import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
@@ -54,9 +55,10 @@ try {
     0,
     `SVG sanitiser regeneration failed:\n${rebuild.stdout}\n${rebuild.stderr}`
   )
-  assert.deepEqual(
-    readFileSync(regenerated),
-    readFileSync(join(repo, 'compiler/assets/vendor/svg-sanitiser.mjs')),
+  const sha256 = (path) => createHash('sha256').update(readFileSync(path)).digest('hex')
+  assert.equal(
+    sha256(regenerated),
+    sha256(join(repo, 'compiler/assets/vendor/svg-sanitiser.mjs')),
     'compiler SVG sanitiser bundle is stale; run npm run generate:compiler-svg-sanitiser'
   )
 

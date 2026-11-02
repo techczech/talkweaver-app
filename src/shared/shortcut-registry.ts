@@ -7,8 +7,8 @@ import { taskGroupFields, type TaskGroupFields } from './task-groups.ts'
 // Sessions, Published pages, Work files and the Run page. Each choice below has its reason in its row's
 // explanation; the rule behind all of them is that a chord already held anywhere in the app, by a reserved
 // chord (ADR-0011) or by the OS or Electron's default menu is not taken, even though the Tools window is a
-// window of its own and would not clash in practice.
-export const SHORTCUT_SCOPES = ['app', 'editor', 'browser', 'slide-picker', 'image-drawer', 'layout-picker', 'inspector', 'presenter', 'picker', 'pathway', 'studio', 'talktext', 'importer', 'tools'] as const
+// window of its own and would not clash in practice. ⌘⇧R belongs to Research; Force Reload is removed.
+export const SHORTCUT_SCOPES = ['app', 'editor', 'browser', 'slide-picker', 'image-drawer', 'layout-picker', 'inspector', 'presenter', 'picker', 'pathway', 'studio', 'talktext', 'importer', 'tools', 'research'] as const
 export type ShortcutScope = (typeof SHORTCUT_SCOPES)[number]
 
 export interface ShortcutEntry extends TaskGroupFields {
@@ -38,7 +38,33 @@ const entries = (scope: ShortcutScope, rows: ShortcutRow[]): ShortcutEntry[] =>
   }))
 
 export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
+  // Picker repeat keys have their own scope; they never consume outline typing.
+  ...entries('research', [
+    ['research.insert', "\u21b5", ["Enter"], "Insert research at cursor", "Insert research at cursor in the research panel or quick picker.", 'Research'],
+    ['research.make-slide', "\u2325\u21b5", ["Alt-Enter"], "Make slide from research", "Make slide from research in the research panel or quick picker.", 'Research'],
+    ['research.open', "\u2318\u21b5", ["Mod-Enter"], "Open research item", "Open research item in the research panel or quick picker.", 'Research'],
+    ['research.previous', "\u2191", ["ArrowUp"], "Previous research item", "Previous research item in the research panel or quick picker.", 'Research'],
+    ['research.next', "\u2193", ["ArrowDown"], "Next research item", "Next research item in the research panel or quick picker.", 'Research'],
+    ['research.scope', "⌥Tab", ["Alt-Tab"], "Change research scope", "Option-Tab changes scope. Tab moves to the inspector buttons.", 'Research'],
+    ['research.close', "Esc", ["Escape"], "Close research", "Close research in the research panel or quick picker.", 'Research'],
+    ['research.copy-reference', "\u2014 \u00b7 \u2318\u21e7P", [], "Copy research reference", "Copy research reference in the research panel or quick picker.", 'Research', true],
+    ['research.reveal', "\u2014 \u00b7 \u2318\u21e7P", [], "Reveal research item", "Reveal research item in the research panel or quick picker.", 'Research', true],
+    ['research.source', "\u2014 \u00b7 \u2318\u21e7P", [], "Open research source", "Open research source in the research panel or quick picker.", 'Research', true],
+    ['research.used-in', "\u2014 \u00b7 \u2318\u21e7P", [], "Jump to research use", "Jump to research use in the research panel or quick picker.", 'Research', true],
+    ['research.scope-talk', "\u2014 \u00b7 \u2318\u21e7P", [], "Research scope: This talk", "Research scope: This talk in the research panel or quick picker.", 'Research', true],
+    ['research.scope-research', "\u2014 \u00b7 \u2318\u21e7P", [], "Research scope: All research", "Research scope: All research in the research panel or quick picker.", 'Research', true],
+    ['research.scope-everything', "\u2014 \u00b7 \u2318\u21e7P", [], "Research scope: Everything", "Research scope: Everything in the research panel or quick picker.", 'Research', true],
+    ['research.rename', '— · ⌘⇧P', [], 'Rename research', 'Rename research for the selected item in Research.', 'Research', true],
+    ['research.change-kind', '— · ⌘⇧P', [], 'Change research kind', 'Change research kind for the selected item in Research.', 'Research', true],
+    ['research.delete', '— · ⌘⇧P', [], 'Delete research', 'Delete research for the selected item in Research.', 'Research', true],
+    ['research.move', '— · ⌘⇧P', [], 'Move research to another talk', 'Move research to another talk for the selected item in Research.', 'Research', true],
+    ['research.copy', '— · ⌘⇧P', [], 'Copy research to another talk', 'Copy research to another talk for the selected item in Research.', 'Research', true],
+    ['research.insert-here', '— · ⌘⇧P', [], 'Insert research from another talk', 'Insert research from another talk for the selected item in Research.', 'Research', true],
+    ['research.retry', "\u2014 \u00b7 \u2318\u21e7P", [], "Reload research", "Reload research in the research panel or quick picker.", 'Research', true],
+  ]),
   ...entries('app', [
+    ['app.research-panel', '⌘⇧R', ['Mod-Shift-r'], 'Research', 'Opens or closes the docked research panel.', 'Research'],
+    ['app.research-find', '⌘⌥R', ['Mod-Alt-r'], 'Find in research…', 'Opens the research quick picker. Option keeps the panel toggle on Command-Shift-R.', 'Research'],
     ['app.sidebar-talks', '⌘⇧T', ['Mod-Shift-t'], 'Open Talks panel search', 'Opens the Talks sidebar and moves focus to its search field.', 'Sidebar'],
     ['app.sidebar-outline', '⌘⇧O', ['Mod-Shift-o'], 'Open Slide outline search', 'Opens the slide outline sidebar and moves focus to its search field.', 'Sidebar'],
     ['app.sidebar-toggle', '⌘⇧[ / ⌘\\', ['Mod-Shift-[', 'Mod-\\'], 'Collapse or expand sidebar', 'Toggles the current sidebar without changing its selected mode.', 'Sidebar'],
@@ -49,15 +75,21 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['app.layout-picker', '⌘L', ['Mod-l'], 'Layout picker: Open', 'Opens the layout picker in the Inspector column for the current slide; pressed again, it closes and puts the slide back.', 'Find & insert'],
     ['app.icon-picker', '⌘I', ['Mod-i'], 'Insert icon', 'Puts an icon on the title, paragraph or list item the cursor is on, in the Plain and the Markdown view.', 'Find & insert'],
     ['app.image-search', '⌘⇧I', ['Mod-Shift-i'], 'Find images', 'Opens or closes the image drawer beside the editor: screenshots, images from old PowerPoints and pictures from your talks.', 'Find & insert'],
+    ['app.set-aside', '⌘⌥S', ['Mod-Alt-s'], 'Set aside in Scratchpad', 'Copies selected slides to the Scratchpad before removing them from the talk. Undo restores the outline.', 'Slides'],
+    ['app.grid-search', '⌘⌥F', ['Mod-Alt-f'], 'Search slides in the grid', 'Shows the grid and moves focus to its search box. The outline search and the grid search are one query.', 'Slides'],
+    ['app.search-next', '⌘⌥J', ['Mod-Alt-j'], 'Next search result', 'Moves to the next slide that matches the search in the grid or the outline.', 'Slides'],
+    ['app.search-previous', '⌘⌥⇧J', ['Mod-Alt-Shift-j'], 'Previous search result', 'Moves to the previous slide that matches the search in the grid or the outline.', 'Slides'],
     ['app.find', '⌘F', ['Mod-f'], 'Find in outline', 'Opens text search in the current outline editor.', 'Find & insert'],
     ['app.where-used', '⌘⇧U', ['Mod-Shift-u'], 'Where used and versions', 'Shows where the current slide is reused and its available versions.', 'Slides'],
-    ['app.slide-focus', '⌘⇧F', ['Mod-Shift-f'], 'Focus current slide', 'Scopes editing and live preview to the current slide.', 'Slides'],
+    ['app.slide-focus', '⌘⌥⇧F', ['Mod-Alt-Shift-f'], 'Focus current slide', 'Scopes editing and live preview to the current slide.', 'Slides'],
     ['app.command-palette', '⌘⇧P', ['Mod-Shift-p'], 'Command palette', 'Opens the searchable list of application commands.', 'App'],
     ['app.toggle-inspector', '⌘P', ['Mod-p'], 'Inspector mode (replaces the slide strip)', 'Toggles the Inspector in every pane where the slide strip would appear.', 'View'],
     ['app.inspector-slides', '⌥↑ / ⌥↓', ['Alt-ArrowUp', 'Alt-ArrowDown'], 'Inspector previous or next slide', 'Moves the Inspector and editor cursor to the adjacent slide while focus is in the Inspector.', 'View'],
     ['app.inspector-steps', '⌥← / ⌥→', ['Alt-ArrowLeft', 'Alt-ArrowRight'], 'Inspector previous or next step', 'Steps reveal, focus, or carousel behaviour in the Inspector preview.', 'View'],
     ['app.new-window', '⌘N', ['Mod-n'], 'New window', 'Opens another TalkWeaver window.', 'App'],
     ['app.help', '⌘/ / ⌃/', ['Mod-/', 'Ctrl-/'], 'Keyboard shortcuts', 'Opens or closes the generated keyboard shortcut sheet.', 'App'],
+    ['app.check-for-updates', '— · ⌘⇧P', [], 'Check for Updates', 'Reads talkweaver.app now and says whether a newer version exists. No default key; rebindable.', 'App', true],
+    ['app.whats-new', '— · ⌘⇧P', [], 'What\u2019s new in TalkWeaver', 'Opens the notes for the version you are running in the right-hand column. No default key; rebindable.', 'App', true],
     ['app.view-editor', '⌘1', ['Mod-1'], 'Editor only', 'Switches the workspace to the editor-only view.', 'View'],
     ['app.view-split', '⌘2', ['Mod-2'], 'Editor and slides', 'Switches the workspace to the split editor and slide view.', 'View'],
     ['app.view-strip', '⌘3', ['Mod-3'], 'Slide strip', 'Switches the workspace to the slide strip view.', 'View'],
@@ -101,7 +133,13 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['editor.object-edit', '↵', ['Enter'], 'Edit object at caret', 'Opens the selected object block for in-place editing; inside an open object, Enter is a plain newline.', 'Objects'],
     ['editor.object-raw', '⇧⌘M', ['Shift-Mod-m'], 'Show markup on widget', 'Toggles the raw markup view on the object block at the caret.', 'Objects'],
     ['editor.object-finish', '⌘↵', ['Mod-Enter'], 'Finish object editing', 'Closes the open object source and returns to its rendered widget.', 'Objects'],
-    ['editor.object-leave', 'Esc', ['Escape'], 'Commit and leave object editing', 'Commits the open object source and returns to its rendered widget.', 'Objects']
+    ['editor.object-leave', 'Esc', ['Escape'], 'Commit and leave object editing', 'Commits the open object source and returns to its rendered widget.', 'Objects'],
+    ['editor.object-expand', '—', [], 'Expand or collapse object card', 'Shows or hides the read-only preview of the object card at the caret. No default key; rebindable.', 'Objects', true],
+    ['editor.object-discard', '—', [], 'Discard object edits', 'Closes the open object editor and writes nothing. No default key; rebindable.', 'Objects', true],
+    ['editor.object-row-up', '⌃⌘↑', ['Ctrl-Mod-ArrowUp'], 'Move row up', 'In a chat, terminal or trace editor, moves the focused row up one place.', 'Objects'],
+    ['editor.object-row-down', '⌃⌘↓', ['Ctrl-Mod-ArrowDown'], 'Move row down', 'In a chat, terminal or trace editor, moves the focused row down one place.', 'Objects'],
+    ['editor.delete-comment', '—', [], 'Delete comment at caret', 'Deletes the whole HTML comment the caret is in, including one that shares its lines with text. Undo restores it.', 'Objects', true],
+    ['editor.insert-notes', '—', [], 'Insert speaker notes', 'Adds a speaker-notes block at the end of the slide, or opens the slide’s existing notes.', 'Objects', true]
   ]),
   ...entries('browser', [
     ['browser.move', '↑ ↓ ← →', ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'], 'Move selection', 'Moves keyboard focus through slide cards, strip items, or talk rows.', 'Navigation'],
@@ -275,7 +313,7 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['tools.plan-like-this', '⌘⇧D', ['Mod-Shift-d'], 'Plan the next run like this', 'Opens the plan sheet filled in from the Run on show. D for duplicate, with ⇧ because ⌘D is Duplicate talk and ⌘⌥D is the macOS Dock shortcut.', 'Plan'],
     ['tools.publish', '⌘⌥U', ['Mod-Alt-u'], 'Publish for this run', 'Publishes the Run on show (U for upload). ⌘⇧P is the command palette, so Publish takes ⌥ and a letter nothing else holds.', 'Publish'],
     ['tools.go-live', '⌘⌥L', ['Mod-Alt-l'], 'Go live', 'Starts the Run on show live. L for live, with ⌥ because ⌘⇧L is Insert link in the editor and ⌘L is the layout picker.', 'Publish'],
-    ['tools.open-run', '⌘⌥O', ['Mod-Alt-o'], 'Open run', 'Opens the Run of the selected page in Published pages. O for open, with ⌥ because ⌘O is Open talk in the Talks panel and ⌘⇧R is the default View menu\'s Force Reload.', 'Views'],
+    ['tools.open-run', '⌘⌥O', ['Mod-Alt-o'], 'Open run', 'Opens the Run of the selected page in Published pages. O for open, with ⌥ because ⌘O is Open talk in the Talks panel and ⌘⇧R opens Research.', 'Views'],
     ['tools.copy-link', '⌘⇧C', ['Mod-Shift-c'], 'Copy link', 'Copies the link of the Run on show, the one its Published step shows with the QR code. C for copy; nothing else holds ⌘⇧C.', 'Publish'],
     ['tools.copy-invitation', '⌘⌥C', ['Mod-Alt-c'], 'Copy invitation text', 'Copies the invitation text of the Run on show (C for copy, ⌥ to tell it from Copy link).', 'Publish'],
     ['tools.new-work-file', '⌘⇧N', ['Mod-Shift-n'], 'New work file', 'Starts a new work file in the Work files view. N for new; ⇧ because ⌘N is New window and ⌘⌥N is Plan a run.', 'Work files']

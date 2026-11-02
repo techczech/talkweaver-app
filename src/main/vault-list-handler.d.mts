@@ -7,6 +7,7 @@ export function createVaultListHandler(options: { dir: string; legacyCachePath?:
    *  answers [] and is not scanned. */
   handle(vault: IndexVault, onBatch?: (batch: IndexedTalk[], reset: boolean, done: boolean) => void): Promise<IndexedTalk[]>
   metadata: VaultIndex['metadata']
+  cachedState: VaultIndex['cachedState']
   cached: VaultIndex['cached']
   invalidate: VaultIndex['invalidate']
   setConflicts: VaultIndex['setConflicts']

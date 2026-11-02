@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { readOutlineSlides } from '../src/shared/feedback-accept.ts'
 // Layout content verbs (ADR-0032; ticket 02): pure functions over outline text.
 import { strict as assert } from 'node:assert'
 import {
@@ -380,4 +382,39 @@ console.log('layout verbs: all checks passed')
   const squash = (text) => text.replace(/ /g, '')
   assert.equal(squash(previewLayout(listSlide, 'ab1', 'numbered')), squash(previewLayout(previewLayout(listSlide, 'ab1', 'numbered'), 'ab1', 'numbered')))
   console.log('ok: Icon list and Numbered list differ on a Cards slide (the list styles take it to List)')
+}
+
+// Explain's chat insertion reuses the picker's empty-slide starter path.
+for (const layout of ['chat', 'chat-lanes']) {
+  const original = '### Keep this title\n{id=chat-example}\n\n### Following slide\n{id=following}\n\nExisting body\n'
+  const inserted = setLayout(original, 'chat-example', layout, [], true).outline
+  assert.equal((inserted.match(/^### /gm) ?? []).length, 2, 'starter never introduces another heading')
+  assert.match(inserted, /^### Keep this title\n/)
+  assert.match(inserted, /```chat\nuser:/)
+  assert.match(inserted, /\nbot:.*\n```/)
+  assert.match(inserted, /### Following slide\n\{id=following\}\n\nExisting body/)
+  const nonempty = inserted.replace('user: What changed', 'user: **literal** What changed')
+  assert.equal(setLayout(nonempty, 'chat-example', layout, [], true).outline, setLayout(nonempty, 'chat-example', layout).outline, 'starter preserves an authored chat body')
+}
+
+const unstampedChat = setLayout('### Empty\n\n', {headingLine: 1}, 'chat', [], true).outline
+assert.match(unstampedChat, /```chat\nuser:/, 'the example also inserts before the empty slide has a stamped id')
+
+// Exercise Explain's actual target selection with a normalised compiled heading.
+{
+  const source = readFileSync(new URL('../src/renderer/src/components/WorkspaceLayout.tsx', import.meta.url), 'utf8')
+  const callback = source.slice(source.indexOf('onInsertExample={(layout) => {'))
+  const expression = callback.match(/const target = ([\s\S]*?)\n            if \(!target\)/)?.[1]
+  assert.ok(expression, 'Explain target selection is present')
+  const matchTarget = new Function('read', 'row', `return ${expression}`)
+  for (const eol of ['\n', '\r\n']) {
+    const text = ['### Empty', '', '### Following', '', 'Keep body', ''].join(eol)
+    const read = readOutlineSlides(text)
+    const row = { slide_id: 'generated-empty', source_line: 1, source_markdown: '### Empty\n\n' }
+    const target = matchTarget(read, row)
+    assert.ok(target, 'an unchanged unstamped heading matches with either line ending')
+    assert.equal(target.line, 1)
+    assert.equal(matchTarget(read, { ...row, source_markdown: '### Changed\n' }), undefined, 'a changed heading still refuses')
+    assert.equal(read.lines.join('\n'), text, 'matching leaves original outline bytes intact')
+  }
 }

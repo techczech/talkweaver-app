@@ -1,3 +1,4 @@
+import { preservationMessage } from '../src/main/publication-preservation.ts'
 // Publishing a planned Run (feedback-boards ticket 09; work-files ticket 16 "Publish for this run"), and the
 // evergreen handout, through the REAL ipcMain handlers lifted out of src/main/index.ts with the
 // TypeScript compiler (as test-handout-from-buffer.mjs does), over a temp vault with the REAL Run
@@ -32,11 +33,13 @@
 //      never sees them; the talk's own handout pages and its outline file stay byte-identical.
 // Usage: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-prework-publish.mjs
 import assert from 'node:assert/strict'
+import { withPrewarmYield } from '../src/main/preparation-gate.ts'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import ts from 'typescript'
+import { runPublicationFixture } from './lib/run-publication-fixture.mjs'
 import { configureTalkWriter, flushTalkForPublish, writeTalkOutline } from '../src/main/talk-writer.ts'
 import { SITE_FOLDER_REFUSED, checkPreconditions, publishUrl, resolveBase } from '../src/main/publishing-logic.ts'
 import { stampHandoutUrl } from '../src/shared/handout-stamp.ts'
@@ -91,6 +94,7 @@ function loadHandler(channel, dependencies) {
 
 configureTalkWriter({ editorBufferFor: () => null })
 const root = mkdtempSync(join(tmpdir(), 'tw-prework-publish-'))
+try {
 const vault = join(root, 'vault')
 const slug = 'agents'
 const talkDir = join(vault, slug)
@@ -147,6 +151,9 @@ const trace = { deploys: 0 }
 const config = { vaultRoot: vault, cfAccountId: 'acct', cfPagesProject: 'talks', publishBaseUrl: 'https://talks.test', publishUseShortIds: false, liveWorkerBaseUrl: 'https://live.example.test' }
 const publishing = grantedPublishing({ siteDir, onUpload: () => { trace.deploys += 1 } })
 const common = {
+  withPrewarmYield,
+  // ticket 2b: the OCR text handed to the compiler; this test has no OCR index.
+  pictureTextForCompile: () => ({}),
   getConfig: (key, fallback) => (key in config ? config[key] : fallback),
   currentVaultRoot: () => vault, writableVaultRoot: () => vault, vaultRootFor: () => vault,
   // The real root choice (ADR-0036), with the test's vault as the one registered vault.
@@ -162,7 +169,7 @@ const common = {
   buildHandoutPagesOffThread: (job) => buildHandoutPages(job, (html) => html),
   SITE_FOLDER_REFUSED, publishedFolders, removeSiteFolder, writableSiteFolder,
   handoutHomeDetails, handoutHomePrework, handoutHomePostwork,
-  handoutPublishing: () => publishing,
+  preservationMessage, handoutPublishing: () => publishing,
   liveAddressForPages,
   process: { env: {} },
   withoutPreworkSlides,
@@ -170,7 +177,8 @@ const common = {
 const postWorkAsked = []
 const runHandlerDeps = {
   ...common,
-  readRun, persistRun, setRunHandoutUrl, clearRunHandoutUrl, talkBySlug: () => talk,
+  ...runPublicationFixture(sourceText,REPO,()=>[{id:'va',root:vault,open:true},{id:'vb',root:join(root,'vault-b'),open:true}],r=>r===vault?[talk]:[{slug,outlinePath:join(r,slug,`${slug}-outline.md`)}]),
+  readRunForTalk, readRun, persistRun, setRunHandoutUrl, clearRunHandoutUrl, talkBySlug: () => talk,
   runHandoutSlug: () => 'agents-itss-2026-10-06',
   prepareTalk: async (path, content) => ({ model: await prepareSource(path, content, slug, statSync(path)) }),
   timerSettings: () => ({}),
@@ -178,6 +186,8 @@ const runHandlerDeps = {
   planRunWork, sendRunWork, writeRunWorkPages, runLineFor, stampRunWork, WORK_PAGE_FOLDER,
   // Ticket 19: a Run published (again) asks whether its post-work opens now.
   openPostWorkFor: (talkSlug, runId) => { postWorkAsked.push(`${talkSlug}/${runId}`) },
+  presenterPublications: { ticket: () => 1, published: () => [], unpublishedRun: () => [], talkUrl: () => null },
+  talkInVault: (_root, _slug) => talk, outlineUrlOnDisk: () => null,
   runSiteFolder, runPublishFolder, listRuns, RUN_FOLDER_UNCLEAR, runUnpublishJob, buildNotAvailablePage,
   // Publish handout for this Run: the Run's compiled deck, then its pages built as the worker thread
   // builds them (here in this process, with the real buildHandoutPages); what the handout carries is recorded.
@@ -564,15 +574,16 @@ const startLine = (html) => {
   assert.equal((await unpublish(null, { talkSlug: slug, runId: 'run-race' })).success, true)
 }
 
-// 1c. A Run whose handout folder has a space and a `#` in its name (round 3): its link holds the name
-//     as an encoded path segment, and Unpublish finds the folder from that link.
-{
-  const awkward = 'two words #1 run'
+// 1c. A Run with spaces keeps its encoded link; a hash name refuses before upload.
+for (const awkward of ['two words 1 run', 'two words #1 run']) {
   const deps = { ...runHandlerDeps, runHandoutSlug: () => awkward }
   persistRunForTalk(vault, slug, 'run-awkward', planned('run-awkward', { status: 'delivered' }))
   const up = await loadHandler('run:publish-handout', deps)(null, { talkSlug: slug, runId: 'run-awkward' })
+  if (awkward.includes('#')) {
+    assert.equal(up.success, false); assert.match(up.error, /Rename it/); assert.ok(up.error.includes(awkward)); rmSync(join(siteDir, awkward), { recursive: true, force: true }); continue
+  }
   assert.equal(up.success, true, up.error)
-  assert.deepEqual([up.url, decodeURIComponent(new URL(up.url).pathname), new URL(up.url).hash], ['https://talks.test/two%20words%20%231%20run/', `/${awkward}/`, ''])
+  assert.deepEqual([up.url, decodeURIComponent(new URL(up.url).pathname), new URL(up.url).hash], ['https://talks.test/two%20words%201%20run/', `/${awkward}/`, ''])
   assert.ok(existsSync(join(siteDir, awkward, 'index.html')) && readRunForTalk(vault, slug, 'run-awkward').handoutUrl === up.url)
   // Published again: the same folder is found from the link, not a second one made.
   assert.equal((await loadHandler('run:publish-handout', { ...deps, runHandoutSlug: () => 'a-second-folder' })(null, { talkSlug: slug, runId: 'run-awkward' })).url, up.url)
@@ -599,6 +610,13 @@ const startLine = (html) => {
   // which other programs write to: nothing is claimed about it.
   const outside = () => ({ beside: readdirSync(dirname(siteDir)).sort(), victim: snapshot(victim) })
   const before = outside()
+  // The frozen candidate never follows an unrelated link into a different tree.
+  persistRunForTalk(vault, slug, 'run-link-guard', planned('run-link-guard', { status: 'delivered' }))
+  const beforeUpload = trace.deploys
+  const refusedLink = await loadHandler('run:publish-handout', { ...runHandlerDeps, runHandoutSlug: () => 'run-link-guard' })(null, { talkSlug: slug, runId: 'run-link-guard' })
+  assert.deepEqual([refusedLink.success, refusedLink.error, trace.deploys], [false, preservationMessage('PUBLISH_CANDIDATE_CHANGED'), beforeUpload])
+  assert.deepEqual(outside(), before)
+  rmSync(join(siteDir, 'run-link-guard'), { recursive: true, force: true })
   const EVIL = ['%2e%2e%2fvictim', '..%2Fvictim', '..%2F..', '%2Fetc', '%2F' + encodeURIComponent(victim.slice(1)), '%5C..%5Cvictim', '%00', 'victim%00', '%2e', '%2e%2e', 'linked', 'linked%2Fdeep', 'victim.', '%E0%A4%A', '%20victim', 'CON']
   for (const segment of EVIL) {
     for (const registry of [{}, { '../victim': 'abcd', [victim]: 'abce', linked: 'abcf', '..': 'abcg' }]) {
@@ -615,11 +633,15 @@ const startLine = (html) => {
         persistRunForTalk(vault, slug, 'run-evil', stored)
         // A short id the registry gives a hostile name (no folder recorded, amended D2): that name only, never a
         // folder of the site, so missing here; the Run gets a new folder, as a first publish does.
+        // Exercise the existing successful path on a candidate consisting only of real files.
+        // The symlink refusal is checked above; the same symlink is restored for the next unsafe-input check.
+        rmSync(join(siteDir, 'linked'))
         const up = await loadHandler('run:publish-handout', { ...deps, runHandoutSlug: () => 'run-evil-folder' })(null, { talkSlug: slug, runId: 'run-evil' })
         assert.equal(up.success, true, up.error)
         assert.deepEqual([outside(), existsSync(join(siteDir, 'run-evil-folder', 'index.html'))], [before, true], `publish with the stored link ${link}: built in its own folder inside the site`)
         assert.equal((await loadHandler('run:unpublish-handout', deps)(null, { talkSlug: slug, runId: 'run-evil' })).success, true)
         assert.deepEqual([outside(), existsSync(join(siteDir, 'run-evil-folder'))], [before, false])
+        symlinkSync(victim, join(siteDir, 'linked'))
       }
     }
   }
@@ -633,17 +655,21 @@ const startLine = (html) => {
   }
   // The link inside the site is still a link, and what it points at is whole.
   assert.ok(lstatSync(join(siteDir, 'linked')).isSymbolicLink() && readFileSync(join(victim, 'deep', 'keep.txt'), 'utf8') === 'keep')
-  // Ordinary and awkward names still publish and unpublish.
+  rmSync(join(siteDir, 'linked'))
+  // Ordinary and awkward names still publish and unpublish from the link-free candidate.
   for (const name of ['two words', 'a#b', '50%', 'ünï-講演', 'plain-run']) {
     persistRunForTalk(vault, slug, 'run-named', planned('run-named', { status: 'delivered' }))
     const deps = { ...runHandlerDeps, runHandoutSlug: () => name }
     const up = await loadHandler('run:publish-handout', deps)(null, { talkSlug: slug, runId: 'run-named' })
+    if (/[%?#]/.test(name)) {
+      assert.equal(up.success, false); assert.match(up.error, /PUBLISH_CANDIDATE_CHANGED/); assert.match(up.error, /Rename it/); assert.ok(up.error.includes(name))
+      rmSync(join(siteDir, name), { recursive: true, force: true }); continue
+    }
     assert.deepEqual([up.success, existsSync(join(siteDir, name, 'index.html')), decodeURIComponent(new URL(up.url).pathname)], [true, true, `/${name}/`], `${name} publishes`)
     assert.equal((await loadHandler('run:unpublish-handout', deps)(null, { talkSlug: slug, runId: 'run-named' })).success, true)
     assert.deepEqual([existsSync(join(siteDir, name)), readRunForTalk(vault, slug, 'run-named').handoutUrl], [false, undefined], `${name} unpublishes`)
   }
   assert.deepEqual(outside(), before)
-  rmSync(join(siteDir, 'linked'))
 }
 
 // 1e. Ticket 17 round 3, finding 1: two open vaults hold the same talk and the same Run identity. Publish
@@ -705,7 +731,7 @@ const startLine = (html) => {
 {
   const evergreen = { ...common, outlineRefused: (p) => outlineRefusal(vault, p),
     resolveImageRefs: (text) => text, resolvePooledRefs: (text) => text, readHandoutUrl: () => null, app: { getPath: () => root },
-    ledgerSeal: async () => {}, localHandoutWorkerBaseUrl: () => 'http://127.0.0.1:8787' }
+    ledgerSeal: async () => {}, localHandoutWorkerBaseUrl: () => 'http://127.0.0.1:8787', presenterPublications: { ticket: () => 1, published: () => [] } }
   const published = await loadHandler('talk:publish-handout', evergreen)(null, outlinePath, OUTLINE)
   assert.equal(published.success, true, published.error)
   const html = readFileSync(join(siteDir, slug, `${slug}.html`), 'utf8')
@@ -727,7 +753,7 @@ const startLine = (html) => {
   assert.notEqual(named, OUTLINE)
   const evergreen = { ...common, outlineRefused: (p) => outlineRefusal(vault, p),
     resolveImageRefs: (text) => text, resolvePooledRefs: (text) => text, readHandoutUrl: () => null, app: { getPath: () => root },
-    ledgerSeal: async () => {}, localHandoutWorkerBaseUrl: () => 'http://127.0.0.1:8787' }
+    ledgerSeal: async () => {}, localHandoutWorkerBaseUrl: () => 'http://127.0.0.1:8787', presenterPublications: { ticket: () => 1, published: () => [] } }
   const published = await loadHandler('talk:publish-handout', evergreen)(null, outlinePath, named)
   assert.equal(published.success, true, published.error)
   const exported = await loadHandler('talk:export-handout', evergreen)(null, outlinePath, named)
@@ -746,7 +772,7 @@ const startLine = (html) => {
 {
   const evergreen = { ...common, outlineRefused: (p) => outlineRefusal(vault, p),
     resolveImageRefs: (text) => text, resolvePooledRefs: (text) => text, readHandoutUrl: () => null, app: { getPath: () => root },
-    ledgerSeal: async () => {}, localHandoutWorkerBaseUrl: () => 'http://127.0.0.1:8787' }
+    ledgerSeal: async () => {}, localHandoutWorkerBaseUrl: () => 'http://127.0.0.1:8787', presenterPublications: { ticket: () => 1, published: () => [] } }
   const talkFolder = join(siteDir, slug)
   const snapshot = () => new Map(filesIn(talkFolder).sort().map((file) => [file.slice(talkFolder.length), readFileSync(file)]))
   const publishTalk = async () => {
@@ -811,7 +837,7 @@ const INJECTION = '[click](https://safe "a https://x/onmouseover=alert(1)// z")'
 {
   const evergreen = { ...common, outlineRefused: (p) => outlineRefusal(vault, p),
     resolveImageRefs: (text) => text, resolvePooledRefs: (text) => text, readHandoutUrl: () => null, app: { getPath: () => root },
-    ledgerSeal: async () => {}, localHandoutWorkerBaseUrl: () => 'http://127.0.0.1:8787' }
+    ledgerSeal: async () => {}, localHandoutWorkerBaseUrl: () => 'http://127.0.0.1:8787', presenterPublications: { ticket: () => 1, published: () => [] } }
   const talkFolder = join(siteDir, slug)
   const snapshot = () => new Map(filesIn(talkFolder).sort().map((file) => [file.slice(talkFolder.length), readFileSync(file)]))
   const publishTalk = async () => {
@@ -882,3 +908,5 @@ const INJECTION = '[click](https://safe "a https://x/onmouseover=alert(1)// z")'
 }
 
 console.log('prework publish: a Run with work files publishes three pages (handout linking to both, pre-work/, post-work/) with no local address and no right answer; pins and objects are reused on republish; a file that is not ready is refused with its finding; legacy pre-work publishes as in 0.39; a window closing before it opens is refused; pre-work steps stay out of the evergreen handout (publish and export), also for a talk that names work files; the extras of a Run show on its handout home page only, escaped, and the talk handout stays byte-identical; a Run’s handout is its pathway’s slides plus its own extra slides, passed')
+
+} finally { rmSync(root,{recursive:true,force:true}) }

@@ -65,6 +65,11 @@ import { computeSlideLines } from './src/shared/slide-lines.ts'
 import { pasteAtHeadingEnd } from './src/renderer/src/extensions/headingEndInsert.ts'
 import { publishOutline, resetOutlineCollapseForTests } from './src/renderer/src/lib/outlineCollapseStore.ts'
 import { activeHeadingLine, createActiveLineReporter, slideIndexAtLine } from './src/renderer/src/lib/activeOutlineLine.ts'
+import { blockAt, copyBlocks, cutBlocks, refHolds } from './src/shared/slide-handling/blocks.ts'
+import { rememberSlideClip } from './src/renderer/src/extensions/slideBlockOps.ts'
+import { writeSlideClipboard } from './src/renderer/src/components/SlideRowMenus.tsx'
+import { notify } from './src/renderer/src/lib/notify.ts'
+import { isolateHistory } from '@codemirror/commands'
 
 const TALK_KEY = ${JSON.stringify(TALK_KEY)}
 window.toasts = []
@@ -124,7 +129,7 @@ const slideOpsOf = (view) => ({
   cut: (line) => cutSlideAt(view, line),
   copy: (line) => copySlideAt(view, line),
   paste: (clip, afterLine) => pasteSlidesAfter(view, clip, afterLine),
-  moveTo: (fromLine, target) => moveSlideTo(view, fromLine, target),
+  moveTo: (fromLine, target, cardRef) => moveSlideTo(view, fromLine, target, cardRef),
   delete: (line) => deleteSlideAt(view, line)
 })
 function stage() {
@@ -217,7 +222,8 @@ window.mountGrid = (doc) => {
     const [active, setActive] = useState(1)
     const [landing, setLanding] = useState(null)
     useEffect(() => { setContent = set }, [])
-    const cards = React.useMemo(() => cardsOf(content), [content])
+    // window.frozenText: the cards stay as compiled from that text while the buffer changes (a compile lag).
+    const cards = React.useMemo(() => cardsOf(window.frozenText ?? content), [content])
     useEffect(() => { publishOutline(TALK_KEY, content) }, [content])
     // As the workspace does: once the cards carry the change, the landed slide's card is selected.
     useEffect(() => {
@@ -233,6 +239,37 @@ window.mountGrid = (doc) => {
       onExplain: (i) => { window.explained.push(cards[i].title) },
       slideOps,
       lineOfSlide: (i) => cards[i]?.line ?? null,
+      // Wired as WorkspaceLayout wires them (slideRefOf: the card's heading; cut / copy / paste checked against the buffer).
+      slideRefOf: (i) => {
+        const c = cards[i]
+        if (!c || !/^#{1,6}\\s/.test(view.state.doc.line(Math.min(c.line, view.state.doc.lines)).text)) return null
+        return { line: c.line, headingText: c.source_markdown ? c.source_markdown.split('\\n')[0] : c.title }
+      },
+      onCutSlides: async (refs, mode) => {
+        const text = view.state.doc.toString()
+        const r = cutBlocks(text, refs)
+        if ('refused' in r) { notify(r.refused, 'info', 'slide-clipboard'); return false }
+        view.dispatch({ changes: r.changes, annotations: isolateHistory.of('full') })
+        const outer = blockAt(text, Math.min(...refs.map((x) => x.line)))
+        const one = (outer?.section ? 'section' : 'slide') + ' “' + r.titles[0] + '”'
+        if (mode === 'cut') { writeSlideClipboard(r.clip, true); notify(r.count === 1 ? 'Cut ' + one + '. Paste with ⌘V.' : 'Cut ' + r.count + ' slides. Paste with ⌘V.', 'info', 'slide-clipboard') }
+        else notify(r.count === 1 ? 'Deleted ' + one + '. Undo with ⌘Z to get it back.' : 'Deleted ' + r.count + ' slides. Undo with ⌘Z to get them back.', 'info', 'slide-clipboard')
+        return true
+      },
+      onCopySlides: (refs) => {
+        const text = view.state.doc.toString()
+        const r = copyBlocks(text, refs)
+        if ('refused' in r) { notify(r.refused, 'info', 'slide-clipboard'); return null }
+        rememberSlideClip(r.clip)
+        return r.clip
+      },
+      onPasteAfterCard: (clip, i) => {
+        const c = cards[i]
+        if (!c) return slideOps.paste(clip, null)
+        const ref = { line: c.line, headingText: c.source_markdown ? c.source_markdown.split('\\n')[0] : c.title }
+        if (!refHolds(view.state.doc.toString(), ref)) { notify('The talk changed while you were pasting, and the slide you chose is no longer where it was. Nothing was pasted; try again.', 'info', 'slide-clipboard'); return null }
+        return slideOps.paste(clip, ref.line)
+      },
       onLanded: (line) => { window.landed.push(line); setLanding(line) },
       onMoreActions: (i) => { window.more.push(cards[i].title) }
     })
@@ -835,9 +872,53 @@ try {
   await clickCell('Section 3')
   assert.equal(await activeTitle(), 'Section 3')
   await key('Meta+x')
-  assert.equal(await doc(), TALK, 'a section-title card is not a ### slide: the grid does not cut it')
-  assert.equal(await lastToast(), 'This card cannot be cut from the grid. Cut it in the Slides outline or the editor.')
-  pass('grid: ⌘X cuts the selected ### slide, ⌘V pastes it after the selected card and selects it; a card that is not a ### slide is refused with a toast')
+  // Slide handling ticket 1a: the grid's `###`-only refusal is gone; a section's card cuts the whole section.
+  assert.equal(await doc(), cutBlock(TALK, lineOf(TALK, '## Section 3')).text, 'a section-title card cuts its whole section')
+  assert.equal(await lastToast(), 'Cut section “Section 3”. Paste with ⌘V.')
+  await undo()
+  assert.equal(await doc(), TALK, 'one undo step')
+  pass('grid: ⌘X cuts the selected slide, ⌘V pastes it after the selected card and selects it; a section card cuts its whole section')
+
+  // Fix round 2 (R1): a card whose line is stale (the cards lag the buffer: an id-less heading, lines typed above it
+  // before the compile) never cuts, copies, deletes or pastes at another block. Seven lines typed above Slide 2.3
+  // put "### Slide 2.3" on the line the card "Slide 2.4" still names.
+  {
+    await page.evaluate((d) => { window.frozenText = d; window.mountGrid(d) }, TALK)
+    await sleep(100)
+    await clickCell('Slide 2.4')
+    const typed = '### Typed above\nx\n\n- t\n\nNote: t\n\n'
+    await page.evaluate(([line, t]) => window.insertBeforeLine(line, t), [lineOf(TALK, '### Slide 2.3'), typed])
+    const shifted = await doc()
+    assert.equal(shifted.split('\n')[lineOf(TALK, '### Slide 2.4') - 1], '### Slide 2.3', 'the card\'s old line now holds another slide')
+    await toasts()
+    await key('Meta+x')
+    assert.equal(await doc(), shifted, '⌘X on the stale card cut nothing')
+    assert.match(await lastToast(), /no longer where it was\. Nothing was moved/, 'and says why')
+    await key('Meta+c')
+    assert.match(await lastToast(), /no longer where it was/, '⌘C refused too')
+    await page.evaluate(() => navigator.clipboard.writeText('### Pasted\n\nbody\n'))
+    await key('Meta+v')
+    await sleep(120)
+    assert.equal(await doc(), shifted, '⌘V after the stale card pasted nothing')
+    assert.match(await lastToast(), /Nothing was pasted/)
+    await cell('Slide 2.4').first().click({ button: 'right' })
+    await sleep(60)
+    await page.locator(`${MENU} [data-slide-row-action="delete"]`).click()
+    await sleep(120)
+    assert.equal(await doc(), shifted, 'menu Delete on the stale card deleted nothing')
+    assert.match(await lastToast(), /no longer where it was/)
+    await cell('Slide 2.4').first().click({ button: 'right' })
+    await sleep(60)
+    await page.locator(`${MENU} [data-slide-row-action="move"]`).click()
+    await sleep(60)
+    await page.locator(`${LIST} [data-move-option="end"]`).click()
+    await sleep(150)
+    assert.equal(await doc(), shifted, 'menu Move slide to… on the stale card moved nothing')
+    assert.match(await lastToast(), /no longer where it was\. Nothing was moved/)
+    await page.evaluate((d) => { window.frozenText = undefined; window.mountGrid(d) }, TALK) // the cases below start from the talk as it was
+    await sleep(100)
+    pass('grid: a card whose line is stale is refused for ⌘X, ⌘C, ⌘V and the menu\'s Delete and Move slide to…; the talk is unchanged')
+  }
 
   await cell('Slide 0.2').first().scrollIntoViewIfNeeded()
   await cell('Slide 0.2').first().click({ button: 'right' })
@@ -853,7 +934,7 @@ try {
   await cell('Section 1').first().scrollIntoViewIfNeeded()
   await cell('Section 1').first().click({ button: 'right' })
   await sleep(60)
-  assert.deepEqual(await menuLabels(), ['Paste after section [⌘V]', 'Explain rendering', 'More actions… [⌘K]'], 'a section-title card: no cut, copy, move or delete; a paste goes after its whole section')
+  assert.deepEqual(await menuLabels(), ['Move section to…', 'Cut section [⌘X]', 'Copy section [⌘C]', 'Paste after section [⌘V]', 'Explain rendering', 'More actions… [⌘K]'], 'a section-title card: the section menu, as the section header has it (slide handling ticket 1a: no `###`-only refusal)')
   await key('Escape')
   const header = page.locator(`${GRID} [data-section-header]`).filter({ hasText: 'Section 5' })
   await header.scrollIntoViewIfNeeded()
@@ -955,17 +1036,20 @@ try {
   assert.deepEqual(after.sel, ['Slide 8.1'], 'and the selection is on its row')
   pass('outline: after Move slide to…, and after a cut and a paste, exactly one row is selected and the caret marker is on it; the keyboard highlight follows its row')
 
-  // The search box matches titles only, and says so.
+  // Ticket 2: the search box matches titles, slide text and picture text; non-matches dim in place (nothing is hidden).
   const search = page.locator(`${ORG} .so-search-input`)
-  assert.equal(await search.getAttribute('placeholder'), 'Search slide titles…')
+  assert.equal(await search.getAttribute('placeholder'), 'Search titles, text and pictures…')
+  const total = await page.locator(`${ORG} [data-line]`).count()
   await search.fill('point 4.4')
   await sleep(80)
-  assert.equal(await page.locator(`${ORG} [data-line]`).count(), 0, 'a word of a slide body finds no row')
+  assert.equal(await page.locator(`${ORG} [data-line]`).count(), total, 'a search hides no row')
+  assert.deepEqual(await page.locator(`${ORG} .so-slide:not(.so-row--dim) .so-slide-title`).allTextContents(), ['Slide 4.4'], 'a word of a slide body finds that slide')
+  assert.match(await page.locator(`${ORG} .so-slide:not(.so-row--dim) [data-so-snippet]`).textContent(), /^in text: /)
   await search.fill('slide 4.4')
   await sleep(80)
-  assert.deepEqual(await page.locator(`${ORG} [data-line] .so-slide-title`).allTextContents(), ['Slide 4.4'])
+  assert.deepEqual(await page.locator(`${ORG} .so-slide:not(.so-row--dim) .so-slide-title`).allTextContents(), ['Slide 4.4'])
   await search.fill('')
-  pass('outline: the search box reads "Search slide titles…" and matches titles only')
+  pass('outline: the search box matches titles, text and pictures and dims the rest in place')
 
   assert.deepEqual(errors, [], 'no page errors')
   console.log(`slide move-to DOM: ${passed} checks passed`)

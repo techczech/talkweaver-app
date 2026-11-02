@@ -8,6 +8,7 @@ import { readFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { readHandoutUrl } from './publishing-logic'
 import { listRuns } from './runs'
+import { listKeptRuns } from './recording-paths'
 import { createPlannedRunIn, deletePlannedRunIn, readRoot, updatePlannedRunIn, type PlannedRunsDeps } from './planned-runs-ipc'
 
 type TalkInfo = { slug: string; title: string; outlinePath: string }
@@ -28,6 +29,7 @@ export interface HistoryDeps {
   /** The vault a planned-Run request names by vaultId: that open, writable vault, or the refusal (planned-runs-ipc.ts). */
   runVault?: PlannedRunsDeps['runVault']
   /** Whether a talk is in a vault: a new plan is written only into the vault that holds its talk. */
+  sourceForPlan?: (senderId:number, input:unknown)=>Promise<string | undefined>
   hasTalk?: PlannedRunsDeps['hasTalk']
   openVaults?: PlannedRunsDeps['openVaults']
   /** Root of the open vault of this id whose folder is there (reads only), or undefined. */
@@ -137,11 +139,20 @@ export function registerHistoryIpc(deps: HistoryDeps): void {
   // With a vault id (the Sessions view's Edit plan and Plan like this): that open vault's Runs; none: the current vault's, as History lists them.
   ipcMain.handle('history:list-runs', (_event, talkSlug?: string, vaultId?: unknown) => {
     const vault = readRoot(deps, vaultId)
-    return vault ? listRuns(vault, talkSlug ? String(talkSlug) : undefined) : []
+    const slug = talkSlug === undefined ? undefined : String(talkSlug)
+    // An explicitly named unavailable vault is still refused; no fallback to another vault.
+    if (vaultId !== undefined && !vault) return []
+    return [...(vault ? listRuns(vault, slug).map((run) => ({ ...run, home: vault })) : []), ...listKeptRuns(deps.userDataDir(), slug)]
   })
 
   // Planned Runs live in their talk's vault (planned-runs-ipc.ts): a request naming a vault writes there only.
-  ipcMain.handle('history:create-planned-run', (_event, input: unknown) => createPlannedRunIn(plannedRunDeps(deps), input))
+  ipcMain.handle('history:create-planned-run', async (event, input: unknown) => {
+    const sourceOutline = await deps.sourceForPlan?.(event.sender.id,input)
+    const clean = {...(input && typeof input==='object' ? input : {})} as Record<string,unknown>
+    delete clean.sourceOutline
+    if(sourceOutline)clean.sourceOutline=sourceOutline
+    return createPlannedRunIn(plannedRunDeps(deps),clean)
+  })
   ipcMain.handle('history:update-planned-run', (_event, payload: unknown) => updatePlannedRunIn(plannedRunDeps(deps), payload))
   ipcMain.handle('history:delete-planned-run', (_event, payload: unknown) => deletePlannedRunIn(plannedRunDeps(deps), payload))
 }

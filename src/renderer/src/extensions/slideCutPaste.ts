@@ -12,13 +12,14 @@ import { EditorView } from '@codemirror/view'
 import { EditorSelection, type Extension } from '@codemirror/state'
 import { isolateHistory } from '@codemirror/commands'
 import { notify } from '../lib/notify'
-import { minimalChange } from '../lib/minimalChange'
 import { moveMessage } from '../lib/moveDestinations'
 import { mintEditorSlideId } from './inlineTriggerCommitModel'
 import { deleteSlideAtCursor } from './outliner'
 import { slideRows } from './slideOutline'
+import { MOVE_NOTHING, moveBlocks, refAt, type SlideRef } from '../../../shared/slide-handling/blocks'
+import { headingTitle, placeRows, type SlidePlace } from '../../../shared/slide-handling/place'
 import {
-  blockAt, caretPastePlace, copyBlock, cutBlock, headingLineAt, isOwnSlideClip, isSlideClip, isTitleClip, moveBlock, pasteSlides, rememberSlideClip,
+  blockAt, caretPastePlace, copyBlock, cutBlock, headingLineAt, isOwnSlideClip, isSlideClip, isTitleClip, pasteSlides, rememberSlideClip,
   touchesTitleLine, widenToBlocks,
   type MoveTarget, type PastePlace
 } from './slideBlockOps'
@@ -143,21 +144,27 @@ export function wouldPasteAsSlides(view: EditorView, text: string): boolean {
 
 /**
  * Move the slide or section headed at `fromLine` to `target`: one minimal change (one undo step),
- * the caret on the moved heading. Returns its new 1-based line, or null when nothing moved.
+ * the caret on the moved heading. Returns its new 1-based line, or null when nothing moved. `cardRef`: the heading as
+ * a grid card shows it (slideRefOf); then the move core refuses it when that line no longer holds that heading.
  */
-export function moveSlideTo(view: EditorView, fromLine: number, target: MoveTarget): number | null {
+export function moveSlideTo(view: EditorView, fromLine: number, target: MoveTarget, cardRef?: SlideRef): number | null {
   if (view.state.readOnly) return null
   const text = view.state.doc.toString()
   const rows = slideRows(text)
-  const moved = moveBlock(text, fromLine, target)
-  if (!moved) {
+  // One move path: the same moveBlocks the grid, the strip and the batch bar run.
+  const ref = cardRef ?? refAt(text, fromLine)
+  const place = ref ? placeOfTarget(text, target) : null
+  const moved = ref && place ? moveBlocks(text, [ref], place) : null
+  if (!moved || 'refused' in moved) {
     const title = rows.find((r) => r.line === fromLine)?.text
-    if (title) notify(`${quoted(title)} is already there.`, 'info', TOAST_KEY)
+    if (title && (!moved || moved.refused === MOVE_NOTHING)) notify(`${quoted(title)} is already there.`, 'info', TOAST_KEY)
+    else if (moved) notify(moved.refused, 'info', TOAST_KEY)
     return null
   }
-  const ch = minimalChange(text, moved.text)
-  const headingFrom = moved.text.split('\n').slice(0, moved.line - 1).reduce((n, l) => n + l.length + 1, 0)
-  // No user event, like the drag moves (moveBlockTo): the text is only reordered.
+  const ch = moved.changes
+  const landed = moved.movedRanges[0].line
+  const headingFrom = moved.text.split('\n').slice(0, landed - 1).reduce((n, l) => n + l.length + 1, 0)
+  // No user event, like the drag moves: the text is only reordered.
   view.dispatch({
     changes: { from: ch.from, to: ch.to, insert: ch.insert },
     selection: EditorSelection.cursor(headingFrom),
@@ -165,7 +172,22 @@ export function moveSlideTo(view: EditorView, fromLine: number, target: MoveTarg
     scrollIntoView: true
   })
   notify(moveMessage(rows, fromLine, target), 'info', TOAST_KEY)
-  return moved.line
+  return landed
+}
+
+/** A Move … to… target as a SlidePlace. */
+function placeOfTarget(text: string, target: MoveTarget): SlidePlace | null {
+  if (target.kind === 'start') return { kind: 'start' }
+  const rows = placeRows(text)
+  if (target.kind === 'end') {
+    // After the last section (or top-level slide) of the talk.
+    const top = Math.min(...rows.map((r) => r.level))
+    const last = [...rows].reverse().find((r) => r.level === top)
+    return last ? { kind: 'after', line: last.line, title: last.title } : null
+  }
+  const at = text.split('\n')[target.line - 1]
+  if (at == null) return null
+  return { kind: target.kind === 'into' ? 'endOfSection' : target.kind, line: target.line, title: headingTitle(at) }
 }
 
 /** Delete the slide headed at `headingLine` (the Delete slide command, aimed at a line). */

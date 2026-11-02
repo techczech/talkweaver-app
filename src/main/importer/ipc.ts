@@ -17,6 +17,7 @@ import { discoverRenderer, inspectPptx } from './pptx.ts'
 import { applySlidePatch, resetSlideDecision } from './storage.ts'
 import { applyImportSuggestion, readImportSuggestions, writeImportCleanupPack } from './pack.ts'
 import { getImportRun, importRunDir, listImportRuns, originalSlideDataUrl, resumeImport, startImport } from './service.ts'
+import { importDestinationFolder, IMPORT_DESTINATION_REFUSED } from '../vault-paths.ts'
 
 export interface RegisterImporterIpcOptions {
   ipcMain: Pick<IpcMain, 'handle'>
@@ -128,7 +129,9 @@ export function registerImporterIpc(options: RegisterImporterIpcOptions): void {
     if (result.canceled) return null
     const destination = resolve(result.filePaths[0])
     if (!insideVault(vault, destination)) throw new Error('Choose a folder inside the configured TalkWeaver Vault.')
-    return relative(vault, destination).split(sep).join('/')
+    const chosen = relative(vault, destination).split(sep).join('/')
+    if (!importDestinationFolder(vault, chosen).ok) throw new Error(IMPORT_DESTINATION_REFUSED)
+    return chosen
   })
 
   options.ipcMain.handle('importer:start', async (event, request: ImportStartRequest) => {

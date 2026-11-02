@@ -97,7 +97,7 @@ export async function startLiveWorker({ vars = {} } = {}) {
     ...Object.entries(vars).flatMap(([key, value]) => ['--var', `${key}:${value}`]),
     '--persist-to', join(scratch, 'state'), '--show-interactive-dev-session=false', '--log-level=error',
   ], { inherited: process.env, set: { WRANGLER_LOG_PATH: join(scratch, 'wrangler.log') } })
-  if (!resolved.ok) throw new Error(`${resolved.error}. ${resolved.details} (run npm ci)`)
+  if (!resolved.ok) throw new Error(`${resolved.error}. ${resolved.details} (run bun install)`)
   const child = spawn(resolved.launch.command, resolved.launch.args, {
     cwd: resolved.launch.cwd,
     env: resolved.launch.env,

@@ -1050,6 +1050,17 @@ function matchSpeakerHeader(line) {
 //
 // Returns `[{ role, cls, label, body, known }]` where `known` flags a well-known role and `cls`
 // is the role's class (well-known) or `speaker-<bucket>` (arbitrary, auto-coloured per name).
+/**
+ * True when parseTrace opens a turn on this line (a bare well-known role, or a speaker header). The
+ * editor's lossless trace rows (simulation-segments.mjs) split on exactly this test.
+ */
+export function isTraceHeaderLine(line) {
+  const bare = String(line).match(/^\s*([A-Za-z]+)\s*(?:\|\s*(.*?))?\s*$/);
+  const bareRole = bare ? bare[1].toLowerCase() : null;
+  if (bareRole && Object.prototype.hasOwnProperty.call(TRACE_ROLES, bareRole) && String(line).indexOf(":") === -1) return true;
+  return matchSpeakerHeader(String(line)) !== null;
+}
+
 export function parseTrace(lines) {
   const turns = [];
   let current = null;

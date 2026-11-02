@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert'
+import { history, undo, redo } from '@codemirror/commands'
 import { EditorState, Transaction } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { focusScopeExtension } from '../src/renderer/src/extensions/focusScope.ts'
@@ -120,6 +121,9 @@ assert.equal(
   true,
   'the real Editor formatting gate re-enables formatting after the object shell closes'
 )
+
+const sourceOnlyView = fakeView(EditorState.create({ doc: '```\n> quotation\n```' }))
+assert.equal(openSelectedObject(sourceOnlyView), false, 'Enter falls through in a source editor without object cards')
 
 const view = fakeView(
   EditorState.create({
@@ -415,15 +419,29 @@ assert.equal(
 )
 
 let insertMenuOpened = false
+let consumeFence
 const fenceTriggerView = fakeView(EditorState.create({
   doc: '``',
   selection: { anchor: 2 },
-  extensions: [objectBlocksExtension({ onInsertMenu: () => { insertMenuOpened = true } })]
+  extensions: [history(), objectBlocksExtension({ onInsertMenu: (_coords, consume) => { insertMenuOpened = true; consumeFence = consume } })]
 }))
 assert.equal(inputText(fenceTriggerView, 2, 2, '`'), true, 'the third backtick opens the insert menu')
 assert.equal(insertMenuOpened, true, 'the fence-trigger callback ran')
+assert.equal(fenceTriggerView.state.doc.toString(), '```', 'dismissing the menu leaves all three typed backticks')
+assert.equal(fenceTriggerView.state.selection.main.head, 3, 'the caret is ready for a fence language')
+consumeFence()
+assert.equal(fenceTriggerView.state.doc.toString(), '', 'choosing an object consumes its opening trigger once')
+consumeFence()
+assert.equal(fenceTriggerView.state.doc.toString(), '', 'a repeated consume does not remove other source')
+assert.equal(undo({ state: fenceTriggerView.state, dispatch: (tr) => fenceTriggerView.dispatch(tr) }), true)
+assert.equal(fenceTriggerView.state.doc.toString(), '```', 'undo of object consumption restores the typed fence')
+assert.equal(undo({ state: fenceTriggerView.state, dispatch: (tr) => fenceTriggerView.dispatch(tr) }), true)
+assert.equal(fenceTriggerView.state.doc.toString(), '``', 'undo removes only the third typed backtick')
+assert.equal(redo({ state: fenceTriggerView.state, dispatch: (tr) => fenceTriggerView.dispatch(tr) }), true)
+assert.equal(fenceTriggerView.state.doc.toString(), '```')
+
 assert.equal(
-  fenceTriggerView.transactions.at(-1)?.annotation(Transaction.userEvent),
+  fenceTriggerView.transactions[0]?.annotation(Transaction.userEvent),
   'input',
   'the fence-trigger rewrite is annotated as input'
 )

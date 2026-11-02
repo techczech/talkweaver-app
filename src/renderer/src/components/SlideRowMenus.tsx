@@ -28,13 +28,13 @@ export interface SlideMenuRequest {
   mode: 'menu' | 'move'
   /** A section row: whether it is collapsed now. Leave out (or null) for no Collapse / Expand row. */
   collapsed?: boolean | null
-  /** False where the slide cannot be cut, moved or deleted from here (a grid card that is not a `###` slide). */
+  /** False where the slide cannot be cut, moved or deleted from here (a card with no heading of its own: the cover or closing). */
   editable?: boolean
   /** True when opened from the keyboard: the first row starts highlighted. */
   startAtFirst?: boolean
 }
 
-export type SlideRowAction = 'move' | 'cut' | 'copy' | 'paste' | 'delete' | 'collapse' | 'explain' | 'more'
+export type SlideRowAction = 'move' | 'set-aside' | 'cut' | 'copy' | 'paste' | 'delete' | 'collapse' | 'explain' | 'more'
 
 interface Props {
   request: SlideMenuRequest | null
@@ -48,6 +48,7 @@ interface Props {
   onLanded?: (line: number) => void
   /** After a cut: the row is gone. */
   onCut?: () => void
+  onSetAside?: () => void
   onToggleCollapse?: () => void
   /** Present = the menu has an Explain rendering row. */
   onExplain?: () => void
@@ -61,7 +62,7 @@ interface Item { action: SlideRowAction; icon: JSX.Element; label: string; k?: s
 const IC = 13
 
 /** The rows of the menu, in order. Exported for the tests. */
-export function slideRowMenuItems(opts: { section: boolean; hasLine: boolean; editable: boolean; collapsed: boolean | null; explain: boolean; more: boolean; collapseChords?: { collapse: string; expand: string } }): Item[] {
+export function slideRowMenuItems(opts: { section: boolean; hasLine: boolean; editable: boolean; collapsed: boolean | null; explain: boolean; more: boolean; setAside?: boolean; collapseChords?: { collapse: string; expand: string } }): Item[] {
   const items: Item[] = []
   const what = opts.section ? 'section' : 'slide'
   if (opts.hasLine && opts.editable) {
@@ -71,6 +72,7 @@ export function slideRowMenuItems(opts: { section: boolean; hasLine: boolean; ed
       { action: 'copy', icon: <Copy size={IC} />, label: `Copy ${what}`, k: '⌘C' }
     )
   }
+  if (opts.hasLine && opts.editable && opts.setAside) items.push({ action: 'set-aside', icon: <Copy size={IC} />, label: 'Set aside in Scratchpad', k: liveShortcutLabel('app.set-aside') || undefined })
   if (opts.hasLine) items.push({ action: 'paste', icon: <ClipboardPaste size={IC} />, label: opts.section ? 'Paste after section' : 'Paste slide after', k: '⌘V', breakAfter: true })
   if (opts.section && opts.collapsed != null) {
     items.push(opts.collapsed
@@ -238,7 +240,7 @@ export function writeSlideClipboard(clip: string, cut: boolean): void {
   try { navigator.clipboard.writeText(clip).catch(failed) } catch { failed() }
 }
 
-export default function SlideRowMenus({ request, rows, ops, onClose, onActed, onLanded, onCut, onToggleCollapse, onExplain, onMore, collapseChords }: Props) {
+export default function SlideRowMenus({ request, rows, ops, onClose, onActed, onLanded, onCut, onSetAside, onToggleCollapse, onExplain, onMore, collapseChords }: Props) {
   // 'move' once the menu's Move … to… row is chosen (or at once, for the two commands).
   // Held as the request it was chosen for, so a new request always starts at its own first step.
   const [movingFor, setMovingFor] = useState<SlideMenuRequest | null>(null)
@@ -270,13 +272,14 @@ export default function SlideRowMenus({ request, rows, ops, onClose, onActed, on
   // A grid card keeps Explain rendering and More actions… whatever its heading is (a section-title
   // card's line is a section's); a grid section header, which passes `collapsed`, has neither.
   const forHeader = request.collapsed != null
-  const items = slideRowMenuItems({ section, hasLine, editable, collapsed: request.collapsed ?? null, explain: !!onExplain && !forHeader, more: !!onMore && !forHeader, collapseChords })
+  const items = slideRowMenuItems({ section, hasLine, editable, collapsed: request.collapsed ?? null, explain: !!onExplain && !forHeader, more: !!onMore && !forHeader, setAside: !!onSetAside && !forHeader, collapseChords })
   if (items.length === 0) return null
   const run = (action: SlideRowAction): void => {
     if (action === 'move') { setMovingFor(request); return }
     onClose()
     onActed?.()
     switch (action) {
+      case 'set-aside': onSetAside?.(); break
       case 'cut': {
         const clip = line != null ? ops?.cut(line) ?? null : null
         if (clip != null) { writeSlideClipboard(clip, true); onCut?.() }

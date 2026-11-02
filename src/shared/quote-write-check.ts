@@ -193,6 +193,29 @@ export function compiledQuoteAt(outline: string, headingLine: number, iconKnown:
 type Read = (outline: string, headingLine: number) => CompiledQuote | null
 
 /**
+ * The layout the compiler draws each of these slides with (headings on `headingLines`, 1-based), from one tree
+ * parse: the same reading as compiledQuoteAt, with no `{name}` taken as an icon. A line the tree has no slide for
+ * maps to null. Used by the editor to choose a fence's editor by the compiler's decision (ADR-0042 review F4: a
+ * chat fence on a slide with a picture is a media slide's code panel, not a chat session).
+ */
+export function compiledLayoutsAt(outline: string, headingLines: readonly number[]): Map<number, string | null> {
+  const out = new Map<number, string | null>()
+  if (!headingLines.length) return out
+  const root = parseOutlineTree(outlineCompilerBody(outline).body).root
+  const defaults = deckTriggerDefaultsFromMeta(outlineFrontmatterMeta(outline)).attrs
+  for (const line of headingLines) {
+    const path = pathToLine(root, line)
+    if (!path) { out.set(line, null); continue }
+    try {
+      out.set(line, String(reader.quoteSlideReading(path[path.length - 1], defaults).layout ?? '') || null)
+    } catch {
+      out.set(line, null)
+    }
+  }
+  return out
+}
+
+/**
  * One decision over every reading the icon catalogue could give. `decide(read)` answers true (the write holds),
  * false (the compiler disagrees) or null (a slide could not be read). It is asked first with no name taken as an
  * icon; when a `{name}` item ending was met, again for every other choice of names. One answer throughout is the

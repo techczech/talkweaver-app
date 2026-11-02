@@ -332,8 +332,9 @@ const edge = (row) => recordingRowEdge(row).text
     assert.ok(!/console\.|process\.std(?:out|err)/.test(files.find(([path]) => path === file)[1]), `${file} prints nothing`)
   }
   // The help text no longer promises a queue.
-  const settingsPanel = files.find(([file]) => file === 'src/renderer/src/components/SettingsPanel.tsx')[1]
-  assert.ok(!/queue and retry/.test(settingsPanel))
+  for (const file of ['src/shared/settings-schema.ts', 'src/renderer/src/components/SettingsWindowPages.tsx']) {
+    assert.ok(!/queue and retry/.test(files.find(([path]) => path === file)[1]), file)
+  }
   console.log('PASS 6: no Bitwarden, Keychain-command or environment source of recording keys under src; one module holds the slot and makes the S3 client')
 }
 

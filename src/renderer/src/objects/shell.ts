@@ -2,9 +2,17 @@ export type ObjectEditorCommitContext = 'interactive' | 'teardown'
 export type ObjectEditorCommitResult =
   | { ok: true }
   | { ok: false; reason: string }
+/**
+ * A structured editor may replace the WHOLE block instead of its body: a code card whose language
+ * changed (its opening line), or whose body needs a longer fence (both marker lines). The planner still
+ * refuses a stale or unparseable result.
+ */
+export type ObjectEditorCommitOptions = { wholeBlock?: string }
 export type ObjectEditorApi = {
-  preflight(source: string): ObjectEditorCommitResult
-  commit(source: string, context: ObjectEditorCommitContext): ObjectEditorCommitResult
+  preflight(source: string, options?: ObjectEditorCommitOptions): ObjectEditorCommitResult
+  commit(source: string, context: ObjectEditorCommitContext, options?: ObjectEditorCommitOptions): ObjectEditorCommitResult
+  /** Present for object cards (ADR-0042): close the editor and write nothing. */
+  discard?(): void
 }
 export type MountedEditor = {
   element: HTMLElement
@@ -12,12 +20,18 @@ export type MountedEditor = {
   focus(): void
   onEscape?(): boolean
   destroy?(): void
+  /** The structured editor's own refusal (for example a row that would split into two turns), else null. */
+  refusal?(source: string): string | null
+  /** Whole-block replacement the structured editor asks for (ObjectEditorCommitOptions). */
+  commitOptions?(source: string): ObjectEditorCommitOptions | undefined
 }
 export type ShellCheatSheet = {
   isShortcut(event: KeyboardEvent): boolean
   request(anchor: HTMLElement): void
   isFinishShortcut?(event: KeyboardEvent): boolean
   isLeaveShortcut?(event: KeyboardEvent): boolean
+  /** The effective (rebindable) chord of a registered command, for keys inside object editors. */
+  matches?(event: KeyboardEvent, shortcutId: string): boolean
 }
 
 export function textareaEditor(source: string, className = 'oe-markup'): MountedEditor {
@@ -118,9 +132,15 @@ export function mountShell(options: {
     note.textContent = `This edit was not saved: ${reason}. Your text is still here.`
     note.hidden = false
   }
+  const commitOptions = (source: string): ObjectEditorCommitOptions | undefined => options.editor.commitOptions?.(source)
+  const editorRefusal = (source: string): ObjectEditorCommitResult | null => {
+    const reason = active === options.editor ? options.editor.refusal?.(source) ?? null : null
+    return reason ? { ok: false, reason } : null
+  }
   const preflightTeardown = (): ObjectEditorCommitResult => {
     if (finished) return { ok: true }
-    const result = api.preflight(active.serialise())
+    const source = active.serialise()
+    const result = editorRefusal(source) ?? api.preflight(source, commitOptions(source))
     if (!result.ok) showRefusal(result.reason)
     return result
   }
@@ -130,7 +150,7 @@ export function mountShell(options: {
     if (finished) return { ok: true }
     finished = true
     const source = active.serialise()
-    const result = api.commit(source, context)
+    const result = editorRefusal(source) ?? api.commit(source, context, commitOptions(source))
     if (!result.ok) {
       finished = false
       showRefusal(result.reason)
@@ -144,12 +164,32 @@ export function mountShell(options: {
     __twCommit?: (context?: ObjectEditorCommitContext) => ObjectEditorCommitResult
     __twPreflightTeardown?: () => ObjectEditorCommitResult
     __twRetargetApi?: (next: ObjectEditorApi) => void
+    __twDiscard?: () => void
   }
   controlledShell.__twCommit = (context = 'teardown') => commit(context)
   controlledShell.__twPreflightTeardown = preflightTeardown
   controlledShell.__twRetargetApi = (next) => { api = next }
   done.addEventListener('click', () => commit())
-  foot.append(hint, done)
+  foot.append(hint)
+  // Discard (object cards, ADR-0042): restores nothing because nothing was written; closes the editor.
+  const discard = (): void => {
+    if (finished || !api.discard) return
+    finished = true
+    controller.abort()
+    active.destroy?.()
+    api.discard()
+  }
+  if (api.discard) {
+    const discardButton = document.createElement('button')
+    discardButton.type = 'button'
+    discardButton.className = 'oe-discard'
+    discardButton.textContent = 'Discard'
+    discardButton.title = 'Close without saving these changes'
+    discardButton.addEventListener('click', discard)
+    foot.append(discardButton)
+  }
+  foot.append(done)
+  controlledShell.__twDiscard = discard
   shell.append(head, surfaces, foot)
   shell.addEventListener('keydown', (event) => {
     if (options.cheatSheet?.isShortcut(event)) {
@@ -165,6 +205,12 @@ export function mountShell(options: {
       event.preventDefault()
       event.stopPropagation()
       commit()
+      return
+    }
+    if (api.discard && options.cheatSheet?.matches?.(event, 'editor.object-discard')) {
+      event.preventDefault()
+      event.stopPropagation()
+      discard()
       return
     }
     if (event.key === 'Escape' && active.onEscape?.() === true) {

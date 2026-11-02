@@ -8,7 +8,7 @@ import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { buildPerSlideProjections } from '../compiler/scripts/lib/10-projections.mjs'
 import { computeSlideLines, slideNumbersByLine } from '../src/shared/slide-lines.ts'
 import { outlineNumbers } from '../src/renderer/src/lib/stripNumbers.ts'
-import { moveMessage, moveSubject, placementOptions, sectionMoveOptions, slideMoveOptions } from '../src/renderer/src/lib/moveDestinations.ts'
+import { batchMoveOptions, moveMessage, moveSubject, placementOptions, sectionMoveOptions, slideMoveOptions } from '../src/renderer/src/lib/moveDestinations.ts'
 
 let cases = 0
 const check = (name, fn) => { fn(); cases += 1 }
@@ -211,6 +211,27 @@ check('what a command acts on, from the caret line', () => {
     const noTitle = slideRows(J('## S', '', ...slide('A')))
     assert.deepEqual(noTitle.map((r) => outlineNumbers(noTitle, null).get(r.line)), [1, 2])
   })
+  {
+    const noCoverText = J('---', 'title: No cover', 'auto_title_slide: false', 'auto_thanks_slide: false', '---', '',
+      '### Opening', '{id=open1}', '', 'Opening body.', '', '### Middle', '{id=mid01}', '', 'Middle body.', '', '### Closing', '{id=close}', '', 'Closing body.')
+    const model = await prepareSource('/tmp/no-cover-numbers.md', noCoverText, 'no-cover-numbers')
+    const compiled = buildPerSlideProjections(model, 'no-cover-numbers')
+    const published = slideNumbersByLine(computeSlideLines(compiled, noCoverText))
+    check('no automatic cover: stale numbers keep the first slide at 1 after an insert or body edit', () => {
+      const grown = slideRows(noCoverText.replace('### Middle', '### Chart\n{id=chart}\n\n![](assets/chart.svg)\n\n\n### Middle'))
+      assert.deepEqual(grown.map((r) => outlineNumbers(grown, published).get(r.line)), [1, 2, 3, 4])
+      const edited = slideRows(noCoverText.replace('Opening body.', 'Opening body.\nMore body.\nMore again.'))
+      assert.deepEqual(edited.map((r) => outlineNumbers(edited, published).get(r.line)), [1, 2, 3])
+    })
+    const withCoverText = noCoverText.replace('auto_title_slide: false', 'auto_title_slide: true')
+    const withCoverModel = await prepareSource('/tmp/with-cover-numbers.md', withCoverText, 'with-cover-numbers')
+    const withCoverSlides = buildPerSlideProjections(withCoverModel, 'with-cover-numbers')
+    const withCoverPublished = slideNumbersByLine(computeSlideLines(withCoverSlides, withCoverText))
+    check('a real synthetic cover still offsets stale heading numbers by one', () => {
+      const grown = slideRows(withCoverText.replace('### Middle', '### Chart\n{id=chart}\n\n![](assets/chart.svg)\n\n\n### Middle'))
+      assert.deepEqual(grown.map((r) => outlineNumbers(grown, withCoverPublished).get(r.line)), [2, 3, 4, 5])
+    })
+  }
   check('fresh with a row the compiler gave no slide: that row has no number, the others keep theirs', () => {
     const partial = new Map(published); partial.delete(orows[3].line)
     const n = outlineNumbers(orows, partial)
@@ -218,6 +239,29 @@ check('what a command acts on, from the caret line', () => {
     assert.equal(n.get(orows[4].line), published.get(orows[4].line))
   })
   assert.ok(obj(outlineNumbers([], null)) && outlineNumbers([], published).size === 0)
+}
+
+// Batch destinations (ticket 1b): Move N slides to… — Start/End of talk, section ends, slides to go after; each a SlidePlace.
+{
+  const T = ['# T', '', '## One', '', '### A', '', '### B', '', '## Two', '', '### C', '', '### D', ''].join('\n')
+  const rows = slideRows(T)
+  const lineOf = (h) => T.split('\n').indexOf(h) + 1
+  const picked = [lineOf('### A'), lineOf('### C')]
+  const all = batchMoveOptions(rows, picked)
+  assert.deepEqual(all.map((o) => o.key.split(':')[0]), ['start', 'end', 'into', 'into', 'after', 'after', 'after', 'after'].slice(0, all.length))
+  const into = all.filter((o) => o.group === 'End of section')
+  assert.deepEqual(into.map((o) => o.label), ['One', 'Two'])
+  assert.deepEqual(into[0].place, { kind: 'endOfSection', line: lineOf('## One'), title: 'One' })
+  assert.deepEqual(all.find((o) => o.key === 'end').place, { kind: 'after', line: lineOf('## Two'), title: 'Two' })
+  assert.deepEqual(all.find((o) => o.key === 'start').place, { kind: 'start' })
+  // the selection itself is never offered as a place
+  assert.equal(all.some((o) => o.key === `after:${lineOf('### A')}` || o.key === `after:${lineOf('### C')}`), false)
+  // a selected section hides itself and what is inside it; typed text filters
+  const sec = batchMoveOptions(rows, [lineOf('## One'), lineOf('### C')])
+  assert.equal(sec.some((o) => o.label === 'One' || o.label === 'A' || o.label === 'B'), false)
+  assert.deepEqual(batchMoveOptions(rows, picked, 'D').filter((o) => o.group === 'After slide').map((o) => o.key), [`after:${lineOf('### D')}`])
+  assert.deepEqual(batchMoveOptions(rows, []), [])
+  cases += 1
 }
 
 console.log(`move destinations: ${cases} cases passed`)

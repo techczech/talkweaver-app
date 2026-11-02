@@ -1,3 +1,4 @@
+import { recordingRunKey, recordingRunHome } from '../../../shared/recording-run-home'
 // TalkWeaver Studio — the recordings player (ADR-0035, Phase 1, with the session treatment from
 // docs/design/2026-07-05-recording/direction-3-transcript-ready-split.html). A full-window Light Table
 // surface: a grouped session sidebar, a slide-time-marker timeline over a real waveform, and the current
@@ -207,8 +208,8 @@ export default function Studio({
     if (!isOpen) return
     void reload().then((all) => {
       setActiveId((cur) => {
-        if (initialSessionId && all.some((s) => s.id === initialSessionId)) return initialSessionId
-        return cur ?? all[0]?.id ?? null
+        if (initialSessionId && all.some((s) => s.id === initialSessionId || recordingRunKey(s) === initialSessionId)) return initialSessionId
+        return cur ?? (all[0] ? recordingRunKey(all[0]) : null)
       })
     })
   }, [isOpen, reload, initialSessionId])
@@ -281,7 +282,7 @@ export default function Studio({
     })
   }, [])
 
-  const active = useMemo(() => sessions.find((s) => s.id === activeId) ?? null, [sessions, activeId])
+  const active = useMemo(() => sessions.find((s) => recordingRunKey(s) === activeId) ?? sessions.find((s) => s.id === activeId) ?? null, [sessions, activeId])
   const activeTrims = active?.trims ?? []
   const enters = useMemo(
     () => (active ? active.slideTimeIndex.filter((m) => m.event === 'enter') : []),
@@ -307,8 +308,8 @@ export default function Studio({
   const keyboardSegmentIdx = activeSegmentIdx ?? curSegmentIdx
 
   useEffect(() => {
-    activeIdRef.current = activeId
-  }, [activeId])
+    activeIdRef.current = active?.id ?? null
+  }, [active])
 
   // When the active session changes: point the <audio> at its local file, reset the playhead,
   // resolve the talk's slides (title + thumbnail by ledger id), and decode a real waveform.
@@ -331,7 +332,7 @@ export default function Studio({
     lastReplayKey.current = ''
     const a = audioRef.current
     if (a) {
-      a.src = `twrec://${active.id}`
+      a.src = `twrec://${active.id}?talk=${encodeURIComponent(active.talkSlug)}${recordingRunHome(active) === undefined ? '' : `&home=${encodeURIComponent(recordingRunHome(active) ?? '')}`}`
       a.playbackRate = SPEEDS[speedIdx]
       a.load()
     }
@@ -387,7 +388,7 @@ export default function Studio({
       setWave(null)
       setWaveLoading(true)
       try {
-        const resp = await fetch(`twrec://${active.id}`)
+        const resp = await fetch(`twrec://${active.id}?talk=${encodeURIComponent(active.talkSlug)}${recordingRunHome(active) === undefined ? '' : `&home=${encodeURIComponent(recordingRunHome(active) ?? '')}`}`)
         const buf = await resp.arrayBuffer()
         const Ctor: typeof AudioContext =
           (window as unknown as { AudioContext: typeof AudioContext; webkitAudioContext?: typeof AudioContext })
@@ -577,9 +578,9 @@ export default function Studio({
   const cycleSession = useCallback(
     (dir: number): void => {
       if (!filtered.length) return
-      const cur = filtered.findIndex((s) => s.id === activeId)
+      const cur = filtered.findIndex((s) => recordingRunKey(s) === activeId || s.id === activeId)
       const next = Math.max(0, Math.min(filtered.length - 1, (cur < 0 ? 0 : cur) + dir))
-      setActiveId(filtered[next].id)
+      setActiveId(recordingRunKey(filtered[next]))
     },
     [filtered, activeId]
   )
@@ -588,7 +589,7 @@ export default function Studio({
     if (!active || uploadBusy) return
     setUploadBusy(true)
     try {
-      const r = await window.tw.recording.upload(active.talkSlug, active.id)
+      const r = await window.tw.recording.upload(active.talkSlug, active.id, recordingRunHome(active))
       if (r.ok && r.uploaded) {
         clearUploadFailure()
         flash('Uploaded to R2')
@@ -642,13 +643,13 @@ export default function Studio({
 
   const saveTrims = useCallback(async (nextTrims: TrimRange[], msg?: string): Promise<void> => {
     if (!active) return
-    const res = await window.tw.recording.setTrims(active.talkSlug, active.id, nextTrims)
+    const res = await window.tw.recording.setTrims(active.talkSlug, active.id, nextTrims, recordingRunHome(active))
     if (!res.ok) {
       flash('Trim could not be saved')
       return
     }
     const trims = res.trims ?? []
-    setSessions((all) => all.map((s) => s.id === active.id ? { ...s, trims } : s))
+    setSessions((all) => all.map((s) => recordingRunKey(s) === recordingRunKey(active) ? { ...s, trims } : s))
     if (msg) flash(msg)
   }, [active, flash])
 
@@ -683,7 +684,7 @@ export default function Studio({
   const saveContext = useCallback(
     async (text: string): Promise<void> => {
       if (!active) return
-      await window.tw.recording.setContext(active.talkSlug, active.id, text)
+      await window.tw.recording.setContext(active.talkSlug, active.id, text, recordingRunHome(active))
       await reload()
     },
     [active, reload]
@@ -691,10 +692,10 @@ export default function Studio({
 
   const doDelete = useCallback(async (): Promise<void> => {
     if (!active) return
-    const wasId = active.id
-    await window.tw.recording.deleteSession(active.talkSlug, active.id)
+    const wasId = recordingRunKey(active)
+    await window.tw.recording.deleteSession(active.talkSlug, active.id, recordingRunHome(active))
     const all = await reload()
-    setActiveId(all.find((s) => s.id !== wasId)?.id ?? null)
+    setActiveId(all.filter((s) => recordingRunKey(s) !== wasId).map(recordingRunKey)[0] ?? null)
     setConfirmDelete(false)
     flash('Recording moved to Trash')
   }, [active, reload, flash])
@@ -907,7 +908,7 @@ export default function Studio({
                       const recSec = (s.recordingMs - trimMs(s.trims, s.recordingMs)) / 1000
                       const d = deltaOf(recSec, s.timerTargetMin)
                       return (
-                        <button key={s.id} data-sid={s.id} className={`tws-scard ${s.id === activeId ? 'active' : ''}`} onClick={() => setActiveId(s.id)}>
+                        <button key={recordingRunKey(s)} data-sid={s.id} className={`tws-scard ${active && recordingRunKey(s) === recordingRunKey(active) ? 'active' : ''}`} onClick={() => setActiveId(recordingRunKey(s))}>
                           <div className="tws-sc-top">
                             <span className="tws-sc-date">{fmtDate(s.startedAt)}</span>
                           </div>

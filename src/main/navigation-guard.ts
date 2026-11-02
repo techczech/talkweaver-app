@@ -198,6 +198,19 @@ type GuardOpts = {
   refuseHandOut?: (contents: unknown, link: string, from: string) => string | null
   /** A window nobody sees or presses in: it navigates nowhere and hands nothing out. */
   isHiddenRenderer?: (contents: unknown) => boolean
+  /**
+   * A live web page's own view (live-page-host.ts): another site shown as the top-level page of a
+   * view with no preload and no bridge. Its main-frame navigations are judged by the live page's own
+   * guard there (web addresses only, never local, never handed to the OS), so this guard leaves them
+   * alone; the frame rule below still applies to its subframes.
+   */
+  isLivePageContents?: (contents: unknown) => boolean
+  /**
+   * A narrower rule for one kind of frame, asked before the general frame rule: `frameUrl` is the page the frame
+   * shows now. 'deny' refuses; null leaves it to the general rule. index.ts uses it for a Slide Scratchpad page's
+   * preview, which may not leave its own address (scratchpad-html.ts).
+   */
+  frameRule?: (frameUrl: string, to: string) => 'deny' | null
 }
 
 type GuardedContents = Pick<WebContents, 'on' | 'getURL'> & { mainFrame?: unknown; opener?: unknown }
@@ -214,6 +227,9 @@ export function guardWebContents(contents: GuardedContents, opts: GuardOpts, ope
   const check = (kind: 'navigate' | 'redirect', event: NavEvent, url: string, isMainFrame: boolean | undefined): void => {
     const to = typeof event.url === 'string' ? event.url : url
     if ((event.isMainFrame ?? isMainFrame) === false) return
+    let livePage = false
+    try { livePage = !!opts.isLivePageContents && opts.isLivePageContents(contents) === true } catch { livePage = false }
+    if (livePage) return // judged by the live page's own guard (live-page-host.ts), never sent to the OS from here
     let from = ''
     try { from = contents.getURL() } catch { /* destroyed: judged with no page */ }
     // A redirect during the first load is judged against where that load was going (the dev
@@ -292,6 +308,16 @@ export function guardWebContents(contents: GuardedContents, opts: GuardOpts, ope
     const to = typeof event.url === 'string' ? event.url : ''
     let top = ''
     try { top = contents.getURL() } catch { /* destroyed */ }
+    if (opts.frameRule) {
+      let frameUrl = ''
+      let rule: 'deny' | null = 'deny'
+      try { frameUrl = String((event.frame as { url?: unknown } | null | undefined)?.url ?? ''); rule = opts.frameRule(frameUrl, to) } catch { rule = 'deny' }
+      if (rule === 'deny') {
+        event.preventDefault()
+        log(`[navigation] refused frame navigation from ${frameUrl.slice(0, 200)} to ${to.slice(0, 200)} in ${top.slice(0, 200)}`)
+        return
+      }
+    }
     if (decideFrameNavigation({ to, isMainFrame: false, top }) === 'allow') return
     event.preventDefault()
     log(`[navigation] refused frame navigation to ${to.slice(0, 200)} in ${top.slice(0, 200)}`)

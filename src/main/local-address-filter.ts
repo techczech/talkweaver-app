@@ -269,6 +269,12 @@ export interface LocalAddressFilterOptions {
    * in development). A frameless request to any other local address is refused.
    */
   appLocalHosts?: Iterable<string>
+  /**
+   * Every request counts as made from inside an embedded frame, the window's own page included: no
+   * request of this session reaches a local address. For the session of a live web page
+   * (live-page-host.ts), whose top-level page is another site's. The default session never sets it.
+   */
+  everyRequestIsEmbedded?: boolean
   now?: () => number
 }
 
@@ -329,7 +335,7 @@ export function localAddressRequestListener(opts: LocalAddressFilterOptions): (d
     }
     let requester: Requester = 'inside-embed'
     try {
-      requester = requesterOf(details)
+      requester = opts.everyRequestIsEmbedded === true ? 'inside-embed' : requesterOf(details)
       const first = decideLocalRequest({ url: details.url, requester, outlineNamedLocalEmbed: opts.outlineNamedLocalEmbed, appLocalHosts: opts.appLocalHosts })
       if (first !== 'resolve') { answer(first === 'refuse'); return }
       const host = new URL(details.url).hostname.toLowerCase().replace(/\.+$/, '')

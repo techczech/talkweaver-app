@@ -1028,7 +1028,7 @@ try {
     await context.close()
   })
 
-  await check('touch: a tap or a drag outside the page in use ends it and the suspended page runs again; a tap inside it does not (share page, plain deck)', async () => {
+  await check('touch: plain deck: a tap or a drag outside the page in use ends it and the suspended page runs again; share page: the page fills the viewport, a touch inside it stays with the page and Return to slides ends it; a tap inside does not', async () => {
     for (const path of ['/handout.html#two', '/deck.html#two']) {
       const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, hasTouch: true })
       const page = await open(context, path)
@@ -1046,19 +1046,48 @@ try {
       await tapOn(frame)
       await sleep(300)
       assert.deepEqual([await inUse(), await embedStates(page)], [[false, true], ['idle', 'live']], `${path}: a tap inside the page leaves it in use`)
-      // A touch that becomes a drag, outside: the browser sends pointerdown and no mouse events.
-      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 8, y: 300 }] })
-      for (let i = 1; i <= 5; i += 1) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 8 + i * 12, y: 300 + i * 6 }] })
-      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
-      await live(page, 2)
-      assert.deepEqual([await inUse(), await embedStates(page)], [[false, false], ['live', 'live']], `${path}: a drag outside ends it, and the suspended page runs again`)
-      // Chosen again, then a plain tap outside.
-      await tapOn(chip)
-      await sleep(200)
-      assert.deepEqual(await embedStates(page), ['idle', 'live'])
-      await page.touchscreen.tap(8, 300)
-      await live(page, 2)
-      assert.deepEqual([await inUse(), await embedStates(page)], [[false, false], ['live', 'live']], `${path}: a tap outside ends it, and the suspended page runs again`)
+      const drag = async () => {
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 8, y: 300 }] })
+        for (let i = 1; i <= 5; i += 1) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 8 + i * 12, y: 300 + i * 6 }] })
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+      }
+      if (path.startsWith('/handout')) {
+        // The share page's chosen page fills the whole viewport (the Interact chip expands it), so (8, 300) is INSIDE the
+        // page: a drag or a tap there is the page's and leaves it in use. The way out by touch is Return to slides.
+        const returnButton = page.locator('#shareEmbedReturn')
+        const inside = await frame.boundingBox()
+        assert.ok(inside.x <= 8 && inside.y <= 300 && inside.x + inside.width >= 8 + 60 && inside.y + inside.height >= 300 + 30, `${path}: the touch point (8, 300) lies inside the expanded page (${JSON.stringify(inside)})`)
+        assert.equal(await returnButton.isVisible(), true, `${path}: Return to slides is visible while the page is in use`)
+        await drag()
+        await sleep(300)
+        assert.deepEqual([await inUse(), await embedStates(page)], [[false, true], ['idle', 'live']], `${path}: a drag inside the full-viewport page leaves it in use`)
+        await page.touchscreen.tap(8, 300)
+        await sleep(300)
+        assert.deepEqual([await inUse(), await embedStates(page)], [[false, true], ['idle', 'live']], `${path}: a tap inside the full-viewport page leaves it in use`)
+        await tapOn(returnButton)
+        await live(page, 2)
+        assert.deepEqual([await inUse(), await embedStates(page)], [[false, false], ['live', 'live']], `${path}: a tap on Return to slides ends it, and the suspended page runs again`)
+        assert.equal(await returnButton.isVisible(), false, `${path}: Return to slides is hidden once the page is left`)
+        // Chosen again, then Return to slides by a real touch tap once more.
+        await tapOn(chip)
+        await sleep(200)
+        assert.deepEqual(await embedStates(page), ['idle', 'live'])
+        await tapOn(returnButton)
+        await live(page, 2)
+        assert.deepEqual([await inUse(), await embedStates(page)], [[false, false], ['live', 'live']], `${path}: Return to slides works by touch a second time`)
+      } else {
+        // A touch that becomes a drag, outside: the browser sends pointerdown and no mouse events.
+        await drag()
+        await live(page, 2)
+        assert.deepEqual([await inUse(), await embedStates(page)], [[false, false], ['live', 'live']], `${path}: a drag outside ends it, and the suspended page runs again`)
+        // Chosen again, then a plain tap outside.
+        await tapOn(chip)
+        await sleep(200)
+        assert.deepEqual(await embedStates(page), ['idle', 'live'])
+        await page.touchscreen.tap(8, 300)
+        await live(page, 2)
+        assert.deepEqual([await inUse(), await embedStates(page)], [[false, false], ['live', 'live']], `${path}: a tap outside ends it, and the suspended page runs again`)
+      }
       await context.close()
     }
   })

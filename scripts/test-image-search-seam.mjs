@@ -26,7 +26,7 @@ import { importImageForTalk } from '../src/main/image-search/image-import.ts'
 import { createVaultPictureSearch, gatherVaultImages, parseVaultPictureUrl, scanVaultPool, twassetFileFor, vaultPictureUrl } from '../src/main/image-search/vault-pictures.ts'
 import { createImageSearch } from '../src/main/image-search/image-search.ts'
 import { createSlideWellProvider, fileNameWhere, ftsQuery, locateSlideWell, READ_BUSY_MS, READ_LIMIT_MS } from '../src/main/image-search/slidewell-provider.ts'
-import { detectSqlite3, sqliteQuery } from '../src/main/image-search/sqlite-read.ts'
+import { detectSqlite3, sqliteQuery, SqliteTimeoutError } from '../src/main/image-search/sqlite-read.ts'
 import { twarchiveUrl } from '../src/main/image-search/thumb-url.ts'
 
 const sqlite3 = detectSqlite3()
@@ -480,13 +480,18 @@ await test('S1: reads wait at most 250 ms for SlideWell\'s lock and are killed a
     writer.stdin.write("BEGIN EXCLUSIVE;\nINSERT INTO triage_decisions VALUES ('zz01', 'selected', NULL, NULL);\nSELECT 'locked';\n")
   })
   let t0 = Date.now()
-  const res = await p.search('Layout Showcase', { match: 'words' })
-  const searchMs = Date.now() - t0
-  t0 = Date.now()
-  const servedWhileLocked = await p.fileFor(issuedShot)
-  const fileForMs = Date.now() - t0
-  writer.stdin.end('ROLLBACK;\n.quit\n')
-  await new Promise((resolve) => writer.on('exit', resolve))
+  let res, servedWhileLocked, searchMs, fileForMs
+  try {
+    res = await p.search('Layout Showcase', { match: 'words' })
+    searchMs = Date.now() - t0
+    t0 = Date.now()
+    servedWhileLocked = await p.fileFor(issuedShot)
+    fileForMs = Date.now() - t0
+  } finally {
+    const exited = new Promise((resolve) => writer.once('close', resolve))
+    writer.stdin.end('ROLLBACK;\n.quit\n')
+    await exited
+  }
   assert.ok(searchMs < 1500, `search took ${searchMs} ms`)
   assert.ok(!res || !res.hits.some((h) => h.source === 'screenshot'), 'no screenshot rows read through the lock')
   assert.equal(servedWhileLocked, null, 'state unknown: refused')
@@ -494,11 +499,22 @@ await test('S1: reads wait at most 250 ms for SlideWell\'s lock and are killed a
   assert.equal((await retry(() => p.fileFor(issuedShot)))?.absPath, shotFile, 'served again once SlideWell is done')
 
   // A slow TalkWeaver read is killed at the limit, so SlideWell's commit goes through
+  // BEGIN keeps the shared read lock while the recursive query runs. Observe a row read inside
+  // that transaction before starting the writer; sleeping 120 ms could start it before the reader.
+  const readerReady = join(busyRoot, 'reader-ready')
   const slow = sqliteQuery({
     binary: sqlite3, dbPath: busyTriage, busyTimeoutMs: READ_BUSY_MS, timeoutMs: READ_LIMIT_MS, escapePaths: true,
-    sql: 'WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT count(*) AS n FROM c, (SELECT count(*) FROM triage_decisions) WHERE x < 5000000000'
-  }).then(() => 'finished', () => 'killed')
-  await new Promise((r) => setTimeout(r, 120))
+    sql: `BEGIN;
+.once "${readerReady.replaceAll('\\', '/')}"
+SELECT count(*) FROM triage_decisions;
+WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT count(*) AS n FROM c WHERE x < 5000000000`
+  }).then(() => 'finished', (error) => { assert.ok(error instanceof SqliteTimeoutError, String(error)); return 'killed' })
+  let reading = true
+  void slow.finally(() => { reading = false }).catch(() => {})
+  while (reading && (!existsSync(readerReady) || readFileSync(readerReady).length === 0)) {
+    await new Promise((resolve) => setTimeout(resolve, 2))
+  }
+  // If startup itself used the read budget, the lock is already gone; the same commit must still succeed.
   t0 = Date.now()
   await new Promise((resolve, reject) => execFile(sqlite3, [busyTriage], (err) => (err ? reject(err) : resolve())).stdin.end(
     ".timeout 4000\nINSERT INTO triage_decisions VALUES ('zz02', 'selected', NULL, NULL);\n"))
@@ -508,6 +524,7 @@ await test('S1: reads wait at most 250 ms for SlideWell\'s lock and are killed a
   assert.equal(execFileSync(sqlite3, [busyTriage, "SELECT count(*) FROM triage_decisions WHERE hash = 'zz02'"]).toString().trim(), '1')
   // a read-only reader of a rollback-journal store leaves no sidecar files behind
   assert.equal(execFileSync(sqlite3, [busyTriage, 'PRAGMA journal_mode']).toString().trim(), 'delete')
+  rmSync(readerReady, { force: true })
   assert.deepEqual(readdirSync(busyRoot).sort(), ['triage.db', 'well.db'])
 })
 
@@ -548,8 +565,9 @@ await test('round 2: a schema read that fails is not kept and does not let an em
     // a well image with no screenshot behind it cannot have been emptied: still found
     assert.ok((await p.search('tidal', { match: 'words' }))?.hits.some((h) => h.key === 'well:abc1234'))
   } finally {
+    const exited = new Promise((resolve) => writer.once('close', resolve))
     writer.stdin.end('ROLLBACK;\n.quit\n')
-    await new Promise((resolve) => writer.on('exit', resolve))
+    await exited
   }
   // with the default cache: a context read under the lock is not kept
   const cached = r2Provider({ busyMs: 100, limitMs: 8000 })
@@ -570,8 +588,9 @@ await test('round 2: a schema read under a lock is retried on the next call, not
   try {
     during = await p.search('Layout Showcase', { match: 'words' })
   } finally {
+    const exited = new Promise((resolve) => writer.once('close', resolve))
     writer.stdin.end('ROLLBACK;\n.quit\n')
-    await new Promise((resolve) => writer.on('exit', resolve))
+    await exited
   }
   assert.ok(!during?.hits.some((h) => h.key === 'triage:aaaa11112222'), 'no screenshots while locked')
   assert.ok((await p.search('Layout Showcase', { match: 'words' })).hits.some((h) => h.key === 'triage:aaaa11112222'), 'screenshots back at once')

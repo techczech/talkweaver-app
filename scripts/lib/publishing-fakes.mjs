@@ -1,9 +1,17 @@
+import { createHash } from 'node:crypto'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 // The REAL publishing sequence (src/main/handout-publishing.ts) over ports that always give leave:
 // for tests of what the publish handlers build, which lift those handlers out of the main process
 // and need a `handoutPublishing()` to call. Nothing is sent anywhere; `onUpload` sees each upload's
 // arguments. The sequence itself, and every way leave is refused or lost, is tested in
 // scripts/test-handout-publishing.mjs.
 import { createHandoutPublishing } from '../../src/main/handout-publishing.ts'
+
+// Test metadata lives outside output fixtures, as production metadata lives outside the site.
+const coordinationRoot = mkdtempSync(join(tmpdir(), 'tw-publishing-fakes-'))
+process.once('exit', () => rmSync(coordinationRoot, { recursive: true, force: true }))
 
 /** A live address somebody else could open (never one on this computer: that is never published). */
 export const FAKE_LIVE_ADDRESS = 'https://live.example.test'
@@ -16,6 +24,8 @@ export function grantedPublishing({ siteDir, project = 'talks', live = async () 
   let current = true
   return createHandoutPublishing({
     siteDir: () => siteDir,
+    preservationRoot: join(coordinationRoot, createHash('sha256').update(siteDir).digest('hex')),
+    inventory: async () => ({ complete: true, site: `cf-pages:acct:${project}`, revision: 'fixture-1', paths: [] }),
     authorise: async () => ({
       ok: true,
       authorisation: {
@@ -31,6 +41,6 @@ export function grantedPublishing({ siteDir, project = 'talks', live = async () 
     live,
     toolMissing: () => null,
     bundlingHazard: () => null,
-    upload: async (args) => { onUpload(args); return { ok: true, stdout: '', stderr: '' } },
+    upload: async (args, credentials, started) => { await started?.(2147483647, true); onUpload(args); return { ok: true, stdout: '', stderr: '' } },
   })
 }

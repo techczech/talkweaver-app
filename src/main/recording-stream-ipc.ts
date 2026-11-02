@@ -7,13 +7,14 @@
 
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { dirname, join } from 'path'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
-import { normaliseRun, writeNewRunFile, type RunMark, type RunRecord } from './runs'
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { normaliseRun, runReservationIsFor, writeNewRunFile, type RunMark, type RunRecord } from './runs'
 import { saveTargets, segmentIndexOfFile, sessionIdRandom, sessionIdTaken, vaultSessionPath } from './recording-paths'
 import { isSafeTalkSlug } from './runs'
 import { createRecordingStreams, type RecordingStreams } from './recording-stream'
 import { audioMsFromSegments, type RunAudioGap, type RunAudioSegment } from '../shared/run-audio'
 import type { WriteVault } from './presented-vault'
+import type { RecordingRecovery } from '../shared/recording-recovery'
 
 /** The ledger functions streaming needs (compiler lib/16-presentation-ledger.mjs). */
 export interface StreamLedger {
@@ -102,10 +103,10 @@ export function audioBlock(
  * Whether the file at `path` is a saved Run for `sessionId`: it parses as JSON and names that id.
  * An empty file (a name reserved by a save that then failed) or an unreadable one is not.
  */
-export function savedRunFor(path: string, sessionId: string): boolean {
+export function savedRunFor(path: string, sessionId: string, talkSlug?: string): boolean {
   try {
-    const run = JSON.parse(readFileSync(path, 'utf8')) as { id?: unknown } | null
-    return !!run && typeof run === 'object' && !Array.isArray(run) && run.id === sessionId
+    const run = JSON.parse(readFileSync(path, 'utf8')) as { id?: unknown; talkSlug?: unknown } | null
+    return !!run && typeof run === 'object' && !Array.isArray(run) && run.id === sessionId && (talkSlug === undefined || run.talkSlug === talkSlug)
   } catch {
     return false
   }
@@ -143,11 +144,10 @@ export async function recoverInterruptedRecordings(): Promise<number> {
       }
       const targets = saveTargets(vault, deps.userDataDir(), manifest.talkSlug, sessionId, false)
       if (!targets.ok) continue
-      // The marker goes only once a real Run for this session is there; an empty or unreadable
-      // file in its place keeps the marker (and so the audio's recovery record).
+      // Only a complete Run or a proven empty reservation belongs to this recovery.
       if (existsSync(targets.sessionJson)) {
-        if (savedRunFor(targets.sessionJson, sessionId)) streams.complete(sessionId)
-        continue
+        if (savedRunFor(targets.sessionJson, sessionId, manifest.talkSlug)) { streams.complete(sessionId); continue }
+        if (!runReservationIsFor(targets.sessionJson, sessionId, manifest.talkSlug)) continue
       }
       const lastEnd = found.segments.reduce((max, seg) => Math.max(max, seg.endMs), 0)
       const recordingMs = Math.max(manifest.recordingMs, lastEnd)
@@ -173,10 +173,10 @@ export async function recoverInterruptedRecordings(): Promise<number> {
       if (vault && !vaultSessionPath(vault, manifest.talkSlug, sessionId).ok) continue
       // Created exclusively: a Run that appeared meanwhile is kept as it is, never replaced.
       try {
-        writeNewRunFile(targets.sessionJson, normaliseRun(session))
+        writeNewRunFile(targets.sessionJson, normaliseRun(session), true)
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
-          if (savedRunFor(targets.sessionJson, sessionId)) streams.complete(sessionId)
+          if (savedRunFor(targets.sessionJson, sessionId, manifest.talkSlug)) streams.complete(sessionId)
           continue
         }
         throw e
@@ -189,6 +189,32 @@ export async function recoverInterruptedRecordings(): Promise<number> {
     }
   }
   return written
+}
+
+/** Unfinished recordings remain visible even when recovery cannot safely use the Run path. */
+export function listRecordingRecovery(): RecordingRecovery[] {
+  if (!streams || !streamDeps) return []
+  const deps = streamDeps
+  return streams.listInterrupted().filter((found) => found.bytes > 0).flatMap<RecordingRecovery>(({ manifest }) => {
+    const base = { sessionId: manifest.sessionId, talkSlug: manifest.talkSlug, talkTitle: manifest.talkTitle }
+    const vault = typeof manifest.vaultRoot === 'string' ? deps.writableVault?.(manifest.vaultRoot)
+      : manifest.vaultRoot === null ? null : deps.vaultRoot()
+    if (vault === undefined) return [{ ...base, status: 'waiting-for-vault' as const, message: 'Open this recording’s vault to finish recovery. Its audio is safe on this Mac.' }]
+    const target = saveTargets(vault, deps.userDataDir(), manifest.talkSlug, manifest.sessionId, false)
+    let blocked = !target.ok
+    if (target.ok) {
+      try {
+        lstatSync(target.sessionJson)
+        if (savedRunFor(target.sessionJson, manifest.sessionId, manifest.talkSlug)) return []
+        blocked = !runReservationIsFor(target.sessionJson, manifest.sessionId, manifest.talkSlug)
+      } catch (e) {
+        blocked = (e as NodeJS.ErrnoException).code !== 'ENOENT' || existsSync(`${target.sessionJson}.reservation`)
+      }
+    }
+    return [{ ...base, status: blocked ? 'needs-attention' as const : 'ready' as const,
+      message: blocked ? 'This recording needs attention: its Run file could not be safely completed. Its audio is safe on this Mac.'
+        : 'This recording is waiting to finish recovery. Its audio is safe on this Mac.' }]
+  })
 }
 
 // When a present window goes (closed, crashed) mid-recording, its files are closed and the
@@ -213,6 +239,7 @@ export function registerRecordingStreamIpc(deps: StreamIpcDeps): RecordingStream
   streamDeps = deps
   streams = createRecordingStreams({ userDataDir: () => deps.userDataDir() })
   const store = streams
+  ipcMain.handle('recording:list-recovery', () => listRecordingRecovery())
   ipcMain.handle('recording:stream-open', async (event, payload) => {
     try {
       // Refused here, not at recovery: a marker with a slug no Run path accepts would never become

@@ -134,17 +134,18 @@ assert.deepEqual(stored, { author: 'Dominik Lukeš' }, 'the store keeps trimmed 
 // ── 7. One persistence path, one application path ─────────────────────────────
 const mainSource = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
 const preloadSource = readFileSync(join(root, 'src/preload/index.ts'), 'utf8')
-const settingsSource = readFileSync(join(root, 'src/renderer/src/components/SettingsPanel.tsx'), 'utf8')
+// 0.42: the Settings rows are schema settings (the shared Settings window draws them).
+const settingsSource = readFileSync(join(root, 'src/shared/settings-schema.ts'), 'utf8')
 const deckSource = readFileSync(join(root, 'src/renderer/src/components/DeckDesignPanel.tsx'), 'utf8')
 const tableSource = readFileSync(join(root, 'src/renderer/src/extensions/frontmatterTable.ts'), 'utf8')
 
 assert.match(mainSource, /metadataDefaults\?: MetadataDefaults/, 'the defaults live in the existing config.json Config type — not a second store')
-assert.match(mainSource, /settings:get-metadata-defaults/, 'the defaults are read through the existing settings IPC')
-assert.match(mainSource, /settings:set-metadata-defaults/, 'the defaults are written through the existing settings IPC')
+assert.match(mainSource, /preferences:get-metadata-defaults/, 'the defaults are read through the existing settings IPC')
+assert.match(mainSource, /preferences:set-metadata-defaults/, 'the defaults are written through the existing settings IPC')
 assert.match(mainSource, /applyMetadataDefaults/, 'new-talk creation pre-fills through the one shared function')
 assert.match(preloadSource, /getMetadataDefaults/, 'the preload exposes the defaults on the existing settings API')
 assert.match(settingsSource, /metadataDefaultsViewModel/, 'the Settings section renders from the registry-derived model')
-assert.match(settingsSource, /Presenter identity and deck defaults/, 'the Settings section is named')
+assert.match(settingsSource, /New talks start with/, 'the Settings group is named')
 assert.match(deckSource, /applyMetadataDefaults/, 'Deck settings fills from defaults through the one shared function')
 assert.match(deckSource, /Fill missing from defaults/, 'Deck settings offers the panel-level fill action')
 assert.match(deckSource, /Use default/, 'Deck settings offers a per-field "Use default"')

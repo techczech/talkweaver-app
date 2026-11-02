@@ -126,7 +126,8 @@ const source = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'u
   assert.doesNotMatch(hook, /useMemo|useLayoutEffect/, 'never during a render')
 
   const workspace = source('src/renderer/src/components/WorkspaceLayout.tsx')
-  assert.match(workspace, /compileTimer\.current = setTimeout\(async \(\) => \{[\s\S]*?\n {4}\}, OUTLINE_PAUSE_MS\)\n/, 'the workspace compiles after the same pause')
+  assert.match(workspace, /const pause = gridModeRef\.current \|\| compileImmediatelyRef\.current \|\| !compileAttemptedRef\.current \? 0 : OUTLINE_PAUSE_MS/, 'ordinary typing uses the same pause; opening and deliberate moves compile immediately')
+  assert.match(workspace, /compileTimer\.current = setTimeout\(async \(\) => \{[\s\S]*?\n {4}\}, pause\)\n/, 'the workspace applies its selected pause')
 }
 
 console.log('PASS test-layout-doctor-paused-icon-scan (25 texts: no reading until the pause has passed, then one, of the last text)')

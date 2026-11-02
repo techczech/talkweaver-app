@@ -50,7 +50,7 @@ const commands = chapterCommands()
 
 // The slide counts as built. The drawing's are in EX_TALKS; where they differ, it is because every
 // counted command has a line on a slide that still fits at 1280×720 (test:example-talks-fit).
-const BUILT_COUNTS = { 'The Saturday market': 22, 'Garden notes': 14, 'Walking the old town': 30, 'Lightning round': 8, 'Harvest supper (draft)': 10 }
+const BUILT_COUNTS = { 'The Saturday market': 25, 'Garden notes': 14, 'Walking the old town': 30, 'Lightning round': 9, 'Harvest supper (draft)': 10 }
 // The shared slides (The Saturday market ↔ Garden notes) and the one with two versions.
 const SHARED = ['s4', 's14', 's15']
 const TWO_VERSIONS = 's4'

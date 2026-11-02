@@ -95,7 +95,7 @@ const LITERALLY = /127\.0\.0\.1|localhost|\[::1\]|0\.0\.0\.0|file:/i
 const slashed = (path) => path.split(sep).join('/')
 function filesOf(dir) {
   if (!existsSync(dir)) return []
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? filesOf(join(dir, entry.name)) : [join(dir, entry.name)]))
+  return readdirSync(dir, { withFileTypes: true }).filter(entry => entry.name !== '.wrangler').flatMap((entry) => (entry.isDirectory() ? filesOf(join(dir, entry.name)) : [join(dir, entry.name)]))
 }
 
 /**
@@ -143,7 +143,7 @@ function world(overrides = {}) {
   }
   async function tool(args, credentials) {
     // Keys are paths inside the site with FORWARD slashes on every platform (`relative` gives back-slashes on Windows).
-    const upload = { args, credentials, said: '', files: Object.fromEntries(filesOf(dir).map((path) => [slashed(relative(dir, path)), readFileSync(path, 'latin1')])) }
+    const upload = { args, credentials, said: '', files: Object.fromEntries(filesOf(args[2]).map((path) => [slashed(relative(args[2], path)), readFileSync(path, 'latin1')])) }
     w.uploads.push(upload)
     log.push('upload:start')
     await w.hooks.duringUpload?.()
@@ -163,11 +163,13 @@ function world(overrides = {}) {
   }
   const ports = {
     siteDir: () => dir,
+    preservationRoot: join(dir, '..', `coordination-${sites}`),
+    inventory: async (a) => ({ complete: true, site: `cf-pages:${a.accountId}:${a.project}`, revision: 'fixture-1', paths: [] }),
     authorise: () => connection.authorisePublish(),
     live: async () => { w.liveCalls += 1; log.push('live'); return w.live() },
     toolMissing: () => w.hooks.toolMissing ?? null,
     bundlingHazard: () => w.hooks.hazard ?? null,
-    upload: tool,
+    upload: async (args, credentials, started) => { await started?.(2147483647, true); return tool(args, credentials) },
     rehearsal: () => w.rehearsal,
     liveLimitMs: overrides.liveLimitMs ?? 2000,
   }
@@ -220,6 +222,18 @@ async function connected(overrides = {}, token = TOKEN) {
   return w
 }
 
+// Completed upload remains published when the Run's final authority check refuses recording.
+{
+  const w = await connected()
+  const job = w.job('run')
+  job.record = () => { throw Error('run-source-unavailable') }
+  await assert.rejects(w.publishing.publish(job), /run-source-unavailable/)
+  assert.equal(w.uploads.length, 1)
+  assert.equal(w.recorded.length, 0)
+  assert.ok(existsSync(join(w.dir, 'run-a', 'index.html')))
+  console.log('PASS: post-upload record refusal rejects; uploaded pages remain; no recorded success')
+}
+
 // ── 1. The entry points ─────────────────────────────────────────────────────────────────────────
 {
   assert.deepEqual(ENTRIES, ['talk', 'run', 'run-unpublish', 'talk-unpublish', 'live-short-link'])
@@ -247,7 +261,7 @@ async function connected(overrides = {}, token = TOKEN) {
   const toolCalls = main.split('\n').filter((line) => line.includes('runBundledWrangler(')).map((line) => line.trim())
   assert.deepEqual(toolCalls.map((line) => line.replace(/\s+/g, ' ')), [
     'function runBundledWrangler(',
-    'upload: (args, credentials) => runBundledWrangler(args, { set: credentials }),',
+    "upload: (args, credentials, started) => runBundledWrangler(args, { set: credentials, cwd: join(args[2], '.wrangler', 'run'), publicationStarted: started }),",
   ])
   // Nothing publishes by itself: no command line, no timer, no save hook reaches the sequence.
   for (const file of ['src/main/setup-cli.ts', 'src/main/talk-writer.ts']) {
@@ -545,7 +559,7 @@ const NOT_AN_ADDRESS = ['', '   ', 'localhost', 'localhost:3000/x', '127.0.0.1:8
     const main = readSource(join(repo, 'src/main/index.ts'))
     assert.deepEqual([...main.matchAll(/join\((?:siteDir|publishSiteDir\(\)), ([^)]*)\)/g)].map((found) => found[1]).filter((rest) => !/^'(?:404\.html|_redirects)'$/.test(rest)), [], 'the only paths joined straight onto the site folder are its two fixed files')
     assert.ok(!/rmSync\(join\(siteDir|existsSync\(join\(siteDir, (?!')/.test(main), 'and nothing is looked for or removed there by a joined name')
-    assert.deepEqual([main.split('writableSiteFolder(siteDir, slug)').length - 1, main.split('removeSiteFolder(').length - 1, main.split('siteFolder(siteDir, context.talkSlug)').length - 1, main.split('publishedFolders(siteDir)').length - 1], [2, 0, 1, 3])
+    assert.deepEqual([main.split('writableSiteFolder(siteDir, slug)').length - 1, main.split('removeSiteFolder(').length - 1, main.split('siteFolder(siteDir, linkFolder)').length - 1, main.split('publishedFolders(siteDir)').length - 1], [2, 0, 1, 3])
     // Unpublishing a Run (run-unpublish.ts, ticket 17): its folder is found by membership and only then removed or replaced.
     const unpublishing = readSource(join(repo, 'src/main/run-unpublish.ts'))
     assert.deepEqual([...unpublishing.matchAll(/join\(siteDir, ([^)]*)\)/g)].map((found) => found[1]), ["'_redirects'"], 'the Run unpublish joins only the redirect file onto the site folder')
@@ -657,7 +671,7 @@ const NOT_READY = [
   ['not connected', {}, null, { kind: 'not-connected', title: NOT_CONNECTED_TITLE, action: 'open-settings' }],
   ['a token Cloudflare does not know', {}, UNKNOWN, { kind: 'not-ready', title: 'Cloudflare did not accept this token', action: 'open-settings' }],
   ['several accounts, none chosen', {}, BOTH_ACCOUNTS, { kind: 'not-ready', title: 'Choose a Cloudflare account', action: 'open-settings' }],
-  ['no site yet', { config: { project: 'not-made-yet' } }, TOKEN, { kind: 'not-ready', title: 'No site yet', action: 'create-site', label: 'Create not-made-yet' }],
+  ['no site yet', { config: { project: 'not-made-yet' } }, TOKEN, { kind: 'not-ready', title: 'No site yet', action: 'open-settings', label: 'Open Settings' }],
   ['a token that cannot even read Pages', {}, NO_PAGES, { kind: 'not-ready', title: 'The token cannot publish pages', action: 'open-settings' }],
   ['a site name that cannot be used', { config: { project: 'not a name' } }, TOKEN, { kind: 'not-ready', title: 'Publishing is not ready', action: 'open-settings' }],
   ['Cloudflare does not answer', { timeoutMs: 30, hang: true }, TOKEN, { kind: 'not-ready', title: 'Cloudflare could not be reached', action: 'open-settings' }],
@@ -681,11 +695,14 @@ for (const entry of ENTRIES) {
   const sheet = (await world().publish('talk')).notReady
   assert.deepEqual([sheet.title, sheet.fix.label, SAVE_AS_FILE], ['Publishing needs a Cloudflare account', 'Open Settings', 'Save as a file instead'])
   assert.equal(OPEN_SETTINGS, 'Open Settings')
-  // "No site yet": the one button makes the site, and the publish then goes.
+  // "No site yet": the sheet opens Settings → Cloudflare, where the site is made (Settings-window-only
+  // since Sol review 4); once it is made there, the same publish goes.
   const w = world({ stored: TOKEN, config: { project: 'not-made-yet' } })
-  assert.equal((await w.publish('talk')).notReady.fix.action, 'create-site')
+  const noSite = (await w.publish('talk')).notReady
+  assert.deepEqual([noSite.fix.action, noSite.fix.label], ['open-settings', 'Open Settings'])
+  assert.match(noSite.detail, /Create it in Settings → Cloudflare\.$/)
   see(await w.connection.createSite())
-  assert.equal((await w.publish('talk')).ok, true, 'after "Create not-made-yet" the same publish goes up, with no "Check again" in between')
+  assert.equal((await w.publish('talk')).ok, true, 'after the site is made in Settings the same publish goes up, with no "Check again" in between')
   assert.equal(w.uploads[0].args[w.uploads[0].args.indexOf('--project-name') + 1], 'not-made-yet')
   // A connection that was offline is asked again at the next publish, not held against the person.
   const flaky = world({ stored: TOKEN, timeoutMs: 30 })
@@ -701,7 +718,11 @@ for (const entry of ENTRIES) {
   assert.equal((await w.publish(entry)).ok, true)
   const upload = w.uploads[0]
   assert.deepEqual(upload.credentials, { CLOUDFLARE_API_TOKEN: TOKEN, CLOUDFLARE_ACCOUNT_ID: ADA.id }, `${entry}: the tool is given the token and the account of the connection`)
-  assert.deepEqual(upload.args, ['pages', 'deploy', w.dir, '--project-name', 'talks', '--branch', 'live', '--commit-dirty=true'])
+  assert.notEqual(upload.args[2], w.dir, 'uploads the immutable candidate, not the build directory')
+  assert.equal(existsSync(upload.args[2]), false, 'candidate scratch cleaned')
+  assert.deepEqual(upload.args.slice(0, 8), ['pages', 'deploy', upload.args[2], '--project-name', 'talks', '--branch', 'live', '--commit-dirty=true'])
+  assert.equal(upload.args[8], '--commit-message')
+  assert.match(upload.args[9], /^tw-candidate:[0-9a-f]{64}$/)
   assert.equal(w.prepared[0].project, 'talks', 'the builder is given the site the check found')
   assert.deepEqual(w.api.requests.slice(before).map((request) => request.path).filter((path) => !path.includes('/pages/projects/talks')), [], `${entry}: with the row Ready a publish asks Cloudflare nothing but the upload itself`)
 }
@@ -726,7 +747,7 @@ for (const entry of ENTRIES) {
       await Promise.all(settled)
       await w.connection.idle()
       const label = `${entry}, ${change} ${point}`
-      assert.deepEqual([result.ok, result.error, result.superseded], [false, PUBLISH_SUPERSEDED_ERROR, true], `${label}: the publish reports that it was superseded`)
+      assert.deepEqual([result.ok, result.error, result.superseded], point === POINTS[2] ? [false, 'PUBLISH_OUTCOME_UNKNOWN', true] : [false, PUBLISH_SUPERSEDED_ERROR, true], `${label}: before launch superseded, after launch outcome unknown`)
       assert.deepEqual(w.recorded, [], `${label}: no result is written`)
       assert.equal(w.uploads.length, point === POINTS[2] ? 1 : 0, `${label}: ${point === POINTS[2] ? 'the upload under way is the only one' : 'no upload starts'}`)
       if (point === POINTS[0]) assert.equal(w.prepared.length, 0, `${label}: nothing is built for a connection that is gone`)
@@ -770,16 +791,18 @@ for (const entry of ENTRIES) {
     if (setup.output) w.hooks.toolOutput = setup.output
     const result = await w.publish(entry)
     const label = `${entry}, ${what}`
-    assert.deepEqual([result.ok, result.error], [false, sentence], `${label}: the message is the sorted sentence`)
+    assert.deepEqual([result.ok, result.error], [false, sentence === PUBLISH_TOO_LARGE ? sentence : 'PUBLISH_OUTCOME_UNKNOWN'], `${label}: definite refusals retain their sentence, unsorted launch outcomes stay unknown`)
     const raw = w.uploads[0].said
     assert.equal(pagesDeployFailure(raw).kind, kind)
     // On the raw text first: the stand-in really printed the token and the reply's own words.
     assert.ok(raw.includes(token) && raw.includes(REPLY_TEXT_MARK), `${label}: what the tool printed held the token and Cloudflare's own text`)
     assert.ok(!result.error.includes(REPLY_TEXT_MARK) && !result.error.includes(token), `${label}: neither is in the message`)
-    assert.ok(result.details.includes(REPLY_TEXT_MARK) || what.startsWith('a long'), `${label}: the raw text is behind Details`)
-    assert.ok(!result.details.includes(token) && result.details.length <= 600, `${label}: Details does not hold the token`)
-    for (let at = 0; at + 12 <= token.length; at += 1) assert.ok(!result.details.includes(token.slice(at, at + 12)), `${label}: nor a part of it`)
-    assert.ok(result.details.includes(TOKEN_REMOVED) || what.startsWith('a long'), `${label}: it was taken out, not cut off by luck`)
+    {
+      assert.ok(result.details.includes(REPLY_TEXT_MARK) || what.startsWith('a long'), `${label}: the raw text is behind Details`)
+      assert.ok(!result.details.includes(token) && result.details.length <= 600, `${label}: Details does not hold the token`)
+      for (let at = 0; at + 12 <= token.length; at += 1) assert.ok(!result.details.includes(token.slice(at, at + 12)), `${label}: nor a part of it`)
+      assert.ok(result.details.includes(TOKEN_REMOVED) || what.startsWith('a long'), `${label}: it was taken out, not cut off by luck`)
+    }
     assert.deepEqual(w.recorded, [], `${label}: nothing is recorded`)
     assert.equal(result.notReady, undefined)
   }
@@ -805,7 +828,7 @@ for (const entry of ENTRIES) {
   const before = await w.connection.authoriseLiveDeploy()
   const emittedBefore = w.emitted.length
   const refused = await w.publish(entry)
-  assert.equal(refused.error, PUBLISH_REFUSED, `${entry}: Cloudflare refuses the publish`)
+  assert.equal(refused.error, 'PUBLISH_OUTCOME_UNKNOWN', `${entry}: Cloudflare refuses the publish`)
   const row = () => w.connection.status().publishing
   assert.deepEqual([row().state, publishingLabel(row()), row().permission], ['no-permission', 'The token cannot publish pages', PAGES_PERMISSION], `${entry}: the row says so, with the permission named`)
   assert.ok(w.emitted.slice(emittedBefore).some((status) => status.publishing.state === 'no-permission'), `${entry}: and the windows are told`)
@@ -820,7 +843,7 @@ for (const entry of ENTRIES) {
   assert.equal(w.connection.status().connection.state, 'connected')
   // It does not stop the next attempt: the permission may have been added at Cloudflare.
   const again = await w.publish(entry)
-  assert.equal(again.error, PUBLISH_REFUSED, `${entry}: the next publish is tried, and refused again`)
+  assert.equal(again.error, 'PUBLISH_OUTCOME_UNKNOWN', `${entry}: the next publish is tried, and refused again`)
   assert.equal(w.uploads.length, 2)
   w.api.model.tokens.get(READ_ONLY).pages = true
   assert.equal((await w.publish(entry)).ok, true, `${entry}: with the permission added the publish goes up`)
@@ -844,7 +867,7 @@ for (const entry of ENTRIES) {
   const w = await connected({}, READ_ONLY)
   w.hooks.duringUpload = async () => { await w.connect(TOKEN) }
   const late = await w.publish('talk')
-  assert.equal(late.superseded, true)
+  assert.equal(late.error, 'PUBLISH_OUTCOME_UNKNOWN')
   assert.equal(w.connection.status().publishing.state, 'ready', 'the new token\'s row is not marked by the old token\'s refusal')
   // Only a refusal for permission marks the row.
   for (const output of ['Invalid API Token [code: 1000]', 'Project not found [code: 8000007]', 'fetch failed ENOTFOUND', 'something else']) {
@@ -887,16 +910,16 @@ console.log('PASS 6: a refused publish turns the row to "The token cannot publis
   const behind = w.publish('run')
   await reached
   const live = await within(w.publish('live-short-link'), 1500, 'the short-link upload, with a handout upload still running')
-  assert.equal(live.ok, true, 'Go live\'s upload finishes while the handout\'s is still running')
-  assert.deepEqual([w.recorded.map((built) => built.entry), w.uploads.length], [['live-short-link'], 2], 'and before the publish queued behind that handout has even started')
-  assert.deepEqual(w.uploads[1].credentials, { CLOUDFLARE_API_TOKEN: TOKEN, CLOUDFLARE_ACCOUNT_ID: ADA.id }, 'with leave of its own from the one connection')
+  assert.equal(live.error, 'PUBLISH_BUSY', 'the shared writer lock refuses an overlapping short-link upload')
+  assert.deepEqual([w.recorded.map((built) => built.entry), w.uploads.length], [[], 1], 'no overlapping build or upload starts')
+  assert.equal(w.prepared.some(job => job.entry === 'live-short-link'), false, 'refused before preparing redirects')
   slow.open()
   assert.deepEqual([(await talk).ok, (await behind).ok], [true, true])
   await w.publishing.idle()
   // Because it overlapped a queued publish, one more upload follows everything queued: the folder as it stands.
-  assert.equal(w.uploads.length, 4, 'talk, short link, run, and one settling upload')
-  assert.deepEqual(Object.keys(w.uploads[3].files).sort(), ['_redirects', 'run-a/index.html', 'talk-a/index.html'], 'the last upload carries everything: the site served ends as the folder is')
-  assert.deepEqual(w.recorded.map((built) => built.entry), ['live-short-link', 'talk', 'run'], 'the settling upload records nothing')
+  assert.equal(w.uploads.length, 2, 'only the two explicit queued publishes upload')
+  assert.deepEqual(Object.keys(w.uploads[1].files).sort(), ['run-a/index.html', 'talk-a/index.html'], 'the second explicit upload preserves both handouts')
+  assert.deepEqual(w.recorded.map((built) => built.entry), ['talk', 'run'], 'the refused short link and settling upload record nothing')
   // With nothing queued there is nothing to settle: one upload.
   const quiet = await connected()
   assert.equal((await quiet.publish('live-short-link')).ok, true)
@@ -909,13 +932,13 @@ console.log('PASS 6: a refused publish turns the row to "The token cannot publis
   failing.hooks.duringUpload = async () => { if (failing.uploads.length === 1) await hold.wait }
   const first = failing.publish('talk')
   await until(() => failing.uploads.length === 1)
-  assert.equal((await failing.publish('live-short-link')).ok, true)
+  assert.equal((await failing.publish('live-short-link')).error, 'PUBLISH_BUSY')
   failing.hooks.toolOutput = () => 'something else'
   hold.open()
   await first
   await failing.publishing.idle()
   failing.hooks.toolOutput = null
-  assert.equal((await failing.publish('talk')).ok, true, 'the next publish goes up after a failed settling upload')
+  assert.equal((await failing.publish('talk')).ok, true, 'the next explicit attempt resolves the unchanged baseline and can publish')
 }
 {
   // A publish that throws, and one that fails, do not hold up the next; nothing is held while idle.
@@ -947,11 +970,11 @@ console.log('PASS 6: a refused publish turns the row to "The token cannot publis
   assert.deepEqual([w.uploads.length, w.log.filter((line) => line.startsWith('prepare')).length], [1, 1], 'while the first upload\'s tool has not exited, the next publish has not even begun')
   exited.open()
   const timedOut = await stuck
-  assert.deepEqual([timedOut.ok, timedOut.error, timedOut.details.includes(REPLY_TEXT_MARK)], [false, PUBLISH_TIMED_OUT, true], 'an upload stopped at its limit is reported as too long, what the tool printed behind Details')
-  assert.equal((await after).ok, true, 'and the publish waiting behind it runs, after it')
-  assert.deepEqual(w.log.filter((line) => /^upload/.test(line)), ['upload:start', 'upload:end', 'upload:start', 'upload:end'], 'the two uploads never overlapped')
-  assert.deepEqual(w.recorded, [{ entry: 'run-unpublish', name: 'run-a' }], 'the one that timed out recorded nothing')
-  assert.equal(w.connection.status().publishing.state, 'ready', 'and it does not mark the row')
+  assert.deepEqual([timedOut.ok, timedOut.error, Boolean(timedOut.details?.includes(REPLY_TEXT_MARK))], [false, 'PUBLISH_OUTCOME_UNKNOWN', true], 'an interrupted upload has an unknown remote outcome')
+  assert.equal((await after).ok, true, 'the next explicit publish checks the unchanged baseline and proceeds')
+  assert.deepEqual(w.log.filter((line) => /^upload/.test(line)), ['upload:start', 'upload:end', 'upload:start', 'upload:end'], 'only the two explicit operations launch')
+  assert.equal(w.recorded.length, 1, 'only the next confirmed publish records success')
+  assert.equal(w.connection.status().publishing.state, 'ready', 'the connection remains usable')
 }
 console.log('PASS 7: publishes of one site run one at a time, in order; a thrown, failed or stuck publish does not hold the next')
 
@@ -1643,7 +1666,7 @@ console.log('PASS 7: publishes of one site run one at a time, in order; a thrown
     const w = await connected()
     seedSite(w.dir)
     const state = app(w)
-    w.hooks.toolOutput = () => 'something else went wrong'
+    w.hooks.toolOutput = () => 'Missing directory. Provide the path to your build output directory.'
     const failed = await w.publishing.publish(state.job())
     assert.equal(failed.ok, false)
     assert.deepEqual([existsSync(join(w.dir, 'ai-research')), state.registry['ai-research'], readHandoutUrl(state.outline), state.cleared], [false, 't1ab', 'https://talks.test/t1ab', 0], 'upload failed: folder gone here, short id and link kept')
@@ -1651,8 +1674,11 @@ console.log('PASS 7: publishes of one site run one at a time, in order; a thrown
     w.hooks.toolOutput = null
     await w.publishing.idle()
     const retried = await w.publishing.publish(state.job())
-    assert.equal(retried.ok, true, retried.error)
-    assert.deepEqual([retried.built.folder, retried.built.linkCleared, state.cleared, state.registry], [null, true, 1, { 'ai-teaching': 't2cd' }], 'the retry: the short link still read as the talk\'s, the site up, the link cleared, the entry dropped')
+    assert.equal(retried.ok, true, 'retry after a definite failure finishes unpublishing')
+    assert.equal(w.uploads.length, 2)
+    assert.equal(state.cleared, 1)
+    assert.equal(state.registry['ai-research'], undefined)
+    assert.equal(readHandoutUrl(state.outline), null)
     assert.deepEqual(Object.keys(w.uploads.at(-1).files).filter((file) => file.startsWith('ai-research/')), [])
     assert.doesNotMatch(w.uploads.at(-1).files._redirects ?? '', /t1ab/)
     // (b) The link clear is refused after the upload: the entry stays; a retry clears the link and drops it.

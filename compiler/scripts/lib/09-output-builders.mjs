@@ -1,4 +1,3 @@
-import { onlineContentGuidelinesHtml } from './online-content-guidelines.mjs';
 import { escapeHtml, qrGeneratorSource, overviewRuntimeSource, slideFitRuntimeSource, pollExtendedStyles, markmapVendorSource, mermaidVendorSource, boardScreenRuntimeSource } from "./01-cli-utils.mjs";
 import { withoutScripts } from "./04-html-extraction.mjs";
 import { plainInlineText } from "./00-inline-render.mjs";
@@ -11,6 +10,7 @@ import { emphasisStepsRuntimeSource } from "../../assets/runtime/emphasis-steps.
 import { traceWindowRuntimeSource } from "../../assets/runtime/trace-window.js";
 import { audioChipRuntimeSource } from "../../assets/runtime/audio-chip.js";
 import { mediaStepsRuntimeSource } from "../../assets/runtime/media-steps.js";
+import { audienceEmbedStyles } from "../../assets/runtime/audience-embed-styles.js";
 import { embedChannelSource } from "../../assets/runtime/embed-channel.js";
 import { EMBED_DOC_ATTRIBUTE } from "./embed-frame.mjs";
 import { audienceReactionsStyles } from "../../assets/runtime/audience-reactions.js";
@@ -24,7 +24,6 @@ import { handoutHomeMarkup } from "./handout-home.mjs";
 import { handoutHomeRuntimeSource } from "../../assets/runtime/handout-home.js";
 import { liveStepRuntimeSource } from "../../assets/runtime/live-step.js";
 import { handoutHomeStyles } from "../../assets/runtime/handout-home-styles.js";
-import { handoutTokens } from "../../assets/runtime/handout-tokens.js";
 import { lazySlideAssetsStyles, lazySlideAssetsRuntimeSource } from "../../assets/runtime/lazy-slide-assets.js";
 
 // =============================================================================
@@ -132,21 +131,12 @@ export function buildShareHtml({ title, slides, styles, includeNotes, slug, lice
 <style>
 ${pollExtendedStyles}
 ${styles}
+${audienceEmbedStyles}
 ${sharedTalk && !venue ? sharedTalkStyles : ""}
 ${homeOn ? handoutHomeStyles : ""}
 ${lazyOn ? lazySlideAssetsStyles : ""}
 body { margin: 0; }
 .presenter-root, #presenterBtn { display: none !important; }
-.tw-online-content { position: fixed; right: 12px; bottom: 62px; z-index: 120; max-width: min(36rem, calc(100vw - 24px)); background: #fff; color: ${handoutTokens.ink}; border: 1px solid ${handoutTokens.control}; border-radius: 6px; font: 14px/1.5 ${handoutTokens.font}; box-shadow: 0 2px 8px #0002; }
-.tw-online-content summary { cursor: pointer; padding: 7px 12px; }
-.tw-online-content-body { padding: 0 12px 12px; max-height: 60vh; overflow: auto; }
-.tw-online-content a { color: ${handoutTokens.cobalt}; }
-body.hh-mode .tw-online-content { position: static; box-sizing: border-box; width: calc(100% - 32px); max-width: 640px; margin: 0 auto 32px; border-color: ${handoutTokens.rule}; border-radius: 10px; box-shadow: none; }
-body.hh-mode .tw-online-content summary { color: ${handoutTokens.soft}; }
-body.hh-mode .tw-online-content-body { max-height: none; }
-body.hh-mode.hh-full-open .tw-online-content { display: none; }
-@media (min-width: 900px) { body.hh-mode .tw-online-content { width: calc(100% - 2 * clamp(32px, 5vw, 72px)); max-width: calc(1440px - 2 * clamp(32px, 5vw, 72px)); } }
-@media print { .tw-online-content { display: none; } }
 .share-shell { min-height: 100vh; display: grid; grid-template-rows: 1fr auto; }
 .slide { display: none; }
 .slide.active { display: grid; }
@@ -458,7 +448,6 @@ ${slideMarkup}
     </div>
   </footer>
 </main>
-${onlineContentGuidelinesHtml()}
 <aside class="nav-panel" id="navPanel" aria-label="Slide overview">
   <button class="btn" id="closeOverview" type="button"><span class="btn-label">Close</span></button>
   <h2>Overview
@@ -592,12 +581,10 @@ ${hasMermaid ? mermaidVendorSource : ""}
   ${overviewRuntimeSource}
   const overviewSlideData = slides.map((el, slideIndex) => ({
     index: slideIndex,
-    title: el.dataset.navLabel || el.dataset.navTitle || el.querySelector("h1,h2")?.textContent || "",
+    ...overviewSlideBase(el, false),
     section: el.dataset.section || "",
     subsection: el.dataset.subsection || "",
-    body: el.textContent || "",
-    notes: el.querySelector("aside.notes")?.textContent || "",
-    subs: Array.from(el.querySelectorAll(".carousel-subslide")).map((c) => ({ title: c.dataset.subTitle || "", subIndex: Number(c.dataset.subIndex) || 0, body: c.textContent || "" })),
+    // body / notes / picture text are read from the slide element by the overview at the first search.
     el,
   }));
   var slideMarks = null;
@@ -663,6 +650,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
     return Array.prototype.slice.call(document.querySelectorAll('figure.slide-embed[data-embed="local"][data-embed-state="live"] > iframe'));
   }
   function shareEmbedInUse() {
+    if (expandedShareFrame) return expandedShareFrame;
     if (!shareEmbedChannel) return null;
     return liveShareEmbeds().filter(function (frame) { var status = shareEmbedChannel.status(frame); return status && status.engaged; })[0] || null;
   }
@@ -696,10 +684,59 @@ ${hasMermaid ? mermaidVendorSource : ""}
   // A local page's frame is compiled with scrolling="no" (no scrollbar, no wheel). While the reader
   // is using the page the attribute is off, so it scrolls with the wheel; it goes back afterwards.
   function setShareEmbedScrollable(frame, scrollable) {
+    if (!frame.hasAttribute("data-embed-doc")) return;
     if (scrollable) frame.removeAttribute("scrolling");
     else frame.setAttribute("scrolling", "no");
   }
+  var expandedShareFrame = null;
+  var shareEmbedBackground = [];
+  var shareEmbedTabIndex = null;
+  var shareEmbedFocusStart = null;
+  function setShareEmbedExpanded(frame) {
+    // Restore only attributes owned by this interaction, including an absent tabindex.
+    shareEmbedBackground.forEach(function (element) { element.removeAttribute("inert"); });
+    shareEmbedBackground = [];
+    if (expandedShareFrame) {
+      if (shareEmbedTabIndex === null) expandedShareFrame.removeAttribute("tabindex");
+      else expandedShareFrame.setAttribute("tabindex", shareEmbedTabIndex);
+    }
+    if (shareEmbedFocusStart) shareEmbedFocusStart.remove();
+    shareEmbedFocusStart = null;
+    expandedShareFrame = frame;
+    if (frame) {
+      shareEmbedTabIndex = frame.getAttribute("tabindex");
+      frame.tabIndex = 0;
+      // Inert every sibling along the frame's ancestor path. The frame stays in place;
+      // its ancestors and the body-level Return remain usable, authored inert stays intact.
+      for (var branch = frame; branch && branch !== document.body; branch = branch.parentElement) {
+        Array.prototype.forEach.call(branch.parentElement.children, function (sibling) {
+          if (sibling === branch || sibling.id === "shareEmbedReturn" || sibling.hasAttribute("inert")) return;
+          sibling.setAttribute("inert", "");
+          shareEmbedBackground.push(sibling);
+        });
+      }
+      // Shift+Tab from the first control of an opaque frame cannot be caught by its parent.
+      // A boundary before the existing frame returns that focus to the visible exit.
+      shareEmbedFocusStart = document.createElement("span");
+      shareEmbedFocusStart.tabIndex = 0;
+      shareEmbedFocusStart.setAttribute("aria-hidden", "true");
+      shareEmbedFocusStart.style.cssText = "position:fixed;width:1px;height:1px;overflow:hidden;opacity:0";
+      shareEmbedFocusStart.addEventListener("focus", function () { document.getElementById("shareEmbedReturn").focus(); });
+      frame.before(shareEmbedFocusStart);
+    }
+    document.body.classList.toggle("share-embed-expanded", Boolean(frame));
+    slides.forEach(function (slide) {
+      slide.classList.toggle("embed-full-screen", Boolean(frame && slide.contains(frame)));
+      slide.querySelectorAll("figure.slide-embed").forEach(function (figure) {
+        figure.classList.toggle("embed-stage-expanded", Boolean(frame && figure.contains(frame)));
+      });
+    });
+    var back = document.getElementById("shareEmbedReturn");
+    if (back) back.hidden = !frame;
+  }
   function leaveShareEmbed(frame) {
+    var wasExpanded = expandedShareFrame === frame;
+    if (wasExpanded) setShareEmbedExpanded(null);
     if (shareEmbedChannel) shareEmbedChannel.disengage(frame);
     frame.classList.remove("embed-live");
     setShareEmbedScrollable(frame, false);
@@ -707,6 +744,12 @@ ${hasMermaid ? mermaidVendorSource : ""}
     try { window.focus(); } catch (e) { /* noop */ }
     // The pages suspended while this one was in use run again (from their beginning).
     syncLocalShareEmbeds();
+    if (wasExpanded) {
+      var chip = frame.parentElement && frame.parentElement.querySelector(".embed-interact-chip");
+      if (chip) chip.focus({ preventScroll: true });
+      fitStage();
+      scheduleSlideFit();
+    }
   }
   // The stage is the view the reader is looking at. It is not while the phone's slide list, the
   // phone's full-screen picture or the pre-work form covers it, nor on the home page outside its
@@ -723,6 +766,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
   // never runs a page: it carries no document, whatever state the slide it was copied from is in.
   // Called before the copy is put in the page.
   function idleEmbedClone(clone) {
+    clone.classList.remove("embed-full-screen");
+    clone.querySelectorAll(".embed-stage-expanded").forEach(function (figure) { figure.classList.remove("embed-stage-expanded"); });
     clone.querySelectorAll('figure.slide-embed[data-embed="local"]').forEach(function (figure) {
       figure.setAttribute("data-embed-state", "idle");
       figure.querySelectorAll("iframe").forEach(function (frame) {
@@ -738,6 +783,9 @@ ${hasMermaid ? mermaidVendorSource : ""}
   // .active for its layout), so nothing outside the stage can be loaded from here.
   function syncLocalShareEmbeds() {
     var showing = !document.body.hasAttribute("data-tw-preview") && shareStageShowing();
+    if (expandedShareFrame && (!showing || !slides[index] || !slides[index].contains(expandedShareFrame))) {
+      leaveShareEmbed(expandedShareFrame);
+    }
     // SUSPENSION, as in the deck: while the reader is using one page, every other local page is
     // unloaded to its placeholder. A page that is engaged has this page's focus, and the browser
     // does not report a second page taking the keyboard from it.
@@ -773,14 +821,36 @@ ${hasMermaid ? mermaidVendorSource : ""}
       }
     }); });
   }
-  // Interact: a local page takes the pointer and the keyboard only after its chip is pressed;
+  // Reuse the figure's opt-in control for every HTML page, including remote sites. The frame stays
+  // in place: moving it to an overlay would reload its document and lose the reader's work.
+  var shareEmbedExpansionEnabled = ${venue ? "false" : "true"};
+  if (shareEmbedExpansionEnabled) {
+    slides.forEach(function (slide) {
+      slide.querySelectorAll("figure.slide-embed > .embed-interact-chip").forEach(function (chip) {
+        chip.textContent = "Expand and interact";
+        chip.title = "Expand and interact with this embedded page";
+        chip.setAttribute("aria-label", chip.title);
+      });
+    });
+    var shareEmbedReturn = document.createElement("button");
+    shareEmbedReturn.id = "shareEmbedReturn";
+    shareEmbedReturn.className = "embed-return-btn";
+    shareEmbedReturn.type = "button";
+    shareEmbedReturn.textContent = "Return to slides";
+    shareEmbedReturn.hidden = true;
+    shareEmbedReturn.addEventListener("click", function () { if (expandedShareFrame) leaveShareEmbed(expandedShareFrame); });
+    document.body.appendChild(shareEmbedReturn);
+    window.addEventListener("beforeprint", function () { if (expandedShareFrame) leaveShareEmbed(expandedShareFrame); });
+  }
+  // Interact: a page takes the pointer and the keyboard only after its chip is pressed;
   // Escape inside it, a press anywhere outside it, or leaving the slide hands them back.
   document.addEventListener("click", function (event) {
-    var chip = event.target instanceof Element ? event.target.closest('figure.slide-embed[data-embed="local"] > .embed-interact-chip') : null;
+    var chip = event.target instanceof Element ? event.target.closest('figure.slide-embed > .embed-interact-chip') : null;
     if (!chip) return;
     var frame = chip.parentElement.querySelector("iframe");
-    if (!frame || !event.isTrusted) return;
+    if (!frame || frame.hasAttribute("data-embed-video") || !event.isTrusted || (!shareEmbedExpansionEnabled && !frame.hasAttribute("data-embed-doc")) || !slides[index] || !slides[index].contains(frame)) return;
     event.preventDefault();
+    if (expandedShareFrame && expandedShareFrame !== frame) leaveShareEmbed(expandedShareFrame);
     // One page at a time: a page still in use is left first, which also runs this one again if it
     // was suspended (its record is made before it is engaged).
     document.querySelectorAll(SHARE_EMBED_FRAMES + ".embed-live").forEach(function (other) { if (other !== frame) leaveShareEmbed(other); });
@@ -790,18 +860,34 @@ ${hasMermaid ? mermaidVendorSource : ""}
       syncLocalShareEmbeds();
     }
     frame.classList.add("embed-live");
+    if (shareEmbedExpansionEnabled) setShareEmbedExpanded(frame);
     // ENGAGED: a trusted press on the chip, in this document. Only then may a stepping key the page
     // forwards move the deck (a page can focus itself, and this window's user activation outlives
     // the reader's own key press, so neither proves the reader is using the page).
-    if (shareEmbedChannel) shareEmbedChannel.engage(frame);
-    setShareEmbedScrollable(frame, true);
+    if (shareEmbedChannel && frame.hasAttribute("data-embed-doc")) shareEmbedChannel.engage(frame);
+    if (frame.hasAttribute("data-embed-doc")) setShareEmbedScrollable(frame, true);
     // At once: from here on no other local page may be running.
     syncLocalShareEmbeds();
     try { frame.focus(); } catch (e) { /* noop */ }
   });
   // A trusted key press that reaches THIS document means the reader is back in the deck.
   window.addEventListener("keydown", function (event) {
-    if (event.isTrusted) document.querySelectorAll(SHARE_EMBED_FRAMES + ".embed-live").forEach(leaveShareEmbed);
+    if (!event.isTrusted) return;
+    // Tab must be able to reach the return button; Enter and Space must activate it.
+    if (expandedShareFrame) {
+      event.stopImmediatePropagation();
+      if (event.key === "Tab" && !event.shiftKey && event.target.id === "shareEmbedReturn") {
+        event.preventDefault();
+        expandedShareFrame.focus();
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        leaveShareEmbed(expandedShareFrame);
+      }
+      return;
+    }
+    document.querySelectorAll(SHARE_EMBED_FRAMES + ".embed-live").forEach(leaveShareEmbed);
   }, true);
   // So does a trusted press (mouse, touch or pen) anywhere outside the figure of the page in use.
   // pointerdown, not mousedown: a touch that becomes a drag or a scroll sends no mouse events.
@@ -809,7 +895,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
   window.addEventListener("pointerdown", function (event) {
     if (!event.isTrusted) return;
     var target = event.target instanceof Element ? event.target : null;
-    document.querySelectorAll(SHARE_EMBED_FRAMES + ".embed-live").forEach(function (frame) {
+    if (target && target.closest("#shareEmbedReturn")) return;
+    document.querySelectorAll("figure.slide-embed iframe.embed-live").forEach(function (frame) {
       if (target && frame.parentElement && frame.parentElement.contains(target)) return;
       leaveShareEmbed(frame);
     });
@@ -817,6 +904,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
   function syncShareEmbeds() {
     syncLocalShareEmbeds();
     document.querySelectorAll(".slide.active iframe[data-src]").forEach((frame) => {
+      // A web page with saved views shows them instead (lib/live-page-captures.mjs): never loaded.
+      if (frame.parentElement && frame.parentElement.classList.contains("has-saved-views")) return;
       if (!frame.src) frame.src = embedSrcFor(frame);
     });
   }
@@ -860,7 +949,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
   // the gallery's active card, the reveal state and late images have laid out.
   function fitActiveSlide() {
     const slide = slides[index];
-    if (!slide || !slide.classList.contains("active")) return;
+    if (!slide || !slide.classList.contains("active") || expandedShareFrame) return;
     densifyActiveCards();
     fitSlideClone(slide);
     // Connector lines follow the final (possibly zoomed) positions.
@@ -2122,7 +2211,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
       const at = images.findIndex((entry) => entry.isQr);
       if (images.length > 0) { event.preventDefault(); openLightbox(at < 0 ? 0 : at); return; }
     }
-    const img = event.target.closest("figure.slide-figure img");
+    const img = event.target.closest("figure.slide-figure img") || event.target.closest(".image-grid .ig-media img");
     if (!img) return;
     // Drawer open = capture mode: an image click anchors a note instead of opening the gallery.
     if (myNotesPanel.classList.contains("open")) { event.preventDefault(); addImageNote(img); return; }

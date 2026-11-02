@@ -64,6 +64,12 @@ try {
         { timeout: 5000 }
       )
     }
+    // Hidden slides can request fonts only after becoming active. Compare their completed
+    // paint, rather than whichever font-loading frame happened to land inside the fixed delay.
+    await page.evaluate(async () => {
+      await document.fonts.ready
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    })
     await page.waitForTimeout(45)
     const shot = await page.locator('.slide.active').first().screenshot()
     const raw = await sharp(shot).resize(W, H, { fit: 'fill' }).greyscale().raw().toBuffer()

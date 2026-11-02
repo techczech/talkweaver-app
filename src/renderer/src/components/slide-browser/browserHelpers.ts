@@ -20,8 +20,16 @@ import {
 
 /* ---------- formatting ---------- */
 
+// Per row object: the title's source and its plain text, so a card's re-render never re-parses
+// inline markdown (rows are immutable apart from the optimistic `tags` change).
+const titleCache = new WeakMap<object, { src: string; text: string }>()
 export function rowTitle(row: SearchResult): string {
-  return plainInlineText(row.nav_title || row.title) || '(untitled)'
+  const src = row.nav_title || row.title
+  const hit = titleCache.get(row)
+  if (hit && hit.src === src) return hit.text
+  const text = plainInlineText(src) || '(untitled)'
+  titleCache.set(row, { src, text })
+  return text
 }
 
 // 'd MMM yyyy' (en-GB): 28 Jun 2026 — mono in the print caption.
@@ -100,6 +108,11 @@ export function addAllToSet<T>(prev: Set<T>, values: Iterable<T>): Set<T> {
  *  falling back to a source parse for rows from a pre-tags cached index. */
 export function rowTagsOf(row: { tags?: string[]; source_markdown?: string }): string[] {
   return row.tags ?? tagsOfBlock(row.source_markdown)
+}
+
+/** A card's tags as one value (SlideCard's `tagsKey`): equal strings = the same chips. */
+export function cardTagsKey(row: { tags?: string[]; source_markdown?: string }): string {
+  return rowTagsOf(row).join('\n')
 }
 
 /** The optimistic in-place tag change of a row after tags:apply succeeded. */

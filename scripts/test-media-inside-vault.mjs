@@ -33,6 +33,7 @@ const { resolveInVaults } = await import(pathToFileURL(join(process.cwd(), 'src/
 const { buildSharedTalkPayload } = await import(pathToFileURL(join(process.cwd(), 'src/main/shared-talk-build.ts')).href)
 const { requireAllowedAssetRoots, requireCompileOptionsWithRoots } = await import(pathToFileURL(join(process.cwd(), 'src/main/compile-roots.ts')).href)
 const { createPrepareTalkOffThread } = await import(pathToFileURL(join(process.cwd(), 'src/main/prepare-talk-off-thread.ts')).href)
+const { forkNodeCompileChild } = await import(pathToFileURL(join(process.cwd(), 'scripts/lib/node-compile-child.mjs')).href)
 const { buildHandoutPages } = await import(pathToFileURL(join(process.cwd(), 'src/main/handout-pages.ts')).href)
 
 const fsSync = await import('node:fs')
@@ -438,18 +439,19 @@ await check('no compile in the main process or its worker threads is left withou
   assert.match(index, /allowedAssetRoots: assetRootsFor\(outlinePath\),\n\s+\/\/ The talk's vault's personal author/)
 })
 
-await check('a compile job without allowed roots is refused, in the live compile\'s worker thread and in the handout build', async () => {
+await check('a compile job without allowed roots is refused, in the live compile\'s own process and in the handout build', async () => {
   for (const bad of [undefined, null, 'vault', [''], ['relative/vault'], [vault, 3]]) {
     assert.throws(() => requireAllowedAssetRoots(bad, 'The compile'), /was refused/, JSON.stringify(bad))
   }
   assert.deepEqual(requireAllowedAssetRoots([], 'The compile'), [], 'an empty list is "no local media", not a missing list')
   assert.deepEqual(requireCompileOptionsWithRoots({ projectionsOnly: true, allowedAssetRoots: [vault] }, 'The compile'), { projectionsOnly: true, allowedAssetRoots: [vault] })
 
-  // The real worker thread, started from its source file as the app starts its built copy.
+  // The real child script of the live compile, started from its source file in a child process (a
+  // plain Node one here; the app starts its built copy as an Electron utility process).
   const outlinePath = join(talk, 'talk-outline.md')
   await writeFile(outlinePath, pooledSource)
   const compilerDir = join(process.cwd(), 'compiler/scripts')
-  const offThread = createPrepareTalkOffThread(join(process.cwd(), 'src/main/prepare-talk-worker.ts'), 10)
+  const offThread = createPrepareTalkOffThread(join(process.cwd(), 'src/main/prepare-talk-worker.ts'), forkNodeCompileChild, 10)
   const text = resolveImageRefs(pooledSource, vault)
   const job = { compilerDir, outlinePath, text, slug: 'talk' }
   for (const options of [{}, { projectionsOnly: true }, { allowedAssetRoots: undefined }, { allowedAssetRoots: ['relative/vault'] }]) {
@@ -893,7 +895,10 @@ await check('the assets-folder size never counts a file elsewhere: links are not
 })
 
 await check('a slide\'s recognised-text lookup names only pictures really inside the vault', async () => {
-  const { fn: resolveImageAbs } = mainFunction('resolveImageAbs')
+  // The lookup moved out of index.ts into src/main/slide-image-refs.ts (one extractor + resolver for what to
+  // read and what a slide shows); the same cases run against it.
+  const { resolveImagePaths } = await import(pathToFileURL(join(process.cwd(), 'src/main/slide-image-refs.ts')).href)
+  const resolveImageAbs = (ref, talkDir, vaultRoot) => resolveImagePaths([{ ref, kind: 'picture' }], talkDir, vaultRoot)[0] ?? null
   assert.equal(resolveImageAbs('inside-image.png', talk, vault), join(talk, 'inside-image.png'))
   assert.equal(resolveImageAbs(pooled.id, talk, vault), join(vault, '_assets', `${pooled.id}.png`))
   for (const ref of [secrets.image.path, `../../outside/${secrets.image.name}`, `%2e%2e/%2e%2e/outside/${secrets.image.name}`, `link-out-image.png`, `dir-out/${secrets.image.name}`, 'img-0000abc']) {

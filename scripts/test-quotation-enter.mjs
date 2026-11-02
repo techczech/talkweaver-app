@@ -25,7 +25,7 @@ import { EditorState, EditorSelection, Prec } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap, undo, undoDepth } from '@codemirror/commands'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { buildEditorKeyBindings } from './src/renderer/src/keymap/store.ts'
-import { objectBlocksExtension } from './src/renderer/src/extensions/objectBlocks/field.ts'
+// These are literal source quotation/list cases; closed-card Enter is covered by test:object-block-field.
 import { continueList, enterFromHeading, enterFromProtectedLine } from './src/renderer/src/extensions/outliner.ts'
 let view = null
 // \`|\` in the text marks the caret. mode: 'app' (the app's keymap), 'before' (its Enter chain without the quotation
@@ -40,7 +40,6 @@ window.mount = (marked, mode = 'app') => {
   view = new EditorView({
     parent: document.getElementById('host'),
     state: EditorState.create({ doc, selection: EditorSelection.cursor(at), extensions: [
-      objectBlocksExtension({ cheatSheet: { isShortcut: () => false, request: () => {}, isFinishShortcut: () => false, isLeaveShortcut: () => false } }),
       Prec.highest(keymap.of(app)),
       history(),
       markdown({ base: markdownLanguage }),

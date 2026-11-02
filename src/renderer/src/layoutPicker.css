@@ -73,3 +73,12 @@
 .tw-inspector-change { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); color: var(--oxford); font: 600 11px var(--font-ui); text-transform: none; letter-spacing: 0; cursor: pointer; }
 .tw-inspector-change kbd { padding: 0 4px; border-radius: 3px; background: var(--hover); font: 500 10px var(--font-mono); color: var(--muted); }
 .tw-inspector-section-heading { display: flex; align-items: center; }
+/* Inspector › Web page (Capture embed…): each web page on the slide, its saved views, the button. */
+.tw-inspector-web-page { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.tw-inspector-web-page-what { display: flex; flex-direction: column; min-width: 0; }
+.tw-inspector-web-page-host { font: 500 12px var(--font-ui); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tw-inspector-web-page-count { font: 11px var(--font-ui); color: var(--muted); }
+a.tw-inspector-web-page-host { color: var(--accent, inherit); text-decoration: none; cursor: pointer; }
+a.tw-inspector-web-page-host:hover { text-decoration: underline; }
+.tw-inspector-saved-view { display: flex; align-items: center; gap: 8px; padding: 2px 0 2px 12px; }
+.tw-inspector-saved-view-name { flex: 1; min-width: 0; font: 11px var(--font-ui); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

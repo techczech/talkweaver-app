@@ -12,6 +12,7 @@
 //   - the marks survive a restart.
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-guide-topics.mjs
 import { _electron as electron } from 'playwright'
+import { closeSettingsWindow } from './lib/settings-window.mjs'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { ensureTalksMode, openTalkByTitle } from './lib/talklist.mjs'
 import { guideLearnFrom } from '../src/shared/guide-learn.ts'
@@ -134,9 +135,10 @@ try {
     // Try it: a command.
     await page.locator('[data-topic-back]').click()
     await page.locator('[data-topic-row="how.9"]').click()
-    await page.locator('[data-topic-try-button]').click()
-    record('Try it on topic 9 opens Settings', await waitFor(async () => (await page.locator('[data-settings-section]').count()) > 0, 4000))
-    await page.keyboard.press('Escape')
+    const [topicSettings] = await Promise.all([app.waitForEvent('window'), page.locator('[data-topic-try-button]').click()])
+    await topicSettings.waitForLoadState('domcontentloaded')
+    record('Try it on topic 9 opens Settings', await waitFor(async () => (await topicSettings.locator('.bsw-root').count()) > 0, 4000))
+    await closeSettingsWindow(app)
     await page.waitForTimeout(300)
 
     // Features: states 10 and 18.
@@ -163,8 +165,9 @@ try {
     await shot(page, '11-connections.png')
     await page.locator('[data-connections-refresh]').click()
     record('Check again re-reads the same ten rows', await waitFor(async () => (await page.locator('[data-connection]').count()) === 10, 4000))
-    await page.locator('[data-connection="pages"] [data-connection-action="open-cloudflare"]').click()
-    record('Set up in Settings opens Settings (at its Cloudflare section)', await waitFor(async () => (await page.locator('[data-settings-section]').count()) > 0, 4000))
+    const [cloudflareSettings] = await Promise.all([app.waitForEvent('window'), page.locator('[data-connection="pages"] [data-connection-action="open-cloudflare"]').click()])
+    await cloudflareSettings.waitForLoadState('domcontentloaded')
+    record('Set up in Settings opens Settings (at its Cloudflare section)', await waitFor(async () => (await cloudflareSettings.locator('.bsw-root[data-section="cloudflare"]').count()) > 0, 4000))
   } finally {
     await app.close()
   }

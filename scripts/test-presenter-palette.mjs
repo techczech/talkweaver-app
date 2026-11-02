@@ -114,7 +114,7 @@ let browser
 try {
   // ── Static: the table against the registry ──────────────────────────────────────────────────
   check(same(PRESENTER_PALETTE.map(([g]) => g), GROUPS), `palette groups are the drawn eight (${PRESENTER_PALETTE.map(([g]) => g).join(', ')})`)
-  check(ENTRIES.length === 74, `the palette has the drawn 56 commands, the two phone switches, the five board commands, Pointer, Embedded page: full screen, the Pen's eight (ticket 08) and the Guide (onboarding ticket 10), 74 (${ENTRIES.length})`)
+  check(ENTRIES.length === 75, `the palette has the drawn 56 commands, the two phone switches, the five board commands, Pointer, Embedded page: full screen, the Pen's eight (ticket 08) the Guide (onboarding ticket 10) and Return Live, 75 (${ENTRIES.length})`)
   check(new Set(ENTRIES.map((e) => e.id)).size === ENTRIES.length, 'palette ids are unique')
   const presenterKeys = SHORTCUT_REGISTRY.filter((e) => e.scope === 'presenter')
   for (const entry of presenterKeys) {
@@ -191,7 +191,7 @@ export const clipboard = { writeText() {}, readText() { return '' }, readImage()
     check(await page.evaluate(() => document.activeElement?.id === 'presenterCommandSearch'), 'the search field has focus')
     check(await page.evaluate(() => document.getElementById('presenterCommandSearch').placeholder) === 'Search presenter commands', 'the search field reads "Search presenter commands"')
     const count = await page.textContent('#presenterCommandCount')
-    check(count === '74 commands', `the count reads "74 commands" (${count})`)
+    check(count === '75 commands', `the count reads "75 commands" (${count})`)
     const list = await rows(page)
     check(list.length === ENTRIES.length, `every entry has a row (${list.length} of ${ENTRIES.length})`)
     for (const [group, entries] of PRESENTER_PALETTE) {
@@ -232,7 +232,7 @@ export const clipboard = { writeText() {}, readText() { return '' }, readImage()
     await page.keyboard.press('ArrowUp'); await page.keyboard.press('ArrowUp')
     check((await highlighted()) === enabled.at(-1), `↑ from the first row wraps to the last that applies (${await highlighted()})`)
     const disabledIds = (await rows(page)).filter((r) => r.disabled).map((r) => r.id)
-    for (const id of ['return', 'instant-back', 'quick-poll-dismiss', 'questions', 'media', 'gallery', 'record-stop']) check(disabledIds.includes(id), `${id}: dimmed where it does not apply (fixture: no jump, no instant slide, no Quick poll, not live, no media, not recording)`)
+    for (const id of ['return', 'instant-back', 'quick-poll-dismiss', 'questions', 'media', 'gallery', 'record-stop', 'return-live']) check(disabledIds.includes(id), `${id}: dimmed where it does not apply (fixture: no jump, no instant slide, no Quick poll, not live, no media, not recording)`)
     await page.keyboard.press('Escape')
     await settle(page, 80)
     check(!(await shown(page, '#presenterCommandPalette')) && !(await shown(page, '#presenterCommandScrim')), 'Esc closes the palette and its scrim')
@@ -272,7 +272,7 @@ export const clipboard = { writeText() {}, readText() { return '' }, readImage()
     }
     check(found.out.length > 60, `the bars were enumerated (${found.out.length} buttons)`)
     // Controls only a preload or a state adds are absent from the fixture: named, not a failure.
-    const allowedAbsent = ['#presenterQuickPollDismiss', '#presenterInstantBack', '#presenterPollOpen', '#presenterPollClose', '#presenterPollReveal', '#presenterEmbedFullscreen']
+    const allowedAbsent = ['#presenterQuickPollDismiss', '#presenterInstantBack', '#presenterPollOpen', '#presenterPollClose', '#presenterPollReveal', '#presenterEmbedFullscreen', '#livePageReturnLive']
     for (const m of found.missing) check(allowedAbsent.some((s) => m.endsWith(s)), `palette control not in the window: ${m}`)
     check(page.errors.length === 0, `coverage: no page errors (${page.errors.join('; ')})`)
     await context.close()

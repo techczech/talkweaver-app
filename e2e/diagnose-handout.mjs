@@ -75,9 +75,10 @@ try {
     // (o2) Type a query matching a TITLE slide and a body-only slide; the title slide ranks first.
     await page.locator('#navSearch').fill('method')
     await page.waitForTimeout(150)
-    const firstRow = (await page.locator('#navList .slide-link').first().innerText()).trim()
-    record('handout: title match ranks first in #navList ("Method notes" before body-only "Results")',
-      /method notes/i.test(firstRow), `firstRow=${JSON.stringify(firstRow)}`)
+    // CHANGED (ticket 2b): hits keep outline order and the rest dim; no ranking.
+    const hitRows = (await page.locator('#navList .slide-link.tw-hit').allInnerTexts()).map((t) => t.split('\n')[0].trim())
+    record('handout: hits in #navList keep outline order ("Method notes" then "Results"), other slides dim',
+      hitRows.length === 2 && /method notes/i.test(hitRows[0]) && /results/i.test(hitRows[1]) && (await page.locator('#navList .slide-link.tw-dim').count()) > 0, `hitRows=${JSON.stringify(hitRows)}`)
 
     // (o3) No shown/skipped markers anywhere in the overview (isPresenter:false → no .tw-status).
     const statusCount = await page.locator('#navList .tw-status').count()

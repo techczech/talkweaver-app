@@ -8,10 +8,10 @@
 // named by the session id alone, which must be a safe Run id.
 
 import { randomBytes } from 'crypto'
-import { lstatSync, readdirSync, realpathSync } from 'fs'
+import { lstatSync, readFileSync, readdirSync, realpathSync } from 'fs'
 import { readdir, stat } from 'fs/promises'
-import { dirname, isAbsolute, join, relative, resolve } from 'path'
-import { isSafeRunId, isSafeTalkSlug, runPathForTalk, talkRunFolderForTalk } from './runs.ts'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'path'
+import { isSafeRunId, isSafeTalkSlug, normaliseRun, runPathForTalk, talkRunFolderForTalk, type RunRecord } from './runs.ts'
 import { pathStaysInside } from './path-containment.ts'
 
 export type RecordingPathError = 'unsafe-talk-slug' | 'unsafe-session-id' | 'unsafe-path'
@@ -155,6 +155,111 @@ export function segmentIndexOfFile(file: string): number | null {
   return null
 }
 
+/** The recordings folder is a real folder directly inside userData; this check never creates it. */
+export function recordingsDirOk(userDataDir: string): boolean {
+  try {
+    const dir = resolve(userDataDir, 'recordings')
+    return lstatSync(dir).isDirectory() && realpathSync(dir) === join(realpathSync(userDataDir), 'recordings')
+  } catch {
+    return false
+  }
+}
+
+/** Saved Runs beside the audio, never markers, links or files whose contents name another Run. */
+export function listKeptRuns(userDataDir: string, talkSlug?: string, options?: { strictSessionId: string }): Array<RunRecord & { kept: 'app-data' }> {
+  if (!recordingsDirOk(userDataDir)) {
+    if (options) throw new Error('recordings-unreadable')
+    return []
+  }
+  if (talkSlug !== undefined && !isSafeTalkSlug(talkSlug)) return []
+  const dir = resolve(userDataDir, 'recordings')
+  const runs: Array<RunRecord & { kept: 'app-data' }> = []
+  let names: string[]
+  try { names = readdirSync(dir) } catch (error) {
+    if (options) throw error
+    return []
+  }
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue
+    const id = name.slice(0, -5)
+    if (!isSafeRunId(id)) continue
+    const path = join(dir, name)
+    try {
+      if (!lstatSync(path).isFile()) continue
+      const raw = JSON.parse(readFileSync(path, 'utf8'))
+      if (!raw || raw.id !== id || !isSafeTalkSlug(raw.talkSlug) || (talkSlug !== undefined && raw.talkSlug !== talkSlug)) continue
+      runs.push({ ...normaliseRun(raw), kept: 'app-data' })
+    } catch (error) {
+      if (id === options?.strictSessionId) throw error
+      // One unreadable Run must not hide the others in History.
+    }
+  }
+  return runs.sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+}
+
+/** A named segment, checked like recovery: a plain file in the real recordings folder. */
+export function existingRecordedSegmentPath(userDataDir: string, sessionId: unknown, index: unknown, file?: unknown): string | null {
+  const target = segmentFilePath(userDataDir, sessionId, index, file)
+  if (!target.ok || !recordingsDirOk(userDataDir)) return null
+  try {
+    return lstatSync(target.path).isFile() ? target.path : null
+  } catch {
+    return null
+  }
+}
+
+type RecordingRecord = {
+  id?: unknown
+  sessionId?: unknown
+  talkSlug?: unknown
+  audio?: { segments?: unknown } | null
+  segments?: unknown
+}
+
+type RecordingSource = { kind: 'run' | 'marker'; record: RecordingRecord }
+
+/** Read the saved Run, else its recovery marker. An invalid Run never authorises a fallback. */
+export function readRecordingSource(vaultRoot: string | null, userDataDir: string, talkSlug: unknown, sessionId: unknown): RecordingSource | null {
+  const target = sessionJsonPath(vaultRoot, userDataDir, talkSlug, sessionId)
+  if (!target.ok) return null
+  const local = localRecordingPath(userDataDir, sessionId, 'json')
+  const marker = streamMarkerPath(userDataDir, sessionId)
+  for (const path of [target.path, ...(vaultRoot && local.ok ? [local.path] : []), ...(marker.ok ? [marker.path] : [])]) {
+    if (!lexists(path)) continue
+    try {
+      if (!lstatSync(path).isFile()) return null
+      const source = JSON.parse(readFileSync(path, 'utf8')) as RecordingRecord | null
+      const isMarker = marker.ok && path === marker.path
+      return source && source.talkSlug === talkSlug && (isMarker ? source.sessionId : source.id) === sessionId ? { kind: isMarker ? 'marker' : 'run', record: source } : null
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+/** Only listed files belong to a Run/marker. Runs predating segment lists keep the old lookup. */
+export function recordedSegmentPaths(userDataDir: string, sessionId: unknown, source: RecordingSource | null): Array<{ path: string; startMs: number; endMs: number }> {
+  if (!source) return []
+  const marker = source.kind === 'marker'
+  const record = source.record
+  if ((marker ? record.sessionId : record.id) !== sessionId) return []
+  const segments = marker ? record.segments : record.audio?.segments
+  if (!marker && record.audio && segments === undefined) {
+    return existingSegmentPaths(userDataDir, sessionId).flatMap((file) => {
+      const path = existingRecordedSegmentPath(userDataDir, sessionId, segmentIndexOfFile(basename(file)), basename(file))
+      return path ? [{ path, startMs: 0, endMs: 0 }] : []
+    })
+  }
+  if (!Array.isArray(segments)) return []
+  return segments.flatMap((seg) => {
+    if (!seg || typeof seg !== 'object') return []
+    const index = marker ? seg.index : typeof seg.file === 'string' ? segmentIndexOfFile(seg.file) : null
+    const path = index === null ? null : existingRecordedSegmentPath(userDataDir, sessionId, index, seg.file)
+    return path ? [{ path, startMs: Number(seg.startMs) || 0, endMs: Number(seg.endMs) || 0 }] : []
+  })
+}
+
 /** `<vault>/_PRESENTATIONS/<talkSlug>/<sessionId>.json`, guarded by `runPathForTalk`. */
 export function vaultSessionPath(vaultRoot: string, talkSlug: unknown, sessionId: unknown): RecordingPath {
   const error = nameError(talkSlug, sessionId)
@@ -238,7 +343,14 @@ export function transcriptPath(vaultRoot: string | null, userDataDir: string, ta
   if (vaultRoot) {
     const run = vaultSessionPath(vaultRoot, talkSlug, sessionId)
     if (!run.ok) return run
-    folder = dirname(run.path)
+    // Audio lookup already falls back to a kept Run. Its finished transcript must follow it too,
+    // including after a restart with an unrelated vault open.
+    const kept = !lexists(run.path) ? readRecordingSource(null, userDataDir, talkSlug, sessionId) : null
+    if (kept?.kind === 'run') {
+      const local = localRecordingPath(userDataDir, sessionId, 'json')
+      if (!local.ok || !recordingsDirOk(userDataDir)) return refuse('unsafe-path')
+      folder = dirname(local.path)
+    } else folder = dirname(run.path)
   } else {
     const local = localRecordingPath(userDataDir, sessionId, 'json')
     if (!local.ok) return local
@@ -270,7 +382,7 @@ export async function listSessionJsonFiles(vaultRoot: string, talkSlug?: unknown
   if (talkSlug !== undefined) {
     const folder = talkSessionsFolder(vaultRoot, talkSlug)
     if (!folder.ok) return []
-    return sessionFilesIn(vaultRoot, folder.path)
+    try { return await sessionFilesIn(vaultRoot, folder.path) } catch { return [] }
   }
   const root = join(vaultRoot, '_PRESENTATIONS')
   let slugDirs: string[]

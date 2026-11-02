@@ -43,7 +43,7 @@ try {
   await openTalkByTitle(page, 'Place Fixture')
   await page.waitForSelector('.cm-content', { timeout: 8000 })
 
-  await page.locator('.cm-content .cm-line', { hasText: '### Four stalls' }).first().click()
+  await page.locator('.cm-content .cm-line', { hasText: 'Four stalls' }).first().click()
   const onHeading = await chipReads('slide-heading')
   const headingText = onHeading ? (await chip.innerText()).replace(/\s+/g, ' ').trim() : ''
   // The count is the list Actions here shows (ticket 03 carries the old context menu's rows too).
@@ -58,7 +58,7 @@ try {
   record('caret in a list: the chip reads "In a list"', await chipReads('list'))
 
   // A click on the chip does what ⌘K does: from the editor, Actions here at the caret.
-  await page.locator('.cm-content .cm-line', { hasText: '### Four stalls' }).first().click()
+  await page.locator('.cm-content .cm-line', { hasText: 'Four stalls' }).first().click()
   await chipReads('slide-heading')
   await chip.click()
   let menuOpened = false

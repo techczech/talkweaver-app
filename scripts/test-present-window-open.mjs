@@ -2,6 +2,8 @@
 // A child window that is allowed inherits its opener's preload, so only the deck's own pages and the
 // board window open in-app; web and mail links go to the OS; everything else is refused.
 import assert from 'node:assert/strict'
+import vm from 'node:vm'
+import ts from 'typescript'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -376,7 +378,8 @@ await test('the editor\'s own page opens no window: its links go through main (s
   const mainDir = fileURLToPath(new URL('../src/main/', import.meta.url))
   const sites = []
   for (const name of readdirSync(mainDir)) if (/\.ts$/.test(name)) for (const m of readFileSync(join(mainDir, name), 'utf8').matchAll(/shell\.openExternal\(([^)]*)\)/g)) sites.push(`${name}: ${m[1]}`)
-  assert.deepEqual(sites.sort(), ['index.ts: link.href', 'index.ts: link.href', 'index.ts: url', 'index.ts: url'], 'a new openExternal site: hand out a handOutLink href')
+  // update-notices.ts: the browser opens the update notices' links (a download or notes link on talkweaver.app, or the Store listing), each through handOutLink.
+  assert.deepEqual(sites.sort(), ['index.ts: link.href', 'index.ts: link.href', 'index.ts: url', 'index.ts: url', 'update-notices.ts: handed.href'], 'a new openExternal site: hand out a handOutLink href')
   assert.equal(index.match(/appWindowOpenHandler\(appWindowOpenOpts, \(\) => pressLedger\.pressedRecently\(win\.webContents\.id\)\)/g).length, 3, 'editor, Tools and Pathways each ask their own window\'s presses')
 })
 
@@ -409,6 +412,45 @@ await test('wiring: index.ts gives the deck windows the press ledger', () => {
   const index = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
   assert.match(index, /const deckWindowOpenOpts = \{ \.\.\.appWindowOpenOpts, pressedRecently: \(contents: \{ id: number \}\) => pressLedger\.pressedRecently\(contents\.id\)/)
   assert.match(index, /guardDeckWindowTree\(win\.webContents, deckWindowOpenOpts\)/)
+})
+
+
+// Evaluate the actual constructor/handler options with production E2E=false. Testing only
+// TW_E2E windows would miss the covered-window freeze: those already disabled throttling.
+await test('production presentation windows keep rendering in both creation paths; E2E stays hidden', () => {
+  const index = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const childStart = index.indexOf('const deckWindowOpenOpts = ')
+  const childEnd = index.indexOf('\n\n', childStart)
+  const directStart = index.indexOf('const win = new BrowserWindow({', index.indexOf('const bridgePreload ='))
+  const directEnd = index.indexOf('    // Keep our role+talk title', directStart)
+  assert.ok(childStart >= 0 && directStart >= 0 && directEnd > directStart)
+  const evaluate = (source, context) => vm.runInNewContext(ts.transpileModule(source, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
+  }).outputText, context)
+  const failures = []
+  for (const E2E of [false, true]) {
+    const opts = evaluate(index.slice(childStart, childEnd) + '\ndeckWindowOpenOpts', {
+      E2E, appWindowOpenOpts: {}, pressLedger: { pressedRecently: () => false }
+    })
+    const child = presentWindowOpenHandler(() => presenterPage, opts)({ url: audience, frameName: 'html-audience-abc' })
+    assert.equal(child.action, 'allow')
+    const childOptions = child.overrideBrowserWindowOptions
+    for (const mode of ['audience', 'presenter', 'window']) {
+      const direct = evaluate(index.slice(directStart, directEnd) + '\nwin', {
+        E2E, winTitle: 'Synthetic presentation', bridgePreload: mode === 'audience' ? null : '/synthetic/preload.js',
+        BrowserWindow: function (options) { return options }
+      })
+      if (direct.webPreferences.backgroundThrottling !== false) failures.push(`direct ${mode} E2E=${E2E}`)
+      assert.equal(direct.webPreferences.nodeIntegration, false)
+      assert.equal(direct.webPreferences.contextIsolation, true)
+      assert.equal(direct.show, E2E ? false : undefined)
+      assert.equal(direct.webPreferences.preload, mode === 'audience' ? undefined : '/synthetic/preload.js')
+    }
+    if (childOptions?.webPreferences?.backgroundThrottling !== false) failures.push(`runtime audience E2E=${E2E}`)
+    assert.equal(childOptions?.show, E2E ? false : undefined)
+    assert.equal(presentWindowOpenHandler(() => presenterPage, opts)({ url: 'file:///other.html', frameName: '' }).action, 'deny')
+  }
+  assert.deepEqual(failures, [], 'all presentation paths must disable throttling in production too')
 })
 
 console.log(`present window open: ${passed} passed`)

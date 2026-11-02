@@ -255,6 +255,13 @@ export function RunAnswers({ source, runPhase, onPulled, onOpenWorkFile, pullTim
     return () => { cancelled = true }
   }, [vaultId, talkSlug, runId, key, apply, setLink, pullPhase])
 
+  // Setting up the live service while this page is open ("Open Settings", then back) changes the empty state: follow the status the main process pushes.
+  useEffect(() => {
+    return window.tw.liveService.onStatus((row) => {
+      setLiveMissing((previous) => (previous?.key === key ? { key, missing: row.state === 'not-set-up' } : previous))
+    })
+  }, [key])
+
   const hasPre = Boolean(source.work?.pre)
   const hasPost = Boolean(source.work?.post)
   const postOpen = runPhase === 'post-open'
@@ -452,8 +459,8 @@ function AnswerSection({ phase, source, runPhase, data, writable, folded, onFold
         <div className="tw-ans-state" data-run-answers-nolive>
           <span className="ic warm"><CloudOff aria-hidden /></span>
           <h3>Responses need the live service</h3>
-          <p>Sent to you answers travel through the live service, the same one live questions use. It is not set up on this Mac, so this Run’s page cannot be published and nothing can reach you.</p>
-          <div className="acts"><button type="button" className="tw-sess-btn sm pri" data-run-set-up-live onClick={() => { void window.tw.liveService.setUp().then(onPull, () => {}) }}>Set up the live service</button></div>
+          <p>Sent to you answers travel through the live service, the same one live questions use. It is not set up on this Mac, so this Run’s page cannot be published and nothing can reach you. Set it up in Settings → Cloudflare.</p>
+          <div className="acts"><button type="button" className="tw-sess-btn sm pri" data-run-set-up-live onClick={() => { void window.tw.cloudflare.openSettings().catch(() => false) }}>Open Settings</button></div>
           <p className="tw-ans-aside"><Lock aria-hidden /><span>Work files whose steps are all <b>Local only</b> need no live service for answers. They still need Cloudflare to publish the page.</span></p>
         </div>
       )

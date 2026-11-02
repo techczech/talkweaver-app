@@ -144,6 +144,8 @@ export const PRESENTER_PALETTE: Group[] = [
     { id: 'pen-freehand', name: 'Pen tool: Freehand', icon: 'pen-line', controls: ['#penToolFreehand', '#penStripFreehand'], words: ['draw'] },
     { id: 'pen-arrow', name: 'Pen tool: Arrow', icon: 'move-up-right', controls: ['#penToolArrow', '#penStripArrow'], words: ['draw'] },
     { id: 'pen-rectangle', name: 'Pen tool: Rectangle', icon: 'square', controls: ['#penToolRectangle', '#penStripRectangle'], words: ['draw', 'box'] },
+    // Freeze and mark: Pointer or Pen on a live web page froze it; this shows the live page again (no default key).
+    { id: 'return-live', name: 'Return Live', icon: 'radio', controls: ['#livePageReturnLive'], words: ['web page', 'live page', 'freeze', 'frozen', 'pointer', 'pen'] },
     { id: 'pen-next-tool', name: 'Pen: next tool', icon: 'pen-tool', shortcut: 'presenter.pen-tool', keyPart: 0 },
     { id: 'ink-undo', name: 'Undo last stroke', icon: 'undo-2', shortcut: 'presenter.ink-undo', controls: ['#penUndo', '#penStripUndo'], words: ['pen', 'drawing'] },
     { id: 'ink-clear', name: 'Clear drawing on this slide', icon: 'eraser', shortcut: 'presenter.ink-clear', controls: ['#presenterInkClear', '#viewInkClear', '#moreInkClear'], words: ['pen'] },

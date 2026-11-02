@@ -91,6 +91,7 @@ export interface PublishedPageRow {
   link: string
   linkShown: string
   /** ISO instant, or null when nothing records it. */
+  dateSource?: 'record' | 'local'
   publishedAt: string | null
   /** "Published Wed 14 Oct", or "Published" when the date is not known. */
   published: string
@@ -188,7 +189,7 @@ function runRow(run: PublishedRunSource, site: SiteListing, now: Date): Publishe
   return {
     key: `${run.vaultId}|run|${run.talkSlug}/${run.runId}`, vaultId: run.vaultId, kind: 'run',
     title: (run.eventTitle || run.talkTitle || 'Run').trim(), sub: `Run page · ${run.talkTitle}`,
-    link: url, linkShown: shownLink(url), publishedAt, published: publishedLabel(publishedAt, run.timeZone),
+    link: url, linkShown: shownLink(url), dateSource: stamps.length ? 'record' : 'local', publishedAt, published: publishedLabel(publishedAt, run.timeZone),
     links, site: state, note,
     unpublish: { kind: 'run', vaultId: run.vaultId, talkSlug: run.talkSlug, runId: run.runId, blocked },
     confirm: unpublishConfirmText(run),
@@ -214,7 +215,7 @@ function talkRow(talk: PublishedTalkSource, site: SiteListing, runPagesStay: boo
   return {
     key: `${talk.vaultId}|talk|${talk.outline}`, vaultId: talk.vaultId, kind: 'talk',
     title: talk.title.trim() || talk.slug, sub: 'Talk handout',
-    link: talk.handoutUrl, linkShown: shownLink(talk.handoutUrl), publishedAt, published: publishedLabel(publishedAt),
+    link: talk.handoutUrl, linkShown: shownLink(talk.handoutUrl), dateSource: 'local', publishedAt, published: publishedLabel(publishedAt),
     links: [{ kind: 'handout', label: 'Link', url: talk.handoutUrl }], site: state, note,
     unpublish: { kind: 'talk', vaultId: talk.vaultId, outline: talk.outline, blocked },
     confirm: talkUnpublishConfirmText(talk.title.trim() || talk.slug, runPagesStay),

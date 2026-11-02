@@ -7,12 +7,15 @@
 // tree outside userData is untouched). Plus the transcription join of several segments
 // (transcode-args.ts) run through the real ffmpeg when one is installed.
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import { syncBuiltinESMExports } from 'node:module'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createRecordingStreams, segmentsFromManifest } from '../src/main/recording-stream.ts'
-import { existingSegmentPaths, localSegmentPath, streamMarkerPath } from '../src/main/recording-paths.ts'
+import { existingRecordedSegmentPath, existingSegmentPaths, localSegmentPath, recordedSegmentPaths, readRecordingSource, streamMarkerPath } from '../src/main/recording-paths.ts'
+import { runReservationIsFor, writeNewRunFile } from '../src/main/runs.ts'
 import { silencesBetween, transcodeArgs } from '../src/main/transcode-args.ts'
 import { recordedInk } from '../src/preload/recorder-ink.ts'
 
@@ -42,6 +45,102 @@ const blockSegment = (dir, id, n) => {
   for (const p of paths) mkdirSync(p)
   return () => { for (const p of paths) rmSync(p, { recursive: true }) }
 }
+
+await check('source kind comes from the file read even when both identity fields are present', () => {
+  const { root, userData } = fresh()
+  const vault = join(root, 'vault')
+  const folder = join(vault, '_PRESENTATIONS', 'talk')
+  const rec = join(userData, 'recordings')
+  mkdirSync(folder, { recursive: true })
+  mkdirSync(rec, { recursive: true })
+  const id = 'both-ids'
+  const file = `${id}.seg-1.r1.webm`
+  const path = join(rec, file)
+  writeFileSync(path, 'OWNED')
+  const runPath = join(folder, `${id}.json`)
+  writeFileSync(runPath, JSON.stringify({ id, sessionId: id, talkSlug: 'talk', audio: { segments: [{ file }] }, segments: [] }))
+  assert.deepEqual(recordedSegmentPaths(userData, id, readRecordingSource(vault, userData, 'talk', id)).map((s) => s.path), [path], 'a Run uses audio.segments even with a sessionId field')
+  rmSync(runPath)
+  writeFileSync(join(rec, `${id}.recording.json`), JSON.stringify({ id, sessionId: id, talkSlug: 'talk', audio: { segments: [] }, segments: [{ index: 0, file }] }))
+  assert.deepEqual(recordedSegmentPaths(userData, id, readRecordingSource(vault, userData, 'talk', id)).map((s) => s.path), [path], 'a marker uses its top-level segments even with an id field')
+})
+
+await check('segment reads use the writer folder boundary without creating a missing folder', () => {
+  const { root, userData } = fresh()
+  const rec = join(userData, 'recordings')
+  assert.equal(existingRecordedSegmentPath(userData, 'sess-boundary', 0), null)
+  assert.equal(existsSync(rec), false, 'reading does not create the recordings folder')
+  const outside = join(root, 'outside')
+  mkdirSync(outside)
+  writeFileSync(join(outside, 'sess-boundary.webm'), 'FOREIGN')
+  symlinkSync(outside, rec)
+  assert.equal(existingRecordedSegmentPath(userData, 'sess-boundary', 0), null, 'the shared boundary refuses a symlinked recordings folder')
+})
+
+await check('recovery proof never authorises non-empty, changed, linked or another session’s Run file', () => {
+  const { root } = fresh()
+  const path = join(root, 'recover.json')
+  const proof = `${path}.reservation`
+  const run = { id: 'recover', talkSlug: 'talk' }
+  writeFileSync(path, '')
+  const st = statSync(path)
+  const receipt = { sessionId: run.id, talkSlug: run.talkSlug, dev: st.dev, ino: st.ino }
+  writeFileSync(proof, JSON.stringify(receipt))
+  assert.equal(runReservationIsFor(path, 'another', 'talk'), false)
+  assert.equal(runReservationIsFor(path, 'recover', 'another'), false)
+  writeFileSync(path, 'NON-EMPTY')
+  assert.equal(runReservationIsFor(path, 'recover', 'talk'), false)
+  assert.throws(() => writeNewRunFile(path, run, true), (e) => e.code === 'EEXIST')
+  assert.equal(readFileSync(path, 'utf8'), 'NON-EMPTY', 'even a matching receipt cannot overwrite content')
+  rmSync(path)
+  symlinkSync(proof, path)
+  assert.equal(runReservationIsFor(path, 'recover', 'talk'), false)
+  assert.throws(() => writeNewRunFile(path, run, true), (e) => e.code === 'EEXIST')
+  assert.deepEqual(JSON.parse(readFileSync(proof, 'utf8')), receipt)
+})
+
+await check('no hard links: stale and partly written proofs cannot strand the next save', () => {
+  const { root } = fresh()
+  const path = join(root, 'stale.json')
+  const proof = `${path}.reservation`
+  const run = { id: 'stale', talkSlug: 'talk' }
+  const real = { linkSync: fs.linkSync, writeFileSync: fs.writeFileSync, unlinkSync: fs.unlinkSync, fsyncSync: fs.fsyncSync, renameSync: fs.renameSync }
+  const fail = (code) => Object.assign(new Error(code), { code })
+  const inject = (fns) => { Object.assign(fs, fns); syncBuiltinESMExports() }
+  try {
+    inject({ linkSync: () => { throw fail('ENOTSUP') } })
+    writeFileSync(proof, '{"sessionId":')
+    writeNewRunFile(path, run)
+    assert.equal(JSON.parse(readFileSync(path, 'utf8')).id, run.id, 'an orphaned partial proof is replaced after exclusive Run creation')
+    rmSync(path)
+    inject({ writeFileSync: (fd, data, ...args) => {
+      if (typeof fd === 'number') { real.writeFileSync(fd, '{'); throw fail('ENOSPC') }
+      return real.writeFileSync(fd, data, ...args)
+    } })
+    assert.throws(() => writeNewRunFile(path, run), (e) => e.code === 'ENOSPC')
+    assert.equal(existsSync(proof), false, 'a partly written proof is removed')
+    assert.equal(existsSync(path), false, 'its empty Run reservation is removed')
+    inject({ writeFileSync: real.writeFileSync })
+    writeNewRunFile(path, run)
+    assert.equal(JSON.parse(readFileSync(path, 'utf8')).id, run.id)
+    rmSync(path)
+    // If proof cleanup fails, retain the empty Run too: never leave an orphaned proof.
+    inject({ renameSync: () => { throw fail('EIO') }, unlinkSync: (p) => {
+      if (p === proof && existsSync(p)) throw fail('EACCES')
+      return real.unlinkSync(p)
+    } })
+    assert.throws(() => writeNewRunFile(path, run), (e) => e.code === 'EIO')
+    assert.equal(runReservationIsFor(path, run.id, run.talkSlug), true)
+    inject({ renameSync: real.renameSync, unlinkSync: real.unlinkSync })
+    writeNewRunFile(path, run, true)
+    rmSync(path)
+    // A file acquiring content between proof creation and the final check is never overwritten.
+    inject({ fsyncSync: (fd) => { real.fsyncSync(fd); real.writeFileSync(path, 'FOREIGN') } })
+    assert.throws(() => writeNewRunFile(path, run), (e) => e.code === 'EEXIST')
+    assert.equal(readFileSync(path, 'utf8'), 'FOREIGN')
+    assert.equal(existsSync(proof), false, 'the changed-reservation refusal cleans its proof too')
+  } finally { inject(real) }
+})
 
 await check('append: each chunk is on disk in order as soon as it is appended', () => {
   const { userData, store } = fresh()
@@ -104,6 +203,21 @@ await check('partial-file survival: no Stop, then a relaunch finds the recording
   relaunch.complete('sess-c')
   assert.equal(relaunch.listInterrupted().length, 0)
   assert.equal(statSync(join(userData, 'recordings', 'sess-c.webm')).size, 3400, 'recovery never deletes audio')
+})
+
+await check('an empty marker never adopts a neighbouring first segment', () => {
+  for (const segments of [undefined, []]) {
+    const { userData, store } = fresh()
+    const dir = join(userData, 'recordings')
+    mkdirSync(dir)
+    writeFileSync(join(dir, 'empty.webm'), 'FOREIGN')
+    writeFileSync(join(dir, 'empty.recording.json'), JSON.stringify({ sessionId: 'empty', talkSlug: 'talk', segments }))
+    const found = store.listInterrupted()
+    assert.equal(found.length, 1)
+    assert.deepEqual(found[0].segments, [])
+    assert.equal(found[0].bytes, 0)
+    assert.equal(readFileSync(join(dir, 'empty.webm'), 'utf8'), 'FOREIGN')
+  }
 })
 
 await check('a window that goes mid-recording leaves its session interrupted (closeOwner)', () => {

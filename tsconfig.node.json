@@ -1,8 +1,8 @@
 {
   "include": ["electron.vite.config.*", "src/main/**/*", "src/preload/**/*", "src/shared/**/*", "worker/protocol.ts", "worker/poll-ballots.ts", "worker/share-id.ts", "worker/prework-protocol.ts"],
   "compilerOptions": {
-    "module": "commonjs",
-    "moduleResolution": "node",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "target": "ES2022",
     "lib": ["ES2022"],

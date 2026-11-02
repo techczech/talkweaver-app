@@ -19,6 +19,7 @@ export const SESSION_FILTER_LABELS: Record<SessionFilter, string> = { upcoming: 
 
 /** What main sends for one Run: plain data, no paths. `answers` is the people who took part, per phase. */
 export interface SessionSource extends ChecklistRun {
+  sourceOutline?: string
   vaultId: string
   talkSlug: string
   runId: string

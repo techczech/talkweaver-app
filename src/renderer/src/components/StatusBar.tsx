@@ -4,6 +4,7 @@ import type { Place } from '../../../shared/place.ts'
 import { placeChipView } from './placeChipModel'
 import { APP_VERSION, BUILD_SHA, BUILD_TIME } from '../buildInfo'
 import { formatTalkDates, type TalkDates } from '../lib/talkFacts'
+import { UpdateAnswerNote, UpdateMarks } from './UpdateNotices'
 
 interface Props {
   slideCount?: number | null
@@ -144,6 +145,7 @@ export default function StatusBar({
         >
           v{APP_VERSION} · {BUILD_SHA}
         </span>
+        <UpdateMarks />
         {!minimal && (
           <>
             <span style={styles.sep}>|</span>
@@ -207,6 +209,7 @@ export default function StatusBar({
           )}
         </div>
       )}
+      <UpdateAnswerNote />
     </div>
   )
 }

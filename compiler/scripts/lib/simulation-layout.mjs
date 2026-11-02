@@ -15,6 +15,11 @@
 import { escapeHtml, slugify } from "./01-cli-utils.mjs";
 import { resolveAuthoredMode } from "./02-triggers-layout.mjs";
 import { SIM_FENCE_LANGS, simulationLayoutForFence } from "./simulation-fences.mjs";
+// The label and prompt grammar is shared with the editor's lossless turn rows (simulation-segments.mjs).
+import { LABEL_RE, UNKNOWN_LABEL_RE, NEAREST_LABEL } from "./simulation-segments.mjs";
+import { dedent, parseShellSession, turnSource } from "./simulation-reading.mjs";
+// The readings with no rendering (and no file access) live in simulation-reading.mjs, which the app's editor loads.
+export { compiledRowCount, parseShellSession } from "./simulation-reading.mjs";
 
 export const SIMULATION_LAYOUTS = Object.freeze(["chat", "chat-lanes", "terminal", "terminal-agent"]);
 /** Layout inferred from an untagged fence: ```chat -> chat, ```terminal -> terminal (same place `trace` is inferred). */
@@ -74,25 +79,6 @@ export function simulationMode(layout, mode) {
 // Labelled turns: chat, chat-lanes, terminal-agent
 // ---------------------------------------------------------------------------------------------
 
-const LABEL_RE = /^(user|bot|model-reasoning|context-retrieval|tool-call|tool-results)(?:[ \t]*\(([^)]*)\))?[ \t]*:(.*)$/i;
-const UNKNOWN_LABEL_RE = /^(assistant|model|agent|ai|system|human|reasoning|thinking|agent-reasoning|tool|tool-use|tool-result|tool-calls|context|retrieval)(?:[ \t]*\([^)]*\))?[ \t]*:/i;
-const NEAREST_LABEL = Object.freeze({
-  assistant: "bot", model: "bot", agent: "bot", ai: "bot", system: "user", human: "user",
-  reasoning: "model-reasoning", thinking: "model-reasoning", "agent-reasoning": "model-reasoning",
-  tool: "tool-call", "tool-use": "tool-call", "tool-calls": "tool-call",
-  "tool-result": "tool-results", context: "context-retrieval", retrieval: "context-retrieval"
-});
-
-const indentOf = (line) => line.match(/^[ \t]*/)[0].length;
-
-/** Strip the indent common to every non-blank line. */
-function dedent(lines) {
-  let min = Infinity;
-  for (const line of lines) if (line.trim()) min = Math.min(min, indentOf(line));
-  if (!Number.isFinite(min) || min === 0) return lines.slice();
-  return lines.map((line) => line.slice(Math.min(min, indentOf(line))));
-}
-
 /**
  * Lines of a tool payload (spec 1.5: verbatim). Only the turn's common continuation indent and the
  * blank lines that separate it from the labels around it are removed; internal blank lines and
@@ -136,7 +122,7 @@ export function formatSimDuration(raw) {
  */
 export function parseSimulationTurns(text) {
   const warnings = [];
-  const source = dedent(String(text ?? "").replace(/\r\n?/g, "\n").split("\n"));
+  const source = turnSource(text);
   const turns = [];
   let current = null;
   let before = false;
@@ -217,44 +203,6 @@ export function parseSimulationTurns(text) {
 // Shell session: terminal
 // ---------------------------------------------------------------------------------------------
 
-const PROMPT_ONLY_RE = /^(?:(\S+) )?\$\s*$/;
-const COMMAND_RE = /^(?:(\S+) )?\$ (.*)$/;
-
-/**
- * Parse a shell session (spec 1.6). Returns { cmds, cursor, warnings }.
- * cmd = { prompt, command|null, out[] }: `command` is null for output that precedes any command.
- * cursor = { prompt }: the closing prompt with the block cursor (the fence's own last prompt-only
- * line, or one added automatically with the current path).
- */
-export function parseShellSession(text) {
-  const warnings = [];
-  const lines = String(text ?? "").replace(/\r\n?/g, "\n").split("\n");
-  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
-  if (!lines.length) {
-    warnings.push(["sim-empty"]);
-    return { cmds: [], cursor: { prompt: "$" }, warnings };
-  }
-  const promptFor = (path) => (path ? `${path} $` : "$");
-  let path = "";
-  const cmds = [];
-  let cursor = null;
-  lines.forEach((raw, i) => {
-    const escaped = raw.startsWith("\\") && (PROMPT_ONLY_RE.test(raw.slice(1)) || COMMAND_RE.test(raw.slice(1)));
-    const line = escaped ? raw.slice(1) : raw;
-    const bare = !escaped && line.match(PROMPT_ONLY_RE);
-    const typed = !escaped && !bare && line.match(COMMAND_RE);
-    if (bare || typed) {
-      const match = bare || typed;
-      if (match[1]) path = match[1];
-      if (bare && i === lines.length - 1) { cursor = { prompt: promptFor(path) }; return; }
-      cmds.push({ prompt: promptFor(path), command: bare ? "" : match[2], out: [] });
-      return;
-    }
-    if (!cmds.length) cmds.push({ prompt: "", command: null, out: [] });
-    cmds[cmds.length - 1].out.push(line);
-  });
-  return { cmds, cursor: cursor || { prompt: promptFor(path) }, warnings };
-}
 
 // ---------------------------------------------------------------------------------------------
 // Annotation (the 08-source-adapters seam)

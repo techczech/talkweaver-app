@@ -38,14 +38,21 @@ Five minutes go quickly. Start the timer before the first word.
 ### Show and point
 {id=s23}
 
-> **Try it.** <kbd>R</kbd> reveals step by step, <kbd>F</kbd> focuses, <kbd>H</kbd> highlights, <kbd>I</kbd> points. <kbd>D</kbd> is the pen: <kbd>W</kbd> changes tool, <kbd>⌘Z</kbd> undoes a stroke, <kbd>X</kbd> and <kbd>⇧X</kbd> clear.
+> **Try it.** <kbd>R</kbd> reveals step by step, <kbd>F</kbd> focuses, <kbd>H</kbd> highlights, <kbd>I</kbd> points. <kbd>D</kbd> is the pen: <kbd>W</kbd> changes tool, <kbd>⌘Z</kbd> undoes a stroke, <kbd>X</kbd> and <kbd>⇧X</kbd> clear. The list (<kbd>⌘⇧P</kbd>) has **Pen tool: Freehand** and **Clear highlights**.
 
-> **Try it.** <kbd>+</kbd> and <kbd>−</kbd> size the text, <kbd>[</kbd> the previews. <kbd>Z</kbd> enlarges a picture or page, <kbd>V</kbd> a video; <kbd>M</kbd> plays media, <kbd>E</kbd> lets you use a page.
-
-> **Try it.** In the presenter's list (<kbd>⌘⇧P</kbd>): **Pen tool: Freehand** and **Clear highlights**.
+> **Try it.** <kbd>+</kbd> and <kbd>−</kbd> size the text, <kbd>[</kbd> the previews. <kbd>Z</kbd> enlarges a picture or page, <kbd>V</kbd> a video; <kbd>M</kbd> plays media, <kbd>E</kbd> lets you use a page. **Return Live** is in the list (<kbd>⌘⇧P</kbd>).
 
 :::notes
 Point at one thing only. Clear the drawing before you move on.
+:::
+
+### Return to a live page
+{id=practice-return-live}
+
+> **Try it.** On a web page frozen for Pointer or Pen, choose **Return Live** from the presenter’s list (<kbd>⌘⇧P</kbd>) to show the live page again.
+
+:::notes
+Freeze a page with Pointer or Pen, then return to the live page.
 :::
 
 ### Notes and help

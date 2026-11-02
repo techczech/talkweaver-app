@@ -137,9 +137,9 @@ export async function resolveContainedFile(allowedRoots, candidate) {
  *                                    extension are the ones the author wrote).
  *   → { ok: false, reason }         "outside" if either form lands outside, else "missing".
  */
-export function createAssetContainment(allowedRoots) {
+export function createAssetContainment(allowedRoots, acquired) {
   const roots = realRoots(allowedRoots);
-  const file = async (candidate) => check(await roots, candidate);
+  const file = async (candidate) => acquired ? acquired.file(candidate) : check(await roots, candidate);
   const reference = async (baseDir, written) => {
     if (typeof written !== "string" || typeof baseDir !== "string" || !isAbsolute(baseDir) || written.includes("\0")) {
       return { ok: false, reason: "outside" };
@@ -175,5 +175,5 @@ export function createAssetContainment(allowedRoots) {
     }
     return basename(lexical);
   };
-  return { file, reference, label };
+  return { file, reference, label, list: acquired?.list };
 }

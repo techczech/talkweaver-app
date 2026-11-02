@@ -1,3 +1,4 @@
+import { beginPublication, publicationPaths, publicationBinding, publicationOutcome, PreservationRefusal, type PreservationInventory, type PublicationLaunch, type PreservationAttempt } from './publication-preservation.ts'
 // Publishing handouts to the person's Cloudflare Pages site: the one sequence every publish goes
 // through, and the one place the site is uploaded (spec docs/plans/cloudflare-setup-in-app, D7, D8,
 // D12 and the table "What each user action does when its feature is not ready").
@@ -35,9 +36,9 @@
 //   folder and its link), never from what the site's copy holds (run-unpublish.ts runSiteFolder,
 //   runPublishFolder): a recorded folder missing here is published back into by the same name.
 //   EVERY UPLOAD IS THE WHOLE SITE FOLDER (`uploadSite`): a deploy from an incomplete copy takes other
-//   pages down. So no refusal in this module or in run-unpublish.ts advises publishing again as the way
+//   pages down. Both writers now enforce publication-preservation.ts before upload. So no refusal in this module or in run-unpublish.ts advises publishing again as the way
 //   out of a missing copy; an unpublish that cannot replace the Run's pages here says to unpublish from
-//   the computer that published it. (Guarding every deploy from an incomplete copy is a separate ticket.)
+//   the computer that published it. (The preservation guard requires a complete production inventory.)
 //
 // WHAT MUST HOLD, for every row of that table. Each is a test in scripts/test-handout-publishing.mjs
 // (the sequence) or in scripts/test-handout-from-buffer.mjs and test-prework-publish.mjs (the real
@@ -114,7 +115,8 @@
 //     A publish superseded before or during its upload uploads nothing further and records nothing.
 //     A publish whose upload completed is recorded, whatever happens to the connection afterwards.
 //   (Once the upload has completed the page exists at that address, so writing the address down is
-//   true.) A superseded publish reports PUBLISH_SUPERSEDED_ERROR. Pages it had already built in the
+//   true.) Before launch a superseded publish reports PUBLISH_SUPERSEDED_ERROR; after launch it
+//   reports an unknown outcome with the superseded flag. Pages it had already built in the
 //   site folder stay there, checked, and go up with the next publish.
 //
 //   NO RAW TEXT. Every failure shown is a fixed sentence: one of publishing-logic.ts's sorted
@@ -132,18 +134,14 @@
 // keyed queue, the key being the site folder). A job that depends on what an earlier one recorded
 // reads it when its turn BEGINS (`begin`, `prepare`), never when it was asked for: an unpublish
 // asked for while the publish is still running finds the link that publish recorded.
-//   GOING LIVE DOES NOT WAIT. `live-short-link` (Go live) writes one small file and must not sit
-//   behind a slow handout upload. It runs AT ONCE, outside the queue; the most it waits is its own
-//   leave (the connection's requests, 10 s each) and its own upload (3 minutes, below). Whichever
-//   upload Cloudflare finishes last is the one served, so when a short-link upload overlapped a
-//   queued publish, ONE more upload of the folder as it then stands is put at the end of the queue
-//   (`settle`): the site served ends as the folder is. A settling upload records nothing and its
-//   failure is dropped.
+//   GOING LIVE checks the shared site lock immediately, outside the ordinary queue. If another
+//   publish owns the site, it refuses before writing redirects; the user can try again when idle.
+//   A refused attempt never starts a settling upload.
 //   TIME LIMITS. A job's first step (saving the open talk): BEGIN_LIMIT_MS, one minute. The
 //   connection's own requests: 10 s each. The live service: `LIVE_STEP_LIMIT_MS`
 //   (7 minutes), after which the handout goes up without live features. The upload: the launcher
-//   stops the tool at 3 minutes (SIGTERM, then SIGKILL 5 s later; the whole process tree on
-//   Windows) and answers only once the tool has EXITED, and the queue moves on only then. There is
+//   stops the tool at `PAGES_UPLOAD_TIME_LIMIT_MS`, 30 minutes for a large site (SIGTERM, then SIGKILL
+//   5 s later; the whole process tree on Windows) and answers only once the tool has EXITED, and the queue moves on only then. There is
 //   no second timer here that could let the next upload start while a late one is still sending.
 //
 // No Electron import and erasable TypeScript only: scripts/test-handout-publishing.mjs imports this
@@ -153,7 +151,7 @@ import { join, relative } from 'node:path'
 import { PUBLISH_SUPERSEDED_ERROR, type DeployCredentials, type PublishAuthorisation, type PublishGrant } from './cloudflare-connection.ts'
 import { LIVE_SETUP_FAILED, LiveServiceError, type ToolRun } from './live-service-deploy.ts'
 import { createKeyedQueue } from './owner-tokens.ts'
-import { PUBLISH_FAILED, pagesDeployFailure, siteFolder } from './publishing-logic.ts'
+import { PUBLISH_FAILED, PUBLISH_UNREACHABLE, pagesDeployFailure, siteFolder } from './publishing-logic.ts'
 import { earlierHandoutsText, publishedWithoutLiveText, type PublishNotReady } from '../shared/publish-status.ts'
 
 export type PublishEntry = 'talk' | 'run' | 'run-unpublish' | 'talk-unpublish' | 'live-short-link'
@@ -461,6 +459,9 @@ export type PublishBegin<Built> = { done: Built } | { fail: { error: string; det
 
 export interface PublishJob<Built> {
   entry: PublishEntry
+  /** Source identity/revision read at the job turn and rechecked before upload. */
+  revision?(): string
+  removalRoots?(built: Built): string[]
   /**
    * Runs first, when the job's turn begins and before leave is asked. `{ done }` ends the job there
    * as a success with nothing built or uploaded (an unpublish of something that is not published);
@@ -482,6 +483,8 @@ export interface PublishJob<Built> {
 }
 
 export interface PublishingPorts {
+  inventory?(authorisation: PublishAuthorisation): Promise<PreservationInventory | null>
+  preservationRoot?: string
   /** The folder the whole site is kept in. */
   siteDir(): string
   authorise(): Promise<PublishGrant>
@@ -495,7 +498,7 @@ export interface PublishingPorts {
   /** A message when uploading this folder would make Cloudflare compile code; else null. */
   bundlingHazard(siteDir: string): string | null
   /** Run `pages deploy` with these credentials. Answers only once the tool has exited (`timedOut` when it was stopped at its limit). */
-  upload(args: string[], credentials: DeployCredentials): Promise<ToolRun & { missing?: { error: string; details: string }; timedOut?: true }>
+  upload(args: string[], credentials: DeployCredentials, started?: (pid: number, group?: boolean) => Promise<void>): Promise<ToolRun & { missing?: { error: string; details: string }; timedOut?: true; neverStarted?: true }>
   /**
    * The app's own test mode (TW_REC_TEST=1): pages are built and checked, and nothing is
    * authorised or uploaded. Null otherwise.
@@ -596,14 +599,16 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
    * connection is no longer the one this publish was authorised for. Answers only once the tool has
    * exited, so the queue never starts the next upload while this one may still be sending.
    */
-  async function uploadSite(authorisation: PublishAuthorisation, dir: string, rehearsal: boolean): Promise<{ ok: true } | PublishFailure> {
+  const outcomes = new WeakMap<PublishFailure, 'accepted' | 'failed' | 'unknown'>()
+
+  async function uploadSite(authorisation: PublishAuthorisation, dir: string, rehearsal: boolean, context?: PublicationLaunch): Promise<{ ok: true } | PublishFailure> {
     const hazard = ports.bundlingHazard(dir)
-    if (hazard) return { ok: false, error: hazard }
+    if (hazard) { const failure = { ok: false as const, error: hazard }; outcomes.set(failure, publicationOutcome({ accepted: false, neverStarted: true })); return failure }
     if (rehearsal) return { ok: true }
     let launched: { superseded: true } | { superseded: false; result: Uploaded }
     try {
       launched = await authorisation.run((credentials) => ports.upload(
-        ['pages', 'deploy', dir, '--project-name', authorisation.project, '--branch', authorisation.productionBranch, '--commit-dirty=true'], credentials,
+        ['pages', 'deploy', dir, '--project-name', authorisation.project, '--branch', authorisation.productionBranch, '--commit-dirty=true', ...(context ? ['--commit-message', 'tw-candidate:' + context.candidateDigest] : [])], credentials, context?.started,
       ))
     } catch (error) {
       if (!authorisation.current()) return SUPERSEDED
@@ -613,15 +618,21 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
     }
     if (launched.superseded) return SUPERSEDED
     const run = launched.result
-    if (run.missing) return { ok: false, error: run.missing.error, details: run.missing.details }
-    if (run.ok) return { ok: true }
+    if (run.missing || run.neverStarted) {
+      const failure = { ok: false as const, error: run.missing?.error ?? PUBLISH_FAILED, details: run.missing?.details ?? authorisation.clean(run.stderr) }
+      outcomes.set(failure, publicationOutcome({ accepted: false, neverStarted: true })); return failure
+    }
+    if (run.ok && !run.timedOut) return { ok: true }
     const output = `${run.stdout}\n${run.stderr}`
     // The token comes out of the WHOLE of what was printed, and only then is the end kept.
     const details = authorisation.clean(output).trim().slice(-DETAILS_CHARS)
     if (run.timedOut) return details ? { ok: false, error: PUBLISH_TIMED_OUT, details } : { ok: false, error: PUBLISH_TIMED_OUT }
-    const sorted = pagesDeployFailure(output)
+    // Asset counts are not HTTP statuses. Keep Details intact.
+    const sorted = pagesDeployFailure(output.replace(/\bUploaded\s+\d+\s+files\b/gi, 'Uploaded files'))
     if (sorted.kind === 'permission') authorisation.refusedForPermission()
-    return details ? { ok: false, error: sorted.error, details } : { ok: false, error: sorted.error }
+    const failure: PublishFailure = details ? { ok: false, error: sorted.error, details } : { ok: false, error: sorted.error }
+    outcomes.set(failure, publicationOutcome({ accepted: false, output }))
+    return failure
   }
 
   async function run<Built>(job: PublishJob<Built>): Promise<PublishSuccess<Built> | PublishFailure> {
@@ -658,63 +669,76 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
     const live = PUBLISH_ENTRY_POINTS[job.entry].live ? await liveForPages(authorisation, rehearsal !== null) : null
     if (!authorisation.current()) return SUPERSEDED
     const dir = ports.siteDir()
-    const before = stamps(dir)
-    let prepared: Awaited<ReturnType<PublishJob<Built>['prepare']>>
+    let attempt: PreservationAttempt | null = null
+    let baseline: string[] = []
     try {
-      prepared = await job.prepare({
-        dir, project: authorisation.project, live: live?.ready ? live.address : '',
-        // ENTRY FIRST: refused before the job has written anything.
-        link: (url) => { if (!liveAddressForPages(url)) throw new LinkRefused(); return url },
-        redirects: (text) => { const bad = redirectsRefusal(text); if (bad !== null) throw new RedirectsRefused(bad); return text },
-      })
+      if (!rehearsal) {
+        const site = `cf-pages:${authorisation.accountId}:${authorisation.project}`
+        const revision = job.revision?.() ?? (existsSync(dir) ? publicationBinding(publicationPaths(dir)) : 'empty-local-site')
+        const binding = () => publicationBinding([site, authorisation.productionBranch, authorisation.current(), job.revision?.() ?? revision])
+        attempt = await beginPublication({ site, inventory: () => ports.inventory?.(authorisation) ?? Promise.resolve(null),
+          binding, approvedBinding: binding(), candidateDigest: null, storageRoot: ports.preservationRoot })
+        baseline = existsSync(dir) ? publicationPaths(dir) : []
+      }
     } catch (error) {
-      if (error instanceof LinkRefused) return { ok: false, error: PUBLISH_LINK_REFUSED }
-      if (error instanceof RedirectsRefused) return { ok: false, error: PUBLISH_REDIRECTS_REFUSED, details: error.message.replace(/[^\x20-\x7e]/g, ' ').slice(0, 200) }
-      throw error // a build that fails is the caller's own, as before this ticket
+      attempt?.close()
+      return { ok: false, error: error instanceof PreservationRefusal ? error.reason : 'PUBLISH_CANDIDATE_CHANGED', ...(error instanceof PreservationRefusal ? { details: error.message } : {}) }
     }
-    if (!prepared.ok) return prepared
-    const checked = checkBuilt(dir, before)
-    if ('ok' in checked) return checked
-    const earlier = earlierHandouts(dir, checked.written)
-    const uploaded = await uploadSite(authorisation, dir, rehearsal !== null)
-    if (!uploaded.ok) return uploaded
-    // The upload completed: the pages are at their address, and that is recorded whatever the connection is now.
-    authorisation.published()
-    await job.record?.(prepared.built)
-    const without = live && !live.ready ? live : null
-    return {
-      ok: true, built: prepared.built, live,
-      notice: without ? publishedWithoutLiveText(without.reason) : null,
-      noticeDetails: without?.details ?? null,
-      earlierNotice: earlier.length ? earlierHandoutsText(earlier.length) : null,
-      earlierDetails: earlier.length ? earlier.join('\n') : null,
-    }
+    try {
+      const before = stamps(dir)
+      let prepared: Awaited<ReturnType<PublishJob<Built>['prepare']>>
+      try {
+        prepared = await job.prepare({
+          dir, project: authorisation.project, live: live?.ready ? live.address : '',
+          // ENTRY FIRST: refused before the job has written anything.
+          link: (url) => { if (!liveAddressForPages(url)) throw new LinkRefused(); return url },
+          redirects: (text) => { const bad = redirectsRefusal(text); if (bad !== null) throw new RedirectsRefused(bad); return text },
+        })
+      } catch (error) {
+        if (error instanceof LinkRefused) return { ok: false, error: PUBLISH_LINK_REFUSED }
+        if (error instanceof RedirectsRefused) return { ok: false, error: PUBLISH_REDIRECTS_REFUSED, details: error.message.replace(/[^\x20-\x7e]/g, ' ').slice(0, 200) }
+        throw error // a build that fails is the caller's own, as before this ticket
+      }
+      if (!prepared.ok) return prepared
+      const checked = checkBuilt(dir, before)
+      if ('ok' in checked) return checked
+      const earlier = earlierHandouts(dir, checked.written)
+      if (!authorisation.current()) return SUPERSEDED
+      let uploaded: { ok: true } | PublishFailure
+      let uncertain: PublishFailure | null = null
+      try {
+        uploaded = attempt ? await attempt.upload(dir, baseline, job.removalRoots?.(prepared.built) ?? [], async (frozen, context) => {
+          const value = await uploadSite(authorisation, frozen, false, context)
+          uncertain = value.ok ? null : value
+          return { outcome: value.ok ? publicationOutcome({ accepted: true }) : outcomes.get(value) ?? publicationOutcome({ accepted: false }), value }
+        }) : await uploadSite(authorisation, dir, true)
+      } catch (error) { return { ...(uncertain ?? {}), ok: false, error: error instanceof PreservationRefusal ? error.reason : 'PUBLISH_CANDIDATE_CHANGED', ...(error instanceof PreservationRefusal && error.reason !== 'PUBLISH_OUTCOME_UNKNOWN' ? { details: error.message } : {}) } }
+      if (!uploaded.ok) return uploaded
+      // The upload completed: the pages are at their address, and that is recorded whatever the connection is now.
+      authorisation.published()
+      await job.record?.(prepared.built)
+      const without = live && !live.ready ? live : null
+      return {
+        ok: true, built: prepared.built, live,
+        notice: without ? publishedWithoutLiveText(without.reason) : null,
+        noticeDetails: without?.details ?? null,
+        earlierNotice: earlier.length ? earlierHandoutsText(earlier.length) : null,
+        earlierDetails: earlier.length ? earlier.join('\n') : null,
+      }
+    } finally { attempt?.close() }
   }
 
-  /** How many queued publishes are waiting or running: a short-link upload that meets one is followed by `settle`. */
-  let queued = 0
   function inQueue<Result>(work: () => Promise<Result>): Promise<Result> {
-    queued += 1
-    const result = queue.run(ports.siteDir(), work).finally(() => { queued -= 1 })
+    const result = queue.run(ports.siteDir(), work)
     tail = result.then(() => {}, () => {})
     return result
   }
-  /** One more upload of the folder as it stands, after everything queued: so the site served ends as the folder is. */
-  function settle(): void {
-    void inQueue(() => run({ entry: 'live-short-link', prepare: async () => ({ ok: true, built: null }) })).catch(() => {})
-  }
-
   return {
     publish(job) {
       if (job.entry !== 'live-short-link') return inQueue(() => run(job))
-      // GOING LIVE DOES NOT WAIT: at once, outside the queue. If a queued publish was writing the
-      // folder at any time while this ran, one settling upload follows them.
-      let overlapped = queued > 0
-      const watch = setInterval(() => { overlapped ||= queued > 0 }, 20)
-      const result = run(job).finally(() => {
-        clearInterval(watch)
-        if (overlapped || queued > 0) settle()
-      })
+      // A short-link attempt checks the common site lock immediately. A refused attempt
+      // wrote nothing and must not enqueue an unsolicited settling upload.
+      const result = run(job)
       const done = result.then(() => {}, () => {})
       tail = Promise.all([tail, done])
       return result

@@ -23,6 +23,10 @@ export default function ActionBar({ sections }: ActionBarProps): ReactElement {
   const [menuOpen, setMenuOpen] = useState(false)
   const [tip, setTip] = useState<{ content: string; left: number; top: number } | null>(null)
 
+  // Only what changes a button's width re-plans the overflow. `sections` is a new array on every
+  // workspace render, and each replan reads geometry — a forced layout of the whole document,
+  // the Slide Browser above included (0.7 s per replan with its full grid drawn).
+  const layoutKey = sections.map((s) => s.items.map((i) => `${i.commandId}\u0001${i.label}\u0001${i.icon}\u0001${i.keys ?? ''}`).join('\u0002')).join('\u0003')
   useLayoutEffect(() => {
     const bar = barRef.current
     const measure = measureRef.current
@@ -42,7 +46,7 @@ export default function ActionBar({ sections }: ActionBarProps): ReactElement {
     const observer = new ResizeObserver(replan)
     observer.observe(bar)
     return () => observer.disconnect()
-  }, [sections])
+  }, [layoutKey])
 
   useLayoutEffect(() => {
     if (!tip || !tipRef.current) return

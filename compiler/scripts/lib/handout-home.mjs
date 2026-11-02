@@ -5,20 +5,13 @@
 // Everything here is built from the publisher's values and escaped; the QR code is the compiler's own SVG.
 import { escapeHtml } from "./00-html.mjs";
 import { renderInline } from "./00-inline-render.mjs";
-import { renderSlideNavTitle } from "./slide-script-render.mjs";
+import { collectResources } from "./handout-resources.mjs";
 
-const decodeEntities = (value) => String(value)
-  .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 const sameTarget = (a, b) => {
   const norm = (u) => String(u || "").trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/^www\./i, "").replace(/\/+$/, "").toLowerCase();
   return Boolean(a) && Boolean(b) && norm(a) === norm(b);
 };
 
-/**
- * The external links the talk's slides carry, in slide order, once each: { href, labelHtml } where the
- * label is the slide's title as the compiler's renderer builds it (escaped, no links). The handout's own
- * address is left out (it is the page itself), and only http(s) targets count.
- */
 /**
  * A link from a published page to a file beside it, by the file's NAME: always relative to the page
  * and under its own address, whatever the name. A name is not a link: `http:127.0.0.1#.html` used
@@ -30,25 +23,8 @@ export function pageLink(name) {
   return encodeURIComponent(String(name ?? ""));
 }
 
-export function collectTalkLinks(slides, { exclude = [] } = {}) {
-  const seen = new Set();
-  const links = [];
-  for (const slide of Array.isArray(slides) ? slides : []) {
-    const html = String(slide && slide.html || "");
-    const labelHtml = renderSlideNavTitle(html, { links: false });
-    for (const match of html.matchAll(/<a\b[^>]*\bhref="([^"]+)"/gi)) {
-      const href = decodeEntities(match[1]).trim();
-      if (!/^https?:\/\/[^\s]+$/i.test(href)) continue;
-      if (exclude.some((url) => sameTarget(url, href))) continue;
-      const key = href.replace(/\/+$/, "");
-      if (seen.has(key)) continue;
-      seen.add(key);
-      let host = "";
-      try { host = new URL(href).host.replace(/^www\./, ""); } catch { continue; }
-      links.push({ href, labelHtml: labelHtml || escapeHtml(host) });
-    }
-  }
-  return links;
+export function collectTalkLinks(slides, options = {}) {
+  return collectResources(slides, { ...options, sameTarget });
 }
 
 // The design's own icons (24px grid, 2px round strokes), inline: no icon font, no outside origin.
@@ -71,6 +47,21 @@ const ICON_PATHS = {
 const icon = (name, size = 18) => `<svg class="hh-ico" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_PATHS[name]}</svg>`;
 const chevron = () => `<svg class="hh-ico hh-chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_PATHS.chevron}</svg>`;
 const STEP_ICONS = { task: "play", slide: "book", check: "question", question: "question" };
+
+function resourceRows(links) {
+  let html = '', group = null;
+  for (const link of links) {
+    const key = link.section ? `${link.section}\u0000${link.sectionRun ?? ''}` : null;
+    if (key !== group) {
+      if (group !== null) html += '</section>';
+      if (key !== null) html += `<section class="hh-resource-group"><h3>${escapeHtml(link.sectionTitle)}</h3>`;
+      group = key;
+    }
+    html += `<a class="hh-row" href="${escapeHtml(link.href)}" target="_blank" rel="noopener noreferrer">${icon("link")}<span class="hh-row-text">${link.labelHtml}</span>${chevron()}</a>`;
+  }
+  return html + (group !== null ? '</section>' : '');
+}
+
 
 /**
  * "Before the session": the form's steps with their minutes, or its one-row summary when it lists none.
@@ -207,7 +198,7 @@ export function handoutHomeMarkup(home, { title, slideCount, firstSlideId = "" }
   <div class="hh-col hh-main">
     ${extrasCard(home.extras)}
     <section class="hh-card hh-cover" id="hhCover" data-hh-for="handout" aria-label="The slides"><div class="hh-slide" id="hhCoverSlot"></div><div class="hh-cover-row"><span>${slidesWords}</span><a class="hh-pill" href="${startHref}">${icon("play", 16)}Start from slide 1</a></div></section>
-    ${links.length ? `<section class="hh-card hh-list" id="hhLinks" data-hh-for="handout"><h2>Links mentioned</h2><div class="hh-rows">${links.map((link) => `<a class="hh-row" href="${escapeHtml(link.href)}" target="_blank" rel="noopener noreferrer">${icon("link")}<span class="hh-row-text">${link.labelHtml}</span>${chevron()}</a>`).join("")}</div></section>` : ""}
+    ${links.length ? `<section class="hh-card hh-list" id="hhLinks" data-hh-for="handout"><h2>Links mentioned</h2><div class="hh-rows">${resourceRows(links)}</div></section>` : ""}
   </div>
   <div class="hh-col hh-side">
     ${prework ? preworkCard(prework, href) : ""}

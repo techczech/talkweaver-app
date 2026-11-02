@@ -9,8 +9,14 @@ import {
   closeOpenObject,
   hasOpenObjectBlock,
   openSelectedObject,
+  toggleExpandedObjectAtSelection,
   toggleRawObjectAtSelection
 } from '../extensions/objectBlocks/field'
+import {
+  deleteCommentAtCaret,
+  discardOpenObject,
+  insertSpeakerNotes
+} from '../extensions/objectBlocks/commands'
 import {
   moveNode,
   reLevel,
@@ -324,7 +330,7 @@ function surfaceCommand(id: string, registryId: string): EditorCommand {
 // shortcut-id: app.sidebar-talks app.sidebar-outline app.sidebar-toggle
 // shortcut-id: editor.move-up editor.move-down editor.promote editor.demote
 // shortcut-id: editor.promote-subtree editor.demote-subtree editor.heading-same editor.heading-sub
-// shortcut-id: editor.jump-prev editor.jump-next editor.delete-slide editor.object-edit editor.object-raw editor.object-finish editor.object-leave editor.title-continue editor.protected-line-continue editor.list-continue
+// shortcut-id: editor.jump-prev editor.jump-next editor.delete-slide editor.object-edit editor.object-raw editor.object-finish editor.object-leave editor.object-expand editor.object-discard editor.delete-comment editor.insert-notes editor.title-continue editor.protected-line-continue editor.list-continue
 // shortcut-id: editor.quote-paragraph editor.list-indent editor.list-outdent editor.bold
 // shortcut-id: editor.italic editor.inline-code editor.highlight editor.link
 export const EDITOR_COMMANDS: EditorCommand[] = [
@@ -352,6 +358,10 @@ export const EDITOR_COMMANDS: EditorCommand[] = [
   command('object-raw', (view) => toggleRawObjectAtSelection(view)),
   command('object-finish', (view) => closeOpenObject(view)),
   command('object-leave', (view) => closeOpenObject(view)),
+  command('object-expand', (view) => toggleExpandedObjectAtSelection(view)),
+  command('object-discard', (view) => discardOpenObject(view)),
+  command('delete-comment', consume((view) => deleteCommentAtCaret(view))),
+  command('insert-notes', (view) => insertSpeakerNotes(view)),
   command('title-continue', (view) => enterFromHeading(view)),
   command('protected-line-continue', (view) => enterFromProtectedLine(view)),
   command('list-continue', (view) => continueList(view) || leaveQuotation(view)),
@@ -365,6 +375,35 @@ export const EDITOR_COMMANDS: EditorCommand[] = [
   command('strikethrough', toggleStrikethrough),
   command('underline', toggleUnderline),
   command('link', insertLink),
+  surfaceCommand('check-for-updates', 'app.check-for-updates'),
+  surfaceCommand('whats-new', 'app.whats-new'),
+  surfaceCommand('research-panel', 'app.research-panel'),
+  surfaceCommand('research-find', 'app.research-find'),
+  surfaceCommand('set-aside-slides', 'app.set-aside'),
+  surfaceCommand('search-slides-grid', 'app.grid-search'),
+  surfaceCommand('search-next', 'app.search-next'),
+  surfaceCommand('search-previous', 'app.search-previous'),
+  surfaceCommand('research-rename', 'research.rename'),
+  surfaceCommand('research-change-kind', 'research.change-kind'),
+  surfaceCommand('research-delete', 'research.delete'),
+  surfaceCommand('research-move', 'research.move'),
+  surfaceCommand('research-copy', 'research.copy'),
+  surfaceCommand('research-insert-here', 'research.insert-here'),
+  surfaceCommand('research-insert', 'research.insert'),
+  surfaceCommand('research-make-slide', 'research.make-slide'),
+  surfaceCommand('research-open', 'research.open'),
+  surfaceCommand('research-previous', 'research.previous'),
+  surfaceCommand('research-next', 'research.next'),
+  surfaceCommand('research-scope', 'research.scope'),
+  surfaceCommand('research-close', 'research.close'),
+  surfaceCommand('research-copy-reference', 'research.copy-reference'),
+  surfaceCommand('research-reveal', 'research.reveal'),
+  surfaceCommand('research-source', 'research.source'),
+  surfaceCommand('research-used-in', 'research.used-in'),
+  surfaceCommand('research-scope-talk', 'research.scope-talk'),
+  surfaceCommand('research-scope-research', 'research.scope-research'),
+  surfaceCommand('research-scope-everything', 'research.scope-everything'),
+  surfaceCommand('research-retry', 'research.retry'),
   surfaceCommand('find-talk', 'app.find-talk'),
   surfaceCommand('add-beside', 'slide-picker.add-beside'),
   surfaceCommand('talk-beside', 'slide-picker.talk-beside'),

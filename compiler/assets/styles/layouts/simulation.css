@@ -287,7 +287,6 @@
   .sim .sim-step { opacity: 1 !important; visibility: visible !important; }
   .sim .sim-link { visibility: visible !important; }
 }
-.sim-static .sim-scroll { overflow: hidden; }
 .sim-static .is-closed .sim-body { display: block !important; }
 .sim-static .sim-chevron, .sim-static .sim-toggle-results, .sim-static .sim-more { display: none !important; }
 .sim-static .sim-toggle { pointer-events: none; }

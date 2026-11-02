@@ -264,6 +264,12 @@ function makePlayBadge(): HTMLElement {
   return badge
 }
 
+/** The local URL the editor shows a picture source with, or null (object cards' saved-view thumbnails). */
+export function editorImageUrl(rawSrc: string, vaultRoot: string | null | undefined, talkDir: string | null | undefined): string | null {
+  const { url } = resolveSrc(rawSrc, vaultRoot, talkDir)
+  return url && !/^https?:/i.test(url) ? url : null
+}
+
 interface WidgetOpts {
   vaultRoot?: string | null
   // A getter (not a static value) because the editor is reused across talks — the Talk dir
@@ -272,6 +278,42 @@ interface WidgetOpts {
   onClick?: ImageWidgetClick | null
   // The compiler's placement for the image on this 1-based line (null when unknown).
   placementForLine?: ((line: number, doc: Text) => ImagePlacement | null) | null
+}
+
+// A saved view of a live web page (live-page-capture-markup.mjs): `![…](…){capture}`. Its card is
+// atomic: Backspace or Delete beside it takes the whole line, never the hidden `}` that makes it a
+// saved view (owner, alpha.16: deleting a card left `{captu` and the card, and the slide lost the view
+// without saying so).
+const CAPTURE_TAIL_RE = /^\s*\{\s*capture\s*\}\s*$/i
+const atomicMark = Decoration.mark({})
+
+// Every image line the widget hides is atomic too (ADR-0042, one object one delete): Backspace or Delete
+// beside any picture card takes its whole line, never a hidden `)` or `}`. One Undo restores it.
+function buildImageAtomicRanges(view: EditorView): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>()
+  for (const { from, to } of view.visibleRanges) {
+    let pos = from
+    while (pos <= to) {
+      const line = view.state.doc.lineAt(pos)
+      if (IMAGE_LINE_RE.test(line.text) && line.to > line.from) builder.add(line.from, line.to, atomicMark)
+      pos = line.to + 1
+    }
+  }
+  return builder.finish()
+}
+
+function buildCaptureRanges(view: EditorView): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>()
+  for (const { from, to } of view.visibleRanges) {
+    let pos = from
+    while (pos <= to) {
+      const line = view.state.doc.lineAt(pos)
+      const match = IMAGE_LINE_RE.exec(line.text)
+      if (match && CAPTURE_TAIL_RE.test(line.text.slice(match[0].length)) && line.to > line.from) builder.add(line.from, line.to, atomicMark)
+      pos = line.to + 1
+    }
+  }
+  return builder.finish()
 }
 
 function buildDecorations(view: EditorView, opts: WidgetOpts): DecorationSet {
@@ -301,20 +343,40 @@ function buildDecorations(view: EditorView, opts: WidgetOpts): DecorationSet {
  * the same way. Vault-asset widgets are clickable (onClick → metadata panel).
  */
 export function imageWidgetExtension(opts: WidgetOpts): Extension {
-  return ViewPlugin.fromClass(
+  const plugin = ViewPlugin.fromClass(
     class {
       decorations: DecorationSet
+      atomic: DecorationSet
       constructor(view: EditorView) {
         this.decorations = buildDecorations(view, opts)
+        this.atomic = buildImageAtomicRanges(view)
       }
       update(update: ViewUpdate) {
         if (update.docChanged || update.viewportChanged || update.transactions.some((t) => t.effects.some((e) => e.is(imagePlacementsChanged)))) {
           this.decorations = buildDecorations(update.view, opts)
+          this.atomic = buildImageAtomicRanges(update.view)
         }
       }
     },
     { decorations: (v) => v.decorations }
   )
+  return [plugin, EditorView.atomicRanges.of((view) => view.plugin(plugin)?.atomic ?? Decoration.none)]
+}
+
+/** For the test: every picture line whose card is atomic, as [from, to] ranges. */
+export function imageAtomicRanges(view: EditorView): Array<[number, number]> {
+  const out: Array<[number, number]> = []
+  const set = buildImageAtomicRanges(view)
+  for (let it = set.iter(); it.value; it.next()) out.push([it.from, it.to])
+  return out
+}
+
+/** For the test: the saved-view lines (exact {capture} token), as [from, to] ranges. */
+export function captureAtomicRanges(view: EditorView): Array<[number, number]> {
+  const out: Array<[number, number]> = []
+  const set = buildCaptureRanges(view)
+  for (let it = set.iter(); it.value; it.next()) out.push([it.from, it.to])
+  return out
 }
 
 export default imageWidgetExtension

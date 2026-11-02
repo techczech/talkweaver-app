@@ -268,6 +268,7 @@ const AMBIG_SKIP_TOKENS = new Set([
   "meta",      // common prefix/word (meta-analysis, metadata); prose-only exclusion —
                // resolves in brand context via _svglAmbiguousIndex (no ALIAS_MAP entry
                // for the bare word "Meta"; only "llama" aliases to it)
+  "after",     // temporal contrast label, not the After Effects brand
   "next",      // "next steps", "next.js" → alias
   "node",      // "node in a graph", "node.js" → alias
   "base",      // "base case", "database" → Base UI brand ambiguous
@@ -709,24 +710,22 @@ const LUCIDE_GENERIC_WORDS = new Set([
   "models", "model", "people", "person", "place", "case", "fact", "point",
 ]);
 
-// Score an item text against a Lucide icon name and its tags.
-// Returns score: 0 = no match; >=LUCIDE_THRESHOLD = genuine match.
-function lucideScore(itemTokens, lucideKey, lucideTags) {
+// Catalogue words never change after the vendored data loads. Split/filter them once, not
+// for every bullet of every slide. Keep repeated words and catalogue order: both affect scores/ties.
+const LUCIDE_SCORE_WORDS = new Map(Object.entries(_lucide)
+  .filter(([name]) => !name.startsWith("_"))
+  .map(([name, entry]) => [name, [
+    ...name.split("-").map(word => [word, 3]),
+    ...(entry.tags || []).flatMap(tag => tag.toLowerCase().split(/\s+/).map(word => [word, 2]))
+  ].filter(([word]) => !LUCIDE_GENERIC_WORDS.has(word))]));
+
+// Exact same name/tag and prefix scores as before; no item, deck or vocabulary result is cached.
+function lucideScore(itemTokens, itemWords, lucideKey) {
   let score = 0;
-  // Name: split hyphenated lucide name into words ("book-open" → ["book","open"])
-  const nameWords = lucideKey.split("-");
-  for (const nw of nameWords) {
-    if (LUCIDE_GENERIC_WORDS.has(nw)) continue; // generic word — never a genuine icon signal
-    if (itemTokens.has(nw)) score += 3;
-    else if ([...itemTokens].some((t) => t.startsWith(nw) || nw.startsWith(t))) score += 1;
-  }
-  // Tags
-  for (const tag of (lucideTags || [])) {
-    const tagWords = tag.toLowerCase().split(/\s+/);
-    for (const tw of tagWords) {
-      if (LUCIDE_GENERIC_WORDS.has(tw)) continue;
-      if (itemTokens.has(tw)) score += 2;
-      else if ([...itemTokens].some((t) => t.startsWith(tw) || tw.startsWith(t))) score += 1;
+  for (const [word, exactScore] of LUCIDE_SCORE_WORDS.get(lucideKey) || []) {
+    if (itemTokens.has(word)) { score += exactScore; continue; }
+    for (const token of itemWords) {
+      if (token.startsWith(word) || word.startsWith(token)) { score += 1; break; }
     }
   }
   return score;
@@ -744,13 +743,14 @@ function tokenize(text) {
 // name/tag scoring. Returns an ordered array of {key, score} for items above threshold.
 function lucideCandidatesForItem(text) {
   const tokens = tokenize(text);
+  const itemWords = [...tokens];
   // Step 1: rule-based priority candidates (scored as 5 + tag-score so they always beat tag-only)
   const rulePriority = [];
   for (const [re, names] of LUCIDE_RULES) {
     if (re.test(text)) {
       for (const name of names) {
         if (_lucide[name]) {
-          const base = lucideScore(tokens, name, _lucide[name].tags);
+          const base = lucideScore(tokens, itemWords, name);
           rulePriority.push({ key: `lucide:${name}`, score: 5 + base });
         }
       }
@@ -760,9 +760,8 @@ function lucideCandidatesForItem(text) {
   // Only consider icons with base score >= LUCIDE_THRESHOLD (real threshold).
   // For performance: skip this pass if rule priority already covers the item.
   const byScore = [];
-  for (const [name, entry] of Object.entries(_lucide)) {
-    if (name.startsWith("_")) continue; // skip _meta
-    const sc = lucideScore(tokens, name, entry.tags);
+  for (const name of LUCIDE_SCORE_WORDS.keys()) {
+    const sc = lucideScore(tokens, itemWords, name);
     if (sc >= LUCIDE_THRESHOLD) byScore.push({ key: `lucide:${name}`, score: sc });
   }
   // Merge: rule-priority entries first (higher score), then remaining by score desc.

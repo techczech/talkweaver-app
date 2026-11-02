@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, KeyboardEvent } from 'react'
 import type { TalkInfo } from '../../../preload/index'
+import { safeTalkSlug } from '../../../shared/vault-gallery-browse'
 
 interface Props {
   vaultRoot: string
@@ -12,6 +13,9 @@ interface Props {
   onCreated: (talk: TalkInfo) => void
   onClose: () => void
 }
+
+/** The talk main returned is authoritative; the dialog's vault only fills in an identity it left out. */
+export const createdTalk = (talk: TalkInfo, vaultId: string): TalkInfo => ({ vaultId, ...talk })
 
 function slugify(title: string): string {
   return title
@@ -30,7 +34,7 @@ export default function NewTalkDialog({ vaultRoot: _vaultRoot, vaultId, folders 
 
   const titleRef = useRef<HTMLInputElement>(null)
 
-  const slug = slugify(title)
+  const slug = safeTalkSlug(slugify(title))
 
   // Sorted, de-duplicated subfolder options (always include the pre-selected one).
   const folderOptions = useMemo(() => {
@@ -70,12 +74,18 @@ export default function NewTalkDialog({ vaultRoot: _vaultRoot, vaultId, folders 
 
     try {
       // IPC handler vault:create-talk is wired in main/index.ts
-      const newTalk: TalkInfo = await (window as any).tw.vault.createTalk({
+      const newTalk: TalkInfo | null = await (window as any).tw.vault.createTalk({
         title: title.trim(),
         slug,
         topicFolder: topicFolder.trim() || undefined,
         ...(vaultId ? { vaultId } : {})
       })
+      if (!newTalk) {
+        // Main refused (a name already taken, a protected folder): stay here and say so.
+        setError(`The talk could not be created. A folder called “${slug}” may already exist here, or the folder is not one you can add talks to. Change the title or the subfolder and try again.`)
+        setCreating(false)
+        return
+      }
       onCreated(newTalk)
     } catch (err: any) {
       setError(err?.message ?? 'Failed to create talk.')
@@ -148,7 +158,7 @@ export default function NewTalkDialog({ vaultRoot: _vaultRoot, vaultId, folders 
           <div style={hintStyle}>Choose an existing folder, or create new folders in the sidebar.</div>
         </div>
 
-        {error && <div style={errorStyle}>{error}</div>}
+        {error && <div role="alert" style={errorStyle}>{error}</div>}
 
         <div style={actionsStyle}>
           <button

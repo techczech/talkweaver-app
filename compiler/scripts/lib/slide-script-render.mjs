@@ -65,6 +65,7 @@ export function isPhoneHref(url) {
 }
 
 function anchor(url, labelHtml) {
+  if (/^Research:/i.test(labelHtml) && /^(?:\.\/)?research\/[^?#]+\.md$/i.test(url)) return labelHtml
   const href = isPhoneHref(url) ? url : '#'
   return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener">${labelHtml}</a>`
 }

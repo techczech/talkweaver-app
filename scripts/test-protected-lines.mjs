@@ -330,12 +330,23 @@ for (const hashes of protectedHeadingLevels) {
   assert.equal(result.state.doc.toString(), '- Item\n- ')
 }
 
-// Negative: Trigger-shaped text inside a fence retains the default newline transaction.
+// Trigger-shaped text inside a fence is fence content, never a structural line. A closed fence is a
+// fence card (ADR-0042): Enter on it opens the card's editor without changing bytes. Once the card's
+// source is open, Enter inside it is the default newline transaction.
 {
   const doc = ['```md', '{chart=bar}', '- Alpha: 40', '```'].join('\n')
-  const result = pressEditorEnter(doc, '{chart=bar}', 6)
-  assert.equal(result.handledBy, 'default')
-  assert.equal(result.state.doc.toString(), doc.replace('{chart=bar}', '{chart\n=bar}'))
+  const view = fakeView(EditorState.create({
+    doc,
+    selection: { anchor: positionInLine(doc, '{chart=bar}', 6) },
+    extensions: [markdown(), objectBlocksExtension({})]
+  }))
+  const closed = pressEnterThroughCommandChain(view)
+  assert.equal(closed.handledBy, 'object-edit', 'Enter on a closed fence card opens its editor')
+  assert.equal(closed.state.doc.toString(), doc, 'opening the fence card changes no bytes')
+  view.dispatch({ selection: { anchor: positionInLine(doc, '{chart=bar}', 6) } })
+  const open = pressEnterThroughCommandChain(view)
+  assert.equal(open.handledBy, 'default', 'Enter inside open fence source is the default newline')
+  assert.equal(open.state.doc.toString(), doc.replace('{chart=bar}', '{chart\n=bar}'))
 }
 
 // Negative: while an object shell is open, Enter still runs through the real command chain and

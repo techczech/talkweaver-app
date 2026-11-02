@@ -15,6 +15,8 @@ export interface SlidePickerCommands {
   closeTalkBeside: () => PickerCommandOutcome
   /** ⇧⌘↵: selects the focused slide's whole section (its heading slide and every slide under it). */
   selectWholeSection: () => PickerCommandOutcome
+  /** Adds the selected slides to the open talk's Slide Scratchpad. */
+  addToScratchpad: () => PickerCommandOutcome
 }
 
 /** What "Find a talk" hands the picker: its input, and its ⌘↵ on the highlighted row. */

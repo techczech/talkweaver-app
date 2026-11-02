@@ -194,3 +194,22 @@ for (const entry of entries) {
 assert.deepEqual(sampleFailures, [], `Registry sample syntax failure(s):\n${sampleFailures.join("\n")}`);
 
 console.log(`layout-registry parity: ${entries.length} entries cover ${compilerWords.length} compiler triggers`);
+
+// Explain must teach authoring from the same registry used by the picker.
+for (const entry of LAYOUTS.filter((entry) => entry.kind === 'layout' || entry.kind === 'container')) {
+  assert(entry.authoring?.trim(), `${entry.name}: Explain needs body and delimiter instructions`);
+}
+const { layoutAuthoringExample, layoutAuthoringExamples } = await import('../src/shared/layout-registry/authoring.ts');
+for (const entry of LAYOUTS) {
+  for (const example of layoutAuthoringExamples(entry)) {
+  assert(example.trim(), `${entry.name}: Explain has a copyable example`);
+  const model = await prepareSource(samplePath, example, `explain-${entry.name}`, statSync(registryPath));
+  assert(!model.warnings.some((w) => /^(unknown-trigger|unresolved-trigger|sim-no-fence|sim-no-turns)/.test(w)), `${entry.name}: Explain example compiles`);
+  }
+}
+const contrastEntry = LAYOUTS.find((entry) => entry.name === 'contrast');
+assert.match(layoutAuthoringExamples(contrastEntry)[1], /- Before\n  - Manual work/);
+assert.match(layoutAuthoringExample(contrastEntry), /- Manual\n- Automated/);
+assert.doesNotMatch(layoutAuthoringExample(contrastEntry), /^#### /m, 'contrast never needs column headings');
+
+assert.match(contrastEntry.sample, /- Manual\n- Automated/, 'the registry also demonstrates the minimal two-bullet contrast')

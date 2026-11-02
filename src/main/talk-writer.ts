@@ -28,7 +28,7 @@
 // again against a fresh read, at most ROUTED_RETRIES more times; a whole-text `next` is never re-applied
 // over a buffer that moved (it would overwrite the typing), so it refuses.
 import { randomBytes } from 'crypto'
-import { constants as fsConstants, type Stats } from 'fs'
+import { constants as fsConstants, ftruncateSync, type Stats } from 'fs'
 import { access, lstat, open, readFile, stat, unlink, type FileHandle } from 'fs/promises'
 import { basename, dirname, join } from 'path'
 import { canonicalOutlinePath, outlineIdentity, type OutlineIdentity } from './outline-identity.ts'
@@ -37,7 +37,8 @@ import { CHANGED_ON_DISK_MESSAGE, PARTIAL_WRITE_MESSAGE, REMOVED_ON_DISK_MESSAGE
 export type TalkWriteOrigin =
   | 'editor' | 'migration' | 'create-talk' | 'tags' | 'frontmatter' | 'ledger-detach' | 'ledger-adopt'
   | 'ledger-merge' | 'publish-handout' | 'publish-flush' | 'optimize-images' | 'retitle' | 'strip-published'
-  | 'share-for-comments' | 'conflict-merge' | 'prework-move' | 'unpublish-handout'
+  | 'research-rename' | 'share-for-comments' | 'conflict-merge' | 'prework-move' | 'unpublish-handout'
+  | 'live-page-capture'
 
 /** The whole new text, or a transformation of the talk's current text (the open buffer when an editor
  *  has the talk, else the file). A transformation that returns its input writes nothing. A thrown
@@ -97,6 +98,9 @@ export interface TalkWriterRoutes {
 }
 
 export interface TalkWriteOptions {
+  /** Synchronous live authority, checked after all staging/locking awaits at the destructive boundary:
+   *  just before the truncate on disk, just before each ask to apply in a window. A throw refuses untouched. */
+  authorize?(): void
   /** Editor route only: runs with the new text just before the window is asked to apply it (e.g.
    *  ledger lineage hints that must be recorded before the editor's own save ledgers the text). */
   beforeEditorApply?(next: string): void | Promise<void>
@@ -234,7 +238,7 @@ export async function readTalkOutline(outlinePath: string): Promise<string> {
 export async function writeTalkFileInPlace(
   realPath: string,
   text: string,
-  hooks: { beforeCopy?: () => Promise<boolean>; expectKey?: string; afterCopy?: () => Promise<void>; afterTruncate?: () => Promise<void> } = {},
+  hooks: { authorize?: () => void; beforeCopy?: () => Promise<boolean>; expectKey?: string; afterCopy?: () => Promise<void>; afterTruncate?: () => Promise<void> } = {},
 ): Promise<'written' | 'aborted'> {
   let previous: Stats | null = null
   try { previous = await lstat(realPath) } catch (error) {
@@ -242,6 +246,7 @@ export async function writeTalkFileInPlace(
   }
   // Only a dangling link lstat's as a link here (canonicalOutlinePath resolved every live one).
   if (previous?.isSymbolicLink()) throw new Error(`The outline ${realPath} is a link to a file that does not exist.`)
+  if (hooks.authorize && !previous) throw new Error('The owned talk was removed; nothing was saved')
   if (previous) await access(realPath, fsConstants.W_OK)
   const bytes = Buffer.from(text, 'utf8')
   const temp = join(dirname(realPath), `.${basename(realPath)}.${randomBytes(6).toString('hex')}.tw-write`)
@@ -270,7 +275,10 @@ export async function writeTalkFileInPlace(
     const st = await target.stat()
     opened = `${st.dev}:${st.ino}`
     if (previous && hooks.expectKey && opened !== hooks.expectKey) throw replaced()
-    await target.truncate(0)
+    hooks.authorize?.()
+    // No event-loop turn between live authority and the first destructive operation.
+    if (hooks.authorize) ftruncateSync(target.fd, 0)
+    else await target.truncate(0)
     truncated = true
     await hooks.afterTruncate?.()
     let offset = 0
@@ -338,7 +346,7 @@ async function viaEditor(outlinePath: string, buffer: EditorBuffer, next: TalkWr
     } else if (typeof next === 'function' && text === base && !opts.force) return { ok: true, via: 'editor', changed: false, text }
     const empty = emptyOverNonempty(outlinePath, origin, text, base)
     if (empty) return { ok: false, error: empty, untouched: true }
-    try { await opts.beforeEditorApply?.(text) } catch (error) { return { ok: false, error: message(error), untouched: true } }
+    try { await opts.beforeEditorApply?.(text); opts.authorize?.() } catch (error) { return { ok: false, error: message(error), untouched: true } }
     const reply = await buffer.commit(base, text, origin)
     if (!reply.ok) {
       // The person typed between the read and the apply: work it out again against the buffer now.
@@ -397,6 +405,7 @@ async function viaDisk(outlinePath: string, next: TalkWriteNext, origin: TalkWri
   try {
     await writeTalkFileInPlace(realPath, text, {
       expectKey: held.key,
+      authorize: opts.authorize,
       ...(routes.afterTruncate ? { afterTruncate: () => routes.afterTruncate!(realPath) } : {}),
     })
   } catch (error) {

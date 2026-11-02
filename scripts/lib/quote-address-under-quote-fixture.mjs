@@ -8,6 +8,7 @@
 //
 // Record (once, from the base commit's compiler, in a scratch folder that holds an untouched copy of compiler/ and src/):
 //   node scripts/lib/quote-address-under-quote-fixture.mjs --record <root holding compiler/> > address-under-quote-formless-hashes.json
+import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -50,6 +51,7 @@ const sha = (text) => createHash('sha256').update(text).digest('hex')
 
 /** sha256 per form-less slide (layout, blocks, section markup, phone text) and of the deck's warnings, from the compiler under `compilerRoot`. */
 export async function formlessHashes(compilerRoot) {
+  const { normalizeEmbedUrl } = await import(pathToFileURL(join(compilerRoot, 'compiler/scripts/lib/02-triggers-layout.mjs')).href)
   const { prepareSource } = await import(pathToFileURL(join(compilerRoot, 'compiler/scripts/lib/08-source-adapters.mjs')).href)
   const { buildDeckHtmlFromModel } = await import(pathToFileURL(join(compilerRoot, 'compiler/scripts/lib/07-assembly.mjs')).href)
   const { buildSlideScriptPayload } = await import(pathToFileURL(join(compilerRoot, 'compiler/scripts/lib/slide-script.mjs')).href)
@@ -65,9 +67,26 @@ export async function formlessHashes(compilerRoot) {
     for (const [id] of FORMLESS_SLIDES) {
       const slide = model.slides.find((candidate) => candidate.id === id)
       // Stamps a later ticket added to every slide are left out (slide-markup-identity.mjs).
-      const section = withoutLaterSlideStamps(html.match(new RegExp(`<section class="slide[^"]*" data-id="${id}"[\\s\\S]*?</section>`))?.[0] ?? '', { talkNamesTitleLook: talkNamesTitleLook(text) })
+      let section = withoutLaterSlideStamps(html.match(new RegExp(`<section class="slide[^"]*" data-id="${id}"[\\s\\S]*?</section>`))?.[0] ?? '', { talkNamesTitleLook: talkNamesTitleLook(text) })
       if (!slide || !section) throw new Error(`form-less slide ${id} did not compile`)
-      out[id] = sha(JSON.stringify({ layout: slide.layout, blocks: slide.blocks, section, script: script[id] ?? null }))
+      // Handout resources now retain the authored URL alongside the normalised player URL.
+      // The original compiler comparison predates that metadata. Verify it against the fixture
+      // and the player URL before excluding only that addition; keep the original golden hashes.
+      const resourceAttrs = new Set()
+      const blocks = slide.blocks.map((block) => {
+        if (block.type !== 'embed' || !Object.hasOwn(block, 'resourceUrl')) return block
+        assert.equal(typeof block.resourceUrl, 'string')
+        assert.ok(FORMLESS_SLIDES.find(([key]) => key === id)[1].includes(block.resourceUrl), `${id}: resource URL is authored`)
+        assert.equal(normalizeEmbedUrl(block.resourceUrl), block.src, `${id}: resource URL identifies the actual player`)
+        resourceAttrs.add(block.resourceUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;'))
+        const { resourceUrl, ...legacy } = block
+        return legacy
+      })
+      section = section.replace(/ data-resource-url="([^"]*)"/g, (attr, value) => {
+        assert.ok(resourceAttrs.has(value), `${id}: rendered resource URL matches the model`)
+        return ''
+      })
+      out[id] = sha(JSON.stringify({ layout: slide.layout, blocks, section, script: script[id] ?? null }))
     }
     out['(warnings)'] = sha(JSON.stringify(model.warnings ?? []))
     return out

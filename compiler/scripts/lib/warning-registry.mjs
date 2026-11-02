@@ -8,6 +8,8 @@ const warning = (id, severity, message, remedy, surfaces = ['doctor']) => ({
 // Compiler warning definitions are data so every UI surface uses the same language and remedy.
 // `{payload}` is the complete suffix after the first colon; `{1}`, `{2}`… address its segments.
 export const WARNING_REGISTRY = [
+  warning('live-page-captures-unreadable', 'warning', 'Some saved views for slide {1} could not be read from {2}.', 'Open the page and capture the missing views again.', ['strip-badge', 'inspector', 'doctor']),
+  warning('capture-not-a-saved-view', 'warning', 'Slide {1} names a picture that is not a saved view: {2}.', 'Capture the page in TalkWeaver and choose one of its saved views.', ['strip-badge', 'inspector', 'doctor']),
   warning('asset-outside-vault', 'error', 'Slide {1} names {2}. This file is outside the talk’s vault, so it was not included.', 'Move the file into the talk’s folder or its vault and point the reference at it there.', ['strip-badge', 'inspector', 'doctor']),
   warning('audio-asset-only', 'hint', 'Slide {1} audio stays as an external asset: {2}.', 'Keep the audio file beside the exported talk; handouts and phones show the chip as a label.', ['doctor']),
   warning('accent-unknown', 'warning', 'Unknown accent colour: {payload}.', 'Choose a named accent from Deck design.'),

@@ -3,8 +3,8 @@
 //
 //   appKeyState()            the state the app's bound commands read. `openSelectedObject`, the
 //                            first command of the app's Enter chain, reads the object blocks'
-//                            fields and throws without them; CodeMirror catches that, and the
-//                            browser's own Enter then acts in the app's place.
+//                            fields when installed, and otherwise falls through to source editing.
+//                            sourceOnly mounts isolate inline decorations from object cards.
 //   appEnterBindings()       the app's own Enter chain, as Editor.tsx installs it: every command
 //                            keymap/registry.ts binds to Enter, in the registry's order.
 //   failOnCaughtExceptions() collects every exception CodeMirror catches (a command, a plugin or a
@@ -17,8 +17,10 @@ import { buildEditorKeyBindings } from '../../src/renderer/src/keymap/store.ts'
 const caught = []
 window.__caught = caught
 
-export function appKeyState() {
-  return [objectBlocksExtension({})]
+export function appKeyState({ sourceOnly = false } = {}) {
+  // Inline-source suites inspect literal fence/note lines. Object-card behaviour is covered by
+  // test:object-block-field and the object DOM suites; ordinary app mounts keep cards by default.
+  return sourceOnly ? [] : [objectBlocksExtension({})]
 }
 
 export function appEnterBindings() {

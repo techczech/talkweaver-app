@@ -228,9 +228,10 @@ try {
   // (p2) Type a query matching a TITLE slide and a body-only slide; the title slide ranks first.
   await page.locator('#presenterSearch').fill('method')
   await page.waitForTimeout(150)
-  const presenterFirstRow = (await page.locator('#presenterOutline .slide-link').first().innerText()).trim()
-  record('presenter: title match ranks first in #presenterOutline ("Method notes" before body-only "Results")',
-    /method notes/i.test(presenterFirstRow), `firstRow=${JSON.stringify(presenterFirstRow)}`)
+  // CHANGED (ticket 2b): hits keep outline order and the rest dim; no ranking.
+  const presenterHits = (await page.locator('#presenterOutline .slide-link.tw-hit').allInnerTexts()).map((t) => t.split('\n')[0].trim())
+  record('presenter: hits in #presenterOutline keep outline order ("Method notes" then "Results")',
+    presenterHits.length === 2 && /method notes/i.test(presenterHits[0]) && /results/i.test(presenterHits[1]), `hits=${JSON.stringify(presenterHits)}`)
 
   // (p3) Enter jumps to the top result and closes the drawer (current slide changes).
   const presenterIndexBefore = await page.evaluate(() => {
@@ -493,9 +494,10 @@ try {
   // (f) Type a query matching a TITLE slide and a body-only slide; the title slide ranks first.
   await page.locator('#overviewSearch').fill('method')
   await page.waitForTimeout(150)
-  const firstRowText = (await page.locator('#overviewList .slide-link').first().innerText()).trim()
-  record('title match ranks first in #overviewList ("Method notes" before body-only "Results")',
-    /method notes/i.test(firstRowText), `firstRow=${JSON.stringify(firstRowText)}`)
+  // CHANGED (ticket 2b): hits keep outline order and the rest dim; no ranking.
+  const overviewHits = (await page.locator('#overviewList .slide-link.tw-hit').allInnerTexts()).map((t) => t.split('\n')[0].trim())
+  record('hits in #overviewList keep outline order ("Method notes" then "Results")',
+    overviewHits.length === 2 && /method notes/i.test(overviewHits[0]) && /results/i.test(overviewHits[1]), `hits=${JSON.stringify(overviewHits)}`)
 
   // (g) Enter jumps to the top result and closes the drawer (slide changes).
   const indexBefore = await page.evaluate(() => {

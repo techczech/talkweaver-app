@@ -82,7 +82,7 @@ type TalkWithLink = Omit<PublishedTalkSource, 'folder'>
  * unavailable and so not read at all: one each): never silently left out, since each could hold a folder of
  * the site (review round 2, finding 1; round 3).
  */
-function linkedPages(deps: Pick<PublishedPagesDeps, 'vaults' | 'talks' | 'readOutline'>, except?: { vaultId: string; outlinePath: string }): { runs: Array<{ vaultId: string; root: string; run: RunRecord }>; talks: TalkWithLink[]; unreadable: number } {
+export function linkedPages(deps: Pick<PublishedPagesDeps, 'vaults' | 'talks' | 'readOutline'>, except?: { vaultId: string; outlinePath: string }): { runs: Array<{ vaultId: string; root: string; run: RunRecord }>; talks: TalkWithLink[]; unreadable: number } {
   const runs: Array<{ vaultId: string; root: string; run: RunRecord }> = []
   const talks: TalkWithLink[] = []
   let unreadable = 0
@@ -122,13 +122,13 @@ export function siteClaims(deps: Pick<PublishedPagesDeps, 'vaults' | 'talks' | '
   }
 }
 
-export function collectPublishedPages(deps: PublishedPagesDeps): PublishedPagesInput {
+export function collectPublishedPages(deps: PublishedPagesDeps, snapshot?: ReturnType<typeof linkedPages>, acquiredSite?: SiteListing): PublishedPagesInput {
   const siteDir = deps.siteDir()
-  const site = siteListing(siteDir)
+  const site = acquiredSite ?? siteListing(siteDir)
   const published = site.folders.map((entry) => entry.name)
   let registry: Record<string, string> = {}
   try { registry = deps.readRegistry() } catch { registry = {} }
-  const { runs, talks, unreadable } = linkedPages(deps)
+  const { runs, talks, unreadable } = snapshot ?? linkedPages(deps)
 
   const runClaims: SiteClaims['runs'] = runs.map(({ run }) => ({ handoutUrl: run.handoutUrl, handoutFolder: run.handoutFolder }))
   return {
@@ -142,7 +142,7 @@ export function collectPublishedPages(deps: PublishedPagesDeps): PublishedPagesI
     }),
     talks: talks.map((talk) => {
       const others = talks.filter((other) => other !== talk).map((other) => ({ slug: other.slug, handoutUrl: other.handoutUrl }))
-      return { ...talk, folder: asTalkFolder(talkSiteFolder(talk, published, registry, { runs: runClaims, talks: others, unreadable }, (name) => siteEntry(siteDir, name))) }
+      return { ...talk, folder: asTalkFolder(talkSiteFolder(talk, published, registry, { runs: runClaims, talks: others, unreadable }, (name) => acquiredSite ? (site.folders.some(f=>f.name===name) ? 'folder' : 'none') : siteEntry(siteDir, name))) }
     }),
   }
 }

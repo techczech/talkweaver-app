@@ -95,9 +95,13 @@ const ONLY = process.env.QUOTE_FOCUS_ONLY
   assert(/window\.addEventListener\('tw-run-command', onRun\)/.test(layout), 'and tw-run-command runs a listed command')
   const editor = source('src/renderer/src/components/Editor.tsx')
   assert(/if \(v\) setFocusRange\(v, focusRange \?\? null\)/.test(editor), 'Editor.tsx hands the range to focusScope\'s setFocusRange')
-  const mounted = editor.slice(editor.indexOf('historyCompartment.of(history())'), editor.indexOf('savedTextAdoption(),'))
+  // History is mounted with or without options (since b040d407 it is history({ minDepth: 200 })).
+  const historyAt = editor.search(/historyCompartment\.of\(history\(/)
+  const adoptionAt = editor.indexOf('savedTextAdoption(),')
+  assert(historyAt >= 0 && adoptionAt > historyAt, 'Editor.tsx mounts history before the adoption')
+  const mounted = editor.slice(historyAt, adoptionAt)
   const order = ['quoteLinkFormExtension(', 'tokenProtectExtension(', 'focusScopeExtension()'].map((name) => mounted.indexOf(name))
-  assert(order.every((at) => at >= 0) && order[0] < order[1] && order[1] < order[2], 'Editor.tsx mounts history, the link watch, the token guards, Slide Focus and the adoption in that order')
+  assert(order.every((at) => at > 0) && order[0] < order[1] && order[1] < order[2], 'Editor.tsx mounts history, the link watch, the token guards, Slide Focus and the adoption in that order')
   // The fix adds or changes no transaction filter: there are three in the editor's extensions, as before.
   const filters = ['focusScope.ts', 'quoteLinkForm.ts', 'outliner.ts', 'quoteLinkFormSnapshots.ts', 'keyTypedMark.ts'].map((name) => (source(`src/renderer/src/extensions/${name}`).match(/EditorState\.(transactionFilter|changeFilter|transactionExtender)\.of\(/g) ?? []).length)
   // The mark has a file of its own (Slide Focus reads it too). Only outliner.ts's key commands attach it: no other file

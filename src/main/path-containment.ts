@@ -4,6 +4,7 @@
 // can reuse it as-is.
 
 import { lstatSync, realpathSync } from 'fs'
+import { lstat, realpath } from 'fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 
 function lexists(path: string): boolean {
@@ -50,6 +51,69 @@ export function pathStaysInside(root: string, candidate: string, allowRoot = fal
   if (probe !== t && within(probe, r, true)) return join(realRoot, relative(r, t))
   let real: string
   try { real = realpathSync(probe) } catch { return null } // a dangling link
+  if (!within(realRoot, real, allowRoot || probe !== t)) return null
+  return probe === t ? real : join(real, relative(probe, t))
+}
+
+/** An answer from the filesystem that is not "there is nothing at this path". */
+function isAbsent(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code
+  return code === 'ENOENT' || code === 'ENOTDIR'
+}
+
+/** Thrown when a caller's budget ran out: no further filesystem operation was started. */
+export class FsWorkStopped extends Error {
+  constructor() { super('stopped'); this.name = 'FsWorkStopped' }
+}
+
+/**
+ * One filesystem operation under a caller's stop signal (review of 03756f0f): never started once
+ * `stop()` is true, and its result not used if `stop()` became true while it ran.
+ */
+export async function underStop<T>(stop: () => boolean, op: () => Promise<T>): Promise<T> {
+  if (stop()) throw new FsWorkStopped()
+  const result = await op()
+  if (stop()) throw new FsWorkStopped()
+  return result
+}
+
+const never = (): boolean => false
+
+async function lexistsAsync(path: string, stop: () => boolean): Promise<boolean> {
+  try { await underStop(stop, () => lstat(path)); return true } catch (error) { if (isAbsent(error)) return false; throw error }
+}
+
+/**
+ * pathStaysInside without blocking main (object card status and earlier views, review R4 of a222975a):
+ * the same lexical and resolved-path rule, with the filesystem asked asynchronously. Null when the
+ * candidate would leave the root, as for pathStaysInside; any answer other than "nothing there" (no
+ * permission, an I/O error) is thrown, so a caller can tell "outside" from "could not be checked".
+ * With `stop`, no filesystem operation starts once it is true (FsWorkStopped is thrown). The answer is
+ * a fact about one moment, never an authority to open the path later: a reader that must not consume
+ * bytes from outside opens with a kernel-enforced rule instead (object-status.ts, readRecord).
+ */
+export async function pathStaysInsideAsync(root: string, candidate: string, allowRoot = false, stop: () => boolean = never): Promise<string | null> {
+  if (typeof root !== 'string' || typeof candidate !== 'string' || !root || !candidate) return null
+  if (root.includes('\0') || candidate.includes('\0')) return null
+  const r = resolve(root)
+  const t = resolve(r, candidate)
+  if (!within(r, t, allowRoot)) return null
+  let base = r
+  while (!(await lexistsAsync(base, stop))) {
+    const parent = dirname(base)
+    if (parent === base) return null
+    base = parent
+  }
+  const realRoot = join(await underStop(stop, () => realpath(base)), relative(base, r))
+  let probe = t
+  while (!(await lexistsAsync(probe, stop))) {
+    const parent = dirname(probe)
+    if (parent === probe) return null
+    probe = parent
+  }
+  if (probe !== t && within(probe, r, true)) return join(realRoot, relative(r, t))
+  let real: string
+  try { real = await underStop(stop, () => realpath(probe)) } catch (error) { if (isAbsent(error)) return null; throw error } // a dangling link
   if (!within(realRoot, real, allowRoot || probe !== t)) return null
   return probe === t ? real : join(real, relative(probe, t))
 }

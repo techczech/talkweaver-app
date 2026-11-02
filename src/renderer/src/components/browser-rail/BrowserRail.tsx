@@ -10,6 +10,7 @@ import type { FsubKey } from './FilterGroups'
 import FilterGroups from './FilterGroups'
 import { Collections, FilesTree } from './BrowseTabs'
 import FindTalk, { type FindTalkProps } from './FindTalk'
+import { SlideSearchInput, type SlideSearchInputApi } from '../slide-browser/SlideSearchInput'
 import type {
   CollectionRow, ContentItem, FacetItem, RailFacets, ScopeEntry, ScopeFn,
   ToggleFacetFn
@@ -50,8 +51,12 @@ function readRailState(): RailUiState {
 
 export interface BrowserRailProps {
   inputRef: React.RefObject<HTMLInputElement>
+  /** The committed slide query; the field keeps what is typed and reports it once typing pauses. */
   query: string
   onQueryChange: (q: string) => void
+  onQueryPendingChange?: (pending: boolean) => void
+  /** Sets the field at once from outside (Esc, Clear search). */
+  searchApiRef?: React.MutableRefObject<SlideSearchInputApi | null>
   /** "Find a talk" (ADR-0029 §4): its query, results and the chips it keeps in the scope. */
   find: FindTalkProps
   /** Find a talk has words typed or a talk picked: the Files tree dims under it (K3, K4). */
@@ -113,15 +118,12 @@ export default function BrowserRail(props: BrowserRailProps) {
         <div className="lt-rail-search">
           <div className="lt-searchfield rail">
             <Search className="lt-icon" />
-            <input
-              ref={props.inputRef}
-              type="text"
-              value={props.query}
-              onChange={(e) => props.onQueryChange(e.target.value)}
-              placeholder="Words on slides — all words match"
-              autoComplete="off"
-              aria-label="Search slides — t: title · s: slide · e: exact · i: image text"
-              title="t: title · s: slide body · e: exact phrase · i: image text"
+            <SlideSearchInput
+              inputRef={props.inputRef}
+              query={props.query}
+              onQueryChange={props.onQueryChange}
+              onPendingChange={props.onQueryPendingChange}
+              apiRef={props.searchApiRef}
             />
             <kbd>⌘S</kbd>
           </div>

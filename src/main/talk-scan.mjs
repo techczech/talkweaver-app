@@ -17,9 +17,10 @@ import { conflictServiceOf } from './conflict-copies.mjs'
 export const TALK_SCAN_MAX_DEPTH = 8
 
 /** Folders never descended into: hidden, `_`-prefixed system areas (_assets, _PRESENTATIONS,
- *  _SLIDE-VERSIONS) and node_modules. */
+ *  _SLIDE-VERSIONS), node_modules, and a talk's `research` folder (filed by the capture verb; its
+ *  files must never read as a talk's outline or abstract). */
 export function isSkippedScanDir(name) {
-  return name.startsWith('.') || name.startsWith('_') || name === 'node_modules'
+  return name.startsWith('.') || name.startsWith('_') || name === 'node_modules' || name.toLowerCase() === 'research'
 }
 
 /**

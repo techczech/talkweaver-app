@@ -133,7 +133,9 @@ try {
     return r.top >= box.top - 1 && r.top < box.top + 60
   })
   assert.equal(sectionAtTop, true, 'the right side opens at § Content')
-  assert.equal(await page.locator(`${B} .lt-table-scroll .lt-grid.g2`).count(), 1, 'the results stay on the left, two across')
+  // The results draw row by row (only what is on screen), so each drawn row is its own grid.
+  const leftGrids = await page.locator(`${B} .lt-table-scroll .lt-grid`).evaluateAll((gs) => gs.map((g) => g.className))
+  assert.ok(leftGrids.length > 0 && leftGrids.every((c) => /\bg2\b/.test(c)), `the results stay on the left, two across (${leftGrids.join(', ')})`)
   assert.equal(await left.count(), 4, 'the results are unchanged')
   assert.match(await page.locator(`${B} .lt-beside-lh`).textContent(), /4 slides match “mondai”/)
   if (shots) { await page.waitForTimeout(1500); await page.screenshot({ path: join(shots, 'K5-result-beside.png') }) }
@@ -175,7 +177,9 @@ try {
   // ── Esc restores the results' scroll position ──
   await slideBox.fill('weekly')
   await settle()
-  assert.ok(await left.count() >= 24, 'a long result list')
+  // The results draw only what is near the viewport, so the list's length is its scroll height.
+  const overflow = await page.locator(`${B} .lt-table-scroll`).evaluate((el) => el.scrollHeight - el.clientHeight)
+  assert.ok(overflow > 400, `a long result list (scrolls ${overflow}px)`)
   await focusCard(0)
   const scroller = page.locator(`${B} .lt-table-scroll`)
   await scroller.evaluate((el) => { el.scrollTop = 320 })

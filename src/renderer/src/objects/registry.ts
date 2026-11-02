@@ -28,6 +28,56 @@ import {
 } from './shell.ts'
 import { mountSvgEditor } from './svg-editor.ts'
 import { mountTableEditor } from './table-editor.ts'
+import {
+  isMarkdownFenceClosingLine,
+  parseMarkdownFenceOpeningLine
+} from '../../../../compiler/scripts/lib/03-object-token.mjs'
+import { closedHtmlComments } from '../../../../compiler/scripts/lib/outline-regions.mjs'
+import { cardKind } from '../../../shared/objects/card-kinds.ts'
+import { notesBodyRefusal } from '../../../shared/objects/notes-body.ts'
+import { restoreLineEndings } from '../../../shared/objects/line-endings.ts'
+import { mountCardEditor } from './card-editors.ts'
+import { compilerErrorRefusal, type AssetFact } from '../../../shared/objects/compiler-error-check.ts'
+import { cardStatusRefs } from '../extensions/objectBlocks/status.ts'
+import type { ObjectEditorCommitOptions } from './shell.ts'
+
+const FENCE_CARD_KINDS = new Set(['code', 'chat', 'terminal', 'trace'])
+
+/**
+ * The refusal a card kind adds before the shared re-detection check (ADR-0042; notes design §4.3).
+ * Each names, in words, the line that would break the object; none is auto-fixed.
+ */
+export function cardBodyRefusal(block: ObjectBlock, inner: string): string | null {
+  const lines = inner.split('\n').map((line) => line.replace(/\r$/, ''))
+  if (FENCE_CARD_KINDS.has(block.kind)) {
+    const opening = parseMarkdownFenceOpeningLine(block.source.split('\n')[0] ?? '')
+    if (opening && lines.some((line) => isMarkdownFenceClosingLine(line, opening))) {
+      return `this text contains a line of ${opening.marker} that would end the block. Use a longer fence`
+    }
+    return null
+  }
+  if (block.kind === 'notes') return notesBodyRefusal(inner)
+  if (block.kind === 'comment') {
+    const found = closedHtmlComments(inner)
+    if (found.length !== 1 || found[0].from !== 0 || found[0].to !== inner.length) {
+      return 'the comment must stay one block from <!-- to -->'
+    }
+  }
+  return null
+}
+
+/** A whole-block replacement (a code card's new language or longer fence): stale-checked and re-detected. */
+function planWholeBlockCommit(block: ObjectBlock, currentDoc: string, wholeBlock: string): ObjectEditorCommitPlan {
+  if (currentDoc.slice(block.from, block.to) !== block.source) {
+    return { ok: false, reason: 'the editor shell was stale and no longer matched the active document' }
+  }
+  const nextDoc = `${currentDoc.slice(0, block.from)}${wholeBlock}${currentDoc.slice(block.to)}`
+  const parsed = detectObjectBlocks(nextDoc).find((candidate) => candidate.from === block.from)
+  if (!parsed || parsed.source !== wholeBlock || typeof parsed.bodyFrom !== 'number') {
+    return { ok: false, reason: 'the new fence lines could not be read back as one closed block without changing its bytes' }
+  }
+  return { ok: true, change: { from: block.from, to: block.to, insert: wholeBlock } }
+}
 
 export function innerSource(block: ObjectBlock): string {
   return objectBlockEditableSource(block)
@@ -58,9 +108,24 @@ export function serialiseBlock(block: ObjectBlock, inner: string): string {
   return `\`\`\`${info}\n${inner.replace(/\r?\n/g, '\n').replace(/\n+$/, '')}\n\`\`\``
 }
 
+// Line endings of an edited card body: src/shared/objects/line-endings.ts (line-matched, review R1).
+export { restoreLineEndings }
+
+export const LINE_ENDINGS_REFUSAL = 'This block mixes line endings and the change is too large to keep each untouched line’s ending exactly, so nothing was written. Make the change in smaller steps.'
+
 /** Preserve all original bytes on a no-op and otherwise preserve the final-newline shape. */
 export function objectEditorReplacement(block: ObjectBlock, inner: string): string {
   if (inner === innerSource(block)) return block.source
+  if (cardKind(block.kind)) {
+    // A card editor's text: a row editor hands over exact bytes (its unchanged rows carry their own
+    // endings, so any CR in it is deliberate); a text field hands over LF only, restored line by line.
+    const exact = inner.includes('\r') ? inner : restoreLineEndings(innerSource(block), inner)
+    // Not provable within the bounds (planObjectEditorChange refuses first): the card stays as it is.
+    if (exact === null) return block.source
+    if (typeof block.bodyFrom === 'number' && typeof block.bodyTo === 'number') return serialiseBlock(block, exact)
+    const trailing = block.source.endsWith('\r\n') ? '\r\n' : block.source.endsWith('\n') ? '\n' : ''
+    return `${exact}${trailing}`
+  }
   const lineEnding = block.source.includes('\r\n') ? '\r\n' : '\n'
   if (
     typeof block.bodyFrom === 'number'
@@ -105,11 +170,62 @@ export type ObjectEditorCommitPlan =
   | { ok: true; change: { from: number; to: number; insert: string } }
   | { ok: false; reason: string }
 
+/** What the editor knows beyond the text: main's answers about the files cards name (object status). */
+export type ObjectCommitFacts = { statusOf?: (ref: string) => string | undefined }
+
+/** The files the cards in `doc` name, with the state main answered for each (unanswered ones left out). */
+function assetFacts(doc: string, statusOf: (ref: string) => string | undefined): AssetFact[] {
+  const facts: AssetFact[] = []
+  for (const block of detectObjectBlocks(doc)) {
+    for (const ref of cardStatusRefs(block)) {
+      const state = statusOf(ref)
+      if (state) facts.push({ ref, state })
+    }
+  }
+  return facts
+}
+
+/**
+ * The commit plan for an object editor: the shape checks below, then the compiler-error check (a change
+ * that adds a compiler error the outline did not have is not written; errors already there never block).
+ */
 export function planObjectEditorCommit(
   block: ObjectBlock,
   currentDoc: string,
-  inner: string
+  inner: string,
+  options?: ObjectEditorCommitOptions,
+  facts?: ObjectCommitFacts
 ): ObjectEditorCommitPlan {
+  const plan = planObjectEditorChange(block, currentDoc, inner, options)
+  if (!plan.ok || plan.change.insert === currentDoc.slice(plan.change.from, plan.change.to)) return plan
+  const nextDoc = `${currentDoc.slice(0, plan.change.from)}${plan.change.insert}${currentDoc.slice(plan.change.to)}`
+  const statusOf = facts?.statusOf
+  const refusal = compilerErrorRefusal(
+    currentDoc,
+    nextDoc,
+    statusOf ? assetFacts(currentDoc, statusOf) : [],
+    statusOf ? assetFacts(nextDoc, statusOf) : []
+  )
+  return refusal ? { ok: false, reason: refusal } : plan
+}
+
+function planObjectEditorChange(
+  block: ObjectBlock,
+  currentDoc: string,
+  inner: string,
+  options?: ObjectEditorCommitOptions
+): ObjectEditorCommitPlan {
+  if (options?.wholeBlock !== undefined && options.wholeBlock !== block.source) {
+    return planWholeBlockCommit(block, currentDoc, options.wholeBlock)
+  }
+  if (inner !== innerSource(block)) {
+    const cardRefusal = cardBodyRefusal(block, inner)
+    if (cardRefusal) return { ok: false, reason: cardRefusal }
+  }
+  if (cardKind(block.kind) && !inner.includes('\r') && inner !== innerSource(block)
+    && restoreLineEndings(innerSource(block), inner) === null) {
+    return { ok: false, reason: LINE_ENDINGS_REFUSAL }
+  }
   const replacement = objectEditorReplacement(block, inner)
   const refusal = objectEditorCommitRefusal(block, currentDoc, replacement, inner)
   if (refusal) return { ok: false, reason: refusal }
@@ -301,6 +417,8 @@ export function mountObjectEditor(
 ): HTMLElement {
   const inner = innerSource(block)
   const markup = textareaEditor(inner)
+  const card = cardKind(block.kind)
+  if (card) return mountCardEditor(block, card, inner, markup, api, cheatSheet, (next) => objectEditorReplacement(block, next))
   const declaration = objectLayoutEntryForBlockKind(block.kind)?.object
   if (!declaration) {
     return mountMarkupFallback(

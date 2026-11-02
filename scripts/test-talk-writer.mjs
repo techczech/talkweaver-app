@@ -356,6 +356,55 @@ try {
     assert.equal(readFileSync(path, 'utf8'), OUTLINE, 'disk untouched throughout (the window is the writer)')
     configureTalkWriter({ editorBufferFor: () => null })
   }
+
+  // Live authority: a routed write's `authorize` runs last on either route. A refusal is the writer's own
+  // untouched refusal, and a transformation that changes nothing has nothing to authorise.
+  {
+    const refuse = () => { throw new Error('the place changed') }
+    const closed = talk()
+    const inode = statSync(closed).ino
+    const refused = await writeTalkOutline(closed, (t) => `${t}\n## Never\n`, 'retitle', { authorize: refuse })
+    assert.deepEqual([refused.ok, refused.error, refused.untouched], [false, 'the place changed', true], 'disk route refuses untouched')
+    assert.deepEqual([readFileSync(closed, 'utf8'), statSync(closed).ino, strays(closed)], [OUTLINE, inode, []], 'no byte, no new inode, no temp')
+
+    const order = []
+    const open = talk()
+    const win = { buffer: OUTLINE, typeBeforeCommit: 0 }
+    configureTalkWriter({
+      editorBufferFor: () => ({
+        async read() { order.push('read'); return win.buffer },
+        async commit(base, next) {
+          order.push('commit')
+          if (win.typeBeforeCommit > 0) { win.typeBeforeCommit -= 1; win.buffer += 'x'; return { ok: false, error: 'moved', moved: true } }
+          if (win.buffer !== base) return { ok: false, error: 'changed' }
+          win.buffer = next
+          return { ok: true }
+        },
+      }),
+    })
+    const allowed = await writeTalkOutline(open, (t) => `${t}\n## Once\n`, 'retitle', { authorize: () => order.push('authorize') })
+    assert.equal(allowed.ok && allowed.via, 'editor', 'an authorised write reaches the window')
+    assert.deepEqual(order, ['read', 'authorize', 'commit'], 'asked after the read, immediately before the apply')
+
+    order.length = 0
+    const held = win.buffer
+    const refusedOpen = await writeTalkOutline(open, (t) => `${t}\n## Never\n`, 'retitle', { authorize: refuse })
+    assert.deepEqual([refusedOpen.ok, refusedOpen.error, refusedOpen.untouched], [false, 'the place changed', true], 'editor route refuses untouched')
+    assert.deepEqual([order, win.buffer], [['read'], held], 'the window was never asked to apply')
+
+    // A retry after the person typed is a new moment: it asks again, so a later refusal stops it.
+    order.length = 0
+    win.typeBeforeCommit = 1
+    let asked = 0
+    const retried = await writeTalkOutline(open, (t) => `${t}\n## Never\n`, 'retitle', { authorize: () => { order.push('authorize'); asked += 1; if (asked === 2) refuse() } })
+    assert.equal(retried.ok, false, 'the second attempt was refused')
+    assert.deepEqual(order, ['read', 'authorize', 'commit', 'read', 'authorize'], 'authorised on each attempt, never committed after a refusal')
+
+    order.length = 0
+    assert.equal((await writeTalkOutline(open, (t) => t, 'retitle', { authorize: refuse })).ok, true, 'nothing to write, nothing to authorise')
+    assert.deepEqual(order, ['read'])
+    configureTalkWriter({ editorBufferFor: () => null })
+  }
 } finally {
   configureTalkWriter({ editorBufferFor: () => null })
   rmSync(root, { recursive: true, force: true })

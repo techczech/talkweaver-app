@@ -1138,6 +1138,49 @@ const hostAfterAdopt = async (_ed, _path) => {} // WorkspaceLayout: no onAdopted
   assert.ok(ed2.doc.includes('typing 1') && ed2.doc.includes('typing 2'), 'the typing is kept')
 }
 
+// A saved view of a live web page (Capture, live-page-capture-markup.mjs): main adds its {capture} line
+// through the same routed writer while the person types in the open talk. The line lands once under the
+// slide's page, the typing is kept, it is ONE undo step, and the closed talk's file takes it in place;
+// a slide that is gone changes nothing.
+{
+  const { captureMarkupLine, withCaptureLine } = await import(pathToFileURL(join(REPO, 'compiler/scripts/lib/live-page-capture-markup.mjs')).href)
+  const SITE_OUTLINE = '# Talk\n\n## Radio Times {id=page}\n\n- Created from 340 hours\n\n[Embed: https://example.org]\n\n## End {id=end}\n\n- end\n'
+  const line = captureMarkupLine('assets/live-page-captures/aaaaaaaaaaaaaaaa.jpg', '2026-10-27T11:05:00.000Z')
+  const place = (text) => withCaptureLine(text, 'page', 'https://example.org/', line)
+  const path = talkFile(SITE_OUTLINE)
+  const ed = fakeEditorWindow(path)
+  ed.type('- Created from 340 hours', ' of audio')
+  let typedOnRead = false
+  configureTalkWriter({ editorBufferFor: (p) => p === path ? {
+    // The person types between main's read and its apply: the transformation is worked out again.
+    async read() { const text = await ed.editorBuffer.read(); if (!typedOnRead) { typedOnRead = true; ed.type('- end', ' and more') } return text },
+    commit: (base, next, origin) => ed.mutator.applyFromMain(path, base, next, origin),
+  } : null })
+  try {
+    const undoBefore = ed.undo.length
+    const routed = await writeTalkOutline(path, place, 'live-page-capture')
+    assert.equal(routed.ok, true, JSON.stringify(routed))
+    assert.equal(routed.via, 'editor')
+    await ed.idle()
+    assert.ok(ed.doc.includes(`[Embed: https://example.org]\n<!-- saved views {capture} -->\n${line}\n`), 'the marker and the line under the page')
+    assert.ok(ed.doc.includes('340 hours of audio') && ed.doc.includes('- end and more'), 'the typing is kept')
+    assert.equal(ed.doc.split(line).length, 2, 'added once')
+    assert.equal(ed.undo.length - undoBefore, 2, 'the typed change and ONE change for the saved view')
+    assert.equal(readFileSync(path, 'utf8'), ed.doc, 'saved through the queue')
+    const gone = await writeTalkOutline(path, (text) => withCaptureLine(text, 'gone', 'https://example.org/', line), 'live-page-capture')
+    assert.equal(gone.ok, false); assert.match(gone.error, /capture-slide-missing/)
+  } finally {
+    configureTalkWriter({ editorBufferFor: () => null })
+  }
+  // The talk is not open: its file takes the line in place.
+  const closed = talkFile(SITE_OUTLINE)
+  const ino = statSync(closed).ino
+  const onDisk = await writeTalkOutline(closed, place, 'live-page-capture')
+  assert.equal(onDisk.ok, true); assert.equal(onDisk.via, 'disk')
+  assert.equal(readFileSync(closed, 'utf8'), place(SITE_OUTLINE))
+  assert.equal(statSync(closed).ino, ino, 'written in place (same file)')
+}
+
 // Non-UTF-8 outline bytes would not survive a text round trip: refuse, write nothing.
 {
   const path = talkFile('')
@@ -1149,4 +1192,4 @@ const hostAfterAdopt = async (_ed, _path) => {} // WorkspaceLayout: no onAdopted
   assert.ok(readFileSync(path).equals(bytes))
 }
 
-console.log('instant-slide insert: text, link, countdown, image; first/middle/last/parent/moved/generated anchors; refusals; byte diffs; Run marking; Run path boundary; staged-write race; save ordering; tilde fences; symlinks; image checks; media escaping; round 2 (mode, read-only, decode, links, shared queue); round 3 (one queue and one editor window per real file); D1 buffer-first reorder, tag, publish stamp, adopt, icon pick, archive insert (saved through the queue at once), refusal wording per origin, Add to talk retried once after a reorder passed')
+console.log('instant-slide insert: text, link, countdown, image; first/middle/last/parent/moved/generated anchors; refusals; byte diffs; Run marking; Run path boundary; staged-write race; save ordering; tilde fences; symlinks; image checks; media escaping; round 2 (mode, read-only, decode, links, shared queue); round 3 (one queue and one editor window per real file); D1 buffer-first reorder, tag, publish stamp, adopt, icon pick, archive insert (saved through the queue at once), refusal wording per origin, Add to talk retried once after a reorder passed; a saved view\'s {capture} line routed while typing (one undo step) and in place for a closed talk')

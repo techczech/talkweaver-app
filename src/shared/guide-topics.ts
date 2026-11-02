@@ -95,7 +95,7 @@ export const HOW_TOPICS: readonly HowTopic[] = [
   {
     id: 'how.7', title: 'Presenter and audience are separate.', picture: 'presenter',
     sentences: [
-      'Speaker notes and the clock appear only in the presenter window. They are not written into the deck, the handout or anything you share.',
+      'Speaker notes and the clock appear only in the presenter window. They are not written into the audience deck, the handout or what you share for comments. The “share with notes” file from Build variants includes them on purpose.',
       'In PowerPoint and Keynote the speaker notes are saved in the presentation file.'
     ],
     tryIt: talk('Lightning round', 'Open Lightning round.', 'Opens the example talk, whose slides carry speaker notes.')

@@ -472,7 +472,9 @@ try {
   // The wiring (the e2e proves the behaviour): setup asks for the app's lock, and refuses before any of its work.
   const indexSource = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
   const top = indexSource.slice(0, indexSource.indexOf('// Renderer heap headroom'))
-  assert.match(top, /const holdsInstanceLock = app\.requestSingleInstanceLock\(SETUP_ARGS \? SETUP_LOCK_DATA : undefined\)/, 'setup takes the same lock as the app')
+  // (0.42: `settings` takes no lock, as the settings file has its own; setup still takes the app's.)
+  assert.match(top, /const holdsInstanceLock = SETTINGS_ARGS \? false : app\.requestSingleInstanceLock\(SETUP_ARGS \? SETUP_LOCK_DATA : undefined\)/, 'setup takes the same lock as the app')
+  assert.match(top, /const SETTINGS_ARGS = SETUP_ARGS \? null :/, 'a setup command is never a settings command')
   const setupBranch = top.slice(top.indexOf('if (SETUP_ARGS) {'), top.indexOf('} else if (!holdsInstanceLock)'))
   assert.match(setupBranch, /if \(!holdsInstanceLock\) \{[\s\S]*?appOpenRefusal\(SETUP_ARGS\)[\s\S]*?app\.exit\(1\)\n  \}/, 'no lock: the refusal, exit 1')
   assert.ok(!setupBranch.includes("on('second-instance'"), 'the setup process listens for no second launch')

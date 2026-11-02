@@ -64,11 +64,11 @@ export function contrastModel(block) {
   const parsed = block.pairs.map(([left, right], i) => {
     const token = listItemIconTokenAt(textOf(left), normalizeIconOverrideKey);
     return {
-      left: { text: token ? textOf(left).slice(0, token.index).trim() : textOf(left), icon: token?.icon || null },
-      right: { text: textOf(right), icon: block.iconOverrides?.[i] || null },
+      left: { text: token ? textOf(left).slice(0, token.index).trim() : textOf(left), icon: token?.icon || null, children: block.pairChildren?.[i]?.[0] },
+      right: { text: textOf(right), icon: block.iconOverrides?.[i] || null, children: block.pairChildren?.[i]?.[1] },
     };
   });
-  const headed = parsed.length >= VS_CONTRAST_HEADS_FROM;
+  const headed = block.headed ?? (parsed.length >= VS_CONTRAST_HEADS_FROM);
   const body = headed ? parsed.slice(1) : parsed;
   const panels = [
     { head: headed ? parsed[0].left.text : "", rows: body.map((p) => p.left) },
@@ -85,7 +85,7 @@ export function contrastModel(block) {
 export function contrastRowDrawsIcon(block, index) {
   const model = contrastModel(block);
   if (!model || !Number.isInteger(index)) return false;
-  const row = index - (block.pairs.length >= VS_CONTRAST_HEADS_FROM ? 1 : 0);
+  const row = index - (model.headed ? 1 : 0);
   const right = row >= 0 ? model.panels[1].rows[row] : null;
   return Boolean(right && textOf(right.text));
 }

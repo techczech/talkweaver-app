@@ -5,16 +5,19 @@ import type { LiveAudienceFeedback } from './live-session-history'
 import { runInstantSlideFrom } from './runs'
 import { talkVaultRoot, type VaultLookup } from './asset-roots'
 
-/** What a presenter window goes live as: its talk, its handout link, and the vault the presented talk is in. */
-export interface LivePresenterContext { talkSlug: string; shortUrl: string | null; vaultRoot: string | null }
+/**
+ * What a presenter window goes live as: its talk, its handout link, and the vault the presented talk is in.
+ * `runLink` is set while that link is the planned Run's own: `folder` is the Run's folder in the site, when recorded.
+ */
+export interface LivePresenterContext { sourceOutline?: string; talkSlug: string; shortUrl: string | null; vaultRoot: string | null; runLink?: { folder?: string } }
 
 /**
  * A presenter window's live identity (issue 256): the vault is the registered vault holding the outline being
  * presented, so a Run of a second vault with the same talk and Run id goes live as that vault's Run. Never the
  * current (first) vault; a talk in no vault has none (null).
  */
-export function livePresenterContext(vaults: VaultLookup, outlinePath: string, talkSlug: string, shortUrl: string | null): LivePresenterContext {
-  return { talkSlug, shortUrl, vaultRoot: talkVaultRoot(vaults, outlinePath) ?? null }
+export function livePresenterContext(vaults: VaultLookup, outlinePath: string, talkSlug: string, shortUrl: string | null, runLink?: { folder?: string }, sourceOutline?: string): LivePresenterContext {
+  return { ...(sourceOutline ? { sourceOutline } : {}), talkSlug, shortUrl, vaultRoot: talkVaultRoot(vaults, outlinePath) ?? null, ...(runLink ? { runLink } : {}) }
 }
 
 const instantKey = (slide: InstantSlide): string => `${slide.kind}-${slide.shownAt}`
@@ -70,6 +73,8 @@ export function createLiveSessionManager(deps: {
    * work-files ticket 19). `vaultRoot` is the vault the session recorded when it was bound: the Run is
    * that vault's, never another vault's Run of the same talk slug and id.
    */
+  /** A session came, went or changed status: the update check asks again whether a talk is on. */
+  onActivity?(): void
   onEnded?(reference: { talkSlug: string; runId: string; vaultRoot: string | null }): void
   schedule?: typeof setTimeout
   cancelSchedule?: typeof clearTimeout
@@ -89,6 +94,7 @@ export function createLiveSessionManager(deps: {
     const record = { ...runtime.record, ...patch }
     deps.save([...sessions.values()].map((item) => item === runtime ? record : item.record))
     runtime.record = record
+    try { deps.onActivity?.() } catch { /* never interrupts a session */ }
   }
   function notify(runtime: Runtime, channel: string, value: unknown) {
     if (runtime.windowId !== null) deps.notify(runtime.windowId, channel, value)
@@ -338,11 +344,13 @@ export function createLiveSessionManager(deps: {
     const runtime = runtimeForWindow(id)
     windows.delete(id)
     if (runtime?.windowId === id) { runtime.windowId = null; history(runtime) }
+    try { deps.onActivity?.() } catch { /* never interrupts a session */ }
   }
   function attachRuntime(runtime: Runtime, windowId: number) {
     if (runtime.windowId !== null && runtime.windowId !== windowId) windows.delete(runtime.windowId)
     runtime.windowId = windowId
     windows.set(windowId, runtime.record.sessionId)
+    try { deps.onActivity?.() } catch { /* never interrupts a session */ }
     connect(runtime)
     return runtime.record
   }
@@ -374,6 +382,10 @@ export function createLiveSessionManager(deps: {
         record.talkSlug === talkSlug && record.vaultRoot === vaultRoot
         && record.expiresAt > now() && record.status !== 'ended' && record.status !== 'expired')
       return runtime && runtime.windowId === null ? attachRuntime(runtime, windowId) : null
+    },
+    /** A live session has not ended, whether or not a window holds it now (the update check waits while one is). */
+    anyOpen(): boolean {
+      return [...sessions.values()].some((runtime) => !isTerminalLiveStatus(runtime.record.status))
     },
     /**
      * The Runs a live session is bound to and has not ended (Sessions' "Live now"), each with the vault the session

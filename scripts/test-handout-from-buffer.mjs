@@ -1,3 +1,4 @@
+import { preservationMessage } from '../src/main/publication-preservation.ts'
 // Handout built from the buffer (roadmap idea handout-built-from-the-buffer, 2026-09-28).
 // Invariant: what is published equals the editor's buffer at the moment Publish was pressed, and no
 // outline is ever written by publishing except through the existing save path (the one writer,
@@ -9,10 +10,10 @@
 // talk handout — the REAL bundled compiler, and the REAL publishing sequence (handout-publishing.ts)
 // with leave always given. The upload, the live service and the ledger are fakes.
 import assert from 'node:assert/strict'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { open } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, relative } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import ts from 'typescript'
 import { configureTalkWriter, flushTalkForPublish, withTalkFileLock, writeTalkOutline } from '../src/main/talk-writer.ts'
@@ -32,7 +33,8 @@ import { withoutPreworkSlides } from '../src/shared/run-prework.ts'
 import { handoutHomeDetails, handoutHomePostwork, handoutHomePrework } from '../src/shared/handout-home.ts'
 import { planRunWork, sendRunWork, writeRunWorkPages, runLineFor } from '../src/main/run-work-publish.ts'
 import { RUN_FOLDER_UNCLEAR, runPublishFolder, runSiteFolder } from '../src/main/run-unpublish.ts'
-import { stampRunWork } from '../src/main/runs.ts'
+import { runPublicationFixture } from './lib/run-publication-fixture.mjs'
+import { persistRunForTalk, readRunForTalk, normaliseRun, stampRunWork } from '../src/main/runs.ts'
 import { WORK_PAGE_FOLDER } from '../src/shared/run-work.ts'
 // The pages are built and written as the main process's worker thread does it, here in this process.
 import { buildHandoutPages } from '../src/main/handout-pages.ts'
@@ -61,6 +63,7 @@ function loadHandler(channel, dependencies) {
 }
 
 const root = mkdtempSync(join(tmpdir(), 'tw-handout-buffer-'))
+try {
 let seq = 0
 const OUTLINE = [
   '---',
@@ -169,7 +172,7 @@ function publishDeps(siteDir, trace) {
     vaultRootFor: () => config.vaultRoot,
     // The real root choice (ADR-0036), with the test's vault as the one registered vault.
     assetRootsFor: (path) => assetRootsForTalk({ resolve: () => (config.vaultRoot ? { vault: { root: config.vaultRoot } } : null) }, path),
-    handoutPublishing: () => trace.publishing ??= grantedPublishing({
+    preservationMessage, handoutPublishing: () => trace.publishing ??= grantedPublishing({
       siteDir, supersede: trace.supersede ?? 'never',
       live: async () => { trace.liveWorker += 1; return { baseUrl: FAKE_LIVE_ADDRESS, adminSecret: 'x' } },
       onUpload: () => { trace.deploys += 1 },
@@ -189,6 +192,7 @@ function publishDeps(siteDir, trace) {
     handoutHomeDetails, handoutHomePrework,
     app: { getPath: () => root },
     ledgerSeal: async (path, text, reason) => { trace.sealed.push({ path, text, reason }) },
+    presenterPublications: { ticket: () => 1, published: () => [] },
   }
 }
 const handoutOf = (siteDir, path) => {
@@ -256,7 +260,7 @@ for (const [supersede, recorded] of [['after-upload', true], ['during-upload', f
       assert.ok(readFileSync(path, 'utf8').includes(stamp) && ed.doc.includes(stamp), 'the upload completed: the link is written into the outline although the connection has changed since')
       assert.deepEqual(trace.sealed.map((seal) => seal.reason), ['publish'], 'and the publish is in the ledger')
     } else {
-      assert.deepEqual([result.success, result.error, result.url], [false, PUBLISH_SUPERSEDED_ERROR, undefined], 'superseded during its upload: the publish says so')
+      assert.deepEqual([result.success, result.error, result.url], [false, preservationMessage('PUBLISH_OUTCOME_UNKNOWN'), undefined], 'superseded during upload: remote outcome is unknown')
       assert.ok(!readFileSync(path, 'utf8').includes(stamp) && !ed.doc.includes(stamp), 'and no link is written into the outline')
       assert.deepEqual(trace.sealed, [], 'and nothing is sealed in the ledger')
     }
@@ -284,8 +288,7 @@ for (const baseUrl of ['http://localhost:4000', 'http://127.1:4000', 'http://213
   }
 }
 // 1d. A talk whose file name reads like an address: its pages' own links stay beside the page.
-{
-  const name = 'http:127.0.0.1#'
+for (const name of ['http:127.0.0.1', 'http:127.0.0.1#']) {
   mkdirSync(join(root, name), { recursive: true })
   const path = join(root, name, `${name}-outline.md`)
   writeFileSync(path, OUTLINE, 'utf8')
@@ -295,6 +298,9 @@ for (const baseUrl of ['http://localhost:4000', 'http://127.1:4000', 'http://213
   try {
     const result = await loadHandler('talk:publish-handout', publishDeps(siteDir, trace))(null, path, ed.doc)
     await ed.idle()
+    if (name.includes('#')) {
+      assert.equal(result.success, false); assert.match(result.error, /Rename it/); assert.ok(result.error.includes(name)); assert.equal(trace.deploys, 0); continue
+    }
     assert.equal(result.success, true, result.error)
     const home = readFileSync(join(siteDir, name, 'index.html'), 'utf8')
     const hrefs = [/<a class="hh-btn" id="hhDownload" data-hh-for="handout" href="([^"]*)" download=/.exec(home)[1], /<a class="hh-btn primary" href="([^"]*)">/.exec(home)[1]]
@@ -306,8 +312,8 @@ for (const baseUrl of ['http://localhost:4000', 'http://127.1:4000', 'http://213
 }
 
 // 1e. ENTRY FIRST covers redirects, through the real handler (ticket 04 round 3). Talks whose file
-//     names hold a space, `#`, `%`, `?` or letters outside ASCII publish, with short links on and
-//     off, and every link and redirect leads to that talk's own folder.
+//     names hold a space or letters outside ASCII publish with short links on and off.
+//     Percent, hash and query names refuse before upload and ask for a rename.
 {
   const NAMES = ['two words', 'a#b', '50%', 'q?x', 'ünï-講演', 'plain-talk']
   const BASE = 'https://talks.test'
@@ -325,6 +331,10 @@ for (const baseUrl of ['http://localhost:4000', 'http://127.1:4000', 'http://213
       try {
         const result = await loadHandler('talk:publish-handout', publishDeps(siteDir, trace))(null, path, ed.doc)
         await ed.idle()
+        if (/[%?#]/.test(name)) {
+          assert.equal(result.success, false); assert.match(result.error, /PUBLISH_CANDIDATE_CHANGED/); assert.match(result.error, /Rename it/); assert.ok(result.error.includes(name)); assert.equal(trace.deploys, 0)
+          rmSync(join(siteDir, name), { recursive: true, force: true }); continue
+        }
         assert.equal(result.success, true, `${name} (${short ? 'short links' : 'plain links'}): ${result.error}`)
         assert.ok(existsSync(join(siteDir, name, 'index.html')), `${name}: its pages are in its own folder`)
         const link = new URL(result.url)
@@ -346,7 +356,7 @@ for (const baseUrl of ['http://localhost:4000', 'http://127.1:4000', 'http://213
       }
     }
   }
-  assert.equal(readFileSync(join(shortSite, '_redirects'), 'utf8').trim().split('\n').length, NAMES.length * 4, 'all of them are in the redirect file together (the link, the venue screen, pre-work and post-work)')
+  assert.equal(readFileSync(join(shortSite, '_redirects'), 'utf8').trim().split('\n').length, NAMES.filter(name => !/[%?#]/.test(name)).length * 4, 'all of them are in the redirect file together (the link, the venue screen, pre-work and post-work)')
 }
 
 // 1f. A talk's folder in the site comes from its file's name: a name that would not stay inside the
@@ -437,13 +447,16 @@ for (const [label, setup] of [
 // ── run:build-handout / run:publish-handout ────────────────────────────────────────────────
 function runDeps(path, built, extra = {}) {
   const talk = { slug: basename(path).replace('-outline.md', ''), outlinePath: path }
+  const authority=runPublicationFixture(sourceText,REPO,()=>[{id:'fixture',root,open:true}],()=>[talk])
+  persistRunForTalk(root,talk.slug,'run-1',normaliseRun({id:'run-1',talkSlug:talk.slug,talkTitle:'Buffer Talk',status:'delivered',eventTitle:'Event',plannedDate:'2026-09-28',startedAt:'2026-09-28T10:00:00Z',sourceOutline:relative(root,path)}))
   return {
+    ...authority,
     unresolvedOutboundFailure,
     getConfig: (key, fallback) => ({ vaultRoot: root, cfPagesProject: 'talks', liveWorkerBaseUrl: 'http://127.0.0.1:8787' }[key] ?? fallback),
     currentVaultRoot: () => root,
     writableVaultRoot: () => root, // a write resolves the vault only while its folder is there (vaults 07)
     vaultRootFor: () => root,
-    readRun: () => ({ id: 'run-1', status: 'delivered', eventTitle: 'Event', plannedDate: '2026-09-28', startedAt: '2026-09-28T10:00:00Z' }),
+    readRunForTalk,
     talkBySlug: () => talk,
     flushTalkForPublish,
     readFileSync,
@@ -462,18 +475,44 @@ function runDeps(path, built, extra = {}) {
     // Publish for this run (work-files ticket 16): with pre-work hidden no work page is sent; the handler still names these.
     handoutHomePostwork, planRunWork, sendRunWork, writeRunWorkPages, runLineFor, stampRunWork, WORK_PAGE_FOLDER, runSiteFolder, runPublishFolder, RUN_FOLDER_UNCLEAR, listRuns: () => [],
     assetRootsFor: () => [root],
+    presenterPublications: { ticket: () => 1, published: () => [] },
     buildHandoutPagesOffThread: async (job) => {
       built.push(job.text)
       if (extra.stopAfterBuild) throw new Error('stop after build')
       return { warnings: [], slideIds: [], missing: [] }
     },
-    handoutPublishing: () => extra.publishing ??= grantedPublishing({ siteDir: join(root, 'run-site') }),
+    preservationMessage, handoutPublishing: () => extra.publishing ??= grantedPublishing({ siteDir: join(root, 'run-site') }),
     publishSiteDir: () => join(root, 'run-site'),
     existsSync, mkdirSync, readdirSync, join, resolveBase, SITE_FOLDER_REFUSED, publishedFolders, removeSiteFolder, writableSiteFolder,
     readHandoutRegistry: () => ({}),
     runHandoutSlug: () => 'run-slug',
     process: { env: {} },
   }
+}
+
+// The extracted production authority refuses closed/unavailable/non-writable fixture roots,
+// and detects replacement of either bound file before any build can use that authority.
+{
+  const path=talkFile(), slug=basename(path).replace('-outline.md','')
+  const run=persistRunForTalk(root,slug,'authority-negative',normaliseRun({id:'authority-negative',talkSlug:slug,status:'delivered',sourceOutline:relative(root,path)}))
+  let registered=[{id:'fixture',root,open:true}]
+  const fixture=runPublicationFixture(sourceText,REPO,()=>registered,()=>[{slug,outlinePath:path}])
+  registered[0].open=false
+  assert.throws(()=>fixture.runPublicationAuthority(root,run),/run-source-unavailable/)
+  registered[0].open=true;fixture.state.unavailable.add('fixture')
+  assert.throws(()=>fixture.runPublicationAuthority(root,run),/run-source-unavailable/)
+  fixture.state.unavailable.clear();fixture.state.writable=false
+  assert.throws(()=>fixture.runPublicationAuthority(root,run),/run-source-unavailable/)
+  fixture.state.writable=true
+  const checkSource=fixture.runPublicationAuthority(root,run)
+  renameSync(path,path+'.held');writeFileSync(path,OUTLINE)
+  assert.throws(checkSource,/run-source-changed/)
+  rmSync(path);renameSync(path+'.held',path)
+  const checkRun=fixture.runPublicationAuthority(root,run)
+  const runPath=join(root,'_PRESENTATIONS',slug,'authority-negative.json')
+  const bytes=readFileSync(runPath);renameSync(runPath,runPath+'.held');writeFileSync(runPath,bytes)
+  assert.throws(checkRun,/run-identity-changed/)
+  rmSync(runPath);renameSync(runPath+'.held',runPath)
 }
 
 // 4. A Run's handout (build and publish) from an open talk with unsaved edits: the editor saves the
@@ -489,7 +528,7 @@ for (const [channel, extra] of [['run:build-handout', {}], ['run:publish-handout
   const built = []
   try {
     const handler = loadHandler(channel, runDeps(path, built, extra))
-    const result = await handler(null, { talkSlug: 'buffer-talk', runId: 'run-1' })
+    const result = await handler(null, { talkSlug: basename(path).replace('-outline.md',''), runId: 'run-1' })
     if (extra.stopAfterBuild) assert.deepEqual(result, { success: false, error: 'stop after build' })
     else assert.equal(result.success, true, result.error)
     assert.deepEqual(built, [committed], `${channel}: built from the committed text (with its stamped id), not a read of the file`)
@@ -511,7 +550,7 @@ for (const [channel, extra] of [['run:build-handout', {}], ['run:publish-handout
   const built = []
   try {
     const handler = loadHandler('run:build-handout', runDeps(path, built))
-    const result = await handler(null, { talkSlug: 'buffer-talk', runId: 'run-1' })
+    const result = await handler(null, { talkSlug: basename(path).replace('-outline.md',''), runId: 'run-1' })
     assert.equal(result.success, true, result.error)
     assert.deepEqual(built, [OUTLINE + '## Saved already {id=bb22}\n'])
     assert.deepEqual(ed.saves, [], 'no save')
@@ -532,7 +571,7 @@ for (const channel of ['run:build-handout', 'run:publish-handout']) {
   const built = []
   try {
     const handler = loadHandler(channel, runDeps(path, built))
-    const result = await handler(null, { talkSlug: 'buffer-talk', runId: 'run-1' })
+    const result = await handler(null, { talkSlug: basename(path).replace('-outline.md',''), runId: 'run-1' })
     assert.deepEqual(result, { success: false, error: 'The talk has unsaved changes and its file is read-only, so nothing was published.' }, channel)
     assert.deepEqual([built, ed.saves], [[], []], channel)
     assert.equal(readFileSync(path, 'utf8'), OUTLINE, channel)
@@ -552,7 +591,7 @@ for (const channel of ['run:build-handout', 'run:publish-handout']) {
   const built = []
   try {
     const handler = loadHandler('run:build-handout', runDeps(path, built))
-    const result = await handler(null, { talkSlug: 'buffer-talk', runId: 'run-1' })
+    const result = await handler(null, { talkSlug: basename(path).replace('-outline.md',''), runId: 'run-1' })
     assert.equal(result.success, true, result.error)
     assert.deepEqual(built, [OUTLINE + '## On disk only {id=bb22}\n'])
     const after = statSync(path)
@@ -569,7 +608,7 @@ for (const channel of ['run:build-handout', 'run:publish-handout']) {
   const built = []
   try {
     const handler = loadHandler('run:build-handout', runDeps(path, built))
-    const result = await handler(null, { talkSlug: 'buffer-talk', runId: 'run-1' })
+    const result = await handler(null, { talkSlug: basename(path).replace('-outline.md',''), runId: 'run-1' })
     assert.deepEqual(result, { success: false, error: 'The talk could not be saved to disk, so nothing was published. Your edits are still in the editor.' })
     assert.deepEqual(built, [])
     assert.equal(readFileSync(path, 'utf8'), OUTLINE)
@@ -613,3 +652,5 @@ for (const channel of ['run:build-handout', 'run:publish-handout']) {
 }
 
 console.log('handout from the buffer: talk handout, ledger seal and stamp are exactly the text the flush committed (a racing in-place autosave never tears it); publishing\'s own refusals (save failed, unsaved over read-only, empty talk; never ⌘Z); unresolved buffer refuses; Run build and publish from the committed buffer; a buffer equal to its file is used with no write; closed read-only talk read, not rewritten; race probe ×120 passed')
+
+} finally { configureTalkWriter({editorBufferFor:()=>null}); rmSync(root,{recursive:true,force:true}) }

@@ -43,7 +43,7 @@ export function checkPreconditions(c: {
 export const PUBLISH_REFUSED = 'Cloudflare did not accept the token for publishing. In Settings → Cloudflare, check that the token has the permission Account · Cloudflare Pages · Edit.'
 export const PUBLISH_TOKEN_REJECTED = 'Cloudflare did not accept this token, so nothing was published. Replace it in Settings → Cloudflare.'
 export const PUBLISH_NO_SITE = 'The site to publish to was not found at Cloudflare, so nothing was published. Check it in Settings → Cloudflare.'
-export const PUBLISH_UNREACHABLE = 'Cloudflare could not be reached, so nothing was published. Try again when this computer is online.'
+export const PUBLISH_UNREACHABLE = 'Cloudflare could not be reached. Publishing could not be confirmed. Try publishing again when this computer is online to check the last attempt.'
 export const PUBLISH_TOO_LARGE = 'A file in the site is over the size Cloudflare accepts (25 MiB), so nothing was published.'
 export const PUBLISH_FAILED = 'Publishing to Cloudflare did not finish.'
 

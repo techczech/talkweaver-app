@@ -239,7 +239,7 @@ for (const command of objectCommands) {
 }
 assert.deepEqual(
   toolbarCommands('insert').map((command) => command.id),
-  ['layout', 'image', 'search', 'insert-board-slide', 'icon-picker', 'insert-object-table', 'insert-object-mindmap', 'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg', 'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-component-auto-embed', 'insert-component-countdown'],
-  'toolbarCommands(insert) is the five built-ins, the six objects, then the six components, in order'
+  ['layout', 'image', 'search', 'insert-board-slide', 'icon-picker', 'insert-object-table', 'insert-object-mindmap', 'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg', 'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-html-page', 'insert-component-auto-embed', 'insert-component-countdown', 'insert-component-notes'],
+  'toolbarCommands(insert) is the five built-ins, the six objects, then the components (speaker notes last), in order'
 )
 console.log('test:insert-objects OK')

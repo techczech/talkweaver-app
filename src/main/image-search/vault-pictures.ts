@@ -40,13 +40,13 @@ function plainFolderBelow(root: string, dir: string): boolean {
 }
 
 /** The picture files directly in `dir`, which must be a plain folder below the vault root; links and non-files are left out. */
-function picturesIn(vaultRoot: string, dir: string): string[] {
+function picturesIn(vaultRoot: string, dir: string, exts: ReadonlySet<string> = VAULT_PICTURE_EXTS): string[] {
   if (!plainFolderBelow(vaultRoot, dir)) return []
   let names: string[]
   try { names = readdirSync(dir) } catch { return [] }
   const out: string[] = []
   for (const name of names) {
-    if (!VAULT_PICTURE_EXTS.has(extname(name).toLowerCase())) continue
+    if (!exts.has(extname(name).toLowerCase())) continue
     const full = join(dir, name)
     if (lstatOrNull(full)?.isFile()) out.push(full)
   }
@@ -55,14 +55,14 @@ function picturesIn(vaultRoot: string, dir: string): string[] {
 
 /** Every picture file in the vault's pool (`_assets`) and in each talk's own `assets/` folder: what the
  *  image-text pass reads. Contained: nothing reached through a link below the vault root. */
-export function gatherVaultImages(vaultRoot: string, talkOutlinePaths: string[]): string[] {
-  const out = picturesIn(vaultRoot, join(vaultRoot, '_assets'))
-  for (const outline of talkOutlinePaths) out.push(...picturesIn(vaultRoot, join(dirname(outline), 'assets')))
+export function gatherVaultImages(vaultRoot: string, talkOutlinePaths: string[], exts: ReadonlySet<string> = VAULT_PICTURE_EXTS): string[] {
+  const out = picturesIn(vaultRoot, join(vaultRoot, '_assets'), exts)
+  for (const outline of talkOutlinePaths) out.push(...picturesIn(vaultRoot, join(dirname(outline), 'assets'), exts))
   return out
 }
 
 /** A name the vault's pool may serve: a picture `img-<hash>.<ext>`, or a clip's poster `vid-<hash>.jpg`. */
-const SERVED_POOL_NAME = /^(?:img-[0-9a-f]{7,}\.(?:webp|png|jpe?g|gif)|vid-[0-9a-f]{7}\.jpg)$/i
+export const SERVED_POOL_NAME = /^(?:img-[0-9a-f]{7,}\.(?:webp|png|jpe?g|gif)|vid-[0-9a-f]{7}\.jpg)$/i
 
 /**
  * The one containment check for a file of a vault's pool (`<vault>/_assets/<id>.<ext>`), used by the

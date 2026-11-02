@@ -333,7 +333,8 @@ await test('the action names a link and main holds the URL; the probe runs on as
   const features = read('src/renderer/src/components/GuideFeatures.tsx')
   assert.ok(features.includes('useEffect(() => { check() }, [check])') && features.includes('data-connections-refresh'))
   // Cloudflare-backed rows open Settings → Cloudflare, by the same route as a publish sheet's Open Settings.
-  assert.match(app, /action === 'open-cloudflare'\) \{ setSettingsCloudflare\(\(asked\) => asked \+ 1\); setSettingsOpen\(true\) \}/)
+  // 0.42: Settings is its own window; Cloudflare is its page there.
+  assert.match(app, /action === 'open-cloudflare'\) openSettingsWindow\('cloudflare'\)/)
   assert.ok(!app.slice(0, app.indexOf('const readConnections')).includes('guide.connections'), 'App itself never asks at startup')
 })
 

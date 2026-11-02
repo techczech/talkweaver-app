@@ -1,8 +1,11 @@
+import { isolateHistory } from '@codemirror/commands'
 import {
   EditorState,
   Facet,
   Prec,
   StateField,
+  StateEffect,
+  type StateEffectType,
   type Extension,
   type Range
 } from '@codemirror/state'
@@ -15,36 +18,51 @@ import {
 } from '@codemirror/view'
 import { currentFocusRange } from '../focusScope.ts'
 import { notify } from '../../lib/notify.ts'
-import { detectObjectBlocks, type ObjectBlock } from './detect.ts'
-import { setOpenObjectBlock, setRawObjectBlock } from './effects.ts'
+import {
+  detectObjectBlocks,
+  detectOutlineObjects,
+  type ObjectBlock,
+  type OutlineObjects
+} from './detect.ts'
+import { setExpandedObjectBlock, setOpenObjectBlock, setRawObjectBlock } from './effects.ts'
 import { widgetForObjectBlock } from './widgets.ts'
+import { AddNotesCloseWidget, CommentChipWidget, cardWidgetFor } from './cardWidgets.ts'
+import { objectStatusField, type CardFileStatus } from './status.ts'
+import { cardKind } from '../../../../shared/objects/card-kinds.ts'
 import {
   mountObjectEditor,
-  planObjectEditorCommit
+  planObjectEditorCommit,
+  type ObjectCommitFacts
 } from '../../objects/registry.ts'
 import type {
   ObjectEditorApi,
+  ObjectEditorCommitOptions,
   ObjectEditorCommitResult,
   ObjectEditorCommitContext,
   ShellCheatSheet
 } from '../../objects/shell.ts'
 
-export { setOpenObjectBlock, setRawObjectBlock } from './effects.ts'
+export { setExpandedObjectBlock, setOpenObjectBlock, setRawObjectBlock } from './effects.ts'
 
 export type ObjectBlocksOptions = {
-  onInsertMenu?: (coords: { x: number; y: number }) => void
+  onInsertMenu?: (coords: { x: number; y: number }, consumeFence: () => void) => void
   onZoom?: (block: ObjectBlock) => void
   cheatSheet?: ShellCheatSheet
 }
 
 // Parsing depends on the immutable document, not the cursor or object UI state. Share one
 // index across all fields so a single edit cannot trigger several complete outline scans.
-const objectBlockIndex = StateField.define<ObjectBlock[]>({
-  create: (state) => detectObjectBlocks(state.doc.toString()),
-  update: (blocks, transaction) => transaction.docChanged
-    ? detectObjectBlocks(transaction.newDoc.toString())
-    : blocks
+const objectIndex = StateField.define<OutlineObjects>({
+  create: (state) => detectOutlineObjects(state.doc.toString()),
+  update: (objects, transaction) => transaction.docChanged
+    ? detectOutlineObjects(transaction.newDoc.toString())
+    : objects
 })
+
+/** The block objects of the shared index (the field name every reader below used before cards). */
+const objectBlockIndex = {
+  read: (state: EditorState): ObjectBlock[] => state.field(objectIndex).blocks
+}
 
 const openBlockField = StateField.define<{ from: number; to: number } | null>({
   create: () => null,
@@ -55,7 +73,7 @@ const openBlockField = StateField.define<{ from: number; to: number } | null>({
     // WriteFlex walk finding: edge association grows an open object when a new row/node is typed
     // at either edge instead of silently dropping out of edit mode.
     const from = transaction.changes.mapPos(value.from, -1)
-    const blocks = transaction.state.field(objectBlockIndex)
+    const blocks = objectBlockIndex.read(transaction.state)
     const head = transaction.newSelection.main.head
     const atCaret = blocks.find((block) =>
       head >= block.from
@@ -66,13 +84,51 @@ const openBlockField = StateField.define<{ from: number; to: number } | null>({
   }
 })
 
+function mappedBlockSet(
+  effectType: StateEffectType<{ from: number; expanded: boolean }>,
+  flag: 'expanded'
+) {
+  return StateField.define<Set<number>>({
+    create: () => new Set(),
+    update(value, transaction) {
+      let next: Set<number>
+      if (transaction.docChanged) {
+        const oldBlocks = objectBlockIndex.read(transaction.startState)
+        const newBlocks = objectBlockIndex.read(transaction.state)
+        next = new Set()
+        for (const oldFrom of value) {
+          const oldBlock = oldBlocks.find((block) => block.from === oldFrom)
+          if (!oldBlock) continue
+          const mappedFrom = transaction.changes.mapPos(oldBlock.from, -1)
+          const mappedTo = transaction.changes.mapPos(oldBlock.to, 1)
+          if (mappedFrom >= mappedTo) continue
+          const mappedBlock = newBlocks.find((block) => block.from >= mappedFrom && block.from < mappedTo)
+          if (mappedBlock) next.add(mappedBlock.from)
+        }
+      } else {
+        next = new Set(value)
+      }
+      for (const effect of transaction.effects) {
+        if (!effect.is(effectType)) continue
+        const value = effect.value
+        if (value[flag]) next.add(value.from)
+        else next.delete(value.from)
+      }
+      return next
+    }
+  })
+}
+
+/** Expanded cards: per-session chrome (ADR-0042), mapped through edits like the raw view. */
+const expandedBlockField = mappedBlockSet(setExpandedObjectBlock, 'expanded')
+
 const rawBlockField = StateField.define<Set<number>>({
   create: () => new Set(),
   update(value, transaction) {
     let next: Set<number>
     if (transaction.docChanged) {
-      const oldBlocks = transaction.startState.field(objectBlockIndex)
-      const newBlocks = transaction.state.field(objectBlockIndex)
+      const oldBlocks = objectBlockIndex.read(transaction.startState)
+      const newBlocks = objectBlockIndex.read(transaction.state)
       next = new Set()
       for (const oldFrom of value) {
         const oldBlock = oldBlocks.find((block) => block.from === oldFrom)
@@ -99,6 +155,19 @@ const rawBlockField = StateField.define<Set<number>>({
   }
 })
 
+const setInsertFence = StateEffect.define<{ from: number; to: number } | null>()
+const insertFenceField = StateField.define<{ from: number; to: number } | null>({
+  create: () => null,
+  update(value, tr) {
+    const effect = tr.effects.find((candidate) => candidate.is(setInsertFence))
+    if (effect) return effect.value
+    if (!value || !tr.docChanged) return value
+    const from = tr.changes.mapPos(value.from, 1)
+    const to = tr.changes.mapPos(value.to, -1)
+    return to - from === 3 && tr.newDoc.sliceString(from, to) === '```' ? { from, to } : null
+  }
+})
+
 const objectBlocksOptions = Facet.define<ObjectBlocksOptions, ObjectBlocksOptions>({
   combine: (values) => values[0] ?? {}
 })
@@ -107,6 +176,11 @@ type ObjectBlockState = {
   blocks: ObjectBlock[]
   decorations: DecorationSet
   atomic: DecorationSet
+}
+
+/** Kinds whose editors commit as their own undo step and offer Discard (ADR-0042; tables keep theirs). */
+export function isCardBlock(block: ObjectBlock): boolean {
+  return cardKind(block.kind) !== undefined
 }
 
 function blockIsSelected(state: EditorState, block: ObjectBlock): boolean {
@@ -145,7 +219,7 @@ export class ObjectEditorWidget extends WidgetType {
   }
 
   private editorApi(view: EditorView): ObjectEditorApi {
-    const preflight = (inner: string): ObjectEditorCommitResult => {
+    const preflight = (inner: string, options?: ObjectEditorCommitOptions): ObjectEditorCommitResult => {
       const focusRefusal = blockIsInsideFocus(this.block, view.state)
         ? null
         : 'the object block is outside the current Slide Focus band'
@@ -153,7 +227,7 @@ export class ObjectEditorWidget extends WidgetType {
         console.error(`[error] ObjectEditor commit refused: ${focusRefusal}`)
         return { ok: false, reason: focusRefusal }
       }
-      const plan = planObjectEditorCommit(this.block, view.state.doc.toString(), inner)
+      const plan = planObjectEditorCommit(this.block, view.state.doc.toString(), inner, options, commitFacts(view))
       if (!plan.ok) {
         console.error(`[error] ObjectEditor commit refused: ${plan.reason}`)
         return plan
@@ -162,14 +236,22 @@ export class ObjectEditorWidget extends WidgetType {
     }
     const commit = (
       inner: string,
-      _context: ObjectEditorCommitContext
+      _context: ObjectEditorCommitContext,
+      options?: ObjectEditorCommitOptions
     ): ObjectEditorCommitResult => {
       const focusRefusal = blockIsInsideFocus(this.block, view.state)
         ? null
         : 'the object block is outside the current Slide Focus band'
       if (focusRefusal) return { ok: false, reason: focusRefusal }
-      const plan = planObjectEditorCommit(this.block, view.state.doc.toString(), inner)
+      const plan = planObjectEditorCommit(this.block, view.state.doc.toString(), inner, options, commitFacts(view))
       if (!plan.ok) return plan
+      const card = isCardBlock(this.block)
+      if (card && plan.change.insert === view.state.doc.sliceString(plan.change.from, plan.change.to)) {
+        // A no-op commit writes nothing: no transaction, no undo step, no autosave (ADR-0042).
+        view.dispatch({ selection: { anchor: this.block.from }, effects: setOpenObjectBlock.of(null) })
+        view.focus()
+        return { ok: true }
+      }
       // Replace ONLY the planner-approved range (the body for fenced objects, the complete block
       // otherwise). The editor update listener then follows the ordinary onContentChange →
       // guarded autosave path; there is no second object-specific writer.
@@ -178,6 +260,8 @@ export class ObjectEditorWidget extends WidgetType {
         selection: { anchor: this.block.from },
         effects: setOpenObjectBlock.of(null),
         userEvent: 'input',
+        // A card's commit is one undo step of its own: never merged with typing before or after it.
+        ...(card ? { annotations: isolateHistory.of('full') } : {}),
         scrollIntoView: true
       })
       if (view.state.doc.sliceString(
@@ -188,7 +272,7 @@ export class ObjectEditorWidget extends WidgetType {
       }
       const committed = detectObjectBlocks(view.state.doc.toString())
         .find((item) => item.from === this.block.from)
-      if (committed?.kind !== this.block.kind) {
+      if (committed?.kind !== this.block.kind && !options?.wholeBlock) {
         console.error(
           `[warning] ObjectEditor commit no longer detects as ${this.block.kind}.\n`
           + `Before:\n${this.block.source}\nAfter:\n${committed?.source ?? '(missing)'}`
@@ -197,7 +281,13 @@ export class ObjectEditorWidget extends WidgetType {
       view.focus()
       return { ok: true }
     }
-    return { preflight, commit }
+    // Discard (cards only): close the editor and write nothing. The only transaction carries the close
+    // effect; there is no change, so no undo step and no autosave.
+    const discard = (): void => {
+      view.dispatch({ effects: setOpenObjectBlock.of(null) })
+      view.focus()
+    }
+    return { preflight, commit, ...(isCardBlock(this.block) ? { discard } : {}) }
   }
 
   toDOM(view: EditorView): HTMLElement {
@@ -259,10 +349,13 @@ export class ObjectEditorWidget extends WidgetType {
  * require block Decoration.replace ranges to come from a StateField, never a ViewPlugin.
  */
 function buildObjectBlockState(state: EditorState): ObjectBlockState {
-  const blocks = state.field(objectBlockIndex)
+  const blocks = objectBlockIndex.read(state)
   const open = state.field(openBlockField)
   const raw = state.field(rawBlockField)
+  const expanded = state.field(expandedBlockField)
+  const statuses = state.field(objectStatusField, false) ?? new Map<string, CardFileStatus>()
   const options = state.facet(objectBlocksOptions)
+  const objects = state.field(objectIndex)
   const ranges: Array<Range<Decoration>> = []
   const atomicRanges: Array<Range<Decoration>> = []
 
@@ -282,7 +375,9 @@ function buildObjectBlockState(state: EditorState): ObjectBlockState {
       continue
     }
     const selected = blockIsSelected(state, block)
-    const widget = widgetForObjectBlock(block, selected, raw.has(block.from), options.onZoom)
+    const widget = isCardBlock(block)
+      ? cardWidgetFor(block, selected, raw.has(block.from), expanded.has(block.from), statuses)
+      : widgetForObjectBlock(block, selected, raw.has(block.from), options.onZoom)
     // WriteFlex C1: selection is a widget class. The visual replacement ends at the final line's
     // END and never consumes its newline, which keeps CM6's tile geometry valid.
     const replacement = Decoration.replace({ widget, block: true })
@@ -292,11 +387,56 @@ function buildObjectBlockState(state: EditorState): ObjectBlockState {
     atomicRanges.push(replacement.range(block.from, Math.min(state.doc.length, lastLineEnd + 1)))
   }
 
+  // Inline comment chips: atomic over exactly `<!--` through `-->`; the text around them is untouched.
+  const focus = currentFocusRange(state)
+  for (const comment of objects.inline) {
+    if (focus && (comment.from < focus.from || comment.to > focus.to)) continue
+    const chip = Decoration.replace({ widget: new CommentChipWidget(comment) })
+    ranges.push(chip.range(comment.from, comment.to))
+    atomicRanges.push(chip.range(comment.from, comment.to))
+  }
+  // Constructs left as text: a warning mark, never a fold (an unclosed `<!--` or `:::notes`).
+  for (const warning of objects.warnings) {
+    if (focus && (warning.from < focus.from || warning.to > focus.to)) continue
+    if (warning.to <= warning.from) continue
+    ranges.push(Decoration.mark({
+      class: 'tw-region-warning',
+      attributes: {
+        title: warning.kind === 'unclosed-notes'
+          ? 'No closing ::: — everything down to the next slide heading is notes.'
+          : 'This <!-- has no -->. It shows on the slide as text and, if a --> appears later, hides everything between.'
+      }
+    }).range(warning.from, warning.to))
+    if (warning.kind === 'unclosed-notes' && typeof warning.closeAt === 'number') {
+      ranges.push(Decoration.widget({ widget: new AddNotesCloseWidget(warning.from, warning.closeAt), side: 1 }).range(warning.to))
+    }
+  }
+
   return {
     blocks,
     decorations: Decoration.set(ranges, true),
     atomic: Decoration.set(atomicRanges, true)
   }
+}
+
+/** The inline comment chips and the region warnings of the current document (read by tests and commands). */
+export function outlineObjectsIn(state: EditorState): OutlineObjects | undefined {
+  return state.field(objectIndex, false)
+}
+
+/** Toggle the expanded preview of the card at the caret (session chrome; writes nothing). */
+export function toggleExpandedObjectAtSelection(view: EditorView): boolean {
+  const block = activeBlock(view.state)
+  if (!block || blockIsOpen(view.state, block) || !isCardBlock(block)) return false
+  const expanded = view.state.field(expandedBlockField).has(block.from)
+  view.dispatch({ effects: setExpandedObjectBlock.of({ from: block.from, expanded: !expanded }) })
+  return true
+}
+
+/** What the commit check knows beyond the text: main's last answers about the files cards name. */
+function commitFacts(view: EditorView): ObjectCommitFacts {
+  const statuses = view.state.field(objectStatusField, false)
+  return { statusOf: (ref) => statuses?.get(ref)?.state }
 }
 
 const objectBlocksField = StateField.define<ObjectBlockState>({
@@ -342,7 +482,7 @@ function blockIsOpen(state: EditorState, block: ObjectBlock): boolean {
 
 /** The first command in the deterministic Enter chain: open a closed object or fall through. */
 export function openSelectedObject(view: EditorView): boolean {
-  const open = view.state.field(openBlockField)
+  const open = view.state.field(openBlockField, false)
   const head = view.state.selection.main.head
   // An Enter inside open source must remain a plain newline so table rows and outline nodes work.
   if (open && head >= open.from && head <= open.to) return false
@@ -436,20 +576,30 @@ export function objectBlocksExtension(options: ObjectBlocksOptions): Extension {
     return true
   })
 
-  // Typing the third backtick on an otherwise-empty line removes the two provisional backticks
-  // and asks the future object-insert surface to open. Without a callback this remains inert.
+  // Keep typed source on cancellation. Only a chosen object consumes the mapped trigger range.
   const fenceTrigger = EditorView.inputHandler.of((view, from, to, text) => {
     if (text !== '`' || !options.onInsertMenu) return false
     const line = view.state.doc.lineAt(from)
     if (view.state.doc.sliceString(line.from, from) !== '``') return false
     if (view.state.doc.sliceString(to, line.to).trim() !== '') return false
     view.dispatch({
-      changes: { from: line.from, to },
-      selection: { anchor: line.from },
+      changes: { from, to, insert: text },
+      selection: { anchor: from + 1 },
+      effects: setInsertFence.of({ from: line.from, to: from + 1 }),
       userEvent: 'input'
     })
     const coords = view.coordsAtPos(line.from)
-    if (coords) options.onInsertMenu({ x: coords.left, y: coords.bottom + 4 })
+    if (coords) options.onInsertMenu({ x: coords.left, y: coords.bottom + 4 }, () => {
+      const fence = view.state.field(insertFenceField)
+      if (!fence) return
+      view.dispatch({
+        changes: { from: fence.from, to: fence.to },
+        selection: { anchor: fence.from },
+        effects: setInsertFence.of(null),
+        annotations: isolateHistory.of('before'),
+        userEvent: 'input'
+      })
+    })
     return true
   })
 
@@ -513,9 +663,12 @@ export function objectBlocksExtension(options: ObjectBlocksOptions): Extension {
   return [
     typeEscape,
     fenceTrigger,
-    objectBlockIndex,
+    insertFenceField,
+    objectIndex,
     openBlockField,
     rawBlockField,
+    expandedBlockField,
+    objectStatusField,
     objectBlocksOptions.of(options),
     objectBlocksField,
     objectBlockEvents,

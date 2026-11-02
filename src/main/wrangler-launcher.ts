@@ -15,7 +15,7 @@
 //   - `set` (what this one call asks for, e.g. the token): passed as given, except names that change
 //     how Node itself starts, which are refused.
 //
-// Variables read by wrangler 4.144, miniflare 5, esbuild 0.28, workerd and Node that select an
+// Variables read by wrangler 4.153 (and 4.144 before it), miniflare 5, esbuild 0.28, workerd and Node that select an
 // executable, a module path, a settings location or an endpoint. None is in INHERITED_NAMES, so none
 // can arrive from the inherited side (scripts/test-wrangler-launcher.mjs checks each):
 //   executables   ESBUILD_BINARY_PATH, MINIFLARE_WORKERD_PATH, CLOUDFLARED_PATH, WRANGLER_DOCKER_BIN,
@@ -35,7 +35,8 @@
 //   identity      CLOUDFLARE_API_TOKEN, CLOUDFLARE_API_KEY, CLOUDFLARE_EMAIL, CLOUDFLARE_ACCOUNT_ID,
 //                 CF_API_TOKEN, CF_API_KEY, CF_EMAIL, CF_ACCOUNT_ID, CLOUDFLARE_ACCESS_CLIENT_ID,
 //                 CLOUDFLARE_ACCESS_CLIENT_SECRET, WRANGLER_CF_AUTHORIZATION_TOKEN,
-//                 WRANGLER_R2_SQL_AUTH_TOKEN, CF_PAGES_UPLOAD_JWT, WRANGLER_CLIENT_ID,
+//                 WRANGLER_R2_SQL_AUTH_TOKEN (4.144; WRANGLER_BASIN_SQL_AUTH_TOKEN from 4.153),
+//                 CF_PAGES_UPLOAD_JWT, WRANGLER_CLIENT_ID,
 //                 CLOUDFLARE_CLIENT_ID, WRANGLER_CI_OVERRIDE_NAME, WRANGLER_CI_MATCH_TAG,
 //                 WORKERS_CI_BRANCH, CF_PAGES_COMMIT_SHA
 // Kept on purpose, because a machine behind a proxy cannot publish without them: the proxy variables.
@@ -125,6 +126,22 @@ export type WranglerLaunchResult = { ok: true; launch: WranglerLaunch } | Wrangl
 // with "Unknown argument: …/wrangler-dist/cli.js". Marking the process as a default app before
 // wrangler loads restores the ordinary Node reading of argv. Harmless under plain Node.
 const ARGV_FIX = 'data:text/javascript,process.defaultApp=true'
+
+/** `pages deploy` and nothing else: the one command that sends a person's whole site. */
+const isPagesUpload = (wranglerArgs: readonly string[]): boolean => wranglerArgs[0] === 'pages' && wranglerArgs[1] === 'deploy'
+
+// A large upload needs longer than wrangler's HTTP client waits by default (undici: 300 seconds without
+// the start of an answer, or between two parts of it), and that client is inside wrangler's bundle, out
+// of reach of any setting. It announces each request it makes on Node's diagnostics channel, before it
+// sends it, and the wait it uses is read from that request: so this module, loaded by the launcher ahead
+// of wrangler, gives every request of this one process the longer wait, whichever dispatcher (a proxy's
+// included) ends up sending it. It is inline, so there is no file to find, replace or carry out of the
+// asar, and it reaches the process by argv alone: the child's environment stays as built above, with
+// NODE_OPTIONS refused. scripts/test-pages-upload-transport.mjs runs the real tool to prove it still
+// holds whenever wrangler changes. It must stay free of spaces, quotes and backslashes (Windows argv).
+const pagesUploadTransport = (ms: number): string => `data:text/javascript,${encodeURIComponent(
+  `import{subscribe}from'node:diagnostics_channel';subscribe('undici:request:create',({request:r})=>{r.headersTimeout=r.bodyTimeout=${ms}})`,
+).replace(/'/g, '%27')}`
 
 // What a child needs in order to run at all, and nothing that steers it. Compared without regard to
 // case on Windows, where names are case-insensitive. The home folder is NOT inherited: see `fixed`.
@@ -362,6 +379,7 @@ export function resolveWranglerLaunch(
       // command name as a second file.
       args: [
         '--no-warnings', ...(trace ? ['--require', trace.preload] : []), '--import', ARGV_FIX,
+        ...(isPagesUpload(wranglerArgs) ? ['--import', pagesUploadTransport(PAGES_UPLOAD_HTTP_TIMEOUT_MS)] : []),
         entry, ...wranglerArgs, '--env-file', wranglerEnvFilePath(install),
       ],
       env,
@@ -380,6 +398,7 @@ export function prepareWranglerRun(
 }
 
 export type WranglerRun = {
+  neverStarted?: true
   ok: boolean
   /** The end of what wrangler printed (at most WRANGLER_KEPT_OUTPUT_CHARS per stream). */
   stdout: string
@@ -394,6 +413,16 @@ export type WranglerRun = {
 export const WRANGLER_TIMED_OUT_MESSAGE = 'The publishing tool took too long and was stopped.'
 /** How long one command may run. */
 export const WRANGLER_TIME_LIMIT_MS = 180_000
+/**
+ * How long `pages deploy` may run. A 78 MiB site took 396 seconds; this allows about four and a half
+ * times that, and is longer than one HTTP wait, so a stalled request ends as the tool's own error, which
+ * it retries, and not as a kill. Still a limit: a tool that hangs for good is stopped like any other.
+ */
+export const PAGES_UPLOAD_TIME_LIMIT_MS = 1_800_000
+/** How long the tool's HTTP client waits on one request during `pages deploy`: for the start of the answer, and between its parts. */
+export const PAGES_UPLOAD_HTTP_TIMEOUT_MS = 1_200_000
+/** The time limit of a wrangler command. */
+export const wranglerTimeLimitMs = (wranglerArgs: readonly string[]): number => (isPagesUpload(wranglerArgs) ? PAGES_UPLOAD_TIME_LIMIT_MS : WRANGLER_TIME_LIMIT_MS)
 /** After the time limit the tool is asked to stop (SIGTERM); this much later it is killed (SIGKILL). */
 export const WRANGLER_KILL_GRACE_MS = 5_000
 /** After the kill the run is answered this much later at the latest, whether or not the process was seen to go. */
@@ -516,7 +545,7 @@ export function startWranglerProcess(launch: WranglerLaunch, platform: string): 
  * Only the end of each output stream is kept, and a command that prints more than
  * `maxOutputBytes` on either stream is stopped and reported as failed.
  *
- * Time limit, and no wait without one. At `timeoutMs` the tool AND everything it started are asked
+ * Time limit, and no wait without one (`wranglerTimeLimitMs`, unless `timeoutMs` says otherwise). At that time the tool AND everything it started are asked
  * to stop (SIGTERM to its process group; on Windows the tree is ended with `taskkill /T /F`), and
  * `killGraceMs` later killed (SIGKILL to the group). The run is answered when the tool's process
  * has EXITED (its `exit`, not the closing of its output, which a process it started can hold open
@@ -532,6 +561,7 @@ export function runWrangler(
   wranglerArgs: readonly string[],
   options: WranglerEnvironment & {
     input?: string
+    publicationStarted?: (pid: number, group?: boolean) => Promise<void>
     timeoutMs?: number
     killGraceMs?: number
     killDeadlineMs?: number
@@ -553,7 +583,11 @@ export function runWrangler(
   })
   const limit = options.maxOutputBytes ?? WRANGLER_MAX_OUTPUT_BYTES
   return new Promise((resolveRun) => {
-    const child = start(resolved.launch)
+    let child: WranglerChild
+    try { child = start(resolved.launch) } catch (error) {
+      resolveRun({ ok: false, stdout: '', stderr: String(error), neverStarted: true }); return
+    }
+    const tracked = (child.pid && options.publicationStarted ? options.publicationStarted(child.pid, child.group === true) : Promise.resolve()).catch(() => {})
     // Known to `endAllWranglerRuns` from now until the run is answered and its group cleared up (`finish`): it must not outlive the app.
     const live: LiveRun = {
       child, install, inherited: options.inherited ?? {}, exited: false, killTree: options.killTree, openPipes: 2,
@@ -595,7 +629,7 @@ export function runWrangler(
       for (const stream of [child.stdout, child.stderr] as Array<{ destroy?: () => void }>) { try { stream.destroy?.() } catch { /* closed */ } }
       // Off the quit list only now, after the group has been cleared up.
       liveRuns.delete(live)
-      resolveRun(run)
+      void tracked.then(() => resolveRun(run), () => resolveRun(run))
     }
     const stopped = (): WranglerRun => ({ ok: false, stdout: kept.stdout, stderr: `${kept.stderr}\n${WRANGLER_TIMED_OUT_MESSAGE}`, timedOut: true })
     const stopTree = options.killTree ?? ((pid: number): void => {
@@ -614,7 +648,7 @@ export function runWrangler(
         // No path waits without a deadline: answered now at the latest, seen to exit or not.
         deadline = setTimeout(() => finish(stopped()), options.killDeadlineMs ?? WRANGLER_KILL_DEADLINE_MS)
       }, options.killGraceMs ?? WRANGLER_KILL_GRACE_MS)
-    }, options.timeoutMs ?? WRANGLER_TIME_LIMIT_MS)
+    }, options.timeoutMs ?? wranglerTimeLimitMs(wranglerArgs))
     const collect = (stream: 'stdout' | 'stderr') => (chunk: Buffer | string): void => {
       if (settled) return
       seen[stream] += chunk.length
@@ -626,7 +660,7 @@ export function runWrangler(
     child.stdout.on('data', collect('stdout'))
     child.stderr.on('data', collect('stderr'))
     child.stdin.on('error', () => { /* wrangler exited before reading its input; `close` reports it */ })
-    child.on('error', (error) => finish({ ok: false, stdout: kept.stdout, stderr: `${kept.stderr}\n${error.message}` }))
+    child.on('error', (error) => finish({ ok: false, stdout: kept.stdout, stderr: `${kept.stderr}\n${error.message}`, ...(!child.pid ? { neverStarted: true as const } : {}) }))
     const ended = (code: number | null): WranglerRun => (timedOut ? stopped() : { ok: code === 0, stdout: kept.stdout, stderr: kept.stderr })
     // Answered when the PROCESS has exited. Its output usually closes with it (`close`); when a
     // process it started holds the output open, `close` may never come, so what was printed last

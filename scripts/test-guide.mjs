@@ -100,7 +100,7 @@ try {
 
   await test('main, preload and the mock carry the switch and the progress; the switch broadcasts to every window', () => {
     const main = read('src/main/index.ts')
-    for (const needle of ["'settings:get-guide-button'", "'settings:set-guide-button-visible'", "'guide:get-progress'", "'guide:note-example-talk-opened'", "'guide-button:changed'", "'guide:progress-changed'", 'BrowserWindow.getAllWindows()']) {
+    for (const needle of ["'preferences:get-guide-button'", "'preferences:set-guide-button-visible'", "'guide:get-progress'", "'guide:note-example-talk-opened'", "'guide-button:changed'", "'guide:progress-changed'", 'BrowserWindow.getAllWindows()']) {
       assert.ok(main.includes(needle), `main: ${needle}`)
     }
     // Turning the switch off writes the switch only: the progress key is not in that handler.
@@ -144,11 +144,11 @@ try {
         "import GuidePane from './src/renderer/src/components/GuidePane.tsx'",
         "import RightColumnTabs from './src/renderer/src/components/RightColumnTabs.tsx'",
         "import SidebarFoot from './src/renderer/src/components/talklist/SidebarFoot.tsx'",
-        "import SettingsPanel from './src/renderer/src/components/SettingsPanel.tsx'",
+        "import { GetStartedRows } from './src/renderer/src/components/SettingsWindowPages.tsx'",
         "export const pane = (props) => renderToStaticMarkup(React.createElement(GuidePane, props))",
         "export const tabs = (props) => renderToStaticMarkup(React.createElement(RightColumnTabs, props))",
         "export const foot = (props) => renderToStaticMarkup(React.createElement(SidebarFoot, props))",
-        "export const settings = (props) => renderToStaticMarkup(React.createElement(SettingsPanel, props))"
+        "export const settings = (props) => renderToStaticMarkup(React.createElement(GetStartedRows, props))"
       ].join('\n'),
       resolveDir: REPO,
       sourcefile: 'test-guide-entry.tsx'
@@ -226,17 +226,21 @@ const FEATURES_STUB = { learn: CHAPTERS_STUB.learn, onRead: noop, readConnection
     }
   })
 
-  await test('Settings: Get started is the first section, above Folders, with the Guide switch and the place-chip switch', () => {
-    const html = m.settings({ isOpen: true, onClose: noop, vaultRoot: '/v', onChangeVault: noop, onOpenGuide: noop })
+  await test('Settings: Get started is a page of the Settings window with Open the Guide; the Guide switch and the place-chip switch are General rows', async () => {
+    // 0.42: Settings is its own window; the switches are schema settings (src/shared/settings-schema.ts).
+    const html = m.settings({ exampleRemoved: false, onAction: noop })
     const t = text(html)
-    assert.ok(t.includes('Get started'), 'section')
-    assert.ok(t.indexOf('Get started') < t.indexOf('Folders'), 'above Folders')
-    assert.ok(t.includes(TEXT.settings.switchT) && t.includes(TEXT.settings.switchS))
+    assert.ok(t.includes('Get started'), 'page')
     assert.ok(t.includes('Open the Guide') && html.includes('data-open-guide'))
-    assert.ok(html.includes('data-setting="guide-button"') && html.includes('role="switch"'))
-    assert.ok(t.includes('Show where I am in the status bar'), 'the place chip row moved here')
-    const workspace = html.slice(html.indexOf('>Workspace<'))
-    assert.ok(!workspace.slice(0, workspace.indexOf('Presentation backup')).includes('Show where I am'), 'and left Workspace')
+    const { schema } = await import('../src/shared/settings-schema.ts')
+    const guide = schema.def('general.guideButton')
+    assert.equal(guide?.label, TEXT.settings.switchT)
+    assert.equal(guide?.help, TEXT.settings.switchS)
+    assert.equal(guide?.type, 'toggle')
+    const chip = schema.def('general.placeChip')
+    assert.equal(chip?.label, 'Show where I am in the status bar')
+    assert.equal(chip?.section, 'general')
+    assert.equal(guide?.section, 'general')
   })
 
   console.log(`\n${passed} passed`)

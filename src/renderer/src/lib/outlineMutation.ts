@@ -32,7 +32,7 @@ export interface OutlineEditorBuffer {
   /** Puts `next` into the buffer as one minimal change, supersedes the pending debounced autosave (the
    *  caller saves the whole buffer at once) and returns the buffer text to save, or null when the
    *  editor is not ready. */
-  apply(outlinePath: string, next: string): string | null
+  apply(outlinePath: string, next: string, opts?: { ownUndoStep?: boolean }): string | null
   /** After a save of `sent`: adopts `saved` (what was written: tidied, ids stamped) only while the buffer
    *  is still the text `sent` was made from. */
   adopt(outlinePath: string, sent: string, saved: string): void
@@ -67,6 +67,8 @@ export interface OutlineMutationOptions {
   base?: string
   /** How many times to work the change out again when the buffer moves while `mutate` runs (default 3). */
   attempts?: number
+  /** The change is an undo step of its own, never joined to typing or another change (a slide move). */
+  ownUndoStep?: boolean
 }
 
 export type OutlineMutationFailure = 'not-open' | 'refused' | 'moved' | 'save-failed'
@@ -138,7 +140,7 @@ export function createOutlineMutator<R extends OutlineSaveReply>(deps: OutlineMu
       // Typed while the change was being worked out: never apply a result computed from an older buffer.
       if (buffer.read(outlinePath) !== base) continue
       if (next === base && !opts.force) return { ok: true, changed: false, base, text: base }
-      const text = buffer.apply(outlinePath, next)
+      const text = buffer.apply(outlinePath, next, opts.ownUndoStep ? { ownUndoStep: true } : undefined)
       if (text == null) return notOpen
       const saved = await deps.write(outlinePath, text)
       if (!saved || saved.ok !== true) {

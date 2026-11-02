@@ -12,7 +12,7 @@
 //      its slides are left out of every handout and no form is built for it; publishing a Run
 //      attached to it publishes no pre-work page.
 import { strict as assert } from 'node:assert'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -73,7 +73,19 @@ const sheet = read('src/renderer/src/components/PlanRunSheet.tsx')
 assert.equal(/preworkFromOutline|sectionSteps/.test(sheet), false, 'the plan sheet does not read the talk’s section')
 assert.match(sheet, /if \(phase === 'pre' && current === LEGACY_SECTION_FILE_ID && run && run\.work\?\.pre\?\.fileId === LEGACY_SECTION_FILE_ID\) \{/, 'the section shows only on a Run being edited that was planned with it, never on a copy or a new Run')
 // The planned-Run handlers (history.ts registers them; planned-runs-ipc.ts holds them, the Run written in its talk's vault).
-assert.match(read('src/main/history.ts'), /'history:create-planned-run', [^\n]*createPlannedRunIn\(/, 'the create handler is the planned-runs one')
+const ts = (await import('typescript')).default
+const sf = ts.createSourceFile('history.ts', read('src/main/history.ts'), ts.ScriptTarget.Latest, true)
+let createHandler
+function visit(n) {
+ if (ts.isCallExpression(n) && n.expression.getText(sf) === 'ipcMain.handle' && n.arguments[0]?.text === 'history:create-planned-run') createHandler = n.arguments[1]
+ ts.forEachChild(n, visit)
+}
+visit(sf)
+assert.ok(createHandler, 'create handler remains registered')
+assert.match(createHandler.getText(sf), /return createPlannedRunIn\(plannedRunDeps\(deps\),\s*clean\)/, 'registered create callback delegates to planned-run creation')
+assert.match(createHandler.getText(sf), /delete clean\.sourceOutline/, 'renderer supplied provenance is removed')
+assert.match(createHandler.getText(sf), /await deps\.sourceForPlan/, 'main obtains source provenance')
+assert.match(createHandler.getText(sf), /if\(sourceOutline\)clean\.sourceOutline=sourceOutline/, 'main provenance is forwarded')
 assert.match(read('src/main/history.ts'), /'history:update-planned-run', [^\n]*updatePlannedRunIn\(/, 'the update handler is the planned-runs one')
 assert.match(read('src/main/planned-runs-ipc.ts'), /createPlannedRun\(vault\.root, input[^\n]*\{ refuseNewSectionPrework: true \}\)/, 'the create handler refuses the section')
 assert.match(read('src/main/planned-runs-ipc.ts'), /updatePlannedRun\(vault\.root, [^\n]*patch as PlannedRunPatch, \{ refuseNewSectionPrework: true \}\)/, 'the update handler refuses it on a Run without it')
@@ -81,6 +93,7 @@ assert.match(read('src/main/planned-runs-ipc.ts'), /updatePlannedRun\(vault\.roo
 // Copy → save: "Plan the next run like this" on a Run planned with the section saves a Run without it.
 {
   const vault = mkdtempSync(join(tmpdir(), 'tw-prework-section-copy-'))
+  try {
   const app = { refuseNewSectionPrework: true }
   const base = { talkSlug: 'leftover', talkTitle: 'Leftover', audience: 'Staff', slideSet: { kind: 'full' }, startTime: '10:00', timeZone: 'Europe/London' }
   createPlannedRun(vault, { ...base, plannedDate: '2026-10-21', eventTitle: 'Old plan', preworkOpens: '2026-10-14T09:00',
@@ -104,6 +117,7 @@ assert.match(read('src/main/planned-runs-ipc.ts'), /updatePlannedRun\(vault\.roo
   assert(edit.ok)
   const retimed = updatePlannedRun(vault, 'leftover', 'old', edit.fields, app)
   assert.equal(retimed.preworkOpens, '2026-10-15T09:00', 'an old Run’s section times stay editable')
+  } finally { rmSync(vault,{recursive:true,force:true}) }
 }
 
 // ── 5. A leftover {prework} section ─────────────────────────────────────────────────────────
@@ -115,7 +129,7 @@ const outline = [
   '## The talk', '{id=talk}', '',
   '### A slide', '{id=s1}', '', '- Text', ''
 ].join('\n')
-const model = await prepareSource('/tmp/prework-section-leftover.md', outline, 'leftover')
+const model = await prepareSource(join(REPO,'evidence/vault-gallery/layout-completion/prework-section-leftover.md'), outline, 'leftover')
 assert.ok(model.warnings.includes('prework-section-retired:pwform'), 'Layout Doctor names the section (with its Move to a work file action)')
 assert.deepEqual([...(model.prework?.slideIds ?? [])].sort(), ['pwform', 'pwquiz', 'pwtask'], 'the section and its steps are known to the compiler')
 const slides = withoutPreworkSlides(extractSlides(model.fullHtml), model.prework)

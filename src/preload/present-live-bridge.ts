@@ -1,7 +1,8 @@
 /// <reference lib="dom" />
+import type { PresenterShareLinkUpdate } from './index'
 import { reportGuideCommand } from './present-guide'
-import { parsePointerMessage, type InkMessage } from '../../worker/protocol'
-import { readInkSlot } from './recorder-ink'
+import { type InkMessage } from '../../worker/protocol'
+import { LIVE_FREEZE_ATTRIBUTE, venueInk, venuePointer } from './recorder-ink'
 import { askEndLiveWithBoards, type OpenBoard } from './present-end-live-boards'
 import { showLiveSetupPrompt } from './present-live-setup'
 import type { LiveSetupPrompt } from '../shared/live-service-status.ts'
@@ -32,6 +33,7 @@ import {
   nextVenueWatch,
   presenterLiveSlideState,
   settleVenueWatch,
+  stampPublishedLink,
   VENUE_BACK_MS,
   VENUE_WATCH_START,
   venueNoticeView,
@@ -511,6 +513,18 @@ export function mountLiveBridge(): void {
   document.documentElement.setAttribute(LIVE_BRIDGE_ATTRIBUTE, '')
   // Poll open/close/reveal/hide and results now cross the isolation boundary via the
   // contextBridge `twLivePollBridge` (exposed above), NOT window events.
+  // The link this window goes live with, as published: when it is published while the deck is open
+  // (main's push), and on every load of the page (the push may have come before this listener, and a
+  // Run's own link is not in the compiled deck). Only the link changes here: Go live stays the person's.
+  let publishedLinkRevision = 0
+  ipcRenderer.on('present:share-link', (_event, link: PresenterShareLinkUpdate) => {
+    publishedLinkRevision++
+    stampPublishedLink(document as never, link)
+  })
+  const requestedLinkRevision = publishedLinkRevision
+  void ipcRenderer.invoke('live:share-link').then((link: PresenterShareLinkUpdate) => {
+    if (publishedLinkRevision === requestedLinkRevision) stampPublishedLink(document as never, link)
+  }).catch(() => {})
   const requestedStatusRevision = statusRevision
   void ipcRenderer.invoke('live:status').then((next: LiveStatus) => {
     if (statusRevision === requestedStatusRevision) updateStatus(next)
@@ -528,17 +542,15 @@ export function mountLiveBridge(): void {
   }
   let pointerLast = ''
   const reportPointer = (): void => {
-    const raw = document.documentElement.dataset.twLivePointer || ''
     // Attribute ticks are page events: movement is throttled there, resting keep-alives are 1 Hz.
-    pointerLast = raw
-    try {
-      const message = parsePointerMessage({ type: 'pointer.live', pointer: JSON.parse(raw) })
-      if (message) ipcRenderer.send('live:pointer', message)
-    } catch { /* malformed page data is inert */ }
+    // While the deck is frozen on a live page picture only 'gone' goes (venuePointer).
+    const message = venuePointer(document.documentElement)
+    pointerLast = message ? JSON.stringify(message.pointer) : ''
+    if (message) ipcRenderer.send('live:pointer', message)
   }
   const pointerObserver = new MutationObserver(reportPointer)
   pointerObserver.observe(document.documentElement, {
-    attributes: true, attributeFilter: ['data-tw-live-pointer', 'data-tw-live-pointer-tick'],
+    attributes: true, attributeFilter: ['data-tw-live-pointer', 'data-tw-live-pointer-tick', LIVE_FREEZE_ATTRIBUTE],
   })
   const clearPointer = (): void => {
     if (pointerLast && pointerLast !== '"gone"') ipcRenderer.send('live:pointer', { type: 'pointer.live', pointer: 'gone' })
@@ -551,8 +563,9 @@ export function mountLiveBridge(): void {
   let inkLast: InkMessage | null = null
   const reportInk = (): void => {
     try {
-      // Length first, then the capped check: an oversized slot is refused before it is parsed.
-      const message = readInkSlot(document.documentElement.dataset.twLiveInk)
+      // Length first, then the capped check: an oversized slot is refused before it is parsed. Nothing
+      // while the deck is frozen on a live page picture (venueInk).
+      const message = venueInk(document.documentElement)
       if (!message) return
       inkLast = message
       ipcRenderer.send('live:ink', message)

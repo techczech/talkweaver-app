@@ -1,0 +1,6 @@
+{
+  "name": "talk-weaver-handout-heap-host",
+  "private": true,
+  "type": "module",
+  "main": "main.mjs"
+}

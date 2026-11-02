@@ -163,7 +163,7 @@ try {
     const packaged = shippedFfmpegCandidates({ platform: 'darwin', resourcesPath: '/App/Contents/Resources', appPath: '/App/Contents/Resources/app', packaged: true })
     assert.deepEqual(packaged, [join('/App/Contents/Resources', 'ffmpeg', 'ffmpeg'), join('/App/Contents/Resources/app', 'node_modules', 'ffmpeg-static', 'ffmpeg')], 'a packaged build looks in its resources first')
     const dev = shippedFfmpegCandidates({ platform: 'darwin', resourcesPath: '/electron/Resources', appPath: '/checkout', packaged: false })
-    assert.equal(dev[0], join('/checkout', 'node_modules', 'ffmpeg-static', 'ffmpeg'), 'an unpackaged app uses the copy npm install downloaded')
+    assert.equal(dev[0], join('/checkout', 'node_modules', 'ffmpeg-static', 'ffmpeg'), 'an unpackaged app uses the copy bun install downloaded')
     const windows = shippedFfmpegCandidates({ platform: 'win32', resourcesPath: 'C:\\TW\\resources', appPath: 'C:\\TW\\resources\\app', packaged: true })
     assert.ok(windows.every((path) => path.endsWith('ffmpeg.exe')), 'Windows: ffmpeg.exe')
     assert.deepEqual(systemFfmpegCandidates('win32'), [], 'Windows has no system places to guess')
@@ -229,13 +229,14 @@ try {
   // ── 5. No path, skill or person from Dominik's machines in what Settings shows ───────────────
   {
     const personal = [/gitrepos/i, /05_skills/i, /_SKILLS/, /speech-to-text/i, /\/Users\//, /dominik/i, /luke[sš]/i, /~\//, /local-models/i, /02_workskills/i]
-    const settings = readFileSync(join(repo, 'src', 'renderer', 'src', 'components', 'SettingsPanel.tsx'), 'utf8')
-    const start = settings.indexOf("{show('transcription') && (")
-    const end = settings.indexOf("{show('shortcuts') && (")
-    assert.ok(start > 0 && end > start, 'the Transcription section of Settings is found')
+    // 0.42: the rows are schema settings; the status row is on the Settings window's Get started page.
+    const { schema } = await import('../src/shared/settings-schema.ts')
+    const transcriptionRows = schema.settings.filter((d) => d.group === 'Transcription')
+    assert.ok(transcriptionRows.length === 3, 'the Transcription rows of Settings are found')
+    const pages = readFileSync(join(repo, 'src', 'renderer', 'src', 'components', 'SettingsWindowPages.tsx'), 'utf8')
     const shown = {
-      'Settings → Transcription': settings.slice(start, end),
-      'Settings search words': /transcription: '([^']*)'/.exec(settings)?.[1] ?? '',
+      'Settings › Recording › Transcription': transcriptionRows.map((d) => `${d.label}\n${d.help ?? ''}`).join('\n'),
+      'Settings › Get started': pages.slice(pages.indexOf('Transcription</div>'), pages.indexOf('<TranscriptionStatusRow')),
       'the status row': readFileSync(join(repo, 'src', 'renderer', 'src', 'components', 'TranscriptionStatusRow.tsx'), 'utf8'),
       'the row\'s words': readFileSync(join(repo, 'src', 'shared', 'transcription-status.ts'), 'utf8'),
       'every row text': TRANSCRIPTION_STATES.flatMap((state) => {
@@ -298,12 +299,12 @@ try {
     ok('the set-up folder and ffmpeg ship; the vendored script matches its provenance; the package check')
   }
 
-  // ── 7. The real shipped ffmpeg, when npm install has downloaded it ──────────────────────────
+  // ── 7. The real shipped ffmpeg, when bun install has downloaded it ──────────────────────────
   {
     // TW_TEST_SHIPPED_FFMPEG (this test only): a downloaded ffmpeg-static binary elsewhere, for a checkout whose node_modules has none yet.
     const real = process.env.TW_TEST_SHIPPED_FFMPEG || join(repo, 'node_modules', 'ffmpeg-static', ffmpegExecutableName(process.platform))
     if (!existsSync(real)) {
-      console.log('  skipped 7: node_modules/ffmpeg-static has no ffmpeg binary (run npm install); the packaged smoke checks the build')
+      console.log('  skipped 7: node_modules/ffmpeg-static has no ffmpeg binary (run bun install); the packaged smoke checks the build')
     } else {
       // A fixture app folder whose node_modules holds the downloaded binary: no path set → it is the one.
       const app = join(scratch, 'app')

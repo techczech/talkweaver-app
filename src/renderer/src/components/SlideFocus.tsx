@@ -1,3 +1,4 @@
+import { isWorkspaceCovered } from '../lib/workspaceCover'
 // Slide Focus surface (PRD B1/B3/B4, ADR-0034) — "zoom in on one slide". A full workspace VIEW
 // (peer of gridMode, not a scrim): scoped editing on the LEFT (the SAME outline, reused editor,
 // focus-scoped via the Task-8 extension), a live rendered preview on the RIGHT (the stage), a
@@ -138,7 +139,7 @@ export default function SlideFocus({
       return !!t.closest('.cm-editor')
     }
     function handle(e: KeyboardEvent): void {
-      if (suspendKeys) return
+      if (suspendKeys || isWorkspaceCovered()) return
       // The detach confirm owns Esc/Enter while it is up.
       if (confirmOpen) {
         if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setConfirmOpen(false) }

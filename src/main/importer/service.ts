@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
 import type {
   ImportProgress,
@@ -13,6 +13,11 @@ import { classifySlide, IMPORT_RULESET_VERSION } from './mapping.ts'
 import { extractPptx, renderOriginalSlides } from './pptx.ts'
 import { createRunStorage, loadRun } from './storage.ts'
 import { writeJsonAtomic, writeTextAtomic } from './atomic.ts'
+import { importDestinationFolder, newTalkFolder, talkPlace, IMPORT_DESTINATION_REFUSED } from '../vault-paths.ts'
+
+/** What the person reads when an import stops or will not resume because its talk is no longer where the run began. */
+export const IMPORT_RUN_PLACE_REFUSED =
+  'This import cannot continue because its talk folder has moved or changed since it began. Nothing more was written. Import the PowerPoint again to make a new talk.'
 
 export interface StartImportDependencies {
   extractPptx: typeof extractPptx
@@ -62,12 +67,16 @@ function safeSlug(value: string): string {
 }
 
 function availableTalk(vaultRoot: string, topicFolder: string, requestedSlug: string): { slug: string; talkDir: string } {
-  const parent = resolve(vaultRoot, topicFolder)
-  if (!inside(vaultRoot, parent)) throw new Error('importer-destination-outside-vault')
-  mkdirSync(parent, { recursive: true })
+  if (!inside(vaultRoot, resolve(vaultRoot, topicFolder))) throw new Error('importer-destination-outside-vault')
+  const parent = importDestinationFolder(vaultRoot, topicFolder)
+  if (!parent.ok) throw new Error(IMPORT_DESTINATION_REFUSED)
+  mkdirSync(parent.path, { recursive: true })
   for (let suffix = 1; suffix < 10_000; suffix += 1) {
     const slug = suffix === 1 ? requestedSlug : `${requestedSlug}-import-${suffix}`
-    const talkDir = join(parent, slug)
+    // A protected name, or a link standing at this one, is passed over like a taken name.
+    const candidate = newTalkFolder(vaultRoot, slug, topicFolder)
+    if (!candidate.ok) continue
+    const talkDir = candidate.path
     if (!existsSync(talkDir)) return { slug, talkDir }
     const outline = join(talkDir, `${slug}-outline.md`)
     if (!existsSync(outline) && readdirSync(talkDir).length === 0) return { slug, talkDir }
@@ -172,7 +181,31 @@ function emit(
   onProgress?.({ runId, status, completed, total, note })
 }
 
+/**
+ * Who stands at the place a run writes through, or null when it may not write there. A run writes at the paths its
+ * manifest stored, so they must be the folder that holds the run: spelled plainly (no `hop/..` for the OS to follow,
+ * no link on the way), then the same folder by the disk's own name, because a category can be typed in another case
+ * or Unicode form than the one it is stored in. A talk moved since, or a destination refused today, is refused. The
+ * answer names the folders by identity, because a path can stay valid while what it names has been swapped.
+ */
+function runPlace(vaultRoot: string, runDir: string, manifest: ImportRunManifest): string | null {
+  const root = resolve(vaultRoot)
+  const talkDir = dirname(dirname(runDir))
+  const plain = (path: unknown): path is string => typeof path === 'string' && resolve(path) === path
+  try {
+    const { path, outlinePath } = manifest.talk
+    if (!plain(path) || !plain(outlinePath)) return null
+    const stored = realpathSync.native(talkDir)
+    for (const folder of [path, dirname(outlinePath)]) {
+      if (!newTalkFolder(root, basename(folder), relative(root, dirname(folder))).ok || realpathSync.native(folder) !== stored) return null
+    }
+    const inside = [dirname(runDir), runDir].map((folder) => { const entry = lstatSync(folder); return `${entry.dev}:${entry.ino}` })
+    return [talkPlace(talkDir), ...inside].join('/')
+  } catch { return null }
+}
+
 async function executeImport(
+  vaultRoot: string,
   runDir: string,
   manifest: ImportRunManifest,
   onProgress: StartImportInput['onProgress'],
@@ -180,6 +213,10 @@ async function executeImport(
 ): Promise<ImportRunDetail> {
   const runId = manifest.id
   const sourcePath = manifest.source.path
+  const place = runPlace(vaultRoot, runDir, manifest)
+  if (!place) throw new Error(IMPORT_RUN_PLACE_REFUSED)
+  // Extraction and rendering run for seconds to minutes: what follows each is judged again before it writes.
+  const placeHolds = () => runPlace(vaultRoot, runDir, manifest) === place
   const talkDir = manifest.talk.path
   try {
     manifest.status = 'extracting'
@@ -189,6 +226,7 @@ async function executeImport(
     writeJsonAtomic(join(runDir, 'manifest.json'), manifest)
     emit(onProgress, runId, 'extracting', 0, 1, manifest.progress.note)
     const extracted = await dependencies.extractPptx(sourcePath, join(runDir, 'extracted'))
+    if (!placeHolds()) throw new Error(IMPORT_RUN_PLACE_REFUSED)
     const selectedNumbers = selectedSlideNumbers(manifest.options.slideRange, extracted.slides.length)
   const selectedSlides = extracted.slides
     .filter((slide) => selectedNumbers.has(slide.slideNumber))
@@ -213,6 +251,7 @@ async function executeImport(
     writeJsonAtomic(join(runDir, 'manifest.json'), manifest)
     emit(onProgress, runId, 'rendering', 0, selectedSlides.length, manifest.progress.note)
     const rendered = await dependencies.renderOriginalSlides(sourcePath, runDir, extracted.slides.length)
+    if (!placeHolds()) throw new Error(IMPORT_RUN_PLACE_REFUSED)
   const mediaAssets = copyMediaAssets(talkDir, selectedSlides)
   const originalAssets = copyOriginalAssets(talkDir, extracted.source.hash, runDir, selectedSlides.map((slide) => slide.slideNumber))
   const records: ImportSlideRecord[] = selectedSlides.map((source) => {
@@ -270,6 +309,11 @@ async function executeImport(
     emit(onProgress, runId, 'review', records.length, records.length, 'Ready for import review')
     return detail
   } catch (error) {
+    // Nothing more goes through a place that is no longer the run's, not even this failure note.
+    if (!placeHolds()) {
+      emit(onProgress, runId, 'failed', manifest.progress.completed, manifest.progress.total, IMPORT_RUN_PLACE_REFUSED)
+      throw new Error(IMPORT_RUN_PLACE_REFUSED)
+    }
     const message = error instanceof Error ? error.message : String(error)
     manifest.status = 'failed'
     manifest.updatedAt = dependencies.now()
@@ -286,14 +330,17 @@ export async function startImport(input: StartImportInput): Promise<ImportRunDet
   const vaultRoot = resolve(input.vaultRoot)
   const slug = safeSlug(input.request.options.slug)
   const topicFolder = safeTopicFolder(input.request.options.topicFolder)
+  // All before the destination is judged: a deck can take seconds to read and hash, and that judgement must stand beside the first write.
+  const sourcePath = resolve(input.request.sourcePath)
+  const sourceBytes = readFileSync(sourcePath)
+  const sourceHash = sha256(sourceBytes)
+  const sourceSize = statSync(sourcePath).size
   const talk = availableTalk(vaultRoot, topicFolder, slug)
   const runId = dependencies.createId()
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(runId)) throw new Error('importer-run-id-invalid')
   const talkDir = talk.talkDir
   const outlinePath = join(talkDir, `${talk.slug}-outline.md`)
   const runDir = join(talkDir, 'import-runs', runId)
-  const sourcePath = resolve(input.request.sourcePath)
-  const sourceBytes = readFileSync(sourcePath)
   const timestamp = dependencies.now()
   const manifest: ImportRunManifest = {
     schemaVersion: 1,
@@ -305,8 +352,8 @@ export async function startImport(input: StartImportInput): Promise<ImportRunDet
     source: {
       path: sourcePath,
       fileName: basename(sourcePath),
-      hash: sha256(sourceBytes),
-      bytes: statSync(sourcePath).size,
+      hash: sourceHash,
+      bytes: sourceSize,
       slideCount: 0,
       width: 0,
       height: 0
@@ -321,7 +368,7 @@ export async function startImport(input: StartImportInput): Promise<ImportRunDet
   writeTextAtomic(outlinePath, placeholderOutline(input.request.options.title, runId, basename(sourcePath)))
   writeJsonAtomic(join(runDir, 'source.json'), manifest.source)
   writeJsonAtomic(join(runDir, 'manifest.json'), manifest)
-  return executeImport(runDir, manifest, input.onProgress, dependencies)
+  return executeImport(vaultRoot, runDir, manifest, input.onProgress, dependencies)
 }
 
 export async function resumeImport(input: ResumeImportInput): Promise<ImportRunDetail> {
@@ -332,7 +379,7 @@ export async function resumeImport(input: ResumeImportInput): Promise<ImportRunD
     throw new Error(`importer-run-not-resumable:${manifest.status}`)
   }
   if (!existsSync(manifest.source.path)) throw new Error('importer-source-no-longer-available')
-  return executeImport(runDir, manifest, input.onProgress, dependencies)
+  return executeImport(input.vaultRoot, runDir, manifest, input.onProgress, dependencies)
 }
 
 function walkRunManifests(root: string, results: string[]): void {

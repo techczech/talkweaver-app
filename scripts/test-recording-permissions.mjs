@@ -207,7 +207,7 @@ await test('check handler: the same table — permissions.query and device label
   assert.equal(check(session, EDITOR, 'clipboard-read', { get isMainFrame() { throw new Error('x') } }), false, 'details that cannot be read')
 })
 
-await test('wiring: installed at app start; the three editor-kind windows are registered; the app has no other permission handler', () => {
+await test('wiring: installed at app start; the three editor-kind windows are registered; the isolated live-page session has its own deny-all handlers', () => {
   const recording = readFileSync(new URL('../src/main/recording.ts', import.meta.url), 'utf8')
   assert.match(recording, /recordingPermissions\.addPresenter\(win/)
   assert.match(recording, /recordingPermissions\.addAppWindow\(win/)
@@ -226,7 +226,8 @@ await test('wiring: installed at app start; the three editor-kind windows are re
   sharing.addAppWindow(fakeWindow(77))
   assert.deepEqual([...shared], [77])
   assert.equal(sharing.appWindowIds(), shared)
-  // Every permission-like handler in the main process is in recording-permissions.ts. A new one
+  // App handlers live in recording-permissions.ts; isolated live-page deny-all handlers are tested
+  // by test:live-page. A new handler
   // anywhere must be checked for the same gap (a request from a frame that is not the main frame).
   const mainDir = fileURLToPath(new URL('../src/main/', import.meta.url))
   const sources = (dir) => readdirSync(dir).flatMap((name) => {
@@ -238,7 +239,7 @@ await test('wiring: installed at app start; the three editor-kind windows are re
     const text = readFileSync(path, 'utf8')
     for (const m of text.matchAll(/\b(setPermissionRequestHandler|setPermissionCheckHandler|setDevicePermissionHandler|setDisplayMediaRequestHandler|setBluetoothPairingHandler|setUSBProtectedClassesHandler)\(/g)) found.push(`${path.slice(mainDir.length)}:${m[1]}`)
   }
-  assert.deepEqual([...new Set(found)].sort(), ['recording-permissions.ts:setPermissionCheckHandler', 'recording-permissions.ts:setPermissionRequestHandler'])
+  assert.deepEqual([...new Set(found)].sort(), ['live-page-host.ts:setDevicePermissionHandler', 'live-page-host.ts:setDisplayMediaRequestHandler', 'live-page-host.ts:setPermissionCheckHandler', 'live-page-host.ts:setPermissionRequestHandler', 'recording-permissions.ts:setPermissionCheckHandler', 'recording-permissions.ts:setPermissionRequestHandler'])
 })
 
 console.log(`permissions: ${passed} passed`)

@@ -37,3 +37,11 @@ single source of TalkWeaver's slide rendering and ships inside the app.
 Do NOT hand-edit these files in Phase 1 — they are a vendored snapshot. Phase 2 ports
 modules to TypeScript under `src/main/compiler/`, at which point this tree is retired
 module-by-module.
+
+## Gallery acquired-asset hook (2026-10-29)
+
+Local change: `asset-containment.mjs` accepts an optional per-compile acquired-assets adapter;
+`08-source-adapters.mjs` forwards it to file resolution and saved-capture enumeration.
+TalkWeaver's private compile worker supplies demand-only, bounded native acquisitions and
+app-cache snapshots for gallery previews. Other compilation paths retain their existing adapter.
+No upstream checkout changed.

@@ -75,7 +75,7 @@ function textAttribute(name: string): boolean {
 
 /** The players the compiler emits for a video embed (06-block-renderers.mjs). */
 const VIDEO_PLAYER = /^https:\/\/(?:(?:www\.)?youtube-nocookie\.com\/embed\/[\w-]{11}|player\.vimeo\.com\/video\/\d+)(?:[?#][^\s"'<>]*)?$/
-const IFRAME_ATTRS = new Set(['class', 'data-src', 'data-embed-url', 'data-embed-video', 'title', 'loading', 'allow', 'allowfullscreen', 'scrolling'])
+const IFRAME_ATTRS = new Set(['class', 'data-src', 'data-embed-url', 'data-embed-video', 'data-resource-url', 'title', 'loading', 'allow', 'allowfullscreen', 'scrolling'])
 /** The permissions the compiler's video player asks for (06-block-renderers.mjs); an `allow` may hold only these. */
 export const VIDEO_PLAYER_ALLOW = ['autoplay', 'encrypted-media', 'picture-in-picture', 'fullscreen'] as const
 

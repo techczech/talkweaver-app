@@ -21,6 +21,9 @@ export async function openPickerFolders(page, { archive = false } = {}) {
 /** The picker's Files-tree row of a talk, its folders opened first. */
 export async function pickerTalkRow(page, slug) {
   const row = page.locator(`${TREE} [data-talk-slug="${slug}"]`)
+  // A picker opened soon after launch can show "No talks indexed yet" until the vault index lands;
+  // wait for the tree to hold a talk or a folder before deciding which folders to open.
+  await page.locator(`${TREE} [data-talk-slug], ${TREE} [data-folder-path]`).first().waitFor({ timeout: 30_000 })
   if (!await row.count()) await openPickerFolders(page, { archive: true })
   return row.first()
 }

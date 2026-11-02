@@ -107,7 +107,7 @@ try {
   const main = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
   const preload = readFileSync(join(root, 'src/preload/index.ts'), 'utf8')
   const mock = readFileSync(join(root, 'src/renderer/src/tw-mock.ts'), 'utf8')
-  for (const ch of ['settings:get-plain-look', 'settings:set-plain-look', 'plain-look:changed']) {
+  for (const ch of ['preferences:get-plain-look', 'preferences:set-plain-look', 'plain-look:changed']) {
     assert.ok(main.includes(ch) && preload.includes(ch), ch + ' in main and preload')
   }
   for (const fn of ['getPlainLook', 'setPlainLook', 'onPlainLookChanged']) assert.ok(preload.includes(fn) && mock.includes(fn), fn + ' in preload and mock')

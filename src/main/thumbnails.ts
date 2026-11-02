@@ -21,11 +21,19 @@ export interface RenderThumbnailsOptions {
    *  when no normal render is pending, so it never holds a queued normal render up; one already
    *  running is not interrupted. Its compile is on the preparation gate's background lane likewise. */
   background?: boolean
+  /** Asked between every two slides and before a picture is written; true stops the run at once (the
+   *  prewarm's own reasons: presenting, memory, a closed vault). */
+  shouldYield?: () => boolean
   /** Ordered slides — one per ProjectionRow, in presentation order. key is the cache key;
    *  layout (when a multi-part one) drives per-part sub-thumbnail capture. */
   slides: Array<{ key: string; cacheKey?: string; layout?: string; index?: number }>
   /** Absolute directory to write PNGs into. Created if missing. */
   cacheDir: string
+  /** Cached pictures first, then one completed slide (and its parts); never incomplete captures. */
+  onProgress?: (pictures: Record<string, string>) => void
+  /** A pause between two slides, in ms (the prewarm's pace, so the Mac stays responsive). Default: one
+   *  turn of the event loop, as before. */
+  paceMs?: number
 }
 
 // ADR-0022: per-part sub-thumbnails are captured ONLY for a CAROUSEL — a slide whose rendered
@@ -44,6 +52,8 @@ const CAROUSEL_SELECTOR = '.card-gallery[data-exclusive]'
 let renderWin: BrowserWindow | null = null
 let renderWinHtmlKey: string | null = null
 let renderWinIdleTimer: NodeJS.Timeout | null = null
+// True while a render is using the window (the queue runs one at a time).
+let rendering = false
 // Calls are serialized: two overlapping runs would fight over the shared window's active slide.
 const enqueueRender = createThumbnailQueue(renderThumbnailsSerialized)
 
@@ -74,7 +84,7 @@ async function deckBytesAndKey(fullHtml: string, knownKey?: string): Promise<{ b
   return { bytes, key: Buffer.from(digest).toString('hex') }
 }
 
-type Sharp = typeof import('sharp')
+type Sharp = typeof import('sharp').default // sharp 0.35 types the module's named exports; the callable is `default`
 let sharpModule: Sharp | null | undefined
 function loadSharp(): Sharp | null {
   if (sharpModule !== undefined) return sharpModule
@@ -197,11 +207,76 @@ export async function renderThumbnails(
   return enqueueRender(opts, opts.requestKey, opts.background === true)
 }
 
+/**
+ * The prewarm's render (thumbnail-prewarm.ts): the lowest priority there is. It starts only when no
+ * other render is waiting, and any other request interrupts it between two slides (thumbnail-queue.ts);
+ * `interrupted` then says so, and the slides it finished are on disk.
+ */
+export async function renderThumbnailsIdle(
+  opts: RenderThumbnailsOptions & { requestKey: string }
+): Promise<{ rendered: Record<string, string>; interrupted: boolean }> {
+  let interrupted = false
+  let yielded = false
+  const ask = opts.shouldYield
+  const shouldYield = ask ? (): boolean => {
+    if (yielded) return true
+    try { yielded = ask() } catch { yielded = true }
+    if (yielded) interrupted = true
+    return yielded
+  } : undefined
+  const rendered = await enqueueRender({ ...opts, shouldYield, onInterrupted: () => { interrupted = true } }, opts.requestKey, 'idle')
+  return { rendered, interrupted }
+}
+
+/** Stop the render (running or waiting) asked for under this request key; it settles with what it has. */
+export function cancelThumbnailRender(requestKey: string): void {
+  enqueueRender.cancel(requestKey)
+}
+
+/** Whether a render somebody is waiting for (anything but the prewarm) is running or queued, and when
+ *  one was last asked for (Date.now() clock, 0 if never). */
+export function thumbnailForeground(): { busy: boolean; lastAt: number } {
+  return { busy: enqueueRender.foregroundBusy(), lastAt: enqueueRender.lastForegroundAt() }
+}
+
+/** Close the hidden render window, and with it the renderer process and every deck it has held, when
+ *  no render is using it. The next render opens a fresh one. True when it was closed (or none was open). */
+export function recycleRenderWindow(): boolean {
+  if (rendering) return false
+  destroyRenderWin()
+  return true
+}
+
+/** The OS process id of the hidden render window's renderer, or null when there is no window. */
+export function renderWindowProcessId(): number | null {
+  try {
+    return renderWin && !renderWin.isDestroyed() ? renderWin.webContents.getOSProcessId() : null
+  } catch {
+    return null
+  }
+}
+
 async function renderThumbnailsSerialized(
+  opts: RenderThumbnailsOptions & { onInterrupted?: () => void },
+  signal: AbortSignal
+): Promise<Record<string, string>> {
+  rendering = true
+  try {
+    return await renderThumbnailsInWindow(opts, signal)
+  } finally {
+    rendering = false
+    if (signal.aborted) opts.onInterrupted?.()
+  }
+}
+
+async function renderThumbnailsInWindow(
   opts: RenderThumbnailsOptions,
   signal: AbortSignal
 ): Promise<Record<string, string>> {
   const { fullHtml, deckKey, slides, cacheDir } = opts
+  const pace = opts.paceMs && opts.paceMs > 0
+    ? (): Promise<void> => new Promise((resolve) => setTimeout(resolve, opts.paceMs))
+    : nextTurn
   const result: Record<string, string> = {}
 
   if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true })
@@ -224,6 +299,7 @@ async function renderThumbnailsSerialized(
     }
   })
 
+  if (!signal.aborted && Object.keys(result).length) opts.onProgress?.({ ...result })
   if (signal.aborted || pending.length === 0) return result
 
   if (renderWinIdleTimer) { clearTimeout(renderWinIdleTimer); renderWinIdleTimer = null }
@@ -233,13 +309,13 @@ async function renderThumbnailsSerialized(
 
     for (const item of pending) {
       // One slide at a time, with a turn of the event loop between them: the queue never holds the
-      // main process for more than one short step.
-      await nextTurn()
-      if (signal.aborted) break
+      // main process for more than one short step (or the caller's pace, a longer pause).
+      await pace()
+      if (signal.aborted || opts.shouldYield?.()) break
       try {
         await navigateToSlide(win, item.index)
         const { pending: stillPending } = await settle(win)
-        if (signal.aborted) break
+        if (signal.aborted || opts.shouldYield?.()) break
         // DETERMINISM: never persist an INCOMPLETE render. A large image (e.g. an 8MP paste) can
         // miss settle's decode window under load — capturing a blank. Caching that blank made it
         // STICK (the cache key is the slide model, stable until the slide changes), so the preview
@@ -263,6 +339,7 @@ async function renderThumbnailsSerialized(
           continue
         }
         const img: NativeImage = await win.webContents.capturePage()
+        if (signal.aborted || opts.shouldYield?.()) break
         await writePicture(item.pngPath, await encodePng(img))
         result[item.key] = item.pngPath
 
@@ -275,6 +352,11 @@ async function renderThumbnailsSerialized(
             await writePicture(p, await encodePng(parts[i]))
             result[`${item.key}__${i}`] = p
           }
+        }
+        if (!signal.aborted && !opts.shouldYield?.()) {
+          const pictures: Record<string, string> = { [item.key]: item.pngPath }
+          for (let i = 0; result[`${item.key}__${i}`]; i++) pictures[`${item.key}__${i}`] = result[`${item.key}__${i}`]
+          opts.onProgress?.(pictures)
         }
       } catch (err) {
         // Partial is better than none — log and keep going.

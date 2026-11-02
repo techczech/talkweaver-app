@@ -22,6 +22,9 @@
 //      Open live view asks for the session of the named vault only.
 // Usage: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-run-page.mjs
 import assert from 'node:assert/strict'
+import { mock, test } from 'node:test'
+import ts from 'typescript'
+import { registerRunBoardIpc } from '../src/main/run-board-ipc.ts'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -291,7 +294,10 @@ const actionsIn = (html, id) => {
   globalThis.URL.createObjectURL = (blob) => { URLs.push(blob); return 'blob:answers' }
   globalThis.URL.revokeObjectURL = () => {}
   dom.window.HTMLAnchorElement.prototype.click = function click() { URLs.push(this.download) }
-  const flush = async () => { for (let i = 0; i < 6; i += 1) await R.act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) }) }
+  // Render turns must not advance the pull deadline: a loaded runner can take longer than 40 ms.
+  mock.timers.enable({ apis: ['setTimeout'] })
+  const flush = async () => { for (let i = 0; i < 6; i += 1) await R.act(async () => { await new Promise((resolve) => setImmediate(resolve)) }) }
+  const expirePull = async () => { await R.act(async () => { mock.timers.tick(40) }); await flush() }
   const text = (selector) => doc.querySelector(selector)?.textContent ?? null
   const click = async (element) => { await R.act(async () => { element.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) }); await flush() }
   // `refresh`: 'ok', 'offline', or a function (the call's number) returning the reply; `parent`: a parent that renders
@@ -318,7 +324,7 @@ const actionsIn = (html, id) => {
         preworkSeen: async (_slug, _run, change) => { seen.push(change); held = applySeenChange(held, change, at(50)) ?? held; return { ok: true, run: { prework: held } } },
         preworkPick: async () => ({ ok: false, error: 'not here' }), preworkQuestion: async () => ({ ok: false, error: 'not here' }), preworkFeeds: async () => ({ ok: false })
       },
-      liveService: { status: async () => (live === 'hang' ? new Promise(() => {}) : typeof live === 'string' ? { state: live } : live), setUp: async () => ({}) }
+      liveService: { status: async () => (live === 'hang' ? new Promise(() => {}) : typeof live === 'string' ? { state: live } : live), setUp: async () => ({}), onStatus: () => () => {} }
     }
     const host = doc.getElementById('host')
     const root = R.createRoot(host)
@@ -394,7 +400,7 @@ const actionsIn = (html, id) => {
   // Never sent and no live service: a full-state message with the set-up button.
   view = await open({ prework: null, status: null, live: 'not-set-up' })
   assert.equal(text('[data-run-answers-nolive] h3'), 'Responses need the live service')
-  assert.equal(text('[data-run-set-up-live]'), 'Set up the live service')
+  assert.equal(text('[data-run-set-up-live]'), 'Open Settings', 'the set-up is in Settings → Cloudflare (Settings-window-only since Sol review 4)')
   await view.close()
 
   // Published, nothing in yet: when it closes, Pull now, and how many steps are Local only.
@@ -479,7 +485,7 @@ const actionsIn = (html, id) => {
   let late
   view = await open({ pullTimeoutMs: 40, refresh: (n, held) => (n === 1 ? new Promise((resolve) => { late = () => resolve({ ok: true, run: { prework: held }, added: 0, changed: false }) }) : { ok: true, run: { prework: held }, added: 0, changed: false }) })
   assert.ok(doc.querySelector('[data-run-pulling]'), 'pulling until the timeout')
-  await R.act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)) })
+  await expirePull()
   await settle()
   assert.equal(pullState(), 'offline', 'the timeout ends the pull as offline')
   assert.equal(pullButton().textContent, 'Try again')
@@ -497,7 +503,7 @@ const actionsIn = (html, id) => {
   // Try again during an unresolved pull after the timeout sends no second request; the answer then lands once.
   let reply = deferred()
   view = await open({ parent: true, pullTimeoutMs: 40, refresh: () => reply.promise })
-  await R.act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)) })
+  await expirePull()
   await settle()
   assert.equal(pullState(), 'offline')
   await click(pullButton())
@@ -532,7 +538,7 @@ const actionsIn = (html, id) => {
   await view.close()
   // An older-build lookup that never answers ends in the plain refusal by the deadline.
   view = await open({ live: 'hang', pullTimeoutMs: 40, refresh: (_n, held) => ({ ok: false, error: 'The answers could not be read (HTTP 404).', run: { prework: held } }) })
-  await R.act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)) })
+  await expirePull()
   await settle()
   assert.equal(doc.querySelector('[data-run-pulling]'), null, 'the deadline ends the pull though the lookup never answered')
   assert.equal(pullState(), 'refused')
@@ -552,14 +558,14 @@ const actionsIn = (html, id) => {
         preworkRefresh: async (_slug, _run, phase) => { calls.push(phase); return phase === 'pre' ? preReply.promise : { ok: true, run: { postwork: BASE_PREWORK }, added: 0, changed: true } },
         preworkSeen: async () => ({ ok: false, error: 'not here' }), preworkPick: async () => ({ ok: false, error: 'not here' }), preworkQuestion: async () => ({ ok: false, error: 'not here' }), preworkFeeds: async () => ({ ok: false })
       },
-      liveService: { status: async () => ({ state: 'ready' }), setUp: async () => ({}) }
+      liveService: { status: async () => ({ state: 'ready' }), setUp: async () => ({}), onStatus: () => () => {} }
     }
     const root = R.createRoot(doc.getElementById('host'))
     await R.act(async () => { root.render(R.createElement(R.RunAnswers, { source: twoPhase, runPhase: 'published', pullTimeoutMs: 40, onPulled: () => heard.push('pulled') })) })
     await flush()
     const stateOf = (phase) => doc.querySelector(`[data-run-strip="${phase}"] [data-run-pulled]`)?.getAttribute('data-run-pull-state') ?? null
     assert.deepEqual(calls, ['pre'], 'pre-work is asked first')
-    await R.act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)) })
+    await expirePull()
     await settle()
     assert.deepEqual(calls, ['pre', 'post'], 'post-work is asked once pre-work passed its deadline, though pre-work has not answered')
     assert.equal(stateOf('pre'), 'offline')
@@ -587,7 +593,7 @@ const actionsIn = (html, id) => {
         preworkRefresh: async (_slug, runId) => { calls.push(runId); return runId === 'said' ? reply.promise : okReply(null) },
         preworkSeen: async () => ({ ok: false, error: 'not here' }), preworkPick: async () => ({ ok: false, error: 'not here' }), preworkQuestion: async () => ({ ok: false, error: 'not here' }), preworkFeeds: async () => ({ ok: false })
       },
-      liveService: { status: async () => ({ state: 'ready' }), setUp: async () => ({}) }
+      liveService: { status: async () => ({ state: 'ready' }), setUp: async () => ({}), onStatus: () => () => {} }
     }
     const heard = []
     const root = R.createRoot(doc.getElementById('host'))
@@ -612,6 +618,7 @@ const actionsIn = (html, id) => {
   await view.close()
   console.log('ok  3e every pull ends in a state: pulled once on opening, Pull now pulls once and is disabled meanwhile, closed, refused, outdated, purged, thrown, timed out, empty and offline; shared request on Try again and reopening, hanging lookups, late answers, Run switched; a hung pre-work does not hold post-work')
 
+  mock.timers.reset()
   dom.window.close()
   globalThis.MessageChannel = NodeMessageChannel
   console.log('ok  3d answers section: strip, routes, Local only, divider and dots, filters, Mark all read, exports without ids, read on leaving; offline, all local, no live service, none yet')
@@ -866,5 +873,285 @@ const actionsIn = (html, id) => {
   assert.match(history, /window\.tw\.history\.talkHandouts\(readVaultId\)/)
   assert.match(history, /resultsRequest\.vaultId !== readVaultId\) \{ setReadVaultId\(resultsRequest\.vaultId\)/)
   console.log('ok  5 issue 256: Go live and Open results carry the Run\'s vault')
+}
+// Vault-only main handlers must refuse a kept target before resolving its same-id vault Run.
+// Compile the real top-level IPC registrations without booting Electron or opening a window.
+{
+  const source = readFileSync(join(repo, 'src/main/index.ts'), 'utf8')
+  const ast = ts.createSourceFile('index.ts', source, ts.ScriptTarget.Latest, true)
+  const channels = ['history:instant-anchors', 'history:feedback-slides', 'history:add-instant-slide', 'tools:open']
+  for (const channel of channels) await test(`${channel} refuses a kept Run before touching the vault`, async () => {
+    const statement = ast.statements.find((s) => ts.isExpressionStatement(s) && ts.isCallExpression(s.expression)
+      && s.expression.expression.getText(ast) === 'ipcMain.handle' && s.expression.arguments[0]?.text === channel)
+    assert.ok(statement, channel)
+    const code = ts.transpileModule(statement.getText(ast), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
+    let handler
+    let reads = 0
+    const touched = () => { reads++; return null }
+    new Function('ipcMain', 'currentVaultRoot', 'writableVaultRoot', 'isOpenableToolsView', 'parseToolsRunRef', 'vaultRegistry', 'openToolsWindow', code)(
+      { handle: (_name, fn) => { handler = fn } }, touched, touched, () => true, (value) => value,
+      { primary: touched }, touched)
+    const target = { talkSlug: 'talk', runId: 'same-run', entryId: 'instant', home: null }
+    const result = channel === 'tools:open' ? await handler({}, 'sessions', undefined, target) : await handler({}, target)
+    if (channel === 'history:instant-anchors' || channel === 'history:feedback-slides') assert.deepEqual(result, {})
+    else assert.equal(channel === 'tools:open' ? result.success : result.ok, false, 'the kept target is refused')
+    assert.equal(reads, 0, 'no current-vault lookup, read, write or window open is attempted')
+  })
+  for (const channel of ['history:board-refresh', 'history:board-close', 'history:board-put-back', 'history:results-share-status', 'history:results-share', 'history:results-share-stop']) {
+    await test(`${channel} refuses a kept Run before touching the vault or share service`, async () => {
+      const handlers = new Map()
+      let touched = 0
+      registerRunBoardIpc({ ipcMain: { handle: (name, fn) => handlers.set(name, fn) },
+        vaultRoot: () => { touched++; return null }, sessions: () => { touched++; return null },
+        shares: { stop: async () => { touched++; return { ok: true } } } })
+      const result = await handlers.get(channel)({}, { talkSlug: 'talk', runId: 'same-run', home: null })
+      if (channel === 'history:results-share-status') assert.equal(result, null)
+      else assert.equal(result.ok, false, 'the kept target is refused')
+      assert.equal(touched, 0, 'the same-id vault Run and its share service are never consulted')
+    })
+  }
+}
+
+// ---- 6. History lists kept Runs alongside vault Runs and uses the existing row and Studio action.
+{
+  const root = mkdtempSync(join(tmpdir(), 'tw-kept-history-'))
+  const vault = join(root, 'vault')
+  const userData = join(root, 'userData')
+  const rec = join(userData, 'recordings')
+  mkdirSync(join(vault, '_PRESENTATIONS', 'talk'), { recursive: true })
+  mkdirSync(rec, { recursive: true })
+  const run = (id) => ({ id, talkSlug: 'talk', talkTitle: 'Talk', kind: 'delivery', startedAt: '2026-10-20T12:00:00Z', endedAt: '2026-10-20T12:01:00Z', recordingMs: 60000, wallClockMs: 60000, timerTargetMin: 0, context: null, pathwayId: null, audio: { bytes: 5, uploaded: false }, slideTimeIndex: [] })
+  writeFileSync(join(vault, '_PRESENTATIONS', 'talk', 'vault-run.json'), JSON.stringify(run('vault-run')))
+  writeFileSync(join(rec, 'kept-run.json'), JSON.stringify(run('kept-run')))
+  writeFileSync(join(rec, 'marker.recording.json'), JSON.stringify({ sessionId: 'marker', talkSlug: 'talk' }))
+  writeFileSync(join(rec, 'wrong-name.json'), JSON.stringify(run('different-id')))
+  writeFileSync(join(rec, 'bad.json'), 'bad JSON')
+  const handlers = new Map()
+  globalThis.__keptHistory = { ipcMain: { handle: (name, fn) => handlers.set(name, fn) } }
+  const main = await build({ entryPoints: ['src/main/history.ts'], bundle: true, write: false, format: 'cjs', platform: 'node', packages: 'external', plugins: [{ name: 'history-electron', setup(b) {
+    b.onResolve({ filter: /^electron$/ }, () => ({ path: 'electron', namespace: 'test' }))
+    b.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: 'module.exports = globalThis.__keptHistory', loader: 'js' }))
+  } }] })
+  const mod = { exports: {} }
+  new Function('require', 'module', 'exports', main.outputFiles[0].text)(createRequire(import.meta.url), mod, mod.exports)
+  let current = vault
+  mod.exports.registerHistoryIpc({ userDataDir: () => userData, vaultRoot: () => current, listTalks: async () => [] })
+  const list = () => handlers.get('history:list-runs')({})
+  const all = await list()
+  assert.deepEqual(all.map((s) => s.id).sort(), ['kept-run', 'vault-run'])
+  assert.equal(all.find((s) => s.id === 'kept-run').kept, 'app-data')
+  assert.equal(all.find((s) => s.id === 'vault-run').kept, undefined)
+  assert.deepEqual(await handlers.get('history:list-runs')({}, 'another-talk'), [])
+  current = null
+  assert.deepEqual((await list()).map((s) => s.id), ['kept-run'], 'kept Runs remain discoverable without an open vault')
+  current = vault
+
+  const { JSDOM } = await import('jsdom')
+  const dom = new JSDOM('<!doctype html><body><div id="host"></div></body>', { pretendToBeVisual: true })
+  const previousGlobals = new Map()
+  for (const name of ['window', 'document', 'navigator', 'HTMLElement', 'HTMLButtonElement', 'KeyboardEvent', 'MouseEvent', 'Event', 'Node', 'Element']) {
+    previousGlobals.set(name, Object.getOwnPropertyDescriptor(globalThis, name))
+    Object.defineProperty(globalThis, name, { value: name === 'window' ? dom.window : dom.window[name], configurable: true, writable: true })
+  }
+  const previousChannel = globalThis.MessageChannel
+  globalThis.MessageChannel = class { constructor() { const p = { onmessage: null }; this.port1 = p; this.port2 = { postMessage: () => setImmediate(() => p.onmessage?.({})) } } }
+  const bundle = await build({ stdin: { contents: "export { default as History } from './src/renderer/src/components/History.tsx'; export { default as Studio } from './src/renderer/src/components/Studio.tsx'; export { createElement, act } from 'react'; export { createRoot } from 'react-dom/client'", resolveDir: repo, loader: 'tsx' }, bundle: true, write: false, format: 'cjs', platform: 'node', jsx: 'automatic', logLevel: 'silent', loader: { '.css': 'empty' }, define: { 'process.env.NODE_ENV': '"development"' } })
+  writeFileSync(join(root, 'history.cjs'), bundle.outputFiles[0].text)
+  const R = createRequire(join(root, 'x.cjs'))('./history.cjs')
+  const opened = []
+  const changed = []
+  const interactions = { instantSlides: [{ id: 'instant', kind: 'text', text: 'A thought', afterSlideId: 's1', shownAt: 0 }], boards: [{ id: 'board', title: 'Ideas', kind: 'board', columns: [], cards: [], hidden: [], state: 'open' }] }
+  const vaultReads = []
+  const keptChecks = []
+  all.push({ ...run('same-run'), ...interactions, talkTitle: 'Vault duplicate', context: 'Vault context', home: vault }, { ...run('same-run'), ...interactions, talkTitle: 'Kept duplicate', context: 'Kept context', kept: 'app-data', home: null })
+  window.tw = { history: { instantAnchors: async (...args) => { vaultReads.push(['anchors', ...args]); return {} }, feedbackSlides: async (...args) => { vaultReads.push(['feedback', ...args]); return {} }, listRuns: async () => all, talkHandouts: async () => ({ talk: { title: 'Another vault’s talk', handoutUrl: null } }) }, recording: {
+    getStorage: async () => null,
+    setKind: async (...args) => { changed.push(args); return { ok: true, kind: 'rehearsal' } },
+    listRecovery: async () => [{ sessionId: 'blocked', talkSlug: 'talk', talkTitle: 'Interrupted talk', status: 'needs-attention', message: 'The recording needs attention. Its audio is safe on this Mac.' }]
+  } }
+  const view = R.createRoot(document.getElementById('host'))
+  try {
+    await R.act(async () => { view.render(R.createElement(R.History, { isOpen: true, onClose() {}, onShowStudio: (id) => opened.push(id) })) })
+    for (let i = 0; i < 5; i++) await R.act(async () => { await new Promise((r) => setTimeout(r, 0)) })
+    const row = document.querySelector('[data-history-sid="kept-run"]')
+    assert.ok(row, 'the existing History row renders a kept Run')
+    assert.match(row.textContent, /kept on this Mac/)
+    assert.equal(row.querySelector('.tk-title').textContent, 'Talk', 'a kept Run keeps its title even when the current vault has the same talk slug')
+    assert.doesNotMatch(document.querySelector('[data-history-sid="vault-run"]').textContent, /kept on this Mac/)
+    await R.act(async () => { [...row.querySelectorAll('button')].find((b) => b.textContent.includes('Open in Studio')).click() })
+    assert.deepEqual(opened, ['kept-run'], 'the kept Run opens through the existing Studio action')
+    assert.match(document.querySelector('[data-recording-recovery="blocked"]').textContent, /needs attention/)
+    const duplicates = [...document.querySelectorAll('[data-history-sid="same-run"]')]
+    assert.equal(duplicates.length, 2, 'both homes remain visible')
+    const keptDuplicate = duplicates.find((r) => r.textContent.includes('kept on this Mac'))
+    const vaultDuplicate = duplicates.find((r) => !r.textContent.includes('kept on this Mac'))
+    await R.act(async () => keptDuplicate.querySelector('.studio-link').click())
+    assert.deepEqual(JSON.parse(opened.at(-1)), [null, 'talk', 'same-run'], 'Open in Studio carries the kept home when ids collide')
+    vaultReads.length = 0
+    await R.act(async () => keptDuplicate.click())
+    keptChecks.push(['selecting a kept Run never resolves anchors or feedback against the same-id vault Run', vaultReads.length === 0])
+    keptChecks.push(['kept Runs have no Add to talk control', keptDuplicate.querySelector('[data-history-instant] button') === null])
+    keptChecks.push(['kept Runs have no vault board mutations or share controls', keptDuplicate.querySelector('[data-history-board] button') === null])
+    assert.equal(document.querySelectorAll('[data-history-sid="same-run"].selected').length, 1, 'selection belongs to one home only')
+    assert.ok(keptDuplicate.classList.contains('selected'))
+    await R.act(async () => keptDuplicate.querySelector('.ctx-edit').click())
+    assert.equal(document.querySelectorAll('[data-history-sid="same-run"] .ctx-input').length, 1, 'only the selected home enters context editing')
+    assert.equal(keptDuplicate.querySelector('.ctx-input').value, 'Kept context')
+    await R.act(async () => keptDuplicate.querySelector('.twh-kebab').click())
+    keptChecks.push(['kept menu does not offer Open in Sessions', document.querySelector('.twh-menu [data-open-in-sessions]') === null])
+    await R.act(async () => [...document.querySelectorAll('.twh-menu button')].find((b) => b.textContent.trim() === 'Run details').click())
+    assert.match(document.querySelector('[role="dialog"][aria-label^="Run ·"]').getAttribute('aria-label'), /Kept duplicate/, 'details resolve by home, not just id')
+    keptChecks.push(['kept details do not offer Open in Sessions', document.querySelector('.twh-run-detail [data-open-in-sessions]') === null])
+    await R.act(async () => [...document.querySelectorAll('.twh-run-detail button')].find((b) => b.textContent.includes('Back to list')).click())
+    await R.act(async () => keptDuplicate.querySelector('.twh-kebab').click())
+    await R.act(async () => [...document.querySelectorAll('.twh-menu button')].find((b) => b.textContent.includes('Change kind')).click())
+    await R.act(async () => [...document.querySelectorAll('.twh-menu button')].find((b) => b.textContent.trim() === 'Rehearsal').click())
+    assert.deepEqual(changed, [['talk', 'same-run', 'rehearsal', null]], 'the action explicitly targets the kept home')
+    assert.equal(vaultDuplicate.querySelector('.twh-kind-tag').textContent, 'Delivery', 'updating kept state does not update the vault row')
+    await R.act(async () => vaultDuplicate.click())
+    assert.ok(vaultDuplicate.querySelector('[data-history-instant] .isl-add'), 'the vault duplicate retains Add to talk')
+    assert.ok(vaultDuplicate.querySelector('[data-board-share]'), 'the vault duplicate retains board controls')
+    await R.act(async () => vaultDuplicate.querySelector('.twh-kebab').click())
+    assert.ok(document.querySelector('.twh-menu [data-open-in-sessions]'), 'the vault duplicate retains Open in Sessions')
+
+    // App's showStudio forwards this string as initialSessionId. Exercise the actual receiving Studio
+    // with the key History emitted, including switching between two homes while Studio stays mounted.
+    const requests = []
+    const studioSessions = [{ ...run('same-run'), talkSlug: 'another-talk', context: 'Other talk', home: vault }, ...all]
+    window.tw.recording.listAllSessions = async () => studioSessions
+    window.tw.replay = { build: async () => ({ success: false }) }
+    window.tw.vault = { listTalks: async () => [] }
+    window.tw.transcript = { get: async () => null, onProgress: () => () => {} }
+    dom.window.HTMLMediaElement.prototype.load = () => {}
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = async (url) => { requests.push(url); return { arrayBuffer: async () => new ArrayBuffer(0) } }
+    try {
+      for (const [key, context, home, id] of [
+        [opened.at(-1), 'Kept context', null, 'same-run'],
+        [JSON.stringify([vault, 'talk', 'same-run']), 'Vault context', vault, 'same-run'],
+        [opened.at(-1), 'Kept context', null, 'same-run'],
+        ['kept-run', '—', null, 'kept-run'],
+        ['vault-run', '—', vault, 'vault-run'],
+      ]) {
+        await R.act(async () => view.render(R.createElement(R.Studio, { isOpen: true, onClose() {}, initialSessionId: key })))
+        const selected = [...document.querySelectorAll('.tws-scard.active')]
+        assert.equal(selected.length, 1, 'Studio selects exactly one Run')
+        assert.equal(selected[0].getAttribute('data-sid'), id)
+        assert.equal(selected[0].querySelector('.tws-sc-ctx').textContent, context, 'Studio resolves the full home/talk/id key, or a legacy plain id')
+        const audio = document.querySelector('audio').getAttribute('src')
+        const expected = `twrec://${id}?talk=talk&home=${encodeURIComponent(home ?? '')}`
+        assert.equal(audio, expected, 'playback targets the selected home')
+        assert.equal(requests.at(-1), expected, 'waveform decoding reads the selected home too')
+      }
+    } finally { globalThis.fetch = originalFetch }
+
+  } finally {
+    await R.act(async () => view.unmount())
+    dom.window.close()
+    for (const [name, descriptor] of previousGlobals) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor)
+      else delete globalThis[name]
+    }
+    globalThis.MessageChannel = previousChannel
+    delete globalThis.__keptHistory
+    rmSync(root, { recursive: true, force: true })
+  }
+  // Run the assertions after restoring Node's globals: jsdom's MessageChannel stand-in is for React only.
+  for (const [name, passed] of keptChecks) await test(name, () => assert.equal(passed, true))
+  console.log('ok  6 History lists kept Runs; Studio resolves composite home/talk/id keys and plain ids, with matching playback and waveform homes')
+}
+
+// ---- 7. History follows Open results into another vault and selects the requested Run, not the newest row.
+{
+  const resultsDir = mkdtempSync(join(tmpdir(), 'tw-history-results-'))
+  const { JSDOM } = await import('jsdom')
+  const dom = new JSDOM('<!doctype html><body><div id="host"></div></body>', { pretendToBeVisual: true })
+  const previousGlobals = new Map()
+  for (const name of ['window', 'document', 'navigator', 'HTMLElement', 'Node', 'Element']) {
+    previousGlobals.set(name, Object.getOwnPropertyDescriptor(globalThis, name))
+    Object.defineProperty(globalThis, name, { value: name === 'window' ? dom.window : dom.window[name], configurable: true, writable: true })
+  }
+  previousGlobals.set('IS_REACT_ACT_ENVIRONMENT', Object.getOwnPropertyDescriptor(globalThis, 'IS_REACT_ACT_ENVIRONMENT'))
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  const NodeMessageChannel = globalThis.MessageChannel
+  const bundle = await build({
+    stdin: { contents: "export { default as History } from './src/renderer/src/components/History.tsx'; export { createElement, act } from 'react'; export { createRoot } from 'react-dom/client'", resolveDir: repo, loader: 'tsx' },
+    bundle: true, write: false, format: 'cjs', platform: 'node', jsx: 'automatic', logLevel: 'silent', loader: { '.css': 'empty' }, define: { 'process.env.NODE_ENV': '"development"' }
+  })
+  writeFileSync(join(resultsDir, 'history.cjs'), bundle.outputFiles[0].text)
+  globalThis.MessageChannel = class { constructor() { const port1 = { onmessage: null }; this.port1 = port1; this.port2 = { postMessage: () => setImmediate(() => port1.onmessage?.({ data: undefined })) } } }
+  const R = createRequire(join(resultsDir, 'x.cjs'))('./history.cjs')
+  const run = (id, eventTitle, startedAt) => ({ id, eventTitle, startedAt, talkSlug: 'same-talk', talkTitle: 'Same talk', kind: 'delivery', status: 'delivered', audio: null, handoutUrl: `https://example.org/${encodeURIComponent(eventTitle)}` })
+  const runs = {
+    v1: [run('old-first', 'First vault Run', '2026-10-20T10:00:00Z'), run('target', 'Same id in first vault', '2026-10-18T10:00:00Z')],
+    v2: [run('newest', 'Newest second vault Run', '2026-10-20T12:00:00Z'), { ...run('target', 'Copied Run in another talk', '2026-10-20T11:00:00Z'), talkSlug: 'other-talk' }, { ...run('target', 'Kept same-id Run', '2026-10-20T10:30:00Z'), kept: 'app-data' }, run('target', 'Requested second vault Run', '2026-10-19T10:00:00Z')]
+  }
+  const reads = []
+  const copied = []
+  Object.defineProperty(dom.window.navigator, 'clipboard', { value: { writeText: async (text) => copied.push(text) }, configurable: true })
+  let release
+  dom.window.tw = {
+    history: {
+      checkLive: async () => ({ status: 'live', checkedAt: null }),
+      listRuns: async (_slug, vaultId) => {
+        reads.push(['runs', vaultId])
+        if (vaultId === 'v2') await new Promise((resolve) => { release = resolve })
+        return runs[vaultId ?? 'v1']
+      },
+      talkHandouts: async (vaultId) => { reads.push(['talks', vaultId]); return {} }
+    },
+    recording: { getStorage: async () => null, listRecovery: async () => [] }
+  }
+  const root = R.createRoot(dom.window.document.getElementById('host'))
+  const show = async (resultsRequest = null) => { await R.act(async () => root.render(R.createElement(R.History, { isOpen: true, onClose() {}, resultsRequest }))) }
+  const selected = () => dom.window.document.querySelector('[data-history-sid].selected')
+  try {
+    await show()
+    assert.match(selected().textContent, /First vault Run/)
+    await show({ vaultId: 'v2', talkSlug: 'same-talk', runId: 'target', nonce: 1 })
+    assert.equal(dom.window.document.querySelector('.twh-run-detail'), null, 'does not open the same-id Run from the old vault while loading')
+    await R.act(async () => release())
+    assert.deepEqual(reads, [['runs', undefined], ['talks', undefined], ['runs', 'v2'], ['talks', 'v2']], 'uses History\'s existing vault read path')
+    assert.match(dom.window.document.querySelector('.twh-run-detail').textContent, /Requested second vault Run/)
+    assert.equal(dom.window.document.querySelectorAll('[data-history-sid]').length, 4, 'the list shows the requested vault')
+    assert.doesNotMatch(dom.window.document.querySelector('.twh-ledger').textContent, /First vault Run/)
+    assert.equal(selected()?.getAttribute('data-history-sid'), 'target', 'selects the requested Run rather than the newest Run')
+    assert.match(selected().textContent, /Requested second vault Run/)
+    await R.act(async () => [...dom.window.document.querySelectorAll('button')].find((button) => button.textContent.startsWith('Back to list')).click())
+    assert.equal(selected()?.getAttribute('data-history-sid'), 'target', 'returning to the list keeps the opened Run selected')
+    assert.equal(dom.window.document.querySelectorAll('[data-history-sid].selected').length, 1, 'same-id Runs under different talks never share selection')
+    assert.match(selected().textContent, /Requested second vault Run/, 'returning from detail selects only the requested talk’s Run')
+    await R.act(async () => dom.window.document.body.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'c', bubbles: true })))
+    assert.deepEqual(copied, [runs.v2[3].handoutUrl], 'the copy keyboard action targets the selected talk’s Run')
+    await R.act(async () => dom.window.document.body.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'e', bubbles: true })))
+    assert.equal(dom.window.document.querySelectorAll('.ctx-input').length, 1, 'the edit shortcut opens only one Run’s context')
+    assert.ok(selected().querySelector('.ctx-input'), 'the edited context belongs to the requested talk’s Run')
+    // On mount, the first render also reads the current vault. Let that stale reply arrive last.
+    await R.act(async () => root.render(null))
+    const pending = new Map()
+    dom.window.tw.history.listRuns = async (_slug, vaultId) => {
+      await new Promise((resolve) => pending.set(vaultId ?? 'v1', resolve))
+      return runs[vaultId ?? 'v1']
+    }
+    await show({ vaultId: 'v2', talkSlug: 'same-talk', runId: 'target', nonce: 2 })
+    assert.ok(pending.has('v1') && pending.has('v2'), 'both vault reads are in flight on mount')
+    await R.act(async () => pending.get('v2')())
+    assert.match(dom.window.document.querySelector('.twh-run-detail').textContent, /Requested second vault Run/)
+    await R.act(async () => pending.get('v1')())
+    assert.doesNotMatch(dom.window.document.querySelector('.twh-ledger').textContent, /First vault Run|Same id in first vault/, 'a late current-vault reply cannot replace the requested vault list')
+    assert.equal(dom.window.document.querySelectorAll('[data-history-sid]').length, 4)
+    assert.match(dom.window.document.querySelector('.twh-run-detail').textContent, /Requested second vault Run/, 'the requested vault detail survives the stale reply')
+    assert.match(selected().textContent, /Requested second vault Run/, 'the selected Run still belongs to the requested vault')
+    console.log('ok  7 History switches vault and selects the opened results Run, including same-id Runs across homes and talks, keyboard actions and stale replies')
+  } finally {
+    await R.act(async () => root.unmount())
+    dom.window.close()
+    for (const [name, descriptor] of previousGlobals) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor)
+      else delete globalThis[name]
+    }
+    globalThis.MessageChannel = NodeMessageChannel
+    rmSync(resultsDir, { recursive: true, force: true })
+  }
 }
 console.log('ALL PASSED')

@@ -1,6 +1,8 @@
 // electron-builder `beforePack` (ticket 11): no package is made without a live-service bundle that
 // matches its manifest and the Worker's sources. The check itself is scripts/check-worker-dist.mjs;
 // it is run as its own Node process because it is an ES module that loads TypeScript sources.
+// Update notices (ADR-0041): no release package is made without resources/whats-new/<version>.md
+// (scripts/check-whats-new.mjs; a preview version needs none).
 // Ticket 08: no package is made without the ffmpeg that ships with the app
 // (scripts/lib/ffmpeg-ship-check.cjs). Windows: ffmpeg-static's binary, and no installer with one
 // marked unredistributable. macOS: the pinned plain-GPL build only, fetched here by
@@ -19,6 +21,7 @@ const readOrNull = (path) => { try { return readFileSync(path) } catch { return 
 exports.default = async function beforePack(context) {
   const repo = join(__dirname, '..')
   const node = (script) => spawnSync(process.execPath, ['--disable-warning=MODULE_TYPELESS_PACKAGE_JSON', join(repo, 'scripts', script)], { cwd: repo, stdio: 'inherit', windowsHide: true })
+  if (node('check-whats-new.mjs').status !== 0) throw new Error('this release version has no What\'s new notes: add resources/whats-new/<version>.md (see docs/RELEASING.md)')
   if (node('check-worker-dist.mjs').status !== 0) throw new Error('worker-dist is not ready to ship: run npm run build (or npm run build:worker-dist) first')
   const platform = (context && context.electronPlatformName) || process.platform
   const targets = ((context && context.targets) || []).map((target) => String(target && target.name))

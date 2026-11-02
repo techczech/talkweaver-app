@@ -1,6 +1,6 @@
 // Which lines of a talk are headings, and at what level (pure). THE ONE ANSWER for every function
-// that works out a slide's block: slideBlockOps.ts, slideOutline.ts, headingEndInsert.ts,
-// outliner.ts, talk-title.ts and grid-reorder.ts all read it here.
+// that works out a slide's block: slide-handling/slide-block-ops.ts, slide-handling/slide-outline.ts, headingEndInsert.ts,
+// outliner.ts, talk-title.ts and slide-handling/blocks.ts all read it here.
 //
 // A heading is a line matching /^#{1,6}\s/ that the compiler would also read as structure:
 //   - not in the YAML frontmatter (a leading `---` line down to the next `---` line);

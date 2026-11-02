@@ -704,6 +704,13 @@
    container and the whole table scrolled sideways. min-width:0 on every grid child (cards AND
    the spanning strip row) keeps 1fr honest; the meta row + origin then ellipsise as designed. */
 .lt .lt-grid > *{min-width:0}
+/* The windowed results (VirtualGrid): only the lines near the viewport are drawn, each placed at
+   its offset. flow-root keeps a heading's own margins inside its line, so the measured height is the
+   whole line; the gaps between rows and groups are each line's padding-bottom. */
+.lt .lt-vlist{position:relative}
+.lt .lt-vline{position:absolute; left:0; right:0; display:flow-root}
+/* A card scrolled into view later is just there: the entry animation is for a new result set. */
+.lt .lt-card.no-enter{animation:none}
 .lt .lt-label .lt-l-meta{min-width:0}
 .lt .lt-label .lt-l-meta .lt-origin{min-width:0}
 

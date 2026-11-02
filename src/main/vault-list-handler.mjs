@@ -37,6 +37,7 @@ export function createVaultListHandler({ dir, legacyCachePath = null, log = cons
     handle,
     metadata: index.metadata,
     cached: index.cached,
+    cachedState: index.cachedState,
     invalidate: index.invalidate,
     setConflicts: index.setConflicts,
     refreshDone: (vaultId) => pending.get(vaultId) ?? Promise.resolve([])

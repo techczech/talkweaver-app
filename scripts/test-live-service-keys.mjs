@@ -1174,6 +1174,8 @@ const ownSecret = (pc, id = ACCOUNT, address = ADDRESS) => `ADMIN_SECRET_${pc.ke
       'live-admin-request.ts': ['key'],
       'live-service-key.ts': ['key.key', 'key.key'],
       'live-session-history.ts': ['record.presenterToken', 'record.presenterToken'],
+      // Read-only Pages inventory uses the named Cloudflare publish authorisation.
+      'observation/cloudflare-inventory.ts': ['token'],
       'owner-tokens.ts': ['ownerToken'],
       'shared-talk-owner-socket.ts': ['options.ownerToken'],
     }, 'a new Bearer header in src/main: if it carries this computer\'s key it goes through sendAsAdmin (live-admin-request.ts)')

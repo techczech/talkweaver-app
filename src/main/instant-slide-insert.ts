@@ -20,6 +20,7 @@
 //   - the Run is loaded only from the selected talk's folder and must name that talk; its entry's
 //     image is re-checked (live size cap, a complete WebP/PNG/JPEG header with a real size) before
 //     anything is stored, and the store must decode it fully or it writes no asset.
+import { withPrewarmYield } from './preparation-gate.ts'
 import { createHash } from 'crypto'
 import { constants as fsConstants } from 'fs'
 import { access, readFile, realpath } from 'fs/promises'
@@ -69,8 +70,8 @@ export async function loadOutlineTools(compilerDir: string): Promise<OutlineTool
       // The same model path the presenter deck is compiled through, minus media inlining.
       // No allowed media folder (ADR-0036): only ids, titles and source lines are read here, so no
       // file a talk names is opened on this path, not even for a picture digest.
-      const model = await adapters.prepareSource(outlinePath, text, basename(outlinePath).replace(/-outline\.md$/, ''),
-        undefined, undefined, { projectionsOnly: true, allowedAssetRoots: [] })
+      const model = await withPrewarmYield(() => adapters.prepareSource(outlinePath, text, basename(outlinePath).replace(/-outline\.md$/, ''),
+        undefined, undefined, { projectionsOnly: true, allowedAssetRoots: [] }))
       const slides = Array.isArray(model?.slides) ? model.slides : []
       return slides.map((slide: { id?: unknown; title?: unknown; sourceLine?: unknown }) => ({
         id: String(slide.id ?? ''),

@@ -36,8 +36,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
-      - run: npm ci
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - name: Cache Bun packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+      - run: bun install --frozen-lockfile
       # Path shapes (pure), `wrangler --version` through the launcher from the checkout with an
       # empty PATH, and the guard that no bare `wrangler` call is left.
       - name: Launcher unit tests
@@ -93,13 +100,28 @@ jobs:
       - name: Handout slimming with sharp
         run: npm run test:handout-slimming
       # Transcription (spec D16): the row from fixture paths, the ffmpeg resolver with Windows names
-      # and Path, and the ffmpeg that npm ci downloaded (ffmpeg.exe) making transcription's WAV.
+      # and Path, and the ffmpeg that bun install downloaded (ffmpeg.exe) making transcription's WAV.
       - name: Transcription set-up and the shipped ffmpeg
         run: npm run test:transcription-setup
       - run: npm run build
       # Unpacked build only (release/win-unpacked): no installer, no signing, nothing uploaded.
       - name: Package (unpacked)
         run: npx electron-builder --win --dir --publish never
+      - name: Scratchpad safety on the packaged Windows runtime
+        shell: pwsh
+        run: |
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          try {
+            # This is a GUI-subsystem executable even in Node mode. Wait explicitly;
+            # direct invocation can return before it finishes and leave LASTEXITCODE unset.
+            $scratchpadSafetyProcess = Start-Process `
+              -FilePath (Resolve-Path './release/win-unpacked/TalkWeaver.exe').Path `
+              -ArgumentList @('--experimental-strip-types', 'scripts/test-scratchpad-disk.mjs') `
+              -WorkingDirectory (Get-Location).Path `
+              -NoNewWindow -Wait -PassThru -ErrorAction Stop
+            if ($null -eq $scratchpadSafetyProcess.ExitCode) { throw 'Scratchpad disk safety did not return an exit code' }
+            if ($scratchpadSafetyProcess.ExitCode -ne 0) { throw "Scratchpad disk safety failed: $($scratchpadSafetyProcess.ExitCode)" }
+          } finally { Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue }
       # TalkWeaver.exe as Node runs the wrangler inside resources/app; PATH holds only System32.
       # It also publishes a site (`pages deploy`) against the fake Cloudflare API on loopback, checks
       # resources/worker-dist against its manifest and sets the live service up from it on
@@ -120,8 +142,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
-      - run: npm ci
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - name: Cache Bun packages
+        if: ${{ inputs.hosted }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+      - run: bun install --frozen-lockfile
       - name: Worker compile integrity
         run: npm run test:worker-compile-integrity
       - name: Live service upload unit tests
@@ -160,6 +190,8 @@ jobs:
         run: npx electron-builder --mac --dir --publish never -c.mac.identity=null -c.mac.notarize=false
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Scratchpad safety on the packaged macOS runtime
+        run: ELECTRON_RUN_AS_NODE=1 release/mac-arm64/TalkWeaver.app/Contents/MacOS/TalkWeaver --experimental-strip-types scripts/test-scratchpad-disk.mjs
       # The release gate on this unsigned build (docs/RELEASING.md): the afterPack attestation for the
       # committed pin is in the app and its ffmpeg has the pinned SHA-256. Independent of electron-builder.
       - name: Verify the Mac package (ffmpeg pin, attestation)

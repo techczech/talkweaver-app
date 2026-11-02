@@ -202,6 +202,7 @@ export interface TalkUnpublishDeps {
 export function talkUnpublishJob(deps: TalkUnpublishDeps): Omit<PublishJob<TalkUnpublished>, 'entry'> {
   const nothing: TalkUnpublished = { way: 'nothing', folder: null, linkCleared: false }
   return {
+    removalRoots: (built) => built.folder ? ['/' + built.folder] : [],
     begin: async (): Promise<PublishBegin<TalkUnpublished>> => {
       const talk = await deps.talk()
       if (!talk) return { fail: { error: TALK_NOT_FOUND } }

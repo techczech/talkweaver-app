@@ -25,7 +25,7 @@ export function buildHandoutHomePageHtml({ title, slides, styles, slug, license,
       ...home,
       slidesHref,
       slidesFile,
-      links: collectTalkLinks(slides, { exclude: [home.url].filter(Boolean) }),
+      links: collectTalkLinks(slides, { slidesFile, exclude: [home.url].filter(Boolean) }),
     },
   })
 }

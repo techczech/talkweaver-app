@@ -332,6 +332,7 @@ export function runUnpublishJob(deps: RunUnpublishDeps): Omit<PublishJob<RunUnpu
     return withdrawn.ok ? { ok: true, phases } : withdrawn
   }
   return {
+    removalRoots: (built) => built.folder ? ['/' + built.folder] : [],
     // Nothing published from here (no link, or a handout only and no site folder): the Run only forgets,
     // and Cloudflare is not asked; whatever it sent is still withdrawn. A Run with a link and a sent set
     // whose site's copy is missing is refused (D1, D3): no page could be replaced, and it is not rebuilt here.

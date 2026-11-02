@@ -27,7 +27,7 @@ import { buildParticipantWorkPage } from './work-page.ts'
 import { decodeUtf8, pinRunWork, readPinnedWork, readWorkFileBytes, runFolder, workFilePath, type PinError } from './run-work-pin.ts'
 import { workPushWindowMs, type RunPreworkService, type RunPreworkState } from './run-prework.ts'
 import { liveAddressForPages } from './handout-publishing.ts'
-import type { RunRecord } from './runs.ts'
+import type { RunRecord, RunReplacementGuard } from './runs.ts'
 import { readWorkFile, type WorkFileFinding } from '../shared/work-file.ts'
 import { findingText } from '../shared/run-page.ts'
 import { dayLabel } from '../shared/run-checklist.ts'
@@ -125,6 +125,7 @@ export interface SendRunWorkInput {
   phases: Phase[]
   compilerDir: string
   service: Pick<RunPreworkService, 'publish' | 'status' | 'withdraw'>
+  replaceRun?: RunReplacementGuard
   now?: () => Date
 }
 
@@ -144,7 +145,7 @@ export async function sendRunWork(input: SendRunWorkInput): Promise<{ ok: true; 
   for (const phase of input.phases) {
     let pinned
     try {
-      pinned = pinRunWork(input.vaultRoot, input.talkSlug, input.runId, phase, input.now)
+      pinned = pinRunWork(input.vaultRoot, input.talkSlug, input.runId, phase, input.now, input.replaceRun)
     } catch (error) {
       const fileId = pinnedFileId(input.vaultRoot, input.talkSlug, input.runId, phase)
       return { ok: false, error: pinErrorText(error instanceof Error ? error.message : '', phase, fileId) }

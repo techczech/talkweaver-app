@@ -30,6 +30,7 @@ import type { BoardEdit } from '../../../../compiler/scripts/lib/board-slide.mjs
 import InspectorPrework from './InspectorPrework'
 import { inspectorPreworkModel } from './inspectorPreworkModel'
 import { commandRan } from '../commands/command-ran'
+import { savedViewsLabel, slideLivePages } from '../lib/captureEmbed'
 
 interface Props {
   talk: TalkInfo
@@ -43,6 +44,11 @@ interface Props {
   onEdit: () => void
   onExplain: () => void
   onOpenLayoutDoctor: () => void
+  /** Capture embed…: the capture window for one of the slide's web pages. */
+  onCaptureEmbed?: (pageUrl: string) => void
+  /** Remove from slide: takes one saved view's {capture} line out of the slide (the picture stays in the
+   *  talk folder). `embed`: which embed of that address on the slide it is listed under (index of `of`). */
+  onRemoveSavedView?: (pageUrl: string, image: string, embed: { index: number; of: number }) => void
   /** The layout section's "Change ⌘L": opens the layout picker (what ⌘L runs). */
   onOpenLayoutPicker?: () => void
   onCommitOption: (entry: LayoutDef | undefined, group: OptionGroup, token: string) => string | null
@@ -62,7 +68,7 @@ function triggerLineOf(block: string): string {
 
 export default function Inspector({
   talk, compiledSlides, outlineContent, triggerFindings, activeIndex, headingLine,
-  onPrev, onNext, onEdit, onExplain, onOpenLayoutDoctor, onOpenLayoutPicker, onCommitOption, onBoardEdit, picker = null, onChangeLayout
+  onPrev, onNext, onEdit, onExplain, onOpenLayoutDoctor, onCaptureEmbed, onRemoveSavedView, onOpenLayoutPicker, onCommitOption, onBoardEdit, picker = null, onChangeLayout
 }: Props) {
   const row = compiledSlides?.[activeIndex] ?? null
   const block = useMemo(
@@ -70,6 +76,8 @@ export default function Inspector({
     [outlineContent, headingLine]
   )
   const triggerLine = triggerLineOf(block)
+  // Capture embed…: the slide's web pages and their saved views ({capture} lines), from its text now.
+  const livePages = useMemo(() => slideLivePages(block), [block])
   const headingLevel = block.match(/^(#{1,6})\s/)?.[1].length ?? 3
   const hasChildren = headingLine == null
     ? false
@@ -309,29 +317,30 @@ export default function Inspector({
             <button type="button" onClick={() => moveStep(1)} disabled={step >= model.steps.count} title="Step forward (⌥→)">▸</button>
             <span>step {step} / {model.steps.count} · {model.steps.mode}</span>
             {warnings.length > 0 && <span className="tw-inspector-warning" title={warnings.map((warning) => warning.text).join('\n')}>⚠ {warnings.length} warning{warnings.length === 1 ? '' : 's'}</span>}
-            <button type="button" className="tw-inspector-explain" onClick={onExplain}>Explain</button>
+            <button type="button" className="tw-inspector-explain" onClick={onExplain} title="Authoring markup, examples and rendering decisions">Explain &amp; markup</button>
           </div>
         )}
         {!picker && model.steps.count === 0 && (warnings.length > 0 || row) && (
           <div className="tw-inspector-stepbar tw-inspector-stepbar--plain">
             {warnings.length > 0 && <span className="tw-inspector-warning" title={warnings.map((warning) => warning.text).join('\n')}>⚠ {warnings.length} warning{warnings.length === 1 ? '' : 's'}</span>}
-            <button type="button" className="tw-inspector-explain" onClick={onExplain}>Explain</button>
+            <button type="button" className="tw-inspector-explain" onClick={onExplain} title="Authoring markup, examples and rendering decisions">Explain &amp; markup</button>
           </div>
         )}
       </div>
 
       {picker?.column}
 
-      {!picker && !model.unresolved && model.sections.length > 0 && (
+      {!picker && !model.unresolved && (model.sections.length > 0 || livePages.length > 0) && (
         <div className="tw-inspector-jumplist" role="navigation" aria-label="Option sections">
-          {model.sections.map((section) => (
+          {[...model.sections.map((section) => ({ id: section.id, label: section.chip ?? section.heading })),
+            ...(livePages.length > 0 ? [{ id: 'web-page', label: 'Web page' }] : [])].map((chip) => (
             <button
-              key={section.id}
+              key={chip.id}
               type="button"
-              className={litSection === section.id ? 'is-lit' : undefined}
-              aria-current={litSection === section.id ? 'true' : undefined}
-              onClick={() => scrollToSection(section.id)}
-            >{section.chip ?? section.heading}</button>
+              className={litSection === chip.id ? 'is-lit' : undefined}
+              aria-current={litSection === chip.id ? 'true' : undefined}
+              onClick={() => scrollToSection(chip.id)}
+            >{chip.label}</button>
           ))}
         </div>
       )}
@@ -399,6 +408,53 @@ export default function Inspector({
                   renderGroup(binding, section.bindings.filter((child) => child.nestedUnder === binding.group.key)))}
               </section>
             ))}
+            {livePages.length > 0 && (
+              <section
+                className="tw-inspector-section tw-inspector-web-pages"
+                data-section="web-page"
+                aria-label="Web page"
+                ref={(element) => { if (element) sectionRefs.current.set('web-page', element); else sectionRefs.current.delete('web-page') }}
+              >
+                <h3 className="tw-inspector-section-heading">Web page</h3>
+                {livePages.map((page, n) => {
+                  // The same address can be embedded more than once: each listing names its own embed.
+                  const embed = { index: livePages.slice(0, n).filter((p) => p.pageUrl === page.pageUrl).length, of: livePages.filter((p) => p.pageUrl === page.pageUrl).length }
+                  return (
+                  <div className="tw-inspector-web-page-group" key={`${page.pageUrl}#${embed.index}`} data-page-url={page.pageUrl}>
+                    <div className="tw-inspector-web-page">
+                      <div className="tw-inspector-web-page-what">
+                        <a
+                          className="tw-inspector-web-page-host"
+                          href={page.pageUrl}
+                          title={`Open ${page.pageUrl} in your browser`}
+                          data-open-page
+                          onClick={(event) => { event.preventDefault(); void window.tw.shell.openExternal(page.pageUrl) }}
+                        >Open {page.host} ↗</a>
+                        <span className="tw-inspector-web-page-count" data-count={page.count}>{savedViewsLabel(page.count)}</span>
+                      </div>
+                      {onCaptureEmbed && (
+                        <button type="button" className="tw-inspector-change" data-capture-embed onClick={() => onCaptureEmbed(page.pageUrl)}>
+                          Capture embed…
+                        </button>
+                      )}
+                    </div>
+                    {onRemoveSavedView && page.images.map((image, n) => (
+                      <div className="tw-inspector-saved-view" key={`${image}#${n}`} data-saved-view={image}>
+                        <span className="tw-inspector-saved-view-name" title={image}>{page.alts[n] || image}</span>
+                        <button
+                          type="button"
+                          className="tw-inspector-change"
+                          data-remove-saved-view
+                          title="Take this saved view off the slide. The picture stays in the talk folder; Undo puts it back."
+                          onClick={() => onRemoveSavedView(page.pageUrl, image, embed)}
+                        >Remove from slide</button>
+                      </div>
+                    ))}
+                  </div>
+                  )
+                })}
+              </section>
+            )}
             {activeIndex === 0 && <VaultOrigin outlinePath={talk.outlinePath} outlineContent={outlineContent} />}
             <SlideProvenance outlinePath={talk.outlinePath} slideId={slideIdOf(block)} />
             <TalkActivity outlinePath={talk.outlinePath} />

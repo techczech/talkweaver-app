@@ -133,6 +133,10 @@ try {
   assert.ok(sanitise('<p onclick="x()">x</p>').removed.includes('p@onclick'))
   const player = '<figure class="slide-embed slide-embed-video"><iframe data-src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?enablejsapi=1" data-embed-url="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?enablejsapi=1" data-embed-video="1" title="t" loading="lazy" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen=""></iframe></figure>'
   assert.equal(sanitise(player).html, player)
+  const resourcePlayer = player.replace('<iframe ', '<iframe data-resource-url="https://www.youtube.com/watch?v=dQw4w9WgXcQ&amp;t=2#view" ')
+  assert.equal(sanitise(resourcePlayer).html, resourcePlayer, 'inert original resource metadata does not remove a permitted video player')
+  assert.equal(sanitise(resourcePlayer).removed.length, 0)
+
 
   // the review's compiled payloads (probe2, probe3)
   const linked = join(dir, 'probe'); mkdirSync(linked)

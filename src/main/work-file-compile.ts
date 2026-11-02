@@ -22,6 +22,7 @@
 //
 // A `video` step goes to the form as `slide`: the Worker's form has no video kind, and the video
 // plays from the step's HTML. Phase (pre- or post-work) is not here; the file has none.
+import { withPrewarmYield } from './preparation-gate.ts'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { readWorkFile, type WorkFileFinding, type WorkFileLayout, type WorkFileStepKind } from '../shared/work-file.ts'
@@ -139,7 +140,9 @@ export function expectedSlideIds(stepIds: ReadonlyArray<string | null>): Array<s
  * its markup: `everything` is reported, so the author is told the step will show nothing.
  */
 export function removedMarkup(sourceHtml: string, clean: SanitisedStepHtml, reserved: boolean): string[] {
-  const removed = reserved ? clean.removed.filter((what) => !/@(?:id|name)$/.test(what)) : [...clean.removed]
+  const kept = reserved ? clean.removed.filter((what) => !/@(?:id|name)$/.test(what)) : [...clean.removed]
+  // An attribute of an element that was taken out whole is not reported again on its own.
+  const removed = kept.filter((what) => !(what.includes('@') && kept.includes(what.slice(0, what.indexOf('@')))))
   if (!removed.length && String(sourceHtml).trim() !== '' && String(clean.html).trim() === '') removed.push('everything')
   return removed
 }
@@ -168,9 +171,9 @@ export async function compileWorkFile(input: CompileWorkFileInput): Promise<Comp
 
   // The compiler reads the stat only to tell a folder from a file; a work file is a file.
   const fileStat = { isDirectory: () => false, isFile: () => true }
-  const model = await prepareSource(path, text.replace(/^\uFEFF/, ''), definition.title || undefined, fileStat, undefined, {
+  const model = await withPrewarmYield(() => prepareSource(path, text.replace(/^\uFEFF/, ''), definition.title || undefined, fileStat, undefined, {
     allowedAssetRoots: input.assetRoots ?? [dirname(path)],
-  })
+  }))
   const fullHtml = String(model.fullHtml ?? '')
   const byId = new Map(html.extractSlides(fullHtml).map((slide) => [slide.id, slide]))
 

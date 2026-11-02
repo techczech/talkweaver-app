@@ -134,6 +134,8 @@ const refused = (result, error, label) => {
 const ESCAPE_RELS = ['..', '../outside', '../outside/victim', '/abs', outside, 'Work/../..', 'Work/../../outside', 'link-out', 'link-out/victim', 'dangling', 'a\0b']
 
 // ── vault:create-folder ──
+refused(createFolderTarget(vault, 'Research', ''), 'unsafe-name', 'create-folder refuses Research at the vault root')
+refused(createFolderTarget(vault, 'research', 'Work'), 'unsafe-name', 'create-folder refuses research under Work')
 for (const name of ['', '   ', '.', '..', 'bad\u0001name', null]) {
   const r = createFolderTarget(vault, name, 'Work')
   refused(r, 'unsafe-name', `create-folder refuses name ${JSON.stringify(name)}`)
@@ -148,6 +150,7 @@ refused(createFolderTarget(null, 'New', ''), 'no-vault', 'create-folder needs a 
 refused(createFolderTarget(vault, 'link-out', ''), 'outside-vault', 'create-folder refuses a name that is a link outside')
 for (const [name, parent, expected] of [
   ['Lectures', '', join(vault, 'Lectures')],
+  ['Research-notes', '', join(vault, 'Research-notes')],
   [CZ_NFC, 'Work', join(vault, 'Work', CZ_NFC)],
   ['Talks: 2026', 'Work/Oxford', join(vault, 'Work', 'Oxford', 'Talks: 2026')],
   ['a/b', 'Work', join(vault, 'Work', 'a-b')], // separators still become '-', as before
@@ -160,6 +163,13 @@ for (const [name, parent, expected] of [
 }
 
 // ── vault:rename-folder ──
+for (const name of ['Research', 'research', 'rEsEaRcH']) {
+  refused(renameFolderTargets(vault, 'Work', name), 'unsafe-name', `rename-folder refuses reserved name ${name}`)
+}
+assert.deepEqual(renameFolderTargets(vault, 'Work', 'Research-notes'), {
+  ok: true, src: join(vault, 'Work'), dest: join(vault, 'Research-notes')
+})
+checks++
 for (const rel of ['', '.', '/', ...ESCAPE_RELS]) {
   const r = renameFolderTargets(vault, rel, 'Renamed')
   refused(r, null, `rename-folder refuses folder ${JSON.stringify(rel)}`)
@@ -194,6 +204,19 @@ for (const rel of ['Lectures', `Work/${CZ_NFC}`, 'Work/Oxford/Přednášky: 2026
   act.trash(r)
   assert.equal(existsSync(r.path), false)
   checks += 2
+}
+
+for (const rel of ['Missing', 'Work/Missing', 'Lectures/Missing']) {
+  refused(deleteFolderTarget(vault, rel), null, `delete-folder refuses ${rel}, which is not there`)
+}
+
+// A name or a folder from the renderer is a string; nothing else is turned into one.
+for (const junk of [['Work'], ['Work', 'Oxford'], [], {}, 1, true]) {
+  refused(createFolderTarget(vault, junk, ''), 'unsafe-name', `create-folder refuses the name ${JSON.stringify(junk)}`)
+  refused(createFolderTarget(vault, 'New', junk), 'outside-vault', `create-folder refuses the parent ${JSON.stringify(junk)}`)
+  refused(renameFolderTargets(vault, 'Work', junk), 'unsafe-name', `rename-folder refuses the name ${JSON.stringify(junk)}`)
+  refused(renameFolderTargets(vault, junk, 'Renamed'), 'outside-vault', `rename-folder refuses the folder ${JSON.stringify(junk)}`)
+  refused(deleteFolderTarget(vault, junk), 'outside-vault', `delete-folder refuses ${JSON.stringify(junk)}`)
 }
 
 // ── vault:delete-talk ──
@@ -289,6 +312,21 @@ for (const dest of ['..', '../outside', '/abs', outside, 'link-out', 'Work/../..
   act.move(toRoot)
   assert.ok(existsSync(join(vault, 'age-of-the-claw', 'age-of-the-claw-outline.md')))
   checks += 3
+}
+
+// The same reserved rule (one rule, inReservedFolder) for create-talk and move-talk.
+{
+  refused(newTalkFolder(vault, 'Research', ''), 'unsafe-name', 'create-talk refuses slug Research')
+  refused(newTalkFolder(vault, 'x', 'research'), 'unsafe-name', 'create-talk refuses a research topic folder')
+  assert.deepEqual(newTalkFolder(vault, 'research-notes', ''), { ok: true, path: join(vault, 'research-notes') }, 'create-talk allows research-notes')
+  checks++
+  const outline = join(vault, 'age-of-the-claw', 'age-of-the-claw-outline.md')
+  refused(moveTalkTargets(vault, outline, 'research'), 'unsafe-name', 'move-talk refuses destination research')
+  refused(moveTalkTargets(vault, outline, 'Research'), 'unsafe-name', 'move-talk refuses destination Research')
+  const toWork = moveTalkTargets(vault, outline, 'Work')
+  assert.deepEqual(toWork, { ok: true, srcDir: join(vault, 'age-of-the-claw'), destParent: join(vault, 'Work'), dest: join(vault, 'Work', 'age-of-the-claw') }, 'move-talk allows Work')
+  checks++
+  assert.ok(existsSync(outline), 'move-talk checks move nothing on disk')
 }
 
 // ── talk:clear-thumb-cache and twthumb:// ──
@@ -396,6 +434,19 @@ for (const [src, slug, expected] of [
 ]) {
   const r = siblingTalkFolder(vault, src, slug)
   assert.deepEqual(r, { ok: true, path: expected }, `sibling ${slug}`)
+  act.mkdir(r)
+  checks++
+}
+// A `research` folder is reserved (any case): a rename or clone that would land there is refused, and
+// `research-notes` (a different name) is still allowed.
+for (const [src, slug] of [[clawDir, 'Research'], [clawDir, 'research'], [join(vault, 'Work', 'abstract-linked'), 'RESEARCH']]) {
+  const r = siblingTalkFolder(vault, src, slug)
+  refused(r, 'unsafe-name', `sibling refuses reserved name ${slug}`)
+  act.mkdir(r)
+}
+{
+  const r = siblingTalkFolder(vault, clawDir, 'research-notes')
+  assert.deepEqual(r, { ok: true, path: join(vault, 'research-notes') }, 'sibling allows research-notes')
   act.mkdir(r)
   checks++
 }

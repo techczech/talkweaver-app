@@ -5,15 +5,15 @@
   },
   "harvest-supper-draft": {
     "slides": 10,
-    "sha256": "83c0bfec7192ddde4f6c9112691bd144ce33e194a1c372f5e175df75100b473e"
+    "sha256": "12af2f2a3f2ba73678ecf16f0f23aca67bca95f8d9880ef4ea04fb0697828ad8"
   },
   "lightning-round": {
-    "slides": 8,
-    "sha256": "b7bf0fe92f92a69dd9f7d1cade174254276d8c804239a188ceffc0c1cf8fe0c0"
+    "slides": 9,
+    "sha256": "1b47d823e898f38e13aaf80be80b208ebdaca21287b73c1f5ece91668a7cd6e4"
   },
   "the-saturday-market": {
-    "slides": 22,
-    "sha256": "70584dc2add1f07635f1ab3ec146675b28009f1b7af95d9cef814093cb0d8ddc"
+    "slides": 25,
+    "sha256": "65395cd11f730f8359563fb4c5fb61b11af51fb11bc3b89faeb8de610151997a"
   },
   "walking-the-old-town": {
     "slides": 30,

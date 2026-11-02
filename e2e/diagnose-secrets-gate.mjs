@@ -31,6 +31,7 @@ import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { createCheckLedger } from './lib/check-ledger.mjs'
+import { openSettingsWindow, closeSettingsWindow, shutdownApp } from './lib/settings-window.mjs'
 import { startCloudflareApiStub } from '../scripts/lib/cloudflare-api-stub.mjs'
 
 const root = process.cwd()
@@ -61,13 +62,13 @@ const ONLY_SEARCHED = Object.keys(SECRETS).filter((name) => !USED.includes(name)
 const CHECKS = [
   'the search finds a planted value (as UTF-8 and as UTF-16)',
   'the app started on the throwaway folder and its replies and pushes are captured',
-  'the token is typed into Settings and saved there; the recording keys are saved through Settings\' call',
+  'the editor window is refused when it tries to save the token (Settings-only call) and nothing is stored; the token is then typed into the Settings window and saved there; the recording keys are refused from the editor window and saved through the Settings window\'s call',
   'a handout is published to the end with the saved token',
   'a publish the API refuses fails with a message',
   'a talk is shared for comments, updated and stopped',
   'the owner tokens in an earlier version\'s registries were moved out of them',
   'used in a real request: the Cloudflare token, the live service admin secret, and the share, results-link and pre-work owner tokens (the recording keys are only saved and searched for)',
-  'no secret in config.json, the settings changelog or any registry',
+  'no secret in config.json, the settings file (with its change log) or any registry',
   'no secret in any file of the user-data folder or the vault',
   'no secret in anything sent to a window',
   'no secret in standard output or standard error',
@@ -204,7 +205,7 @@ try {
   for (const name of ['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'SHELL', 'DISPLAY', 'SystemRoot', 'SYSTEMROOT', 'windir', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'USERNAME', 'PATHEXT', 'ComSpec']) {
     if (process.env[name] !== undefined) env[name] = process.env[name]
   }
-  app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`], cwd: root, env })
+  app = await electron.launch({ args: ['.', '--use-mock-keychain', `--user-data-dir=${userData}`], cwd: root, env })
   app.process().stdout.on('data', (chunk) => { output += chunk })
   app.process().stderr.on('data', (chunk) => { output += chunk })
   await app.evaluate(({ app: electronApp, BrowserWindow }) => {
@@ -264,23 +265,31 @@ try {
 
   // The token goes in the way a person does it: typed into Settings and saved there (which also
   // writes the settings changelog). The recording keys go through the call Settings makes.
-  await page.keyboard.press('ControlOrMeta+,')
-  const settings = page.locator('[aria-label="Settings"]').first()
-  await settings.waitFor({ state: 'attached' })
-  await settings.locator('input[placeholder="Cloudflare API token"]').fill(SECRETS['Cloudflare token'])
-  await settings.getByRole('button', { name: 'Save token' }).click()
+  // The editor window is refused: the same call, from the editor, stores nothing (the Settings window's rule).
+  const refusedInEditor = await page.evaluate((token) => window.tw.cloudflare.saveToken(token), SECRETS['Cloudflare token'])
+  const editorLeftNothing = refusedInEditor?.ok === false && refusedInEditor.error === 'This can be changed only in the Settings window.'
+    && !existsSync(join(userData, 'cf-pages-token.bin')) && (await page.evaluate(async () => (await window.tw.publish.getConfig()).hasToken)) === false
+  const sw = await openSettingsWindow(app, page, 'cloudflare')
+  await sw.locator('input[placeholder="Cloudflare API token"]').fill(SECRETS['Cloudflare token'])
+  await sw.getByRole('button', { name: 'Save token' }).click()
   await page.waitForFunction(async () => (await window.tw.publish.getConfig()).hasToken === true)
-  await page.waitForFunction(async () => (await window.tw.settings.getChangelog()).some((entry) => entry.key === 'publish.token'))
+  // The change log (in the settings file) holds the presence of the key, never the key.
+  for (let i = 0; i < 100 && !(await sw.evaluate(async () => (await window.bridleSettings.view()).state.changes.some((entry) => entry.key === 'accounts.cloudflare'))); i++) await sw.waitForTimeout(100)
   // The check that follows the save: the app asks the stand-in API with the token and tells the window.
   await page.waitForFunction(async () => { const status = await window.tw.cloudflare.status(); return status.connection.state === 'connected' && !status.busy })
-  const saved = await page.evaluate(async ({ keys }) => ({
-    keys: await window.tw.recording.setKeys(keys),
+  // The recording keys are a Settings-window-only change: the editor window is refused and stores nothing.
+  const recordingKeys = { accessKeyId: SECRETS['recording key id'], secretAccessKey: SECRETS['recording key secret'] }
+  const keysRefusedInEditor = await page.evaluate((keys) => (window.tw.recording.setKeys ? window.tw.recording.setKeys(keys) : { success: false, error: 'not in the editor preload' }), recordingKeys)
+  const editorLeftNoKeys = keysRefusedInEditor?.success === false && !existsSync(join(userData, 'recording-r2-creds.bin'))
+  const savedKeys = await sw.evaluate((keys) => window.tw.recording.setKeys(keys), recordingKeys)
+  const saved = await page.evaluate(async () => ({
     config: await window.tw.publish.getConfig(),
     storage: await window.tw.recording.getStorage(),
-  }), { keys: { accessKeyId: SECRETS['recording key id'], secretAccessKey: SECRETS['recording key secret'] } })
-  await page.keyboard.press('Escape')
-  record(CHECKS[2], saved.keys.success && saved.config.hasToken === true && saved.storage.hasKeys === true
-    && existsSync(join(userData, 'cf-pages-token.bin')) && existsSync(join(userData, 'recording-r2-creds.bin')) && existsSync(join(userData, 'settings-changelog.json')))
+  }))
+  saved.keys = savedKeys
+  await closeSettingsWindow(app)
+  record(CHECKS[2], editorLeftNothing && editorLeftNoKeys && saved.keys.success && saved.config.hasToken === true && saved.storage.hasKeys === true
+    && existsSync(join(userData, 'cf-pages-token.bin')) && existsSync(join(userData, 'recording-r2-creds.bin')) && existsSync(join(userData, 'settings.json')), editorLeftNothing ? '' : `editor reply: ${refusedInEditor?.error}`)
 
   // Publish, to the end.
   const published = await page.evaluate(({ path, content }) => window.tw.talk.publishHandout(path, content), { path: outlinePath, content: outline })
@@ -341,9 +350,9 @@ try {
     `${notUsed.length ? `NOT used: ${notUsed.join('; ')}. ` : ''}used: ${USED.filter((name) => usedFacts[name]).join('; ')}. Saved and searched for only, never used: ${ONLY_SEARCHED.join('; ')}. Not in this gate at all: the stored live service keys (admin and signing secret), live-session recovery credentials`)
 
   const values = Object.values(SECRETS)
-  const named = ['config.json', 'settings-changelog.json', 'shared-talk-registry.json', 'run-results-share-registry.json', 'run-prework-registry.json', 'handout-registry.json']
+  const named = ['config.json', 'settings.json', 'settings-changelog.json', 'shared-talk-registry.json', 'run-results-share-registry.json', 'run-prework-registry.json', 'handout-registry.json']
   const namedHits = named.filter((file) => existsSync(join(userData, file)) && values.some((value) => readFileSync(join(userData, file)).includes(Buffer.from(value))))
-  record(CHECKS[8], existsSync(join(userData, 'config.json')) && existsSync(join(userData, 'settings-changelog.json')) && namedHits.length === 0, namedHits.length ? `found in: ${namedHits.join(', ')}` : '')
+  record(CHECKS[8], existsSync(join(userData, 'config.json')) && existsSync(join(userData, 'settings.json')) && namedHits.length === 0, namedHits.length ? `found in: ${namedHits.join(', ')}` : '')
   const fileHits = [...findIn(userData, values).map((path) => `userData/${path}`), ...findIn(vault, values).map((path) => `vault/${path}`)]
   record(CHECKS[9], fileHits.length === 0, fileHits.length ? `found in: ${fileHits.join(', ')}` : `${countFiles(userData) + countFiles(vault)} files searched`)
   record(CHECKS[10], captured.replies > 10 && captured.sends > 0 && captured.configReply === true && captured.cloudflareReply === true && captured.cloudflarePush === true && captured.hits.length === 0,
@@ -391,9 +400,7 @@ try {
   try { ledger.summary('SECRETS GATE') } catch { /* summary already printed or not reachable */ }
   exitCode = 1
 } finally {
-  const pid = app?.process().pid
-  try { await app?.close() } catch { /* already closed */ }
-  if (pid) { try { process.kill(pid) } catch { /* gone, as it should be */ } }
+  await shutdownApp(app)
   await apiGate?.close()
   await api?.close()
   await live?.close()

@@ -1,3 +1,4 @@
+import type { PresenterShareLinkUpdate } from './index'
 import type { SlideFocusState, SlideLightboxState } from '../../worker/protocol'
 import type { LiveStatus } from '../main/live-presenter-client'
 
@@ -37,6 +38,35 @@ export function presenterLightboxState(dataset: { twLiveLightbox?: string }): Sl
 /** The presenter template stamps "1" while the talk's QR overlay is up (ticket 04). */
 export function presenterTalkQrState(dataset: { twLiveTalkQr?: string }): boolean {
   return dataset.twLiveTalkQr === '1'
+}
+
+/** The parts of `document` the stamp needs, so that a test can hand in its own. */
+type StampElement = { id: string; innerHTML: string; setAttribute(name: string, value: string): void }
+type StampDocument = { body: { append(node: never): void }; getElementById(id: string): StampElement | null; createElement(tag: 'template'): StampElement }
+
+/**
+ * A link published while this deck is open: written where the deck reads it when "Show talk QR code" is
+ * pressed (the presenter template's `talkQrLink`), as the compiler stamps it into a deck that was
+ * published before it was opened (`talkQrTemplateTag`). Answers whether it was stamped; `qrSvg` is
+ * main's own, from the app's compiler, and never goes through the page.
+ */
+export function stampPublishedLink(document: StampDocument, link: PresenterShareLinkUpdate | undefined): boolean {
+  let stamp = document.getElementById('twTalkQr')
+  if (link === null) {
+    if (!stamp) return false
+    stamp.setAttribute('data-url', '')
+    stamp.innerHTML = ''
+    return true
+  }
+  if (!link || !/^https?:\/\//i.test(link.url) || !link.qrSvg) return false
+  if (!stamp) {
+    stamp = document.createElement('template')
+    stamp.id = 'twTalkQr'
+    document.body.append(stamp as never)
+  }
+  stamp.setAttribute('data-url', link.url)
+  stamp.innerHTML = link.qrSvg
+  return true
 }
 
 export function presenterLiveSlideState(

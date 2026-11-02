@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict'
 import { JSDOM, VirtualConsole } from 'jsdom'
 import { buildDeckHtmlFromModel } from '../compiler/scripts/lib/07-assembly.mjs'
-import { presenterLiveSlideState } from '../src/preload/present-live-state.ts'
+import { presenterLiveSlideState, stampPublishedLink } from '../src/preload/present-live-state.ts'
 
 const slides = [
   { id: 'slide-a', title: 'First slide', blocks: [] },
@@ -112,6 +112,16 @@ key(presenter.window, 'u')
 relay()
 assert.equal(overlay(projector.document).querySelector('.qr-fs-url').textContent, 'handouts.fyi/live9', 'live: the audience link')
 assert.ok(overlay(projector.document).querySelector('svg[data-live="1"]'))
+
+const publishedStamp = { url: 'https://handouts.fyi/k7m2', qrSvg: presenter.document.getElementById('twTalkQr').innerHTML }
+stampPublishedLink(presenter.document, null)
+await settle()
+relay()
+assert.equal(overlay(projector.document).querySelector('.qr-fs-url').textContent, 'handouts.fyi/live9', 'withdrawing a handout leaves the active live-session QR alone')
+stampPublishedLink(presenter.document, publishedStamp)
+await settle()
+relay()
+
 key(presenter.window, 'Escape')
 relay()
 onStatus('ended')
@@ -135,6 +145,26 @@ assert.equal(activeId(projector.document), 'slide-b')
 key(presenter.window, 'Escape')
 relay()
 assert.equal(overlay(projector.document), null)
+
+// An already-open handout QR follows a replacement stamp, and closes when it is withdrawn.
+key(presenter.window, 'u')
+relay()
+stampPublishedLink(presenter.document, { url: 'https://handouts.fyi/current-talk', qrSvg: publishedStamp.qrSvg })
+await settle()
+relay()
+for (const side of [presenter, projector]) {
+  assert.equal(overlay(side.document).querySelector('.qr-fs-url').textContent, 'handouts.fyi/current-talk', 'an open overlay updates without another key press')
+  assert.equal(activeId(side.document), 'slide-b')
+}
+stampPublishedLink(presenter.document, null)
+await settle()
+relay()
+for (const side of [presenter, projector]) {
+  assert.equal(overlay(side.document), null, 'the removed handout QR disappears on both surfaces')
+  assert.equal(activeId(side.document), 'slide-b')
+}
+stampPublishedLink(presenter.document, publishedStamp)
+await settle()
 
 // The cheat sheet shows it.
 key(presenter.window, '?')

@@ -31,7 +31,7 @@ import { readWorkFile, type WorkFileReading } from '../shared/work-file.ts'
 import { workFileHash } from '../shared/work-file-hash.ts'
 import { LEGACY_SECTION_FILE_ID, normaliseRunWork, safeCopyPath, WORK_FILE_ID, type Phase, type PinnedRevision } from '../shared/run-work.ts'
 import { pathStaysInside } from './path-containment.ts'
-import { isSafeRunId, isSafeTalkSlug, persistRunForTalk, readRunForTalk, talkRunFolderForTalk, type RunRecord } from './runs.ts'
+import { isSafeRunId, isSafeTalkSlug, persistRunForTalk, readRunForTalk, talkRunFolderForTalk, type RunRecord, type RunReplacementGuard } from './runs.ts'
 
 export const WORK_FILES_FOLDER = 'Work files'
 
@@ -180,7 +180,7 @@ export function readPinnedWork(vaultRoot: string, talkSlug: string, runId: strin
  * folder, and the pin is recorded on the Run. A failure before the record is written leaves the Run
  * record as it was. Throws with a `PinError` code.
  */
-export function pinRunWork(vaultRoot: string, talkSlug: string, runId: string, phase: Phase, now: () => Date = () => new Date()): PinResult {
+export function pinRunWork(vaultRoot: string, talkSlug: string, runId: string, phase: Phase, now: () => Date = () => new Date(), guard?: RunReplacementGuard): PinResult {
   if (!isSafeTalkSlug(talkSlug) || !isSafeRunId(runId)) fail('run-path-unsafe')
   const run = readRunForTalk(vaultRoot, talkSlug, runId)
   if (!run) fail('run-not-found')
@@ -253,7 +253,7 @@ export function pinRunWork(vaultRoot: string, talkSlug: string, runId: string, p
   const next: RunRecord = { ...latest, work: { ...latest.work, [phase]: { ...current, pinned } } }
   let saved: RunRecord
   try {
-    saved = persistRunForTalk(vaultRoot, talkSlug, runId, next)
+    saved = persistRunForTalk(vaultRoot, talkSlug, runId, next, guard)
   } catch (error) {
     try { rmSync(target, { force: true }) } catch { /* harmless orphan */ }
     throw error

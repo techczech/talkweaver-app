@@ -17,6 +17,7 @@
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-example-vault-removal.mjs
 import { _electron as electron } from 'playwright'
+import { openSettingsWindow, closeSettingsWindow } from './lib/settings-window.mjs'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { ensureTalksMode, openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
@@ -65,6 +66,19 @@ async function launch(p) {
   await app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) w.setSize(1440, 900) })
   return { app, page }
 }
+// Thumbnail capture also creates BrowserWindows. Only a renderer editor window can be
+// the requested talk; retain the existing deadline and all subsequent content checks.
+function nextTalkWindow(app) {
+  return app.waitForEvent('window', {
+    timeout: 15000,
+    predicate: async (candidate) => {
+      try {
+        await candidate.waitForURL(/\/renderer\/index\.html(?:[?#]|$)/, { timeout: 15000 })
+        return true
+      } catch { return false }
+    },
+  })
+}
 const exampleHeader = (page) => page.locator('[data-vault-header][data-vault-example="true"]')
 async function waitFor(page, fn, arg, timeout = 15000) {
   return page.waitForFunction(fn, arg, { timeout }).then(() => true).catch(() => false)
@@ -80,18 +94,18 @@ async function setUp(p) {
   await exampleHeader(page).waitFor({ state: 'visible', timeout: 15000 })
   await waitFor(page, (want) => want.every((t) => document.querySelector(`[data-talk-title="${CSS.escape(t)}"]`)), TITLES)
   const outline = join(realpathSync(p.root), 'the-saturday-market', 'the-saturday-market-outline.md')
-  const second = app.waitForEvent('window')
+  const second = nextTalkWindow(app)
   await page.evaluate((outlinePath) => window.tw.windows.openInNewWindow({ kind: 'talk', outlinePath }), outline)
   const win2 = await second
   await win2.waitForLoadState('domcontentloaded')
-  await win2.waitForSelector('.cm-content', { timeout: 15000 })
+  await win2.waitForSelector('.cm-content', { timeout: 15000 }).catch(async (error) => { console.error('new-window diagnostic', JSON.stringify({ received: win2.url(), windows: app.windows().map((w) => w.url()) })); throw error })
   await waitFor(win2, () => document.title.includes('The Saturday market'))
   return { app, page, win2, outline }
 }
 /** Open an example talk in a window of its own; returns its page. */
 async function openExampleWindow(app, page, root, slug, title) {
   const outlinePath = join(realpathSync(root), slug, `${slug}-outline.md`)
-  const next = app.waitForEvent('window')
+  const next = nextTalkWindow(app)
   await page.evaluate((path) => window.tw.windows.openInNewWindow({ kind: 'talk', outlinePath: path }), outlinePath)
   const win = await next
   await win.waitForLoadState('domcontentloaded')
@@ -183,13 +197,13 @@ try {
     record('the Guide’s Remove link is gone', (await page.locator('[data-guide-remove-example]').count()) === 0)
 
     // ── (B) Settings and the palette ──
-    await page.evaluate(() => window.dispatchEvent(new Event('tw-open-settings')))
-    await page.waitForSelector('[data-setting="get-started"]', { timeout: 5000 })
-    const row = await page.locator('[data-setting="get-started"]').innerText()
+    let settings = await openSettingsWindow(app, page, 'get-started')
+    await settings.waitForSelector('[data-setting="get-started"]', { timeout: 5000 })
+    const row = await settings.locator('[data-setting="get-started"]').innerText()
     record('Settings → Get started: “The example vault was removed.”, Show the example vault again, Open the Guide',
       row.includes('The example vault was removed.') && row.indexOf('Show the example vault again') >= 0 && row.indexOf('Show the example vault again') < row.indexOf('Open the Guide'), JSON.stringify(row))
-    await shot(page, '12-state-16-settings.png')
-    await page.keyboard.press('Escape')
+    await shot(settings, '12-state-16-settings.png')
+    await closeSettingsWindow(app)
     await page.waitForTimeout(300)
     await page.locator('.cm-content').first().click()
     await page.keyboard.press('Meta+Shift+P')
@@ -210,8 +224,9 @@ try {
     const learnBeforeRestore = JSON.stringify(config(a).guideLearn)
     record('progress survived removal (the chapters read as before it, plus what was run since)', statusBefore.length === 10 && statusBeforeRestore[0] === statusBefore[0], `${statusBefore[0]} → ${statusBeforeRestore[0]}`)
     await ensureTalksMode(page)
-    await page.evaluate(() => window.dispatchEvent(new Event('tw-open-settings')))
-    await page.locator('[data-restore-example]').click()
+    settings = await openSettingsWindow(app, page, 'get-started')
+    await settings.locator('[data-restore-example]').click()
+    await closeSettingsWindow(app)
     const listedAgain = await exampleHeader(page).waitFor({ state: 'visible', timeout: 15000 }).then(() => true).catch(() => false)
     if (!listedAgain) {
       const toasts = await page.locator('.toast, [role="status"], [role="alert"]').allInnerTexts().catch(() => [])

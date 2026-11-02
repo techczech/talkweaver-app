@@ -45,6 +45,8 @@ The picture for this slide has not been added yet.
 
 > **Try it.** **Add vault…** (<kbd>⌘⇧P</kbd>, or at the foot of the sidebar) adds a folder of your own talks.
 
+> **Try it.** In All commands (<kbd>⌘⇧P</kbd>), **Vault Gallery** opens the gallery of talks in your vaults.
+
 > **Try it.** <kbd>N</kbd>, <kbd>S</kbd>, <kbd>R</kbd> and <kbd>C</kbd> work in Manage notes, which opens from a recording in Studio. This vault has no recording.
 
 ## 09 Check and repair

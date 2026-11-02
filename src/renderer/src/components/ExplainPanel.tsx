@@ -1,4 +1,8 @@
 import { useEffect, useState } from 'react'
+import { layoutEntryFor, optionGroupsForSlide, valuesForGroup } from '../../../shared/layout-registry/options'
+import { layoutAuthoringExamples } from '../../../shared/layout-registry/authoring'
+import { notify } from '../lib/notify'
+
 
 interface Trace {
   navTitle: string
@@ -20,12 +24,13 @@ interface Props {
   outlinePath: string
   content: string
   index: number | null
+  onInsertExample?: (layout: string) => void
 }
 
 // "Explain rendering" (ADR-0024). Right-click a slide → see WHY it rendered the way it did, read
 // from the ACTUAL compiled decisions (data-* on the slide's <section>), not a guess. Turns the
 // opaque, content-adaptive layout into something inspectable so "inconsistent" becomes explainable.
-export default function ExplainPanel({ isOpen, onClose, outlinePath, content, index }: Props) {
+export default function ExplainPanel({ isOpen, onClose, outlinePath, content, index, onInsertExample }: Props) {
   const [trace, setTrace] = useState<Trace | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -62,6 +67,16 @@ export default function ExplainPanel({ isOpen, onClose, outlinePath, content, in
     if (trace.layout === 'quote' || trace.layout === 'image-quote') return 'Title hidden (kept for navigation only) — quote layouts default to no on-slide title.'
     return 'Default — no left rail; title sits above the content.'
   })()
+  const entry = layoutEntryFor(trace?.layout)
+    ?? (trace?.role ? layoutEntryFor(trace.role) : undefined)
+  const examples = entry ? layoutAuthoringExamples(entry) : []
+  const example = examples[0] ?? ''
+  const optionContext = {
+    layoutName: entry?.name,
+    headingLevel: example.match(/^(#{1,6})\s/)?.[1].length ?? 3,
+    hasChildren: /^#{2,6}\s/m.test(example.split('\n').slice(1).join('\n'))
+  }
+  const optionGroups = entry ? optionGroupsForSlide(optionContext) : []
   const rows: Array<[string, string]> = trace
     ? [
         ['Layout', `${trace.layout || '(none)'}${layoutTrigger ? ` — set by your ${layoutTrigger} trigger` : ' — inferred from the slide content (no layout trigger written)'}`],
@@ -103,10 +118,49 @@ export default function ExplainPanel({ isOpen, onClose, outlinePath, content, in
                 </div>
               )}
 
+              {entry && (
+                <section aria-label="How to author this layout">
+                  <h3 style={rulesHead}>How to author {entry.label}</h3>
+                  <p style={helpText}>{entry.whenItFits ?? entry.description}</p>
+                  <p style={helpText}>{entry.trigger ? <>Layout trigger: <code style={code}>{entry.trigger}</code>.</> : null}</p>
+                  {(entry.authoring ?? 'Keep the body structure and delimiters shown in the example.').split('\n\n').map((paragraph) => <p key={paragraph} style={helpText}>{paragraph}</p>)}
+                  {examples.map((source, index) => (
+                    <div key={source}>
+                      {index > 0 && <div style={rulesHead}>Another example</div>}
+                      <pre style={exampleCode}><code>{source}</code></pre>
+                      <button type="button" onClick={() => {
+                        void navigator.clipboard.writeText(source).then(
+                          () => notify('Example copied.', 'info', 'layout-example'),
+                          () => notify('Select the example text and copy it.', 'info', 'layout-example')
+                        )
+                      }}>Copy example</button>
+                    </div>
+                  ))}
+                  {(entry.name === 'chat' || entry.name === 'chat-lanes') && onInsertExample && (
+                    <button type="button" onClick={() => onInsertExample(entry.name)} style={{ marginLeft: 8 }}>Insert example into empty slide</button>
+                  )}
+                  <p style={helpText}>The examples include their headings for copying. In the layout picker (⌘L), ⌘Enter adds starter text to an empty slide.</p>
+                  <details>
+                    <summary style={helpText}>Supported option markup</summary>
+                    <p style={helpText}>Put option tokens beside the layout trigger, outside any code fence. The Inspector shows the controls for the selected slide.</p>
+                    {optionGroups.map(({ group }) => (
+                      <div key={group.key} style={helpText}>
+                        <b>{group.label}</b>
+                        <ul style={{ paddingLeft: 18 }}>
+                          {valuesForGroup(group, optionContext).map((value) => (
+                            <li key={value.token}><code style={code}>{value.token ? `{${value.token}}` : '(omit token)'}</code> — {value.label}{value.description ? `: ${value.description}` : ''}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </details>
+                </section>
+              )}
+
               <div style={rulesHead}>How a slide's layout is decided</div>
               <ol style={rules}>
                 <li><b>Layout:</b> if you wrote a bare <code style={code}>{'{word}'}</code> trigger (e.g. <code style={code}>{'{statement}'}</code>) that wins; otherwise it&apos;s <b>inferred</b> from content (text → statement, a list → list, an image → media, image + text → copy-visual…).</li>
-                <li><b>Title placement</b> follows the layout: <code style={code}>list / statement / contrast / quote / timeline</code> use a <b>left rail (side-by-side)</b>; others sit on top or centre. Placement and size are fixed per placement — the title does not scale with content length.</li>
+                <li><b>Title placement</b> follows the layout registry and your title options. Compare and contrast use a top title; the compiled title placement is shown above.</li>
                 <li><b>Quote / section / title</b> layouts have their own centred treatment and hide or restyle the heading by default ({'{title=show}'} forces it back).</li>
               </ol>
             </>
@@ -138,3 +192,6 @@ const rules: React.CSSProperties = { margin: '8px 0 0', paddingLeft: 18, fontSiz
 const code: React.CSSProperties = { fontFamily: 'var(--font-mono)', fontSize: 11.5, background: 'var(--hover)', padding: '1px 4px', borderRadius: 3 }
 const footer: React.CSSProperties = { padding: '6px 14px', borderTop: '1px solid var(--line)', fontSize: 11, color: 'var(--faint)', textAlign: 'center', flexShrink: 0 }
 const kbd: React.CSSProperties = { fontFamily: 'var(--font-mono)', fontSize: 11, background: 'var(--hover)', border: '1px solid var(--line)', borderRadius: 3, padding: '2px 5px', color: 'var(--ink)', display: 'inline-block' }
+
+const helpText: React.CSSProperties = { fontSize: 13, lineHeight: 1.5, color: 'var(--ink)', margin: '8px 0' }
+const exampleCode: React.CSSProperties = { whiteSpace: 'pre-wrap', userSelect: 'text', padding: 12, background: 'var(--hover)', borderRadius: 6, fontSize: 12, lineHeight: 1.5 }

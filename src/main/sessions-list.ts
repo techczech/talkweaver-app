@@ -34,6 +34,7 @@ export function sessionSource(vaultId: string, run: RunRecord, sent: readonly Ph
   // New to the presenter: waiting on the service, plus pulled onto the Run and not seen yet.
   const responses = Math.max(0, waiting) + newResponseCount(run.prework) + newResponseCount(run.postwork)
   return {
+    ...(run.sourceOutline ? {sourceOutline:run.sourceOutline} : {}),
     vaultId, talkSlug: run.talkSlug, runId: run.id, talkTitle: run.talkTitle, kind: run.kind,
     status: run.status, startedAt: run.startedAt || undefined,
     ...(run.eventTitle ? { eventTitle: run.eventTitle } : {}),

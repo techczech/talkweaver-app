@@ -28,7 +28,7 @@ function record(name, pass, detail) {
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`)
 }
 
-const TALKS = [['The Saturday market', 22], ['Garden notes', 14], ['Walking the old town', 30], ['Lightning round', 8], ['Harvest supper (draft)', 10]]
+const TALKS = [['The Saturday market', 25], ['Garden notes', 14], ['Walking the old town', 30], ['Lightning round', 9], ['Harvest supper (draft)', 10]]
 const PASSIVE = 'editor.protect-heading-delete'
 const write = deriveChapters().find((c) => c.task === 'Write the outline')
 
@@ -158,6 +158,29 @@ try {
   await caretOn('Four stalls'); await key('Meta+Shift+Backspace', 600)
   await key('Meta+z', 500); await key('Meta+Shift+z', 500); await key('Meta+z', 500)
   await page.waitForTimeout(800)
+
+  // The quotation paragraph command and the grid commands added since the original practice walk.
+  await caretOn('Try it: move a slide')
+  await key('Shift+Enter'); await key('Meta+z')
+  await key('Meta+4', 600)
+  await page.locator('.grid-cell').filter({ hasText: 'Four stalls' }).first().click()
+  await palette('Select section')
+  await page.locator('[data-batch-bar]').waitFor()
+  await palette('Move selected slides to…')
+  await page.locator('[data-batch-menu]').waitFor()
+  await page.keyboard.press('Escape')
+  await palette('Clear slide selection')
+  await page.waitForSelector('[data-batch-bar]', { state: 'detached' })
+  await page.locator('.grid-cell').filter({ hasText: 'Four stalls' }).first().click()
+  await palette('Set aside in Scratchpad')
+  await page.waitForSelector('.sp-card')
+  await page.waitForFunction(() => ![...document.querySelectorAll('.grid-cell')].some((node) => node.innerText.includes('Four stalls')))
+  await page.locator('.grid-view').focus()
+  await key('Meta+z', 600)
+  await page.locator('.grid-cell').filter({ hasText: 'Four stalls' }).first().waitFor()
+  await key('Meta+2', 500)
+  await page.evaluate(() => window.dispatchEvent(new Event('tw-guide-open')))
+  await page.locator('[data-chapter-detail="Write the outline"]').waitFor()
 
   const learn = learnOnDisk()
   const untouched = write.rows.filter((row) => !row.ids.some((id) => learn.ran.includes(id)))

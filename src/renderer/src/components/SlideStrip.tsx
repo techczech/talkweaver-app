@@ -5,6 +5,9 @@ import type { LayoutDoctorFinding } from '../../../shared/layout-doctor'
 import { triggerWarningPayloadsForSlide } from '../../../shared/layout-doctor'
 import { warningBadgesForSurface, type WarningSurface } from '../../../../compiler/scripts/lib/warning-registry.mjs'
 import type { GhostRow, SlideMarker, SlideMarkers } from '../../../shared/feedback-markers'
+import type { SlideRef } from '../../../shared/slide-handling/blocks'
+import { placeAtHeading, type SlidePlace } from '../../../shared/slide-handling/place'
+import { sectionDropBoundary } from '../lib/sectionDrop'
 
 export type SurfaceWarningBadge = ReturnType<typeof warningBadgesForSurface>[number]
 
@@ -19,7 +22,10 @@ interface Props {
   // Double-click a card: open that slide's source in the editor, focused (single click
   // stays select-only so browsing the strip never steals the keyboard).
   onEdit?: (index: number) => void
-  onReorder?: (fromIndex: number, toIndex: number) => void
+  /** The heading behind the card at a display index, in the editor's current text (null: a card with no heading). */
+  slideRefOf?: (index: number) => SlideRef | null
+  /** Move these slides or sections to `place` (shared/slide-handling moveBlocks, one undo step). */
+  onMoveSlides?: (refs: SlideRef[], place: SlidePlace) => void
   // Right-click a card → explain why it rendered this way (ADR-0024). Index = display index.
   onExplain?: (index: number) => void
   // Shared talk feedback (ticket 06, frame 2): a badge per slide, ghost rows for proposed new slides.
@@ -33,11 +39,10 @@ interface Props {
 interface SlidePreview {
   // Display position in the strip (includes synthesized title/section/closing slides).
   index: number
-  // Position among ONLY the real `### ` outline blocks, or null for synthesized
-  // slides the compiler adds (cover title, section dividers, closing). This is the
-  // index `window.tw.outline.reorder` expects — the lib moves slides by `### ` block,
-  // NOT by strip row, so passing a display index would move the wrong slide. null ⇒
-  // not reorderable (no backing heading in the source file).
+  // Position among ONLY the cards with a heading of their own (`##`–`######`), or null
+  // for synthesized slides the compiler adds (cover title, section dividers, closing)
+  // and for the fallback parse before the first compile. null ⇒ not movable. Moves are
+  // addressed by source line and heading text (slideRefOf), never by this counter.
   blockIndex: number | null
   title: string
   excerpt: string
@@ -73,8 +78,8 @@ export function surfacedWarnings(
   return [...compilerWarnings, ...triggerWarnings]
 }
 
-// Fast client-side parse — used when compiler result is not yet available. Every
-// slide here is a real `### ` block, so display index === block index.
+// Fast client-side parse — used when compiler result is not yet available. These cards
+// have no source lines yet, so they are not movable until the first compile.
 function parseSlides(content: string): SlidePreview[] {
   if (!content) return []
   const slides: SlidePreview[] = []
@@ -84,7 +89,7 @@ function parseSlides(content: string): SlidePreview[] {
   function push(c: { title: string; lines: string[]; layout: string }) {
     slides.push({
       index: slides.length,
-      blockIndex: slides.length,
+      blockIndex: null,
       title: c.title,
       excerpt: c.lines.slice(0, 3).join(' ').slice(0, 160),
       layout: c.layout,
@@ -108,15 +113,15 @@ function parseSlides(content: string): SlidePreview[] {
   return slides
 }
 
-// A projection row is a reorderable outline block iff its source_markdown begins
-// with a `### ` heading. Synthesized rows (cover title, section dividers, closing)
-// carry empty/non-heading source_markdown and must not be dragged.
+// A projection row is a movable outline block iff it is a section's card or its
+// source_markdown begins with a slide or section heading (`##`–`######`; a section's card
+// moves the whole section). The cover title and closing carry no heading and are not
+// dragged; a card whose heading line the host cannot find does not move. Mirrors GridView.
 function isOutlineBlock(p: ProjectionRow): boolean {
-  return /^###\s/.test((p.source_markdown ?? '').trimStart())
+  return p.role === 'section-title' || /^#{2,6}\s/.test((p.source_markdown ?? '').trimStart())
 }
 
-// Build previews from compiled rows, assigning each real `### ` slide a running
-// block index (skipping synthesized rows so the index matches listSlideBlocks).
+// Build previews from compiled rows, numbering each movable card (synthesized rows skipped).
 function compiledToPreviews(rows: ProjectionRow[]): SlidePreview[] {
   let block = 0
   return rows.map((p, i) => {
@@ -637,7 +642,8 @@ export default function SlideStrip({
   activeIndex,
   onSelectSlide,
   onEdit,
-  onReorder,
+  slideRefOf,
+  onMoveSlides,
   onExplain,
   markers,
   onMarker,
@@ -649,8 +655,8 @@ export default function SlideStrip({
   // a ref (the synchronous drop handler must read the live value, not a stale
   // closure capture from the render that bound the handler).
   // dragFromIndex is the DISPLAY index of the source card (drives source styling +
-  // drop-edge direction). dragFromBlockRef is its OUTLINE-BLOCK index — the value
-  // onReorder needs. Both held as refs too so the synchronous drop handler reads
+  // drop-edge direction). dragRefRef is its heading line and text, read at drag start —
+  // what the move needs. Both held as refs too so the synchronous drop handler reads
   // live values, not a stale render closure.
   const [dragFromIndex, setDragFromIndex] = useState<number | null>(null)
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null)
@@ -667,7 +673,7 @@ export default function SlideStrip({
     })
   }
   const dragFromRef = useRef<number | null>(null)
-  const dragFromBlockRef = useRef<number | null>(null)
+  const dragRefRef = useRef<SlideRef | null>(null)
   // The slide this component just moved, awaiting the recompiled strip so we can
   // re-assert selection on its NEW row. The parent's editor↔strip cursor sync
   // resets activeIndex to the top on editor remount; re-selecting by identity once
@@ -680,26 +686,37 @@ export default function SlideStrip({
   const listRef = useRef<HTMLDivElement>(null)
   const cardRefs = useRef<Array<HTMLDivElement | null>>([])
 
-  const canReorder = !!onReorder
+  const canReorder = !!onMoveSlides && !!slideRefOf
 
   // Latest-refs for the parent callbacks. MemoSlideCard deliberately keeps old handler
   // closures across skipped re-renders, so handlers must never call a captured (possibly
-  // stale) parent callback directly — a stale onReorder would rewrite the outline from
+  // stale) parent callback directly — a stale onMoveSlides would rewrite the outline from
   // an old snapshot. These refs always point at the current render's props.
   const onSelectSlideRef = useRef(onSelectSlide)
   const onEditRef = useRef(onEdit)
-  const onReorderRef = useRef(onReorder)
+  const onMoveSlidesRef = useRef(onMoveSlides)
+  const slideRefOfRef = useRef(slideRefOf)
   const onExplainRef = useRef(onExplain)
   const onMarkerRef = useRef(onMarker)
   onSelectSlideRef.current = onSelectSlide
   onEditRef.current = onEdit
-  onReorderRef.current = onReorder
+  onMoveSlidesRef.current = onMoveSlides
+  slideRefOfRef.current = slideRefOf
   onExplainRef.current = onExplain
   onMarkerRef.current = onMarker
 
+  // A section card dragged onto a slide card lands at that slide's section boundary (sectionDrop.ts); the bar shows
+  // there. Read through a ref: a memoised card keeps an older closure.
+  const dropRowsRef = useRef<Array<{ role: string; section: string; movable: boolean }>>([])
+  dropRowsRef.current = slides.map((s) => ({ role: s.row?.role ?? s.role, section: s.row?.section ?? '', movable: s.blockIndex !== null }))
+  const barCell = (index: number): number => {
+    const from = dragFromRef.current
+    return from === null ? index : sectionDropBoundary(dropRowsRef.current, from, index)?.cell ?? index
+  }
+
   function resetDrag() {
     dragFromRef.current = null
-    dragFromBlockRef.current = null
+    dragRefRef.current = null
     setDragFromIndex(null)
     setDropTargetIndex(null)
   }
@@ -752,12 +769,49 @@ export default function SlideStrip({
     return byIndex
   }, [slides, triggerFindings])
 
-  // Scroll the active card to the TOP of the strip when activeIndex changes, so the slide
-  // you're editing sits at the top of the sidebar (requested) rather than just "nearest".
+  // Click intent is committed alongside selection and consumed even if the parent
+  // leaves activeIndex unchanged. It cannot leak into a later editor-follow change.
+  const [smoothClick, setSmoothClick] = useState<number | null>(null)
+  const followedRef = useRef<{ index: number; count: number; talk: string } | null>(null)
+  function selectByClick(index: number) {
+    setSmoothClick(index)
+    onSelectSlideRef.current(index)
+  }
+
   useEffect(() => {
+    const previous = followedRef.current
+    followedRef.current = { index: activeIndex, count: slides.length, talk: talk.outlinePath }
+    if (smoothClick !== null) setSmoothClick(null)
+    if (previous?.index === activeIndex && previous.count === slides.length && previous.talk === talk.outlinePath) return
     const node = cardRefs.current[activeIndex]
-    if (node) node.scrollIntoView({ block: 'start', behavior: 'smooth' })
-  }, [activeIndex, slides.length])
+    // `auto` can inherit CSS smooth scrolling. `instant` also cancels an in-flight
+    // click animation, keeping keyboard/editor following at the active card's top.
+    if (node) {
+      const smooth = smoothClick === activeIndex
+      const list = listRef.current
+      if (smooth) node.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      else if (list) {
+        const top = list.scrollTop + node.getBoundingClientRect().top - list.getBoundingClientRect().top
+        list.scrollTo?.({ top, behavior: 'instant' })
+        // Chromium can apply one final compositor delta after aborting a smooth
+        // scroll. Reassert once before the next paint; never follow manual scrolling
+        // beyond this selection change. A new selection or unmount cancels the frame.
+        const frame = requestAnimationFrame(() => {
+          const settledTop = list.scrollTop + node.getBoundingClientRect().top - list.getBoundingClientRect().top
+          list.scrollTo?.({ top: settledTop, behavior: 'instant' })
+        })
+        return () => cancelAnimationFrame(frame)
+      }
+    }
+  }, [activeIndex, slides.length, talk.outlinePath, smoothClick])
+
+  useEffect(() => {
+    const list = listRef.current
+    return () => {
+      // Do not leave an old talk's animation running through replacement/unmount.
+      list?.scrollTo?.({ top: list.scrollTop, behavior: 'instant' })
+    }
+  }, [talk.outlinePath, slides.length])
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (slides.length === 0) return
@@ -856,7 +910,7 @@ export default function SlideStrip({
         si += 1
       }
     }
-    // Only real `### ` blocks participate in reorder; synthesized slides
+    // Only cards with a heading of their own can move; synthesized slides
     // (cover/section/closing) have no outline block to move.
     const isBlock = slide.blockIndex !== null
     const cardDraggable = canReorder && isBlock
@@ -880,12 +934,12 @@ export default function SlideStrip({
           thumbnailUrl={thumbnailUrl}
           draggable={cardDraggable}
           dropEdge={dropEdge}
-          onClick={() => onSelectSlideRef.current(slide.index)}
+          onClick={() => selectByClick(slide.index)}
           onDoubleClick={onEdit ? () => onEditRef.current?.(slide.index) : undefined}
           onContextMenu={onExplain ? (e) => { e.preventDefault(); onExplainRef.current?.(slide.index) } : undefined}
           onDragStart={(e) => {
             dragFromRef.current = slide.index
-            dragFromBlockRef.current = slide.blockIndex
+            dragRefRef.current = isBlock ? slideRefOfRef.current?.(slide.index) ?? null : null
             setDragFromIndex(slide.index)
             setDropTargetIndex(slide.index)
             // Firefox requires data on the transfer for the drag to start at
@@ -896,7 +950,7 @@ export default function SlideStrip({
             }
           }}
           onDragEnter={() => {
-            if (dragFromRef.current !== null && isBlock) setDropTargetIndex(slide.index)
+            if (dragFromRef.current !== null && isBlock) setDropTargetIndex(barCell(slide.index))
           }}
           onDragOver={(e) => {
             // Only a real block is a valid drop target. preventDefault is
@@ -906,21 +960,24 @@ export default function SlideStrip({
             if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
             // Functional update: a skipped card render keeps this closure, so it must not read a
             // captured dropTargetIndex.
-            setDropTargetIndex((current) => (current === slide.index ? current : slide.index))
+            const at = barCell(slide.index)
+            setDropTargetIndex((current) => (current === at ? current : at))
           }}
           onDrop={(e) => {
             e.preventDefault()
-            const fromBlock = dragFromBlockRef.current
+            const dragged = dragRefRef.current
             const fromDisplay = dragFromRef.current
-            const toBlock = slide.blockIndex
             const toDisplay = slide.index
             // Capture the moved slide's identity (by its source display index)
             // BEFORE resetDrag clears the drag refs.
             const movedSlide = fromDisplay !== null ? slides[fromDisplay] : undefined
+            // A section card on a slide card: the boundary of that slide's section (before it going up, after it going down).
+            const boundary = fromDisplay !== null ? sectionDropBoundary(dropRowsRef.current, fromDisplay, toDisplay) : null
             resetDrag()
-            if (fromBlock !== null && toBlock !== null && fromBlock !== toBlock) {
-              // onReorder takes OUTLINE-BLOCK indices (what the lib moves by).
-              onReorderRef.current?.(fromBlock, toBlock)
+            const target = isBlock && fromDisplay !== null && fromDisplay !== toDisplay ? slideRefOfRef.current?.(boundary ? boundary.refIndex : toDisplay) ?? null : null
+            if (dragged && target && fromDisplay !== null) {
+              // Dragging down lands after the target card's block, up before it (the drop edge shows which).
+              onMoveSlidesRef.current?.([dragged], placeAtHeading(boundary ? boundary.kind : toDisplay > fromDisplay ? 'after' : 'before', target))
               // activeIndex must follow the moved card. Optimistically select the
               // target slot (the block lands there in both directions); then the
               // pending-move effect re-asserts by identity after the recompile so
@@ -946,7 +1003,7 @@ export default function SlideStrip({
           className="tw-subslide-card"
           data-subslide
           title={`${slide.title} — step ${i + 1}`}
-          onClick={() => onSelectSlide(slide.index)}
+          onClick={() => selectByClick(slide.index)}
           style={{
             margin: '2px 8px 2px 24px',
             border: '1px dashed var(--line)',

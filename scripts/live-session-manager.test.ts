@@ -41,6 +41,20 @@ function harness(initial: any[] = [], endRemote = async () => 'ended', extra: an
   return { manager, clients, windows, history, timers, saved: () => saved }
 }
 describe('durable live session ownership', () => {
+  test('anyOpen counts a running live session whatever window holds it, and tells the update check when one comes or goes', () => {
+    let activity = 0
+    const h = harness([record()], async () => 'ended', { onActivity: () => { activity += 1 } })
+    expect(h.manager.anyOpen()).toBe(true) // restored from the store: no window yet
+    const h2 = harness([], async () => 'ended', { onActivity: () => { activity += 1 } })
+    expect(h2.manager.anyOpen()).toBe(false)
+    const before = activity
+    h2.manager.create({ ...record(), sessionId: 'second' }, 11)
+    expect(activity).toBeGreaterThan(before)
+    h2.manager.detach(11) // the window closed, the session keeps running
+    expect(h2.manager.anyOpen()).toBe(true)
+    const done = harness([{ ...record(), status: 'ended' }])
+    expect(done.manager.anyOpen()).toBe(false)
+  })
   test('forwards reaction counts and questions to the presenter window and keeps them for its snapshot', () => {
     const h = harness()
     h.manager.create(record(), 10)

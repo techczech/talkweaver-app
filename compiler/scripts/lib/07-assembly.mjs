@@ -19,6 +19,7 @@ import { presenterShortcutsRuntimeSource } from '../../assets/runtime/presenter-
 import { pointerOverlayRuntimeSource } from '../../assets/runtime/pointer-overlay.js';
 import { simTypingRuntimeSource } from '../../assets/runtime/sim-typing.js';
 import { penInkRuntimeSource } from '../../assets/runtime/pen-ink.js';
+import { liveFreezeRuntimeSource } from '../../assets/runtime/live-page-freeze.js';
 import { audioChipRuntimeSource } from '../../assets/runtime/audio-chip.js';
 import { imageStepsRuntimeSource } from '../../assets/runtime/image-steps.js';
 import { emphasisStepsRuntimeSource } from '../../assets/runtime/emphasis-steps.js';
@@ -496,6 +497,8 @@ function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = n
     }
     const accentStyle = styleDeclarations.length ? ` style="${styleDeclarations.join("; ")}"` : "";
     const title = slide.navTitle || slide.title || id;
+    // Text read from this slide's pictures (the overview searches it, "in picture:"); only when the app supplied it.
+    const pictureTextAttr = slide.pictureText ? ` data-picture-text="${escapeHtml(slide.pictureText)}"` : "";
     // data-nav-title keeps the outline heading as written (the phone text view renders its inline
     // formatting). Where that heading carries inline markers, data-nav-label carries it as plain
     // text for the places that show a title as text (presenter outline and Next label, overview).
@@ -587,7 +590,7 @@ function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = n
       const contentHtml = `<div class="slide-content layout-carousel">
 ${headHtml}${emphasis ? emphasis.html : galleryHtml}${sourceHtml}
   </div>`;
-      return `<section class="slide" data-id="${escapeHtml(id)}" data-section="${escapeHtml(section)}" data-subsection="${escapeHtml(subsection)}" data-role="${escapeHtml(role)}" data-layout="${escapeHtml(layout)}" data-carousel data-nav-title="${escapeHtml(title)}"${navLabelAttr}${titlePlacement.mode ? ` data-title-layout="${titlePlacement.mode}"` : ""}${titleLookAttrs}${titlePlacement.split ? ` data-split="${titlePlacement.split}"` : ""}${pollAttr}${reactionsAttr}${authoredMode ? ` data-mode="${escapeHtml(authoredMode)}"` : ""}${preparesFor ? ` data-prepares-for="${escapeHtml(preparesFor)}"` : ""}${slide.noStep ? " data-nostep" : ""}${slide.imageSteps ? " data-image-steps" : ""}${emphasis?.count ? " data-emphasis-steps" : ""}${!slide.noStep && hasMediaSteps(contentHtml) ? " data-media-steps" : ""}${slide.noValues ? " data-novalues" : ""}${slide.fontBody ? ` data-font-body="${slide.fontBody}"` : ""}${slide.fontTitle ? ` data-font-title="${slide.fontTitle}"` : ""}${accentStyle}>
+      return `<section class="slide" data-id="${escapeHtml(id)}" data-section="${escapeHtml(section)}" data-subsection="${escapeHtml(subsection)}" data-role="${escapeHtml(role)}" data-layout="${escapeHtml(layout)}" data-carousel data-nav-title="${escapeHtml(title)}"${navLabelAttr}${pictureTextAttr}${titlePlacement.mode ? ` data-title-layout="${titlePlacement.mode}"` : ""}${titleLookAttrs}${titlePlacement.split ? ` data-split="${titlePlacement.split}"` : ""}${pollAttr}${reactionsAttr}${authoredMode ? ` data-mode="${escapeHtml(authoredMode)}"` : ""}${preparesFor ? ` data-prepares-for="${escapeHtml(preparesFor)}"` : ""}${slide.noStep ? " data-nostep" : ""}${slide.imageSteps ? " data-image-steps" : ""}${emphasis?.count ? " data-emphasis-steps" : ""}${!slide.noStep && hasMediaSteps(contentHtml) ? " data-media-steps" : ""}${slide.noValues ? " data-novalues" : ""}${slide.fontBody ? ` data-font-body="${slide.fontBody}"` : ""}${slide.fontTitle ? ` data-font-title="${slide.fontTitle}"` : ""}${accentStyle}>
   ${contentHtml}
   ${notes ? `<aside class="notes">${notes}</aside>` : ""}
 </section>`;
@@ -626,7 +629,7 @@ ${headHtml}${emphasis ? emphasis.html : galleryHtml}${sourceHtml}
       contentHtml = marked.html;
       emphasisCount = marked.count;
     }
-    return `<section class="slide" data-id="${escapeHtml(id)}" data-section="${escapeHtml(section)}" data-subsection="${escapeHtml(subsection)}" data-role="${escapeHtml(role)}" data-layout="${escapeHtml(layout)}" data-nav-title="${escapeHtml(title)}"${navLabelAttr}${pollAttr}${reactionsAttr}${authoredMode ? ` data-mode="${escapeHtml(authoredMode)}"` : ""}${preparesFor ? ` data-prepares-for="${escapeHtml(preparesFor)}"` : ""}${slide.noStep ? " data-nostep" : ""}${slide.imageSteps ? " data-image-steps" : ""}${emphasisCount ? " data-emphasis-steps" : ""}${!slide.noStep && hasMediaSteps(contentHtml) ? " data-media-steps" : ""}${slide.noValues ? " data-novalues" : ""}${slide.fontBody ? ` data-font-body="${slide.fontBody}"` : ""}${slide.fontTitle ? ` data-font-title="${slide.fontTitle}"` : ""}${slide.countdownSeconds ? ` data-countdown="${slide.countdownSeconds}" data-countdown-style="${slide.countdownStyle || "digits"}"` : ""}${slide.sectionTimerSeconds ? ` data-section-timer="${slide.sectionTimerSeconds}" data-section-timer-show="${slide.sectionTimerShow || "presenter"}"` : ""}${slide.remindText ? ` data-remind="${escapeHtml(slide.remindText)}"${slide.remindAtMinutes != null ? ` data-remind-at="${slide.remindAtMinutes}"` : ""}${slide.remindInSeconds != null ? ` data-remind-in="${slide.remindInSeconds}"` : ""}` : ""}${titlePlacement.mode ? ` data-title-layout="${titlePlacement.mode}"` : ""}${effectiveTitleStyle ? ` data-title-style="${escapeHtml(effectiveTitleStyle)}"` : ""}${titlePlacement.mode === "top" && slide.titleLook ? ` data-title-look="${slide.titleLook}"${slide.titleLookTone ? ` data-title-look-tone="${slide.titleLookTone}"` : ""}` : ""}${titlePlacement.split ? ` data-split="${titlePlacement.split}"` : ""}${containerAttrs}${slideStyle}>
+    return `<section class="slide" data-id="${escapeHtml(id)}" data-section="${escapeHtml(section)}" data-subsection="${escapeHtml(subsection)}" data-role="${escapeHtml(role)}" data-layout="${escapeHtml(layout)}" data-nav-title="${escapeHtml(title)}"${navLabelAttr}${pictureTextAttr}${pollAttr}${reactionsAttr}${authoredMode ? ` data-mode="${escapeHtml(authoredMode)}"` : ""}${preparesFor ? ` data-prepares-for="${escapeHtml(preparesFor)}"` : ""}${slide.noStep ? " data-nostep" : ""}${slide.imageSteps ? " data-image-steps" : ""}${emphasisCount ? " data-emphasis-steps" : ""}${!slide.noStep && hasMediaSteps(contentHtml) ? " data-media-steps" : ""}${slide.noValues ? " data-novalues" : ""}${slide.fontBody ? ` data-font-body="${slide.fontBody}"` : ""}${slide.fontTitle ? ` data-font-title="${slide.fontTitle}"` : ""}${slide.countdownSeconds ? ` data-countdown="${slide.countdownSeconds}" data-countdown-style="${slide.countdownStyle || "digits"}"` : ""}${slide.sectionTimerSeconds ? ` data-section-timer="${slide.sectionTimerSeconds}" data-section-timer-show="${slide.sectionTimerShow || "presenter"}"` : ""}${slide.remindText ? ` data-remind="${escapeHtml(slide.remindText)}"${slide.remindAtMinutes != null ? ` data-remind-at="${slide.remindAtMinutes}"` : ""}${slide.remindInSeconds != null ? ` data-remind-in="${slide.remindInSeconds}"` : ""}` : ""}${titlePlacement.mode ? ` data-title-layout="${titlePlacement.mode}"` : ""}${effectiveTitleStyle ? ` data-title-style="${escapeHtml(effectiveTitleStyle)}"` : ""}${titlePlacement.mode === "top" && slide.titleLook ? ` data-title-look="${slide.titleLook}"${slide.titleLookTone ? ` data-title-look-tone="${slide.titleLookTone}"` : ""}` : ""}${titlePlacement.split ? ` data-split="${titlePlacement.split}"` : ""}${containerAttrs}${slideStyle}>
   ${contentHtml}
 ${cornerQrHtml ? `  ${cornerQrHtml}\n` : ""}${cornerSectionHtml ? `  ${cornerSectionHtml}\n` : ""}  ${notes ? `<aside class="notes">${notes}</aside>` : ""}
 </section>`;
@@ -670,6 +673,8 @@ export async function buildDeckHtmlFromModel(model) {
   html = html.replace("<!--POINTER_OVERLAY_RUNTIME-->", () => pointerOverlayRuntimeSource() + '\n' + presenterShortcutsRuntimeSource());
   // The Pen's stroke model, store, gesture and drawing (0.38 ticket 08).
   html = html.replace("<!--PEN_INK_RUNTIME-->", () => penInkRuntimeSource());
+  // Freeze and mark on a live web page: the deck's state machine and checks (live-page-freeze.js).
+  html = html.replace("<!--LIVE_PAGE_FREEZE_RUNTIME-->", () => liveFreezeRuntimeSource());
   html = html.replace("<!--IMAGE_STEPS_RUNTIME-->", () => imageStepsRuntimeSource());
   // The emphasis-step order and count (0.38 ticket 02): the same source the handout / venue page
   // inlines and scripts/test-emphasis-steps.mjs asserts.
@@ -690,7 +695,8 @@ export async function buildDeckHtmlFromModel(model) {
   html = html.replace("/*INSTANT_STYLES*/", () => instantSlideStyles);
   // Inline the shared overview runtime (rankSlides / deriveSlideStatus / createOverview) verbatim —
   // the presenter drawer runs the SAME factory the handout does. Single source of truth.
-  html = html.replace("<!--OVERVIEW_RUNTIME-->", overviewRuntimeSource);
+  // A replacer function, not a string: the runtime holds `$&` (a regex escape), which a string replacement would expand.
+  html = html.replace("<!--OVERVIEW_RUNTIME-->", () => overviewRuntimeSource);
   // The one slide fit pipeline (runtime/slide-fit.js); the share page inlines the same source.
   html = html.replace("<!--SLIDE_FIT_RUNTIME-->", () => slideFitRuntimeSource);
   // The fixed slide canvas, scaled to the window (runtime/stage-fit.js; ADR-0030).
@@ -768,7 +774,18 @@ export async function buildDeckHtmlFromModel(model) {
   // Hash the actual rendered slide with the common document shell. This retains section
   // accents, inlined assets, fonts, runtimes and beats, without making an
   // ordinary text edit invalidate every PNG. Navigation changes remain conservative; the phone script is not slide artwork.
-  const shellHash = createHash("sha256").update(html.replace(allSlides, "").replace(companionTag, "")).digest("hex");
+  // Only a flat sequence of independent slides can ignore navigation ORDER. Containers and
+  // contextual/stepped beats still retain the complete sequence: their artwork may depend on it.
+  // Keep the membership in the hash too, so adding/removing slides remains conservative.
+  const independentBeats = (model.beats || []).every(beat =>
+    beat.kind === "slide" && Object.keys(beat).every(key => key === "kind" || key === "slideId"))
+    && !model.slides.some(slide => slide.containerMode);
+  const pictureBeats = independentBeats
+    ? JSON.stringify([...(model.beats || [])].sort((a, b) => String(a.slideId).localeCompare(String(b.slideId)))).replace(/</g, "\\u003c")
+    : beatsJson;
+  const shell = html.replace(allSlides, "").replace(companionTag, "")
+    .replace(`<script>window.__deckBeats=${beatsJson};</script>`, () => `<script>window.__deckBeats=${pictureBeats};</script>`);
+  const shellHash = createHash("sha256").update(shell).digest("hex");
   model.thumbnailHashes = slideMarkup.map(markup =>
     createHash("sha256").update(shellHash).update(markup).digest("hex"));
   // ADR-0028 §10: the title regime each slide was rendered with (its <section>'s

@@ -161,10 +161,12 @@ const sources = (dir) => readdirSync(dir).flatMap((name) => {
   return statSync(path).isDirectory() ? sources(path) : /\.(ts|mts|mjs|js)$/.test(name) ? [path] : []
 })
 
-await test('no window runs a preload in subframes: the preference is named nowhere in src/main', () => {
+await test('no window runs a preload in subframes: the preference is absent or explicitly false in src/main', () => {
   const preference = ['nodeIntegration', 'In', 'SubFrames'].join('')
   for (const path of sources(mainDir)) {
-    assert.ok(!readFileSync(path, 'utf8').includes(preference), `${path} names ${preference}`)
+    const source = readFileSync(path, 'utf8')
+    const withoutExplicitFalse = source.replace(new RegExp(`${preference}\\s*:\\s*false\\b(?=\\s*[,}])`, 'g'), '')
+    assert.ok(!withoutExplicitFalse.includes(preference), `${path} enables or ambiguously sets ${preference}`)
   }
   for (const path of sources(mainDir)) assert.ok(!/webviewTag\s*:\s*true/.test(readFileSync(path, 'utf8')), `${path} turns <webview> on`)
 })
