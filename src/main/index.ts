@@ -6868,13 +6868,14 @@ let handoutPublishingService: HandoutPublishing | null = null
 function handoutPublishing(): HandoutPublishing {
   handoutPublishingService ??= createHandoutPublishing({
     siteDir: () => publishSiteDir(),
-    inventory: readPublishingInventory,
+    inventory: authorisation => readPublishingInventory(authorisation, standInApiBase(cloudflareTestContext())),
     authorise: () => cloudflareConnection().authorisePublish(),
     live: async () => (publishRehearsal() ? { baseUrl: getConfig('liveWorkerBaseUrl', undefined) ?? '' } : ensureLiveWorker()),
     toolMissing: () => wranglerMissing(),
     bundlingHazard: (siteDir) => pagesBundlingBlock(siteDir),
     upload: (args, credentials, started) => runBundledWrangler(args, { set: credentials, cwd: join(args[2], '.wrangler', 'run'), publicationStarted: started }),
     rehearsal: () => publishRehearsal(),
+    stagingRoot: () => join(app.getPath('userData'), 'publish-staging'),
   })
   return handoutPublishingService
 }
@@ -6916,7 +6917,7 @@ ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, conte
     const outcome = await handoutPublishing().publish({
       entry: 'talk',
       // The flushed string below is the compiler's selected input; no mutable-source recheck is claimed.
-      prepare: async ({ dir: siteDir, project, live, link, redirects }) => {
+      prepare: async ({ dir: siteDir, project, live, link, redirects, makeFolder, writeSiteFile, claimFile }) => {
         const baseUrl = getConfig('publishBaseUrl', undefined)
         const useShortIds = getConfig('publishUseShortIds', false) ?? false
         // ENTRY FIRST: the address every link of this handout starts with is checked before anything is
@@ -6950,7 +6951,9 @@ ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, conte
         const url = link(publishUrl({ base, slug, id, useShortIds }))
         // Checked: from here on things are written.
         if (registryToKeep) writeHandoutRegistry(registryToKeep)
-        if (!existsSync(talkOutDir)) mkdirSync(talkOutDir, { recursive: true })
+        // Built privately and moved into the site only when the upload launches (handout-publishing.ts), or written in place when already there.
+        const outDir = makeFolder(talkOutDir)
+        claimFile(join(siteDir, '404.html')) // the page builder writes the site's 404 page: owned by this publish when it is new
 
         const { makeQrSvg } = await import(pathToFileURL(join(compilerDir, 'lib/01-cli-utils.mjs')).href)
         const qr = (makeQrSvg(url) as string) || ''
@@ -6958,14 +6961,14 @@ ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, conte
         // slimming and writing run OFF this thread (handout-pages.ts): a heavy handout held it for
         // seconds, and the app showed the beachball. Everything it is handed has been checked above.
         const pagesWritten = await buildHandoutPagesOffThread({
-          kind: 'talk', compilerDir, talkOutDir, siteDir, slug, live, url, qr,
+          kind: 'talk', compilerDir, talkOutDir: outDir, siteDir, slug, live, url, qr,
           downloadFile: `${slug}-download.html`, handoutFile: `${slug}.html`,
           outlinePath, text: resolved, outline: published, assetRoots: assetRootsFor(outlinePath),
           homeDetails: handoutHomeDetails({ outline: published }),
         })
 
         // The redirect file, as it was checked before the build began.
-        if (redirectsText !== null) writeFileSync(join(siteDir, '_redirects'), redirectsText, 'utf8')
+        if (redirectsText !== null) writeSiteFile(join(siteDir, '_redirects'), redirectsText)
         return { ok: true, built: { url, warnings: pagesWritten.warnings } }
       },
     })
@@ -7682,7 +7685,7 @@ async function ensureLiveJoinUrl(context: LivePresenterContext): Promise<string>
     const deployed = await handoutPublishing().publish({
       entry: 'live-short-link',
       // ENTRY FIRST: the join link and the whole redirect text are checked before the file is written.
-      prepare: async ({ link, redirects: checked }) => { link(joinUrl); writeFileSync(redirectPath, checked(redirects), 'utf8'); return { ok: true, built: null } },
+      prepare: async ({ link, redirects: checked, writeSiteFile }) => { link(joinUrl); writeSiteFile(redirectPath, checked(redirects)); return { ok: true, built: null } },
     })
     // The sentence is the message; what the tool printed stays behind Details.
     if (!deployed.ok) throw new LiveServiceError('failed', deployed.error.startsWith('PUBLISH_') ? ((deployed.details?.includes('cannot be compared safely') || deployed.details?.startsWith('Publishing stopped because the local file ')) ? deployed.details : preservationMessage(deployed.error as PreservationReason)) : deployed.error, deployed.details ?? null)
@@ -7831,7 +7834,7 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
         workWarning = plan.warning
         return null
       },
-      prepare: async ({ dir: siteDir, project, live: liveWorkerBaseUrl, link, redirects }) => {
+      prepare: async ({ dir: siteDir, project, live: liveWorkerBaseUrl, link, redirects, makeFolder, writeSiteFile, claimFile }) => {
         reread()
         if(asked.sourceOutline && !(await qualifiedRunTalk(vault,asked)))return {ok:false,error:'run-source-unavailable'}
         // ENTRY FIRST: the address every link of this handout starts with, checked before anything is built or written.
@@ -7897,7 +7900,9 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
         const url = link(publishUrl({ base, slug, id, useShortIds }))
         // Checked (ENTRY FIRST): from here on things are written.
         if (registryToKeep) writeHandoutRegistry(registryToKeep)
-        if (!existsSync(talkOutDir)) mkdirSync(talkOutDir, { recursive: true })
+        // Built privately and moved into the site only when the upload launches (handout-publishing.ts), or written in place when already there.
+        const outDir = makeFolder(talkOutDir)
+        claimFile(join(siteDir, '404.html')) // the page builder writes the site's 404 page: owned by this publish when it is new
         const { makeQrSvg } = await import(pathToFileURL(join(compilerDir, 'lib/01-cli-utils.mjs')).href)
         const qr = (makeQrSvg(url) as string) || ''
         // As talk:publish-handout, built and written OFF this thread (handout-pages.ts): the Run's
@@ -7907,7 +7912,7 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
         const path = runHandoutDistPath(talk, slug)
         reread()
         const pagesWritten = await buildHandoutPagesOffThread({
-          kind: 'run', compilerDir, talkOutDir, siteDir, slug, live: liveWorkerBaseUrl, url, qr, downloadFile, handoutFile,
+          kind: 'run', compilerDir, talkOutDir: outDir, siteDir, slug, live: liveWorkerBaseUrl, url, qr, downloadFile, handoutFile,
           outlinePath: talk.outlinePath, text: resolvePooledRefs(content, talk.outlinePath), defaults: timerSettings() as Record<string, unknown>,
           assetRoots: assetRootsFor(talk.outlinePath), talkSlug: talk.slug, run: runSource, distPath: path,
           // The home page links to the Run's work pages, beside it in its folder; the handout carries no form.
@@ -7919,8 +7924,8 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
         })
         if (pagesWritten.warnings.length) preworkWarning = [preworkWarning, ...pagesWritten.warnings].filter(Boolean).join(' ')
         // The work pages, in the Run's own folder of the site (a phase the Run no longer has loses its page).
-        await writeRunWorkPages({ compilerDir, folder: talkOutDir, sent: sentWork, talkTitle: run.talkTitle || talk.slug, runLine: runLineFor(run), handoutUrl: url })
-        if (redirectsText !== null) writeFileSync(join(siteDir, '_redirects'), redirectsText, 'utf8')
+        await writeRunWorkPages({ compilerDir, folder: outDir, sent: sentWork, talkTitle: run.talkTitle || talk.slug, runLine: runLineFor(run), handoutUrl: url })
+        if (redirectsText !== null) writeSiteFile(join(siteDir, '_redirects'), redirectsText)
         return { ok: true, built: { url, folder: slug, artifact: { path, slideIds: pagesWritten.slideIds ?? [], missing: pagesWritten.missing ?? [] }, preworkWarning, phases: sentWork.map((work) => work.phase) } }
       },
       // The Run's link, the folder it was written to (bound to the Run from now on), and when each phase

@@ -212,7 +212,7 @@ export function talkUnpublishJob(deps: TalkUnpublishDeps): Omit<PublishJob<TalkU
       if (!deps.siteExists()) return { fail: { error: TALK_UNPUBLISH_SITE_MISSING } }
       return null
     },
-    prepare: async ({ dir: siteDir, redirects }: PublishBuild) => {
+    prepare: async ({ dir: siteDir, redirects, writeSiteFile }: PublishBuild) => {
       const talk = await deps.talk()
       if (!talk) return { ok: false, error: TALK_NOT_FOUND }
       if ('error' in talk) return { ok: false, error: talk.error }
@@ -235,7 +235,7 @@ export function talkUnpublishJob(deps: TalkUnpublishDeps): Omit<PublishJob<TalkU
       delete without[bound.name]
       const redirectsText = redirects(buildRedirects(without, published.filter((name) => name !== folder)))
       if (folder !== null && removeSiteFolder(siteDir, folder) !== 'removed') return { ok: false, error: TALK_UNPUBLISH_FOLDER_CHANGED }
-      writeFileSync(join(siteDir, '_redirects'), redirectsText, 'utf8')
+      writeSiteFile(join(siteDir, '_redirects'), redirectsText)
       return { ok: true, built: { way: 'removed', folder, linkCleared: false, ...(id !== undefined ? { registryEntry: { name: bound.name, id } } : {}) } }
     },
     record: async (built) => {

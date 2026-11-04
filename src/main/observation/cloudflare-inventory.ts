@@ -66,7 +66,7 @@ export interface InventoryQuery {
 }
 
 type Stopped =
-  | { outcome: 'incomplete'; reason: WorkerIncompleteReason; pathIssue?: PathIssue; unsupportedPath?: string }
+  | { outcome: 'incomplete'; reason: WorkerIncompleteReason; pathIssue?: PathIssue; unsupportedPath?: string; noProductionDeployment?: true }
   | { outcome: 'failed'; reason: WorkerFailureReason; detail?: MalformedDetail; httpStatus?: number; apiErrorCodes?: number[] }
 /** Thrown inside the plan; carries fixed codes only, never text from a reply or the transport. */
 class InventoryStop {
@@ -258,7 +258,10 @@ export async function queryProductionInventory(query: InventoryQuery): Promise<I
     }
 
     const production = (value: unknown): ProductionDeployment => {
-      if (value === null || value === undefined) incomplete('no-production-deployment')
+      // An explicit `null` in the answer for this project (its name was checked just before) is Cloudflare saying there is no
+      // production deployment; an absent field is not that and stays an unproven answer.
+      if (value === null) throw new InventoryStop({ outcome: 'incomplete', reason: 'no-production-deployment', noProductionDeployment: true })
+      if (value === undefined) incomplete('no-production-deployment')
       if (!isRecord(value) || typeof value.id !== 'string' || !UUID.test(value.id) || value.environment !== 'production') return malformed('shape')
       if (value.project_name !== undefined && value.project_name !== projectName) malformed('identity-mismatch')
       if (value.is_skipped === true || !isRecord(value.latest_stage) || value.latest_stage.status !== 'success') incomplete('production-not-settled')

@@ -17,6 +17,7 @@ import sharp from 'sharp'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { createCheckLedger } from './lib/check-ledger.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
+import { closeSettingsWindow, openSettingsWindow } from './lib/settings-window.mjs'
 import { startCloudflareApiStub } from '../scripts/lib/cloudflare-api-stub.mjs'
 
 const root = process.cwd()
@@ -60,7 +61,7 @@ writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault }
 
 const fake = (name) => ['test', 'token', 'responsive', 'handout', name, '0123456789abcdef'].join('-')
 const TOKEN = fake('pagesonly')
-const ADA = { id: 'acc-ada-0001', name: 'Ada Lovelace' }
+const ADA = { id: 'a1b2c3d4e5f60718293a4b5c6d7e8f90', name: 'Ada Lovelace' }
 const SITE = 'talkweaver-handouts'
 
 const CHECKS = [
@@ -81,7 +82,7 @@ let output = ''
 let exitCode = 1
 try {
   await ensureFreshBuild(root)
-  api = await startCloudflareApiStub({ sites: [], accounts: [ADA], accountSites: { [ADA.id]: [SITE] }, tokens: { [TOKEN]: { accounts: [ADA.id], workers: false } } })
+  api = await startCloudflareApiStub({ sites: [], accounts: [ADA], accountSites: { [ADA.id]: [SITE] }, pagesDeployments: { [ADA.id]: { [SITE]: { neverDeployed: true } } }, tokens: { [TOKEN]: { accounts: [ADA.id], workers: false } } })
   const env = { TW_E2E: '1', TW_E2E_CLOUDFLARE_API_BASE_URL: api.baseUrl }
   for (const name of ['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'SHELL', 'DISPLAY', 'SystemRoot', 'SYSTEMROOT', 'windir', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'USERNAME', 'PATHEXT', 'ComSpec']) {
     if (process.env[name] !== undefined) env[name] = process.env[name]
@@ -175,16 +176,15 @@ try {
   if (process.env.TW_STALL_REPORT === '1') console.log(JSON.stringify({ open: openBeat.stalls, edit: editBeat.stalls }))
 
   // Connect, as a person does, in Settings.
-  const settings = page.locator('[aria-label="Settings"]').first()
-  const part = (name) => settings.locator(`[data-cloudflare="${name}"]`)
-  await page.keyboard.press('ControlOrMeta+,')
+  const settingsPage = await openSettingsWindow(app, page, 'cloudflare')
+  const part = (name) => settingsPage.locator(`.bsw-root [data-cloudflare="${name}"]`)
   await part('connection').waitFor({ state: 'visible' })
+  await part('connection').scrollIntoViewIfNeeded()
   await part('token').locator('input').fill(TOKEN)
   await part('token').getByRole('button', { name: 'Save token' }).click()
-  await page.waitForFunction(() => document.querySelector('[data-cloudflare="connection-label"]')?.textContent === 'Connected · Ada Lovelace', null, { timeout: 40_000 })
-  await page.waitForFunction(() => document.querySelector('[data-cloudflare="connection"]')?.getAttribute('data-busy') === 'no', null, { timeout: 40_000 })
-  await page.keyboard.press('Escape')
-  await page.locator('[aria-label="Settings"]').waitFor({ state: 'detached' })
+  await settingsPage.waitForFunction(() => document.querySelector('[data-cloudflare="connection-label"]')?.textContent === 'Connected · Ada Lovelace', null, { timeout: 40_000 })
+  await settingsPage.waitForFunction(() => document.querySelector('[data-cloudflare="connection"]')?.getAttribute('data-busy') === 'no', null, { timeout: 40_000 })
+  await closeSettingsWindow(app)
 
   // The app's own work after a talk opens or changes (its compile, its slide pictures) also runs in
   // the main process. A publish is measured from a quiet app: the heartbeat runs in 2 s windows until

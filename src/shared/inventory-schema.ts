@@ -19,7 +19,9 @@ export interface ProductionDeployment { deploymentId: string; createdOn: string;
 export type InventoryResult =
   | { outcome: 'complete'; requests: number; retried: boolean; production: ProductionDeployment;
       confirmedAt: string; explicitEmpty: boolean; files: Array<[path: string, hash: string]> }
-  | { outcome: 'incomplete'; requests: number; retried: boolean; reason: WorkerIncompleteReason; pathIssue?: PathIssue; unsupportedPath?: string }
+  | { outcome: 'incomplete'; requests: number; retried: boolean; reason: WorkerIncompleteReason; pathIssue?: PathIssue; unsupportedPath?: string;
+      /** Set only when Cloudflare answered for this very project and said, in so many words (`canonical_deployment: null`), that it has no production deployment. */
+      noProductionDeployment?: true }
   | { outcome: 'failed'; requests: number; reason: WorkerFailureReason; detail?: MalformedDetail;
       httpStatus?: number; apiErrorCodes?: number[] }
 

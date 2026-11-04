@@ -181,7 +181,7 @@ function world(overrides = {}) {
     const name = options.name ?? (entry === 'talk' ? 'talk-a' : 'run-a')
     return {
       entry,
-      prepare: async ({ dir: siteDir, project, live, link, redirects }) => {
+      prepare: async ({ dir: siteDir, project, live, link, redirects, makeFolder, writeSiteFile }) => {
         log.push(`prepare:${entry}:${name}`)
         w.prepared.push({ entry, project, live })
         await options.duringPrepare?.()
@@ -191,18 +191,18 @@ function world(overrides = {}) {
         const pageEntry = entry === 'talk' || entry === 'run'
         const redirectsText = options.redirectsText !== undefined ? redirects(options.redirectsText) : pageEntry ? null : redirects(entry === 'run-unpublish' ? '' : '/abcd  /talk-a/  302\n')
         w.built.push(url)
-        if (options.half) writeFileSync(join(siteDir, 'half-built.html'), 'half')
+        if (options.half) writeSiteFile(join(siteDir, 'half-built.html'), 'half')
         if (options.failBuild) return { ok: false, error: options.failBuild }
         if (pageEntry) {
-          mkdirSync(join(siteDir, name), { recursive: true })
+          const out = makeFolder(join(siteDir, name)) // where the handout is written: a private folder for a new one
           // As the compiler does: the live address is carried in the page as JSON on a line it marks as its own.
           const liveConfig = options.plant ?? `<script>\n  const LIVE_CONFIG = ${live ? JSON.stringify({ workerBaseUrl: live, talkSlug: name }) : 'null'}; ${APP_CONFIG_MARK}\n</script>`
-          writeFileSync(join(siteDir, name, 'index.html'), `<!doctype html><title>${name}</title>${liveConfig}<p>${options.text ?? 'A handout.'}</p>`)
-          if (redirectsText !== null) writeFileSync(join(siteDir, '_redirects'), redirectsText)
+          writeFileSync(join(out, 'index.html'), `<!doctype html><title>${name}</title>${liveConfig}<p>${options.text ?? 'A handout.'}</p>`)
+          if (redirectsText !== null) writeSiteFile(join(siteDir, '_redirects'), redirectsText)
         } else {
           if (entry === 'run-unpublish') rmSync(join(siteDir, name), { recursive: true, force: true })
           // `plant`: written WITHOUT the entry check, as only a fault in that check could.
-          writeFileSync(join(siteDir, '_redirects'), options.plant ?? redirectsText)
+          writeSiteFile(join(siteDir, '_redirects'), options.plant ?? redirectsText)
         }
         return { ok: true, built: { entry, name } }
       },
@@ -484,7 +484,10 @@ const NOT_AN_ADDRESS = ['', '   ', 'localhost', 'localhost:3000/x', '127.0.0.1:8
       // Nothing is deleted or moved, and nothing is remembered: no file appears anywhere beside the site.
       const after = tree(w.dir)
       for (const [file, text] of Object.entries(others)) assert.equal(after[file], text, `${entry}: ${file} is untouched`)
-      assert.ok(after[pageEntry ? page : '_redirects'].includes(value), `${entry}: the rejected page is where it was built, not removed`)
+      // A page in a handout folder that was already there stays where it was built (its folder is not this publish's to remove);
+      // a redirect file that this publish made new is taken away again, so no later upload carries it.
+      if (pageEntry) assert.ok(after[page].includes(value), `${entry}: the rejected page is where it was built, not removed`)
+      else assert.ok(after._redirects === undefined || !after._redirects.includes(value), `${entry}: the rejected redirect file is not left behind`)
       assert.deepEqual(readdirSync(dirname(w.dir)).filter((name) => !/^site-\d+$/.test(name)).sort(), beside, `${entry}: nothing is written down about it`)
       assert.equal(w.connection.status().publishing.state, 'ready', 'the row is untouched')
       // Nothing is held up: another handout publishes, also after a restart. (The written limit: that
@@ -493,7 +496,8 @@ const NOT_AN_ADDRESS = ['', '   ', 'localhost', 'localhost:3000/x', '127.0.0.1:8
       const next = await w.publish('talk', { name: 'other-talk', text: 'again' })
       assert.equal(next.ok, true, `${entry}: the next publish of another handout goes up (${next.error ?? ''})`)
       assert.equal(w.uploads.length, 4)
-      assert.ok(w.uploads[3].files[pageEntry ? page : '_redirects'].includes(value), `${entry}: carrying the rejected page: the limit the header states`)
+      if (pageEntry) assert.ok(w.uploads[3].files[page].includes(value), `${entry}: carrying the rejected page (in a folder that was already there)`)
+      else assert.ok(!(w.uploads[3].files._redirects ?? '').includes(value), `${entry}: a rejected redirect file is not carried`)
       // Built again cleanly, it is gone.
       assert.equal((await w.publish(entry, { text: 'fixed' })).ok, true)
       assert.ok(!Object.values(w.uploads[4].files).some((text) => text.includes(value)), `${entry}: once built again cleanly, nothing of it is left`)
@@ -948,9 +952,18 @@ console.log('PASS 6: a refused publish turns the row to "The token cannot publis
   await assert.rejects(thrown, /the compiler threw/, 'a throw while building is the caller\'s own, as before')
   assert.equal((await next).ok, true, 'and the next publish runs')
   await w.publishing.idle()
-  const started = Date.now()
-  assert.equal((await w.publish('talk')).ok, true)
-  assert.ok(Date.now() - started < 1000, 'an idle queue starts the next publish at once')
+  // An idle queue starts the next publish at once. Not timed (a whole publish against a wall-clock limit is flaky on a slow
+  // machine): the upload of the next publish is held open, so the publish can only have BEGUN, and its job's turn and its
+  // upload having started while it is held show that nothing queued ahead of it.
+  const turn = gate()
+  w.hooks.duringUpload = () => turn.wait
+  const logged = w.log.length, uploaded = w.uploads.length
+  const begun = w.publish('talk')
+  await until(() => w.uploads.length === uploaded + 1)
+  assert.deepEqual(w.log.slice(logged).filter((line) => /^(?:prepare|upload)/.test(line)), ['prepare:talk:talk-a', 'upload:start'], 'an idle queue starts the next publish at once: its job has had its turn and its upload has started, and nothing else was ahead of it')
+  turn.open()
+  assert.equal((await begun).ok, true)
+  w.hooks.duringUpload = null
 }
 {
   // The upload has ONE time limit, the launcher's, which answers only once the tool has exited. The

@@ -34,7 +34,7 @@ import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { createCheckLedger } from './lib/check-ledger.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
 import { PRE_WORK, TASK_PICTURE } from '../scripts/lib/work-page-fixture.mjs'
-import { WORKERS_SUBDOMAIN, startCloudflareApiStub } from '../scripts/lib/cloudflare-api-stub.mjs'
+import { WORKERS_SUBDOMAIN, pagesFileHash, startCloudflareApiStub } from '../scripts/lib/cloudflare-api-stub.mjs'
 import { startLiveWorker } from '../scripts/lib/live-worker-harness.mjs'
 import { appWrittenLoopback } from '../src/main/handout-publishing.ts'
 
@@ -51,13 +51,20 @@ if (shots) mkdirSync(shots, { recursive: true })
 
 // Made up, and built so that no source file holds a whole value.
 const TOKEN = ['test', 'token', 'core', 'journey', 'full', '0123456789abcdef'].join('-')
-const ADA = { id: 'acc-ada-0001', name: 'Ada Lovelace' }
+// Cloudflare's shapes, which the publication-preservation check insists on: a 32-character hex account id.
+// (The fake API hands out real-shaped deployment ids, a UUID each, for what the publish uploads.)
+const ADA = { id: 'a1b2c3d4e5f60718293a4b5c6d7e8f90', name: 'Ada Lovelace' }
 const SITE = 'talkweaver-handouts'
 const PAGES = `https://${SITE}.pages.dev`
 const LIVE_HOST = `talkweaver-live-sessions.${WORKERS_SUBDOMAIN}.workers.dev`
 const EVENT = 'Core journey workshop'
 const EXPECTED = 12
 const NOT_AVAILABLE = 'This page is not available'
+// An earlier publish already live on the site: the publication-preservation check reads it from the fake API and
+// refuses a publish from a computer that no longer holds it (first publish below), then passes once it is restored.
+const EARLIER_PATH = '/earlier-talk/index.html'
+const EARLIER_PAGE = '<!doctype html><title>Earlier talk</title><p>Published from this computer before the journey.</p>\n'
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 const pad = (n) => String(n).padStart(2, '0')
 const dayOf = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` }
@@ -79,7 +86,7 @@ const CHECKS = [
   'attach a work file in metadata; before any publish the strip says "not sent to anyone"',
   'Plan a run with pre-work: one Save writes the planned Run with its file and window, and opens its Run page',
   'the Run page is not published: Publish is on its Published step; the live service is set up through Settings first',
-  'Publish for this run: one link for that Run only (the handout and its pre-work page under one folder; the talk itself is not published)',
+  'Publish for this run: refused while this computer lacks the earlier published page (nothing uploaded); once restored, one link for that Run only (the handout and its pre-work page under one folder; the talk itself is not published) and the earlier page kept on the site',
   'the participant opens /pre-work from the written site and answers two steps; no page error, no right answer in the page',
   'the Run page shows 1 of the expected people and the answers (the open answer as text, the quick check\'s spread)',
   'the status bar chip shows the count: "pre-work 1/N"',
@@ -130,6 +137,7 @@ try {
   api = await startCloudflareApiStub({
     sites: [], accounts: [ADA], accountSites: { [ADA.id]: [SITE] },
     tokens: { [TOKEN]: { accounts: [ADA.id] } },
+    pagesDeployments: { [ADA.id]: { [SITE]: { files: { [EARLIER_PATH]: pagesFileHash(EARLIER_PAGE) } } } },
   })
   worker = await startLiveWorker()
   const workerPort = new URL(worker.baseUrl).port
@@ -237,10 +245,25 @@ try {
     unpublishHere: await publishStep.locator('[data-run-action="unpublish"]').count(),
   }
   record(3, liveReady && beforePublish.pill === 'Not published' && beforePublish.publishHere && beforePublish.unpublishHere === 0, JSON.stringify(beforePublish))
-  await publishButton.click()
-  await until(async () => (await tools.locator('[data-run-published-block]').count()) > 0 ? 'published' : (await tools.locator('[data-run-notice]').innerText().catch(() => '')).trim(),
+  const publishOutcome = () => until(async () => (await tools.locator('[data-run-published-block]').count()) > 0 ? 'published' : (await tools.locator('[data-run-notice]').innerText().catch(() => '')).trim(),
     (state) => state === 'published' || state !== '', 300_000, 'the Published block or a notice')
-    .then((state) => { if (state !== 'published') throw new Error(`Publish for this run said: ${state}`) })
+  const deploys = () => api.requests.filter((request) => request.method === 'POST' && request.path.endsWith('/deployments')).length
+  // First try: the site on Cloudflare holds an earlier page this computer's site folder does not. The check refuses, uploads nothing.
+  await publishButton.click()
+  const refusedText = await publishOutcome()
+  const refusedAt = { notice: refusedText.replace(/\s+/g, ' ').slice(0, 200), deployments: deploys(), published: await tools.locator('[data-run-published-block]').count() }
+  const refusedRight = refusedText.includes('PUBLISH_COVERAGE_MISSING') && refusedAt.deployments === 0 && refusedAt.published === 0
+  if (!refusedRight) throw new Error(`The first Publish should have been refused for the missing earlier page (PUBLISH_COVERAGE_MISSING); it said: ${JSON.stringify(refusedAt)}`)
+  await shot('4-run-page-publish-refused', tools)
+  // The refused attempt must leave nothing behind that the retry would upload (or give a "-2" folder to).
+  const leftBehind = readdirSync(site, { withFileTypes: true }).map((entry) => entry.name)
+  refusedAt.leftBehind = leftBehind.length
+  if (leftBehind.length) throw new Error(`The refused publish left ${JSON.stringify(leftBehind)} in the site folder`)
+  // Restore the complete site folder, as the message says, and publish again.
+  mkdirSync(join(site, 'earlier-talk'), { recursive: true })
+  writeFileSync(join(site, 'earlier-talk', 'index.html'), EARLIER_PAGE)
+  await tools.locator('[data-run-step="published"] [data-run-action="publish"]').click()
+  await publishOutcome().then((state) => { if (state !== 'published') throw new Error(`Publish for this run (earlier page restored) said: ${state}`) })
   await shot('4-run-page-published', tools)
   const published = runRecord()
   const handoutUrl = published.handoutUrl
@@ -250,10 +273,13 @@ try {
   const topLevel = existsSync(site) ? readdirSync(site, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name) : []
   const pagesOfRun = ['index.html', 'pre-work/index.html'].map((file) => existsSync(join(site, runFolder ?? '-', file)))
   const talkOutline = readFileSync(outlinePath, 'utf8')
+  const uploadedTo = api.production(ADA.id, SITE)
+  const uploadedFiles = Object.keys(uploadedTo?.files ?? {})
   record(4, typeof handoutUrl === 'string' && handoutUrl.startsWith(`${PAGES}/${runFolder}/`) && !!preLink && preLink.text.replace(/\s+/g, '').includes(`${runFolder}/pre-work`)
     && pagesOfRun.every(Boolean)
-    && JSON.stringify(topLevel) === JSON.stringify([runFolder]) && !talkOutline.includes('handout_url') && published.work?.pre?.publishedAt,
-    JSON.stringify({ handoutUrl, links: linkRows, topLevel, pagesOfRun }))
+    && JSON.stringify(topLevel) === JSON.stringify(['earlier-talk', runFolder].sort()) && !talkOutline.includes('handout_url') && published.work?.pre?.publishedAt
+    && refusedRight && uploadedTo?.environment === 'production' && UUID.test(uploadedTo.id) && uploadedFiles.includes(EARLIER_PATH) && uploadedFiles.includes(`/${runFolder}/pre-work/index.html`),
+    JSON.stringify({ refused: refusedAt, handoutUrl, links: linkRows, topLevel, pagesOfRun, production: { id: uploadedTo?.id, files: uploadedFiles.length } }))
   const preUrl = `${handoutUrl.replace(/\/+$/, '')}/pre-work/`
 
   // ---- 5. The participant.
@@ -365,15 +391,20 @@ try {
   await shot('10-participant-not-available', phone)
   const keptAfter = runRecord()?.prework
   const answersStay = (keptAfter?.entries ?? []).some((entry) => entry.kind === 'answer' && entry.text === ANSWER)
-  record(9, again === 1 && gone.includes(NOT_AVAILABLE) && handoutGone.includes(NOT_AVAILABLE) && !!stamped.work?.pre?.unpublishedAt && answersStay
+  const finalFiles = Object.keys(api.production(ADA.id, SITE)?.files ?? {})
+  const strays = finalFiles.filter((file) => file !== EARLIER_PATH && !file.startsWith(`/${runFolder}/`) && !/^\/(_redirects|_headers|404\.html)$/.test(file))
+  record(9, again === 1 && !/-2$/.test(runFolder ?? '') && strays.length === 0 && finalFiles.includes(EARLIER_PATH) && gone.includes(NOT_AVAILABLE) && handoutGone.includes(NOT_AVAILABLE) && !!stamped.work?.pre?.unpublishedAt && answersStay
     && (await tools.locator('[data-run-section="pre-answers"] [data-run-answered]').innerText()).trim() === `1/${EXPECTED} answered`,
-    JSON.stringify({ publishAgain: again, participant: gone.slice(0, 80), handout: handoutGone.slice(0, 80), kept: keptAfter?.entries?.length }))
+    JSON.stringify({ publishAgain: again, strays, siteKeepsEarlierPage: finalFiles.includes(EARLIER_PATH), participant: gone.slice(0, 80), handout: handoutGone.slice(0, 80), kept: keptAfter?.entries?.length }))
 
   // ---- 9. No address on this computer in anything the publish wrote.
   const files = filesBelow(site)
-  const needles = [`127.0.0.1:${api.port}`, `127.0.0.1:${workerPort}`, `localhost:${api.port}`, `localhost:${workerPort}`, scratch, vault, userData, homedir(), tmpdir(), 'file://']
-    .flatMap((value) => [Buffer.from(value, 'utf8'), Buffer.from(value, 'utf16le')])
-  const leaking = files.filter((path) => needles.some((needle) => readFileSync(path).includes(needle))).map((path) => relative(site, path))
+  // 'file:///' (a file address with a path); the deck runtime's own comments say "file://" in prose, which is not an address.
+  const labelled = [['the fake API address', `127.0.0.1:${api.port}`], ['the Worker address', `127.0.0.1:${workerPort}`], ['localhost fake API', `localhost:${api.port}`], ['localhost Worker', `localhost:${workerPort}`],
+    ['the scratch folder', scratch], ['the vault', vault], ['the user-data folder', userData], ['the home folder', homedir()], ['the temporary folder', tmpdir()], ['a file:/// address', 'file:///']]
+    .flatMap(([label, value]) => [[label, Buffer.from(value, 'utf8')], [label, Buffer.from(value, 'utf16le')]])
+  const leakingAt = files.map((path) => { const bytes = readFileSync(path); const hit = labelled.find(([, needle]) => bytes.includes(needle)); return hit ? `${relative(site, path)} (${hit[0]})` : null }).filter(Boolean)
+  const leaking = leakingAt
   const positional = files.map((path) => relative(site, path).split('\\').join('/')).filter((file) => appWrittenLoopback(file, readFileSync(join(site, file), 'latin1')) !== null)
   const pageFiles = files.filter((path) => path.endsWith('.html')).length
   record(10, leaking.length === 0 && positional.length === 0 && pageFiles >= 4,

@@ -74,12 +74,14 @@ export function publicationPaths(dir: string): string[] {
   walk(dir, '')
   return paths
 }
+/** A folder built outside the site that is part of the candidate as `/<name>/…`; it enters the site only when the upload launches. */
+export interface PublicationOverlay { name: string; dir: string }
 interface Tree { digest: string; paths: string[]; files: Array<{ path: string; uploadPath: string; source: string; hash: string }>; controls: Record<string, string> }
 const controls = ['/_redirects', '/_headers', '/_routes.json', '/_worker.js', '/functions']
 function control(path: string): string | undefined { return controls.find(c => path === c || path.startsWith(c + '/')) }
 export function publicationBinding(parts: unknown): string { return createHash('sha256').update(JSON.stringify(parts)).digest('hex') }
 /** Four streaming file readers; no synchronous site reads or site-sized byte buffers. */
-export async function publicationTree(dir: string): Promise<Tree> {
+export async function publicationTree(dir: string, overlays: readonly PublicationOverlay[] = []): Promise<Tree> {
   const files: Tree['files'] = []
   const names = new Set<string>()
   async function walk(root: string, prefix: string): Promise<void> {
@@ -98,6 +100,8 @@ export async function publicationTree(dir: string): Promise<Tree> {
     }
   }
   await walk(dir, '')
+  // Folders an attempt has built privately and not yet moved into the site: part of the candidate under their site name.
+  for (const overlay of overlays) await walk(overlay.dir, '/' + overlay.name)
   let next = 0
   await Promise.all(Array.from({ length: 4 }, async () => {
     for (let i = next++; i < files.length; i = next++) {
@@ -170,7 +174,7 @@ export interface PublicationLaunch {
 }
 export interface PreservationAttempt {
   recovered: boolean
-  upload<T>(dir: string, before: readonly string[], removalRoots: readonly string[], launch: (frozenDir: string, context: PublicationLaunch) => Promise<{ outcome: 'accepted' | 'failed' | 'unknown'; value: T }>): Promise<T>
+  upload<T>(dir: string, before: readonly string[], removalRoots: readonly string[], launch: (frozenDir: string, context: PublicationLaunch) => Promise<{ outcome: 'accepted' | 'failed' | 'unknown'; value: T }>, overlays?: readonly PublicationOverlay[]): Promise<T>
   close(): void
 }
 export async function beginPublication(options: PreservationOptions): Promise<PreservationAttempt> {
@@ -244,10 +248,10 @@ export async function beginPublication(options: PreservationOptions): Promise<Pr
     let used = false
     return {
       close, recovered,
-      async upload(dir, before, removalRoots, launch) {
+      async upload(dir, before, removalRoots, launch, overlays = []) {
         if (used) refuse('PUBLISH_OUTCOME_UNKNOWN')
         used = true
-        const candidate = await publicationTree(dir)
+        const candidate = await publicationTree(dir, overlays)
         if (options.candidateDigest !== null && (!/^[0-9a-f]{64}$/u.test(options.candidateDigest ?? '') || candidate.digest !== options.candidateDigest)) refuse('PUBLISH_CANDIDATE_CHANGED')
         if (existsSync(record)) {
           let prior
@@ -271,10 +275,10 @@ export async function beginPublication(options: PreservationOptions): Promise<Pr
             const dest = join(scratch, file.uploadPath.slice(1)); await mkdir(join(dest, '..'), { recursive: true })
             await copyFile(file.source, dest)
           }
-          if ((await publicationTree(scratch)).digest !== candidate.digest || (await publicationTree(dir)).digest !== candidate.digest) refuse('PUBLISH_CANDIDATE_CHANGED')
+          if ((await publicationTree(scratch)).digest !== candidate.digest || (await publicationTree(dir, overlays)).digest !== candidate.digest) refuse('PUBLISH_CANDIDATE_CHANGED')
           const last = checked(await options.inventory(), options.site)
           if (last.revision !== first.revision || publicationBinding([...last.paths].sort()) !== publicationBinding([...first.paths].sort())) refuse('PUBLISH_REVISION_CHANGED')
-          if ((await publicationTree(scratch)).digest !== candidate.digest || (await publicationTree(dir)).digest !== candidate.digest) refuse('PUBLISH_CANDIDATE_CHANGED')
+          if ((await publicationTree(scratch)).digest !== candidate.digest || (await publicationTree(dir, overlays)).digest !== candidate.digest) refuse('PUBLISH_CANDIDATE_CHANGED')
           await mkdir(join(scratch, '.wrangler', 'deploy'), { recursive: true })
           durable(join(scratch, '.wrangler', 'publication.json'), { pages_build_output_dir: '..' })
           durable(join(scratch, '.wrangler', 'deploy', 'config.json'), { configPath: '../publication.json' })

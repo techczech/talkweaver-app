@@ -346,7 +346,7 @@ export function runUnpublishJob(deps: RunUnpublishDeps): Omit<PublishJob<RunUnpu
       forget(false)
       return { done: { ...nothing, phases: withdrawn.phases } }
     },
-    prepare: async ({ dir: siteDir, redirects }: PublishBuild) => {
+    prepare: async ({ dir: siteDir, redirects, writeSiteFile }: PublishBuild) => {
       const run = deps.run()
       if (!run.handoutUrl) return { ok: true, built: nothing }
       const published = publishedFolders(siteDir)
@@ -377,7 +377,7 @@ export function runUnpublishJob(deps: RunUnpublishDeps): Omit<PublishJob<RunUnpu
       const redirectsText = redirects(buildRedirects(registry, published.filter((name) => name !== folder)))
       if (folder) removeSiteFolder(siteDir, folder)
       if (folder) deps.writeRegistry(registry)
-      writeFileSync(join(siteDir, '_redirects'), redirectsText, 'utf8')
+      writeSiteFile(join(siteDir, '_redirects'), redirectsText)
       return { ok: true, built: { way: 'removed', folder, pages: [], phases: [] } }
     },
     record: (built) => { forget(built.way === 'replaced') },

@@ -64,7 +64,7 @@ if (shots) mkdirSync(shots, { recursive: true })
 // Made up, and built so that no source file holds a whole value.
 const fake = (name) => ['test', 'token', 'publish', 'handout', name, '0123456789abcdef'].join('-')
 const TOKENS = { pagesOnly: fake('pagesonly'), full: fake('full'), readOnly: fake('readonly') }
-const ADA = { id: 'acc-ada-0001', name: 'Ada Lovelace' }
+const ADA = { id: 'a1b2c3d4e5f60718293a4b5c6d7e8f90', name: 'Ada Lovelace' }
 const SITE = 'talkweaver-handouts'
 const LIVE = `https://talkweaver-live-sessions.${WORKERS_SUBDOMAIN}.workers.dev`
 const D7 = 'Published. Going live is not set up: Settings → Cloudflare'
@@ -143,6 +143,8 @@ try {
   await ensureFreshBuild(root)
   api = await startCloudflareApiStub({
     sites: [], accounts: [ADA], accountSites: { [ADA.id]: [SITE] },
+    // A site just made in Settings: no production deployment yet (the first publish must go ahead).
+    pagesDeployments: { [ADA.id]: { [SITE]: { neverDeployed: true } } },
     tokens: {
       [TOKENS.pagesOnly]: { accounts: [ADA.id], workers: false },
       [TOKENS.full]: { accounts: [ADA.id] },

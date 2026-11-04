@@ -1,4 +1,4 @@
-import { beginPublication, publicationPaths, publicationBinding, publicationOutcome, PreservationRefusal, type PreservationInventory, type PublicationLaunch, type PreservationAttempt } from './publication-preservation.ts'
+import { beginPublication, publicationPaths, publicationBinding, publicationOutcome, PreservationRefusal, type PreservationInventory, type PublicationLaunch, type PreservationAttempt, type PublicationOverlay } from './publication-preservation.ts'
 // Publishing handouts to the person's Cloudflare Pages site: the one sequence every publish goes
 // through, and the one place the site is uploaded (spec docs/plans/cloudflare-setup-in-app, D7, D8,
 // D12 and the table "What each user action does when its feature is not ready").
@@ -61,10 +61,9 @@ import { beginPublication, publicationPaths, publicationBinding, publicationOutc
 //       ENTRY FIRST is the control: every address TalkWeaver writes into a page or a redirect is
 //       checked before anything is written. AFTER THE BUILD the app's marked config lines and the
 //       redirect file are checked once more; if that ever fails, this publish is not uploaded and
-//       reports the fixed sentence. Nothing is deleted, moved or remembered. Written limit: the
-//       rejected page stays in the site folder, as the output of a failed build always has, and a
-//       later upload of the site would carry it; reaching this needs a fault in the entry check
-//       itself. Before this work no check existed at all.
+//       reports the fixed sentence. Nothing is moved or remembered; what the publish built NEW is taken
+//       away again (as for every publish that stops before anything is sent), so a later upload cannot carry the rejected page. Reaching this needs a
+//       fault in the entry check itself.
 //         What ENTRY FIRST checks, each before the job writes its first file: the live address
 //         (`liveForPages`); every link (`link()` handed to the job: the address every link of the
 //         handout starts with, the handout's own link, which is also the venue screen's join link,
@@ -87,12 +86,29 @@ import { beginPublication, publicationPaths, publicationBinding, publicationOutc
 //         author's and is not read; the same marked line twice means the author copied the mark too,
 //         and neither is read. The author always wins, except over a start line: every one is read,
 //         and one that cannot be read refuses the publish (a refusal, never a leak).
-//       Pages are built in the site folder itself, as before this ticket; publishing moves, renames
+//       Pages of a REPUBLISHED handout are built in the site folder itself, as before this ticket; publishing moves, renames
 //       and deletes nothing there. (Unpublishing a Run removes that Run's folder, or replaces its pages
 //       with the not-available page and takes the rest of it away (run-unpublish.ts); unpublishing a talk
-//       handout removes that talk's own folder (talk-unpublish.ts): that is what they are for.) A build that simply FAILS (the compiler threw, a file could
-//       not be written) may leave its pages part-written in the site folder: that too is the
-//       behaviour before this ticket and is not changed here.
+//       handout removes that talk's own folder (talk-unpublish.ts): that is what they are for.)
+//       A NEW handout folder is built PRIVATELY: `build.makeFolder` hands the job a folder outside the site (a `tw-publish-*`
+//       folder of the app's own data folder) to write ALL of the handout into, and no other writer can put anything in it. The
+//       checks after the build read it there; the preservation check counts it in the candidate under its site name; and it
+//       enters the site only at THE BOUNDARY: the first line of the launch callback, just before the upload tool is asked to
+//       start. The publish creates each folder and file itself, exclusively (an entry already there fails the move, and nothing
+//       is merged into or written over), and lists every one.
+//       A publish that STOPS BEFORE ANYTHING IS SENT (the build failed, a check after the build refused it, the preservation
+//       check refused it, ANY other error before the boundary such as a page or file that cannot be read or copied, the
+//       connection changed after the pages were built and before the upload began, or the upload tool never started or failed in
+//       a way that proves nothing went up) takes away what THIS ATTEMPT created, and only that (`removeOwnedEntries`): before the
+//       boundary that is the private folder (deleted whole: it is the attempt's alone) and the top-level files it created
+//       (`build.writeSiteFile`, `build.claimFile`: exclusive creates, recorded with the identity, device and inode, they were
+//       created with); after the boundary it is each file and folder the move created, from that list. Ownership is never
+//       inferred from a folder's absence in an earlier listing or from a folder "and what is in it", because the site folder can
+//       be shared. Removal looks at each entry again without following links and removes it only if it is still that same entry,
+//       a folder only while it is empty: anything another writer added, or an entry that was replaced, is never touched. An entry
+//       that cannot be removed is named in the failure's Details, so the author knows a retry will use a second folder. The retry
+//       builds into the same folder name, uploads one copy, and Unpublish covers what was published. An unknown outcome (the upload
+//       may have gone up, or the connection changed while the tool ran) keeps its pages, for the recovery check.
 //     Pages an EARLIER version left in the site folder with the dead live address are already
 //     public. They do not stop a publish and are not rewritten: the result carries one sentence
 //     saying how many earlier handouts need publishing again (`earlierHandoutsText`), with their
@@ -116,8 +132,8 @@ import { beginPublication, publicationPaths, publicationBinding, publicationOutc
 //     A publish whose upload completed is recorded, whatever happens to the connection afterwards.
 //   (Once the upload has completed the page exists at that address, so writing the address down is
 //   true.) Before launch a superseded publish reports PUBLISH_SUPERSEDED_ERROR; after launch it
-//   reports an unknown outcome with the superseded flag. Pages it had already built in the
-//   site folder stay there, checked, and go up with the next publish.
+//   reports an unknown outcome with the superseded flag. Pages a publish superseded BEFORE its upload had built are taken
+//   away again (nothing was sent); those of one superseded DURING its upload stay there, checked, for the recovery check.
 //
 //   NO RAW TEXT. Every failure shown is a fixed sentence: one of publishing-logic.ts's sorted
 //   failures, a refusal from the connection, or one of this file's. What the publishing tool printed
@@ -146,8 +162,9 @@ import { beginPublication, publicationPaths, publicationBinding, publicationOutc
 //
 // No Electron import and erasable TypeScript only: scripts/test-handout-publishing.mjs imports this
 // file as it is. The main process supplies the connection, the live service, the tool and the pages.
-import { existsSync, lstatSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { closeSync, constants as fsConstants, copyFileSync, existsSync, fstatSync, ftruncateSync, linkSync, openSync, writeSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import { PUBLISH_SUPERSEDED_ERROR, type DeployCredentials, type PublishAuthorisation, type PublishGrant } from './cloudflare-connection.ts'
 import { LIVE_SETUP_FAILED, LiveServiceError, type ToolRun } from './live-service-deploy.ts'
 import { createKeyedQueue } from './owner-tokens.ts'
@@ -395,6 +412,40 @@ export function removeSiteFolder(siteDir: string, name: unknown): 'removed' | 'u
   return 'removed'
 }
 
+/**
+ * One entry of the site folder that a publish attempt created itself, with the identity it was created with. `label` is the
+ * top-level name it is reported under; `folder`: it was made as a folder (and is taken away only while empty).
+ */
+type OwnedEntry = { path: string; dev: number; ino: number; label?: string; folder?: true }
+
+/**
+ * A publish that stopped BEFORE anything was sent leaves nothing behind that it created: only the entries in `owned` are taken
+ * away, so a retry builds into the same folder name instead of a `-2` one and uploads one copy. `owned` lists every file and folder
+ * the attempt itself created in the site (the top-level files it wrote, and each file and folder of a new handout when it was moved
+ * in), never a folder "and what is in it". Nothing is removed because it is absent from an earlier listing, and nothing is removed
+ * recursively: another writer may share the site folder, so a file of theirs inside a folder of this attempt's stays, and the
+ * folder with it. Each entry is looked at without following links (`lstat`) and removed only while it is still the entry that was
+ * created (same device and inode); a link is unlinked, never what it points at. Answers the names that could not be removed.
+ */
+export function removeOwnedEntries(owned: readonly OwnedEntry[]): string[] {
+  const failed = new Set<string>()
+  for (const entry of [...owned].reverse()) {
+    try {
+      const stat = lstatSync(entry.path)
+      if (stat.dev !== entry.dev || stat.ino !== entry.ino) continue // replaced by someone else: not this attempt's any more
+      if (stat.isDirectory() && !stat.isSymbolicLink()) rmdirSync(entry.path) // empty folders only: never what someone else put in
+      else unlinkSync(entry.path)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') continue // gone already
+      failed.add(entry.label ?? basename(entry.path))
+    }
+  }
+  return [...failed]
+}
+
+/** A handout folder this attempt is building privately, outside the site folder, until the upload launches. */
+type StagedFolder = { target: string; dir: string; label: string }
+
 // ── The sequence ────────────────────────────────────────────────────────────────────────────────
 
 /** The live service as a publish found it. `reason`: a sorted sentence when a set-up was tried and failed; null when there simply is none. */
@@ -449,6 +500,25 @@ export type PublishBuild = {
    * this computer or is not an absolute http(s) address.
    */
   link(url: string): string
+  /**
+   * The folder a job is about to write a handout into: `path` must be a direct child of `dir`. Gives back the folder the job
+   * writes into, and the job writes ALL of that handout's files there (it keeps `path` for names and links).
+   *   - `path` is not there yet (a new handout): a private folder outside the site, which no other writer can reach. The
+   *     publish checks it there, and moves it into the site, as `path`, only when the upload is launched, creating each folder and
+   *     file itself and keeping a list of them. A publish that stops before that point just deletes the private folder.
+   *   - `path` is there (a republish): `path` itself. The job writes in place, as before, and the folder is never removed.
+   */
+  makeFolder(path: string): string
+  /**
+   * Write a top-level file of the site (the redirect file). Created exclusively when it was not there, and then owned as
+   * `makeFolder` does; written over when it was, and then left as it is. `path` must be a direct child of `dir`.
+   */
+  writeSiteFile(path: string, text: string): boolean
+  /**
+   * For a top-level file that something else is about to write (the shared 404 page the page builder writes): when it is not
+   * there, create it empty and own it (true); when it is, leave it alone (false). The writer then fills the same file.
+   */
+  claimFile(path: string): boolean
 }
 
 /**
@@ -485,6 +555,8 @@ export interface PublishJob<Built> {
 export interface PublishingPorts {
   inventory?(authorisation: PublishAuthorisation): Promise<PreservationInventory | null>
   preservationRoot?: string
+  /** Where an attempt builds a new handout privately until its upload launches (a folder only this app writes). Default: the system temporary folder. */
+  stagingRoot?(): string
   /** The folder the whole site is kept in. */
   siteDir(): string
   authorise(): Promise<PublishGrant>
@@ -584,14 +656,16 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
    * If one fails, this publish is not uploaded. Nothing is deleted, moved or remembered.
    * Answers the refusal, or the handouts (folders) this build wrote.
    */
-  function checkBuilt(dir: string, before: Map<string, string>): PublishFailure | { written: Set<string> } {
-    const written = [...stamps(dir)].filter(([file, stamp]) => before.get(file) !== stamp).map(([file]) => file)
-    const finds = written.flatMap((file) => {
-      const found = appWrittenLoopback(file, readFileSync(join(dir, file), 'latin1'))
+  function checkBuilt(dir: string, before: Map<string, string>, staged: readonly StagedFolder[]): PublishFailure | { written: Set<string> } {
+    const written = [...stamps(dir)].filter(([file, stamp]) => before.get(file) !== stamp).map(([file]) => ({ file, path: join(dir, file) }))
+    // A new handout is still in its private folder: its pages are read where they are, under the name they will have.
+    for (const folder of staged) for (const file of pagesUnder(folder.dir)) written.push({ file: `${folder.label}/${file}`, path: join(folder.dir, file) })
+    const finds = written.flatMap(({ file, path }) => {
+      const found = appWrittenLoopback(file, readFileSync(path, 'latin1'))
       return found ? [`${file}: ${found}`] : []
     })
     if (finds.length) return { ok: false, error: PUBLISH_LOOPBACK_REFUSED, details: finds.slice(0, 20).join('\n') }
-    return { written: new Set(written.map((file) => file.split('/')[0])) }
+    return { written: new Set(written.map(({ file }) => file.split('/')[0])) }
   }
 
   /**
@@ -606,17 +680,20 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
     if (hazard) { const failure = { ok: false as const, error: hazard }; outcomes.set(failure, publicationOutcome({ accepted: false, neverStarted: true })); return failure }
     if (rehearsal) return { ok: true }
     let launched: { superseded: true } | { superseded: false; result: Uploaded }
+    // Whether the tool was ever asked to start: a failure before that is proven to precede deployment.
+    let invoked = false
+    const beforeLaunch = (failure: PublishFailure): PublishFailure => { if (!invoked) outcomes.set(failure, publicationOutcome({ accepted: false, neverStarted: true })); return failure }
     try {
-      launched = await authorisation.run((credentials) => ports.upload(
+      launched = await authorisation.run((credentials) => { invoked = true; return ports.upload(
         ['pages', 'deploy', dir, '--project-name', authorisation.project, '--branch', authorisation.productionBranch, '--commit-dirty=true', ...(context ? ['--commit-message', 'tw-candidate:' + context.candidateDigest] : [])], credentials, context?.started,
-      ))
+      ) })
     } catch (error) {
-      if (!authorisation.current()) return SUPERSEDED
+      if (!authorisation.current()) return beforeLaunch({ ...SUPERSEDED })
       // The launch itself threw: its text is Details, never the message.
       const text = authorisation.clean(error instanceof Error ? error.message : String(error)).trim().slice(-DETAILS_CHARS)
-      return text ? { ok: false, error: PUBLISH_FAILED, details: text } : { ok: false, error: PUBLISH_FAILED }
+      return beforeLaunch(text ? { ok: false, error: PUBLISH_FAILED, details: text } : { ok: false, error: PUBLISH_FAILED })
     }
-    if (launched.superseded) return SUPERSEDED
+    if (launched.superseded) return beforeLaunch({ ...SUPERSEDED })
     const run = launched.result
     if (run.missing || run.neverStarted) {
       const failure = { ok: false as const, error: run.missing?.error ?? PUBLISH_FAILED, details: run.missing?.details ?? authorisation.clean(run.stderr) }
@@ -684,36 +761,169 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
       attempt?.close()
       return { ok: false, error: error instanceof PreservationRefusal ? error.reason : 'PUBLISH_CANDIDATE_CHANGED', ...(error instanceof PreservationRefusal ? { details: error.message } : {}) }
     }
+    /** New handout folders, built privately (see makeFolder), and everything this attempt created in the site (see removeOwnedEntries). */
+    const staged: StagedFolder[] = []
+    const owned: OwnedEntry[] = []
     try {
       const before = stamps(dir)
-      let prepared: Awaited<ReturnType<PublishJob<Built>['prepare']>>
-      try {
-        prepared = await job.prepare({
-          dir, project: authorisation.project, live: live?.ready ? live.address : '',
-          // ENTRY FIRST: refused before the job has written anything.
-          link: (url) => { if (!liveAddressForPages(url)) throw new LinkRefused(); return url },
-          redirects: (text) => { const bad = redirectsRefusal(text); if (bad !== null) throw new RedirectsRefused(bad); return text },
-        })
-      } catch (error) {
-        if (error instanceof LinkRefused) return { ok: false, error: PUBLISH_LINK_REFUSED }
-        if (error instanceof RedirectsRefused) return { ok: false, error: PUBLISH_REDIRECTS_REFUSED, details: error.message.replace(/[^\x20-\x7e]/g, ' ').slice(0, 200) }
-        throw error // a build that fails is the caller's own, as before this ticket
+      const directChild = (path: string): string => {
+        const full = resolve(path)
+        if (dirname(full) !== resolve(dir)) throw new Error('A publish creates only top-level entries of the site folder.')
+        return full
       }
-      if (!prepared.ok) return prepared
-      const checked = checkBuilt(dir, before)
-      if ('ok' in checked) return checked
-      const earlier = earlierHandouts(dir, checked.written)
-      if (!authorisation.current()) return SUPERSEDED
+      const own = (full: string, label = basename(full), folder?: true): void => { const stat = lstatSync(full); owned.push({ path: full, dev: stat.dev, ino: stat.ino, label, ...(folder ? { folder } : {}) }) }
+      const present = (full: string): boolean => { try { lstatSync(full); return true } catch (error) { if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return false; throw error } }
+      /** An entry of the site that the publish writes in place must be what it looks like: a link, or anything but a plain file (folder), is refused, not followed. */
+      const plain = (full: string, folder?: true): void => {
+        let stat; try { stat = lstatSync(full) } catch (error) { if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return; throw error }
+        if (folder ? !stat.isDirectory() : !stat.isFile()) throw new PreservationRefusal('PUBLISH_CANDIDATE_CHANGED')
+      }
+      const makeFolder = (path: string): string => {
+        const full = directChild(path)
+        mkdirSync(dir, { recursive: true })
+        // Rehearsal builds in the site and removes nothing; a folder that is there is a republish, written in place and never removed.
+        if (rehearsal) { plain(full, true); mkdirSync(full, { recursive: true }); return full }
+        if (present(full)) { plain(full, true); return full }
+        const again = staged.find((folder) => folder.target === full)
+        if (again) return again.dir
+        const root = ports.stagingRoot?.() ?? tmpdir()
+        mkdirSync(root, { recursive: true })
+        const folder: StagedFolder = { target: full, dir: mkdtempSync(join(root, 'tw-publish-')), label: basename(full) }
+        staged.push(folder)
+        return folder.dir
+      }
+      const writeSiteFile = (path: string, text: string): boolean => {
+        const full = directChild(path)
+        mkdirSync(dir, { recursive: true })
+        try { writeFileSync(full, text, { encoding: 'utf8', flag: 'wx' }) } catch (error) {
+          if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error
+          plain(full)
+          // Windows rejects O_NOFOLLOW. Open without truncating, then verify the held file
+          // against both path observations before writing; a raced link must never lose bytes.
+          const expected = lstatSync(full)
+          const noFollow = process.platform === 'win32' ? 0 : fsConstants.O_NOFOLLOW
+          const handle = openSync(full, fsConstants.O_WRONLY | noFollow)
+          try {
+            const held = fstatSync(handle), current = lstatSync(full)
+            if (!expected.isFile() || !held.isFile() || !current.isFile() ||
+                held.dev !== expected.dev || held.ino !== expected.ino ||
+                held.dev !== current.dev || held.ino !== current.ino) throw new PreservationRefusal('PUBLISH_CANDIDATE_CHANGED')
+            ftruncateSync(handle, 0)
+            writeSync(handle, text)
+          } finally { closeSync(handle) }
+          return false
+        }
+        own(full)
+        return true
+      }
+      const claimFile = (path: string): boolean => {
+        const full = directChild(path)
+        mkdirSync(dir, { recursive: true })
+        try { writeFileSync(full, '', { encoding: 'utf8', flag: 'wx' }) } catch (error) { if ((error as NodeJS.ErrnoException)?.code === 'EEXIST') { plain(full); return false }; throw error }
+        own(full)
+        return true
+      }
+      /**
+       * Move a privately built folder into the site, creating each folder and file here itself (exclusively: an entry that is
+       * already there makes this fail, nothing of anyone else's is merged into or written over) and listing each in `owned`.
+       */
+      const moveIn = (from: string, to: string, label: string): void => {
+        for (const entry of readdirSync(from, { withFileTypes: true })) {
+          const source = join(from, entry.name), target = join(to, entry.name)
+          if (entry.isDirectory()) { mkdirSync(target); own(target, label, true); moveIn(source, target, label) }
+          else if (entry.isFile()) {
+            try { linkSync(source, target) } catch (error) {
+              if ((error as NodeJS.ErrnoException)?.code === 'EEXIST') throw error
+              copyFileSync(source, target, fsConstants.COPYFILE_EXCL) // another disk, or a disk that does not link
+            }
+            own(target, label)
+          } else throw new Error('A handout folder holds only files and folders.')
+        }
+      }
+      /** Null once every new folder is in the site; else the failure (nothing was sent: the tool has not been asked to start). */
+      const moveStagedIn = (): PublishFailure | null => {
+        try {
+          for (const folder of staged) {
+            mkdirSync(folder.target) // exclusive: a folder another writer made under this name meanwhile is theirs
+            own(folder.target, folder.label, true)
+            moveIn(folder.dir, folder.target, folder.label)
+          }
+          return null
+        } catch {
+          const failure: PublishFailure = { ok: false, error: 'PUBLISH_CANDIDATE_CHANGED' }
+          outcomes.set(failure, publicationOutcome({ accepted: false, neverStarted: true }))
+          return failure
+        }
+      }
+      /**
+       * Nothing was sent: what this attempt created in the site goes again, so a retry builds into the same folder name. A failure to
+       * take an entry away is not hidden: it is named in the failure's Details (a retry then uses a second folder).
+       */
+      const withdraw = (): string[] => (rehearsal ? [] : removeOwnedEntries(owned))
+      const withdrawn = <Failure extends PublishFailure>(failure: Failure): Failure => {
+        const failed = withdraw()
+        if (!failed.length) return failure
+        const sentence = `Pages this publish had built could not be removed from the site folder, so the next publish will make a second copy: ${failed.join(', ')}. Remove ${failed.length === 1 ? 'that folder' : 'those folders'} from the site folder first.`
+        return { ...failure, details: failure.details ? `${failure.details}\n${sentence}` : sentence }
+      }
+
+      // ── BEFORE THE BOUNDARY ───────────────────────────────────────────────────────────────────────────────────────────────
+      // Everything up to the moment the upload is launched happens before anything could have been sent: the build, the checks
+      // after it, the listing of earlier handouts, the preservation check, the frozen copy. Whatever stops it there, a refusal or
+      // an ordinary error (a page that cannot be read, a file that cannot be copied), takes away what this attempt created and
+      // nothing else. (The boundary is the first line of the launch callback below.)
+      let prepared: Awaited<ReturnType<PublishJob<Built>['prepare']>>
+      let earlier: string[]
+      try {
+        try {
+          prepared = await job.prepare({
+            dir, project: authorisation.project, live: live?.ready ? live.address : '',
+            // ENTRY FIRST: refused before the job has written anything.
+            link: (url) => { if (!liveAddressForPages(url)) throw new LinkRefused(); return url },
+            redirects: (text) => { const bad = redirectsRefusal(text); if (bad !== null) throw new RedirectsRefused(bad); return text },
+            makeFolder, writeSiteFile, claimFile,
+          })
+        } catch (error) {
+          if (error instanceof LinkRefused) return withdrawn({ ok: false, error: PUBLISH_LINK_REFUSED })
+          if (error instanceof PreservationRefusal) return withdrawn({ ok: false, error: error.reason, details: error.message })
+          if (error instanceof RedirectsRefused) return withdrawn({ ok: false, error: PUBLISH_REDIRECTS_REFUSED, details: error.message.replace(/[^\x20-\x7e]/g, ' ').slice(0, 200) })
+          throw error // taken away below, as for every error before the boundary
+        }
+        if (!prepared.ok) return withdrawn(prepared)
+        const checked = checkBuilt(dir, before, staged)
+        if ('ok' in checked) return withdrawn(checked)
+        earlier = earlierHandouts(dir, checked.written)
+        // Superseded after the pages were built and before the upload began: nothing was sent, so what was built goes again.
+        if (!authorisation.current()) return withdrawn(SUPERSEDED)
+      } catch (error) {
+        // A build that fails leaves no half-written new folder for a retry to find. The failure itself is the caller's own, as before.
+        const failed = withdraw()
+        if (failed.length && error instanceof Error) error.message += ` (Pages this publish had built could not be removed from the site folder: ${failed.join(', ')}.)`
+        throw error
+      }
       let uploaded: { ok: true } | PublishFailure
       let uncertain: PublishFailure | null = null
+      /** Set on the first line of the launch callback: from there on the tool may have been asked to start. */
+      let launchReached = false
       try {
         uploaded = attempt ? await attempt.upload(dir, baseline, job.removalRoots?.(prepared.built) ?? [], async (frozen, context) => {
-          const value = await uploadSite(authorisation, frozen, false, context)
+          launchReached = true
+          // THE BOUNDARY. The new folders enter the site now (the frozen copy that goes up already holds them), before the tool is
+          // asked to start, so that pages which may have gone up are in the site for the recovery check.
+          const refusal = moveStagedIn()
+          const value = refusal ?? await uploadSite(authorisation, frozen, false, context)
           uncertain = value.ok ? null : value
           return { outcome: value.ok ? publicationOutcome({ accepted: true }) : outcomes.get(value) ?? publicationOutcome({ accepted: false }), value }
-        }) : await uploadSite(authorisation, dir, true)
-      } catch (error) { return { ...(uncertain ?? {}), ok: false, error: error instanceof PreservationRefusal ? error.reason : 'PUBLISH_CANDIDATE_CHANGED', ...(error instanceof PreservationRefusal && error.reason !== 'PUBLISH_OUTCOME_UNKNOWN' ? { details: error.message } : {}) } }
-      if (!uploaded.ok) return uploaded
+        }, staged.map((folder) => ({ name: folder.label, dir: folder.dir }))) : await uploadSite(authorisation, dir, true)
+      } catch (error) {
+        const refused: PublishFailure = { ...(uncertain ?? {}), ok: false, error: error instanceof PreservationRefusal ? error.reason : 'PUBLISH_CANDIDATE_CHANGED', ...(error instanceof PreservationRefusal && error.reason !== 'PUBLISH_OUTCOME_UNKNOWN' ? { details: error.message } : {}) }
+        // Before the boundary nothing was sent, whatever stopped it (a refusal, an unreadable or uncopyable file): its pages go again.
+        // After it the outcome might be unknown, so its pages stay for the recovery check.
+        return launchReached ? refused : withdrawn(refused)
+      }
+      // An upload that is known not to have gone up (the tool never started, the bundling check refused it, or it failed in a way
+      // that is definite) is proven to precede deployment: its pages go again. An unknown outcome keeps them.
+      if (!uploaded.ok) return outcomes.get(uploaded) === 'failed' ? withdrawn(uploaded) : uploaded
       // The upload completed: the pages are at their address, and that is recorded whatever the connection is now.
       authorisation.published()
       await job.record?.(prepared.built)
@@ -725,7 +935,11 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
         earlierNotice: earlier.length ? earlierHandoutsText(earlier.length) : null,
         earlierDetails: earlier.length ? earlier.join('\n') : null,
       }
-    } finally { attempt?.close() }
+    } finally {
+      // The private build folders are this attempt's alone: whatever happened, they go (what was moved into the site is in `owned`).
+      for (const folder of staged) rmSync(folder.dir, { recursive: true, force: true })
+      attempt?.close()
+    }
   }
 
   function inQueue<Result>(work: () => Promise<Result>): Promise<Result> {
